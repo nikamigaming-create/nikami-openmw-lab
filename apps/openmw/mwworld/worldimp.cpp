@@ -147,11 +147,248 @@ namespace MWWorld
                 { "sIntimidateFail", ESM::Variant("Intimidate Fail") },
                 { "sTauntSuccess", ESM::Variant("Taunt Success") },
                 { "sTauntFail", ESM::Variant("Taunt Fail") },
+                { "sBreath", ESM::Variant("Breath") },
                 { "sBribeSuccess", ESM::Variant("Bribe Success") },
                 { "sBribeFail", ESM::Variant("Bribe Fail") },
                 { "fNPCHealthBarTime", ESM::Variant(5.f) },
                 { "fNPCHealthBarFade", ESM::Variant(1.f) },
+                { "fAIFleeFleeMult", ESM::Variant(0.2f) },
+                { "fAIFleeHealthMult", ESM::Variant(7.f) },
+                { "fAIMagicSpellMult", ESM::Variant(3.f) },
+                { "fAIMeleeArmorMult", ESM::Variant(1.f) },
+                { "fAIMeleeWeaponMult", ESM::Variant(1.f) },
+                { "fAIRangeMagicSpellMult", ESM::Variant(5.f) },
+                { "fAIRangeMeleeWeaponMult", ESM::Variant(5.f) },
+                { "fAlarmRadius", ESM::Variant(4000.f) },
+                { "fAudioDefaultMaxDistance", ESM::Variant(40.f) },
+                { "fAudioDefaultMinDistance", ESM::Variant(5.f) },
+                { "fAudioMaxDistanceMult", ESM::Variant(50.f) },
+                { "fAudioMinDistanceMult", ESM::Variant(20.f) },
+                { "fAudioVoiceDefaultMaxDistance", ESM::Variant(60.f) },
+                { "fAudioVoiceDefaultMinDistance", ESM::Variant(10.f) },
+                { "fAthleticsRunBonus", ESM::Variant(0.02f) },
+                { "fBargainOfferBase", ESM::Variant(50.f) },
+                { "fBargainOfferMulti", ESM::Variant(-4.f) },
+                { "fBarterGoldResetDelay", ESM::Variant(24.f) },
+                { "fBaseRunMultiplier", ESM::Variant(1.f) },
+                { "fBlockStillBonus", ESM::Variant(0.5f) },
+                { "fBribe10Mod", ESM::Variant(35.f) },
+                { "fBribe100Mod", ESM::Variant(75.f) },
+                { "fBribe1000Mod", ESM::Variant(150.f) },
+                { "fCombatAngleXY", ESM::Variant(60.f) },
+                { "fCombatAngleZ", ESM::Variant(30.f) },
+                { "fCombatArmorMinMult", ESM::Variant(0.25f) },
+                { "fCombatBlockLeftAngle", ESM::Variant(45.f) },
+                { "fCombatBlockRightAngle", ESM::Variant(45.f) },
+                { "fCombatCriticalStrikeMult", ESM::Variant(4.f) },
+                { "fCombatDelayCreature", ESM::Variant(0.1f) },
+                { "fCombatDelayNPC", ESM::Variant(0.1f) },
+                { "fCombatInvisoMult", ESM::Variant(0.2f) },
+                { "fCombatKODamageMult", ESM::Variant(0.5f) },
+                { "fCorpseRespawnDelay", ESM::Variant(72.f) },
+                { "fCrimeStealing", ESM::Variant(1.f) },
+                { "fDamageStrengthBase", ESM::Variant(0.5f) },
+                { "fDamageStrengthMult", ESM::Variant(0.1f) },
+                { "fDispAttacking", ESM::Variant(-50.f) },
+                { "fDispCrimeMod", ESM::Variant(1.f) },
+                { "fDispDiseaseMod", ESM::Variant(-10.f) },
+                { "fDispFactionMod", ESM::Variant(1.f) },
+                { "fDispFactionRankBase", ESM::Variant(5.f) },
+                { "fDispFactionRankMult", ESM::Variant(5.f) },
+                { "fDispositionMod", ESM::Variant(1.f) },
+                { "fDispPersonalityBase", ESM::Variant(50.f) },
+                { "fDispPersonalityMult", ESM::Variant(0.5f) },
+                { "fDispPickPocketMod", ESM::Variant(-25.f) },
+                { "fDispRaceMod", ESM::Variant(5.f) },
+                { "fDispStealing", ESM::Variant(-0.5f) },
+                { "fDispWeaponDrawn", ESM::Variant(-5.f) },
+                { "fEncumberedMoveEffect", ESM::Variant(0.3f) },
+                { "fEncumbranceStrMult", ESM::Variant(5.f) },
+                { "fEndFatigueMult", ESM::Variant(2.f) },
+                { "fFallAcroBase", ESM::Variant(5.f) },
+                { "fFallAcroMult", ESM::Variant(0.25f) },
+                { "fFallDamageDistanceMin", ESM::Variant(400.f) },
+                { "fFallDistanceBase", ESM::Variant(500.f) },
+                { "fFallDistanceMult", ESM::Variant(0.1f) },
+                { "fFatigueAttackBase", ESM::Variant(2.f) },
+                { "fFatigueAttackMult", ESM::Variant(0.5f) },
+                { "fFatigueBase", ESM::Variant(1.25f) },
+                { "fFatigueBlockBase", ESM::Variant(1.f) },
+                { "fFatigueBlockMult", ESM::Variant(1.f) },
+                { "fFatigueJumpBase", ESM::Variant(5.f) },
+                { "fFatigueJumpMult", ESM::Variant(0.5f) },
+                { "fFatigueMult", ESM::Variant(1.f) },
+                { "fFatigueReturnBase", ESM::Variant(2.f) },
+                { "fFatigueReturnMult", ESM::Variant(0.02f) },
+                { "fFatigueRunBase", ESM::Variant(1.f) },
+                { "fFatigueRunMult", ESM::Variant(0.1f) },
+                { "fFatigueSneakBase", ESM::Variant(1.f) },
+                { "fFatigueSneakMult", ESM::Variant(0.5f) },
+                { "fFatigueSwimRunBase", ESM::Variant(2.f) },
+                { "fFatigueSwimRunMult", ESM::Variant(0.5f) },
+                { "fFatigueSwimWalkBase", ESM::Variant(1.f) },
+                { "fFatigueSwimWalkMult", ESM::Variant(0.5f) },
+                { "fFightDispMult", ESM::Variant(0.2f) },
+                { "fFightDistanceMultiplier", ESM::Variant(1.f) },
+                { "fFightStealing", ESM::Variant(0.5f) },
                 { "fFleeDistance", ESM::Variant(3000.f) },
+                { "fHandtoHandHealthPer", ESM::Variant(0.1f) },
+                { "fHandToHandReach", ESM::Variant(1.f) },
+                { "fHoldBreathTime", ESM::Variant(20.f) },
+                { "fIdleChanceMultiplier", ESM::Variant(1.f) },
+                { "fInteriorHeadTrackMult", ESM::Variant(0.5f) },
+                { "fJumpAcrobaticsBase", ESM::Variant(0.f) },
+                { "fJumpAcroMultiplier", ESM::Variant(1.f) },
+                { "fJumpEncumbranceBase", ESM::Variant(1.f) },
+                { "fJumpEncumbranceMultiplier", ESM::Variant(1.f) },
+                { "fJumpMoveBase", ESM::Variant(1.f) },
+                { "fJumpMoveMult", ESM::Variant(1.f) },
+                { "fJumpRunMultiplier", ESM::Variant(1.f) },
+                { "fKnockDownMult", ESM::Variant(0.5f) },
+                { "fLevelMod", ESM::Variant(1.f) },
+                { "fLightMaxMod", ESM::Variant(0.15f) },
+                { "fLuckMod", ESM::Variant(10.f) },
+                { "fMagicItemRechargePerSecond", ESM::Variant(0.05f) },
+                { "fMagicStartIconBlink", ESM::Variant(0.5f) },
+                { "fMagicSunBlockedMult", ESM::Variant(0.5f) },
+                { "fMajorSkillBonus", ESM::Variant(25.f) },
+                { "fMaxFlySpeed", ESM::Variant(300.f) },
+                { "fMaxHandToHandMult", ESM::Variant(0.5f) },
+                { "fMaxHeadTrackDistance", ESM::Variant(512.f) },
+                { "fMaxWalkSpeed", ESM::Variant(300.f) },
+                { "fMaxWalkSpeedCreature", ESM::Variant(300.f) },
+                { "fMedMaxMod", ESM::Variant(0.4f) },
+                { "fMessageTimePerChar", ESM::Variant(0.1f) },
+                { "fMinFlySpeed", ESM::Variant(50.f) },
+                { "fMinHandToHandMult", ESM::Variant(0.1f) },
+                { "fMinorSkillBonus", ESM::Variant(10.f) },
+                { "fMinWalkSpeed", ESM::Variant(100.f) },
+                { "fMinWalkSpeedCreature", ESM::Variant(100.f) },
+                { "fMiscSkillBonus", ESM::Variant(5.f) },
+                { "fNPCbaseMagickaMult", ESM::Variant(1.f) },
+                { "fPerDieRollMult", ESM::Variant(1.f) },
+                { "fPersonalityMod", ESM::Variant(10.f) },
+                { "fPerTempMult", ESM::Variant(1.f) },
+                { "fPickLockMult", ESM::Variant(1.f) },
+                { "fPickPocketMod", ESM::Variant(1.f) },
+                { "fProjectileMaxSpeed", ESM::Variant(3000.f) },
+                { "fProjectileMinSpeed", ESM::Variant(400.f) },
+                { "fProjectileThrownStoreChance", ESM::Variant(25.f) },
+                { "fRepairAmountMult", ESM::Variant(1.f) },
+                { "fRepairMult", ESM::Variant(1.f) },
+                { "fReputationMod", ESM::Variant(1.f) },
+                { "fRestMagicMult", ESM::Variant(0.15f) },
+                { "fSleepRandMod", ESM::Variant(1.f) },
+                { "fSleepRestMod", ESM::Variant(1.f) },
+                { "fSneakBootMult", ESM::Variant(1.f) },
+                { "fSneakDistanceBase", ESM::Variant(500.f) },
+                { "fSneakDistanceMultiplier", ESM::Variant(1.f) },
+                { "fSneakNoViewMult", ESM::Variant(0.5f) },
+                { "fSneakSkillMult", ESM::Variant(1.f) },
+                { "fSneakSpeedMultiplier", ESM::Variant(0.75f) },
+                { "fSneakUseDelay", ESM::Variant(1.f) },
+                { "fSneakUseDist", ESM::Variant(200.f) },
+                { "fSneakViewMult", ESM::Variant(1.f) },
+                { "fSoulgemMult", ESM::Variant(3.f) },
+                { "fSpecialSkillBonus", ESM::Variant(15.f) },
+                { "fStromWalkMult", ESM::Variant(0.5f) },
+                { "fSuffocationDamage", ESM::Variant(3.f) },
+                { "fSwimHeightScale", ESM::Variant(0.9f) },
+                { "fSwimRunAthleticsMult", ESM::Variant(0.02f) },
+                { "fSwimRunBase", ESM::Variant(100.f) },
+                { "fSwingBlockBase", ESM::Variant(1.f) },
+                { "fSwingBlockMult", ESM::Variant(1.f) },
+                { "iMaxActivateDist", ESM::Variant(192) },
+                { "fTargetSpellMaxSpeed", ESM::Variant(1000.f) },
+                { "fThrownWeaponMaxSpeed", ESM::Variant(3000.f) },
+                { "fThrownWeaponMinSpeed", ESM::Variant(400.f) },
+                { "fTravelMult", ESM::Variant(1.f) },
+                { "fTravelTimeMult", ESM::Variant(16000.f) },
+                { "fUnarmoredBase1", ESM::Variant(0.1f) },
+                { "fUnarmoredBase2", ESM::Variant(0.1f) },
+                { "fVanityDelay", ESM::Variant(30.f) },
+                { "fVoiceIdleOdds", ESM::Variant(1.f) },
+                { "fWeaponDamageMult", ESM::Variant(1.f) },
+                { "fWeaponFatigueBlockMult", ESM::Variant(1.f) },
+                { "fWeaponFatigueMult", ESM::Variant(1.f) },
+                { "fCombatDistance", ESM::Variant(256.f) },
+                { "fStromWindSpeed", ESM::Variant(7.f) },
+                { "fFatigueSpellBase", ESM::Variant(1.f) },
+                { "fFatigueSpellMult", ESM::Variant(1.f) },
+                { "fPCbaseMagickaMult", ESM::Variant(1.f) },
+                { "fLevelUpHealthEndMult", ESM::Variant(0.1f) },
+                { "iLevelupMajorMult", ESM::Variant(1) },
+                { "iLevelupMinorMult", ESM::Variant(1) },
+                { "iLevelupMiscMultAttriubte", ESM::Variant(1) },
+                { "iLevelupSpecialization", ESM::Variant(5) },
+                { "fCrimeGoldDiscountMult", ESM::Variant(0.5f) },
+                { "fCrimeGoldTurnInMult", ESM::Variant(0.9f) },
+                { "iAlchemyMod", ESM::Variant(2) },
+                { "iAutoPCSpellMax", ESM::Variant(100) },
+                { "iAutoRepFacMod", ESM::Variant(10) },
+                { "iAutoRepLevMod", ESM::Variant(10) },
+                { "iAutoSpellAttSkillMin", ESM::Variant(5) },
+                { "iAutoSpellTimesCanCast", ESM::Variant(3) },
+                { "iBarterFailDisposition", ESM::Variant(-1) },
+                { "iBarterSuccessDisposition", ESM::Variant(1) },
+                { "iBaseArmorSkill", ESM::Variant(30) },
+                { "iBlockMaxChance", ESM::Variant(50) },
+                { "iBlockMinChance", ESM::Variant(10) },
+                { "iBootsWeight", ESM::Variant(20) },
+                { "iCrimeAttack", ESM::Variant(40) },
+                { "iCrimeKilling", ESM::Variant(1000) },
+                { "iCrimePickPocket", ESM::Variant(25) },
+                { "iCrimeThreshold", ESM::Variant(1000) },
+                { "iCrimeThresholdMultiplier", ESM::Variant(1) },
+                { "iCrimeTresspass", ESM::Variant(5) },
+                { "iCuirassWeight", ESM::Variant(30) },
+                { "iDaysinPrisonMod", ESM::Variant(100) },
+                { "iDispAttackMod", ESM::Variant(-50) },
+                { "iDispKilling", ESM::Variant(-50) },
+                { "iDispTresspass", ESM::Variant(-5) },
+                { "iFightAttack", ESM::Variant(100) },
+                { "iFightAttacking", ESM::Variant(50) },
+                { "iFightDistanceBase", ESM::Variant(1000) },
+                { "iFightKilling", ESM::Variant(100) },
+                { "iFightPickpocket", ESM::Variant(100) },
+                { "iFightTrespass", ESM::Variant(50) },
+                { "iGauntletWeight", ESM::Variant(10) },
+                { "iGreavesWeight", ESM::Variant(30) },
+                { "iGreetDistanceMultiplier", ESM::Variant(5) },
+                { "iHelmWeight", ESM::Variant(10) },
+                { "iKnockDownOddsBase", ESM::Variant(0) },
+                { "iKnockDownOddsMult", ESM::Variant(1) },
+                { "iLevelUpTotal", ESM::Variant(10) },
+                { "iMagicItemChargeConst", ESM::Variant(1) },
+                { "iMagicItemChargeOnce", ESM::Variant(1) },
+                { "iMagicItemChargeStrike", ESM::Variant(1) },
+                { "iMagicItemChargeUse", ESM::Variant(1) },
+                { "iNumberCreatures", ESM::Variant(2) },
+                { "iPauldronWeight", ESM::Variant(10) },
+                { "iPerMinChance", ESM::Variant(10) },
+                { "iPerMinChange", ESM::Variant(10) },
+                { "iPickMaxChance", ESM::Variant(75) },
+                { "iPickMinChance", ESM::Variant(5) },
+                { "iShieldWeight", ESM::Variant(30) },
+                { "iSoulAmountForConstantEffect", ESM::Variant(400) },
+                { "iTrainingMod", ESM::Variant(10) },
+                { "iVoiceAttackOdds", ESM::Variant(30) },
+                { "iVoiceHitOdds", ESM::Variant(30) },
+                { "fCorpseClearDelay", ESM::Variant(72.f) },
+                { "iMonthsToRespawn", ESM::Variant(4) },
+                { "i1stPersonSneakDelta", ESM::Variant(10) },
+                { "sBarter", ESM::Variant("Barter") },
+                { "sDefaultCellname", ESM::Variant("Wasteland") },
+                { "sGoodbye", ESM::Variant("Goodbye") },
+                { "sMagicBoundRightGauntletID", ESM::Variant("") },
+                { "sNotifyMessage49", ESM::Variant("") },
+                { "sNotifyMessage50", ESM::Variant("") },
+                { "sNotifyMessage51", ESM::Variant("") },
+                { "sPersuasion", ESM::Variant("Persuasion") },
+                { "sRepair", ESM::Variant("Repair") },
+                { "sServiceTrainingTitle", ESM::Variant("Training") },
+                { "sSpells", ESM::Variant("Spells") },
+                { "sTravel", ESM::Variant("Travel") },
                 { "sMaxSale", ESM::Variant("Max Sale") },
                 { "sAnd", ESM::Variant("and") },
                 // Werewolf (BM)
@@ -176,9 +413,12 @@ namespace MWWorld
                 { Globals::sGameHour, ESM::Variant(0) },
                 { Globals::sTimeScale, ESM::Variant(30.f) },
                 { Globals::sDay, ESM::Variant(1) },
+                { Globals::sMonth, ESM::Variant(0) },
                 { Globals::sYear, ESM::Variant(1) },
+                { Globals::sCharGenState, ESM::Variant(-1) },
                 { Globals::sPCRace, ESM::Variant(0) },
                 { Globals::sPCHasCrimeGold, ESM::Variant(0) },
+                { Globals::sPCHasGoldDiscount, ESM::Variant(0) },
                 { Globals::sCrimeGoldDiscount, ESM::Variant(0) },
                 { Globals::sCrimeGoldTurnIn, ESM::Variant(0) },
                 { Globals::sPCHasTurnIn, ESM::Variant(0) },
@@ -291,6 +531,7 @@ namespace MWWorld
         loadContentFiles(fileCollections, contentFiles, encoder, listener);
         loadGroundcoverFiles(fileCollections, groundcoverFiles, encoder, listener);
 
+        ensureNeededRecords();
         fillGlobalVariables();
 
         mStore.setUp();
@@ -339,6 +580,8 @@ namespace MWWorld
 
     void World::startNewGame(bool bypass)
     {
+        Log(Debug::Info) << "FNV/ESM4 diag: startNewGame bypass=" << bypass << " startCell='" << mStartCell << "'";
+
         mGoToJail = false;
         mLevitationEnabled = true;
         mTeleportEnabled = true;
@@ -374,12 +617,16 @@ namespace MWWorld
             ESM::RefId cellId = findExteriorPosition(mStartCell, pos);
             if (!cellId.empty())
             {
+                Log(Debug::Info) << "FNV/ESM4 diag: start cell '" << mStartCell << "' resolved as exterior "
+                                 << cellId;
                 changeToCell(cellId, pos, true);
                 adjustPosition(getPlayerPtr(), false);
             }
             else
             {
-                findInteriorPosition(mStartCell, pos);
+                cellId = findInteriorPosition(mStartCell, pos);
+                Log(Debug::Info) << "FNV/ESM4 diag: start cell '" << mStartCell << "' resolved as interior "
+                                 << cellId;
                 changeToInteriorCell(mStartCell, pos, true);
             }
         }
@@ -1588,18 +1835,29 @@ namespace MWWorld
         // Cancel door closing sound if collision with actor is detected
         if (collisionWithActor)
         {
-            const ESM::Door* ref = door.get<ESM::Door>()->mBase;
+            ESM::RefId openSound;
+            ESM::RefId closeSound;
+            if (door.getType() == ESM::REC_DOOR)
+            {
+                const ESM::Door* ref = door.get<ESM::Door>()->mBase;
+                openSound = ref->mOpenSound;
+                closeSound = ref->mCloseSound;
+            }
+            else if (door.getType() == ESM::REC_DOOR4)
+            {
+                const ESM4::Door* ref = door.get<ESM4::Door>()->mBase;
+                openSound = ESM::RefId(ref->mOpenSound);
+                closeSound = ESM::RefId(ref->mCloseSound);
+            }
 
             if (state == MWWorld::DoorState::Opening)
             {
-                const ESM::RefId& openSound = ref->mOpenSound;
                 if (!openSound.empty()
                     && MWBase::Environment::get().getSoundManager()->getSoundPlaying(door, openSound))
                     MWBase::Environment::get().getSoundManager()->stopSound3D(door, openSound);
             }
             else if (state == MWWorld::DoorState::Closing)
             {
-                const ESM::RefId& closeSound = ref->mCloseSound;
                 if (!closeSound.empty()
                     && MWBase::Environment::get().getSoundManager()->getSoundPlaying(door, closeSound))
                     MWBase::Environment::get().getSoundManager()->stopSound3D(door, closeSound);

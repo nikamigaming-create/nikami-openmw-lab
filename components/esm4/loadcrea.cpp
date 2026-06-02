@@ -180,6 +180,20 @@ void ESM4::Creature::load(ESM4::Reader& reader)
                 throw std::runtime_error("ESM4::CREA::load - Unknown subrecord " + ESM::printName(subHdr.typeId));
         }
     }
+
+    if (!mModel.empty() && !mNif.empty())
+    {
+        const std::string::size_type slash = mModel.find_last_of("/\\");
+        if (slash != std::string::npos)
+        {
+            const std::string directory = mModel.substr(0, slash + 1);
+            for (std::string& nif : mNif)
+            {
+                if (!nif.empty() && nif.find_first_of("/\\") == std::string::npos)
+                    nif = directory + nif;
+            }
+        }
+    }
 }
 
 // void ESM4::Creature::save(ESM4::Writer& writer) const

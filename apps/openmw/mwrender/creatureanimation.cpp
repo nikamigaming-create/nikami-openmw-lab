@@ -2,36 +2,352 @@
 
 #include <osg/MatrixTransform>
 
+#include <algorithm>
+#include <cctype>
+#include <cstdlib>
 #include <components/debug/debuglog.hpp>
 #include <components/esm3/loadcrea.hpp>
+#include <components/esm4/loadbptd.hpp>
+#include <components/esm4/loadcrea.hpp>
+#include <components/esm4/loadlvlc.hpp>
+#include <components/misc/resourcehelpers.hpp>
 #include <components/resource/resourcesystem.hpp>
+#include <components/resource/scenemanager.hpp>
 #include <components/sceneutil/lightcommon.hpp>
 #include <components/sceneutil/positionattitudetransform.hpp>
 #include <components/sceneutil/visitor.hpp>
 #include <components/settings/values.hpp>
+#include <components/vfs/manager.hpp>
+#include <components/vfs/pathutil.hpp>
+#include <components/vfs/recursivedirectoryiterator.hpp>
+
+#include <vector>
 
 #include "../mwmechanics/weapontype.hpp"
 
+#include "../mwbase/environment.hpp"
+
 #include "../mwworld/class.hpp"
+#include "../mwworld/esmstore.hpp"
 
 namespace MWRender
 {
+    namespace
+    {
+        bool hasSuffix(std::string_view value, std::string_view suffix)
+        {
+            return value.size() >= suffix.size() && value.substr(value.size() - suffix.size()) == suffix;
+        }
+
+        std::string toLowerAscii(std::string_view value)
+        {
+            std::string result(value);
+            std::transform(result.begin(), result.end(), result.begin(),
+                [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+            return result;
+        }
+
+        bool isLikelySkeletonNif(std::string_view value)
+        {
+            const std::string lowered = toLowerAscii(value);
+            return lowered.ends_with("skeleton.nif") || lowered.find("/skeleton") != std::string::npos
+                || lowered.find("\\skeleton") != std::string::npos;
+        }
+
+        bool findCreatureKf(const VFS::Manager& vfs, const std::string& path, std::string& normalizedPath)
+        {
+            VFS::Path::Normalized normalized(path);
+            if (!vfs.exists(normalized))
+                return false;
+
+            normalizedPath = normalized.value();
+            return true;
+        }
+
+        std::vector<std::string> collectDiscoveredCreatureKfs(
+            const VFS::Manager& vfs, std::string_view directory, std::string_view probeToken, const std::string& editorId)
+        {
+            std::vector<std::string> paths;
+            unsigned int logged = 0;
+            const bool logCandidates = std::getenv("OPENMW_FNV_CREATURE_KF_DIAG") != nullptr;
+            for (const VFS::Path::Normalized& name : vfs.getRecursiveDirectoryIterator(directory))
+            {
+                const std::string_view value = name.view();
+                if (!hasSuffix(value, ".kf"))
+                    continue;
+
+                paths.push_back(name.value());
+
+                if (logCandidates && logged < 24)
+                {
+                    Log(Debug::Info) << "FNV/ESM4 diag: creature KF candidate " << editorId << " path=" << name;
+                    ++logged;
+                }
+            }
+
+            if (paths.empty() && !probeToken.empty())
+            {
+                for (const VFS::Path::Normalized& name : vfs.getRecursiveDirectoryIterator())
+                {
+                    const std::string_view value = name.view();
+                    if (value.find(probeToken) == std::string_view::npos || !hasSuffix(value, ".kf"))
+                        continue;
+
+                    paths.push_back(name.value());
+
+                    if (logCandidates && logged < 24)
+                    {
+                        Log(Debug::Info) << "FNV/ESM4 diag: creature KF global candidate " << editorId
+                                         << " path=" << name;
+                        ++logged;
+                    }
+                }
+            }
+
+            return paths;
+        }
+
+        const ESM4::Creature* searchCreatureTemplate(ESM::FormId id, int depth = 0)
+        {
+            const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
+            if (store == nullptr || id.isZeroOrUnset() || depth > 8)
+                return nullptr;
+
+            const ESM::RecNameInts foundType = static_cast<ESM::RecNameInts>(store->find(id));
+            if (foundType == ESM::RecNameInts::REC_CREA4)
+                return store->get<ESM4::Creature>().search(id);
+
+            if (foundType != ESM::RecNameInts::REC_LVLC4)
+                return nullptr;
+
+            const ESM4::LevelledCreature* list = store->get<ESM4::LevelledCreature>().search(id);
+            if (list == nullptr || list->mLvlObject.empty())
+                return nullptr;
+
+            const ESM4::LVLO* selected = nullptr;
+            for (const ESM4::LVLO& entry : list->mLvlObject)
+            {
+                if (entry.item == 0)
+                    continue;
+                if (selected == nullptr || entry.level <= 1)
+                    selected = &entry;
+                if (entry.level <= 1)
+                    break;
+            }
+
+            return selected == nullptr ? nullptr : searchCreatureTemplate(ESM::FormId::fromUint32(selected->item), depth + 1);
+        }
+
+        const ESM4::Creature& getEffectiveCreatureForRendering(const ESM4::Creature& creature)
+        {
+            const ESM4::Creature* current = &creature;
+            for (int depth = 0; depth < 8; ++depth)
+            {
+                if (!current->mModel.empty() || !current->mNif.empty() || !current->mBodyParts.empty())
+                    return *current;
+                if (current->mBaseTemplate.isZeroOrUnset())
+                    return *current;
+
+                const ESM4::Creature* templated = searchCreatureTemplate(current->mBaseTemplate);
+                if (templated == nullptr || templated == current)
+                    return *current;
+
+                current = templated;
+            }
+
+            return *current;
+        }
+
+        bool appendUniquePath(std::vector<std::string>& paths, const std::string& path)
+        {
+            if (path.empty() || std::find(paths.begin(), paths.end(), path) != paths.end())
+                return false;
+
+            paths.push_back(path);
+            return true;
+        }
+
+        VFS::Path::Normalized correctCreatureBodyPath(const std::string& path)
+        {
+            VFS::Path::Normalized normalized(path);
+            if (normalized.value().starts_with("meshes/"))
+                return normalized;
+            return Misc::ResourceHelpers::correctMeshPath(normalized);
+        }
+
+        void appendDirectoryBodyNifs(const VFS::Manager& vfs, std::string_view directory, std::string_view editorId,
+            std::vector<std::string>& paths)
+        {
+            std::vector<std::string> candidates;
+            for (const VFS::Path::Normalized& name : vfs.getRecursiveDirectoryIterator(directory))
+            {
+                const std::string_view value = name.view();
+                if (!hasSuffix(value, ".nif") || isLikelySkeletonNif(value))
+                    continue;
+
+                candidates.push_back(name.value());
+            }
+
+            const std::string loweredEditor = toLowerAscii(editorId);
+            auto appendMatching = [&](std::string_view token) {
+                for (const std::string& candidate : candidates)
+                {
+                    const std::string loweredCandidate = toLowerAscii(candidate);
+                    if (loweredCandidate.find(token) != std::string::npos)
+                        appendUniquePath(paths, candidate);
+                }
+            };
+
+            if (loweredEditor.find("coyote") != std::string::npos)
+                appendMatching("coyote.nif");
+            else if (loweredEditor.find("mongrel") != std::string::npos)
+                appendMatching("nv_mongrel.nif");
+            else if (loweredEditor.find("dog") != std::string::npos)
+                appendMatching("dogskin.nif");
+
+            if (!paths.empty())
+                return;
+
+            for (const std::string& candidate : candidates)
+            {
+                const std::string loweredCandidate = toLowerAscii(candidate);
+                if (loweredCandidate.find("skullcap") != std::string::npos
+                    || loweredCandidate.find("eyes") != std::string::npos
+                    || loweredCandidate.find("rex") != std::string::npos
+                    || loweredCandidate.find("cyberdog") != std::string::npos
+                    || loweredCandidate.find("static") != std::string::npos)
+                    continue;
+
+                appendUniquePath(paths, candidate);
+                return;
+            }
+        }
+
+        std::vector<std::string> collectCreatureBodyNifs(
+            const ESM4::Creature& creature, const VFS::Manager& vfs, std::string_view animationDirectory)
+        {
+            std::vector<std::string> paths;
+            for (const std::string& bodyNif : creature.mNif)
+            {
+                if (!isLikelySkeletonNif(bodyNif))
+                    appendUniquePath(paths, bodyNif);
+            }
+
+            const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
+            if (store == nullptr)
+                return paths;
+
+            const auto& bodyPartStore = store->get<ESM4::BodyPartData>();
+            for (ESM::FormId bodyPartId : creature.mBodyParts)
+            {
+                const ESM4::BodyPartData* bodyPartData = bodyPartStore.search(bodyPartId);
+                if (bodyPartData == nullptr)
+                    continue;
+
+                if (!isLikelySkeletonNif(bodyPartData->mModel))
+                    appendUniquePath(paths, bodyPartData->mModel);
+            }
+
+            if (paths.empty())
+                appendDirectoryBodyNifs(vfs, animationDirectory, creature.mEditorId, paths);
+
+            return paths;
+        }
+    }
 
     CreatureAnimation::CreatureAnimation(
         const MWWorld::Ptr& ptr, const std::string& model, Resource::ResourceSystem* resourceSystem, bool animated)
         : ActorAnimation(ptr, osg::ref_ptr<osg::Group>(ptr.getRefData().getBaseNode()), resourceSystem)
     {
-        MWWorld::LiveCellRef<ESM::Creature>* ref = mPtr.get<ESM::Creature>();
-
         if (!model.empty())
         {
             setObjectRoot(model, false, false, true);
 
-            if ((ref->mBase->mFlags & ESM::Creature::Bipedal))
-                addAnimSource(Settings::models().mXbaseanim.get(), model);
+            if (mPtr.getType() == ESM::Creature::sRecordId)
+            {
+                MWWorld::LiveCellRef<ESM::Creature>* ref = mPtr.get<ESM::Creature>();
+                if ((ref->mBase->mFlags & ESM::Creature::Bipedal))
+                    addAnimSource(Settings::models().mXbaseanim.get(), model);
 
-            if (animated)
+                if (animated)
+                    addAnimSource(model, model);
+            }
+            else if (mPtr.getType() == ESM4::Creature::sRecordId)
+            {
+                MWWorld::LiveCellRef<ESM4::Creature>* ref = mPtr.get<ESM4::Creature>();
+                const ESM4::Creature& effective = getEffectiveCreatureForRendering(*ref->mBase);
                 addAnimSource(model, model);
+
+                std::string animationDirectory = model;
+                const std::size_t slash = animationDirectory.find_last_of("/\\");
+                animationDirectory = slash == std::string::npos ? std::string() : animationDirectory.substr(0, slash + 1);
+                unsigned int attachedBodyNifs = 0;
+                const VFS::Manager* vfs = resourceSystem->getVFS();
+                const std::vector<std::string> bodyNifs = collectCreatureBodyNifs(effective, *vfs, animationDirectory);
+                for (const std::string& bodyNif : bodyNifs)
+                {
+                    if (bodyNif.empty())
+                        continue;
+                    const VFS::Path::Normalized bodyPath = correctCreatureBodyPath(bodyNif);
+                    osg::ref_ptr<osg::Node> bodyNode
+                        = resourceSystem->getSceneManager()->getInstance(bodyPath, mObjectRoot);
+                    mObjectRoot->addChild(bodyNode);
+                    if (std::getenv("OPENMW_FNV_CREATURE_BODY_DIAG") != nullptr)
+                        Log(Debug::Info) << "FNV/ESM4 diag: attached creature body nif "
+                                         << ref->mBase->mEditorId << " effective=" << effective.mEditorId
+                                         << " path=" << bodyPath;
+                    ++attachedBodyNifs;
+                }
+                unsigned int fallbackKfs = 0;
+                for (const std::string& kf : effective.mKf)
+                {
+                    if (!kf.empty())
+                        addAnimSource(animationDirectory + kf, model);
+                }
+
+                static constexpr std::string_view fallbackNames[] = {
+                    "skeleton.kf",
+                    "idle.kf",
+                    "forward.kf",
+                    "backward.kf",
+                    "left.kf",
+                    "right.kf",
+                    "walkforward.kf",
+                    "runforward.kf",
+                    "attackleft.kf",
+                    "attackright.kf",
+                    "attack1.kf",
+                };
+                for (std::string_view fallback : fallbackNames)
+                {
+                    std::string path = animationDirectory + std::string(fallback);
+                    std::string normalizedPath;
+                    if (findCreatureKf(*vfs, path, normalizedPath))
+                    {
+                        addAnimSource(normalizedPath, model);
+                        ++fallbackKfs;
+                    }
+                }
+
+                std::string normalizedDirectory = animationDirectory;
+                VFS::Path::normalizeFilenameInPlace(normalizedDirectory);
+                std::string probeToken = normalizedDirectory;
+                if (probeToken.ends_with('/'))
+                    probeToken.pop_back();
+                const std::vector<std::string> discoveredKfPaths
+                    = collectDiscoveredCreatureKfs(*vfs, normalizedDirectory, probeToken, effective.mEditorId);
+                for (const std::string& path : discoveredKfPaths)
+                    addAnimSource(path, model);
+
+                Log(Debug::Info) << "FNV/ESM4 diag: inserted creature animation for "
+                                 << ref->mBase->mEditorId << " model=" << model
+                                 << " animated=" << animated << " effective=" << effective.mEditorId
+                                 << " kfCount=" << effective.mKf.size()
+                                 << " bodyPartCount=" << effective.mBodyParts.size()
+                                 << " attachedBodyNifs=" << attachedBodyNifs
+                                 << " fallbackKfs=" << fallbackKfs
+                                 << " discoveredKfs=" << discoveredKfPaths.size();
+            }
         }
     }
 

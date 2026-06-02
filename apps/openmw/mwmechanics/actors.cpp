@@ -18,6 +18,7 @@
 #include <components/esm3/loadgmst.hpp>
 #include <components/esm3/loadmgef.hpp>
 #include <components/esm3/loadstat.hpp>
+#include <components/esm/defs.hpp>
 
 #include "../mwworld/cellstore.hpp"
 #include "../mwworld/class.hpp"
@@ -1201,9 +1202,17 @@ namespace MWMechanics
 
         MWRender::Animation* anim = MWBase::Environment::get().getWorld()->getAnimation(ptr);
         if (!anim)
+        {
+            if (ptr.getType() == ESM::REC_NPC_4)
+                Log(Debug::Warning) << "FNV/ESM4 diag: no animation when registering actor "
+                                    << ptr.getCellRef().getRefId();
             return;
+        }
         const auto it = mActors.emplace(mActors.end(), ptr, *anim);
         mIndex.emplace(ptr.mRef, it);
+        if (ptr.getType() == ESM::REC_NPC_4)
+            Log(Debug::Info) << "FNV/ESM4 diag: registered CharacterController for "
+                             << ptr.getCellRef().getRefId();
 
         if (updateImmediately)
             it->getCharacterController().update(0);

@@ -4,6 +4,7 @@
 #include <osg/Geometry>
 #include <osg/Matrixf>
 
+#include <string>
 #include <string_view>
 
 namespace SceneUtil
@@ -64,7 +65,12 @@ namespace SceneUtil
 
         void setRootBone(std::string_view name);
 
+        std::string_view getRootBone() const;
+        std::size_t getBoneCount() const;
+        std::string_view getBoneName(std::size_t index) const;
+
         osg::ref_ptr<osg::Geometry> getSourceGeometry() const;
+        osg::Geometry* getRenderGeometry(unsigned int index) const;
 
         void accept(osg::NodeVisitor& nv) override;
         bool supports(const osg::PrimitiveFunctor&) const override { return true; }
@@ -110,8 +116,21 @@ namespace SceneUtil
 
         unsigned int mLastFrameNumber{ 0 };
         bool mBoundsFirstFrame{ true };
+        bool mLoggedFalloutRigInit{ false };
+        bool mLoggedFalloutCullTraversal{ false };
+        bool mHaveFalloutMatrixBaseline{ false };
+        bool mLoggedFalloutMatrixChange{ false };
+        bool mLoggedFalloutVertexSkinning{ false };
+        bool mLoggedFalloutInfluenceSummary{ false };
+        bool mLoggedFalloutSkinningModes{ false };
+        bool mLoggedFalloutPoseSanity{ false };
+        bool mLoggedFalloutCullInitRecovery{ false };
+        bool mFalloutFallbackDecided{ false };
+        bool mFalloutUseSourceFallback{ false };
+        std::vector<osg::Matrixf> mFalloutMatrixBaseline;
 
         bool initFromParentSkeleton(osg::NodeVisitor* nv);
+        bool isFalloutCharacterRig() const;
 
         void updateSkinToSkelMatrix(const osg::NodePath& nodePath);
     };

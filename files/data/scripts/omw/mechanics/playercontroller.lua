@@ -11,9 +11,11 @@ local ui = require('openmw.ui')
 
 local cell = nil
 local autodoors = {}
+local activeAutodoors = {}
 
 local function onCellChange()
     autodoors = {}
+    activeAutodoors = {}
     for _, door in ipairs(nearby.doors) do
         if door.type == types.ESM4Door and types.ESM4Door.record(door).isAutomatic then
             autodoors[#autodoors + 1] = door
@@ -22,17 +24,23 @@ local function onCellChange()
 end
 
 local autodoorActivationDist = 300
+local autodoorResetDist = 380
 
 local lastAutoActivation = 0
 local function processAutomaticDoors()
-    if core.getRealTime() - lastAutoActivation < 2 then
-        return
-    end
+    local now = core.getRealTime()
     for _, door in ipairs(autodoors) do
-        if door.enabled and (door.position - self.position):length() < autodoorActivationDist then
+        local doorKey = door.id
+        local distance = (door.position - self.position):length()
+        if activeAutodoors[doorKey] and distance > autodoorResetDist then
+            activeAutodoors[doorKey] = nil
+        end
+        if door.enabled and not activeAutodoors[doorKey] and distance < autodoorActivationDist
+            and now - lastAutoActivation >= 2 then
             print('Automatic activation of', door)
             door:activateBy(self)
-            lastAutoActivation = core.getRealTime()
+            activeAutodoors[doorKey] = true
+            lastAutoActivation = now
         end
     end
 end

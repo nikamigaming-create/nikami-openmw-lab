@@ -2,6 +2,9 @@
 
 #include <atomic>
 #include <chrono>
+#include <cmath>
+#include <cstdlib>
+#include <cstdint>
 #include <limits>
 
 #include <BulletCollision/CollisionDispatch/btCollisionObject.h>
@@ -15,6 +18,9 @@
 #include <components/esm/esmterrain.hpp>
 #include <components/esm/records.hpp>
 #include <components/esm3/loadcell.hpp>
+#include <components/esm4/loadnpc.hpp>
+#include <components/esm4/loadpack.hpp>
+#include <components/esm4/loadrefr.hpp>
 #include <components/loadinglistener/loadinglistener.hpp>
 #include <components/misc/convert.hpp>
 #include <components/misc/resourcehelpers.hpp>
@@ -31,6 +37,8 @@
 #include "../mwbase/soundmanager.hpp"
 #include "../mwbase/windowmanager.hpp"
 #include "../mwbase/world.hpp"
+
+#include "../mwclass/esm4npc.hpp"
 
 #include "../mwrender/landmanager.hpp"
 #include "../mwrender/postprocessor.hpp"
@@ -51,6 +59,7 @@
 #include "localscripts.hpp"
 #include "player.hpp"
 #include "worldimp.hpp"
+#include "worldmodel.hpp"
 
 namespace
 {
@@ -103,6 +112,151 @@ namespace
         return ptr.getClass().getCorrectedModel(ptr);
     }
 
+    bool fnvPackageHasExplicitTime(const ESM4::AIPackage& package)
+    {
+        return package.mSchedule.time != 0xff && package.mSchedule.duration != 0;
+    }
+
+    bool fnvPackageCoversHour(const ESM4::AIPackage& package, float hour)
+    {
+        if (!fnvPackageHasExplicitTime(package))
+            return false;
+
+        const float start = static_cast<float>(package.mSchedule.time);
+        const float duration = static_cast<float>(std::min<std::uint32_t>(package.mSchedule.duration, 24));
+        const float end = std::fmod(start + duration, 24.f);
+        if (duration >= 24.f)
+            return true;
+        if (start <= end)
+            return hour >= start && hour < end;
+        return hour >= start || hour < end;
+    }
+
+    const ESM4::Reference* resolveFnvPackageReference(
+        const MWWorld::ESMStore& store, const ESM4::AIPackage::PLDT& location)
+    {
+        if (location.type != 0 && location.type != 4)
+            return nullptr;
+        return store.get<ESM4::Reference>().search(ESM::FormId::fromUint32(location.location));
+    }
+
+    float getFnvPackageHour(const MWWorld::World& world, bool& usedHourOverride)
+    {
+        usedHourOverride = false;
+        float hour = world.getTimeStamp().getHour();
+        if (const char* env = std::getenv("OPENMW_FNV_PROCEDURE_HOUR"))
+        {
+            char* end = nullptr;
+            const float overrideHour = std::strtof(env, &end);
+            if (end != env && std::isfinite(overrideHour))
+            {
+                hour = std::fmod(std::max(0.f, overrideHour), 24.f);
+                usedHourOverride = true;
+            }
+        }
+        return hour;
+    }
+
+    enum class FnvPackagePrePlacement
+    {
+        None,
+        SameCell,
+        MovedToPackageCell
+    };
+
+    FnvPackagePrePlacement applyFnvPackagePrePlacement(const MWWorld::Ptr& ptr, const MWWorld::World& world)
+    {
+        if (std::getenv("OPENMW_FNV_DISABLE_PACKAGE_PREPLACEMENT") != nullptr
+            || std::getenv("OPENMW_FNV_DISABLE_AI_PACKAGES") != nullptr)
+            return FnvPackagePrePlacement::None;
+
+        if (ptr.getType() != ESM::REC_NPC_4)
+            return FnvPackagePrePlacement::None;
+
+        const ESM4::Npc* traits = MWClass::ESM4Npc::getTraitsRecord(ptr);
+        if (traits == nullptr || !traits->mIsFONV)
+            return FnvPackagePrePlacement::None;
+
+        const ESM4::Npc* packageRecord = MWClass::ESM4Npc::getAIPackageRecord(ptr);
+        if (packageRecord == nullptr || packageRecord->mAIPackages.empty())
+            return FnvPackagePrePlacement::None;
+
+        const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
+        if (store == nullptr || ptr.getCell() == nullptr || ptr.getCell()->getCell() == nullptr)
+            return FnvPackagePrePlacement::None;
+
+        bool usedHourOverride = false;
+        const float hour = getFnvPackageHour(world, usedHourOverride);
+        const auto& packageStore = store->get<ESM4::AIPackage>();
+
+        const ESM4::AIPackage* selected = nullptr;
+        for (ESM::FormId packageId : packageRecord->mAIPackages)
+        {
+            const ESM4::AIPackage* package = packageStore.search(packageId);
+            if (package != nullptr && fnvPackageCoversHour(*package, hour))
+            {
+                selected = package;
+                break;
+            }
+        }
+
+        if (selected == nullptr)
+            return FnvPackagePrePlacement::None;
+
+        const ESM4::Reference* target = resolveFnvPackageReference(*store, selected->mLocation);
+        if (target == nullptr)
+            return FnvPackagePrePlacement::None;
+
+        const ESM::RefId& currentCellId = ptr.getCell()->getCell()->getId();
+        const bool sameCell = target->mParent == currentCellId;
+        Log(Debug::Info) << "FNV/ESM4 diag: package pre-placement " << selected->mEditorId
+                         << " hour=" << hour << " override=" << usedHourOverride
+                         << " targetRef=" << target->mEditorId << " targetParent=" << target->mParent
+                         << " currentCell=" << currentCellId << " sameCell=" << sameCell << " for "
+                         << traits->mEditorId;
+
+        ESM::Position position = ptr.getRefData().getPosition();
+        position.pos[0] = target->mPos.pos[0];
+        position.pos[1] = target->mPos.pos[1];
+        position.pos[2] = target->mPos.pos[2];
+        position.rot[0] = 0.f;
+        position.rot[1] = 0.f;
+        position.rot[2] = target->mPos.rot[2];
+
+        if (!sameCell)
+        {
+            MWWorld::CellStore* targetCell
+                = MWBase::Environment::get().getWorldModel()->findCell(target->mParent, true);
+            if (targetCell == nullptr)
+            {
+                Log(Debug::Warning) << "FNV/ESM4 diag: package pre-placement target cell not found "
+                                    << target->mParent << " for " << selected->mEditorId << " actor "
+                                    << traits->mEditorId;
+                return FnvPackagePrePlacement::None;
+            }
+
+            ptr.getRefData().setPosition(position);
+            MWWorld::Ptr movedPtr = ptr.getCell()->moveTo(ptr, targetCell);
+            Log(Debug::Info) << "FNV/ESM4 diag: applied cross-cell package pre-placement "
+                             << selected->mEditorId << " actor=" << traits->mEditorId
+                             << " targetRef=" << target->mEditorId << " fromCell=" << currentCellId
+                             << " toCell=" << targetCell->getCell()->getId()
+                             << " toName='" << targetCell->getCell()->getNameId()
+                             << "' toDesc='" << targetCell->getCell()->getDescription() << "' pos=("
+                             << position.pos[0] << "," << position.pos[1] << "," << position.pos[2]
+                             << ") rotZ=" << position.rot[2]
+                             << " movedPtrCell=" << movedPtr.getCell()->getCell()->getId();
+            return FnvPackagePrePlacement::MovedToPackageCell;
+        }
+
+        ptr.getRefData().setPosition(position);
+        Log(Debug::Info) << "FNV/ESM4 diag: applied same-cell package pre-placement " << selected->mEditorId
+                         << " targetRef=" << target->mEditorId << " pos=(" << position.pos[0] << ","
+                         << position.pos[1] << "," << position.pos[2] << ") rotZ=" << position.rot[2] << " for "
+                         << traits->mEditorId;
+        return FnvPackagePrePlacement::SameCell;
+    }
+
     // Null node meant to distinguish objects that aren't in the scene from paged objects
     // TODO: find a more clever way to make paging exclusion more reliable?
     static osg::ref_ptr<SceneUtil::PositionAttitudeTransform> pagedNode = new SceneUtil::PositionAttitudeTransform;
@@ -116,6 +270,10 @@ namespace
             return;
         }
 
+        const FnvPackagePrePlacement fnvPackagePrePlacement = applyFnvPackagePrePlacement(ptr, world);
+        if (fnvPackagePrePlacement == FnvPackagePrePlacement::MovedToPackageCell)
+            return;
+
         const VFS::Path::Normalized model = getModel(ptr);
         const auto rotation = makeDirectNodeRotation(ptr);
 
@@ -125,6 +283,15 @@ namespace
         else
             ptr.getRefData().setBaseNode(pagedNode);
         setNodeRotation(ptr, rendering, rotation);
+        if (fnvPackagePrePlacement == FnvPackagePrePlacement::SameCell && ptr.getRefData().getBaseNode())
+        {
+            const osg::Vec3f scenePos = ptr.getRefData().getBaseNode()->getPosition();
+            const ESM::Position& refPos = ptr.getRefData().getPosition();
+            Log(Debug::Info) << "FNV/ESM4 diag: finalized package scene placement "
+                             << ptr.getCellRef().getRefId() << " refPos=(" << refPos.pos[0] << ","
+                             << refPos.pos[1] << "," << refPos.pos[2] << ") scenePos=(" << scenePos.x() << ","
+                             << scenePos.y() << "," << scenePos.z() << ") rotZ=" << refPos.rot[2];
+        }
 
         if (ptr.getClass().useAnim())
             MWBase::Environment::get().getMechanicsManager()->add(ptr);

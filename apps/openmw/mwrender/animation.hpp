@@ -155,6 +155,7 @@ namespace MWRender
             const SceneUtil::TextKeyMap& getTextKeys() const;
 
             osg::ref_ptr<const SceneUtil::AnimBlendRules> mAnimBlendRules;
+            bool mFalloutProcedureIdle = false;
         };
 
         struct AnimState
@@ -303,7 +304,8 @@ namespace MWRender
          * @param baseModel The filename of the mObjectRoot, only used for error messages.
          */
         virtual void addAnimSource(std::string_view model, const std::string& baseModel);
-        std::shared_ptr<AnimSource> addSingleAnimSource(const std::string& model, const std::string& baseModel);
+        std::shared_ptr<AnimSource> addSingleAnimSource(
+            const std::string& model, const std::string& baseModel, bool falloutProcedureIdle = false);
 
         /** Adds an additional light to the given node using the specified ESM record. */
         void addExtraLight(osg::ref_ptr<osg::Group> parent, const SceneUtil::LightCommon& light);

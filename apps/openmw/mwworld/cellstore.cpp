@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <fstream>
+#include <type_traits>
 
 #include <components/debug/debuglog.hpp>
 
@@ -366,15 +367,24 @@ namespace MWWorld
             //  - every time when the parent is enabled/disabled we should also enable/disable
             //        all objects that are linked to it.
             // But for now we assume that the parent remains in its initial state.
-            if (const ESM4::Reference* parentRef = store.get<ESM4::Reference>().searchStatic(ref.mEsp.parent))
-            {
+            const auto parentAllowsEnabled = [&](const auto* parentRef) {
                 const bool parentDisabled = parentRef->mFlags & ESM4::Rec_Disabled;
                 const bool inversed = ref.mEsp.flags & ESM4::EnableParent::Flag_Inversed;
                 if (parentDisabled != inversed)
                     return false;
 
                 return isEnabled(*parentRef, store);
-            }
+            };
+
+            if (const ESM4::Reference* parentRef = store.get<ESM4::Reference>().searchStatic(ref.mEsp.parent))
+                return parentAllowsEnabled(parentRef);
+
+            if (const ESM4::ActorCharacter* parentRef
+                = store.get<ESM4::ActorCharacter>().searchStatic(ref.mEsp.parent))
+                return parentAllowsEnabled(parentRef);
+
+            if (const ESM4::ActorCreature* parentRef = store.get<ESM4::ActorCreature>().searchStatic(ref.mEsp.parent))
+                return parentAllowsEnabled(parentRef);
 
             return true;
         }
@@ -449,12 +459,25 @@ namespace MWWorld
         const X* ptr = store.search(ref.mBaseObj);
         if (!ptr)
         {
-            Log(Debug::Warning) << "Warning: could not resolve cell reference " << ref.mId << " (dropping reference)";
+            Log(Debug::Warning) << "FNV/ESM4 diag: could not resolve placed reference " << ESM::RefId(ref.mId)
+                                << " base " << ESM::RefId(ref.mBaseObj) << " in parent cell " << ref.mParent
+                                << " (dropping reference)";
             return;
         }
         LiveCellRef<X> liveCellRef(ref, ptr);
         if (!isEnabled(ref, esmStore))
             liveCellRef.mData.disable();
+        if constexpr (isESM4ActorRec(X::sRecordId))
+        {
+            Log(Debug::Info) << "FNV/ESM4 diag: loaded placed actor ref " << ESM::RefId(ref.mId) << " editor '"
+                             << ref.mEditorId << "' full '" << ref.mFullName << "' base " << ESM::RefId(ref.mBaseObj)
+                             << " baseEditor '" << ptr->mEditorId << "' baseFull '" << ptr->mFullName << "' parent "
+                             << ref.mParent << " pos=(" << ref.mPos.pos[0] << ", " << ref.mPos.pos[1] << ", "
+                             << ref.mPos.pos[2] << ") flags=0x" << std::hex << ref.mFlags << std::dec
+                             << " enableParent=" << ESM::RefId(ref.mEsp.parent) << " enableFlags=0x" << std::hex
+                             << static_cast<int>(ref.mEsp.flags) << std::dec
+                             << " enabled=" << liveCellRef.mData.isEnabled();
+        }
         list.push_back(std::move(liveCellRef));
     }
 
@@ -730,7 +753,7 @@ namespace MWWorld
 
     float CellStore::getWaterLevel() const
     {
-        if (isExterior())
+        if (isExterior() && !mHasState)
             return getCell()->getWaterHeight();
         return mWaterLevel;
     }
@@ -958,6 +981,13 @@ namespace MWWorld
         const MWWorld::ESMStore& store = mStore;
 
         ESM::RecNameInts foundType = static_cast<ESM::RecNameInts>(store.find(ref.mBaseObj));
+        if (foundType == 0)
+        {
+            Log(Debug::Warning) << "FNV/ESM4 diag: unresolved object reference " << ESM::RefId(ref.mId)
+                                << " editor '" << ref.mEditorId << "' base " << ESM::RefId(ref.mBaseObj)
+                                << " in parent cell " << ref.mParent;
+            return;
+        }
 
         Misc::tupleForEach(this->mCellStoreImp->mRefLists, [&ref, &store, foundType](auto& x) {
             recNameSwitcher(x, foundType, [&ref, &store](auto& storeIn) { storeIn.load(ref, store); });
@@ -968,6 +998,13 @@ namespace MWWorld
     {
         const MWWorld::ESMStore& store = mStore;
         ESM::RecNameInts foundType = static_cast<ESM::RecNameInts>(store.find(ref.mBaseObj));
+        if (foundType == 0)
+        {
+            Log(Debug::Warning) << "FNV/ESM4 diag: unresolved actor reference " << ESM::RefId(ref.mId)
+                                << " editor '" << ref.mEditorId << "' base " << ESM::RefId(ref.mBaseObj)
+                                << " in parent cell " << ref.mParent;
+            return;
+        }
 
         Misc::tupleForEach(this->mCellStoreImp->mRefLists, [&ref, &store, foundType](auto& x) {
             recNameSwitcher(x, foundType, [&ref, &store](auto& storeIn) { storeIn.load(ref, store); });

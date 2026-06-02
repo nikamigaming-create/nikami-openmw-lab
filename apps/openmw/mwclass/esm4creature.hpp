@@ -1,9 +1,7 @@
-#ifndef GAME_MWCLASS_ESM4ACTOR_H
-#define GAME_MWCLASS_ESM4ACTOR_H
+#ifndef GAME_MWCLASS_ESM4CREATURE_H
+#define GAME_MWCLASS_ESM4CREATURE_H
 
 #include <components/esm4/loadcrea.hpp>
-#include <components/esm4/loadnpc.hpp>
-#include <components/esm4/loadweap.hpp>
 
 #include "../mwgui/tooltips.hpp"
 
@@ -14,28 +12,27 @@
 #include "../mwworld/registeredclass.hpp"
 
 #include "actor.hpp"
-#include "esm4base.hpp"
 
 namespace MWClass
 {
-    class ESM4Npc final : public MWWorld::RegisteredClass<ESM4Npc, Actor>
+    class ESM4Creature final : public MWWorld::RegisteredClass<ESM4Creature, Actor>
     {
     public:
-        ESM4Npc()
-            : MWWorld::RegisteredClass<ESM4Npc, Actor>(ESM4::Npc::sRecordId)
+        ESM4Creature()
+            : MWWorld::RegisteredClass<ESM4Creature, Actor>(ESM4::Creature::sRecordId)
         {
         }
 
         MWWorld::Ptr copyToCellImpl(const MWWorld::ConstPtr& ptr, MWWorld::CellStore& cell) const override
         {
-            const MWWorld::LiveCellRef<ESM4::Npc>* ref = ptr.get<ESM4::Npc>();
+            const MWWorld::LiveCellRef<ESM4::Creature>* ref = ptr.get<ESM4::Creature>();
             return MWWorld::Ptr(cell.insert(ref), &cell);
         }
 
         void insertObjectRendering(const MWWorld::Ptr& ptr, const std::string& model,
             MWRender::RenderingInterface& renderingInterface) const override
         {
-            renderingInterface.getObjects().insertNPC(ptr);
+            renderingInterface.getObjects().insertCreature(ptr, model, false);
         }
 
         void insertObject(const MWWorld::Ptr& ptr, const std::string& model, const osg::Quat& rotation,
@@ -47,20 +44,19 @@ namespace MWClass
         void insertObjectPhysics(const MWWorld::Ptr& ptr, const std::string& model, const osg::Quat& rotation,
             MWPhysics::PhysicsSystem& physics) const override
         {
-            // ESM4Impl::insertObjectPhysics(ptr, getModel(ptr), rotation, physics);
-        }
-
-        bool hasToolTip(const MWWorld::ConstPtr& ptr) const override { return true; }
-        MWGui::ToolTipInfo getToolTipInfo(const MWWorld::ConstPtr& ptr, int count) const override
-        {
-            return ESM4Impl::getToolTipInfo(getName(ptr), count);
+            (void)ptr;
+            (void)model;
+            (void)rotation;
+            (void)physics;
         }
 
         std::string_view getModel(const MWWorld::ConstPtr& ptr) const override;
         std::string_view getName(const MWWorld::ConstPtr& ptr) const override;
+        bool hasToolTip(const MWWorld::ConstPtr& ptr) const override;
+        MWGui::ToolTipInfo getToolTipInfo(const MWWorld::ConstPtr& ptr, int count) const override;
         MWMechanics::CreatureStats& getCreatureStats(const MWWorld::Ptr& ptr) const override;
-        MWMechanics::Movement& getMovementSettings(const MWWorld::Ptr& ptr) const override;
         MWWorld::ContainerStore& getContainerStore(const MWWorld::Ptr& ptr) const override;
+        MWMechanics::Movement& getMovementSettings(const MWWorld::Ptr& ptr) const override;
         float getCapacity(const MWWorld::Ptr& ptr) const override;
         float getMaxSpeed(const MWWorld::Ptr& ptr) const override;
         float getWalkSpeed(const MWWorld::Ptr& ptr) const override;
@@ -68,25 +64,13 @@ namespace MWClass
         float getSwimSpeed(const MWWorld::Ptr& ptr) const override;
         float getSkill(const MWWorld::Ptr& ptr, ESM::RefId id) const override;
         bool isPersistent(const MWWorld::ConstPtr& ptr) const override;
-        bool isBipedal(const MWWorld::ConstPtr& ptr) const override;
+        bool canFly(const MWWorld::ConstPtr& ptr) const override;
         bool canSwim(const MWWorld::ConstPtr& ptr) const override;
         bool canWalk(const MWWorld::ConstPtr& ptr) const override;
 
-        static const ESM4::Npc* getTraitsRecord(const MWWorld::Ptr& ptr);
-        static const ESM4::Npc* getModelRecord(const MWWorld::Ptr& ptr);
-        static const ESM4::Npc* getAIPackageRecord(const MWWorld::Ptr& ptr);
-        static const ESM4::Race* getRace(const MWWorld::Ptr& ptr);
-        static bool isFemale(const MWWorld::Ptr& ptr);
-        static const std::vector<const ESM4::Armor*>& getEquippedArmor(const MWWorld::Ptr& ptr);
-        static const std::vector<const ESM4::Clothing*>& getEquippedClothing(const MWWorld::Ptr& ptr);
-        static const ESM4::Weapon* getEquippedWeapon(const MWWorld::Ptr& ptr);
-        static bool addEquippedArmor(const MWWorld::Ptr& ptr, const ESM4::Armor* armor);
-        static std::string_view chooseEquipmentModel(const ESM4::Armor* rec, bool isFemale);
-        static std::string_view chooseEquipmentModel(const ESM4::Clothing* rec, bool isFemale);
-
     private:
-        static ESM4NpcCustomData& getCustomData(const MWWorld::ConstPtr& ptr);
+        static class ESM4CreatureCustomData& getCustomData(const MWWorld::ConstPtr& ptr);
     };
 }
 
-#endif // GAME_MWCLASS_ESM4ACTOR_H
+#endif

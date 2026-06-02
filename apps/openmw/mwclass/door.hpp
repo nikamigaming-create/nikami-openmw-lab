@@ -3,10 +3,21 @@
 
 #include <components/esm3/loaddoor.hpp>
 
+#include "../mwworld/customdata.hpp"
+#include "../mwworld/doorstate.hpp"
 #include "../mwworld/registeredclass.hpp"
 
 namespace MWClass
 {
+    class DoorCustomData : public MWWorld::TypedCustomData<DoorCustomData>
+    {
+    public:
+        MWWorld::DoorState mDoorState = MWWorld::DoorState::Idle;
+
+        DoorCustomData& asDoorCustomData() override { return *this; }
+        const DoorCustomData& asDoorCustomData() const override { return *this; }
+    };
+
     class Door : public MWWorld::RegisteredClass<Door>
     {
         friend MWWorld::RegisteredClass<Door>;

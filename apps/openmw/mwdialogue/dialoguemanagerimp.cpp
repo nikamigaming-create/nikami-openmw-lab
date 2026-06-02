@@ -173,7 +173,9 @@ namespace MWDialogue
 
                     if (!info->mSound.empty())
                     {
-                        // TODO play sound
+                        Log(Debug::Info) << "FNV/ESM4 dialogue: playing greeting voice \"" << info->mSound << "\"";
+                        MWBase::Environment::get().getSoundManager()->say(
+                            actor, Misc::ResourceHelpers::correctSoundPath(VFS::Path::Normalized(info->mSound)));
                     }
 
                     MWScript::InterpreterContext interpreterContext(&mActor.getRefData().getLocals(), mActor);
@@ -641,6 +643,8 @@ namespace MWDialogue
         const ESM::DialInfo* info = filter.search(*dial, false).second;
         if (info != nullptr)
         {
+            Log(Debug::Info) << "FNV/ESM4 dialogue: actor " << actor.toString() << " topic \""
+                             << topic.toDebugString() << "\" selected sound \"" << info->mSound << "\"";
             MWBase::WindowManager* winMgr = MWBase::Environment::get().getWindowManager();
             if (Settings::gui().mSubtitles)
                 winMgr->messageBox(info->mResponse);

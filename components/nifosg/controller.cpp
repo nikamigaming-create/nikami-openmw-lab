@@ -1,5 +1,8 @@
 #include "controller.hpp"
 
+#include <algorithm>
+#include <cmath>
+
 #include <osg/Material>
 #include <osg/MatrixTransform>
 #include <osg/TexMat>
@@ -16,6 +19,45 @@
 
 namespace NifOsg
 {
+    namespace
+    {
+        bool isReasonableFloat(float value, float maxAbs)
+        {
+            return std::isfinite(value) && std::abs(value) <= maxAbs;
+        }
+
+        bool isReasonableVec3(const osg::Vec3f& value, float maxAbs)
+        {
+            return isReasonableFloat(value.x(), maxAbs) && isReasonableFloat(value.y(), maxAbs)
+                && isReasonableFloat(value.z(), maxAbs);
+        }
+
+        bool isReasonableQuat(const osg::Quat& value)
+        {
+            if (!isReasonableFloat(value.x(), 2.f) || !isReasonableFloat(value.y(), 2.f)
+                || !isReasonableFloat(value.z(), 2.f) || !isReasonableFloat(value.w(), 2.f))
+                return false;
+
+            const float length2 = value.x() * value.x() + value.y() * value.y() + value.z() * value.z()
+                + value.w() * value.w();
+            return length2 > 0.0001f && length2 < 4.f;
+        }
+
+        bool isReasonableScale(float value)
+        {
+            return std::isfinite(value) && value > 0.0001f && value < 10000.f;
+        }
+
+        void sanitizeTransform(SceneUtil::KeyframeController::KfTransform& transform)
+        {
+            if (transform.mTranslation && !isReasonableVec3(*transform.mTranslation, 1000000.f))
+                transform.mTranslation.reset();
+            if (transform.mRotation && !isReasonableQuat(*transform.mRotation))
+                transform.mRotation.reset();
+            if (transform.mScale && !isReasonableScale(*transform.mScale))
+                transform.mScale.reset();
+        }
+    }
 
     ControllerFunction::ControllerFunction(const Nif::NiTimeController* ctrl)
         : mFrequency(ctrl->mFrequency)
@@ -23,6 +65,16 @@ namespace NifOsg
         , mStartTime(ctrl->mTimeStart)
         , mStopTime(ctrl->mTimeStop)
         , mExtrapolationMode(ctrl->extrapolationMode())
+    {
+    }
+
+    ControllerFunction::ControllerFunction(
+        float frequency, float phase, float startTime, float stopTime, Nif::NiTimeController::ExtrapolationMode mode)
+        : mFrequency(frequency)
+        , mPhase(phase)
+        , mStartTime(startTime)
+        , mStopTime(stopTime)
+        , mExtrapolationMode(mode)
     {
     }
 
@@ -87,6 +139,7 @@ namespace NifOsg
         , mTranslations(copy.mTranslations)
         , mScales(copy.mScales)
         , mAxisOrder(copy.mAxisOrder)
+        , mBSplineTransform(copy.mBSplineTransform)
     {
     }
 
@@ -130,6 +183,210 @@ namespace NifOsg
 
             mAxisOrder = keydata->mAxisOrder;
         }
+    }
+
+    KeyframeController::KeyframeController(const Nif::NiTransformInterpolator* interp)
+    {
+        const Nif::NiQuatTransform& defaultTransform = interp->mDefaultValue;
+        if (!interp->mData.empty())
+        {
+            mRotations = QuaternionInterpolator(interp->mData->mRotations, defaultTransform.mRotation);
+            mXRotations = FloatInterpolator(interp->mData->mXRotations);
+            mYRotations = FloatInterpolator(interp->mData->mYRotations);
+            mZRotations = FloatInterpolator(interp->mData->mZRotations);
+            mTranslations = Vec3Interpolator(interp->mData->mTranslations, defaultTransform.mTranslation);
+            mScales = FloatInterpolator(interp->mData->mScales, defaultTransform.mScale);
+
+            mAxisOrder = interp->mData->mAxisOrder;
+        }
+        else
+        {
+            mRotations = QuaternionInterpolator(Nif::QuaternionKeyMapPtr(), defaultTransform.mRotation);
+            mTranslations = Vec3Interpolator(Nif::Vector3KeyMapPtr(), defaultTransform.mTranslation);
+            mScales = FloatInterpolator(Nif::FloatKeyMapPtr(), defaultTransform.mScale);
+        }
+    }
+
+    void KeyframeController::initFromDefaultTransform(const Nif::NiQuatTransform& transform)
+    {
+        mRotations = QuaternionInterpolator(Nif::QuaternionKeyMapPtr(), transform.mRotation);
+        mTranslations = Vec3Interpolator(Nif::Vector3KeyMapPtr(), transform.mTranslation);
+        mScales = FloatInterpolator(Nif::FloatKeyMapPtr(), transform.mScale);
+    }
+
+    bool KeyframeController::initFromInterpolator(const Nif::NiInterpolator* interp)
+    {
+        if (interp == nullptr)
+            return false;
+
+        if (interp->recType == Nif::RC_NiTransformInterpolator)
+        {
+            const auto* transform = static_cast<const Nif::NiTransformInterpolator*>(interp);
+            if (!transform->mData.empty())
+            {
+                const Nif::NiQuatTransform& defaultTransform = transform->mDefaultValue;
+                mRotations = QuaternionInterpolator(transform->mData->mRotations, defaultTransform.mRotation);
+                mXRotations = FloatInterpolator(transform->mData->mXRotations);
+                mYRotations = FloatInterpolator(transform->mData->mYRotations);
+                mZRotations = FloatInterpolator(transform->mData->mZRotations);
+                mTranslations = Vec3Interpolator(transform->mData->mTranslations, defaultTransform.mTranslation);
+                mScales = FloatInterpolator(transform->mData->mScales, defaultTransform.mScale);
+                mAxisOrder = transform->mData->mAxisOrder;
+            }
+            else
+                initFromDefaultTransform(transform->mDefaultValue);
+            return true;
+        }
+
+        if (interp->recType == Nif::RC_NiBSplineTransformInterpolator
+            || interp->recType == Nif::RC_NiBSplineCompTransformInterpolator)
+        {
+            const auto* bspline = static_cast<const Nif::NiBSplineTransformInterpolator*>(interp);
+            if (bspline->mSplineData.empty() || bspline->mBasisData.empty())
+            {
+                initFromDefaultTransform(bspline->mValue);
+                return true;
+            }
+
+            BSplineTransform data;
+            data.mStartTime = bspline->mStartTime;
+            data.mStopTime = bspline->mStopTime;
+            data.mDefaultValue = bspline->mValue;
+            data.mFloatControlPoints = bspline->mSplineData->mFloatControlPoints;
+            data.mCompactControlPoints = bspline->mSplineData->mCompactControlPoints;
+            data.mNumControlPoints = bspline->mBasisData->mNumControlPoints;
+            data.mTranslationHandle = bspline->mTranslationHandle;
+            data.mRotationHandle = bspline->mRotationHandle;
+            data.mScaleHandle = bspline->mScaleHandle;
+
+            if (bspline->recType == Nif::RC_NiBSplineCompTransformInterpolator)
+            {
+                const auto* comp = static_cast<const Nif::NiBSplineCompTransformInterpolator*>(bspline);
+                data.mCompressed = true;
+                data.mTranslationOffset = comp->mTranslationOffset;
+                data.mTranslationHalfRange = comp->mTranslationHalfRange;
+                data.mRotationOffset = comp->mRotationOffset;
+                data.mRotationHalfRange = comp->mRotationHalfRange;
+                data.mScaleOffset = comp->mScaleOffset;
+                data.mScaleHalfRange = comp->mScaleHalfRange;
+            }
+
+            mBSplineTransform = std::move(data);
+            return true;
+        }
+
+        if (interp->recType == Nif::RC_NiBlendTransformInterpolator)
+        {
+            const auto* blend = static_cast<const Nif::NiBlendTransformInterpolator*>(interp);
+            if (!blend->mSingleInterpolator.empty() && initFromInterpolator(blend->mSingleInterpolator.getPtr()))
+                return true;
+
+            const Nif::NiInterpolator* best = nullptr;
+            float bestWeight = -1.f;
+            for (const Nif::NiBlendInterpolator::Item& item : blend->mItems)
+            {
+                if (item.mInterpolator.empty())
+                    continue;
+                const float weight = item.mNormalizedWeight > 0.f ? item.mNormalizedWeight : item.mWeight;
+                if (best == nullptr || weight > bestWeight)
+                {
+                    best = item.mInterpolator.getPtr();
+                    bestWeight = weight;
+                }
+            }
+            if (initFromInterpolator(best))
+                return true;
+
+            initFromDefaultTransform(blend->mValue);
+            return true;
+        }
+
+        return false;
+    }
+
+    KeyframeController::KeyframeController(const Nif::NiBSplineTransformInterpolator* interp)
+    {
+        if (interp->mSplineData.empty() || interp->mBasisData.empty())
+            return;
+
+        BSplineTransform data;
+        data.mStartTime = interp->mStartTime;
+        data.mStopTime = interp->mStopTime;
+        data.mDefaultValue = interp->mValue;
+        data.mFloatControlPoints = interp->mSplineData->mFloatControlPoints;
+        data.mCompactControlPoints = interp->mSplineData->mCompactControlPoints;
+        data.mNumControlPoints = interp->mBasisData->mNumControlPoints;
+        data.mTranslationHandle = interp->mTranslationHandle;
+        data.mRotationHandle = interp->mRotationHandle;
+        data.mScaleHandle = interp->mScaleHandle;
+
+        if (interp->recType == Nif::RC_NiBSplineCompTransformInterpolator)
+        {
+            const auto* comp = static_cast<const Nif::NiBSplineCompTransformInterpolator*>(interp);
+            data.mCompressed = true;
+            data.mTranslationOffset = comp->mTranslationOffset;
+            data.mTranslationHalfRange = comp->mTranslationHalfRange;
+            data.mRotationOffset = comp->mRotationOffset;
+            data.mRotationHalfRange = comp->mRotationHalfRange;
+            data.mScaleOffset = comp->mScaleOffset;
+            data.mScaleHalfRange = comp->mScaleHalfRange;
+        }
+
+        mBSplineTransform = std::move(data);
+    }
+
+    KeyframeController::KeyframeController(const Nif::NiBlendTransformInterpolator* interp)
+    {
+        initFromInterpolator(interp);
+    }
+
+    static float bsplineBasis(int index, float t)
+    {
+        const float t2 = t * t;
+        const float t3 = t2 * t;
+        switch (index)
+        {
+            case 0:
+                return (1.f - 3.f * t + 3.f * t2 - t3) / 6.f;
+            case 1:
+                return (4.f - 6.f * t2 + 3.f * t3) / 6.f;
+            case 2:
+                return (1.f + 3.f * t + 3.f * t2 - 3.f * t3) / 6.f;
+            default:
+                return t3 / 6.f;
+        }
+    }
+
+    float sampleBSplineComponent(
+        const KeyframeController::BSplineTransform& data, uint32_t handle, unsigned int stride, unsigned int component,
+        float time, float defaultValue, float offset, float halfRange)
+    {
+        if (handle == std::numeric_limits<uint32_t>::max() || data.mNumControlPoints < 4
+            || data.mStopTime <= data.mStartTime)
+            return defaultValue;
+
+        const float normalized = std::clamp((time - data.mStartTime) / (data.mStopTime - data.mStartTime), 0.f, 1.f);
+        const float scaled = normalized * static_cast<float>(data.mNumControlPoints - 3);
+        unsigned int segment = std::min(static_cast<unsigned int>(scaled), data.mNumControlPoints - 4);
+        const float local = scaled - static_cast<float>(segment);
+
+        float value = 0.f;
+        for (unsigned int i = 0; i < 4; ++i)
+        {
+            const size_t index = static_cast<size_t>(handle) + static_cast<size_t>(segment + i) * stride + component;
+            float control = defaultValue;
+            if (data.mCompressed)
+            {
+                if (index < data.mCompactControlPoints.size())
+                    control = offset + halfRange * (static_cast<float>(data.mCompactControlPoints[index]) / 32767.f);
+            }
+            else if (index < data.mFloatControlPoints.size())
+                control = data.mFloatControlPoints[index];
+
+            value += control * bsplineBasis(i, local);
+        }
+
+        return value;
     }
 
     osg::Quat KeyframeController::getXYZRotation(float time) const
@@ -206,6 +463,49 @@ namespace NifOsg
         {
             float time = getInputValue(nv);
 
+            if (mBSplineTransform)
+            {
+                const BSplineTransform& data = *mBSplineTransform;
+
+                if (data.mTranslationHandle != std::numeric_limits<uint32_t>::max())
+                {
+                    out.mTranslation = osg::Vec3f(
+                        sampleBSplineComponent(data, data.mTranslationHandle, 3, 0, time,
+                            data.mDefaultValue.mTranslation.x(), data.mTranslationOffset,
+                            data.mTranslationHalfRange),
+                        sampleBSplineComponent(data, data.mTranslationHandle, 3, 1, time,
+                            data.mDefaultValue.mTranslation.y(), data.mTranslationOffset,
+                            data.mTranslationHalfRange),
+                        sampleBSplineComponent(data, data.mTranslationHandle, 3, 2, time,
+                            data.mDefaultValue.mTranslation.z(), data.mTranslationOffset,
+                            data.mTranslationHalfRange));
+                }
+
+                if (data.mRotationHandle != std::numeric_limits<uint32_t>::max())
+                {
+                    const float x = sampleBSplineComponent(data, data.mRotationHandle, 4, 0, time,
+                        data.mDefaultValue.mRotation.x(), data.mRotationOffset, data.mRotationHalfRange);
+                    const float y = sampleBSplineComponent(data, data.mRotationHandle, 4, 1, time,
+                        data.mDefaultValue.mRotation.y(), data.mRotationOffset, data.mRotationHalfRange);
+                    const float z = sampleBSplineComponent(data, data.mRotationHandle, 4, 2, time,
+                        data.mDefaultValue.mRotation.z(), data.mRotationOffset, data.mRotationHalfRange);
+                    const float w = sampleBSplineComponent(data, data.mRotationHandle, 4, 3, time,
+                        data.mDefaultValue.mRotation.w(), data.mRotationOffset, data.mRotationHalfRange);
+                    const float length = std::sqrt(x * x + y * y + z * z + w * w);
+                    if (length > 0.f)
+                        out.mRotation = osg::Quat(x / length, y / length, z / length, w / length);
+                }
+
+                if (data.mScaleHandle != std::numeric_limits<uint32_t>::max())
+                {
+                    out.mScale = sampleBSplineComponent(data, data.mScaleHandle, 1, 0, time,
+                        data.mDefaultValue.mScale, data.mScaleOffset, data.mScaleHalfRange);
+                }
+
+                sanitizeTransform(out);
+                return out;
+            }
+
             if (!mRotations.empty())
                 out.mRotation = mRotations.interpKey(time);
             else if (!mXRotations.empty() || !mYRotations.empty() || !mZRotations.empty())
@@ -218,6 +518,7 @@ namespace NifOsg
                 out.mScale = mScales.interpKey(time);
         }
 
+        sanitizeTransform(out);
         return out;
     }
 
@@ -341,6 +642,82 @@ namespace NifOsg
         }
     }
 
+    TextureTransformController::TextureTransformController(
+        const Nif::NiTextureTransformController* ctrl, unsigned int textureUnit)
+        : mTextureUnit(textureUnit)
+        , mTransformMember(ctrl->mTransformMember)
+    {
+        if (!ctrl->mInterpolator.empty() && ctrl->mInterpolator->recType == Nif::RC_NiFloatInterpolator)
+            mData = static_cast<const Nif::NiFloatInterpolator*>(ctrl->mInterpolator.getPtr());
+        else if (!ctrl->mInterpolator.empty() && ctrl->mInterpolator->recType == Nif::RC_NiBlendFloatInterpolator)
+        {
+            const auto* interpolator = static_cast<const Nif::NiBlendFloatInterpolator*>(ctrl->mInterpolator.getPtr());
+            mData = FloatInterpolator(Nif::FloatKeyMapPtr(), interpolator->mValue);
+        }
+        else if (!ctrl->mData.empty())
+            mData = FloatInterpolator(ctrl->mData->mKeyList, 0.f);
+    }
+
+    TextureTransformController::TextureTransformController(
+        const TextureTransformController& copy, const osg::CopyOp& copyop)
+        : osg::Object(copy, copyop)
+        , StateSetUpdater(copy, copyop)
+        , Controller(copy)
+        , mData(copy.mData)
+        , mTextureUnit(copy.mTextureUnit)
+        , mTransformMember(copy.mTransformMember)
+    {
+    }
+
+    void TextureTransformController::setDefaults(osg::StateSet* stateset)
+    {
+        if (!stateset->getTextureAttribute(mTextureUnit, osg::StateAttribute::TEXMAT))
+            stateset->setTextureAttributeAndModes(mTextureUnit, new osg::TexMat, osg::StateAttribute::ON);
+    }
+
+    void TextureTransformController::apply(osg::StateSet* stateset, osg::NodeVisitor* nv)
+    {
+        if (!hasInput())
+            return;
+
+        osg::TexMat* texMat
+            = static_cast<osg::TexMat*>(stateset->getTextureAttribute(mTextureUnit, osg::StateAttribute::TEXMAT));
+        if (!texMat)
+            return;
+
+        osg::Matrixf mat = texMat->getMatrix();
+        const float value = mData.empty() ? getInputValue(nv) : mData.interpKey(getInputValue(nv));
+
+        switch (mTransformMember)
+        {
+            case 0: // U translation
+                mat(3, 0) = -value;
+                break;
+            case 1: // V translation
+                mat(3, 1) = -value;
+                break;
+            case 2: // Rotation around UV center
+            {
+                const osg::Vec3f trans = mat.getTrans();
+                mat = osg::Matrixf::translate(osg::Vec3f(0.5f, 0.5f, 0.f));
+                mat.preMultRotate(osg::Quat(value, osg::Z_AXIS));
+                mat.preMultTranslate(osg::Vec3f(-0.5f, -0.5f, 0.f));
+                mat.setTrans(trans);
+                break;
+            }
+            case 3: // U scale
+                mat(0, 0) = value;
+                break;
+            case 4: // V scale
+                mat(1, 1) = value;
+                break;
+            default:
+                break;
+        }
+
+        texMat->setMatrix(mat);
+    }
+
     VisController::VisController(const Nif::NiVisController* ctrl, unsigned int mask)
         : mMask(mask)
     {
@@ -397,6 +774,12 @@ namespace NifOsg
         {
             if (ctrl->mInterpolator->recType == Nif::RC_NiFloatInterpolator)
                 mData = FloatInterpolator(static_cast<const Nif::NiFloatInterpolator*>(ctrl->mInterpolator.getPtr()));
+            else if (ctrl->mInterpolator->recType == Nif::RC_NiBlendFloatInterpolator)
+            {
+                const auto* interpolator
+                    = static_cast<const Nif::NiBlendFloatInterpolator*>(ctrl->mInterpolator.getPtr());
+                mData = FloatInterpolator(nullptr, interpolator->mValue);
+            }
         }
         else if (!ctrl->mData.empty())
             mData = FloatInterpolator(ctrl->mData->mKeyList, 1.f);
@@ -443,6 +826,12 @@ namespace NifOsg
         {
             if (ctrl->mInterpolator->recType == Nif::RC_NiFloatInterpolator)
                 mData = FloatInterpolator(static_cast<const Nif::NiFloatInterpolator*>(ctrl->mInterpolator.getPtr()));
+            else if (ctrl->mInterpolator->recType == Nif::RC_NiBlendFloatInterpolator)
+            {
+                const auto* interpolator
+                    = static_cast<const Nif::NiBlendFloatInterpolator*>(ctrl->mInterpolator.getPtr());
+                mData = FloatInterpolator(Nif::FloatKeyMapPtr(), interpolator->mValue);
+            }
         }
         else if (!ctrl->mData.empty())
             mData = FloatInterpolator(ctrl->mData->mKeyList, 1.f);
@@ -485,6 +874,12 @@ namespace NifOsg
         {
             if (ctrl->mInterpolator->recType == Nif::RC_NiPoint3Interpolator)
                 mData = Vec3Interpolator(static_cast<const Nif::NiPoint3Interpolator*>(ctrl->mInterpolator.getPtr()));
+            else if (ctrl->mInterpolator->recType == Nif::RC_NiBlendPoint3Interpolator)
+            {
+                const auto* interpolator
+                    = static_cast<const Nif::NiBlendPoint3Interpolator*>(ctrl->mInterpolator.getPtr());
+                mData = Vec3Interpolator(nullptr, interpolator->mValue);
+            }
         }
         else if (!ctrl->mData.empty())
             mData = Vec3Interpolator(ctrl->mData->mKeyList, osg::Vec3f(1, 1, 1));
@@ -543,6 +938,57 @@ namespace NifOsg
                     mat->setAmbient(osg::Material::FRONT_AND_BACK, ambient);
                 }
             }
+        }
+    }
+
+    MaterialEmittanceMultController::MaterialEmittanceMultController() = default;
+
+    MaterialEmittanceMultController::MaterialEmittanceMultController(
+        const Nif::NiFloatInterpController* ctrl, const osg::Material* baseMaterial)
+        : mData(Nif::FloatKeyMapPtr(), 1.f)
+        , mBaseMaterial(baseMaterial)
+        , mBaseEmission(baseMaterial->getEmission(osg::Material::FRONT_AND_BACK))
+    {
+        if (!ctrl->mInterpolator.empty())
+        {
+            if (ctrl->mInterpolator->recType == Nif::RC_NiFloatInterpolator)
+                mData = FloatInterpolator(static_cast<const Nif::NiFloatInterpolator*>(ctrl->mInterpolator.getPtr()));
+            else if (ctrl->mInterpolator->recType == Nif::RC_NiBlendFloatInterpolator)
+            {
+                const auto* interpolator
+                    = static_cast<const Nif::NiBlendFloatInterpolator*>(ctrl->mInterpolator.getPtr());
+                mData = FloatInterpolator(Nif::FloatKeyMapPtr(), interpolator->mValue);
+            }
+        }
+    }
+
+    MaterialEmittanceMultController::MaterialEmittanceMultController(
+        const MaterialEmittanceMultController& copy, const osg::CopyOp& copyop)
+        : StateSetUpdater(copy, copyop)
+        , Controller(copy)
+        , mData(copy.mData)
+        , mBaseMaterial(copy.mBaseMaterial)
+        , mBaseEmission(copy.mBaseEmission)
+    {
+    }
+
+    void MaterialEmittanceMultController::setDefaults(osg::StateSet* stateset)
+    {
+        stateset->setAttribute(
+            static_cast<osg::Material*>(mBaseMaterial->clone(osg::CopyOp::DEEP_COPY_ALL)), osg::StateAttribute::ON);
+    }
+
+    void MaterialEmittanceMultController::apply(osg::StateSet* stateset, osg::NodeVisitor* nv)
+    {
+        if (hasInput())
+        {
+            const float value = mData.interpKey(getInputValue(nv));
+            osg::Material* mat = static_cast<osg::Material*>(stateset->getAttribute(osg::StateAttribute::MATERIAL));
+            osg::Vec4f emissive = mBaseEmission;
+            emissive.x() *= value;
+            emissive.y() *= value;
+            emissive.z() *= value;
+            mat->setEmission(osg::Material::FRONT_AND_BACK, emissive);
         }
     }
 

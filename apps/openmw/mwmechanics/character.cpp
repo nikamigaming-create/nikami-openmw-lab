@@ -22,6 +22,8 @@
 #include <array>
 
 #include <components/esm/records.hpp>
+#include <components/esm/defs.hpp>
+#include <components/esm4/loadcrea.hpp>
 #include <components/misc/mathutil.hpp>
 #include <components/misc/resourcehelpers.hpp>
 #include <components/misc/rng.hpp>
@@ -67,6 +69,16 @@
 
 namespace
 {
+    bool isFalloutActor(const MWWorld::Ptr& ptr)
+    {
+        return ptr.getType() == ESM::REC_NPC_4 || ptr.getType() == ESM4::Creature::sRecordId;
+    }
+
+    bool shouldUseFalloutFlyingIdleAsMovement(const MWWorld::Ptr& ptr, const MWRender::Animation& animation)
+    {
+        return ptr.getType() == ESM4::Creature::sRecordId && ptr.getClass().canFly(ptr)
+            && !ptr.getClass().isBipedal(ptr) && animation.hasAnimation("idle");
+    }
 
     std::string_view getBestAttack(const ESM::Weapon* weapon)
     {
@@ -710,6 +722,20 @@ namespace MWMechanics
 
             if (!mAnimation->hasAnimation(movementAnimName))
             {
+                if (shouldUseFalloutFlyingIdleAsMovement(mPtr, *mAnimation))
+                {
+                    if (isFalloutActor(mPtr))
+                        Log(Debug::Info) << "FNV/ESM4 diag: using idle as flying movement fallback for "
+                                         << mPtr.getCellRef().getRefId() << " requested='" << movementAnimName << "'";
+                    movementAnimName = "idle";
+                }
+            }
+
+            if (!mAnimation->hasAnimation(movementAnimName))
+            {
+                if (isFalloutActor(mPtr))
+                    Log(Debug::Warning) << "FNV/ESM4 diag: movement animation missing for "
+                                        << mPtr.getCellRef().getRefId() << " group '" << movementAnimName << "'";
                 if (!mCurrentMovement.empty())
                     resetCurrentIdleState();
                 resetCurrentMovementState();
@@ -770,6 +796,16 @@ namespace MWMechanics
 
     void CharacterController::refreshIdleAnims(CharacterState idle, bool force)
     {
+        if (isFalloutActor(mPtr) && std::getenv("OPENMW_FNV_BIND_POSE_PROOF") != nullptr)
+        {
+            if (!mCurrentIdle.empty())
+                clearStateAnimation(mCurrentIdle);
+            resetCurrentIdleState();
+            Log(Debug::Info) << "FNV/ESM4 diag: Fallout bind-pose proof suppressed idle animation for "
+                             << mPtr.getCellRef().getRefId();
+            return;
+        }
+
         // FIXME: if one of the below states is close to their last animation frame (i.e. will be disabled in the coming
         // update), the idle animation should be displayed
         if (((mUpperBodyState != UpperBodyState::None && mUpperBodyState != UpperBodyState::WeaponEquipped)
@@ -824,6 +860,9 @@ namespace MWMechanics
 
         if (!mAnimation->hasAnimation(idleGroup))
         {
+            if (isFalloutActor(mPtr))
+                Log(Debug::Warning) << "FNV/ESM4 diag: idle animation missing for " << mPtr.getCellRef().getRefId()
+                                    << " group '" << idleGroup << "'";
             resetCurrentIdleState();
             return;
         }
@@ -836,6 +875,9 @@ namespace MWMechanics
 
         clearStateAnimation(mCurrentIdle);
         mCurrentIdle = std::move(idleGroup);
+        if (isFalloutActor(mPtr))
+            Log(Debug::Info) << "FNV/ESM4 diag: CharacterController playing idle for "
+                             << mPtr.getCellRef().getRefId() << " group '" << mCurrentIdle << "'";
         playBlendedAnimation(
             mCurrentIdle, priority, MWRender::BlendMask_All, false, 1.0f, "start", "stop", startPoint, numLoops, true);
     }

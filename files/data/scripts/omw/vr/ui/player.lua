@@ -65,14 +65,9 @@ end
 local initialized = false
 
 local function tutorials()
-    if common.uiSection:get('ShowTutorials') then
-        if not I.vrinputs.isKBMouseMode() and not saveData.hasSeenMCTutorial then
-            MCTutorialMessages()
-        end
-        if I.vrinputs.isKBMouseMode() and not saveData.hasSeenKBMTutorial then
-            KBMTutorialMessages()
-        end
-    end
+    -- FNV launches directly into the world; do not block startup on VR tutorial prompts.
+    saveData.hasSeenMCTutorial = true
+    saveData.hasSeenKBMTutorial = true
 end
 
 local function init()

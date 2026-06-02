@@ -26,6 +26,7 @@
 */
 #include "loadidlm.hpp"
 
+#include <algorithm>
 #include <stdexcept>
 
 #include "reader.hpp"
@@ -50,27 +51,30 @@ void ESM4::IdleMarker::load(ESM4::Reader& reader)
                 reader.get(mIdleFlags);
                 break;
             case ESM::fourCC("IDLC"):
-                if (subHdr.dataSize != 1) // FO3 can have 4?
+                if (subHdr.dataSize == 1)
+                    reader.get(mIdleCount);
+                else if (subHdr.dataSize == 4)
                 {
-                    reader.skipSubRecordData();
-                    break;
+                    std::uint32_t count = 0;
+                    reader.get(count);
+                    mIdleCount = static_cast<std::uint8_t>(std::min<std::uint32_t>(count, 0xff));
                 }
-
-                reader.get(mIdleCount);
+                else
+                    reader.skipSubRecordData();
                 break;
             case ESM::fourCC("IDLT"):
                 reader.get(mIdleTimer);
                 break;
             case ESM::fourCC("IDLA"):
             {
-                bool isFONV = esmVer == ESM::VER_132 || esmVer == ESM::VER_133 || esmVer == ESM::VER_134;
-                if (esmVer == ESM::VER_094 || isFONV) // FO3? 4 or 8 bytes
+                if (subHdr.dataSize % sizeof(ESM::FormId32) != 0)
                 {
                     reader.skipSubRecordData();
                     break;
                 }
 
-                mIdleAnim.resize(mIdleCount);
+                const std::size_t idleCount = subHdr.dataSize / sizeof(ESM::FormId32);
+                mIdleAnim.resize(idleCount);
                 for (ESM::FormId& value : mIdleAnim)
                     reader.getFormId(value);
                 break;

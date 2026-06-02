@@ -1244,4 +1244,11 @@ namespace Resource
         shaderVisitor->setWeatherParticleOcclusion(mWeatherParticleOcclusion);
         return shaderVisitor;
     }
+
+    void SceneManager::applyShaders(osg::Node& node, const std::string& shaderPrefix)
+    {
+        osg::ref_ptr<Shader::ShaderVisitor> shaderVisitor(createShaderVisitor(shaderPrefix));
+        shaderVisitor->setAllowedToModifyStateSets(true);
+        node.accept(*shaderVisitor);
+    }
 }

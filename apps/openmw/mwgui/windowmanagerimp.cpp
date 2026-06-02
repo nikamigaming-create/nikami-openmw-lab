@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cassert>
 #include <chrono>
+#include <cstdlib>
 #include <filesystem>
 #include <thread>
 
@@ -787,6 +788,17 @@ namespace MWGui
             // user has opened/closed (the 'shown' variable) and by what
             // windows we are allowed to show (the 'allowed' var.)
             int eff = mShown & mAllowed & ~mForceHidden;
+            if (std::getenv("OPENMW_FNV_PROOF_PIPBOY_SURFACE") != nullptr)
+            {
+                eff = GW_Map | GW_Inventory | GW_Magic | GW_Stats;
+                static bool loggedPipBoySurface = false;
+                if (!loggedPipBoySurface)
+                {
+                    Log(Debug::Info)
+                        << "FNV/ESM4 proof: Pip-Boy surface forcing inventory mode panes map=1 items=1 data=1 stats=1";
+                    loggedPipBoySurface = true;
+                }
+            }
             mMap->setVisible(eff & GW_Map);
             mInventoryWindow->setVisible(eff & GW_Inventory);
             mSpellWindow->setVisible(eff & GW_Magic);
@@ -794,6 +806,12 @@ namespace MWGui
         }
 
         updateControllerButtonsOverlay();
+        if (std::getenv("OPENMW_FNV_PROOF_PIPBOY_SURFACE") != nullptr && getMode() == GM_Inventory
+            && mInventoryTabsOverlay != nullptr)
+        {
+            mInventoryTabsOverlay->setVisible(true);
+            mInventoryTabsOverlay->setTab(mActiveControllerWindows[GM_Inventory]);
+        }
 
         switch (mode)
         {

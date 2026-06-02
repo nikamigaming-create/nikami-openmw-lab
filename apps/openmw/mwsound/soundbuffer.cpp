@@ -19,6 +19,8 @@ namespace MWSound
 {
     namespace
     {
+        constexpr unsigned int maxSoundReferenceDepth = 8;
+
         struct AudioParams
         {
             float mAudioDefaultMinDistance;
@@ -35,6 +37,24 @@ namespace MWSound
             params.mAudioMinDistanceMult = settings.find("fAudioMinDistanceMult")->mValue.getFloat();
             params.mAudioMaxDistanceMult = settings.find("fAudioMaxDistanceMult")->mValue.getFloat();
             return params;
+        }
+
+        std::string resolveESM4SoundReferencePath(
+            const MWWorld::ESMStore& store, const ESM4::SoundReference& sound, unsigned int depth = 0)
+        {
+            if (!sound.mSoundFile.empty())
+                return sound.mSoundFile;
+
+            if (depth >= maxSoundReferenceDepth || sound.mSoundId.isZeroOrUnset())
+                return {};
+
+            if (const ESM4::SoundReference* linked = store.get<ESM4::SoundReference>().search(sound.mSoundId))
+                return resolveESM4SoundReferencePath(store, *linked, depth + 1);
+
+            if (const ESM4::Sound* linked = store.get<ESM4::Sound>().search(sound.mSoundId))
+                return linked->mSoundFile;
+
+            return {};
         }
     }
 
@@ -117,10 +137,17 @@ namespace MWSound
             sfx = it->second;
         else
         {
-            const ESM::Sound* sound = MWBase::Environment::get().getESMStore()->get<ESM::Sound>().search(soundId);
-            if (sound == nullptr)
+            const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
+            if (const ESM::Sound* sound = store->get<ESM::Sound>().search(soundId))
+                sfx = insertSound(soundId, *sound);
+            else if (const ESM4::Sound* sound = store->get<ESM4::Sound>().search(soundId))
+                sfx = insertSound(soundId, *sound);
+            else if (const ESM4::SoundReference* sound = store->get<ESM4::SoundReference>().search(soundId))
+                sfx = insertSound(soundId, *sound);
+            else
                 return {};
-            sfx = insertSound(soundId, *sound);
+            if (sfx == nullptr)
+                return {};
         }
 
         return loadSfx(sfx);
@@ -210,11 +237,17 @@ namespace MWSound
 
     SoundBuffer* SoundBufferPool::insertSound(const ESM::RefId& soundId, const ESM4::SoundReference& sound)
     {
+        const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
+        const std::string soundFile = resolveESM4SoundReferencePath(*store, sound);
+        if (soundFile.empty())
+        {
+            Log(Debug::Warning) << "Unable to resolve ESM4 sound reference " << soundId << " to an audio file";
+            return nullptr;
+        }
+
         std::string path = Misc::ResourceHelpers::correctResourcePath(
-            { { "sound" } }, sound.mSoundFile, MWBase::Environment::get().getResourceSystem()->getVFS(), ".mp3");
+            { { "sound" } }, soundFile, MWBase::Environment::get().getResourceSystem()->getVFS(), ".mp3");
         float volume = 1, min = 1, max = 255; // TODO: needs research
-        // TODO: sound.mSoundId can link to another SoundReference, probably we will need to add additional lookups to
-        // ESMStore.
         SoundBuffer& sfx = mSoundBuffers.emplace_back(VFS::Path::Normalized(std::move(path)), volume, min, max);
         mBufferNameMap.emplace(soundId, &sfx);
         return &sfx;

@@ -12,8 +12,23 @@
 
 #include <LinearMath/btTransform.h>
 
+#include <set>
+#include <string>
+
 namespace MWPhysics
 {
+    namespace
+    {
+        std::mutex sMissingAnimatedCollisionLogMutex;
+        std::set<std::pair<std::string, int>> sMissingAnimatedCollisionLogs;
+
+        bool shouldLogMissingAnimatedCollisionNode(const MWWorld::Ptr& ptr, int recIndex)
+        {
+            std::lock_guard<std::mutex> lock(sMissingAnimatedCollisionLogMutex);
+            return sMissingAnimatedCollisionLogs.emplace(ptr.getCellRef().getRefId().serializeText(), recIndex).second;
+        }
+    }
+
     Object::Object(const MWWorld::Ptr& ptr, osg::ref_ptr<Resource::BulletShapeInstance> shapeInstance,
         osg::Quat rotation, int collisionType, PhysicsTaskScheduler* scheduler)
         : PtrHolder(ptr, osg::Vec3f())
@@ -118,8 +133,11 @@ namespace MWPhysics
 
         btCompoundShape* compound = static_cast<btCompoundShape*>(mShapeInstance->mCollisionShape.get());
         bool result = false;
-        for (const auto& [recIndex, shapeIndex] : mShapeInstance->mAnimatedShapes)
+        for (auto animatedShape = mShapeInstance->mAnimatedShapes.begin();
+             animatedShape != mShapeInstance->mAnimatedShapes.end();)
         {
+            const int recIndex = animatedShape->first;
+            const int shapeIndex = animatedShape->second;
             auto nodePathFound = mRecIndexToNodePath.find(recIndex);
             if (nodePathFound == mRecIndexToNodePath.end())
             {
@@ -127,12 +145,15 @@ namespace MWPhysics
                 mPtr.getRefData().getBaseNode()->accept(visitor);
                 if (!visitor.mFound)
                 {
-                    Log(Debug::Warning) << "Warning: animateCollisionShapes can't find node " << recIndex << " for "
-                                        << mPtr.getCellRef().getRefId();
+                    if (mMissingAnimatedCollisionNodes.insert(recIndex).second
+                        && shouldLogMissingAnimatedCollisionNode(mPtr, recIndex))
+                        Log(Debug::Warning) << "Warning: animateCollisionShapes can't find node " << recIndex << " for "
+                                            << mPtr.getCellRef().getRefId() << "; keeping static collision child";
 
-                    // Remove nonexistent nodes from animated shapes map and early out
-                    mShapeInstance->mAnimatedShapes.erase(recIndex);
-                    return false;
+                    // Fallout meshes sometimes carry animated collision entries for nodes that are absent from the
+                    // rendered scene graph. Keep their initial child transform as static collision and stop polling it.
+                    animatedShape = mShapeInstance->mAnimatedShapes.erase(animatedShape);
+                    continue;
                 }
                 osg::NodePath nodePath = visitor.mFoundPath;
                 nodePath.erase(nodePath.begin());
@@ -164,6 +185,8 @@ namespace MWPhysics
                 compound->updateChildTransform(shapeIndex, transform);
                 result = true;
             }
+
+            ++animatedShape;
         }
         return result;
     }

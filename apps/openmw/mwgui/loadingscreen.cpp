@@ -69,14 +69,23 @@ namespace MWGui
                 && std::find(supportedExtensions.begin(), supportedExtensions.end(), ext) != supportedExtensions.end();
         };
 
-        constexpr VFS::Path::NormalizedView splash("splash/");
-        for (const auto& name : mResourceSystem->getVFS()->getRecursiveDirectoryIterator(splash))
+        constexpr std::array<VFS::Path::NormalizedView, 2> splashRoots = {
+            VFS::Path::NormalizedView("textures/interface/loading/"),
+            VFS::Path::NormalizedView("splash/"),
+        };
+        for (const VFS::Path::NormalizedView splash : splashRoots)
         {
-            if (isSupportedExtension(Misc::getFileExtension(name)))
-                mSplashScreens.push_back(name);
+            for (const auto& name : mResourceSystem->getVFS()->getRecursiveDirectoryIterator(splash))
+            {
+                if (isSupportedExtension(Misc::getFileExtension(name)))
+                    mSplashScreens.push_back(name);
+            }
         }
         if (mSplashScreens.empty())
             Log(Debug::Warning) << "Warning: no splash screens found!";
+        else
+            Log(Debug::Info) << "FNV/ESM4 diag: found " << mSplashScreens.size()
+                             << " candidate loading screen image(s)";
     }
 
     void LoadingScreen::setLabel(const std::string& label, bool important)
@@ -167,12 +176,11 @@ namespace MWGui
 
         setVisible(true);
 
-        mShowWallpaper = MWBase::Environment::get().getStateManager()->getState() == MWBase::StateManager::State_NoGame;
+        mShowWallpaper = !mSplashScreens.empty()
+            || MWBase::Environment::get().getStateManager()->getState() == MWBase::StateManager::State_NoGame;
 
         if (mShowWallpaper)
-        {
             changeWallpaper();
-        }
 
         MWBase::Environment::get().getWindowManager()->pushGuiMode(mShowWallpaper ? GM_LoadingWallpaper : GM_Loading);
     }

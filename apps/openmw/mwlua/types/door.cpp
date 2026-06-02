@@ -120,6 +120,47 @@ namespace MWLua
 
     void addESM4DoorBindings(sol::table door, const Context& context)
     {
+        door["STATE"] = LuaUtil::makeStrictReadOnly(LuaUtil::tableFromPairs<std::string_view, MWWorld::DoorState>(
+            context.sol(),
+            {
+                { "Idle", MWWorld::DoorState::Idle },
+                { "Opening", MWWorld::DoorState::Opening },
+                { "Closing", MWWorld::DoorState::Closing },
+            }));
+        door["getDoorState"] = [](const Object& o) -> MWWorld::DoorState {
+            const MWWorld::Ptr& ptr = door4Ptr(o);
+            return ptr.getClass().getDoorState(ptr);
+        };
+        door["isOpen"] = [](const Object& o) {
+            const MWWorld::Ptr& ptr = door4Ptr(o);
+            const bool doorIsIdle = ptr.getClass().getDoorState(ptr) == MWWorld::DoorState::Idle;
+            const bool doorIsOpen = ptr.getRefData().getPosition().rot[2] != ptr.getCellRef().getPosition().rot[2];
+
+            return doorIsIdle && doorIsOpen;
+        };
+        door["isClosed"] = [](const Object& o) {
+            const MWWorld::Ptr& ptr = door4Ptr(o);
+            const bool doorIsIdle = ptr.getClass().getDoorState(ptr) == MWWorld::DoorState::Idle;
+            const bool doorIsOpen = ptr.getRefData().getPosition().rot[2] != ptr.getCellRef().getPosition().rot[2];
+
+            return doorIsIdle && !doorIsOpen;
+        };
+        door["activateDoor"] = [](const Object& o, sol::optional<bool> openState) {
+            bool allowChanges
+                = dynamic_cast<const GObject*>(&o) != nullptr || dynamic_cast<const SelfObject*>(&o) != nullptr;
+            if (!allowChanges)
+                throw std::runtime_error("Can only be used in global scripts or in local scripts on self.");
+
+            const MWWorld::Ptr& ptr = door4Ptr(o);
+            auto world = MWBase::Environment::get().getWorld();
+
+            if (!openState.has_value())
+                world->activateDoor(ptr);
+            else if (*openState)
+                world->activateDoor(ptr, MWWorld::DoorState::Opening);
+            else
+                world->activateDoor(ptr, MWWorld::DoorState::Closing);
+        };
         door["isTeleport"] = [](const Object& o) { return door4Ptr(o).getCellRef().getTeleport(); };
         door["destPosition"]
             = [](const Object& o) -> osg::Vec3f { return door4Ptr(o).getCellRef().getDoorDest().asVec3(); };

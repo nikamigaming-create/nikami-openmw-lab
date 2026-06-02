@@ -4,6 +4,8 @@
 #include <osg/MatrixTransform>
 #include <osg/UserDataContainer>
 
+#include <cstdlib>
+
 #include <osgUtil/CullVisitor>
 #include <osgUtil/RenderBin>
 
@@ -177,11 +179,17 @@ namespace MWRender
         else
         {
             // FIXME: would be nice to hold on to the SoundPtr so we don't have to retrieve it every frame
-            mValue = mTalkStart
-                + (mTalkStop - mTalkStart)
-                    * std::min(1.f,
-                        MWBase::Environment::get().getSoundManager()->getSaySoundLoudness(mReference)
-                            * 2); // Rescale a bit (most voices are not very loud)
+            const float loudness = MWBase::Environment::get().getSoundManager()->getSaySoundLoudness(mReference);
+            mValue = mTalkStart + (mTalkStop - mTalkStart) * std::min(1.f, loudness * 2);
+
+            static bool proofTalkLogged = false;
+            if (!proofTalkLogged && std::getenv("OPENMW_PROOF_SAY_ACTOR") != nullptr)
+            {
+                Log(Debug::Info) << "FNV/ESM4 proof: head talk controller active for " << mReference.toString()
+                                 << " loudness=" << loudness << " value=" << mValue
+                                 << " talkStart=" << mTalkStart << " talkStop=" << mTalkStop;
+                proofTalkLogged = true;
+            }
         }
     }
 
@@ -585,6 +593,14 @@ namespace MWRender
         const MWWorld::InventoryStore& inv = mPtr.getClass().getInventoryStore(mPtr);
         for (size_t i = 0; i < slotlistsize && mViewMode != VM_HeadOnly; i++)
         {
+            if (std::getenv("OPENMW_FNV_HIDE_PLAYER_PROOF_PARTS") != nullptr && mPtr == MWMechanics::getPlayer()
+                && (slotlist[i].mSlot == MWWorld::InventoryStore::Slot_CarriedRight
+                    || slotlist[i].mSlot == MWWorld::InventoryStore::Slot_CarriedLeft))
+            {
+                removePartGroup(slotlist[i].mSlot);
+                continue;
+            }
+
             MWWorld::ConstContainerStoreIterator store = inv.getSlot(slotlist[i].mSlot);
 
             removePartGroup(slotlist[i].mSlot);
@@ -936,6 +952,9 @@ namespace MWRender
 
     void NpcAnimation::showWeapons(bool showWeapon)
     {
+        if (std::getenv("OPENMW_FNV_HIDE_PLAYER_PROOF_PARTS") != nullptr && mPtr == MWMechanics::getPlayer())
+            showWeapon = false;
+
         mShowWeapons = showWeapon;
         mAmmunition.reset();
         if (showWeapon)

@@ -47,16 +47,43 @@ void ESM4::AIPackage::load(ESM4::Reader& reader)
                 break;
             case ESM::fourCC("PKDT"):
             {
-                if (subHdr.dataSize != sizeof(PKDT) && subHdr.dataSize == 4)
+                if (subHdr.dataSize == 4)
                 {
-                    // std::cout << "skip fallout" << mEditorId << std::endl; // FIXME
                     reader.get(mData.flags);
                     mData.type = 0; // FIXME
+                }
+                else if (subHdr.dataSize == 8)
+                {
+                    reader.get(mData);
+                    mFo3PackageFlags = mData.flags;
+                }
+                else if (subHdr.dataSize == 12)
+                {
+                    struct RawFo3Pkdt
+                    {
+                        std::uint32_t flags;
+                        std::uint8_t type;
+                        std::uint8_t unused;
+                        std::uint16_t procedureFlags;
+                        std::uint16_t typeSpecificFlags;
+                        std::uint16_t unused2;
+                    };
+
+                    RawFo3Pkdt data{};
+                    reader.get(data);
+                    mData.flags = data.flags;
+                    mData.type = data.type;
+                    mFo3PackageFlags = data.flags;
+                    mFo3ProcedureFlags = data.procedureFlags;
+                    mFo3TypeSpecificFlags = data.typeSpecificFlags;
                 }
                 else if (subHdr.dataSize != sizeof(mData))
                     reader.skipSubRecordData(); // FIXME: FO3
                 else
+                {
                     reader.get(mData);
+                    mFo3PackageFlags = mData.flags;
+                }
 
                 break;
             }
@@ -82,16 +109,88 @@ void ESM4::AIPackage::load(ESM4::Reader& reader)
 
                 break;
             }
-            case ESM::fourCC("PTDT"):
+            case ESM::fourCC("PLD2"):
             {
-                if (subHdr.dataSize != sizeof(mTarget))
-                    reader.skipSubRecordData(); // FIXME: FO3
+                PLDT location{};
+                if (subHdr.dataSize != sizeof(location))
+                    reader.skipSubRecordData();
                 else
                 {
+                    reader.get(location);
+                    if (location.type != 5)
+                        reader.adjustFormId(location.location);
+                    mExtraLocations.push_back(location);
+                }
+
+                break;
+            }
+            case ESM::fourCC("PTDT"):
+            {
+                if (subHdr.dataSize == sizeof(mTarget))
+                {
                     reader.get(mTarget); // TES4
-                    if (mLocation.type != 2)
+                    if (mTarget.type != 2)
                         reader.adjustFormId(mTarget.target);
                 }
+                else if (subHdr.dataSize == 16)
+                {
+                    struct RawFo3Ptdt
+                    {
+                        std::int32_t type;
+                        ESM::FormId32 target;
+                        std::int32_t distance;
+                        float unknown;
+                    };
+
+                    RawFo3Ptdt data{};
+                    reader.get(data);
+                    mTarget.type = data.type;
+                    mTarget.target = data.target;
+                    mTarget.distance = data.distance;
+                    mFo3TargetUnknown = data.unknown;
+                    if (mTarget.type != 2)
+                        reader.adjustFormId(mTarget.target);
+                }
+                else
+                    reader.skipSubRecordData(); // FIXME: FO3
+
+                break;
+            }
+            case ESM::fourCC("PTD2"):
+            {
+                PTDT target{};
+                float unknown = 0.f;
+                if (subHdr.dataSize == sizeof(target))
+                {
+                    reader.get(target);
+                    if (target.type != 2)
+                        reader.adjustFormId(target.target);
+                    mExtraTargets.push_back(target);
+                    mExtraTargetUnknowns.push_back(unknown);
+                }
+                else if (subHdr.dataSize == 16)
+                {
+                    struct RawFo3Ptdt
+                    {
+                        std::int32_t type;
+                        ESM::FormId32 target;
+                        std::int32_t distance;
+                        float unknown;
+                    };
+
+                    RawFo3Ptdt data{};
+                    reader.get(data);
+                    target.type = data.type;
+                    target.target = data.target;
+                    target.distance = data.distance;
+                    unknown = data.unknown;
+                    if (target.type != 2)
+                        reader.adjustFormId(target.target);
+                    mExtraTargets.push_back(target);
+                    mExtraTargetUnknowns.push_back(unknown);
+                }
+                else
+                    reader.skipSubRecordData();
 
                 break;
             }
@@ -123,10 +222,6 @@ void ESM4::AIPackage::load(ESM4::Reader& reader)
             case ESM::fourCC("SCTX"): // FO3
             case ESM::fourCC("SCDA"): // FO3
             case ESM::fourCC("SCRO"): // FO3
-            case ESM::fourCC("IDLA"): // FO3
-            case ESM::fourCC("IDLC"): // FO3
-            case ESM::fourCC("IDLF"): // FO3
-            case ESM::fourCC("IDLT"): // FO3
             case ESM::fourCC("PKDD"): // FO3
             case ESM::fourCC("PKD2"): // FO3
             case ESM::fourCC("PKPT"): // FO3
@@ -135,8 +230,6 @@ void ESM4::AIPackage::load(ESM4::Reader& reader)
             case ESM::fourCC("PKAM"): // FO3
             case ESM::fourCC("PUID"): // FO3
             case ESM::fourCC("PKW3"): // FO3
-            case ESM::fourCC("PTD2"): // FO3
-            case ESM::fourCC("PLD2"): // FO3
             case ESM::fourCC("PKFD"): // FO3
             case ESM::fourCC("SLSD"): // FO3
             case ESM::fourCC("SCVR"): // FO3
@@ -163,8 +256,61 @@ void ESM4::AIPackage::load(ESM4::Reader& reader)
             case ESM::fourCC("TPIC"): // TES5
                 reader.skipSubRecordData();
                 break;
+            case ESM::fourCC("IDLF"): // FO3/FONV
+                if (subHdr.dataSize == 1)
+                    reader.get(mIdleFlags);
+                else if (subHdr.dataSize == 4)
+                {
+                    std::uint32_t flags = 0;
+                    reader.get(flags);
+                    mIdleFlags = static_cast<std::uint8_t>(flags & 0xff);
+                }
+                else
+                    reader.skipSubRecordData();
+                break;
+            case ESM::fourCC("IDLC"): // FO3/FONV
+                if (subHdr.dataSize == 1)
+                {
+                    std::uint8_t count = 0;
+                    reader.get(count);
+                    mIdleCount = count;
+                }
+                else if (subHdr.dataSize == 4)
+                    reader.get(mIdleCount);
+                else
+                    reader.skipSubRecordData();
+                break;
+            case ESM::fourCC("IDLT"): // FO3/FONV
+                if (subHdr.dataSize == sizeof(mIdleTimer))
+                    reader.get(mIdleTimer);
+                else
+                    reader.skipSubRecordData();
+                break;
+            case ESM::fourCC("IDLA"): // FO3/FONV
+            {
+                if (subHdr.dataSize % sizeof(ESM::FormId32) != 0)
+                {
+                    reader.skipSubRecordData();
+                    break;
+                }
+
+                const std::size_t idleCount = subHdr.dataSize / sizeof(ESM::FormId32);
+                mIdleAnim.resize(idleCount);
+                for (ESM::FormId& value : mIdleAnim)
+                    reader.getFormId(value);
+                break;
+            }
             default:
+            {
+                const bool isFo3OrFonv = reader.esmVersion() == ESM::VER_094 || reader.esmVersion() == ESM::VER_132
+                    || reader.esmVersion() == ESM::VER_133 || reader.esmVersion() == ESM::VER_134;
+                if (isFo3OrFonv)
+                {
+                    reader.skipSubRecordData();
+                    break;
+                }
                 throw std::runtime_error("ESM4::PACK::load - Unknown subrecord " + ESM::printName(subHdr.typeId));
+            }
         }
     }
 }

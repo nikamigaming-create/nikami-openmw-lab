@@ -31,6 +31,7 @@ namespace MWGui
 
     void VideoWidget::playVideo(const std::string& video)
     {
+        Log(Debug::Info) << "FNV/ESM4 proof: playing movie \"" << video << "\"";
         mPlayer->setAudioFactory(new MWSound::MovieAudioFactory());
 
         Files::IStreamPtr videoStream;

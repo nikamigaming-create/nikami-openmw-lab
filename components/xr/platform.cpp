@@ -1,3 +1,10 @@
+#ifdef _WIN32
+#ifdef NOGDI
+#undef NOGDI
+#endif
+#include <Windows.h>
+#endif
+
 #include <SDL2/SDL_syswm.h>
 #include <components/misc/strings/algorithm.hpp>
 #include <components/misc/strings/lower.hpp>
@@ -12,11 +19,8 @@
 
 // The OpenXR SDK's platform headers assume we've included platform headers
 #ifdef _WIN32
-#ifdef NOGDI
-#undef NOGDI
-#endif
-#include <Windows.h>
 #include <objbase.h>
+#include <GL/gl.h>
 
 #ifdef XR_USE_GRAPHICS_API_D3D11
 #include <d3d11_1.h>

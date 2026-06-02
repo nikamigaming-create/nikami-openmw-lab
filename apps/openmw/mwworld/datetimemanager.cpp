@@ -1,8 +1,12 @@
 #include "datetimemanager.hpp"
 
+#include <sstream>
+
+#include <components/debug/debuglog.hpp>
 #include <components/l10n/manager.hpp>
 
 #include "../mwbase/environment.hpp"
+#include "../mwbase/inputmanager.hpp"
 #include "../mwbase/soundmanager.hpp"
 #include "../mwbase/statemanager.hpp"
 #include "../mwbase/windowmanager.hpp"
@@ -256,7 +260,43 @@ namespace MWWorld
     {
         auto stateManager = MWBase::Environment::get().getStateManager();
         auto wm = MWBase::Environment::get().getWindowManager();
-        mPaused = !mPausedTags.empty() || wm->isConsoleMode() || wm->isPostProcessorHudVisible()
-            || wm->isInteractiveMessageBoxActive() || stateManager->getState() == MWBase::StateManager::State_NoGame;
+        const bool hasPauseTags = !mPausedTags.empty();
+        const bool consoleMode = wm->isConsoleMode();
+        const bool postProcessorHud = wm->isPostProcessorHudVisible();
+        const bool interactiveMessageBox = wm->isInteractiveMessageBoxActive();
+        const auto state = stateManager->getState();
+        const bool noGame = state == MWBase::StateManager::State_NoGame;
+        const bool paused = hasPauseTags || consoleMode || postProcessorHud || interactiveMessageBox || noGame;
+
+        static bool firstReport = true;
+        if (firstReport || paused != mPaused)
+        {
+            std::ostringstream tags;
+            bool firstTag = true;
+            for (const std::string& tag : mPausedTags)
+            {
+                if (!firstTag)
+                    tags << ',';
+                tags << tag;
+                firstTag = false;
+            }
+
+            Log(Debug::Info) << "FNV/ESM4 diag: pause state " << (paused ? "paused" : "running")
+                             << " tags='" << tags.str() << "' console=" << consoleMode
+                             << " postProcessorHud=" << postProcessorHud << " interactiveMessageBox="
+                             << interactiveMessageBox << " state=" << static_cast<int>(state)
+                             << " simScale=" << mSimulationTimeScale << " gameTimeScale=" << mGameTimeScale
+                             << " controlsDisabled="
+                             << MWBase::Environment::get().getInputManager()->controlsDisabled()
+                             << " playercontrols="
+                             << MWBase::Environment::get().getInputManager()->getControlSwitch("playercontrols")
+                             << " playerlooking="
+                             << MWBase::Environment::get().getInputManager()->getControlSwitch("playerlooking")
+                             << " playerfighting="
+                             << MWBase::Environment::get().getInputManager()->getControlSwitch("playerfighting");
+            firstReport = false;
+        }
+
+        mPaused = paused;
     }
 }

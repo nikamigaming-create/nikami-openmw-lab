@@ -1,8 +1,11 @@
 #ifndef COMPONENTS_NIFOSG_CONTROLLER_H
 #define COMPONENTS_NIFOSG_CONTROLLER_H
 
+#include <limits>
+#include <optional>
 #include <set>
 #include <type_traits>
+#include <vector>
 
 #include <osg/Texture2D>
 
@@ -200,6 +203,8 @@ namespace NifOsg
 
     public:
         ControllerFunction(const Nif::NiTimeController* ctrl);
+        ControllerFunction(float frequency, float phase, float startTime, float stopTime,
+            Nif::NiTimeController::ExtrapolationMode mode);
 
         float calculate(float value) const override;
 
@@ -238,6 +243,9 @@ namespace NifOsg
         KeyframeController();
         KeyframeController(const KeyframeController& copy, const osg::CopyOp& copyop);
         KeyframeController(const Nif::NiKeyframeController* keyctrl);
+        KeyframeController(const Nif::NiTransformInterpolator* interp);
+        KeyframeController(const Nif::NiBSplineTransformInterpolator* interp);
+        KeyframeController(const Nif::NiBlendTransformInterpolator* interp);
 
         META_Object(NifOsg, KeyframeController)
 
@@ -249,6 +257,9 @@ namespace NifOsg
         void operator()(NifOsg::MatrixTransform*, osg::NodeVisitor*);
 
     private:
+        void initFromDefaultTransform(const Nif::NiQuatTransform& transform);
+        bool initFromInterpolator(const Nif::NiInterpolator* interp);
+
         QuaternionInterpolator mRotations;
 
         FloatInterpolator mXRotations;
@@ -259,6 +270,30 @@ namespace NifOsg
         FloatInterpolator mScales;
 
         Nif::NiKeyframeData::AxisOrder mAxisOrder{ Nif::NiKeyframeData::AxisOrder::Order_XYZ };
+
+    public:
+        struct BSplineTransform
+        {
+            float mStartTime = 0.f;
+            float mStopTime = 0.f;
+            Nif::NiQuatTransform mDefaultValue;
+            std::vector<float> mFloatControlPoints;
+            std::vector<int16_t> mCompactControlPoints;
+            uint32_t mNumControlPoints = 0;
+            uint32_t mTranslationHandle = std::numeric_limits<uint32_t>::max();
+            uint32_t mRotationHandle = std::numeric_limits<uint32_t>::max();
+            uint32_t mScaleHandle = std::numeric_limits<uint32_t>::max();
+            bool mCompressed = false;
+            float mTranslationOffset = 0.f;
+            float mTranslationHalfRange = 1.f;
+            float mRotationOffset = 0.f;
+            float mRotationHalfRange = 1.f;
+            float mScaleOffset = 0.f;
+            float mScaleHalfRange = 1.f;
+        };
+
+    private:
+        std::optional<BSplineTransform> mBSplineTransform;
 
         osg::Quat getXYZRotation(float time) const;
     };
@@ -284,6 +319,24 @@ namespace NifOsg
         FloatInterpolator mUScale;
         FloatInterpolator mVScale;
         std::set<unsigned int> mTextureUnits;
+    };
+
+    class TextureTransformController : public SceneUtil::StateSetUpdater, public SceneUtil::Controller
+    {
+    public:
+        TextureTransformController() = default;
+        TextureTransformController(const TextureTransformController&, const osg::CopyOp&);
+        TextureTransformController(const Nif::NiTextureTransformController* ctrl, unsigned int textureUnit);
+
+        META_Object(NifOsg, TextureTransformController)
+
+        void setDefaults(osg::StateSet* stateset) override;
+        void apply(osg::StateSet* stateset, osg::NodeVisitor* nv) override;
+
+    private:
+        FloatInterpolator mData;
+        unsigned int mTextureUnit = 0;
+        uint32_t mTransformMember = 0;
     };
 
     class VisController : public SceneUtil::NodeCallback<VisController>, public SceneUtil::Controller
@@ -359,6 +412,25 @@ namespace NifOsg
             Nif::NiMaterialColorController::TargetColor::Ambient
         };
         osg::ref_ptr<const osg::Material> mBaseMaterial;
+    };
+
+    class MaterialEmittanceMultController : public SceneUtil::StateSetUpdater, public SceneUtil::Controller
+    {
+    public:
+        MaterialEmittanceMultController(const Nif::NiFloatInterpController* ctrl, const osg::Material* baseMaterial);
+        MaterialEmittanceMultController();
+        MaterialEmittanceMultController(const MaterialEmittanceMultController& copy, const osg::CopyOp& copyop);
+
+        META_Object(NifOsg, MaterialEmittanceMultController)
+
+        void setDefaults(osg::StateSet* stateset) override;
+
+        void apply(osg::StateSet* stateset, osg::NodeVisitor* nv) override;
+
+    private:
+        FloatInterpolator mData;
+        osg::ref_ptr<const osg::Material> mBaseMaterial;
+        osg::Vec4f mBaseEmission;
     };
 
     class FlipController : public SceneUtil::StateSetUpdater, public SceneUtil::Controller

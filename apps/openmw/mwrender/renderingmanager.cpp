@@ -2,6 +2,7 @@
 
 #include <cstdlib>
 #include <limits>
+#include <string_view>
 
 #include <osg/ClipControl>
 #include <osg/ComputeBoundsVisitor>
@@ -45,12 +46,15 @@
 #include <components/sceneutil/writescene.hpp>
 
 #include <components/misc/constants.hpp>
+#include <components/misc/strings/algorithm.hpp>
 
 #include <components/terrain/quadtreeworld.hpp>
 #include <components/terrain/terraingrid.hpp>
 
 #include <components/esm3/loadcell.hpp>
+#include <components/esm4/loadarmo.hpp>
 #include <components/esm4/loadcell.hpp>
+#include <components/esm4/loadnpc.hpp>
 
 #include <components/debug/debugdraw.hpp>
 #include <components/detournavigator/navigator.hpp>
@@ -58,7 +62,9 @@
 
 #include "../mwworld/cellstore.hpp"
 #include "../mwworld/class.hpp"
+#include "../mwworld/esmstore.hpp"
 #include "../mwworld/groundcoverstore.hpp"
+#include "../mwworld/livecellref.hpp"
 #include "../mwworld/scene.hpp"
 
 #include "../mwgui/postprocessorhud.hpp"
@@ -69,8 +75,11 @@
 #include "../mwbase/windowmanager.hpp"
 #include "../mwbase/world.hpp"
 
+#include "../mwclass/esm4npc.hpp"
+
 #include "actorspaths.hpp"
 #include "camera.hpp"
+#include "esm4npcanimation.hpp"
 #include "effectmanager.hpp"
 #include "fogmanager.hpp"
 #include "groundcover.hpp"
@@ -97,6 +106,72 @@
 //## VR_PATCH END
 namespace MWRender
 {
+    namespace
+    {
+        const ESM4::Npc* findFalloutPlayerVisualRecord()
+        {
+            const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
+            if (store == nullptr)
+                return nullptr;
+
+            const char* env = std::getenv("OPENMW_FNV_PLAYER_NPC");
+            const std::string_view wanted = env != nullptr && *env != '\0' ? std::string_view(env) : "Player";
+            const ESM4::Npc* fallback = nullptr;
+
+            for (const ESM4::Npc& npc : store->get<ESM4::Npc>())
+            {
+                if (!npc.mIsFONV)
+                    continue;
+                if (Misc::StringUtils::ciEqual(npc.mEditorId, wanted))
+                    return &npc;
+                if (fallback == nullptr && Misc::StringUtils::ciEqual(npc.mEditorId, "Player"))
+                    fallback = &npc;
+            }
+
+            return fallback;
+        }
+
+        const ESM4::Armor* findFalloutArmorByEditorId(const std::string_view editorId)
+        {
+            const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
+            if (store == nullptr || editorId.empty())
+                return nullptr;
+
+            for (const ESM4::Armor& armor : store->get<ESM4::Armor>())
+            {
+                if (Misc::StringUtils::ciEqual(armor.mEditorId, editorId))
+                    return &armor;
+            }
+
+            return nullptr;
+        }
+
+        void applyFalloutPlayerProxyProofOutfit(const MWWorld::Ptr& visualPtr, const char* context)
+        {
+            const char* outfitEnv = std::getenv("OPENMW_FNV_PLAYER_OUTFIT");
+            const bool useProofDefault = std::getenv("OPENMW_FNV_BOOTSTRAP_LEVEL1_COURIER") != nullptr;
+            if ((outfitEnv == nullptr || *outfitEnv == '\0') && !useProofDefault)
+                return;
+
+            const std::string_view outfitEditorId
+                = outfitEnv != nullptr && *outfitEnv != '\0' ? std::string_view(outfitEnv) : "OutfitRepublican02";
+            const ESM4::Armor* armor = findFalloutArmorByEditorId(outfitEditorId);
+            if (armor == nullptr)
+            {
+                Log(Debug::Warning) << "FNV/ESM4 proof: " << context << " player proxy outfit "
+                                    << outfitEditorId << " not found";
+                return;
+            }
+
+            const bool added = MWClass::ESM4Npc::addEquippedArmor(visualPtr, armor);
+            Log(Debug::Info) << "FNV/ESM4 proof: " << context << " player proxy outfit "
+                             << armor->mEditorId << " model="
+                             << MWClass::ESM4Npc::chooseEquipmentModel(
+                                    armor, MWClass::ESM4Npc::isFemale(visualPtr))
+                             << " added=" << added;
+        }
+    }
+
     class PerViewUniformStateUpdater final : public SceneUtil::StateSetUpdater
     {
     public:
@@ -931,6 +1006,14 @@ namespace MWRender
             float windSpeed = mSky->getBaseWindSpeed();
             mSharedUniformStateUpdater->setWindSpeed(windSpeed);
             mSharedUniformStateUpdater->setPlayerPos(playerPos);
+
+            if (mFalloutPlayerVisualAnimation)
+            {
+                if (!mFalloutPlayerVisualAnimation->isPlaying("idle"))
+                    mFalloutPlayerVisualAnimation->play("idle", Animation::AnimPriority(1), BlendMask_All, false, 1.f,
+                        "start", "stop", 0.f, 0, true);
+                mFalloutPlayerVisualAnimation->runAnimation(dt);
+            }
         }
 
         updateNavMesh();
@@ -1374,6 +1457,9 @@ namespace MWRender
 
     void RenderingManager::renderPlayer(const MWWorld::Ptr& player)
     {
+        mFalloutPlayerVisualAnimation = nullptr;
+        mFalloutPlayerVisualRef.reset();
+
 //## VR_PATCH BEGIN
         if(VR::getVR())
         {
@@ -1389,8 +1475,55 @@ namespace MWRender
         }
 //## VR_PATCH END
 
+        if (const ESM4::Npc* falloutPlayerVisual = findFalloutPlayerVisualRecord())
+        {
+            ESM::CellRef proxyRef;
+            proxyRef.blank();
+            proxyRef.mRefID = ESM::RefId::stringRefId("Player");
+            mFalloutPlayerVisualRef = std::make_unique<MWWorld::LiveCellRef<ESM4::Npc>>(proxyRef, falloutPlayerVisual);
+            mFalloutPlayerVisualRef->mData.setPosition(player.getRefData().getPosition());
+            MWWorld::Ptr visualPtr(mFalloutPlayerVisualRef.get(), player.getCell());
+            applyFalloutPlayerProxyProofOutfit(visualPtr, "world");
+
+            Log(Debug::Info) << "FNV/ESM4 diag: using Fallout NPC player visual proxy "
+                             << falloutPlayerVisual->mEditorId << " (" << ESM::RefId(falloutPlayerVisual->mId)
+                             << ") on player root; hiding legacy ESM3 body";
+
+            mFalloutPlayerVisualAnimation = new ESM4NpcAnimation(
+                visualPtr, osg::ref_ptr<osg::Group>(player.getRefData().getBaseNode()), mResourceSystem);
+            if (osg::Group* legacyPlayerRoot = mPlayerAnimation->getObjectRoot())
+                legacyPlayerRoot->setNodeMask(0);
+            if (osg::Group* falloutRoot = mFalloutPlayerVisualAnimation->getObjectRoot())
+                falloutRoot->setNodeMask(Mask_Player);
+        }
+
+        if (std::getenv("OPENMW_PROOF_HIDE_PLAYER_VISUAL") != nullptr
+            || std::getenv("OPENMW_FNV_HIDE_PLAYER_PROOF_PARTS") != nullptr)
+        {
+            if (osg::Group* legacyPlayerRoot = mPlayerAnimation->getObjectRoot())
+                legacyPlayerRoot->setNodeMask(0);
+            if (mFalloutPlayerVisualAnimation)
+            {
+                if (osg::Group* falloutRoot = mFalloutPlayerVisualAnimation->getObjectRoot())
+                    falloutRoot->setNodeMask(0);
+            }
+            Log(Debug::Info) << "FNV/ESM4 proof: hidden player render roots for clean proof capture";
+        }
+
         mCamera->setAnimation(mPlayerAnimation.get());
         mCamera->attachTo(player);
+
+        if (std::getenv("OPENMW_PROOF_HIDE_PLAYER_VISUAL") != nullptr)
+        {
+            if (osg::Group* legacyPlayerRoot = mPlayerAnimation->getObjectRoot())
+                legacyPlayerRoot->setNodeMask(0);
+            if (mFalloutPlayerVisualAnimation)
+            {
+                if (osg::Group* falloutRoot = mFalloutPlayerVisualAnimation->getObjectRoot())
+                    falloutRoot->setNodeMask(0);
+            }
+            Log(Debug::Info) << "FNV/ESM4 proof: hidden player render roots after camera attachment";
+        }
     }
 
     void RenderingManager::rebuildPtr(const MWWorld::Ptr& ptr)

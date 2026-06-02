@@ -247,6 +247,7 @@ osg::Group {
         static constexpr std::array sParams = {
             ShaderPrefixParams{ static_cast<unsigned int>(Nif::BSShaderType::ShaderType_Default), "bs/default" },
             ShaderPrefixParams{ static_cast<unsigned int>(Nif::BSShaderType::ShaderType_NoLighting), "bs/nolighting" },
+            ShaderPrefixParams{ static_cast<unsigned int>(Nif::BSShaderType::ShaderType_Skin), "bs/default" },
             ShaderPrefixParams{ static_cast<unsigned int>(Nif::BSShaderType::ShaderType_Tile), "bs/default" },
             ShaderPrefixParams{ std::numeric_limits<unsigned int>::max(), "bs/default" },
         };

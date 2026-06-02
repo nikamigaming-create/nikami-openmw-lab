@@ -29,6 +29,7 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
 
 #include <components/esm/defs.hpp>
 #include <components/esm/formid.hpp>
@@ -73,6 +74,12 @@ namespace ESM4
             }
         };
 
+        struct SoundRef
+        {
+            std::uint32_t mType = 0;
+            ESM::FormId mSound;
+        };
+
         ESM::FormId mId; // from the header
         std::uint32_t mFlags; // from the header, see enum type RecordFlag for details
 
@@ -82,6 +89,17 @@ namespace ESM4
         std::string mText;
         std::string mIcon;
         std::string mMiniIcon;
+
+        // FONV specific
+        std::string mModModel[7];
+        ESM::FormId mModItem[3];
+        ESM::FormId mAmmo;
+        ESM::FormId mRepairList;
+        ESM::FormId mEquipType;
+        ESM::FormId mImpactDataSet;
+        ESM::FormId mWorldModel;
+        ESM::FormId mModdedWeapon[7];
+        std::vector<SoundRef> mSoundRefs;
 
         ESM::FormId mPickUpSound;
         ESM::FormId mDropSound;

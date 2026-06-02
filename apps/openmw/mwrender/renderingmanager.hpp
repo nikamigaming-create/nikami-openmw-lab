@@ -48,6 +48,11 @@ namespace ESM
     using RefNum = FormId;
 }
 
+namespace ESM4
+{
+    struct Npc;
+}
+
 namespace Terrain
 {
     class World;
@@ -77,6 +82,8 @@ namespace MWWorld
 {
     class GroundcoverStore;
     class Cell;
+    template <typename X>
+    struct LiveCellRef;
 }
 
 namespace Debug
@@ -95,6 +102,7 @@ namespace MWRender
     class ScreenshotManager;
     class FogManager;
     class SkyManager;
+    class Animation;
     class NpcAnimation;
     class Pathgrid;
     class Camera;
@@ -357,6 +365,8 @@ namespace MWRender
         std::unique_ptr<EffectManager> mEffectManager;
         std::unique_ptr<SceneUtil::ShadowManager> mShadowManager;
         osg::ref_ptr<PostProcessor> mPostProcessor;
+        std::unique_ptr<MWWorld::LiveCellRef<ESM4::Npc>> mFalloutPlayerVisualRef;
+        osg::ref_ptr<Animation> mFalloutPlayerVisualAnimation;
         osg::ref_ptr<NpcAnimation> mPlayerAnimation;
         osg::ref_ptr<SceneUtil::PositionAttitudeTransform> mPlayerNode;
         std::unique_ptr<Camera> mCamera;

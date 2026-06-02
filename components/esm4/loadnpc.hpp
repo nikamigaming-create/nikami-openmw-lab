@@ -164,6 +164,16 @@ namespace ESM4
             std::uint8_t custom; // alpha?
         };
 
+        struct TintLayer
+        {
+            std::uint32_t index = 0;
+            float value = 0.f;
+            HairColour color{ 255, 255, 255, 255 };
+            bool hasIndex = false;
+            bool hasValue = false;
+            bool hasColor = false;
+        };
+
         struct Data
         {
             SkillValues skills;
@@ -174,10 +184,10 @@ namespace ESM4
 #pragma pack(pop)
 
         ESM::FormId mId; // from the header
-        std::uint32_t mFlags; // from the header, see enum type RecordFlag for details
+        std::uint32_t mFlags = 0; // from the header, see enum type RecordFlag for details
 
-        bool mIsTES4;
-        bool mIsFONV;
+        bool mIsTES4 = false;
+        bool mIsFONV = false;
         bool mIsFO4 = false;
 
         std::string mEditorId;
@@ -191,8 +201,8 @@ namespace ESM4
 
         std::vector<ESM::FormId> mHeadParts; // FO3/FONV/TES5
 
-        float mHairLength;
-        HairColour mHairColour; // TES4/FO3/FONV
+        float mHairLength = 0.f;
+        HairColour mHairColour{ 255, 255, 255, 255 }; // TES4/FO3/FONV
         ESM::FormId mHairColourId; // TES5
         ESM::FormId mBeardColourId; // FO4
 
@@ -200,18 +210,18 @@ namespace ESM4
         std::vector<ESM::FormId> mSpell;
         ESM::FormId mScriptId;
 
-        AIData mAIData;
+        AIData mAIData{};
         std::vector<ESM::FormId> mAIPackages; // seems to be in priority order, 0 = highest priority
-        ActorBaseConfig mBaseConfig; // union
-        ActorFaction mFaction;
-        Data mData;
+        ActorBaseConfig mBaseConfig{}; // union
+        ActorFaction mFaction{};
+        Data mData{};
         ESM::FormId mCombatStyle;
         ESM::FormId mSoundBase;
         ESM::FormId mSound;
-        std::uint8_t mSoundChance;
-        float mFootWeight;
+        std::uint8_t mSoundChance = 0;
+        float mFootWeight = 0.f;
 
-        float mBoundRadius;
+        float mBoundRadius = 0.f;
         std::vector<std::string> mKf; // filenames only, get directory path from mModel
 
         std::vector<InventoryItem> mInventory;
@@ -226,7 +236,8 @@ namespace ESM4
         std::vector<float> mSymShapeModeCoefficients; // size 0 or 50
         std::vector<float> mAsymShapeModeCoefficients; // size 0 or 30
         std::vector<float> mSymTextureModeCoefficients; // size 0 or 50
-        std::int16_t mFgRace;
+        std::vector<TintLayer> mTintLayers;
+        std::int16_t mFgRace = 0;
 
         void load(ESM4::Reader& reader);
         // void save(ESM4::Writer& writer) const;

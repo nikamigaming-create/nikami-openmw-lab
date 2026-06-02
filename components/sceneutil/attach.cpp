@@ -1,6 +1,8 @@
 #include "attach.hpp"
 
+#include <cstdlib>
 #include <stdexcept>
+#include <vector>
 
 #include <osg/FrontFace>
 #include <osg/Geometry>
@@ -45,6 +47,24 @@ namespace SceneUtil
             if (!isRig)
                 return;
 
+            // With an empty filter we want the skinned drawable itself, not the whole attached part graph. Fallout
+            // body and outfit NIFs often include their own duplicate Bip01 hierarchy; copying that hierarchy onto the
+            // actor skeleton keeps individual skinning sane but tears the assembled actor apart.
+            if (mFilter.empty())
+            {
+                CopyItem item;
+                item.mNode = node;
+                for (osg::Node* parent : getNodePath())
+                {
+                    if (parent != nullptr && (parent->getStateSet() != nullptr || parent->getUserDataContainer() != nullptr
+                            || dynamic_cast<const osg::MatrixTransform*>(parent) != nullptr
+                            || dynamic_cast<const osg::PositionAttitudeTransform*>(parent) != nullptr))
+                        item.mStatePath.emplace_back(parent);
+                }
+                mToCopy.emplace_back(std::move(item));
+                return;
+            }
+
             for (auto it = getNodePath().rbegin() + 1; it != getNodePath().rend(); ++it)
             {
                 const osg::Node* parent = *it;
@@ -52,19 +72,74 @@ namespace SceneUtil
                     break;
                 node = parent;
             }
-            mToCopy.emplace(node);
+            CopyItem item;
+            item.mNode = node;
+            mToCopy.emplace_back(std::move(item));
         }
 
         void doCopy(Resource::SceneManager* sceneManager)
         {
-            for (const osg::ref_ptr<const osg::Node>& node : mToCopy)
+            for (const CopyItem& item : mToCopy)
             {
-                mParent->addChild(sceneManager->getInstance(node));
+                osg::ref_ptr<osg::Node> instance = sceneManager->getInstance(item.mNode);
+                if (item.mStatePath.empty())
+                {
+                    mParent->addChild(instance);
+                    continue;
+                }
+
+                osg::Group* parent = mParent.get();
+                for (const osg::ref_ptr<const osg::Node>& stateSource : item.mStatePath)
+                {
+                    osg::ref_ptr<osg::Group> stateWrapper;
+                    if (const osg::MatrixTransform* matrix = dynamic_cast<const osg::MatrixTransform*>(stateSource.get()))
+                    {
+                        osg::ref_ptr<osg::MatrixTransform> wrapper = new osg::MatrixTransform;
+                        wrapper->setMatrix(matrix->getMatrix());
+                        stateWrapper = wrapper;
+                    }
+                    else if (const osg::PositionAttitudeTransform* pat
+                        = dynamic_cast<const osg::PositionAttitudeTransform*>(stateSource.get()))
+                    {
+                        osg::ref_ptr<osg::PositionAttitudeTransform> wrapper = new osg::PositionAttitudeTransform;
+                        wrapper->setPosition(pat->getPosition());
+                        wrapper->setAttitude(pat->getAttitude());
+                        wrapper->setScale(pat->getScale());
+                        wrapper->setPivotPoint(pat->getPivotPoint());
+                        stateWrapper = wrapper;
+                    }
+                    else
+                        stateWrapper = new osg::Group;
+                    stateWrapper->setName(stateSource->getName());
+                    if (stateSource->getStateSet() != nullptr)
+                        stateWrapper->setStateSet(osg::clone(stateSource->getStateSet(), osg::CopyOp::SHALLOW_COPY));
+                    mergeUserDataInto(stateSource->getUserDataContainer(), stateWrapper);
+                    parent->addChild(stateWrapper);
+                    parent = stateWrapper.get();
+                }
+                parent->addChild(instance);
             }
             mToCopy.clear();
         }
 
+        bool hasRiggedNodes() const { return !mToCopy.empty(); }
+
     private:
+        static void mergeUserDataInto(const osg::UserDataContainer* source, osg::Object* target)
+        {
+            if (!source)
+                return;
+
+            if (!target->getUserDataContainer())
+                target->setUserDataContainer(osg::clone(source, osg::CopyOp::SHALLOW_COPY));
+            else
+            {
+                for (unsigned int i = 0; i < source->getNumUserObjects(); ++i)
+                    target->getUserDataContainer()->addUserObject(
+                        osg::clone(source->getUserObject(i), osg::CopyOp::SHALLOW_COPY));
+            }
+        }
+
         bool filterMatches(std::string_view name) const
         {
             if (Misc::StringUtils::ciStartsWith(name, mFilter))
@@ -75,8 +150,12 @@ namespace SceneUtil
             return false;
         }
 
-        using NodeSet = std::set<osg::ref_ptr<const osg::Node>>;
-        NodeSet mToCopy;
+        struct CopyItem
+        {
+            osg::ref_ptr<const osg::Node> mNode;
+            std::vector<osg::ref_ptr<const osg::Node>> mStatePath;
+        };
+        std::vector<CopyItem> mToCopy;
 
         osg::ref_ptr<osg::Group> mParent;
         std::string_view mFilter;
@@ -114,12 +193,12 @@ namespace SceneUtil
     osg::ref_ptr<osg::Node> attach(osg::ref_ptr<const osg::Node> toAttach, osg::Node* master, std::string_view filter,
         osg::Group* attachNode, Resource::SceneManager* sceneManager, const osg::Quat* attitude)
     {
-        if (dynamic_cast<const SceneUtil::Skeleton*>(toAttach.get()))
-        {
-            osg::ref_ptr<osg::Group> handle = new osg::Group;
+        osg::ref_ptr<osg::Group> handle = new osg::Group;
+        CopyRigVisitor copyVisitor(handle, filter);
+        const_cast<osg::Node*>(toAttach.get())->accept(copyVisitor);
 
-            CopyRigVisitor copyVisitor(handle, filter);
-            const_cast<osg::Node*>(toAttach.get())->accept(copyVisitor);
+        if (dynamic_cast<const SceneUtil::Skeleton*>(toAttach.get()) || copyVisitor.hasRiggedNodes())
+        {
             copyVisitor.doCopy(sceneManager);
             // add a ref to the original template to hint to the cache that it is still being used and should be kept in
             // cache.
@@ -157,6 +236,8 @@ namespace SceneUtil
 
                 trans = new osg::PositionAttitudeTransform;
                 trans->setPosition(boneOffset->getMatrix().getTrans());
+                if (std::getenv("OPENMW_FNV_APPLY_BONEOFFSET_ROTATION") != nullptr)
+                    trans->setAttitude(boneOffset->getMatrix().getRotate());
 
                 // Now that we used it, get rid of the redundant node.
                 if (boneOffset->getNumChildren() == 0 && boneOffset->getNumParents() == 1)
@@ -182,7 +263,7 @@ namespace SceneUtil
             {
                 if (!trans)
                     trans = new osg::PositionAttitudeTransform;
-                trans->setAttitude(*attitude);
+                trans->setAttitude(trans->getAttitude() * *attitude);
             }
 
             if (trans)

@@ -232,6 +232,8 @@ namespace Resource
 
         void setWeatherParticleOcclusion(bool value) { mWeatherParticleOcclusion = value; }
 
+        void applyShaders(osg::Node& node, const std::string& shaderPrefix = "objects");
+
     private:
         osg::ref_ptr<Shader::ShaderVisitor> createShaderVisitor(const std::string& shaderPrefix = "objects");
         osg::ref_ptr<osg::Node> loadErrorMarker();

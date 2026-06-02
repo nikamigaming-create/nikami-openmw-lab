@@ -1,6 +1,7 @@
 #include "soundmanagerimp.hpp"
 
 #include <algorithm>
+#include <array>
 #include <map>
 #include <numeric>
 #include <sstream>
@@ -101,6 +102,39 @@ namespace MWSound
 
             return volume;
         }
+
+        bool isLegacyMorrowindMusicRequest(VFS::Path::NormalizedView filename)
+        {
+            constexpr std::string_view explorePrefix = "music/explore/";
+            const std::string_view value = filename.value();
+
+            return value == titleMusic.value() || (value.size() >= explorePrefix.size()
+                && value.substr(0, explorePrefix.size()) == explorePrefix);
+        }
+
+        VFS::Path::NormalizedView getNewVegasFallbackMusic(
+            const VFS::Manager& vfs, VFS::Path::NormalizedView requested)
+        {
+            static constexpr std::array tracks = {
+                VFS::Path::NormalizedView("music/loc/desertsettlement/mus_loc_dessttl_day_1low.mp3"),
+                VFS::Path::NormalizedView("music/loc/desertsettlement/mus_loc_dessttl_day_2mid.mp3"),
+                VFS::Path::NormalizedView("music/loc/desertsettlement/mus_loc_dessttl_day_3high.mp3"),
+                VFS::Path::NormalizedView("music/loc/desertsettlement/mus_loc_dessttl_night_1low.mp3"),
+                VFS::Path::NormalizedView("music/loc/desertexploration/mus_loc_desexpl_day_1low.mp3"),
+                VFS::Path::NormalizedView("music/loc/desertexploration/mus_loc_desexpl_night_1low.mp3"),
+            };
+
+            if (!isLegacyMorrowindMusicRequest(requested))
+                return requested;
+
+            for (VFS::Path::NormalizedView track : tracks)
+            {
+                if (vfs.exists(track))
+                    return track;
+            }
+
+            return requested;
+        }
     }
 
     // For combining PlayMode and Type flags
@@ -179,6 +213,7 @@ namespace MWSound
         {
             DecoderPtr decoder = getDecoder();
             decoder->open(Misc::ResourceHelpers::correctSoundPath(voicefile, *decoder->mResourceMgr));
+            Log(Debug::Info) << "FNV/ESM4 sound: loaded voice \"" << voicefile << "\"";
             return decoder;
         }
         catch (std::exception& e)
@@ -241,6 +276,7 @@ namespace MWSound
         }
         if (!played)
             return nullptr;
+        Log(Debug::Info) << "FNV/ESM4 sound: started voice stream";
         return sound;
     }
 
@@ -308,6 +344,14 @@ namespace MWSound
         // Can not interrupt scripted music by built-in playlists
         if (mMusicType == MusicType::MWScript && type != MusicType::MWScript)
             return;
+
+        const VFS::Path::NormalizedView remapped = getNewVegasFallbackMusic(*mVFS, filename);
+        if (remapped != filename)
+        {
+            Log(Debug::Info) << "FNV/ESM4 diag: remapped legacy music \"" << filename << "\" to \"" << remapped
+                             << "\"";
+            filename = remapped;
+        }
 
         mMusicType = type;
         advanceMusic(filename, fade);

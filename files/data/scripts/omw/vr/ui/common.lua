@@ -79,6 +79,14 @@ local layersForArrangement = {
     'DialogueWindow', 'MapWindow', 'SpellWindow', 'InventoryWindow', 'StatsWindow', 'InventoryCompanionWindow', 'Windows'
 }
 
+local pipBoyLayers = {
+    InventoryWindow = true,
+    MapWindow = true,
+    StatsWindow = true,
+    SpellWindow = true,
+    Windows = true,
+}
+
 local function getWindowLayer(window)
     return windowToLayer[window] or 'Windows'
 end
@@ -146,6 +154,41 @@ local function createDerivedSpaces()
         I.vrspaces.actionSpaces.LeftHandAim,
         {
             position = util.vector3(0.0, -0.200, 0.066) * I.vrspaces.unitsPerMeter
+        }
+    )
+
+    I.vrspaces.createDerivedSpace(
+        'PipBoyInventory',
+        I.vrspaces.actionSpaces.LeftHandAim,
+        {
+            position = util.vector3(0.0, -0.235, 0.070) * I.vrspaces.unitsPerMeter
+        }
+    )
+
+    I.vrspaces.createDerivedSpace(
+        'PipBoyStats',
+        I.vrspaces.actionSpaces.LeftHandAim,
+        {
+            position = util.vector3(-0.075, -0.235, 0.060) * I.vrspaces.unitsPerMeter,
+            orientation = util.transform.rotate(math.pi / 18, util.vector3(0, 0, 1))
+        }
+    )
+
+    I.vrspaces.createDerivedSpace(
+        'PipBoyMap',
+        I.vrspaces.actionSpaces.LeftHandAim,
+        {
+            position = util.vector3(0.075, -0.235, 0.060) * I.vrspaces.unitsPerMeter,
+            orientation = util.transform.rotate(-math.pi / 18, util.vector3(0, 0, 1))
+        }
+    )
+
+    I.vrspaces.createDerivedSpace(
+        'PipBoyUtility',
+        I.vrspaces.actionSpaces.LeftHandAim,
+        {
+            position = util.vector3(0.0, -0.255, -0.015) * I.vrspaces.unitsPerMeter,
+            orientation = util.transform.rotate(math.pi / 2, util.vector3(0, 0, 1))
         }
     )
 
@@ -331,7 +374,7 @@ local function registerSettingsGroup()
         name = uiGroupKey,
         permanentStorage = true,
         settings = {
-            boolSetting('ShowTutorials', true),
+            boolSetting('ShowTutorials', false),
         },
     })
 end
@@ -408,6 +451,22 @@ local function setupDefaults(modes)
     layerConfig.Notification = createDefaultConfig(0, false)
     layerConfig.Notification.space = 'DefaultNotification'
     layerConfig.HUD = createDefaultConfig(0, true)
+
+    layerConfig.InventoryWindow.backgroundOpacity = 0.82
+    layerConfig.InventoryWindow.pixelsPerMeter = 2800
+    layerConfig.InventoryWindow.space = 'PipBoyInventory'
+    layerConfig.StatsWindow.backgroundOpacity = 0.78
+    layerConfig.StatsWindow.pixelsPerMeter = 3000
+    layerConfig.StatsWindow.space = 'PipBoyStats'
+    layerConfig.MapWindow.backgroundOpacity = 0.78
+    layerConfig.MapWindow.pixelsPerMeter = 3000
+    layerConfig.MapWindow.space = 'PipBoyMap'
+    layerConfig.SpellWindow.backgroundOpacity = 0.78
+    layerConfig.SpellWindow.pixelsPerMeter = 3000
+    layerConfig.SpellWindow.space = 'PipBoyUtility'
+    layerConfig.Windows.backgroundOpacity = 0.82
+    layerConfig.Windows.pixelsPerMeter = 3000
+    layerConfig.Windows.space = 'PipBoyUtility'
     
     for layer, config in pairs(layerConfig) do
         setLayerConfigIfNotOverridden(layer, config)
@@ -462,7 +521,7 @@ local function updateVisibleLayers()
     visibleLayersForArrangement = {}
 
     for _, layer in ipairs(layersForArrangement) do
-        if vr._isLayerRendering(layer) then
+        if not pipBoyLayers[layer] and vr._isLayerRendering(layer) then
             visibleLayersForArrangement[#visibleLayersForArrangement + 1] = layer
         end
     end

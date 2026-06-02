@@ -7,9 +7,11 @@
 #include <osg/PositionAttitudeTransform>
 
 #include <components/esm3/loadnpc.hpp>
+#include <components/esm4/loadnpc.hpp>
 
 #include <components/resource/resourcesystem.hpp>
 
+#include "../mwworld/livecellref.hpp"
 #include "../mwworld/ptr.hpp"
 
 namespace osg
@@ -25,6 +27,7 @@ namespace MWRender
 {
 
     class NpcAnimation;
+    class Animation;
     class DrawOnceCallback;
     class CharacterPreviewRTTNode;
 
@@ -54,6 +57,7 @@ namespace MWRender
         virtual bool renderHeadOnly() { return false; }
         void setBlendMode();
         virtual void onSetup();
+        virtual osg::ref_ptr<Animation> createAnimation();
 
         osg::ref_ptr<osg::Group> mParent;
         Resource::ResourceSystem* mResourceSystem;
@@ -66,7 +70,7 @@ namespace MWRender
 
         MWWorld::Ptr mCharacter;
 
-        osg::ref_ptr<MWRender::NpcAnimation> mAnimation;
+        osg::ref_ptr<MWRender::Animation> mAnimation;
         osg::ref_ptr<osg::PositionAttitudeTransform> mNode;
         std::string mCurrentAnimGroup;
 
@@ -88,7 +92,9 @@ namespace MWRender
 
     protected:
         osg::ref_ptr<osg::Viewport> mViewport;
+        std::unique_ptr<MWWorld::LiveCellRef<ESM4::Npc>> mFalloutPreviewRef;
 
+        osg::ref_ptr<Animation> createAnimation() override;
         void onSetup() override;
     };
 

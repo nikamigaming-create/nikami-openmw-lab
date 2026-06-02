@@ -1,12 +1,17 @@
 #ifndef GAME_MWCLASS_ESM4BASE_H
 #define GAME_MWCLASS_ESM4BASE_H
 
+#include <memory>
+#include <stdexcept>
+
 #include <components/esm4/inventory.hpp>
+#include <components/esm4/loaddoor.hpp>
 #include <components/esm4/loadstat.hpp>
 #include <components/esm4/loadtree.hpp>
 #include <components/misc/strings/algorithm.hpp>
 
 #include "../mwbase/environment.hpp"
+#include "../mwbase/world.hpp"
 
 #include "../mwgui/tooltips.hpp"
 
@@ -16,6 +21,7 @@
 #include "../mwworld/registeredclass.hpp"
 
 #include "classmodel.hpp"
+#include "door.hpp"
 
 namespace MWClass
 {
@@ -59,6 +65,9 @@ namespace MWClass
         // TODO: Figure out a better way to find markers and LOD meshes
         inline bool isMarkerModel(std::string_view model)
         {
+            const std::size_t slash = model.find_last_of("/\\");
+            if (slash != std::string_view::npos)
+                model.remove_prefix(slash + 1);
             return Misc::StringUtils::ciStartsWith(model, "marker");
         }
         inline bool isLodModel(std::string_view model)
@@ -158,6 +167,67 @@ namespace MWClass
         }
 
         bool hasToolTip(const MWWorld::ConstPtr& ptr) const override { return !getName(ptr).empty(); }
+    };
+
+    class ESM4Door final : public MWWorld::RegisteredClass<ESM4Door, ESM4Base<ESM4::Door>>
+    {
+        friend MWWorld::RegisteredClass<ESM4Door, ESM4Base<ESM4::Door>>;
+
+        ESM4Door()
+            : MWWorld::RegisteredClass<ESM4Door, ESM4Base<ESM4::Door>>(ESM4::Door::sRecordId)
+        {
+        }
+
+        void ensureCustomData(const MWWorld::Ptr& ptr) const
+        {
+            if (!ptr.getRefData().getCustomData())
+                ptr.getRefData().setCustomData(std::make_unique<DoorCustomData>());
+        }
+
+    public:
+        void insertObject(const MWWorld::Ptr& ptr, const std::string& model, const osg::Quat& rotation,
+            MWPhysics::PhysicsSystem& physics) const override
+        {
+            ESM4Base<ESM4::Door>::insertObject(ptr, model, rotation, physics);
+
+            if (ptr.getRefData().getCustomData())
+            {
+                const DoorCustomData& customData = ptr.getRefData().getCustomData()->asDoorCustomData();
+                if (customData.mDoorState != MWWorld::DoorState::Idle)
+                    MWBase::Environment::get().getWorld()->activateDoor(ptr, customData.mDoorState);
+            }
+        }
+
+        bool isDoor() const override { return true; }
+
+        bool useAnim() const override { return true; }
+
+        std::string_view getName(const MWWorld::ConstPtr& ptr) const override { return ptr.get<ESM4::Door>()->mBase->mFullName; }
+
+        MWGui::ToolTipInfo getToolTipInfo(const MWWorld::ConstPtr& ptr, int count) const override
+        {
+            return ESM4Impl::getToolTipInfo(getName(ptr), count);
+        }
+
+        bool hasToolTip(const MWWorld::ConstPtr& ptr) const override { return !getName(ptr).empty(); }
+
+        bool canLock(const MWWorld::ConstPtr& ptr) const override { return true; }
+
+        MWWorld::DoorState getDoorState(const MWWorld::ConstPtr& ptr) const override
+        {
+            if (!ptr.getRefData().getCustomData())
+                return MWWorld::DoorState::Idle;
+            return ptr.getRefData().getCustomData()->asDoorCustomData().mDoorState;
+        }
+
+        void setDoorState(const MWWorld::Ptr& ptr, MWWorld::DoorState state) const override
+        {
+            if (ptr.getCellRef().getTeleport())
+                throw std::runtime_error("load doors can't be moved");
+
+            ensureCustomData(ptr);
+            ptr.getRefData().getCustomData()->asDoorCustomData().mDoorState = state;
+        }
     };
 }
 
