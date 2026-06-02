@@ -967,12 +967,28 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                 }
 
                 const ESM::Position& actorPos = proofActor.getRefData().getPosition();
-                const float offsetX = readProofFloat("OPENMW_PROOF_ACTOR_VIEW_OFFSET_X", 0.f);
-                const float offsetY = readProofFloat("OPENMW_PROOF_ACTOR_VIEW_OFFSET_Y", -220.f);
+                float offsetX = readProofFloat("OPENMW_PROOF_ACTOR_VIEW_OFFSET_X", 0.f);
+                float offsetY = readProofFloat("OPENMW_PROOF_ACTOR_VIEW_OFFSET_Y", -220.f);
                 const float offsetZ = readProofFloat("OPENMW_PROOF_ACTOR_VIEW_OFFSET_Z", 20.f);
                 const float cameraDistance = readProofFloat("OPENMW_PROOF_ACTOR_VIEW_CAMERA_DISTANCE", 0.f);
                 const float cameraPitch = readProofFloat("OPENMW_PROOF_ACTOR_VIEW_PITCH", 0.f);
                 const bool staticDialogueCamera = std::getenv("OPENMW_PROOF_ACTOR_VIEW_STATIC_CAMERA") != nullptr;
+                if (std::getenv("OPENMW_PROOF_ACTOR_VIEW_USE_ACTOR_FACING") != nullptr)
+                {
+                    float frontDistance = readProofFloat("OPENMW_PROOF_ACTOR_VIEW_FRONT_DISTANCE", 0.f);
+                    if (frontDistance <= 0.f)
+                    {
+                        frontDistance = std::sqrt(offsetX * offsetX + offsetY * offsetY);
+                        if (frontDistance <= 0.f)
+                            frontDistance = 220.f;
+                    }
+                    const float actorYaw = actorPos.rot[2];
+                    offsetX = std::sin(actorYaw) * frontDistance;
+                    offsetY = std::cos(actorYaw) * frontDistance;
+                    Log(Debug::Info) << "FNV/ESM4 proof: actor-facing camera offset target=\"" << proofSayActor
+                                     << "\" actorYaw=" << actorYaw << " frontDistance=" << frontDistance
+                                     << " offset=(" << offsetX << "," << offsetY << "," << offsetZ << ")";
+                }
                 MWWorld::Ptr player = mWorld->getPlayerPtr();
                 const osg::Vec3f targetPos(
                     actorPos.pos[0] + offsetX, actorPos.pos[1] + offsetY, actorPos.pos[2] + offsetZ);

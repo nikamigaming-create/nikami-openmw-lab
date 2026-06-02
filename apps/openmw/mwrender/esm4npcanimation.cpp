@@ -272,6 +272,15 @@ namespace MWRender
                 || name.find("hair") != std::string::npos;
         }
 
+        bool isFonvFacialHairHeadPart(const ESM4::HeadPart& part)
+        {
+            if (part.mType == ESM4::HeadPart::Type_FacialHair)
+                return true;
+
+            const std::string name = Misc::StringUtils::lowerCase(part.mEditorId + " " + part.mModel);
+            return name.find("beard") != std::string::npos || name.find("facial") != std::string::npos;
+        }
+
         bool containsAny(std::string_view value, std::initializer_list<std::string_view> needles)
         {
             for (std::string_view needle : needles)
@@ -860,6 +869,38 @@ namespace MWRender
             // FNV RACE head parts are: 0 head, 1 ears, 2 mouth, 3 lower teeth, 4 upper teeth, 5 tongue,
             // 6 left eye, 7 right eye. TES4 has the eye slots shifted by one.
             return index == 6 || index == 7;
+        }
+
+        const char* getFonvRaceHeadPartRole(std::size_t index)
+        {
+            switch (index)
+            {
+                case 0:
+                    return "head";
+                case 1:
+                    return "ears";
+                case 2:
+                    return "mouth";
+                case 3:
+                    return "lowerTeeth";
+                case 4:
+                    return "upperTeeth";
+                case 5:
+                    return "tongue";
+                case 6:
+                    return "leftEye";
+                case 7:
+                    return "rightEye";
+                default:
+                    return "extra";
+            }
+        }
+
+        const char* getFonvFacePartStatus(bool attached, bool hasMesh)
+        {
+            if (attached)
+                return "OK";
+            return hasMesh ? "MISSING" : "IN_HEAD";
         }
 
         bool isFonvRaceSkinSurface(std::string_view model)
@@ -1469,13 +1510,13 @@ namespace MWRender
             };
 
             const BonePose poses[] = {
-                { "Bip01 L UpperArm", makeFalloutProofDialoguePoseRotation(0.f, 0.f, -48.f) },
-                { "Bip01 R UpperArm", makeFalloutProofDialoguePoseRotation(0.f, 0.f, 48.f) },
-                { "Bip01 L Forearm", makeFalloutProofDialoguePoseRotation(0.f, 0.f, -12.f) },
-                { "Bip01 R Forearm", makeFalloutProofDialoguePoseRotation(0.f, 0.f, 12.f) },
-                { "Bip01 L Hand", makeFalloutProofDialoguePoseRotation(0.f, 0.f, 8.f) },
-                { "Bip01 R Hand", makeFalloutProofDialoguePoseRotation(0.f, 0.f, -8.f) },
-                { "Bip01 Head", makeFalloutProofDialoguePoseRotation(-4.f, 0.f, 0.f) },
+                { "Bip01 L UpperArm", makeFalloutProofDialoguePoseRotation(0.f, 0.f, -82.f) },
+                { "Bip01 R UpperArm", makeFalloutProofDialoguePoseRotation(0.f, 0.f, 82.f) },
+                { "Bip01 L Forearm", makeFalloutProofDialoguePoseRotation(0.f, 0.f, 4.f) },
+                { "Bip01 R Forearm", makeFalloutProofDialoguePoseRotation(0.f, 0.f, -4.f) },
+                { "Bip01 L Hand", makeFalloutProofDialoguePoseRotation(0.f, 0.f, 4.f) },
+                { "Bip01 R Hand", makeFalloutProofDialoguePoseRotation(0.f, 0.f, -4.f) },
+                { "Bip01 Head", makeFalloutProofDialoguePoseRotation(-2.f, 0.f, 0.f) },
             };
 
             unsigned int applied = 0;
@@ -2556,6 +2597,8 @@ namespace MWRender
                 Log(Debug::Error) << "Eyes not found: " << ESM::RefId(traits.mEyes);
         }
 
+        bool raceFacePartAttached[8] = {};
+        bool raceFacePartHasMesh[8] = {};
         const std::vector<ESM4::Race::BodyPart>& raceHeadParts = isFemale ? race->mHeadPartsFemale : race->mHeadParts;
         for (std::size_t i = 0; i < raceHeadParts.size(); ++i)
         {
@@ -2565,6 +2608,17 @@ namespace MWRender
             const std::string_view texture = eyePart && !eyeTexture.empty() ? eyeTexture
                                                                             : headPart.texture;
             osg::ref_ptr<osg::Node> attached = insertPart(headPart.mesh, nullptr, texture);
+            if (i < 8)
+            {
+                raceFacePartAttached[i] = attached != nullptr;
+                raceFacePartHasMesh[i] = !headPart.mesh.empty();
+            }
+            Log(Debug::Info) << "FNV/ESM4 diag: race face part " << getFonvRaceHeadPartRole(i)
+                             << " index=" << i << " mesh=" << headPart.mesh << " texture="
+                             << (texture.empty() ? std::string("<none>") : std::string(texture))
+                             << " attached=" << (attached != nullptr) << " status="
+                             << getFonvFacePartStatus(attached != nullptr, !headPart.mesh.empty()) << " for "
+                             << traits.mEditorId;
             if (headSurface && attached != nullptr)
             {
                 forceFalloutActorPartVisible(attached.get(), headPart.mesh, traits);
@@ -2589,6 +2643,7 @@ namespace MWRender
 
         std::set<uint32_t> usedHeadPartTypes;
         unsigned int insertedHeadParts = insertHeadParts(traits, traits.mHeadParts, usedHeadPartTypes);
+        bool fallbackHairAttached = false;
         if (!traits.mHair.isZeroOrUnset() && usedHeadPartTypes.count(ESM4::HeadPart::Type_Hair) == 0)
         {
             const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
@@ -2600,6 +2655,7 @@ namespace MWRender
                                  << hair->mModel << " tint=(" << hairTint.x() << ", " << hairTint.y() << ", "
                                  << hairTint.z() << ") for " << traits.mEditorId;
                 osg::ref_ptr<osg::Node> attached = insertPart(hair->mModel, &hairTint);
+                fallbackHairAttached = attached != nullptr;
                 applyFaceGenEgmMorph(mResourceSystem, attached.get(), hair->mModel, traits);
                 if (attached != nullptr)
                 {
@@ -2615,6 +2671,29 @@ namespace MWRender
         if (insertedHeadParts > 0)
             Log(Debug::Info) << "FNV/ESM4 diag: using " << insertedHeadParts
                              << " NPC-specific head mesh part(s) for " << traits.mEditorId;
+
+        Log(Debug::Info) << "FNV/ESM4 FACE CHECK " << traits.mEditorId
+                         << ": head=" << getFonvFacePartStatus(raceFacePartAttached[0], raceFacePartHasMesh[0])
+                         << " ears=" << getFonvFacePartStatus(raceFacePartAttached[1], raceFacePartHasMesh[1])
+                         << " mouth=" << getFonvFacePartStatus(raceFacePartAttached[2], raceFacePartHasMesh[2])
+                         << " lowerTeeth=" << getFonvFacePartStatus(raceFacePartAttached[3], raceFacePartHasMesh[3])
+                         << " upperTeeth=" << getFonvFacePartStatus(raceFacePartAttached[4], raceFacePartHasMesh[4])
+                         << " tongue=" << getFonvFacePartStatus(raceFacePartAttached[5], raceFacePartHasMesh[5])
+                         << " leftEye=" << getFonvFacePartStatus(raceFacePartAttached[6], raceFacePartHasMesh[6])
+                         << " rightEye=" << getFonvFacePartStatus(raceFacePartAttached[7], raceFacePartHasMesh[7])
+                         << " eyesRecord=" << (!traits.mEyes.isZeroOrUnset() ? "OK" : "MISSING")
+                         << " eyeTexture=" << (!eyeTexture.empty() ? "OK" : "MISSING")
+                         << " hairRecord=" << (!traits.mHair.isZeroOrUnset() ? "OK" : "MISSING")
+                         << " hairAttached="
+                         << (usedHeadPartTypes.count(ESM4::HeadPart::Type_Hair) != 0 || fallbackHairAttached ? "OK"
+                                                                                                              : "MISSING")
+                         << " facialHairType="
+                         << (usedHeadPartTypes.count(ESM4::HeadPart::Type_FacialHair) != 0 ? "OK" : "UNKNOWN")
+                         << " npcSpecificHeadParts=" << insertedHeadParts
+                         << " faceTexture="
+                         << (!npcFaceTexture.empty() ? "OK" : "RACE")
+                         << " faceNormal=" << (!npcFaceNormalTexture.empty() ? "OK" : "RACE")
+                         << " tintLayers=" << traits.mTintLayers.size();
 
         const auto [shapeNonZero, shapeTotal] = summarizeCoefficients(traits.mSymShapeModeCoefficients);
         const auto [asymNonZero, asymTotal] = summarizeCoefficients(traits.mAsymShapeModeCoefficients);
@@ -2737,6 +2816,8 @@ namespace MWRender
                     TintMaterialVisitor visitor(*tint);
                     attached->accept(visitor);
                 }
+                if (isFonvFacialHairHeadPart(*part))
+                    usedHeadPartTypes.insert(ESM4::HeadPart::Type_FacialHair);
                 ++inserted;
                 for (ESM::FormId extraPartId : part->mExtraParts)
                 {
@@ -2755,6 +2836,8 @@ namespace MWRender
                         TintMaterialVisitor visitor(*tint);
                         extraAttached->accept(visitor);
                     }
+                    if (isFonvFacialHairHeadPart(*extraPart))
+                        usedHeadPartTypes.insert(ESM4::HeadPart::Type_FacialHair);
                     ++inserted;
                 }
             }
