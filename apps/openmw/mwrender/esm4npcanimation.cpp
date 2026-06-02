@@ -1475,6 +1475,18 @@ namespace MWRender
             return z * y * x;
         }
 
+        float readFalloutProofPoseDegrees(const char* name, float fallback)
+        {
+            if (const char* value = std::getenv(name))
+            {
+                char* end = nullptr;
+                const float parsed = std::strtof(value, &end);
+                if (end != value)
+                    return parsed;
+            }
+            return fallback;
+        }
+
         bool addFalloutProofDialogueBonePose(osg::MatrixTransform& bone, std::string_view name, const osg::Quat& rotation)
         {
             osg::ref_ptr<osg::Callback> pose = new FalloutProofDialogueBonePose(std::string(name), rotation);
@@ -1510,10 +1522,22 @@ namespace MWRender
             };
 
             const BonePose poses[] = {
-                { "Bip01 L UpperArm", makeFalloutProofDialoguePoseRotation(0.f, 0.f, -82.f) },
-                { "Bip01 R UpperArm", makeFalloutProofDialoguePoseRotation(0.f, 0.f, 82.f) },
-                { "Bip01 L Forearm", makeFalloutProofDialoguePoseRotation(0.f, 0.f, 4.f) },
-                { "Bip01 R Forearm", makeFalloutProofDialoguePoseRotation(0.f, 0.f, -4.f) },
+                { "Bip01 L UpperArm",
+                    makeFalloutProofDialoguePoseRotation(
+                        readFalloutProofPoseDegrees("OPENMW_FNV_PROOF_POSE_L_UPPERARM_X", 0.f),
+                        readFalloutProofPoseDegrees("OPENMW_FNV_PROOF_POSE_L_UPPERARM_Y", 0.f),
+                        readFalloutProofPoseDegrees("OPENMW_FNV_PROOF_POSE_L_UPPERARM_Z", -82.f)) },
+                { "Bip01 R UpperArm",
+                    makeFalloutProofDialoguePoseRotation(
+                        readFalloutProofPoseDegrees("OPENMW_FNV_PROOF_POSE_R_UPPERARM_X", 0.f),
+                        readFalloutProofPoseDegrees("OPENMW_FNV_PROOF_POSE_R_UPPERARM_Y", 0.f),
+                        readFalloutProofPoseDegrees("OPENMW_FNV_PROOF_POSE_R_UPPERARM_Z", 82.f)) },
+                { "Bip01 L Forearm",
+                    makeFalloutProofDialoguePoseRotation(0.f, 0.f,
+                        readFalloutProofPoseDegrees("OPENMW_FNV_PROOF_POSE_L_FOREARM_Z", 4.f)) },
+                { "Bip01 R Forearm",
+                    makeFalloutProofDialoguePoseRotation(0.f, 0.f,
+                        readFalloutProofPoseDegrees("OPENMW_FNV_PROOF_POSE_R_FOREARM_Z", -4.f)) },
                 { "Bip01 L Hand", makeFalloutProofDialoguePoseRotation(0.f, 0.f, 4.f) },
                 { "Bip01 R Hand", makeFalloutProofDialoguePoseRotation(0.f, 0.f, -4.f) },
                 { "Bip01 Head", makeFalloutProofDialoguePoseRotation(-2.f, 0.f, 0.f) },
