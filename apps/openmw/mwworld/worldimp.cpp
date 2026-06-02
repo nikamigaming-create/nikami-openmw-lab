@@ -1,6 +1,7 @@
 #include "worldimp.hpp"
 
 #include <charconv>
+#include <cstdlib>
 #include <vector>
 
 #include <osg/ComputeBoundsVisitor>
@@ -3736,6 +3737,27 @@ namespace MWWorld
 
         const TimeStamp time = getTimeStamp();
         mWeatherManager->update(duration, paused, time, isExterior);
+        if (const char* weatherIdEnv = std::getenv("OPENMW_FNV_PROOF_WEATHER_ID"))
+        {
+            char* end = nullptr;
+            const long weatherId = std::strtol(weatherIdEnv, &end, 10);
+            static bool loggedProofWeather = false;
+            if (end != weatherIdEnv && weatherId >= 0)
+            {
+                mWeatherManager->forceWeather(static_cast<int>(weatherId));
+                if (!loggedProofWeather)
+                {
+                    Log(Debug::Info) << "FNV/ESM4 proof: force-weather manager override weatherId=" << weatherId
+                                     << " isExterior=" << isExterior;
+                    loggedProofWeather = true;
+                }
+            }
+            else if (!loggedProofWeather)
+            {
+                Log(Debug::Warning) << "FNV/ESM4 proof: ignored invalid force-weather id '" << weatherIdEnv << "'";
+                loggedProofWeather = true;
+            }
+        }
     }
 
     struct AddDetectedReferenceVisitor

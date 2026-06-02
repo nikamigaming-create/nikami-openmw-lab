@@ -349,6 +349,8 @@ namespace MWWorld
 
         int getNextWeatherID() const { return mNextWeather; }
 
+        void forceWeather(const int weatherID);
+
         float getTransitionFactor() const { return mTransitionFactor; }
 
         bool useTorches(float hour) const;
@@ -420,7 +422,6 @@ namespace MWWorld
         bool updateWeatherTime();
         bool updateWeatherRegion(const ESM::RefId& playerRegion);
         void updateWeatherTransitions(const float elapsedRealSeconds);
-        void forceWeather(const int weatherID);
 
         bool inTransition() const;
         void addWeatherTransition(const int weatherID);

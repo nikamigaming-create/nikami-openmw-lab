@@ -334,26 +334,6 @@ namespace
             player = world.moveObject(player, outside.asVec3(), true, true);
             if (player.getCell() != nullptr)
                 player.getCell()->setWaterLevel(-200000.f);
-            if (const char* weatherIdEnv = std::getenv("OPENMW_FNV_PROOF_WEATHER_ID"))
-            {
-                char* end = nullptr;
-                const long weatherId = std::strtol(weatherIdEnv, &end, 10);
-                const ESM::RefId region = player.getCell() && player.getCell()->getCell()
-                    ? player.getCell()->getCell()->getRegion()
-                    : ESM::RefId();
-                if (end != weatherIdEnv && !region.empty())
-                {
-                    world.changeWeather(region, static_cast<unsigned int>(std::max<long>(0, weatherId)));
-                    world.advanceTime(0.0, false);
-                    Log(Debug::Info) << "FNV/ESM4 proof: forced weather region=" << region.toDebugString()
-                                     << " weatherId=" << weatherId;
-                }
-                else
-                {
-                    Log(Debug::Warning) << "FNV/ESM4 proof: skipped forced weather weatherIdEnv=" << weatherIdEnv
-                                        << " region=" << region.toDebugString();
-                }
-            }
             world.rotateObject(player, osg::Vec3f(outside.rot[0], outside.rot[1], outside.rot[2]));
             if (MWRender::Camera* camera = world.getCamera())
             {
