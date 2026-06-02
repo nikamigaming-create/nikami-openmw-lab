@@ -1487,6 +1487,16 @@ namespace MWRender
             return fallback;
         }
 
+        osg::Quat makeFalloutProofDialoguePoseRotationFromEnv(
+            const char* prefix, float fallbackX, float fallbackY, float fallbackZ)
+        {
+            const std::string base(prefix);
+            return makeFalloutProofDialoguePoseRotation(
+                readFalloutProofPoseDegrees((base + "_X").c_str(), fallbackX),
+                readFalloutProofPoseDegrees((base + "_Y").c_str(), fallbackY),
+                readFalloutProofPoseDegrees((base + "_Z").c_str(), fallbackZ));
+        }
+
         bool addFalloutProofDialogueBonePose(osg::MatrixTransform& bone, std::string_view name, const osg::Quat& rotation)
         {
             osg::ref_ptr<osg::Callback> pose = new FalloutProofDialogueBonePose(std::string(name), rotation);
@@ -1523,24 +1533,21 @@ namespace MWRender
 
             const BonePose poses[] = {
                 { "Bip01 L UpperArm",
-                    makeFalloutProofDialoguePoseRotation(
-                        readFalloutProofPoseDegrees("OPENMW_FNV_PROOF_POSE_L_UPPERARM_X", 0.f),
-                        readFalloutProofPoseDegrees("OPENMW_FNV_PROOF_POSE_L_UPPERARM_Y", 0.f),
-                        readFalloutProofPoseDegrees("OPENMW_FNV_PROOF_POSE_L_UPPERARM_Z", -82.f)) },
+                    makeFalloutProofDialoguePoseRotationFromEnv(
+                        "OPENMW_FNV_PROOF_POSE_L_UPPERARM", 0.f, 0.f, -82.f) },
                 { "Bip01 R UpperArm",
-                    makeFalloutProofDialoguePoseRotation(
-                        readFalloutProofPoseDegrees("OPENMW_FNV_PROOF_POSE_R_UPPERARM_X", 0.f),
-                        readFalloutProofPoseDegrees("OPENMW_FNV_PROOF_POSE_R_UPPERARM_Y", 0.f),
-                        readFalloutProofPoseDegrees("OPENMW_FNV_PROOF_POSE_R_UPPERARM_Z", 82.f)) },
+                    makeFalloutProofDialoguePoseRotationFromEnv(
+                        "OPENMW_FNV_PROOF_POSE_R_UPPERARM", 0.f, 0.f, 82.f) },
                 { "Bip01 L Forearm",
-                    makeFalloutProofDialoguePoseRotation(0.f, 0.f,
-                        readFalloutProofPoseDegrees("OPENMW_FNV_PROOF_POSE_L_FOREARM_Z", 4.f)) },
+                    makeFalloutProofDialoguePoseRotationFromEnv("OPENMW_FNV_PROOF_POSE_L_FOREARM", 0.f, 0.f, 4.f) },
                 { "Bip01 R Forearm",
-                    makeFalloutProofDialoguePoseRotation(0.f, 0.f,
-                        readFalloutProofPoseDegrees("OPENMW_FNV_PROOF_POSE_R_FOREARM_Z", -4.f)) },
-                { "Bip01 L Hand", makeFalloutProofDialoguePoseRotation(0.f, 0.f, 4.f) },
-                { "Bip01 R Hand", makeFalloutProofDialoguePoseRotation(0.f, 0.f, -4.f) },
-                { "Bip01 Head", makeFalloutProofDialoguePoseRotation(-2.f, 0.f, 0.f) },
+                    makeFalloutProofDialoguePoseRotationFromEnv("OPENMW_FNV_PROOF_POSE_R_FOREARM", 0.f, 0.f, -4.f) },
+                { "Bip01 L Hand",
+                    makeFalloutProofDialoguePoseRotationFromEnv("OPENMW_FNV_PROOF_POSE_L_HAND", 0.f, 0.f, 4.f) },
+                { "Bip01 R Hand",
+                    makeFalloutProofDialoguePoseRotationFromEnv("OPENMW_FNV_PROOF_POSE_R_HAND", 0.f, 0.f, -4.f) },
+                { "Bip01 Head",
+                    makeFalloutProofDialoguePoseRotationFromEnv("OPENMW_FNV_PROOF_POSE_HEAD", -2.f, 0.f, 0.f) },
             };
 
             unsigned int applied = 0;
