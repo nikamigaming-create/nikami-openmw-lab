@@ -157,8 +157,9 @@ namespace MWRender
         class FalloutProofMouthDriver : public osg::NodeCallback
         {
         public:
-            explicit FalloutProofMouthDriver(const MWWorld::Ptr& actor)
+            FalloutProofMouthDriver(const MWWorld::Ptr& actor, std::string model)
                 : mActor(actor)
+                , mModel(Misc::StringUtils::lowerCase(std::move(model)))
             {
             }
 
@@ -170,19 +171,39 @@ namespace MWRender
                     mBasePosition = transform->getPosition();
                     mBaseCaptured = true;
                 }
-                if (transform != nullptr && MWBase::Environment::get().getSoundManager()->sayActive(mActor))
+                const bool forceOpen = std::getenv("OPENMW_FNV_PROOF_MOUTH_FORCE_OPEN") != nullptr;
+                if (transform != nullptr && (forceOpen || MWBase::Environment::get().getSoundManager()->sayActive(mActor)))
                 {
                     const double simTime = nv != nullptr && nv->getFrameStamp() != nullptr
                         ? nv->getFrameStamp()->getSimulationTime()
                         : 0.0;
-                    const float open = 0.5f + 0.5f * std::sin(static_cast<float>(simTime * 34.0));
-                    transform->setScale(osg::Vec3f(1.f, 1.f, 1.f + 0.12f * open));
-                    transform->setPosition(mBasePosition + osg::Vec3f(0.f, 0.f, -0.35f * open));
+                    const float open = forceOpen ? 1.f : 0.5f + 0.5f * std::sin(static_cast<float>(simTime * 34.0));
+                    osg::Vec3f offset(0.f, 0.9f * open, -1.1f * open);
+                    osg::Vec3f scale(1.f, 1.f, 1.f + 0.18f * open);
+                    if (mModel.find("teethlower") != std::string::npos)
+                    {
+                        offset.set(0.f, 1.8f * open, -2.4f * open);
+                        scale.set(1.f, 1.f, 1.f);
+                    }
+                    else if (mModel.find("teethupper") != std::string::npos)
+                    {
+                        offset.set(0.f, 1.6f * open, 0.25f * open);
+                        scale.set(1.f, 1.f, 1.f);
+                    }
+                    else if (mModel.find("tongue") != std::string::npos)
+                    {
+                        offset.set(0.f, 2.0f * open, -1.7f * open);
+                        scale.set(1.f, 1.f, 1.f);
+                    }
+                    transform->setScale(scale);
+                    transform->setPosition(mBasePosition + offset);
 
                     if (!mLogged)
                     {
                         Log(Debug::Info) << "FNV/ESM4 proof: mouth driver active for " << mActor.toString()
-                                         << " open=" << open;
+                                         << " model=" << mModel << " open=" << open << " force=" << forceOpen
+                                         << " offset=(" << offset.x() << "," << offset.y() << "," << offset.z()
+                                         << ")";
                         mLogged = true;
                     }
                 }
@@ -197,6 +218,7 @@ namespace MWRender
 
         private:
             MWWorld::Ptr mActor;
+            std::string mModel;
             osg::Vec3f mBasePosition;
             bool mLogged = false;
             bool mBaseCaptured = false;
@@ -1044,6 +1066,144 @@ namespace MWRender
             return morphed;
         }
 
+        osg::ref_ptr<osg::Geometry> makeFalloutProofTalkingHeadGeometry(const osg::Geometry& source, float& maxDelta)
+        {
+            const osg::Vec3Array* sourceVertices = dynamic_cast<const osg::Vec3Array*>(source.getVertexArray());
+            if (sourceVertices == nullptr)
+                return nullptr;
+
+            osg::ref_ptr<osg::Geometry> morphed = new osg::Geometry(source, osg::CopyOp::SHALLOW_COPY);
+            osg::ref_ptr<osg::Vec3Array> vertices = new osg::Vec3Array(*sourceVertices);
+            morphed->setVertexArray(vertices);
+
+            osg::BoundingBox bounds;
+            for (const osg::Vec3f& vertex : *vertices)
+                bounds.expandBy(vertex);
+            if (!bounds.valid())
+                return nullptr;
+
+            const float centerX = (bounds.xMin() + bounds.xMax()) * 0.5f;
+            const float width = std::max(bounds.xMax() - bounds.xMin(), 0.001f);
+            const float depth = std::max(bounds.yMax() - bounds.yMin(), 0.001f);
+            const float height = std::max(bounds.zMax() - bounds.zMin(), 0.001f);
+            const float mouthZMin = bounds.zMin() + height * 0.28f;
+            const float mouthZMax = bounds.zMin() + height * 0.40f;
+            const float chinZMin = bounds.zMin() + height * 0.20f;
+            const float chinZMax = bounds.zMin() + height * 0.30f;
+            const float frontY = bounds.yMin() + depth * 0.35f;
+            const float noseTipY = bounds.yMin() + depth * 0.82f;
+
+            maxDelta = 0.f;
+            unsigned int lowerLipCount = 0;
+            unsigned int chinCount = 0;
+            for (osg::Vec3f& vertex : *vertices)
+            {
+                const float absX = std::abs(vertex.x() - centerX);
+                const bool lowerLip = absX < width * 0.24f && vertex.y() > frontY && vertex.y() < noseTipY
+                    && vertex.z() > mouthZMin && vertex.z() < mouthZMax;
+                const bool chin = absX < width * 0.30f && vertex.y() > frontY && vertex.y() < noseTipY
+                    && vertex.z() > chinZMin && vertex.z() <= chinZMax;
+                if (!lowerLip && !chin)
+                    continue;
+
+                const osg::Vec3f before = vertex;
+                if (lowerLip)
+                {
+                    ++lowerLipCount;
+                    vertex.y() += depth * 0.04f;
+                    vertex.z() -= height * 0.055f;
+                }
+                else
+                {
+                    ++chinCount;
+                    vertex.y() += depth * 0.02f;
+                    vertex.z() -= height * 0.025f;
+                }
+                maxDelta = std::max(maxDelta, (vertex - before).length());
+            }
+
+            static unsigned int sLogCount = 0;
+            if (sLogCount < 12)
+            {
+                Log(Debug::Info) << "FNV/ESM4 proof: talking head source bounds x=(" << bounds.xMin() << ","
+                                 << bounds.xMax() << ") y=(" << bounds.yMin() << "," << bounds.yMax()
+                                 << ") z=(" << bounds.zMin() << "," << bounds.zMax() << ") selected lowerLip="
+                                 << lowerLipCount << " chin=" << chinCount << " maxDelta=" << maxDelta;
+                ++sLogCount;
+            }
+
+            if (maxDelta <= 0.f)
+                return nullptr;
+
+            vertices->dirty();
+            return morphed;
+        }
+
+        class FalloutProofTalkingHeadVisitor : public osg::NodeVisitor
+        {
+        public:
+            FalloutProofTalkingHeadVisitor()
+                : osg::NodeVisitor(TRAVERSE_ALL_CHILDREN)
+            {
+            }
+
+            void apply(osg::Geode& geode) override
+            {
+                for (unsigned int i = 0; i < geode.getNumDrawables(); ++i)
+                    applyDrawable(*geode.getDrawable(i));
+                traverse(geode);
+            }
+
+            void apply(osg::Drawable& drawable) override { applyDrawable(drawable); }
+
+            unsigned int getMorphedDrawableCount() const { return mMorphedDrawableCount; }
+            float getMaxDelta() const { return mMaxDelta; }
+
+        private:
+            void applyDrawable(osg::Drawable& drawable)
+            {
+                float maxDelta = 0.f;
+                if (SceneUtil::RigGeometry* rig = dynamic_cast<SceneUtil::RigGeometry*>(&drawable))
+                {
+                    if (rig->getSourceGeometry() == nullptr)
+                        return;
+                    osg::ref_ptr<osg::Geometry> morphed
+                        = makeFalloutProofTalkingHeadGeometry(*rig->getSourceGeometry(), maxDelta);
+                    if (morphed == nullptr)
+                        return;
+                    rig->setSourceGeometry(morphed);
+                }
+                else if (osg::Geometry* geometry = dynamic_cast<osg::Geometry*>(&drawable))
+                {
+                    osg::ref_ptr<osg::Geometry> morphed = makeFalloutProofTalkingHeadGeometry(*geometry, maxDelta);
+                    if (morphed == nullptr)
+                        return;
+                    geodeReplace(*geometry, morphed);
+                }
+                else
+                    return;
+
+                ++mMorphedDrawableCount;
+                mMaxDelta = std::max(mMaxDelta, maxDelta);
+            }
+
+            void geodeReplace(osg::Geometry& geometry, osg::ref_ptr<osg::Geometry> morphed)
+            {
+                for (unsigned int parentIndex = 0; parentIndex < geometry.getNumParents(); ++parentIndex)
+                {
+                    osg::Geode* parent = dynamic_cast<osg::Geode*>(geometry.getParent(parentIndex));
+                    if (parent == nullptr)
+                        continue;
+                    const unsigned int drawableIndex = parent->getDrawableIndex(&geometry);
+                    if (drawableIndex < parent->getNumDrawables())
+                        parent->setDrawable(drawableIndex, morphed);
+                }
+            }
+
+            unsigned int mMorphedDrawableCount = 0;
+            float mMaxDelta = 0.f;
+        };
+
         class FaceGenMorphVisitor : public osg::NodeVisitor
         {
         public:
@@ -1326,6 +1486,23 @@ namespace MWRender
                 || lowered.find("tongue") != std::string::npos;
         }
 
+        osg::Vec3f getFalloutHeadFrameSurfaceOffset(std::string_view model, bool headgearStaticPart)
+        {
+            std::string lowered(model);
+            Misc::StringUtils::lowerCaseInPlace(lowered);
+
+            if (headgearStaticPart)
+                return osg::Vec3f(0.f, 0.f, 4.5f);
+            if (lowered.find("beard") != std::string::npos)
+                return osg::Vec3f(0.f, 2.0f, -0.4f);
+            if (lowered.find("mouth") != std::string::npos || lowered.find("teeth") != std::string::npos
+                || lowered.find("tongue") != std::string::npos)
+                return osg::Vec3f(0.f, 2.2f, 0.f);
+            if (lowered.find("brow") != std::string::npos)
+                return osg::Vec3f(0.f, 0.7f, 0.f);
+            return osg::Vec3f();
+        }
+
         bool isFalloutStaticFaceChildPart(std::string_view model)
         {
             return shouldAttachFalloutStaticPartToHead(model) && !isFalloutStaticHeadgearPart(model);
@@ -1346,17 +1523,25 @@ namespace MWRender
             return osg::Matrix::identity();
         }
 
-        osg::ref_ptr<osg::MatrixTransform> makeFalloutHeadTranslationHelper(osg::Group& bip01, osg::Group& head)
+        osg::ref_ptr<osg::MatrixTransform> makeFalloutHeadFrameHelper(osg::Group& bip01, osg::Group& head)
         {
+            constexpr std::string_view helperName = "FNV Head Frame";
+            for (unsigned int i = 0; i < bip01.getNumChildren(); ++i)
+            {
+                if (osg::MatrixTransform* existing = dynamic_cast<osg::MatrixTransform*>(bip01.getChild(i)))
+                    if (existing->getName() == std::string(helperName))
+                        return existing;
+            }
+
             const osg::Matrix headWorld = getNodeWorldMatrix(&head);
             const osg::Matrix bipWorld = getNodeWorldMatrix(&bip01);
             const osg::Matrix headInBip = headWorld * osg::Matrix::inverse(bipWorld);
 
             osg::ref_ptr<osg::MatrixTransform> helper = new osg::MatrixTransform;
-            helper->setName("FNV Headgear Translation");
+            helper->setName(std::string(helperName));
             helper->setMatrix(osg::Matrix::translate(headInBip.getTrans()));
             bip01.addChild(helper);
-            Log(Debug::Info) << "FNV/ESM4 diag: inserted headgear translation helper at ("
+            Log(Debug::Info) << "FNV/ESM4 diag: inserted head frame helper at ("
                              << headInBip.getTrans().x() << ", " << headInBip.getTrans().y() << ", "
                              << headInBip.getTrans().z() << ") under " << bip01.getName();
             return helper;
@@ -1366,7 +1551,7 @@ namespace MWRender
         {
             const char* mode = std::getenv("OPENMW_FNV_STATIC_HEAD_ATTACH_MODE");
             if (mode == nullptr || mode[0] == '\0')
-                return "bip01";
+                return "headframe";
             return mode;
         }
 
@@ -1421,8 +1606,14 @@ namespace MWRender
                 { "weapon", "headgear", "hat", "hair", "beard", "brow", "eye", "mouth", "teeth", "tongue" });
         }
 
-        void logFalloutAttachmentBounds(
-            osg::Node* attached, osg::Group* attachNode, std::string_view model, const MWWorld::Ptr& ptr)
+        osg::Vec3f transformPoint(const osg::Vec3f& point, const osg::Matrix& matrix)
+        {
+            const osg::Vec3d transformed = osg::Vec3d(point) * matrix;
+            return osg::Vec3f(transformed.x(), transformed.y(), transformed.z());
+        }
+
+        void logFalloutAttachmentBounds(osg::Node* attached, osg::Group* attachNode, osg::Group* headNode,
+            std::string_view model, const MWWorld::Ptr& ptr)
         {
             if (attached == nullptr)
                 return;
@@ -1440,6 +1631,11 @@ namespace MWRender
 
             const osg::Vec3f center = box.center();
             const osg::Vec3f extent = boundingBoxExtent(box);
+            const osg::Vec3f worldCenter
+                = attachNode != nullptr ? transformPoint(center, getNodeWorldMatrix(attachNode)) : center;
+            const osg::Vec3f headOrigin
+                = headNode != nullptr ? transformPoint(osg::Vec3f(), getNodeWorldMatrix(headNode)) : osg::Vec3f();
+            const osg::Vec3f headDelta = worldCenter - headOrigin;
             const float centerDistance = center.length();
             const float diagonal = extent.length();
             const bool accessory = isFalloutAccessoryModel(model);
@@ -1451,6 +1647,13 @@ namespace MWRender
                              << (attachNode != nullptr ? attachNode->getName() : std::string("<none>"))
                              << " center=(" << center.x() << "," << center.y() << "," << center.z() << ")"
                              << " extent=(" << extent.x() << "," << extent.y() << "," << extent.z() << ")"
+                             << " worldCenter=(" << worldCenter.x() << "," << worldCenter.y() << ","
+                             << worldCenter.z() << ")"
+                             << (headNode != nullptr ? " headDelta=(" : " headDelta=(n/a")
+                             << (headNode != nullptr ? std::to_string(headDelta.x()) : std::string())
+                             << (headNode != nullptr ? "," + std::to_string(headDelta.y()) : std::string())
+                             << (headNode != nullptr ? "," + std::to_string(headDelta.z()) : std::string())
+                             << ")"
                              << " centerDistance=" << centerDistance << " diagonal=" << diagonal
                              << " verdict=" << (suspicious ? "SUSPECT" : "OK");
         }
@@ -2309,7 +2512,7 @@ namespace MWRender
                         bip01 = found->second.get();
                     osg::Group* head = findBestAttachmentNode(nodeMap, { "Bip01 Head", "bip01 head" });
                     if (bip01 != nullptr && head != nullptr)
-                        attachNode = makeFalloutHeadTranslationHelper(*bip01, *head);
+                        attachNode = makeFalloutHeadFrameHelper(*bip01, *head);
                 }
             }
             else if (Misc::StringUtils::ciEqual(mode, "root"))
@@ -2318,6 +2521,16 @@ namespace MWRender
             {
                 if (const auto bip01 = nodeMap.find("Bip01"); bip01 != nodeMap.end())
                     attachNode = bip01->second.get();
+            }
+            else if (Misc::StringUtils::ciEqual(mode, "headframe")
+                || Misc::StringUtils::ciEqual(mode, "headtranslation"))
+            {
+                osg::Group* bip01 = nullptr;
+                if (const auto found = nodeMap.find("Bip01"); found != nodeMap.end())
+                    bip01 = found->second.get();
+                osg::Group* head = findBestAttachmentNode(nodeMap, { "Bip01 Head", "bip01 head" });
+                if (bip01 != nullptr && head != nullptr)
+                    attachNode = makeFalloutHeadFrameHelper(*bip01, *head);
             }
             else if (osg::Group* head = findBestAttachmentNode(nodeMap, { "Bip01 Head", "bip01 head" }))
                 attachNode = head;
@@ -2359,6 +2572,29 @@ namespace MWRender
             attached = SceneUtil::attach(std::move(templateNode), mObjectRoot.get(), {}, attachNode,
                 mResourceSystem->getSceneManager(), attitude);
         }
+        if (attached != nullptr && headAttachedStaticPart)
+        {
+            const osg::Vec3f surfaceOffset = getFalloutHeadFrameSurfaceOffset(model, headgearStaticPart);
+            if (surfaceOffset.length2() > 0.f)
+            {
+                osg::ref_ptr<osg::PositionAttitudeTransform> offsetNode = new osg::PositionAttitudeTransform;
+                offsetNode->setName("FNV Head Frame Surface Offset " + correctedModel.value());
+                offsetNode->setPosition(surfaceOffset);
+                if (attached->getNumParents() > 0)
+                {
+                    osg::Group* parent = attached->getParent(0);
+                    if (parent != nullptr && parent->replaceChild(attached.get(), offsetNode.get()))
+                        offsetNode->addChild(attached);
+                }
+                if (offsetNode->getNumChildren() == 0)
+                    offsetNode->addChild(attached);
+                attached = offsetNode;
+                Log(Debug::Info) << "FNV/ESM4 diag: applied head frame surface offset model="
+                                 << correctedModel.value() << " offset=(" << surfaceOffset.x() << ","
+                                 << surfaceOffset.y() << "," << surfaceOffset.z() << ") for "
+                                 << mPtr.getCellRef().getRefId();
+            }
+        }
         if (attached != nullptr && std::getenv("OPENMW_FNV_PROOF_MOUTH_DRIVER") != nullptr
             && isFalloutMouthDriverPart(model))
         {
@@ -2373,7 +2609,7 @@ namespace MWRender
             if (mouthDriverNode->getNumChildren() == 0)
                 mouthDriverNode->addChild(attached);
             attached = mouthDriverNode;
-            attached->setUpdateCallback(new FalloutProofMouthDriver(mPtr));
+            attached->setUpdateCallback(new FalloutProofMouthDriver(mPtr, correctedModel.value()));
             Log(Debug::Info) << "FNV/ESM4 proof: attached mouth driver to " << correctedModel.value() << " for "
                              << mPtr.getCellRef().getRefId();
         }
@@ -2389,7 +2625,9 @@ namespace MWRender
             attached->accept(visitor);
         }
         logFalloutPartShapeSummary(attached.get(), correctedModel.value(), mPtr);
-        logFalloutAttachmentBounds(attached.get(), attachNode, correctedModel.value(), mPtr);
+        logFalloutAttachmentBounds(
+            attached.get(), attachNode, findBestAttachmentNode(nodeMap, { "Bip01 Head", "bip01 head" }),
+            correctedModel.value(), mPtr);
         return attached;
     }
 
@@ -2422,7 +2660,9 @@ namespace MWRender
         osg::ref_ptr<osg::Node> attached = SceneUtil::attach(
             std::move(templateNode), mObjectRoot.get(), {}, attachNode, mResourceSystem->getSceneManager());
         logFalloutPartShapeSummary(attached.get(), correctedModel.value(), mPtr);
-        logFalloutAttachmentBounds(attached.get(), attachNode, correctedModel.value(), mPtr);
+        logFalloutAttachmentBounds(
+            attached.get(), attachNode, findBestAttachmentNode(nodeMap, { "Bip01 Head", "bip01 head" }),
+            correctedModel.value(), mPtr);
         return attached;
     }
 
@@ -2654,6 +2894,15 @@ namespace MWRender
             {
                 forceFalloutActorPartVisible(attached.get(), headPart.mesh, traits);
                 applyFaceGenEgmMorph(mResourceSystem, attached.get(), headPart.mesh, traits);
+                if (std::getenv("OPENMW_FNV_PROOF_MOUTH_DRIVER") != nullptr)
+                {
+                    FalloutProofTalkingHeadVisitor talkingHead;
+                    attached->accept(talkingHead);
+                    if (talkingHead.getMorphedDrawableCount() > 0)
+                        Log(Debug::Info) << "FNV/ESM4 proof: applied talking head mouth deformation to "
+                                         << talkingHead.getMorphedDrawableCount() << " drawable(s) for "
+                                         << traits.mEditorId << " maxVertexDelta=" << talkingHead.getMaxDelta();
+                }
                 if (!texture.empty())
                     overrideFalloutPartDiffuseTexture(texture, mResourceSystem, *attached);
                 if (std::getenv("OPENMW_FNV_APPLY_FACEGEN_DETAIL") != nullptr && !npcFaceTexture.empty())
