@@ -2033,12 +2033,12 @@ namespace MWRender
                     readFalloutProofFloat("OPENMW_FNV_HEADGEAR_OFFSET_Y", 0.f),
                     readFalloutProofFloat("OPENMW_FNV_HEADGEAR_OFFSET_Z", 0.f));
             if (lowered.find("eye") != std::string::npos)
-                return osg::Vec3f(readFalloutProofFloat("OPENMW_FNV_EYE_OFFSET_X", 4.f),
+                return osg::Vec3f(readFalloutProofFloat("OPENMW_FNV_EYE_OFFSET_X", 0.f),
                     readFalloutProofFloat("OPENMW_FNV_EYE_OFFSET_Y", 0.f),
-                    readFalloutProofFloat("OPENMW_FNV_EYE_OFFSET_Z", -4.f));
+                    readFalloutProofFloat("OPENMW_FNV_EYE_OFFSET_Z", 0.f));
             if (lowered.find("beard") != std::string::npos)
                 return osg::Vec3f(readFalloutProofFloat("OPENMW_FNV_BEARD_OFFSET_X", 0.f),
-                    readFalloutProofFloat("OPENMW_FNV_BEARD_OFFSET_Y", 0.f),
+                    readFalloutProofFloat("OPENMW_FNV_BEARD_OFFSET_Y", -3.f),
                     readFalloutProofFloat("OPENMW_FNV_BEARD_OFFSET_Z", -1.f));
             if (lowered.find("mouth") != std::string::npos || lowered.find("teeth") != std::string::npos
                 || lowered.find("tongue") != std::string::npos)
@@ -2208,11 +2208,21 @@ namespace MWRender
             return helper;
         }
 
-        std::string_view getFonvStaticFaceAttachMode()
+        std::string_view getFonvStaticFaceAttachMode(std::string_view model)
         {
             const char* mode = std::getenv("OPENMW_FNV_STATIC_HEAD_ATTACH_MODE");
             if (mode == nullptr || mode[0] == '\0')
+            {
+                std::string lowered(model);
+                Misc::StringUtils::lowerCaseInPlace(lowered);
+                if (lowered.find("eye") != std::string::npos || lowered.find("mouth") != std::string::npos
+                    || lowered.find("teeth") != std::string::npos || lowered.find("tongue") != std::string::npos)
+                    return "bip01";
+                if (lowered.find("hair") != std::string::npos || lowered.find("beard") != std::string::npos
+                    || lowered.find("brow") != std::string::npos)
+                    return "head";
                 return "headframe";
+            }
             return mode;
         }
 
@@ -3213,7 +3223,7 @@ namespace MWRender
         const bool headgearStaticPart = isFalloutStaticHeadgearPart(model);
         if (headAttachedStaticPart)
         {
-            const std::string_view mode = headgearStaticPart ? std::string_view("headgear") : getFonvStaticFaceAttachMode();
+            const std::string_view mode = headgearStaticPart ? std::string_view("headgear") : getFonvStaticFaceAttachMode(model);
             if (headgearStaticPart)
             {
                 const char* headgearMode = std::getenv("OPENMW_FNV_HEADGEAR_ATTACH_MODE");
