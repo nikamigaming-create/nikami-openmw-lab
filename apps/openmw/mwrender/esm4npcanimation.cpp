@@ -2033,12 +2033,12 @@ namespace MWRender
                     readFalloutProofFloat("OPENMW_FNV_HEADGEAR_OFFSET_Y", 0.f),
                     readFalloutProofFloat("OPENMW_FNV_HEADGEAR_OFFSET_Z", 0.f));
             if (lowered.find("eye") != std::string::npos)
-                return osg::Vec3f(readFalloutProofFloat("OPENMW_FNV_EYE_OFFSET_X", 0.f),
+                return osg::Vec3f(readFalloutProofFloat("OPENMW_FNV_EYE_OFFSET_X", 4.f),
                     readFalloutProofFloat("OPENMW_FNV_EYE_OFFSET_Y", 0.f),
-                    readFalloutProofFloat("OPENMW_FNV_EYE_OFFSET_Z", 0.f));
+                    readFalloutProofFloat("OPENMW_FNV_EYE_OFFSET_Z", -4.f));
             if (lowered.find("beard") != std::string::npos)
-                return osg::Vec3f(readFalloutProofFloat("OPENMW_FNV_BEARD_OFFSET_X", 4.f),
-                    readFalloutProofFloat("OPENMW_FNV_BEARD_OFFSET_Y", -4.05f),
+                return osg::Vec3f(readFalloutProofFloat("OPENMW_FNV_BEARD_OFFSET_X", 0.f),
+                    readFalloutProofFloat("OPENMW_FNV_BEARD_OFFSET_Y", 0.f),
                     readFalloutProofFloat("OPENMW_FNV_BEARD_OFFSET_Z", -1.f));
             if (lowered.find("mouth") != std::string::npos || lowered.find("teeth") != std::string::npos
                 || lowered.find("tongue") != std::string::npos)
