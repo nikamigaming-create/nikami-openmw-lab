@@ -798,6 +798,14 @@ namespace MWRender
             return { "bip01 luparmtwist", "bip01 l uparmtwist" };
         if (name == "bip01 r upperarmtwist")
             return { "bip01 ruparmtwist", "bip01 r uparmtwist" };
+        if (name == "bip01 spin1")
+            return { "bip01 spin01" };
+        if (name == "screen01root")
+            return { "bip01 screen01" };
+        if (name == "screenstatic" || name == "screenstaticroot")
+            return { "bip01 screenstatic" };
+        if (name == "voicebox_talk" || name == "##voicebox_talk")
+            return { "bip01 voicebox1", "voicebox_root" };
 
         return {};
     }
@@ -1346,7 +1354,7 @@ namespace MWRender
             std::string bonename = Misc::StringUtils::lowerCase(it->first);
             NodeMap::const_iterator found = isFonvAnim ? findNodeMapBone(nodeMap, bonename, bonename)
                                                        : nodeMap.find(bonename);
-            if (found == nodeMap.end() && isFonvActorAnim)
+            if (found == nodeMap.end() && isFonvAnim)
             {
                 const std::string originalName = bonename;
                 found = findFonvAnimationBone(nodeMap, originalName, bonename);
@@ -1845,7 +1853,7 @@ namespace MWRender
             {
                 SceneUtil::NodeMapVisitorBoneOnly visitor(mNodeMap);
                 mObjectRoot->accept(visitor);
-                if (isFalloutNpc(mPtr))
+                if (isFalloutActor(mPtr))
                 {
                     SceneUtil::NodeMapVisitor helperVisitor(mNodeMap);
                     mObjectRoot->accept(helperVisitor);
