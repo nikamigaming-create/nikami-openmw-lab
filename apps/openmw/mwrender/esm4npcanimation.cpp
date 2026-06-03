@@ -2053,6 +2053,18 @@ namespace MWRender
                 readFalloutProofFloat("OPENMW_FNV_FACE_OFFSET_Z", 0.f));
         }
 
+        osg::Quat getFalloutHeadFrameAttitude()
+        {
+            constexpr float degreesToRadians = 0.017453292519943295f;
+            const float xDegrees = readFalloutProofFloat("OPENMW_FNV_HEAD_FRAME_ROTATION_X", 0.f);
+            const float yDegrees = readFalloutProofFloat("OPENMW_FNV_HEAD_FRAME_ROTATION_Y", 0.f);
+            const float zDegrees = readFalloutProofFloat("OPENMW_FNV_HEAD_FRAME_ROTATION_Z", 0.f);
+            const osg::Quat x(xDegrees * degreesToRadians, osg::Vec3f(1.f, 0.f, 0.f));
+            const osg::Quat y(yDegrees * degreesToRadians, osg::Vec3f(0.f, 1.f, 0.f));
+            const osg::Quat z(zDegrees * degreesToRadians, osg::Vec3f(0.f, 0.f, 1.f));
+            return z * y * x;
+        }
+
         osg::Group* makeFalloutFaceSurfaceFrameHelper(osg::Group& parent)
         {
             constexpr std::string_view helperName = "FNV Face Surface Frame";
@@ -2120,12 +2132,24 @@ namespace MWRender
             osg::ref_ptr<osg::MatrixTransform> helper = new osg::MatrixTransform;
             helper->setName(std::string(helperName));
             const bool useFullHeadFrame = std::getenv("OPENMW_FNV_HEAD_FRAME_FULL_MATRIX") != nullptr;
-            helper->setMatrix(useFullHeadFrame ? headInBip : osg::Matrix::translate(headInBip.getTrans()));
+            osg::Matrix headFrame = useFullHeadFrame ? headInBip : osg::Matrix::translate(headInBip.getTrans());
+            const osg::Quat headFrameAttitude = getFalloutHeadFrameAttitude();
+            const bool parentOrder = std::getenv("OPENMW_FNV_HEAD_FRAME_ROTATION_PARENT_ORDER") != nullptr;
+            if (!headFrameAttitude.zeroRotation())
+            {
+                const osg::Matrix rotation = osg::Matrix::rotate(headFrameAttitude);
+                headFrame = parentOrder ? headFrame * rotation : rotation * headFrame;
+            }
+            helper->setMatrix(headFrame);
             bip01.addChild(helper);
             Log(Debug::Info) << "FNV/ESM4 diag: inserted head frame helper at ("
                              << headInBip.getTrans().x() << ", " << headInBip.getTrans().y() << ", "
                              << headInBip.getTrans().z() << ") under " << bip01.getName()
-                             << " fullMatrix=" << useFullHeadFrame;
+                             << " fullMatrix=" << useFullHeadFrame << " rotation=("
+                             << readFalloutProofFloat("OPENMW_FNV_HEAD_FRAME_ROTATION_X", 0.f) << ","
+                             << readFalloutProofFloat("OPENMW_FNV_HEAD_FRAME_ROTATION_Y", 0.f) << ","
+                             << readFalloutProofFloat("OPENMW_FNV_HEAD_FRAME_ROTATION_Z", 0.f) << ") parentOrder="
+                             << parentOrder;
             return helper;
         }
 
