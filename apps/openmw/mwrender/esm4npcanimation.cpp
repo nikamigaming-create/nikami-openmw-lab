@@ -1001,7 +1001,9 @@ namespace MWRender
         struct FaceGenTri
         {
             std::uint32_t mVertexCount = 0;
+            std::vector<osg::Vec3f> mBaseVertices;
             std::map<std::string, std::vector<osg::Vec3f>, std::less<>> mDiffMorphs;
+            std::map<std::string, std::vector<std::pair<std::uint32_t, osg::Vec3f>>, std::less<>> mStaticMorphs;
         };
 
         bool readFaceGenString(std::istream& stream, std::string& value)
@@ -1156,7 +1158,16 @@ namespace MWRender
             }
 
             stream->ignore(16);
-            stream->ignore(static_cast<std::streamsize>((vertexCount + addedVertexCount) * 12));
+            std::vector<osg::Vec3f> triVertices(static_cast<std::size_t>(vertexCount + addedVertexCount));
+            for (osg::Vec3f& vertex : triVertices)
+            {
+                float x = 0.f;
+                float y = 0.f;
+                float z = 0.f;
+                if (!readBinary(*stream, x) || !readBinary(*stream, y) || !readBinary(*stream, z))
+                    break;
+                vertex.set(x, y, z);
+            }
             stream->ignore(static_cast<std::streamsize>(triangleCount * 12 + quadCount * 16));
 
             for (std::int32_t i = 0; i < labelledVertexCount; ++i)
@@ -1187,6 +1198,7 @@ namespace MWRender
 
             auto tri = std::make_shared<FaceGenTri>();
             tri->mVertexCount = static_cast<std::uint32_t>(vertexCount);
+            tri->mBaseVertices.assign(triVertices.begin(), triVertices.begin() + vertexCount);
             for (std::int32_t morph = 0; morph < diffMorphCount; ++morph)
             {
                 std::string name;
@@ -1207,8 +1219,33 @@ namespace MWRender
                 tri->mDiffMorphs.emplace(std::move(name), std::move(deltas));
             }
 
+            std::size_t addedVertexOffset = static_cast<std::size_t>(vertexCount);
+            for (std::int32_t morph = 0; morph < staticMorphCount; ++morph)
+            {
+                std::string name;
+                std::int32_t indexCount = 0;
+                if (!readFaceGenString(*stream, name) || !readBinary(*stream, indexCount) || indexCount < 0)
+                    break;
+
+                std::vector<std::pair<std::uint32_t, osg::Vec3f>> replacements;
+                replacements.reserve(static_cast<std::size_t>(indexCount));
+                for (std::int32_t i = 0; i < indexCount; ++i)
+                {
+                    std::int32_t vertexIndex = 0;
+                    if (!readBinary(*stream, vertexIndex))
+                        break;
+                    const std::size_t replacementIndex = addedVertexOffset + static_cast<std::size_t>(i);
+                    if (vertexIndex >= 0 && vertexIndex < vertexCount && replacementIndex < triVertices.size())
+                        replacements.emplace_back(static_cast<std::uint32_t>(vertexIndex), triVertices[replacementIndex]);
+                }
+                addedVertexOffset += static_cast<std::size_t>(indexCount);
+                if (!replacements.empty())
+                    tri->mStaticMorphs.emplace(std::move(name), std::move(replacements));
+            }
+
             Log(Debug::Info) << "FNV/ESM4 diag: loaded FaceGen TRI " << cacheKey << " vertices=" << vertexCount
-                             << " diffMorphs=" << tri->mDiffMorphs.size() << " staticMorphs=" << staticMorphCount;
+                             << " diffMorphs=" << tri->mDiffMorphs.size() << " staticMorphs="
+                             << tri->mStaticMorphs.size();
             sCache.emplace(cacheKey, tri);
             return tri;
         }
@@ -1271,6 +1308,36 @@ namespace MWRender
             {
                 const osg::Vec3f delta = deltas[vertex] * weight;
                 (*vertices)[vertex] += delta;
+                maxDelta = std::max(maxDelta, delta.length());
+            }
+
+            vertices->dirty();
+            return morphed;
+        }
+
+        osg::ref_ptr<osg::Geometry> makeFaceGenTriStaticMorphedGeometry(
+            const osg::Geometry& source, const FaceGenTri& tri, std::string_view morphName, float weight, float& maxDelta)
+        {
+            const osg::Vec3Array* sourceVertices = dynamic_cast<const osg::Vec3Array*>(source.getVertexArray());
+            if (sourceVertices == nullptr || sourceVertices->size() > tri.mVertexCount)
+                return nullptr;
+
+            const auto found = tri.mStaticMorphs.find(morphName);
+            if (found == tri.mStaticMorphs.end())
+                return nullptr;
+
+            osg::ref_ptr<osg::Geometry> morphed = new osg::Geometry(source, osg::CopyOp::SHALLOW_COPY);
+            osg::ref_ptr<osg::Vec3Array> vertices = new osg::Vec3Array(*sourceVertices);
+            morphed->setVertexArray(vertices);
+
+            maxDelta = 0.f;
+            for (const auto& [vertexIndex, target] : found->second)
+            {
+                if (vertexIndex >= vertices->size() || vertexIndex >= tri.mBaseVertices.size())
+                    continue;
+                osg::Vec3f& vertex = (*vertices)[vertexIndex];
+                const osg::Vec3f delta = (target - tri.mBaseVertices[vertexIndex]) * weight;
+                vertex += delta;
                 maxDelta = std::max(maxDelta, delta.length());
             }
 
@@ -1354,11 +1421,12 @@ namespace MWRender
         class FaceGenTriMorphVisitor : public osg::NodeVisitor
         {
         public:
-            FaceGenTriMorphVisitor(const FaceGenTri& tri, std::string_view morphName, float weight)
+            FaceGenTriMorphVisitor(const FaceGenTri& tri, std::string_view morphName, float weight, bool staticMorph = false)
                 : osg::NodeVisitor(TRAVERSE_ALL_CHILDREN)
                 , mTri(tri)
                 , mMorphName(morphName)
                 , mWeight(weight)
+                , mStaticMorph(staticMorph)
             {
             }
 
@@ -1383,7 +1451,10 @@ namespace MWRender
                     if (rig->getSourceGeometry() == nullptr)
                         return;
                     osg::ref_ptr<osg::Geometry> morphed
-                        = makeFaceGenTriMorphedGeometry(*rig->getSourceGeometry(), mTri, mMorphName, mWeight, maxDelta);
+                        = mStaticMorph
+                        ? makeFaceGenTriStaticMorphedGeometry(
+                            *rig->getSourceGeometry(), mTri, mMorphName, mWeight, maxDelta)
+                        : makeFaceGenTriMorphedGeometry(*rig->getSourceGeometry(), mTri, mMorphName, mWeight, maxDelta);
                     if (morphed == nullptr)
                         return;
                     rig->setSourceGeometry(morphed);
@@ -1391,7 +1462,9 @@ namespace MWRender
                 else if (osg::Geometry* geometry = dynamic_cast<osg::Geometry*>(&drawable))
                 {
                     osg::ref_ptr<osg::Geometry> morphed
-                        = makeFaceGenTriMorphedGeometry(*geometry, mTri, mMorphName, mWeight, maxDelta);
+                        = mStaticMorph
+                        ? makeFaceGenTriStaticMorphedGeometry(*geometry, mTri, mMorphName, mWeight, maxDelta)
+                        : makeFaceGenTriMorphedGeometry(*geometry, mTri, mMorphName, mWeight, maxDelta);
                     if (morphed == nullptr)
                         return;
                     geodeReplace(*geometry, morphed);
@@ -1419,6 +1492,7 @@ namespace MWRender
             const FaceGenTri& mTri;
             std::string mMorphName;
             float mWeight;
+            bool mStaticMorph = false;
             unsigned int mMorphedDrawableCount = 0;
             float mMaxDelta = 0.f;
         };
@@ -1926,6 +2000,47 @@ namespace MWRender
             return false;
         }
 
+        bool applyFalloutProofTriStaticMorph(Resource::ResourceSystem* resourceSystem, osg::Node* attached,
+            std::string_view model, const ESM4::Npc& traits)
+        {
+            if (attached == nullptr)
+                return false;
+
+            const char* morphEnv = std::getenv("OPENMW_FNV_PROOF_TRI_STATIC_MORPH");
+            if (morphEnv == nullptr || *morphEnv == '\0')
+                return false;
+
+            const std::shared_ptr<const FaceGenTri> tri = loadFaceGenTri(resourceSystem, model);
+            if (!tri)
+                return false;
+
+            const std::string_view morphName(morphEnv);
+            const auto found = tri->mStaticMorphs.find(morphName);
+            if (found == tri->mStaticMorphs.end())
+            {
+                std::string names;
+                for (const auto& [name, ignored] : tri->mStaticMorphs)
+                {
+                    if (!names.empty())
+                        names += ",";
+                    names += name;
+                }
+                Log(Debug::Info) << "FNV/ESM4 proof: static TRI morph " << morphName << " not applied to " << model
+                                 << " for " << traits.mEditorId << " available=[" << names << "]";
+                return false;
+            }
+
+            FaceGenTriMorphVisitor morphVisitor(*tri, morphName, 1.f, true);
+            attached->accept(morphVisitor);
+            if (morphVisitor.getMorphedDrawableCount() == 0)
+                return false;
+
+            Log(Debug::Info) << "FNV/ESM4 proof: applied static TRI morph " << morphName << " on " << model << " to "
+                             << morphVisitor.getMorphedDrawableCount() << " drawable(s) for " << traits.mEditorId
+                             << " maxVertexDelta=" << morphVisitor.getMaxDelta();
+            return true;
+        }
+
         bool applyFalloutProofTriOpenMorph(
             Resource::ResourceSystem* resourceSystem, const MWWorld::Ptr& actor, osg::Node* attached,
             std::string_view model, const ESM4::Npc& traits)
@@ -2074,8 +2189,8 @@ namespace MWRender
                     readFalloutProofFloat("OPENMW_FNV_EYE_OFFSET_Z", 0.f));
             if (lowered.find("beard") != std::string::npos)
                 return osg::Vec3f(readFalloutProofFloat("OPENMW_FNV_BEARD_OFFSET_X", 0.f),
-                    readFalloutProofFloat("OPENMW_FNV_BEARD_OFFSET_Y", -3.f),
-                    readFalloutProofFloat("OPENMW_FNV_BEARD_OFFSET_Z", -1.f));
+                    readFalloutProofFloat("OPENMW_FNV_BEARD_OFFSET_Y", 0.f),
+                    readFalloutProofFloat("OPENMW_FNV_BEARD_OFFSET_Z", 0.f));
             if (lowered.find("mouth") != std::string::npos || lowered.find("teeth") != std::string::npos
                 || lowered.find("tongue") != std::string::npos)
                 return osg::Vec3f(readFalloutProofFloat("OPENMW_FNV_MOUTH_OFFSET_X", 0.f),
@@ -2244,17 +2359,7 @@ namespace MWRender
         {
             const char* mode = std::getenv("OPENMW_FNV_STATIC_HEAD_ATTACH_MODE");
             if (mode == nullptr || mode[0] == '\0')
-            {
-                std::string lowered(model);
-                Misc::StringUtils::lowerCaseInPlace(lowered);
-                if (lowered.find("hair") != std::string::npos || lowered.find("beard") != std::string::npos
-                    || lowered.find("brow") != std::string::npos)
-                    return "head";
-                if (lowered.find("eye") != std::string::npos || lowered.find("mouth") != std::string::npos
-                    || lowered.find("teeth") != std::string::npos || lowered.find("tongue") != std::string::npos)
-                    return "bip01";
                 return "headframe";
-            }
             return mode;
         }
 
@@ -3717,7 +3822,10 @@ namespace MWRender
                 }
                 neutralizeFalloutSkinMaterial(attached.get(), headPart.mesh, traits);
             }
-            if (attached != nullptr && std::getenv("OPENMW_FNV_PROOF_MOUTH_DRIVER") != nullptr)
+            if (attached != nullptr)
+                applyFalloutProofTriStaticMorph(mResourceSystem, attached.get(), headPart.mesh, traits);
+            if (attached != nullptr && std::getenv("OPENMW_FNV_PROOF_MOUTH_DRIVER") != nullptr
+                && isFalloutMouthDriverPart(headPart.mesh))
                 applyFalloutProofTriOpenMorph(mResourceSystem, mPtr, attached.get(), headPart.mesh, traits);
         }
 
@@ -3737,7 +3845,9 @@ namespace MWRender
                 osg::ref_ptr<osg::Node> attached = insertPart(hair->mModel, &hairTint);
                 fallbackHairAttached = attached != nullptr;
                 applyFaceGenEgmMorph(mResourceSystem, attached.get(), hair->mModel, traits);
-                if (attached != nullptr && std::getenv("OPENMW_FNV_PROOF_MOUTH_DRIVER") != nullptr)
+                applyFalloutProofTriStaticMorph(mResourceSystem, attached.get(), hair->mModel, traits);
+                if (attached != nullptr && std::getenv("OPENMW_FNV_PROOF_MOUTH_DRIVER") != nullptr
+                    && isFalloutMouthDriverPart(hair->mModel))
                     applyFalloutProofTriOpenMorph(mResourceSystem, mPtr, attached.get(), hair->mModel, traits);
                 if (attached != nullptr)
                 {
@@ -3893,7 +4003,9 @@ namespace MWRender
                                  << mPtr.getCellRef().getRefId();
                 osg::ref_ptr<osg::Node> attached = insertPart(part->mModel, tint);
                 applyFaceGenEgmMorph(mResourceSystem, attached.get(), part->mModel, traits);
-                if (attached != nullptr && std::getenv("OPENMW_FNV_PROOF_MOUTH_DRIVER") != nullptr)
+                applyFalloutProofTriStaticMorph(mResourceSystem, attached.get(), part->mModel, traits);
+                if (attached != nullptr && std::getenv("OPENMW_FNV_PROOF_MOUTH_DRIVER") != nullptr
+                    && isFalloutMouthDriverPart(part->mModel))
                     applyFalloutProofTriOpenMorph(mResourceSystem, mPtr, attached.get(), part->mModel, traits);
                 if (attached != nullptr && tint != nullptr)
                 {
@@ -3916,7 +4028,9 @@ namespace MWRender
                     }
                     osg::ref_ptr<osg::Node> extraAttached = insertPart(extraPart->mModel, tint);
                     applyFaceGenEgmMorph(mResourceSystem, extraAttached.get(), extraPart->mModel, traits);
-                    if (extraAttached != nullptr && std::getenv("OPENMW_FNV_PROOF_MOUTH_DRIVER") != nullptr)
+                    applyFalloutProofTriStaticMorph(mResourceSystem, extraAttached.get(), extraPart->mModel, traits);
+                    if (extraAttached != nullptr && std::getenv("OPENMW_FNV_PROOF_MOUTH_DRIVER") != nullptr
+                        && isFalloutMouthDriverPart(extraPart->mModel))
                         applyFalloutProofTriOpenMorph(
                             mResourceSystem, mPtr, extraAttached.get(), extraPart->mModel, traits);
                     if (extraAttached != nullptr && tint != nullptr)
