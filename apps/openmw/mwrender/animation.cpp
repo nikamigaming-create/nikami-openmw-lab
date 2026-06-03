@@ -1407,6 +1407,36 @@ namespace MWRender
                 ++groupCount;
             }
             Log(Debug::Info) << "FNV/ESM4 diag: animation source " << kfname << " groups=[" << groups.str() << "]";
+            if (!animsrc->mKeyframes->mFalloutHeadAnimTracks.empty())
+            {
+                std::ostringstream headAnimSample;
+                unsigned int sampleCount = 0;
+                for (const auto& [name, track] : animsrc->mKeyframes->mFalloutHeadAnimTracks)
+                {
+                    if (sampleCount >= 8)
+                        break;
+                    if (sampleCount != 0)
+                        headAnimSample << " | ";
+                    float minValue = track.mDefaultValue;
+                    float maxValue = track.mDefaultValue;
+                    for (const auto& [time, value] : track.mKeys)
+                    {
+                        minValue = std::min(minValue, value);
+                        maxValue = std::max(maxValue, value);
+                    }
+                    headAnimSample << name << "{"
+                                   << (track.mType
+                                               == SceneUtil::KeyframeHolder::FalloutHeadAnimTrack::Type::Float
+                                           ? "float"
+                                           : "bool")
+                                   << " keys=" << track.mKeys.size() << " default=" << track.mDefaultValue
+                                   << " range=(" << minValue << "," << maxValue << ")}";
+                    ++sampleCount;
+                }
+                Log(Debug::Info) << "FNV/ESM4 diag: animation source " << kfname << " headAnimTracks="
+                                 << animsrc->mKeyframes->mFalloutHeadAnimTracks.size() << " sample=["
+                                 << headAnimSample.str() << "]";
+            }
         }
 
         mAnimSources.push_back(animsrc);

@@ -69,9 +69,10 @@ namespace MWRender
         class TintMaterialVisitor : public osg::NodeVisitor
         {
         public:
-            TintMaterialVisitor(const osg::Vec4f& tint)
+            TintMaterialVisitor(const osg::Vec4f& tint, float emissionStrength = 0.f)
                 : osg::NodeVisitor(TRAVERSE_ALL_CHILDREN)
                 , mTint(tint)
+                , mEmissionStrength(emissionStrength)
             {
             }
 
@@ -121,6 +122,16 @@ namespace MWRender
                     material->setEmission(osg::Material::FRONT_AND_BACK, osg::Vec4f(0.f, 0.f, 0.f, 1.f));
                     material->setShininess(osg::Material::FRONT_AND_BACK, 0.f);
                 }
+                else if (mEmissionStrength > 0.f)
+                {
+                    osg::Vec4f emission(std::min(mTint.x() * mEmissionStrength, 1.f),
+                        std::min(mTint.y() * mEmissionStrength, 1.f),
+                        std::min(mTint.z() * mEmissionStrength, 1.f), 1.f);
+                    material->setEmission(osg::Material::FRONT_AND_BACK, emission);
+                    material->setSpecular(osg::Material::FRONT_AND_BACK, osg::Vec4f(0.15f, 0.15f, 0.15f, 1.f));
+                    material->setShininess(osg::Material::FRONT_AND_BACK, 12.f);
+                    stateSet->setMode(GL_CULL_FACE, osg::StateAttribute::OFF | osg::StateAttribute::OVERRIDE);
+                }
                 stateSet->setAttributeAndModes(material, osg::StateAttribute::ON);
             }
 
@@ -149,6 +160,7 @@ namespace MWRender
             }
 
             osg::Vec4f mTint;
+            float mEmissionStrength = 0.f;
 
         public:
             mutable unsigned int mNeutralizedVertexColorArrays = 0;
@@ -174,25 +186,25 @@ namespace MWRender
                 const bool forceOpen = std::getenv("OPENMW_FNV_PROOF_MOUTH_FORCE_OPEN") != nullptr;
                 if (transform != nullptr && (forceOpen || MWBase::Environment::get().getSoundManager()->sayActive(mActor)))
                 {
-                    const double simTime = nv != nullptr && nv->getFrameStamp() != nullptr
-                        ? nv->getFrameStamp()->getSimulationTime()
-                        : 0.0;
-                    const float open = forceOpen ? 1.f : 0.5f + 0.5f * std::sin(static_cast<float>(simTime * 34.0));
-                    osg::Vec3f offset(0.f, 0.9f * open, -1.1f * open);
-                    osg::Vec3f scale(1.f, 1.f, 1.f + 0.18f * open);
+                    const float loudness = forceOpen
+                        ? 1.f
+                        : MWBase::Environment::get().getSoundManager()->getSaySoundLoudness(mActor);
+                    const float open = forceOpen ? 1.f : std::clamp(loudness * 10.0f, 0.10f, 1.0f);
+                    osg::Vec3f offset(0.f, -0.15f * open, -1.8f * open);
+                    osg::Vec3f scale(1.f, 1.f, 1.f + 0.24f * open);
                     if (mModel.find("teethlower") != std::string::npos)
                     {
-                        offset.set(0.f, 1.8f * open, -2.4f * open);
+                        offset.set(0.f, -0.25f * open, -3.2f * open);
                         scale.set(1.f, 1.f, 1.f);
                     }
                     else if (mModel.find("teethupper") != std::string::npos)
                     {
-                        offset.set(0.f, 1.6f * open, 0.25f * open);
+                        offset.set(0.f, -0.05f * open, 0.1f * open);
                         scale.set(1.f, 1.f, 1.f);
                     }
                     else if (mModel.find("tongue") != std::string::npos)
                     {
-                        offset.set(0.f, 2.0f * open, -1.7f * open);
+                        offset.set(0.f, -0.25f * open, -2.4f * open);
                         scale.set(1.f, 1.f, 1.f);
                     }
                     transform->setScale(scale);
@@ -201,7 +213,8 @@ namespace MWRender
                     if (!mLogged)
                     {
                         Log(Debug::Info) << "FNV/ESM4 proof: mouth driver active for " << mActor.toString()
-                                         << " model=" << mModel << " open=" << open << " force=" << forceOpen
+                                         << " model=" << mModel << " loudness=" << loudness << " open=" << open
+                                         << " force=" << forceOpen
                                          << " offset=(" << offset.x() << "," << offset.y() << "," << offset.z()
                                          << ")";
                         mLogged = true;
@@ -947,6 +960,26 @@ namespace MWRender
             std::vector<std::vector<osg::Vec3f>> mAsymmetricModes;
         };
 
+        struct FaceGenTri
+        {
+            std::uint32_t mVertexCount = 0;
+            std::map<std::string, std::vector<osg::Vec3f>, std::less<>> mDiffMorphs;
+        };
+
+        bool readFaceGenString(std::istream& stream, std::string& value)
+        {
+            std::int32_t length = 0;
+            if (!readBinary(stream, length) || length < 0)
+                return false;
+
+            value.resize(static_cast<std::size_t>(length));
+            if (length > 0)
+                stream.read(value.data(), length);
+            while (!value.empty() && value.back() == '\0')
+                value.pop_back();
+            return static_cast<bool>(stream);
+        }
+
         std::shared_ptr<const FaceGenEgm> loadFaceGenEgm(Resource::ResourceSystem* resourceSystem, std::string_view model)
         {
             std::string egmPath(model);
@@ -1029,6 +1062,119 @@ namespace MWRender
             return egm;
         }
 
+        std::shared_ptr<const FaceGenTri> loadFaceGenTri(Resource::ResourceSystem* resourceSystem, std::string_view model)
+        {
+            std::string triPath(model);
+            const std::size_t dot = triPath.find_last_of('.');
+            if (dot == std::string::npos)
+                return nullptr;
+            triPath.replace(dot, std::string::npos, ".tri");
+
+            const VFS::Path::Normalized correctedPath = Misc::ResourceHelpers::correctMeshPath(VFS::Path::Normalized(triPath));
+            const std::string cacheKey = correctedPath.value();
+            static std::map<std::string, std::shared_ptr<const FaceGenTri>> sCache;
+            if (const auto found = sCache.find(cacheKey); found != sCache.end())
+                return found->second;
+
+            const VFS::Manager* vfs = resourceSystem->getVFS();
+            if (!vfs->exists(correctedPath))
+            {
+                sCache.emplace(cacheKey, nullptr);
+                return nullptr;
+            }
+
+            auto stream = vfs->get(correctedPath);
+            char magic[8] = {};
+            stream->read(magic, sizeof(magic));
+            if (!*stream || std::string_view(magic, sizeof(magic)) != "FRTRI003")
+            {
+                Log(Debug::Warning) << "FNV/ESM4 diag: unsupported FaceGen TRI " << cacheKey;
+                sCache.emplace(cacheKey, nullptr);
+                return nullptr;
+            }
+
+            std::int32_t vertexCount = 0;
+            std::int32_t triangleCount = 0;
+            std::int32_t quadCount = 0;
+            std::int32_t labelledVertexCount = 0;
+            std::int32_t labelledSurfaceCount = 0;
+            std::int32_t uvVertexCount = 0;
+            std::int32_t extensionFlags = 0;
+            std::int32_t diffMorphCount = 0;
+            std::int32_t staticMorphCount = 0;
+            std::int32_t addedVertexCount = 0;
+            if (!readBinary(*stream, vertexCount) || !readBinary(*stream, triangleCount)
+                || !readBinary(*stream, quadCount) || !readBinary(*stream, labelledVertexCount)
+                || !readBinary(*stream, labelledSurfaceCount) || !readBinary(*stream, uvVertexCount)
+                || !readBinary(*stream, extensionFlags) || !readBinary(*stream, diffMorphCount)
+                || !readBinary(*stream, staticMorphCount) || !readBinary(*stream, addedVertexCount)
+                || vertexCount < 0 || triangleCount < 0 || quadCount < 0 || labelledVertexCount < 0
+                || labelledSurfaceCount < 0 || uvVertexCount < 0 || diffMorphCount < 0 || staticMorphCount < 0
+                || addedVertexCount < 0)
+            {
+                Log(Debug::Warning) << "FNV/ESM4 diag: failed to read FaceGen TRI header " << cacheKey;
+                sCache.emplace(cacheKey, nullptr);
+                return nullptr;
+            }
+
+            stream->ignore(16);
+            stream->ignore(static_cast<std::streamsize>((vertexCount + addedVertexCount) * 12));
+            stream->ignore(static_cast<std::streamsize>(triangleCount * 12 + quadCount * 16));
+
+            for (std::int32_t i = 0; i < labelledVertexCount; ++i)
+            {
+                stream->ignore(4);
+                std::string ignored;
+                if (!readFaceGenString(*stream, ignored))
+                    break;
+            }
+            for (std::int32_t i = 0; i < labelledSurfaceCount; ++i)
+            {
+                stream->ignore(16);
+                std::string ignored;
+                if (!readFaceGenString(*stream, ignored))
+                    break;
+            }
+
+            if ((extensionFlags & 1) != 0)
+            {
+                if (uvVertexCount == 0)
+                    stream->ignore(static_cast<std::streamsize>(vertexCount * 8));
+                else
+                {
+                    stream->ignore(static_cast<std::streamsize>(uvVertexCount * 8));
+                    stream->ignore(static_cast<std::streamsize>(triangleCount * 12 + quadCount * 16));
+                }
+            }
+
+            auto tri = std::make_shared<FaceGenTri>();
+            tri->mVertexCount = static_cast<std::uint32_t>(vertexCount);
+            for (std::int32_t morph = 0; morph < diffMorphCount; ++morph)
+            {
+                std::string name;
+                float scale = 0.f;
+                if (!readFaceGenString(*stream, name) || !readBinary(*stream, scale))
+                    break;
+
+                std::vector<osg::Vec3f> deltas(static_cast<std::size_t>(vertexCount));
+                for (std::int32_t vertex = 0; vertex < vertexCount; ++vertex)
+                {
+                    std::int16_t x = 0;
+                    std::int16_t y = 0;
+                    std::int16_t z = 0;
+                    if (!readBinary(*stream, x) || !readBinary(*stream, y) || !readBinary(*stream, z))
+                        break;
+                    deltas[static_cast<std::size_t>(vertex)].set(x * scale, y * scale, z * scale);
+                }
+                tri->mDiffMorphs.emplace(std::move(name), std::move(deltas));
+            }
+
+            Log(Debug::Info) << "FNV/ESM4 diag: loaded FaceGen TRI " << cacheKey << " vertices=" << vertexCount
+                             << " diffMorphs=" << tri->mDiffMorphs.size() << " staticMorphs=" << staticMorphCount;
+            sCache.emplace(cacheKey, tri);
+            return tri;
+        }
+
         osg::ref_ptr<osg::Geometry> makeFaceGenMorphedGeometry(const osg::Geometry& source, const FaceGenEgm& egm,
             const std::vector<float>& symmetricCoefficients, const std::vector<float>& asymmetricCoefficients,
             float& maxDelta)
@@ -1062,6 +1208,34 @@ namespace MWRender
 
             applyModes(egm.mSymmetricModes, symmetricCoefficients);
             applyModes(egm.mAsymmetricModes, asymmetricCoefficients);
+            vertices->dirty();
+            return morphed;
+        }
+
+        osg::ref_ptr<osg::Geometry> makeFaceGenTriMorphedGeometry(
+            const osg::Geometry& source, const FaceGenTri& tri, std::string_view morphName, float weight, float& maxDelta)
+        {
+            const osg::Vec3Array* sourceVertices = dynamic_cast<const osg::Vec3Array*>(source.getVertexArray());
+            if (sourceVertices == nullptr || sourceVertices->size() > tri.mVertexCount)
+                return nullptr;
+
+            const auto found = tri.mDiffMorphs.find(morphName);
+            if (found == tri.mDiffMorphs.end())
+                return nullptr;
+
+            osg::ref_ptr<osg::Geometry> morphed = new osg::Geometry(source, osg::CopyOp::SHALLOW_COPY);
+            osg::ref_ptr<osg::Vec3Array> vertices = new osg::Vec3Array(*sourceVertices);
+            morphed->setVertexArray(vertices);
+
+            maxDelta = 0.f;
+            const std::vector<osg::Vec3f>& deltas = found->second;
+            for (std::size_t vertex = 0; vertex < vertices->size(); ++vertex)
+            {
+                const osg::Vec3f delta = deltas[vertex] * weight;
+                (*vertices)[vertex] += delta;
+                maxDelta = std::max(maxDelta, delta.length());
+            }
+
             vertices->dirty();
             return morphed;
         }
@@ -1138,6 +1312,225 @@ namespace MWRender
             vertices->dirty();
             return morphed;
         }
+
+        class FaceGenTriMorphVisitor : public osg::NodeVisitor
+        {
+        public:
+            FaceGenTriMorphVisitor(const FaceGenTri& tri, std::string_view morphName, float weight)
+                : osg::NodeVisitor(TRAVERSE_ALL_CHILDREN)
+                , mTri(tri)
+                , mMorphName(morphName)
+                , mWeight(weight)
+            {
+            }
+
+            void apply(osg::Geode& geode) override
+            {
+                for (unsigned int i = 0; i < geode.getNumDrawables(); ++i)
+                    applyDrawable(*geode.getDrawable(i));
+                traverse(geode);
+            }
+
+            void apply(osg::Drawable& drawable) override { applyDrawable(drawable); }
+
+            unsigned int getMorphedDrawableCount() const { return mMorphedDrawableCount; }
+            float getMaxDelta() const { return mMaxDelta; }
+
+        private:
+            void applyDrawable(osg::Drawable& drawable)
+            {
+                float maxDelta = 0.f;
+                if (SceneUtil::RigGeometry* rig = dynamic_cast<SceneUtil::RigGeometry*>(&drawable))
+                {
+                    if (rig->getSourceGeometry() == nullptr)
+                        return;
+                    osg::ref_ptr<osg::Geometry> morphed
+                        = makeFaceGenTriMorphedGeometry(*rig->getSourceGeometry(), mTri, mMorphName, mWeight, maxDelta);
+                    if (morphed == nullptr)
+                        return;
+                    rig->setSourceGeometry(morphed);
+                }
+                else if (osg::Geometry* geometry = dynamic_cast<osg::Geometry*>(&drawable))
+                {
+                    osg::ref_ptr<osg::Geometry> morphed
+                        = makeFaceGenTriMorphedGeometry(*geometry, mTri, mMorphName, mWeight, maxDelta);
+                    if (morphed == nullptr)
+                        return;
+                    geodeReplace(*geometry, morphed);
+                }
+                else
+                    return;
+
+                ++mMorphedDrawableCount;
+                mMaxDelta = std::max(mMaxDelta, maxDelta);
+            }
+
+            void geodeReplace(osg::Geometry& geometry, osg::ref_ptr<osg::Geometry> morphed)
+            {
+                for (unsigned int parentIndex = 0; parentIndex < geometry.getNumParents(); ++parentIndex)
+                {
+                    osg::Geode* parent = dynamic_cast<osg::Geode*>(geometry.getParent(parentIndex));
+                    if (parent == nullptr)
+                        continue;
+                    const unsigned int drawableIndex = parent->getDrawableIndex(&geometry);
+                    if (drawableIndex < parent->getNumDrawables())
+                        parent->setDrawable(drawableIndex, morphed);
+                }
+            }
+
+            const FaceGenTri& mTri;
+            std::string mMorphName;
+            float mWeight;
+            unsigned int mMorphedDrawableCount = 0;
+            float mMaxDelta = 0.f;
+        };
+
+        class FalloutProofTriMorphDriver : public osg::NodeCallback
+        {
+        public:
+            FalloutProofTriMorphDriver(const MWWorld::Ptr& actor, const FaceGenTri& tri, std::string_view morphName,
+                std::string model)
+                : mActor(actor)
+                , mMorphName(morphName)
+                , mModel(std::move(model))
+            {
+                const auto found = tri.mDiffMorphs.find(mMorphName);
+                if (found != tri.mDiffMorphs.end())
+                    mDeltas = found->second;
+            }
+
+            void addRig(SceneUtil::RigGeometry& rig)
+            {
+                osg::Geometry* source = rig.getSourceGeometry();
+                if (source == nullptr)
+                    return;
+                const osg::Vec3Array* vertices = dynamic_cast<const osg::Vec3Array*>(source->getVertexArray());
+                if (vertices == nullptr || vertices->size() > mDeltas.size())
+                    return;
+
+                Target target;
+                target.mRig = &rig;
+                target.mTemplateGeometry = source;
+                target.mBaseVertices = new osg::Vec3Array(*vertices);
+                mTargets.push_back(std::move(target));
+            }
+
+            void addGeometry(osg::Geometry& geometry)
+            {
+                const osg::Vec3Array* vertices = dynamic_cast<const osg::Vec3Array*>(geometry.getVertexArray());
+                if (vertices == nullptr || vertices->size() > mDeltas.size())
+                    return;
+
+                Target target;
+                target.mGeometry = &geometry;
+                target.mBaseVertices = new osg::Vec3Array(*vertices);
+                mTargets.push_back(std::move(target));
+            }
+
+            bool empty() const { return mTargets.empty() || mDeltas.empty(); }
+
+            void operator()(osg::Node* node, osg::NodeVisitor* nv) override
+            {
+                const bool forceOpen = std::getenv("OPENMW_FNV_PROOF_MOUTH_FORCE_OPEN") != nullptr;
+                float open = 0.f;
+                if (forceOpen)
+                    open = 1.f;
+                else if (MWBase::Environment::get().getSoundManager()->sayActive(mActor))
+                {
+                    const float loudness = MWBase::Environment::get().getSoundManager()->getSaySoundLoudness(mActor);
+                    open = std::clamp(loudness * 10.0f, 0.f, 1.f);
+                }
+
+                if (open != mLastOpen)
+                {
+                    for (Target& target : mTargets)
+                        applyTarget(target, open);
+                    mLastOpen = open;
+                }
+
+                if (!mLogged && open > 0.f)
+                {
+                    Log(Debug::Info) << "FNV/ESM4 proof: TRI morph driver active for " << mActor.toString()
+                                     << " model=" << mModel << " morph=" << mMorphName << " targets="
+                                     << mTargets.size() << " open=" << open << " force=" << forceOpen;
+                    mLogged = true;
+                }
+
+                traverse(node, nv);
+            }
+
+        private:
+            struct Target
+            {
+                osg::ref_ptr<SceneUtil::RigGeometry> mRig;
+                osg::ref_ptr<osg::Geometry> mGeometry;
+                osg::ref_ptr<osg::Geometry> mTemplateGeometry;
+                osg::ref_ptr<osg::Vec3Array> mBaseVertices;
+            };
+
+            void applyTarget(Target& target, float open)
+            {
+                if (target.mBaseVertices == nullptr)
+                    return;
+
+                osg::ref_ptr<osg::Vec3Array> vertices = new osg::Vec3Array(*target.mBaseVertices);
+                for (std::size_t i = 0; i < vertices->size(); ++i)
+                    (*vertices)[i] += mDeltas[i] * open;
+                vertices->dirty();
+
+                if (target.mRig != nullptr && target.mTemplateGeometry != nullptr)
+                {
+                    osg::ref_ptr<osg::Geometry> morphed
+                        = new osg::Geometry(*target.mTemplateGeometry, osg::CopyOp::SHALLOW_COPY);
+                    morphed->setVertexArray(vertices);
+                    target.mRig->setSourceGeometry(morphed);
+                }
+                else if (target.mGeometry != nullptr)
+                {
+                    target.mGeometry->setVertexArray(vertices);
+                    target.mGeometry->dirtyDisplayList();
+                    target.mGeometry->dirtyBound();
+                }
+            }
+
+            MWWorld::Ptr mActor;
+            std::string mMorphName;
+            std::string mModel;
+            std::vector<osg::Vec3f> mDeltas;
+            std::vector<Target> mTargets;
+            float mLastOpen = -1.f;
+            bool mLogged = false;
+        };
+
+        class FalloutProofTriMorphTargetVisitor : public osg::NodeVisitor
+        {
+        public:
+            FalloutProofTriMorphTargetVisitor(FalloutProofTriMorphDriver& driver)
+                : osg::NodeVisitor(TRAVERSE_ALL_CHILDREN)
+                , mDriver(driver)
+            {
+            }
+
+            void apply(osg::Geode& geode) override
+            {
+                for (unsigned int i = 0; i < geode.getNumDrawables(); ++i)
+                    applyDrawable(*geode.getDrawable(i));
+                traverse(geode);
+            }
+
+            void apply(osg::Drawable& drawable) override { applyDrawable(drawable); }
+
+        private:
+            void applyDrawable(osg::Drawable& drawable)
+            {
+                if (SceneUtil::RigGeometry* rig = dynamic_cast<SceneUtil::RigGeometry*>(&drawable))
+                    mDriver.addRig(*rig);
+                else if (osg::Geometry* geometry = dynamic_cast<osg::Geometry*>(&drawable))
+                    mDriver.addGeometry(*geometry);
+            }
+
+            FalloutProofTriMorphDriver& mDriver;
+        };
 
         class FalloutProofTalkingHeadVisitor : public osg::NodeVisitor
         {
@@ -1440,6 +1833,51 @@ namespace MWRender
             return false;
         }
 
+        bool applyFalloutProofTriOpenMorph(
+            Resource::ResourceSystem* resourceSystem, const MWWorld::Ptr& actor, osg::Node* attached,
+            std::string_view model, const ESM4::Npc& traits)
+        {
+            if (attached == nullptr)
+                return false;
+
+            const std::shared_ptr<const FaceGenTri> tri = loadFaceGenTri(resourceSystem, model);
+            if (!tri)
+                return false;
+
+            constexpr std::string_view morphName = "BigAah";
+            if (tri->mDiffMorphs.find(morphName) == tri->mDiffMorphs.end())
+            {
+                Log(Debug::Info) << "FNV/ESM4 proof: FaceGen TRI morph " << morphName << " not applied to " << model
+                                 << " for " << traits.mEditorId << " morphs=" << tri->mDiffMorphs.size();
+                return false;
+            }
+
+            if (std::getenv("OPENMW_FNV_PROOF_MOUTH_FORCE_OPEN") != nullptr)
+            {
+                FaceGenTriMorphVisitor morphVisitor(*tri, morphName, 1.f);
+                attached->accept(morphVisitor);
+                if (morphVisitor.getMorphedDrawableCount() == 0)
+                    return false;
+
+                Log(Debug::Info) << "FNV/ESM4 proof: applied FaceGen TRI morph " << morphName << " on " << model
+                                 << " to " << morphVisitor.getMorphedDrawableCount() << " drawable(s) for "
+                                 << traits.mEditorId << " maxVertexDelta=" << morphVisitor.getMaxDelta();
+                return true;
+            }
+
+            osg::ref_ptr<FalloutProofTriMorphDriver> driver
+                = new FalloutProofTriMorphDriver(actor, *tri, morphName, std::string(model));
+            FalloutProofTriMorphTargetVisitor targetVisitor(*driver);
+            attached->accept(targetVisitor);
+            if (driver->empty())
+                return false;
+
+            attached->addUpdateCallback(driver);
+            Log(Debug::Info) << "FNV/ESM4 proof: installed FaceGen TRI morph driver " << morphName << " on " << model
+                             << " for " << traits.mEditorId;
+            return true;
+        }
+
         osg::Group* findBestAttachmentNode(
             const Animation::NodeMap& nodeMap, std::initializer_list<std::string_view> names)
         {
@@ -1478,6 +1916,26 @@ namespace MWRender
             return lowered.find("headgear") != std::string::npos || lowered.find("hat") != std::string::npos;
         }
 
+        bool isFalloutHairTintModel(std::string_view model)
+        {
+            std::string lowered(model);
+            Misc::StringUtils::lowerCaseInPlace(lowered);
+            return lowered.find("characters/hair/") != std::string::npos
+                || lowered.find("characters\\hair\\") != std::string::npos
+                || lowered.find("beard") != std::string::npos || lowered.find("brow") != std::string::npos;
+        }
+
+        std::string getFalloutHairTintDiffuseOverride(std::string_view model)
+        {
+            std::string lowered(model);
+            Misc::StringUtils::lowerCaseInPlace(lowered);
+            if (lowered.find("beardfull") != std::string::npos)
+                return "textures/characters/hair/beardfull_hl.dds";
+            if (lowered.find("hairbaseold") != std::string::npos)
+                return "textures/characters/hair/hairafricanamericanbase_hl.dds";
+            return {};
+        }
+
         bool isFalloutMouthDriverPart(std::string_view model)
         {
             std::string lowered(model);
@@ -1486,20 +1944,38 @@ namespace MWRender
                 || lowered.find("tongue") != std::string::npos;
         }
 
+        float readFalloutProofFloat(const char* name, float fallback)
+        {
+            if (const char* value = std::getenv(name))
+            {
+                char* end = nullptr;
+                const float parsed = std::strtof(value, &end);
+                if (end != value)
+                    return parsed;
+            }
+            return fallback;
+        }
+
         osg::Vec3f getFalloutHeadFrameSurfaceOffset(std::string_view model, bool headgearStaticPart)
         {
             std::string lowered(model);
             Misc::StringUtils::lowerCaseInPlace(lowered);
 
             if (headgearStaticPart)
-                return osg::Vec3f(0.f, 0.f, 4.5f);
+                return osg::Vec3f(readFalloutProofFloat("OPENMW_FNV_HEADGEAR_OFFSET_X", 0.f),
+                    readFalloutProofFloat("OPENMW_FNV_HEADGEAR_OFFSET_Y", 0.f),
+                    readFalloutProofFloat("OPENMW_FNV_HEADGEAR_OFFSET_Z", 5.5f));
+            if (lowered.find("eye") != std::string::npos)
+                return osg::Vec3f(0.f, -6.4f, 0.f);
             if (lowered.find("beard") != std::string::npos)
-                return osg::Vec3f(0.f, 2.0f, -0.4f);
+                return osg::Vec3f(readFalloutProofFloat("OPENMW_FNV_BEARD_OFFSET_X", 4.f),
+                    readFalloutProofFloat("OPENMW_FNV_BEARD_OFFSET_Y", -4.05f),
+                    readFalloutProofFloat("OPENMW_FNV_BEARD_OFFSET_Z", -1.f));
             if (lowered.find("mouth") != std::string::npos || lowered.find("teeth") != std::string::npos
                 || lowered.find("tongue") != std::string::npos)
-                return osg::Vec3f(0.f, 2.2f, 0.f);
+                return osg::Vec3f(0.f, -4.55f, 0.f);
             if (lowered.find("brow") != std::string::npos)
-                return osg::Vec3f(0.f, 0.7f, 0.f);
+                return osg::Vec3f(0.f, -6.7f, 0.f);
             return osg::Vec3f();
         }
 
@@ -2228,7 +2704,8 @@ namespace MWRender
             const std::vector<ESM::FormId>& packageIds)
         {
             std::vector<std::string> result;
-            if (std::getenv("OPENMW_FNV_DISABLE_PACKAGE_PROCEDURE") != nullptr)
+            if (std::getenv("OPENMW_FNV_DISABLE_PACKAGE_PROCEDURE") != nullptr
+                || std::getenv("OPENMW_FNV_DISABLE_AI_PACKAGES") != nullptr)
             {
                 Log(Debug::Info) << "FNV/ESM4 diag: package procedure animation disabled by proof env for "
                                  << traits.mEditorId;
@@ -2619,9 +3096,20 @@ namespace MWRender
                              << correctedModel.value() << " for " << mPtr.getCellRef().getRefId();
             overrideFalloutPartDiffuseTexture(diffuseTexture, mResourceSystem, *attached);
         }
+        else if (attached != nullptr)
+        {
+            const std::string hairDiffuse = getFalloutHairTintDiffuseOverride(correctedModel.value());
+            if (!hairDiffuse.empty())
+            {
+                Log(Debug::Info) << "FNV/ESM4 diag: overriding hair tint diffuse " << hairDiffuse << " on "
+                                 << correctedModel.value() << " for " << mPtr.getCellRef().getRefId();
+                overrideFalloutPartDiffuseTexture(hairDiffuse, mResourceSystem, *attached);
+            }
+        }
         if (tint != nullptr && attached != nullptr)
         {
-            TintMaterialVisitor visitor(*tint);
+            const float emissionStrength = isFalloutHairTintModel(correctedModel.value()) ? 0.65f : 0.f;
+            TintMaterialVisitor visitor(*tint, emissionStrength);
             attached->accept(visitor);
         }
         logFalloutPartShapeSummary(attached.get(), correctedModel.value(), mPtr);
@@ -2894,15 +3382,6 @@ namespace MWRender
             {
                 forceFalloutActorPartVisible(attached.get(), headPart.mesh, traits);
                 applyFaceGenEgmMorph(mResourceSystem, attached.get(), headPart.mesh, traits);
-                if (std::getenv("OPENMW_FNV_PROOF_MOUTH_DRIVER") != nullptr)
-                {
-                    FalloutProofTalkingHeadVisitor talkingHead;
-                    attached->accept(talkingHead);
-                    if (talkingHead.getMorphedDrawableCount() > 0)
-                        Log(Debug::Info) << "FNV/ESM4 proof: applied talking head mouth deformation to "
-                                         << talkingHead.getMorphedDrawableCount() << " drawable(s) for "
-                                         << traits.mEditorId << " maxVertexDelta=" << talkingHead.getMaxDelta();
-                }
                 if (!texture.empty())
                     overrideFalloutPartDiffuseTexture(texture, mResourceSystem, *attached);
                 if (std::getenv("OPENMW_FNV_APPLY_FACEGEN_DETAIL") != nullptr && !npcFaceTexture.empty())
@@ -2919,6 +3398,8 @@ namespace MWRender
                 }
                 neutralizeFalloutSkinMaterial(attached.get(), headPart.mesh, traits);
             }
+            if (attached != nullptr && std::getenv("OPENMW_FNV_PROOF_MOUTH_DRIVER") != nullptr)
+                applyFalloutProofTriOpenMorph(mResourceSystem, mPtr, attached.get(), headPart.mesh, traits);
         }
 
         std::set<uint32_t> usedHeadPartTypes;
@@ -2937,9 +3418,11 @@ namespace MWRender
                 osg::ref_ptr<osg::Node> attached = insertPart(hair->mModel, &hairTint);
                 fallbackHairAttached = attached != nullptr;
                 applyFaceGenEgmMorph(mResourceSystem, attached.get(), hair->mModel, traits);
+                if (attached != nullptr && std::getenv("OPENMW_FNV_PROOF_MOUTH_DRIVER") != nullptr)
+                    applyFalloutProofTriOpenMorph(mResourceSystem, mPtr, attached.get(), hair->mModel, traits);
                 if (attached != nullptr)
                 {
-                    TintMaterialVisitor visitor(hairTint);
+                    TintMaterialVisitor visitor(hairTint, 0.65f);
                     attached->accept(visitor);
                 }
                 ++insertedHeadParts;
@@ -3091,9 +3574,12 @@ namespace MWRender
                                  << mPtr.getCellRef().getRefId();
                 osg::ref_ptr<osg::Node> attached = insertPart(part->mModel, tint);
                 applyFaceGenEgmMorph(mResourceSystem, attached.get(), part->mModel, traits);
+                if (attached != nullptr && std::getenv("OPENMW_FNV_PROOF_MOUTH_DRIVER") != nullptr)
+                    applyFalloutProofTriOpenMorph(mResourceSystem, mPtr, attached.get(), part->mModel, traits);
                 if (attached != nullptr && tint != nullptr)
                 {
-                    TintMaterialVisitor visitor(*tint);
+                    const float emissionStrength = isFalloutHairTintModel(part->mModel) ? 0.65f : 0.f;
+                    TintMaterialVisitor visitor(*tint, emissionStrength);
                     attached->accept(visitor);
                 }
                 if (isFonvFacialHairHeadPart(*part))
@@ -3111,9 +3597,13 @@ namespace MWRender
                     }
                     osg::ref_ptr<osg::Node> extraAttached = insertPart(extraPart->mModel, tint);
                     applyFaceGenEgmMorph(mResourceSystem, extraAttached.get(), extraPart->mModel, traits);
+                    if (extraAttached != nullptr && std::getenv("OPENMW_FNV_PROOF_MOUTH_DRIVER") != nullptr)
+                        applyFalloutProofTriOpenMorph(
+                            mResourceSystem, mPtr, extraAttached.get(), extraPart->mModel, traits);
                     if (extraAttached != nullptr && tint != nullptr)
                     {
-                        TintMaterialVisitor visitor(*tint);
+                        const float emissionStrength = isFalloutHairTintModel(extraPart->mModel) ? 0.65f : 0.f;
+                        TintMaterialVisitor visitor(*tint, emissionStrength);
                         extraAttached->accept(visitor);
                     }
                     if (isFonvFacialHairHeadPart(*extraPart))

@@ -3,6 +3,8 @@
 
 #include <map>
 #include <optional>
+#include <string>
+#include <vector>
 
 #include <osg/Object>
 
@@ -63,6 +65,7 @@ namespace SceneUtil
         KeyframeHolder(const KeyframeHolder& copy, const osg::CopyOp& copyop)
             : mTextKeys(copy.mTextKeys)
             , mKeyframeControllers(copy.mKeyframeControllers)
+            , mFalloutHeadAnimTracks(copy.mFalloutHeadAnimTracks)
         {
         }
 
@@ -73,6 +76,23 @@ namespace SceneUtil
         /// Controllers mapped to node name.
         typedef std::map<std::string, osg::ref_ptr<const KeyframeController>> KeyframeControllerMap;
         KeyframeControllerMap mKeyframeControllers;
+
+        struct FalloutHeadAnimTrack
+        {
+            enum class Type
+            {
+                Float,
+                Bool
+            };
+
+            Type mType = Type::Float;
+            float mDefaultValue = 0.f;
+            std::vector<std::pair<float, float>> mKeys;
+        };
+
+        /// Fallout 3/New Vegas KF files store FaceGen/head animation channels as HeadAnims float/bool tracks.
+        typedef std::map<std::string, FalloutHeadAnimTrack> FalloutHeadAnimTrackMap;
+        FalloutHeadAnimTrackMap mFalloutHeadAnimTracks;
     };
 
 }

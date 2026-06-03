@@ -653,6 +653,7 @@ namespace NifOsg
 
             unsigned int loaded = 0;
             unsigned int unsupported = 0;
+            unsigned int headAnimTracks = 0;
             for (const Nif::ControlledBlock& block : sequence->mControlledBlocks)
             {
                 const std::string targetName = resolveControlledBlockTargetName(sequence, block);
@@ -675,6 +676,47 @@ namespace NifOsg
                 {
                     callback = new NifOsg::KeyframeController(
                         static_cast<const Nif::NiBlendTransformInterpolator*>(block.mInterpolator.getPtr()));
+                }
+                else if (Misc::StringUtils::ciStartsWith(targetName, "HeadAnims"))
+                {
+                    SceneUtil::KeyframeHolder::FalloutHeadAnimTrack track;
+                    if (block.mInterpolator->recType == Nif::RC_NiFloatInterpolator)
+                    {
+                        const auto* interpolator
+                            = static_cast<const Nif::NiFloatInterpolator*>(block.mInterpolator.getPtr());
+                        track.mType = SceneUtil::KeyframeHolder::FalloutHeadAnimTrack::Type::Float;
+                        track.mDefaultValue = interpolator->mDefaultValue;
+                        if (!interpolator->mData.empty() && interpolator->mData->mKeyList)
+                        {
+                            for (const auto& [time, key] : interpolator->mData->mKeyList->mKeys)
+                                track.mKeys.emplace_back(time, key.mValue);
+                        }
+                    }
+                    else if (block.mInterpolator->recType == Nif::RC_NiBoolInterpolator)
+                    {
+                        const auto* interpolator
+                            = static_cast<const Nif::NiBoolInterpolator*>(block.mInterpolator.getPtr());
+                        track.mType = SceneUtil::KeyframeHolder::FalloutHeadAnimTrack::Type::Bool;
+                        track.mDefaultValue = interpolator->mDefaultValue ? 1.f : 0.f;
+                        if (!interpolator->mData.empty() && interpolator->mData->mKeyList)
+                        {
+                            for (const auto& [time, key] : interpolator->mData->mKeyList->mKeys)
+                                track.mKeys.emplace_back(time, key.mValue ? 1.f : 0.f);
+                        }
+                    }
+                    else
+                    {
+                        ++unsupported;
+                        if (unsupported <= 8)
+                            Log(Debug::Info) << "FNV/ESM4 diag: unsupported Fallout KF interpolator target='"
+                                             << targetName << "' type=" << block.mInterpolator->recType << " name="
+                                             << block.mInterpolator->recName << " in " << filename;
+                        continue;
+                    }
+
+                    if (target.mFalloutHeadAnimTracks.emplace(targetName, std::move(track)).second)
+                        ++headAnimTracks;
+                    continue;
                 }
                 else
                 {
@@ -720,6 +762,11 @@ namespace NifOsg
             {
                 Log(Debug::Info) << "FNV/ESM4 diag: skipped " << unsupported
                                  << " unsupported Fallout KF interpolator(s) in " << filename;
+            }
+            if (headAnimTracks > 0)
+            {
+                Log(Debug::Info) << "FNV/ESM4 diag: loaded " << headAnimTracks
+                                 << " Fallout HeadAnims track(s) from " << filename;
             }
         }
 
