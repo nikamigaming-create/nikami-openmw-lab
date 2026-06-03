@@ -1,5 +1,6 @@
 #include "creatureanimation.hpp"
 
+#include <osg/ComputeBoundsVisitor>
 #include <osg/MatrixTransform>
 
 #include <algorithm>
@@ -15,6 +16,7 @@
 #include <components/resource/scenemanager.hpp>
 #include <components/sceneutil/lightcommon.hpp>
 #include <components/sceneutil/positionattitudetransform.hpp>
+#include <components/sceneutil/riggeometry.hpp>
 #include <components/sceneutil/visitor.hpp>
 #include <components/settings/values.hpp>
 #include <components/vfs/manager.hpp>
@@ -253,6 +255,85 @@ namespace MWRender
 
             return paths;
         }
+
+        osg::Vec3f boundingBoxExtent(const osg::BoundingBox& box)
+        {
+            return osg::Vec3f(box.xMax() - box.xMin(), box.yMax() - box.yMin(), box.zMax() - box.zMin());
+        }
+
+        void logCreatureBounds(std::string_view label, const std::string& editorId, const std::string& path,
+            osg::Node& node)
+        {
+            osg::ComputeBoundsVisitor boundsVisitor;
+            node.accept(boundsVisitor);
+            const osg::BoundingBox box = boundsVisitor.getBoundingBox();
+            if (!box.valid())
+            {
+                Log(Debug::Warning) << "FNV/ESM4 diag: creature " << label << " bounds invalid for "
+                                    << editorId << " path=" << path;
+                return;
+            }
+
+            const osg::Vec3f center = box.center();
+            const osg::Vec3f extent = boundingBoxExtent(box);
+            Log(Debug::Info) << "FNV/ESM4 diag: creature " << label << " bounds for " << editorId
+                             << " path=" << path << " center=(" << center.x() << "," << center.y() << ","
+                             << center.z() << ") extent=(" << extent.x() << "," << extent.y() << ","
+                             << extent.z() << ")";
+        }
+
+        class ForceFalloutCreatureBodyVisibleVisitor : public osg::NodeVisitor
+        {
+        public:
+            ForceFalloutCreatureBodyVisibleVisitor()
+                : osg::NodeVisitor(TRAVERSE_ALL_CHILDREN)
+            {
+            }
+
+            void apply(osg::Node& node) override
+            {
+                node.setNodeMask(~0u);
+                traverse(node);
+            }
+
+            void apply(osg::Drawable& drawable) override
+            {
+                drawable.setNodeMask(~0u);
+                drawable.setCullingActive(false);
+
+                if (dynamic_cast<SceneUtil::RigGeometry*>(&drawable) != nullptr)
+                    ++mRigGeometryCount;
+                else if (dynamic_cast<osg::Geometry*>(&drawable) != nullptr)
+                    ++mStaticGeometryCount;
+                else
+                    ++mOtherDrawableCount;
+
+                for (osg::Node* node : getNodePath())
+                {
+                    if (node != nullptr)
+                        node->setNodeMask(~0u);
+                }
+            }
+
+            unsigned int mRigGeometryCount = 0;
+            unsigned int mStaticGeometryCount = 0;
+            unsigned int mOtherDrawableCount = 0;
+        };
+
+        void forceFalloutCreatureBodyVisible(
+            osg::Node* bodyNode, const std::string& editorId, const VFS::Path::Normalized& bodyPath)
+        {
+            if (bodyNode == nullptr)
+                return;
+
+            ForceFalloutCreatureBodyVisibleVisitor visitor;
+            bodyNode->accept(visitor);
+            Log(Debug::Info) << "FNV/ESM4 diag: forced creature body render mask for " << editorId
+                             << " path=" << bodyPath
+                             << " rigged=" << visitor.mRigGeometryCount
+                             << " static=" << visitor.mStaticGeometryCount
+                             << " other=" << visitor.mOtherDrawableCount;
+        }
     }
 
     CreatureAnimation::CreatureAnimation(
@@ -291,13 +372,19 @@ namespace MWRender
                     const VFS::Path::Normalized bodyPath = correctCreatureBodyPath(bodyNif);
                     osg::ref_ptr<osg::Node> bodyNode
                         = resourceSystem->getSceneManager()->getInstance(bodyPath, mObjectRoot);
+                    forceFalloutCreatureBodyVisible(bodyNode, ref->mBase->mEditorId, bodyPath);
                     mObjectRoot->addChild(bodyNode);
                     if (std::getenv("OPENMW_FNV_CREATURE_BODY_DIAG") != nullptr)
+                    {
                         Log(Debug::Info) << "FNV/ESM4 diag: attached creature body nif "
                                          << ref->mBase->mEditorId << " effective=" << effective.mEditorId
                                          << " path=" << bodyPath;
+                        logCreatureBounds("body", ref->mBase->mEditorId, bodyPath.value(), *bodyNode);
+                    }
                     ++attachedBodyNifs;
                 }
+                if (std::getenv("OPENMW_FNV_CREATURE_BODY_DIAG") != nullptr && mObjectRoot != nullptr)
+                    logCreatureBounds("root", ref->mBase->mEditorId, model, *mObjectRoot);
                 unsigned int fallbackKfs = 0;
                 for (const std::string& kf : effective.mKf)
                 {
