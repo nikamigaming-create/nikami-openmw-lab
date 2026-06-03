@@ -1,14 +1,18 @@
 #include "engine.hpp"
 
+#include <algorithm>
 #include <cerrno>
 #include <charconv>
 #include <chrono>
+#include <cctype>
 #include <cmath>
 #include <cstdlib>
 #include <future>
 #include <optional>
+#include <string>
 #include <string_view>
 #include <system_error>
+#include <vector>
 
 #include <osgDB/ReaderWriter>
 #include <osgDB/Registry>
@@ -492,14 +496,46 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
             return -1;
         return static_cast<int>(value);
     };
-    static const int proofScreenshotFrame = getProofFrame("OPENMW_PROOF_SCREENSHOT_FRAME");
+    const auto getProofFrames = [](const char* name) {
+        std::vector<int> frames;
+        const char* env = std::getenv(name);
+        if (env == nullptr || *env == '\0')
+            return frames;
+
+        std::string_view value(env);
+        while (!value.empty())
+        {
+            const std::size_t comma = value.find(',');
+            std::string_view token = value.substr(0, comma);
+            while (!token.empty() && std::isspace(static_cast<unsigned char>(token.front())))
+                token.remove_prefix(1);
+            while (!token.empty() && std::isspace(static_cast<unsigned char>(token.back())))
+                token.remove_suffix(1);
+            if (!token.empty())
+            {
+                int frame = -1;
+                const auto result = std::from_chars(token.data(), token.data() + token.size(), frame);
+                if (result.ec == std::errc() && result.ptr == token.data() + token.size() && frame >= 0)
+                    frames.push_back(frame);
+            }
+            if (comma == std::string_view::npos)
+                break;
+            value.remove_prefix(comma + 1);
+        }
+
+        std::sort(frames.begin(), frames.end());
+        frames.erase(std::unique(frames.begin(), frames.end()), frames.end());
+        return frames;
+    };
+    static const std::vector<int> proofScreenshotFrames = getProofFrames("OPENMW_PROOF_SCREENSHOT_FRAME");
     static const int proofScreenshotReadyFrames = getProofFrame("OPENMW_PROOF_SCREENSHOT_READY_FRAMES");
     static const int proofInventoryFrame = getProofFrame("OPENMW_PROOF_INVENTORY_FRAME");
     static const int proofQuickSaveFrame = getProofFrame("OPENMW_PROOF_QUICKSAVE_FRAME");
     static const int proofSayFrame = getProofFrame("OPENMW_PROOF_SAY_FRAME");
     static const int proofTimedScript1Frame = getProofFrame("OPENMW_PROOF_TIMED_SCRIPT_1_FRAME");
     static const int proofTimedScript2Frame = getProofFrame("OPENMW_PROOF_TIMED_SCRIPT_2_FRAME");
-    static bool proofScreenshotQueued = false;
+    static std::size_t proofScreenshotFrameIndex = 0;
+    static bool proofScreenshotReadyQueued = false;
     static bool proofInventoryOpened = false;
     static bool proofQuickSaveQueued = false;
     static bool proofSayQueued = false;
@@ -1131,11 +1167,11 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
     executeProofTimedScript(proofTimedScript1Frame, "OPENMW_PROOF_TIMED_SCRIPT_1", proofTimedScript1Executed);
     executeProofTimedScript(proofTimedScript2Frame, "OPENMW_PROOF_TIMED_SCRIPT_2", proofTimedScript2Executed);
 
-    const bool proofScreenshotFrameReached
-        = proofScreenshotFrame >= 0 && frameNumber >= static_cast<unsigned>(proofScreenshotFrame);
+    const bool proofScreenshotFrameReached = proofScreenshotFrameIndex < proofScreenshotFrames.size()
+        && frameNumber >= static_cast<unsigned>(proofScreenshotFrames[proofScreenshotFrameIndex]);
     const bool proofScreenshotReadyFramesReached
-        = proofScreenshotReadyFrames >= 0 && proofWorldReadyFrames >= proofScreenshotReadyFrames;
-    if (!proofScreenshotQueued && (proofScreenshotFrameReached || proofScreenshotReadyFramesReached)
+        = !proofScreenshotReadyQueued && proofScreenshotReadyFrames >= 0 && proofWorldReadyFrames >= proofScreenshotReadyFrames;
+    if ((proofScreenshotFrameReached || proofScreenshotReadyFramesReached)
         && mScreenCaptureHandler != nullptr)
     {
         if (!proofWorldReady && !proofScreenshotWaitLogged)
@@ -1155,7 +1191,10 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
         Log(Debug::Info) << "FNV/ESM4 proof: queuing native screenshot at frame " << frameNumber;
         mScreenCaptureHandler->setFramesToCapture(1);
         mScreenCaptureHandler->captureNextFrame(*mViewer);
-        proofScreenshotQueued = true;
+        if (proofScreenshotFrameReached)
+            ++proofScreenshotFrameIndex;
+        if (proofScreenshotReadyFramesReached)
+            proofScreenshotReadyQueued = true;
     }
 
     mViewer->renderingTraversals();
