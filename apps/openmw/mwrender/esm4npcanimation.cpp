@@ -170,6 +170,38 @@ namespace MWRender
             mutable unsigned int mNeutralizedVertexColorArrays = 0;
         };
 
+        class DisableCullVisitor : public osg::NodeVisitor
+        {
+        public:
+            DisableCullVisitor()
+                : osg::NodeVisitor(TRAVERSE_ALL_CHILDREN)
+            {
+            }
+
+            void apply(osg::Node& node) override
+            {
+                disableCull(node.getOrCreateStateSet());
+                traverse(node);
+            }
+
+            void apply(osg::Geode& geode) override
+            {
+                disableCull(geode.getOrCreateStateSet());
+                for (unsigned int i = 0; i < geode.getNumDrawables(); ++i)
+                    if (osg::Drawable* drawable = geode.getDrawable(i))
+                        disableCull(drawable->getOrCreateStateSet());
+                traverse(geode);
+            }
+
+            void apply(osg::Drawable& drawable) override { disableCull(drawable.getOrCreateStateSet()); }
+
+        private:
+            void disableCull(osg::StateSet* stateSet) const
+            {
+                stateSet->setMode(GL_CULL_FACE, osg::StateAttribute::OFF | osg::StateAttribute::OVERRIDE);
+            }
+        };
+
         class FalloutProofMouthDriver : public osg::NodeCallback
         {
         public:
@@ -2032,6 +2064,10 @@ namespace MWRender
                 return osg::Vec3f(readFalloutProofFloat("OPENMW_FNV_HEADGEAR_OFFSET_X", 0.f),
                     readFalloutProofFloat("OPENMW_FNV_HEADGEAR_OFFSET_Y", 0.f),
                     readFalloutProofFloat("OPENMW_FNV_HEADGEAR_OFFSET_Z", 0.f));
+            if (lowered.find("brow") != std::string::npos)
+                return osg::Vec3f(readFalloutProofFloat("OPENMW_FNV_BROW_OFFSET_X", 0.f),
+                    readFalloutProofFloat("OPENMW_FNV_BROW_OFFSET_Y", 0.f),
+                    readFalloutProofFloat("OPENMW_FNV_BROW_OFFSET_Z", 0.f));
             if (lowered.find("eye") != std::string::npos)
                 return osg::Vec3f(readFalloutProofFloat("OPENMW_FNV_EYE_OFFSET_X", 0.f),
                     readFalloutProofFloat("OPENMW_FNV_EYE_OFFSET_Y", 0.f),
@@ -2045,10 +2081,6 @@ namespace MWRender
                 return osg::Vec3f(readFalloutProofFloat("OPENMW_FNV_MOUTH_OFFSET_X", 0.f),
                     readFalloutProofFloat("OPENMW_FNV_MOUTH_OFFSET_Y", 0.f),
                     readFalloutProofFloat("OPENMW_FNV_MOUTH_OFFSET_Z", 0.f));
-            if (lowered.find("brow") != std::string::npos)
-                return osg::Vec3f(readFalloutProofFloat("OPENMW_FNV_BROW_OFFSET_X", 0.f),
-                    readFalloutProofFloat("OPENMW_FNV_BROW_OFFSET_Y", 0.f),
-                    readFalloutProofFloat("OPENMW_FNV_BROW_OFFSET_Z", 0.f));
             return osg::Vec3f();
         }
 
@@ -2059,6 +2091,8 @@ namespace MWRender
 
             std::string lowered(model);
             Misc::StringUtils::lowerCaseInPlace(lowered);
+            if (lowered.find("brow") != std::string::npos)
+                return "OPENMW_FNV_BROW";
             if (lowered.find("eye") != std::string::npos)
                 return "OPENMW_FNV_EYE";
             if (lowered.find("beard") != std::string::npos)
@@ -2066,8 +2100,6 @@ namespace MWRender
             if (lowered.find("mouth") != std::string::npos || lowered.find("teeth") != std::string::npos
                 || lowered.find("tongue") != std::string::npos)
                 return "OPENMW_FNV_MOUTH";
-            if (lowered.find("brow") != std::string::npos)
-                return "OPENMW_FNV_BROW";
             if (lowered.find("hair") != std::string::npos)
                 return "OPENMW_FNV_HAIR";
             return {};
@@ -2215,12 +2247,12 @@ namespace MWRender
             {
                 std::string lowered(model);
                 Misc::StringUtils::lowerCaseInPlace(lowered);
-                if (lowered.find("eye") != std::string::npos || lowered.find("mouth") != std::string::npos
-                    || lowered.find("teeth") != std::string::npos || lowered.find("tongue") != std::string::npos)
-                    return "bip01";
                 if (lowered.find("hair") != std::string::npos || lowered.find("beard") != std::string::npos
                     || lowered.find("brow") != std::string::npos)
                     return "head";
+                if (lowered.find("eye") != std::string::npos || lowered.find("mouth") != std::string::npos
+                    || lowered.find("teeth") != std::string::npos || lowered.find("tongue") != std::string::npos)
+                    return "bip01";
                 return "headframe";
             }
             return mode;
@@ -3388,10 +3420,16 @@ namespace MWRender
         }
         if (attached != nullptr && isFalloutEyeSurfaceModel(correctedModel.value()))
         {
-            TintMaterialVisitor visitor(osg::Vec4f(1.f, 1.f, 1.f, 1.f), 0.35f);
-            attached->accept(visitor);
-            Log(Debug::Info) << "FNV/ESM4 diag: brightened double-sided eye surface " << correctedModel.value()
-                             << " for " << mPtr.getCellRef().getRefId();
+            if (std::getenv("OPENMW_FNV_EYE_DISABLE_CULL") != nullptr)
+            {
+                DisableCullVisitor visitor;
+                attached->accept(visitor);
+                Log(Debug::Info) << "FNV/ESM4 diag: made eye surface double-sided " << correctedModel.value()
+                                 << " for " << mPtr.getCellRef().getRefId();
+            }
+            else
+                Log(Debug::Info) << "FNV/ESM4 diag: preserved authored eye surface culling "
+                                 << correctedModel.value() << " for " << mPtr.getCellRef().getRefId();
         }
         logFalloutPartShapeSummary(attached.get(), correctedModel.value(), mPtr);
         logFalloutAttachmentBounds(
