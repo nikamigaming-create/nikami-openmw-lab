@@ -1696,7 +1696,24 @@ namespace MWRender
             {
             }
 
+            void apply(osg::Geode& geode) override
+            {
+                for (unsigned int i = 0; i < geode.getNumDrawables(); ++i)
+                {
+                    osg::Drawable* drawable = geode.getDrawable(i);
+                    if (drawable != nullptr)
+                        summarizeDrawable(*drawable);
+                }
+
+                traverse(geode);
+            }
+
             void apply(osg::Drawable& drawable) override
+            {
+                summarizeDrawable(drawable);
+            }
+
+            void summarizeDrawable(osg::Drawable& drawable)
             {
                 if (SceneUtil::RigGeometry* rig = dynamic_cast<SceneUtil::RigGeometry*>(&drawable))
                 {
@@ -1724,6 +1741,44 @@ namespace MWRender
             std::string mFirstRigRootBone;
             std::size_t mFirstRigBoneCount = 0;
             std::ostringstream mFirstRigBoneSample;
+        };
+
+        class StaticizeFalloutRiggedGeometryVisitor : public osg::NodeVisitor
+        {
+        public:
+            StaticizeFalloutRiggedGeometryVisitor()
+                : osg::NodeVisitor(TRAVERSE_ALL_CHILDREN)
+            {
+            }
+
+            void apply(osg::Geode& geode) override
+            {
+                for (unsigned int i = 0; i < geode.getNumDrawables(); ++i)
+                {
+                    SceneUtil::RigGeometry* rig = dynamic_cast<SceneUtil::RigGeometry*>(geode.getDrawable(i));
+                    if (rig == nullptr)
+                        continue;
+
+                    osg::Geometry* source = rig->getSourceGeometry();
+                    if (source == nullptr)
+                        continue;
+
+                    osg::ref_ptr<osg::Geometry> staticGeometry
+                        = osg::clone(source, osg::CopyOp::DEEP_COPY_ALL);
+                    staticGeometry->setName(rig->getName().empty() ? source->getName() : rig->getName());
+                    staticGeometry->setNodeMask(rig->getNodeMask());
+                    staticGeometry->setCullingActive(false);
+                    if (rig->getStateSet() != nullptr)
+                        staticGeometry->setStateSet(osg::clone(rig->getStateSet(), osg::CopyOp::DEEP_COPY_ALL));
+
+                    geode.setDrawable(i, staticGeometry);
+                    ++mStaticizedRigGeometryCount;
+                }
+
+                traverse(geode);
+            }
+
+            unsigned int mStaticizedRigGeometryCount = 0;
         };
 
         bool isFalloutHiddenMorphShape(std::string_view name)
@@ -3214,10 +3269,29 @@ namespace MWRender
                             << " to " << mPtr.getCellRef().getRefId() << " at " << attachNode->getName();
         FalloutPartShapeSummaryVisitor rigProbe;
         const_cast<osg::Node*>(templateNode.get())->accept(rigProbe);
-        osg::ref_ptr<osg::Node> attached;
-        if (std::getenv("OPENMW_FNV_ATTACH_FULL_RIG_PARTS") != nullptr && rigProbe.mRigGeometryCount > 0)
+        osg::ref_ptr<const osg::Node> attachTemplateNode = templateNode;
+        bool staticizedHeadPartRig = false;
+        if (headAttachedStaticPart && rigProbe.mRigGeometryCount > 0
+            && std::getenv("OPENMW_FNV_KEEP_RIGGED_HEAD_PARTS") == nullptr)
         {
-            attached = mResourceSystem->getSceneManager()->getInstance(templateNode);
+            osg::ref_ptr<osg::Node> staticTemplate = osg::clone(templateNode.get(), osg::CopyOp::DEEP_COPY_ALL);
+            StaticizeFalloutRiggedGeometryVisitor staticizeVisitor;
+            staticTemplate->accept(staticizeVisitor);
+            if (staticizeVisitor.mStaticizedRigGeometryCount > 0)
+            {
+                staticizedHeadPartRig = true;
+                attachTemplateNode = staticTemplate;
+                Log(Debug::Info) << "FNV/ESM4 diag: staticized "
+                                 << staticizeVisitor.mStaticizedRigGeometryCount
+                                 << " rigged head-part drawable(s) for " << correctedModel.value() << " on "
+                                 << mPtr.getCellRef().getRefId();
+            }
+        }
+        osg::ref_ptr<osg::Node> attached;
+        if (!staticizedHeadPartRig && std::getenv("OPENMW_FNV_ATTACH_FULL_RIG_PARTS") != nullptr
+            && rigProbe.mRigGeometryCount > 0)
+        {
+            attached = mResourceSystem->getSceneManager()->getInstance(attachTemplateNode);
             mObjectRoot->addChild(attached);
             Log(Debug::Info) << "FNV/ESM4 diag: full-subtree attaching rigged NPC model part "
                              << correctedModel.value() << " to " << mPtr.getCellRef().getRefId()
@@ -3233,7 +3307,7 @@ namespace MWRender
                 if (!headgearAttitude.zeroRotation())
                     attitude = &headgearAttitude;
             }
-            attached = SceneUtil::attach(std::move(templateNode), mObjectRoot.get(), {}, attachNode,
+            attached = SceneUtil::attach(std::move(attachTemplateNode), mObjectRoot.get(), {}, attachNode,
                 mResourceSystem->getSceneManager(), attitude);
         }
         if (attached != nullptr && headAttachedStaticPart)
