@@ -64,6 +64,13 @@ namespace SceneUtil
             return "auto";
         }
 
+        bool useFalloutSkinToSkelMatrix()
+        {
+            if (const char* env = std::getenv("OPENMW_FNV_USE_SKIN_TO_SKEL"))
+                return std::string_view(env) != "0";
+            return false;
+        }
+
         osg::Matrixf composeFalloutBoneMatrix(const RigGeometry::BoneInfo& boneInfo, const Bone* bone)
         {
             if (bone == nullptr)
@@ -129,29 +136,20 @@ namespace SceneUtil
     RigGeometry::RigGeometry(const RigGeometry& copy, const osg::CopyOp& copyop)
         : Drawable(copy, copyop)
         , mData(copy.mData)
+        , mFalloutCharacterRig(copy.mFalloutCharacterRig)
     {
         setSourceGeometry(copy.mSourceGeometry);
         setNumChildrenRequiringUpdateTraversal(1);
     }
 
+    void RigGeometry::setFalloutCharacterRig(bool value)
+    {
+        mFalloutCharacterRig = value;
+    }
+
     bool RigGeometry::isFalloutCharacterRig() const
     {
-        if (mData == nullptr)
-            return false;
-
-        const bool hasBipRoot = mData->mRootBone.empty() || Misc::StringUtils::ciStartsWith(mData->mRootBone, "Bip01")
-            || Misc::StringUtils::ciEqual(mData->mRootBone, "Scene Root");
-        bool hasFalloutLimb = false;
-        for (const BoneInfo& info : mData->mBones)
-        {
-            if (Misc::StringUtils::ciStartsWith(info.mName, "bip01 "))
-            {
-                hasFalloutLimb = true;
-                break;
-            }
-        }
-
-        return hasBipRoot && hasFalloutLimb;
+        return mFalloutCharacterRig;
     }
 
     void RigGeometry::setSourceGeometry(osg::ref_ptr<osg::Geometry> sourceGeometry)
@@ -457,7 +455,7 @@ namespace SceneUtil
         osg::Matrixf transform;
         if (falloutSourceSkinning)
             transform.makeIdentity();
-        else if (mSkinToSkelMatrix && !falloutRig)
+        else if (mSkinToSkelMatrix && (!falloutRig || useFalloutSkinToSkelMatrix()))
             transform = (*mSkinToSkelMatrix) * mData->mTransform;
         else
             transform = mData->mTransform;
@@ -568,7 +566,8 @@ namespace SceneUtil
                              << " skeletonThenBind=" << maxSkeletonThenBindDelta
                              << " selected=" << getFalloutSkinningMode()
                              << " sourceFallback=" << mFalloutUseSourceFallback
-                             << " hasSkinToSkel=" << static_cast<bool>(mSkinToSkelMatrix);
+                             << " hasSkinToSkel=" << static_cast<bool>(mSkinToSkelMatrix)
+                             << " useSkinToSkel=" << useFalloutSkinToSkelMatrix();
         }
 
         float maxFalloutVertexDelta = 0.f;
@@ -744,7 +743,7 @@ namespace SceneUtil
                 || (falloutSkinningMode == "auto" && mFalloutUseSourceFallback));
         if (falloutSourceSkinning)
             transform.makeIdentity();
-        else if (mSkinToSkelMatrix && !falloutRig)
+        else if (mSkinToSkelMatrix && (!falloutRig || useFalloutSkinToSkelMatrix()))
             transform = (*mSkinToSkelMatrix) * mData->mTransform;
         else
             transform = mData->mTransform;

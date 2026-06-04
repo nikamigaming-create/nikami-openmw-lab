@@ -28,13 +28,16 @@
 #include <components/resource/resourcesystem.hpp>
 #include <components/resource/scenemanager.hpp>
 #include <components/sceneutil/attach.hpp>
+#include <components/sceneutil/skeleton.hpp>
 #include <components/sceneutil/positionattitudetransform.hpp>
 #include <components/sceneutil/riggeometry.hpp>
+#include <components/sceneutil/riggeometryosgaextension.hpp>
 #include <components/sceneutil/texturetype.hpp>
 #include <components/vfs/manager.hpp>
 #include <components/vfs/pathutil.hpp>
 
 #include <osg/ComputeBoundsVisitor>
+#include <osg/FrontFace>
 #include <osg/Geode>
 #include <osg/Material>
 #include <osg/MatrixTransform>
@@ -1849,6 +1852,29 @@ namespace MWRender
             std::ostringstream mFirstRigBoneSample;
         };
 
+        class MarkFalloutRigGeometryVisitor : public osg::NodeVisitor
+        {
+        public:
+            MarkFalloutRigGeometryVisitor()
+                : osg::NodeVisitor(TRAVERSE_ALL_CHILDREN)
+            {
+            }
+
+            void apply(osg::Geode& geode) override
+            {
+                for (unsigned int i = 0; i < geode.getNumDrawables(); ++i)
+                    if (SceneUtil::RigGeometry* rig = dynamic_cast<SceneUtil::RigGeometry*>(geode.getDrawable(i)))
+                    {
+                        rig->setFalloutCharacterRig(true);
+                        ++mMarked;
+                    }
+
+                traverse(geode);
+            }
+
+            unsigned int mMarked = 0;
+        };
+
         class StaticizeFalloutRiggedGeometryVisitor : public osg::NodeVisitor
         {
         public:
@@ -1861,21 +1887,9 @@ namespace MWRender
             {
                 for (unsigned int i = 0; i < geode.getNumDrawables(); ++i)
                 {
-                    SceneUtil::RigGeometry* rig = dynamic_cast<SceneUtil::RigGeometry*>(geode.getDrawable(i));
-                    if (rig == nullptr)
+                    osg::ref_ptr<osg::Geometry> staticGeometry = makeStaticGeometry(*geode.getDrawable(i));
+                    if (staticGeometry == nullptr)
                         continue;
-
-                    osg::Geometry* source = rig->getSourceGeometry();
-                    if (source == nullptr)
-                        continue;
-
-                    osg::ref_ptr<osg::Geometry> staticGeometry
-                        = osg::clone(source, osg::CopyOp::DEEP_COPY_ALL);
-                    staticGeometry->setName(rig->getName().empty() ? source->getName() : rig->getName());
-                    staticGeometry->setNodeMask(rig->getNodeMask());
-                    staticGeometry->setCullingActive(false);
-                    if (rig->getStateSet() != nullptr)
-                        staticGeometry->setStateSet(osg::clone(rig->getStateSet(), osg::CopyOp::DEEP_COPY_ALL));
 
                     geode.setDrawable(i, staticGeometry);
                     ++mStaticizedRigGeometryCount;
@@ -1884,6 +1898,115 @@ namespace MWRender
                 traverse(geode);
             }
 
+            void apply(osg::Drawable& drawable) override
+            {
+                osg::ref_ptr<osg::Geometry> staticGeometry = makeStaticGeometry(drawable);
+                if (staticGeometry == nullptr)
+                    return;
+
+                bool replaced = false;
+                while (drawable.getNumParents() > 0)
+                {
+                    osg::Group* parent = drawable.getParent(0);
+                    if (osg::Geode* geode = dynamic_cast<osg::Geode*>(parent))
+                    {
+                        if (!geode->replaceDrawable(&drawable, staticGeometry.get()))
+                            break;
+                        replaced = true;
+                        continue;
+                    }
+
+                    osg::Node* drawableNode = dynamic_cast<osg::Node*>(&drawable);
+                    if (parent == nullptr || drawableNode == nullptr)
+                        break;
+
+                    osg::ref_ptr<osg::Geode> staticGeode = new osg::Geode;
+                    staticGeode->setName(drawable.getName().empty() ? std::string("FNV Staticized Rig Drawable")
+                                                                     : "FNV Staticized " + drawable.getName());
+                    staticGeode->addDrawable(staticGeometry.get());
+                    if (!parent->replaceChild(drawableNode, staticGeode.get()))
+                        break;
+                    replaced = true;
+                }
+                if (replaced)
+                    ++mStaticizedRigGeometryCount;
+                else
+                    Log(Debug::Warning) << "FNV/ESM4 diag: staticize could not replace direct rig drawable name="
+                                        << drawable.getName() << " parents=" << drawable.getNumParents();
+            }
+
+            osg::ref_ptr<osg::Geometry> makeStaticGeometry(osg::Drawable& drawable)
+            {
+                osg::Geometry* source = nullptr;
+                std::string sourceName;
+                std::string rootBone;
+                std::size_t boneCount = 0;
+                const char* kind = nullptr;
+                auto vertexCount = [](const osg::Geometry* geometry) -> unsigned int {
+                    if (geometry == nullptr || geometry->getVertexArray() == nullptr)
+                        return 0;
+                    return geometry->getVertexArray()->getNumElements();
+                };
+
+                if (SceneUtil::RigGeometry* rig = dynamic_cast<SceneUtil::RigGeometry*>(&drawable))
+                {
+                    ++mSeenRigGeometryCount;
+                    source = rig->getSourceGeometry();
+                    if (vertexCount(source) == 0)
+                    {
+                        for (unsigned int i = 0; i < 2; ++i)
+                        {
+                            osg::Geometry* renderGeometry = rig->getRenderGeometry(i);
+                            if (vertexCount(renderGeometry) == 0)
+                                continue;
+                            source = renderGeometry;
+                            break;
+                        }
+                    }
+                    sourceName = source != nullptr ? source->getName() : std::string();
+                    rootBone = std::string(rig->getRootBone());
+                    boneCount = rig->getBoneCount();
+                    kind = "SceneUtil::RigGeometry";
+                }
+                else if (SceneUtil::RigGeometryHolder* holder = dynamic_cast<SceneUtil::RigGeometryHolder*>(&drawable))
+                {
+                    ++mSeenRigGeometryCount;
+                    osg::ref_ptr<SceneUtil::OsgaRigGeometry> holderSource = holder->getSourceRigGeometry();
+                    source = dynamic_cast<osg::Geometry*>(holderSource.get());
+                    sourceName = source != nullptr ? source->getName() : std::string();
+                    kind = "SceneUtil::RigGeometryHolder";
+                }
+                else
+                    return nullptr;
+
+                if (source == nullptr)
+                {
+                    ++mMissingSourceGeometryCount;
+                    Log(Debug::Info) << "FNV/ESM4 diag: staticize rig drawable has no source geometry kind=" << kind
+                                     << " name=" << drawable.getName() << " rootBone=" << rootBone
+                                     << " bones=" << boneCount;
+                    return nullptr;
+                }
+
+                Log(Debug::Info) << "FNV/ESM4 diag: staticize replacing rig drawable kind=" << kind
+                                 << " name=" << drawable.getName() << " source=" << sourceName
+                                 << " rootBone=" << rootBone << " bones=" << boneCount
+                                 << " vertices=" << vertexCount(source);
+
+                osg::ref_ptr<osg::Geometry> staticGeometry = osg::clone(source, osg::CopyOp::DEEP_COPY_ALL);
+                staticGeometry->setName(drawable.getName().empty() ? source->getName() : drawable.getName());
+                staticGeometry->setNodeMask(~0u);
+                staticGeometry->setCullingActive(false);
+                staticGeometry->setComputeBoundingBoxCallback(nullptr);
+                staticGeometry->setComputeBoundingSphereCallback(nullptr);
+                staticGeometry->dirtyBound();
+                if (drawable.getStateSet() != nullptr)
+                    staticGeometry->setStateSet(osg::clone(drawable.getStateSet(), osg::CopyOp::DEEP_COPY_ALL));
+                return staticGeometry;
+            }
+
+            unsigned int mSeenRigGeometryCount = 0;
+            unsigned int mMissingSourceGeometryCount = 0;
             unsigned int mStaticizedRigGeometryCount = 0;
         };
 
@@ -2110,11 +2233,38 @@ namespace MWRender
         {
             std::string lowered(model);
             Misc::StringUtils::lowerCaseInPlace(lowered);
-            return lowered.find("mouth") != std::string::npos || lowered.find("teeth") != std::string::npos
+            return lowered.find("characters/head/head") != std::string::npos
+                || lowered.find("characters\\head\\head") != std::string::npos
+                || lowered.find("mouth") != std::string::npos || lowered.find("teeth") != std::string::npos
                 || lowered.find("tongue") != std::string::npos || lowered.find("eye") != std::string::npos
                 || lowered.find("hair") != std::string::npos || lowered.find("beard") != std::string::npos
                 || lowered.find("brow") != std::string::npos || lowered.find("headgear") != std::string::npos
                 || lowered.find("hat") != std::string::npos;
+        }
+
+        bool isFalloutHeadSurfaceModel(std::string_view model)
+        {
+            std::string lowered(model);
+            Misc::StringUtils::lowerCaseInPlace(lowered);
+            return lowered.find("characters/head/head") != std::string::npos
+                || lowered.find("characters\\head\\head") != std::string::npos;
+        }
+
+        bool isFalloutBareHandSurfaceModel(std::string_view model)
+        {
+            std::string lowered(model);
+            Misc::StringUtils::lowerCaseInPlace(lowered);
+            return lowered.find("characters/_male/lefthand.nif") != std::string::npos
+                || lowered.find("characters\\_male\\lefthand.nif") != std::string::npos
+                || lowered.find("characters/_male/righthand.nif") != std::string::npos
+                || lowered.find("characters\\_male\\righthand.nif") != std::string::npos;
+        }
+
+        bool isFalloutLeftHandSurfaceModel(std::string_view model)
+        {
+            std::string lowered(model);
+            Misc::StringUtils::lowerCaseInPlace(lowered);
+            return lowered.find("lefthand.nif") != std::string::npos;
         }
 
         bool isFalloutStaticHeadgearPart(std::string_view model)
@@ -2186,7 +2336,7 @@ namespace MWRender
             if (lowered.find("eye") != std::string::npos)
                 return osg::Vec3f(readFalloutProofFloat("OPENMW_FNV_EYE_OFFSET_X", 0.f),
                     readFalloutProofFloat("OPENMW_FNV_EYE_OFFSET_Y", 0.f),
-                    readFalloutProofFloat("OPENMW_FNV_EYE_OFFSET_Z", 0.f));
+                    readFalloutProofFloat("OPENMW_FNV_EYE_OFFSET_Z", -2.f));
             if (lowered.find("beard") != std::string::npos)
                 return osg::Vec3f(readFalloutProofFloat("OPENMW_FNV_BEARD_OFFSET_X", 0.f),
                     readFalloutProofFloat("OPENMW_FNV_BEARD_OFFSET_Y", 0.f),
@@ -2299,7 +2449,8 @@ namespace MWRender
 
         bool isFalloutStaticFaceChildPart(std::string_view model)
         {
-            return shouldAttachFalloutStaticPartToHead(model) && !isFalloutStaticHeadgearPart(model);
+            return shouldAttachFalloutStaticPartToHead(model) && !isFalloutStaticHeadgearPart(model)
+                && !isFalloutHeadSurfaceModel(model);
         }
 
         osg::Matrix getNodeWorldMatrix(osg::Node* node)
@@ -2352,6 +2503,82 @@ namespace MWRender
                              << readFalloutProofFloat("OPENMW_FNV_HEAD_FRAME_ROTATION_Y", 0.f) << ","
                              << readFalloutProofFloat("OPENMW_FNV_HEAD_FRAME_ROTATION_Z", 0.f) << ") parentOrder="
                              << parentOrder;
+            return helper;
+        }
+
+        osg::ref_ptr<osg::MatrixTransform> makeFalloutAnimatedHeadFrameHelper(osg::Group& bip01, osg::Group& head)
+        {
+            constexpr std::string_view helperName = "FNV Animated Head Frame";
+            for (unsigned int i = 0; i < head.getNumChildren(); ++i)
+            {
+                if (osg::MatrixTransform* existing = dynamic_cast<osg::MatrixTransform*>(head.getChild(i)))
+                    if (existing->getName() == std::string(helperName))
+                        return existing;
+            }
+
+            const osg::Matrix headWorld = getNodeWorldMatrix(&head);
+            const osg::Matrix bipWorld = getNodeWorldMatrix(&bip01);
+            const osg::Matrix headInBip = headWorld * osg::Matrix::inverse(bipWorld);
+
+            const bool useFullHeadFrame = std::getenv("OPENMW_FNV_HEAD_FRAME_FULL_MATRIX") != nullptr;
+            osg::Matrix headFrameInBip = useFullHeadFrame ? headInBip : osg::Matrix::translate(headInBip.getTrans());
+            const osg::Quat headFrameAttitude = getFalloutHeadFrameAttitude();
+            const bool parentOrder = std::getenv("OPENMW_FNV_HEAD_FRAME_ROTATION_PARENT_ORDER") != nullptr;
+            if (!headFrameAttitude.zeroRotation())
+            {
+                const osg::Matrix rotation = osg::Matrix::rotate(headFrameAttitude);
+                headFrameInBip = parentOrder ? headFrameInBip * rotation : rotation * headFrameInBip;
+            }
+
+            osg::Matrix localInHead = headFrameInBip * osg::Matrix::inverse(headInBip);
+            if (std::getenv("OPENMW_FNV_ANIMATED_HEAD_FRAME_ALT_ORDER") != nullptr)
+                localInHead = osg::Matrix::inverse(headInBip) * headFrameInBip;
+            osg::ref_ptr<osg::MatrixTransform> helper = new osg::MatrixTransform;
+            helper->setName(std::string(helperName));
+            helper->setMatrix(localInHead);
+            head.addChild(helper);
+            osg::Quat localRotation = localInHead.getRotate();
+            Log(Debug::Info) << "FNV/ESM4 diag: inserted animated head frame helper local=("
+                             << localInHead.getTrans().x() << ", " << localInHead.getTrans().y() << ", "
+                             << localInHead.getTrans().z() << ") localQuat=(" << localRotation.x() << ", "
+                             << localRotation.y() << ", " << localRotation.z() << ", " << localRotation.w()
+                             << ") under " << head.getName()
+                             << " fullMatrix=" << useFullHeadFrame << " rotation=("
+                             << readFalloutProofFloat("OPENMW_FNV_HEAD_FRAME_ROTATION_X", 0.f) << ","
+                             << readFalloutProofFloat("OPENMW_FNV_HEAD_FRAME_ROTATION_Y", 0.f) << ","
+                             << readFalloutProofFloat("OPENMW_FNV_HEAD_FRAME_ROTATION_Z", 0.f) << ") parentOrder="
+                             << parentOrder;
+            return helper;
+        }
+
+        osg::ref_ptr<osg::MatrixTransform> makeFalloutAnimatedBoneBindFrameHelper(
+            osg::Group& bip01, osg::Group& bone, std::string_view helperName)
+        {
+            for (unsigned int i = 0; i < bone.getNumChildren(); ++i)
+            {
+                if (osg::MatrixTransform* existing = dynamic_cast<osg::MatrixTransform*>(bone.getChild(i)))
+                    if (existing->getName() == std::string(helperName))
+                        return existing;
+            }
+
+            const osg::Matrix boneWorld = getNodeWorldMatrix(&bone);
+            const osg::Matrix bipWorld = getNodeWorldMatrix(&bip01);
+            const osg::Matrix boneInBip = boneWorld * osg::Matrix::inverse(bipWorld);
+            osg::Matrix localInBone;
+            if (!localInBone.invert(boneInBip))
+                localInBone.makeIdentity();
+
+            osg::ref_ptr<osg::MatrixTransform> helper = new osg::MatrixTransform;
+            helper->setName(std::string(helperName));
+            helper->setMatrix(localInBone);
+            bone.addChild(helper);
+
+            const osg::Quat localRotation = localInBone.getRotate();
+            Log(Debug::Info) << "FNV/ESM4 diag: inserted animated bone bind-frame helper " << helperName
+                             << " under " << bone.getName() << " local=(" << localInBone.getTrans().x()
+                             << ", " << localInBone.getTrans().y() << ", " << localInBone.getTrans().z()
+                             << ") localQuat=(" << localRotation.x() << ", " << localRotation.y() << ", "
+                             << localRotation.z() << ", " << localRotation.w() << ")";
             return helper;
         }
 
@@ -2414,10 +2641,120 @@ namespace MWRender
                 { "weapon", "headgear", "hat", "hair", "beard", "brow", "eye", "mouth", "teeth", "tongue" });
         }
 
+        bool isFalloutHeadRelativeModel(std::string_view model)
+        {
+            std::string lowered(model);
+            Misc::StringUtils::lowerCaseInPlace(lowered);
+            return lowered.find("characters/head/head") != std::string::npos
+                || lowered.find("characters\\head\\head") != std::string::npos
+                || containsAny(
+                    lowered, { "headgear", "hat", "hair", "beard", "brow", "eye", "mouth", "teeth", "tongue" });
+        }
+
+        bool isFalloutFaceTightModel(std::string_view model)
+        {
+            std::string lowered(model);
+            Misc::StringUtils::lowerCaseInPlace(lowered);
+            return lowered.find("characters/head/head") != std::string::npos
+                || lowered.find("characters\\head\\head") != std::string::npos
+                || containsAny(lowered, { "beard", "brow", "eye", "mouth", "teeth", "tongue" });
+        }
+
         osg::Vec3f transformPoint(const osg::Vec3f& point, const osg::Matrix& matrix)
         {
             const osg::Vec3d transformed = osg::Vec3d(point) * matrix;
             return osg::Vec3f(transformed.x(), transformed.y(), transformed.z());
+        }
+
+        class FindNamedNodeVisitor : public osg::NodeVisitor
+        {
+        public:
+            FindNamedNodeVisitor(std::string_view name)
+                : osg::NodeVisitor(TRAVERSE_ALL_CHILDREN)
+                , mName(name)
+            {
+            }
+
+            void apply(osg::Node& node) override
+            {
+                if (mFound == nullptr && Misc::StringUtils::ciEqual(node.getName(), mName))
+                    mFound = &node;
+                if (mFound == nullptr)
+                    traverse(node);
+            }
+
+            osg::Node* mFound = nullptr;
+
+        private:
+            std::string mName;
+        };
+
+        osg::StateSet* getFalloutMirroredFrontFaceStateSet()
+        {
+            static osg::ref_ptr<osg::StateSet> stateSet;
+            if (stateSet == nullptr)
+            {
+                osg::ref_ptr<osg::FrontFace> frontFace = new osg::FrontFace;
+                frontFace->setMode(osg::FrontFace::CLOCKWISE);
+                stateSet = new osg::StateSet;
+                stateSet->setAttributeAndModes(frontFace, osg::StateAttribute::ON);
+            }
+            return stateSet.get();
+        }
+
+        osg::ref_ptr<osg::Node> attachStaticizedFalloutPart(osg::ref_ptr<const osg::Node> templateNode,
+            osg::Group* attachNode, Resource::SceneManager* sceneManager)
+        {
+            osg::ref_ptr<osg::Node> cloned = sceneManager->getInstance(templateNode);
+            FindNamedNodeVisitor findBoneOffset("BoneOffset");
+            cloned->accept(findBoneOffset);
+
+            osg::ref_ptr<osg::PositionAttitudeTransform> transform;
+            if (osg::MatrixTransform* boneOffset = dynamic_cast<osg::MatrixTransform*>(findBoneOffset.mFound))
+            {
+                transform = new osg::PositionAttitudeTransform;
+                transform->setPosition(boneOffset->getMatrix().getTrans());
+                if (std::getenv("OPENMW_FNV_APPLY_BONEOFFSET_ROTATION") != nullptr)
+                    transform->setAttitude(boneOffset->getMatrix().getRotate());
+
+                if (boneOffset->getNumChildren() == 0 && boneOffset->getNumParents() == 1)
+                    boneOffset->getParent(0)->removeChild(boneOffset);
+            }
+
+            if (attachNode != nullptr && attachNode->getName().find("Left") != std::string::npos)
+            {
+                if (transform == nullptr)
+                    transform = new osg::PositionAttitudeTransform;
+                transform->setScale(osg::Vec3f(-1.f, 1.f, 1.f));
+                transform->setStateSet(getFalloutMirroredFrontFaceStateSet());
+            }
+
+            osg::ComputeBoundsVisitor boundsVisitor;
+            cloned->accept(boundsVisitor);
+            const osg::BoundingBox bounds = boundsVisitor.getBoundingBox();
+            if (bounds.valid())
+            {
+                const osg::Vec3f center = bounds.center();
+                if (center.length() > 40.f)
+                {
+                    if (transform == nullptr)
+                        transform = new osg::PositionAttitudeTransform;
+                    transform->setPosition(transform->getPosition() - center);
+                    Log(Debug::Info) << "FNV/ESM4 diag: normalized staticized rig part local center=("
+                                     << center.x() << "," << center.y() << "," << center.z()
+                                     << ") distance=" << center.length();
+                }
+            }
+
+            if (transform != nullptr)
+            {
+                attachNode->addChild(transform);
+                transform->addChild(cloned);
+                return transform;
+            }
+
+            attachNode->addChild(cloned);
+            return cloned;
         }
 
         void logFalloutAttachmentBounds(osg::Node* attached, osg::Group* attachNode, osg::Group* headNode,
@@ -2447,23 +2784,37 @@ namespace MWRender
             const float centerDistance = center.length();
             const float diagonal = extent.length();
             const bool accessory = isFalloutAccessoryModel(model);
+            const bool headRelative = headNode != nullptr && isFalloutHeadRelativeModel(model);
+            const bool faceTight = headRelative && isFalloutFaceTightModel(model);
+            const float maxHeadPlanarDelta = faceTight ? 18.f : 42.f;
+            const float maxHeadVerticalDelta = faceTight ? 24.f : 46.f;
+            const float headPlanarDelta = std::sqrt(headDelta.x() * headDelta.x() + headDelta.y() * headDelta.y());
+            const bool headDetached = headRelative
+                && (headPlanarDelta > maxHeadPlanarDelta || std::abs(headDelta.z()) > maxHeadVerticalDelta);
             const bool suspicious = (accessory && (centerDistance > 180.f || diagonal > 260.f))
-                || (!accessory && centerDistance > 420.f);
+                || (!accessory && centerDistance > 420.f) || headDetached;
 
-            Log(Debug::Info) << "FNV/ESM4 diag: attachment bounds " << model << " for "
-                             << ptr.getCellRef().getRefId() << " parent="
-                             << (attachNode != nullptr ? attachNode->getName() : std::string("<none>"))
-                             << " center=(" << center.x() << "," << center.y() << "," << center.z() << ")"
-                             << " extent=(" << extent.x() << "," << extent.y() << "," << extent.z() << ")"
-                             << " worldCenter=(" << worldCenter.x() << "," << worldCenter.y() << ","
-                             << worldCenter.z() << ")"
-                             << (headNode != nullptr ? " headDelta=(" : " headDelta=(n/a")
-                             << (headNode != nullptr ? std::to_string(headDelta.x()) : std::string())
-                             << (headNode != nullptr ? "," + std::to_string(headDelta.y()) : std::string())
-                             << (headNode != nullptr ? "," + std::to_string(headDelta.z()) : std::string())
-                             << ")"
-                             << " centerDistance=" << centerDistance << " diagonal=" << diagonal
-                             << " verdict=" << (suspicious ? "SUSPECT" : "OK");
+            std::ostringstream message;
+            message << "FNV/ESM4 diag: attachment bounds " << model << " for " << ptr.getCellRef().getRefId()
+                    << " parent=" << (attachNode != nullptr ? attachNode->getName() : std::string("<none>"))
+                    << " center=(" << center.x() << "," << center.y() << "," << center.z() << ")"
+                    << " extent=(" << extent.x() << "," << extent.y() << "," << extent.z() << ")"
+                    << " worldCenter=(" << worldCenter.x() << "," << worldCenter.y() << "," << worldCenter.z()
+                    << ") attachLocal=(" << center.x() << "," << center.y() << "," << center.z()
+                    << ") headRel=(" << headDelta.x() << "," << headDelta.y() << "," << headDelta.z() << ")";
+            if (headNode != nullptr)
+                message << " headDelta=(" << headDelta.x() << "," << headDelta.y() << "," << headDelta.z()
+                        << ") headPlanarDelta=" << headPlanarDelta;
+            else
+                message << " headDelta=(n/a)";
+            message << " centerDistance=" << centerDistance << " diagonal=" << diagonal
+                    << " headRelative=" << headRelative << " faceTight=" << faceTight
+                    << " verdict=" << (suspicious ? "SUSPECT" : "OK");
+
+            if (suspicious)
+                Log(Debug::Warning) << message.str();
+            else
+                Log(Debug::Info) << message.str();
         }
 
         osg::ref_ptr<osg::MatrixTransform> makeFalloutAttachmentHelper(
@@ -3108,20 +3459,27 @@ namespace MWRender
             const std::string furnitureModel = getPackageReferenceFurnitureModel(store, *selected);
             std::string lowerFurniture = furnitureModel;
             Misc::StringUtils::lowerCaseInPlace(lowerFurniture);
+            const bool usesTableSeat = lowerFurniture.find("dinerbooth") != std::string::npos
+                || lowerFurniture.find("table") != std::string::npos;
+            const bool usesChairSeat = lowerFurniture.find("chair") != std::string::npos || usesTableSeat;
+            const bool preferChairSitIdle = std::getenv("OPENMW_FNV_PREFER_CHAIRSIT_IDLE") != nullptr;
 
             switch (selected->mData.type)
             {
                 case 3: // Eat
-                    if (lowerFurniture.find("dinerbooth") != std::string::npos
-                        || lowerFurniture.find("table") != std::string::npos)
+                    if (usesTableSeat)
                         addProcedureSourceIfPresent(
                             result, *vfs, "meshes/characters/_male/idleanims/sittablechaireata.kf");
                     else
                         addProcedureSourceIfPresent(
                             result, *vfs, "meshes/characters/_male/idleanims/sitchaireata.kf");
-                    // Keep the stable seated base as the winning source until the eat overlay gets its own basis.
-                    addProcedureSourceIfPresent(
-                        result, *vfs, "meshes/characters/_male/idleanims/dynamicidle_sit.kf");
+                    if (usesChairSeat && !preferChairSitIdle)
+                        addProcedureSourceIfPresent(
+                            result, *vfs, "meshes/characters/_male/idleanims/dynamicidle_chairsit.kf");
+                    addProcedureSourceIfPresent(result, *vfs, "meshes/characters/_male/idleanims/dynamicidle_sit.kf");
+                    if (usesChairSeat && preferChairSitIdle)
+                        addProcedureSourceIfPresent(
+                            result, *vfs, "meshes/characters/_male/idleanims/dynamicidle_chairsit.kf");
                     break;
                 case 4: // Sleep
                     addProcedureSourceIfPresent(
@@ -3134,7 +3492,15 @@ namespace MWRender
                         addProcedureSourceIfPresent(
                             result, *vfs, "meshes/characters/_male/idleanims/sitchairlistena.kf");
                         addProcedureSourceIfPresent(
+                            result, *vfs, "meshes/characters/_male/idleanims/sitchairtalktoplayera.kf");
+                        if (usesChairSeat && !preferChairSitIdle)
+                            addProcedureSourceIfPresent(
+                                result, *vfs, "meshes/characters/_male/idleanims/dynamicidle_chairsit.kf");
+                        addProcedureSourceIfPresent(
                             result, *vfs, "meshes/characters/_male/idleanims/dynamicidle_sit.kf");
+                        if (usesChairSeat && preferChairSitIdle)
+                            addProcedureSourceIfPresent(
+                                result, *vfs, "meshes/characters/_male/idleanims/dynamicidle_chairsit.kf");
                     }
                     break;
                 default:
@@ -3145,6 +3511,22 @@ namespace MWRender
                 Log(Debug::Info) << "FNV/ESM4 diag: package procedure animation source " << path << " from "
                                  << selected->mEditorId << " type=" << getFonvPackageTypeName(selected->mData.type)
                                  << " furniture=" << furnitureModel << " for " << traits.mEditorId;
+
+            if (const char* overridePath = std::getenv("OPENMW_FNV_PROCEDURE_KF_OVERRIDE"))
+            {
+                std::vector<std::string> overrideResult;
+                std::stringstream stream(overridePath);
+                std::string path;
+                while (std::getline(stream, path, ';'))
+                    addProcedureSourceIfPresent(overrideResult, *vfs, path);
+                if (!overrideResult.empty())
+                {
+                    result = std::move(overrideResult);
+                    for (const std::string& path : result)
+                        Log(Debug::Info) << "FNV/ESM4 diag: package procedure animation override source "
+                                         << path << " for " << traits.mEditorId;
+                }
+            }
 
             return result;
         }
@@ -3280,6 +3662,18 @@ namespace MWRender
             for (const std::string& kfPath : procedureIdleSources)
                 addFonvAnimationSource(kfPath, "scheduled package procedure", false, true);
 
+            if (const char* forcedKfs = std::getenv("OPENMW_FNV_FORCED_KF_SOURCE"))
+            {
+                std::stringstream stream(forcedKfs);
+                std::string kfPath;
+                while (std::getline(stream, kfPath, ';'))
+                {
+                    kfPath = normalizeFonvAnimationPath(kfPath);
+                    if (!kfPath.empty())
+                        addFonvAnimationSource(kfPath, "forced diagnostic KF", false, true);
+                }
+            }
+
             addFalloutProofDialoguePose(getNodeMap(), *traits);
         }
     }
@@ -3358,6 +3752,7 @@ namespace MWRender
         const NodeMap& nodeMap = getNodeMap();
         const bool headAttachedStaticPart = shouldAttachFalloutStaticPartToHead(model);
         const bool headgearStaticPart = isFalloutStaticHeadgearPart(model);
+        const bool bareHandSurfacePart = isFalloutBareHandSurfaceModel(model);
         if (headAttachedStaticPart)
         {
             const std::string_view mode = headgearStaticPart ? std::string_view("headgear") : getFonvStaticFaceAttachMode(model);
@@ -3376,7 +3771,12 @@ namespace MWRender
                         bip01 = found->second.get();
                     osg::Group* head = findBestAttachmentNode(nodeMap, { "Bip01 Head", "bip01 head" });
                     if (bip01 != nullptr && head != nullptr)
-                        attachNode = makeFalloutHeadFrameHelper(*bip01, *head);
+                    {
+                        if (headgearMode != nullptr && Misc::StringUtils::ciEqual(headgearMode, "animatedheadframe"))
+                            attachNode = makeFalloutAnimatedHeadFrameHelper(*bip01, *head);
+                        else
+                            attachNode = makeFalloutHeadFrameHelper(*bip01, *head);
+                    }
                 }
             }
             else if (Misc::StringUtils::ciEqual(mode, "root"))
@@ -3396,6 +3796,15 @@ namespace MWRender
                 if (bip01 != nullptr && head != nullptr)
                     attachNode = makeFalloutHeadFrameHelper(*bip01, *head);
             }
+            else if (Misc::StringUtils::ciEqual(mode, "animatedheadframe"))
+            {
+                osg::Group* bip01 = nullptr;
+                if (const auto found = nodeMap.find("Bip01"); found != nodeMap.end())
+                    bip01 = found->second.get();
+                osg::Group* head = findBestAttachmentNode(nodeMap, { "Bip01 Head", "bip01 head" });
+                if (bip01 != nullptr && head != nullptr)
+                    attachNode = makeFalloutAnimatedHeadFrameHelper(*bip01, *head);
+            }
             else if (osg::Group* head = findBestAttachmentNode(nodeMap, { "Bip01 Head", "bip01 head" }))
                 attachNode = head;
 
@@ -3405,6 +3814,39 @@ namespace MWRender
         }
         if (isFalloutStaticFaceChildPart(model) && attachNode != nullptr)
             attachNode = makeFalloutFaceSurfaceFrameHelper(*attachNode);
+        if (bareHandSurfacePart)
+        {
+            osg::Group* bip01 = nullptr;
+            if (const auto found = nodeMap.find("Bip01"); found != nodeMap.end())
+                bip01 = found->second.get();
+            osg::Group* hand = findBestAttachmentNode(nodeMap,
+                isFalloutLeftHandSurfaceModel(model) ? std::initializer_list<std::string_view>{ "Bip01 L Hand", "bip01 l hand" }
+                                                     : std::initializer_list<std::string_view>{ "Bip01 R Hand", "bip01 r hand" });
+            if (bip01 != nullptr && hand != nullptr)
+            {
+                if (std::getenv("OPENMW_FNV_HAND_BIND_FRAME_ATTACH") != nullptr)
+                {
+                    attachNode = makeFalloutAnimatedBoneBindFrameHelper(*bip01, *hand,
+                        isFalloutLeftHandSurfaceModel(model) ? std::string_view("FNV Animated L Hand Bind Frame")
+                                                             : std::string_view("FNV Animated R Hand Bind Frame"));
+                    Log(Debug::Info) << "FNV/ESM4 diag: bare hand bind-frame attachment model="
+                                     << correctedModel.value() << " attachNode=" << attachNode->getName() << " for "
+                                     << mPtr.getCellRef().getRefId();
+                }
+                else
+                {
+                    attachNode = hand;
+                    Log(Debug::Info) << "FNV/ESM4 diag: bare hand bone attachment model="
+                                     << correctedModel.value() << " attachNode=" << attachNode->getName() << " for "
+                                     << mPtr.getCellRef().getRefId();
+                }
+            }
+            else
+                Log(Debug::Warning) << "FNV/ESM4 diag: bare hand bind-frame attachment missing bone model="
+                                    << correctedModel.value() << " bip01=" << static_cast<bool>(bip01)
+                                    << " hand=" << static_cast<bool>(hand) << " for "
+                                    << mPtr.getCellRef().getRefId();
+        }
         if (attachNode == mObjectRoot.get())
         {
             auto bip01 = nodeMap.find("Bip01");
@@ -3418,8 +3860,12 @@ namespace MWRender
         const_cast<osg::Node*>(templateNode.get())->accept(rigProbe);
         osg::ref_ptr<const osg::Node> attachTemplateNode = templateNode;
         bool staticizedHeadPartRig = false;
-        if (headAttachedStaticPart && rigProbe.mRigGeometryCount > 0
-            && std::getenv("OPENMW_FNV_KEEP_RIGGED_HEAD_PARTS") == nullptr)
+        bool staticizedBareHandPartRig = false;
+        const bool wantsStaticizedHeadPartRig = headAttachedStaticPart && rigProbe.mRigGeometryCount > 0
+            && std::getenv("OPENMW_FNV_KEEP_RIGGED_HEAD_PARTS") == nullptr;
+        const bool wantsStaticizedBareHandPartRig = bareHandSurfacePart && rigProbe.mRigGeometryCount > 0
+            && std::getenv("OPENMW_FNV_KEEP_RIGGED_HAND_PARTS") == nullptr;
+        if (wantsStaticizedHeadPartRig)
         {
             osg::ref_ptr<osg::Node> staticTemplate = osg::clone(templateNode.get(), osg::CopyOp::DEEP_COPY_ALL);
             StaticizeFalloutRiggedGeometryVisitor staticizeVisitor;
@@ -3432,17 +3878,99 @@ namespace MWRender
                                  << staticizeVisitor.mStaticizedRigGeometryCount
                                  << " rigged head-part drawable(s) for " << correctedModel.value() << " on "
                                  << mPtr.getCellRef().getRefId();
+                FalloutPartShapeSummaryVisitor staticizedSummary;
+                staticTemplate->accept(staticizedSummary);
+                Log(Debug::Info) << "FNV/ESM4 diag: staticized template summary " << correctedModel.value()
+                                 << " for " << mPtr.getCellRef().getRefId()
+                                 << " rigGeometry=" << staticizedSummary.mRigGeometryCount
+                                 << " staticGeometry=" << staticizedSummary.mStaticGeometryCount;
             }
+            else
+                Log(Debug::Warning) << "FNV/ESM4 diag: failed to staticize rigged head-part "
+                                    << correctedModel.value() << " on " << mPtr.getCellRef().getRefId()
+                                    << " rigProbe=" << rigProbe.mRigGeometryCount
+                                    << " seen=" << staticizeVisitor.mSeenRigGeometryCount
+                                    << " missingSource=" << staticizeVisitor.mMissingSourceGeometryCount;
+        }
+        if (wantsStaticizedBareHandPartRig)
+        {
+            osg::ref_ptr<osg::Node> staticTemplate = osg::clone(templateNode.get(), osg::CopyOp::DEEP_COPY_ALL);
+            StaticizeFalloutRiggedGeometryVisitor staticizeVisitor;
+            staticTemplate->accept(staticizeVisitor);
+            if (staticizeVisitor.mStaticizedRigGeometryCount > 0)
+            {
+                staticizedBareHandPartRig = true;
+                attachTemplateNode = staticTemplate;
+                Log(Debug::Info) << "FNV/ESM4 diag: staticized "
+                                 << staticizeVisitor.mStaticizedRigGeometryCount
+                                 << " rigged bare-hand drawable(s) for " << correctedModel.value() << " on "
+                                 << mPtr.getCellRef().getRefId();
+                FalloutPartShapeSummaryVisitor staticizedSummary;
+                staticTemplate->accept(staticizedSummary);
+                Log(Debug::Info) << "FNV/ESM4 diag: staticized template summary " << correctedModel.value()
+                                 << " for " << mPtr.getCellRef().getRefId()
+                                 << " rigGeometry=" << staticizedSummary.mRigGeometryCount
+                                 << " staticGeometry=" << staticizedSummary.mStaticGeometryCount;
+            }
+            else
+                Log(Debug::Warning) << "FNV/ESM4 diag: failed to staticize rigged bare-hand part "
+                                    << correctedModel.value() << " on " << mPtr.getCellRef().getRefId()
+                                    << " rigProbe=" << rigProbe.mRigGeometryCount
+                                    << " seen=" << staticizeVisitor.mSeenRigGeometryCount
+                                    << " missingSource=" << staticizeVisitor.mMissingSourceGeometryCount;
         }
         osg::ref_ptr<osg::Node> attached;
-        if (!staticizedHeadPartRig && std::getenv("OPENMW_FNV_ATTACH_FULL_RIG_PARTS") != nullptr
+        osg::Group* rigPartMaster = mSkeleton != nullptr ? static_cast<osg::Group*>(mSkeleton) : mObjectRoot.get();
+        if ((staticizedHeadPartRig || staticizedBareHandPartRig)
+            && std::getenv("OPENMW_FNV_DIRECT_ATTACH_STATICIZED_RIG_PARTS") != nullptr)
+        {
+            attached = mResourceSystem->getSceneManager()->getInstance(attachTemplateNode);
+            attachNode->addChild(attached);
+            Log(Debug::Info) << "FNV/ESM4 diag: direct-attached staticized rig part "
+                             << correctedModel.value() << " to " << mPtr.getCellRef().getRefId()
+                             << " attachNode=" << attachNode->getName()
+                             << " staticizedHead=" << staticizedHeadPartRig
+                             << " staticizedHand=" << staticizedBareHandPartRig;
+        }
+        else if (staticizedHeadPartRig || staticizedBareHandPartRig)
+        {
+            attached = attachStaticizedFalloutPart(attachTemplateNode, attachNode, mResourceSystem->getSceneManager());
+            Log(Debug::Info) << "FNV/ESM4 diag: offset-attached staticized rig part "
+                             << correctedModel.value() << " to " << mPtr.getCellRef().getRefId()
+                             << " attachNode=" << attachNode->getName()
+                             << " staticizedHead=" << staticizedHeadPartRig
+                             << " staticizedHand=" << staticizedBareHandPartRig;
+        }
+        else if (!staticizedHeadPartRig && wantsStaticizedHeadPartRig)
+        {
+            attached = mResourceSystem->getSceneManager()->getInstance(attachTemplateNode);
+            attachNode->addChild(attached);
+
+            StaticizeFalloutRiggedGeometryVisitor liveStaticizeVisitor;
+            attached->accept(liveStaticizeVisitor);
+            if (liveStaticizeVisitor.mStaticizedRigGeometryCount > 0)
+            {
+                staticizedHeadPartRig = true;
+                Log(Debug::Info) << "FNV/ESM4 diag: live-staticized "
+                                 << liveStaticizeVisitor.mStaticizedRigGeometryCount
+                                 << " rigged head-part drawable(s) for " << correctedModel.value() << " on "
+                                 << mPtr.getCellRef().getRefId() << " attachNode=" << attachNode->getName();
+            }
+            else
+                Log(Debug::Warning) << "FNV/ESM4 diag: failed to live-staticize rigged head-part "
+                                    << correctedModel.value() << " on " << mPtr.getCellRef().getRefId()
+                                    << " rigProbe=" << rigProbe.mRigGeometryCount
+                                    << " seen=" << liveStaticizeVisitor.mSeenRigGeometryCount
+                                    << " missingSource=" << liveStaticizeVisitor.mMissingSourceGeometryCount;
+        }
+        else if (!staticizedHeadPartRig && std::getenv("OPENMW_FNV_ATTACH_FULL_RIG_PARTS") != nullptr
             && rigProbe.mRigGeometryCount > 0)
         {
             attached = mResourceSystem->getSceneManager()->getInstance(attachTemplateNode);
-            mObjectRoot->addChild(attached);
+            rigPartMaster->addChild(attached);
             Log(Debug::Info) << "FNV/ESM4 diag: full-subtree attaching rigged NPC model part "
                              << correctedModel.value() << " to " << mPtr.getCellRef().getRefId()
-                             << " rigGeometry=" << rigProbe.mRigGeometryCount;
+                             << " rigGeometry=" << rigProbe.mRigGeometryCount << " master=" << rigPartMaster->getName();
         }
         else
         {
@@ -3454,8 +3982,20 @@ namespace MWRender
                 if (!headgearAttitude.zeroRotation())
                     attitude = &headgearAttitude;
             }
-            attached = SceneUtil::attach(std::move(attachTemplateNode), mObjectRoot.get(), {}, attachNode,
+            osg::Node* attachMaster = rigProbe.mRigGeometryCount > 0 && !staticizedHeadPartRig
+                    && !staticizedBareHandPartRig
+                ? static_cast<osg::Node*>(rigPartMaster)
+                : static_cast<osg::Node*>(mObjectRoot.get());
+            attached = SceneUtil::attach(std::move(attachTemplateNode), attachMaster, {}, attachNode,
                 mResourceSystem->getSceneManager(), attitude);
+            if (rigProbe.mRigGeometryCount > 0 && !staticizedHeadPartRig && !staticizedBareHandPartRig)
+            {
+                Log(Debug::Info) << "FNV/ESM4 diag: rigged NPC model part master "
+                                 << correctedModel.value() << " for " << mPtr.getCellRef().getRefId()
+                                 << " master=" << rigPartMaster->getName()
+                                 << " objectRoot=" << mObjectRoot->getName()
+                                 << " attachNode=" << attachNode->getName();
+            }
         }
         if (attached != nullptr && headAttachedStaticPart)
         {
@@ -3535,6 +4075,16 @@ namespace MWRender
             else
                 Log(Debug::Info) << "FNV/ESM4 diag: preserved authored eye surface culling "
                                  << correctedModel.value() << " for " << mPtr.getCellRef().getRefId();
+        }
+        if (attached != nullptr)
+        {
+            MarkFalloutRigGeometryVisitor markFalloutRigs;
+            attached->accept(markFalloutRigs);
+            if (markFalloutRigs.mMarked > 0)
+                Log(Debug::Info) << "FNV/ESM4 diag: marked " << markFalloutRigs.mMarked
+                                 << " Fallout rigged drawable(s) on " << correctedModel.value() << " for "
+                                 << mPtr.getCellRef().getRefId();
+            attached->setName("FNV Part " + correctedModel.value());
         }
         logFalloutPartShapeSummary(attached.get(), correctedModel.value(), mPtr);
         logFalloutAttachmentBounds(

@@ -16,6 +16,8 @@
 
 #include <osgDB/ReaderWriter>
 #include <osgDB/Registry>
+#include <osg/ComputeBoundsVisitor>
+#include <osg/NodeVisitor>
 #include <osgViewer/ViewerEventHandlers>
 
 #include <SDL.h>
@@ -245,6 +247,106 @@ namespace
 
         return parsed;
     }
+
+    bool isFalloutProofFaceNodeName(std::string_view lowerName)
+    {
+        if (lowerName.find("fnv part ") == std::string_view::npos)
+            return false;
+
+        return lowerName.find("characters/head/head") != std::string_view::npos
+            || lowerName.find("characters/head/mouth") != std::string_view::npos
+            || lowerName.find("characters/head/teeth") != std::string_view::npos
+            || lowerName.find("characters/head/tongue") != std::string_view::npos
+            || lowerName.find("characters/head/eye") != std::string_view::npos
+            || lowerName.find("characters/hair/beard") != std::string_view::npos;
+    }
+
+    bool isFalloutProofFaceHeadNodeName(std::string_view lowerName)
+    {
+        return lowerName.find("fnv part ") != std::string_view::npos
+            && lowerName.find("characters/head/head") != std::string_view::npos;
+    }
+
+    bool isFalloutProofFaceFeatureNodeName(std::string_view lowerName)
+    {
+        if (lowerName.find("fnv part ") == std::string_view::npos)
+            return false;
+
+        return lowerName.find("characters/head/mouth") != std::string_view::npos
+            || lowerName.find("characters/head/teeth") != std::string_view::npos
+            || lowerName.find("characters/head/tongue") != std::string_view::npos
+            || lowerName.find("characters/head/eye") != std::string_view::npos
+            || lowerName.find("characters/hair/beard") != std::string_view::npos;
+    }
+
+    class FalloutProofFaceBoundsVisitor : public osg::NodeVisitor
+    {
+    public:
+        FalloutProofFaceBoundsVisitor()
+            : osg::NodeVisitor(osg::NodeVisitor::TRAVERSE_ALL_CHILDREN)
+        {
+            setTraversalMask(~(MWRender::Mask_ParticleSystem | MWRender::Mask_Effect));
+        }
+
+        void apply(osg::Node& node) override
+        {
+            const std::string lowerName = Misc::StringUtils::lowerCase(node.getName());
+            if (lowerName == "bip01 head" || lowerName == "bip01 head_nub")
+            {
+                const osg::Matrixd localToWorld = osg::computeLocalToWorld(getNodePath());
+                mHeadCenter += localToWorld.getTrans();
+                ++mHeadMatched;
+            }
+
+            if (isFalloutProofFaceNodeName(lowerName))
+            {
+                const osg::BoundingSphere bound = node.getBound();
+                if (bound.valid())
+                {
+                    const osg::Matrixd localToWorld = osg::computeLocalToWorld(getNodePath());
+                    const osg::Vec3d center = bound.center() * localToWorld;
+                    const double radius = bound.radius();
+                    mBounds.expandBy(osg::Vec3d(center.x() - radius, center.y() - radius, center.z() - radius));
+                    mBounds.expandBy(osg::Vec3d(center.x() + radius, center.y() + radius, center.z() + radius));
+                    ++mMatched;
+
+                    if (isFalloutProofFaceHeadNodeName(lowerName))
+                    {
+                        mHeadCenter += center;
+                        ++mHeadMatched;
+                    }
+                    else if (isFalloutProofFaceFeatureNodeName(lowerName))
+                    {
+                        mFeatureCenter += center;
+                        ++mFeatureMatched;
+                    }
+                }
+            }
+
+            traverse(node);
+        }
+
+        const osg::BoundingBox& getBounds() const { return mBounds; }
+        unsigned int getMatched() const { return mMatched; }
+        unsigned int getHeadMatched() const { return mHeadMatched; }
+        unsigned int getFeatureMatched() const { return mFeatureMatched; }
+        osg::Vec3d getHeadCenter() const
+        {
+            return mHeadMatched > 0 ? mHeadCenter / static_cast<double>(mHeadMatched) : osg::Vec3d();
+        }
+        osg::Vec3d getFeatureCenter() const
+        {
+            return mFeatureMatched > 0 ? mFeatureCenter / static_cast<double>(mFeatureMatched) : osg::Vec3d();
+        }
+
+    private:
+        osg::BoundingBox mBounds;
+        osg::Vec3d mHeadCenter;
+        osg::Vec3d mFeatureCenter;
+        unsigned int mMatched = 0;
+        unsigned int mHeadMatched = 0;
+        unsigned int mFeatureMatched = 0;
+    };
 
     template <typename T>
     ESM::RefId findEsm4EditorId(const MWWorld::ESMStore& store, std::string_view editorId)
@@ -541,6 +643,9 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
     static bool proofSayQueued = false;
     static bool proofTimedScript1Executed = false;
     static bool proofTimedScript2Executed = false;
+    static bool proofActorCameraAligned = false;
+    static int proofActorCameraAlignedFrame = -1;
+    static bool proofActorAlignedScreenshotQueued = false;
     static bool proofFirstPersonHidden = false;
     static bool proofGuiHidden = false;
     static bool proofDelayedStartupScriptExecuted = false;
@@ -853,25 +958,28 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
     // if there is a separate Lua thread, it starts the update now
     mLuaWorker->allowUpdate(frameStart, frameNumber, *stats);
 
-    if (!proofFirstPersonHidden && std::getenv("OPENMW_PROOF_HIDE_FIRST_PERSON") != nullptr)
+    if (std::getenv("OPENMW_PROOF_HIDE_FIRST_PERSON") != nullptr)
     {
         const uint32_t mask = mViewer->getCamera()->getCullMask() & ~MWRender::Mask_FirstPerson;
         mViewer->getCamera()->setCullMask(mask);
         mViewer->getCamera()->setCullMaskLeft(mask);
         mViewer->getCamera()->setCullMaskRight(mask);
-        proofFirstPersonHidden = true;
-        Log(Debug::Info) << "FNV/ESM4 proof: hidden first-person render mask for clean proof capture";
+        if (!proofFirstPersonHidden)
+        {
+            proofFirstPersonHidden = true;
+            Log(Debug::Info) << "FNV/ESM4 proof: hidden first-person render mask for clean proof capture";
+        }
     }
 
     if (std::getenv("OPENMW_PROOF_HIDE_PLAYER_VISUAL") != nullptr)
     {
         static bool proofPlayerMaskHidden = false;
+        const uint32_t mask = mViewer->getCamera()->getCullMask() & ~MWRender::Mask_Player;
+        mViewer->getCamera()->setCullMask(mask);
+        mViewer->getCamera()->setCullMaskLeft(mask);
+        mViewer->getCamera()->setCullMaskRight(mask);
         if (!proofPlayerMaskHidden)
         {
-            const uint32_t mask = mViewer->getCamera()->getCullMask() & ~MWRender::Mask_Player;
-            mViewer->getCamera()->setCullMask(mask);
-            mViewer->getCamera()->setCullMaskLeft(mask);
-            mViewer->getCamera()->setCullMaskRight(mask);
             proofPlayerMaskHidden = true;
             Log(Debug::Info) << "FNV/ESM4 proof: hidden player render mask for clean proof capture";
         }
@@ -986,9 +1094,89 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                 float offsetX = readProofFloat("OPENMW_PROOF_ACTOR_VIEW_OFFSET_X", 0.f);
                 float offsetY = readProofFloat("OPENMW_PROOF_ACTOR_VIEW_OFFSET_Y", -220.f);
                 const float offsetZ = readProofFloat("OPENMW_PROOF_ACTOR_VIEW_OFFSET_Z", 20.f);
+                const float targetZ = readProofFloat("OPENMW_PROOF_ACTOR_VIEW_TARGET_Z", 120.f);
                 const float cameraDistance = readProofFloat("OPENMW_PROOF_ACTOR_VIEW_CAMERA_DISTANCE", 0.f);
                 const float cameraPitch = readProofFloat("OPENMW_PROOF_ACTOR_VIEW_PITCH", 0.f);
                 const bool staticDialogueCamera = std::getenv("OPENMW_PROOF_ACTOR_VIEW_STATIC_CAMERA") != nullptr;
+                bool useFaceAxisCamera = false;
+                osg::Vec2f faceAxis(0.f, 0.f);
+                osg::Vec3d actorAim(actorPos.pos[0], actorPos.pos[1], actorPos.pos[2] + targetZ);
+                double cameraZ = actorPos.pos[2] + offsetZ;
+                if (std::getenv("OPENMW_PROOF_ACTOR_VIEW_USE_RENDER_BOUNDS") != nullptr
+                    && proofActor.getRefData().getBaseNode() != nullptr)
+                {
+                    osg::ComputeBoundsVisitor boundsVisitor;
+                    boundsVisitor.setTraversalMask(~(MWRender::Mask_ParticleSystem | MWRender::Mask_Effect));
+                    proofActor.getRefData().getBaseNode()->accept(boundsVisitor);
+                    const osg::BoundingBox bounds = boundsVisitor.getBoundingBox();
+                    if (bounds.valid())
+                    {
+                        const float focusPercent = readProofFloat("OPENMW_PROOF_ACTOR_VIEW_BOUNDS_FOCUS", 0.72f);
+                        const double focusZ = bounds.zMin() + (bounds.zMax() - bounds.zMin()) * focusPercent;
+                        actorAim = osg::Vec3d(bounds.center().x(), bounds.center().y(), focusZ);
+                        cameraZ = focusZ + (offsetZ - targetZ);
+                        Log(Debug::Info) << "FNV/ESM4 proof: actor render bounds target=\"" << proofSayActor
+                                         << "\" min=(" << bounds.xMin() << "," << bounds.yMin() << ","
+                                         << bounds.zMin() << ") max=(" << bounds.xMax() << "," << bounds.yMax()
+                                         << "," << bounds.zMax() << ") focus=(" << actorAim.x() << ","
+                                         << actorAim.y() << "," << actorAim.z() << ") cameraZ=" << cameraZ;
+                    }
+                    else
+                        Log(Debug::Warning) << "FNV/ESM4 proof: actor render bounds invalid target=\""
+                                            << proofSayActor << "\"";
+                }
+                if (std::getenv("OPENMW_PROOF_ACTOR_VIEW_USE_FACE_BOUNDS") != nullptr
+                    && proofActor.getRefData().getBaseNode() != nullptr)
+                {
+                    FalloutProofFaceBoundsVisitor faceBoundsVisitor;
+                    proofActor.getRefData().getBaseNode()->accept(faceBoundsVisitor);
+                    const osg::BoundingBox bounds = faceBoundsVisitor.getBounds();
+                    if (bounds.valid())
+                    {
+                        actorAim = osg::Vec3d(bounds.center().x(), bounds.center().y(), bounds.center().z());
+                        const osg::Vec3d headCenter = faceBoundsVisitor.getHeadCenter();
+                        const osg::Vec3d featureCenter = faceBoundsVisitor.getFeatureCenter();
+                        const osg::Vec3d faceVector = featureCenter - headCenter;
+                        if (faceBoundsVisitor.getHeadMatched() > 0 && faceBoundsVisitor.getFeatureMatched() > 0)
+                        {
+                            const float featureFocus
+                                = readProofFloat("OPENMW_PROOF_ACTOR_VIEW_FEATURE_FOCUS", 0.3f);
+                            actorAim = headCenter + faceVector * featureFocus;
+                        }
+                        else if (faceBoundsVisitor.getFeatureMatched() > 0)
+                            actorAim = featureCenter;
+                        else if (faceBoundsVisitor.getHeadMatched() > 0)
+                            actorAim = headCenter;
+                        cameraZ = actorAim.z() + (offsetZ - targetZ);
+                        const double faceVectorPlanar
+                            = std::sqrt(faceVector.x() * faceVector.x() + faceVector.y() * faceVector.y());
+                        if (std::getenv("OPENMW_PROOF_ACTOR_VIEW_USE_FACE_AXIS") != nullptr
+                            && faceBoundsVisitor.getHeadMatched() > 0 && faceBoundsVisitor.getFeatureMatched() > 0
+                            && faceVectorPlanar > 1e-3)
+                        {
+                            faceAxis.set(static_cast<float>(faceVector.x() / faceVectorPlanar),
+                                static_cast<float>(faceVector.y() / faceVectorPlanar));
+                            useFaceAxisCamera = true;
+                        }
+                        Log(Debug::Info) << "FNV/ESM4 proof: actor face bounds target=\"" << proofSayActor
+                                         << "\" matched=" << faceBoundsVisitor.getMatched() << " min=("
+                                         << bounds.xMin() << "," << bounds.yMin() << "," << bounds.zMin()
+                                         << ") max=(" << bounds.xMax() << "," << bounds.yMax() << ","
+                                         << bounds.zMax() << ") focus=(" << actorAim.x() << "," << actorAim.y()
+                                         << "," << actorAim.z() << ") cameraZ=" << cameraZ
+                                         << " headMatched=" << faceBoundsVisitor.getHeadMatched()
+                                         << " featureMatched=" << faceBoundsVisitor.getFeatureMatched()
+                                         << " headCenter=(" << headCenter.x() << "," << headCenter.y() << ","
+                                         << headCenter.z() << ") featureCenter=(" << featureCenter.x() << ","
+                                         << featureCenter.y() << "," << featureCenter.z() << ") faceAxis=("
+                                         << faceAxis.x() << "," << faceAxis.y()
+                                         << ") useFaceAxisCamera=" << useFaceAxisCamera;
+                    }
+                    else
+                        Log(Debug::Warning) << "FNV/ESM4 proof: actor face bounds invalid target=\""
+                                            << proofSayActor << "\" matched="
+                                            << faceBoundsVisitor.getMatched();
+                }
                 if (std::getenv("OPENMW_PROOF_ACTOR_VIEW_USE_ACTOR_FACING") != nullptr)
                 {
                     float frontDistance = readProofFloat("OPENMW_PROOF_ACTOR_VIEW_FRONT_DISTANCE", 0.f);
@@ -999,20 +1187,56 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                             frontDistance = 220.f;
                     }
                     const float actorYaw = actorPos.rot[2];
-                    offsetX = std::sin(actorYaw) * frontDistance;
-                    offsetY = std::cos(actorYaw) * frontDistance;
+                    const float frontSign = std::getenv("OPENMW_PROOF_ACTOR_VIEW_FALLOUT_FRONT") != nullptr ? -1.f : 1.f;
+                    if (useFaceAxisCamera)
+                    {
+                        offsetX = faceAxis.x() * frontDistance;
+                        offsetY = faceAxis.y() * frontDistance;
+                    }
+                    else
+                    {
+                        offsetX = std::sin(actorYaw) * frontDistance * frontSign;
+                        offsetY = std::cos(actorYaw) * frontDistance * frontSign;
+                    }
+                    const float orbitDegrees = readProofFloat("OPENMW_PROOF_ACTOR_VIEW_ORBIT_DEGREES", 0.f);
+                    if (std::abs(orbitDegrees) > 1e-3f)
+                    {
+                        const float orbitRadians = orbitDegrees * static_cast<float>(osg::PI) / 180.f;
+                        const float cosOrbit = std::cos(orbitRadians);
+                        const float sinOrbit = std::sin(orbitRadians);
+                        const float rotatedX = offsetX * cosOrbit - offsetY * sinOrbit;
+                        const float rotatedY = offsetX * sinOrbit + offsetY * cosOrbit;
+                        offsetX = rotatedX;
+                        offsetY = rotatedY;
+                    }
+                    const float openMwForwardX = std::sin(actorYaw);
+                    const float openMwForwardY = std::cos(actorYaw);
+                    const float falloutForwardX = -openMwForwardX;
+                    const float falloutForwardY = -openMwForwardY;
+                    const float offsetLength = std::sqrt(offsetX * offsetX + offsetY * offsetY);
+                    const float cameraDirX = offsetLength > 0.f ? offsetX / offsetLength : 0.f;
+                    const float cameraDirY = offsetLength > 0.f ? offsetY / offsetLength : 0.f;
+                    const float openMwFrontDot = cameraDirX * openMwForwardX + cameraDirY * openMwForwardY;
+                    const float falloutFrontDot = cameraDirX * falloutForwardX + cameraDirY * falloutForwardY;
                     Log(Debug::Info) << "FNV/ESM4 proof: actor-facing camera offset target=\"" << proofSayActor
                                      << "\" actorYaw=" << actorYaw << " frontDistance=" << frontDistance
-                                     << " offset=(" << offsetX << "," << offsetY << "," << offsetZ << ")";
+                                     << " frontSign=" << frontSign
+                                     << " useFaceAxisCamera=" << useFaceAxisCamera
+                                     << " orbitDegrees=" << orbitDegrees
+                                     << " offset=(" << offsetX << "," << offsetY << "," << offsetZ
+                                     << ") cameraDir=(" << cameraDirX << "," << cameraDirY
+                                     << ") openMwFrontDot=" << openMwFrontDot
+                                     << " falloutFrontDot=" << falloutFrontDot;
                 }
                 MWWorld::Ptr player = mWorld->getPlayerPtr();
                 const osg::Vec3f targetPos(
-                    actorPos.pos[0] + offsetX, actorPos.pos[1] + offsetY, actorPos.pos[2] + offsetZ);
+                    static_cast<float>(actorAim.x() + offsetX), static_cast<float>(actorAim.y() + offsetY),
+                    static_cast<float>(cameraZ));
                 if (!staticDialogueCamera)
                     player = mWorld->moveObject(player, targetPos, true, true);
                 const ESM::Position& playerPos = player.getRefData().getPosition();
                 const float yawToActor = static_cast<float>(
-                    std::atan2(actorPos.pos[0] - targetPos.x(), actorPos.pos[1] - targetPos.y()));
+                    std::atan2(actorAim.x() - targetPos.x(), actorAim.y() - targetPos.y()));
                 if (!staticDialogueCamera)
                     mWorld->rotateObject(player, osg::Vec3f(0.f, 0.f, -yawToActor));
                 if (MWRender::Camera* camera = mWorld->getCamera())
@@ -1020,8 +1244,7 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                     osg::Vec3d proofCameraPos;
                     if (staticDialogueCamera)
                     {
-                        const float targetZ = readProofFloat("OPENMW_PROOF_ACTOR_VIEW_TARGET_Z", 120.f);
-                        const osg::Vec3d cameraTarget(actorPos.pos[0], actorPos.pos[1], actorPos.pos[2] + targetZ);
+                        const osg::Vec3d cameraTarget(actorAim);
                         const osg::Vec3d cameraPos(targetPos.x(), targetPos.y(), targetPos.z());
                         proofCameraPos = cameraPos;
                         const float dx = static_cast<float>(cameraTarget.x() - cameraPos.x());
@@ -1057,6 +1280,8 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                                      << cameraDistance << " cameraPitch=" << camera->getPitch()
                                      << " cameraYaw=" << camera->getYaw() << " staticDialogueCamera="
                                      << staticDialogueCamera;
+                    proofActorCameraAligned = true;
+                    proofActorCameraAlignedFrame = static_cast<int>(frameNumber);
 
                     if (std::getenv("OPENMW_PROOF_LOG_NEARBY_REFS") != nullptr)
                     {
@@ -1171,7 +1396,11 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
         && frameNumber >= static_cast<unsigned>(proofScreenshotFrames[proofScreenshotFrameIndex]);
     const bool proofScreenshotReadyFramesReached
         = !proofScreenshotReadyQueued && proofScreenshotReadyFrames >= 0 && proofWorldReadyFrames >= proofScreenshotReadyFrames;
-    if ((proofScreenshotFrameReached || proofScreenshotReadyFramesReached)
+    const int proofActorAlignedScreenshotDelay = getProofFrame("OPENMW_PROOF_ACTOR_ALIGNED_SCREENSHOT_DELAY");
+    const bool proofActorAlignedScreenshotReached = !proofActorAlignedScreenshotQueued && proofActorCameraAligned
+        && proofActorAlignedScreenshotDelay >= 0 && proofActorCameraAlignedFrame >= 0
+        && frameNumber >= static_cast<unsigned>(proofActorCameraAlignedFrame + proofActorAlignedScreenshotDelay);
+    if ((proofScreenshotFrameReached || proofScreenshotReadyFramesReached || proofActorAlignedScreenshotReached)
         && mScreenCaptureHandler != nullptr)
     {
         if (!proofWorldReady && !proofScreenshotWaitLogged)
@@ -1195,6 +1424,8 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
             ++proofScreenshotFrameIndex;
         if (proofScreenshotReadyFramesReached)
             proofScreenshotReadyQueued = true;
+        if (proofActorAlignedScreenshotReached)
+            proofActorAlignedScreenshotQueued = true;
     }
 
     mViewer->renderingTraversals();

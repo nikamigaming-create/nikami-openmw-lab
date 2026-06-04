@@ -56,6 +56,10 @@ namespace SceneUtil
                 item.mNode = node;
                 for (osg::Node* parent : getNodePath())
                 {
+                    const std::string& name = parent != nullptr ? parent->getName() : std::string();
+                    if (Misc::StringUtils::ciStartsWith(name, "Bip01")
+                        || Misc::StringUtils::ciEqual(name, "Scene Root"))
+                        continue;
                     if (parent != nullptr && (parent->getStateSet() != nullptr || parent->getUserDataContainer() != nullptr
                             || dynamic_cast<const osg::MatrixTransform*>(parent) != nullptr
                             || dynamic_cast<const osg::PositionAttitudeTransform*>(parent) != nullptr))

@@ -858,6 +858,24 @@ namespace MWMechanics
             }
         }
 
+        if (isFalloutActor(mPtr))
+        {
+            if (const char* forcedIdleGroup = std::getenv("OPENMW_FNV_FORCE_IDLE_GROUP"))
+            {
+                std::string forced = Misc::StringUtils::lowerCase(forcedIdleGroup);
+                if (forced == "idle" || forced == "sitchairlisten" || forced == "sitchairtalk"
+                    || forced == "sitchaireat")
+                {
+                    Log(Debug::Info) << "FNV/ESM4 diag: forcing idle group '" << forced << "' for "
+                                     << mPtr.getCellRef().getRefId();
+                    idleGroup = std::move(forced);
+                }
+                else
+                    Log(Debug::Warning) << "FNV/ESM4 diag: ignoring invalid OPENMW_FNV_FORCE_IDLE_GROUP='"
+                                        << forcedIdleGroup << "'";
+            }
+        }
+
         if (!mAnimation->hasAnimation(idleGroup))
         {
             if (isFalloutActor(mPtr))
@@ -880,6 +898,35 @@ namespace MWMechanics
                              << mPtr.getCellRef().getRefId() << " group '" << mCurrentIdle << "'";
         playBlendedAnimation(
             mCurrentIdle, priority, MWRender::BlendMask_All, false, 1.0f, "start", "stop", startPoint, numLoops, true);
+
+        const bool hasFalloutSitTalk = isFalloutActor(mPtr) && mAnimation->hasAnimation("sitchairtalk");
+        if (isFalloutActor(mPtr) && mCurrentIdle == "idle" && mAnimation->hasAnimation("sitchairlisten")
+            && !hasFalloutSitTalk
+            && std::getenv("OPENMW_FNV_ENABLE_SIT_LISTEN_OVERLAY") != nullptr)
+        {
+            MWRender::Animation::AnimPriority listenPriority(Priority_Default);
+            listenPriority[MWRender::BoneGroup_LeftArm] = Priority_Weapon;
+            listenPriority[MWRender::BoneGroup_RightArm] = Priority_Weapon;
+            Log(Debug::Info) << "FNV/ESM4 diag: CharacterController layering package sit/listen overlay for "
+                             << mPtr.getCellRef().getRefId();
+            playBlendedAnimation("sitchairlisten",
+                listenPriority, MWRender::BlendMask_LeftArm | MWRender::BlendMask_RightArm, false, 1.0f, "start",
+                "stop", 0.f, numLoops, true);
+        }
+        if (isFalloutActor(mPtr) && mCurrentIdle == "idle" && hasFalloutSitTalk
+            && std::getenv("OPENMW_FNV_ENABLE_SIT_LISTEN_OVERLAY") != nullptr)
+        {
+            MWRender::Animation::AnimPriority talkPriority(Priority_Default);
+            talkPriority[MWRender::BoneGroup_Torso] = Priority_Weapon;
+            talkPriority[MWRender::BoneGroup_LeftArm] = Priority_Weapon;
+            talkPriority[MWRender::BoneGroup_RightArm] = Priority_Weapon;
+            Log(Debug::Info) << "FNV/ESM4 diag: CharacterController layering package sit/talk overlay for "
+                             << mPtr.getCellRef().getRefId();
+            playBlendedAnimation("sitchairtalk",
+                talkPriority,
+                MWRender::BlendMask_Torso | MWRender::BlendMask_LeftArm | MWRender::BlendMask_RightArm, false, 1.0f,
+                "start", "stop", 0.f, numLoops, true);
+        }
     }
 
     void CharacterController::refreshCurrentAnims(

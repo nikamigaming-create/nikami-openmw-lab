@@ -1,6 +1,7 @@
 #include "esmstore.hpp"
 
 #include <algorithm>
+#include <cstdlib>
 #include <fstream>
 #include <tuple>
 
@@ -284,6 +285,13 @@ namespace
             "textures/interface/icons/pipboyimages/items/item_bobby_pin.dds", 0.01f, 1);
         ensureMisc("FNV_PROOF_CAPS", "Bottle Cap",
             "textures/interface/icons/pipboyimages/items/items_nuka_cola_cap.dds", 0.f, 1);
+    }
+
+    bool shouldEnsureFalloutProofCharacterDefaults()
+    {
+        return std::getenv("OPENMW_FNV_BOOTSTRAP_LEVEL1_COURIER") != nullptr
+            || std::getenv("OPENMW_FNV_BOOTSTRAP_DOC_SENT") != nullptr
+            || std::getenv("OPENMW_FNV_PROOF_ENABLE_ESM3_FALLBACKS") != nullptr;
     }
 
     std::vector<ESM::NPC> getNPCsToReplace(const MWWorld::Store<ESM::Faction>& factions,
@@ -799,10 +807,11 @@ namespace MWWorld
     void ESMStore::validate()
     {
         auto& npcs = getWritable<ESM::NPC>();
-        ensureFalloutProofCharacterDefaults(
-            getWritable<ESM::Class>(), getWritable<ESM::Race>(), getWritable<ESM::Skill>(),
-            getWritable<ESM::MagicEffect>(), getWritable<ESM::Dialogue>(), npcs, getWritable<ESM::Weapon>(),
-            getWritable<ESM::Potion>(), getWritable<ESM::Miscellaneous>());
+        if (shouldEnsureFalloutProofCharacterDefaults())
+            ensureFalloutProofCharacterDefaults(
+                getWritable<ESM::Class>(), getWritable<ESM::Race>(), getWritable<ESM::Skill>(),
+                getWritable<ESM::MagicEffect>(), getWritable<ESM::Dialogue>(), npcs, getWritable<ESM::Weapon>(),
+                getWritable<ESM::Potion>(), getWritable<ESM::Miscellaneous>());
         rebuildIdsIndex();
         mStoreImp->mStaticIds = mStoreImp->mIds;
         std::vector<ESM::NPC> npcsToReplace = getNPCsToReplace(getWritable<ESM::Faction>(), getWritable<ESM::Class>(),
@@ -846,10 +855,11 @@ namespace MWWorld
     void ESMStore::validateDynamic()
     {
         auto& npcs = getWritable<ESM::NPC>();
-        ensureFalloutProofCharacterDefaults(
-            getWritable<ESM::Class>(), getWritable<ESM::Race>(), getWritable<ESM::Skill>(),
-            getWritable<ESM::MagicEffect>(), getWritable<ESM::Dialogue>(), npcs, getWritable<ESM::Weapon>(),
-            getWritable<ESM::Potion>(), getWritable<ESM::Miscellaneous>());
+        if (shouldEnsureFalloutProofCharacterDefaults())
+            ensureFalloutProofCharacterDefaults(
+                getWritable<ESM::Class>(), getWritable<ESM::Race>(), getWritable<ESM::Skill>(),
+                getWritable<ESM::MagicEffect>(), getWritable<ESM::Dialogue>(), npcs, getWritable<ESM::Weapon>(),
+                getWritable<ESM::Potion>(), getWritable<ESM::Miscellaneous>());
         rebuildIdsIndex();
         auto& scripts = getWritable<ESM::Script>();
 

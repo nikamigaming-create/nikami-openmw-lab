@@ -147,6 +147,7 @@ namespace MWRender
         struct AnimSource
         {
             osg::ref_ptr<const SceneUtil::KeyframeHolder> mKeyframes;
+            std::string mSourceName;
 
             typedef std::map<std::string, osg::ref_ptr<SceneUtil::KeyframeController>> ControllerMap;
 

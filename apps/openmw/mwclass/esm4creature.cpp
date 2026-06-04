@@ -9,6 +9,7 @@
 #include <components/debug/debuglog.hpp>
 #include <components/esm/attr.hpp>
 #include <components/esm/defs.hpp>
+#include <components/esm4/loadfurn.hpp>
 #include <components/esm4/loadlvlc.hpp>
 #include <components/esm4/loadpack.hpp>
 #include <components/esm4/loadrefr.hpp>
@@ -272,12 +273,15 @@ namespace MWClass
             const float dx = actorPos.pos[0] - target->mPos.pos[0];
             const float dy = actorPos.pos[1] - target->mPos.pos[1];
             const float dz = actorPos.pos[2] - target->mPos.pos[2];
-            if (dx * dx + dy * dy + dz * dz < 64.f)
+            const bool furnitureTarget = store->get<ESM4::Furniture>().search(target->mBaseObj) != nullptr;
+            const float arrivalDistance = furnitureTarget ? 128.f : 8.f;
+            if (dx * dx + dy * dy + dz * dz < arrivalDistance * arrivalDistance)
             {
                 Log(Debug::Info) << "FNV/ESM4 diag: skipped native creature AI travel package "
                                  << package->mEditorId << " type=" << getFnvPackageTypeName(package->mData.type)
-                                 << " because actor is already at targetRef=" << target->mEditorId << " for "
-                                 << creature.mEditorId;
+                                 << " because actor is already at targetRef=" << target->mEditorId
+                                 << " furnitureTarget=" << furnitureTarget
+                                 << " arrivalDistance=" << arrivalDistance << " for " << creature.mEditorId;
                 return;
             }
 
