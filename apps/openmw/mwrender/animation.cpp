@@ -247,13 +247,27 @@ namespace
 
         void apply(osg::MatrixTransform& node) override
         {
-            if (!node.getName().empty())
+            const bool runtimePart = Misc::StringUtils::ciStartsWith(node.getName(), "FNV Part ");
+            if (!runtimePart && !mInsideRuntimePart && !node.getName().empty())
                 mTargets[Misc::StringUtils::lowerCase(node.getName())].push_back(&node);
+            const bool wasInsideRuntimePart = mInsideRuntimePart;
+            mInsideRuntimePart = mInsideRuntimePart || runtimePart;
             traverse(node);
+            mInsideRuntimePart = wasInsideRuntimePart;
+        }
+
+        void apply(osg::Group& node) override
+        {
+            const bool runtimePart = Misc::StringUtils::ciStartsWith(node.getName(), "FNV Part ");
+            const bool wasInsideRuntimePart = mInsideRuntimePart;
+            mInsideRuntimePart = mInsideRuntimePart || runtimePart;
+            traverse(node);
+            mInsideRuntimePart = wasInsideRuntimePart;
         }
 
     private:
         std::unordered_map<std::string, std::vector<osg::MatrixTransform*>>& mTargets;
+        bool mInsideRuntimePart = false;
     };
 
     class FalloutRiggedPartTransformVisitor : public osg::NodeVisitor
@@ -448,10 +462,126 @@ namespace
         return found->second.front();
     }
 
+    osg::MatrixTransform* findFalloutTargetAny(
+        const std::unordered_map<std::string, std::vector<osg::MatrixTransform*>>& targets,
+        std::initializer_list<std::string_view> bones)
+    {
+        for (std::string_view bone : bones)
+        {
+            osg::MatrixTransform* target = findFalloutTarget(targets, std::string(bone));
+            if (target != nullptr)
+                return target;
+        }
+        return nullptr;
+    }
+
     osg::Vec3f getFalloutTargetWorldOrigin(
         const std::unordered_map<std::string, std::vector<osg::MatrixTransform*>>& targets, const std::string& bone)
     {
         return transformFalloutPoint(osg::Vec3f(), getFalloutNodeWorldMatrix(findFalloutTarget(targets, bone)));
+    }
+
+    void auditFalloutSkeletonBounds(
+        const std::unordered_map<std::string, std::vector<osg::MatrixTransform*>>& targets, const MWWorld::Ptr& ptr)
+    {
+        osg::Vec3f minimum(std::numeric_limits<float>::max(), std::numeric_limits<float>::max(),
+            std::numeric_limits<float>::max());
+        osg::Vec3f maximum(-std::numeric_limits<float>::max(), -std::numeric_limits<float>::max(),
+            -std::numeric_limits<float>::max());
+        int pointCount = 0;
+
+        for (const auto& [bone, nodes] : targets)
+        {
+            if (bone.empty() || nodes.empty())
+                continue;
+
+            osg::MatrixTransform* node = nodes.front();
+            if (node == nullptr)
+                continue;
+
+            const osg::Vec3f point = transformFalloutPoint(osg::Vec3f(), getFalloutNodeWorldMatrix(node));
+            minimum.x() = std::min(minimum.x(), point.x());
+            minimum.y() = std::min(minimum.y(), point.y());
+            minimum.z() = std::min(minimum.z(), point.z());
+            maximum.x() = std::max(maximum.x(), point.x());
+            maximum.y() = std::max(maximum.y(), point.y());
+            maximum.z() = std::max(maximum.z(), point.z());
+            ++pointCount;
+        }
+
+        if (pointCount == 0)
+        {
+            Log(Debug::Warning) << "FNV/ESM4 diag: skeleton bounds " << ptr.getCellRef().getRefId()
+                                << " verdict=BAD reason=no_points";
+            return;
+        }
+
+        const osg::Vec3f size = maximum - minimum;
+        const osg::Vec3f center = (minimum + maximum) * 0.5f;
+        Log(Debug::Info) << "FNV/ESM4 diag: skeleton bounds " << ptr.getCellRef().getRefId()
+                         << " points=" << pointCount
+                         << " min=" << formatFalloutAuditVec3(minimum)
+                         << " max=" << formatFalloutAuditVec3(maximum)
+                         << " center=" << formatFalloutAuditVec3(center)
+                         << " size=" << formatFalloutAuditVec3(size);
+
+        const auto pointOrNaN = [&](std::initializer_list<std::string_view> bones) {
+            osg::MatrixTransform* node = findFalloutTargetAny(targets, bones);
+            return node != nullptr ? transformFalloutPoint(osg::Vec3f(), getFalloutNodeWorldMatrix(node))
+                                   : osg::Vec3f(std::numeric_limits<float>::quiet_NaN(),
+                                       std::numeric_limits<float>::quiet_NaN(),
+                                       std::numeric_limits<float>::quiet_NaN());
+        };
+        const osg::Vec3f head = pointOrNaN({ "bip01 head" });
+        const osg::Vec3f neck = pointOrNaN({ "bip01 neck1", "bip01 neck" });
+        const osg::Vec3f spine = pointOrNaN({ "bip01 spine2", "bip01 spine1", "bip01 spine" });
+        const osg::Vec3f pelvis = pointOrNaN({ "bip01 pelvis" });
+        const osg::Vec3f leftShoulder = pointOrNaN({ "bip01 l upperarm" });
+        const osg::Vec3f rightShoulder = pointOrNaN({ "bip01 r upperarm" });
+        const osg::Vec3f leftElbow = pointOrNaN({ "bip01 l forearm" });
+        const osg::Vec3f rightElbow = pointOrNaN({ "bip01 r forearm" });
+        const osg::Vec3f leftHand = pointOrNaN({ "bip01 l hand" });
+        const osg::Vec3f rightHand = pointOrNaN({ "bip01 r hand" });
+        const osg::Vec3f leftThigh = pointOrNaN({ "bip01 l thigh" });
+        const osg::Vec3f rightThigh = pointOrNaN({ "bip01 r thigh" });
+        const osg::Vec3f leftKnee = pointOrNaN({ "bip01 l calf" });
+        const osg::Vec3f rightKnee = pointOrNaN({ "bip01 r calf" });
+        const osg::Vec3f leftFoot = pointOrNaN({ "bip01 l foot" });
+        const osg::Vec3f rightFoot = pointOrNaN({ "bip01 r foot" });
+
+        Log(Debug::Info) << "FNV/ESM4 diag: skeleton anchors " << ptr.getCellRef().getRefId()
+                         << " head=" << formatFalloutAuditVec3(head)
+                         << " neck=" << formatFalloutAuditVec3(neck)
+                         << " spine=" << formatFalloutAuditVec3(spine)
+                         << " pelvis=" << formatFalloutAuditVec3(pelvis)
+                         << " leftShoulder=" << formatFalloutAuditVec3(leftShoulder)
+                         << " rightShoulder=" << formatFalloutAuditVec3(rightShoulder)
+                         << " leftElbow=" << formatFalloutAuditVec3(leftElbow)
+                         << " rightElbow=" << formatFalloutAuditVec3(rightElbow)
+                         << " leftHand=" << formatFalloutAuditVec3(leftHand)
+                         << " rightHand=" << formatFalloutAuditVec3(rightHand)
+                         << " leftThigh=" << formatFalloutAuditVec3(leftThigh)
+                         << " rightThigh=" << formatFalloutAuditVec3(rightThigh)
+                         << " leftKnee=" << formatFalloutAuditVec3(leftKnee)
+                         << " rightKnee=" << formatFalloutAuditVec3(rightKnee)
+                         << " leftFoot=" << formatFalloutAuditVec3(leftFoot)
+                         << " rightFoot=" << formatFalloutAuditVec3(rightFoot);
+
+        Log(Debug::Info) << "FNV/ESM4 diag: skeleton segments " << ptr.getCellRef().getRefId()
+                         << " neckToHead=" << (head - neck).length()
+                         << " spineToNeck=" << (neck - spine).length()
+                         << " pelvisToSpine=" << (spine - pelvis).length()
+                         << " shoulderSpan=" << (rightShoulder - leftShoulder).length()
+                         << " leftUpperArm=" << (leftElbow - leftShoulder).length()
+                         << " rightUpperArm=" << (rightElbow - rightShoulder).length()
+                         << " leftForearm=" << (leftHand - leftElbow).length()
+                         << " rightForearm=" << (rightHand - rightElbow).length()
+                         << " hipSpan=" << (rightThigh - leftThigh).length()
+                         << " leftThigh=" << (leftKnee - leftThigh).length()
+                         << " rightThigh=" << (rightKnee - rightThigh).length()
+                         << " leftCalf=" << (leftFoot - leftKnee).length()
+                         << " rightCalf=" << (rightFoot - rightKnee).length()
+                         << " footSpread=" << (rightFoot - leftFoot).length();
     }
 
     std::string describeFalloutClosestTarget(const osg::Vec3f& point,
@@ -836,8 +966,8 @@ namespace
     bool auditFalloutWorldPosture(
         const std::unordered_map<std::string, std::vector<osg::MatrixTransform*>>& targets, const MWWorld::Ptr& ptr)
     {
-        const auto requireBone = [&](const std::string& bone, osg::Vec3f& value) {
-            osg::MatrixTransform* node = findFalloutTarget(targets, bone);
+        const auto requireBone = [&](std::initializer_list<std::string_view> bones, osg::Vec3f& value) {
+            osg::MatrixTransform* node = findFalloutTargetAny(targets, bones);
             if (node == nullptr)
                 return false;
             value = transformFalloutPoint(osg::Vec3f(), getFalloutNodeWorldMatrix(node));
@@ -850,9 +980,11 @@ namespace
         osg::Vec3f pelvis;
         osg::Vec3f leftFoot;
         osg::Vec3f rightFoot;
-        const bool hasRequired = requireBone("bip01 head", head) && requireBone("bip01 neck1", neck)
-            && requireBone("bip01 spine2", spine2) && requireBone("bip01 pelvis", pelvis)
-            && requireBone("bip01 l foot", leftFoot) && requireBone("bip01 r foot", rightFoot);
+        const bool hasRequired = requireBone({ "bip01 head" }, head)
+            && requireBone({ "bip01 neck1", "bip01 neck" }, neck)
+            && requireBone({ "bip01 spine2", "bip01 spine1", "bip01 spine" }, spine2)
+            && requireBone({ "bip01 pelvis" }, pelvis)
+            && requireBone({ "bip01 l foot" }, leftFoot) && requireBone({ "bip01 r foot" }, rightFoot);
         if (!hasRequired)
         {
             Log(Debug::Warning) << "FNV/ESM4 diag: world posture " << ptr.getCellRef().getRefId()
@@ -903,6 +1035,78 @@ namespace
         }
 
         return !bad;
+    }
+
+    bool shouldAuditGenericProofPosture(const MWWorld::Ptr& ptr)
+    {
+        const char* target = std::getenv("OPENMW_PROOF_POSTURE_TARGET");
+        if (target == nullptr || *target == '\0')
+            return false;
+
+        const std::string targetLower = Misc::StringUtils::lowerCase(target);
+        const std::string idLower = Misc::StringUtils::lowerCase(ptr.getCellRef().getRefId().toDebugString());
+        if (targetLower == idLower)
+            return true;
+
+        const std::string ptrLower = Misc::StringUtils::lowerCase(ptr.toString());
+        if (ptrLower.find(targetLower) != std::string::npos)
+            return true;
+
+        try
+        {
+            const std::string nameLower = Misc::StringUtils::lowerCase(std::string(ptr.getClass().getName(ptr)));
+            if (!nameLower.empty()
+                && (nameLower == targetLower || nameLower.find(targetLower) != std::string::npos
+                    || targetLower.find(nameLower) != std::string::npos))
+                return true;
+        }
+        catch (const std::exception&) {}
+
+        return false;
+    }
+
+    void auditGenericProofPosture(osg::Node* root, const MWWorld::Ptr& ptr)
+    {
+        if (root == nullptr || !shouldAuditGenericProofPosture(ptr))
+            return;
+
+        static std::unordered_map<std::string, int> sSamples;
+        const std::string key = ptr.toString();
+        int& samples = sSamples[key];
+        const int maxSamples = [] {
+            if (const char* value = std::getenv("OPENMW_PROOF_POSTURE_SAMPLES"))
+            {
+                try
+                {
+                    return std::max(1, std::stoi(value));
+                }
+                catch (...) {}
+            }
+            return 8;
+        }();
+        if (samples >= maxSamples)
+            return;
+        ++samples;
+
+        std::unordered_map<std::string, std::vector<osg::MatrixTransform*>> targets;
+        FalloutTransformTargetVisitor visitor(targets);
+        root->accept(visitor);
+
+        Log(Debug::Info) << "OPENMW PROOF posture sample target=" << ptr.getCellRef().getRefId()
+                         << " sample=" << samples
+                         << " targetCount=" << targets.size()
+                         << " label="
+                         << (std::getenv("OPENMW_PROOF_POSTURE_LABEL") != nullptr
+                                    ? std::getenv("OPENMW_PROOF_POSTURE_LABEL")
+                                    : "");
+        auditFalloutSkeletonBounds(targets, ptr);
+        auditFalloutWorldPosture(targets, ptr);
+        auditFalloutMirrorSymmetry(targets, ptr);
+        if (std::getenv("OPENMW_PROOF_POSTURE_SEATED") != nullptr)
+        {
+            auditFalloutSeatedLegChain(targets, ptr);
+            auditFalloutSeatedUpperBody(targets, ptr);
+        }
     }
 
     std::string getFalloutRuntimePartClass(std::string_view name)
@@ -4117,6 +4321,8 @@ namespace MWRender
                 mHeadController->setRotate(
                     osg::Quat(mHeadPitchRadians, osg::Vec3f(1, 0, 0)) * osg::Quat(yaw, osg::Vec3f(0, 0, 1)));
         }
+
+        auditGenericProofPosture(mObjectRoot.get(), mPtr);
 
         return movement;
     }
