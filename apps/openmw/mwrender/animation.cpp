@@ -3824,13 +3824,19 @@ namespace MWRender
                     SceneUtil::KeyframeController::KfTransform keyframe = it->second->getCurrentTransformation(nullptr);
                     if (std::getenv("OPENMW_FNV_ENABLE_CHAIR_LOWER_LEG_DONOR") != nullptr
                         && falloutProcedureIdle && blendMask == BoneGroup_LowerBody && animsrc
-                        && isFalloutDynamicChairSitSource(animsrc->mSourceName)
-                        && isFalloutCalfFootBone(lowerAppliedBone))
+                        && isFalloutCalfFootBone(lowerAppliedBone)
+                        && (isFalloutDynamicChairSitSource(animsrc->mSourceName)
+                            || isFalloutDynamicSitSource(animsrc->mSourceName)))
                     {
+                        const bool activeChairSit = isFalloutDynamicChairSitSource(animsrc->mSourceName);
                         for (AnimSourceList::const_iterator source = mAnimSources.begin(); source != mAnimSources.end();
                              ++source)
                         {
-                            if (!*source || !isFalloutDynamicSitSource((*source)->mSourceName))
+                            if (!*source)
+                                continue;
+                            const bool donorMatches = activeChairSit ? isFalloutDynamicSitSource((*source)->mSourceName)
+                                                                      : isFalloutDynamicChairSitSource((*source)->mSourceName);
+                            if (!donorMatches)
                                 continue;
 
                             const auto& donorControllers = (*source)->mControllerMap[blendMask];
@@ -4278,7 +4284,10 @@ namespace MWRender
                 auditFalloutDuplicateBoneDeltas(duplicateTransformTargets, mPtr);
                 auditFalloutMirrorSymmetry(duplicateTransformTargets, mPtr);
                 if (std::getenv("OPENMW_FNV_SEATED_POSTURE_AUDIT") != nullptr)
+                {
+                    auditFalloutSeatedLegChain(duplicateTransformTargets, mPtr);
                     auditFalloutSeatedUpperBody(duplicateTransformTargets, mPtr);
+                }
                 auditFalloutWorldPosture(duplicateTransformTargets, mPtr);
                 auditFalloutRuntimeParts(mObjectRoot.get(), duplicateTransformTargets, mPtr);
             }
