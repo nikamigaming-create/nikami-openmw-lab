@@ -36,6 +36,8 @@
 #include <components/vfs/manager.hpp>
 #include <components/vfs/pathutil.hpp>
 
+#include "../mwmechanics/character.hpp"
+
 #include <osg/ComputeBoundsVisitor>
 #include <osg/FrontFace>
 #include <osg/Geode>
@@ -394,7 +396,7 @@ namespace MWRender
                 || traits.mId.mIndex == 0x00104c7f;
         }
 
-        bool isFonvProofTargetActor(const ESM4::Npc& traits)
+        bool isFonvProofTargetActor(const MWWorld::Ptr& ptr, const ESM4::Npc& traits)
         {
             if (std::getenv("OPENMW_FNV_PROOF_ONLY_EASY_PETE") != nullptr)
                 return isEasyPeteProofActor(traits);
@@ -403,8 +405,14 @@ namespace MWRender
             if (target == nullptr || target[0] == '\0')
                 return true;
 
+            std::string refId;
+            if (ptr.getCell() != nullptr)
+                refId = ptr.getCellRef().getRefNum().toString("FormId:");
+
             return Misc::StringUtils::ciEqual(traits.mEditorId, target)
-                || Misc::StringUtils::ciEqual(formatFalloutFormIndex(traits.mId), target);
+                || Misc::StringUtils::ciEqual(ESM::RefId(traits.mId).toDebugString(), target)
+                || Misc::StringUtils::ciEqual(formatFalloutFormIndex(traits.mId), target)
+                || (!refId.empty() && Misc::StringUtils::ciEqual(refId, target));
         }
 
         std::string formatFormIdList(const std::vector<ESM::FormId>& ids, std::size_t maxCount = 16)
@@ -1865,7 +1873,6 @@ namespace MWRender
                 for (unsigned int i = 0; i < geode.getNumDrawables(); ++i)
                     if (SceneUtil::RigGeometry* rig = dynamic_cast<SceneUtil::RigGeometry*>(geode.getDrawable(i)))
                     {
-                        rig->setFalloutCharacterRig(true);
                         ++mMarked;
                     }
 
@@ -2164,6 +2171,218 @@ namespace MWRender
             return true;
         }
 
+        class FalloutDialogueMorphDriver : public osg::NodeCallback
+        {
+        public:
+            FalloutDialogueMorphDriver(Animation* animation, const FaceGenTri& tri, const std::string& model)
+                : mAnimation(animation)
+                , mModel(model)
+            {
+                for (const auto& [morphName, deltas] : tri.mDiffMorphs)
+                {
+                    Morph m;
+                    m.name = morphName;
+                    m.deltas = deltas;
+                    mMorphs.push_back(std::move(m));
+                }
+                mLastValues.resize(mMorphs.size(), -1.f);
+            }
+
+            bool empty() const { return mTargets.empty() || mMorphs.empty(); }
+
+            void operator()(osg::Node* node, osg::NodeVisitor* nv) override
+            {
+                if (mAnimation == nullptr || mMorphs.empty() || mTargets.empty())
+                {
+                    traverse(node, nv);
+                    return;
+                }
+
+                std::vector<float> values;
+                values.reserve(mMorphs.size());
+
+                for (const Morph& morph : mMorphs)
+                {
+                    float val = mAnimation->getFalloutHeadAnimTrackValue(morph.name);
+                    values.push_back(val);
+                }
+
+                if (mLastValues != values)
+                {
+                    for (Target& target : mTargets)
+                        applyTarget(target, values);
+                    mLastValues = values;
+                }
+
+                traverse(node, nv);
+            }
+
+            struct Target
+            {
+                osg::ref_ptr<SceneUtil::RigGeometry> mRig;
+                osg::ref_ptr<osg::Geometry> mGeometry;
+                osg::ref_ptr<osg::Vec3Array> mBaseVertices;
+                osg::ref_ptr<osg::Vec3Array> mActiveVertices;
+            };
+
+            void addRig(SceneUtil::RigGeometry& rig)
+            {
+                if (rig.getSourceGeometry() == nullptr)
+                    return;
+
+                const osg::Vec3Array* baseVertices = dynamic_cast<const osg::Vec3Array*>(rig.getSourceGeometry()->getVertexArray());
+                if (baseVertices == nullptr)
+                    return;
+
+                osg::ref_ptr<osg::Geometry> morphed = new osg::Geometry(*rig.getSourceGeometry(), osg::CopyOp::SHALLOW_COPY);
+                osg::ref_ptr<osg::Vec3Array> activeVertices = new osg::Vec3Array(*baseVertices);
+                morphed->setVertexArray(activeVertices);
+                
+                morphed->setDataVariance(osg::Object::DYNAMIC);
+                morphed->setUseDisplayList(false);
+                morphed->setUseVertexBufferObjects(true);
+                activeVertices->setDataVariance(osg::Object::DYNAMIC);
+                
+                rig.setSourceGeometry(morphed);
+
+                Target t;
+                t.mRig = &rig;
+                t.mBaseVertices = new osg::Vec3Array(*baseVertices);
+                t.mActiveVertices = activeVertices;
+                mTargets.push_back(t);
+            }
+
+            void addGeometry(osg::Geometry& geometry)
+            {
+                const osg::Vec3Array* baseVertices = dynamic_cast<const osg::Vec3Array*>(geometry.getVertexArray());
+                if (baseVertices == nullptr)
+                    return;
+
+                osg::ref_ptr<osg::Geometry> morphed = new osg::Geometry(geometry, osg::CopyOp::SHALLOW_COPY);
+                osg::ref_ptr<osg::Vec3Array> activeVertices = new osg::Vec3Array(*baseVertices);
+                morphed->setVertexArray(activeVertices);
+                
+                morphed->setDataVariance(osg::Object::DYNAMIC);
+                morphed->setUseDisplayList(false);
+                morphed->setUseVertexBufferObjects(true);
+                activeVertices->setDataVariance(osg::Object::DYNAMIC);
+                
+                for (unsigned int parentIndex = 0; parentIndex < geometry.getNumParents(); ++parentIndex)
+                {
+                    if (osg::Geode* parent = dynamic_cast<osg::Geode*>(geometry.getParent(parentIndex)))
+                    {
+                        const unsigned int drawableIndex = parent->getDrawableIndex(&geometry);
+                        if (drawableIndex < parent->getNumDrawables())
+                            parent->setDrawable(drawableIndex, morphed);
+                    }
+                }
+
+                Target t;
+                t.mGeometry = morphed;
+                t.mBaseVertices = new osg::Vec3Array(*baseVertices);
+                t.mActiveVertices = activeVertices;
+                mTargets.push_back(t);
+            }
+
+        private:
+            struct Morph
+            {
+                std::string name;
+                std::vector<osg::Vec3f> deltas;
+            };
+
+            void applyTarget(Target& target, const std::vector<float>& values)
+            {
+                if (target.mBaseVertices == nullptr || target.mActiveVertices == nullptr)
+                    return;
+
+                for (std::size_t i = 0; i < target.mBaseVertices->size(); ++i)
+                    (*target.mActiveVertices)[i] = (*target.mBaseVertices)[i];
+                
+                for (size_t m = 0; m < mMorphs.size(); ++m)
+                {
+                    float val = values[m];
+                    if (val == 0.f)
+                        continue;
+                    
+                    const auto& deltas = mMorphs[m].deltas;
+                    if (target.mActiveVertices->size() != deltas.size())
+                        continue;
+
+                    for (std::size_t i = 0; i < target.mActiveVertices->size(); ++i)
+                        (*target.mActiveVertices)[i] += deltas[i] * val;
+                }
+                
+                target.mActiveVertices->dirty();
+
+                if (target.mGeometry != nullptr)
+                {
+                    target.mGeometry->dirtyDisplayList();
+                    target.mGeometry->dirtyBound();
+                }
+            }
+
+            Animation* mAnimation;
+            std::string mModel;
+            std::vector<Morph> mMorphs;
+            std::vector<Target> mTargets;
+            std::vector<float> mLastValues;
+        };
+
+        class FalloutDialogueMorphTargetVisitor : public osg::NodeVisitor
+        {
+        public:
+            FalloutDialogueMorphTargetVisitor(FalloutDialogueMorphDriver& driver)
+                : osg::NodeVisitor(TRAVERSE_ALL_CHILDREN)
+                , mDriver(driver)
+            {
+            }
+
+            void apply(osg::Geode& geode) override
+            {
+                for (unsigned int i = 0; i < geode.getNumDrawables(); ++i)
+                    applyDrawable(*geode.getDrawable(i));
+                traverse(geode);
+            }
+
+            void apply(osg::Drawable& drawable) override { applyDrawable(drawable); }
+
+        private:
+            void applyDrawable(osg::Drawable& drawable)
+            {
+                if (SceneUtil::RigGeometry* rig = dynamic_cast<SceneUtil::RigGeometry*>(&drawable))
+                    mDriver.addRig(*rig);
+                else if (osg::Geometry* geometry = dynamic_cast<osg::Geometry*>(&drawable))
+                    mDriver.addGeometry(*geometry);
+            }
+
+            FalloutDialogueMorphDriver& mDriver;
+        };
+
+        bool applyFalloutDialogueMorph(
+            Resource::ResourceSystem* resourceSystem, Animation* animation, osg::Node* attached,
+            std::string_view model, const ESM4::Npc& traits)
+        {
+            if (attached == nullptr)
+                return false;
+
+            const std::shared_ptr<const FaceGenTri> tri = loadFaceGenTri(resourceSystem, model);
+            if (!tri)
+                return false;
+
+            osg::ref_ptr<FalloutDialogueMorphDriver> driver
+                = new FalloutDialogueMorphDriver(animation, *tri, std::string(model));
+            FalloutDialogueMorphTargetVisitor targetVisitor(*driver);
+            attached->accept(targetVisitor);
+            
+            if (driver->empty())
+                return false;
+
+            attached->addUpdateCallback(driver);
+            return true;
+        }
+
+
         bool applyFalloutProofTriOpenMorph(
             Resource::ResourceSystem* resourceSystem, const MWWorld::Ptr& actor, osg::Node* attached,
             std::string_view model, const ESM4::Npc& traits)
@@ -2409,7 +2628,7 @@ namespace MWRender
         {
             constexpr float degreesToRadians = 0.017453292519943295f;
             const float xDegrees = readFalloutProofFloat("OPENMW_FNV_HEAD_FRAME_ROTATION_X", 0.f);
-            const float yDegrees = readFalloutProofFloat("OPENMW_FNV_HEAD_FRAME_ROTATION_Y", 0.f);
+            const float yDegrees = readFalloutProofFloat("OPENMW_FNV_HEAD_FRAME_ROTATION_Y", 90.f);
             const float zDegrees = readFalloutProofFloat("OPENMW_FNV_HEAD_FRAME_ROTATION_Z", 0.f);
             const osg::Quat x(xDegrees * degreesToRadians, osg::Vec3f(1.f, 0.f, 0.f));
             const osg::Quat y(yDegrees * degreesToRadians, osg::Vec3f(0.f, 1.f, 0.f));
@@ -2451,6 +2670,11 @@ namespace MWRender
         {
             return shouldAttachFalloutStaticPartToHead(model) && !isFalloutStaticHeadgearPart(model)
                 && !isFalloutHeadSurfaceModel(model);
+        }
+
+        bool isFalloutStaticHeadAttachmentPart(std::string_view model)
+        {
+            return shouldAttachFalloutStaticPartToHead(model) && !isFalloutHeadSurfaceModel(model);
         }
 
         osg::Matrix getNodeWorldMatrix(osg::Node* node)
@@ -2500,7 +2724,7 @@ namespace MWRender
                              << headInBip.getTrans().z() << ") under " << bip01.getName()
                              << " fullMatrix=" << useFullHeadFrame << " rotation=("
                              << readFalloutProofFloat("OPENMW_FNV_HEAD_FRAME_ROTATION_X", 0.f) << ","
-                             << readFalloutProofFloat("OPENMW_FNV_HEAD_FRAME_ROTATION_Y", 0.f) << ","
+                             << readFalloutProofFloat("OPENMW_FNV_HEAD_FRAME_ROTATION_Y", 90.f) << ","
                              << readFalloutProofFloat("OPENMW_FNV_HEAD_FRAME_ROTATION_Z", 0.f) << ") parentOrder="
                              << parentOrder;
             return helper;
@@ -2545,7 +2769,7 @@ namespace MWRender
                              << ") under " << head.getName()
                              << " fullMatrix=" << useFullHeadFrame << " rotation=("
                              << readFalloutProofFloat("OPENMW_FNV_HEAD_FRAME_ROTATION_X", 0.f) << ","
-                             << readFalloutProofFloat("OPENMW_FNV_HEAD_FRAME_ROTATION_Y", 0.f) << ","
+                             << readFalloutProofFloat("OPENMW_FNV_HEAD_FRAME_ROTATION_Y", 90.f) << ","
                              << readFalloutProofFloat("OPENMW_FNV_HEAD_FRAME_ROTATION_Z", 0.f) << ") parentOrder="
                              << parentOrder;
             return helper;
@@ -2703,7 +2927,7 @@ namespace MWRender
         }
 
         osg::ref_ptr<osg::Node> attachStaticizedFalloutPart(osg::ref_ptr<const osg::Node> templateNode,
-            osg::Group* attachNode, Resource::SceneManager* sceneManager)
+            osg::Group* attachNode, Resource::SceneManager* sceneManager, bool normalizeLargeBounds)
         {
             osg::ref_ptr<osg::Node> cloned = sceneManager->getInstance(templateNode);
             FindNamedNodeVisitor findBoneOffset("BoneOffset");
@@ -2732,7 +2956,7 @@ namespace MWRender
             osg::ComputeBoundsVisitor boundsVisitor;
             cloned->accept(boundsVisitor);
             const osg::BoundingBox bounds = boundsVisitor.getBoundingBox();
-            if (bounds.valid())
+            if (bounds.valid() && normalizeLargeBounds)
             {
                 const osg::Vec3f center = bounds.center();
                 if (center.length() > 40.f)
@@ -2744,6 +2968,13 @@ namespace MWRender
                                      << center.x() << "," << center.y() << "," << center.z()
                                      << ") distance=" << center.length();
                 }
+            }
+            else if (bounds.valid() && !normalizeLargeBounds)
+            {
+                const osg::Vec3f center = bounds.center();
+                Log(Debug::Info) << "FNV/ESM4 diag: kept staticized rig part skeleton-space local center=("
+                                 << center.x() << "," << center.y() << "," << center.z()
+                                 << ") distance=" << center.length();
             }
 
             if (transform != nullptr)
@@ -2823,6 +3054,24 @@ namespace MWRender
             osg::ref_ptr<osg::MatrixTransform> helper = new osg::MatrixTransform;
             helper->setName(std::string(name));
             helper->setDataVariance(osg::Object::DYNAMIC);
+            if (Misc::StringUtils::ciEqual(name, "Weapon"))
+            {
+                const osg::Vec3f offset(readFalloutProofFloat("OPENMW_FNV_WEAPON_OFFSET_X", 0.f),
+                    readFalloutProofFloat("OPENMW_FNV_WEAPON_OFFSET_Y", 0.f),
+                    readFalloutProofFloat("OPENMW_FNV_WEAPON_OFFSET_Z", 0.f));
+                constexpr float degreesToRadians = 0.017453292519943295f;
+                const float xDegrees = readFalloutProofFloat("OPENMW_FNV_WEAPON_ROTATION_X", 0.f);
+                const float yDegrees = readFalloutProofFloat("OPENMW_FNV_WEAPON_ROTATION_Y", 0.f);
+                const float zDegrees = readFalloutProofFloat("OPENMW_FNV_WEAPON_ROTATION_Z", 0.f);
+                const osg::Quat x(xDegrees * degreesToRadians, osg::Vec3f(1.f, 0.f, 0.f));
+                const osg::Quat y(yDegrees * degreesToRadians, osg::Vec3f(0.f, 1.f, 0.f));
+                const osg::Quat z(zDegrees * degreesToRadians, osg::Vec3f(0.f, 0.f, 1.f));
+                const osg::Quat rotation = z * y * x;
+                helper->setMatrix(osg::Matrix::rotate(rotation) * osg::Matrix::translate(offset));
+                Log(Debug::Info) << "FNV/ESM4 diag: weapon helper bone-local offset=(" << offset.x() << ","
+                                 << offset.y() << "," << offset.z() << ") rotation=(" << xDegrees << ","
+                                 << yDegrees << "," << zDegrees << ")";
+            }
             parent.addChild(helper);
             nodeMap.emplace(std::string(name), helper);
             return helper;
@@ -2880,11 +3129,11 @@ namespace MWRender
             return false;
         }
 
-        void addFalloutProofDialoguePose(const Animation::NodeMap& nodeMap, const ESM4::Npc& traits)
+        void addFalloutProofDialoguePose(const Animation::NodeMap& nodeMap, const MWWorld::Ptr& ptr, const ESM4::Npc& traits)
         {
             if (std::getenv("OPENMW_FNV_PROOF_DIALOGUE_POSE") == nullptr)
                 return;
-            if (!isFonvProofTargetActor(traits))
+            if (!isFonvProofTargetActor(ptr, traits))
                 return;
 
             struct BonePose
@@ -2971,6 +3220,197 @@ namespace MWRender
             std::string name = texture->getImage()->getFileName();
             Misc::StringUtils::lowerCaseInPlace(name);
             return name;
+        }
+
+        std::string getFalloutCullFaceMode(const osg::StateSet* stateSet)
+        {
+            if (stateSet == nullptr)
+                return "inherit";
+
+            const osg::StateAttribute::GLModeValue value = stateSet->getMode(GL_CULL_FACE);
+            if ((value & osg::StateAttribute::ON) != 0)
+                return "on";
+            if ((value & osg::StateAttribute::OFF) != 0)
+                return "off";
+            return "inherit";
+        }
+
+        std::string getFalloutGlModeSummary(const osg::StateSet* stateSet, GLenum mode)
+        {
+            if (stateSet == nullptr)
+                return "inherit";
+
+            const osg::StateAttribute::GLModeValue value = stateSet->getMode(mode);
+            if ((value & osg::StateAttribute::ON) != 0)
+                return "on";
+            if ((value & osg::StateAttribute::OFF) != 0)
+                return "off";
+            return "inherit";
+        }
+
+        std::string getFalloutMaterialSummary(const osg::StateSet* stateSet)
+        {
+            const osg::Material* material = stateSet == nullptr ? nullptr
+                : dynamic_cast<const osg::Material*>(stateSet->getAttribute(osg::StateAttribute::MATERIAL));
+            if (material == nullptr)
+                return "none";
+
+            const osg::Vec4 diffuse = material->getDiffuse(osg::Material::FRONT);
+            const osg::Vec4 ambient = material->getAmbient(osg::Material::FRONT);
+            const osg::Vec4 emission = material->getEmission(osg::Material::FRONT);
+            std::ostringstream stream;
+            stream << "diffuse=(" << diffuse.r() << "," << diffuse.g() << "," << diffuse.b() << "," << diffuse.a()
+                   << ") ambient=(" << ambient.r() << "," << ambient.g() << "," << ambient.b() << ","
+                   << ambient.a() << ") emission=(" << emission.r() << "," << emission.g() << "," << emission.b()
+                   << "," << emission.a() << ")";
+            return stream.str();
+        }
+
+        std::string getFalloutStateSetSummary(const osg::StateSet* stateSet)
+        {
+            if (stateSet == nullptr)
+                return "none";
+
+            std::ostringstream stream;
+            stream << "texture=" << getDiffuseTextureName(stateSet)
+                   << ",cull=" << getFalloutGlModeSummary(stateSet, GL_CULL_FACE)
+                   << ",blend=" << getFalloutGlModeSummary(stateSet, GL_BLEND)
+                   << ",depth=" << getFalloutGlModeSummary(stateSet, GL_DEPTH_TEST)
+                   << ",material={" << getFalloutMaterialSummary(stateSet) << "}";
+            return stream.str();
+        }
+
+        std::string getFalloutGeometryColorSummary(const osg::Geometry* geometry)
+        {
+            if (geometry == nullptr || geometry->getColorArray() == nullptr)
+                return "none";
+
+            std::ostringstream stream;
+            stream << "size=" << geometry->getColorArray()->getNumElements()
+                   << ",binding=" << static_cast<int>(geometry->getColorBinding());
+            return stream.str();
+        }
+
+        unsigned int getFalloutGeometryVertexCount(const osg::Geometry* geometry)
+        {
+            if (geometry == nullptr || geometry->getVertexArray() == nullptr)
+                return 0;
+
+            return geometry->getVertexArray()->getNumElements();
+        }
+
+        class FalloutFaceDrawableAuditVisitor : public osg::NodeVisitor
+        {
+        public:
+            FalloutFaceDrawableAuditVisitor(std::string_view model, const MWWorld::Ptr& ptr, std::string_view phase)
+                : osg::NodeVisitor(TRAVERSE_ALL_CHILDREN)
+                , mModel(model)
+                , mPhase(phase)
+            {
+                std::ostringstream stream;
+                stream << ptr.getCellRef().getRefId();
+                mRefId = stream.str();
+            }
+
+            void apply(osg::Geode& geode) override
+            {
+                for (unsigned int i = 0; i < geode.getNumDrawables(); ++i)
+                    if (osg::Drawable* drawable = geode.getDrawable(i))
+                        auditDrawable(*drawable, &geode);
+                traverse(geode);
+            }
+
+            void apply(osg::Drawable& drawable) override { auditDrawable(drawable, nullptr); }
+
+        private:
+            void auditDrawable(osg::Drawable& drawable, osg::Geode* geode)
+            {
+                osg::Geometry* geometry = dynamic_cast<osg::Geometry*>(&drawable);
+                SceneUtil::RigGeometry* rig = dynamic_cast<SceneUtil::RigGeometry*>(&drawable);
+                osg::Geometry* sourceGeometry = rig == nullptr ? nullptr : rig->getSourceGeometry();
+                osg::Geometry* renderGeometry = rig == nullptr ? geometry : nullptr;
+
+                const osg::BoundingBox renderBox = renderGeometry == nullptr ? osg::BoundingBox()
+                                                                             : renderGeometry->getBoundingBox();
+                const osg::BoundingBox sourceBox = sourceGeometry == nullptr ? osg::BoundingBox()
+                                                                             : sourceGeometry->getBoundingBox();
+                const osg::Vec3f renderExtent = boundingBoxExtent(renderBox);
+                const osg::Vec3f sourceExtent = boundingBoxExtent(sourceBox);
+
+                std::string texture = getDiffuseTextureName(drawable.getStateSet());
+                if (texture.empty() && sourceGeometry != nullptr)
+                    texture = getDiffuseTextureName(sourceGeometry->getStateSet());
+                if (texture.empty() && geode != nullptr)
+                    texture = getDiffuseTextureName(geode->getStateSet());
+
+                Log(Debug::Info) << "FNV/ESM4 FACE DRAWABLE AUDIT " << mRefId << " model=" << mModel
+                                 << " phase=" << mPhase
+                                 << " drawable='" << drawable.getName() << "' kind="
+                                 << (rig != nullptr ? "SceneUtil::RigGeometry" : geometry != nullptr ? "osg::Geometry" : "other")
+                                 << " nodeMask=0x" << std::hex << drawable.getNodeMask() << std::dec
+                                 << " cullingActive=" << drawable.getCullingActive()
+                                 << " drawableVertices=" << getFalloutGeometryVertexCount(geometry)
+                                 << " sourceName='"
+                                 << (sourceGeometry == nullptr ? std::string() : sourceGeometry->getName()) << "'"
+                                 << " sourceVertices=" << getFalloutGeometryVertexCount(sourceGeometry)
+                                 << " sourceMask=0x" << std::hex
+                                 << (sourceGeometry == nullptr ? 0u : sourceGeometry->getNodeMask()) << std::dec
+                                 << " renderName='"
+                                 << (renderGeometry == nullptr ? std::string() : renderGeometry->getName()) << "'"
+                                 << " renderVertices=" << getFalloutGeometryVertexCount(renderGeometry)
+                                 << " renderMask=0x" << std::hex
+                                 << (renderGeometry == nullptr ? 0u : renderGeometry->getNodeMask()) << std::dec
+                                 << " drawableCull=" << getFalloutCullFaceMode(drawable.getStateSet())
+                                 << " sourceCull="
+                                 << (sourceGeometry == nullptr ? std::string("none")
+                                                               : getFalloutCullFaceMode(sourceGeometry->getStateSet()))
+                                 << " geodeCull=" << (geode == nullptr ? std::string("none")
+                                                                       : getFalloutCullFaceMode(geode->getStateSet()))
+                                 << " texture=" << (texture.empty() ? std::string("<none>") : texture)
+                                 << " material=" << getFalloutMaterialSummary(drawable.getStateSet())
+                                 << " drawableColors=" << getFalloutGeometryColorSummary(geometry)
+                                 << " sourceColors=" << getFalloutGeometryColorSummary(sourceGeometry)
+                                 << " renderColors=" << getFalloutGeometryColorSummary(renderGeometry)
+                                 << " drawableState={" << getFalloutStateSetSummary(drawable.getStateSet()) << "}"
+                                 << " sourceState={"
+                                 << (sourceGeometry == nullptr ? std::string("none")
+                                                               : getFalloutStateSetSummary(sourceGeometry->getStateSet()))
+                                 << "}"
+                                 << " renderState={"
+                                 << (renderGeometry == nullptr ? std::string("none")
+                                                               : getFalloutStateSetSummary(renderGeometry->getStateSet()))
+                                 << "}"
+                                 << " geodeState={"
+                                 << (geode == nullptr ? std::string("none") : getFalloutStateSetSummary(geode->getStateSet()))
+                                 << "}"
+                                 << " renderValid=" << renderBox.valid()
+                                 << " renderCenter=(" << (renderBox.valid() ? renderBox.center().x() : 0.f) << ","
+                                 << (renderBox.valid() ? renderBox.center().y() : 0.f) << ","
+                                 << (renderBox.valid() ? renderBox.center().z() : 0.f) << ")"
+                                 << " renderExtent=(" << renderExtent.x() << "," << renderExtent.y() << ","
+                                 << renderExtent.z() << ")"
+                                 << " sourceValid=" << sourceBox.valid()
+                                 << " sourceCenter=(" << (sourceBox.valid() ? sourceBox.center().x() : 0.f) << ","
+                                 << (sourceBox.valid() ? sourceBox.center().y() : 0.f) << ","
+                                 << (sourceBox.valid() ? sourceBox.center().z() : 0.f) << ")"
+                                 << " sourceExtent=(" << sourceExtent.x() << "," << sourceExtent.y() << ","
+                                 << sourceExtent.z() << ")";
+            }
+
+            std::string mModel;
+            std::string mPhase;
+            std::string mRefId;
+        };
+
+        void logFalloutFaceDrawableAudit(
+            osg::Node* attached, std::string_view model, const MWWorld::Ptr& ptr, std::string_view phase = "insert")
+        {
+            if (attached == nullptr || std::getenv("OPENMW_FNV_PART_MATRIX_AUDIT") == nullptr
+                || !isFalloutHeadRelativeModel(model))
+                return;
+
+            FalloutFaceDrawableAuditVisitor visitor(model, ptr, phase);
+            attached->accept(visitor);
         }
 
         bool looksLikeFalloutSkinTexture(std::string_view texture)
@@ -3554,7 +3994,7 @@ namespace MWRender
                                  << parent->getName() << " for " << traits->mEditorId;
             };
 
-            ensureHelper("Weapon", { "Bip01 R Hand", "bip01 r hand" });
+            ensureHelper("Weapon", { "Bip01 R Hand", "bip01 r hand", "Bip01", "bip01" });
             ensureHelper("Torch", { "Bip01 L Hand", "bip01 l hand" });
             ensureHelper("SideWeapon", { "Bip01 Pelvis", "bip01 pelvis", "Bip01 R Thigh", "bip01 r thigh" });
             ensureHelper("BackWeapon", { "Bip01 Spine2", "bip01 spine2", "Bip01 Spine1", "bip01 spine1" });
@@ -3674,7 +4114,7 @@ namespace MWRender
                 }
             }
 
-            addFalloutProofDialoguePose(getNodeMap(), *traits);
+            addFalloutProofDialoguePose(getNodeMap(), mPtr, *traits);
         }
     }
 
@@ -3750,7 +4190,7 @@ namespace MWRender
 
         osg::Group* attachNode = mObjectRoot.get();
         const NodeMap& nodeMap = getNodeMap();
-        const bool headAttachedStaticPart = shouldAttachFalloutStaticPartToHead(model);
+        const bool headAttachedStaticPart = isFalloutStaticHeadAttachmentPart(model);
         const bool headgearStaticPart = isFalloutStaticHeadgearPart(model);
         const bool bareHandSurfacePart = isFalloutBareHandSurfaceModel(model);
         if (headAttachedStaticPart)
@@ -3864,6 +4304,7 @@ namespace MWRender
         const bool wantsStaticizedHeadPartRig = headAttachedStaticPart && rigProbe.mRigGeometryCount > 0
             && std::getenv("OPENMW_FNV_KEEP_RIGGED_HEAD_PARTS") == nullptr;
         const bool wantsStaticizedBareHandPartRig = bareHandSurfacePart && rigProbe.mRigGeometryCount > 0
+            && std::getenv("OPENMW_FNV_STATICIZE_RIGGED_HAND_PARTS") != nullptr
             && std::getenv("OPENMW_FNV_KEEP_RIGGED_HAND_PARTS") == nullptr;
         if (wantsStaticizedHeadPartRig)
         {
@@ -3934,7 +4375,8 @@ namespace MWRender
         }
         else if (staticizedHeadPartRig || staticizedBareHandPartRig)
         {
-            attached = attachStaticizedFalloutPart(attachTemplateNode, attachNode, mResourceSystem->getSceneManager());
+            attached = attachStaticizedFalloutPart(attachTemplateNode, attachNode, mResourceSystem->getSceneManager(),
+                !staticizedBareHandPartRig);
             Log(Debug::Info) << "FNV/ESM4 diag: offset-attached staticized rig part "
                              << correctedModel.value() << " to " << mPtr.getCellRef().getRefId()
                              << " attachNode=" << attachNode->getName()
@@ -4090,6 +4532,7 @@ namespace MWRender
         logFalloutAttachmentBounds(
             attached.get(), attachNode, findBestAttachmentNode(nodeMap, { "Bip01 Head", "bip01 head" }),
             correctedModel.value(), mPtr);
+        logFalloutFaceDrawableAudit(attached.get(), correctedModel.value(), mPtr);
         return attached;
     }
 
@@ -4121,6 +4564,8 @@ namespace MWRender
                          << mPtr.getCellRef().getRefId() << " at " << attachNode->getName();
         osg::ref_ptr<osg::Node> attached = SceneUtil::attach(
             std::move(templateNode), mObjectRoot.get(), {}, attachNode, mResourceSystem->getSceneManager());
+        if (attached != nullptr)
+            attached->setName("FNV Part " + correctedModel.value());
         logFalloutPartShapeSummary(attached.get(), correctedModel.value(), mPtr);
         logFalloutAttachmentBounds(
             attached.get(), attachNode, findBestAttachmentNode(nodeMap, { "Bip01 Head", "bip01 head" }),
@@ -4204,7 +4649,7 @@ namespace MWRender
             return;
         }
 
-        if (mPtr.getCell() != nullptr && !isFonvProofTargetActor(traits))
+        if (mPtr.getCell() != nullptr && !isFonvProofTargetActor(mPtr, traits))
         {
             Log(Debug::Info) << "FNV/ESM4 proof: skipped non-target actor part assembly for "
                              << traits.mEditorId << " ref=" << mPtr.getCellRef().getRefId();
@@ -4259,6 +4704,7 @@ namespace MWRender
             Log(Debug::Info) << "FNV/ESM4 diag: using baked NPC body normal texture " << npcBodyNormalTexture
                              << " for " << traits.mEditorId;
 
+        const bool proofTargetActor = isFonvProofTargetActor(mPtr, traits);
         const bool proofActor = isEasyPeteProofActor(traits);
         if (proofActor)
         {
@@ -4374,9 +4820,9 @@ namespace MWRender
             }
             if (attached != nullptr)
                 applyFalloutProofTriStaticMorph(mResourceSystem, attached.get(), headPart.mesh, traits);
-            if (attached != nullptr && std::getenv("OPENMW_FNV_PROOF_MOUTH_DRIVER") != nullptr
-                && isFalloutMouthDriverPart(headPart.mesh))
-                applyFalloutProofTriOpenMorph(mResourceSystem, mPtr, attached.get(), headPart.mesh, traits);
+            if (attached != nullptr)
+                applyFalloutDialogueMorph(mResourceSystem, this, attached.get(), headPart.mesh, traits);
+            logFalloutFaceDrawableAudit(attached.get(), headPart.mesh, mPtr, "final-race-head");
         }
 
         std::set<uint32_t> usedHeadPartTypes;
@@ -4396,9 +4842,8 @@ namespace MWRender
                 fallbackHairAttached = attached != nullptr;
                 applyFaceGenEgmMorph(mResourceSystem, attached.get(), hair->mModel, traits);
                 applyFalloutProofTriStaticMorph(mResourceSystem, attached.get(), hair->mModel, traits);
-                if (attached != nullptr && std::getenv("OPENMW_FNV_PROOF_MOUTH_DRIVER") != nullptr
-                    && isFalloutMouthDriverPart(hair->mModel))
-                    applyFalloutProofTriOpenMorph(mResourceSystem, mPtr, attached.get(), hair->mModel, traits);
+                if (attached != nullptr)
+                    applyFalloutDialogueMorph(mResourceSystem, this, attached.get(), hair->mModel, traits);
                 if (attached != nullptr)
                 {
                     TintMaterialVisitor visitor(hairTint, 0.65f);
@@ -4493,7 +4938,7 @@ namespace MWRender
 
         if (const ESM4::Weapon* weapon = MWClass::ESM4Npc::getEquippedWeapon(mPtr))
         {
-            if (proofActor && std::getenv("OPENMW_FNV_PROOF_HIDE_EQUIPPED_WEAPON") != nullptr)
+            if (proofTargetActor && std::getenv("OPENMW_FNV_PROOF_HIDE_EQUIPPED_WEAPON") != nullptr)
             {
                 Log(Debug::Info) << "FNV/ESM4 proof: skipped equipped weapon for clean dialogue proof on "
                                  << traits.mEditorId;
@@ -4554,9 +4999,8 @@ namespace MWRender
                 osg::ref_ptr<osg::Node> attached = insertPart(part->mModel, tint);
                 applyFaceGenEgmMorph(mResourceSystem, attached.get(), part->mModel, traits);
                 applyFalloutProofTriStaticMorph(mResourceSystem, attached.get(), part->mModel, traits);
-                if (attached != nullptr && std::getenv("OPENMW_FNV_PROOF_MOUTH_DRIVER") != nullptr
-                    && isFalloutMouthDriverPart(part->mModel))
-                    applyFalloutProofTriOpenMorph(mResourceSystem, mPtr, attached.get(), part->mModel, traits);
+                if (attached != nullptr)
+                    applyFalloutDialogueMorph(mResourceSystem, this, attached.get(), part->mModel, traits);
                 if (attached != nullptr && tint != nullptr)
                 {
                     const float emissionStrength = isFalloutHairTintModel(part->mModel) ? 0.65f : 0.f;
@@ -4579,6 +5023,8 @@ namespace MWRender
                     osg::ref_ptr<osg::Node> extraAttached = insertPart(extraPart->mModel, tint);
                     applyFaceGenEgmMorph(mResourceSystem, extraAttached.get(), extraPart->mModel, traits);
                     applyFalloutProofTriStaticMorph(mResourceSystem, extraAttached.get(), extraPart->mModel, traits);
+                    if (extraAttached != nullptr)
+                        applyFalloutDialogueMorph(mResourceSystem, this, extraAttached.get(), extraPart->mModel, traits);
                     if (extraAttached != nullptr && std::getenv("OPENMW_FNV_PROOF_MOUTH_DRIVER") != nullptr
                         && isFalloutMouthDriverPart(extraPart->mModel))
                         applyFalloutProofTriOpenMorph(

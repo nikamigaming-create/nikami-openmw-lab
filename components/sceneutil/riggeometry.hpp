@@ -68,7 +68,6 @@ namespace SceneUtil
         std::string_view getRootBone() const;
         std::size_t getBoneCount() const;
         std::string_view getBoneName(std::size_t index) const;
-        void setFalloutCharacterRig(bool value);
         bool isFalloutCharacterRig() const;
 
         osg::ref_ptr<osg::Geometry> getSourceGeometry() const;
@@ -129,7 +128,8 @@ namespace SceneUtil
         bool mLoggedFalloutCullInitRecovery{ false };
         bool mFalloutFallbackDecided{ false };
         bool mFalloutUseSourceFallback{ false };
-        bool mFalloutCharacterRig{ false };
+        mutable bool mFalloutCharacterRigComputed{ false };
+        mutable bool mFalloutCharacterRig{ false };
         std::vector<osg::Matrixf> mFalloutMatrixBaseline;
 
         bool initFromParentSkeleton(osg::NodeVisitor* nv);

@@ -448,6 +448,9 @@ namespace MWRender
         /** Retrieves the velocity (in units per second) that the animation will move. */
         float getVelocity(std::string_view groupname) const;
 
+        /** Retrieves the interpolated value of the requested Fallout head animation track */
+        float getFalloutHeadAnimTrackValue(std::string_view trackName) const;
+
         virtual osg::Vec3f runAnimation(float duration);
 
         void setLoopingEnabled(std::string_view groupname, bool enabled);

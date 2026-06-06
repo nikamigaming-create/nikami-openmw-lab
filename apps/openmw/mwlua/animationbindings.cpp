@@ -111,6 +111,7 @@ namespace MWLua
                 { "Torso", BlendMask::BlendMask_Torso },
                 { "LeftArm", BlendMask::BlendMask_LeftArm },
                 { "RightArm", BlendMask::BlendMask_RightArm },
+                { "Head", BlendMask::BlendMask_Head },
                 { "UpperBody", BlendMask::BlendMask_UpperBody },
                 { "All", BlendMask::BlendMask_All },
             }));
@@ -121,6 +122,7 @@ namespace MWLua
                 { "Torso", BoneGroup::BoneGroup_Torso },
                 { "LeftArm", BoneGroup::BoneGroup_LeftArm },
                 { "RightArm", BoneGroup::BoneGroup_RightArm },
+                { "Head", BoneGroup::BoneGroup_Head },
             }));
 
         api["hasAnimation"] = [](const LObject& object) -> bool {

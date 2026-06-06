@@ -350,6 +350,7 @@ namespace NifOsg
 
     public:
         VisController(const Nif::NiVisController* ctrl, unsigned int mask);
+        VisController(const Nif::NiBoolInterpolator* interpolator, unsigned int mask);
         VisController();
         VisController(const VisController& copy, const osg::CopyOp& copyop);
 

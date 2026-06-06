@@ -899,7 +899,31 @@ namespace MWMechanics
         playBlendedAnimation(
             mCurrentIdle, priority, MWRender::BlendMask_All, false, 1.0f, "start", "stop", startPoint, numLoops, true);
 
-        const bool hasFalloutSitTalk = isFalloutActor(mPtr) && mAnimation->hasAnimation("sitchairtalk");
+        if (isFalloutActor(mPtr))
+        {
+            if (const char* forcedOverlayGroup = std::getenv("OPENMW_FNV_FORCED_OVERLAY_GROUP"))
+            {
+                std::string overlayGroup = Misc::StringUtils::lowerCase(forcedOverlayGroup);
+                if (!overlayGroup.empty())
+                {
+                    if (mAnimation->hasAnimation(overlayGroup))
+                    {
+                        MWRender::Animation::AnimPriority overlayPriority(Priority_Default);
+                        overlayPriority[MWRender::BoneGroup_RightArm] = Priority_Weapon;
+                        Log(Debug::Info) << "FNV/ESM4 diag: CharacterController layering forced right-arm overlay group '"
+                                         << overlayGroup << "' for " << mPtr.getCellRef().getRefId();
+                        playBlendedAnimation(overlayGroup, overlayPriority, MWRender::BlendMask_RightArm, false, 1.0f,
+                            "start", "stop", 0.f, numLoops, true);
+                    }
+                    else
+                        Log(Debug::Warning) << "FNV/ESM4 diag: forced overlay group missing for "
+                                            << mPtr.getCellRef().getRefId() << " group '" << overlayGroup << "'";
+                }
+            }
+        }
+
+        const bool hasFalloutSitTalk = isFalloutActor(mPtr) && mAnimation->hasAnimation("sitchairtalk")
+            && std::getenv("OPENMW_FNV_DISABLE_SIT_TALK_OVERLAY") == nullptr;
         if (isFalloutActor(mPtr) && mCurrentIdle == "idle" && mAnimation->hasAnimation("sitchairlisten")
             && !hasFalloutSitTalk
             && std::getenv("OPENMW_FNV_ENABLE_SIT_LISTEN_OVERLAY") != nullptr)
@@ -917,15 +941,23 @@ namespace MWMechanics
             && std::getenv("OPENMW_FNV_ENABLE_SIT_LISTEN_OVERLAY") != nullptr)
         {
             MWRender::Animation::AnimPriority talkPriority(Priority_Default);
-            talkPriority[MWRender::BoneGroup_Torso] = Priority_Weapon;
-            talkPriority[MWRender::BoneGroup_LeftArm] = Priority_Weapon;
-            talkPriority[MWRender::BoneGroup_RightArm] = Priority_Weapon;
+            talkPriority[MWRender::BoneGroup_Head] = Priority_Weapon;
+            int talkMask = MWRender::BlendMask_Head;
+            if (std::getenv("OPENMW_FNV_SIT_TALK_OVERLAY_TORSO") != nullptr)
+            {
+                talkPriority[MWRender::BoneGroup_Torso] = Priority_Weapon;
+                talkMask |= MWRender::BlendMask_Torso;
+            }
+            if (std::getenv("OPENMW_FNV_SIT_TALK_OVERLAY_ARMS") != nullptr)
+            {
+                talkPriority[MWRender::BoneGroup_LeftArm] = Priority_Weapon;
+                talkPriority[MWRender::BoneGroup_RightArm] = Priority_Weapon;
+                talkMask |= MWRender::BlendMask_LeftArm | MWRender::BlendMask_RightArm;
+            }
             Log(Debug::Info) << "FNV/ESM4 diag: CharacterController layering package sit/talk overlay for "
                              << mPtr.getCellRef().getRefId();
             playBlendedAnimation("sitchairtalk",
-                talkPriority,
-                MWRender::BlendMask_Torso | MWRender::BlendMask_LeftArm | MWRender::BlendMask_RightArm, false, 1.0f,
-                "start", "stop", 0.f, numLoops, true);
+                talkPriority, talkMask, false, 1.0f, "start", "stop", 0.f, numLoops, true);
         }
     }
 

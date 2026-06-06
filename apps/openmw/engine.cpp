@@ -17,6 +17,7 @@
 #include <osgDB/ReaderWriter>
 #include <osgDB/Registry>
 #include <osg/ComputeBoundsVisitor>
+#include <osg/Image>
 #include <osg/NodeVisitor>
 #include <osgViewer/ViewerEventHandlers>
 
@@ -629,7 +630,39 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
         frames.erase(std::unique(frames.begin(), frames.end()), frames.end());
         return frames;
     };
+    const auto getProofFloats = [](const char* name) {
+        std::vector<float> values;
+        const char* env = std::getenv(name);
+        if (env == nullptr || *env == '\0')
+            return values;
+
+        std::string_view value(env);
+        while (!value.empty())
+        {
+            const std::size_t comma = value.find(',');
+            std::string_view token = value.substr(0, comma);
+            while (!token.empty() && std::isspace(static_cast<unsigned char>(token.front())))
+                token.remove_prefix(1);
+            while (!token.empty() && std::isspace(static_cast<unsigned char>(token.back())))
+                token.remove_suffix(1);
+            if (!token.empty())
+            {
+                const std::string tokenText(token);
+                char* end = nullptr;
+                const float parsed = std::strtof(tokenText.c_str(), &end);
+                if (end != tokenText.c_str() && *end == '\0')
+                    values.push_back(parsed);
+            }
+            if (comma == std::string_view::npos)
+                break;
+            value.remove_prefix(comma + 1);
+        }
+
+        return values;
+    };
     static const std::vector<int> proofScreenshotFrames = getProofFrames("OPENMW_PROOF_SCREENSHOT_FRAME");
+    static const std::vector<float> proofActorViewOrbitDegrees
+        = getProofFloats("OPENMW_PROOF_ACTOR_VIEW_ORBIT_DEGREES");
     static const int proofScreenshotReadyFrames = getProofFrame("OPENMW_PROOF_SCREENSHOT_READY_FRAMES");
     static const int proofInventoryFrame = getProofFrame("OPENMW_PROOF_INVENTORY_FRAME");
     static const int proofQuickSaveFrame = getProofFrame("OPENMW_PROOF_QUICKSAVE_FRAME");
@@ -1049,7 +1082,11 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
         proofQuickSaveQueued = true;
     }
 
-    if (!proofSayQueued && proofSayFrame >= 0 && frameNumber >= static_cast<unsigned>(proofSayFrame)
+    const bool proofOrbitBurstAlignReached = proofScreenshotFrameIndex < proofScreenshotFrames.size()
+        && !proofActorViewOrbitDegrees.empty()
+        && frameNumber >= static_cast<unsigned>(proofScreenshotFrames[proofScreenshotFrameIndex]);
+    if ((!proofSayQueued || proofOrbitBurstAlignReached) && proofSayFrame >= 0
+        && frameNumber >= static_cast<unsigned>(proofSayFrame)
         && mSoundManager != nullptr)
     {
         const char* proofSayFile = std::getenv("OPENMW_PROOF_SAY_FILE");
@@ -1198,7 +1235,13 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                         offsetX = std::sin(actorYaw) * frontDistance * frontSign;
                         offsetY = std::cos(actorYaw) * frontDistance * frontSign;
                     }
-                    const float orbitDegrees = readProofFloat("OPENMW_PROOF_ACTOR_VIEW_ORBIT_DEGREES", 0.f);
+                    float orbitDegrees = readProofFloat("OPENMW_PROOF_ACTOR_VIEW_ORBIT_DEGREES", 0.f);
+                    if (!proofActorViewOrbitDegrees.empty())
+                    {
+                        const std::size_t orbitIndex = std::min(
+                            proofScreenshotFrameIndex, proofActorViewOrbitDegrees.size() - 1);
+                        orbitDegrees = proofActorViewOrbitDegrees[orbitIndex];
+                    }
                     if (std::abs(orbitDegrees) > 1e-3f)
                     {
                         const float orbitRadians = orbitDegrees * static_cast<float>(osg::PI) / 180.f;
@@ -1264,7 +1307,12 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                         camera->setMode(MWRender::Camera::Mode::ThirdPerson, true);
                         camera->setPreferredCameraDistance(cameraDistance);
                         camera->update(0.f, false);
-                        camera->setPitch(cameraPitch, true);
+                        const osg::Vec3d initialCameraPos = camera->getPosition();
+                        const float dx = static_cast<float>(actorAim.x() - initialCameraPos.x());
+                        const float dy = static_cast<float>(actorAim.y() - initialCameraPos.y());
+                        const float dz = static_cast<float>(actorAim.z() - initialCameraPos.z());
+                        const float horizontal = std::sqrt(dx * dx + dy * dy);
+                        camera->setPitch(static_cast<float>(std::atan2(dz, horizontal)) + cameraPitch, true);
                         camera->setYaw(yawToActor, true);
                         camera->setRoll(0.f);
                         camera->updateCamera();
@@ -1397,11 +1445,14 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
     const bool proofScreenshotReadyFramesReached
         = !proofScreenshotReadyQueued && proofScreenshotReadyFrames >= 0 && proofWorldReadyFrames >= proofScreenshotReadyFrames;
     const int proofActorAlignedScreenshotDelay = getProofFrame("OPENMW_PROOF_ACTOR_ALIGNED_SCREENSHOT_DELAY");
+    const int proofActorAlignedScreenshotMinFrame = getProofFrame("OPENMW_PROOF_ACTOR_ALIGNED_SCREENSHOT_MIN_FRAME");
     const bool proofActorAlignedScreenshotReached = !proofActorAlignedScreenshotQueued && proofActorCameraAligned
         && proofActorAlignedScreenshotDelay >= 0 && proofActorCameraAlignedFrame >= 0
-        && frameNumber >= static_cast<unsigned>(proofActorCameraAlignedFrame + proofActorAlignedScreenshotDelay);
+        && frameNumber >= static_cast<unsigned>(proofActorCameraAlignedFrame + proofActorAlignedScreenshotDelay)
+        && (proofActorAlignedScreenshotMinFrame < 0
+            || frameNumber >= static_cast<unsigned>(proofActorAlignedScreenshotMinFrame));
     if ((proofScreenshotFrameReached || proofScreenshotReadyFramesReached || proofActorAlignedScreenshotReached)
-        && mScreenCaptureHandler != nullptr)
+        && (mScreenCaptureHandler != nullptr || mWorld != nullptr))
     {
         if (!proofWorldReady && !proofScreenshotWaitLogged)
         {
@@ -1417,9 +1468,15 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
             return true;
         }
 
-        Log(Debug::Info) << "FNV/ESM4 proof: queuing native screenshot at frame " << frameNumber;
-        mScreenCaptureHandler->setFramesToCapture(1);
-        mScreenCaptureHandler->captureNextFrame(*mViewer);
+        Log(Debug::Info) << "FNV/ESM4 proof: capturing native screenshot at frame " << frameNumber;
+        osg::ref_ptr<osg::Image> screenshot = new osg::Image;
+        mWorld->screenshot(screenshot.get(), 1280, 720);
+        const std::filesystem::path fileName = SceneUtil::writeScreenshotToFile(
+            mCfgMgr.getScreenshotPath(), Settings::general().mScreenshotFormat, *screenshot);
+        if (fileName.empty())
+            Log(Debug::Warning) << "FNV/ESM4 proof: native screenshot write failed at frame " << frameNumber;
+        else
+            Log(Debug::Info) << mCfgMgr.getScreenshotPath() / fileName << " has been saved";
         if (proofScreenshotFrameReached)
             ++proofScreenshotFrameIndex;
         if (proofScreenshotReadyFramesReached)

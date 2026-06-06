@@ -1,6 +1,7 @@
 #include "nifloader.hpp"
 
 #include <algorithm>
+#include <cstdlib>
 #include <cmath>
 #include <initializer_list>
 #include <limits>
@@ -431,7 +432,6 @@ namespace
             groups.emplace_back("walkleft");
         else if (Misc::StringUtils::ciEndsWith(stem, "right"))
             groups.emplace_back("walkright");
-
         if (groups.empty())
             return;
 
@@ -660,6 +660,24 @@ namespace NifOsg
                 if (targetName.empty() || block.mInterpolator.empty())
                     continue;
 
+                if (std::getenv("OPENMW_FNV_KF_BLOCK_AUDIT") != nullptr)
+                {
+                    const std::string lowerTarget = Misc::StringUtils::lowerCase(targetName);
+                    if (lowerTarget.find("forearm") != std::string::npos
+                        || lowerTarget.find("foretwist") != std::string::npos
+                        || lowerTarget.find("hand") != std::string::npos
+                        || lowerTarget.find("finger") != std::string::npos
+                        || lowerTarget.find("thumb") != std::string::npos
+                        || lowerTarget.find("head") != std::string::npos)
+                    {
+                        Log(Debug::Info) << "FNV/ESM4 KF BLOCK AUDIT file=" << filename.string()
+                                         << " sequence=" << sequence->mName
+                                         << " target=\"" << targetName << "\" interpolator="
+                                         << block.mInterpolator->recName << " recType="
+                                         << block.mInterpolator->recType;
+                    }
+                }
+
                 osg::ref_ptr<SceneUtil::KeyframeController> callback;
                 if (block.mInterpolator->recType == Nif::RC_NiTransformInterpolator)
                 {
@@ -677,7 +695,7 @@ namespace NifOsg
                     callback = new NifOsg::KeyframeController(
                         static_cast<const Nif::NiBlendTransformInterpolator*>(block.mInterpolator.getPtr()));
                 }
-                else if (Misc::StringUtils::ciStartsWith(targetName, "HeadAnims"))
+                else if (block.mInterpolator->recType == Nif::RC_NiFloatInterpolator || block.mInterpolator->recType == Nif::RC_NiBoolInterpolator)
                 {
                     SceneUtil::KeyframeHolder::FalloutHeadAnimTrack track;
                     if (block.mInterpolator->recType == Nif::RC_NiFloatInterpolator)
@@ -703,15 +721,6 @@ namespace NifOsg
                             for (const auto& [time, key] : interpolator->mData->mKeyList->mKeys)
                                 track.mKeys.emplace_back(time, key.mValue ? 1.f : 0.f);
                         }
-                    }
-                    else
-                    {
-                        ++unsupported;
-                        if (unsupported <= 8)
-                            Log(Debug::Info) << "FNV/ESM4 diag: unsupported Fallout KF interpolator target='"
-                                             << targetName << "' type=" << block.mInterpolator->recType << " name="
-                                             << block.mInterpolator->recName << " in " << filename;
-                        continue;
                     }
 
                     if (target.mFalloutHeadAnimTracks.emplace(targetName, std::move(track)).second)

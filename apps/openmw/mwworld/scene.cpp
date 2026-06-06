@@ -436,6 +436,9 @@ namespace
                              << marker.mOffset.z() << ") proofOffset=(" << proofOffset.x() << ","
                              << proofOffset.y() << "," << proofOffset.z() << ") worldOffset=(" << worldOffset.x()
                              << "," << worldOffset.y() << "," << worldOffset.z() << ") heading=" << marker.mHeading
+                             << " type=" << marker.mType << " entryPoint=" << marker.mEntryPoint
+                             << " positionRef=" << static_cast<int>(marker.mPositionRef)
+                             << " legacy=" << marker.mLegacy
                              << " finalPos=(" << position.pos[0] << "," << position.pos[1] << ","
                              << position.pos[2] << ") finalRotZ=" << position.rot[2] << " for "
                              << traits->mEditorId;

@@ -731,6 +731,11 @@ namespace NifOsg
         else if (!ctrl->mData.empty())
             mData = ctrl->mData->mKeys;
     }
+    VisController::VisController(const Nif::NiBoolInterpolator* interpolator, unsigned int mask)
+        : mMask(mask)
+        , mInterpolator(interpolator)
+    {
+    }
 
     VisController::VisController() {}
 

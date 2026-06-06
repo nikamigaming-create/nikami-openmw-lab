@@ -61,7 +61,7 @@ namespace SceneUtil
         {
             if (const char* env = std::getenv("OPENMW_FNV_SKINNING_MODE"))
                 return env;
-            return "auto";
+            return "source";
         }
 
         bool useFalloutSkinToSkelMatrix()
@@ -142,13 +142,28 @@ namespace SceneUtil
         setNumChildrenRequiringUpdateTraversal(1);
     }
 
-    void RigGeometry::setFalloutCharacterRig(bool value)
-    {
-        mFalloutCharacterRig = value;
-    }
-
     bool RigGeometry::isFalloutCharacterRig() const
     {
+        if (mFalloutCharacterRigComputed)
+            return mFalloutCharacterRig;
+
+        if (mData == nullptr)
+            return false;
+
+        const bool hasBipRoot = mData->mRootBone.empty() || Misc::StringUtils::ciStartsWith(mData->mRootBone, "Bip01")
+            || Misc::StringUtils::ciEqual(mData->mRootBone, "Scene Root");
+        bool hasFalloutLimb = false;
+        for (const BoneInfo& info : mData->mBones)
+        {
+            if (Misc::StringUtils::ciStartsWith(info.mName, "bip01 "))
+            {
+                hasFalloutLimb = true;
+                break;
+            }
+        }
+
+        mFalloutCharacterRig = hasBipRoot && hasFalloutLimb;
+        mFalloutCharacterRigComputed = true;
         return mFalloutCharacterRig;
     }
 
