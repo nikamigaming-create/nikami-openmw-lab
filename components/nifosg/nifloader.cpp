@@ -117,8 +117,10 @@ namespace
 
     bool isFalloutDismemberCapShape(std::string_view shapeName)
     {
-        // Fallout 3/New Vegas stores visible severed-limb cap meshes as separate MeatCap shapes.
-        return Misc::StringUtils::ciStartsWith(shapeName, "MeatCap");
+        // Fallout 3/New Vegas stores severed-limb cap meshes as MeatCap/GoreCap shapes.
+        // Some creature meshes use names like "neckmeatcap" instead of a MeatCap prefix.
+        const std::string name = Misc::StringUtils::lowerCase(shapeName);
+        return name.find("meatcap") != std::string::npos || name.find("gorecap") != std::string::npos;
     }
 
     bool isFalloutHiddenMorphShape(std::string_view shapeName)
@@ -2298,7 +2300,8 @@ namespace NifOsg
                     const std::string filename = Misc::StringUtils::lowerCase(mFilename.generic_string());
                     const bool logDismemberParts = dismemberSkin != nullptr
                         && (filename.find("meshes/characters/") != std::string::npos
-                            || filename.find("meshes/armor/") != std::string::npos);
+                            || filename.find("meshes/armor/") != std::string::npos
+                            || filename.find("meshes/creatures/") != std::string::npos);
 
                     for (std::size_t partitionIndex = 0; partitionIndex < partitions->mPartitions.size();
                          ++partitionIndex)

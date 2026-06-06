@@ -692,6 +692,7 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
     static bool proofFirstPersonHidden = false;
     static bool proofGuiHidden = false;
     static bool proofSkyDisabled = false;
+    static bool proofGodModeEnabled = false;
     static bool proofDelayedStartupScriptExecuted = false;
     static bool proofFNVBootstrapApplied = false;
     static bool proofScreenshotWaitLogged = false;
@@ -1178,6 +1179,14 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
         proofQuickSaveQueued = true;
     }
 
+    if (!proofGodModeEnabled && proofRunning && std::getenv("OPENMW_PROOF_GOD_MODE") != nullptr && mWorld != nullptr)
+    {
+        if (!mWorld->getGodModeState())
+            mWorld->toggleGodMode();
+        proofGodModeEnabled = true;
+        Log(Debug::Info) << "FNV/ESM4 proof: enabled god mode for deterministic proof capture";
+    }
+
     const bool proofRequiresActorForScreenshot = std::getenv("OPENMW_PROOF_REQUIRE_ACTOR_FOR_SCREENSHOT") != nullptr;
     const int proofActorResolveRetryFramesEnv = getProofFrame("OPENMW_PROOF_ACTOR_RESOLVE_RETRY_FRAMES");
     const int proofActorResolveRetryFrames = proofActorResolveRetryFramesEnv >= 0 ? proofActorResolveRetryFramesEnv : 30;
@@ -1207,6 +1216,29 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                 proofActorScreenshotLastResolveFrame = static_cast<int>(frameNumber);
             Log(Debug::Info) << "FNV/ESM4 proof: resolved proof say actor \"" << proofSayActor
                              << "\" -> " << proofActor.toString();
+            if (!proofActor.isEmpty() && std::getenv("OPENMW_PROOF_SUPPRESS_ACTOR_AI") != nullptr)
+            {
+                try
+                {
+                    MWMechanics::CreatureStats& proofActorStats = proofActor.getClass().getCreatureStats(proofActor);
+                    proofActorStats.getAiSequence().stopCombat();
+                    proofActorStats.setAttackingOrSpell(false);
+                    proofActorStats.setAiSetting(MWMechanics::AiSetting::Fight, 0);
+                    proofActorStats.setAiSetting(MWMechanics::AiSetting::Flee, 0);
+                    proofActorStats.setAiSetting(MWMechanics::AiSetting::Alarm, 0);
+                    proofActorStats.setMovementFlag(MWMechanics::CreatureStats::Flag_Run, false);
+                    proofActorStats.setMovementFlag(MWMechanics::CreatureStats::Flag_ForceRun, false);
+                    if (std::getenv("OPENMW_PROOF_DISABLE_ACTOR_COLLISION") != nullptr && mWorld != nullptr)
+                        mWorld->setActorCollisionMode(proofActor, false, false);
+                    Log(Debug::Info) << "FNV/ESM4 proof: suppressed proof actor AI target=\"" << proofSayActor
+                                     << "\" ptr=" << proofActor.toString();
+                }
+                catch (const std::exception& e)
+                {
+                    Log(Debug::Warning) << "FNV/ESM4 proof: failed to suppress proof actor AI target=\""
+                                        << proofSayActor << "\": " << e.what();
+                }
+            }
             if (!proofActor.isEmpty() && std::getenv("OPENMW_PROOF_ALIGN_PLAYER_TO_ACTOR") != nullptr)
             {
                 if (std::getenv("OPENMW_PROOF_STAGE_ACTOR") != nullptr && !proofActorStagedForCamera)
