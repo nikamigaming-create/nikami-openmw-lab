@@ -59,6 +59,8 @@
 #include <components/compiler/extensions0.hpp>
 
 #include <components/esm/position.hpp>
+#include <components/esm/util.hpp>
+#include <components/esm3/loadcell.hpp>
 #include <components/esm3/loadskil.hpp>
 #include <components/esm4/loadalch.hpp>
 #include <components/esm4/loadammo.hpp>
@@ -112,7 +114,9 @@
 #include "mwworld/containerstore.hpp"
 #include "mwworld/datetimemanager.hpp"
 #include "mwworld/esmstore.hpp"
+#include "mwworld/manualref.hpp"
 #include "mwworld/worldimp.hpp"
+#include "mwworld/worldmodel.hpp"
 
 #include "mwrender/vismask.hpp"
 
@@ -679,34 +683,36 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
     static bool proofActorCameraAligned = false;
     static int proofActorCameraAlignedFrame = -1;
     static bool proofActorAlignedScreenshotQueued = false;
+    static bool proofActorScreenshotWaitLogged = false;
+    static int proofActorScreenshotLastResolveFrame = -1;
     static bool proofFirstPersonHidden = false;
     static bool proofGuiHidden = false;
     static bool proofDelayedStartupScriptExecuted = false;
     static bool proofFNVBootstrapApplied = false;
     static bool proofScreenshotWaitLogged = false;
     static int proofWorldReadyFrames = 0;
-    const auto makeProofRefId = [](const char* value) {
-        const std::string_view ref(value);
-        constexpr std::string_view prefix = "FormId:0x";
-        if (ref.size() > prefix.size() && ref.substr(0, prefix.size()) == prefix)
-        {
-            std::uint32_t formId = 0;
-            const auto result = std::from_chars(ref.data() + prefix.size(), ref.data() + ref.size(), formId, 16);
-            if (result.ec == std::errc() && result.ptr == ref.data() + ref.size())
-                return ESM::RefId::formIdRefId(ESM::FormId::fromUint32(formId));
-        }
-        return ESM::RefId::stringRefId(ref);
-    };
     const auto parseProofFormId = [](std::string_view value) -> std::optional<ESM::FormId> {
         constexpr std::string_view prefix = "FormId:0x";
-        if (value.size() <= prefix.size() || value.substr(0, prefix.size()) != prefix)
+        constexpr std::string_view shortPrefix = "0x";
+        std::size_t offset = std::string_view::npos;
+        if (value.size() > prefix.size() && value.substr(0, prefix.size()) == prefix)
+            offset = prefix.size();
+        else if (value.size() > shortPrefix.size() && value.substr(0, shortPrefix.size()) == shortPrefix)
+            offset = shortPrefix.size();
+        else
             return std::nullopt;
 
         std::uint32_t formId = 0;
-        const auto result = std::from_chars(value.data() + prefix.size(), value.data() + value.size(), formId, 16);
+        const auto result = std::from_chars(value.data() + offset, value.data() + value.size(), formId, 16);
         if (result.ec != std::errc() || result.ptr != value.data() + value.size())
             return std::nullopt;
         return ESM::FormId::fromUint32(formId);
+    };
+    const auto makeProofRefId = [&](const char* value) {
+        const std::string_view ref(value);
+        if (std::optional<ESM::FormId> formId = parseProofFormId(ref))
+            return ESM::RefId::formIdRefId(*formId);
+        return ESM::RefId::stringRefId(ref);
     };
     const auto compactProofToken = [](std::string_view value) {
         std::string compact;
@@ -800,6 +806,83 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
         {
             Log(Debug::Warning) << "FNV/ESM4 proof: active-cell actor lookup failed for \"" << value
                                 << "\" scanned=" << scanned << " actors=" << actors;
+
+            if (std::getenv("OPENMW_PROOF_PLACE_ACTOR_IF_MISSING") != nullptr)
+            {
+                try
+                {
+                    MWWorld::Ptr player = MWMechanics::getPlayer();
+                    MWWorld::CellStore* store = nullptr;
+                    ESM::RefId worldspace = ESM::Cell::sDefaultWorldspaceId;
+                    ESM::Position pos;
+                    if (!player.isEmpty() && player.isInCell())
+                    {
+                        const ESM::Position& playerPos = player.getRefData().getPosition();
+                        pos.pos[0] = readProofFloat("OPENMW_PROOF_ACTOR_STAGE_X", playerPos.pos[0] + 96.f);
+                        pos.pos[1] = readProofFloat("OPENMW_PROOF_ACTOR_STAGE_Y", playerPos.pos[1]);
+                        pos.pos[2] = readProofFloat("OPENMW_PROOF_ACTOR_STAGE_Z", playerPos.pos[2]);
+                        pos.rot[0] = readProofFloat("OPENMW_PROOF_ACTOR_STAGE_ROT_X", 0.f);
+                        pos.rot[1] = readProofFloat("OPENMW_PROOF_ACTOR_STAGE_ROT_Y", 0.f);
+                        pos.rot[2] = readProofFloat("OPENMW_PROOF_ACTOR_STAGE_ROT_Z", 0.f);
+
+                        MWWorld::CellStore* playerCell = player.getCell();
+                        if (playerCell != nullptr && playerCell->isExterior())
+                        {
+                            worldspace = playerCell->getCell()->getWorldSpace();
+                            store = &mWorld->getWorldModel().getExterior(
+                                ESM::positionToExteriorCellLocation(pos.pos[0], pos.pos[1], worldspace));
+                        }
+                        else
+                            store = playerCell;
+                    }
+                    else
+                    {
+                        pos.pos[0] = readProofFloat("OPENMW_PROOF_ACTOR_STAGE_X", 0.f);
+                        pos.pos[1] = readProofFloat("OPENMW_PROOF_ACTOR_STAGE_Y", 0.f);
+                        pos.pos[2] = readProofFloat("OPENMW_PROOF_ACTOR_STAGE_Z", 0.f);
+                        pos.rot[0] = readProofFloat("OPENMW_PROOF_ACTOR_STAGE_ROT_X", 0.f);
+                        pos.rot[1] = readProofFloat("OPENMW_PROOF_ACTOR_STAGE_ROT_Y", 0.f);
+                        pos.rot[2] = readProofFloat("OPENMW_PROOF_ACTOR_STAGE_ROT_Z", 0.f);
+                        const auto& activeCells = mWorld->getWorldScene().getActiveCells();
+                        if (!activeCells.empty())
+                            store = *activeCells.begin();
+                    }
+
+                    if (store == nullptr)
+                        throw std::runtime_error("no active cell available for proof placement");
+
+                    ESM::RefId placementRefId = targetRefId;
+                    if (const char* placementFormId = std::getenv("OPENMW_PROOF_PLACE_ACTOR_FORM_ID"))
+                    {
+                        if (std::optional<ESM::FormId> formId = parseProofFormId(placementFormId))
+                        {
+                            placementRefId = ESM::RefId::formIdRefId(*formId);
+                            Log(Debug::Info) << "FNV/ESM4 proof: using inventory form id " << placementFormId
+                                             << " for missing actor target \"" << value << "\" base="
+                                             << targetRefId.toDebugString();
+                        }
+                        else
+                            Log(Debug::Warning) << "FNV/ESM4 proof: ignored invalid inventory form id \""
+                                                << placementFormId << "\" for missing actor target \"" << value << "\"";
+                    }
+
+                    MWWorld::ManualRef ref(mWorld->getStore(), placementRefId);
+                    ref.getPtr().mRef->mData.mPhysicsPostponed = !ref.getPtr().getClass().isActor();
+                    ref.getPtr().getCellRef().setPosition(pos);
+                    found = mWorld->placeObject(ref.getPtr(), store, pos);
+                    found.getClass().adjustPosition(found, true);
+                    Log(Debug::Info) << "FNV/ESM4 proof: placed missing actor target \"" << value
+                                     << "\" base=" << placementRefId.toDebugString() << " requestedBase="
+                                     << targetRefId.toDebugString() << " pos=(" << pos.pos[0] << "," << pos.pos[1]
+                                     << "," << pos.pos[2] << ") rot=(" << pos.rot[0] << "," << pos.rot[1] << ","
+                                     << pos.rot[2] << ") ptr=" << found.toString();
+                }
+                catch (const std::exception& e)
+                {
+                    Log(Debug::Warning) << "FNV/ESM4 proof: failed to place missing actor target \"" << value
+                                        << "\": " << e.what();
+                }
+            }
         }
         return found;
     };
@@ -1082,10 +1165,20 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
         proofQuickSaveQueued = true;
     }
 
+    const bool proofRequiresActorForScreenshot = std::getenv("OPENMW_PROOF_REQUIRE_ACTOR_FOR_SCREENSHOT") != nullptr;
+    const int proofActorResolveRetryFramesEnv = getProofFrame("OPENMW_PROOF_ACTOR_RESOLVE_RETRY_FRAMES");
+    const int proofActorResolveRetryFrames = proofActorResolveRetryFramesEnv >= 0 ? proofActorResolveRetryFramesEnv : 30;
     const bool proofOrbitBurstAlignReached = proofScreenshotFrameIndex < proofScreenshotFrames.size()
         && !proofActorViewOrbitDegrees.empty()
         && frameNumber >= static_cast<unsigned>(proofScreenshotFrames[proofScreenshotFrameIndex]);
-    if ((!proofSayQueued || proofOrbitBurstAlignReached) && proofSayFrame >= 0
+    const bool proofActorScreenshotNeedsResolveRaw = proofRequiresActorForScreenshot && !proofActorCameraAligned
+        && proofScreenshotFrameIndex < proofScreenshotFrames.size()
+        && frameNumber >= static_cast<unsigned>(proofScreenshotFrames[proofScreenshotFrameIndex]);
+    const bool proofActorScreenshotNeedsResolve = proofActorScreenshotNeedsResolveRaw
+        && (proofActorScreenshotLastResolveFrame < 0
+            || frameNumber
+                >= static_cast<unsigned>(proofActorScreenshotLastResolveFrame + proofActorResolveRetryFrames));
+    if ((!proofSayQueued || proofOrbitBurstAlignReached || proofActorScreenshotNeedsResolve) && proofSayFrame >= 0
         && frameNumber >= static_cast<unsigned>(proofSayFrame)
         && mSoundManager != nullptr)
     {
@@ -1096,6 +1189,8 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
         if (proofSayActor != nullptr && *proofSayActor != '\0')
         {
             proofActor = resolveProofActor(proofSayActor);
+            if (proofActorScreenshotNeedsResolve)
+                proofActorScreenshotLastResolveFrame = static_cast<int>(frameNumber);
             Log(Debug::Info) << "FNV/ESM4 proof: resolved proof say actor \"" << proofSayActor
                              << "\" -> " << proofActor.toString();
             if (!proofActor.isEmpty() && std::getenv("OPENMW_PROOF_ALIGN_PLAYER_TO_ACTOR") != nullptr)
@@ -1297,7 +1392,7 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                         camera->setMode(MWRender::Camera::Mode::Static, true);
                         camera->setStaticPosition(cameraPos);
                         camera->setPitch(static_cast<float>(std::atan2(dz, horizontal)), true);
-                        camera->setYaw(-static_cast<float>(std::atan2(dx, dy)), true);
+                        camera->setYaw(static_cast<float>(std::atan2(dx, dy)), true);
                         camera->setRoll(0.f);
                         camera->updateCamera();
                     }
@@ -1399,19 +1494,20 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
             }
         }
 
-        if (!proofActor.isEmpty() && proofSayTopic != nullptr && *proofSayTopic != '\0' && mDialogueManager != nullptr)
+        if (!proofSayQueued && !proofActor.isEmpty() && proofSayTopic != nullptr && *proofSayTopic != '\0'
+            && mDialogueManager != nullptr)
         {
             const bool said = mDialogueManager->say(proofActor, ESM::RefId::stringRefId(proofSayTopic));
             Log(Debug::Info) << "FNV/ESM4 proof: actor dialogue say topic \"" << proofSayTopic << "\" result="
                              << said << " at frame " << frameNumber;
         }
-        else if (!proofActor.isEmpty() && proofSayFile != nullptr && *proofSayFile != '\0')
+        else if (!proofSayQueued && !proofActor.isEmpty() && proofSayFile != nullptr && *proofSayFile != '\0')
         {
             Log(Debug::Info) << "FNV/ESM4 proof: playing actor proof voice \"" << proofSayFile << "\" for "
                              << proofActor.toString() << " at frame " << frameNumber;
             mSoundManager->say(proofActor, VFS::Path::Normalized(proofSayFile));
         }
-        else if (proofSayFile != nullptr && *proofSayFile != '\0')
+        else if (!proofSayQueued && proofSayFile != nullptr && *proofSayFile != '\0')
         {
             Log(Debug::Info) << "FNV/ESM4 proof: playing proof voice \"" << proofSayFile << "\" at frame "
                              << frameNumber;
@@ -1463,6 +1559,20 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
         }
         if (!proofWorldReady)
         {
+            mViewer->renderingTraversals();
+            mLuaWorker->finishUpdate(frameStart, frameNumber, *stats);
+            return true;
+        }
+        if (proofRequiresActorForScreenshot && !proofActorCameraAligned)
+        {
+            if (!proofActorScreenshotWaitLogged)
+            {
+                const char* proofSayActor = std::getenv("OPENMW_PROOF_SAY_ACTOR");
+                Log(Debug::Info) << "FNV/ESM4 proof: waiting to capture screenshot until actor is resolved target=\""
+                                 << (proofSayActor != nullptr ? proofSayActor : "") << "\" frame=" << frameNumber
+                                 << " screenshotIndex=" << proofScreenshotFrameIndex;
+                proofActorScreenshotWaitLogged = true;
+            }
             mViewer->renderingTraversals();
             mLuaWorker->finishUpdate(frameStart, frameNumber, *stats);
             return true;

@@ -5,7 +5,9 @@
 #include <components/esm4/loadarmo.hpp>
 #include <components/esm4/loadbook.hpp>
 #include <components/esm4/loadclot.hpp>
+#include <components/esm4/loadcrea.hpp>
 #include <components/esm4/loadmisc.hpp>
+#include <components/esm4/loadnpc.hpp>
 #include <components/esm4/loadstat.hpp>
 #include <components/esm4/loadweap.hpp>
 
@@ -96,8 +98,12 @@ namespace
                 return func(store.get<ESM4::Book>());
             case ESM::REC_CLOT4:
                 return func(store.get<ESM4::Clothing>());
+            case ESM::REC_CREA4:
+                return func(store.get<ESM4::Creature>());
             case ESM::REC_MISC4:
                 return func(store.get<ESM4::MiscItem>());
+            case ESM::REC_NPC_4:
+                return func(store.get<ESM4::Npc>());
             case ESM::REC_WEAP4:
                 return func(store.get<ESM4::Weapon>());
             case 0:
