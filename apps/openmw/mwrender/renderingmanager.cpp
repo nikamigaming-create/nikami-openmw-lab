@@ -110,6 +110,13 @@ namespace MWRender
     {
         const ESM4::Npc* findFalloutPlayerVisualRecord()
         {
+            if (std::getenv("OPENMW_FNV_DISABLE_PLAYER_VISUAL_PROXY") != nullptr)
+            {
+                Log(Debug::Info)
+                    << "FNV/ESM4 proof: Fallout NPC player visual proxy disabled by "
+                       "OPENMW_FNV_DISABLE_PLAYER_VISUAL_PROXY";
+                return nullptr;
+            }
             const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
             if (store == nullptr)
                 return nullptr;
