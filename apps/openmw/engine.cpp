@@ -118,6 +118,9 @@
 #include "mwworld/worldimp.hpp"
 #include "mwworld/worldmodel.hpp"
 
+#include "mwphysics/collisiontype.hpp"
+#include "mwphysics/raycasting.hpp"
+
 #include "mwrender/vismask.hpp"
 
 #include "mwclass/classes.hpp"
@@ -683,10 +686,12 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
     static bool proofActorCameraAligned = false;
     static int proofActorCameraAlignedFrame = -1;
     static bool proofActorAlignedScreenshotQueued = false;
+    static bool proofActorStagedForCamera = false;
     static bool proofActorScreenshotWaitLogged = false;
     static int proofActorScreenshotLastResolveFrame = -1;
     static bool proofFirstPersonHidden = false;
     static bool proofGuiHidden = false;
+    static bool proofSkyDisabled = false;
     static bool proofDelayedStartupScriptExecuted = false;
     static bool proofFNVBootstrapApplied = false;
     static bool proofScreenshotWaitLogged = false;
@@ -1111,6 +1116,14 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
         proofGuiHidden = true;
         Log(Debug::Info) << "FNV/ESM4 proof: hidden GUI/HUD for clean proof capture";
     }
+    if (!proofSkyDisabled && std::getenv("OPENMW_PROOF_DISABLE_SKY") != nullptr)
+    {
+        bool skyEnabled = mWorld->toggleSky();
+        if (skyEnabled)
+            skyEnabled = mWorld->toggleSky();
+        proofSkyDisabled = true;
+        Log(Debug::Info) << "FNV/ESM4 proof: disabled sky for clean proof capture finalEnabled=" << skyEnabled;
+    }
 
     const bool proofRunning = mStateManager->getState() == MWBase::StateManager::State_Running;
     const bool proofLoadingGui = mWindowManager->containsMode(MWGui::GM_Loading)
@@ -1196,7 +1209,7 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                              << "\" -> " << proofActor.toString();
             if (!proofActor.isEmpty() && std::getenv("OPENMW_PROOF_ALIGN_PLAYER_TO_ACTOR") != nullptr)
             {
-                if (std::getenv("OPENMW_PROOF_STAGE_ACTOR") != nullptr)
+                if (std::getenv("OPENMW_PROOF_STAGE_ACTOR") != nullptr && !proofActorStagedForCamera)
                 {
                     const ESM::Position& currentActorPos = proofActor.getRefData().getPosition();
                     const osg::Vec3f stagedPos(
@@ -1211,6 +1224,7 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                     {
                         proofActor = mWorld->moveObject(proofActor, stagedPos, true, true);
                         mWorld->rotateObject(proofActor, stagedRot);
+                        proofActorStagedForCamera = true;
                         Log(Debug::Info) << "FNV/ESM4 proof: staged actor target=\"" << proofSayActor << "\" pos=("
                                          << stagedPos.x() << "," << stagedPos.y() << "," << stagedPos.z()
                                          << ") rot=(" << stagedRot.x() << "," << stagedRot.y() << ","
@@ -1236,38 +1250,60 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                 osg::Vec2f faceAxis(0.f, 0.f);
                 osg::Vec3d actorAim(actorPos.pos[0], actorPos.pos[1], actorPos.pos[2] + targetZ);
                 double cameraZ = actorPos.pos[2] + offsetZ;
-                if (std::getenv("OPENMW_PROOF_ACTOR_VIEW_USE_RENDER_BOUNDS") != nullptr
-                    && proofActor.getRefData().getBaseNode() != nullptr)
+                const bool useRenderBounds = std::getenv("OPENMW_PROOF_ACTOR_VIEW_USE_RENDER_BOUNDS") != nullptr;
+                const bool useFaceBounds = std::getenv("OPENMW_PROOF_ACTOR_VIEW_USE_FACE_BOUNDS") != nullptr;
+                bool actorViewBoundsAccepted = false;
+                const auto isProofBoundsNearActor = [&](const osg::BoundingBox& bounds, const char* label) {
+                    const double dx = bounds.center().x() - actorPos.pos[0];
+                    const double dy = bounds.center().y() - actorPos.pos[1];
+                    const double dz = bounds.center().z() - actorPos.pos[2];
+                    const double centerDistance = std::sqrt(dx * dx + dy * dy + dz * dz);
+                    const float maxCenterDistance
+                        = readProofFloat("OPENMW_PROOF_ACTOR_VIEW_MAX_BOUNDS_CENTER_DISTANCE", 1000.f);
+                    if (centerDistance <= maxCenterDistance)
+                        return true;
+                    Log(Debug::Warning) << "FNV/ESM4 proof: actor " << label
+                                        << " bounds rejected as stale/far target=\"" << proofSayActor
+                                        << "\" center=(" << bounds.center().x() << "," << bounds.center().y()
+                                        << "," << bounds.center().z() << ") actorPos=(" << actorPos.pos[0] << ","
+                                        << actorPos.pos[1] << "," << actorPos.pos[2] << ") distance="
+                                        << centerDistance << " max=" << maxCenterDistance;
+                    return false;
+                };
+                if (useRenderBounds && proofActor.getRefData().getBaseNode() != nullptr)
                 {
                     osg::ComputeBoundsVisitor boundsVisitor;
                     boundsVisitor.setTraversalMask(~(MWRender::Mask_ParticleSystem | MWRender::Mask_Effect));
                     proofActor.getRefData().getBaseNode()->accept(boundsVisitor);
                     const osg::BoundingBox bounds = boundsVisitor.getBoundingBox();
-                    if (bounds.valid())
+                    if (bounds.valid() && isProofBoundsNearActor(bounds, "render"))
                     {
                         const float focusPercent = readProofFloat("OPENMW_PROOF_ACTOR_VIEW_BOUNDS_FOCUS", 0.72f);
                         const double focusZ = bounds.zMin() + (bounds.zMax() - bounds.zMin()) * focusPercent;
                         actorAim = osg::Vec3d(bounds.center().x(), bounds.center().y(), focusZ);
                         cameraZ = focusZ + (offsetZ - targetZ);
+                        actorViewBoundsAccepted = true;
                         Log(Debug::Info) << "FNV/ESM4 proof: actor render bounds target=\"" << proofSayActor
                                          << "\" min=(" << bounds.xMin() << "," << bounds.yMin() << ","
                                          << bounds.zMin() << ") max=(" << bounds.xMax() << "," << bounds.yMax()
                                          << "," << bounds.zMax() << ") focus=(" << actorAim.x() << ","
-                                         << actorAim.y() << "," << actorAim.z() << ") cameraZ=" << cameraZ;
+                                         << actorAim.y() << "," << actorAim.z() << ") size=("
+                                         << bounds.xMax() - bounds.xMin() << "," << bounds.yMax() - bounds.yMin()
+                                         << "," << bounds.zMax() - bounds.zMin() << ") cameraZ=" << cameraZ;
                     }
                     else
                         Log(Debug::Warning) << "FNV/ESM4 proof: actor render bounds invalid target=\""
                                             << proofSayActor << "\"";
                 }
-                if (std::getenv("OPENMW_PROOF_ACTOR_VIEW_USE_FACE_BOUNDS") != nullptr
-                    && proofActor.getRefData().getBaseNode() != nullptr)
+                if (useFaceBounds && proofActor.getRefData().getBaseNode() != nullptr)
                 {
                     FalloutProofFaceBoundsVisitor faceBoundsVisitor;
                     proofActor.getRefData().getBaseNode()->accept(faceBoundsVisitor);
                     const osg::BoundingBox bounds = faceBoundsVisitor.getBounds();
-                    if (bounds.valid())
+                    if (bounds.valid() && isProofBoundsNearActor(bounds, "face"))
                     {
                         actorAim = osg::Vec3d(bounds.center().x(), bounds.center().y(), bounds.center().z());
+                        actorViewBoundsAccepted = true;
                         const osg::Vec3d headCenter = faceBoundsVisitor.getHeadCenter();
                         const osg::Vec3d featureCenter = faceBoundsVisitor.getFeatureCenter();
                         const osg::Vec3d faceVector = featureCenter - headCenter;
@@ -1369,14 +1405,70 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                                      << " falloutFrontDot=" << falloutFrontDot;
                 }
                 MWWorld::Ptr player = mWorld->getPlayerPtr();
-                const osg::Vec3f targetPos(
+                osg::Vec3f targetPos(
                     static_cast<float>(actorAim.x() + offsetX), static_cast<float>(actorAim.y() + offsetY),
                     static_cast<float>(cameraZ));
+                if (std::getenv("OPENMW_PROOF_ACTOR_VIEW_RAYCAST_BACKOFF") != nullptr)
+                {
+                    const MWPhysics::RayCastingInterface* rayCasting = mWorld->getRayCasting();
+                    if (rayCasting != nullptr)
+                    {
+                        const osg::Vec3f focus(
+                            static_cast<float>(actorAim.x()), static_cast<float>(actorAim.y()),
+                            static_cast<float>(actorAim.z()));
+                        const osg::Vec3f ray = targetPos - focus;
+                        const float rayLength = ray.length();
+                        if (rayLength > 1e-3f)
+                        {
+                            const osg::Vec3f rayDirection = ray / rayLength;
+                            const int mask = MWPhysics::CollisionType_World | MWPhysics::CollisionType_HeightMap
+                                | MWPhysics::CollisionType_Door;
+                            const MWPhysics::RayCastingResult rayResult
+                                = rayCasting->castRay(focus, targetPos, { proofActor }, {}, mask);
+                            if (rayResult.mHit)
+                            {
+                                const float clearance = readProofFloat("OPENMW_PROOF_ACTOR_VIEW_RAYCAST_CLEARANCE", 24.f);
+                                const osg::Vec3f adjusted = rayResult.mHitPos - rayDirection * clearance;
+                                const float adjustedDistance = (adjusted - focus).length();
+                                if (adjustedDistance > 32.f)
+                                {
+                                    Log(Debug::Info)
+                                        << "FNV/ESM4 proof: actor orbit camera raycast adjusted target=\""
+                                        << proofSayActor << "\" hit=(" << rayResult.mHitPos.x() << ","
+                                        << rayResult.mHitPos.y() << "," << rayResult.mHitPos.z() << ") from=("
+                                        << targetPos.x() << "," << targetPos.y() << "," << targetPos.z()
+                                        << ") to=(" << adjusted.x() << "," << adjusted.y() << ","
+                                        << adjusted.z() << ")";
+                                    targetPos = adjusted;
+                                    cameraZ = targetPos.z();
+                                }
+                                else
+                                {
+                                    Log(Debug::Warning)
+                                        << "FNV/ESM4 proof: actor orbit camera raycast hit too close target=\""
+                                        << proofSayActor << "\" hit=(" << rayResult.mHitPos.x() << ","
+                                        << rayResult.mHitPos.y() << "," << rayResult.mHitPos.z() << ")";
+                                }
+                            }
+                            else
+                            {
+                                Log(Debug::Info) << "FNV/ESM4 proof: actor orbit camera raycast clear target=\""
+                                                 << proofSayActor << "\"";
+                            }
+                        }
+                    }
+                }
+                osg::Vec3f playerTargetPos(targetPos);
                 if (!staticDialogueCamera)
-                    player = mWorld->moveObject(player, targetPos, true, true);
+                {
+                    const float playerEyeZ = readProofFloat("OPENMW_PROOF_ACTOR_VIEW_PLAYER_EYE_Z", 124.f);
+                    playerTargetPos.z() -= playerEyeZ;
+                    player = mWorld->moveObject(player, playerTargetPos, true, true);
+                }
                 const ESM::Position& playerPos = player.getRefData().getPosition();
                 const float yawToActor = static_cast<float>(
                     std::atan2(actorAim.x() - targetPos.x(), actorAim.y() - targetPos.y()));
+                const float cameraYawToActor = -yawToActor;
                 if (!staticDialogueCamera)
                     mWorld->rotateObject(player, osg::Vec3f(0.f, 0.f, -yawToActor));
                 if (MWRender::Camera* camera = mWorld->getCamera())
@@ -1394,7 +1486,7 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                         camera->setMode(MWRender::Camera::Mode::Static, true);
                         camera->setStaticPosition(cameraPos);
                         camera->setPitch(static_cast<float>(std::atan2(dz, horizontal)), true);
-                        camera->setYaw(static_cast<float>(std::atan2(dx, dy)), true);
+                        camera->setYaw(-static_cast<float>(std::atan2(dx, dy)), true);
                         camera->setRoll(0.f);
                         camera->updateCamera();
                     }
@@ -1410,18 +1502,36 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                         const float dz = static_cast<float>(actorAim.z() - initialCameraPos.z());
                         const float horizontal = std::sqrt(dx * dx + dy * dy);
                         camera->setPitch(static_cast<float>(std::atan2(dz, horizontal)) + cameraPitch, true);
-                        camera->setYaw(yawToActor, true);
+                        camera->setYaw(cameraYawToActor, true);
                         camera->setRoll(0.f);
                         camera->updateCamera();
                         proofCameraPos = camera->getPosition();
                     }
                     const osg::Vec3d cameraPos = camera->getPosition();
+                    const osg::Vec3d cameraToAim = actorAim - cameraPos;
+                    const double cameraToAimDistance = cameraToAim.length();
+                    const double cameraPlanarDistance = std::sqrt(
+                        cameraToAim.x() * cameraToAim.x() + cameraToAim.y() * cameraToAim.y());
+                    const osg::Vec3d requestedDelta(
+                        cameraPos.x() - targetPos.x(), cameraPos.y() - targetPos.y(), cameraPos.z() - targetPos.z());
+                    const double requestedDeltaDistance = requestedDelta.length();
                     Log(Debug::Info) << "FNV/ESM4 proof: aligned player camera to actor target=\""
                                      << proofSayActor << "\" playerPos=(" << playerPos.pos[0] << ","
                                      << playerPos.pos[1] << "," << playerPos.pos[2] << ") actorPos=("
                                      << actorPos.pos[0] << "," << actorPos.pos[1] << "," << actorPos.pos[2]
-                                     << ") yawToActor=" << yawToActor << " cameraPos=(" << cameraPos.x() << ","
-                                     << cameraPos.y() << "," << cameraPos.z() << ") cameraDistance="
+                                     << ") actorRot=(" << actorPos.rot[0] << "," << actorPos.rot[1] << ","
+                                     << actorPos.rot[2] << ") actorAim=(" << actorAim.x() << "," << actorAim.y()
+                                     << "," << actorAim.z() << ") yawToActor=" << yawToActor
+                                     << " cameraYawToActor=" << cameraYawToActor << " requestedCameraPos=("
+                                     << targetPos.x() << "," << targetPos.y() << "," << targetPos.z()
+                                     << ") cameraPos=(" << cameraPos.x() << ","
+                                     << cameraPos.y() << "," << cameraPos.z() << ") cameraDelta=("
+                                     << requestedDelta.x() << "," << requestedDelta.y() << ","
+                                     << requestedDelta.z() << ") cameraDeltaDistance=" << requestedDeltaDistance
+                                     << " aimDelta=(" << cameraToAim.x() << ","
+                                     << cameraToAim.y() << "," << cameraToAim.z() << ") aimDistance="
+                                     << cameraToAimDistance << " aimPlanarDistance=" << cameraPlanarDistance
+                                     << " cameraDistance="
                                      << cameraDistance << " cameraPitch=" << camera->getPitch()
                                      << " cameraYaw=" << camera->getYaw() << " staticDialogueCamera="
                                      << staticDialogueCamera;
@@ -1437,14 +1547,25 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                             const double screenPointY = (clipPoint.y() / clipPoint.w() - 1.0) * -0.5;
                             actorFocusInFrame = screenPointX >= 0.02 && screenPointX <= 0.98 && screenPointY >= 0.02
                                 && screenPointY <= 0.98;
+                            if ((useRenderBounds || useFaceBounds) && !actorViewBoundsAccepted)
+                                actorFocusInFrame = false;
+                            const float maxCameraDrift
+                                = readProofFloat("OPENMW_PROOF_ACTOR_VIEW_MAX_CAMERA_DRIFT", 4.f);
+                            if (requestedDeltaDistance > maxCameraDrift)
+                                actorFocusInFrame = false;
                             Log(Debug::Info) << "FNV/ESM4 proof: actor focus screen target=\"" << proofSayActor
-                                             << "\" x=" << screenPointX << " y=" << screenPointY << " w="
-                                             << clipPoint.w() << " inFrame=" << actorFocusInFrame;
+                                             << "\" clip=(" << clipPoint.x() << "," << clipPoint.y() << ","
+                                             << clipPoint.z() << "," << clipPoint.w() << ") screen=("
+                                             << screenPointX << "," << screenPointY << ") boundsAccepted="
+                                             << actorViewBoundsAccepted << " cameraDeltaDistance="
+                                             << requestedDeltaDistance << " inFrame=" << actorFocusInFrame;
                         }
                         else
                         {
-                            Log(Debug::Warning) << "FNV/ESM4 proof: actor focus is behind camera target=\""
-                                                << proofSayActor << "\" w=" << clipPoint.w();
+                            actorFocusInFrame = false;
+                            Log(Debug::Warning)
+                                << "FNV/ESM4 proof: actor focus projection sign was behind camera target=\""
+                                << proofSayActor << "\" w=" << clipPoint.w() << "; rejecting actor alignment";
                         }
                     }
                     if (actorFocusInFrame)
