@@ -1168,9 +1168,6 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
     const bool proofRequiresActorForScreenshot = std::getenv("OPENMW_PROOF_REQUIRE_ACTOR_FOR_SCREENSHOT") != nullptr;
     const int proofActorResolveRetryFramesEnv = getProofFrame("OPENMW_PROOF_ACTOR_RESOLVE_RETRY_FRAMES");
     const int proofActorResolveRetryFrames = proofActorResolveRetryFramesEnv >= 0 ? proofActorResolveRetryFramesEnv : 30;
-    const bool proofOrbitBurstAlignReached = proofScreenshotFrameIndex < proofScreenshotFrames.size()
-        && !proofActorViewOrbitDegrees.empty()
-        && frameNumber >= static_cast<unsigned>(proofScreenshotFrames[proofScreenshotFrameIndex]);
     const bool proofActorScreenshotNeedsResolveRaw = proofRequiresActorForScreenshot && !proofActorCameraAligned
         && proofScreenshotFrameIndex < proofScreenshotFrames.size()
         && frameNumber >= static_cast<unsigned>(proofScreenshotFrames[proofScreenshotFrameIndex]);
@@ -1178,6 +1175,10 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
         && (proofActorScreenshotLastResolveFrame < 0
             || frameNumber
                 >= static_cast<unsigned>(proofActorScreenshotLastResolveFrame + proofActorResolveRetryFrames));
+    const bool proofOrbitBurstAlignReached = proofScreenshotFrameIndex < proofScreenshotFrames.size()
+        && !proofActorViewOrbitDegrees.empty()
+        && frameNumber >= static_cast<unsigned>(proofScreenshotFrames[proofScreenshotFrameIndex])
+        && (!proofRequiresActorForScreenshot || proofActorScreenshotNeedsResolve);
     if ((!proofSayQueued || proofOrbitBurstAlignReached || proofActorScreenshotNeedsResolve) && proofSayFrame >= 0
         && frameNumber >= static_cast<unsigned>(proofSayFrame)
         && mSoundManager != nullptr)
@@ -1230,6 +1231,7 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                 const float cameraDistance = readProofFloat("OPENMW_PROOF_ACTOR_VIEW_CAMERA_DISTANCE", 0.f);
                 const float cameraPitch = readProofFloat("OPENMW_PROOF_ACTOR_VIEW_PITCH", 0.f);
                 const bool staticDialogueCamera = std::getenv("OPENMW_PROOF_ACTOR_VIEW_STATIC_CAMERA") != nullptr;
+                const bool requireActorForScreenshot = std::getenv("OPENMW_PROOF_REQUIRE_ACTOR_FOR_SCREENSHOT") != nullptr;
                 bool useFaceAxisCamera = false;
                 osg::Vec2f faceAxis(0.f, 0.f);
                 osg::Vec3d actorAim(actorPos.pos[0], actorPos.pos[1], actorPos.pos[2] + targetZ);
@@ -1423,8 +1425,40 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                                      << cameraDistance << " cameraPitch=" << camera->getPitch()
                                      << " cameraYaw=" << camera->getYaw() << " staticDialogueCamera="
                                      << staticDialogueCamera;
-                    proofActorCameraAligned = true;
-                    proofActorCameraAlignedFrame = static_cast<int>(frameNumber);
+                    bool actorFocusInFrame = true;
+                    if (requireActorForScreenshot)
+                    {
+                        actorFocusInFrame = false;
+                        const osg::Matrix viewProj = camera->getViewMatrix() * camera->getProjectionMatrix();
+                        const osg::Vec4d clipPoint = osg::Vec4d(actorAim, 1.0) * viewProj;
+                        if (clipPoint.w() > 0.0)
+                        {
+                            const double screenPointX = (clipPoint.x() / clipPoint.w() + 1.0) * 0.5;
+                            const double screenPointY = (clipPoint.y() / clipPoint.w() - 1.0) * -0.5;
+                            actorFocusInFrame = screenPointX >= 0.02 && screenPointX <= 0.98 && screenPointY >= 0.02
+                                && screenPointY <= 0.98;
+                            Log(Debug::Info) << "FNV/ESM4 proof: actor focus screen target=\"" << proofSayActor
+                                             << "\" x=" << screenPointX << " y=" << screenPointY << " w="
+                                             << clipPoint.w() << " inFrame=" << actorFocusInFrame;
+                        }
+                        else
+                        {
+                            Log(Debug::Warning) << "FNV/ESM4 proof: actor focus is behind camera target=\""
+                                                << proofSayActor << "\" w=" << clipPoint.w();
+                        }
+                    }
+                    if (actorFocusInFrame)
+                    {
+                        proofActorCameraAligned = true;
+                        proofActorCameraAlignedFrame = static_cast<int>(frameNumber);
+                    }
+                    else
+                    {
+                        proofActorCameraAligned = false;
+                        proofActorCameraAlignedFrame = -1;
+                        Log(Debug::Warning) << "FNV/ESM4 proof: actor camera alignment rejected target=\""
+                                            << proofSayActor << "\" frame=" << frameNumber;
+                    }
 
                     if (std::getenv("OPENMW_PROOF_LOG_NEARBY_REFS") != nullptr)
                     {
