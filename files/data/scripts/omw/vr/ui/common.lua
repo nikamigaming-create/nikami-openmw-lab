@@ -467,7 +467,7 @@ local function setupDefaults(modes)
     layerConfig.Windows.backgroundOpacity = 0.82
     layerConfig.Windows.pixelsPerMeter = 3000
     layerConfig.Windows.space = 'PipBoyUtility'
-    
+
     for layer, config in pairs(layerConfig) do
         setLayerConfigIfNotOverridden(layer, config)
     end
@@ -484,7 +484,15 @@ local referenceWorldPose = {
 
 local windowArrangementRelativePose = {}
 local function updateWindowRelativePoses()
-    windowArrangementRelativePose = I.vrspaces.locateSpace(getWindowSpaceForCurrentMode(), I.vrspaces.referenceSpaces.View) or windowArrangementRelativePose
+    local pose = I.vrspaces.locateSpace(getWindowSpaceForCurrentMode(), I.vrspaces.referenceSpaces.View)
+    if pose and pose.position and pose.orientation then
+        windowArrangementRelativePose = pose
+    elseif not windowArrangementRelativePose.position or not windowArrangementRelativePose.orientation then
+        windowArrangementRelativePose = {
+            position = util.vector3(0, 1, -0.25) * I.vrspaces.unitsPerMeter,
+            orientation = util.transform.identity,
+        }
+    end
 end
 
 local virtualKeyboardRelativePose = {
@@ -504,6 +512,9 @@ local function updateLayerArrangement()
     local span = step * (#visibleLayersForArrangement - 1)
     local angle = -span / 2 + referenceWorldPose.orientation:getYaw()
     for _, layer in ipairs(visibleLayersForArrangement) do
+        if not windowArrangementRelativePose.orientation or not windowArrangementRelativePose.position then
+            return
+        end
         local transform = util.transform.rotateZ(angle) * util.transform.rotateZ(windowArrangementRelativePose.orientation:getYaw())
         local rotatedPosition = transform:apply(windowArrangementRelativePose.position)
 
@@ -538,6 +549,18 @@ local function updateVisibleLayers()
 end
 
 local function computeLayerPose()
+    if not referenceWorldPose.orientation or not referenceWorldPose.position then
+        referenceWorldPose = {
+            position = util.vector3(0,0,0),
+            orientation = util.transform.identity,
+        }
+    end
+    if not windowArrangementRelativePose.orientation or not windowArrangementRelativePose.position then
+        windowArrangementRelativePose = {
+            position = util.vector3(0, 1, -0.25) * I.vrspaces.unitsPerMeter,
+            orientation = util.transform.identity,
+        }
+    end
     local transform = util.transform.rotateZ(referenceWorldPose.orientation:getYaw() + windowArrangementRelativePose.orientation:getYaw())
     return {
         position = referenceWorldPose.position + transform:apply(windowArrangementRelativePose.position),
@@ -566,7 +589,10 @@ local function updateLayers()
 end
 
 local function updatePoses()
-    referenceWorldPose = I.vrspaces.locateSpaceInWorld(I.vrspaces.referenceSpaces.View) or referenceWorldPose
+    local pose = I.vrspaces.locateSpaceInWorld(I.vrspaces.referenceSpaces.View)
+    if pose and pose.position and pose.orientation then
+        referenceWorldPose = pose
+    end
     updateWindowRelativePoses()
 end
 
