@@ -391,6 +391,7 @@ end
 local configHUD3D = createDefaultConfig(0, true)
 configHUD3D.extent = util.vector2(0.033, 0.033)
 configHUD3D.center = util.vector2(0, 0.5)
+configHUD3D.pixelsPerMeter = 650
 configHUD3D.space = 'LeftWristTop'
 layerConfig.HUD_3D = configHUD3D
 
@@ -450,15 +451,15 @@ local function setupDefaults(modes)
     layerConfig.HUD = createDefaultConfig(0, true)
 
     layerConfig.InventoryWindow.backgroundOpacity = 0.82
-    layerConfig.InventoryWindow.pixelsPerMeter = 1200
+    layerConfig.InventoryWindow.pixelsPerMeter = 850
     layerConfig.StatsWindow.backgroundOpacity = 0.78
-    layerConfig.StatsWindow.pixelsPerMeter = 1200
+    layerConfig.StatsWindow.pixelsPerMeter = 850
     layerConfig.MapWindow.backgroundOpacity = 0.78
-    layerConfig.MapWindow.pixelsPerMeter = 1200
+    layerConfig.MapWindow.pixelsPerMeter = 850
     layerConfig.SpellWindow.backgroundOpacity = 0.78
-    layerConfig.SpellWindow.pixelsPerMeter = 1200
+    layerConfig.SpellWindow.pixelsPerMeter = 850
     layerConfig.Windows.backgroundOpacity = 0.82
-    layerConfig.Windows.pixelsPerMeter = 1200
+    layerConfig.Windows.pixelsPerMeter = 850
 
     for layer, config in pairs(layerConfig) do
         setLayerConfigIfNotOverridden(layer, config)

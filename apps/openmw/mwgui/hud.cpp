@@ -9,6 +9,7 @@
 
 #include <components/esm3/loadgmst.hpp>
 #include <components/esm3/loadmgef.hpp>
+#include <components/debug/debuglog.hpp>
 #include <components/misc/resourcehelpers.hpp>
 #include <components/resource/resourcesystem.hpp>
 #include <components/settings/values.hpp>
@@ -116,9 +117,10 @@ namespace MWGui
 
         if (falloutContent)
         {
-            if (mHealth) { mHealth->setProperty("Skin", "MW_EnergyBar_Green"); }
-            if (mMagicka) { mMagicka->setProperty("Skin", "MW_EnergyBar_Green"); }
+            if (mHealth) { mHealth->changeWidgetSkin("MW_EnergyBar_Green"); }
+            if (mMagicka) { mMagicka->changeWidgetSkin("MW_EnergyBar_Green"); }
             if (fatigueFrame) fatigueFrame->setVisible(false);
+            Log(Debug::Info) << "FNV/ESM4 proof: HUD Fallout bars applied HP/AP green theme; fatigue hidden";
         }
 
         // Drowning bar
@@ -542,6 +544,16 @@ namespace MWGui
 
     void HUD::setHmsVisible(bool visible)
     {
+        if (VR::getVR() && !visible)
+        {
+            static bool logged = false;
+            if (!logged)
+            {
+                logged = true;
+                Log(Debug::Info) << "FNV/ESM4 diag: keeping VR wrist HUD health/AP visible despite hide request";
+            }
+            visible = true;
+        }
         mHealth->setVisible(visible);
         mMagicka->setVisible(visible);
         mStamina->setVisible(visible);
@@ -574,6 +586,16 @@ namespace MWGui
 
     void HUD::setMinimapVisible(bool visible)
     {
+        if (VR::getVR() && !visible)
+        {
+            static bool logged = false;
+            if (!logged)
+            {
+                logged = true;
+                Log(Debug::Info) << "FNV/ESM4 diag: keeping VR wrist HUD compass/minimap visible despite hide request";
+            }
+            visible = true;
+        }
         mMinimapBox->setVisible(visible);
         updatePositions();
     }

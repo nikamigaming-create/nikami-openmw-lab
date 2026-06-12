@@ -755,38 +755,33 @@ namespace MWVR
                 osg::ref_ptr<const osg::Node> attachTemplateNode = templateNode;
                 bool staticizedHandRig = false;
                 bool liveRiggedHand = false;
-                if (templateProofVisitor.mRiggedDrawables > 0)
-                {
-                    Log(Debug::Info) << "FNV/ESM4 diag: attaching live rigged VR hand fallback " << mesh
-                                     << " riggedDrawables=" << templateProofVisitor.mRiggedDrawables
-                                     << " so master finger bones can drive the visible glove";
-                }
 
                 osg::ref_ptr<osg::Node> attached;
                 if (templateProofVisitor.mRiggedDrawables > 0)
                 {
-                    attached = SceneUtil::attach(std::move(attachTemplateNode), mObjectRoot, {}, attachNode,
-                        mResourceSystem->getSceneManager());
-                    FalloutVrHandProofVisitor liveProofVisitor;
-                    attached->accept(liveProofVisitor);
-                    liveRiggedHand = liveProofVisitor.mRiggedDrawables > 0 || liveProofVisitor.mDrawables > 0;
-                    if (!liveRiggedHand)
+                    osg::ref_ptr<osg::Node> staticTemplate = osg::clone(templateNode.get(), osg::CopyOp::DEEP_COPY_ALL);
+                    StaticizeFalloutVrHandRigVisitor staticizeVisitor;
+                    staticTemplate->accept(staticizeVisitor);
+                    if (staticizeVisitor.mStaticizedRigGeometryCount > 0)
                     {
-                        osg::ref_ptr<osg::Node> staticTemplate
-                            = osg::clone(templateNode.get(), osg::CopyOp::DEEP_COPY_ALL);
-                        StaticizeFalloutVrHandRigVisitor staticizeVisitor;
-                        staticTemplate->accept(staticizeVisitor);
-                        if (staticizeVisitor.mStaticizedRigGeometryCount > 0)
-                        {
-                            staticizedHandRig = true;
-                            attached = attachStaticizedFalloutVrHand(
-                                staticTemplate, attachNode, mResourceSystem->getSceneManager(), handInBip, bone);
-                            Log(Debug::Warning) << "FNV/ESM4 diag: live rigged VR hand attach produced no drawables; "
-                                                << "staticized fallback " << mesh
-                                                << " rigged=" << staticizeVisitor.mStaticizedRigGeometryCount
-                                                << " seen=" << staticizeVisitor.mSeenRigGeometryCount
-                                                << " missingSource=" << staticizeVisitor.mMissingSourceGeometryCount;
-                        }
+                        staticizedHandRig = true;
+                        attached = attachStaticizedFalloutVrHand(
+                            staticTemplate, attachNode, mResourceSystem->getSceneManager(), handInBip, bone);
+                        Log(Debug::Info) << "FNV/ESM4 diag: forcing staticized VR hand fallback " << mesh
+                                         << " rigged=" << staticizeVisitor.mStaticizedRigGeometryCount
+                                         << " seen=" << staticizeVisitor.mSeenRigGeometryCount
+                                         << " missingSource=" << staticizeVisitor.mMissingSourceGeometryCount
+                                         << " bone=" << bone;
+                    }
+                    else
+                    {
+                        Log(Debug::Warning) << "FNV/ESM4 diag: staticized VR hand fallback failed; attaching live rigged "
+                                            << mesh << " riggedDrawables=" << templateProofVisitor.mRiggedDrawables;
+                        attached = SceneUtil::attach(std::move(attachTemplateNode), mObjectRoot, {}, attachNode,
+                            mResourceSystem->getSceneManager());
+                        FalloutVrHandProofVisitor liveProofVisitor;
+                        attached->accept(liveProofVisitor);
+                        liveRiggedHand = liveProofVisitor.mRiggedDrawables > 0 || liveProofVisitor.mDrawables > 0;
                     }
                 }
                 else
