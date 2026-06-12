@@ -99,6 +99,8 @@ namespace MWVR
         float mScrollSpeed = 0.f;
         float mScrollPoints = 0.f;
         osg::ref_ptr<osg::Node> mVRAimNode;
+        std::string mLastPointerSourceName;
+        int mPointerSourceLogFrames = 0;
 
         std::optional<std::chrono::steady_clock::time_point> mGameMenuLongPressTimer;
         std::queue<std::string> mVoidMessages;

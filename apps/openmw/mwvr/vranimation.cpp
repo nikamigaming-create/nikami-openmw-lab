@@ -518,11 +518,12 @@ namespace MWVR
     {
     public:
         TrackingController(std::shared_ptr<VR::Space> space, osg::Vec3 baseOffset, bool left, bool mirror,
-            bool useNativeGripOrientation)
+            bool useNativeGripOrientation, std::string debugName)
             : mSpace(space)
             , mTransform(nullptr)
             , mBaseOffset(baseOffset)
             , mBaseOrientation(useNativeGripOrientation ? osg::Quat() : osg::Quat(osg::PI_2, osg::Vec3f(0, 0, 1)))
+            , mDebugName(std::move(debugName))
             , mLeft(left)
             , mMirror(mirror)
             , mUseNativeGripOrientation(useNativeGripOrientation)
@@ -557,6 +558,26 @@ namespace MWVR
                 offset.x() = -offset.x();
             position += tp.pose.orientation * offset;
 
+            const osg::Vec3 rayOrigin = tp.pose.position.asMWUnits();
+            const osg::Vec3 worldDelta = position - rayOrigin;
+            const osg::Vec3 aimLocalDelta = tp.pose.orientation.inverse() * worldDelta;
+            if (mAlignmentLogCount < 20 || (++mAlignmentLogFrame % 300) == 0)
+            {
+                ++mAlignmentLogCount;
+                Log(Debug::Info) << "FNV/ESM4 diag: VR hand pointer alignment hand=" << mDebugName
+                                 << " rayOriginMW=(" << rayOrigin.x() << "," << rayOrigin.y() << ","
+                                 << rayOrigin.z() << ") computedHandMW=(" << position.x() << ","
+                                 << position.y() << "," << position.z() << ") worldDeltaMW=("
+                                 << worldDelta.x() << "," << worldDelta.y() << "," << worldDelta.z()
+                                 << ") aimLocalDeltaMW=(" << aimLocalDelta.x() << "," << aimLocalDelta.y()
+                                 << "," << aimLocalDelta.z() << ") distanceMW=" << worldDelta.length()
+                                 << " baseOffset=(" << mBaseOffset.x() << "," << mBaseOffset.y() << ","
+                                 << mBaseOffset.z() << ") handsOffset=(" << offset.x() << ","
+                                 << offset.y() << "," << offset.z() << ") handChildLocal=("
+                                 << handMatrix.getTrans().x() << "," << handMatrix.getTrans().y() << ","
+                                 << handMatrix.getTrans().z() << ")";
+            }
+
             osg::Matrix worldToLocal = osg::computeWorldToLocal(mTransform->getParentalNodePaths()[0]);
             osg::Matrix localToWorld = osg::Matrix::identity();
             // New transform based on tracking.
@@ -580,6 +601,9 @@ namespace MWVR
         osg::ref_ptr<osg::MatrixTransform> mTransform;
         osg::Vec3 mBaseOffset;
         osg::Quat mBaseOrientation;
+        std::string mDebugName;
+        int mAlignmentLogCount = 0;
+        int mAlignmentLogFrame = 0;
         bool mLeft;
         bool mMirror;
         bool mUseNativeGripOrientation;
@@ -634,7 +658,8 @@ namespace MWVR
                 ctx.spaceName = i == 0 ? OpenXRInput::LeftHandAim : OpenXRInput::RightHandAim;
             ctx.forearmBone = i == 0 ? "bip01 l forearm" : "bip01 r forearm";
             ctx.forearmController = std::make_unique<TrackingController>(
-                xrInput.getSpace(ctx.spaceName), offset, i == 0, VR::getLeftHandedMode(), false);
+                xrInput.getSpace(ctx.spaceName), offset, i == 0, VR::getLeftHandedMode(), false,
+                i == 0 ? "left" : "right");
             ctx.handBone = i == 0 ? "Bip01 L Hand" : "Bip01 R Hand";
             ctx.handController = new HandController;
             ctx.indexFingerBone[0] = i == 0 ? "bip01 l finger1" : "bip01 r finger1";

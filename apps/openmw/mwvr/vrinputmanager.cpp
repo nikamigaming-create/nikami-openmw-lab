@@ -51,6 +51,7 @@ namespace MWVR
     void VRInputManager::updateVRPointer(bool disableControls)
     {
         std::shared_ptr<VR::Space> source;
+        std::string sourceName;
         if (VR::getVR())
         {
             bool guiMode = MWBase::Environment::get().getWindowManager()->isGuiMode();
@@ -61,14 +62,38 @@ namespace MWVR
                 MWBase::Environment::get().getWorld()->enableVRPointer(leftPointer, rightPointer);
 
             if (VR::getLeftHandedMode() && leftPointer)
+            {
                 source = mXRInput->getSpace(VR::Paths::LEFT_HAND_AIM);
+                sourceName = "LeftHandAim";
+            }
             else if (rightPointer)
+            {
                 source = mXRInput->getSpace(VR::Paths::RIGHT_HAND_AIM);
+                sourceName = "RightHandAim";
+            }
             else if (leftPointer)
+            {
                 source = mXRInput->getSpace(VR::Paths::LEFT_HAND_AIM);
+                sourceName = "LeftHandAim";
+            }
         }
         if (!source)
+        {
             source = mXRInput->getSpace(OpenXRInput::DefaultReferenceSpaceView);
+            sourceName = "DefaultReferenceSpaceView";
+        }
+
+        if (sourceName != mLastPointerSourceName || mPointerSourceLogFrames < 20 || (mPointerSourceLogFrames % 300) == 0)
+        {
+            Log(Debug::Info) << "FNV/ESM4 diag: VR pointer source=" << sourceName
+                             << " vr=" << VR::getVR()
+                             << " leftPointer=" << mPointerLeft
+                             << " rightPointer=" << mPointerRight
+                             << " disableControls=" << disableControls
+                             << " guiMode=" << MWBase::Environment::get().getWindowManager()->isGuiMode();
+            mLastPointerSourceName = sourceName;
+        }
+        ++mPointerSourceLogFrames;
 
         if (!mVRPointer && !disableControls)
         {
