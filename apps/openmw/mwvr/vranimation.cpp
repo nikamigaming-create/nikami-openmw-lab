@@ -125,6 +125,32 @@ namespace MWVR
         int mRiggedDrawables = 0;
     };
 
+    class FindNamedNodeVisitor : public osg::NodeVisitor
+    {
+    public:
+        explicit FindNamedNodeVisitor(std::string_view name)
+            : osg::NodeVisitor(TRAVERSE_ALL_CHILDREN)
+            , mName(name)
+        {
+        }
+
+        void apply(osg::Node& node) override
+        {
+            if (mFound == nullptr && node.getName() == mName)
+            {
+                mFound = &node;
+                return;
+            }
+
+            traverse(node);
+        }
+
+        osg::ref_ptr<osg::Node> mFound;
+
+    private:
+        std::string mName;
+    };
+
     class StaticizeFalloutVrHandRigVisitor : public osg::NodeVisitor
     {
     public:
@@ -272,7 +298,6 @@ namespace MWVR
         osg::ref_ptr<const osg::Node> templateNode, osg::Group* attachNode, Resource::SceneManager* sceneManager,
         const osg::Matrix& handInBip, std::string_view bone)
     {
-        (void)handInBip;
         osg::ref_ptr<osg::Node> cloned = sceneManager->getInstance(templateNode);
         osg::ComputeBoundsVisitor boundsVisitor;
         cloned->accept(boundsVisitor);
@@ -280,11 +305,35 @@ namespace MWVR
         osg::Matrix handLocal;
         handLocal.makeIdentity();
         osg::Vec3f center;
+        osg::Vec3f anchor;
+        std::string anchorSource = "none";
         if (bounds.valid())
         {
             center = bounds.center();
-            handLocal.setTrans(-center);
+            anchor = center;
+            anchorSource = "boundsCenter";
         }
+
+        FindNamedNodeVisitor handBoneFinder(bone);
+        cloned->accept(handBoneFinder);
+        if (handBoneFinder.mFound != nullptr)
+        {
+            osg::NodePathList paths = handBoneFinder.mFound->getParentalNodePaths(cloned.get());
+            if (paths.empty())
+                paths = handBoneFinder.mFound->getParentalNodePaths();
+            if (!paths.empty())
+            {
+                anchor = osg::computeLocalToWorld(paths.front()).getTrans();
+                anchorSource = "templateBone";
+            }
+        }
+
+        if (bounds.valid() && anchorSource == "boundsCenter")
+        {
+            anchor = osg::Vec3f(center.x(), bounds.yMin(), center.z());
+            anchorSource = "boundsWristSideYMin";
+        }
+        handLocal.setTrans(-anchor);
         const bool leftHand = bone.find(" L ") != std::string_view::npos;
         const bool leftRollFlip = leftHand && Settings::vr().mFalloutLeftHandRollFlip;
         if (leftRollFlip)
@@ -319,19 +368,23 @@ namespace MWVR
                          << handLocal.getTrans().x() << "," << handLocal.getTrans().y() << ","
                          << handLocal.getTrans().z() << ") quat=(" << localRotation.x() << ","
                          << localRotation.y() << "," << localRotation.z() << "," << localRotation.w()
-                         << ") sourceCenter=(" << center.x() << "," << center.y() << "," << center.z()
+                         << ") anchorSource=" << anchorSource << " anchor=(" << anchor.x() << "," << anchor.y()
+                         << "," << anchor.z() << ") sourceCenter=(" << center.x() << "," << center.y() << "," << center.z()
                          << ") wristCalibration=(" << falloutWristCalibration.x() << ","
                          << falloutWristCalibration.y() << "," << falloutWristCalibration.z()
                          << ") meshRotationDeg=(" << osg::RadiansToDegrees(falloutMeshRotation.x()) << ","
                          << osg::RadiansToDegrees(falloutMeshRotation.y()) << ","
                          << osg::RadiansToDegrees(falloutMeshRotation.z()) << ") leftRollFlip=" << leftRollFlip
-                         << " bindOffset=discarded";
+                         << " handInBip=(" << handInBip.getTrans().x() << "," << handInBip.getTrans().y() << ","
+                         << handInBip.getTrans().z() << ")";
 
         if (bounds.valid())
         {
-            Log(Debug::Info) << "FNV/ESM4 diag: VR static hand source skeleton-space local center=("
-                             << center.x() << "," << center.y() << "," << center.z()
-                             << ") distance=" << center.length();
+            Log(Debug::Info) << "FNV/ESM4 diag: VR static hand source skeleton-space bounds min=("
+                             << bounds.xMin() << "," << bounds.yMin() << "," << bounds.zMin()
+                             << ") max=(" << bounds.xMax() << "," << bounds.yMax() << "," << bounds.zMax()
+                             << ") center=(" << center.x() << "," << center.y() << "," << center.z()
+                             << ") centerDistance=" << center.length() << " anchorDistance=" << anchor.length();
         }
 
         attachNode->addChild(transform);
