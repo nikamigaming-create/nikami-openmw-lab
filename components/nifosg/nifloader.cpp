@@ -120,7 +120,9 @@ namespace
         // Fallout 3/New Vegas stores severed-limb cap meshes as MeatCap/GoreCap shapes.
         // Some creature meshes use names like "neckmeatcap" instead of a MeatCap prefix.
         const std::string name = Misc::StringUtils::lowerCase(shapeName);
-        return name.find("meatcap") != std::string::npos || name.find("gorecap") != std::string::npos;
+        return name.find("meatcap") != std::string::npos || name.find("gorecap") != std::string::npos
+            || name.find("bodycap") != std::string::npos || name.find("limbcap") != std::string::npos
+            || name.find("meatneck") != std::string::npos || name.find("meathead") != std::string::npos;
     }
 
     bool isFalloutHiddenMorphShape(std::string_view shapeName)
@@ -152,6 +154,18 @@ namespace
             { "meshes/effects/", "meshes\\effects\\", "windmill", "spinningwindmill", "fx", "smoke", "steam",
                 "sanddust", "dust", "vulture", "bird", "flyswarm", "flag", "saloon-sign", "open_24hours_sign",
                 "open-24-hours_sign" });
+    }
+
+    bool isFalloutFlagHelperGeometry(std::string_view filename, const Nif::NiGeometry& geometry)
+    {
+        if (!containsAny(filename, { "meshes/clutter/flags/", "meshes\\clutter\\flags\\" }))
+            return false;
+        if (!geometry.mSkin.empty() || geometry.mData.empty() || geometry.mData->mVertices.size() != 24)
+            return false;
+
+        const std::string name = Misc::StringUtils::lowerCase(geometry.mName);
+        return name.find("tail") != std::string::npos || name.find("rootbone") != std::string::npos
+            || name.find("bip01 root") != std::string::npos;
     }
 
     bool isActivationOnlyAnimationPath(std::string_view filename)
@@ -983,13 +997,11 @@ namespace NifOsg
 
                     for (const Nif::ControlledBlock& block : sequence->mControlledBlocks)
                     {
-                        if (block.mInterpolator.empty()
-                            || block.mInterpolator->recType != Nif::RC_NiTransformInterpolator)
+                        if (block.mInterpolator.empty())
                             continue;
 
                         osg::Node* node = findControllerSequenceTarget(manager, block);
-                        auto* transform = dynamic_cast<NifOsg::MatrixTransform*>(node);
-                        if (!transform)
+                        if (!node)
                         {
                             Log(Debug::Info)
                                 << "FNV/ESM4 diag: unable to attach NiControllerSequence '" << sequence->mName
@@ -997,13 +1009,34 @@ namespace NifOsg
                             continue;
                         }
 
-                        const auto* interp
-                            = static_cast<const Nif::NiTransformInterpolator*>(block.mInterpolator.getPtr());
-                        osg::ref_ptr<KeyframeController> callback = new KeyframeController(interp);
-                        setupController(sequence, callback, true);
-                        transform->addUpdateCallback(callback);
-                        transform->setDataVariance(osg::Object::DYNAMIC);
-                        ++attached;
+                        if (block.mInterpolator->recType == Nif::RC_NiTransformInterpolator)
+                        {
+                            auto* transform = dynamic_cast<NifOsg::MatrixTransform*>(node);
+                            if (!transform)
+                            {
+                                Log(Debug::Info) << "FNV/ESM4 diag: unable to attach transform NiControllerSequence '"
+                                                 << sequence->mName << "' block '" << block.mNodeName << "' in "
+                                                 << mFilename;
+                                continue;
+                            }
+
+                            const auto* interp
+                                = static_cast<const Nif::NiTransformInterpolator*>(block.mInterpolator.getPtr());
+                            osg::ref_ptr<KeyframeController> callback = new KeyframeController(interp);
+                            setupController(sequence, callback, true);
+                            transform->addUpdateCallback(callback);
+                            transform->setDataVariance(osg::Object::DYNAMIC);
+                            ++attached;
+                        }
+                        else if (block.mInterpolator->recType == Nif::RC_NiBoolInterpolator)
+                        {
+                            const auto* interp = static_cast<const Nif::NiBoolInterpolator*>(block.mInterpolator.getPtr());
+                            osg::ref_ptr<VisController> callback = new VisController(interp, Loader::getHiddenNodeMask());
+                            setupController(sequence, callback, true);
+                            node->addUpdateCallback(callback);
+                            node->setDataVariance(osg::Object::DYNAMIC);
+                            ++attached;
+                        }
                     }
                 }
 
@@ -2432,6 +2465,15 @@ namespace NifOsg
         {
             assert(isTypeNiGeometry(nifNode->recType));
 
+            auto niGeometry = static_cast<const Nif::NiGeometry*>(nifNode);
+            const std::string filename = Misc::StringUtils::lowerCase(mFilename.generic_string());
+            if (isFalloutFlagHelperGeometry(filename, *niGeometry))
+            {
+                Log(Debug::Info) << "FNV/ESM4 diag: skipped Fallout flag helper geometry " << nifNode->mName << " in "
+                                 << mFilename;
+                return;
+            }
+
             osg::ref_ptr<osg::Geometry> geom(new osg::Geometry);
             handleNiGeometryData(nifNode, parent, geom, parentNode, composite, boundTextures, animflags);
             // If the record had no valid geometry data in it, early-out
@@ -2440,7 +2482,6 @@ namespace NifOsg
 
             osg::ref_ptr<osg::Drawable> drawable = geom;
 
-            auto niGeometry = static_cast<const Nif::NiGeometry*>(nifNode);
             if (!niGeometry->mSkin.empty())
             {
                 osg::ref_ptr<SceneUtil::RigGeometry> rig(new SceneUtil::RigGeometry);
@@ -2498,6 +2539,12 @@ namespace NifOsg
 
                     osg::ref_ptr<GeomMorpherController> morphctrl = new GeomMorpherController(nimorphctrl);
                     setupController(ctrl.getPtr(), morphctrl, animflags);
+                    if ((animflags & Nif::NiNode::AnimFlag_AutoPlay) == 0 && isAmbientEmbeddedAnimationPath(filename))
+                    {
+                        morphctrl->setSource(std::make_shared<SceneUtil::FrameTimeSource>());
+                        Log(Debug::Info) << "FNV/ESM4 diag: forced ambient morph autoplay for " << nifNode->mName
+                                         << " in " << mFilename;
+                    }
                     morphGeom->setUpdateCallback(morphctrl);
 
                     drawable = morphGeom;

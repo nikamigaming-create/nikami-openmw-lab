@@ -16,7 +16,10 @@
 
 #include <components/esm3/esmwriter.hpp>
 #include <components/esm3/globalmap.hpp>
+#include <components/debug/debuglog.hpp>
+#include <components/misc/resourcehelpers.hpp>
 #include <components/myguiplatform/myguitexture.hpp>
+#include <components/resource/resourcesystem.hpp>
 #include <components/settings/values.hpp>
 
 #include "../mwbase/environment.hpp"
@@ -44,6 +47,41 @@ namespace
 
     const int cellSize = Constants::CellSizeInUnits;
     constexpr float speed = 1.08f; // the zoom speed, it should be greater than 1
+
+    bool isFalloutContentLoaded()
+    {
+        if (std::getenv("OPENMW_FNV_PROOF_PIPBOY_SURFACE") != nullptr)
+            return true;
+
+        const MWBase::World* world = MWBase::Environment::get().getWorld();
+        if (world == nullptr)
+            return false;
+
+        for (const std::string& file : world->getContentFiles())
+        {
+            if (file.find("FalloutNV.esm") != std::string::npos || file.find("falloutnv.esm") != std::string::npos)
+                return true;
+        }
+
+        return false;
+    }
+
+    std::string getFalloutWorldMapTexture()
+    {
+        const VFS::Manager* const vfs = MWBase::Environment::get().getResourceSystem()->getVFS();
+        return Misc::ResourceHelpers::correctTexturePath(
+            "textures\\interface\\worldmap\\wasteland_1024_no_map.png", vfs);
+    }
+
+    const char* getFalloutMapModeLabel(bool global)
+    {
+        return global ? "WASTELAND" : "LOCAL MAP";
+    }
+
+    const char* getFalloutMapToggleLabel(bool global)
+    {
+        return global ? "LOCAL MAP" : "WASTELAND";
+    }
 
     enum LocalMapWidgetDepth
     {
@@ -814,23 +852,32 @@ namespace MWGui
         getWidget(mButton, "WorldButton");
         mButton->eventMouseButtonClick += MyGUI::newDelegate(this, &MapWindow::onWorldButtonClicked);
 
+        bool falloutContent = isFalloutContentLoaded();
+        if (falloutContent)
+            Settings::map().mGlobal.set(true);
         const bool global = Settings::map().mGlobal;
 
-        bool falloutContent = std::getenv("OPENMW_FNV_PROOF_PIPBOY_SURFACE") != nullptr;
-        if (!falloutContent && MWBase::Environment::get().getWorld())
-        {
-            for (const std::string& file : MWBase::Environment::get().getWorld()->getContentFiles())
-            {
-                if (file.find("FalloutNV.esm") != std::string::npos || file.find("falloutnv.esm") != std::string::npos)
-                {
-                    falloutContent = true;
-                    break;
-                }
-            }
-        }
-
         if (falloutContent)
-            mButton->setCaption(global ? "LOCAL MAP" : "WASTELAND");
+        {
+            mButton->setCaption(getFalloutMapToggleLabel(global));
+            Log(Debug::Info) << "FNV/ESM4 proof: map toggle label applied " << getFalloutMapModeLabel(global)
+                             << " button=" << getFalloutMapToggleLabel(global);
+            const std::string mapTexture = getFalloutWorldMapTexture();
+            mGlobalMapTexture = std::make_unique<MyGUIPlatform::OSGTexture>(
+                mapTexture, MWBase::Environment::get().getResourceSystem()->getImageManager());
+            mGlobalMapTexture->loadFromFile(mapTexture);
+            mGlobalMapImage->setRenderItemTexture(mGlobalMapTexture.get());
+            mGlobalMapImage->setImageTexture(mapTexture);
+            mGlobalMapImage->getSubWidgetMain()->_setUVSet(MyGUI::FloatRect(0.f, 0.f, 1.f, 1.f));
+            mGlobalMapImage->setImageCoord(MyGUI::IntCoord(0, 0, 1024, 1024));
+            mGlobalMapOverlay->setVisible(false);
+            mGlobalMapOverlay->setImageTexture({});
+            mGlobalMapOverlay->setImageCoord(MyGUI::IntCoord(0, 0, 1024, 1024));
+            mGlobalMapImage->setSize(1024, 1024);
+            mGlobalMap->setCanvasSize(1024, 1024);
+            mGlobalMap->setViewOffset(MyGUI::IntPoint(0, 0));
+            Log(Debug::Info) << "FNV/ESM4 proof: Fallout world map texture bound " << mapTexture;
+        }
         else
             mButton->setCaptionWithReplacing(global ? "#{sLocal}" : "#{sWorld}");
 
@@ -1015,6 +1062,17 @@ namespace MWGui
 
     void MapWindow::updateGlobalMap()
     {
+        if (isFalloutContentLoaded())
+        {
+            mGlobalMapZoom = 1.f;
+            mGlobalMap->setCanvasSize(1024, 1024);
+            mGlobalMapImage->setSize(1024, 1024);
+            mGlobalMapOverlay->setSize(1024, 1024);
+            mPlayerArrowGlobal->setPosition(MyGUI::IntPoint(496, 496));
+            mGlobalMap->setViewOffset(MyGUI::IntPoint(0, 0));
+            return;
+        }
+
         resizeGlobalMap();
 
         float x = mCurPos.x(), y = mCurPos.y();
@@ -1252,21 +1310,14 @@ namespace MWGui
         mGlobalMap->setVisible(global);
         mLocalMap->setVisible(!global);
 
-        bool falloutContent = std::getenv("OPENMW_FNV_PROOF_PIPBOY_SURFACE") != nullptr;
-        if (!falloutContent && MWBase::Environment::get().getWorld())
-        {
-            for (const std::string& file : MWBase::Environment::get().getWorld()->getContentFiles())
-            {
-                if (file.find("FalloutNV.esm") != std::string::npos || file.find("falloutnv.esm") != std::string::npos)
-                {
-                    falloutContent = true;
-                    break;
-                }
-            }
-        }
+        bool falloutContent = isFalloutContentLoaded();
 
         if (falloutContent)
-            mButton->setCaption(global ? "LOCAL MAP" : "WASTELAND");
+        {
+            mButton->setCaption(getFalloutMapToggleLabel(global));
+            Log(Debug::Info) << "FNV/ESM4 proof: map toggle label applied " << getFalloutMapModeLabel(global)
+                             << " button=" << getFalloutMapToggleLabel(global);
+        }
         else
             mButton->setCaptionWithReplacing(global ? "#{sLocal}" : "#{sWorld}");
         mControllerButtons.mX = global ? "#{Interface:Local}" : "#{Interface:World}";
@@ -1316,6 +1367,12 @@ namespace MWGui
 
     void MapWindow::centerView()
     {
+        if (isFalloutContentLoaded() && Settings::map().mGlobal)
+        {
+            mGlobalMap->setViewOffset(MyGUI::IntPoint(0, 0));
+            return;
+        }
+
         LocalMapBase::centerView();
         // set the view offset so that player is in the center
         MyGUI::IntSize viewsize = mGlobalMap->getSize();
@@ -1343,6 +1400,31 @@ namespace MWGui
 
     void MapWindow::ensureGlobalMapLoaded()
     {
+        if (isFalloutContentLoaded())
+        {
+            const std::string mapTexture = getFalloutWorldMapTexture();
+            if (!mGlobalMapTexture)
+            {
+                mGlobalMapTexture = std::make_unique<MyGUIPlatform::OSGTexture>(
+                    mapTexture, MWBase::Environment::get().getResourceSystem()->getImageManager());
+                mGlobalMapTexture->loadFromFile(mapTexture);
+            }
+            mGlobalMapImage->setRenderItemTexture(mGlobalMapTexture.get());
+            mGlobalMapImage->setImageTexture(mapTexture);
+            mGlobalMapImage->getSubWidgetMain()->_setUVSet(MyGUI::FloatRect(0.f, 0.f, 1.f, 1.f));
+            mGlobalMapImage->setImageCoord(MyGUI::IntCoord(0, 0, 1024, 1024));
+            mGlobalMapOverlay->setVisible(false);
+            mGlobalMapOverlay->setImageTexture({});
+            mGlobalMapOverlay->setImageCoord(MyGUI::IntCoord(0, 0, 1024, 1024));
+            mGlobalMapImage->setSize(1024, 1024);
+            mGlobalMapOverlay->setSize(1024, 1024);
+            mGlobalMap->setCanvasSize(1024, 1024);
+            mGlobalMap->setViewOffset(MyGUI::IntPoint(0, 0));
+            mGlobalMap->getParent()->_updateChilds();
+            Log(Debug::Info) << "FNV/ESM4 proof: Fallout world map texture refreshed " << mapTexture;
+            return;
+        }
+
         if (!mGlobalMapTexture.get())
         {
             mGlobalMapTexture = std::make_unique<MyGUIPlatform::OSGTexture>(mGlobalMapRender->getBaseTexture());
