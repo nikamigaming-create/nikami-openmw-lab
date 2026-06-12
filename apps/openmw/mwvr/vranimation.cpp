@@ -1057,7 +1057,7 @@ namespace MWVR
         for (auto& it : mVrControllers)
         {
             disableTracking(it.second.topLevelPath);
-            if (VR::getControllerActive(it.second.topLevelPath))
+            if (VR::getVR() || VR::getControllerActive(it.second.topLevelPath))
                 enableTracking(it.second.topLevelPath);
         }
 
