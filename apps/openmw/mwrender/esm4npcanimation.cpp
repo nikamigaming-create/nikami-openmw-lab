@@ -2579,20 +2579,20 @@ namespace MWRender
                     readFalloutProofFloat("OPENMW_FNV_HEADGEAR_OFFSET_Y", 0.f),
                     readFalloutProofFloat("OPENMW_FNV_HEADGEAR_OFFSET_Z", 0.f));
             if (lowered.find("brow") != std::string::npos)
-                return osg::Vec3f(readFalloutProofFloat("OPENMW_FNV_BROW_OFFSET_X", 12.5f),
+                return osg::Vec3f(readFalloutProofFloat("OPENMW_FNV_BROW_OFFSET_X", 0.f),
                     readFalloutProofFloat("OPENMW_FNV_BROW_OFFSET_Y", 0.f),
                     readFalloutProofFloat("OPENMW_FNV_BROW_OFFSET_Z", 0.f));
             if (lowered.find("eye") != std::string::npos)
-                return osg::Vec3f(readFalloutProofFloat("OPENMW_FNV_EYE_OFFSET_X", 12.85f),
+                return osg::Vec3f(readFalloutProofFloat("OPENMW_FNV_EYE_OFFSET_X", 0.f),
                     readFalloutProofFloat("OPENMW_FNV_EYE_OFFSET_Y", 0.f),
                     readFalloutProofFloat("OPENMW_FNV_EYE_OFFSET_Z", 0.f));
             if (lowered.find("beard") != std::string::npos)
-                return osg::Vec3f(readFalloutProofFloat("OPENMW_FNV_BEARD_OFFSET_X", 9.f),
+                return osg::Vec3f(readFalloutProofFloat("OPENMW_FNV_BEARD_OFFSET_X", 0.f),
                     readFalloutProofFloat("OPENMW_FNV_BEARD_OFFSET_Y", 0.f),
                     readFalloutProofFloat("OPENMW_FNV_BEARD_OFFSET_Z", 0.f));
             if (lowered.find("mouth") != std::string::npos || lowered.find("teeth") != std::string::npos
                 || lowered.find("tongue") != std::string::npos)
-                return osg::Vec3f(readFalloutProofFloat("OPENMW_FNV_MOUTH_OFFSET_X", 11.4f),
+                return osg::Vec3f(readFalloutProofFloat("OPENMW_FNV_MOUTH_OFFSET_X", 0.f),
                     readFalloutProofFloat("OPENMW_FNV_MOUTH_OFFSET_Y", 0.f),
                     readFalloutProofFloat("OPENMW_FNV_MOUTH_OFFSET_Z", 0.f));
             return osg::Vec3f();
@@ -2628,7 +2628,8 @@ namespace MWRender
             constexpr float degreesToRadians = 0.017453292519943295f;
             const float xDegrees = readFalloutProofFloat((prefix + "_ROTATION_X").c_str(), 0.f);
             const float yDegrees = readFalloutProofFloat((prefix + "_ROTATION_Y").c_str(), 0.f);
-            const float zFallback = headgearStaticPart ? 0.f : 90.f;
+            const bool hairLike = prefix == "OPENMW_FNV_HAIR";
+            const float zFallback = hairLike ? 90.f : 0.f;
             const float zDegrees = readFalloutProofFloat((prefix + "_ROTATION_Z").c_str(), zFallback);
             const osg::Quat x(xDegrees * degreesToRadians, osg::Vec3f(1.f, 0.f, 0.f));
             const osg::Quat y(yDegrees * degreesToRadians, osg::Vec3f(0.f, 1.f, 0.f));
