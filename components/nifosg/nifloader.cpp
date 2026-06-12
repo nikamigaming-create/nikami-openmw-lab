@@ -156,6 +156,11 @@ namespace
                 "open-24-hours_sign" });
     }
 
+    bool isFalloutFlagPath(std::string_view filename)
+    {
+        return containsAny(filename, { "meshes/clutter/flags/", "meshes\\clutter\\flags\\" });
+    }
+
     bool isFalloutFlagHelperGeometry(std::string_view filename, const Nif::NiGeometry& geometry)
     {
         if (!containsAny(filename, { "meshes/clutter/flags/", "meshes\\clutter\\flags\\" }))
@@ -263,8 +268,7 @@ namespace
     {
         const std::string sequenceName = Misc::StringUtils::lowerCase(sequence.mName);
         const bool ambientPath = isAmbientEmbeddedAnimationPath(filename);
-        if (sequenceName == "specialidle" || sequenceName == "idle")
-            return true;
+        const bool falloutFlagPath = isFalloutFlagPath(filename);
 
         std::string key = sequenceName;
         for (const Nif::ControlledBlock& block : sequence.mControlledBlocks)
@@ -284,6 +288,19 @@ namespace
                     "door", "gate", "mailbox", "dropbox", "toolbox", "ammobox", "trash", "dumpster", "plant",
                     "flower", "fruit", "grow", "bloom" }))
             return false;
+
+        if (falloutFlagPath)
+        {
+            if (containsAny(key, { "forward", "backward", "backwards", "left", "right", "up", "down" }))
+                return false;
+            if (sequence.mExtrapolationMode != Nif::NiTimeController::Cycle && sequenceName != "specialidle"
+                && sequenceName != "idle")
+                return false;
+            return containsAny(key, { "idle", "loop", "ambient", "wind", "flag", "wave", "flutter", "sway", "tail" });
+        }
+
+        if (sequenceName == "specialidle" || sequenceName == "idle")
+            return true;
 
         if (ambientPath && containsAny(key, { "forward", "backward", "backwards", "left", "right", "up", "down" }))
             return true;
@@ -423,7 +440,19 @@ namespace
         Misc::StringUtils::lowerCaseInPlace(stem);
 
         std::vector<std::string> groups;
-        if (stem == "mtidle" || stem == "pamtidle" || stem == "talk_handsatside_moving"
+        if (stem.find("flyaway") != std::string::npos)
+        {
+            groups.emplace_back("idle");
+            groups.emplace_back("idle2");
+            groups.emplace_back("flyforward");
+            groups.emplace_back("walkforward");
+        }
+        else if (stem.find("specialidle") != std::string::npos)
+        {
+            groups.emplace_back("idle2");
+            groups.emplace_back("idle");
+        }
+        else if (stem == "mtidle" || stem == "pamtidle" || stem == "talk_handsatside_moving"
             || stem == "talk_handsatside_still2" || stem == "2hrloiter" || stem == "2hrloiteronehanded"
             || stem == "3rdp_specialidle_1hmidlela" || stem == "3rdp_specialidle_1hmidlelb"
             || stem == "dlcanch1hpistolpose" || Misc::StringUtils::ciEndsWith(stem, "idle"))
@@ -978,6 +1007,7 @@ namespace NifOsg
         void handleControllerManagers() const
         {
             const std::string filename = Misc::StringUtils::lowerCase(mFilename.generic_string());
+            const bool falloutFlagPath = isFalloutFlagPath(filename);
             for (const Nif::NiControllerManager* manager : mControllerManagers)
             {
                 unsigned int attached = 0;
@@ -999,6 +1029,37 @@ namespace NifOsg
                     {
                         if (block.mInterpolator.empty())
                             continue;
+
+                        if (falloutFlagPath)
+                        {
+                            std::string blockKey = Misc::StringUtils::lowerCase(block.mTargetName);
+                            blockKey += ' ';
+                            blockKey += Misc::StringUtils::lowerCase(block.mNodeName);
+                            blockKey += ' ';
+                            blockKey += Misc::StringUtils::lowerCase(block.mControllerId);
+                            blockKey += ' ';
+                            blockKey += Misc::StringUtils::lowerCase(block.mInterpolatorId);
+                            blockKey += ' ';
+                            blockKey += Misc::StringUtils::lowerCase(resolveControlledBlockTargetName(sequence, block));
+                            if (std::getenv("OPENMW_FNV_FLAG_CONTROLLER_AUDIT") != nullptr)
+                            {
+                                Log(Debug::Info) << "FNV/ESM4 flag audit: sequence='" << sequence->mName
+                                                 << "' target='" << block.mTargetName << "' node='"
+                                                 << block.mNodeName << "' controller='" << block.mControllerId
+                                                 << "' interpolator='" << block.mInterpolatorId << "' resolved='"
+                                                 << resolveControlledBlockTargetName(sequence, block) << "' in "
+                                                 << mFilename;
+                            }
+                            if (containsAny(blockKey,
+                                    { "rootbone", "bip01 root", "root bone", "pole", "staff", "flagpole", "marker",
+                                        "base" }))
+                            {
+                                Log(Debug::Info)
+                                    << "FNV/ESM4 diag: skipped Fallout flag anchor controller '"
+                                    << sequence->mName << "' block '" << block.mNodeName << "' in " << mFilename;
+                                continue;
+                            }
+                        }
 
                         osg::Node* node = findControllerSequenceTarget(manager, block);
                         if (!node)
@@ -2490,6 +2551,25 @@ namespace NifOsg
                 const Nif::NiSkinInstance* skin = niGeometry->mSkin.getPtr();
                 const Nif::NiSkinData* data = skin->mData.getPtr();
                 const Nif::NiAVObjectList& bones = skin->mBones;
+                const bool falloutSkinProbe = filename.find("characters/head/headhuman.nif") != std::string::npos
+                    || filename.find("characters\\head\\headhuman.nif") != std::string::npos
+                    || filename.find("characters/_male/lefthand") != std::string::npos
+                    || filename.find("characters\\_male\\lefthand") != std::string::npos
+                    || filename.find("characters/_male/righthand") != std::string::npos
+                    || filename.find("characters\\_male\\righthand") != std::string::npos;
+                if (falloutSkinProbe)
+                {
+                    const osg::Matrixf skinTransform = data->mTransform.toMatrix();
+                    const Nif::NiAVObject* rootBone = skin->mRoot.getPtr();
+                    Log(Debug::Info) << "FNV/ESM4 skin data: file=" << mFilename << " geom=" << nifNode->mName
+                                     << " root=" << (rootBone != nullptr ? rootBone->mName : std::string("<none>"))
+                                     << " geomLocal=(" << nifNode->mTransform.mTranslation.x() << ","
+                                     << nifNode->mTransform.mTranslation.y() << ","
+                                     << nifNode->mTransform.mTranslation.z() << ")"
+                                     << " skinTransformT=(" << skinTransform.getTrans().x() << ","
+                                     << skinTransform.getTrans().y() << "," << skinTransform.getTrans().z()
+                                     << ") bones=" << bones.size();
+                }
 
                 // Assign bone weights
                 std::vector<SceneUtil::RigGeometry::BoneInfo> boneInfo;
@@ -2502,6 +2582,17 @@ namespace NifOsg
                     boneInfo[i].mInvBindMatrix = data->mBones[i].mTransform.toMatrix();
                     boneInfo[i].mBoundSphere = data->mBones[i].mBoundSphere;
                     influences[i] = data->mBones[i].mWeights;
+                    if (falloutSkinProbe && i < 12)
+                    {
+                        const osg::Matrixf boneTransform = data->mBones[i].mTransform.toMatrix();
+                        Log(Debug::Info) << "FNV/ESM4 skin data: file=" << mFilename << " geom="
+                                         << nifNode->mName << " bone[" << i << "]="
+                                         << bones[i].getPtr()->mName << " skinT=("
+                                         << boneTransform.getTrans().x() << ","
+                                         << boneTransform.getTrans().y() << ","
+                                         << boneTransform.getTrans().z() << ") weights="
+                                         << data->mBones[i].mWeights.size();
+                    }
                 }
                 rig->setBoneInfo(std::move(boneInfo));
                 rig->setInfluences(influences);

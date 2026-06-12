@@ -106,6 +106,19 @@ namespace MWRender
                 }
             }
 
+            const std::string loweredEditor = toLowerAscii(editorId);
+            auto idlePriority = [&](const std::string& path) {
+                const std::string loweredPath = toLowerAscii(path);
+                if ((loweredEditor.find("raven") != std::string::npos
+                        || loweredPath.find("nvraven") != std::string::npos)
+                    && loweredPath.find("specialidle_flyaway") != std::string::npos)
+                    return 100;
+                return 0;
+            };
+            std::stable_sort(paths.begin(), paths.end(), [&](const std::string& lhs, const std::string& rhs) {
+                return idlePriority(lhs) < idlePriority(rhs);
+            });
+
             return paths;
         }
 
