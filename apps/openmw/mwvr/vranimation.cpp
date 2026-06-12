@@ -83,7 +83,11 @@ namespace MWVR
 
     bool shouldUseFalloutVrHandFallback(Resource::ResourceSystem* resourceSystem)
     {
-        return false;
+        const VFS::Manager* vfs = resourceSystem != nullptr ? resourceSystem->getVFS() : nullptr;
+        return vfs != nullptr
+            && (vfs->exists(VFS::Path::Normalized("meshes/characters/_male/lefthandpipboyglove.nif"))
+                || vfs->exists(VFS::Path::Normalized("meshes/characters/_male/lefthand.nif")))
+            && vfs->exists(VFS::Path::Normalized("meshes/characters/_male/righthand.nif"));
     }
 
     VFS::Path::Normalized getFalloutLeftVrHandMesh(Resource::ResourceSystem* resourceSystem)
@@ -1131,11 +1135,10 @@ namespace MWVR
 
     void VRAnimation::enablePointer(XrPath topLevelPath, bool enable) 
     {
-        const bool falloutHandFallback = shouldUseFalloutVrHandFallback(mResourceSystem);
         auto& ctx = mVrControllers[topLevelPath];
-        ctx.handController->setFingerPointingMode(enable && !falloutHandFallback);
-        ctx.indexFingerControllers[0]->setEnabled(enable && !falloutHandFallback);
-        ctx.indexFingerControllers[1]->setEnabled(enable && !falloutHandFallback);
+        ctx.handController->setFingerPointingMode(enable);
+        ctx.indexFingerControllers[0]->setEnabled(enable);
+        ctx.indexFingerControllers[1]->setEnabled(enable);
     }
 
     void VRAnimation::enableHeadAnimation(bool)
