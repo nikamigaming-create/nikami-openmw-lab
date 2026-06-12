@@ -2550,6 +2550,35 @@ namespace MWRender
                 || lowered.find("tongue") != std::string::npos;
         }
 
+        bool isFalloutBrowModel(std::string_view model)
+        {
+            std::string lowered(model);
+            Misc::StringUtils::lowerCaseInPlace(lowered);
+            return lowered.find("brow") != std::string::npos;
+        }
+
+        bool isFalloutEyeModel(std::string_view model)
+        {
+            std::string lowered(model);
+            Misc::StringUtils::lowerCaseInPlace(lowered);
+            return lowered.find("eye") != std::string::npos && !isFalloutBrowModel(lowered);
+        }
+
+        bool isFalloutFaceHairModel(std::string_view model)
+        {
+            std::string lowered(model);
+            Misc::StringUtils::lowerCaseInPlace(lowered);
+            return lowered.find("beard") != std::string::npos || lowered.find("facial") != std::string::npos;
+        }
+
+        bool isFalloutScalpHairModel(std::string_view model)
+        {
+            std::string lowered(model);
+            Misc::StringUtils::lowerCaseInPlace(lowered);
+            return lowered.find("hair") != std::string::npos && !isFalloutBrowModel(lowered)
+                && !isFalloutFaceHairModel(lowered);
+        }
+
         bool isFalloutMouthSurfaceModel(std::string_view model)
         {
             std::string lowered(model);
@@ -2628,8 +2657,9 @@ namespace MWRender
             constexpr float degreesToRadians = 0.017453292519943295f;
             const float xDegrees = readFalloutProofFloat((prefix + "_ROTATION_X").c_str(), 0.f);
             const float yDegrees = readFalloutProofFloat((prefix + "_ROTATION_Y").c_str(), 0.f);
-            const bool hairLike = prefix == "OPENMW_FNV_HAIR";
-            const float zFallback = hairLike ? 90.f : 0.f;
+            const bool faceInternal = prefix == "OPENMW_FNV_EYE" || prefix == "OPENMW_FNV_MOUTH"
+                || prefix == "OPENMW_FNV_BEARD" || prefix == "OPENMW_FNV_BROW";
+            const float zFallback = faceInternal ? -90.f : 0.f;
             const float zDegrees = readFalloutProofFloat((prefix + "_ROTATION_Z").c_str(), zFallback);
             const osg::Quat x(xDegrees * degreesToRadians, osg::Vec3f(1.f, 0.f, 0.f));
             const osg::Quat y(yDegrees * degreesToRadians, osg::Vec3f(0.f, 1.f, 0.f));
@@ -3049,21 +3079,68 @@ namespace MWRender
             const osg::Vec3f extent = boundingBoxExtent(box);
             const osg::Vec3f worldCenter
                 = attachNode != nullptr ? transformPoint(center, getNodeWorldMatrix(attachNode)) : center;
+            const osg::Matrix headWorld = headNode != nullptr ? getNodeWorldMatrix(headNode) : osg::Matrix::identity();
             const osg::Vec3f headOrigin
-                = headNode != nullptr ? transformPoint(osg::Vec3f(), getNodeWorldMatrix(headNode)) : osg::Vec3f();
+                = headNode != nullptr ? transformPoint(osg::Vec3f(), headWorld) : osg::Vec3f();
             const osg::Vec3f headDelta = worldCenter - headOrigin;
+            osg::Matrix headWorldInverse;
+            if (!headWorldInverse.invert(headWorld))
+                headWorldInverse.makeIdentity();
+            const osg::Vec3f headLocalCenter
+                = headNode != nullptr ? transformPoint(worldCenter, headWorldInverse) : headDelta;
             const float centerDistance = center.length();
             const float diagonal = extent.length();
             const bool accessory = isFalloutAccessoryModel(model);
             const bool headRelative = headNode != nullptr && isFalloutHeadRelativeModel(model);
             const bool faceTight = headRelative && isFalloutFaceTightModel(model);
+            const bool mouthLike = isFalloutMouthDriverPart(model);
+            const bool eyeLike = isFalloutEyeModel(model);
+            const bool browLike = isFalloutBrowModel(model);
+            const bool faceHairLike = isFalloutFaceHairModel(model);
+            const bool checksFaceAxes = faceTight && (mouthLike || eyeLike || browLike || faceHairLike);
+            const osg::Vec3f headFrameCenter = headDelta;
+            bool headAxisDetached = false;
+            const char* headAxisReason = "";
+            if (checksFaceAxes)
+            {
+                const float absX = std::abs(headFrameCenter.x());
+                // FNV face attachments are authored in head space with +Y as the face/front axis and +Z up.
+                if (mouthLike
+                    && (absX > 4.5f || headFrameCenter.y() < 2.f || headFrameCenter.y() > 8.5f
+                        || headFrameCenter.z() < -1.f || headFrameCenter.z() > 7.5f))
+                {
+                    headAxisDetached = true;
+                    headAxisReason = "mouth-not-front";
+                }
+                else if (eyeLike
+                    && (absX < 0.75f || absX > 4.25f || headFrameCenter.y() < 4.5f
+                        || headFrameCenter.y() > 8.5f || headFrameCenter.z() < 5.f || headFrameCenter.z() > 10.f))
+                {
+                    headAxisDetached = true;
+                    headAxisReason = "eye-not-front";
+                }
+                else if (browLike
+                    && (absX > 7.5f || headFrameCenter.y() < 3.5f || headFrameCenter.y() > 9.5f
+                        || headFrameCenter.z() < 5.5f || headFrameCenter.z() > 12.f))
+                {
+                    headAxisDetached = true;
+                    headAxisReason = "brow-not-front";
+                }
+                else if (faceHairLike
+                    && (absX > 8.f || headFrameCenter.y() < 0.5f || headFrameCenter.y() > 9.f
+                        || headFrameCenter.z() < -3.f || headFrameCenter.z() > 10.f))
+                {
+                    headAxisDetached = true;
+                    headAxisReason = "facehair-not-front";
+                }
+            }
             const float maxHeadPlanarDelta = faceTight ? 18.f : 42.f;
             const float maxHeadVerticalDelta = faceTight ? 24.f : 46.f;
             const float headPlanarDelta = std::sqrt(headDelta.x() * headDelta.x() + headDelta.y() * headDelta.y());
-            const bool headDetached = headRelative
+            const bool headDetached = headRelative && !isFalloutHeadSurfaceModel(model)
                 && (headPlanarDelta > maxHeadPlanarDelta || std::abs(headDelta.z()) > maxHeadVerticalDelta);
             const bool suspicious = (accessory && (centerDistance > 180.f || diagonal > 260.f))
-                || (!accessory && centerDistance > 420.f) || headDetached;
+                || (!accessory && centerDistance > 420.f) || headDetached || headAxisDetached;
 
             std::ostringstream message;
             message << "FNV/ESM4 diag: attachment bounds " << model << " for " << ptr.getCellRef().getRefId()
@@ -3072,7 +3149,10 @@ namespace MWRender
                     << " extent=(" << extent.x() << "," << extent.y() << "," << extent.z() << ")"
                     << " worldCenter=(" << worldCenter.x() << "," << worldCenter.y() << "," << worldCenter.z()
                     << ") attachLocal=(" << center.x() << "," << center.y() << "," << center.z()
-                    << ") headRel=(" << headDelta.x() << "," << headDelta.y() << "," << headDelta.z() << ")";
+                    << ") headRel=(" << headDelta.x() << "," << headDelta.y() << "," << headDelta.z()
+                    << ") headLocal=(" << headLocalCenter.x() << "," << headLocalCenter.y() << ","
+                    << headLocalCenter.z() << ") headFrame=(" << headFrameCenter.x() << ","
+                    << headFrameCenter.y() << "," << headFrameCenter.z() << ")";
             if (headNode != nullptr)
                 message << " headDelta=(" << headDelta.x() << "," << headDelta.y() << "," << headDelta.z()
                         << ") headPlanarDelta=" << headPlanarDelta;
@@ -3080,6 +3160,8 @@ namespace MWRender
                 message << " headDelta=(n/a)";
             message << " centerDistance=" << centerDistance << " diagonal=" << diagonal
                     << " headRelative=" << headRelative << " faceTight=" << faceTight
+                    << " faceAxisChecked=" << checksFaceAxes << " faceAxisReason="
+                    << (headAxisDetached ? headAxisReason : "OK")
                     << " verdict=" << (suspicious ? "SUSPECT" : "OK");
 
             if (suspicious)
@@ -4195,36 +4277,43 @@ namespace MWRender
             return nullptr;
         }
         const VFS::Path::Normalized correctedModel = Misc::ResourceHelpers::correctMeshPath(VFS::Path::Normalized(model));
-        if (mPtr.getCell() != nullptr)
+        const std::string loweredModel = Misc::StringUtils::lowerCase(std::string(model));
+        if (std::getenv("OPENMW_FNV_PROOF_HIDE_FACE_HAIR") != nullptr && isFalloutFaceHairModel(loweredModel))
         {
-            const std::string loweredModel = Misc::StringUtils::lowerCase(std::string(model));
-            if (std::getenv("OPENMW_FNV_PROOF_HIDE_FACE_HAIR") != nullptr
-                && (loweredModel.find("beard") != std::string::npos
-                    || loweredModel.find("facial") != std::string::npos))
-            {
-                Log(Debug::Info) << "FNV/ESM4 proof: skipped face hair diagnostic part " << correctedModel.value()
-                                 << " for " << mPtr.getCellRef().getRefId();
-                return nullptr;
-            }
-            if (std::getenv("OPENMW_FNV_PROOF_HIDE_HAIR") != nullptr && loweredModel.find("hair") != std::string::npos)
-            {
-                Log(Debug::Info) << "FNV/ESM4 proof: skipped hair diagnostic part " << correctedModel.value()
-                                 << " for " << mPtr.getCellRef().getRefId();
-                return nullptr;
-            }
-            if (std::getenv("OPENMW_FNV_PROOF_HIDE_HEADGEAR") != nullptr && isFalloutStaticHeadgearPart(model))
-            {
-                Log(Debug::Info) << "FNV/ESM4 proof: skipped headgear diagnostic part " << correctedModel.value()
-                                 << " for " << mPtr.getCellRef().getRefId();
-                return nullptr;
-            }
-            if (std::getenv("OPENMW_FNV_PROOF_FACE_PARTS_ONLY") != nullptr
-                && !shouldAttachFalloutStaticPartToHead(model))
-            {
-                Log(Debug::Info) << "FNV/ESM4 proof: skipped non-face diagnostic part " << correctedModel.value()
-                                 << " for " << mPtr.getCellRef().getRefId();
-                return nullptr;
-            }
+            Log(Debug::Info) << "FNV/ESM4 proof: skipped face hair diagnostic part " << correctedModel.value()
+                             << " for " << mPtr.getCellRef().getRefId();
+            return nullptr;
+        }
+        if (std::getenv("OPENMW_FNV_PROOF_HIDE_BROWS") != nullptr && isFalloutBrowModel(loweredModel))
+        {
+            Log(Debug::Info) << "FNV/ESM4 proof: skipped brow diagnostic part " << correctedModel.value()
+                             << " for " << mPtr.getCellRef().getRefId();
+            return nullptr;
+        }
+        if (std::getenv("OPENMW_FNV_PROOF_HIDE_HAIR") != nullptr && isFalloutScalpHairModel(loweredModel))
+        {
+            Log(Debug::Info) << "FNV/ESM4 proof: skipped scalp hair diagnostic part " << correctedModel.value()
+                             << " for " << mPtr.getCellRef().getRefId();
+            return nullptr;
+        }
+        if (std::getenv("OPENMW_FNV_PROOF_HIDE_ALL_HAIR") != nullptr && loweredModel.find("hair") != std::string::npos)
+        {
+            Log(Debug::Info) << "FNV/ESM4 proof: skipped all-hair diagnostic part " << correctedModel.value()
+                             << " for " << mPtr.getCellRef().getRefId();
+            return nullptr;
+        }
+        if (std::getenv("OPENMW_FNV_PROOF_HIDE_HEADGEAR") != nullptr && isFalloutStaticHeadgearPart(model))
+        {
+            Log(Debug::Info) << "FNV/ESM4 proof: skipped headgear diagnostic part " << correctedModel.value()
+                             << " for " << mPtr.getCellRef().getRefId();
+            return nullptr;
+        }
+        if (std::getenv("OPENMW_FNV_PROOF_FACE_PARTS_ONLY") != nullptr
+            && !shouldAttachFalloutStaticPartToHead(model))
+        {
+            Log(Debug::Info) << "FNV/ESM4 proof: skipped non-face diagnostic part " << correctedModel.value()
+                             << " for " << mPtr.getCellRef().getRefId();
+            return nullptr;
         }
         osg::ref_ptr<const osg::Node> templateNode = mResourceSystem->getSceneManager()->getTemplate(correctedModel);
 
