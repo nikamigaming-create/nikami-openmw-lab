@@ -70,17 +70,17 @@ namespace
     {
         const VFS::Manager* const vfs = MWBase::Environment::get().getResourceSystem()->getVFS();
         return Misc::ResourceHelpers::correctTexturePath(
-            "textures\\interface\\worldmap\\wasteland_1024_no_map.png", vfs);
+            "textures\\interface\\worldmap\\wasteland_nv_1024_no_map.png", vfs);
     }
 
     const char* getFalloutMapModeLabel(bool global)
     {
-        return global ? "WASTELAND" : "LOCAL MAP";
+        return global ? "MOJAVE" : "LOCAL MAP";
     }
 
     const char* getFalloutMapToggleLabel(bool global)
     {
-        return global ? "LOCAL MAP" : "WASTELAND";
+        return global ? "LOCAL MAP" : "MOJAVE";
     }
 
     enum LocalMapWidgetDepth
@@ -530,6 +530,14 @@ namespace MWGui
     void LocalMapBase::setPlayerPos(int cellX, int cellY, const float nx, const float ny)
     {
         MyGUI::IntPoint pos = getPosition(cellX, cellY, nx, ny) - MyGUI::IntPoint{ 16, 16 };
+        static bool loggedFalloutLocalTracking = false;
+        if (!loggedFalloutLocalTracking && isFalloutContentLoaded())
+        {
+            loggedFalloutLocalTracking = true;
+            Log(Debug::Info) << "FNV/ESM4 proof: local map tracks player cell=(" << cellX << "," << cellY
+                             << ") norm=(" << nx << "," << ny << ") arrow=(" << pos.left << "," << pos.top
+                             << ")";
+        }
 
         if (pos != mCompass->getPosition())
         {
@@ -1387,6 +1395,14 @@ namespace MWGui
         float x, y;
         worldPosToGlobalMapImageSpace(worldX, worldY, x, y);
         mPlayerArrowGlobal->setPosition(MyGUI::IntPoint(static_cast<int>(x - 16), static_cast<int>(y - 16)));
+        static bool loggedFalloutGlobalTracking = false;
+        if (!loggedFalloutGlobalTracking && isFalloutContentLoaded())
+        {
+            loggedFalloutGlobalTracking = true;
+            Log(Debug::Info) << "FNV/ESM4 proof: global map tracks player world=(" << worldX << "," << worldY
+                             << ") image=(" << x << "," << y << ") arrow=(" << mPlayerArrowGlobal->getLeft()
+                             << "," << mPlayerArrowGlobal->getTop() << ")";
+        }
     }
 
     void MapWindow::setGlobalMapPlayerDir(const float x, const float y)

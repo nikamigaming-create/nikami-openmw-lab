@@ -38,6 +38,8 @@
 
 #include "../mwmechanics/character.hpp"
 
+#include <osg/AlphaFunc>
+#include <osg/BlendFunc>
 #include <osg/ComputeBoundsVisitor>
 #include <osg/FrontFace>
 #include <osg/Geode>
@@ -228,6 +230,67 @@ namespace MWRender
             {
                 stateSet->setMode(GL_CULL_FACE, osg::StateAttribute::OFF | osg::StateAttribute::OVERRIDE);
             }
+        };
+
+        class FalloutCutoutAlphaVisitor : public osg::NodeVisitor
+        {
+        public:
+            FalloutCutoutAlphaVisitor()
+                : osg::NodeVisitor(TRAVERSE_ALL_CHILDREN)
+            {
+            }
+
+            void apply(osg::Node& node) override
+            {
+                applyCutoutState(node.getOrCreateStateSet());
+                traverse(node);
+            }
+
+            void apply(osg::Geode& geode) override
+            {
+                applyCutoutState(geode.getOrCreateStateSet());
+                for (unsigned int i = 0; i < geode.getNumDrawables(); ++i)
+                    if (osg::Drawable* drawable = geode.getDrawable(i))
+                        applyDrawable(*drawable);
+                traverse(geode);
+            }
+
+            void apply(osg::Drawable& drawable) override { applyDrawable(drawable); }
+
+            unsigned int getAppliedCount() const { return mApplied; }
+
+        private:
+            void applyDrawable(osg::Drawable& drawable)
+            {
+                applyCutoutState(drawable.getOrCreateStateSet());
+                if (SceneUtil::RigGeometry* rig = dynamic_cast<SceneUtil::RigGeometry*>(&drawable))
+                {
+                    if (osg::Geometry* source = rig->getSourceGeometry())
+                        applyCutoutState(source->getOrCreateStateSet());
+                    for (unsigned int i = 0; i < 2; ++i)
+                        if (osg::Geometry* geometry = rig->getRenderGeometry(i))
+                            applyCutoutState(geometry->getOrCreateStateSet());
+                }
+            }
+
+            void applyCutoutState(osg::StateSet* stateSet)
+            {
+                if (stateSet == nullptr)
+                    return;
+
+                osg::ref_ptr<osg::AlphaFunc> alphaFunc = new osg::AlphaFunc(osg::AlphaFunc::GREATER, 0.18f);
+                osg::ref_ptr<osg::BlendFunc> blendFunc
+                    = new osg::BlendFunc(osg::BlendFunc::SRC_ALPHA, osg::BlendFunc::ONE_MINUS_SRC_ALPHA);
+                stateSet->setMode(GL_BLEND, osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
+                stateSet->setMode(GL_ALPHA_TEST, osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
+                stateSet->setAttributeAndModes(alphaFunc, osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
+                stateSet->setAttributeAndModes(blendFunc, osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
+                stateSet->setRenderingHint(osg::StateSet::TRANSPARENT_BIN);
+                stateSet->setDefine("FORCE_OPAQUE", "0", osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
+                ++mApplied;
+            }
+
+            unsigned int mApplied = 0;
         };
 
         class FalloutProofMouthDriver : public osg::NodeCallback
@@ -4648,6 +4711,16 @@ namespace MWRender
             const float emissionStrength = isFalloutHairTintModel(correctedModel.value()) ? 0.65f : 0.f;
             TintMaterialVisitor visitor(*tint, emissionStrength);
             attached->accept(visitor);
+        }
+        if (attached != nullptr
+            && (isFalloutHairTintModel(correctedModel.value()) || isFalloutScalpHairModel(correctedModel.value())
+                || isFalloutFaceHairModel(correctedModel.value()) || isFalloutBrowModel(correctedModel.value())))
+        {
+            FalloutCutoutAlphaVisitor cutoutAlpha;
+            attached->accept(cutoutAlpha);
+            Log(Debug::Info) << "FNV/ESM4 diag: enabled cutout alpha on " << cutoutAlpha.getAppliedCount()
+                             << " hair/brow state(s) for " << correctedModel.value() << " on "
+                             << mPtr.getCellRef().getRefId();
         }
         if (attached != nullptr && isFalloutEyeSurfaceModel(correctedModel.value()))
         {
