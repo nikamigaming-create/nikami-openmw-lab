@@ -101,6 +101,26 @@ namespace MWGui
         magickaFrame->eventMouseButtonClick += MyGUI::newDelegate(this, &HUD::onHMSClicked);
         fatigueFrame->eventMouseButtonClick += MyGUI::newDelegate(this, &HUD::onHMSClicked);
 
+        bool falloutContent = std::getenv("OPENMW_FNV_PROOF_PIPBOY_SURFACE") != nullptr;
+        if (!falloutContent && MWBase::Environment::get().getWorld())
+        {
+            for (const std::string& file : MWBase::Environment::get().getWorld()->getContentFiles())
+            {
+                if (file.find("FalloutNV.esm") != std::string::npos || file.find("falloutnv.esm") != std::string::npos)
+                {
+                    falloutContent = true;
+                    break;
+                }
+            }
+        }
+
+        if (falloutContent)
+        {
+            if (mHealth) { mHealth->setProperty("Skin", "MW_EnergyBar_Green"); }
+            if (mMagicka) { mMagicka->setProperty("Skin", "MW_EnergyBar_Green"); }
+            if (fatigueFrame) fatigueFrame->setVisible(false);
+        }
+
         // Drowning bar
         getWidget(mDrowningBar, "DrowningBar");
         getWidget(mDrowningFrame, "DrowningFrame");

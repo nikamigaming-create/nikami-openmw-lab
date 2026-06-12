@@ -139,6 +139,24 @@ namespace MWGui
 
         mFilterAll->setStateSelected(true);
 
+        bool falloutContent = std::getenv("OPENMW_FNV_PROOF_PIPBOY_SURFACE") != nullptr;
+        if (!falloutContent && MWBase::Environment::get().getWorld())
+        {
+            for (const std::string& file : MWBase::Environment::get().getWorld()->getContentFiles())
+            {
+                if (file.find("FalloutNV.esm") != std::string::npos || file.find("falloutnv.esm") != std::string::npos)
+                {
+                    falloutContent = true;
+                    break;
+                }
+            }
+        }
+        if (falloutContent)
+        {
+            if (mFilterMagic) mFilterMagic->setCaption("AID");
+            if (mFilterMisc) mFilterMisc->setCaption("MISC / AMMO");
+        }
+
         setGuiMode(mGuiMode);
 
         if (Settings::gui().mControllerMenus)

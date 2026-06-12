@@ -681,8 +681,21 @@ namespace MWGui
             if (!mSkillWidgets.empty())
                 addSeparator(coord1, coord2);
 
-            addGroup(MWBase::Environment::get().getWindowManager()->getGameSettingString("sBirthSign", "Sign"), coord1,
-                coord2);
+            bool falloutContent = std::getenv("OPENMW_FNV_PROOF_PIPBOY_SURFACE") != nullptr;
+            if (!falloutContent && MWBase::Environment::get().getWorld())
+            {
+                for (const std::string& file : MWBase::Environment::get().getWorld()->getContentFiles())
+                {
+                    if (file.find("FalloutNV.esm") != std::string::npos || file.find("falloutnv.esm") != std::string::npos)
+                    {
+                        falloutContent = true;
+                        break;
+                    }
+                }
+            }
+
+            std::string signStr = falloutContent ? "TRAITS" : std::string(MWBase::Environment::get().getWindowManager()->getGameSettingString("sBirthSign", "Sign"));
+            addGroup(signStr, coord1, coord2);
             const ESM::BirthSign* sign = store.get<ESM::BirthSign>().find(mBirthSignId);
             MyGUI::Widget* w = addItem(sign->mName, coord1, coord2);
 

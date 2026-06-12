@@ -80,8 +80,11 @@ local layersForArrangement = {
 }
 
 local pipBoyLayers = {
-    -- Reserved for dedicated live wrist Pip-Boy layers. The regular inventory,
-    -- stats, map, and utility windows remain front arranged menu panels.
+    InventoryWindow = true,
+    MapWindow = true,
+    StatsWindow = true,
+    SpellWindow = true,
+    Windows = true,
 }
 
 local function getWindowLayer(window)
@@ -450,15 +453,20 @@ local function setupDefaults(modes)
     layerConfig.HUD = createDefaultConfig(0, true)
 
     layerConfig.InventoryWindow.backgroundOpacity = 0.82
-    layerConfig.InventoryWindow.pixelsPerMeter = 1400
+    layerConfig.InventoryWindow.pixelsPerMeter = 2800
+    layerConfig.InventoryWindow.space = 'PipBoyInventory'
     layerConfig.StatsWindow.backgroundOpacity = 0.78
-    layerConfig.StatsWindow.pixelsPerMeter = 1400
+    layerConfig.StatsWindow.pixelsPerMeter = 3000
+    layerConfig.StatsWindow.space = 'PipBoyStats'
     layerConfig.MapWindow.backgroundOpacity = 0.78
-    layerConfig.MapWindow.pixelsPerMeter = 1400
+    layerConfig.MapWindow.pixelsPerMeter = 3000
+    layerConfig.MapWindow.space = 'PipBoyMap'
     layerConfig.SpellWindow.backgroundOpacity = 0.78
-    layerConfig.SpellWindow.pixelsPerMeter = 1400
+    layerConfig.SpellWindow.pixelsPerMeter = 3000
+    layerConfig.SpellWindow.space = 'PipBoyUtility'
     layerConfig.Windows.backgroundOpacity = 0.82
-    layerConfig.Windows.pixelsPerMeter = 1400
+    layerConfig.Windows.pixelsPerMeter = 3000
+    layerConfig.Windows.space = 'PipBoyUtility'
 
     for layer, config in pairs(layerConfig) do
         setLayerConfigIfNotOverridden(layer, config)

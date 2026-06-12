@@ -816,7 +816,23 @@ namespace MWGui
 
         const bool global = Settings::map().mGlobal;
 
-        mButton->setCaptionWithReplacing(global ? "#{sLocal}" : "#{sWorld}");
+        bool falloutContent = std::getenv("OPENMW_FNV_PROOF_PIPBOY_SURFACE") != nullptr;
+        if (!falloutContent && MWBase::Environment::get().getWorld())
+        {
+            for (const std::string& file : MWBase::Environment::get().getWorld()->getContentFiles())
+            {
+                if (file.find("FalloutNV.esm") != std::string::npos || file.find("falloutnv.esm") != std::string::npos)
+                {
+                    falloutContent = true;
+                    break;
+                }
+            }
+        }
+
+        if (falloutContent)
+            mButton->setCaption(global ? "LOCAL MAP" : "WASTELAND");
+        else
+            mButton->setCaptionWithReplacing(global ? "#{sLocal}" : "#{sWorld}");
 
         getWidget(mEventBoxGlobal, "EventBoxGlobal");
         mEventBoxGlobal->eventMouseDrag += MyGUI::newDelegate(this, &MapWindow::onMouseDrag);
@@ -1236,7 +1252,23 @@ namespace MWGui
         mGlobalMap->setVisible(global);
         mLocalMap->setVisible(!global);
 
-        mButton->setCaptionWithReplacing(global ? "#{sLocal}" : "#{sWorld}");
+        bool falloutContent = std::getenv("OPENMW_FNV_PROOF_PIPBOY_SURFACE") != nullptr;
+        if (!falloutContent && MWBase::Environment::get().getWorld())
+        {
+            for (const std::string& file : MWBase::Environment::get().getWorld()->getContentFiles())
+            {
+                if (file.find("FalloutNV.esm") != std::string::npos || file.find("falloutnv.esm") != std::string::npos)
+                {
+                    falloutContent = true;
+                    break;
+                }
+            }
+        }
+
+        if (falloutContent)
+            mButton->setCaption(global ? "LOCAL MAP" : "WASTELAND");
+        else
+            mButton->setCaptionWithReplacing(global ? "#{sLocal}" : "#{sWorld}");
         mControllerButtons.mX = global ? "#{Interface:Local}" : "#{Interface:World}";
         MWBase::Environment::get().getWindowManager()->updateControllerButtonsOverlay();
     }

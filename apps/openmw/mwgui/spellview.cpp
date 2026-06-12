@@ -1,4 +1,5 @@
 #include "spellview.hpp"
+#include "../mwbase/world.hpp"
 
 #include <MyGUI_FactoryManager.h>
 #include <MyGUI_Gui.h>
@@ -106,12 +107,25 @@ namespace MWGui
             const Spell& spell = mModel->getItem(i);
             if (curType != spell.mType)
             {
+                bool falloutContent = std::getenv("OPENMW_FNV_PROOF_PIPBOY_SURFACE") != nullptr;
+                if (!falloutContent && MWBase::Environment::get().getWorld())
+                {
+                    for (const std::string& file : MWBase::Environment::get().getWorld()->getContentFiles())
+                    {
+                        if (file.find("FalloutNV.esm") != std::string::npos || file.find("falloutnv.esm") != std::string::npos)
+                        {
+                            falloutContent = true;
+                            break;
+                        }
+                    }
+                }
+
                 if (spell.mType == Spell::Type_Power)
-                    addGroup("#{sPowers}", {});
+                    addGroup(falloutContent ? "TRAITS" : "#{sPowers}", {});
                 else if (spell.mType == Spell::Type_Spell)
-                    addGroup("#{sSpells}", mShowCostColumn ? "#{sCostChance}" : "");
+                    addGroup(falloutContent ? "PERKS" : "#{sSpells}", mShowCostColumn ? "#{sCostChance}" : "");
                 else
-                    addGroup("#{sMagicItem}", mShowCostColumn ? "#{sCostCharge}" : "");
+                    addGroup(falloutContent ? "EFFX" : "#{sMagicItem}", mShowCostColumn ? "#{sCostCharge}" : "");
                 curType = spell.mType;
             }
 
