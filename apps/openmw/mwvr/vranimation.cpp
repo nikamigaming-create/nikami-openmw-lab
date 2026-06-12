@@ -281,15 +281,7 @@ namespace MWVR
             bipToHand.makeIdentity();
 
         const osg::Quat localRotation = bipToHand.getRotate();
-        osg::Matrix handLocal;
-        if (bounds.valid())
-        {
-            const osg::Vec3f center = bounds.center();
-            handLocal.makeRotate(localRotation);
-            handLocal.postMultTranslate(-(localRotation * center));
-        }
-        else
-            handLocal = bipToHand;
+        osg::Matrix handLocal = bipToHand;
 
         osg::ref_ptr<osg::MatrixTransform> transform = new osg::MatrixTransform;
         transform->setMatrix(handLocal);
@@ -297,7 +289,7 @@ namespace MWVR
                          << handLocal.getTrans().x() << "," << handLocal.getTrans().y() << ","
                          << handLocal.getTrans().z() << ") quat=(" << localRotation.x() << ","
                          << localRotation.y() << "," << localRotation.z() << "," << localRotation.w()
-                         << ") yawCorrection=0";
+                         << ") yawCorrection=0 bindOffset=preserved";
 
         if (bounds.valid())
         {
