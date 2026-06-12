@@ -83,11 +83,7 @@ namespace MWVR
 
     bool shouldUseFalloutVrHandFallback(Resource::ResourceSystem* resourceSystem)
     {
-        const VFS::Manager* vfs = resourceSystem != nullptr ? resourceSystem->getVFS() : nullptr;
-        return vfs != nullptr
-            && (vfs->exists(VFS::Path::Normalized("meshes/characters/_male/lefthandpipboyglove.nif"))
-                || vfs->exists(VFS::Path::Normalized("meshes/characters/_male/lefthand.nif")))
-            && vfs->exists(VFS::Path::Normalized("meshes/characters/_male/righthand.nif"));
+        return false;
     }
 
     VFS::Path::Normalized getFalloutLeftVrHandMesh(Resource::ResourceSystem* resourceSystem)
@@ -616,11 +612,11 @@ namespace MWVR
         auto& xrInput = OpenXRInput::instance();
 
         const bool falloutHandFallback = shouldUseFalloutVrHandFallback(mResourceSystem);
-        // Morrowind's meshes do not point forward by default and need re-positioning and orientation.
-        // Fallout hands already live on Fallout hand bones, so use the runtime grip pose directly.
-        osg::Vec3 offset = falloutHandFallback ? osg::Vec3(0, 0, 0) : osg::Vec3(15, 0, 0);
+        // Keep the stock OpenMW VR controller-space hand path authoritative. Fallout meshes can
+        // be swapped onto this stable path later, but should not drive tracking from avatar bones.
+        osg::Vec3 offset(15, 0, 0);
         Log(Debug::Info) << "FNV/ESM4 diag: VR hand tracking mode falloutFallback=" << falloutHandFallback
-                         << " nativeGripOrientation=" << falloutHandFallback
+                         << " nativeGripOrientation=false"
                          << " baseOffset=(" << offset.x() << "," << offset.y() << "," << offset.z() << ")";
 
         for (int i = 0; i < 2; i++)
@@ -628,19 +624,19 @@ namespace MWVR
             XrPath path = i == 0 ? mLeftHandPath : mRightHandPath;
             auto& ctx = mVrControllers[path] = {};
             ctx.topLevelPath = path;
-            ctx.spaceName = i == 0 ? OpenXRInput::LeftHandGrip : OpenXRInput::RightHandGrip;
+            if (VR::getLeftHandedMode())
+                ctx.spaceName = i == 1 ? OpenXRInput::LeftHandAim : OpenXRInput::RightHandAim;
+            else
+                ctx.spaceName = i == 0 ? OpenXRInput::LeftHandAim : OpenXRInput::RightHandAim;
             ctx.forearmBone = i == 0 ? "bip01 l forearm" : "bip01 r forearm";
             ctx.forearmController = std::make_unique<TrackingController>(
-                xrInput.getSpace(ctx.spaceName), offset, i == 0, false, falloutHandFallback);
+                xrInput.getSpace(ctx.spaceName), offset, i == 0, VR::getLeftHandedMode(), false);
             ctx.handBone = i == 0 ? "Bip01 L Hand" : "Bip01 R Hand";
             ctx.handController = new HandController;
-            ctx.handController->setEnabled(!falloutHandFallback);
             ctx.indexFingerBone[0] = i == 0 ? "bip01 l finger1" : "bip01 r finger1";
             ctx.indexFingerControllers[0] = new FingerController;
-            ctx.indexFingerControllers[0]->setEnabled(!falloutHandFallback);
             ctx.indexFingerBone[1] = i == 0 ? "bip01 l finger2" : "bip01 r finger2";
             ctx.indexFingerControllers[1] = new FingerController;
-            ctx.indexFingerControllers[1]->setEnabled(!falloutHandFallback);
         }
     }
 
@@ -1058,7 +1054,7 @@ namespace MWVR
         for (auto& it : mVrControllers)
         {
             disableTracking(it.second.topLevelPath);
-            if (VR::getVR() || VR::getControllerActive(it.second.topLevelPath))
+            if (VR::getControllerActive(it.second.topLevelPath))
                 enableTracking(it.second.topLevelPath);
         }
 
