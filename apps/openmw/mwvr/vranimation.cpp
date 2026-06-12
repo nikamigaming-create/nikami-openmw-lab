@@ -649,7 +649,8 @@ namespace MWVR
         osg::Vec3 offset = falloutHandFallback ? osg::Vec3(0, 0, 0) : osg::Vec3(15, 0, 0);
         const bool useNativeGripOrientation = false;
         Log(Debug::Info) << "FNV/ESM4 diag: VR hand tracking mode falloutFallback=" << falloutHandFallback
-                         << " nativeGripOrientation=" << useNativeGripOrientation << " trackingSpace=Grip"
+                         << " nativeGripOrientation=" << useNativeGripOrientation
+                         << " trackingSpace=" << (falloutHandFallback ? "WristTop/Aim-derived" : "Grip")
                          << " baseOffset=(" << offset.x() << "," << offset.y() << "," << offset.z() << ")";
 
         for (int i = 0; i < 2; i++)
@@ -661,6 +662,15 @@ namespace MWVR
                 ctx.spaceName = i == 1 ? OpenXRInput::LeftHandGrip : OpenXRInput::RightHandGrip;
             else
                 ctx.spaceName = i == 0 ? OpenXRInput::LeftHandGrip : OpenXRInput::RightHandGrip;
+            if (falloutHandFallback)
+            {
+                const std::string wristSpace = i == 0 ? "LeftWristTop" : "RightWristTop";
+                if (xrInput.getSpace(wristSpace))
+                    ctx.spaceName = wristSpace;
+                else
+                    Log(Debug::Warning) << "FNV/ESM4 diag: VR wrist hand space missing " << wristSpace
+                                        << "; falling back to " << ctx.spaceName;
+            }
             ctx.forearmBone = i == 0 ? "bip01 l forearm" : "bip01 r forearm";
             ctx.forearmController = std::make_unique<TrackingController>(
                 xrInput.getSpace(ctx.spaceName), offset, i == 0, VR::getLeftHandedMode(), useNativeGripOrientation,
