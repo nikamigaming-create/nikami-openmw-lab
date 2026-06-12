@@ -288,8 +288,6 @@ namespace MWVR
         const bool leftHand = bone.find(" L ") != std::string_view::npos;
         if (leftHand)
             handLocal.postMultRotate(osg::Quat(osg::PI, osg::Vec3f(0, 1, 0)));
-        const osg::Vec3f falloutWristCalibration(0.f, 6.f, -12.f);
-        handLocal.setTrans(handLocal.getTrans() + falloutWristCalibration);
 
         osg::ref_ptr<osg::MatrixTransform> transform = new osg::MatrixTransform;
         transform->setMatrix(handLocal);
@@ -299,8 +297,6 @@ namespace MWVR
                          << handLocal.getTrans().z() << ") quat=(" << localRotation.x() << ","
                          << localRotation.y() << "," << localRotation.z() << "," << localRotation.w()
                          << ") sourceCenter=(" << center.x() << "," << center.y() << "," << center.z()
-                         << ") wristCalibration=(" << falloutWristCalibration.x() << ","
-                         << falloutWristCalibration.y() << "," << falloutWristCalibration.z()
                          << ") leftRollFlip=" << leftHand << " bindOffset=discarded";
 
         if (bounds.valid())
