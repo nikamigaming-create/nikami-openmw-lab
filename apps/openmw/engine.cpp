@@ -1765,15 +1765,9 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
             return true;
         }
 
-        Log(Debug::Info) << "FNV/ESM4 proof: capturing native screenshot at frame " << frameNumber;
-        osg::ref_ptr<osg::Image> screenshot = new osg::Image;
-        mWorld->screenshot(screenshot.get(), 1280, 720);
-        const std::filesystem::path fileName = SceneUtil::writeScreenshotToFile(
-            mCfgMgr.getScreenshotPath(), Settings::general().mScreenshotFormat, *screenshot);
-        if (fileName.empty())
-            Log(Debug::Warning) << "FNV/ESM4 proof: native screenshot write failed at frame " << frameNumber;
-        else
-            Log(Debug::Info) << mCfgMgr.getScreenshotPath() / fileName << " has been saved";
+        Log(Debug::Info) << "FNV/ESM4 proof: queuing GUI-inclusive native screenshot at frame " << frameNumber;
+        mScreenCaptureHandler->setFramesToCapture(1);
+        mScreenCaptureHandler->captureNextFrame(*mViewer);
         if (proofScreenshotFrameReached)
             ++proofScreenshotFrameIndex;
         if (proofScreenshotReadyFramesReached)
