@@ -280,7 +280,14 @@ namespace MWVR
         if (!bipToHand.invert(handInBip))
             bipToHand.makeIdentity();
 
-        const osg::Quat localRotation = bipToHand.getRotate();
+        osg::Quat localRotation = bipToHand.getRotate();
+        const bool leftHand = bone == "Bip01 L Hand";
+        const bool rightHand = bone == "Bip01 R Hand";
+        if (leftHand || rightHand)
+        {
+            const float yaw = leftHand ? -osg::PI_2 : osg::PI_2;
+            localRotation = localRotation * osg::Quat(yaw, osg::Vec3f(0, 0, 1));
+        }
         osg::Matrix handLocal;
         if (bounds.valid())
         {
@@ -296,7 +303,8 @@ namespace MWVR
         Log(Debug::Info) << "FNV/ESM4 diag: made VR static hand mesh hand-local matrix trans=("
                          << handLocal.getTrans().x() << "," << handLocal.getTrans().y() << ","
                          << handLocal.getTrans().z() << ") quat=(" << localRotation.x() << ","
-                         << localRotation.y() << "," << localRotation.z() << "," << localRotation.w() << ")";
+                         << localRotation.y() << "," << localRotation.z() << "," << localRotation.w()
+                         << ") yawCorrection=" << (leftHand ? -90 : (rightHand ? 90 : 0));
 
         if (bounds.valid())
         {
