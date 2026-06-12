@@ -272,28 +272,32 @@ namespace MWVR
         osg::ref_ptr<const osg::Node> templateNode, osg::Group* attachNode, Resource::SceneManager* sceneManager,
         const osg::Matrix& handInBip, std::string_view bone)
     {
+        (void)handInBip;
         osg::ref_ptr<osg::Node> cloned = sceneManager->getInstance(templateNode);
         osg::ComputeBoundsVisitor boundsVisitor;
         cloned->accept(boundsVisitor);
         const osg::BoundingBox bounds = boundsVisitor.getBoundingBox();
-        osg::Matrix bipToHand;
-        if (!bipToHand.invert(handInBip))
-            bipToHand.makeIdentity();
-
-        const osg::Quat localRotation = bipToHand.getRotate();
-        osg::Matrix handLocal = bipToHand;
+        osg::Matrix handLocal;
+        handLocal.makeIdentity();
+        osg::Vec3f center;
+        if (bounds.valid())
+        {
+            center = bounds.center();
+            handLocal.setTrans(-center);
+        }
 
         osg::ref_ptr<osg::MatrixTransform> transform = new osg::MatrixTransform;
         transform->setMatrix(handLocal);
-        Log(Debug::Info) << "FNV/ESM4 diag: made VR static hand mesh hand-local matrix trans=("
+        const osg::Quat localRotation = handLocal.getRotate();
+        Log(Debug::Info) << "FNV/ESM4 diag: made VR static hand mesh stable controller-local matrix trans=("
                          << handLocal.getTrans().x() << "," << handLocal.getTrans().y() << ","
                          << handLocal.getTrans().z() << ") quat=(" << localRotation.x() << ","
                          << localRotation.y() << "," << localRotation.z() << "," << localRotation.w()
-                         << ") yawCorrection=0 bindOffset=preserved";
+                         << ") sourceCenter=(" << center.x() << "," << center.y() << "," << center.z()
+                         << ") bindOffset=discarded";
 
         if (bounds.valid())
         {
-            const osg::Vec3f center = bounds.center();
             Log(Debug::Info) << "FNV/ESM4 diag: VR static hand source skeleton-space local center=("
                              << center.x() << "," << center.y() << "," << center.z()
                              << ") distance=" << center.length();
@@ -642,9 +646,10 @@ namespace MWVR
         const bool falloutHandFallback = shouldUseFalloutVrHandFallback(mResourceSystem);
         // Keep the stock OpenMW VR controller-space hand path authoritative. Fallout meshes can
         // be swapped onto this stable path later, but should not drive tracking from avatar bones.
-        osg::Vec3 offset(15, 0, 0);
+        osg::Vec3 offset = falloutHandFallback ? osg::Vec3(0, 0, 0) : osg::Vec3(15, 0, 0);
+        const bool useNativeGripOrientation = falloutHandFallback;
         Log(Debug::Info) << "FNV/ESM4 diag: VR hand tracking mode falloutFallback=" << falloutHandFallback
-                         << " nativeGripOrientation=false"
+                         << " nativeGripOrientation=" << useNativeGripOrientation << " trackingSpace=Grip"
                          << " baseOffset=(" << offset.x() << "," << offset.y() << "," << offset.z() << ")";
 
         for (int i = 0; i < 2; i++)
@@ -653,12 +658,12 @@ namespace MWVR
             auto& ctx = mVrControllers[path] = {};
             ctx.topLevelPath = path;
             if (VR::getLeftHandedMode())
-                ctx.spaceName = i == 1 ? OpenXRInput::LeftHandAim : OpenXRInput::RightHandAim;
+                ctx.spaceName = i == 1 ? OpenXRInput::LeftHandGrip : OpenXRInput::RightHandGrip;
             else
-                ctx.spaceName = i == 0 ? OpenXRInput::LeftHandAim : OpenXRInput::RightHandAim;
+                ctx.spaceName = i == 0 ? OpenXRInput::LeftHandGrip : OpenXRInput::RightHandGrip;
             ctx.forearmBone = i == 0 ? "bip01 l forearm" : "bip01 r forearm";
             ctx.forearmController = std::make_unique<TrackingController>(
-                xrInput.getSpace(ctx.spaceName), offset, i == 0, VR::getLeftHandedMode(), false,
+                xrInput.getSpace(ctx.spaceName), offset, i == 0, VR::getLeftHandedMode(), useNativeGripOrientation,
                 i == 0 ? "left" : "right");
             ctx.handBone = i == 0 ? "Bip01 L Hand" : "Bip01 R Hand";
             ctx.handController = new HandController;
@@ -807,6 +812,7 @@ namespace MWVR
             attachHand(ESM::PartReferenceType::PRT_RHand, getFalloutRightVrHandMesh(mResourceSystem), "Bip01 R Hand");
         }
 
+        updateTrackingControllers();
         updateCharHeight();
     }
 
@@ -1095,16 +1101,20 @@ namespace MWVR
         auto& ctx = mVrControllers[path];
 
         auto forearm = mNodeMap.find(ctx.forearmBone);
+        bool forearmBound = false;
         if (forearm != mNodeMap.end())
         {
             ctx.forearmController->setTransform(forearm->second);
+            forearmBound = true;
         }
 
         auto hand = mNodeMap.find(ctx.handBone);
+        bool handBound = false;
         if (hand != mNodeMap.end())
         {
             auto node = hand->second;
             node->addUpdateCallback(ctx.handController);
+            handBound = true;
         }
 
         auto finger1 = mNodeMap.find(ctx.indexFingerBone[0]);
@@ -1120,6 +1130,11 @@ namespace MWVR
         }
 
         ctx.enabled = true;
+        Log(Debug::Info) << "FNV/ESM4 diag: VR tracking enabled hand=" << (ctx.handBone.find(" L ") != std::string::npos ? "left" : "right")
+                         << " active=" << VR::getControllerActive(ctx.topLevelPath)
+                         << " forearmBound=" << forearmBound
+                         << " handBound=" << handBound
+                         << " space=" << ctx.spaceName;
     }
 
     void VRAnimation::disableTracking(XrPath path) {
@@ -1236,8 +1251,8 @@ namespace MWVR
 
     void VRAnimation::onInteractionProfileActiveChanged(XrPath topLevelPath, bool isActive) 
     {
-        updateTrackingControllers();
         updateParts();
+        updateTrackingControllers();
     }
 
     void VRAnimation::addAnimSource(std::string_view model, const std::string& baseModel) 
