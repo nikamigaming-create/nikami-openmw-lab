@@ -701,6 +701,19 @@ namespace XR
 
         if (XR_FAILED(res))
         {
+            if (res == XR_ERROR_TIME_INVALID)
+            {
+                static bool loggedTimeInvalid = false;
+                if (!loggedTimeInvalid)
+                {
+                    Log(Debug::Warning)
+                        << "OpenXR: xrLocateSpace received an invalid predicted display time; treating pose as runtime-failure for this frame";
+                    loggedTimeInvalid = true;
+                }
+                pose.status = VR::TrackingStatus::RuntimeFailure;
+                return pose;
+            }
+
             // Call failed, exit.
             CHECK_XRRESULT(res, "xrLocateSpace");
             pose.status = VR::TrackingStatus::RuntimeFailure;
