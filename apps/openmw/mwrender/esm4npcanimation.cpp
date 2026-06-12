@@ -102,13 +102,35 @@ namespace MWRender
         private:
             bool neutralizeVertexColors(osg::Geometry& geometry) const
             {
-                if (geometry.getColorArray() == nullptr)
+                osg::Array* existingColors = geometry.getColorArray();
+                if (existingColors == nullptr)
                     return false;
 
-                osg::ref_ptr<osg::Vec4Array> color = new osg::Vec4Array;
-                color->push_back(mTint);
-                geometry.setColorArray(color, osg::Array::BIND_OVERALL);
-                return true;
+                if (osg::Vec4Array* colors = dynamic_cast<osg::Vec4Array*>(existingColors))
+                {
+                    for (osg::Vec4f& color : *colors)
+                    {
+                        color.x() *= mTint.x();
+                        color.y() *= mTint.y();
+                        color.z() *= mTint.z();
+                    }
+                    colors->dirty();
+                    return true;
+                }
+
+                if (osg::Vec4ubArray* colors = dynamic_cast<osg::Vec4ubArray*>(existingColors))
+                {
+                    for (osg::Vec4ub& color : *colors)
+                    {
+                        color.r() = static_cast<unsigned char>(std::clamp(color.r() * mTint.x(), 0.f, 255.f));
+                        color.g() = static_cast<unsigned char>(std::clamp(color.g() * mTint.y(), 0.f, 255.f));
+                        color.b() = static_cast<unsigned char>(std::clamp(color.b() * mTint.z(), 0.f, 255.f));
+                    }
+                    colors->dirty();
+                    return true;
+                }
+
+                return false;
             }
 
             void applyTint(osg::StateSet* stateSet) const
@@ -119,7 +141,7 @@ namespace MWRender
                     material = static_cast<osg::Material*>(existing->clone(osg::CopyOp::DEEP_COPY_ALL));
 
                 const bool neutralTint = mTint == osg::Vec4f(1.f, 1.f, 1.f, 1.f);
-                material->setColorMode(neutralTint ? osg::Material::OFF : osg::Material::AMBIENT_AND_DIFFUSE);
+                material->setColorMode(osg::Material::AMBIENT_AND_DIFFUSE);
                 material->setDiffuse(osg::Material::FRONT_AND_BACK, mTint);
                 material->setAmbient(osg::Material::FRONT_AND_BACK, mTint);
                 if (neutralTint)
@@ -146,23 +168,24 @@ namespace MWRender
 
             void applyDrawable(osg::Drawable& drawable) const
             {
+                const bool neutralTint = mTint == osg::Vec4f(1.f, 1.f, 1.f, 1.f);
                 applyTint(drawable.getOrCreateStateSet());
                 if (osg::Geometry* geometry = drawable.asGeometry())
-                    if (neutralizeVertexColors(*geometry))
+                    if (!neutralTint && neutralizeVertexColors(*geometry))
                         ++mNeutralizedVertexColorArrays;
                 if (SceneUtil::RigGeometry* rig = dynamic_cast<SceneUtil::RigGeometry*>(&drawable))
                 {
                     if (osg::Geometry* source = rig->getSourceGeometry())
                     {
                         applyTint(source->getOrCreateStateSet());
-                        if (neutralizeVertexColors(*source))
+                        if (!neutralTint && neutralizeVertexColors(*source))
                             ++mNeutralizedVertexColorArrays;
                     }
                     for (unsigned int i = 0; i < 2; ++i)
                         if (osg::Geometry* geometry = rig->getRenderGeometry(i))
                         {
                             applyTint(geometry->getOrCreateStateSet());
-                            if (neutralizeVertexColors(*geometry))
+                            if (!neutralTint && neutralizeVertexColors(*geometry))
                                 ++mNeutralizedVertexColorArrays;
                         }
                 }
@@ -2527,6 +2550,13 @@ namespace MWRender
                 || lowered.find("tongue") != std::string::npos;
         }
 
+        bool isFalloutMouthSurfaceModel(std::string_view model)
+        {
+            std::string lowered(model);
+            Misc::StringUtils::lowerCaseInPlace(lowered);
+            return lowered.find("teeth") != std::string::npos || lowered.find("tongue") != std::string::npos;
+        }
+
         float readFalloutProofFloat(const char* name, float fallback)
         {
             if (const char* value = std::getenv(name))
@@ -2549,20 +2579,20 @@ namespace MWRender
                     readFalloutProofFloat("OPENMW_FNV_HEADGEAR_OFFSET_Y", 0.f),
                     readFalloutProofFloat("OPENMW_FNV_HEADGEAR_OFFSET_Z", 0.f));
             if (lowered.find("brow") != std::string::npos)
-                return osg::Vec3f(readFalloutProofFloat("OPENMW_FNV_BROW_OFFSET_X", 0.f),
+                return osg::Vec3f(readFalloutProofFloat("OPENMW_FNV_BROW_OFFSET_X", 12.5f),
                     readFalloutProofFloat("OPENMW_FNV_BROW_OFFSET_Y", 0.f),
                     readFalloutProofFloat("OPENMW_FNV_BROW_OFFSET_Z", 0.f));
             if (lowered.find("eye") != std::string::npos)
-                return osg::Vec3f(readFalloutProofFloat("OPENMW_FNV_EYE_OFFSET_X", 0.f),
+                return osg::Vec3f(readFalloutProofFloat("OPENMW_FNV_EYE_OFFSET_X", 12.85f),
                     readFalloutProofFloat("OPENMW_FNV_EYE_OFFSET_Y", 0.f),
-                    readFalloutProofFloat("OPENMW_FNV_EYE_OFFSET_Z", -2.f));
+                    readFalloutProofFloat("OPENMW_FNV_EYE_OFFSET_Z", 0.f));
             if (lowered.find("beard") != std::string::npos)
-                return osg::Vec3f(readFalloutProofFloat("OPENMW_FNV_BEARD_OFFSET_X", 0.f),
+                return osg::Vec3f(readFalloutProofFloat("OPENMW_FNV_BEARD_OFFSET_X", 9.f),
                     readFalloutProofFloat("OPENMW_FNV_BEARD_OFFSET_Y", 0.f),
                     readFalloutProofFloat("OPENMW_FNV_BEARD_OFFSET_Z", 0.f));
             if (lowered.find("mouth") != std::string::npos || lowered.find("teeth") != std::string::npos
                 || lowered.find("tongue") != std::string::npos)
-                return osg::Vec3f(readFalloutProofFloat("OPENMW_FNV_MOUTH_OFFSET_X", 0.f),
+                return osg::Vec3f(readFalloutProofFloat("OPENMW_FNV_MOUTH_OFFSET_X", 11.4f),
                     readFalloutProofFloat("OPENMW_FNV_MOUTH_OFFSET_Y", 0.f),
                     readFalloutProofFloat("OPENMW_FNV_MOUTH_OFFSET_Z", 0.f));
             return osg::Vec3f();
@@ -2598,7 +2628,8 @@ namespace MWRender
             constexpr float degreesToRadians = 0.017453292519943295f;
             const float xDegrees = readFalloutProofFloat((prefix + "_ROTATION_X").c_str(), 0.f);
             const float yDegrees = readFalloutProofFloat((prefix + "_ROTATION_Y").c_str(), 0.f);
-            const float zDegrees = readFalloutProofFloat((prefix + "_ROTATION_Z").c_str(), 0.f);
+            const float zFallback = headgearStaticPart ? 0.f : 90.f;
+            const float zDegrees = readFalloutProofFloat((prefix + "_ROTATION_Z").c_str(), zFallback);
             const osg::Quat x(xDegrees * degreesToRadians, osg::Vec3f(1.f, 0.f, 0.f));
             const osg::Quat y(yDegrees * degreesToRadians, osg::Vec3f(0.f, 1.f, 0.f));
             const osg::Quat z(zDegrees * degreesToRadians, osg::Vec3f(0.f, 0.f, 1.f));
@@ -2628,7 +2659,7 @@ namespace MWRender
         {
             constexpr float degreesToRadians = 0.017453292519943295f;
             const float xDegrees = readFalloutProofFloat("OPENMW_FNV_HEAD_FRAME_ROTATION_X", 0.f);
-            const float yDegrees = readFalloutProofFloat("OPENMW_FNV_HEAD_FRAME_ROTATION_Y", 90.f);
+            const float yDegrees = readFalloutProofFloat("OPENMW_FNV_HEAD_FRAME_ROTATION_Y", 0.f);
             const float zDegrees = readFalloutProofFloat("OPENMW_FNV_HEAD_FRAME_ROTATION_Z", 0.f);
             const osg::Quat x(xDegrees * degreesToRadians, osg::Vec3f(1.f, 0.f, 0.f));
             const osg::Quat y(yDegrees * degreesToRadians, osg::Vec3f(0.f, 1.f, 0.f));
@@ -2724,7 +2755,7 @@ namespace MWRender
                              << headInBip.getTrans().z() << ") under " << bip01.getName()
                              << " fullMatrix=" << useFullHeadFrame << " rotation=("
                              << readFalloutProofFloat("OPENMW_FNV_HEAD_FRAME_ROTATION_X", 0.f) << ","
-                             << readFalloutProofFloat("OPENMW_FNV_HEAD_FRAME_ROTATION_Y", 90.f) << ","
+                             << readFalloutProofFloat("OPENMW_FNV_HEAD_FRAME_ROTATION_Y", 0.f) << ","
                              << readFalloutProofFloat("OPENMW_FNV_HEAD_FRAME_ROTATION_Z", 0.f) << ") parentOrder="
                              << parentOrder;
             return helper;
@@ -2769,7 +2800,7 @@ namespace MWRender
                              << ") under " << head.getName()
                              << " fullMatrix=" << useFullHeadFrame << " rotation=("
                              << readFalloutProofFloat("OPENMW_FNV_HEAD_FRAME_ROTATION_X", 0.f) << ","
-                             << readFalloutProofFloat("OPENMW_FNV_HEAD_FRAME_ROTATION_Y", 90.f) << ","
+                             << readFalloutProofFloat("OPENMW_FNV_HEAD_FRAME_ROTATION_Y", 0.f) << ","
                              << readFalloutProofFloat("OPENMW_FNV_HEAD_FRAME_ROTATION_Z", 0.f) << ") parentOrder="
                              << parentOrder;
             return helper;
@@ -2855,6 +2886,14 @@ namespace MWRender
             if (!box.valid())
                 return osg::Vec3f();
             return osg::Vec3f(box.xMax() - box.xMin(), box.yMax() - box.yMin(), box.zMax() - box.zMin());
+        }
+
+        osg::Vec3f localBoundsCenter(osg::Node& node)
+        {
+            osg::ComputeBoundsVisitor boundsVisitor;
+            node.accept(boundsVisitor);
+            const osg::BoundingBox box = boundsVisitor.getBoundingBox();
+            return box.valid() ? box.center() : osg::Vec3f();
         }
 
         bool isFalloutAccessoryModel(std::string_view model)
@@ -4445,10 +4484,23 @@ namespace MWRender
             const osg::Quat surfaceAttitude = getFalloutHeadFrameSurfaceAttitude(model, headgearStaticPart);
             if (surfaceOffset.length2() > 0.f || !surfaceAttitude.zeroRotation())
             {
-                osg::ref_ptr<osg::PositionAttitudeTransform> offsetNode = new osg::PositionAttitudeTransform;
+                osg::ref_ptr<osg::Transform> offsetNode;
+                const osg::Vec3f pivot = localBoundsCenter(*attached);
+                if (!surfaceAttitude.zeroRotation() && std::getenv("OPENMW_FNV_HEAD_SURFACE_PIVOT_ROTATION") != nullptr)
+                {
+                    osg::ref_ptr<osg::MatrixTransform> matrixNode = new osg::MatrixTransform;
+                    matrixNode->setMatrix(osg::Matrix::translate(-pivot) * osg::Matrix::rotate(surfaceAttitude)
+                        * osg::Matrix::translate(pivot + surfaceOffset));
+                    offsetNode = matrixNode;
+                }
+                else
+                {
+                    osg::ref_ptr<osg::PositionAttitudeTransform> pat = new osg::PositionAttitudeTransform;
+                    pat->setPosition(surfaceOffset);
+                    pat->setAttitude(surfaceAttitude);
+                    offsetNode = pat;
+                }
                 offsetNode->setName("FNV Head Frame Surface Offset " + correctedModel.value());
-                offsetNode->setPosition(surfaceOffset);
-                offsetNode->setAttitude(surfaceAttitude);
                 if (attached->getNumParents() > 0)
                 {
                     osg::Group* parent = attached->getParent(0);
@@ -4461,7 +4513,9 @@ namespace MWRender
                 Log(Debug::Info) << "FNV/ESM4 diag: applied head frame surface offset model="
                                  << correctedModel.value() << " offset=(" << surfaceOffset.x() << ","
                                  << surfaceOffset.y() << "," << surfaceOffset.z() << ") rotationPrefix="
-                                 << getFalloutHeadFrameSurfacePrefix(model, headgearStaticPart) << " for "
+                                 << getFalloutHeadFrameSurfacePrefix(model, headgearStaticPart) << " pivot=("
+                                 << pivot.x() << "," << pivot.y() << "," << pivot.z() << ") pivotMode="
+                                 << (std::getenv("OPENMW_FNV_HEAD_SURFACE_PIVOT_ROTATION") != nullptr) << " for "
                                  << mPtr.getCellRef().getRefId();
             }
         }
@@ -4507,16 +4561,23 @@ namespace MWRender
         }
         if (attached != nullptr && isFalloutEyeSurfaceModel(correctedModel.value()))
         {
-            if (std::getenv("OPENMW_FNV_EYE_DISABLE_CULL") != nullptr)
-            {
-                DisableCullVisitor visitor;
-                attached->accept(visitor);
-                Log(Debug::Info) << "FNV/ESM4 diag: made eye surface double-sided " << correctedModel.value()
-                                 << " for " << mPtr.getCellRef().getRefId();
-            }
-            else
-                Log(Debug::Info) << "FNV/ESM4 diag: preserved authored eye surface culling "
-                                 << correctedModel.value() << " for " << mPtr.getCellRef().getRefId();
+            TintMaterialVisitor eyeMaterial(osg::Vec4f(1.f, 1.f, 1.f, 1.f));
+            attached->accept(eyeMaterial);
+            Log(Debug::Info) << "FNV/ESM4 diag: applied neutral eye material " << correctedModel.value()
+                             << " for " << mPtr.getCellRef().getRefId();
+            DisableCullVisitor visitor;
+            attached->accept(visitor);
+            Log(Debug::Info) << "FNV/ESM4 diag: made eye surface double-sided " << correctedModel.value()
+                             << " for " << mPtr.getCellRef().getRefId();
+        }
+        if (attached != nullptr && isFalloutMouthSurfaceModel(correctedModel.value()))
+        {
+            TintMaterialVisitor mouthMaterial(osg::Vec4f(1.f, 1.f, 1.f, 1.f));
+            attached->accept(mouthMaterial);
+            DisableCullVisitor visitor;
+            attached->accept(visitor);
+            Log(Debug::Info) << "FNV/ESM4 diag: made mouth interior surface double-sided "
+                             << correctedModel.value() << " for " << mPtr.getCellRef().getRefId();
         }
         if (attached != nullptr)
         {
