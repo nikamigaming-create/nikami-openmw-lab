@@ -706,15 +706,9 @@ namespace MWVR
             removeIndividualPart(ESM::PartReferenceType::PRT_RHand);
 
             const auto attachHand = [&](ESM::PartReferenceType type, VFS::Path::NormalizedView mesh,
-                                        std::string_view bone, bool controllerActive) {
+                                        std::string_view bone) {
                 if (mObjectParts[type] != nullptr)
                     return;
-                if (!controllerActive)
-                {
-                    Log(Debug::Info) << "FNV/ESM4 diag: delaying Fallout VR hand fallback " << mesh
-                                     << " until controller tracking is active for " << bone;
-                    return;
-                }
 
                 const NodeMap& nodeMap = getNodeMap();
                 const auto found = nodeMap.find(bone);
@@ -725,14 +719,6 @@ namespace MWVR
                 }
 
                 osg::Group* attachNode = found->second.get();
-                osg::Matrix handInBip;
-                if (const auto bip01 = nodeMap.find("Bip01"); bip01 != nodeMap.end())
-                {
-                    const osg::Matrix handWorld = getFalloutVrNodeWorldMatrix(attachNode);
-                    const osg::Matrix bipWorld = getFalloutVrNodeWorldMatrix(bip01->second.get());
-                    handInBip = handWorld * osg::Matrix::inverse(bipWorld);
-                }
-
                 osg::ref_ptr<const osg::Node> templateNode = mResourceSystem->getSceneManager()->getTemplate(mesh);
                 FalloutVrHandProofVisitor templateProofVisitor;
                 const_cast<osg::Node*>(templateNode.get())->accept(templateProofVisitor);
@@ -758,10 +744,8 @@ namespace MWVR
                                  << bound.center().z() << ")";
             };
 
-            attachHand(ESM::PartReferenceType::PRT_LHand, getFalloutLeftVrHandMesh(mResourceSystem), "Bip01 L Hand",
-                VR::getControllerActive(mLeftHandPath));
-            attachHand(ESM::PartReferenceType::PRT_RHand, getFalloutRightVrHandMesh(mResourceSystem), "Bip01 R Hand",
-                VR::getControllerActive(mRightHandPath));
+            attachHand(ESM::PartReferenceType::PRT_LHand, getFalloutLeftVrHandMesh(mResourceSystem), "Bip01 L Hand");
+            attachHand(ESM::PartReferenceType::PRT_RHand, getFalloutRightVrHandMesh(mResourceSystem), "Bip01 R Hand");
         }
 
         updateCharHeight();
