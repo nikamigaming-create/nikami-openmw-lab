@@ -2659,7 +2659,7 @@ namespace MWRender
             const float yDegrees = readFalloutProofFloat((prefix + "_ROTATION_Y").c_str(), 0.f);
             const bool faceInternal = prefix == "OPENMW_FNV_EYE" || prefix == "OPENMW_FNV_MOUTH"
                 || prefix == "OPENMW_FNV_BEARD" || prefix == "OPENMW_FNV_BROW";
-            const float zFallback = faceInternal ? -90.f : 0.f;
+            const float zFallback = (faceInternal || prefix == "OPENMW_FNV_HAIR") ? -90.f : 0.f;
             const float zDegrees = readFalloutProofFloat((prefix + "_ROTATION_Z").c_str(), zFallback);
             const osg::Quat x(xDegrees * degreesToRadians, osg::Vec3f(1.f, 0.f, 0.f));
             const osg::Quat y(yDegrees * degreesToRadians, osg::Vec3f(0.f, 1.f, 0.f));
@@ -2681,7 +2681,7 @@ namespace MWRender
 
         osg::Vec3f getFalloutFaceSurfacePosition()
         {
-            return osg::Vec3f(readFalloutProofFloat("OPENMW_FNV_FACE_OFFSET_X", 0.f),
+            return osg::Vec3f(readFalloutProofFloat("OPENMW_FNV_FACE_OFFSET_X", 0.12f),
                 readFalloutProofFloat("OPENMW_FNV_FACE_OFFSET_Y", 0.f),
                 readFalloutProofFloat("OPENMW_FNV_FACE_OFFSET_Z", 0.f));
         }
