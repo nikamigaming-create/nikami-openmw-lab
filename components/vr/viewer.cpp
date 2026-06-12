@@ -529,6 +529,8 @@ namespace VR
 
         std::unique_lock<std::mutex> lock(mMutex);
         auto& frame = mReadyFrames.back();
+        if (!frame.shouldSyncFrameLoop || !frame.shouldRender || frame.predictedDisplayTime == 0)
+            return;
 
         auto referenceSpaceLocal = mSession->getReferenceSpace(VR::ReferenceSpace::Local);
         auto referenceSpaceView = mSession->getReferenceSpace(VR::ReferenceSpace::View);
@@ -536,31 +538,28 @@ namespace VR
             = VR::Session::instance().locateViews(frame.predictedDisplayTime, *referenceSpaceLocal);
         auto views = VR::Session::instance().locateViews(frame.predictedDisplayTime, *referenceSpaceView);
 
-        if (frame.shouldRender && frame.shouldSyncFrameLoop)
+        left = views[VR::Side_Left];
+        right = views[VR::Side_Right];
+
+        // Print view once to log, useful for debugging the views of headsets i do not posess.
+        static bool havePrintedView = false;
+        if (!havePrintedView)
         {
-            left = views[VR::Side_Left];
-            right = views[VR::Side_Right];
-
-            // Print view once to log, useful for debugging the views of headsets i do not posess.
-            static bool havePrintedView = false;
-            if (!havePrintedView)
-            {
-                havePrintedView = true;
-                Log(Debug::Verbose) << "Left View: " << left;
-                Log(Debug::Verbose) << "Right View: " << right;
-            }
-
-            std::shared_ptr<VR::ProjectionLayer> projectionLayer
-                = std::make_shared<VR::ProjectionLayer>(*mProjectionLayer);
-
-            projectionLayer->space = referenceSpaceLocal;
-            for (uint32_t i = 0; i < 2; i++)
-            {
-                projectionLayer->views[i].view = localViews[i];
-            }
-            frame.layers.push_back(projectionLayer);
-            if (!mLayers.empty())
-                frame.layers.insert(frame.layers.end(), mLayers.begin(), mLayers.end());
+            havePrintedView = true;
+            Log(Debug::Verbose) << "Left View: " << left;
+            Log(Debug::Verbose) << "Right View: " << right;
         }
+
+        std::shared_ptr<VR::ProjectionLayer> projectionLayer
+            = std::make_shared<VR::ProjectionLayer>(*mProjectionLayer);
+
+        projectionLayer->space = referenceSpaceLocal;
+        for (uint32_t i = 0; i < 2; i++)
+        {
+            projectionLayer->views[i].view = localViews[i];
+        }
+        frame.layers.push_back(projectionLayer);
+        if (!mLayers.empty())
+            frame.layers.insert(frame.layers.end(), mLayers.begin(), mLayers.end());
     }
 }
