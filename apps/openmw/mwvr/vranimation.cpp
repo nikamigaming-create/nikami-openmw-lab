@@ -280,8 +280,16 @@ namespace MWVR
         if (!bipToHand.invert(handInBip))
             bipToHand.makeIdentity();
 
-        osg::Matrix handLocal = bipToHand;
         const osg::Quat localRotation = bipToHand.getRotate();
+        osg::Matrix handLocal;
+        if (bounds.valid())
+        {
+            const osg::Vec3f center = bounds.center();
+            handLocal.makeRotate(localRotation);
+            handLocal.postMultTranslate(-(localRotation * center));
+        }
+        else
+            handLocal = bipToHand;
 
         osg::ref_ptr<osg::MatrixTransform> transform = new osg::MatrixTransform;
         transform->setMatrix(handLocal);
