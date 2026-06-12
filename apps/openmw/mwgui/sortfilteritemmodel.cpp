@@ -15,6 +15,16 @@
 #include <components/esm3/loadprob.hpp>
 #include <components/esm3/loadrepa.hpp>
 #include <components/esm3/loadweap.hpp>
+#include <components/esm4/loadammo.hpp>
+#include <components/esm4/loadarmo.hpp>
+#include <components/esm4/loadbook.hpp>
+#include <components/esm4/loadclot.hpp>
+#include <components/esm4/loadalch.hpp>
+#include <components/esm4/loadimod.hpp>
+#include <components/esm4/loadingr.hpp>
+#include <components/esm4/loadligh.hpp>
+#include <components/esm4/loadmisc.hpp>
+#include <components/esm4/loadweap.hpp>
 #include <components/misc/utf8stream.hpp>
 
 #include "../mwbase/environment.hpp"
@@ -34,31 +44,41 @@ namespace
         switch (type)
         {
             case ESM::Weapon::sRecordId:
+            case ESM4::Weapon::sRecordId:
                 return 0;
             case ESM::Armor::sRecordId:
+            case ESM4::Armor::sRecordId:
                 return 1;
-            case ESM::Clothing::sRecordId:
+            case ESM4::Ammunition::sRecordId:
                 return 2;
-            case ESM::Potion::sRecordId:
+            case ESM::Clothing::sRecordId:
+            case ESM4::Clothing::sRecordId:
                 return 3;
-            case ESM::Ingredient::sRecordId:
+            case ESM::Potion::sRecordId:
+            case ESM4::Potion::sRecordId:
                 return 4;
-            case ESM::Apparatus::sRecordId:
+            case ESM::Ingredient::sRecordId:
+            case ESM4::Ingredient::sRecordId:
                 return 5;
-            case ESM::Book::sRecordId:
+            case ESM::Apparatus::sRecordId:
                 return 6;
-            case ESM::Light::sRecordId:
+            case ESM::Book::sRecordId:
+            case ESM4::Book::sRecordId:
                 return 7;
-            case ESM::Miscellaneous::sRecordId:
+            case ESM::Light::sRecordId:
+            case ESM4::Light::sRecordId:
                 return 8;
-            case ESM::Lockpick::sRecordId:
+            case ESM::Miscellaneous::sRecordId:
+            case ESM4::ItemMod::sRecordId:
+            case ESM4::MiscItem::sRecordId:
                 return 9;
-            case ESM::Repair::sRecordId:
+            case ESM::Lockpick::sRecordId:
                 return 10;
-            case ESM::Probe::sRecordId:
+            case ESM::Repair::sRecordId:
                 return 11;
+            case ESM::Probe::sRecordId:
+                return 12;
         }
-        assert(false && "Invalid type value");
         return std::numeric_limits<unsigned int>::max();
     }
 
@@ -202,17 +222,27 @@ namespace MWGui
         switch (base.getType())
         {
             case ESM::Armor::sRecordId:
+            case ESM4::Armor::sRecordId:
             case ESM::Clothing::sRecordId:
+            case ESM4::Clothing::sRecordId:
                 category = Category_Apparel;
                 break;
             case ESM::Weapon::sRecordId:
+            case ESM4::Weapon::sRecordId:
                 category = Category_Weapon;
                 break;
             case ESM::Ingredient::sRecordId:
+            case ESM4::Ingredient::sRecordId:
             case ESM::Potion::sRecordId:
+            case ESM4::Potion::sRecordId:
                 category = Category_Magic;
                 break;
             case ESM::Miscellaneous::sRecordId:
+            case ESM4::Ammunition::sRecordId:
+            case ESM4::Book::sRecordId:
+            case ESM4::ItemMod::sRecordId:
+            case ESM4::Light::sRecordId:
+            case ESM4::MiscItem::sRecordId:
             case ESM::Repair::sRecordId:
             case ESM::Lockpick::sRecordId:
             case ESM::Light::sRecordId:

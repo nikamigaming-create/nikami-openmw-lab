@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cassert>
 #include <chrono>
+#include <cctype>
 #include <cstdlib>
 #include <filesystem>
 #include <thread>
@@ -12,9 +13,12 @@
 #include <MyGUI_ClipboardManager.h>
 #include <MyGUI_FactoryManager.h>
 #include <MyGUI_InputManager.h>
+#include <MyGUI_LayerManager.h>
 #include <MyGUI_LanguageManager.h>
 #include <MyGUI_PointerManager.h>
+#include <MyGUI_RenderManager.h>
 #include <MyGUI_UString.h>
+#include <MyGUI_Window.h>
 
 // For BT_NO_PROFILE
 #include <LinearMath/btQuickprof.h>
@@ -153,6 +157,39 @@ namespace MWGui
                 default:
                     return nullptr;
             }
+        }
+
+        bool isFalloutContentLoaded()
+        {
+            const MWBase::World* world = MWBase::Environment::get().getWorld();
+            if (world == nullptr)
+                return false;
+
+            for (std::string file : world->getContentFiles())
+            {
+                std::transform(file.begin(), file.end(), file.begin(),
+                    [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+                constexpr std::string_view falloutNv = "falloutnv.esm";
+                const bool suffixMatch = file.size() >= falloutNv.size()
+                    && file.compare(file.size() - falloutNv.size(), falloutNv.size(), falloutNv) == 0;
+                if (suffixMatch)
+                    return true;
+            }
+
+            return false;
+        }
+
+        void setWindowCoord(WindowBase* window, const MyGUI::IntCoord& coord)
+        {
+            if (window == nullptr || window->mMainWidget == nullptr)
+                return;
+
+            MyGUI::Window* guiWindow = window->mMainWidget->castType<MyGUI::Window>(false);
+            if (guiWindow == nullptr)
+                return;
+
+            guiWindow->setCoord(coord);
+            window->onWindowResize(guiWindow);
         }
     }
 
@@ -738,12 +775,25 @@ namespace MWGui
         if (gameMode)
             setKeyFocusWidget(nullptr);
 
-        // Icons of forced hidden windows are displayed
-        setMinimapVisibility((mAllowed & GW_Map) && (!mMap->pinned() || (mForceHidden & GW_Map)));
-        setWeaponVisibility(
-            (mAllowed & GW_Inventory) && (!mInventoryWindow->pinned() || (mForceHidden & GW_Inventory)));
-        setSpellVisibility((mAllowed & GW_Magic) && (!mSpellWindow->pinned() || (mForceHidden & GW_Magic)));
-        setHMSVisibility((mAllowed & GW_Stats) && (!mStatsWindow->pinned() || (mForceHidden & GW_Stats)));
+        const bool falloutContent = isFalloutContentLoaded();
+
+        // Fallout uses Pip-Boy surfaces, not OpenMW's minimized Morrowind window icons.
+        if (falloutContent)
+        {
+            setMinimapVisibility(false);
+            setWeaponVisibility(false);
+            setSpellVisibility(false);
+            setHMSVisibility(false);
+        }
+        else
+        {
+            // Icons of forced hidden windows are displayed
+            setMinimapVisibility((mAllowed & GW_Map) && (!mMap->pinned() || (mForceHidden & GW_Map)));
+            setWeaponVisibility(
+                (mAllowed & GW_Inventory) && (!mInventoryWindow->pinned() || (mForceHidden & GW_Inventory)));
+            setSpellVisibility((mAllowed & GW_Magic) && (!mSpellWindow->pinned() || (mForceHidden & GW_Magic)));
+            setHMSVisibility((mAllowed & GW_Stats) && (!mStatsWindow->pinned() || (mForceHidden & GW_Stats)));
+        }
 
         mInventoryWindow->setGuiMode(getMode());
 
@@ -758,13 +808,10 @@ namespace MWGui
             mSpellWindow->setVisible(
                 mSpellWindow->pinned() && !isConsoleMode() && !(mForceHidden & GW_Magic) && (mAllowed & GW_Magic));
 
-            if (Settings::gui().mControllerMenus)
-            {
-                if (mControllerButtonsOverlay)
-                    mControllerButtonsOverlay->setVisible(false);
-                if (mInventoryTabsOverlay)
-                    mInventoryTabsOverlay->setVisible(false);
-            }
+            if (mControllerButtonsOverlay)
+                mControllerButtonsOverlay->setVisible(false);
+            if (mInventoryTabsOverlay)
+                mInventoryTabsOverlay->setVisible(false);
             return;
         }
         else if (getMode() != GM_Inventory)
@@ -788,25 +835,89 @@ namespace MWGui
             // user has opened/closed (the 'shown' variable) and by what
             // windows we are allowed to show (the 'allowed' var.)
             int eff = mShown & mAllowed & ~mForceHidden;
-            if (std::getenv("OPENMW_FNV_PROOF_PIPBOY_SURFACE") != nullptr)
+            const bool flatPaperDollProfiler = falloutContent && !VR::getVR()
+                && std::getenv("OPENMW_FNV_PAPER_DOLL_PROFILER") != nullptr;
+            if (flatPaperDollProfiler)
+            {
+                eff = GW_Inventory;
+                static bool loggedPaperDollProfiler = false;
+                if (!loggedPaperDollProfiler)
+                {
+                    Log(Debug::Info)
+                        << "FNV/ESM4 proof: flat paper doll profiler owns inventory mode full-screen";
+                    loggedPaperDollProfiler = true;
+                }
+            }
+            else if (falloutContent || std::getenv("OPENMW_FNV_PROOF_PIPBOY_SURFACE") != nullptr)
             {
                 eff = GW_Map | GW_Inventory | GW_Magic | GW_Stats;
                 static bool loggedPipBoySurface = false;
                 if (!loggedPipBoySurface)
                 {
                     Log(Debug::Info)
-                        << "FNV/ESM4 proof: Pip-Boy surface forcing inventory mode panes map=1 items=1 data=1 stats=1";
+                        << "FNV/ESM4 proof: Fallout inventory mode opens all native panes map=1 items=1 aid=1 data=1";
                     loggedPipBoySurface = true;
                 }
+                Log(Debug::Info) << "FNV/ESM4 diag: Pip-Boy active pane index="
+                                 << std::clamp(mActiveControllerWindows[GM_Inventory], 0, 3) << " visibleMask=0x"
+                                 << std::hex << eff << std::dec;
             }
             mMap->setVisible(eff & GW_Map);
             mInventoryWindow->setVisible(eff & GW_Inventory);
             mSpellWindow->setVisible(eff & GW_Magic);
             mStatsWindow->setVisible(eff & GW_Stats);
+
+            if (flatPaperDollProfiler)
+            {
+                const MyGUI::IntSize viewSize = MyGUI::RenderManager::getInstance().getViewSize();
+                setWindowCoord(mInventoryWindow, MyGUI::IntCoord(0, 0, viewSize.width, viewSize.height));
+                if (mInventoryWindow->mMainWidget != nullptr)
+                    MyGUI::LayerManager::getInstance().upLayerItem(mInventoryWindow->mMainWidget);
+                Log(Debug::Info) << "FNV/ESM4 proof: flat paper doll profiler fullscreen rect=0,0,"
+                                 << viewSize.width << "," << viewSize.height;
+            }
+            else if (falloutContent || std::getenv("OPENMW_FNV_PROOF_PIPBOY_SURFACE") != nullptr)
+            {
+                const MyGUI::IntSize viewSize = MyGUI::RenderManager::getInstance().getViewSize();
+                const int margin = 24;
+                const int top = std::min(std::max(88, viewSize.height / 8), 128);
+                const int bottom = 36;
+                const int gap = 8;
+                const int activeIndex = std::clamp(mActiveControllerWindows[GM_Inventory], 0, 3);
+                const int shelfWidth = std::min(std::max(viewSize.width / 5, 220), 320);
+                const int activeWidth = std::max(480, viewSize.width - margin * 2 - shelfWidth - gap);
+                const int activeHeight = std::max(360, viewSize.height - top - bottom);
+                const int shelfLeft = margin + activeWidth + gap;
+                const int shelfHeight = std::max(110, (activeHeight - gap * 2) / 3);
+
+                WindowBase* windows[4] = { mMap, mInventoryWindow, mSpellWindow, mStatsWindow };
+                int shelfSlot = 0;
+                for (int i = 0; i < 4; ++i)
+                {
+                    if (i == activeIndex)
+                    {
+                        setWindowCoord(windows[i], MyGUI::IntCoord(margin, top, activeWidth, activeHeight));
+                        continue;
+                    }
+
+                    const int shelfTop = top + shelfSlot * (shelfHeight + gap);
+                    setWindowCoord(windows[i], MyGUI::IntCoord(shelfLeft, shelfTop, shelfWidth, shelfHeight));
+                    ++shelfSlot;
+                }
+
+                if (WindowBase* activeWindow = windows[activeIndex])
+                {
+                    if (activeWindow->mMainWidget != nullptr)
+                        MyGUI::LayerManager::getInstance().upLayerItem(activeWindow->mMainWidget);
+                }
+                Log(Debug::Info) << "FNV/ESM4 proof: Fallout pause panes laid out all-visible active="
+                                 << activeIndex << " activeRect=" << margin << "," << top << "," << activeWidth
+                                 << "," << activeHeight << " shelfWidth=" << shelfWidth;
+            }
         }
 
         updateControllerButtonsOverlay();
-        if (std::getenv("OPENMW_FNV_PROOF_PIPBOY_SURFACE") != nullptr && getMode() == GM_Inventory
+        if ((falloutContent || std::getenv("OPENMW_FNV_PROOF_PIPBOY_SURFACE") != nullptr) && getMode() == GM_Inventory
             && mInventoryTabsOverlay != nullptr)
         {
             mInventoryTabsOverlay->setVisible(true);
@@ -1062,7 +1173,8 @@ namespace MWGui
 
     void WindowManager::setActiveControllerWindow(GuiMode mode, int activeIndex)
     {
-        if (!Settings::gui().mControllerMenus)
+        const bool falloutInventoryTabs = isFalloutContentLoaded() && mode == GM_Inventory;
+        if (!Settings::gui().mControllerMenus && !falloutInventoryTabs)
             return;
 
         int winCount = mGuiModeStates[mode].mWindows.size();
@@ -1071,6 +1183,29 @@ namespace MWGui
 
         activeIndex = std::clamp(activeIndex, 0, winCount - 1);
         mActiveControllerWindows[mode] = activeIndex;
+
+        if (falloutInventoryTabs && !Settings::gui().mControllerMenus)
+        {
+            updateVisible();
+            if (WindowBase* activeWindow = mGuiModeStates[mode].mWindows[activeIndex])
+            {
+                if (activeWindow->mMainWidget != nullptr)
+                    MyGUI::LayerManager::getInstance().upLayerItem(activeWindow->mMainWidget);
+                Log(Debug::Info) << "FNV/ESM4 diag: Pip-Boy tab raised pane index=" << activeIndex;
+            }
+            if (mInventoryTabsOverlay != nullptr)
+            {
+                mInventoryTabsOverlay->setVisible(true);
+                mInventoryTabsOverlay->setTab(activeIndex);
+                if (mInventoryTabsOverlay->mMainWidget != nullptr)
+                    MyGUI::LayerManager::getInstance().upLayerItem(mInventoryTabsOverlay->mMainWidget);
+            }
+
+            if (winCount > 1)
+                playSound(ESM::RefId::stringRefId("Menu Size"));
+
+            return;
+        }
 
         reapplyActiveControllerWindow();
 
@@ -1717,7 +1852,7 @@ namespace MWGui
     {
         mSelectedWeapon = MWWorld::Ptr();
         mHud->unsetSelectedWeapon();
-        mInventoryWindow->setTitle("#{sSkillHandtohand}");
+        mInventoryWindow->setTitle(isFalloutContentLoaded() ? "Unarmed" : "#{sSkillHandtohand}");
     }
 
     void WindowManager::getMousePosition(int& x, int& y)

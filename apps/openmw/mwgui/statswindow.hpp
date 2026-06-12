@@ -46,6 +46,7 @@ namespace MWGui
             this->mBounty = bounty;
         }
         void updateSkillArea();
+        bool updateFalloutStatsArea();
 
         void onOpen() override { onWindowResize(mMainWidget->castType<MyGUI::Window>()); }
 

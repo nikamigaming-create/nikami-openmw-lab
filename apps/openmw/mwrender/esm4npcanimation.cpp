@@ -2608,11 +2608,11 @@ namespace MWRender
                     readFalloutProofFloat("OPENMW_FNV_HEADGEAR_OFFSET_Y", 0.f),
                     readFalloutProofFloat("OPENMW_FNV_HEADGEAR_OFFSET_Z", 0.f));
             if (lowered.find("brow") != std::string::npos)
-                return osg::Vec3f(readFalloutProofFloat("OPENMW_FNV_BROW_OFFSET_X", 0.f),
+                return osg::Vec3f(readFalloutProofFloat("OPENMW_FNV_BROW_OFFSET_X", -0.12f),
                     readFalloutProofFloat("OPENMW_FNV_BROW_OFFSET_Y", 0.f),
                     readFalloutProofFloat("OPENMW_FNV_BROW_OFFSET_Z", 0.f));
             if (lowered.find("eye") != std::string::npos)
-                return osg::Vec3f(readFalloutProofFloat("OPENMW_FNV_EYE_OFFSET_X", 0.f),
+                return osg::Vec3f(readFalloutProofFloat("OPENMW_FNV_EYE_OFFSET_X", -0.18f),
                     readFalloutProofFloat("OPENMW_FNV_EYE_OFFSET_Y", 0.f),
                     readFalloutProofFloat("OPENMW_FNV_EYE_OFFSET_Z", 0.f));
             if (lowered.find("beard") != std::string::npos)
@@ -2621,7 +2621,7 @@ namespace MWRender
                     readFalloutProofFloat("OPENMW_FNV_BEARD_OFFSET_Z", 0.f));
             if (lowered.find("mouth") != std::string::npos || lowered.find("teeth") != std::string::npos
                 || lowered.find("tongue") != std::string::npos)
-                return osg::Vec3f(readFalloutProofFloat("OPENMW_FNV_MOUTH_OFFSET_X", 0.f),
+                return osg::Vec3f(readFalloutProofFloat("OPENMW_FNV_MOUTH_OFFSET_X", -0.35f),
                     readFalloutProofFloat("OPENMW_FNV_MOUTH_OFFSET_Y", 0.f),
                     readFalloutProofFloat("OPENMW_FNV_MOUTH_OFFSET_Z", 0.f));
             return osg::Vec3f();
@@ -2681,7 +2681,7 @@ namespace MWRender
 
         osg::Vec3f getFalloutFaceSurfacePosition()
         {
-            return osg::Vec3f(readFalloutProofFloat("OPENMW_FNV_FACE_OFFSET_X", 0.45f),
+            return osg::Vec3f(readFalloutProofFloat("OPENMW_FNV_FACE_OFFSET_X", 0.65f),
                 readFalloutProofFloat("OPENMW_FNV_FACE_OFFSET_Y", 0.f),
                 readFalloutProofFloat("OPENMW_FNV_FACE_OFFSET_Z", 0.f));
         }

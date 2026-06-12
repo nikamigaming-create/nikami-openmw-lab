@@ -32,10 +32,10 @@
                     <Property key="NeedMouse" value="true"/>
                     <UserString key="ToolTipType" value="Layout"/>
                     <UserString key="ToolTipLayout" value="HealthToolTip"/>
-                    <UserString key="ImageTexture_HealthImage" value="icons\k\magicka.dds"/>
+                    <UserString key="ImageTexture_HealthImage" value="textures\interface\icons\pipboyimages\derived statistics\actions_points.dds"/>
 
                     <Widget type="TextBox" skin="NormalText" position="0 0 70 18" name="Magicka_str" align="Left Top HStretch">
-                        <Property key="Caption" value="#{sMagic}"/>
+                        <Property key="Caption" value="AP"/>
                         <Property key="NeedMouse" value="false"/>
                     </Widget>
 
@@ -47,15 +47,15 @@
                     </Widget>
                 </Widget>
 
-                <!-- Fatigue -->
+                <!-- Carry weight -->
                 <Widget type="Widget" skin="" position="4 40 204 18" name="Fatigue" align="Left Top HStretch">
                     <Property key="NeedMouse" value="true"/>
                     <UserString key="ToolTipType" value="Layout"/>
                     <UserString key="ToolTipLayout" value="HealthToolTip"/>
-                    <UserString key="ImageTexture_HealthImage" value="icons\k\fatigue.dds"/>
+                    <UserString key="ImageTexture_HealthImage" value="textures\interface\icons\pipboyimages\derived statistics\carry_weight.dds"/>
 
                     <Widget type="TextBox" skin="NormalText" position="0 0 70 18" name="Fatigue_str" align="Left Top HStretch">
-                        <Property key="Caption" value="#{sFatigue}"/>
+                        <Property key="Caption" value="WG"/>
                         <Property key="NeedMouse" value="false"/>
                     </Widget>
 
@@ -68,7 +68,7 @@
                 </Widget>
             </Widget>
 
-            <!-- Player level, race and class -->
+            <!-- Player level and Fallout status fields -->
             <Widget type="Widget" skin="MW_Box" position="8 78 212 62" align="Top HStretch">
                 <Widget type="HBox" position="4 4 204 18" align="Top HStretch">
                     <Widget type="AutoSizedTextBox" skin="NormalText" position="0 0 200 18" name="Level_str" align="Left Top">
@@ -86,7 +86,7 @@
                 </Widget>
                 <Widget type="HBox" position="4 24 204 18" align="Top HStretch">
                     <Widget type="AutoSizedTextBox" skin="NormalText" position="0 0 95 18" name="Race_str" align="Left Top">
-                        <Property key="Caption" value="#{sRace}"/>
+                        <Property key="Caption" value="RACE"/>
                         <UserString key="ToolTipType" value="Layout"/>
                         <UserString key="ToolTipLayout" value="RaceToolTip"/>
                     </Widget>
@@ -99,7 +99,7 @@
                 </Widget>
                 <Widget type="HBox" position="4 42 204 18" align="Top HStretch">
                     <Widget type="AutoSizedTextBox" skin="NormalText" position="0 0 95 18" name="Class_str" align="Left Top">
-                        <Property key="Caption" value="#{sClass}"/>
+                        <Property key="Caption" value="KARMA"/>
                         <UserString key="ToolTipType" value="Layout"/>
                         <UserString key="ToolTipLayout" value="ClassToolTip"/>
                     </Widget>

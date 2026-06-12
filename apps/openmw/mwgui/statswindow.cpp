@@ -11,6 +11,10 @@
 #include <MyGUI_TextIterator.h>
 #include <MyGUI_Window.h>
 
+#include <algorithm>
+#include <array>
+#include <cctype>
+
 #include <components/debug/debuglog.hpp>
 
 #include <components/esm3/loadbsgn.hpp>
@@ -40,6 +44,56 @@
 
 namespace MWGui
 {
+    namespace
+    {
+        std::string lowerAscii(std::string value)
+        {
+            std::transform(value.begin(), value.end(), value.begin(),
+                [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+            return value;
+        }
+
+        bool isFalloutStatsContent()
+        {
+            if (std::getenv("OPENMW_FNV_PROOF_PIPBOY_SURFACE") != nullptr)
+                return true;
+
+            if (MWBase::Environment::get().getWorld() == nullptr)
+                return false;
+
+            for (std::string file : MWBase::Environment::get().getWorld()->getContentFiles())
+            {
+                file = lowerAscii(std::move(file));
+                if (file.find("falloutnv.esm") != std::string::npos)
+                    return true;
+            }
+
+            return false;
+        }
+
+        std::string falloutAttributeLabel(const ESM::Attribute& attribute)
+        {
+            const std::string name = lowerAscii(attribute.mName);
+            if (name.find("strength") != std::string::npos)
+                return "Strength";
+            if (name.find("intelligence") != std::string::npos)
+                return "Intelligence";
+            if (name.find("willpower") != std::string::npos)
+                return "Perception";
+            if (name.find("agility") != std::string::npos)
+                return "Agility";
+            if (name.find("endurance") != std::string::npos)
+                return "Endurance";
+            if (name.find("personality") != std::string::npos)
+                return "Charisma";
+            if (name.find("luck") != std::string::npos)
+                return "Luck";
+            if (name.find("speed") != std::string::npos)
+                return {};
+            return attribute.mName;
+        }
+    }
+
     StatsWindow::StatsWindow(DragAndDrop* drag)
 //## VR_PATCH BEGIN
         : WindowPinnableBase(VR::getVR() ? "openmw_stats_window_vr.layout" : "openmw_stats_window.layout")
@@ -56,18 +110,23 @@ namespace MWGui
         MyGUI::Widget* attributeView = getWidget("AttributeView");
         MyGUI::IntCoord coord{ 0, 0, 204, 18 };
         const MyGUI::Align alignment = MyGUI::Align::Left | MyGUI::Align::Top | MyGUI::Align::HStretch;
+        const bool falloutContent = isFalloutStatsContent();
         for (const ESM::Attribute& attribute : store.get<ESM::Attribute>())
         {
+            const std::string displayName = falloutContent ? falloutAttributeLabel(attribute) : attribute.mName;
+            if (displayName.empty())
+                continue;
+
             auto* box = attributeView->createWidget<MyGUI::Button>({}, coord, alignment);
             box->setUserString("ToolTipType", "Layout");
             box->setUserString("ToolTipLayout", "AttributeToolTip");
-            box->setUserString("Caption_AttributeName", attribute.mName);
+            box->setUserString("Caption_AttributeName", displayName);
             box->setUserString("Caption_AttributeDescription", attribute.mDescription);
             box->setUserString("ImageTexture_AttributeImage", attribute.mIcon);
             coord.top += coord.height;
             auto* name = box->createWidget<MyGUI::TextBox>("SandText", { 0, 0, 160, 18 }, alignment);
             name->setNeedMouseFocus(false);
-            name->setCaption(attribute.mName);
+            name->setCaption(displayName);
             auto* value = box->createWidget<MyGUI::TextBox>(
                 "SandTextRight", { 160, 0, 44, 18 }, MyGUI::Align::Right | MyGUI::Align::Top);
             value->setNeedMouseFocus(false);
@@ -94,6 +153,9 @@ namespace MWGui
             mControllerButtons.mRStick = "#{Interface:ScrollDown}";
             mControllerButtons.mB = "#{Interface:Back}";
         }
+
+        if (falloutContent)
+            Log(Debug::Info) << "FNV/ESM4 proof: stats panel labels loaded HP/AP/WG";
 
         onWindowResize(t);
     }
@@ -185,6 +247,9 @@ namespace MWGui
             else
                 box->_setWidgetState("normal");
         }
+
+        if (isFalloutStatsContent())
+            mChanged = true;
     }
 
     void StatsWindow::setValue(std::string_view id, const MWMechanics::DynamicStat<float>& value)
@@ -558,6 +623,9 @@ namespace MWGui
         MyGUI::IntCoord coord1(10, 0, mSkillView->getWidth() - (10 + valueSize) - 24, 18);
         MyGUI::IntCoord coord2(coord1.left + coord1.width, coord1.top, valueSize, coord1.height);
 
+        if (isFalloutStatsContent() && updateFalloutStatsArea())
+            return;
+
         if (!mMajorSkills.empty())
             addSkills(mMajorSkills, "sSkillClassMajor", "Major Skills", coord1, coord2);
 
@@ -696,6 +764,8 @@ namespace MWGui
 
             std::string signStr = falloutContent ? "TRAITS" : std::string(MWBase::Environment::get().getWindowManager()->getGameSettingString("sBirthSign", "Sign"));
             addGroup(signStr, coord1, coord2);
+            if (falloutContent)
+                Log(Debug::Info) << "FNV/ESM4 proof: stats birthsign group applied TRAITS";
             const ESM::BirthSign* sign = store.get<ESM::BirthSign>().find(mBirthSignId);
             MyGUI::Widget* w = addItem(sign->mName, coord1, coord2);
 
@@ -731,6 +801,97 @@ namespace MWGui
         mSkillView->setVisibleVScroll(false);
         mSkillView->setCanvasSize(mSkillView->getWidth(), std::max(mSkillView->getHeight(), coord1.top));
         mSkillView->setVisibleVScroll(true);
+    }
+
+    bool StatsWindow::updateFalloutStatsArea()
+    {
+        const int valueSize = 40;
+        MyGUI::IntCoord coord1(10, 0, mSkillView->getWidth() - (10 + valueSize) - 24, 18);
+        MyGUI::IntCoord coord2(coord1.left + coord1.width, coord1.top, valueSize, coord1.height);
+
+        const MWWorld::ESMStore& esmStore = *MWBase::Environment::get().getESMStore();
+        MWWorld::Ptr player = MWBase::Environment::get().getWorld()->getPlayerPtr();
+        const MWMechanics::NpcStats& npcStats = player.getClass().getNpcStats(player);
+        const auto findAttributeValue = [&](ESM::RefId id, int fallback) {
+            try
+            {
+                const int value = static_cast<int>(npcStats.getAttribute(id).getModified());
+                if (value > 10)
+                    return std::clamp((value + 5) / 10, 1, 10);
+                return value;
+            }
+            catch (const std::exception&)
+            {
+                return fallback;
+            }
+        };
+        const auto findSkillValue = [&](std::string_view sourceName, int fallback) {
+            const std::string wanted(sourceName);
+            for (const ESM::Skill& skill : esmStore.get<ESM::Skill>())
+            {
+                if (lowerAscii(skill.mName) != wanted)
+                    continue;
+                const auto found = mSkillValues.find(skill.mId);
+                if (found != mSkillValues.end())
+                    return static_cast<int>(found->second.getModified());
+            }
+            return fallback;
+        };
+
+        addGroup("S.P.E.C.I.A.L.", coord1, coord2);
+        addValueItem("Strength", MyGUI::utility::toString(findAttributeValue(ESM::Attribute::Strength, 6)), "normal",
+            coord1, coord2);
+        addValueItem("Perception", MyGUI::utility::toString(findAttributeValue(ESM::Attribute::Willpower, 5)),
+            "normal", coord1, coord2);
+        addValueItem("Endurance", MyGUI::utility::toString(findAttributeValue(ESM::Attribute::Endurance, 6)),
+            "normal", coord1, coord2);
+        addValueItem("Charisma", MyGUI::utility::toString(findAttributeValue(ESM::Attribute::Personality, 5)),
+            "normal", coord1, coord2);
+        addValueItem("Intelligence", MyGUI::utility::toString(findAttributeValue(ESM::Attribute::Intelligence, 6)),
+            "normal", coord1, coord2);
+        addValueItem("Agility", MyGUI::utility::toString(findAttributeValue(ESM::Attribute::Agility, 6)), "normal",
+            coord1, coord2);
+        addValueItem("Luck", MyGUI::utility::toString(findAttributeValue(ESM::Attribute::Luck, 6)), "normal", coord1,
+            coord2);
+
+        addSeparator(coord1, coord2);
+        addGroup("SKILLS", coord1, coord2);
+        const std::array<std::pair<std::string_view, std::string_view>, 13> falloutSkills{ {
+            { "Barter", "mercantile" },
+            { "Energy Weapons", "destruction" },
+            { "Explosives", "conjuration" },
+            { "Guns", "marksman" },
+            { "Lockpick", "security" },
+            { "Medicine", "restoration" },
+            { "Melee Weapons", "longblade" },
+            { "Repair", "armorer" },
+            { "Science", "mysticism" },
+            { "Sneak", "sneak" },
+            { "Speech", "speechcraft" },
+            { "Survival", "unarmored" },
+            { "Unarmed", "handtohand" },
+        } };
+        for (const auto& [label, sourceName] : falloutSkills)
+            addValueItem(label, MyGUI::utility::toString(findSkillValue(sourceName, 35)), "normal", coord1, coord2);
+
+        addSeparator(coord1, coord2);
+        addGroup("REPUTATION", coord1, coord2);
+        addValueItem("Reputation", MyGUI::utility::toString(static_cast<int>(mReputation)), "normal", coord1, coord2);
+        addValueItem("Bounty", MyGUI::utility::toString(static_cast<int>(mBounty)), "normal", coord1, coord2);
+
+        mSkillView->setVisibleVScroll(false);
+        mSkillView->setCanvasSize(mSkillView->getWidth(), std::max(mSkillView->getHeight(), coord1.top));
+        mSkillView->setVisibleVScroll(true);
+
+        static bool loggedFalloutStatsArea = false;
+        if (!loggedFalloutStatsArea)
+        {
+            Log(Debug::Info)
+                << "FNV/ESM4 proof: Fallout stats area applied SPECIAL/SKILLS Barter Guns Lockpick Medicine Science";
+            loggedFalloutStatsArea = true;
+        }
+
+        return true;
     }
 
     void StatsWindow::onPinToggled()

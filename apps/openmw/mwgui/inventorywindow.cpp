@@ -14,6 +14,7 @@
 
 #include <components/misc/strings/algorithm.hpp>
 
+#include <components/debug/debuglog.hpp>
 #include <components/myguiplatform/myguitexture.hpp>
 
 #include <components/settings/values.hpp>
@@ -81,6 +82,23 @@ namespace MWGui
                 default:
                     return makeInventoryWindowSettingValues();
             }
+        }
+
+        bool hasFalloutContent()
+        {
+            if (std::getenv("OPENMW_FNV_PROOF_PIPBOY_SURFACE") != nullptr)
+                return true;
+
+            if (!MWBase::Environment::get().getWorld())
+                return false;
+
+            for (const std::string& file : MWBase::Environment::get().getWorld()->getContentFiles())
+            {
+                if (file.find("FalloutNV.esm") != std::string::npos || file.find("falloutnv.esm") != std::string::npos)
+                    return true;
+            }
+
+            return false;
         }
     }
 
@@ -155,6 +173,34 @@ namespace MWGui
         {
             if (mFilterMagic) mFilterMagic->setCaption("AID");
             if (mFilterMisc) mFilterMisc->setCaption("MISC / AMMO");
+            Log(Debug::Info) << "FNV/ESM4 proof: inventory tabs applied ALL/WEAPONS/APPAREL/AID/MISC / AMMO";
+        }
+
+        mPaperDollProfiler = falloutContent && !VR::getVR() && std::getenv("OPENMW_FNV_PAPER_DOLL_PROFILER") != nullptr;
+        if (mPaperDollProfiler)
+        {
+            mProfilePreviewSide = std::make_unique<MWRender::InventoryPreview>(
+                parent, resourceSystem, MWMechanics::getPlayer(), MWRender::InventoryPreview::ViewMode::Profile);
+            mProfilePreviewTop = std::make_unique<MWRender::InventoryPreview>(
+                parent, resourceSystem, MWMechanics::getPlayer(), MWRender::InventoryPreview::ViewMode::Top);
+            mProfilePreviewSideTexture = std::make_unique<MyGUIPlatform::OSGTexture>(
+                mProfilePreviewSide->getTexture(), mProfilePreviewSide->getTextureStateSet());
+            mProfilePreviewTopTexture = std::make_unique<MyGUIPlatform::OSGTexture>(
+                mProfilePreviewTop->getTexture(), mProfilePreviewTop->getTextureStateSet());
+            mProfilePreviewSide->rebuild();
+            mProfilePreviewTop->rebuild();
+
+            mProfileAvatarSide = mAvatar->createWidget<MyGUI::ImageBox>(
+                "ImageBox", MyGUI::IntCoord(0, 0, 0, 0), MyGUI::Align::Default);
+            mProfileAvatarTop = mAvatar->createWidget<MyGUI::ImageBox>(
+                "ImageBox", MyGUI::IntCoord(0, 0, 0, 0), MyGUI::Align::Default);
+            mProfileAvatarSide->setNeedMouseFocus(false);
+            mProfileAvatarTop->setNeedMouseFocus(false);
+            mProfileAvatarSide->setRenderItemTexture(mProfilePreviewSideTexture.get());
+            mProfileAvatarTop->setRenderItemTexture(mProfilePreviewTopTexture.get());
+            mProfileAvatarSide->getSubWidgetMain()->_setUVSet(MyGUI::FloatRect(0.f, 0.f, 1.f, 1.f));
+            mProfileAvatarTop->getSubWidgetMain()->_setUVSet(MyGUI::FloatRect(0.f, 0.f, 1.f, 1.f));
+            Log(Debug::Info) << "FNV/ESM4 proof: enabled flat paper doll profiler panel front/profile/top";
         }
 
         setGuiMode(mGuiMode);
@@ -183,8 +229,21 @@ namespace MWGui
 
     void InventoryWindow::adjustPanes()
     {
-        const float aspect = 0.5; // fixed aspect ratio for the avatar image
+        if (mPaperDollProfiler)
+        {
+            const int width = std::max(1, mMainWidget->getWidth());
+            const int height = std::max(1, mMainWidget->getHeight());
+            mLeftPane->setCoord(0, 0, width, height);
+            mRightPane->setVisible(false);
+            mAvatar->setCoord(8, 34, std::max(1, width - 16), std::max(1, height - 34));
+            return;
+        }
+
+        mRightPane->setVisible(true);
+        const float aspect = hasFalloutContent() ? 0.78f : 0.5f; // fixed aspect ratio for the avatar image
         int leftPaneWidth = static_cast<int>((mMainWidget->getSize().height - 44 - mArmorRating->getHeight()) * aspect);
+        if (hasFalloutContent())
+            leftPaneWidth = std::min(leftPaneWidth, std::max(220, mMainWidget->getSize().width / 3));
         mLeftPane->setSize(leftPaneWidth, mMainWidget->getSize().height - 44);
         mRightPane->setCoord(mLeftPane->getPosition().left + leftPaneWidth + 4, mRightPane->getPosition().top,
             mMainWidget->getSize().width - 12 - leftPaneWidth - 15, mMainWidget->getSize().height - 44);
@@ -218,6 +277,7 @@ namespace MWGui
         mPreview->updatePtr(mPtr);
         mPreview->rebuild();
         mPreview->update();
+        rebuildProfilerPreviews();
 
         dirtyPreview();
 
@@ -276,6 +336,11 @@ namespace MWGui
         MyGUI::IntSize viewSize = MyGUI::RenderManager::getInstance().getViewSize();
         MyGUI::IntPoint pos(static_cast<int>(rect.mX * viewSize.width), static_cast<int>(rect.mY * viewSize.height));
         MyGUI::IntSize size(static_cast<int>(rect.mW * viewSize.width), static_cast<int>(rect.mH * viewSize.height));
+        if (mPaperDollProfiler)
+        {
+            pos = MyGUI::IntPoint(0, 0);
+            size = viewSize;
+        }
 
         bool needUpdate = (size.width != mMainWidget->getWidth() || size.height != mMainWidget->getHeight());
 
@@ -580,11 +645,74 @@ namespace MWGui
 
     void InventoryWindow::updatePreviewSize()
     {
+        auto setImageViewport = [](MyGUI::ImageBox* image, MWRender::InventoryPreview* preview, float scale) {
+            if (image == nullptr || preview == nullptr)
+                return;
+            const MyGUI::IntSize imageSize = image->getSize();
+            const int width = std::min<int>(preview->getTextureWidth(), imageSize.width * scale);
+            const int height = std::min<int>(preview->getTextureHeight(), imageSize.height * scale);
+            preview->setViewport(width, height);
+            preview->update();
+            image->getSubWidgetMain()->_setUVSet(MyGUI::FloatRect(
+                0.f, 0.f, width / float(preview->getTextureWidth()), height / float(preview->getTextureHeight())));
+        };
+
+        const float scale = MWBase::Environment::get().getWindowManager()->getScalingFactor();
+        if (mPaperDollProfiler)
+        {
+            const int margin = 3;
+            const int gap = 3;
+            const int labelHeight = 24;
+            const int fullWidth = std::max(1, mAvatar->getWidth() - margin * 2);
+            const int fullHeight = std::max(1, mAvatar->getHeight() - margin - labelHeight);
+            const int cellWidth = std::max(1, (fullWidth - gap * 2) / 3);
+            mAvatarImage->setCoord(margin, margin, cellWidth, fullHeight);
+            if (mProfileAvatarSide != nullptr)
+                mProfileAvatarSide->setCoord(margin + cellWidth + gap, margin, cellWidth, fullHeight);
+            if (mProfileAvatarTop != nullptr)
+                mProfileAvatarTop->setCoord(margin + (cellWidth + gap) * 2, margin, cellWidth, fullHeight);
+            mArmorRating->setCoord(0, mAvatar->getHeight() - labelHeight, mAvatar->getWidth(), labelHeight);
+
+            setImageViewport(mAvatarImage, mPreview.get(), scale);
+            setImageViewport(mProfileAvatarSide, mProfilePreviewSide.get(), scale);
+            setImageViewport(mProfileAvatarTop, mProfilePreviewTop.get(), scale);
+            return;
+        }
+
         const MyGUI::IntSize viewport = getPreviewViewportSize();
         mPreview->setViewport(viewport.width, viewport.height);
         mAvatarImage->getSubWidgetMain()->_setUVSet(
             MyGUI::FloatRect(0.f, 0.f, viewport.width / float(mPreview->getTextureWidth()),
                 viewport.height / float(mPreview->getTextureHeight())));
+    }
+
+    void InventoryWindow::updateProfilerPreviews()
+    {
+        if (!mPaperDollProfiler)
+            return;
+        if (mProfilePreviewSide)
+            mProfilePreviewSide->update();
+        if (mProfilePreviewTop)
+            mProfilePreviewTop->update();
+    }
+
+    void InventoryWindow::rebuildProfilerPreviews()
+    {
+        if (!mPaperDollProfiler)
+            return;
+        if (mProfilePreviewSide)
+        {
+            mProfilePreviewSide->updatePtr(mPtr);
+            mProfilePreviewSide->rebuild();
+            mProfilePreviewSide->update();
+        }
+        if (mProfilePreviewTop)
+        {
+            mProfilePreviewTop->updatePtr(mPtr);
+            mProfilePreviewTop->rebuild();
+            mProfilePreviewTop->update();
+        }
+        updatePreviewSize();
     }
 
     void InventoryWindow::onNameFilterChanged(MyGUI::EditBox* sender)
@@ -813,6 +941,7 @@ namespace MWGui
     void InventoryWindow::dirtyPreview()
     {
         mPreview->update();
+        updateProfilerPreviews();
 
         updateArmorRating();
     }
@@ -960,6 +1089,7 @@ namespace MWGui
     void InventoryWindow::rebuildAvatar()
     {
         mPreview->rebuild();
+        rebuildProfilerPreviews();
     }
 
     void InventoryWindow::itemAdded(const MWWorld::ConstPtr& item, int count)

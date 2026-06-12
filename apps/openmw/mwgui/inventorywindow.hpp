@@ -119,6 +119,13 @@ namespace MWGui
 
         std::unique_ptr<MyGUI::ITexture> mPreviewTexture;
         std::unique_ptr<MWRender::InventoryPreview> mPreview;
+        MyGUI::ImageBox* mProfileAvatarSide = nullptr;
+        MyGUI::ImageBox* mProfileAvatarTop = nullptr;
+        std::unique_ptr<MyGUI::ITexture> mProfilePreviewSideTexture;
+        std::unique_ptr<MyGUI::ITexture> mProfilePreviewTopTexture;
+        std::unique_ptr<MWRender::InventoryPreview> mProfilePreviewSide;
+        std::unique_ptr<MWRender::InventoryPreview> mProfilePreviewTop;
+        bool mPaperDollProfiler = false;
 
         bool mTrading;
         bool mUpdateNextFrame;
@@ -156,6 +163,8 @@ namespace MWGui
         void dirtyPreview();
         void updatePreviewSize();
         void updateArmorRating();
+        void updateProfilerPreviews();
+        void rebuildProfilerPreviews();
 
         MyGUI::IntSize getPreviewViewportSize() const;
         osg::Vec2f mapPreviewWindowToViewport(int x, int y) const;

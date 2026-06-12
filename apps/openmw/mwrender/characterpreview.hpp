@@ -81,7 +81,15 @@ namespace MWRender
     class InventoryPreview : public CharacterPreview
     {
     public:
-        InventoryPreview(osg::Group* parent, Resource::ResourceSystem* resourceSystem, const MWWorld::Ptr& character);
+        enum class ViewMode
+        {
+            Front,
+            Profile,
+            Top,
+        };
+
+        InventoryPreview(osg::Group* parent, Resource::ResourceSystem* resourceSystem, const MWWorld::Ptr& character,
+            ViewMode viewMode = ViewMode::Front);
 
         void updatePtr(const MWWorld::Ptr& ptr);
 
@@ -93,6 +101,7 @@ namespace MWRender
     protected:
         osg::ref_ptr<osg::Viewport> mViewport;
         std::unique_ptr<MWWorld::LiveCellRef<ESM4::Npc>> mFalloutPreviewRef;
+        ViewMode mViewMode;
 
         osg::ref_ptr<Animation> createAnimation() override;
         void onSetup() override;

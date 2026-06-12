@@ -36,6 +36,26 @@
 
 namespace MWGui
 {
+    namespace
+    {
+        bool hasFalloutContent()
+        {
+            if (std::getenv("OPENMW_FNV_PROOF_PIPBOY_SURFACE") != nullptr)
+                return true;
+
+            if (!MWBase::Environment::get().getWorld())
+                return false;
+
+            for (const std::string& file : MWBase::Environment::get().getWorld()->getContentFiles())
+            {
+                if (file.find("FalloutNV.esm") != std::string::npos || file.find("falloutnv.esm") != std::string::npos)
+                    return true;
+            }
+
+            return false;
+        }
+    }
+
     HUD::HUD(CustomMarkerCollection& customMarkers, DragAndDrop* dragAndDrop, MWRender::LocalMap* localMapRender)
 //## VR_PATCH BEGIN
         : WindowBase(VR::getVR() ? "openmw_hud_vr.layout" : "openmw_hud.layout")
@@ -102,18 +122,7 @@ namespace MWGui
         magickaFrame->eventMouseButtonClick += MyGUI::newDelegate(this, &HUD::onHMSClicked);
         fatigueFrame->eventMouseButtonClick += MyGUI::newDelegate(this, &HUD::onHMSClicked);
 
-        bool falloutContent = std::getenv("OPENMW_FNV_PROOF_PIPBOY_SURFACE") != nullptr;
-        if (!falloutContent && MWBase::Environment::get().getWorld())
-        {
-            for (const std::string& file : MWBase::Environment::get().getWorld()->getContentFiles())
-            {
-                if (file.find("FalloutNV.esm") != std::string::npos || file.find("falloutnv.esm") != std::string::npos)
-                {
-                    falloutContent = true;
-                    break;
-                }
-            }
-        }
+        bool falloutContent = hasFalloutContent();
 
         if (falloutContent)
         {
@@ -164,6 +173,48 @@ namespace MWGui
         getWidget(mCrosshair, "Crosshair");
 
         LocalMapBase::init(mMinimap, mCompass);
+
+        if (falloutContent && !VR::getVR())
+        {
+            const int margin = 18;
+            const int barWidth = 160;
+            const int barHeight = 18;
+            const int barGap = 7;
+            const int mapSize = 150;
+            const int mapInset = 5;
+            const int iconSize = 54;
+            const int iconStatusHeight = 7;
+
+            const int barTop = viewSize.height - margin - (barHeight * 2 + barGap);
+            mHealthFrame->setCoord(margin, barTop, barWidth, barHeight);
+            mHealth->setCoord(0, 0, barWidth, barHeight);
+            magickaFrame->setCoord(margin, barTop + barHeight + barGap, barWidth, barHeight);
+            mMagicka->setCoord(0, 0, barWidth, barHeight);
+
+            const int iconTop = viewSize.height - margin - iconSize - iconStatusHeight;
+            mWeapBox->setCoord(margin + barWidth + 18, iconTop, iconSize, iconSize + iconStatusHeight);
+            mSpellBox->setCoord(margin + barWidth + 18 + iconSize + 8, iconTop, iconSize, iconSize + iconStatusHeight);
+            mSneakBox->setCoord(margin + barWidth + 18 + (iconSize + 8) * 2, iconTop, iconSize, iconSize);
+
+            mMinimapBox->setCoord(viewSize.width - margin - mapSize, viewSize.height - margin - mapSize, mapSize, mapSize);
+            if (mMinimapBox->getChildCount() > 0)
+                mMinimapBox->getChildAt(0)->setCoord(0, 0, mapSize, mapSize);
+            mMinimap->setCoord(mapInset, mapInset, mapSize - mapInset * 2, mapSize - mapInset * 2);
+            mCompass->setCoord((mapSize - 72) / 2, (mapSize - 72) / 2, 72, 72);
+            mMinimapButton->setCoord(0, 0, mapSize - mapInset * 2, mapSize - mapInset * 2);
+
+            mEffectBox->setPosition(viewSize.width - margin - mapSize - 28, viewSize.height - margin - 24);
+
+            mHealthManaStaminaBaseLeft = mHealthFrame->getLeft();
+            mWeapBoxBaseLeft = mWeapBox->getLeft();
+            mSpellBoxBaseLeft = mSpellBox->getLeft();
+            mSneakBoxBaseLeft = mSneakBox->getLeft();
+            mMinimapBoxBaseRight = viewSize.width - mMinimapBox->getRight();
+            mEffectBoxBaseRight = viewSize.width - mEffectBox->getRight();
+            Log(Debug::Info) << "FNV/ESM4 proof: flat Fallout HUD scaled HP/AP and compass to "
+                             << barWidth << "x" << barHeight << " bars, " << mapSize << "x" << mapSize
+                             << " minimap";
+        }
 
         mMainWidget->eventMouseButtonClick += MyGUI::newDelegate(this, &HUD::onWorldClicked);
         mMainWidget->eventMouseMove += MyGUI::newDelegate(this, &HUD::onWorldMouseOver);
@@ -544,13 +595,13 @@ namespace MWGui
 
     void HUD::setHmsVisible(bool visible)
     {
-        if (VR::getVR() && !visible)
+        if ((VR::getVR() || hasFalloutContent()) && !visible)
         {
             static bool logged = false;
             if (!logged)
             {
                 logged = true;
-                Log(Debug::Info) << "FNV/ESM4 diag: keeping VR wrist HUD health/AP visible despite hide request";
+                Log(Debug::Info) << "FNV/ESM4 diag: keeping Fallout HUD health/AP visible despite hide request";
             }
             visible = true;
         }
@@ -586,13 +637,13 @@ namespace MWGui
 
     void HUD::setMinimapVisible(bool visible)
     {
-        if (VR::getVR() && !visible)
+        if ((VR::getVR() || hasFalloutContent()) && !visible)
         {
             static bool logged = false;
             if (!logged)
             {
                 logged = true;
-                Log(Debug::Info) << "FNV/ESM4 diag: keeping VR wrist HUD compass/minimap visible despite hide request";
+                Log(Debug::Info) << "FNV/ESM4 diag: keeping Fallout HUD compass/minimap visible despite hide request";
             }
             visible = true;
         }

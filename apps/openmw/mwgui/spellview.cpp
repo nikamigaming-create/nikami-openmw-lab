@@ -7,6 +7,7 @@
 #include <MyGUI_ScrollView.h>
 
 #include <components/settings/values.hpp>
+#include <components/debug/debuglog.hpp>
 #include <components/widgets/box.hpp>
 #include <components/widgets/sharedstatebutton.hpp>
 
@@ -121,11 +122,23 @@ namespace MWGui
                 }
 
                 if (spell.mType == Spell::Type_Power)
+                {
                     addGroup(falloutContent ? "TRAITS" : "#{sPowers}", {});
+                    if (falloutContent)
+                        Log(Debug::Info) << "FNV/ESM4 proof: spell/perk group applied TRAITS";
+                }
                 else if (spell.mType == Spell::Type_Spell)
+                {
                     addGroup(falloutContent ? "PERKS" : "#{sSpells}", mShowCostColumn ? "#{sCostChance}" : "");
+                    if (falloutContent)
+                        Log(Debug::Info) << "FNV/ESM4 proof: spell/perk group applied PERKS";
+                }
                 else
+                {
                     addGroup(falloutContent ? "EFFX" : "#{sMagicItem}", mShowCostColumn ? "#{sCostCharge}" : "");
+                    if (falloutContent)
+                        Log(Debug::Info) << "FNV/ESM4 proof: spell/perk group applied EFFX";
+                }
                 curType = spell.mType;
             }
 
