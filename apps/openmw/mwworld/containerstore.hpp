@@ -18,6 +18,11 @@
 #include <components/esm3/loadprob.hpp>
 #include <components/esm3/loadrepa.hpp>
 #include <components/esm3/loadweap.hpp>
+#include <components/esm4/loadalch.hpp>
+#include <components/esm4/loadammo.hpp>
+#include <components/esm4/loadarmo.hpp>
+#include <components/esm4/loadmisc.hpp>
+#include <components/esm4/loadweap.hpp>
 
 #include <components/misc/rng.hpp>
 
@@ -92,10 +97,15 @@ namespace MWWorld
         static constexpr int Type_Probe = 0x0200;
         static constexpr int Type_Repair = 0x0400;
         static constexpr int Type_Weapon = 0x0800;
+        static constexpr int Type_ESM4Ammunition = 0x1000;
+        static constexpr int Type_ESM4Armor = 0x2000;
+        static constexpr int Type_ESM4Miscellaneous = 0x4000;
+        static constexpr int Type_ESM4Weapon = 0x8000;
+        static constexpr int Type_ESM4Potion = 0x10000;
 
-        static constexpr int Type_Last = Type_Weapon;
+        static constexpr int Type_Last = Type_ESM4Potion;
 
-        static constexpr int Type_All = 0xffff;
+        static constexpr int Type_All = 0x1ffff;
 
         static const ESM::RefId sGoldId;
 
@@ -104,7 +114,10 @@ namespace MWWorld
             return t == ESM::Potion::sRecordId || t == ESM::Apparatus::sRecordId || t == ESM::Armor::sRecordId
                 || t == ESM::Book::sRecordId || t == ESM::Clothing::sRecordId || t == ESM::Ingredient::sRecordId
                 || t == ESM::Light::sRecordId || t == ESM::Lockpick::sRecordId || t == ESM::Miscellaneous::sRecordId
-                || t == ESM::Probe::sRecordId || t == ESM::Repair::sRecordId || t == ESM::Weapon::sRecordId;
+                || t == ESM::Probe::sRecordId || t == ESM::Repair::sRecordId || t == ESM::Weapon::sRecordId
+                || t == ESM4::Ammunition::sRecordId || t == ESM4::Armor::sRecordId
+                || t == ESM4::MiscItem::sRecordId || t == ESM4::Weapon::sRecordId
+                || t == ESM4::Potion::sRecordId;
         }
         template <typename T>
         static constexpr bool isStorableType()
@@ -138,6 +151,11 @@ namespace MWWorld
         MWWorld::CellRefList<ESM::Probe> probes;
         MWWorld::CellRefList<ESM::Repair> repairs;
         MWWorld::CellRefList<ESM::Weapon> weapons;
+        MWWorld::CellRefList<ESM4::Ammunition> esm4Ammunition;
+        MWWorld::CellRefList<ESM4::Armor> esm4Armors;
+        MWWorld::CellRefList<ESM4::MiscItem> esm4MiscItems;
+        MWWorld::CellRefList<ESM4::Weapon> esm4Weapons;
+        MWWorld::CellRefList<ESM4::Potion> esm4Potions;
 
         mutable float mCachedWeight;
         mutable bool mWeightUpToDate;
@@ -358,6 +376,11 @@ namespace MWWorld
         typename Iterator<ESM::Probe>::type mProbe;
         typename Iterator<ESM::Repair>::type mRepair;
         typename Iterator<ESM::Weapon>::type mWeapon;
+        typename Iterator<ESM4::Ammunition>::type mESM4Ammunition;
+        typename Iterator<ESM4::Armor>::type mESM4Armor;
+        typename Iterator<ESM4::MiscItem>::type mESM4Miscellaneous;
+        typename Iterator<ESM4::Weapon>::type mESM4Weapon;
+        typename Iterator<ESM4::Potion>::type mESM4Potion;
 
         ContainerStoreIteratorBase(ContainerStoreType container);
         ///< End-iterator
@@ -378,6 +401,11 @@ namespace MWWorld
         ContainerStoreIteratorBase(ContainerStoreType container, typename Iterator<ESM::Probe>::type);
         ContainerStoreIteratorBase(ContainerStoreType container, typename Iterator<ESM::Repair>::type);
         ContainerStoreIteratorBase(ContainerStoreType container, typename Iterator<ESM::Weapon>::type);
+        ContainerStoreIteratorBase(ContainerStoreType container, typename Iterator<ESM4::Ammunition>::type);
+        ContainerStoreIteratorBase(ContainerStoreType container, typename Iterator<ESM4::Armor>::type);
+        ContainerStoreIteratorBase(ContainerStoreType container, typename Iterator<ESM4::MiscItem>::type);
+        ContainerStoreIteratorBase(ContainerStoreType container, typename Iterator<ESM4::Weapon>::type);
+        ContainerStoreIteratorBase(ContainerStoreType container, typename Iterator<ESM4::Potion>::type);
 
         template <class T>
         void copy(const ContainerStoreIteratorBase<T>& src);
