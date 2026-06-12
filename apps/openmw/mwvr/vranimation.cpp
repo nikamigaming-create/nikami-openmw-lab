@@ -521,15 +521,17 @@ namespace MWVR
     class TrackingController
     {
     public:
-        TrackingController(std::shared_ptr<VR::Space> space, osg::Vec3 baseOffset, bool left, bool mirror)
+        TrackingController(std::shared_ptr<VR::Space> space, osg::Vec3 baseOffset, bool left, bool mirror,
+            bool useNativeGripOrientation)
             : mSpace(space)
             , mTransform(nullptr)
             , mBaseOffset(baseOffset)
-            , mBaseOrientation(osg::PI_2, osg::Vec3f(0, 0, 1))
+            , mBaseOrientation(useNativeGripOrientation ? osg::Quat() : osg::Quat(osg::PI_2, osg::Vec3f(0, 0, 1)))
             , mLeft(left)
             , mMirror(mirror)
+            , mUseNativeGripOrientation(useNativeGripOrientation)
         {
-            if (left)
+            if (left && !mUseNativeGripOrientation)
                 mBaseOrientation = osg::Quat(osg::PI, osg::Vec3f(1, 0, 0)) * mBaseOrientation;
         }
 
@@ -584,6 +586,7 @@ namespace MWVR
         osg::Quat mBaseOrientation;
         bool mLeft;
         bool mMirror;
+        bool mUseNativeGripOrientation;
     };
 
     VRAnimation::VRAnimation(const MWWorld::Ptr& ptr, osg::ref_ptr<osg::Group> parentNode,
@@ -616,8 +619,13 @@ namespace MWVR
 
         auto& xrInput = OpenXRInput::instance();
 
+        const bool falloutHandFallback = shouldUseFalloutVrHandFallback(mResourceSystem);
         // Morrowind's meshes do not point forward by default and need re-positioning and orientation.
-        osg::Vec3 offset{ 15, 0, 0 };
+        // Fallout hands already live on Fallout hand bones, so use the runtime grip pose directly.
+        osg::Vec3 offset = falloutHandFallback ? osg::Vec3(0, 0, 0) : osg::Vec3(15, 0, 0);
+        Log(Debug::Info) << "FNV/ESM4 diag: VR hand tracking mode falloutFallback=" << falloutHandFallback
+                         << " nativeGripOrientation=" << falloutHandFallback
+                         << " baseOffset=(" << offset.x() << "," << offset.y() << "," << offset.z() << ")";
 
         for (int i = 0; i < 2; i++)
         {
@@ -627,7 +635,7 @@ namespace MWVR
             ctx.spaceName = i == 0 ? OpenXRInput::LeftHandGrip : OpenXRInput::RightHandGrip;
             ctx.forearmBone = i == 0 ? "bip01 l forearm" : "bip01 r forearm";
             ctx.forearmController = std::make_unique<TrackingController>(
-                xrInput.getSpace(ctx.spaceName), offset, i == 0, false);
+                xrInput.getSpace(ctx.spaceName), offset, i == 0, false, falloutHandFallback);
             ctx.handBone = i == 0 ? "Bip01 L Hand" : "Bip01 R Hand";
             ctx.handController = new HandController;
             ctx.indexFingerBone[0] = i == 0 ? "bip01 l finger1" : "bip01 r finger1";
@@ -722,30 +730,41 @@ namespace MWVR
                 const_cast<osg::Node*>(templateNode.get())->accept(templateProofVisitor);
                 osg::ref_ptr<const osg::Node> attachTemplateNode = templateNode;
                 bool staticizedHandRig = false;
+                bool liveRiggedHand = false;
                 if (templateProofVisitor.mRiggedDrawables > 0)
                 {
-                    osg::ref_ptr<osg::Node> staticTemplate = osg::clone(templateNode.get(), osg::CopyOp::DEEP_COPY_ALL);
-                    StaticizeFalloutVrHandRigVisitor staticizeVisitor;
-                    staticTemplate->accept(staticizeVisitor);
-                    if (staticizeVisitor.mStaticizedRigGeometryCount > 0)
-                    {
-                        staticizedHandRig = true;
-                        attachTemplateNode = staticTemplate;
-                        Log(Debug::Info) << "FNV/ESM4 diag: staticized VR hand fallback " << mesh
-                                         << " rigged=" << staticizeVisitor.mStaticizedRigGeometryCount
-                                         << " seen=" << staticizeVisitor.mSeenRigGeometryCount
-                                         << " missingSource=" << staticizeVisitor.mMissingSourceGeometryCount;
-                    }
-                    else
-                        Log(Debug::Warning) << "FNV/ESM4 diag: failed to staticize VR hand fallback " << mesh
-                                            << " seen=" << staticizeVisitor.mSeenRigGeometryCount
-                                            << " missingSource=" << staticizeVisitor.mMissingSourceGeometryCount;
+                    Log(Debug::Info) << "FNV/ESM4 diag: attaching live rigged VR hand fallback " << mesh
+                                     << " riggedDrawables=" << templateProofVisitor.mRiggedDrawables
+                                     << " so master finger bones can drive the visible glove";
                 }
 
                 osg::ref_ptr<osg::Node> attached;
-                if (staticizedHandRig)
-                    attached = attachStaticizedFalloutVrHand(
-                        attachTemplateNode, attachNode, mResourceSystem->getSceneManager(), handInBip, bone);
+                if (templateProofVisitor.mRiggedDrawables > 0)
+                {
+                    attached = SceneUtil::attach(std::move(attachTemplateNode), mObjectRoot, {}, attachNode,
+                        mResourceSystem->getSceneManager());
+                    FalloutVrHandProofVisitor liveProofVisitor;
+                    attached->accept(liveProofVisitor);
+                    liveRiggedHand = liveProofVisitor.mRiggedDrawables > 0 || liveProofVisitor.mDrawables > 0;
+                    if (!liveRiggedHand)
+                    {
+                        osg::ref_ptr<osg::Node> staticTemplate
+                            = osg::clone(templateNode.get(), osg::CopyOp::DEEP_COPY_ALL);
+                        StaticizeFalloutVrHandRigVisitor staticizeVisitor;
+                        staticTemplate->accept(staticizeVisitor);
+                        if (staticizeVisitor.mStaticizedRigGeometryCount > 0)
+                        {
+                            staticizedHandRig = true;
+                            attached = attachStaticizedFalloutVrHand(
+                                staticTemplate, attachNode, mResourceSystem->getSceneManager(), handInBip, bone);
+                            Log(Debug::Warning) << "FNV/ESM4 diag: live rigged VR hand attach produced no drawables; "
+                                                << "staticized fallback " << mesh
+                                                << " rigged=" << staticizeVisitor.mStaticizedRigGeometryCount
+                                                << " seen=" << staticizeVisitor.mSeenRigGeometryCount
+                                                << " missingSource=" << staticizeVisitor.mMissingSourceGeometryCount;
+                        }
+                    }
+                }
                 else
                     attached = SceneUtil::attach(std::move(attachTemplateNode), mObjectRoot, {}, attachNode,
                         mResourceSystem->getSceneManager());
@@ -757,6 +776,7 @@ namespace MWVR
                 Log(Debug::Info) << "FNV/ESM4 diag: attached Fallout VR hand fallback " << mesh << " to " << bone
                                  << " attachNode=" << attachNode->getName()
                                  << " staticized=" << staticizedHandRig
+                                 << " liveRigged=" << liveRiggedHand
                                  << " drawables=" << proofVisitor.mDrawables
                                  << " riggedDrawables=" << proofVisitor.mRiggedDrawables
                                  << " boundRadius=" << bound.radius()
