@@ -69,6 +69,7 @@ namespace SceneUtil
         std::size_t getBoneCount() const;
         std::string_view getBoneName(std::size_t index) const;
         bool isFalloutCharacterRig() const;
+        void setFalloutFlagSkinning(bool enabled) { mFalloutFlagSkinning = enabled; }
 
         osg::ref_ptr<osg::Geometry> getSourceGeometry() const;
         osg::Geometry* getRenderGeometry(unsigned int index) const;
@@ -127,6 +128,8 @@ namespace SceneUtil
         bool mLoggedFalloutPoseSanity{ false };
         bool mLoggedFalloutCullInitRecovery{ false };
         bool mFalloutFallbackDecided{ false };
+        bool mFalloutFlagSkinning{ false };
+        bool mLoggedFalloutFlagSkinning{ false };
         bool mFalloutUseSourceFallback{ false };
         mutable bool mFalloutCharacterRigComputed{ false };
         mutable bool mFalloutCharacterRig{ false };

@@ -2551,12 +2551,16 @@ namespace NifOsg
                 const Nif::NiSkinInstance* skin = niGeometry->mSkin.getPtr();
                 const Nif::NiSkinData* data = skin->mData.getPtr();
                 const Nif::NiAVObjectList& bones = skin->mBones;
+                const bool falloutFlagPath = isFalloutFlagPath(filename);
+                if (falloutFlagPath)
+                    rig->setFalloutFlagSkinning(true);
                 const bool falloutSkinProbe = filename.find("characters/head/headhuman.nif") != std::string::npos
                     || filename.find("characters\\head\\headhuman.nif") != std::string::npos
                     || filename.find("characters/_male/lefthand") != std::string::npos
                     || filename.find("characters\\_male\\lefthand") != std::string::npos
                     || filename.find("characters/_male/righthand") != std::string::npos
-                    || filename.find("characters\\_male\\righthand") != std::string::npos;
+                    || filename.find("characters\\_male\\righthand") != std::string::npos
+                    || falloutFlagPath;
                 if (falloutSkinProbe)
                 {
                     const osg::Matrixf skinTransform = data->mTransform.toMatrix();

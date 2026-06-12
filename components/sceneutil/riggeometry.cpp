@@ -136,6 +136,7 @@ namespace SceneUtil
     RigGeometry::RigGeometry(const RigGeometry& copy, const osg::CopyOp& copyop)
         : Drawable(copy, copyop)
         , mData(copy.mData)
+        , mFalloutFlagSkinning(copy.mFalloutFlagSkinning)
         , mFalloutCharacterRig(copy.mFalloutCharacterRig)
     {
         setSourceGeometry(copy.mSourceGeometry);
@@ -333,6 +334,7 @@ namespace SceneUtil
         osg::Geometry& geom = *getGeometry(mLastFrameNumber);
 
         const bool falloutRig = isFalloutCharacterRig();
+        const bool falloutFlagRig = mFalloutFlagSkinning;
         if (falloutRig && std::getenv("OPENMW_FNV_RIG_DRAW_AUDIT") != nullptr)
         {
             std::ostringstream stream;
@@ -468,12 +470,24 @@ namespace SceneUtil
         }
 
         osg::Matrixf transform;
-        if (falloutSourceSkinning)
+        if (falloutFlagRig)
+            transform.makeIdentity();
+        else if (falloutSourceSkinning)
             transform.makeIdentity();
         else if (mSkinToSkelMatrix && (!falloutRig || useFalloutSkinToSkelMatrix()))
             transform = (*mSkinToSkelMatrix) * mData->mTransform;
         else
             transform = mData->mTransform;
+
+        if (falloutFlagRig && !mLoggedFalloutFlagSkinning)
+        {
+            mLoggedFalloutFlagSkinning = true;
+            Log(Debug::Info) << "FNV/ESM4 diag: Fallout flag RigGeometry '" << getName()
+                             << "' using animated bone deltas with identity skin root"
+                             << " rootBone=" << mData->mRootBone
+                             << " bones=" << mData->mBones.size()
+                             << " hasSkinToSkel=" << static_cast<bool>(mSkinToSkelMatrix);
+        }
 
         if (falloutRig && !mLoggedFalloutSkinningModes && positionSrc != nullptr && !mData->mInfluences.empty())
         {
@@ -749,6 +763,7 @@ namespace SceneUtil
 
         osg::BoundingBox box;
         const bool falloutRig = isFalloutCharacterRig();
+        const bool falloutFlagRig = mFalloutFlagSkinning;
         osg::Matrixf transform;
         const std::string_view falloutSkinningMode = falloutRig ? getFalloutSkinningMode() : std::string_view();
         const bool sourceSkinOnly = falloutRig && falloutSkinningMode == "sourceSkinOnly"
@@ -756,7 +771,9 @@ namespace SceneUtil
         const bool falloutSourceSkinning = falloutRig
             && (falloutSkinningMode == "source" || sourceSkinOnly
                 || (falloutSkinningMode == "auto" && mFalloutUseSourceFallback));
-        if (falloutSourceSkinning)
+        if (falloutFlagRig)
+            transform.makeIdentity();
+        else if (falloutSourceSkinning)
             transform.makeIdentity();
         else if (mSkinToSkelMatrix && (!falloutRig || useFalloutSkinToSkelMatrix()))
             transform = (*mSkinToSkelMatrix) * mData->mTransform;
