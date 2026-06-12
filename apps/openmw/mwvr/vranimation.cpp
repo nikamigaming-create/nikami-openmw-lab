@@ -318,20 +318,18 @@ namespace MWVR
 
     void FingerController::operator()(osg::Node* node, osg::NodeVisitor* nv)
     {
-        if (!mEnabled)
+        if (mEnabled)
         {
-            traverse(node, nv);
-            return;
-        }
 
         // Since morrowinds assets do not do a particularly good job of imitating natural hands and poses,
         // the best i can do for pointing is to just make it point straight forward. While not
         // totally natural, it works.
         osg::Quat rotate{ 0, 0, 0, 1 };
-        auto matrixTransform = node->asTransform()->asMatrixTransform();
-        auto matrix = matrixTransform->getMatrix();
-        matrix.setRotate(rotate);
-        matrixTransform->setMatrix(matrix);
+            auto matrixTransform = node->asTransform()->asMatrixTransform();
+            auto matrix = matrixTransform->getMatrix();
+            matrix.setRotate(rotate);
+            matrixTransform->setMatrix(matrix);
+        }
 
         // Omit nested callbacks to override animations of this node
         osg::ref_ptr<osg::Callback> ncb = getNestedCallback();
@@ -356,11 +354,8 @@ namespace MWVR
 
     void HandController::operator()(osg::Node* node, osg::NodeVisitor* nv)
     {
-        if (!mEnabled)
+        if (mEnabled)
         {
-            traverse(node, nv);
-            return;
-        }
         float PI_2 = osg::PI_2;
         if (node->getName() == "Bip01 L Hand")
             PI_2 = -PI_2;
@@ -399,10 +394,11 @@ namespace MWVR
             }
         }
 
-        auto matrixTransform = node->asTransform()->asMatrixTransform();
-        auto matrix = matrixTransform->getMatrix();
-        matrix.setRotate(rotate);
-        matrixTransform->setMatrix(matrix);
+            auto matrixTransform = node->asTransform()->asMatrixTransform();
+            auto matrix = matrixTransform->getMatrix();
+            matrix.setRotate(rotate);
+            matrixTransform->setMatrix(matrix);
+        }
 
         // Omit nested callbacks to override animations of this node
         osg::ref_ptr<osg::Callback> ncb = getNestedCallback();
@@ -638,10 +634,13 @@ namespace MWVR
                 xrInput.getSpace(ctx.spaceName), offset, i == 0, false, falloutHandFallback);
             ctx.handBone = i == 0 ? "Bip01 L Hand" : "Bip01 R Hand";
             ctx.handController = new HandController;
+            ctx.handController->setEnabled(!falloutHandFallback);
             ctx.indexFingerBone[0] = i == 0 ? "bip01 l finger1" : "bip01 r finger1";
             ctx.indexFingerControllers[0] = new FingerController;
+            ctx.indexFingerControllers[0]->setEnabled(!falloutHandFallback);
             ctx.indexFingerBone[1] = i == 0 ? "bip01 l finger2" : "bip01 r finger2";
             ctx.indexFingerControllers[1] = new FingerController;
+            ctx.indexFingerControllers[1]->setEnabled(!falloutHandFallback);
         }
     }
 
@@ -1136,10 +1135,11 @@ namespace MWVR
 
     void VRAnimation::enablePointer(XrPath topLevelPath, bool enable) 
     {
+        const bool falloutHandFallback = shouldUseFalloutVrHandFallback(mResourceSystem);
         auto& ctx = mVrControllers[topLevelPath];
-        ctx.handController->setFingerPointingMode(enable);
-        ctx.indexFingerControllers[0]->setEnabled(enable);
-        ctx.indexFingerControllers[1]->setEnabled(enable);
+        ctx.handController->setFingerPointingMode(enable && !falloutHandFallback);
+        ctx.indexFingerControllers[0]->setEnabled(enable && !falloutHandFallback);
+        ctx.indexFingerControllers[1]->setEnabled(enable && !falloutHandFallback);
     }
 
     void VRAnimation::enableHeadAnimation(bool)
