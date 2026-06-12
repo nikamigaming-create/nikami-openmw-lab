@@ -639,13 +639,10 @@ namespace MWVR
             XrPath path = i == 0 ? mLeftHandPath : mRightHandPath;
             auto& ctx = mVrControllers[path] = {};
             ctx.topLevelPath = path;
-            if (VR::getLeftHandedMode())
-                ctx.spaceName = i == 1 ? OpenXRInput::LeftHandAim : OpenXRInput::RightHandAim;
-            else
-                ctx.spaceName = i == 0 ? OpenXRInput::LeftHandAim : OpenXRInput::RightHandAim;
+            ctx.spaceName = i == 0 ? OpenXRInput::LeftHandGrip : OpenXRInput::RightHandGrip;
             ctx.forearmBone = i == 0 ? "bip01 l forearm" : "bip01 r forearm";
             ctx.forearmController = std::make_unique<TrackingController>(
-                xrInput.getSpace(ctx.spaceName), offset, i == 0, VR::getLeftHandedMode());
+                xrInput.getSpace(ctx.spaceName), offset, i == 0, false);
             ctx.handBone = i == 0 ? "Bip01 L Hand" : "Bip01 R Hand";
             ctx.handController = new HandController;
             ctx.indexFingerBone[0] = i == 0 ? "bip01 l finger1" : "bip01 r finger1";
