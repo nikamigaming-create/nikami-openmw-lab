@@ -36,6 +36,16 @@ namespace Settings
         SettingValue<float> mHandsOffsetX{ mIndex, "VR", "hands offset x" };
         SettingValue<float> mHandsOffsetY{ mIndex, "VR", "hands offset y" };
         SettingValue<float> mHandsOffsetZ{ mIndex, "VR", "hands offset z" };
+        SettingValue<float> mFalloutHandMeshOffsetX{ mIndex, "VR", "fallout hand mesh offset x" };
+        SettingValue<float> mFalloutHandMeshOffsetY{ mIndex, "VR", "fallout hand mesh offset y" };
+        SettingValue<float> mFalloutHandMeshOffsetZ{ mIndex, "VR", "fallout hand mesh offset z" };
+        SettingValue<float> mFalloutLeftHandMeshOffsetX{ mIndex, "VR", "fallout left hand mesh offset x" };
+        SettingValue<float> mFalloutLeftHandMeshOffsetY{ mIndex, "VR", "fallout left hand mesh offset y" };
+        SettingValue<float> mFalloutLeftHandMeshOffsetZ{ mIndex, "VR", "fallout left hand mesh offset z" };
+        SettingValue<float> mFalloutRightHandMeshOffsetX{ mIndex, "VR", "fallout right hand mesh offset x" };
+        SettingValue<float> mFalloutRightHandMeshOffsetY{ mIndex, "VR", "fallout right hand mesh offset y" };
+        SettingValue<float> mFalloutRightHandMeshOffsetZ{ mIndex, "VR", "fallout right hand mesh offset z" };
+        SettingValue<bool> mFalloutLeftHandRollFlip{ mIndex, "VR", "fallout left hand roll flip" };
         SettingValue<bool> mLeftHandedMode{ mIndex, "VR", "left handed mode" };
         SettingValue<bool> mShow3DCrosshairs{ mIndex, "VR", "show 3D crosshairs" };
         SettingValue<bool> mUseXrLayerForHuds{ mIndex, "VR", "use xr layer for huds" };

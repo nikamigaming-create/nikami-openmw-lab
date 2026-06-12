@@ -286,8 +286,22 @@ namespace MWVR
             handLocal.setTrans(-center);
         }
         const bool leftHand = bone.find(" L ") != std::string_view::npos;
-        if (leftHand)
+        const bool leftRollFlip = leftHand && Settings::vr().mFalloutLeftHandRollFlip;
+        if (leftRollFlip)
             handLocal.postMultRotate(osg::Quat(osg::PI, osg::Vec3f(0, 1, 0)));
+        const osg::Vec3f falloutBaseCalibration(
+            Settings::vr().mFalloutHandMeshOffsetX * Constants::UnitsPerMeter,
+            Settings::vr().mFalloutHandMeshOffsetY * Constants::UnitsPerMeter,
+            Settings::vr().mFalloutHandMeshOffsetZ * Constants::UnitsPerMeter);
+        const osg::Vec3f falloutSideCalibration(
+            (leftHand ? Settings::vr().mFalloutLeftHandMeshOffsetX : Settings::vr().mFalloutRightHandMeshOffsetX)
+                * Constants::UnitsPerMeter,
+            (leftHand ? Settings::vr().mFalloutLeftHandMeshOffsetY : Settings::vr().mFalloutRightHandMeshOffsetY)
+                * Constants::UnitsPerMeter,
+            (leftHand ? Settings::vr().mFalloutLeftHandMeshOffsetZ : Settings::vr().mFalloutRightHandMeshOffsetZ)
+                * Constants::UnitsPerMeter);
+        const osg::Vec3f falloutWristCalibration = falloutBaseCalibration + falloutSideCalibration;
+        handLocal.setTrans(handLocal.getTrans() + falloutWristCalibration);
 
         osg::ref_ptr<osg::MatrixTransform> transform = new osg::MatrixTransform;
         transform->setMatrix(handLocal);
@@ -297,7 +311,9 @@ namespace MWVR
                          << handLocal.getTrans().z() << ") quat=(" << localRotation.x() << ","
                          << localRotation.y() << "," << localRotation.z() << "," << localRotation.w()
                          << ") sourceCenter=(" << center.x() << "," << center.y() << "," << center.z()
-                         << ") leftRollFlip=" << leftHand << " bindOffset=discarded";
+                         << ") wristCalibration=(" << falloutWristCalibration.x() << ","
+                         << falloutWristCalibration.y() << "," << falloutWristCalibration.z()
+                         << ") leftRollFlip=" << leftRollFlip << " bindOffset=discarded";
 
         if (bounds.valid())
         {
