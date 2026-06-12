@@ -736,35 +736,13 @@ namespace MWVR
                 osg::ref_ptr<const osg::Node> templateNode = mResourceSystem->getSceneManager()->getTemplate(mesh);
                 FalloutVrHandProofVisitor templateProofVisitor;
                 const_cast<osg::Node*>(templateNode.get())->accept(templateProofVisitor);
-                osg::ref_ptr<const osg::Node> attachTemplateNode = templateNode;
-                bool staticizedHandRig = false;
                 if (templateProofVisitor.mRiggedDrawables > 0)
-                {
-                    osg::ref_ptr<osg::Node> staticTemplate = osg::clone(templateNode.get(), osg::CopyOp::DEEP_COPY_ALL);
-                    StaticizeFalloutVrHandRigVisitor staticizeVisitor;
-                    staticTemplate->accept(staticizeVisitor);
-                    if (staticizeVisitor.mStaticizedRigGeometryCount > 0)
-                    {
-                        staticizedHandRig = true;
-                        attachTemplateNode = staticTemplate;
-                        Log(Debug::Info) << "FNV/ESM4 diag: staticized VR hand fallback " << mesh
-                                         << " rigged=" << staticizeVisitor.mStaticizedRigGeometryCount
-                                         << " seen=" << staticizeVisitor.mSeenRigGeometryCount
-                                         << " missingSource=" << staticizeVisitor.mMissingSourceGeometryCount;
-                    }
-                    else
-                        Log(Debug::Warning) << "FNV/ESM4 diag: failed to staticize VR hand fallback " << mesh
-                                            << " seen=" << staticizeVisitor.mSeenRigGeometryCount
-                                            << " missingSource=" << staticizeVisitor.mMissingSourceGeometryCount;
-                }
+                    Log(Debug::Info) << "FNV/ESM4 diag: attaching rigged Fallout VR hand fallback through OpenMW VR "
+                                        "hand bone path "
+                                     << mesh << " rigged=" << templateProofVisitor.mRiggedDrawables;
 
-                osg::ref_ptr<osg::Node> attached;
-                if (staticizedHandRig)
-                    attached = attachStaticizedFalloutVrHand(
-                        attachTemplateNode, attachNode, mResourceSystem->getSceneManager(), handInBip, bone);
-                else
-                    attached = SceneUtil::attach(std::move(attachTemplateNode), mObjectRoot, {}, attachNode,
-                        mResourceSystem->getSceneManager());
+                osg::ref_ptr<osg::Node> attached = SceneUtil::attach(std::move(templateNode), mObjectRoot, {},
+                    attachNode, mResourceSystem->getSceneManager());
                 FalloutVrHandProofVisitor proofVisitor;
                 attached->accept(proofVisitor);
                 const osg::BoundingSphere bound = attached->getBound();
@@ -772,7 +750,7 @@ namespace MWVR
                 mPartPriorities[type] = 2;
                 Log(Debug::Info) << "FNV/ESM4 diag: attached Fallout VR hand fallback " << mesh << " to " << bone
                                  << " attachNode=" << attachNode->getName()
-                                 << " staticized=" << staticizedHandRig
+                                 << " staticized=0"
                                  << " drawables=" << proofVisitor.mDrawables
                                  << " riggedDrawables=" << proofVisitor.mRiggedDrawables
                                  << " boundRadius=" << bound.radius()
