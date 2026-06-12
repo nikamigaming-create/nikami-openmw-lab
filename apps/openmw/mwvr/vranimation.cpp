@@ -289,6 +289,15 @@ namespace MWVR
         const bool leftRollFlip = leftHand && Settings::vr().mFalloutLeftHandRollFlip;
         if (leftRollFlip)
             handLocal.postMultRotate(osg::Quat(osg::PI, osg::Vec3f(0, 1, 0)));
+        const osg::Vec3f falloutMeshRotation(
+            osg::DegreesToRadians(
+                leftHand ? Settings::vr().mFalloutLeftHandMeshPitch : Settings::vr().mFalloutRightHandMeshPitch),
+            osg::DegreesToRadians(
+                leftHand ? Settings::vr().mFalloutLeftHandMeshYaw : Settings::vr().mFalloutRightHandMeshYaw),
+            osg::DegreesToRadians(
+                leftHand ? Settings::vr().mFalloutLeftHandMeshRoll : Settings::vr().mFalloutRightHandMeshRoll));
+        handLocal.postMultRotate(osg::Quat(falloutMeshRotation.x(), osg::Vec3f(1, 0, 0),
+            falloutMeshRotation.y(), osg::Vec3f(0, 1, 0), falloutMeshRotation.z(), osg::Vec3f(0, 0, 1)));
         const osg::Vec3f falloutBaseCalibration(
             Settings::vr().mFalloutHandMeshOffsetX * Constants::UnitsPerMeter,
             Settings::vr().mFalloutHandMeshOffsetY * Constants::UnitsPerMeter,
@@ -313,7 +322,10 @@ namespace MWVR
                          << ") sourceCenter=(" << center.x() << "," << center.y() << "," << center.z()
                          << ") wristCalibration=(" << falloutWristCalibration.x() << ","
                          << falloutWristCalibration.y() << "," << falloutWristCalibration.z()
-                         << ") leftRollFlip=" << leftRollFlip << " bindOffset=discarded";
+                         << ") meshRotationDeg=(" << osg::RadiansToDegrees(falloutMeshRotation.x()) << ","
+                         << osg::RadiansToDegrees(falloutMeshRotation.y()) << ","
+                         << osg::RadiansToDegrees(falloutMeshRotation.z()) << ") leftRollFlip=" << leftRollFlip
+                         << " bindOffset=discarded";
 
         if (bounds.valid())
         {

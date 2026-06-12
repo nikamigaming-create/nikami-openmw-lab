@@ -42,9 +42,15 @@ namespace Settings
         SettingValue<float> mFalloutLeftHandMeshOffsetX{ mIndex, "VR", "fallout left hand mesh offset x" };
         SettingValue<float> mFalloutLeftHandMeshOffsetY{ mIndex, "VR", "fallout left hand mesh offset y" };
         SettingValue<float> mFalloutLeftHandMeshOffsetZ{ mIndex, "VR", "fallout left hand mesh offset z" };
+        SettingValue<float> mFalloutLeftHandMeshPitch{ mIndex, "VR", "fallout left hand mesh pitch" };
+        SettingValue<float> mFalloutLeftHandMeshYaw{ mIndex, "VR", "fallout left hand mesh yaw" };
+        SettingValue<float> mFalloutLeftHandMeshRoll{ mIndex, "VR", "fallout left hand mesh roll" };
         SettingValue<float> mFalloutRightHandMeshOffsetX{ mIndex, "VR", "fallout right hand mesh offset x" };
         SettingValue<float> mFalloutRightHandMeshOffsetY{ mIndex, "VR", "fallout right hand mesh offset y" };
         SettingValue<float> mFalloutRightHandMeshOffsetZ{ mIndex, "VR", "fallout right hand mesh offset z" };
+        SettingValue<float> mFalloutRightHandMeshPitch{ mIndex, "VR", "fallout right hand mesh pitch" };
+        SettingValue<float> mFalloutRightHandMeshYaw{ mIndex, "VR", "fallout right hand mesh yaw" };
+        SettingValue<float> mFalloutRightHandMeshRoll{ mIndex, "VR", "fallout right hand mesh roll" };
         SettingValue<bool> mFalloutLeftHandRollFlip{ mIndex, "VR", "fallout left hand roll flip" };
         SettingValue<bool> mLeftHandedMode{ mIndex, "VR", "left handed mode" };
         SettingValue<bool> mShow3DCrosshairs{ mIndex, "VR", "show 3D crosshairs" };
