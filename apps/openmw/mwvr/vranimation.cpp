@@ -647,7 +647,7 @@ namespace MWVR
         // Keep the stock OpenMW VR controller-space hand path authoritative. Fallout meshes can
         // be swapped onto this stable path later, but should not drive tracking from avatar bones.
         osg::Vec3 offset = falloutHandFallback ? osg::Vec3(0, 0, 0) : osg::Vec3(15, 0, 0);
-        const bool useNativeGripOrientation = falloutHandFallback;
+        const bool useNativeGripOrientation = false;
         Log(Debug::Info) << "FNV/ESM4 diag: VR hand tracking mode falloutFallback=" << falloutHandFallback
                          << " nativeGripOrientation=" << useNativeGripOrientation << " trackingSpace=Grip"
                          << " baseOffset=(" << offset.x() << "," << offset.y() << "," << offset.z() << ")";
