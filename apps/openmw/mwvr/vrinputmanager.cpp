@@ -51,20 +51,23 @@ namespace MWVR
     void VRInputManager::updateVRPointer(bool disableControls)
     {
         std::shared_ptr<VR::Space> source;
-        if (VR::getLeftControllerActive() || VR::getRightControllerActive())
+        if (VR::getVR())
         {
             bool guiMode = MWBase::Environment::get().getWindowManager()->isGuiMode();
+            bool leftPointer = mPointerLeft || guiMode;
+            bool rightPointer = mPointerRight || guiMode;
 
             if (!disableControls)
-                MWBase::Environment::get().getWorld()->enableVRPointer(
-                    mPointerLeft && VR::getLeftControllerActive(), mPointerRight && VR::getRightControllerActive());
+                MWBase::Environment::get().getWorld()->enableVRPointer(leftPointer, rightPointer);
 
-            // If both hands are active, or we are in GUI mode, pick aim based on user's dominant hand.
-            if (auto space = Util::pickByHandedness(mPointerLeft || guiMode, mPointerRight || guiMode,
-                    VR::Paths::LEFT_HAND_AIM, VR::Paths::RIGHT_HAND_AIM))
-                source = mXRInput->getSpace(*space);
+            if (VR::getLeftHandedMode() && leftPointer)
+                source = mXRInput->getSpace(VR::Paths::LEFT_HAND_AIM);
+            else if (rightPointer)
+                source = mXRInput->getSpace(VR::Paths::RIGHT_HAND_AIM);
+            else if (leftPointer)
+                source = mXRInput->getSpace(VR::Paths::LEFT_HAND_AIM);
         }
-        else
+        if (!source)
             source = mXRInput->getSpace(OpenXRInput::DefaultReferenceSpaceView);
 
         if (!mVRPointer && !disableControls)
@@ -302,7 +305,7 @@ namespace MWVR
 
         auto wm = MWBase::Environment::get().getWindowManager();
 
-        if (!VR::getKBMouseModeActive())
+        if (VR::getVR())
         {
             auto& actionSet = mXRInput->getActionSet(MWActionSet::Actions);
             if (actionSet.update())
@@ -337,7 +340,7 @@ namespace MWVR
 
     void VRInputManager::onSpaceUpdate()
     {
-        if (!VR::getKBMouseModeActive()
+        if (VR::getVR()
             && MWBase::Environment::get().getStateManager()->getState() == MWBase::StateManager::State_Running)
             updateRealisticCombat(mDt);
     }
