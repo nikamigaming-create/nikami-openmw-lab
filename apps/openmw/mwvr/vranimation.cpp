@@ -705,10 +705,16 @@ namespace MWVR
             removeIndividualPart(ESM::PartReferenceType::PRT_LHand);
             removeIndividualPart(ESM::PartReferenceType::PRT_RHand);
 
-            const auto attachHand
-                = [&](ESM::PartReferenceType type, VFS::Path::NormalizedView mesh, std::string_view bone) {
+            const auto attachHand = [&](ESM::PartReferenceType type, VFS::Path::NormalizedView mesh,
+                                        std::string_view bone, bool controllerActive) {
                 if (mObjectParts[type] != nullptr)
                     return;
+                if (!controllerActive)
+                {
+                    Log(Debug::Info) << "FNV/ESM4 diag: delaying Fallout VR hand fallback " << mesh
+                                     << " until controller tracking is active for " << bone;
+                    return;
+                }
 
                 const NodeMap& nodeMap = getNodeMap();
                 const auto found = nodeMap.find(bone);
@@ -774,8 +780,10 @@ namespace MWVR
                                  << bound.center().z() << ")";
             };
 
-            attachHand(ESM::PartReferenceType::PRT_LHand, getFalloutLeftVrHandMesh(mResourceSystem), "Bip01 L Hand");
-            attachHand(ESM::PartReferenceType::PRT_RHand, getFalloutRightVrHandMesh(mResourceSystem), "Bip01 R Hand");
+            attachHand(ESM::PartReferenceType::PRT_LHand, getFalloutLeftVrHandMesh(mResourceSystem), "Bip01 L Hand",
+                VR::getControllerActive(mLeftHandPath));
+            attachHand(ESM::PartReferenceType::PRT_RHand, getFalloutRightVrHandMesh(mResourceSystem), "Bip01 R Hand",
+                VR::getControllerActive(mRightHandPath));
         }
 
         updateCharHeight();
@@ -1208,6 +1216,7 @@ namespace MWVR
     void VRAnimation::onInteractionProfileActiveChanged(XrPath topLevelPath, bool isActive) 
     {
         updateTrackingControllers();
+        updateParts();
     }
 
     void VRAnimation::addAnimSource(std::string_view model, const std::string& baseModel) 
