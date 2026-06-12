@@ -285,6 +285,9 @@ namespace MWVR
             center = bounds.center();
             handLocal.setTrans(-center);
         }
+        const bool leftHand = bone.find(" L ") != std::string_view::npos;
+        if (leftHand)
+            handLocal.postMultRotate(osg::Quat(osg::PI, osg::Vec3f(0, 1, 0)));
 
         osg::ref_ptr<osg::MatrixTransform> transform = new osg::MatrixTransform;
         transform->setMatrix(handLocal);
@@ -294,7 +297,7 @@ namespace MWVR
                          << handLocal.getTrans().z() << ") quat=(" << localRotation.x() << ","
                          << localRotation.y() << "," << localRotation.z() << "," << localRotation.w()
                          << ") sourceCenter=(" << center.x() << "," << center.y() << "," << center.z()
-                         << ") bindOffset=discarded";
+                         << ") leftRollFlip=" << leftHand << " bindOffset=discarded";
 
         if (bounds.valid())
         {
