@@ -2681,7 +2681,7 @@ namespace MWRender
 
         osg::Vec3f getFalloutFaceSurfacePosition()
         {
-            return osg::Vec3f(readFalloutProofFloat("OPENMW_FNV_FACE_OFFSET_X", 0.65f),
+            return osg::Vec3f(readFalloutProofFloat("OPENMW_FNV_FACE_OFFSET_X", 0.9f),
                 readFalloutProofFloat("OPENMW_FNV_FACE_OFFSET_Y", 0.f),
                 readFalloutProofFloat("OPENMW_FNV_FACE_OFFSET_Z", 0.f));
         }
