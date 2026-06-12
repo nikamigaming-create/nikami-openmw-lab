@@ -1,5 +1,6 @@
 #include "weather.hpp"
 
+#include <components/debug/debuglog.hpp>
 #include <components/esm/stringrefid.hpp>
 #include <components/settings/values.hpp>
 
@@ -823,6 +824,27 @@ namespace MWWorld
         }
 
         calculateWeatherResult(time.getHour(), duration, paused);
+        if (std::getenv("OPENMW_FNV_PROOF_WEATHER_ID") != nullptr)
+        {
+            static int proofWeatherLogs = 0;
+            if (proofWeatherLogs < 12)
+            {
+                Log(Debug::Info) << "FNV/ESM4 proof: weather render state hour=" << time.getHour()
+                                 << " currentWeather=" << mCurrentWeather
+                                 << " nextWeather=" << mNextWeather
+                                 << " isExterior=" << isExterior
+                                 << " isDay=" << isDay
+                                 << " ambient=(" << mResult.mAmbientColor.r() << "," << mResult.mAmbientColor.g()
+                                 << "," << mResult.mAmbientColor.b() << "," << mResult.mAmbientColor.a()
+                                 << ") sun=(" << mResult.mSunColor.r() << "," << mResult.mSunColor.g() << ","
+                                 << mResult.mSunColor.b() << "," << mResult.mSunColor.a()
+                                 << ") sky=(" << mResult.mSkyColor.r() << "," << mResult.mSkyColor.g() << ","
+                                 << mResult.mSkyColor.b() << "," << mResult.mSkyColor.a()
+                                 << ") fog=(" << mResult.mFogColor.r() << "," << mResult.mFogColor.g() << ","
+                                 << mResult.mFogColor.b() << "," << mResult.mFogColor.a() << ")";
+                ++proofWeatherLogs;
+            }
+        }
 
         if (!paused)
         {

@@ -32,9 +32,12 @@
 
 #include <components/fallback/fallback.hpp>
 
+#include <components/debug/debuglog.hpp>
 #include <components/sceneutil/statesetupdater.hpp>
+#include <components/vfs/manager.hpp>
 
 #include "../mwbase/environment.hpp"
+#include "../mwbase/world.hpp"
 
 #include "renderbin.hpp"
 #include "vismask.hpp"
@@ -80,6 +83,37 @@ namespace
         geom->addPrimitiveSet(new osg::DrawArrays(osg::PrimitiveSet::QUADS, 0, 4));
 
         return geom;
+    }
+
+    void setAlphaBlendedSkyBillboard(osg::StateSet& stateset, int renderBin = MWRender::RenderBin_DepthSorted)
+    {
+        osg::ref_ptr<osg::BlendFunc> blendFunc = new osg::BlendFunc;
+        blendFunc->setFunction(osg::BlendFunc::SRC_ALPHA, osg::BlendFunc::ONE_MINUS_SRC_ALPHA);
+        stateset.setAttributeAndModes(blendFunc, osg::StateAttribute::ON);
+        stateset.setMode(GL_BLEND, osg::StateAttribute::ON);
+        stateset.setRenderBinDetails(renderBin, "RenderBin");
+    }
+
+    bool hasFalloutSkyContent(Resource::SceneManager& sceneManager)
+    {
+        const VFS::Manager* vfs = sceneManager.getVFS();
+        if (vfs != nullptr
+            && (vfs->exists(VFS::Path::NormalizedView("meshes/creatures/nvraven/skeleton.nif"))
+                || vfs->exists(VFS::Path::NormalizedView("meshes/clutter/flags/nv_nevadaflag.nif"))
+                || vfs->exists(VFS::Path::NormalizedView("falloutnv.esm"))))
+            return true;
+
+        const MWBase::World* world = MWBase::Environment::get().getWorld();
+        if (world == nullptr)
+            return false;
+
+        for (const std::string& file : world->getContentFiles())
+        {
+            if (file.find("FalloutNV.esm") != std::string::npos || file.find("falloutnv.esm") != std::string::npos)
+                return true;
+        }
+
+        return false;
     }
 
     struct DummyComputeBoundCallback : osg::Node::ComputeBoundingSphereCallback
@@ -783,6 +817,7 @@ namespace MWRender
 
     CelestialBody::CelestialBody(osg::Group* parentNode, float scaleFactor, int numUvSets, unsigned int visibleMask)
         : mVisibleMask(visibleMask)
+        , mAvailable(true)
     {
         mGeom = createTexturedQuad(numUvSets);
         mGeom->getOrCreateStateSet();
@@ -796,27 +831,51 @@ namespace MWRender
 
     void CelestialBody::setVisible(bool visible)
     {
-        mTransform->setNodeMask(visible ? mVisibleMask : 0);
+        mTransform->setNodeMask(visible && mAvailable ? mVisibleMask : 0);
+    }
+
+    void CelestialBody::setAvailable(bool available)
+    {
+        mAvailable = available;
+        if (!mAvailable)
+            mTransform->setNodeMask(0);
     }
 
     Sun::Sun(osg::Group* parentNode, Resource::SceneManager& sceneManager)
         : CelestialBody(parentNode, 1.0f, 1, Mask_Sun)
         , mUpdater(new SunUpdater)
     {
+        if (hasFalloutSkyContent(sceneManager))
+        {
+            setAvailable(false);
+            Log(Debug::Info) << "FNV/ESM4: disabled OpenMW sun billboard for Fallout sky content";
+            return;
+        }
+
         mTransform->addUpdateCallback(mUpdater);
 
         Resource::ImageManager& imageManager = *sceneManager.getImageManager();
 
         constexpr VFS::Path::NormalizedView image("textures/tx_sun_05.dds");
+        constexpr VFS::Path::NormalizedView flashImage("textures/tx_sun_flash_grey_05.dds");
+
+        if (!sceneManager.getVFS()->exists(image))
+        {
+            setAvailable(false);
+            Log(Debug::Info) << "FNV/ESM4: disabled OpenMW sun billboard; missing Morrowind texture " << image;
+            return;
+        }
 
         osg::ref_ptr<osg::Texture2D> sunTex = new osg::Texture2D(imageManager.getImage(image));
         sunTex->setWrap(osg::Texture::WRAP_S, osg::Texture::CLAMP_TO_EDGE);
         sunTex->setWrap(osg::Texture::WRAP_T, osg::Texture::CLAMP_TO_EDGE);
 
-        mGeom->getOrCreateStateSet()->setTextureAttributeAndModes(0, sunTex);
-        mGeom->getOrCreateStateSet()->setTextureAttributeAndModes(
+        osg::StateSet* sunStateSet = mGeom->getOrCreateStateSet();
+        sunStateSet->setTextureAttributeAndModes(0, sunTex);
+        sunStateSet->setTextureAttributeAndModes(
             0, new SceneUtil::TextureType("diffuseMap"), osg::StateAttribute::ON);
-        mGeom->getOrCreateStateSet()->addUniform(new osg::Uniform("pass", static_cast<int>(Pass::Sun)));
+        sunStateSet->addUniform(new osg::Uniform("pass", static_cast<int>(Pass::Sun)));
+        setAlphaBlendedSkyBillboard(*sunStateSet);
 
         osg::ref_ptr<osg::Group> queryNode = new osg::Group;
         // Need to render after the world geometry so we can correctly test for occlusions
@@ -845,7 +904,10 @@ namespace MWRender
         mOcclusionQueryVisiblePixels = createOcclusionQueryNode(queryNode, true);
         mOcclusionQueryTotalPixels = createOcclusionQueryNode(queryNode, false);
 
-        createSunFlash(imageManager);
+        if (sceneManager.getVFS()->exists(flashImage))
+            createSunFlash(imageManager);
+        else
+            Log(Debug::Info) << "FNV/ESM4: disabled OpenMW sun flash; missing Morrowind texture " << flashImage;
         createSunGlare();
     }
 
@@ -890,8 +952,10 @@ namespace MWRender
 
     void Sun::setSunglare(bool enabled)
     {
-        mSunGlareNode->setNodeMask(enabled ? ~0u : 0);
-        mSunFlashNode->setNodeMask(enabled ? ~0u : 0);
+        if (mSunGlareNode)
+            mSunGlareNode->setNodeMask(enabled ? ~0u : 0);
+        if (mSunFlashNode)
+            mSunFlashNode->setNodeMask(enabled ? ~0u : 0);
     }
 
     osg::ref_ptr<osg::OcclusionQueryNode> Sun::createOcclusionQueryNode(osg::Group* parent, bool queryVisible)
@@ -949,8 +1013,8 @@ namespace MWRender
 
     void Sun::createSunFlash(Resource::ImageManager& imageManager)
     {
-        constexpr VFS::Path::NormalizedView image("textures/tx_sun_flash_grey_05.dds");
-        osg::ref_ptr<osg::Texture2D> tex = new osg::Texture2D(imageManager.getImage(image));
+        constexpr VFS::Path::NormalizedView flashImage("textures/tx_sun_flash_grey_05.dds");
+        osg::ref_ptr<osg::Texture2D> tex = new osg::Texture2D(imageManager.getImage(flashImage));
         tex->setWrap(osg::Texture::WRAP_S, osg::Texture::CLAMP_TO_EDGE);
         tex->setWrap(osg::Texture::WRAP_T, osg::Texture::CLAMP_TO_EDGE);
 
@@ -970,6 +1034,7 @@ namespace MWRender
         stateset->setRenderBinDetails(RenderBin_SunGlare, "RenderBin");
         stateset->setNestRenderBins(false);
         stateset->addUniform(new osg::Uniform("pass", static_cast<int>(Pass::Sun)));
+        setAlphaBlendedSkyBillboard(*stateset, RenderBin_SunGlare);
 
         mSunFlashNode = group;
 
@@ -1039,9 +1104,35 @@ namespace MWRender
         , mPhase(MoonState::Phase::Unspecified)
         , mUpdater(new MoonUpdater(*sceneManager.getImageManager(), sceneManager.getForceShaders()))
     {
-        setPhase(MoonState::Phase::Full);
+        if (hasFalloutSkyContent(sceneManager))
+        {
+            setAvailable(false);
+            Log(Debug::Info) << "FNV/ESM4: disabled OpenMW "
+                             << (mType == Moon::Type_Secunda ? "Secunda" : "Masser")
+                             << " moon billboard for Fallout sky content";
+            return;
+        }
+
+        const bool secunda = mType == Moon::Type_Secunda;
+        constexpr VFS::Path::NormalizedView secundaFull("textures/tx_secunda_full.dds");
+        constexpr VFS::Path::NormalizedView secundaCircle("textures/tx_mooncircle_full_s.dds");
+        constexpr VFS::Path::NormalizedView masserFull("textures/tx_masser_full.dds");
+        constexpr VFS::Path::NormalizedView masserCircle("textures/tx_mooncircle_full_m.dds");
+        const bool hasMoonTextures = secunda
+            ? sceneManager.getVFS()->exists(secundaFull) && sceneManager.getVFS()->exists(secundaCircle)
+            : sceneManager.getVFS()->exists(masserFull) && sceneManager.getVFS()->exists(masserCircle);
+        if (hasMoonTextures)
+            setPhase(MoonState::Phase::Full);
+        else
+        {
+            setAvailable(false);
+            Log(Debug::Info) << "FNV/ESM4: disabled OpenMW "
+                             << (secunda ? "Secunda" : "Masser")
+                             << " moon billboard; missing Morrowind moon phase/circle textures";
+        }
         setVisible(true);
 
+        setAlphaBlendedSkyBillboard(*mGeom->getOrCreateStateSet());
         mGeom->addUpdateCallback(mUpdater);
     }
 
@@ -1052,11 +1143,16 @@ namespace MWRender
 
     void Moon::adjustTransparency(const float ratio)
     {
+        if (!mAvailable)
+            return;
         mUpdater->mTransparency *= ratio;
     }
 
     void Moon::setState(const MoonState state)
     {
+        if (!mAvailable)
+            return;
+
         float radsX = ((state.mRotationFromHorizon) * static_cast<float>(osg::PI)) / 180.0f;
         float radsZ = ((state.mRotationFromNorth) * static_cast<float>(osg::PI)) / 180.0f;
 
@@ -1078,11 +1174,15 @@ namespace MWRender
 
     void Moon::setAtmosphereColor(const osg::Vec4f& color)
     {
+        if (!mAvailable)
+            return;
         mUpdater->mAtmosphereColor = color;
     }
 
     void Moon::setColor(const osg::Vec4f& color)
     {
+        if (!mAvailable)
+            return;
         mUpdater->mMoonColor = color;
     }
 
@@ -1113,6 +1213,9 @@ namespace MWRender
 
     void Moon::setPhase(const MoonState::Phase& phase)
     {
+        if (!mAvailable)
+            return;
+
         if (mPhase == phase)
             return;
 

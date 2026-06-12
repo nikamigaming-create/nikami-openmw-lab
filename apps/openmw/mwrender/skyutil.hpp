@@ -234,7 +234,10 @@ namespace MWRender
         void setVisible(bool visible);
 
     protected:
+        void setAvailable(bool available);
+
         unsigned int mVisibleMask;
+        bool mAvailable;
         static const float mDistance;
         osg::ref_ptr<osg::PositionAttitudeTransform> mTransform;
         osg::ref_ptr<osg::Geometry> mGeom;
