@@ -450,15 +450,15 @@ local function setupDefaults(modes)
     layerConfig.HUD = createDefaultConfig(0, true)
 
     layerConfig.InventoryWindow.backgroundOpacity = 0.82
-    layerConfig.InventoryWindow.pixelsPerMeter = 700
+    layerConfig.InventoryWindow.pixelsPerMeter = 1400
     layerConfig.StatsWindow.backgroundOpacity = 0.78
-    layerConfig.StatsWindow.pixelsPerMeter = 700
+    layerConfig.StatsWindow.pixelsPerMeter = 1400
     layerConfig.MapWindow.backgroundOpacity = 0.78
-    layerConfig.MapWindow.pixelsPerMeter = 700
+    layerConfig.MapWindow.pixelsPerMeter = 1400
     layerConfig.SpellWindow.backgroundOpacity = 0.78
-    layerConfig.SpellWindow.pixelsPerMeter = 700
+    layerConfig.SpellWindow.pixelsPerMeter = 1400
     layerConfig.Windows.backgroundOpacity = 0.82
-    layerConfig.Windows.pixelsPerMeter = 700
+    layerConfig.Windows.pixelsPerMeter = 1400
 
     for layer, config in pairs(layerConfig) do
         setLayerConfigIfNotOverridden(layer, config)
