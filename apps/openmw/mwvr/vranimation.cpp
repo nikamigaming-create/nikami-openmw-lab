@@ -15,10 +15,15 @@
 #include <osg/Object>
 #include <osg/PolygonMode>
 #include <osg/PositionAttitudeTransform>
+#include <osg/Quat>
+
+#include <cstdlib>
 
 #include <components/debug/debuglog.hpp>
 
+#include <components/misc/constants.hpp>
 #include <components/misc/resourcehelpers.hpp>
+#include <components/misc/strings/lower.hpp>
 #include <components/resource/resourcesystem.hpp>
 #include <components/resource/scenemanager.hpp>
 #include <components/sceneutil/attach.hpp>
@@ -31,8 +36,6 @@
 
 #include <components/esm3/loadrace.hpp>
 #include <components/esm3/loadench.hpp>
-
-#include <components/misc/constants.hpp>
 
 #include <components/vr/session.hpp>
 #include <components/vr/trackingmanager.hpp>
@@ -64,6 +67,13 @@
 
 namespace MWVR
 {
+    float getEnvFloat(std::string_view name, float fallback)
+    {
+        if (const char* value = std::getenv(std::string(name).c_str()))
+            return std::atof(value);
+        return fallback;
+    }
+
     // Some weapon types, such as spellcast, are classified as melee even though they are not. At least not in the way i
     // want. All the false melee types have negative enum values, but also so does hand to hand. I think this covers all
     // cases
@@ -524,6 +534,15 @@ namespace MWVR
 
     void VRAnimation::setFalloutVrHandSurfaces(std::vector<FalloutVrHandSurface> surfaces)
     {
+        const bool sameSurfaces = surfaces.size() == mFalloutVrHandSurfaces.size()
+            && std::equal(surfaces.begin(), surfaces.end(), mFalloutVrHandSurfaces.begin(),
+                [](const FalloutVrHandSurface& left, const FalloutVrHandSurface& right) {
+                    return left.model == right.model && left.diffuseTexture == right.diffuseTexture
+                        && left.source == right.source && left.left == right.left;
+                });
+        if (sameSurfaces && mFalloutVrHandSurfacesAttached)
+            return;
+
         mFalloutVrHandSurfaces = std::move(surfaces);
         mFalloutVrHandSurfacesAttached = false;
         attachFalloutVrHandSurfaces();
@@ -538,6 +557,9 @@ namespace MWVR
         const NodeMap& nodeMap = getNodeMap();
         osg::Group* leftHand = nullptr;
         osg::Group* rightHand = nullptr;
+        osg::Group* bip01 = nullptr;
+        if (const auto found = nodeMap.find("Bip01"); found != nodeMap.end())
+            bip01 = found->second.get();
         if (const auto found = nodeMap.find("Bip01 L Hand"); found != nodeMap.end())
             leftHand = found->second.get();
         if (const auto found = nodeMap.find("Bip01 R Hand"); found != nodeMap.end())
@@ -550,24 +572,60 @@ namespace MWVR
             if (surface.model.empty())
                 continue;
 
-            osg::Group* attachNode = surface.left ? leftHand : rightHand;
+            std::string loweredModel = Misc::StringUtils::lowerCase(surface.model);
+            const bool pipBoyArm = loweredModel.find("pipboyarm") != std::string::npos;
+            const bool riggedHandPart = !pipBoyArm
+                && (loweredModel.find("hand") != std::string::npos || loweredModel.find("glove") != std::string::npos);
+
+            osg::Group* attachNode = riggedHandPart ? (bip01 != nullptr ? bip01 : master)
+                                                    : (surface.left ? leftHand : rightHand);
             if (attachNode == nullptr)
             {
                 Log(Debug::Warning) << "FNV/ESM4 diag: VRHandsOnly attach skipped missing "
-                                    << (surface.left ? "left" : "right") << " hand bone model=" << surface.model;
+                                    << (riggedHandPart ? "Bip01" : (surface.left ? "left" : "right"))
+                                    << " attach node model=" << surface.model;
                 continue;
             }
 
             const VFS::Path::Normalized correctedModel
                 = Misc::ResourceHelpers::correctMeshPath(VFS::Path::Normalized(surface.model));
             osg::ref_ptr<const osg::Node> templateNode = mResourceSystem->getSceneManager()->getTemplate(correctedModel);
+            const float pipBoyRotX = getEnvFloat("OPENMW_FNV_PIPBOY_ROT_X", 0.f);
+            const float pipBoyRotY = getEnvFloat("OPENMW_FNV_PIPBOY_ROT_Y", 0.f);
+            const float pipBoyRotZ = getEnvFloat("OPENMW_FNV_PIPBOY_ROT_Z", 90.f);
+            const osg::Quat pipBoyAttitude
+                = osg::Quat(osg::DegreesToRadians(pipBoyRotX), osg::Vec3f(1.f, 0.f, 0.f))
+                * osg::Quat(osg::DegreesToRadians(pipBoyRotY), osg::Vec3f(0.f, 1.f, 0.f))
+                * osg::Quat(osg::DegreesToRadians(pipBoyRotZ), osg::Vec3f(0.f, 0.f, 1.f));
+            if (pipBoyArm)
+                Log(Debug::Info) << "FNV/ESM4 diag: PipBoy wrist rotation degrees x=" << pipBoyRotX
+                                 << " y=" << pipBoyRotY << " z=" << pipBoyRotZ;
             osg::ref_ptr<osg::Node> attached = SceneUtil::attach(
-                std::move(templateNode), master, {}, attachNode, mResourceSystem->getSceneManager());
+                std::move(templateNode), master, {}, attachNode, mResourceSystem->getSceneManager(),
+                pipBoyArm ? &pipBoyAttitude : nullptr);
             if (attached == nullptr)
             {
                 Log(Debug::Warning) << "FNV/ESM4 diag: VRHandsOnly attach failed model=" << correctedModel.value()
                                     << " source=" << surface.source;
                 continue;
+            }
+
+            if (pipBoyArm)
+            {
+                const float offsetX = getEnvFloat("OPENMW_FNV_PIPBOY_OFFSET_X", -3.f);
+                const float offsetY = getEnvFloat("OPENMW_FNV_PIPBOY_OFFSET_Y", -13.f);
+                const float offsetZ = getEnvFloat("OPENMW_FNV_PIPBOY_OFFSET_Z", -6.5f);
+                if (osg::PositionAttitudeTransform* transform
+                    = dynamic_cast<osg::PositionAttitudeTransform*>(attached.get()))
+                {
+                    transform->setPosition(transform->getPosition() + osg::Vec3f(offsetX, offsetY, offsetZ));
+                    Log(Debug::Info) << "FNV/ESM4 diag: PipBoy wrist offset applied x=" << offsetX
+                                     << " y=" << offsetY << " z=" << offsetZ
+                                     << " finalPosition=(" << transform->getPosition().x() << ","
+                                     << transform->getPosition().y() << "," << transform->getPosition().z() << ")";
+                }
+                else
+                    Log(Debug::Warning) << "FNV/ESM4 diag: PipBoy wrist offset skipped; attached node is not PAT";
             }
 
             attached->setName("FNV VRHandsOnly " + correctedModel.value());
@@ -576,6 +634,8 @@ namespace MWVR
                              << " source=" << surface.source
                              << " side=" << (surface.left ? "left" : "right")
                              << " attachNode=" << attachNode->getName()
+                             << " riggedHandPart=" << riggedHandPart
+                             << " pipBoyArm=" << pipBoyArm
                              << " master=" << master->getName()
                              << " diffuse=" << surface.diffuseTexture;
         }

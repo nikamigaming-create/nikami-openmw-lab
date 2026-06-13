@@ -1332,6 +1332,28 @@ namespace MWRender
         {
             setupPlayer(ptr);
             mPlayerAnimation->updatePtr(ptr);
+            if (VR::getVR())
+            {
+                if (auto* vrAnimation = dynamic_cast<MWVR::VRAnimation*>(mPlayerAnimation.get()))
+                {
+                    if (ptr.getType() == ESM4::Npc::sRecordId)
+                    {
+                        Log(Debug::Info) << "FNV/ESM4 diag: VRHandsOnly save-loaded live player surface refresh";
+                        logFalloutVrHandSourceCandidates(ptr, "save-loaded-vr-player-ptr");
+                        vrAnimation->setViewMode(NpcAnimation::VM_VRFirstPerson);
+                        vrAnimation->setFalloutVrHandSurfaces(
+                            collectFalloutVrHandSurfaces(ptr, "save-loaded-vr-player-ptr"));
+                    }
+                    else if (const ESM4::Npc* falloutPlayerVisualRecord = findFalloutPlayerVisualRecord())
+                    {
+                        Log(Debug::Info) << "FNV/ESM4 diag: VRHandsOnly save-loaded visual-record surface refresh";
+                        logFalloutVrHandSelectionDiagnostic(ptr, falloutPlayerVisualRecord);
+                        vrAnimation->setViewMode(NpcAnimation::VM_VRFirstPerson);
+                        vrAnimation->setFalloutVrHandSurfaces(
+                            collectFalloutVrHandSurfacesForVisualRecord(ptr, falloutPlayerVisualRecord));
+                    }
+                }
+            }
         }
         mCamera->attachTo(ptr);
     }
