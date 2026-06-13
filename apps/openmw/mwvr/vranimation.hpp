@@ -9,6 +9,9 @@
 
 #include <osg/MatrixTransform>
 
+#include <string>
+#include <vector>
+
 namespace MWVR
 {
     class HandController;
@@ -66,6 +69,16 @@ namespace MWVR
 
         void modifyMovement(osg::Vec3& movement);
 
+        struct FalloutVrHandSurface
+        {
+            std::string model;
+            std::string diffuseTexture;
+            std::string source;
+            bool left = false;
+        };
+
+        void setFalloutVrHandSurfaces(std::vector<FalloutVrHandSurface> surfaces);
+
     protected:
 
         void updateCrosshairs() override;
@@ -77,6 +90,7 @@ namespace MWVR
         void onInteractionProfileActiveChanged(XrPath topLevelPath, bool isActive) override;
 
         void updateTrackingControllers();
+        void attachFalloutVrHandSurfaces();
 
         void enableTracking(XrPath path);
         void disableTracking(XrPath path);
@@ -107,6 +121,8 @@ namespace MWVR
         XrPath mLeftHandPath = XR_NULL_PATH;
         XrPath mRightHandPath = XR_NULL_PATH;
         bool mCrosshairsEnabled;
+        bool mFalloutVrHandSurfacesAttached = false;
+        std::vector<FalloutVrHandSurface> mFalloutVrHandSurfaces;
         float mCharHeight = 120.f;
         Stereo::Pose mHeadPoseInLocalSpace;
         Stereo::Pose mCharLocalSpacePose;

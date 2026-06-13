@@ -18,8 +18,10 @@
 
 #include <components/debug/debuglog.hpp>
 
+#include <components/misc/resourcehelpers.hpp>
 #include <components/resource/resourcesystem.hpp>
 #include <components/resource/scenemanager.hpp>
+#include <components/sceneutil/attach.hpp>
 #include <components/sceneutil/positionattitudetransform.hpp>
 #include <components/sceneutil/shadow.hpp>
 #include <components/sceneutil/skeleton.hpp>
@@ -37,6 +39,7 @@
 #include <components/vr/trackingtransform.hpp>
 #include <components/vr/vr.hpp>
 #include <components/vfs/manager.hpp>
+#include <components/vfs/pathutil.hpp>
 #include <components/xr/session.hpp>
 
 #include "../mwworld/esmstore.hpp"
@@ -514,8 +517,72 @@ namespace MWVR
             removeIndividualPart(ESM::PartReferenceType::PRT_RWrist);
         }
 
+        attachFalloutVrHandSurfaces();
         updateTrackingControllers();
         updateCharHeight();
+    }
+
+    void VRAnimation::setFalloutVrHandSurfaces(std::vector<FalloutVrHandSurface> surfaces)
+    {
+        mFalloutVrHandSurfaces = std::move(surfaces);
+        mFalloutVrHandSurfacesAttached = false;
+        attachFalloutVrHandSurfaces();
+        updateTrackingControllers();
+    }
+
+    void VRAnimation::attachFalloutVrHandSurfaces()
+    {
+        if (mFalloutVrHandSurfacesAttached || mFalloutVrHandSurfaces.empty() || mObjectRoot == nullptr)
+            return;
+
+        const NodeMap& nodeMap = getNodeMap();
+        osg::Group* leftHand = nullptr;
+        osg::Group* rightHand = nullptr;
+        if (const auto found = nodeMap.find("Bip01 L Hand"); found != nodeMap.end())
+            leftHand = found->second.get();
+        if (const auto found = nodeMap.find("Bip01 R Hand"); found != nodeMap.end())
+            rightHand = found->second.get();
+
+        osg::Group* master = mSkeleton != nullptr ? static_cast<osg::Group*>(mSkeleton) : mObjectRoot.get();
+        int attachedCount = 0;
+        for (const FalloutVrHandSurface& surface : mFalloutVrHandSurfaces)
+        {
+            if (surface.model.empty())
+                continue;
+
+            osg::Group* attachNode = surface.left ? leftHand : rightHand;
+            if (attachNode == nullptr)
+            {
+                Log(Debug::Warning) << "FNV/ESM4 diag: VRHandsOnly attach skipped missing "
+                                    << (surface.left ? "left" : "right") << " hand bone model=" << surface.model;
+                continue;
+            }
+
+            const VFS::Path::Normalized correctedModel
+                = Misc::ResourceHelpers::correctMeshPath(VFS::Path::Normalized(surface.model));
+            osg::ref_ptr<const osg::Node> templateNode = mResourceSystem->getSceneManager()->getTemplate(correctedModel);
+            osg::ref_ptr<osg::Node> attached = SceneUtil::attach(
+                std::move(templateNode), master, {}, attachNode, mResourceSystem->getSceneManager());
+            if (attached == nullptr)
+            {
+                Log(Debug::Warning) << "FNV/ESM4 diag: VRHandsOnly attach failed model=" << correctedModel.value()
+                                    << " source=" << surface.source;
+                continue;
+            }
+
+            attached->setName("FNV VRHandsOnly " + correctedModel.value());
+            ++attachedCount;
+            Log(Debug::Info) << "FNV/ESM4 diag: VRHandsOnly attached model=" << correctedModel.value()
+                             << " source=" << surface.source
+                             << " side=" << (surface.left ? "left" : "right")
+                             << " attachNode=" << attachNode->getName()
+                             << " master=" << master->getName()
+                             << " diffuse=" << surface.diffuseTexture;
+        }
+
+        mFalloutVrHandSurfacesAttached = true;
+        Log(Debug::Info) << "FNV/ESM4 diag: VRHandsOnly attached surfaces count=" << attachedCount
+                         << " requested=" << mFalloutVrHandSurfaces.size();
     }
 
     void VRAnimation::updateCrosshairs()

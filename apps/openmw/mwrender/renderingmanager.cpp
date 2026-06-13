@@ -323,6 +323,92 @@ namespace MWRender
                                  << " editor=<none>";
         }
 
+        std::vector<MWVR::VRAnimation::FalloutVrHandSurface> collectFalloutVrHandSurfaces(
+            const MWWorld::Ptr& actorPtr, std::string_view label)
+        {
+            std::vector<MWVR::VRAnimation::FalloutVrHandSurface> surfaces;
+            if (actorPtr.isEmpty() || actorPtr.getType() != ESM4::Npc::sRecordId)
+                return surfaces;
+
+            const ESM4::Race* race = MWClass::ESM4Npc::getRace(actorPtr);
+            const bool isFemale = MWClass::ESM4Npc::isFemale(actorPtr);
+            const uint32_t coveredSlots = getFalloutActorCoveredBodySlots(actorPtr);
+            const bool coversLeft = (coveredSlots & ESM4::Armor::FO3_LeftHand) != 0;
+            const bool coversRight = (coveredSlots & ESM4::Armor::FO3_RightHand) != 0;
+
+            const auto addSurface = [&](std::string_view model, std::string_view texture, std::string source, bool left) {
+                if (model.empty())
+                    return;
+                surfaces.push_back(MWVR::VRAnimation::FalloutVrHandSurface{
+                    std::string(model), std::string(texture), std::move(source), left });
+            };
+
+            if (race != nullptr)
+            {
+                const std::vector<ESM4::Race::BodyPart>& bodyParts
+                    = isFemale ? race->mBodyPartsFemale : race->mBodyPartsMale;
+                for (const ESM4::Race::BodyPart& bodyPart : bodyParts)
+                {
+                    if (!falloutModelMentionsHand(bodyPart.mesh))
+                        continue;
+                    const std::string lowered = Misc::StringUtils::lowerCase(bodyPart.mesh);
+                    const bool left = lowered.find("lefthand") != std::string::npos;
+                    const bool right = lowered.find("righthand") != std::string::npos;
+                    if ((left && coversLeft) || (right && coversRight))
+                        continue;
+                    addSurface(bodyPart.mesh, bodyPart.texture, std::string(label) + ":race", left && !right);
+                }
+            }
+
+            for (const ESM4::Armor* armor : MWClass::ESM4Npc::getEquippedArmor(actorPtr))
+            {
+                if (armor == nullptr)
+                    continue;
+                const std::string_view model = MWClass::ESM4Npc::chooseEquipmentModel(armor, isFemale);
+                const uint32_t handFlags = armor->mArmorFlags
+                    & (ESM4::Armor::FO3_LeftHand | ESM4::Armor::FO3_RightHand | ESM4::Armor::FO3_PipBoy);
+                if (handFlags == 0 && !falloutModelMentionsHand(model))
+                    continue;
+                const std::string lowered = Misc::StringUtils::lowerCase(model);
+                const bool left = (handFlags & (ESM4::Armor::FO3_LeftHand | ESM4::Armor::FO3_PipBoy)) != 0
+                    || lowered.find("left") != std::string::npos || lowered.find("pipboy") != std::string::npos;
+                addSurface(model, {}, std::string(label) + ":armor:" + armor->mEditorId, left);
+            }
+
+            for (const ESM4::Clothing* clothing : MWClass::ESM4Npc::getEquippedClothing(actorPtr))
+            {
+                if (clothing == nullptr)
+                    continue;
+                const std::string_view model = MWClass::ESM4Npc::chooseEquipmentModel(clothing, isFemale);
+                const uint32_t handFlags = clothing->mClothingFlags
+                    & (ESM4::Armor::FO3_LeftHand | ESM4::Armor::FO3_RightHand | ESM4::Armor::FO3_PipBoy);
+                if (handFlags == 0 && !falloutModelMentionsHand(model))
+                    continue;
+                const std::string lowered = Misc::StringUtils::lowerCase(model);
+                const bool left = (handFlags & (ESM4::Armor::FO3_LeftHand | ESM4::Armor::FO3_PipBoy)) != 0
+                    || lowered.find("left") != std::string::npos || lowered.find("pipboy") != std::string::npos;
+                addSurface(model, {}, std::string(label) + ":clothing:" + clothing->mEditorId, left);
+            }
+
+            return surfaces;
+        }
+
+        std::vector<MWVR::VRAnimation::FalloutVrHandSurface> collectFalloutVrHandSurfacesForVisualRecord(
+            const MWWorld::Ptr& player, const ESM4::Npc* visualRecord)
+        {
+            if (visualRecord == nullptr)
+                return {};
+
+            ESM::CellRef visualRef;
+            visualRef.blank();
+            visualRef.mRefID = ESM::RefId::stringRefId("Player");
+            MWWorld::LiveCellRef<ESM4::Npc> liveVisualRef(visualRef, visualRecord);
+            liveVisualRef.mData.setPosition(player.getRefData().getPosition());
+            MWWorld::Ptr visualPtr(&liveVisualRef, player.getCell());
+            applyFalloutPlayerProxyProofOutfit(visualPtr, "vr-hands-attach");
+            return collectFalloutVrHandSurfaces(visualPtr, "fallout-visual-record");
+        }
+
         void logFalloutVrHandSelectionDiagnostic(const MWWorld::Ptr& player, const ESM4::Npc* visualRecord)
         {
             Log(Debug::Info) << "FNV/ESM4 diag: VRHandsOnly diagnostic begin playerPtr=" << player.toString()
@@ -1658,6 +1744,8 @@ namespace MWRender
                 vrAnimation->setViewMode(NpcAnimation::VM_VRFirstPerson);
                 vrAnimation->setEnableCrosshairs(Settings::Manager::getBool("show 3D crosshairs", "VR"));
                 logFalloutVrHandSelectionDiagnostic(player, falloutPlayerVisualRecord);
+                vrAnimation->setFalloutVrHandSurfaces(
+                    collectFalloutVrHandSurfacesForVisualRecord(player, falloutPlayerVisualRecord));
             }
             else
                 vrAnimation->setEnableCrosshairs(Settings::Manager::getBool("show 3D crosshairs", "VR"));
