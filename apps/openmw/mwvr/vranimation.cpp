@@ -4,6 +4,7 @@
 #include "vrpointer.hpp"
 
 #include <osg/BlendFunc>
+#include <osg/Array>
 #include <osg/ComputeBoundsVisitor>
 #include <osg/CullFace>
 #include <osg/FrontFace>
@@ -13,13 +14,16 @@
 #include <osg/Geode>
 #include <osg/Geometry>
 #include <osg/LightModel>
+#include <osg/LineWidth>
 #include <osg/MatrixTransform>
 #include <osg/Object>
 #include <osg/PolygonMode>
 #include <osg/PositionAttitudeTransform>
 #include <osg/Quat>
 
+#include <algorithm>
 #include <cstdlib>
+#include <cmath>
 
 #include <components/debug/debuglog.hpp>
 
@@ -76,6 +80,80 @@ namespace MWVR
         if (const char* value = std::getenv(std::string(name).c_str()))
             return std::atof(value);
         return fallback;
+    }
+
+    osg::Quat makeEulerDegrees(float x, float y, float z)
+    {
+        return osg::Quat(osg::DegreesToRadians(x), osg::Vec3f(1.f, 0.f, 0.f))
+            * osg::Quat(osg::DegreesToRadians(y), osg::Vec3f(0.f, 1.f, 0.f))
+            * osg::Quat(osg::DegreesToRadians(z), osg::Vec3f(0.f, 0.f, 1.f));
+    }
+
+    float getHandEnvFloat(bool left, std::string_view suffix, float fallback)
+    {
+        std::string sideName = left ? "OPENMW_FNV_LEFT_HAND_" : "OPENMW_FNV_RIGHT_HAND_";
+        sideName += suffix;
+        if (const char* value = std::getenv(sideName.c_str()))
+            return std::atof(value);
+
+        std::string sharedName = "OPENMW_FNV_HAND_";
+        sharedName += suffix;
+        return getEnvFloat(sharedName, fallback);
+    }
+
+    float clampUnit(float value)
+    {
+        return std::max(-1.f, std::min(1.f, value));
+    }
+
+    osg::Vec3f normalizeOr(const osg::Vec3f& value, const osg::Vec3f& fallback)
+    {
+        const float length = value.length();
+        if (length <= 1e-5f)
+            return fallback;
+        return value * (1.f / length);
+    }
+
+    osg::Vec3f rejectFromAxis(const osg::Vec3f& value, const osg::Vec3f& axis)
+    {
+        return value - axis * (value * axis);
+    }
+
+    osg::Quat shortestArcQuat(const osg::Vec3f& from, const osg::Vec3f& to)
+    {
+        const osg::Vec3f source = normalizeOr(from, osg::Vec3f(1.f, 0.f, 0.f));
+        const osg::Vec3f target = normalizeOr(to, osg::Vec3f(1.f, 0.f, 0.f));
+        const float dot = clampUnit(source * target);
+        if (dot > 0.9999f)
+            return osg::Quat();
+        if (dot < -0.9999f)
+        {
+            const osg::Vec3f probe = std::abs(source.x()) < 0.9f ? osg::Vec3f(1.f, 0.f, 0.f) : osg::Vec3f(0.f, 1.f, 0.f);
+            return osg::Quat(3.14159265358979323846, normalizeOr(source ^ probe, osg::Vec3f(0.f, 0.f, 1.f)));
+        }
+
+        return osg::Quat(std::acos(dot), normalizeOr(source ^ target, osg::Vec3f(0.f, 0.f, 1.f)));
+    }
+
+    float signedAngleAroundAxis(const osg::Vec3f& from, const osg::Vec3f& to, const osg::Vec3f& axis)
+    {
+        const osg::Vec3f source = normalizeOr(from, osg::Vec3f(0.f, 0.f, 1.f));
+        const osg::Vec3f target = normalizeOr(to, osg::Vec3f(0.f, 0.f, 1.f));
+        return std::atan2((source ^ target) * axis, clampUnit(source * target));
+    }
+
+    osg::Quat alignFrames(
+        const osg::Vec3f& modelForward, const osg::Vec3f& modelUp, const osg::Vec3f& targetForward, const osg::Vec3f& targetUp)
+    {
+        const osg::Vec3f sourceForward = normalizeOr(modelForward, osg::Vec3f(1.f, 0.f, 0.f));
+        const osg::Vec3f destForward = normalizeOr(targetForward, osg::Vec3f(1.f, 0.f, 0.f));
+        const osg::Quat forwardRotation = shortestArcQuat(sourceForward, destForward);
+        const osg::Vec3f rotatedUp = normalizeOr(
+            rejectFromAxis(forwardRotation * modelUp, destForward), osg::Vec3f(0.f, 0.f, 1.f));
+        const osg::Vec3f desiredUp
+            = normalizeOr(rejectFromAxis(targetUp, destForward), osg::Vec3f(0.f, 0.f, 1.f));
+        const osg::Quat rollRotation(signedAngleAroundAxis(rotatedUp, desiredUp, destForward), destForward);
+        return rollRotation * forwardRotation;
     }
 
     // Some weapon types, such as spellcast, are classified as melee even though they are not. At least not in the way i
@@ -353,6 +431,134 @@ namespace MWVR
     osg::Vec3f boundsExtent(const osg::BoundingBox& box)
     {
         return osg::Vec3f(box.xMax() - box.xMin(), box.yMax() - box.yMin(), box.zMax() - box.zMin());
+    }
+
+    struct HandCuffAnchor
+    {
+        osg::Vec3f mAnchor;
+        osg::Vec3f mSliceMin;
+        osg::Vec3f mSliceMax;
+        unsigned int mVertexCount = 0;
+        bool mValid = false;
+    };
+
+    class HandCuffAnchorVisitor : public osg::NodeVisitor
+    {
+    public:
+        HandCuffAnchorVisitor(bool left, const osg::BoundingBox& bounds)
+            : osg::NodeVisitor(TRAVERSE_ALL_CHILDREN)
+            , mLeft(left)
+            , mWristX(left ? bounds.xMax() : bounds.xMin())
+            , mSliceThickness(std::max(0.5f, (bounds.xMax() - bounds.xMin()) * 0.12f))
+            , mSum(0.f, 0.f, 0.f)
+        {
+            mMatrixStack.push_back(osg::Matrix::identity());
+        }
+
+        void apply(osg::Transform& transform) override
+        {
+            osg::Matrix matrix = mMatrixStack.back();
+            transform.computeLocalToWorldMatrix(matrix, this);
+            mMatrixStack.push_back(matrix);
+            traverse(transform);
+            mMatrixStack.pop_back();
+        }
+
+        void apply(osg::Geode& geode) override
+        {
+            for (unsigned int i = 0; i < geode.getNumDrawables(); ++i)
+            {
+                osg::Geometry* geometry = geode.getDrawable(i) != nullptr ? geode.getDrawable(i)->asGeometry() : nullptr;
+                if (geometry == nullptr)
+                    continue;
+
+                const osg::Vec3Array* vertices = dynamic_cast<const osg::Vec3Array*>(geometry->getVertexArray());
+                if (vertices == nullptr)
+                    continue;
+
+                for (const osg::Vec3f& vertex : *vertices)
+                {
+                    const osg::Vec3f local = vertex * mMatrixStack.back();
+                    const float distance = mLeft ? (mWristX - local.x()) : (local.x() - mWristX);
+                    if (distance < 0.f || distance > mSliceThickness)
+                        continue;
+
+                    mSum += local;
+                    mSliceBounds.expandBy(local);
+                    ++mVertexCount;
+                }
+            }
+
+            traverse(geode);
+        }
+
+        HandCuffAnchor result() const
+        {
+            if (mVertexCount == 0)
+                return {};
+            const osg::Vec3f sliceCenter = mSliceBounds.valid()
+                ? mSliceBounds.center()
+                : mSum / static_cast<float>(mVertexCount);
+            return { osg::Vec3f(mWristX, sliceCenter.y(), sliceCenter.z()),
+                osg::Vec3f(mSliceBounds.xMin(), mSliceBounds.yMin(), mSliceBounds.zMin()),
+                osg::Vec3f(mSliceBounds.xMax(), mSliceBounds.yMax(), mSliceBounds.zMax()), mVertexCount, true };
+        }
+
+    private:
+        bool mLeft;
+        float mWristX;
+        float mSliceThickness;
+        osg::Vec3f mSum;
+        osg::BoundingBox mSliceBounds;
+        unsigned int mVertexCount = 0;
+        std::vector<osg::Matrix> mMatrixStack;
+    };
+
+    osg::ref_ptr<osg::Geometry> createAxisMarkerGeometry(float length)
+    {
+        osg::ref_ptr<osg::Geometry> geometry = new osg::Geometry;
+        osg::ref_ptr<osg::Vec3Array> vertices = new osg::Vec3Array;
+        vertices->push_back(osg::Vec3f(0.f, 0.f, 0.f));
+        vertices->push_back(osg::Vec3f(length, 0.f, 0.f));
+        vertices->push_back(osg::Vec3f(0.f, 0.f, 0.f));
+        vertices->push_back(osg::Vec3f(0.f, length, 0.f));
+        vertices->push_back(osg::Vec3f(0.f, 0.f, 0.f));
+        vertices->push_back(osg::Vec3f(0.f, 0.f, length));
+        geometry->setVertexArray(vertices);
+
+        osg::ref_ptr<osg::Vec4Array> colors = new osg::Vec4Array;
+        colors->push_back(osg::Vec4f(1.f, 0.f, 0.f, 1.f));
+        colors->push_back(osg::Vec4f(1.f, 0.f, 0.f, 1.f));
+        colors->push_back(osg::Vec4f(0.f, 1.f, 0.f, 1.f));
+        colors->push_back(osg::Vec4f(0.f, 1.f, 0.f, 1.f));
+        colors->push_back(osg::Vec4f(0.f, 0.4f, 1.f, 1.f));
+        colors->push_back(osg::Vec4f(0.f, 0.4f, 1.f, 1.f));
+        geometry->setColorArray(colors, osg::Array::BIND_PER_VERTEX);
+        geometry->addPrimitiveSet(new osg::DrawArrays(osg::PrimitiveSet::LINES, 0, vertices->size()));
+        geometry->setCullingActive(false);
+
+        osg::StateSet* stateset = geometry->getOrCreateStateSet();
+        stateset->setMode(GL_LIGHTING, osg::StateAttribute::OFF);
+        stateset->setMode(GL_DEPTH_TEST, osg::StateAttribute::OFF);
+        stateset->setAttributeAndModes(new osg::LineWidth(4.f), osg::StateAttribute::ON);
+        return geometry;
+    }
+
+    void addAxisMarker(osg::Group& parent, const osg::Vec3f& position, const osg::Quat& attitude, float length)
+    {
+        osg::ref_ptr<osg::PositionAttitudeTransform> marker = new osg::PositionAttitudeTransform;
+        marker->setName("FNV VR hand socket debug axis");
+        marker->setPosition(position);
+        marker->setAttitude(attitude);
+        marker->addChild(createAxisMarkerGeometry(length));
+        parent.addChild(marker);
+    }
+
+    HandCuffAnchor computeHandCuffAnchor(osg::Node& node, const osg::BoundingBox& bounds, bool left)
+    {
+        HandCuffAnchorVisitor visitor(left, bounds);
+        node.accept(visitor);
+        return visitor.result();
     }
 
     /// Implements control of weapon direction
@@ -742,6 +948,47 @@ namespace MWVR
             rightHand = found->second.get();
 
         osg::Group* master = mSkeleton != nullptr ? static_cast<osg::Group*>(mSkeleton) : mObjectRoot.get();
+        const float pipBoyRotX = getEnvFloat("OPENMW_FNV_PIPBOY_ROT_X", 0.f);
+        const float pipBoyRotY = getEnvFloat("OPENMW_FNV_PIPBOY_ROT_Y", 0.f);
+        const float pipBoyRotZ = getEnvFloat("OPENMW_FNV_PIPBOY_ROT_Z", 90.f);
+        const osg::Quat pipBoyAttitude = makeEulerDegrees(pipBoyRotX, pipBoyRotY, pipBoyRotZ);
+        const osg::Vec3f pipBoyOffset(getEnvFloat("OPENMW_FNV_PIPBOY_OFFSET_X", -3.f),
+            getEnvFloat("OPENMW_FNV_PIPBOY_OFFSET_Y", -13.f), getEnvFloat("OPENMW_FNV_PIPBOY_OFFSET_Z", -6.5f));
+        osg::Vec3f pipBoySocketTarget;
+        bool pipBoySocketTargetValid = false;
+        for (const FalloutVrHandSurface& surface : mFalloutVrHandSurfaces)
+        {
+            const std::string loweredModel = Misc::StringUtils::lowerCase(surface.model);
+            if (loweredModel.find("pipboyarm") == std::string::npos)
+                continue;
+
+            const VFS::Path::Normalized correctedModel
+                = Misc::ResourceHelpers::correctMeshPath(VFS::Path::Normalized(surface.model));
+            osg::ref_ptr<const osg::Node> templateNode = mResourceSystem->getSceneManager()->getTemplate(correctedModel);
+            if (templateNode == nullptr)
+                continue;
+
+            osg::ref_ptr<osg::Node> socketTemplate = osg::clone(templateNode.get(), osg::CopyOp::DEEP_COPY_ALL);
+            osg::BoundingBox pipBoyBounds = computeNodeBounds(*socketTemplate);
+            if (!pipBoyBounds.valid())
+                continue;
+
+            const osg::Vec3f socketModel(getEnvFloat("OPENMW_FNV_PIPBOY_SOCKET_MODEL_X", pipBoyBounds.xMin()),
+                getEnvFloat("OPENMW_FNV_PIPBOY_SOCKET_MODEL_Y", pipBoyBounds.center().y()),
+                getEnvFloat("OPENMW_FNV_PIPBOY_SOCKET_MODEL_Z", pipBoyBounds.center().z()));
+            pipBoySocketTarget = pipBoyOffset + pipBoyAttitude * socketModel;
+            pipBoySocketTargetValid = true;
+            const osg::Vec3f extent = boundsExtent(pipBoyBounds);
+            Log(Debug::Info) << "FNV/ESM4 diag: PipBoy socket target model=" << correctedModel.value()
+                             << " boundsMin=(" << pipBoyBounds.xMin() << "," << pipBoyBounds.yMin() << ","
+                             << pipBoyBounds.zMin() << ") boundsMax=(" << pipBoyBounds.xMax() << ","
+                             << pipBoyBounds.yMax() << "," << pipBoyBounds.zMax() << ") extent=("
+                             << extent.x() << "," << extent.y() << "," << extent.z() << ") socketModel=("
+                             << socketModel.x() << "," << socketModel.y() << "," << socketModel.z()
+                             << ") socketTarget=(" << pipBoySocketTarget.x() << "," << pipBoySocketTarget.y()
+                             << "," << pipBoySocketTarget.z() << ")";
+            break;
+        }
         int attachedCount = 0;
         for (const FalloutVrHandSurface& surface : mFalloutVrHandSurfaces)
         {
@@ -768,6 +1015,7 @@ namespace MWVR
             osg::ref_ptr<const osg::Node> attachTemplateNode = templateNode;
             osg::ref_ptr<osg::Node> directStaticHandNode;
             osg::BoundingBox staticizedHandBounds;
+            HandCuffAnchor staticizedHandCuffAnchor;
             bool staticizedRiggedHandPart = false;
             if (riggedHandPart)
             {
@@ -782,13 +1030,19 @@ namespace MWVR
                     staticizedHandBounds = computeNodeBounds(*staticTemplate);
                     if (staticizedHandBounds.valid())
                     {
+                        staticizedHandCuffAnchor
+                            = computeHandCuffAnchor(*staticTemplate, staticizedHandBounds, surface.left);
                         const osg::Vec3f center = staticizedHandBounds.center();
                         const osg::Vec3f extent = boundsExtent(staticizedHandBounds);
                         Log(Debug::Info) << "FNV/ESM4 diag: VRHandsOnly staticized hand bounds model="
                                          << correctedModel.value()
                                          << " center=(" << center.x() << "," << center.y() << "," << center.z()
                                          << ") extent=(" << extent.x() << "," << extent.y() << "," << extent.z()
-                                         << ")";
+                                         << ") cuffAnchor=(" << staticizedHandCuffAnchor.mAnchor.x() << ","
+                                         << staticizedHandCuffAnchor.mAnchor.y() << ","
+                                         << staticizedHandCuffAnchor.mAnchor.z() << ") cuffVertices="
+                                         << staticizedHandCuffAnchor.mVertexCount
+                                         << " cuffValid=" << staticizedHandCuffAnchor.mValid;
                     }
                     else
                         Log(Debug::Warning) << "FNV/ESM4 diag: VRHandsOnly staticized hand bounds invalid model="
@@ -801,13 +1055,6 @@ namespace MWVR
                                         << " missingSource=" << staticizeVisitor.mMissingSourceGeometryCount;
             }
 
-            const float pipBoyRotX = getEnvFloat("OPENMW_FNV_PIPBOY_ROT_X", 0.f);
-            const float pipBoyRotY = getEnvFloat("OPENMW_FNV_PIPBOY_ROT_Y", 0.f);
-            const float pipBoyRotZ = getEnvFloat("OPENMW_FNV_PIPBOY_ROT_Z", 90.f);
-            const osg::Quat pipBoyAttitude
-                = osg::Quat(osg::DegreesToRadians(pipBoyRotX), osg::Vec3f(1.f, 0.f, 0.f))
-                * osg::Quat(osg::DegreesToRadians(pipBoyRotY), osg::Vec3f(0.f, 1.f, 0.f))
-                * osg::Quat(osg::DegreesToRadians(pipBoyRotZ), osg::Vec3f(0.f, 0.f, 1.f));
             if (pipBoyArm)
                 Log(Debug::Info) << "FNV/ESM4 diag: PipBoy wrist rotation degrees x=" << pipBoyRotX
                                  << " y=" << pipBoyRotY << " z=" << pipBoyRotZ;
@@ -816,11 +1063,19 @@ namespace MWVR
             {
                 osg::ref_ptr<osg::PositionAttitudeTransform> handTransform = new osg::PositionAttitudeTransform;
                 handTransform->setName("FNV VR Staticized Hand Surface");
+                const float handRotX = getHandEnvFloat(surface.left, "ROT_X", 0.f);
+                const float handRotY = getHandEnvFloat(surface.left, "ROT_Y", surface.left ? -90.f : 90.f);
+                const float handRotZ = getHandEnvFloat(surface.left, "ROT_Z", 0.f);
+                const osg::Quat baseHandAttitude = makeEulerDegrees(0.f, handRotY, handRotZ);
+                const osg::Quat cuffRoll = osg::Quat(osg::DegreesToRadians(handRotX), osg::Vec3f(1.f, 0.f, 0.f));
+                handTransform->setAttitude(baseHandAttitude * cuffRoll);
                 handTransform->addChild(directStaticHandNode);
                 attachNode->addChild(handTransform);
                 attached = handTransform;
                 Log(Debug::Info) << "FNV/ESM4 diag: VRHandsOnly direct hand wrapper attached model="
-                                 << correctedModel.value() << " attachNode=" << attachNode->getName();
+                                 << correctedModel.value() << " attachNode=" << attachNode->getName()
+                                 << " handRotationDegrees=(" << handRotX << "," << handRotY << "," << handRotZ
+                                 << ")";
             }
             else
             {
@@ -842,15 +1097,187 @@ namespace MWVR
                 {
                     const osg::Vec3f center = staticizedHandBounds.center();
                     const osg::Vec3f scale = transform->getScale();
-                    const osg::Vec3f normalizeOffset(
-                        -scale.x() * center.x(), -scale.y() * center.y(), -scale.z() * center.z());
-                    transform->setPosition(transform->getPosition() + normalizeOffset);
+                    const float wristX = surface.left ? staticizedHandBounds.xMax() : staticizedHandBounds.xMin();
+                    osg::Vec3f cuffAnchor = staticizedHandCuffAnchor.mValid
+                        ? staticizedHandCuffAnchor.mAnchor
+                        : osg::Vec3f(wristX, center.y(), center.z());
+                    cuffAnchor += osg::Vec3f(getHandEnvFloat(surface.left, "CUFF_MODEL_OFFSET_X", 0.f),
+                        getHandEnvFloat(surface.left, "CUFF_MODEL_OFFSET_Y", 0.f),
+                        getHandEnvFloat(surface.left, "CUFF_MODEL_OFFSET_Z", 0.f));
+                    const osg::Vec3f modelCuffAnchor(
+                        scale.x() * cuffAnchor.x(), scale.y() * cuffAnchor.y(), scale.z() * cuffAnchor.z());
+                    const osg::Vec3f modelCuffForward = normalizeOr(
+                        osg::Vec3f(scale.x() * (center.x() - cuffAnchor.x()),
+                            scale.y() * (center.y() - cuffAnchor.y()),
+                            scale.z() * (center.z() - cuffAnchor.z())),
+                        osg::Vec3f(surface.left ? -1.f : 1.f, 0.f, 0.f));
+                    osg::Vec3f targetCuffAnchor(0.f, 0.f, 0.f);
+                    if (surface.left && pipBoySocketTargetValid
+                        && getEnvFloat("OPENMW_FNV_LEFT_HAND_ANCHOR_PIPBOY", 1.f) != 0.f)
+                    {
+                        targetCuffAnchor = pipBoySocketTarget;
+                        targetCuffAnchor += osg::Vec3f(getHandEnvFloat(surface.left, "SOCKET_X", 0.f),
+                            getHandEnvFloat(surface.left, "SOCKET_Y", 0.f),
+                            getHandEnvFloat(surface.left, "SOCKET_Z", 0.f));
+                    }
+                    else
+                    {
+                        targetCuffAnchor += osg::Vec3f(getHandEnvFloat(surface.left, "OFFSET_X", 0.f),
+                            getHandEnvFloat(surface.left, "OFFSET_Y", 0.f),
+                            getHandEnvFloat(surface.left, "OFFSET_Z", 0.f));
+                    }
+                    osg::Vec3f normalizeOffset = targetCuffAnchor - (transform->getAttitude() * modelCuffAnchor);
+                    const osg::Vec3f modelPalmPivot(scale.x() * getHandEnvFloat(surface.left, "PIVOT_X", center.x()),
+                        scale.y() * getHandEnvFloat(surface.left, "PIVOT_Y", center.y()),
+                        scale.z() * getHandEnvFloat(surface.left, "PIVOT_Z", center.z()));
+                    const float pivotRotX = getHandEnvFloat(surface.left, "PIVOT_ROT_X", 0.f);
+                    const float pivotRotY = getHandEnvFloat(surface.left, "PIVOT_ROT_Y", 0.f);
+                    const float pivotRotZ = getHandEnvFloat(surface.left, "PIVOT_ROT_Z", 0.f);
+                    const bool frameSolve = surface.left && pipBoySocketTargetValid
+                        && getEnvFloat("OPENMW_FNV_LEFT_HAND_ANCHOR_PIPBOY", 1.f) != 0.f
+                        && getHandEnvFloat(surface.left, "FRAME_SOLVE", 1.f) != 0.f;
+                    if (frameSolve)
+                    {
+                        const osg::Vec3f modelForward = normalizeOr(
+                            osg::Vec3f(getHandEnvFloat(surface.left, "MODEL_FORWARD_X", modelCuffForward.x()),
+                                getHandEnvFloat(surface.left, "MODEL_FORWARD_Y", modelCuffForward.y()),
+                                getHandEnvFloat(surface.left, "MODEL_FORWARD_Z", modelCuffForward.z())),
+                            modelCuffForward);
+                        const osg::Vec3f modelUp = normalizeOr(
+                            osg::Vec3f(getHandEnvFloat(surface.left, "MODEL_UP_X", 0.f),
+                                getHandEnvFloat(surface.left, "MODEL_UP_Y", 0.f),
+                                getHandEnvFloat(surface.left, "MODEL_UP_Z", 1.f)),
+                            osg::Vec3f(0.f, 0.f, 1.f));
+                        const osg::Vec3f pipBoyForward = normalizeOr(pipBoyAttitude * osg::Vec3f(1.f, 0.f, 0.f),
+                            osg::Vec3f(0.f, 1.f, 0.f));
+                        const osg::Vec3f pipBoyUp = normalizeOr(pipBoyAttitude * osg::Vec3f(0.f, 0.f, 1.f),
+                            osg::Vec3f(0.f, 0.f, 1.f));
+                        const osg::Vec3f targetForward = normalizeOr(
+                            osg::Vec3f(getHandEnvFloat(surface.left, "TARGET_FORWARD_X", pipBoyForward.x()),
+                                getHandEnvFloat(surface.left, "TARGET_FORWARD_Y", pipBoyForward.y()),
+                                getHandEnvFloat(surface.left, "TARGET_FORWARD_Z", pipBoyForward.z())),
+                            pipBoyForward);
+                        const osg::Vec3f targetUp = normalizeOr(
+                            osg::Vec3f(getHandEnvFloat(surface.left, "TARGET_UP_X", pipBoyUp.x()),
+                                getHandEnvFloat(surface.left, "TARGET_UP_Y", pipBoyUp.y()),
+                                getHandEnvFloat(surface.left, "TARGET_UP_Z", pipBoyUp.z())),
+                            pipBoyUp);
+                        osg::Quat solvedRotation = alignFrames(modelForward, modelUp, targetForward, targetUp);
+                        const float solveRoll = getHandEnvFloat(surface.left, "SOLVE_ROLL", 0.f);
+                        if (solveRoll != 0.f)
+                            solvedRotation = osg::Quat(osg::DegreesToRadians(solveRoll), targetForward) * solvedRotation;
+                        transform->setAttitude(solvedRotation);
+                        normalizeOffset = targetCuffAnchor - (solvedRotation * modelCuffAnchor);
+                        transform->setPosition(normalizeOffset);
+                        Log(Debug::Info) << "FNV/ESM4 diag: VRHandsOnly left hand frame solved model="
+                                         << correctedModel.value() << " modelForward=(" << modelForward.x() << ","
+                                         << modelForward.y() << "," << modelForward.z() << ") modelUp=("
+                                         << modelUp.x() << "," << modelUp.y() << "," << modelUp.z()
+                                         << ") targetForward=(" << targetForward.x() << "," << targetForward.y()
+                                         << "," << targetForward.z() << ") targetUp=(" << targetUp.x() << ","
+                                         << targetUp.y() << "," << targetUp.z() << ") solveRoll=" << solveRoll;
+                    }
+                    else
+                    {
+                        transform->setPosition(transform->getPosition() + normalizeOffset);
+                    }
+                    if (!frameSolve && (pivotRotX != 0.f || pivotRotY != 0.f || pivotRotZ != 0.f))
+                    {
+                        const osg::Quat baseRotation = transform->getAttitude();
+                        const osg::Vec3f pivotTarget = transform->getPosition() + baseRotation * modelPalmPivot;
+                        const osg::Quat pivotRotation = baseRotation * makeEulerDegrees(pivotRotX, pivotRotY, pivotRotZ);
+                        transform->setAttitude(pivotRotation);
+                        transform->setPosition(pivotTarget - pivotRotation * modelPalmPivot);
+                    }
+                    const osg::Vec3f finalPosition = transform->getPosition();
+                    const osg::Quat handRotation = transform->getAttitude();
+                    const osg::Vec3f candidateXMin = finalPosition
+                        + handRotation
+                            * osg::Vec3f(scale.x() * staticizedHandBounds.xMin(), scale.y() * center.y(),
+                                scale.z() * center.z());
+                    const osg::Vec3f candidateXMax = finalPosition
+                        + handRotation
+                            * osg::Vec3f(scale.x() * staticizedHandBounds.xMax(), scale.y() * center.y(),
+                                scale.z() * center.z());
+                    const osg::Vec3f candidateYMin = finalPosition
+                        + handRotation
+                            * osg::Vec3f(scale.x() * center.x(), scale.y() * staticizedHandBounds.yMin(),
+                                scale.z() * center.z());
+                    const osg::Vec3f candidateYMax = finalPosition
+                        + handRotation
+                            * osg::Vec3f(scale.x() * center.x(), scale.y() * staticizedHandBounds.yMax(),
+                                scale.z() * center.z());
+                    const osg::Vec3f candidateWrist = finalPosition + handRotation * modelCuffAnchor;
+                    const osg::Vec3f candidateZMin = finalPosition
+                        + handRotation
+                            * osg::Vec3f(scale.x() * center.x(), scale.y() * center.y(),
+                                scale.z() * staticizedHandBounds.zMin());
+                    const osg::Vec3f candidateZMax = finalPosition
+                        + handRotation
+                            * osg::Vec3f(scale.x() * center.x(), scale.y() * center.y(),
+                                scale.z() * staticizedHandBounds.zMax());
+                    const osg::Vec3f localAxisX = handRotation * osg::Vec3f(1.f, 0.f, 0.f);
+                    const osg::Vec3f localAxisY = handRotation * osg::Vec3f(0.f, 1.f, 0.f);
+                    const osg::Vec3f localAxisZ = handRotation * osg::Vec3f(0.f, 0.f, 1.f);
+                    osg::Matrix parentToWorld = osg::Matrix::identity();
+                    if (!attachNode->getParentalNodePaths().empty())
+                        parentToWorld = osg::computeLocalToWorld(attachNode->getParentalNodePaths().front());
+                    const osg::Vec3f worldWrist = candidateWrist * parentToWorld;
+                    const osg::Vec3f worldAxisX = osg::Matrix::transform3x3(localAxisX, parentToWorld);
+                    const osg::Vec3f worldAxisY = osg::Matrix::transform3x3(localAxisY, parentToWorld);
+                    const osg::Vec3f worldAxisZ = osg::Matrix::transform3x3(localAxisZ, parentToWorld);
                     Log(Debug::Info) << "FNV/ESM4 diag: VRHandsOnly hand center normalized model="
                                      << correctedModel.value()
                                      << " offset=(" << normalizeOffset.x() << "," << normalizeOffset.y() << ","
                                      << normalizeOffset.z() << ") finalPosition=(" << transform->getPosition().x()
                                      << "," << transform->getPosition().y() << "," << transform->getPosition().z()
-                                     << ") scale=(" << scale.x() << "," << scale.y() << "," << scale.z() << ")";
+                                     << ") cuffAnchorTarget=(" << targetCuffAnchor.x() << ","
+                                     << targetCuffAnchor.y() << "," << targetCuffAnchor.z()
+                                     << ") cuffAnchorModel=(" << modelCuffAnchor.x() << ","
+                                     << modelCuffAnchor.y() << "," << modelCuffAnchor.z() << ") rotation=("
+                                     << transform->getAttitude().x() << "," << transform->getAttitude().y()
+                                     << "," << transform->getAttitude().z() << ","
+                                     << transform->getAttitude().w() << ") palmPivot=(" << modelPalmPivot.x() << ","
+                                     << modelPalmPivot.y() << "," << modelPalmPivot.z() << ") pivotRotationDegrees=("
+                                     << pivotRotX << "," << pivotRotY << "," << pivotRotZ << ") scale=("
+                                     << scale.x() << "," << scale.y() << "," << scale.z()
+                                     << ") modelCuffForward=(" << modelCuffForward.x() << ","
+                                     << modelCuffForward.y() << "," << modelCuffForward.z()
+                                     << ") cuffSliceMin=(" << staticizedHandCuffAnchor.mSliceMin.x() << ","
+                                     << staticizedHandCuffAnchor.mSliceMin.y() << ","
+                                     << staticizedHandCuffAnchor.mSliceMin.z() << ") cuffSliceMax=("
+                                     << staticizedHandCuffAnchor.mSliceMax.x() << ","
+                                     << staticizedHandCuffAnchor.mSliceMax.y() << ","
+                                     << staticizedHandCuffAnchor.mSliceMax.z() << ")";
+                    Log(Debug::Info) << "FNV/ESM4 diag: VRHandsOnly hand local anchor candidates model="
+                                     << correctedModel.value()
+                                     << " side=" << (surface.left ? "left" : "right")
+                                     << " wrist=(" << candidateWrist.x() << "," << candidateWrist.y() << ","
+                                     << candidateWrist.z() << ")"
+                                     << " xMin=(" << candidateXMin.x() << "," << candidateXMin.y() << ","
+                                     << candidateXMin.z() << ") xMax=(" << candidateXMax.x() << ","
+                                     << candidateXMax.y() << "," << candidateXMax.z() << ") yMin=("
+                                     << candidateYMin.x() << "," << candidateYMin.y() << "," << candidateYMin.z()
+                                     << ") yMax=(" << candidateYMax.x() << "," << candidateYMax.y() << ","
+                                     << candidateYMax.z() << ") zMin=(" << candidateZMin.x() << ","
+                                     << candidateZMin.y() << "," << candidateZMin.z() << ") zMax=("
+                                     << candidateZMax.x() << "," << candidateZMax.y() << ","
+                                     << candidateZMax.z() << ")";
+                    Log(Debug::Info) << "FNV/ESM4 diag: VRHandsOnly hand rotation axes model="
+                                     << correctedModel.value()
+                                     << " side=" << (surface.left ? "left" : "right")
+                                     << " attachNode=" << attachNode->getName()
+                                     << " wristLocal=(" << candidateWrist.x() << "," << candidateWrist.y() << ","
+                                     << candidateWrist.z() << ") wristWorld=(" << worldWrist.x() << ","
+                                     << worldWrist.y() << "," << worldWrist.z() << ")"
+                                     << " localX=(" << localAxisX.x() << "," << localAxisX.y() << ","
+                                     << localAxisX.z() << ") localY=(" << localAxisY.x() << ","
+                                     << localAxisY.y() << "," << localAxisY.z() << ") localZ=("
+                                     << localAxisZ.x() << "," << localAxisZ.y() << "," << localAxisZ.z()
+                                     << ") worldX=(" << worldAxisX.x() << "," << worldAxisX.y() << ","
+                                     << worldAxisX.z() << ") worldY=(" << worldAxisY.x() << ","
+                                     << worldAxisY.y() << "," << worldAxisY.z() << ") worldZ=("
+                                     << worldAxisZ.x() << "," << worldAxisZ.y() << "," << worldAxisZ.z() << ")";
                 }
                 else
                     Log(Debug::Warning) << "FNV/ESM4 diag: VRHandsOnly hand center normalization skipped; attached "
@@ -860,15 +1287,12 @@ namespace MWVR
 
             if (pipBoyArm)
             {
-                const float offsetX = getEnvFloat("OPENMW_FNV_PIPBOY_OFFSET_X", -3.f);
-                const float offsetY = getEnvFloat("OPENMW_FNV_PIPBOY_OFFSET_Y", -13.f);
-                const float offsetZ = getEnvFloat("OPENMW_FNV_PIPBOY_OFFSET_Z", -6.5f);
                 if (osg::PositionAttitudeTransform* transform
                     = dynamic_cast<osg::PositionAttitudeTransform*>(attached.get()))
                 {
-                    transform->setPosition(transform->getPosition() + osg::Vec3f(offsetX, offsetY, offsetZ));
-                    Log(Debug::Info) << "FNV/ESM4 diag: PipBoy wrist offset applied x=" << offsetX
-                                     << " y=" << offsetY << " z=" << offsetZ
+                    transform->setPosition(transform->getPosition() + pipBoyOffset);
+                    Log(Debug::Info) << "FNV/ESM4 diag: PipBoy wrist offset applied x=" << pipBoyOffset.x()
+                                     << " y=" << pipBoyOffset.y() << " z=" << pipBoyOffset.z()
                                      << " finalPosition=(" << transform->getPosition().x() << ","
                                      << transform->getPosition().y() << "," << transform->getPosition().z() << ")";
                 }
