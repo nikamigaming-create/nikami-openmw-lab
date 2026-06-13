@@ -926,23 +926,6 @@ namespace SceneUtil
         return mData->mBones[index].mName;
     }
 
-    bool RigGeometry::getBoneInvBindMatrix(std::string_view name, osg::Matrixf& matrix) const
-    {
-        if (!mData)
-            return false;
-
-        for (const BoneInfo& bone : mData->mBones)
-        {
-            if (bone.mName != name)
-                continue;
-
-            matrix = bone.mInvBindMatrix;
-            return true;
-        }
-
-        return false;
-    }
-
     void RigGeometry::accept(osg::NodeVisitor& nv)
     {
         if (!nv.validNodeMask(*this))
