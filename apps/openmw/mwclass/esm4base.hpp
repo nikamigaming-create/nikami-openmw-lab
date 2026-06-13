@@ -5,9 +5,20 @@
 #include <stdexcept>
 
 #include <components/esm4/inventory.hpp>
+#include <components/esm4/loadalch.hpp>
+#include <components/esm4/loadammo.hpp>
+#include <components/esm4/loadarmo.hpp>
+#include <components/esm4/loadbook.hpp>
+#include <components/esm4/loadclot.hpp>
 #include <components/esm4/loaddoor.hpp>
+#include <components/esm4/loadimod.hpp>
+#include <components/esm4/loadingr.hpp>
+#include <components/esm4/loadkeym.hpp>
+#include <components/esm4/loadligh.hpp>
+#include <components/esm4/loadmisc.hpp>
 #include <components/esm4/loadstat.hpp>
 #include <components/esm4/loadtree.hpp>
+#include <components/esm4/loadweap.hpp>
 #include <components/misc/strings/algorithm.hpp>
 
 #include "../mwbase/environment.hpp"
@@ -36,6 +47,126 @@ namespace MWClass
 
         // We don't handle ESM4 player stats yet, so for resolving levelled object we use an arbitrary number.
         constexpr int sDefaultLevel = 5;
+
+        template <class Record>
+        struct InventoryIcon
+        {
+            static const std::string& get(const Record&)
+            {
+                static const std::string sEmpty;
+                return sEmpty;
+            }
+        };
+
+        template <>
+        struct InventoryIcon<ESM4::Ammunition>
+        {
+            static const std::string& get(const ESM4::Ammunition& record) { return record.mIcon; }
+        };
+
+        template <>
+        struct InventoryIcon<ESM4::Armor>
+        {
+            static const std::string& get(const ESM4::Armor& record)
+            {
+                return !record.mIconMale.empty() ? record.mIconMale : record.mIconFemale;
+            }
+        };
+
+        template <>
+        struct InventoryIcon<ESM4::Book>
+        {
+            static const std::string& get(const ESM4::Book& record) { return record.mIcon; }
+        };
+
+        template <>
+        struct InventoryIcon<ESM4::Clothing>
+        {
+            static const std::string& get(const ESM4::Clothing& record)
+            {
+                return !record.mIconMale.empty() ? record.mIconMale : record.mIconFemale;
+            }
+        };
+
+        template <>
+        struct InventoryIcon<ESM4::Ingredient>
+        {
+            static const std::string& get(const ESM4::Ingredient& record) { return record.mIcon; }
+        };
+
+        template <>
+        struct InventoryIcon<ESM4::ItemMod>
+        {
+            static const std::string& get(const ESM4::ItemMod& record) { return record.mIcon; }
+        };
+
+        template <>
+        struct InventoryIcon<ESM4::Key>
+        {
+            static const std::string& get(const ESM4::Key& record) { return record.mIcon; }
+        };
+
+        template <>
+        struct InventoryIcon<ESM4::Light>
+        {
+            static const std::string& get(const ESM4::Light& record) { return record.mIcon; }
+        };
+
+        template <>
+        struct InventoryIcon<ESM4::MiscItem>
+        {
+            static const std::string& get(const ESM4::MiscItem& record) { return record.mIcon; }
+        };
+
+        template <>
+        struct InventoryIcon<ESM4::Potion>
+        {
+            static const std::string& get(const ESM4::Potion& record) { return record.mIcon; }
+        };
+
+        template <>
+        struct InventoryIcon<ESM4::Weapon>
+        {
+            static const std::string& get(const ESM4::Weapon& record) { return record.mIcon; }
+        };
+
+        template <class Record>
+        struct ItemValue
+        {
+            static int get(const Record&) { return 0; }
+        };
+
+        template <class Record>
+        struct ItemWeight
+        {
+            static float get(const Record&) { return 0.f; }
+        };
+
+#define OPENMW_ESM4_VALUE_WEIGHT_TRAIT(Type, ValueExpr, WeightExpr)                                                   \
+    template <>                                                                                                      \
+    struct ItemValue<Type>                                                                                           \
+    {                                                                                                                \
+        static int get(const Type& record) { return static_cast<int>(ValueExpr); }                                    \
+    };                                                                                                               \
+    template <>                                                                                                      \
+    struct ItemWeight<Type>                                                                                          \
+    {                                                                                                                \
+        static float get(const Type& record) { return static_cast<float>(WeightExpr); }                               \
+    }
+
+        OPENMW_ESM4_VALUE_WEIGHT_TRAIT(ESM4::Ammunition, record.mData.mValue, record.mData.mWeight);
+        OPENMW_ESM4_VALUE_WEIGHT_TRAIT(ESM4::Armor, record.mData.value, record.mData.weight);
+        OPENMW_ESM4_VALUE_WEIGHT_TRAIT(ESM4::Book, record.mData.value, record.mData.weight);
+        OPENMW_ESM4_VALUE_WEIGHT_TRAIT(ESM4::Clothing, record.mData.value, record.mData.weight);
+        OPENMW_ESM4_VALUE_WEIGHT_TRAIT(ESM4::Ingredient, record.mData.value, record.mData.weight);
+        OPENMW_ESM4_VALUE_WEIGHT_TRAIT(ESM4::ItemMod, record.mData.mValue, record.mData.mWeight);
+        OPENMW_ESM4_VALUE_WEIGHT_TRAIT(ESM4::Key, record.mData.value, record.mData.weight);
+        OPENMW_ESM4_VALUE_WEIGHT_TRAIT(ESM4::Light, record.mData.value, record.mData.weight);
+        OPENMW_ESM4_VALUE_WEIGHT_TRAIT(ESM4::MiscItem, record.mData.value, record.mData.weight);
+        OPENMW_ESM4_VALUE_WEIGHT_TRAIT(ESM4::Potion, record.mItem.value, record.mData.weight);
+        OPENMW_ESM4_VALUE_WEIGHT_TRAIT(ESM4::Weapon, record.mData.value, record.mData.weight);
+
+#undef OPENMW_ESM4_VALUE_WEIGHT_TRAIT
 
         template <class LevelledRecord, class TargetRecord>
         const TargetRecord* resolveLevelled(const ESM::RefId& id, int level = sDefaultLevel)
@@ -115,6 +246,28 @@ namespace MWClass
 
         std::string_view getName(const MWWorld::ConstPtr& ptr) const override { return {}; }
 
+        int getValue(const MWWorld::ConstPtr& ptr) const override
+        {
+            return ESM4Impl::ItemValue<Record>::get(*ptr.get<Record>()->mBase);
+        }
+
+        float getWeight(const MWWorld::ConstPtr& ptr) const override
+        {
+            return ESM4Impl::ItemWeight<Record>::get(*ptr.get<Record>()->mBase);
+        }
+
+        const ESM::RefId& getUpSoundId(const MWWorld::ConstPtr& ptr) const override
+        {
+            static const ESM::RefId sEmpty;
+            return sEmpty;
+        }
+
+        const ESM::RefId& getDownSoundId(const MWWorld::ConstPtr& ptr) const override
+        {
+            static const ESM::RefId sEmpty;
+            return sEmpty;
+        }
+
         std::string_view getModel(const MWWorld::ConstPtr& ptr) const override
         {
             std::string_view model = getClassModel<Record>(ptr);
@@ -164,6 +317,11 @@ namespace MWClass
         MWGui::ToolTipInfo getToolTipInfo(const MWWorld::ConstPtr& ptr, int count) const override
         {
             return ESM4Impl::getToolTipInfo(getName(ptr), count);
+        }
+
+        const std::string& getInventoryIcon(const MWWorld::ConstPtr& ptr) const override
+        {
+            return ESM4Impl::InventoryIcon<Record>::get(*ptr.get<Record>()->mBase);
         }
 
         bool hasToolTip(const MWWorld::ConstPtr& ptr) const override { return !getName(ptr).empty(); }

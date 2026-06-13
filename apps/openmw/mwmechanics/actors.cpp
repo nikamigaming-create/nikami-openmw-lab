@@ -1,6 +1,7 @@
 #include "actors.hpp"
 
 #include <array>
+#include <cstdlib>
 #include <optional>
 
 #include <components/esm3/esmreader.hpp>
@@ -62,6 +63,11 @@
 
 namespace
 {
+    bool shouldHoldFalloutActorDisplacement(const MWWorld::Ptr& ptr)
+    {
+        return VR::getVR() && (ptr.getType() == ESM::REC_NPC_4 || ptr.getType() == ESM::REC_CREA4)
+            && std::getenv("OPENMW_FNV_ALLOW_ACTOR_DISPLACEMENT") == nullptr;
+    }
 
     bool isConscious(const MWWorld::Ptr& ptr)
     {
@@ -1365,6 +1371,8 @@ namespace MWMechanics
             const MWWorld::Ptr& ptr = cached.mPtr;
             if (ptr == player)
                 continue; // Don't interfere with player controls.
+            if (shouldHoldFalloutActorDisplacement(ptr))
+                continue;
 
             const float maxSpeed = cached.mMaxSpeed;
             if (maxSpeed == 0.0)

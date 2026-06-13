@@ -95,7 +95,7 @@ namespace
         throw std::runtime_error("List of NPC races is empty!");
     }
 
-    void ensureFalloutProofCharacterDefaults(MWWorld::Store<ESM::Class>& classes, MWWorld::Store<ESM::Race>& races,
+    void ensureFalloutCharacterDefaults(MWWorld::Store<ESM::Class>& classes, MWWorld::Store<ESM::Race>& races,
         MWWorld::Store<ESM::Skill>& skills, MWWorld::Store<ESM::MagicEffect>& magicEffects,
         MWWorld::Store<ESM::Dialogue>& dialogues, MWWorld::Store<ESM::NPC>& npcs,
         MWWorld::Store<ESM::Weapon>& weapons, MWWorld::Store<ESM::Potion>& potions,
@@ -117,7 +117,7 @@ namespace
             courier.mData.mSpecialization = ESM::Class::Combat;
             courier.mData.mSkills = { { { 5, 10 }, { 12, 13 }, { 14, 15 }, { 16, 17 }, { 18, 19 } } };
             classes.insertStatic(courier);
-            Log(Debug::Info) << "FNV/ESM4 proof: inserted fallback ESM3 player class FNV_Courier";
+            Log(Debug::Info) << "FNV/ESM4: inserted fallback ESM3 player class FNV_Courier";
         }
 
         if (races.begin() == races.end())
@@ -134,7 +134,7 @@ namespace
                 wastelander.mData.mAttributeValues[i + ESM::Attribute::Length] = 50;
             }
             races.insertStatic(wastelander);
-            Log(Debug::Info) << "FNV/ESM4 proof: inserted fallback ESM3 player race FNV_Wastelander";
+            Log(Debug::Info) << "FNV/ESM4: inserted fallback ESM3 player race FNV_Wastelander";
         }
 
         int insertedSkills = 0;
@@ -159,7 +159,7 @@ namespace
             ++insertedSkills;
         }
         if (insertedSkills > 0)
-            Log(Debug::Info) << "FNV/ESM4 proof: inserted fallback ESM3 skills count=" << insertedSkills;
+            Log(Debug::Info) << "FNV/ESM4: inserted fallback ESM3 skills count=" << insertedSkills;
 
         int insertedMagicEffects = 0;
         for (int i = 0; i < ESM::MagicEffect::Length; ++i)
@@ -179,8 +179,7 @@ namespace
             ++insertedMagicEffects;
         }
         if (insertedMagicEffects > 0)
-            Log(Debug::Info) << "FNV/ESM4 proof: inserted fallback ESM3 magic effects count="
-                             << insertedMagicEffects;
+            Log(Debug::Info) << "FNV/ESM4: inserted fallback ESM3 magic effects count=" << insertedMagicEffects;
 
         const ESM::RefId vcg01 = ESM::RefId::stringRefId("VCG01");
         if (dialogues.search(vcg01) == nullptr)
@@ -191,7 +190,7 @@ namespace
             dialogue.blank();
             dialogue.mType = ESM::Dialogue::Journal;
             dialogues.insertStatic(dialogue);
-            Log(Debug::Info) << "FNV/ESM4 proof: inserted fallback ESM3 quest dialogue VCG01";
+            Log(Debug::Info) << "FNV/ESM4: inserted fallback ESM3 quest dialogue VCG01";
         }
 
         if (npcs.searchStatic(ESM::RefId::stringRefId("Player")) == nullptr)
@@ -212,7 +211,7 @@ namespace
             player.mNpdt.mDisposition = 50;
             player.mNpdt.mGold = 0;
             npcs.insertStatic(player);
-            Log(Debug::Info) << "FNV/ESM4 proof: inserted fallback ESM3 Player NPC for normal save/load";
+            Log(Debug::Info) << "FNV/ESM4: inserted fallback ESM3 Player NPC for normal save/load";
         }
 
         const auto ensureWeapon = [&weapons](
@@ -236,7 +235,7 @@ namespace
             weapon.mData.mSlash = { 4, 12 };
             weapon.mData.mThrust = { 4, 12 };
             weapons.insertStatic(weapon);
-            Log(Debug::Info) << "FNV/ESM4 proof: inserted fallback inventory weapon " << id;
+            Log(Debug::Info) << "FNV/ESM4: inserted fallback inventory weapon " << id;
         };
 
         const auto ensurePotion = [&potions](
@@ -253,7 +252,7 @@ namespace
             potion.mData.mWeight = 0.1f;
             potion.mData.mValue = value;
             potions.insertStatic(potion);
-            Log(Debug::Info) << "FNV/ESM4 proof: inserted fallback inventory potion " << id;
+            Log(Debug::Info) << "FNV/ESM4: inserted fallback inventory potion " << id;
         };
 
         const auto ensureMisc = [&miscItems](std::string_view id, std::string_view name, std::string_view icon,
@@ -270,7 +269,7 @@ namespace
             item.mData.mWeight = weight;
             item.mData.mValue = value;
             miscItems.insertStatic(item);
-            Log(Debug::Info) << "FNV/ESM4 proof: inserted fallback inventory misc " << id;
+            Log(Debug::Info) << "FNV/ESM4: inserted fallback inventory misc " << id;
         };
 
         ensureWeapon("FNV_PROOF_9MM_PISTOL", "9mm Pistol",
@@ -292,6 +291,19 @@ namespace
         return std::getenv("OPENMW_FNV_BOOTSTRAP_LEVEL1_COURIER") != nullptr
             || std::getenv("OPENMW_FNV_BOOTSTRAP_DOC_SENT") != nullptr
             || std::getenv("OPENMW_FNV_PROOF_ENABLE_ESM3_FALLBACKS") != nullptr;
+    }
+
+    bool shouldEnsureFalloutCharacterDefaults(const MWWorld::Store<ESM::Class>& classes,
+        const MWWorld::Store<ESM::Race>& races, const MWWorld::Store<ESM4::Npc>& npcs,
+        const MWWorld::Store<ESM4::Creature>& creatures, const MWWorld::Store<ESM4::Race>& esm4Races)
+    {
+        if (shouldEnsureFalloutProofCharacterDefaults())
+            return true;
+
+        const bool missingEsm3CharacterBasis = classes.begin() == classes.end() || races.begin() == races.end();
+        const bool hasEsm4CharacterData
+            = npcs.begin() != npcs.end() || creatures.begin() != creatures.end() || esm4Races.begin() != esm4Races.end();
+        return missingEsm3CharacterBasis && hasEsm4CharacterData;
     }
 
     std::vector<ESM::NPC> getNPCsToReplace(const MWWorld::Store<ESM::Faction>& factions,
@@ -807,8 +819,9 @@ namespace MWWorld
     void ESMStore::validate()
     {
         auto& npcs = getWritable<ESM::NPC>();
-        if (shouldEnsureFalloutProofCharacterDefaults())
-            ensureFalloutProofCharacterDefaults(
+        if (shouldEnsureFalloutCharacterDefaults(getWritable<ESM::Class>(), getWritable<ESM::Race>(),
+                getWritable<ESM4::Npc>(), getWritable<ESM4::Creature>(), getWritable<ESM4::Race>()))
+            ensureFalloutCharacterDefaults(
                 getWritable<ESM::Class>(), getWritable<ESM::Race>(), getWritable<ESM::Skill>(),
                 getWritable<ESM::MagicEffect>(), getWritable<ESM::Dialogue>(), npcs, getWritable<ESM::Weapon>(),
                 getWritable<ESM::Potion>(), getWritable<ESM::Miscellaneous>());
@@ -855,8 +868,9 @@ namespace MWWorld
     void ESMStore::validateDynamic()
     {
         auto& npcs = getWritable<ESM::NPC>();
-        if (shouldEnsureFalloutProofCharacterDefaults())
-            ensureFalloutProofCharacterDefaults(
+        if (shouldEnsureFalloutCharacterDefaults(getWritable<ESM::Class>(), getWritable<ESM::Race>(),
+                getWritable<ESM4::Npc>(), getWritable<ESM4::Creature>(), getWritable<ESM4::Race>()))
+            ensureFalloutCharacterDefaults(
                 getWritable<ESM::Class>(), getWritable<ESM::Race>(), getWritable<ESM::Skill>(),
                 getWritable<ESM::MagicEffect>(), getWritable<ESM::Dialogue>(), npcs, getWritable<ESM::Weapon>(),
                 getWritable<ESM::Potion>(), getWritable<ESM::Miscellaneous>());

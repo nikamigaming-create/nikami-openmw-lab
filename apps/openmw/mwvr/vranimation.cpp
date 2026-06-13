@@ -4,14 +4,11 @@
 #include "vrpointer.hpp"
 
 #include <osg/BlendFunc>
-#include <osg/ComputeBoundsVisitor>
-#include <osg/CopyOp>
 #include <osg/CullFace>
 #include <osg/FrontFace>
 #include <osg/Depth>
 #include <osg/Drawable>
 #include <osg/Fog>
-#include <osg/Geode>
 #include <osg/Geometry>
 #include <osg/LightModel>
 #include <osg/MatrixTransform>
@@ -23,8 +20,6 @@
 
 #include <components/resource/resourcesystem.hpp>
 #include <components/resource/scenemanager.hpp>
-#include <components/sceneutil/attach.hpp>
-#include <components/sceneutil/riggeometry.hpp>
 #include <components/sceneutil/positionattitudetransform.hpp>
 #include <components/sceneutil/shadow.hpp>
 #include <components/sceneutil/skeleton.hpp>
@@ -79,317 +74,6 @@ namespace MWVR
             return true;
 
         return false;
-    }
-
-    bool shouldUseFalloutVrHandFallback(Resource::ResourceSystem* resourceSystem)
-    {
-        const VFS::Manager* vfs = resourceSystem != nullptr ? resourceSystem->getVFS() : nullptr;
-        return vfs != nullptr
-            && (vfs->exists(VFS::Path::Normalized("meshes/characters/_male/lefthandpipboyglove.nif"))
-                || vfs->exists(VFS::Path::Normalized("meshes/characters/_male/lefthand.nif")))
-            && vfs->exists(VFS::Path::Normalized("meshes/characters/_male/righthand.nif"));
-    }
-
-    VFS::Path::Normalized getFalloutLeftVrHandMesh(Resource::ResourceSystem* resourceSystem)
-    {
-        const VFS::Manager* vfs = resourceSystem != nullptr ? resourceSystem->getVFS() : nullptr;
-        if (vfs != nullptr && vfs->exists(VFS::Path::Normalized("meshes/characters/_male/lefthandpipboyglove.nif")))
-            return VFS::Path::Normalized("meshes/characters/_male/lefthandpipboyglove.nif");
-        return VFS::Path::Normalized("meshes/characters/_male/lefthand.nif");
-    }
-
-    VFS::Path::Normalized getFalloutRightVrHandMesh(Resource::ResourceSystem* resourceSystem)
-    {
-        const VFS::Manager* vfs = resourceSystem != nullptr ? resourceSystem->getVFS() : nullptr;
-        if (vfs != nullptr && vfs->exists(VFS::Path::Normalized("meshes/characters/_male/righthand1st.nif")))
-            return VFS::Path::Normalized("meshes/characters/_male/righthand1st.nif");
-        return VFS::Path::Normalized("meshes/characters/_male/righthand.nif");
-    }
-
-    class FalloutVrHandProofVisitor : public osg::NodeVisitor
-    {
-    public:
-        FalloutVrHandProofVisitor()
-            : osg::NodeVisitor(TRAVERSE_ALL_CHILDREN)
-        {
-        }
-
-        void apply(osg::Drawable& drawable) override
-        {
-            ++mDrawables;
-            if (dynamic_cast<SceneUtil::RigGeometry*>(&drawable) != nullptr)
-                ++mRiggedDrawables;
-        }
-
-        int mDrawables = 0;
-        int mRiggedDrawables = 0;
-    };
-
-    class FindNamedNodeVisitor : public osg::NodeVisitor
-    {
-    public:
-        explicit FindNamedNodeVisitor(std::string_view name)
-            : osg::NodeVisitor(TRAVERSE_ALL_CHILDREN)
-            , mName(name)
-        {
-        }
-
-        void apply(osg::Node& node) override
-        {
-            if (mFound == nullptr && node.getName() == mName)
-            {
-                mFound = &node;
-                return;
-            }
-
-            traverse(node);
-        }
-
-        osg::ref_ptr<osg::Node> mFound;
-
-    private:
-        std::string mName;
-    };
-
-    class StaticizeFalloutVrHandRigVisitor : public osg::NodeVisitor
-    {
-    public:
-        StaticizeFalloutVrHandRigVisitor()
-            : osg::NodeVisitor(TRAVERSE_ALL_CHILDREN)
-        {
-        }
-
-        void apply(osg::Geode& geode) override
-        {
-            for (unsigned int i = 0; i < geode.getNumDrawables(); ++i)
-            {
-                osg::ref_ptr<osg::Geometry> staticGeometry = makeStaticGeometry(*geode.getDrawable(i));
-                if (staticGeometry == nullptr)
-                    continue;
-
-                geode.setDrawable(i, staticGeometry);
-                ++mStaticizedRigGeometryCount;
-            }
-
-            traverse(geode);
-        }
-
-        void apply(osg::Drawable& drawable) override
-        {
-            osg::ref_ptr<osg::Geometry> staticGeometry = makeStaticGeometry(drawable);
-            if (staticGeometry == nullptr)
-                return;
-
-            bool replaced = false;
-            while (drawable.getNumParents() > 0)
-            {
-                osg::Group* parent = drawable.getParent(0);
-                if (osg::Geode* geode = dynamic_cast<osg::Geode*>(parent))
-                {
-                    if (!geode->replaceDrawable(&drawable, staticGeometry.get()))
-                        break;
-                    replaced = true;
-                    continue;
-                }
-
-                osg::Node* drawableNode = dynamic_cast<osg::Node*>(&drawable);
-                if (parent == nullptr || drawableNode == nullptr)
-                    break;
-
-                osg::ref_ptr<osg::Geode> staticGeode = new osg::Geode;
-                staticGeode->setName(drawable.getName().empty() ? std::string("FNV VR Staticized Hand Drawable")
-                                                                 : "FNV VR Staticized " + drawable.getName());
-                staticGeode->addDrawable(staticGeometry.get());
-                if (!parent->replaceChild(drawableNode, staticGeode.get()))
-                    break;
-                replaced = true;
-            }
-            if (replaced)
-                ++mStaticizedRigGeometryCount;
-            else
-                Log(Debug::Warning) << "FNV/ESM4 diag: VR hand staticize could not replace direct rig drawable name="
-                                    << drawable.getName() << " parents=" << drawable.getNumParents();
-        }
-
-        osg::ref_ptr<osg::Geometry> makeStaticGeometry(osg::Drawable& drawable)
-        {
-            SceneUtil::RigGeometry* rig = dynamic_cast<SceneUtil::RigGeometry*>(&drawable);
-            if (rig == nullptr)
-                return nullptr;
-
-            ++mSeenRigGeometryCount;
-            osg::Geometry* source = rig->getSourceGeometry();
-            const auto vertexCount = [](const osg::Geometry* geometry) -> unsigned int {
-                if (geometry == nullptr || geometry->getVertexArray() == nullptr)
-                    return 0;
-                return geometry->getVertexArray()->getNumElements();
-            };
-            if (vertexCount(source) == 0)
-            {
-                for (unsigned int i = 0; i < 2; ++i)
-                {
-                    osg::Geometry* renderGeometry = rig->getRenderGeometry(i);
-                    if (vertexCount(renderGeometry) == 0)
-                        continue;
-                    source = renderGeometry;
-                    break;
-                }
-            }
-            if (source == nullptr)
-            {
-                ++mMissingSourceGeometryCount;
-                return nullptr;
-            }
-
-            osg::ref_ptr<osg::Geometry> staticGeometry = osg::clone(source, osg::CopyOp::DEEP_COPY_ALL);
-            staticGeometry->setName(drawable.getName().empty() ? source->getName() : drawable.getName());
-            staticGeometry->setNodeMask(~0u);
-            staticGeometry->setCullingActive(false);
-            staticGeometry->setComputeBoundingBoxCallback(nullptr);
-            staticGeometry->setComputeBoundingSphereCallback(nullptr);
-            staticGeometry->dirtyBound();
-            if (drawable.getStateSet() != nullptr)
-                staticGeometry->setStateSet(osg::clone(drawable.getStateSet(), osg::CopyOp::DEEP_COPY_ALL));
-            return staticGeometry;
-        }
-
-        unsigned int mSeenRigGeometryCount = 0;
-        unsigned int mMissingSourceGeometryCount = 0;
-        unsigned int mStaticizedRigGeometryCount = 0;
-    };
-
-    osg::Matrix getFalloutVrNodeWorldMatrix(osg::Node* node)
-    {
-        if (node == nullptr || node->getParentalNodePaths().empty())
-            return osg::Matrix::identity();
-        return osg::computeLocalToWorld(node->getParentalNodePaths().front());
-    }
-
-    osg::ref_ptr<osg::MatrixTransform> makeFalloutVrHandBindFrameHelper(
-        osg::Group& bip01, osg::Group& bone, std::string_view helperName)
-    {
-        for (unsigned int i = 0; i < bone.getNumChildren(); ++i)
-            if (osg::MatrixTransform* existing = dynamic_cast<osg::MatrixTransform*>(bone.getChild(i)))
-                if (existing->getName() == std::string(helperName))
-                    return existing;
-
-        const osg::Matrix boneWorld = getFalloutVrNodeWorldMatrix(&bone);
-        const osg::Matrix bipWorld = getFalloutVrNodeWorldMatrix(&bip01);
-        const osg::Matrix boneInBip = boneWorld * osg::Matrix::inverse(bipWorld);
-        osg::Matrix localInBone;
-        if (!localInBone.invert(boneInBip))
-            localInBone.makeIdentity();
-
-        osg::ref_ptr<osg::MatrixTransform> helper = new osg::MatrixTransform;
-        helper->setName(std::string(helperName));
-        helper->setMatrix(localInBone);
-        bone.addChild(helper);
-
-        const osg::Quat localRotation = localInBone.getRotate();
-        Log(Debug::Info) << "FNV/ESM4 diag: inserted VR hand bind-frame helper " << helperName
-                         << " under " << bone.getName() << " local=(" << localInBone.getTrans().x()
-                         << "," << localInBone.getTrans().y() << "," << localInBone.getTrans().z()
-                         << ") localQuat=(" << localRotation.x() << "," << localRotation.y() << ","
-                         << localRotation.z() << "," << localRotation.w() << ")";
-        return helper;
-    }
-
-    osg::ref_ptr<osg::Node> attachStaticizedFalloutVrHand(
-        osg::ref_ptr<const osg::Node> templateNode, osg::Group* attachNode, Resource::SceneManager* sceneManager,
-        const osg::Matrix& handInBip, std::string_view bone)
-    {
-        osg::ref_ptr<osg::Node> cloned = sceneManager->getInstance(templateNode);
-        osg::ComputeBoundsVisitor boundsVisitor;
-        cloned->accept(boundsVisitor);
-        const osg::BoundingBox bounds = boundsVisitor.getBoundingBox();
-        osg::Matrix handLocal;
-        handLocal.makeIdentity();
-        osg::Vec3f center;
-        osg::Vec3f anchor;
-        std::string anchorSource = "none";
-        if (bounds.valid())
-        {
-            center = bounds.center();
-            anchor = center;
-            anchorSource = "boundsCenter";
-        }
-
-        FindNamedNodeVisitor handBoneFinder(bone);
-        cloned->accept(handBoneFinder);
-        if (handBoneFinder.mFound != nullptr)
-        {
-            osg::NodePathList paths = handBoneFinder.mFound->getParentalNodePaths(cloned.get());
-            if (paths.empty())
-                paths = handBoneFinder.mFound->getParentalNodePaths();
-            if (!paths.empty())
-            {
-                anchor = osg::computeLocalToWorld(paths.front()).getTrans();
-                anchorSource = "templateBone";
-            }
-        }
-
-        if (bounds.valid() && anchorSource == "boundsCenter")
-        {
-            anchor = osg::Vec3f(center.x(), bounds.yMin(), center.z());
-            anchorSource = "boundsWristSideYMin";
-        }
-        handLocal.setTrans(-anchor);
-        const bool leftHand = bone.find(" L ") != std::string_view::npos;
-        const bool leftRollFlip = leftHand && Settings::vr().mFalloutLeftHandRollFlip;
-        if (leftRollFlip)
-            handLocal.postMultRotate(osg::Quat(osg::PI, osg::Vec3f(0, 1, 0)));
-        const osg::Vec3f falloutMeshRotation(
-            osg::DegreesToRadians(
-                leftHand ? Settings::vr().mFalloutLeftHandMeshPitch : Settings::vr().mFalloutRightHandMeshPitch),
-            osg::DegreesToRadians(
-                leftHand ? Settings::vr().mFalloutLeftHandMeshYaw : Settings::vr().mFalloutRightHandMeshYaw),
-            osg::DegreesToRadians(
-                leftHand ? Settings::vr().mFalloutLeftHandMeshRoll : Settings::vr().mFalloutRightHandMeshRoll));
-        handLocal.postMultRotate(osg::Quat(falloutMeshRotation.x(), osg::Vec3f(1, 0, 0),
-            falloutMeshRotation.y(), osg::Vec3f(0, 1, 0), falloutMeshRotation.z(), osg::Vec3f(0, 0, 1)));
-        const osg::Vec3f falloutBaseCalibration(
-            Settings::vr().mFalloutHandMeshOffsetX * Constants::UnitsPerMeter,
-            Settings::vr().mFalloutHandMeshOffsetY * Constants::UnitsPerMeter,
-            Settings::vr().mFalloutHandMeshOffsetZ * Constants::UnitsPerMeter);
-        const osg::Vec3f falloutSideCalibration(
-            (leftHand ? Settings::vr().mFalloutLeftHandMeshOffsetX : Settings::vr().mFalloutRightHandMeshOffsetX)
-                * Constants::UnitsPerMeter,
-            (leftHand ? Settings::vr().mFalloutLeftHandMeshOffsetY : Settings::vr().mFalloutRightHandMeshOffsetY)
-                * Constants::UnitsPerMeter,
-            (leftHand ? Settings::vr().mFalloutLeftHandMeshOffsetZ : Settings::vr().mFalloutRightHandMeshOffsetZ)
-                * Constants::UnitsPerMeter);
-        const osg::Vec3f falloutWristCalibration = falloutBaseCalibration + falloutSideCalibration;
-        handLocal.setTrans(handLocal.getTrans() + falloutWristCalibration);
-
-        osg::ref_ptr<osg::MatrixTransform> transform = new osg::MatrixTransform;
-        transform->setMatrix(handLocal);
-        const osg::Quat localRotation = handLocal.getRotate();
-        Log(Debug::Info) << "FNV/ESM4 diag: made VR static hand mesh stable controller-local matrix trans=("
-                         << handLocal.getTrans().x() << "," << handLocal.getTrans().y() << ","
-                         << handLocal.getTrans().z() << ") quat=(" << localRotation.x() << ","
-                         << localRotation.y() << "," << localRotation.z() << "," << localRotation.w()
-                         << ") anchorSource=" << anchorSource << " anchor=(" << anchor.x() << "," << anchor.y()
-                         << "," << anchor.z() << ") sourceCenter=(" << center.x() << "," << center.y() << "," << center.z()
-                         << ") wristCalibration=(" << falloutWristCalibration.x() << ","
-                         << falloutWristCalibration.y() << "," << falloutWristCalibration.z()
-                         << ") meshRotationDeg=(" << osg::RadiansToDegrees(falloutMeshRotation.x()) << ","
-                         << osg::RadiansToDegrees(falloutMeshRotation.y()) << ","
-                         << osg::RadiansToDegrees(falloutMeshRotation.z()) << ") leftRollFlip=" << leftRollFlip
-                         << " handInBip=(" << handInBip.getTrans().x() << "," << handInBip.getTrans().y() << ","
-                         << handInBip.getTrans().z() << ")";
-
-        if (bounds.valid())
-        {
-            Log(Debug::Info) << "FNV/ESM4 diag: VR static hand source skeleton-space bounds min=("
-                             << bounds.xMin() << "," << bounds.yMin() << "," << bounds.zMin()
-                             << ") max=(" << bounds.xMax() << "," << bounds.yMax() << "," << bounds.zMax()
-                             << ") center=(" << center.x() << "," << center.y() << "," << center.z()
-                             << ") centerDistance=" << center.length() << " anchorDistance=" << anchor.length();
-        }
-
-        attachNode->addChild(transform);
-        transform->addChild(cloned);
-        return osg::ref_ptr<osg::Node>(transform.get());
     }
 
     /// Implements control of a finger by overriding rotation
@@ -634,8 +318,18 @@ namespace MWVR
             // Undo the wrist translate
             // TODO: I'm sure this could bee a lot less hacky
             // But i'll defer that to whenever we get inverse cinematics so i can track the hand directly.
-            auto* hand = mTransform->getChild(0);
-            auto handMatrix = hand->asTransform()->asMatrixTransform()->getMatrix();
+            osg::Matrix handMatrix = osg::Matrix::identity();
+            for (unsigned int i = 0; i < mTransform->getNumChildren(); ++i) {
+                auto* child = mTransform->getChild(i);
+                if (child->getName().find(" Hand") != std::string::npos) {
+                    if (auto* t = child->asTransform()) {
+                        if (auto* mt = t->asMatrixTransform()) {
+                            handMatrix = mt->getMatrix();
+                            break;
+                        }
+                    }
+                }
+            }
             auto position = tp.pose.position.asMWUnits() - (orientation * handMatrix.getTrans());
 
             // Center hand mesh on tracking
@@ -727,15 +421,7 @@ namespace MWVR
 
         auto& xrInput = OpenXRInput::instance();
 
-        const bool falloutHandFallback = shouldUseFalloutVrHandFallback(mResourceSystem);
-        // Keep the stock OpenMW VR controller-space hand path authoritative. Fallout meshes can
-        // be swapped onto this stable path later, but should not drive tracking from avatar bones.
-        osg::Vec3 offset = falloutHandFallback ? osg::Vec3(0, 0, 0) : osg::Vec3(15, 0, 0);
-        const bool useNativeGripOrientation = false;
-        Log(Debug::Info) << "FNV/ESM4 diag: VR hand tracking mode falloutFallback=" << falloutHandFallback
-                         << " nativeGripOrientation=" << useNativeGripOrientation
-                         << " trackingSpace=" << (falloutHandFallback ? "WristTop/Aim-derived" : "Grip")
-                         << " baseOffset=(" << offset.x() << "," << offset.y() << "," << offset.z() << ")";
+        Log(Debug::Info) << "FNV/ESM4 diag: VR hand tracking mode inventoryHands=1";
 
         for (int i = 0; i < 2; i++)
         {
@@ -746,24 +432,31 @@ namespace MWVR
                 ctx.spaceName = i == 1 ? OpenXRInput::LeftHandGrip : OpenXRInput::RightHandGrip;
             else
                 ctx.spaceName = i == 0 ? OpenXRInput::LeftHandGrip : OpenXRInput::RightHandGrip;
-            if (falloutHandFallback)
+            const std::string gripSpace = ctx.spaceName;
+            const std::string wristSpace = i == 0 ? "LeftWristTop" : "RightWristTop";
+            const bool useWristTop = xrInput.getSpace(wristSpace) != nullptr;
+            if (useWristTop)
             {
-                const std::string wristSpace = i == 0 ? "LeftWristTop" : "RightWristTop";
-                if (xrInput.getSpace(wristSpace))
-                    ctx.spaceName = wristSpace;
-                else
-                    Log(Debug::Warning) << "FNV/ESM4 diag: VR wrist hand space missing " << wristSpace
-                                        << "; falling back to " << ctx.spaceName;
+                ctx.spaceName = wristSpace;
             }
-            ctx.forearmBone = i == 0 ? "bip01 l forearm" : "bip01 r forearm";
+            else
+                Log(Debug::Warning) << "FNV/ESM4 diag: VR wrist hand space missing " << wristSpace
+                                    << "; using grip tracking space " << gripSpace;
+            const osg::Vec3 offset = useWristTop ? osg::Vec3(0, 0, 0) : osg::Vec3(15, 0, 0);
+            const bool useNativeGripOrientation = useWristTop;
+            Log(Debug::Info) << "FNV/ESM4 diag: VR hand tracking source hand=" << (i == 0 ? "left" : "right")
+                             << " space=" << ctx.spaceName
+                             << " nativeOrientation=" << useNativeGripOrientation
+                             << " baseOffset=(" << offset.x() << "," << offset.y() << "," << offset.z() << ")";
+            ctx.forearmBone = i == 0 ? "Bip01 L Forearm" : "Bip01 R Forearm";
             ctx.forearmController = std::make_unique<TrackingController>(
                 xrInput.getSpace(ctx.spaceName), offset, i == 0, VR::getLeftHandedMode(), useNativeGripOrientation,
                 i == 0 ? "left" : "right");
             ctx.handBone = i == 0 ? "Bip01 L Hand" : "Bip01 R Hand";
             ctx.handController = new HandController;
-            ctx.indexFingerBone[0] = i == 0 ? "bip01 l finger1" : "bip01 r finger1";
+            ctx.indexFingerBone[0] = i == 0 ? "Bip01 L Finger1" : "Bip01 R Finger1";
             ctx.indexFingerControllers[0] = new FingerController;
-            ctx.indexFingerBone[1] = i == 0 ? "bip01 l finger2" : "bip01 r finger2";
+            ctx.indexFingerBone[1] = i == 0 ? "Bip01 L Finger2" : "Bip01 R Finger2";
             ctx.indexFingerControllers[1] = new FingerController;
         }
     }
@@ -791,9 +484,9 @@ namespace MWVR
             // Hide everything other than hands
             removeIndividualPart(ESM::PartReferenceType::PRT_Hair);
             removeIndividualPart(ESM::PartReferenceType::PRT_Head);
-            removeIndividualPart(ESM::PartReferenceType::PRT_LForearm);
+            // removeIndividualPart(ESM::PartReferenceType::PRT_LForearm);
             removeIndividualPart(ESM::PartReferenceType::PRT_LUpperarm);
-            removeIndividualPart(ESM::PartReferenceType::PRT_LWrist);
+            // removeIndividualPart(ESM::PartReferenceType::PRT_LWrist);
             removeIndividualPart(ESM::PartReferenceType::PRT_RForearm);
             removeIndividualPart(ESM::PartReferenceType::PRT_RUpperarm);
             removeIndividualPart(ESM::PartReferenceType::PRT_RWrist);
@@ -819,91 +512,6 @@ namespace MWVR
             removeIndividualPart(ESM::PartReferenceType::PRT_LWrist);
             removeIndividualPart(ESM::PartReferenceType::PRT_RForearm);
             removeIndividualPart(ESM::PartReferenceType::PRT_RWrist);
-        }
-
-        if (mViewMode == VM_VRFirstPerson && shouldUseFalloutVrHandFallback(mResourceSystem))
-        {
-            removeIndividualPart(ESM::PartReferenceType::PRT_LHand);
-            removeIndividualPart(ESM::PartReferenceType::PRT_RHand);
-
-            const auto attachHand = [&](ESM::PartReferenceType type, VFS::Path::NormalizedView mesh,
-                                        std::string_view bone) {
-                if (mObjectParts[type] != nullptr)
-                    return;
-
-                const NodeMap& nodeMap = getNodeMap();
-                const auto found = nodeMap.find(bone);
-                if (found == nodeMap.end())
-                {
-                    Log(Debug::Warning) << "FNV/ESM4 diag: missing VR hand fallback bone " << bone;
-                    return;
-                }
-
-                osg::Group* attachNode = found->second.get();
-                osg::Matrix handInBip;
-                if (const auto bip01 = nodeMap.find("Bip01"); bip01 != nodeMap.end())
-                {
-                    const osg::Matrix handWorld = getFalloutVrNodeWorldMatrix(attachNode);
-                    const osg::Matrix bipWorld = getFalloutVrNodeWorldMatrix(bip01->second.get());
-                    handInBip = handWorld * osg::Matrix::inverse(bipWorld);
-                }
-
-                osg::ref_ptr<const osg::Node> templateNode = mResourceSystem->getSceneManager()->getTemplate(mesh);
-                FalloutVrHandProofVisitor templateProofVisitor;
-                const_cast<osg::Node*>(templateNode.get())->accept(templateProofVisitor);
-                osg::ref_ptr<const osg::Node> attachTemplateNode = templateNode;
-                bool staticizedHandRig = false;
-                bool liveRiggedHand = false;
-
-                osg::ref_ptr<osg::Node> attached;
-                if (templateProofVisitor.mRiggedDrawables > 0)
-                {
-                    osg::ref_ptr<osg::Node> staticTemplate = osg::clone(templateNode.get(), osg::CopyOp::DEEP_COPY_ALL);
-                    StaticizeFalloutVrHandRigVisitor staticizeVisitor;
-                    staticTemplate->accept(staticizeVisitor);
-                    if (staticizeVisitor.mStaticizedRigGeometryCount > 0)
-                    {
-                        staticizedHandRig = true;
-                        attached = attachStaticizedFalloutVrHand(
-                            staticTemplate, attachNode, mResourceSystem->getSceneManager(), handInBip, bone);
-                        Log(Debug::Info) << "FNV/ESM4 diag: forcing staticized VR hand fallback " << mesh
-                                         << " rigged=" << staticizeVisitor.mStaticizedRigGeometryCount
-                                         << " seen=" << staticizeVisitor.mSeenRigGeometryCount
-                                         << " missingSource=" << staticizeVisitor.mMissingSourceGeometryCount
-                                         << " bone=" << bone;
-                    }
-                    else
-                    {
-                        Log(Debug::Warning) << "FNV/ESM4 diag: staticized VR hand fallback failed; attaching live rigged "
-                                            << mesh << " riggedDrawables=" << templateProofVisitor.mRiggedDrawables;
-                        attached = SceneUtil::attach(std::move(attachTemplateNode), mObjectRoot, {}, attachNode,
-                            mResourceSystem->getSceneManager());
-                        FalloutVrHandProofVisitor liveProofVisitor;
-                        attached->accept(liveProofVisitor);
-                        liveRiggedHand = liveProofVisitor.mRiggedDrawables > 0 || liveProofVisitor.mDrawables > 0;
-                    }
-                }
-                else
-                    attached = SceneUtil::attach(std::move(attachTemplateNode), mObjectRoot, {}, attachNode,
-                        mResourceSystem->getSceneManager());
-                FalloutVrHandProofVisitor proofVisitor;
-                attached->accept(proofVisitor);
-                const osg::BoundingSphere bound = attached->getBound();
-                mObjectParts[type] = std::make_unique<MWRender::PartHolder>(std::move(attached));
-                mPartPriorities[type] = 2;
-                Log(Debug::Info) << "FNV/ESM4 diag: attached Fallout VR hand fallback " << mesh << " to " << bone
-                                 << " attachNode=" << attachNode->getName()
-                                 << " staticized=" << staticizedHandRig
-                                 << " liveRigged=" << liveRiggedHand
-                                 << " drawables=" << proofVisitor.mDrawables
-                                 << " riggedDrawables=" << proofVisitor.mRiggedDrawables
-                                 << " boundRadius=" << bound.radius()
-                                 << " boundCenter=(" << bound.center().x() << "," << bound.center().y() << ","
-                                 << bound.center().z() << ")";
-            };
-
-            attachHand(ESM::PartReferenceType::PRT_LHand, getFalloutLeftVrHandMesh(mResourceSystem), "Bip01 L Hand");
-            attachHand(ESM::PartReferenceType::PRT_RHand, getFalloutRightVrHandMesh(mResourceSystem), "Bip01 R Hand");
         }
 
         updateTrackingControllers();

@@ -1,6 +1,7 @@
 #include "controller.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 
 #include <osg/Material>
@@ -46,6 +47,43 @@ namespace NifOsg
         bool isReasonableScale(float value)
         {
             return std::isfinite(value) && value > 0.0001f && value < 10000.f;
+        }
+
+        osg::Quat falloutHalfTurnX()
+        {
+            return osg::Quat(osg::PI, osg::Vec3f(1.f, 0.f, 0.f));
+        }
+
+        std::string asciiLower(std::string value)
+        {
+            std::transform(value.begin(), value.end(), value.begin(),
+                [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+            return value;
+        }
+
+        bool isFalloutActorBasisBone(const std::string& bone)
+        {
+            const std::string lowerBone = asciiLower(bone);
+            return lowerBone.find("neck") != std::string::npos || lowerBone.find("head") != std::string::npos
+                || lowerBone.find("clavicle") != std::string::npos
+                || lowerBone.find("upperarm") != std::string::npos
+                || lowerBone.find("uparmtwist") != std::string::npos
+                || lowerBone.find("forearm") != std::string::npos
+                || lowerBone.find("foretwist") != std::string::npos
+                || lowerBone.find("hand") != std::string::npos || lowerBone.find("finger") != std::string::npos
+                || lowerBone.find("thumb") != std::string::npos;
+        }
+
+        bool shouldPinFalloutActorBindRotation(const std::string& bone)
+        {
+            const std::string lowerBone = asciiLower(bone);
+            return lowerBone.find("neck") != std::string::npos || lowerBone.find("head") != std::string::npos
+                || lowerBone.find("clavicle") != std::string::npos
+                || lowerBone.find("upperarm") != std::string::npos
+                || lowerBone.find("uparmtwist") != std::string::npos
+                || lowerBone.find("forearm") != std::string::npos
+                || lowerBone.find("foretwist") != std::string::npos || lowerBone.find("hand") != std::string::npos
+                || lowerBone.find("finger") != std::string::npos || lowerBone.find("thumb") != std::string::npos;
         }
 
         void sanitizeTransform(SceneUtil::KeyframeController::KfTransform& transform)
@@ -139,6 +177,12 @@ namespace NifOsg
         , mTranslations(copy.mTranslations)
         , mScales(copy.mScales)
         , mAxisOrder(copy.mAxisOrder)
+        , mUseFalloutActorRotationBasis(copy.mUseFalloutActorRotationBasis)
+        , mPinFalloutActorBindRotation(copy.mPinFalloutActorBindRotation)
+        , mFalloutLowerBone(copy.mFalloutLowerBone)
+        , mFalloutBindTranslation(copy.mFalloutBindTranslation)
+        , mFalloutBindRotation(copy.mFalloutBindRotation)
+        , mFalloutBindScale(copy.mFalloutBindScale)
         , mBSplineTransform(copy.mBSplineTransform)
     {
     }
@@ -212,6 +256,17 @@ namespace NifOsg
         mRotations = QuaternionInterpolator(Nif::QuaternionKeyMapPtr(), transform.mRotation);
         mTranslations = Vec3Interpolator(Nif::Vector3KeyMapPtr(), transform.mTranslation);
         mScales = FloatInterpolator(Nif::FloatKeyMapPtr(), transform.mScale);
+    }
+
+    void KeyframeController::setFalloutActorTransformBasis(
+        const std::string& lowerBone, const osg::Vec3f& bindTranslation, const osg::Quat& bindRotation, float bindScale)
+    {
+        mUseFalloutActorRotationBasis = isFalloutActorBasisBone(lowerBone);
+        mPinFalloutActorBindRotation = shouldPinFalloutActorBindRotation(lowerBone);
+        mFalloutLowerBone = lowerBone;
+        mFalloutBindTranslation = bindTranslation;
+        mFalloutBindRotation = bindRotation;
+        mFalloutBindScale = bindScale;
     }
 
     bool KeyframeController::initFromInterpolator(const Nif::NiInterpolator* interp)
@@ -502,6 +557,18 @@ namespace NifOsg
                         data.mDefaultValue.mScale, data.mScaleOffset, data.mScaleHalfRange);
                 }
 
+                if (mUseFalloutActorRotationBasis)
+                {
+                    if (mPinFalloutActorBindRotation)
+                    {
+                        out.mTranslation = mFalloutBindTranslation;
+                        out.mRotation = mFalloutBindRotation;
+                        out.mScale = mFalloutBindScale;
+                    }
+                    else if (out.mRotation)
+                        out.mRotation = *out.mRotation * falloutHalfTurnX() * mFalloutBindRotation;
+                }
+
                 sanitizeTransform(out);
                 return out;
             }
@@ -516,6 +583,18 @@ namespace NifOsg
 
             if (!mScales.empty())
                 out.mScale = mScales.interpKey(time);
+
+            if (mUseFalloutActorRotationBasis)
+            {
+                if (mPinFalloutActorBindRotation)
+                {
+                    out.mTranslation = mFalloutBindTranslation;
+                    out.mRotation = mFalloutBindRotation;
+                    out.mScale = mFalloutBindScale;
+                }
+                else if (out.mRotation)
+                    out.mRotation = *out.mRotation * falloutHalfTurnX() * mFalloutBindRotation;
+            }
         }
 
         sanitizeTransform(out);

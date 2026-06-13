@@ -6,6 +6,7 @@
 #include <iomanip>
 #include <limits>
 #include <sstream>
+#include <typeinfo>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -45,6 +46,7 @@
 #include <components/misc/resourcehelpers.hpp>
 
 #include <components/nifosg/matrixtransform.hpp>
+#include <components/nifosg/controller.hpp>
 
 #include <components/vfs/manager.hpp>
 #include <components/vfs/pathutil.hpp>
@@ -2630,10 +2632,10 @@ namespace MWRender
             return { "bip01 ruparmtwist", "bip01 r uparmtwist" };
         if (name == "bip01 spin1")
             return { "bip01 spin01" };
-        if (name == "screen01root")
-            return { "bip01 screen01" };
+        if (name == "screen01" || name == "screen01root")
+            return { "bip01 screen01", "screen01root" };
         if (name == "screenstatic" || name == "screenstaticroot")
-            return { "bip01 screenstatic" };
+            return { "bip01 screenstatic", "screenstaticroot" };
         if (name == "voicebox_talk" || name == "##voicebox_talk")
             return { "bip01 voicebox1", "voicebox_root" };
 
@@ -3400,6 +3402,9 @@ namespace MWRender
 
     bool isFalloutMatrixAuditBone(const std::string& lowerBone)
     {
+        if (std::getenv("OPENMW_FNV_FULL_MATRIX_AUDIT") != nullptr)
+            return true;
+
         return lowerBone == "bip01" || lowerBone == "bip01 pelvis" || lowerBone == "bip01 spine"
             || lowerBone == "bip01 spine1" || lowerBone == "bip01 spine2" || lowerBone == "bip01 neck"
             || lowerBone == "bip01 head" || lowerBone == "bip01 l upperarm" || lowerBone == "bip01 r upperarm"
@@ -3648,7 +3653,10 @@ namespace MWRender
 
     bool shouldUseNativeFalloutAnimationCallbacks()
     {
-        return std::getenv("OPENMW_FNV_NATIVE_ANIM_CALLBACKS") != nullptr;
+        // Fallout KFs are data: sampled local translation/rotation/scale belongs on the
+        // matched target node through the same callback path OpenMW uses for native actors.
+        // The old hand-composed Fallout matrix path is intentionally unreachable.
+        return true;
     }
 
     bool shouldMirrorFalloutDuplicatePoses()
@@ -3680,6 +3688,12 @@ namespace MWRender
             stem.resize(dot);
         Misc::StringUtils::lowerCaseInPlace(stem);
 
+        if (stem == "swimidle")
+            return "swimidle";
+        if (stem.find("flyaway") != std::string::npos)
+            return "flyforward";
+        if (stem.find("specialidle") != std::string::npos)
+            return "idle2";
         if (stem == "mtidle" || stem == "idle" || Misc::StringUtils::ciEndsWith(stem, "idle"))
             return "idle";
         if (Misc::StringUtils::ciEndsWith(stem, "turnleft"))
@@ -3795,6 +3809,9 @@ namespace MWRender
         std::string lowerKf = Misc::StringUtils::lowerCase(kfname);
         std::string lowerBaseModel = Misc::StringUtils::lowerCase(baseModel);
         const bool isFonvActorAnim = lowerKf.find("meshes/characters/_male/") != std::string::npos
+            || lowerKf.find("meshes\\characters\\_male\\") != std::string::npos
+            || lowerKf.find("characters/_male/") != std::string::npos
+            || lowerKf.find("characters\\_male\\") != std::string::npos
             || lowerBaseModel.find("characters\\_male\\") != std::string::npos
             || lowerBaseModel.find("characters/_male/") != std::string::npos;
         const bool isFonvCreatureAnim = lowerKf.find("meshes/creatures/") != std::string::npos
@@ -3863,6 +3880,25 @@ namespace MWRender
         const auto& controllerMap = animsrc->mKeyframes->mKeyframeControllers;
         unsigned int matchedControllers = 0;
         unsigned int missingControllers = 0;
+        unsigned int falloutActorBasisApplied = 0;
+        unsigned int falloutActorBasisMissed = 0;
+        unsigned int falloutActorBasisAudited = 0;
+        const bool auditFalloutActorControllers = isFonvActorAnim
+            && (lowerKf.find("locomotion/mtidle.kf") != std::string::npos
+                || lowerKf.find("locomotion\\mtidle.kf") != std::string::npos);
+        if (auditFalloutActorControllers)
+        {
+            static unsigned int sFalloutActorControllerSourceLogs = 0;
+            if (sFalloutActorControllerSourceLogs < 12)
+            {
+                ++sFalloutActorControllerSourceLogs;
+                Log(Debug::Info) << "FNV/ESM4 diag: actor controller audit source=" << kfname
+                                 << " baseModel=" << baseModel
+                                 << " isActor=" << isFonvActorAnim
+                                 << " isCreature=" << isFonvCreatureAnim
+                                 << " controllerCount=" << controllerMap.size();
+            }
+        }
         for (SceneUtil::KeyframeHolder::KeyframeControllerMap::const_iterator it = controllerMap.begin();
              it != controllerMap.end(); ++it)
         {
@@ -3893,6 +3929,51 @@ namespace MWRender
             // clone the controller, because each Animation needs its own ControllerSource
             osg::ref_ptr<SceneUtil::KeyframeController> cloned
                 = osg::clone(it->second.get(), osg::CopyOp::SHALLOW_COPY);
+            if (isFonvActorAnim)
+            {
+                const bool auditBone = auditFalloutActorControllers
+                    && (bonename.find("hand") != std::string::npos
+                        || bonename.find("finger") != std::string::npos
+                        || bonename.find("forearm") != std::string::npos
+                        || bonename.find("head") != std::string::npos);
+                if (auto* nifController = dynamic_cast<NifOsg::KeyframeController*>(cloned.get()))
+                {
+                    float bindScale = 1.f;
+                    if (const auto* nifTarget = dynamic_cast<const NifOsg::MatrixTransform*>(found->second.get()))
+                        bindScale = nifTarget->mScale;
+                    nifController->setFalloutActorTransformBasis(
+                        bonename, found->second->getMatrix().getTrans(), getFalloutBindRotation(found->second),
+                        bindScale);
+                    ++falloutActorBasisApplied;
+                    static unsigned int sFalloutBasisLogs = 0;
+                    if ((sFalloutBasisLogs < 8
+                            && (bonename.find("finger42") != std::string::npos
+                                || bonename.find("finger12") != std::string::npos
+                                || bonename.find("head") != std::string::npos))
+                        || (auditBone && falloutActorBasisAudited < 20))
+                    {
+                        ++sFalloutBasisLogs;
+                        ++falloutActorBasisAudited;
+                        Log(Debug::Info) << "FNV/ESM4 diag: enabled actor rotation basis for " << bonename
+                                         << " source=" << kfname
+                                         << " sourceType=" << typeid(*it->second).name()
+                                         << " clonedType=" << typeid(*cloned).name();
+                    }
+                }
+                else
+                {
+                    ++falloutActorBasisMissed;
+                    static unsigned int sFalloutBasisMissLogs = 0;
+                    if (sFalloutBasisMissLogs < 8 || (auditBone && falloutActorBasisAudited < 20))
+                    {
+                        ++sFalloutBasisMissLogs;
+                        ++falloutActorBasisAudited;
+                        Log(Debug::Info) << "FNV/ESM4 diag: actor rotation basis skipped non-NifOsg controller bone="
+                                         << bonename << " sourceType=" << typeid(*it->second).name()
+                                         << " clonedType=" << typeid(*cloned).name() << " source=" << kfname;
+                    }
+                }
+            }
             cloned->setSource(mAnimationTimePtr[blendMask]);
 
             animsrc->mControllerMap[blendMask].insert(std::make_pair(bonename, cloned));
@@ -3929,6 +4010,12 @@ namespace MWRender
             Log(Debug::Info) << "FNV/ESM4 diag: animation source " << kfname << " bound " << matchedControllers << "/"
                              << controllerMap.size() << " controller(s) to " << baseModel << ", missing "
                              << missingControllers;
+            if (auditFalloutActorControllers)
+                Log(Debug::Info) << "FNV/ESM4 diag: actor controller audit result source=" << kfname
+                                 << " basisApplied=" << falloutActorBasisApplied
+                                 << " basisMissed=" << falloutActorBasisMissed
+                                 << " matched=" << matchedControllers
+                                 << " missing=" << missingControllers;
             std::ostringstream groups;
             unsigned int groupCount = 0;
             for (const std::string& group : animsrc->getTextKeys().getGroups())
@@ -5640,10 +5727,30 @@ namespace MWRender
             }
         }
 
+        const auto isDefaultActorModel = [](std::string_view path) {
+            return VFS::Path::pathEqual(Settings::models().mXbaseanim.get(), path)
+                || VFS::Path::pathEqual(Settings::models().mXbaseanim1st.get(), path)
+                || VFS::Path::pathEqual(Settings::models().mXbaseanimfemale.get(), path)
+                || VFS::Path::pathEqual(Settings::models().mXargonianswimkna.get(), path)
+                || VFS::Path::pathEqual(Settings::models().mBaseanim.get(), path)
+                || VFS::Path::pathEqual(Settings::models().mBaseanimkna.get(), path)
+                || VFS::Path::pathEqual(Settings::models().mBaseanimkna1st.get(), path)
+                || VFS::Path::pathEqual(Settings::models().mBaseanimfemale.get(), path)
+                || VFS::Path::pathEqual(Settings::models().mBaseanimfemale1st.get(), path);
+        };
+        const bool useEmptyMissingDefaultActorRoot
+            = !model.empty() && isDefaultActorModel(model) && !mResourceSystem->getVFS()->exists(VFS::Path::toNormalized(model));
+
         if (!forceskeleton)
         {
-            osg::ref_ptr<osg::Node> created
-                = getModelInstance(mResourceSystem, model, baseonly, inject, defaultSkeleton);
+            osg::ref_ptr<osg::Node> created;
+            if (useEmptyMissingDefaultActorRoot)
+            {
+                Log(Debug::Info) << "FNV/ESM4: skipped missing default actor model " << model;
+                created = new osg::Group;
+            }
+            else
+                created = getModelInstance(mResourceSystem, model, baseonly, inject, defaultSkeleton);
             mInsert->addChild(created);
             mObjectRoot = created->asGroup();
             if (!mObjectRoot)
@@ -5659,8 +5766,14 @@ namespace MWRender
         }
         else
         {
-            osg::ref_ptr<osg::Node> created
-                = getModelInstance(mResourceSystem, model, baseonly, inject, defaultSkeleton);
+            osg::ref_ptr<osg::Node> created;
+            if (useEmptyMissingDefaultActorRoot)
+            {
+                Log(Debug::Info) << "FNV/ESM4: skipped missing default actor skeleton " << model;
+                created = new SceneUtil::Skeleton;
+            }
+            else
+                created = getModelInstance(mResourceSystem, model, baseonly, inject, defaultSkeleton);
             osg::ref_ptr<SceneUtil::Skeleton> skel = dynamic_cast<SceneUtil::Skeleton*>(created.get());
             if (!skel)
             {

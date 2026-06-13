@@ -74,10 +74,40 @@ namespace
         return ptr.getType() == ESM::REC_NPC_4 || ptr.getType() == ESM4::Creature::sRecordId;
     }
 
-    bool shouldUseFalloutFlyingIdleAsMovement(const MWWorld::Ptr& ptr, const MWRender::Animation& animation)
+    std::string_view getFalloutFlyingMovementFallback(const MWWorld::Ptr& ptr, const MWRender::Animation& animation)
     {
-        return ptr.getType() == ESM4::Creature::sRecordId && ptr.getClass().canFly(ptr)
-            && !ptr.getClass().isBipedal(ptr) && animation.hasAnimation("idle");
+        if (ptr.getType() != ESM4::Creature::sRecordId || !ptr.getClass().canFly(ptr)
+            || ptr.getClass().isBipedal(ptr))
+            return {};
+
+        static constexpr std::array<std::string_view, 12> groups = {
+            "flyforward",
+            "flightforward",
+            "flight",
+            "flapforward",
+            "flap",
+            "hoverforward",
+            "hover",
+            "forward",
+            "walkforward",
+            "idle",
+            "idle2",
+            "idle3",
+        };
+
+        for (std::string_view group : groups)
+        {
+            if (animation.hasAnimation(group))
+                return group;
+        }
+
+        return {};
+    }
+
+    bool shouldHoldFalloutActorDisplacement(const MWWorld::Ptr& ptr, bool isPlayer)
+    {
+        return VR::getVR() && !isPlayer && isFalloutActor(ptr)
+            && std::getenv("OPENMW_FNV_ALLOW_ACTOR_DISPLACEMENT") == nullptr;
     }
 
     std::string_view getBestAttack(const ESM::Weapon* weapon)
@@ -722,12 +752,14 @@ namespace MWMechanics
 
             if (!mAnimation->hasAnimation(movementAnimName))
             {
-                if (shouldUseFalloutFlyingIdleAsMovement(mPtr, *mAnimation))
+                if (std::string_view flyingMovement = getFalloutFlyingMovementFallback(mPtr, *mAnimation);
+                    !flyingMovement.empty())
                 {
                     if (isFalloutActor(mPtr))
-                        Log(Debug::Info) << "FNV/ESM4 diag: using idle as flying movement fallback for "
-                                         << mPtr.getCellRef().getRefId() << " requested='" << movementAnimName << "'";
-                    movementAnimName = "idle";
+                        Log(Debug::Info) << "FNV/ESM4 diag: using '" << flyingMovement
+                                         << "' as flying movement fallback for " << mPtr.getCellRef().getRefId()
+                                         << " requested='" << movementAnimName << "'";
+                    movementAnimName = std::string(flyingMovement);
                 }
             }
 
@@ -2143,6 +2175,13 @@ namespace MWMechanics
             bool isrunning = cls.getCreatureStats(mPtr).getStance(MWMechanics::CreatureStats::Stance_Run) && !flying;
             CreatureStats& stats = cls.getCreatureStats(mPtr);
             Movement& movementSettings = cls.getMovementSettings(mPtr);
+            const bool holdFalloutActorDisplacement = shouldHoldFalloutActorDisplacement(mPtr, isPlayer);
+            if (holdFalloutActorDisplacement)
+            {
+                movementSettings.mPosition[0] = 0.f;
+                movementSettings.mPosition[1] = 0.f;
+                movementSettings.mPosition[2] = 0.f;
+            }
 
             // Force Jump Logic
 
@@ -2159,6 +2198,8 @@ namespace MWMechanics
             }
 
             osg::Vec3f rot = cls.getRotationVector(mPtr);
+            if (holdFalloutActorDisplacement)
+                rot = osg::Vec3f();
             //if ((rot.x() != 0 || rot.y() != 0 || rot.z() != 0) && isPlayer)
             //    Log(Debug::Verbose) << "breakpoint";
             osg::Vec3f vec(movementSettings.asVec3());
@@ -2641,6 +2682,11 @@ namespace MWMechanics
 
             movement.x() *= scale;
             movement.y() *= scale;
+            if (shouldHoldFalloutActorDisplacement(mPtr, isPlayer))
+            {
+                movement.x() = 0.f;
+                movement.y() = 0.f;
+            }
 
             if (VR::getVR() && isPlayer)
             {

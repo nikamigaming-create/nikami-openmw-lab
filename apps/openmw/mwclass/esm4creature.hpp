@@ -2,9 +2,11 @@
 #define GAME_MWCLASS_ESM4CREATURE_H
 
 #include <components/esm4/loadcrea.hpp>
+#include <components/vfs/pathutil.hpp>
 
 #include "../mwgui/tooltips.hpp"
 
+#include "../mwphysics/physicssystem.hpp"
 #include "../mwrender/objects.hpp"
 #include "../mwrender/renderinginterface.hpp"
 #include "../mwworld/cellstore.hpp"
@@ -44,10 +46,8 @@ namespace MWClass
         void insertObjectPhysics(const MWWorld::Ptr& ptr, const std::string& model, const osg::Quat& rotation,
             MWPhysics::PhysicsSystem& physics) const override
         {
-            (void)ptr;
-            (void)model;
             (void)rotation;
-            (void)physics;
+            physics.addActor(ptr, VFS::Path::toNormalized(model.empty() ? std::string(getModel(ptr)) : model));
         }
 
         std::string_view getModel(const MWWorld::ConstPtr& ptr) const override;

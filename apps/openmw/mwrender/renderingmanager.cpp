@@ -138,6 +138,21 @@ namespace MWRender
             return fallback;
         }
 
+        bool hasFalloutNvContentLoaded()
+        {
+            const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
+            if (store == nullptr)
+                return false;
+
+            for (const ESM4::Npc& npc : store->get<ESM4::Npc>())
+            {
+                if (npc.mIsFONV)
+                    return true;
+            }
+
+            return false;
+        }
+
         const ESM4::Armor* findFalloutArmorByEditorId(const std::string_view editorId)
         {
             const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
@@ -741,15 +756,20 @@ namespace MWRender
         mSky->listAssetsToPreload(workItem->mModels, workItem->mTextures);
         mWater->listAssetsToPreload(workItem->mTextures);
 
-        workItem->mModels.push_back(Settings::models().mXbaseanim);
-        workItem->mModels.push_back(Settings::models().mXbaseanim1st);
-        workItem->mModels.push_back(Settings::models().mXbaseanimfemale);
-        workItem->mModels.push_back(Settings::models().mXargonianswimkna);
+        if (!hasFalloutNvContentLoaded())
+        {
+            workItem->mModels.push_back(Settings::models().mXbaseanim);
+            workItem->mModels.push_back(Settings::models().mXbaseanim1st);
+            workItem->mModels.push_back(Settings::models().mXbaseanimfemale);
+            workItem->mModels.push_back(Settings::models().mXargonianswimkna);
 
-        workItem->mKeyframes.push_back(Settings::models().mXbaseanimkf);
-        workItem->mKeyframes.push_back(Settings::models().mXbaseanim1stkf);
-        workItem->mKeyframes.push_back(Settings::models().mXbaseanimfemalekf);
-        workItem->mKeyframes.push_back(Settings::models().mXargonianswimknakf);
+            workItem->mKeyframes.push_back(Settings::models().mXbaseanimkf);
+            workItem->mKeyframes.push_back(Settings::models().mXbaseanim1stkf);
+            workItem->mKeyframes.push_back(Settings::models().mXbaseanimfemalekf);
+            workItem->mKeyframes.push_back(Settings::models().mXargonianswimknakf);
+        }
+        else
+            Log(Debug::Info) << "FNV/ESM4: skipped Morrowind common actor preloads for Fallout content";
 
         workItem->mTextures.emplace_back("textures/_land_default.dds");
 
@@ -1466,14 +1486,23 @@ namespace MWRender
     {
         mFalloutPlayerVisualAnimation = nullptr;
         mFalloutPlayerVisualRef.reset();
+        const ESM4::Npc* falloutPlayerVisualRecord = findFalloutPlayerVisualRecord();
+        const bool falloutFlatProfile = !VR::getVR() && falloutPlayerVisualRecord != nullptr;
+        const bool falloutVrProfile = VR::getVR() && falloutPlayerVisualRecord != nullptr;
 
 //## VR_PATCH BEGIN
         if(VR::getVR())
         {
             mPlayerAnimation
                 = new MWVR::VRAnimation(player, player.getRefData().getBaseNode(), mResourceSystem, false, mSceneRoot);
-            static_cast<MWVR::VRAnimation*>(mPlayerAnimation.get())
-                ->setEnableCrosshairs(Settings::Manager::getBool("show 3D crosshairs", "VR"));
+            auto* vrAnimation = static_cast<MWVR::VRAnimation*>(mPlayerAnimation.get());
+            if (falloutVrProfile)
+            {
+                vrAnimation->setViewMode(NpcAnimation::VM_VRFirstPerson);
+                vrAnimation->setEnableCrosshairs(Settings::Manager::getBool("show 3D crosshairs", "VR"));
+            }
+            else
+                vrAnimation->setEnableCrosshairs(Settings::Manager::getBool("show 3D crosshairs", "VR"));
         }
         else
         {
@@ -1482,7 +1511,16 @@ namespace MWRender
         }
 //## VR_PATCH END
 
-        if (const ESM4::Npc* falloutPlayerVisual = findFalloutPlayerVisualRecord())
+        const bool hideLocalPlayerVisual = VR::getVR();
+        const bool proofHidePlayerVisual = std::getenv("OPENMW_PROOF_HIDE_PLAYER_VISUAL") != nullptr
+            || std::getenv("OPENMW_FNV_HIDE_PLAYER_PROOF_PARTS") != nullptr;
+        const bool suppressFalloutPlayerProxy = hideLocalPlayerVisual || falloutFlatProfile || proofHidePlayerVisual;
+        if (proofHidePlayerVisual)
+            Log(Debug::Info) << "FNV/ESM4: skipped Fallout NPC player visual proxy for hidden player capture";
+        if (falloutFlatProfile)
+            Log(Debug::Info) << "FNV/ESM4: flat gameplay camera hides local player body until Fallout first-person arms are available";
+        if (const ESM4::Npc* falloutPlayerVisual
+            = suppressFalloutPlayerProxy ? nullptr : falloutPlayerVisualRecord)
         {
             ESM::CellRef proxyRef;
             proxyRef.blank();
@@ -1504,8 +1542,7 @@ namespace MWRender
                 falloutRoot->setNodeMask(Mask_Player);
         }
 
-        if (std::getenv("OPENMW_PROOF_HIDE_PLAYER_VISUAL") != nullptr
-            || std::getenv("OPENMW_FNV_HIDE_PLAYER_PROOF_PARTS") != nullptr)
+        if (falloutFlatProfile || proofHidePlayerVisual)
         {
             if (osg::Group* legacyPlayerRoot = mPlayerAnimation->getObjectRoot())
                 legacyPlayerRoot->setNodeMask(0);
@@ -1514,13 +1551,20 @@ namespace MWRender
                 if (osg::Group* falloutRoot = mFalloutPlayerVisualAnimation->getObjectRoot())
                     falloutRoot->setNodeMask(0);
             }
-            Log(Debug::Info) << "FNV/ESM4 proof: hidden player render roots for clean proof capture";
+            Log(Debug::Info) << "FNV/ESM4: hidden player render roots";
         }
 
         mCamera->setAnimation(mPlayerAnimation.get());
         mCamera->attachTo(player);
 
-        if (std::getenv("OPENMW_PROOF_HIDE_PLAYER_VISUAL") != nullptr)
+        if (falloutVrProfile)
+        {
+            auto* vrAnimation = static_cast<MWVR::VRAnimation*>(mPlayerAnimation.get());
+            vrAnimation->setViewMode(NpcAnimation::VM_VRFirstPerson);
+            Log(Debug::Info) << "FNV/ESM4: VR player render uses first-person hand-only rig";
+        }
+
+        if (falloutFlatProfile || proofHidePlayerVisual)
         {
             if (osg::Group* legacyPlayerRoot = mPlayerAnimation->getObjectRoot())
                 legacyPlayerRoot->setNodeMask(0);
@@ -1529,7 +1573,7 @@ namespace MWRender
                 if (osg::Group* falloutRoot = mFalloutPlayerVisualAnimation->getObjectRoot())
                     falloutRoot->setNodeMask(0);
             }
-            Log(Debug::Info) << "FNV/ESM4 proof: hidden player render roots after camera attachment";
+            Log(Debug::Info) << "FNV/ESM4: hidden player render roots after camera attachment";
         }
     }
 

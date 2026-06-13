@@ -4,6 +4,7 @@
 #include <limits>
 #include <optional>
 #include <set>
+#include <string>
 #include <type_traits>
 #include <vector>
 
@@ -255,6 +256,9 @@ namespace NifOsg
         KfTransform getCurrentTransformation(osg::NodeVisitor* nv) override;
 
         void operator()(NifOsg::MatrixTransform*, osg::NodeVisitor*);
+        void setFalloutActorTransformBasis(
+            const std::string& lowerBone, const osg::Vec3f& bindTranslation, const osg::Quat& bindRotation,
+            float bindScale);
 
     private:
         void initFromDefaultTransform(const Nif::NiQuatTransform& transform);
@@ -270,6 +274,12 @@ namespace NifOsg
         FloatInterpolator mScales;
 
         Nif::NiKeyframeData::AxisOrder mAxisOrder{ Nif::NiKeyframeData::AxisOrder::Order_XYZ };
+        bool mUseFalloutActorRotationBasis{ false };
+        bool mPinFalloutActorBindRotation{ false };
+        std::string mFalloutLowerBone;
+        osg::Vec3f mFalloutBindTranslation;
+        osg::Quat mFalloutBindRotation;
+        float mFalloutBindScale{ 1.f };
 
     public:
         struct BSplineTransform

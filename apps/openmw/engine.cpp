@@ -256,6 +256,21 @@ namespace
         return parsed;
     }
 
+    bool hasFalloutNvContent(const std::vector<std::string>& contentFiles)
+    {
+        for (std::string file : contentFiles)
+        {
+            std::transform(file.begin(), file.end(), file.begin(),
+                [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+            constexpr std::string_view falloutNv = "falloutnv.esm";
+            if (file.size() >= falloutNv.size()
+                && file.compare(file.size() - falloutNv.size(), falloutNv.size(), falloutNv) == 0)
+                return true;
+        }
+
+        return false;
+    }
+
     bool isFalloutProofFaceNodeName(std::string_view lowerName)
     {
         if (lowerName.find("fnv part ") == std::string_view::npos)
@@ -504,7 +519,7 @@ namespace
             { ESM::Attribute::Luck, 6.f },
         };
         for (const auto& [id, value] : attributes)
-            stats.setAttribute(id, value * 10.f);
+            stats.setAttribute(id, value);
 
         for (int i = 0; i < ESM::Skill::Length; ++i)
         {
@@ -562,6 +577,98 @@ namespace
         Log(Debug::Info) << "FNV/ESM4 proof: level-1 Courier profile applied level=" << stats.getLevel()
                          << " attributes=8 skills=" << ESM::Skill::Length << " starterItemKinds=" << added
                          << " proofStarterItemKinds=" << proofAdded;
+    }
+
+    void resetFNVProofCamera(MWBase::World& world)
+    {
+        MWWorld::Ptr player = world.getPlayerPtr();
+        if (player.isEmpty())
+            return;
+
+        ESM::Position pos = player.getRefData().getPosition();
+        pos.rot[0] = readProofFloat("OPENMW_FNV_PROOF_CAMERA_PLAYER_ROT_X", pos.rot[0]);
+        pos.rot[1] = readProofFloat("OPENMW_FNV_PROOF_CAMERA_PLAYER_ROT_Y", pos.rot[1]);
+        pos.rot[2] = readProofFloat("OPENMW_FNV_PROOF_CAMERA_PLAYER_ROT_Z", -0.6981317f);
+        world.rotateObject(player, osg::Vec3f(pos.rot[0], pos.rot[1], pos.rot[2]));
+
+        if (MWRender::Camera* camera = world.getCamera())
+        {
+            const char* cameraMode = std::getenv("OPENMW_FNV_PROOF_CAMERA_MODE");
+            const bool firstPerson = cameraMode == nullptr || *cameraMode == '\0'
+                || Misc::StringUtils::ciEqual(cameraMode, "firstperson");
+            const float cameraDistance = readProofFloat("OPENMW_FNV_PROOF_CAMERA_DISTANCE", 0.f);
+            const float cameraPitch = readProofFloat("OPENMW_FNV_PROOF_CAMERA_PITCH", 0.45f);
+            const float cameraYaw = readProofFloat("OPENMW_FNV_PROOF_CAMERA_YAW", -pos.rot[2]);
+
+            camera->attachTo(player);
+            camera->setMode(MWRender::Camera::Mode::ThirdPerson, true);
+            camera->setPreferredCameraDistance(readProofFloat("OPENMW_FNV_PROOF_CAMERA_NUDGE_DISTANCE", 128.f));
+            camera->processViewChange();
+            camera->update(0.f, false);
+            camera->instantTransition();
+            camera->setMode(firstPerson ? MWRender::Camera::Mode::FirstPerson : MWRender::Camera::Mode::ThirdPerson,
+                true);
+            camera->setPreferredCameraDistance(cameraDistance);
+            camera->processViewChange();
+            camera->update(0.f, false);
+            camera->setPitch(cameraPitch, true);
+            camera->setYaw(cameraYaw, true);
+            camera->setRoll(0.f);
+            camera->instantTransition();
+            camera->update(0.f, false);
+            camera->updateCamera();
+
+            const osg::Vec3d cameraPos = camera->getPosition();
+            const ESM::Position& actual = player.getRefData().getPosition();
+            Log(Debug::Info) << "FNV/ESM4 proof: reset real-start camera mode=" << static_cast<int>(camera->getMode())
+                             << " playerPos=(" << actual.pos[0] << "," << actual.pos[1] << "," << actual.pos[2]
+                             << ") playerRot=(" << actual.rot[0] << "," << actual.rot[1] << "," << actual.rot[2]
+                             << ") cameraPos=(" << cameraPos.x() << "," << cameraPos.y() << "," << cameraPos.z()
+                             << ") cameraPitch=" << camera->getPitch() << " cameraYaw=" << camera->getYaw()
+                             << " cameraDistance=" << cameraDistance;
+        }
+    }
+
+    void settleFNVFlatStartupCamera(MWBase::World& world)
+    {
+        if (VR::getVR())
+            return;
+
+        MWWorld::Ptr player = world.getPlayerPtr();
+        if (player.isEmpty())
+            return;
+
+        MWRender::Camera* camera = world.getCamera();
+        if (camera == nullptr)
+            return;
+
+        const ESM::Position& pos = player.getRefData().getPosition();
+        const float cameraPitch = 0.20f;
+        const float cameraYaw = -pos.rot[2];
+
+        camera->attachTo(player);
+        camera->setMode(MWRender::Camera::Mode::ThirdPerson, true);
+        camera->setPreferredCameraDistance(128.f);
+        camera->processViewChange();
+        camera->update(0.f, false);
+        camera->instantTransition();
+        camera->setMode(MWRender::Camera::Mode::FirstPerson, true);
+        camera->setPreferredCameraDistance(0.f);
+        camera->processViewChange();
+        camera->update(0.f, false);
+        camera->setPitch(cameraPitch, true);
+        camera->setYaw(cameraYaw, true);
+        camera->setRoll(0.f);
+        camera->instantTransition();
+        camera->update(0.f, false);
+        camera->updateCamera();
+
+        const osg::Vec3d cameraPos = camera->getPosition();
+        Log(Debug::Info) << "FNV/ESM4 diag: settled flat startup camera via zoom-cycle equivalent"
+                         << " mode=" << static_cast<int>(camera->getMode()) << " playerPos=(" << pos.pos[0] << ","
+                         << pos.pos[1] << "," << pos.pos[2] << ") playerRotZ=" << pos.rot[2] << " cameraPos=("
+                         << cameraPos.x() << "," << cameraPos.y() << "," << cameraPos.z()
+                         << ") cameraPitch=" << camera->getPitch() << " cameraYaw=" << camera->getYaw();
     }
     // ## VR_PATCH BEGIN
 
@@ -672,11 +779,14 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
         = getProofFloats("OPENMW_PROOF_ACTOR_VIEW_ORBIT_DEGREES");
     static const int proofScreenshotReadyFrames = getProofFrame("OPENMW_PROOF_SCREENSHOT_READY_FRAMES");
     static const int proofInventoryFrame = getProofFrame("OPENMW_PROOF_INVENTORY_FRAME");
+    static const std::vector<int> proofInventoryPaneFrames = getProofFrames("OPENMW_PROOF_INVENTORY_PANE_FRAME");
+    static const std::vector<int> proofInventoryPaneIndices = getProofFrames("OPENMW_PROOF_INVENTORY_PANE_INDEX");
     static const int proofQuickSaveFrame = getProofFrame("OPENMW_PROOF_QUICKSAVE_FRAME");
     static const int proofSayFrame = getProofFrame("OPENMW_PROOF_SAY_FRAME");
     static const int proofTimedScript1Frame = getProofFrame("OPENMW_PROOF_TIMED_SCRIPT_1_FRAME");
     static const int proofTimedScript2Frame = getProofFrame("OPENMW_PROOF_TIMED_SCRIPT_2_FRAME");
     static std::size_t proofScreenshotFrameIndex = 0;
+    static std::size_t proofInventoryPaneFrameIndex = 0;
     static bool proofScreenshotReadyQueued = false;
     static bool proofInventoryOpened = false;
     static bool proofQuickSaveQueued = false;
@@ -685,6 +795,7 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
     static bool proofTimedScript2Executed = false;
     static bool proofActorCameraAligned = false;
     static int proofActorCameraAlignedFrame = -1;
+    static std::size_t proofActorCameraAlignedScreenshotIndex = static_cast<std::size_t>(-1);
     static bool proofActorAlignedScreenshotQueued = false;
     static bool proofActorStagedForCamera = false;
     static bool proofActorScreenshotWaitLogged = false;
@@ -695,15 +806,20 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
     static bool proofGodModeEnabled = false;
     static bool proofDelayedStartupScriptExecuted = false;
     static bool proofFNVBootstrapApplied = false;
+    static bool proofFNVCameraResetApplied = false;
+    static bool fnvFlatStartupCameraSettled = false;
     static bool proofScreenshotWaitLogged = false;
     static int proofWorldReadyFrames = 0;
     const auto parseProofFormId = [](std::string_view value) -> std::optional<ESM::FormId> {
+        while (!value.empty() && std::isspace(static_cast<unsigned char>(value.front()))) value.remove_prefix(1);
+        while (!value.empty() && std::isspace(static_cast<unsigned char>(value.back()))) value.remove_suffix(1);
+
         constexpr std::string_view prefix = "FormId:0x";
         constexpr std::string_view shortPrefix = "0x";
         std::size_t offset = std::string_view::npos;
-        if (value.size() > prefix.size() && value.substr(0, prefix.size()) == prefix)
+        if (value.size() > prefix.size() && Misc::StringUtils::ciEqual(value.substr(0, prefix.size()), prefix))
             offset = prefix.size();
-        else if (value.size() > shortPrefix.size() && value.substr(0, shortPrefix.size()) == shortPrefix)
+        else if (value.size() > shortPrefix.size() && Misc::StringUtils::ciEqual(value.substr(0, shortPrefix.size()), shortPrefix))
             offset = shortPrefix.size();
         else
             return std::nullopt;
@@ -711,7 +827,11 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
         std::uint32_t formId = 0;
         const auto result = std::from_chars(value.data() + offset, value.data() + value.size(), formId, 16);
         if (result.ec != std::errc() || result.ptr != value.data() + value.size())
-            return std::nullopt;
+        {
+            try {
+                formId = std::stoul(std::string(value.substr(offset)), nullptr, 16);
+            } catch (...) { return std::nullopt; }
+        }
         return ESM::FormId::fromUint32(formId);
     };
     const auto makeProofRefId = [&](const char* value) {
@@ -858,6 +978,20 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                         throw std::runtime_error("no active cell available for proof placement");
 
                     ESM::RefId placementRefId = targetRefId;
+                    if (placementRefId.is<ESM::StringRefId>())
+                    {
+                        const std::string_view editorId = placementRefId.getRefIdString();
+                        ESM::RefId resolvedId = findEsm4EditorId<ESM4::Npc>(mWorld->getStore(), editorId);
+                        if (resolvedId.empty())
+                            resolvedId = findEsm4EditorId<ESM4::Creature>(mWorld->getStore(), editorId);
+                        if (!resolvedId.empty())
+                        {
+                            placementRefId = resolvedId;
+                            Log(Debug::Info) << "FNV/ESM4 proof: resolved string base target \"" << editorId
+                                             << "\" to form id " << resolvedId.toDebugString();
+                        }
+                    }
+
                     if (const char* placementFormId = std::getenv("OPENMW_PROOF_PLACE_ACTOR_FORM_ID"))
                     {
                         if (std::optional<ESM::FormId> formId = parseProofFormId(placementFormId))
@@ -1144,7 +1278,8 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
         proofDelayedStartupScriptExecuted = true;
     }
 
-    const bool proofFNVBootstrapProfile = std::getenv("OPENMW_FNV_BOOTSTRAP_LEVEL1_COURIER") != nullptr;
+    const bool proofFNVBootstrapProfile = hasFalloutNvContent(mContentFiles)
+        || std::getenv("OPENMW_FNV_BOOTSTRAP_LEVEL1_COURIER") != nullptr;
     const bool proofFNVBootstrapOutside = std::getenv("OPENMW_FNV_BOOTSTRAP_DOC_SENT") != nullptr;
     if (!proofFNVBootstrapApplied && proofRunning && (proofFNVBootstrapProfile || proofFNVBootstrapOutside))
     {
@@ -1160,12 +1295,39 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
         proofFNVBootstrapApplied = true;
     }
 
+    if (!fnvFlatStartupCameraSettled && proofWorldReady && proofWorldReadyFrames >= 2 && !VR::getVR()
+        && hasFalloutNvContent(mContentFiles))
+    {
+        settleFNVFlatStartupCamera(*mWorld);
+        fnvFlatStartupCameraSettled = true;
+    }
+
+    if (!proofFNVCameraResetApplied && proofWorldReady && std::getenv("OPENMW_FNV_PROOF_RESET_CAMERA") != nullptr)
+    {
+        resetFNVProofCamera(*mWorld);
+        proofFNVCameraResetApplied = true;
+    }
+
     if (!proofInventoryOpened && proofInventoryFrame >= 0 && frameNumber >= static_cast<unsigned>(proofInventoryFrame)
         && proofRunning)
     {
         Log(Debug::Info) << "FNV/ESM4 proof: opening native inventory screen at frame " << frameNumber;
         mWindowManager->pushGuiMode(MWGui::GM_Inventory);
         proofInventoryOpened = true;
+    }
+
+    while (proofInventoryPaneFrameIndex < proofInventoryPaneFrames.size()
+        && frameNumber >= static_cast<unsigned>(proofInventoryPaneFrames[proofInventoryPaneFrameIndex]) && proofRunning)
+    {
+        const int paneIndex = proofInventoryPaneFrameIndex < proofInventoryPaneIndices.size()
+            ? proofInventoryPaneIndices[proofInventoryPaneFrameIndex]
+            : 1;
+        if (!mWindowManager->containsMode(MWGui::GM_Inventory))
+            mWindowManager->pushGuiMode(MWGui::GM_Inventory);
+        Log(Debug::Info) << "FNV/ESM4 proof: raising native inventory pane index=" << paneIndex << " at frame "
+                         << frameNumber;
+        mWindowManager->setActiveControllerWindow(MWGui::GM_Inventory, paneIndex);
+        ++proofInventoryPaneFrameIndex;
     }
 
     if (!proofQuickSaveQueued && proofQuickSaveFrame >= 0 && frameNumber >= static_cast<unsigned>(proofQuickSaveFrame)
@@ -1190,15 +1352,18 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
     const bool proofRequiresActorForScreenshot = std::getenv("OPENMW_PROOF_REQUIRE_ACTOR_FOR_SCREENSHOT") != nullptr;
     const int proofActorResolveRetryFramesEnv = getProofFrame("OPENMW_PROOF_ACTOR_RESOLVE_RETRY_FRAMES");
     const int proofActorResolveRetryFrames = proofActorResolveRetryFramesEnv >= 0 ? proofActorResolveRetryFramesEnv : 30;
-    const bool proofActorScreenshotNeedsResolveRaw = proofRequiresActorForScreenshot && !proofActorCameraAligned
+    const bool proofOrbitBurstPending = proofScreenshotFrameIndex < proofScreenshotFrames.size()
+        && !proofActorViewOrbitDegrees.empty()
+        && proofActorCameraAlignedScreenshotIndex != proofScreenshotFrameIndex;
+    const bool proofActorScreenshotNeedsResolveRaw = proofRequiresActorForScreenshot
+        && (!proofActorCameraAligned || proofOrbitBurstPending)
         && proofScreenshotFrameIndex < proofScreenshotFrames.size()
         && frameNumber >= static_cast<unsigned>(proofScreenshotFrames[proofScreenshotFrameIndex]);
     const bool proofActorScreenshotNeedsResolve = proofActorScreenshotNeedsResolveRaw
         && (proofActorScreenshotLastResolveFrame < 0
             || frameNumber
                 >= static_cast<unsigned>(proofActorScreenshotLastResolveFrame + proofActorResolveRetryFrames));
-    const bool proofOrbitBurstAlignReached = proofScreenshotFrameIndex < proofScreenshotFrames.size()
-        && !proofActorViewOrbitDegrees.empty()
+    const bool proofOrbitBurstAlignReached = proofOrbitBurstPending
         && frameNumber >= static_cast<unsigned>(proofScreenshotFrames[proofScreenshotFrameIndex])
         && (!proofRequiresActorForScreenshot || proofActorScreenshotNeedsResolve);
     if ((!proofSayQueued || proofOrbitBurstAlignReached || proofActorScreenshotNeedsResolve) && proofSayFrame >= 0
@@ -1604,11 +1769,13 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                     {
                         proofActorCameraAligned = true;
                         proofActorCameraAlignedFrame = static_cast<int>(frameNumber);
+                        proofActorCameraAlignedScreenshotIndex = proofScreenshotFrameIndex;
                     }
                     else
                     {
                         proofActorCameraAligned = false;
                         proofActorCameraAlignedFrame = -1;
+                        proofActorCameraAlignedScreenshotIndex = static_cast<std::size_t>(-1);
                         Log(Debug::Warning) << "FNV/ESM4 proof: actor camera alignment rejected target=\""
                                             << proofSayActor << "\" frame=" << frameNumber;
                     }
@@ -1735,7 +1902,7 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
         && (proofActorAlignedScreenshotMinFrame < 0
             || frameNumber >= static_cast<unsigned>(proofActorAlignedScreenshotMinFrame));
     if ((proofScreenshotFrameReached || proofScreenshotReadyFramesReached || proofActorAlignedScreenshotReached)
-        && (mScreenCaptureHandler != nullptr || mWorld != nullptr))
+        && mScreenCaptureHandler != nullptr)
     {
         if (!proofWorldReady && !proofScreenshotWaitLogged)
         {
@@ -1765,7 +1932,10 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
             return true;
         }
 
-        Log(Debug::Info) << "FNV/ESM4 proof: queuing GUI-inclusive native screenshot at frame " << frameNumber;
+        Log(Debug::Info) << "FNV/ESM4 proof: queuing GUI-inclusive native screenshot at frame " << frameNumber
+                         << " hour=" << mWorld->getTimeStamp().getHour()
+                         << " weatherId=" << mWorld->getCurrentWeatherScriptId()
+                         << " weatherTransition=" << mWorld->getWeatherTransition();
         mScreenCaptureHandler->setFramesToCapture(1);
         mScreenCaptureHandler->captureNextFrame(*mViewer);
         if (proofScreenshotFrameReached)

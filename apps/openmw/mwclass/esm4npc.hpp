@@ -4,9 +4,11 @@
 #include <components/esm4/loadcrea.hpp>
 #include <components/esm4/loadnpc.hpp>
 #include <components/esm4/loadweap.hpp>
+#include <components/vfs/pathutil.hpp>
 
 #include "../mwgui/tooltips.hpp"
 
+#include "../mwphysics/physicssystem.hpp"
 #include "../mwrender/objects.hpp"
 #include "../mwrender/renderinginterface.hpp"
 #include "../mwworld/cellstore.hpp"
@@ -47,7 +49,8 @@ namespace MWClass
         void insertObjectPhysics(const MWWorld::Ptr& ptr, const std::string& model, const osg::Quat& rotation,
             MWPhysics::PhysicsSystem& physics) const override
         {
-            // ESM4Impl::insertObjectPhysics(ptr, getModel(ptr), rotation, physics);
+            (void)rotation;
+            physics.addActor(ptr, VFS::Path::toNormalized(model.empty() ? std::string(getModel(ptr)) : model));
         }
 
         bool hasToolTip(const MWWorld::ConstPtr& ptr) const override { return true; }
@@ -75,6 +78,8 @@ namespace MWClass
         static const ESM4::Npc* getTraitsRecord(const MWWorld::Ptr& ptr);
         static const ESM4::Npc* getModelRecord(const MWWorld::Ptr& ptr);
         static const ESM4::Npc* getAIPackageRecord(const MWWorld::Ptr& ptr);
+        static const ESM4::Npc* getStatsRecord(const MWWorld::Ptr& ptr);
+        static const ESM4::Npc* getBaseDataRecord(const MWWorld::Ptr& ptr);
         static const ESM4::Race* getRace(const MWWorld::Ptr& ptr);
         static bool isFemale(const MWWorld::Ptr& ptr);
         static const std::vector<const ESM4::Armor*>& getEquippedArmor(const MWWorld::Ptr& ptr);

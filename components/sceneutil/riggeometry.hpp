@@ -127,13 +127,16 @@ namespace SceneUtil
         bool mLoggedFalloutSkinningModes{ false };
         bool mLoggedFalloutPoseSanity{ false };
         bool mLoggedFalloutCullInitRecovery{ false };
+        bool mFalloutDerivedInvBindComputed{ false };
+        bool mLoggedFalloutDerivedInvBind{ false };
         bool mFalloutFallbackDecided{ false };
+        bool mFalloutUseSourceFallback{ false };
         bool mFalloutFlagSkinning{ false };
         bool mLoggedFalloutFlagSkinning{ false };
-        bool mFalloutUseSourceFallback{ false };
         mutable bool mFalloutCharacterRigComputed{ false };
         mutable bool mFalloutCharacterRig{ false };
         std::vector<osg::Matrixf> mFalloutMatrixBaseline;
+        std::vector<osg::Matrixf> mFalloutDerivedInvBindMatrices;
 
         bool initFromParentSkeleton(osg::NodeVisitor* nv);
 

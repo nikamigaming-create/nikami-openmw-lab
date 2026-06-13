@@ -499,6 +499,36 @@ bool isImportantFNVHumanBone(const std::string& lowerName)
         "bip01 r forearm",
         "bip01 l hand",
         "bip01 r hand",
+        "bip01 l finger0",
+        "bip01 l finger01",
+        "bip01 l finger02",
+        "bip01 l finger1",
+        "bip01 l finger11",
+        "bip01 l finger12",
+        "bip01 l finger2",
+        "bip01 l finger21",
+        "bip01 l finger22",
+        "bip01 l finger3",
+        "bip01 l finger31",
+        "bip01 l finger32",
+        "bip01 l finger4",
+        "bip01 l finger41",
+        "bip01 l finger42",
+        "bip01 r finger0",
+        "bip01 r finger01",
+        "bip01 r finger02",
+        "bip01 r finger1",
+        "bip01 r finger11",
+        "bip01 r finger12",
+        "bip01 r finger2",
+        "bip01 r finger21",
+        "bip01 r finger22",
+        "bip01 r finger3",
+        "bip01 r finger31",
+        "bip01 r finger32",
+        "bip01 r finger4",
+        "bip01 r finger41",
+        "bip01 r finger42",
         "bip01 l thigh",
         "bip01 r thigh",
         "bip01 l calf",
@@ -517,6 +547,480 @@ std::unique_ptr<Nif::NIFFile> readNifFile(const std::filesystem::path& path)
     Nif::Reader reader(*file, nullptr);
     reader.parse(Files::openConstrainedFileStream(path));
     return file;
+}
+
+float fnvMatrixMaxAbsDelta(const osg::Matrixf& left, const osg::Matrixf& right)
+{
+    float result = 0.f;
+    const float* leftPtr = left.ptr();
+    const float* rightPtr = right.ptr();
+    for (int i = 0; i < 16; ++i)
+        result = std::max(result, std::abs(leftPtr[i] - rightPtr[i]));
+    return result;
+}
+
+osg::Vec3f fnvAuditExtent(const osg::BoundingBox& box)
+{
+    if (!box.valid())
+        return osg::Vec3f();
+    return osg::Vec3f(box.xMax() - box.xMin(), box.yMax() - box.yMin(), box.zMax() - box.zMin());
+}
+
+void collectNifWorldMatrices(const Nif::NiAVObject* node, const osg::Matrixf& parentWorld,
+    std::unordered_map<std::string, osg::Matrixf>& worldsByLowerName)
+{
+    if (node == nullptr)
+        return;
+
+    const osg::Matrixf local = node->mTransform.toMatrix();
+    const osg::Matrixf world = local * parentWorld;
+    if (!node->mName.empty())
+        worldsByLowerName[Misc::StringUtils::lowerCase(node->mName)] = world;
+
+    const Nif::NiNode* niNode = dynamic_cast<const Nif::NiNode*>(node);
+    if (niNode == nullptr)
+        return;
+
+    for (const auto& child : niNode->mChildren)
+        if (!child.empty())
+            collectNifWorldMatrices(child.getPtr(), world, worldsByLowerName);
+}
+
+void collectSkinnedGeometries(const Nif::NiAVObject* node, std::vector<const Nif::NiGeometry*>& geometries)
+{
+    if (node == nullptr)
+        return;
+
+    if (const Nif::NiGeometry* geometry = dynamic_cast<const Nif::NiGeometry*>(node))
+        if (!geometry->mSkin.empty() && !geometry->mSkin->mData.empty() && !geometry->mData.empty())
+            geometries.push_back(geometry);
+
+    const Nif::NiNode* niNode = dynamic_cast<const Nif::NiNode*>(node);
+    if (niNode == nullptr)
+        return;
+
+    for (const auto& child : niNode->mChildren)
+        if (!child.empty())
+            collectSkinnedGeometries(child.getPtr(), geometries);
+}
+
+void collectNifGeometries(const Nif::NiAVObject* node, std::vector<const Nif::NiGeometry*>& geometries)
+{
+    if (node == nullptr)
+        return;
+
+    if (const Nif::NiGeometry* geometry = dynamic_cast<const Nif::NiGeometry*>(node))
+        if (!geometry->mData.empty())
+            geometries.push_back(geometry);
+
+    const Nif::NiNode* niNode = dynamic_cast<const Nif::NiNode*>(node);
+    if (niNode == nullptr)
+        return;
+
+    for (const auto& child : niNode->mChildren)
+        if (!child.empty())
+            collectNifGeometries(child.getPtr(), geometries);
+}
+
+struct FnvGeometryDumpInfo
+{
+    const Nif::NiGeometry* mGeometry = nullptr;
+    osg::Matrixf mWorldTransform;
+};
+
+void collectNifGeometryInfos(const Nif::NiAVObject* node, const osg::Matrixf& parentWorld,
+    std::vector<FnvGeometryDumpInfo>& geometries)
+{
+    if (node == nullptr)
+        return;
+
+    const osg::Matrixf local = node->mTransform.toMatrix();
+    const osg::Matrixf world = local * parentWorld;
+
+    if (const Nif::NiGeometry* geometry = dynamic_cast<const Nif::NiGeometry*>(node))
+        if (!geometry->mData.empty())
+            geometries.push_back({ geometry, world });
+
+    const Nif::NiNode* niNode = dynamic_cast<const Nif::NiNode*>(node);
+    if (niNode == nullptr)
+        return;
+
+    for (const auto& child : niNode->mChildren)
+        if (!child.empty())
+            collectNifGeometryInfos(child.getPtr(), world, geometries);
+}
+
+int runFnvGeometryDump(const std::filesystem::path& meshPath, const std::filesystem::path& outPath)
+{
+    Nif::Reader::setLoadUnsupportedFiles(true);
+
+    std::unique_ptr<Nif::NIFFile> meshFile = readNifFile(meshPath);
+    std::vector<FnvGeometryDumpInfo> geometries;
+    for (const Nif::Record* record : meshFile->mRoots)
+        if (const Nif::NiAVObject* root = dynamic_cast<const Nif::NiAVObject*>(record))
+            collectNifGeometryInfos(root, osg::Matrixf::identity(), geometries);
+
+    std::ofstream out(outPath);
+    if (!out)
+        throw std::runtime_error("failed to open output path");
+
+    out << std::setprecision(9);
+    out << "{\n";
+    out << "  \"mesh\": \"" << jsonEscape(Files::pathToUnicodeString(meshPath)) << "\",\n";
+    out << "  \"geometryCount\": " << geometries.size() << ",\n";
+    out << "  \"geometries\": [";
+
+    bool firstGeometry = true;
+    for (const FnvGeometryDumpInfo& info : geometries)
+    {
+        const Nif::NiGeometry* geometry = info.mGeometry;
+        if (geometry->mData.empty())
+            continue;
+
+        const std::vector<osg::Vec3f>& vertices = geometry->mData->mVertices;
+        osg::BoundingBox box;
+        osg::BoundingBox worldBox;
+        for (const osg::Vec3f& vertex : vertices)
+        {
+            box.expandBy(vertex);
+            worldBox.expandBy(vertex * info.mWorldTransform);
+        }
+
+        if (!firstGeometry)
+            out << ",";
+        firstGeometry = false;
+
+        out << "\n    {\"name\":\"" << jsonEscape(geometry->mName) << "\""
+            << ",\"vertexCount\":" << vertices.size()
+            << ",\"hasSkin\":" << (!geometry->mSkin.empty() ? "true" : "false")
+            << ",\"extent\":" << formatVec3Json(fnvAuditExtent(box))
+            << ",\"worldExtent\":" << formatVec3Json(fnvAuditExtent(worldBox))
+            << ",\"localTransform\":" << formatMatrixJson(geometry->mTransform.toMatrix())
+            << ",\"worldTransform\":" << formatMatrixJson(info.mWorldTransform)
+            << ",\"vertices\":[";
+        for (std::size_t i = 0; i < vertices.size(); ++i)
+        {
+            if (i != 0)
+                out << ",";
+            out << formatVec3Json(vertices[i]);
+        }
+        out << "],\"worldVertices\":[";
+        for (std::size_t i = 0; i < vertices.size(); ++i)
+        {
+            if (i != 0)
+                out << ",";
+            out << formatVec3Json(vertices[i] * info.mWorldTransform);
+        }
+        out << "]";
+
+        if (!geometry->mSkin.empty() && !geometry->mSkin->mData.empty())
+        {
+            const Nif::NiSkinData& skinData = *geometry->mSkin->mData.getPtr();
+            const osg::Matrixf skinRoot = skinData.mTransform.toMatrix();
+            osg::Matrixf invSkinRoot;
+            const bool hasInvSkinRoot = invSkinRoot.invert(skinRoot);
+
+            auto writeVertexArray = [&](std::string_view name, const std::vector<osg::Vec3f>& values) {
+                out << ",\"" << name << "\":[";
+                for (std::size_t i = 0; i < values.size(); ++i)
+                {
+                    if (i != 0)
+                        out << ",";
+                    out << formatVec3Json(values[i]);
+                }
+                out << "]";
+            };
+
+            auto writeMatrixSpace = [&](std::string_view name, const osg::Matrixf& matrix) {
+                std::vector<osg::Vec3f> values;
+                values.reserve(vertices.size());
+                for (const osg::Vec3f& vertex : vertices)
+                    values.push_back(vertex * matrix);
+                writeVertexArray(name, values);
+            };
+
+            auto writeWeightedSpace = [&](std::string_view name, const std::vector<osg::Matrixf>& matrices) {
+                std::vector<std::vector<std::pair<std::size_t, float>>> influencesByVertex(vertices.size());
+                for (std::size_t boneIndex = 0; boneIndex < skinData.mBones.size() && boneIndex < matrices.size();
+                     ++boneIndex)
+                {
+                    for (const auto& [vertexIndex, weight] : skinData.mBones[boneIndex].mWeights)
+                        if (vertexIndex < vertices.size())
+                            influencesByVertex[vertexIndex].push_back({ boneIndex, weight });
+                }
+
+                std::vector<osg::Vec3f> values;
+                values.reserve(vertices.size());
+                for (std::size_t vertexIndex = 0; vertexIndex < vertices.size(); ++vertexIndex)
+                {
+                    osg::Vec3f value(0.f, 0.f, 0.f);
+                    float weightSum = 0.f;
+                    for (const auto& [boneIndex, weight] : influencesByVertex[vertexIndex])
+                    {
+                        value += (vertices[vertexIndex] * matrices[boneIndex]) * weight;
+                        weightSum += weight;
+                    }
+
+                    if (influencesByVertex[vertexIndex].empty())
+                        value = vertices[vertexIndex];
+                    else if (weightSum > 0.0001f && std::abs(weightSum - 1.f) > 0.0001f)
+                        value /= weightSum;
+                    values.push_back(value);
+                }
+
+                writeVertexArray(name, values);
+            };
+
+            writeMatrixSpace("skinRootVertices", skinRoot);
+            if (hasInvSkinRoot)
+                writeMatrixSpace("invSkinRootVertices", invSkinRoot);
+
+            std::vector<osg::Matrixf> authoredInvBindMatrices;
+            std::vector<osg::Matrixf> authoredInvBindSkinRootMatrices;
+            std::vector<osg::Matrixf> authoredBindMatrices;
+            authoredInvBindMatrices.reserve(skinData.mBones.size());
+            authoredInvBindSkinRootMatrices.reserve(skinData.mBones.size());
+            authoredBindMatrices.reserve(skinData.mBones.size());
+            for (const Nif::NiSkinData::BoneInfo& boneInfo : skinData.mBones)
+            {
+                const osg::Matrixf invBind = boneInfo.mTransform.toMatrix();
+                authoredInvBindMatrices.push_back(invBind);
+                authoredInvBindSkinRootMatrices.push_back(invBind * skinRoot);
+
+                osg::Matrixf bind;
+                if (bind.invert(invBind))
+                    authoredBindMatrices.push_back(bind);
+                else
+                    authoredBindMatrices.push_back(osg::Matrixf());
+            }
+            writeWeightedSpace("authoredInvBindVertices", authoredInvBindMatrices);
+            writeWeightedSpace("authoredInvBindSkinRootVertices", authoredInvBindSkinRootMatrices);
+            writeWeightedSpace("authoredBindVertices", authoredBindMatrices);
+        }
+
+        out << "}";
+    }
+
+    out << "\n  ]\n";
+    out << "}\n";
+    return 0;
+}
+
+struct FnvSkinCandidateMetric
+{
+    std::string mName;
+    float mMaxVertexDelta = 0.f;
+    unsigned int mMaxVertex = 0;
+    float mMaxBlendedVertexDelta = 0.f;
+    unsigned int mMaxBlendedVertex = 0;
+    osg::BoundingBox mSourceBox;
+    osg::BoundingBox mSkinnedBox;
+};
+
+std::vector<osg::Matrixf> makeFNVWeightedBoneMatrices(const std::string& candidate,
+    const Nif::NiSkinData& data, const Nif::NiSkinInstance& skin,
+    const std::unordered_map<std::string, osg::Matrixf>& skeletonWorlds)
+{
+    std::vector<osg::Matrixf> matrices;
+    matrices.reserve(skin.mBones.size());
+    const osg::Matrixf skinTransform = data.mTransform.toMatrix();
+    osg::Matrixf inverseSkinTransform;
+    const bool hasInverseSkinTransform = inverseSkinTransform.invert(skinTransform);
+
+    for (std::size_t i = 0; i < skin.mBones.size(); ++i)
+    {
+        const Nif::NiAVObject* bone = skin.mBones[i].getPtr();
+        const std::string lowerName = bone != nullptr ? Misc::StringUtils::lowerCase(bone->mName) : std::string();
+        const auto found = skeletonWorlds.find(lowerName);
+        const osg::Matrixf bindWorld = found != skeletonWorlds.end() ? found->second : osg::Matrixf::identity();
+        const osg::Matrixf skinBone = i < data.mBones.size() ? data.mBones[i].mTransform.toMatrix() : osg::Matrixf();
+
+        osg::Matrixf inverseBindWorld;
+        const bool hasInverseBindWorld = inverseBindWorld.invert(bindWorld);
+        osg::Matrixf inverseSkinBone;
+        const bool hasInverseSkinBone = inverseSkinBone.invert(skinBone);
+
+        if (candidate == "engine")
+            matrices.push_back(skinBone * bindWorld * skinTransform);
+        else if (candidate == "engineNoSkinRoot")
+            matrices.push_back(skinBone * bindWorld);
+        else if (candidate == "skeletonDerived")
+            matrices.push_back(hasInverseBindWorld ? inverseBindWorld * bindWorld : osg::Matrixf());
+        else if (candidate == "skeletonDerivedSkinRoot")
+            matrices.push_back(hasInverseBindWorld ? inverseBindWorld * bindWorld * skinTransform : osg::Matrixf());
+        else if (candidate == "skinRootInverseThenEngine")
+            matrices.push_back(hasInverseSkinTransform ? inverseSkinTransform * skinBone * bindWorld * skinTransform
+                                                       : osg::Matrixf());
+        else if (candidate == "inverseSkinBoneThenBind")
+            matrices.push_back(hasInverseSkinBone ? inverseSkinBone * bindWorld : osg::Matrixf());
+        else
+            matrices.push_back(osg::Matrixf());
+    }
+
+    return matrices;
+}
+
+FnvSkinCandidateMetric auditFNVRestCandidate(const std::string& candidate, const Nif::NiGeometry& geometry,
+    const Nif::NiSkinData& data, const Nif::NiSkinInstance& skin,
+    const std::unordered_map<std::string, osg::Matrixf>& skeletonWorlds)
+{
+    FnvSkinCandidateMetric metric;
+    metric.mName = candidate;
+
+    const std::vector<osg::Matrixf> boneMatrices = makeFNVWeightedBoneMatrices(candidate, data, skin, skeletonWorlds);
+    const std::vector<osg::Vec3f>& vertices = geometry.mData->mVertices;
+    if (vertices.empty())
+        return metric;
+
+    for (const osg::Vec3f& vertex : vertices)
+        metric.mSourceBox.expandBy(vertex);
+
+    std::vector<std::vector<std::pair<std::size_t, float>>> influencesByVertex(vertices.size());
+    for (std::size_t boneIndex = 0; boneIndex < data.mBones.size() && boneIndex < boneMatrices.size(); ++boneIndex)
+    {
+        const osg::Matrixf& boneMatrix = boneMatrices[boneIndex];
+        for (const auto& [vertexIndex, weight] : data.mBones[boneIndex].mWeights)
+        {
+            if (vertexIndex >= vertices.size())
+                continue;
+
+            // This per-bone max is intentionally conservative. Full blended vertex accumulation is logged separately
+            // by the renderer; the bind audit rejects any individual influence that cannot preserve the rest pose.
+            const osg::Vec3f skinned = vertices[vertexIndex] * boneMatrix;
+            const float delta = (skinned - vertices[vertexIndex]).length() * std::abs(weight);
+            if (delta > metric.mMaxVertexDelta)
+            {
+                metric.mMaxVertexDelta = delta;
+                metric.mMaxVertex = vertexIndex;
+            }
+            influencesByVertex[vertexIndex].push_back({ boneIndex, weight });
+        }
+    }
+
+    for (std::size_t vertexIndex = 0; vertexIndex < vertices.size(); ++vertexIndex)
+    {
+        osg::Vec3f skinned(0.f, 0.f, 0.f);
+        float weightSum = 0.f;
+        for (const auto& [boneIndex, weight] : influencesByVertex[vertexIndex])
+        {
+            skinned += (vertices[vertexIndex] * boneMatrices[boneIndex]) * weight;
+            weightSum += weight;
+        }
+
+        if (influencesByVertex[vertexIndex].empty())
+            skinned = vertices[vertexIndex];
+        else if (weightSum > 0.0001f && std::abs(weightSum - 1.f) > 0.0001f)
+            skinned /= weightSum;
+
+        metric.mSkinnedBox.expandBy(skinned);
+        const float delta = (skinned - vertices[vertexIndex]).length();
+        if (delta > metric.mMaxBlendedVertexDelta)
+        {
+            metric.mMaxBlendedVertexDelta = delta;
+            metric.mMaxBlendedVertex = static_cast<unsigned int>(vertexIndex);
+        }
+    }
+
+    return metric;
+}
+
+int runFnvSkinBindAudit(const std::filesystem::path& skeletonPath, const std::filesystem::path& meshPath,
+    const std::filesystem::path& outPath)
+{
+    Nif::Reader::setLoadUnsupportedFiles(true);
+
+    std::unique_ptr<Nif::NIFFile> skeletonFile = readNifFile(skeletonPath);
+    std::unordered_map<std::string, osg::Matrixf> skeletonWorlds;
+    for (const Nif::Record* record : skeletonFile->mRoots)
+        if (const Nif::NiAVObject* root = dynamic_cast<const Nif::NiAVObject*>(record))
+            collectNifWorldMatrices(root, osg::Matrixf::identity(), skeletonWorlds);
+
+    std::unique_ptr<Nif::NIFFile> meshFile = readNifFile(meshPath);
+    std::vector<const Nif::NiGeometry*> geometries;
+    for (const Nif::Record* record : meshFile->mRoots)
+        if (const Nif::NiAVObject* root = dynamic_cast<const Nif::NiAVObject*>(record))
+            collectSkinnedGeometries(root, geometries);
+
+    const std::vector<std::string> candidates = { "engine", "engineNoSkinRoot", "skeletonDerived",
+        "skeletonDerivedSkinRoot", "skinRootInverseThenEngine", "inverseSkinBoneThenBind" };
+
+    std::ofstream out(outPath);
+    if (!out)
+        throw std::runtime_error("failed to open output path");
+
+    out << std::setprecision(9);
+    out << "{\n";
+    out << "  \"skeleton\": \"" << jsonEscape(Files::pathToUnicodeString(skeletonPath)) << "\",\n";
+    out << "  \"mesh\": \"" << jsonEscape(Files::pathToUnicodeString(meshPath)) << "\",\n";
+    out << "  \"skeletonNodeCount\": " << skeletonWorlds.size() << ",\n";
+    out << "  \"skinnedGeometryCount\": " << geometries.size() << ",\n";
+    out << "  \"restPoseInvariant\": \"A valid bind-pose skinning formula should keep source vertices stationary at bind pose.\",\n";
+    out << "  \"geometries\": [";
+    bool firstGeometry = true;
+    for (const Nif::NiGeometry* geometry : geometries)
+    {
+        const Nif::NiSkinInstance* skin = geometry->mSkin.getPtr();
+        const Nif::NiSkinData* data = skin != nullptr ? skin->mData.getPtr() : nullptr;
+        if (skin == nullptr || data == nullptr || geometry->mData.empty())
+            continue;
+
+        if (!firstGeometry)
+            out << ",";
+        firstGeometry = false;
+
+        std::size_t missingBones = 0;
+        float maxSkinBoneVsSkeletonInverseDelta = 0.f;
+        for (std::size_t i = 0; i < skin->mBones.size() && i < data->mBones.size(); ++i)
+        {
+            const Nif::NiAVObject* bone = skin->mBones[i].getPtr();
+            const std::string lowerName = bone != nullptr ? Misc::StringUtils::lowerCase(bone->mName) : std::string();
+            const auto found = skeletonWorlds.find(lowerName);
+            if (found == skeletonWorlds.end())
+            {
+                ++missingBones;
+                continue;
+            }
+
+            osg::Matrixf inverseBindWorld;
+            if (!inverseBindWorld.invert(found->second))
+                continue;
+            maxSkinBoneVsSkeletonInverseDelta = std::max(maxSkinBoneVsSkeletonInverseDelta,
+                fnvMatrixMaxAbsDelta(data->mBones[i].mTransform.toMatrix(), inverseBindWorld));
+        }
+
+        out << "\n    {\"name\":\"" << jsonEscape(geometry->mName) << "\""
+            << ",\"vertexCount\":" << geometry->mData->mVertices.size()
+            << ",\"boneCount\":" << skin->mBones.size()
+            << ",\"missingSkeletonBones\":" << missingBones
+            << ",\"maxSkinBoneVsSkeletonInverseDelta\":" << maxSkinBoneVsSkeletonInverseDelta
+            << ",\"skinRootTransform\":" << formatMatrixJson(data->mTransform.toMatrix())
+            << ",\"candidates\":[";
+
+        bool firstCandidate = true;
+        for (const std::string& candidate : candidates)
+        {
+            const FnvSkinCandidateMetric metric
+                = auditFNVRestCandidate(candidate, *geometry, *data, *skin, skeletonWorlds);
+            const osg::Vec3f sourceExtent = fnvAuditExtent(metric.mSourceBox);
+            const osg::Vec3f skinnedExtent = fnvAuditExtent(metric.mSkinnedBox);
+            if (!firstCandidate)
+                out << ",";
+            firstCandidate = false;
+            out << "{\"name\":\"" << candidate << "\""
+                << ",\"maxWeightedVertexDelta\":" << metric.mMaxVertexDelta
+                << ",\"maxVertex\":" << metric.mMaxVertex
+                << ",\"maxBlendedVertexDelta\":" << metric.mMaxBlendedVertexDelta
+                << ",\"maxBlendedVertex\":" << metric.mMaxBlendedVertex
+                << ",\"sourceExtent\":" << formatVec3Json(sourceExtent)
+                << ",\"skinnedExtent\":" << formatVec3Json(skinnedExtent)
+                << ",\"verdict\":\"" << (metric.mMaxBlendedVertexDelta <= 0.01f ? "PASS" : "FAIL") << "\"}";
+        }
+        out << "]}";
+    }
+    out << "\n  ]\n";
+    out << "}\n";
+
+    return 0;
 }
 
 int runFnvTransformDump(
@@ -1014,6 +1518,32 @@ Allowed options)");
 
 int main(int argc, char** argv)
 {
+    if (argc == 4 && std::string_view(argv[1]) == "--fnv-geometry-dump")
+    {
+        try
+        {
+            return runFnvGeometryDump(argv[2], argv[3]);
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "FNV geometry dump failed: " << e.what() << std::endl;
+            return 2;
+        }
+    }
+
+    if (argc == 5 && std::string_view(argv[1]) == "--fnv-skin-bind-audit")
+    {
+        try
+        {
+            return runFnvSkinBindAudit(argv[2], argv[3], argv[4]);
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "FNV skin bind audit failed: " << e.what() << std::endl;
+            return 2;
+        }
+    }
+
     if (argc == 5 && std::string_view(argv[1]) == "--fnv-transform-dump")
     {
         try

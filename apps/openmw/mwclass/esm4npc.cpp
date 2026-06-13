@@ -583,6 +583,16 @@ namespace MWClass
         return getCustomData(ptr).mAIPackage;
     }
 
+    const ESM4::Npc* ESM4Npc::getStatsRecord(const MWWorld::Ptr& ptr)
+    {
+        return chooseStatsRecord(getCustomData(ptr));
+    }
+
+    const ESM4::Npc* ESM4Npc::getBaseDataRecord(const MWWorld::Ptr& ptr)
+    {
+        return getCustomData(ptr).mBaseData;
+    }
+
     const ESM4::Race* ESM4Npc::getRace(const MWWorld::Ptr& ptr)
     {
         return getCustomData(ptr).mRace;
