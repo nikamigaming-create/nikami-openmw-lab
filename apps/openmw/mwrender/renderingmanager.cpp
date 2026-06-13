@@ -67,6 +67,7 @@
 #include "../mwworld/class.hpp"
 #include "../mwworld/esmstore.hpp"
 #include "../mwworld/groundcoverstore.hpp"
+#include "../mwworld/inventorystore.hpp"
 #include "../mwworld/livecellref.hpp"
 #include "../mwworld/scene.hpp"
 
@@ -323,8 +324,51 @@ namespace MWRender
                                  << " editor=<none>";
         }
 
+        bool appendFalloutVrWeaponSurface(
+            std::vector<MWVR::VRAnimation::FalloutVrHandSurface>& surfaces, const MWWorld::Ptr& actorPtr,
+            std::string_view label)
+        {
+            if (actorPtr.isEmpty())
+                return false;
+
+            const auto addWeaponSurface = [&](const ESM4::Weapon* weapon, std::string source) {
+                if (weapon == nullptr || weapon->mModel.empty())
+                    return false;
+                surfaces.push_back(MWVR::VRAnimation::FalloutVrHandSurface{
+                    weapon->mModel, {}, std::move(source), false });
+                Log(Debug::Info) << "FNV/ESM4 diag: VRHandsOnly appended right-hand weapon source="
+                                 << surfaces.back().source << " editor=" << weapon->mEditorId
+                                 << " model=" << weapon->mModel;
+                return true;
+            };
+
+            const MWWorld::Class& actorClass = actorPtr.getClass();
+            if (actorClass.hasInventoryStore(actorPtr))
+            {
+                const MWWorld::InventoryStore& inventory = actorClass.getInventoryStore(actorPtr);
+                const MWWorld::ConstContainerStoreIterator weaponSlot
+                    = inventory.getSlot(MWWorld::InventoryStore::Slot_CarriedRight);
+                if (weaponSlot != inventory.end() && weaponSlot->getType() == ESM4::Weapon::sRecordId)
+                {
+                    const ESM4::Weapon* weapon = weaponSlot->get<ESM4::Weapon>()->mBase;
+                    if (addWeaponSurface(weapon, std::string(label) + ":live-weapon:" + weapon->mEditorId))
+                        return true;
+                }
+            }
+
+            if (actorPtr.getType() == ESM4::Npc::sRecordId)
+            {
+                const ESM4::Weapon* weapon = MWClass::ESM4Npc::getEquippedWeapon(actorPtr);
+                if (weapon != nullptr)
+                    return addWeaponSurface(weapon, std::string(label) + ":npc-weapon:" + weapon->mEditorId);
+            }
+
+            Log(Debug::Info) << "FNV/ESM4 diag: VRHandsOnly no right-hand weapon surface source=" << label;
+            return false;
+        }
+
         std::vector<MWVR::VRAnimation::FalloutVrHandSurface> collectFalloutVrHandSurfaces(
-            const MWWorld::Ptr& actorPtr, std::string_view label)
+            const MWWorld::Ptr& actorPtr, std::string_view label, bool includeWeapon = true)
         {
             std::vector<MWVR::VRAnimation::FalloutVrHandSurface> surfaces;
             if (actorPtr.isEmpty() || actorPtr.getType() != ESM4::Npc::sRecordId)
@@ -390,6 +434,8 @@ namespace MWRender
                 addSurface(model, {}, std::string(label) + ":clothing:" + clothing->mEditorId, left);
             }
 
+            if (includeWeapon)
+                appendFalloutVrWeaponSurface(surfaces, actorPtr, label);
             return surfaces;
         }
 
@@ -406,7 +452,10 @@ namespace MWRender
             liveVisualRef.mData.setPosition(player.getRefData().getPosition());
             MWWorld::Ptr visualPtr(&liveVisualRef, player.getCell());
             applyFalloutPlayerProxyProofOutfit(visualPtr, "vr-hands-attach");
-            return collectFalloutVrHandSurfaces(visualPtr, "fallout-visual-record");
+            std::vector<MWVR::VRAnimation::FalloutVrHandSurface> surfaces
+                = collectFalloutVrHandSurfaces(visualPtr, "fallout-visual-record", false);
+            appendFalloutVrWeaponSurface(surfaces, player, "save-loaded-vr-player-ptr");
+            return surfaces;
         }
 
         void logFalloutVrHandSelectionDiagnostic(const MWWorld::Ptr& player, const ESM4::Npc* visualRecord)
