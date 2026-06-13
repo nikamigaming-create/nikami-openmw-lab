@@ -766,6 +766,7 @@ namespace MWVR
                 = Misc::ResourceHelpers::correctMeshPath(VFS::Path::Normalized(surface.model));
             osg::ref_ptr<const osg::Node> templateNode = mResourceSystem->getSceneManager()->getTemplate(correctedModel);
             osg::ref_ptr<const osg::Node> attachTemplateNode = templateNode;
+            osg::ref_ptr<osg::Node> directStaticHandNode;
             osg::BoundingBox staticizedHandBounds;
             bool staticizedRiggedHandPart = false;
             if (riggedHandPart)
@@ -776,6 +777,7 @@ namespace MWVR
                 if (staticizeVisitor.mStaticizedRigGeometryCount > 0)
                 {
                     attachTemplateNode = staticTemplate;
+                    directStaticHandNode = staticTemplate;
                     staticizedRiggedHandPart = true;
                     staticizedHandBounds = computeNodeBounds(*staticTemplate);
                     if (staticizedHandBounds.valid())
@@ -809,9 +811,23 @@ namespace MWVR
             if (pipBoyArm)
                 Log(Debug::Info) << "FNV/ESM4 diag: PipBoy wrist rotation degrees x=" << pipBoyRotX
                                  << " y=" << pipBoyRotY << " z=" << pipBoyRotZ;
-            osg::ref_ptr<osg::Node> attached = SceneUtil::attach(
-                std::move(attachTemplateNode), master, {}, attachNode, mResourceSystem->getSceneManager(),
-                pipBoyArm ? &pipBoyAttitude : nullptr);
+            osg::ref_ptr<osg::Node> attached;
+            if (staticizedRiggedHandPart && directStaticHandNode != nullptr)
+            {
+                osg::ref_ptr<osg::PositionAttitudeTransform> handTransform = new osg::PositionAttitudeTransform;
+                handTransform->setName("FNV VR Staticized Hand Surface");
+                handTransform->addChild(directStaticHandNode);
+                attachNode->addChild(handTransform);
+                attached = handTransform;
+                Log(Debug::Info) << "FNV/ESM4 diag: VRHandsOnly direct hand wrapper attached model="
+                                 << correctedModel.value() << " attachNode=" << attachNode->getName();
+            }
+            else
+            {
+                attached = SceneUtil::attach(
+                    std::move(attachTemplateNode), master, {}, attachNode, mResourceSystem->getSceneManager(),
+                    pipBoyArm ? &pipBoyAttitude : nullptr);
+            }
             if (attached == nullptr)
             {
                 Log(Debug::Warning) << "FNV/ESM4 diag: VRHandsOnly attach failed model=" << correctedModel.value()
