@@ -90,6 +90,7 @@ namespace MWVR
         void onInteractionProfileActiveChanged(XrPath topLevelPath, bool isActive) override;
 
         void updateTrackingControllers();
+        void clearFalloutVrHandSurfaces();
         void attachFalloutVrHandSurfaces();
 
         void enableTracking(XrPath path);
@@ -123,6 +124,7 @@ namespace MWVR
         bool mCrosshairsEnabled;
         bool mFalloutVrHandSurfacesAttached = false;
         std::vector<FalloutVrHandSurface> mFalloutVrHandSurfaces;
+        std::vector<osg::ref_ptr<osg::Node>> mFalloutVrHandSurfaceNodes;
         float mCharHeight = 120.f;
         Stereo::Pose mHeadPoseInLocalSpace;
         Stereo::Pose mCharLocalSpacePose;

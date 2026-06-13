@@ -474,7 +474,10 @@ namespace MWVR
         }
     }
 
-    VRAnimation::~VRAnimation() {}
+    VRAnimation::~VRAnimation()
+    {
+        clearFalloutVrHandSurfaces();
+    }
 
     void VRAnimation::setViewMode(NpcAnimation::ViewMode viewMode)
     {
@@ -491,6 +494,7 @@ namespace MWVR
     void VRAnimation::updateParts()
     {
         NpcAnimation::updateParts();
+        clearFalloutVrHandSurfaces();
 
         if (mViewMode == VM_VRFirstPerson)
         {
@@ -540,13 +544,37 @@ namespace MWVR
                     return left.model == right.model && left.diffuseTexture == right.diffuseTexture
                         && left.source == right.source && left.left == right.left;
                 });
-        if (sameSurfaces && mFalloutVrHandSurfacesAttached)
-            return;
 
-        mFalloutVrHandSurfaces = std::move(surfaces);
-        mFalloutVrHandSurfacesAttached = false;
+        clearFalloutVrHandSurfaces();
+        if (!sameSurfaces)
+            mFalloutVrHandSurfaces = std::move(surfaces);
         attachFalloutVrHandSurfaces();
         updateTrackingControllers();
+    }
+
+    void VRAnimation::clearFalloutVrHandSurfaces()
+    {
+        int parentLinksRemoved = 0;
+        for (const osg::ref_ptr<osg::Node>& node : mFalloutVrHandSurfaceNodes)
+        {
+            if (node == nullptr)
+                continue;
+
+            while (node->getNumParents() > 0)
+            {
+                osg::Group* parent = node->getParent(0);
+                if (parent == nullptr || !parent->removeChild(node.get()))
+                    break;
+                ++parentLinksRemoved;
+            }
+        }
+
+        if (!mFalloutVrHandSurfaceNodes.empty() || parentLinksRemoved > 0)
+            Log(Debug::Info) << "FNV/ESM4 diag: VRHandsOnly cleared attached surfaces nodes="
+                             << mFalloutVrHandSurfaceNodes.size() << " parentLinks=" << parentLinksRemoved;
+
+        mFalloutVrHandSurfaceNodes.clear();
+        mFalloutVrHandSurfacesAttached = false;
     }
 
     void VRAnimation::attachFalloutVrHandSurfaces()
@@ -629,6 +657,7 @@ namespace MWVR
             }
 
             attached->setName("FNV VRHandsOnly " + correctedModel.value());
+            mFalloutVrHandSurfaceNodes.push_back(attached);
             ++attachedCount;
             Log(Debug::Info) << "FNV/ESM4 diag: VRHandsOnly attached model=" << correctedModel.value()
                              << " source=" << surface.source
