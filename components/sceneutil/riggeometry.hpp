@@ -68,6 +68,7 @@ namespace SceneUtil
         std::string_view getRootBone() const;
         std::size_t getBoneCount() const;
         std::string_view getBoneName(std::size_t index) const;
+        bool getBoneInvBindMatrix(std::string_view name, osg::Matrixf& matrix) const;
         bool isFalloutCharacterRig() const;
         void setFalloutFlagSkinning(bool enabled) { mFalloutFlagSkinning = enabled; }
 

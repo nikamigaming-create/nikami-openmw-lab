@@ -78,6 +78,25 @@ namespace MWVR
         return fallback;
     }
 
+    float getHandEnvFloat(bool left, std::string_view suffix, float fallback)
+    {
+        std::string sideName = left ? "OPENMW_FNV_LEFT_HAND_" : "OPENMW_FNV_RIGHT_HAND_";
+        sideName += suffix;
+        if (const char* value = std::getenv(sideName.c_str()))
+            return std::atof(value);
+
+        std::string sharedName = "OPENMW_FNV_HAND_";
+        sharedName += suffix;
+        return getEnvFloat(sharedName, fallback);
+    }
+
+    osg::Quat makeEulerDegrees(float x, float y, float z)
+    {
+        return osg::Quat(osg::DegreesToRadians(x), osg::Vec3f(1.f, 0.f, 0.f))
+            * osg::Quat(osg::DegreesToRadians(y), osg::Vec3f(0.f, 1.f, 0.f))
+            * osg::Quat(osg::DegreesToRadians(z), osg::Vec3f(0.f, 0.f, 1.f));
+    }
+
     // Some weapon types, such as spellcast, are classified as melee even though they are not. At least not in the way i
     // want. All the false melee types have negative enum values, but also so does hand to hand. I think this covers all
     // cases
@@ -214,8 +233,9 @@ namespace MWVR
     class StaticizeFalloutVrRiggedGeometryVisitor : public osg::NodeVisitor
     {
     public:
-        StaticizeFalloutVrRiggedGeometryVisitor()
+        StaticizeFalloutVrRiggedGeometryVisitor(std::string targetHandBone)
             : osg::NodeVisitor(TRAVERSE_ALL_CHILDREN)
+            , mTargetHandBone(std::move(targetHandBone))
         {
         }
 
@@ -300,6 +320,15 @@ namespace MWVR
                 sourceName = source != nullptr ? source->getName() : std::string();
                 rootBone = std::string(rig->getRootBone());
                 boneCount = rig->getBoneCount();
+                if (!mHasHandInvBindMatrix && rig->getBoneInvBindMatrix(mTargetHandBone, mHandInvBindMatrix))
+                {
+                    mHasHandInvBindMatrix = true;
+                    Log(Debug::Info) << "FNV/ESM4 diag: VRHandsOnly found hand inv-bind modelBone="
+                                     << mTargetHandBone
+                                     << " translation=(" << mHandInvBindMatrix.getTrans().x() << ","
+                                     << mHandInvBindMatrix.getTrans().y() << ","
+                                     << mHandInvBindMatrix.getTrans().z() << ")";
+                }
                 kind = "SceneUtil::RigGeometry";
             }
             else if (SceneUtil::RigGeometryHolder* holder = dynamic_cast<SceneUtil::RigGeometryHolder*>(&drawable))
@@ -341,6 +370,9 @@ namespace MWVR
         unsigned int mStaticizedRigGeometryCount = 0;
         unsigned int mSeenRigGeometryCount = 0;
         unsigned int mMissingSourceGeometryCount = 0;
+        std::string mTargetHandBone;
+        osg::Matrixf mHandInvBindMatrix;
+        bool mHasHandInvBindMatrix = false;
     };
 
     osg::BoundingBox computeNodeBounds(osg::Node& node)
@@ -768,16 +800,20 @@ namespace MWVR
             osg::ref_ptr<const osg::Node> attachTemplateNode = templateNode;
             osg::ref_ptr<osg::Node> directStaticHandNode;
             osg::BoundingBox staticizedHandBounds;
+            osg::Matrixf handInvBindMatrix;
+            bool hasHandInvBindMatrix = false;
             bool staticizedRiggedHandPart = false;
             if (riggedHandPart)
             {
                 osg::ref_ptr<osg::Node> staticTemplate = osg::clone(templateNode.get(), osg::CopyOp::DEEP_COPY_ALL);
-                StaticizeFalloutVrRiggedGeometryVisitor staticizeVisitor;
+                StaticizeFalloutVrRiggedGeometryVisitor staticizeVisitor(surface.left ? "bip01 l hand" : "bip01 r hand");
                 staticTemplate->accept(staticizeVisitor);
                 if (staticizeVisitor.mStaticizedRigGeometryCount > 0)
                 {
                     attachTemplateNode = staticTemplate;
                     directStaticHandNode = staticTemplate;
+                    handInvBindMatrix = staticizeVisitor.mHandInvBindMatrix;
+                    hasHandInvBindMatrix = staticizeVisitor.mHasHandInvBindMatrix;
                     staticizedRiggedHandPart = true;
                     staticizedHandBounds = computeNodeBounds(*staticTemplate);
                     if (staticizedHandBounds.valid())
@@ -816,11 +852,34 @@ namespace MWVR
             {
                 osg::ref_ptr<osg::PositionAttitudeTransform> handTransform = new osg::PositionAttitudeTransform;
                 handTransform->setName("FNV VR Staticized Hand Surface");
-                handTransform->addChild(directStaticHandNode);
+                const float handRotX = getHandEnvFloat(surface.left, "ROT_X", 0.f);
+                const float handRotY = getHandEnvFloat(surface.left, "ROT_Y", 0.f);
+                const float handRotZ = getHandEnvFloat(surface.left, "ROT_Z", 0.f);
+                const float handOffsetX = getHandEnvFloat(surface.left, "OFFSET_X", 0.f);
+                const float handOffsetY = getHandEnvFloat(surface.left, "OFFSET_Y", 0.f);
+                const float handOffsetZ = getHandEnvFloat(surface.left, "OFFSET_Z", 0.f);
+                handTransform->setAttitude(makeEulerDegrees(handRotX, handRotY, handRotZ));
+                handTransform->setPosition(osg::Vec3f(handOffsetX, handOffsetY, handOffsetZ));
+
+                if (hasHandInvBindMatrix)
+                {
+                    osg::ref_ptr<osg::MatrixTransform> handLocalTransform = new osg::MatrixTransform;
+                    handLocalTransform->setName("FNV VR Hand InvBind Localizer");
+                    handLocalTransform->setMatrix(handInvBindMatrix);
+                    handLocalTransform->addChild(directStaticHandNode);
+                    handTransform->addChild(handLocalTransform);
+                }
+                else
+                    handTransform->addChild(directStaticHandNode);
+
                 attachNode->addChild(handTransform);
                 attached = handTransform;
                 Log(Debug::Info) << "FNV/ESM4 diag: VRHandsOnly direct hand wrapper attached model="
-                                 << correctedModel.value() << " attachNode=" << attachNode->getName();
+                                 << correctedModel.value() << " attachNode=" << attachNode->getName()
+                                 << " invBindLocalizer=" << hasHandInvBindMatrix
+                                 << " handRotationDegrees=(" << handRotX << "," << handRotY << "," << handRotZ
+                                 << ") handOffset=(" << handOffsetX << "," << handOffsetY << ","
+                                 << handOffsetZ << ")";
             }
             else
             {
@@ -840,17 +899,29 @@ namespace MWVR
                 if (osg::PositionAttitudeTransform* transform
                     = dynamic_cast<osg::PositionAttitudeTransform*>(attached.get()))
                 {
-                    const osg::Vec3f center = staticizedHandBounds.center();
-                    const osg::Vec3f scale = transform->getScale();
-                    const osg::Vec3f normalizeOffset(
-                        -scale.x() * center.x(), -scale.y() * center.y(), -scale.z() * center.z());
-                    transform->setPosition(transform->getPosition() + normalizeOffset);
-                    Log(Debug::Info) << "FNV/ESM4 diag: VRHandsOnly hand center normalized model="
-                                     << correctedModel.value()
-                                     << " offset=(" << normalizeOffset.x() << "," << normalizeOffset.y() << ","
-                                     << normalizeOffset.z() << ") finalPosition=(" << transform->getPosition().x()
-                                     << "," << transform->getPosition().y() << "," << transform->getPosition().z()
-                                     << ") scale=(" << scale.x() << "," << scale.y() << "," << scale.z() << ")";
+                    if (!hasHandInvBindMatrix)
+                    {
+                        const osg::Vec3f center = staticizedHandBounds.center();
+                        const osg::Vec3f scale = transform->getScale();
+                        const osg::Vec3f normalizeOffset(
+                            -scale.x() * center.x(), -scale.y() * center.y(), -scale.z() * center.z());
+                        transform->setPosition(transform->getPosition() + normalizeOffset);
+                        Log(Debug::Info) << "FNV/ESM4 diag: VRHandsOnly hand center normalized model="
+                                         << correctedModel.value()
+                                         << " offset=(" << normalizeOffset.x() << "," << normalizeOffset.y() << ","
+                                         << normalizeOffset.z() << ") finalPosition=(" << transform->getPosition().x()
+                                         << "," << transform->getPosition().y() << "," << transform->getPosition().z()
+                                         << ") scale=(" << scale.x() << "," << scale.y() << "," << scale.z() << ")";
+                    }
+                    else
+                    {
+                        Log(Debug::Info) << "FNV/ESM4 diag: VRHandsOnly hand inv-bind localized model="
+                                         << correctedModel.value()
+                                         << " finalPosition=(" << transform->getPosition().x() << ","
+                                         << transform->getPosition().y() << "," << transform->getPosition().z()
+                                         << ") scale=(" << transform->getScale().x() << ","
+                                         << transform->getScale().y() << "," << transform->getScale().z() << ")";
+                    }
                 }
                 else
                     Log(Debug::Warning) << "FNV/ESM4 diag: VRHandsOnly hand center normalization skipped; attached "
