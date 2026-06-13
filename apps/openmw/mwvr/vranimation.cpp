@@ -4,11 +4,13 @@
 #include "vrpointer.hpp"
 
 #include <osg/BlendFunc>
+#include <osg/ComputeBoundsVisitor>
 #include <osg/CullFace>
 #include <osg/FrontFace>
 #include <osg/Depth>
 #include <osg/Drawable>
 #include <osg/Fog>
+#include <osg/Geode>
 #include <osg/Geometry>
 #include <osg/LightModel>
 #include <osg/MatrixTransform>
@@ -28,6 +30,8 @@
 #include <components/resource/scenemanager.hpp>
 #include <components/sceneutil/attach.hpp>
 #include <components/sceneutil/positionattitudetransform.hpp>
+#include <components/sceneutil/riggeometry.hpp>
+#include <components/sceneutil/riggeometryosgaextension.hpp>
 #include <components/sceneutil/shadow.hpp>
 #include <components/sceneutil/skeleton.hpp>
 
@@ -206,6 +210,150 @@ namespace MWVR
 
         bool mEnable;
     };
+
+    class StaticizeFalloutVrRiggedGeometryVisitor : public osg::NodeVisitor
+    {
+    public:
+        StaticizeFalloutVrRiggedGeometryVisitor()
+            : osg::NodeVisitor(TRAVERSE_ALL_CHILDREN)
+        {
+        }
+
+        void apply(osg::Geode& geode) override
+        {
+            for (unsigned int i = 0; i < geode.getNumDrawables(); ++i)
+            {
+                osg::ref_ptr<osg::Geometry> staticGeometry = makeStaticGeometry(*geode.getDrawable(i));
+                if (staticGeometry == nullptr)
+                    continue;
+
+                geode.setDrawable(i, staticGeometry);
+                ++mStaticizedRigGeometryCount;
+            }
+
+            traverse(geode);
+        }
+
+        void apply(osg::Drawable& drawable) override
+        {
+            osg::ref_ptr<osg::Geometry> staticGeometry = makeStaticGeometry(drawable);
+            if (staticGeometry == nullptr)
+                return;
+
+            bool replaced = false;
+            while (drawable.getNumParents() > 0)
+            {
+                osg::Group* parent = drawable.getParent(0);
+                if (osg::Geode* geode = dynamic_cast<osg::Geode*>(parent))
+                {
+                    if (!geode->replaceDrawable(&drawable, staticGeometry.get()))
+                        break;
+                    replaced = true;
+                    continue;
+                }
+
+                osg::Node* drawableNode = dynamic_cast<osg::Node*>(&drawable);
+                if (parent == nullptr || drawableNode == nullptr)
+                    break;
+
+                osg::ref_ptr<osg::Geode> staticGeode = new osg::Geode;
+                staticGeode->setName(drawable.getName().empty() ? std::string("FNV VR Staticized Rig Drawable")
+                                                                 : "FNV VR Staticized " + drawable.getName());
+                staticGeode->addDrawable(staticGeometry.get());
+                if (!parent->replaceChild(drawableNode, staticGeode.get()))
+                    break;
+                replaced = true;
+            }
+
+            if (replaced)
+                ++mStaticizedRigGeometryCount;
+            else
+                Log(Debug::Warning) << "FNV/ESM4 diag: VRHandsOnly staticize could not replace rig drawable name="
+                                    << drawable.getName() << " parents=" << drawable.getNumParents();
+        }
+
+        osg::ref_ptr<osg::Geometry> makeStaticGeometry(osg::Drawable& drawable)
+        {
+            osg::Geometry* source = nullptr;
+            std::string sourceName;
+            std::string rootBone;
+            std::size_t boneCount = 0;
+            const char* kind = nullptr;
+
+            if (SceneUtil::RigGeometry* rig = dynamic_cast<SceneUtil::RigGeometry*>(&drawable))
+            {
+                ++mSeenRigGeometryCount;
+                source = rig->getSourceGeometry();
+                if ((source == nullptr || source->getVertexArray() == nullptr
+                        || source->getVertexArray()->getNumElements() == 0))
+                {
+                    for (unsigned int i = 0; i < 2; ++i)
+                    {
+                        osg::Geometry* renderGeometry = rig->getRenderGeometry(i);
+                        if (renderGeometry == nullptr || renderGeometry->getVertexArray() == nullptr
+                            || renderGeometry->getVertexArray()->getNumElements() == 0)
+                            continue;
+                        source = renderGeometry;
+                        break;
+                    }
+                }
+                sourceName = source != nullptr ? source->getName() : std::string();
+                rootBone = std::string(rig->getRootBone());
+                boneCount = rig->getBoneCount();
+                kind = "SceneUtil::RigGeometry";
+            }
+            else if (SceneUtil::RigGeometryHolder* holder = dynamic_cast<SceneUtil::RigGeometryHolder*>(&drawable))
+            {
+                ++mSeenRigGeometryCount;
+                osg::ref_ptr<SceneUtil::OsgaRigGeometry> holderSource = holder->getSourceRigGeometry();
+                source = dynamic_cast<osg::Geometry*>(holderSource.get());
+                sourceName = source != nullptr ? source->getName() : std::string();
+                kind = "SceneUtil::RigGeometryHolder";
+            }
+            else
+                return nullptr;
+
+            if (source == nullptr)
+            {
+                ++mMissingSourceGeometryCount;
+                Log(Debug::Warning) << "FNV/ESM4 diag: VRHandsOnly staticize rig drawable has no source kind=" << kind
+                                    << " name=" << drawable.getName() << " rootBone=" << rootBone
+                                    << " bones=" << boneCount;
+                return nullptr;
+            }
+
+            osg::ref_ptr<osg::Geometry> staticGeometry = osg::clone(source, osg::CopyOp::DEEP_COPY_ALL);
+            staticGeometry->setName(drawable.getName().empty() ? sourceName : drawable.getName());
+            staticGeometry->setNodeMask(~0u);
+            staticGeometry->setCullingActive(false);
+            staticGeometry->setComputeBoundingBoxCallback(nullptr);
+            staticGeometry->setComputeBoundingSphereCallback(nullptr);
+            staticGeometry->dirtyBound();
+            if (drawable.getStateSet() != nullptr)
+                staticGeometry->setStateSet(osg::clone(drawable.getStateSet(), osg::CopyOp::DEEP_COPY_ALL));
+
+            Log(Debug::Info) << "FNV/ESM4 diag: VRHandsOnly staticized rig drawable kind=" << kind
+                             << " name=" << drawable.getName() << " source=" << sourceName
+                             << " rootBone=" << rootBone << " bones=" << boneCount;
+            return staticGeometry;
+        }
+
+        unsigned int mStaticizedRigGeometryCount = 0;
+        unsigned int mSeenRigGeometryCount = 0;
+        unsigned int mMissingSourceGeometryCount = 0;
+    };
+
+    osg::BoundingBox computeNodeBounds(osg::Node& node)
+    {
+        osg::ComputeBoundsVisitor boundsVisitor;
+        node.accept(boundsVisitor);
+        return boundsVisitor.getBoundingBox();
+    }
+
+    osg::Vec3f boundsExtent(const osg::BoundingBox& box)
+    {
+        return osg::Vec3f(box.xMax() - box.xMin(), box.yMax() - box.yMin(), box.zMax() - box.zMin());
+    }
 
     /// Implements control of weapon direction
     class WeaponDirectionController : public osg::NodeCallback
@@ -605,12 +753,11 @@ namespace MWVR
             const bool riggedHandPart = !pipBoyArm
                 && (loweredModel.find("hand") != std::string::npos || loweredModel.find("glove") != std::string::npos);
 
-            osg::Group* attachNode = riggedHandPart ? (bip01 != nullptr ? bip01 : master)
-                                                    : (surface.left ? leftHand : rightHand);
+            osg::Group* attachNode = surface.left ? leftHand : rightHand;
             if (attachNode == nullptr)
             {
                 Log(Debug::Warning) << "FNV/ESM4 diag: VRHandsOnly attach skipped missing "
-                                    << (riggedHandPart ? "Bip01" : (surface.left ? "left" : "right"))
+                                    << (surface.left ? "left" : "right")
                                     << " attach node model=" << surface.model;
                 continue;
             }
@@ -618,6 +765,40 @@ namespace MWVR
             const VFS::Path::Normalized correctedModel
                 = Misc::ResourceHelpers::correctMeshPath(VFS::Path::Normalized(surface.model));
             osg::ref_ptr<const osg::Node> templateNode = mResourceSystem->getSceneManager()->getTemplate(correctedModel);
+            osg::ref_ptr<const osg::Node> attachTemplateNode = templateNode;
+            osg::BoundingBox staticizedHandBounds;
+            bool staticizedRiggedHandPart = false;
+            if (riggedHandPart)
+            {
+                osg::ref_ptr<osg::Node> staticTemplate = osg::clone(templateNode.get(), osg::CopyOp::DEEP_COPY_ALL);
+                StaticizeFalloutVrRiggedGeometryVisitor staticizeVisitor;
+                staticTemplate->accept(staticizeVisitor);
+                if (staticizeVisitor.mStaticizedRigGeometryCount > 0)
+                {
+                    attachTemplateNode = staticTemplate;
+                    staticizedRiggedHandPart = true;
+                    staticizedHandBounds = computeNodeBounds(*staticTemplate);
+                    if (staticizedHandBounds.valid())
+                    {
+                        const osg::Vec3f center = staticizedHandBounds.center();
+                        const osg::Vec3f extent = boundsExtent(staticizedHandBounds);
+                        Log(Debug::Info) << "FNV/ESM4 diag: VRHandsOnly staticized hand bounds model="
+                                         << correctedModel.value()
+                                         << " center=(" << center.x() << "," << center.y() << "," << center.z()
+                                         << ") extent=(" << extent.x() << "," << extent.y() << "," << extent.z()
+                                         << ")";
+                    }
+                    else
+                        Log(Debug::Warning) << "FNV/ESM4 diag: VRHandsOnly staticized hand bounds invalid model="
+                                            << correctedModel.value();
+                }
+                else
+                    Log(Debug::Warning) << "FNV/ESM4 diag: VRHandsOnly failed to staticize rigged hand model="
+                                        << correctedModel.value()
+                                        << " seen=" << staticizeVisitor.mSeenRigGeometryCount
+                                        << " missingSource=" << staticizeVisitor.mMissingSourceGeometryCount;
+            }
+
             const float pipBoyRotX = getEnvFloat("OPENMW_FNV_PIPBOY_ROT_X", 0.f);
             const float pipBoyRotY = getEnvFloat("OPENMW_FNV_PIPBOY_ROT_Y", 0.f);
             const float pipBoyRotZ = getEnvFloat("OPENMW_FNV_PIPBOY_ROT_Z", 90.f);
@@ -629,13 +810,36 @@ namespace MWVR
                 Log(Debug::Info) << "FNV/ESM4 diag: PipBoy wrist rotation degrees x=" << pipBoyRotX
                                  << " y=" << pipBoyRotY << " z=" << pipBoyRotZ;
             osg::ref_ptr<osg::Node> attached = SceneUtil::attach(
-                std::move(templateNode), master, {}, attachNode, mResourceSystem->getSceneManager(),
+                std::move(attachTemplateNode), master, {}, attachNode, mResourceSystem->getSceneManager(),
                 pipBoyArm ? &pipBoyAttitude : nullptr);
             if (attached == nullptr)
             {
                 Log(Debug::Warning) << "FNV/ESM4 diag: VRHandsOnly attach failed model=" << correctedModel.value()
                                     << " source=" << surface.source;
                 continue;
+            }
+
+            if (staticizedRiggedHandPart && staticizedHandBounds.valid())
+            {
+                if (osg::PositionAttitudeTransform* transform
+                    = dynamic_cast<osg::PositionAttitudeTransform*>(attached.get()))
+                {
+                    const osg::Vec3f center = staticizedHandBounds.center();
+                    const osg::Vec3f scale = transform->getScale();
+                    const osg::Vec3f normalizeOffset(
+                        -scale.x() * center.x(), -scale.y() * center.y(), -scale.z() * center.z());
+                    transform->setPosition(transform->getPosition() + normalizeOffset);
+                    Log(Debug::Info) << "FNV/ESM4 diag: VRHandsOnly hand center normalized model="
+                                     << correctedModel.value()
+                                     << " offset=(" << normalizeOffset.x() << "," << normalizeOffset.y() << ","
+                                     << normalizeOffset.z() << ") finalPosition=(" << transform->getPosition().x()
+                                     << "," << transform->getPosition().y() << "," << transform->getPosition().z()
+                                     << ") scale=(" << scale.x() << "," << scale.y() << "," << scale.z() << ")";
+                }
+                else
+                    Log(Debug::Warning) << "FNV/ESM4 diag: VRHandsOnly hand center normalization skipped; attached "
+                                           "node is not PAT model="
+                                        << correctedModel.value();
             }
 
             if (pipBoyArm)
@@ -664,6 +868,7 @@ namespace MWVR
                              << " side=" << (surface.left ? "left" : "right")
                              << " attachNode=" << attachNode->getName()
                              << " riggedHandPart=" << riggedHandPart
+                             << " staticizedHandPart=" << staticizedRiggedHandPart
                              << " pipBoyArm=" << pipBoyArm
                              << " master=" << master->getName()
                              << " diffuse=" << surface.diffuseTexture;
