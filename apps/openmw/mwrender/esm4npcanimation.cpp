@@ -5041,6 +5041,10 @@ namespace MWRender
                     overrideFalloutPartNormalTexture(npcFaceNormalTexture, mResourceSystem, *attached);
                 }
                 neutralizeFalloutSkinMaterial(attached.get(), headPart.mesh, traits);
+                DisableCullVisitor visitor;
+                attached->accept(visitor);
+                Log(Debug::Info) << "FNV/ESM4 diag: made head skin surface double-sided " << headPart.mesh
+                                 << " for " << traits.mEditorId;
             }
             if (attached != nullptr)
                 applyFalloutProofTriStaticMorph(mResourceSystem, attached.get(), headPart.mesh, traits);
