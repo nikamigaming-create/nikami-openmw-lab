@@ -9,6 +9,7 @@
 -- @field openmw.util#Vector2 center Defines where within a layer is considered the center. x and y values range from -0.5 to 0.5. The geometry will be positioned with its center at the assigned coordinate. This most importantly affects the direction auto-sized layers will grow. For example, the HUD has a default center of util.vector2(0, 0.5),  causing it to grow left as new magic effects are added, keeping all elements in place.
 -- @field openmw.util#Vector2 extent Defines the spatial size of a layer in meters. Is ignored for auto-sized layers.
 -- @field #number pixelsPerMeter Defines the spatial size of auto-sized layers. Is ignored for non-auto-sized layers.
+-- @field openmw.util#Vector2 rttResolution Defines the render target pixel resolution of the layer.
 -- @field #boolean autosize Defines whether this layer should be auto-sized or not
 -- @field #string space (Optional) name of a space to actively track. If set, the UI element will actively track this space, updating its pose every frame.
 --
@@ -79,10 +80,14 @@ local layersForArrangement = {
     'DialogueWindow', 'MapWindow', 'SpellWindow', 'InventoryWindow', 'StatsWindow', 'InventoryCompanionWindow', 'Windows'
 }
 
-local pipBoyLayers = {
-    -- Reserved for dedicated live wrist Pip-Boy layers. The regular inventory,
-    -- stats, map, and utility windows remain front arranged menu panels.
+local pipBoyWindowLayers = {
+    'InventoryWindow',
+    'StatsWindow',
+    'MapWindow',
+    'SpellWindow',
 }
+
+local pipBoyLayers = {}
 
 local function getWindowLayer(window)
     return windowToLayer[window] or 'Windows'
@@ -99,6 +104,21 @@ end
 
 local function getLayerSize(layer)
     return ui.layers[ui.layers.indexOf(layer)].size
+end
+
+local function isFalloutContentLoaded()
+    return core.contentFiles and core.contentFiles.has and core.contentFiles.has('FalloutNV.esm')
+end
+
+local function updatePipBoyLayerMembership()
+    pipBoyLayers = {}
+    if not isFalloutContentLoaded() then
+        return
+    end
+
+    for _, layer in ipairs(pipBoyWindowLayers) do
+        pipBoyLayers[layer] = true
+    end
 end
 
 local function createDerivedSpaces()
@@ -276,7 +296,7 @@ local function createDefaultConfig(backgroundOpacity, autosize)
         center = util.vector2(0,0),
         extent = util.vector2(1,1),
         pixelsPerMeter = 1024,
-        pixelResolution = util.vector2(1024, 1024),
+        rttResolution = util.vector2(1024, 1024),
         autosize = autosize,
     }
 end
@@ -423,6 +443,7 @@ spacesSection:subscribe(async:callback(updateSpacesSettings))
 
 
 local function setupDefaults(modes)
+    updatePipBoyLayerMembership()
     updateSpacesSettings()
 
     local allLayers = getAllLayers()
@@ -460,6 +481,36 @@ local function setupDefaults(modes)
     layerConfig.SpellWindow.pixelsPerMeter = 850
     layerConfig.Windows.backgroundOpacity = 0.82
     layerConfig.Windows.pixelsPerMeter = 850
+
+    if isFalloutContentLoaded() then
+        layerConfig.InventoryWindow.backgroundOpacity = 0.08
+        layerConfig.InventoryWindow.autosize = false
+        layerConfig.InventoryWindow.extent = util.vector2(0.18, 0.13)
+        layerConfig.InventoryWindow.rttResolution = util.vector2(1024, 768)
+        layerConfig.InventoryWindow.pixelsPerMeter = 900
+        layerConfig.InventoryWindow.space = 'PipBoyInventory'
+
+        layerConfig.StatsWindow.backgroundOpacity = 0.05
+        layerConfig.StatsWindow.autosize = false
+        layerConfig.StatsWindow.extent = util.vector2(0.09, 0.12)
+        layerConfig.StatsWindow.rttResolution = util.vector2(768, 768)
+        layerConfig.StatsWindow.pixelsPerMeter = 900
+        layerConfig.StatsWindow.space = 'PipBoyStats'
+
+        layerConfig.MapWindow.backgroundOpacity = 0.05
+        layerConfig.MapWindow.autosize = false
+        layerConfig.MapWindow.extent = util.vector2(0.09, 0.12)
+        layerConfig.MapWindow.rttResolution = util.vector2(768, 768)
+        layerConfig.MapWindow.pixelsPerMeter = 900
+        layerConfig.MapWindow.space = 'PipBoyMap'
+
+        layerConfig.SpellWindow.backgroundOpacity = 0.05
+        layerConfig.SpellWindow.autosize = false
+        layerConfig.SpellWindow.extent = util.vector2(0.12, 0.05)
+        layerConfig.SpellWindow.rttResolution = util.vector2(768, 384)
+        layerConfig.SpellWindow.pixelsPerMeter = 900
+        layerConfig.SpellWindow.space = 'PipBoyUtility'
+    end
 
     for layer, config in pairs(layerConfig) do
         setLayerConfigIfNotOverridden(layer, config)
@@ -521,6 +572,8 @@ local function updateLayerArrangement()
 end
 
 local function updateVisibleLayers()
+    updatePipBoyLayerMembership()
+
     local old = visibleLayersForArrangement
     visibleLayersForArrangement = {}
 
