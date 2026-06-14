@@ -176,36 +176,34 @@ local function createDerivedSpaces()
 
     I.vrspaces.createDerivedSpace(
         'PipBoyInventory',
-        I.vrspaces.actionSpaces.LeftHandAim,
+        'LeftWristTop',
         {
-            position = util.vector3(0.0, -0.235, 0.070) * I.vrspaces.unitsPerMeter
+            position = util.vector3(-0.037, -0.023, -0.050) * I.vrspaces.unitsPerMeter,
+            orientation = util.transform.rotate(math.pi / 2, util.vector3(0, 0, 1))
         }
     )
 
     I.vrspaces.createDerivedSpace(
         'PipBoyStats',
-        I.vrspaces.actionSpaces.LeftHandAim,
+        'PipBoyInventory',
         {
-            position = util.vector3(-0.075, -0.235, 0.060) * I.vrspaces.unitsPerMeter,
-            orientation = util.transform.rotate(math.pi / 18, util.vector3(0, 0, 1))
+            position = util.vector3(-0.078, 0.0, 0.0) * I.vrspaces.unitsPerMeter
         }
     )
 
     I.vrspaces.createDerivedSpace(
         'PipBoyMap',
-        I.vrspaces.actionSpaces.LeftHandAim,
+        'PipBoyInventory',
         {
-            position = util.vector3(0.075, -0.235, 0.060) * I.vrspaces.unitsPerMeter,
-            orientation = util.transform.rotate(-math.pi / 18, util.vector3(0, 0, 1))
+            position = util.vector3(0.078, 0.0, 0.0) * I.vrspaces.unitsPerMeter
         }
     )
 
     I.vrspaces.createDerivedSpace(
         'PipBoyUtility',
-        I.vrspaces.actionSpaces.LeftHandAim,
+        'PipBoyInventory',
         {
-            position = util.vector3(0.0, -0.255, -0.015) * I.vrspaces.unitsPerMeter,
-            orientation = util.transform.rotate(math.pi / 2, util.vector3(0, 0, 1))
+            position = util.vector3(0.0, 0.0, -0.075) * I.vrspaces.unitsPerMeter
         }
     )
 
