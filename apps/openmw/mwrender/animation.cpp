@@ -4769,7 +4769,7 @@ namespace MWRender
                                 [](const std::pair<float, float>& a, float b) {
                                     return a.first < b;
                                 });
-                            
+
                             if (it == track.mKeys.begin())
                                 return it->second;
 

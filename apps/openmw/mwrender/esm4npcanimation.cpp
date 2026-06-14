@@ -2323,12 +2323,12 @@ namespace MWRender
                 osg::ref_ptr<osg::Geometry> morphed = new osg::Geometry(*rig.getSourceGeometry(), osg::CopyOp::SHALLOW_COPY);
                 osg::ref_ptr<osg::Vec3Array> activeVertices = new osg::Vec3Array(*baseVertices);
                 morphed->setVertexArray(activeVertices);
-                
+
                 morphed->setDataVariance(osg::Object::DYNAMIC);
                 morphed->setUseDisplayList(false);
                 morphed->setUseVertexBufferObjects(true);
                 activeVertices->setDataVariance(osg::Object::DYNAMIC);
-                
+
                 rig.setSourceGeometry(morphed);
 
                 Target t;
@@ -2347,12 +2347,12 @@ namespace MWRender
                 osg::ref_ptr<osg::Geometry> morphed = new osg::Geometry(geometry, osg::CopyOp::SHALLOW_COPY);
                 osg::ref_ptr<osg::Vec3Array> activeVertices = new osg::Vec3Array(*baseVertices);
                 morphed->setVertexArray(activeVertices);
-                
+
                 morphed->setDataVariance(osg::Object::DYNAMIC);
                 morphed->setUseDisplayList(false);
                 morphed->setUseVertexBufferObjects(true);
                 activeVertices->setDataVariance(osg::Object::DYNAMIC);
-                
+
                 for (unsigned int parentIndex = 0; parentIndex < geometry.getNumParents(); ++parentIndex)
                 {
                     if (osg::Geode* parent = dynamic_cast<osg::Geode*>(geometry.getParent(parentIndex)))
@@ -2384,13 +2384,13 @@ namespace MWRender
 
                 for (std::size_t i = 0; i < target.mBaseVertices->size(); ++i)
                     (*target.mActiveVertices)[i] = (*target.mBaseVertices)[i];
-                
+
                 for (size_t m = 0; m < mMorphs.size(); ++m)
                 {
                     float val = values[m];
                     if (val == 0.f)
                         continue;
-                    
+
                     const auto& deltas = mMorphs[m].deltas;
                     if (target.mActiveVertices->size() != deltas.size())
                         continue;
@@ -2398,7 +2398,7 @@ namespace MWRender
                     for (std::size_t i = 0; i < target.mActiveVertices->size(); ++i)
                         (*target.mActiveVertices)[i] += deltas[i] * val;
                 }
-                
+
                 target.mActiveVertices->dirty();
 
                 if (target.mGeometry != nullptr)
@@ -2460,7 +2460,7 @@ namespace MWRender
                 = new FalloutDialogueMorphDriver(animation, *tri, std::string(model));
             FalloutDialogueMorphTargetVisitor targetVisitor(*driver);
             attached->accept(targetVisitor);
-            
+
             if (driver->empty())
                 return false;
 
