@@ -64,6 +64,24 @@ namespace SceneUtil
             return "source";
         }
 
+        bool isFalloutHandRig(std::string_view name, std::string_view rootBone)
+        {
+            return Misc::StringUtils::ciFind(name, "hand") != std::string_view::npos
+                || Misc::StringUtils::ciFind(name, "glove") != std::string_view::npos
+                || Misc::StringUtils::ciFind(rootBone, " hand") != std::string_view::npos;
+        }
+
+        std::string_view getFalloutSkinningMode(std::string_view name, std::string_view rootBone)
+        {
+            if (isFalloutHandRig(name, rootBone))
+            {
+                if (const char* env = std::getenv("OPENMW_FNV_VR_HAND_SKINNING_MODE"))
+                    return env;
+            }
+
+            return getFalloutSkinningMode();
+        }
+
         bool useFalloutSkinToSkelMatrix()
         {
             if (const char* env = std::getenv("OPENMW_FNV_USE_SKIN_TO_SKEL"))
@@ -71,12 +89,12 @@ namespace SceneUtil
             return false;
         }
 
-        osg::Matrixf composeFalloutBoneMatrix(const RigGeometry::BoneInfo& boneInfo, const Bone* bone)
+        osg::Matrixf composeFalloutBoneMatrix(
+            const RigGeometry::BoneInfo& boneInfo, const Bone* bone, std::string_view mode)
         {
             if (bone == nullptr)
                 return osg::Matrixf();
 
-            const std::string_view mode = getFalloutSkinningMode();
             const osg::Matrixf& invBind = boneInfo.mInvBindMatrix;
             const osg::Matrixf& skeleton = bone->mMatrixInSkeletonSpace;
             if (mode == "skeleton")
@@ -92,9 +110,12 @@ namespace SceneUtil
                 return skeleton * bind;
             if (mode == "identity" || mode == "source")
                 return osg::Matrixf();
+            if (mode == "invBindThenSkeleton")
+                return invBind * skeleton;
 
             return invBind * skeleton;
         }
+
 
         void copySourceSkinningGeometry(const osg::Vec3Array* positionSrc, const osg::Vec3Array* normalSrc,
             const osg::Vec4Array* tangentSrc, osg::Vec3Array* positionDst, osg::Vec3Array* normalDst,
@@ -411,7 +432,8 @@ namespace SceneUtil
         osg::Vec3Array* normalDst = static_cast<osg::Vec3Array*>(geom.getNormalArray());
         osg::Vec4Array* tangentDst = static_cast<osg::Vec4Array*>(geom.getTexCoordArray(7));
 
-        const std::string_view falloutSkinningMode = falloutRig ? getFalloutSkinningMode() : std::string_view();
+        const std::string_view falloutSkinningMode
+            = falloutRig ? getFalloutSkinningMode(getName(), mData->mRootBone) : std::string_view();
         const bool falloutAutoMode = falloutRig && falloutSkinningMode == "auto";
         const bool sourceSkinOnly = falloutRig && falloutSkinningMode == "sourceSkinOnly"
             && mSkinToSkelMatrix != nullptr;
@@ -427,7 +449,7 @@ namespace SceneUtil
             if (*bone != nullptr)
             {
                 boneMat = falloutSourceSkinning ? osg::Matrixf()
-                    : falloutRig       ? composeFalloutBoneMatrix(*boneInfo, *bone)
+                    : falloutRig       ? composeFalloutBoneMatrix(*boneInfo, *bone, falloutSkinningMode)
                                        : boneInfo->mInvBindMatrix * (*bone)->mMatrixInSkeletonSpace;
             }
             ++bone;
@@ -593,7 +615,7 @@ namespace SceneUtil
                              << " skeletonThenInvBind=" << maxSkeletonThenInvBindDelta
                              << " bindThenSkeleton=" << maxBindThenSkeletonDelta
                              << " skeletonThenBind=" << maxSkeletonThenBindDelta
-                             << " selected=" << getFalloutSkinningMode()
+                             << " selected=" << falloutSkinningMode
                              << " sourceFallback=" << mFalloutUseSourceFallback
                              << " hasSkinToSkel=" << static_cast<bool>(mSkinToSkelMatrix)
                              << " useSkinToSkel=" << useFalloutSkinToSkelMatrix();
@@ -765,7 +787,8 @@ namespace SceneUtil
         const bool falloutRig = isFalloutCharacterRig();
         const bool falloutFlagRig = mFalloutFlagSkinning;
         osg::Matrixf transform;
-        const std::string_view falloutSkinningMode = falloutRig ? getFalloutSkinningMode() : std::string_view();
+        const std::string_view falloutSkinningMode
+            = falloutRig ? getFalloutSkinningMode(getName(), mData->mRootBone) : std::string_view();
         const bool sourceSkinOnly = falloutRig && falloutSkinningMode == "sourceSkinOnly"
             && mSkinToSkelMatrix != nullptr;
         const bool falloutSourceSkinning = falloutRig
@@ -924,6 +947,227 @@ namespace SceneUtil
         if (!mData || index >= mData->mBones.size())
             return {};
         return mData->mBones[index].mName;
+    }
+
+    bool RigGeometry::getSkinningDebugData(std::vector<BoneInfo>& bones, std::vector<BoneWeights>& vertexInfluences,
+        std::vector<osg::Matrixf>& localBoneMatrices, std::vector<osg::Matrixf>& skeletonBoneMatrices,
+        osg::Matrixf& transform, osg::Matrixf& skinToSkelMatrix) const
+    {
+        bones.clear();
+        vertexInfluences.clear();
+        localBoneMatrices.clear();
+        skeletonBoneMatrices.clear();
+        transform.makeIdentity();
+        skinToSkelMatrix.makeIdentity();
+
+        if (!mData || !mSourceGeometry || mSourceGeometry->getVertexArray() == nullptr)
+            return false;
+
+        const std::size_t vertexCount = mSourceGeometry->getVertexArray()->getNumElements();
+        if (vertexCount == 0)
+            return false;
+
+        bones = mData->mBones;
+        vertexInfluences.resize(vertexCount);
+        for (const auto& [influences, vertices] : mData->mInfluences)
+        {
+            for (unsigned short vertex : vertices)
+            {
+                if (vertex < vertexInfluences.size())
+                    vertexInfluences[vertex] = influences;
+            }
+        }
+
+        localBoneMatrices.resize(bones.size());
+        skeletonBoneMatrices.resize(bones.size());
+        for (std::size_t i = 0; i < bones.size(); ++i)
+        {
+            localBoneMatrices[i].makeIdentity();
+            skeletonBoneMatrices[i].makeIdentity();
+            if (i >= mNodes.size() || mNodes[i] == nullptr)
+                continue;
+
+            if (mNodes[i]->mNode != nullptr)
+                localBoneMatrices[i] = mNodes[i]->mNode->getMatrix();
+            skeletonBoneMatrices[i] = mNodes[i]->mMatrixInSkeletonSpace;
+        }
+
+        transform = mData->mTransform;
+        if (mSkinToSkelMatrix)
+            skinToSkelMatrix = *mSkinToSkelMatrix;
+        return true;
+    }
+
+    bool RigGeometry::getFalloutFingerVertexWeights(
+        std::vector<float>& thumb, std::vector<float>& index, std::vector<float>& grip) const
+    {
+        thumb.clear();
+        index.clear();
+        grip.clear();
+
+        if (!mData || !mSourceGeometry || mSourceGeometry->getVertexArray() == nullptr)
+            return false;
+
+        const std::size_t vertexCount = mSourceGeometry->getVertexArray()->getNumElements();
+        if (vertexCount == 0)
+            return false;
+
+        thumb.assign(vertexCount, 0.f);
+        index.assign(vertexCount, 0.f);
+        grip.assign(vertexCount, 0.f);
+
+        auto clampUnit = [](float value) {
+            return std::max(0.f, std::min(1.f, value));
+        };
+
+        bool found = false;
+        for (const auto& [influences, vertices] : mData->mInfluences)
+        {
+            float thumbWeight = 0.f;
+            float indexWeight = 0.f;
+            float gripWeight = 0.f;
+
+            for (const auto& [boneIndex, weight] : influences)
+            {
+                if (boneIndex >= mData->mBones.size() || weight <= 0.f)
+                    continue;
+
+                const std::string boneName = Misc::StringUtils::lowerCase(mData->mBones[boneIndex].mName);
+                if (boneName.find("finger0") != std::string::npos || boneName.find("thumb") != std::string::npos)
+                    thumbWeight += weight;
+                else if (boneName.find("finger1") != std::string::npos || boneName.find("index") != std::string::npos)
+                    indexWeight += weight;
+                else if (boneName.find("finger2") != std::string::npos || boneName.find("finger3") != std::string::npos
+                    || boneName.find("finger4") != std::string::npos || boneName.find("middle") != std::string::npos
+                    || boneName.find("ring") != std::string::npos || boneName.find("pinky") != std::string::npos
+                    || boneName.find("little") != std::string::npos)
+                    gripWeight += weight;
+            }
+
+            if (thumbWeight <= 0.f && indexWeight <= 0.f && gripWeight <= 0.f)
+                continue;
+
+            found = true;
+            for (unsigned short vertex : vertices)
+            {
+                if (vertex >= vertexCount)
+                    continue;
+                thumb[vertex] = clampUnit(thumb[vertex] + thumbWeight);
+                index[vertex] = clampUnit(index[vertex] + indexWeight);
+                grip[vertex] = clampUnit(grip[vertex] + gripWeight);
+            }
+        }
+
+        return found;
+    }
+
+    namespace
+    {
+        int getFalloutFingerBoneSlot(const std::string& boneName)
+        {
+            const auto chainSlot = [&](std::string_view base, int group) -> int {
+                const std::string chain2 = std::string(base) + "2";
+                const std::string chain1 = std::string(base) + "1";
+                if (boneName.find(chain2) != std::string::npos)
+                    return group * 3 + 2;
+                if (boneName.find(chain1) != std::string::npos)
+                    return group * 3 + 1;
+                if (boneName.find(base) != std::string::npos)
+                    return group * 3;
+                return -1;
+            };
+
+            int slot = chainSlot("thumb1", 0);
+            if (slot >= 0)
+                return slot;
+            slot = chainSlot("finger1", 1);
+            if (slot >= 0)
+                return slot;
+            slot = chainSlot("finger2", 2);
+            if (slot >= 0)
+                return slot;
+            slot = chainSlot("finger3", 3);
+            if (slot >= 0)
+                return slot;
+            slot = chainSlot("finger4", 4);
+            if (slot >= 0)
+                return slot;
+
+            if (boneName.find("index") != std::string::npos)
+                return 3;
+            if (boneName.find("middle") != std::string::npos)
+                return 6;
+            if (boneName.find("ring") != std::string::npos)
+                return 9;
+            if (boneName.find("pinky") != std::string::npos || boneName.find("little") != std::string::npos)
+                return 12;
+            if (boneName.find("thumb") != std::string::npos)
+                return 0;
+
+            return -1;
+        }
+    }
+
+    bool RigGeometry::getFalloutFingerBoneVertexWeights(std::array<std::vector<float>, 15>& fingerBones) const
+    {
+        for (auto& weights : fingerBones)
+            weights.clear();
+
+        if (!mData || !mSourceGeometry || mSourceGeometry->getVertexArray() == nullptr)
+            return false;
+
+        const std::size_t vertexCount = mSourceGeometry->getVertexArray()->getNumElements();
+        if (vertexCount == 0)
+            return false;
+
+        for (auto& weights : fingerBones)
+            weights.assign(vertexCount, 0.f);
+
+        auto clampUnit = [](float value) {
+            return std::max(0.f, std::min(1.f, value));
+        };
+
+        bool found = false;
+        for (const auto& [influences, vertices] : mData->mInfluences)
+        {
+            std::array<float, 15> fingerWeights{};
+            for (const auto& [boneIndex, weight] : influences)
+            {
+                if (boneIndex >= mData->mBones.size() || weight <= 0.f)
+                    continue;
+
+                const std::string boneName = Misc::StringUtils::lowerCase(mData->mBones[boneIndex].mName);
+                const int slot = getFalloutFingerBoneSlot(boneName);
+                if (slot < 0 || slot >= static_cast<int>(fingerWeights.size()))
+                    continue;
+
+                fingerWeights[slot] += weight;
+            }
+
+            bool hasFingerWeight = false;
+            for (float weight : fingerWeights)
+            {
+                if (weight > 0.f)
+                {
+                    hasFingerWeight = true;
+                    break;
+                }
+            }
+            if (!hasFingerWeight)
+                continue;
+
+            found = true;
+            for (unsigned short vertex : vertices)
+            {
+                if (vertex >= vertexCount)
+                    continue;
+
+                for (std::size_t slot = 0; slot < fingerWeights.size(); ++slot)
+                    fingerBones[slot][vertex] = clampUnit(fingerBones[slot][vertex] + fingerWeights[slot]);
+            }
+        }
+
+        return found;
     }
 
     void RigGeometry::accept(osg::NodeVisitor& nv)

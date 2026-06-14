@@ -20,6 +20,8 @@ namespace MWVR
     class Crosshair;
     class XrSpaceTransform;
 
+    void updateVrDebugSnapshotControls();
+
     /// Subclassing NpcAnimation to implement VR related behaviour
     class VRAnimation : public MWRender::NpcAnimation, private VR::Session::Listener
     {
@@ -92,6 +94,7 @@ namespace MWVR
         void updateTrackingControllers();
         void clearFalloutVrHandSurfaces();
         void attachFalloutVrHandSurfaces();
+        void updateFalloutVrHandSurfaceVisibility();
 
         void enableTracking(XrPath path);
         void disableTracking(XrPath path);
@@ -106,8 +109,12 @@ namespace MWVR
             std::unique_ptr<TrackingController> forearmController;
             std::string handBone;
             osg::ref_ptr<HandController> handController;
-            std::string indexFingerBone[2];
-            osg::ref_ptr<FingerController> indexFingerControllers[2];
+            struct FingerBinding
+            {
+                std::string bone;
+                osg::ref_ptr<FingerController> controller;
+            };
+            std::vector<FingerBinding> fingerBindings;
         };
 
     protected:

@@ -4,8 +4,10 @@
 #include <osg/Geometry>
 #include <osg/Matrixf>
 
+#include <array>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace SceneUtil
 {
@@ -68,8 +70,14 @@ namespace SceneUtil
         std::string_view getRootBone() const;
         std::size_t getBoneCount() const;
         std::string_view getBoneName(std::size_t index) const;
+        bool getSkinningDebugData(std::vector<BoneInfo>& bones, std::vector<BoneWeights>& vertexInfluences,
+            std::vector<osg::Matrixf>& localBoneMatrices, std::vector<osg::Matrixf>& skeletonBoneMatrices,
+            osg::Matrixf& transform, osg::Matrixf& skinToSkelMatrix) const;
         bool isFalloutCharacterRig() const;
         void setFalloutFlagSkinning(bool enabled) { mFalloutFlagSkinning = enabled; }
+        bool getFalloutFingerVertexWeights(
+            std::vector<float>& thumb, std::vector<float>& index, std::vector<float>& grip) const;
+        bool getFalloutFingerBoneVertexWeights(std::array<std::vector<float>, 15>& fingerBones) const;
 
         osg::ref_ptr<osg::Geometry> getSourceGeometry() const;
         osg::Geometry* getRenderGeometry(unsigned int index) const;
