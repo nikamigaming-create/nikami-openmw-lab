@@ -2,6 +2,7 @@ param(
     [string]$BuildDir = "build-clean",
     [string]$Configuration = "Release",
     [string]$VcpkgRoot = $env:NIKAMI_VCPKG_ROOT,
+    [string]$VsDevCmd = $env:NIKAMI_VSDEVCMD,
     [string]$Triplet = "x64-windows",
     [int]$Parallel = 8,
     [switch]$SkipConfigure
@@ -30,6 +31,50 @@ function Invoke-CheckedNative {
     & $Command @Arguments
     if ($LASTEXITCODE -ne 0) {
         throw "$Command failed with exit code $LASTEXITCODE"
+    }
+}
+
+function Import-VisualStudioEnvironment {
+    if (Get-Command "cl.exe" -ErrorAction SilentlyContinue) {
+        return
+    }
+
+    $Candidates = @()
+    if (![string]::IsNullOrWhiteSpace($VsDevCmd)) {
+        $Candidates += $VsDevCmd
+    }
+
+    $Candidates += @(
+        "${env:ProgramFiles(x86)}\Microsoft Visual Studio\2022\BuildTools\Common7\Tools\VsDevCmd.bat",
+        "${env:ProgramFiles(x86)}\Microsoft Visual Studio\2022\Community\Common7\Tools\VsDevCmd.bat",
+        "${env:ProgramFiles(x86)}\Microsoft Visual Studio\2022\Professional\Common7\Tools\VsDevCmd.bat",
+        "${env:ProgramFiles(x86)}\Microsoft Visual Studio\2022\Enterprise\Common7\Tools\VsDevCmd.bat",
+        "$env:ProgramFiles\Microsoft Visual Studio\2022\BuildTools\Common7\Tools\VsDevCmd.bat",
+        "$env:ProgramFiles\Microsoft Visual Studio\2022\Community\Common7\Tools\VsDevCmd.bat",
+        "$env:ProgramFiles\Microsoft Visual Studio\2022\Professional\Common7\Tools\VsDevCmd.bat",
+        "$env:ProgramFiles\Microsoft Visual Studio\2022\Enterprise\Common7\Tools\VsDevCmd.bat"
+    )
+
+    $Script:ResolvedVsDevCmd = $Candidates | Where-Object {
+        ![string]::IsNullOrWhiteSpace($_) -and (Test-Path -LiteralPath $_)
+    } | Select-Object -First 1
+
+    if ([string]::IsNullOrWhiteSpace($Script:ResolvedVsDevCmd)) {
+        throw "Could not find cl.exe or VsDevCmd.bat. Pass -VsDevCmd or set NIKAMI_VSDEVCMD."
+    }
+
+    $EnvironmentLines = cmd /d /s /c "`"$Script:ResolvedVsDevCmd`" -arch=x64 -host_arch=x64 >nul && set"
+    if ($LASTEXITCODE -ne 0) {
+        throw "VsDevCmd failed with exit code $LASTEXITCODE"
+    }
+
+    foreach ($Line in $EnvironmentLines) {
+        $Equals = $Line.IndexOf("=")
+        if ($Equals -gt 0) {
+            $Name = $Line.Substring(0, $Equals)
+            $Value = $Line.Substring($Equals + 1)
+            Set-Item -Path "Env:$Name" -Value $Value
+        }
     }
 }
 
@@ -68,11 +113,14 @@ if (!(Test-Path -LiteralPath $LuaJitLibrary)) {
     throw "Missing LuaJit library: $LuaJitLibrary"
 }
 
+Import-VisualStudioEnvironment
+
 if (!$SkipConfigure) {
     $ConfigureArgs = @(
         "-S", $RepoRoot,
         "-B", $BuildPath,
         "-G", "Visual Studio 17 2022",
+        "-A", "x64",
         "-DCMAKE_TOOLCHAIN_FILE=$Toolchain",
         "-DVCPKG_TARGET_TRIPLET=$Triplet",
         "-DLuaJit_INCLUDE_DIR=$LuaJitInclude",
