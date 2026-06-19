@@ -3,6 +3,7 @@ param(
     [string]$Configuration = "Release",
     [string]$MorrowindData = $env:NIKAMI_MORROWIND_DATA,
     [string]$VcpkgRoot = $env:NIKAMI_VCPKG_ROOT,
+    [string]$ExtraOsgPluginDir = $env:NIKAMI_EXTRA_OSG_PLUGIN_DIR,
     [string]$Triplet = "x64-windows",
     [string]$ProofRoot = "",
     [switch]$NoSound
@@ -66,7 +67,9 @@ if ($Configuration -eq "Debug") {
 }
 
 $OutputOsgPluginDir = Join-Path $BuildPath "$Configuration/osgPlugins-3.6.5"
-$OsgPluginDirs = @($OutputOsgPluginDir, $OsgPluginDir) | Where-Object { Test-Path -LiteralPath $_ }
+$OsgPluginDirs = @($OutputOsgPluginDir, $OsgPluginDir, $ExtraOsgPluginDir) | Where-Object {
+    ![string]::IsNullOrWhiteSpace($_) -and (Test-Path -LiteralPath $_)
+}
 $env:OSG_LIBRARY_PATH = $OsgPluginDirs -join ";"
 
 New-Item -ItemType Directory -Force -Path $ConfigDir | Out-Null

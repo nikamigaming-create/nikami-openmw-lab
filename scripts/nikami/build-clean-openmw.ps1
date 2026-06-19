@@ -3,6 +3,7 @@ param(
     [string]$Configuration = "Release",
     [string]$VcpkgRoot = $env:NIKAMI_VCPKG_ROOT,
     [string]$VsDevCmd = $env:NIKAMI_VSDEVCMD,
+    [string]$ExtraOsgPluginDir = $env:NIKAMI_EXTRA_OSG_PLUGIN_DIR,
     [string]$Triplet = "x64-windows",
     [int]$Parallel = 8,
     [switch]$SkipConfigure
@@ -167,8 +168,21 @@ if (Test-Path -LiteralPath $OsgPluginDir) {
     Write-Warning "OSG plugin directory was not found at $OsgPluginDir"
 }
 
-$FallbackOsgPluginDir = Join-Path $RepoRoot "build/$Configuration/osgPlugins-3.6.5"
 $OutputOsgPluginDir = Join-Path $OutputDir "osgPlugins-3.6.5"
+if (![string]::IsNullOrWhiteSpace($ExtraOsgPluginDir)) {
+    if (!(Test-Path -LiteralPath $ExtraOsgPluginDir)) {
+        throw "Extra OSG plugin directory was not found: $ExtraOsgPluginDir"
+    }
+
+    New-Item -ItemType Directory -Force -Path $OutputOsgPluginDir | Out-Null
+    try {
+        Copy-Item -Path (Join-Path $ExtraOsgPluginDir "*") -Destination $OutputOsgPluginDir -Recurse -Force
+    } catch {
+        Write-Warning "Could not overwrite one or more extra OSG plugins, likely because OpenMW is running. Existing copies will be used."
+    }
+}
+
+$FallbackOsgPluginDir = Join-Path $RepoRoot "build/$Configuration/osgPlugins-3.6.5"
 if (Test-Path -LiteralPath $FallbackOsgPluginDir) {
     New-Item -ItemType Directory -Force -Path $OutputOsgPluginDir | Out-Null
     try {
