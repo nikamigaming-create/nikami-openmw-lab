@@ -323,9 +323,10 @@ namespace Nif
     /// Base class for all records
     struct Record
     {
-        RecordType mRecordType{ RC_MISSING };
-        std::string mRecordName;
-        unsigned int mRecordIndex{ ~0u };
+        // Record type and type name
+        RecordType recType{ RC_MISSING };
+        std::string recName;
+        unsigned int recIndex{ ~0u };
 
         Record() = default;
 

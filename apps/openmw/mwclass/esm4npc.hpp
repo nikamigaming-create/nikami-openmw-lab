@@ -76,10 +76,18 @@ namespace MWClass
         bool canWalk(const MWWorld::ConstPtr& ptr) const override;
 
         static const ESM4::Npc* getTraitsRecord(const MWWorld::Ptr& ptr);
+        static const ESM4::Npc* getModelRecord(const MWWorld::Ptr& ptr);
+        static const ESM4::Npc* getAIPackageRecord(const MWWorld::Ptr& ptr);
+        static const ESM4::Npc* getStatsRecord(const MWWorld::Ptr& ptr);
+        static const ESM4::Npc* getBaseDataRecord(const MWWorld::Ptr& ptr);
         static const ESM4::Race* getRace(const MWWorld::Ptr& ptr);
         static bool isFemale(const MWWorld::Ptr& ptr);
         static const std::vector<const ESM4::Armor*>& getEquippedArmor(const MWWorld::Ptr& ptr);
         static const std::vector<const ESM4::Clothing*>& getEquippedClothing(const MWWorld::Ptr& ptr);
+        static const ESM4::Weapon* getEquippedWeapon(const MWWorld::Ptr& ptr);
+        static bool addEquippedArmor(const MWWorld::Ptr& ptr, const ESM4::Armor* armor);
+        static std::string_view chooseEquipmentModel(const ESM4::Armor* rec, bool isFemale);
+        static std::string_view chooseEquipmentModel(const ESM4::Clothing* rec, bool isFemale);
 
     private:
         static ESM4NpcCustomData& getCustomData(const MWWorld::ConstPtr& ptr);

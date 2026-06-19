@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstdlib>
 #include <fstream>
+#include <string_view>
 #include <tuple>
 
 #include <components/debug/debuglog.hpp>
@@ -197,8 +198,20 @@ namespace
             player.mNpdt.mFatigue = 220;
             player.mNpdt.mDisposition = 50;
             player.mNpdt.mGold = 0;
+            const auto addProofItem = [&player](std::string_view id, int count) {
+                ESM::ContItem item;
+                item.mCount = count;
+                item.mItem = ESM::RefId::stringRefId(id);
+                player.mInventory.mList.push_back(item);
+            };
+            addProofItem("FNV_PROOF_9MM_PISTOL", 1);
+            addProofItem("FNV_PROOF_VARMINT_RIFLE", 1);
+            addProofItem("FNV_PROOF_STIMPAK", 3);
+            addProofItem("FNV_PROOF_9MM_AMMO", 48);
+            addProofItem("FNV_PROOF_BOBBY_PIN", 5);
+            addProofItem("FNV_PROOF_CAPS", 37);
             npcs.insertStatic(player);
-            Log(Debug::Info) << "FNV/ESM4: inserted fallback ESM3 Player NPC for normal save/load";
+            Log(Debug::Info) << "FNV/ESM4: inserted fallback ESM3 Player NPC for normal save/load with proof inventory";
         }
 
         const auto ensureWeapon = [&weapons](
@@ -259,18 +272,13 @@ namespace
             Log(Debug::Info) << "FNV/ESM4: inserted fallback inventory misc " << id;
         };
 
-        ensureWeapon("FNV_PROOF_9MM_PISTOL", "9mm Pistol",
-            "textures/interface/icons/pipboyimages/weapons/weapons_9mm_pistol.dds", 100);
-        ensureWeapon("FNV_PROOF_VARMINT_RIFLE", "Varmint Rifle",
-            "textures/interface/icons/pipboyimages/weapons/weapons_varmint_rifle.dds", 75);
-        ensurePotion("FNV_PROOF_STIMPAK", "Stimpak",
-            "textures/interface/icons/pipboyimages/items/items_stimpack.dds", 25);
-        ensureMisc("FNV_PROOF_9MM_AMMO", "9mm Round",
-            "textures/interface/icons/pipboyimages/items/items_9mm_ammo.dds", 0.01f, 1);
-        ensureMisc("FNV_PROOF_BOBBY_PIN", "Bobby Pin",
-            "textures/interface/icons/pipboyimages/items/item_bobby_pin.dds", 0.01f, 1);
-        ensureMisc("FNV_PROOF_CAPS", "Bottle Cap",
-            "textures/interface/icons/pipboyimages/items/items_nuka_cola_cap.dds", 0.f, 1);
+        constexpr std::string_view proofIcon = "nikami_proof_item.dds";
+        ensureWeapon("FNV_PROOF_9MM_PISTOL", "9mm Pistol", proofIcon, 100);
+        ensureWeapon("FNV_PROOF_VARMINT_RIFLE", "Varmint Rifle", proofIcon, 75);
+        ensurePotion("FNV_PROOF_STIMPAK", "Stimpak", proofIcon, 25);
+        ensureMisc("FNV_PROOF_9MM_AMMO", "9mm Round", proofIcon, 0.01f, 1);
+        ensureMisc("FNV_PROOF_BOBBY_PIN", "Bobby Pin", proofIcon, 0.01f, 1);
+        ensureMisc("FNV_PROOF_CAPS", "Bottle Cap", proofIcon, 0.f, 1);
     }
 
     bool shouldEnsureFalloutProofCharacterDefaults()

@@ -1,6 +1,8 @@
 #include "characterpreview.hpp"
 
 #include <cmath>
+#include <cstdlib>
+#include <string_view>
 
 #include <osg/BlendFunc>
 #include <osg/Camera>
@@ -13,7 +15,9 @@
 #include <osgUtil/LineSegmentIntersector>
 
 #include <components/debug/debuglog.hpp>
+#include <components/esm4/loadarmo.hpp>
 #include <components/fallback/fallback.hpp>
+#include <components/misc/strings/algorithm.hpp>
 #include <components/resource/resourcesystem.hpp>
 #include <components/resource/scenemanager.hpp>
 #include <components/sceneutil/depth.hpp>
@@ -24,18 +28,105 @@
 #include <components/settings/values.hpp>
 #include <components/stereo/multiview.hpp>
 
+#include "../mwbase/environment.hpp"
+#include "../mwbase/world.hpp"
+#include "../mwclass/esm4npc.hpp"
 #include "../mwworld/class.hpp"
+#include "../mwworld/customdata.hpp"
+#include "../mwworld/esmstore.hpp"
 #include "../mwworld/inventorystore.hpp"
 
 #include "../mwmechanics/actorutil.hpp"
 #include "../mwmechanics/weapontype.hpp"
 
+#include "animation.hpp"
+#include "esm4npcanimation.hpp"
 #include "npcanimation.hpp"
 #include "util.hpp"
 #include "vismask.hpp"
 
 namespace MWRender
 {
+    namespace
+    {
+        const ESM4::Npc* findFalloutInventoryPlayerVisualRecord()
+        {
+            const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
+            if (store == nullptr)
+                return nullptr;
+
+            const char* env = std::getenv("OPENMW_FNV_PLAYER_NPC");
+            const std::string_view wanted = env != nullptr && *env != '\0' ? std::string_view(env) : "Player";
+            const ESM4::Npc* fallback = nullptr;
+
+            for (const ESM4::Npc& npc : store->get<ESM4::Npc>())
+            {
+                if (!npc.mIsFONV)
+                    continue;
+                if (Misc::StringUtils::ciEqual(npc.mEditorId, wanted))
+                    return &npc;
+                if (fallback == nullptr && Misc::StringUtils::ciEqual(npc.mEditorId, "Player"))
+                    fallback = &npc;
+            }
+
+            return fallback;
+        }
+
+        const ESM4::Armor* findFalloutInventoryArmorByEditorId(std::string_view editorId)
+        {
+            const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
+            if (store == nullptr || editorId.empty())
+                return nullptr;
+
+            for (const ESM4::Armor& armor : store->get<ESM4::Armor>())
+                if (Misc::StringUtils::ciEqual(armor.mEditorId, editorId))
+                    return &armor;
+
+            return nullptr;
+        }
+
+        bool isFalloutContentLoaded()
+        {
+            const MWBase::World* world = MWBase::Environment::get().getWorld();
+            if (world == nullptr)
+                return false;
+
+            for (const std::string& file : world->getContentFiles())
+                if (Misc::StringUtils::ciEndsWith(file, "FalloutNV.esm"))
+                    return true;
+
+            return false;
+        }
+
+        bool shouldUseFalloutInventoryPlayerVisual()
+        {
+            if (std::getenv("OPENMW_FNV_INVENTORY_PLAYER_PROXY") != nullptr)
+                return true;
+
+            return isFalloutContentLoaded();
+        }
+
+        void applyFalloutInventoryPlayerProxyProofOutfit(const MWWorld::Ptr& visualPtr)
+        {
+            const char* outfitEnv = std::getenv("OPENMW_FNV_PLAYER_OUTFIT");
+            const std::string_view outfitEditorId
+                = outfitEnv != nullptr && *outfitEnv != '\0' ? std::string_view(outfitEnv) : "OutfitRepublican02";
+            const ESM4::Armor* armor = findFalloutInventoryArmorByEditorId(outfitEditorId);
+            if (armor == nullptr)
+            {
+                Log(Debug::Warning) << "FNV/ESM4 proof: inventory player proxy outfit " << outfitEditorId
+                                    << " not found";
+                return;
+            }
+
+            visualPtr.getRefData().setCustomData(std::unique_ptr<MWWorld::CustomData>());
+            const bool added = MWClass::ESM4Npc::addEquippedArmor(visualPtr, armor);
+            Log(Debug::Info) << "FNV/ESM4 proof: inventory player proxy outfit " << armor->mEditorId << " model="
+                             << MWClass::ESM4Npc::chooseEquipmentModel(
+                                    armor, MWClass::ESM4Npc::isFemale(visualPtr))
+                             << " added=" << added;
+        }
+    }
 
     class DrawOnceCallback : public SceneUtil::NodeCallback<DrawOnceCallback>
     {
@@ -57,7 +148,7 @@ namespace MWRender
 
                 osg::ref_ptr<osg::FrameStamp> previousFramestamp = const_cast<osg::FrameStamp*>(nv->getFrameStamp());
                 osg::FrameStamp* fs = new osg::FrameStamp(*previousFramestamp);
-                fs->setSimulationTime(0.0);
+                fs->setSimulationTime(mSimulationTime);
 
                 nv->setFrameStamp(fs);
 
@@ -76,12 +167,14 @@ namespace MWRender
         }
 
         void redrawNextFrame() { mRendered = false; }
+        void setSimulationTime(double simulationTime) { mSimulationTime = simulationTime; }
 
         unsigned int getLastRenderedFrame() const { return mLastRenderedFrame; }
 
     private:
         bool mRendered;
         unsigned int mLastRenderedFrame;
+        double mSimulationTime = 0.0;
         osg::ref_ptr<osg::Node> mSubgraph;
     };
 
@@ -238,7 +331,7 @@ namespace MWRender
         stateset->setMode(GL_NORMALIZE, osg::StateAttribute::ON);
         stateset->setMode(GL_CULL_FACE, osg::StateAttribute::ON);
         osg::ref_ptr<osg::Material> defaultMat(new osg::Material);
-        defaultMat->setColorMode(osg::Material::OFF);
+        defaultMat->setColorMode(isFalloutContentLoaded() ? osg::Material::AMBIENT_AND_DIFFUSE : osg::Material::OFF);
         defaultMat->setAmbient(osg::Material::FRONT_AND_BACK, osg::Vec4f(1, 1, 1, 1));
         defaultMat->setDiffuse(osg::Material::FRONT_AND_BACK, osg::Vec4f(1, 1, 1, 1));
         defaultMat->setSpecular(osg::Material::FRONT_AND_BACK, osg::Vec4f(0.f, 0.f, 0.f, 0.f));
@@ -284,6 +377,15 @@ namespace MWRender
         float positionY = std::sin(azimuth) * std::sin(altitude);
         float positionZ = std::cos(altitude);
         light->setPosition(osg::Vec4(positionX, positionY, positionZ, 0.0));
+        if (isFalloutContentLoaded())
+        {
+            diffuseR = std::max(diffuseR, 0.95f);
+            diffuseG = std::max(diffuseG, 0.95f);
+            diffuseB = std::max(diffuseB, 0.95f);
+            ambientR = std::max(ambientR, 0.45f);
+            ambientG = std::max(ambientG, 0.45f);
+            ambientB = std::max(ambientB, 0.45f);
+        }
         light->setDiffuse(osg::Vec4(diffuseR, diffuseG, diffuseB, 1));
         light->setAmbient(osg::Vec4(ambientR, ambientG, ambientB, 1));
         light->setSpecular(osg::Vec4(0, 0, 0, 0));
@@ -331,6 +433,12 @@ namespace MWRender
         setBlendMode();
     }
 
+    osg::ref_ptr<Animation> CharacterPreview::createAnimation()
+    {
+        return new NpcAnimation(mCharacter, mNode, mResourceSystem, true,
+            (renderHeadOnly() ? NpcAnimation::VM_HeadOnly : NpcAnimation::VM_Normal));
+    }
+
     osg::ref_ptr<osg::Texture2D> CharacterPreview::getTexture()
     {
         return static_cast<osg::Texture2D*>(mRTTNode->getColorTexture(nullptr));
@@ -340,8 +448,7 @@ namespace MWRender
     {
         mAnimation = nullptr;
 
-        mAnimation = new NpcAnimation(mCharacter, mNode, mResourceSystem, true,
-            (renderHeadOnly() ? NpcAnimation::VM_HeadOnly : NpcAnimation::VM_Normal));
+        mAnimation = createAnimation();
 
         onSetup();
 
@@ -357,9 +464,45 @@ namespace MWRender
     // --------------------------------------------------------------------------------------------------
 
     InventoryPreview::InventoryPreview(
-        osg::Group* parent, Resource::ResourceSystem* resourceSystem, const MWWorld::Ptr& character)
+        osg::Group* parent, Resource::ResourceSystem* resourceSystem, const MWWorld::Ptr& character, ViewMode viewMode)
         : CharacterPreview(parent, resourceSystem, character, 512, 1024, osg::Vec3f(0, 700, 71), osg::Vec3f(0, 0, 71))
+        , mViewMode(viewMode)
     {
+        mNode->setName("FNV Inventory Paper Doll Preview");
+    }
+
+    osg::ref_ptr<Animation> InventoryPreview::createAnimation()
+    {
+        if (shouldUseFalloutInventoryPlayerVisual())
+        {
+            if (const ESM4::Npc* falloutPlayerVisual = findFalloutInventoryPlayerVisualRecord())
+            {
+                ESM::CellRef proxyRef;
+                proxyRef.blank();
+                proxyRef.mRefID = ESM::RefId::stringRefId("Player");
+                mFalloutPreviewRef = std::make_unique<MWWorld::LiveCellRef<ESM4::Npc>>(proxyRef, falloutPlayerVisual);
+                MWWorld::Ptr visualPtr(mFalloutPreviewRef.get(), nullptr);
+                visualPtr.getRefData().setCustomData(std::unique_ptr<MWWorld::CustomData>());
+                applyFalloutInventoryPlayerProxyProofOutfit(visualPtr);
+
+                Log(Debug::Info) << "FNV/ESM4 proof: using Fallout inventory player visual proxy "
+                                 << falloutPlayerVisual->mEditorId << " (" << ESM::RefId(falloutPlayerVisual->mId)
+                                 << ")";
+                return new ESM4NpcAnimation(visualPtr, mNode, mResourceSystem);
+            }
+
+            Log(Debug::Warning)
+                << "FNV/ESM4 proof: requested Fallout inventory player visual proxy, but no FONV Player NPC was found";
+        }
+
+        mFalloutPreviewRef.reset();
+        if (mCharacter.getType() == ESM::REC_NPC_4)
+        {
+            Log(Debug::Info) << "FNV/ESM4 proof: using live Fallout inventory player visual " << mCharacter.toString();
+            return new ESM4NpcAnimation(mCharacter, mNode, mResourceSystem);
+        }
+
+        return CharacterPreview::createAnimation();
     }
 
     void InventoryPreview::setViewport(int sizeX, int sizeY)
@@ -382,8 +525,21 @@ namespace MWRender
         if (!mAnimation.get())
             return;
 
-        mAnimation->showWeapons(true);
-        mAnimation->updateParts();
+        NpcAnimation* npcAnimation = dynamic_cast<NpcAnimation*>(mAnimation.get());
+        if (npcAnimation == nullptr)
+        {
+            const float previewStart = mFalloutPreviewRef != nullptr ? 0.35f : 0.0f;
+            mDrawOnceCallback->setSimulationTime(previewStart);
+            if (mAnimation->hasAnimation("idle"))
+                mAnimation->play("idle", 1, BlendMask::BlendMask_All, false, 1.0f, "start", "stop", previewStart, 0);
+            mAnimation->runAnimation(previewStart);
+            setBlendMode();
+            redraw();
+            return;
+        }
+
+        npcAnimation->showWeapons(true);
+        npcAnimation->updateParts();
 
         MWWorld::InventoryStore& inv = mCharacter.getClass().getInventoryStore(mCharacter);
         MWWorld::ContainerStoreIterator iter = inv.getSlot(MWWorld::InventoryStore::Slot_CarriedRight);
@@ -403,7 +559,7 @@ namespace MWRender
                 inventoryGroup = "inventory" + inventoryGroup;
 
                 // We still should use one-handed animation as fallback
-                if (mAnimation->hasAnimation(inventoryGroup))
+                if (npcAnimation->hasAnimation(inventoryGroup))
                     groupname = std::move(inventoryGroup);
                 else
                 {
@@ -422,22 +578,31 @@ namespace MWRender
             }
         }
 
-        mAnimation->showCarriedLeft(showCarriedLeft);
+        npcAnimation->showCarriedLeft(showCarriedLeft);
+
+        const bool falloutPreview = mFalloutPreviewRef != nullptr || mCharacter.getType() == ESM::REC_NPC_4;
+        if (falloutPreview && !npcAnimation->hasAnimation(groupname) && npcAnimation->hasAnimation("idle"))
+        {
+            Log(Debug::Info) << "FNV/ESM4 proof: inventory paper doll using Fallout idle pose instead of missing "
+                             << groupname;
+            groupname = "idle";
+        }
 
         mCurrentAnimGroup = std::move(groupname);
-        mAnimation->play(mCurrentAnimGroup, 1, BlendMask::BlendMask_All, false, 1.0f, "start", "stop", 0.0f, 0);
+        npcAnimation->play(mCurrentAnimGroup, 1, BlendMask::BlendMask_All, false, 1.0f, "start", "stop", 0.0f, 0);
 
         MWWorld::ConstContainerStoreIterator torch = inv.getSlot(MWWorld::InventoryStore::Slot_CarriedLeft);
         if (torch != inv.end() && torch->getType() == ESM::Light::sRecordId && showCarriedLeft)
         {
-            if (!mAnimation->getInfo("torch"))
-                mAnimation->play("torch", 2, BlendMask::BlendMask_LeftArm, false, 1.0f, "start", "stop", 0.0f,
+            if (!npcAnimation->getInfo("torch"))
+                npcAnimation->play("torch", 2, BlendMask::BlendMask_LeftArm, false, 1.0f, "start", "stop", 0.0f,
                     std::numeric_limits<uint32_t>::max(), true);
         }
-        else if (mAnimation->getInfo("torch"))
-            mAnimation->disable("torch");
+        else if (npcAnimation->getInfo("torch"))
+            npcAnimation->disable("torch");
 
-        mAnimation->runAnimation(0.0f);
+        npcAnimation->runAnimation(0.0f);
+        mDrawOnceCallback->setSimulationTime(0.0f);
 
         setBlendMode();
 
@@ -448,6 +613,10 @@ namespace MWRender
     {
         if (!mViewport)
             return -1;
+        NpcAnimation* npcAnimation = dynamic_cast<NpcAnimation*>(mAnimation.get());
+        if (npcAnimation == nullptr)
+            return -1;
+
         double projX = (posX / mViewport->width()) * 2 - 1;
         double projY = (posY / mViewport->height()) * 2 - 1;
         // With Intersector::WINDOW, the intersection ratios are slightly inaccurate. Seems to be a
@@ -473,7 +642,7 @@ namespace MWRender
         if (intersector->containsIntersections())
         {
             osgUtil::LineSegmentIntersector::Intersection intersection = intersector->getFirstIntersection();
-            return mAnimation->getSlot(intersection.nodePath);
+            return npcAnimation->getSlot(intersection.nodePath);
         }
         return -1;
     }
@@ -491,8 +660,36 @@ namespace MWRender
 
         mNode->setScale(scale);
 
-        auto viewMatrix = osg::Matrixf::lookAt(mPosition * scale.z(), mLookAt * scale.z(), osg::Vec3f(0, 0, 1));
+        osg::Vec3f position = mPosition;
+        osg::Vec3f lookAt = mLookAt;
+        if (mFalloutPreviewRef != nullptr)
+        {
+            switch (mViewMode)
+            {
+                case ViewMode::Front:
+                    position = osg::Vec3f(0, 700, 76);
+                    lookAt = osg::Vec3f(0, 0, 76);
+                    break;
+                case ViewMode::Profile:
+                    position = osg::Vec3f(320, 0, 104);
+                    lookAt = osg::Vec3f(0, 0, 104);
+                    break;
+                case ViewMode::Top:
+                    position = osg::Vec3f(0, -230, 310);
+                    lookAt = osg::Vec3f(0, 0, 112);
+                    break;
+            }
+            Log(Debug::Info) << "FNV/ESM4 proof: inventory paper doll camera "
+                             << (mViewMode == ViewMode::Front ? "front"
+                                     : (mViewMode == ViewMode::Profile ? "profile" : "top"))
+                             << " position=(" << position.x() << "," << position.y() << "," << position.z()
+                             << ") lookAt=(" << lookAt.x() << "," << lookAt.y() << "," << lookAt.z() << ")";
+        }
+
+        auto viewMatrix = osg::Matrixf::lookAt(position * scale.z(), lookAt * scale.z(), osg::Vec3f(0, 0, 1));
         mRTTNode->setViewMatrix(viewMatrix);
+        if (mFalloutPreviewRef != nullptr)
+            update();
     }
 
     // --------------------------------------------------------------------------------------------------

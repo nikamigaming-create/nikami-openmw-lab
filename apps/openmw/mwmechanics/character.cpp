@@ -1931,9 +1931,10 @@ namespace MWMechanics
         else
         {
             float complete;
-            uint32_t loopcount;
+            size_t loopcount;
             mAnimation->getInfo(mAnimQueue.front().mGroup, &complete, nullptr, &loopcount);
-            mAnimQueue.front().mLoopCount = loopcount;
+            mAnimQueue.front().mLoopCount
+                = static_cast<uint32_t>(std::min<size_t>(loopcount, std::numeric_limits<uint32_t>::max()));
             mAnimQueue.front().mTime = complete;
         }
 
@@ -2527,10 +2528,11 @@ namespace MWMechanics
             if (iter == mAnimQueue.begin() && mAnimation)
             {
                 float complete;
-                uint32_t loopcount;
+                size_t loopcount;
                 mAnimation->getInfo(anim.mGroup, &complete, nullptr, &loopcount);
                 anim.mTime = complete;
-                anim.mLoopCount = loopcount;
+                anim.mLoopCount
+                    = static_cast<uint32_t>(std::min<size_t>(loopcount, std::numeric_limits<uint32_t>::max()));
             }
             else
             {

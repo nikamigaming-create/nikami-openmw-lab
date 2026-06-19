@@ -9,6 +9,10 @@
 #include <components/esm/records.hpp>
 #include <components/esm3/esmreader.hpp>
 #include <components/esm3/esmwriter.hpp>
+#include <components/esm4/loadeyes.hpp>
+#include <components/esm4/loadidle.hpp>
+#include <components/esm4/loadidlm.hpp>
+#include <components/esm4/loadpack.hpp>
 
 #include <components/loadinglistener/loadinglistener.hpp>
 #include <components/misc/rng.hpp>
@@ -1241,6 +1245,7 @@ template class MWWorld::TypedDynamicStore<ESM4::ActorCharacter, ESM::FormId>;
 template class MWWorld::TypedDynamicStore<ESM4::ActorCreature, ESM::FormId>;
 
 template class MWWorld::TypedDynamicStore<ESM4::Activator>;
+template class MWWorld::TypedDynamicStore<ESM4::AIPackage>;
 template class MWWorld::TypedDynamicStore<ESM4::Ammunition>;
 template class MWWorld::TypedDynamicStore<ESM4::Armor>;
 template class MWWorld::TypedDynamicStore<ESM4::ArmorAddon>;
@@ -1250,10 +1255,13 @@ template class MWWorld::TypedDynamicStore<ESM4::Clothing>;
 template class MWWorld::TypedDynamicStore<ESM4::Container>;
 template class MWWorld::TypedDynamicStore<ESM4::Creature>;
 template class MWWorld::TypedDynamicStore<ESM4::Door>;
+template class MWWorld::TypedDynamicStore<ESM4::Eyes>;
 template class MWWorld::TypedDynamicStore<ESM4::Flora>;
 template class MWWorld::TypedDynamicStore<ESM4::Furniture>;
 template class MWWorld::TypedDynamicStore<ESM4::Hair>;
 template class MWWorld::TypedDynamicStore<ESM4::HeadPart>;
+template class MWWorld::TypedDynamicStore<ESM4::IdleAnimation>;
+template class MWWorld::TypedDynamicStore<ESM4::IdleMarker>;
 template class MWWorld::TypedDynamicStore<ESM4::Ingredient>;
 template class MWWorld::TypedDynamicStore<ESM4::ItemMod>;
 template class MWWorld::TypedDynamicStore<ESM4::Land>;

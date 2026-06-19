@@ -3,6 +3,8 @@
 
 #include <map>
 #include <optional>
+#include <string>
+#include <vector>
 
 #include <osg/Object>
 
@@ -17,7 +19,7 @@ namespace SceneUtil
     public:
         KeyframeController() {}
 
-        KeyframeController(const KeyframeController& copy, const osg::CopyOp& copyop)
+        KeyframeController(const KeyframeController& copy)
             : SceneUtil::Controller(copy)
         {
         }
@@ -33,7 +35,7 @@ namespace SceneUtil
 
         virtual osg::Vec3f getTranslation(float time) const { return osg::Vec3f(); }
 
-        virtual KfTransform getCurrentTransformation(osg::NodeVisitor* nv) { return KfTransform(); }
+        virtual KfTransform getCurrentTransformation(osg::NodeVisitor* nv) { return KfTransform(); };
 
         /// @note We could drop this function in favour of osg::Object::asCallback from OSG 3.6 on.
         virtual osg::Callback* getAsCallback() = 0;
@@ -63,6 +65,7 @@ namespace SceneUtil
         KeyframeHolder(const KeyframeHolder& copy, const osg::CopyOp& copyop)
             : mTextKeys(copy.mTextKeys)
             , mKeyframeControllers(copy.mKeyframeControllers)
+            , mFalloutHeadAnimTracks(copy.mFalloutHeadAnimTracks)
         {
         }
 
@@ -73,6 +76,23 @@ namespace SceneUtil
         /// Controllers mapped to node name.
         typedef std::map<std::string, osg::ref_ptr<const KeyframeController>> KeyframeControllerMap;
         KeyframeControllerMap mKeyframeControllers;
+
+        struct FalloutHeadAnimTrack
+        {
+            enum class Type
+            {
+                Float,
+                Bool
+            };
+
+            Type mType = Type::Float;
+            float mDefaultValue = 0.f;
+            std::vector<std::pair<float, float>> mKeys;
+        };
+
+        /// Fallout 3/New Vegas KF files store FaceGen/head animation channels as HeadAnims float/bool tracks.
+        typedef std::map<std::string, FalloutHeadAnimTrack> FalloutHeadAnimTrackMap;
+        FalloutHeadAnimTrackMap mFalloutHeadAnimTracks;
     };
 
 }
