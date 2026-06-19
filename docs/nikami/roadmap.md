@@ -21,5 +21,5 @@ Nikami OpenMW Lab is a clean OpenMW-based lab for staged rendering and VR experi
 
 - Keep commits small and explainable.
 - Do not commit build outputs, proof logs, generated runtime configs, game assets, or private machine paths.
-- Put Nikami-specific notes under `docs/` or `scripts/nikami/`.
+- Put Nikami-specific notes under `docs/nikami/` or `scripts/nikami/`.
 - Avoid rebranding upstream OpenMW files unless a change is needed for the lab.
