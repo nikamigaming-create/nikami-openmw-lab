@@ -191,6 +191,9 @@ framerate limit = 60
 
 [Map]
 global = true
+
+[GUI]
+controller menus = true
 "@
 
 Set-Content -LiteralPath $ConfigPath -Value $ConfigText -Encoding ASCII

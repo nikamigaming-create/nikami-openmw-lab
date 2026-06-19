@@ -28,6 +28,10 @@ param(
     [double]$ActorViewOffsetY = 0,
     [double]$ActorViewOffsetZ = 102,
     [double]$ActorViewTargetZ = 116,
+    [string]$GuiMode = "",
+    [int]$GuiFrame = 240,
+    [switch]$OpenInventory,
+    [int]$OpenInventoryFrame = 240,
     [switch]$DisableSky,
     [switch]$NoSound
 )
@@ -180,6 +184,15 @@ try {
         $env:OPENMW_FNV_BOOTSTRAP_CELL = $BootstrapCell
     }
     if ($DisableSky) { $env:OPENMW_PROOF_DISABLE_SKY = "1" }
+    if ($OpenInventory -and [string]::IsNullOrWhiteSpace($GuiMode)) {
+        $GuiMode = "items"
+        $GuiFrame = $OpenInventoryFrame
+    }
+    if (![string]::IsNullOrWhiteSpace($GuiMode)) {
+        $env:OPENMW_PROOF_GUI_MODE = $GuiMode
+        $env:OPENMW_PROOF_GUI_FRAME = [string]$GuiFrame
+        $env:OPENMW_FNV_INVENTORY_PLAYER_PROXY = "1"
+    }
     if (![string]::IsNullOrWhiteSpace($ActorTarget)) {
         $env:OPENMW_PROOF_ACTOR_TARGET = $ActorTarget
         $env:OPENMW_PROOF_ACTOR_FRAME = [string]$ActorFrame
@@ -211,6 +224,9 @@ try {
     }
     if (![string]::IsNullOrWhiteSpace($ActorTarget)) {
         Write-ProofLine "Actor target: $ActorTarget frame=$ActorFrame stage=$([bool]$StageActor)"
+    }
+    if (![string]::IsNullOrWhiteSpace($GuiMode)) {
+        Write-ProofLine "Proof GUI mode: $GuiMode frame=$GuiFrame"
     }
     Write-ProofLine "Proof dir: $ProofDir"
 
@@ -247,14 +263,47 @@ try {
         }
     }
 
-    $fatalLines = @()
+    $knownMissingMeshes = @(
+        "meshes/sky_atmosphere.nif",
+        "meshes/sky_night_01.nif",
+        "meshes/sky_clouds_01.nif",
+        "meshes/ashcloud.nif",
+        "meshes/blightcloud.nif",
+        "meshes/snow.nif",
+        "meshes/blizzard.nif",
+        "meshes/xbase_anim.nif",
+        "meshes/xbase_anim.1st.nif",
+        "meshes/xbase_anim_female.nif",
+        "meshes/xargonian_swimkna.nif"
+    )
+    $realBlockerLines = @()
+    $knownNoiseLines = @()
     $logPath = Join-Path $ConfigDir "openmw.log"
     if (Test-Path -LiteralPath $logPath) {
-        $fatalLines = @(Select-String -LiteralPath $logPath -Pattern "Fatal error|Failed to start new game|unknown global|List of NPC classes|Resource 'meshes/base_anim|marker_error" -ErrorAction SilentlyContinue)
+        $candidateLines = @(Select-String -LiteralPath $logPath -Pattern "Fatal error|Failed to start new game|unknown global|List of NPC classes|Resource 'meshes/base_anim|marker_error" -ErrorAction SilentlyContinue)
+        foreach ($line in $candidateLines) {
+            $isKnownNoise = $false
+            foreach ($mesh in $knownMissingMeshes) {
+                if ($line.Line -like "*$mesh*") {
+                    $isKnownNoise = $true
+                    break
+                }
+            }
+
+            if ($isKnownNoise) {
+                $knownNoiseLines += $line
+            } else {
+                $realBlockerLines += $line
+            }
+        }
     }
     Write-ProofLine ""
-    Write-ProofLine "Fatal/blocker lines: $($fatalLines.Count)"
-    foreach ($line in ($fatalLines | Select-Object -Last 40)) {
+    Write-ProofLine "Real fatal/blocker lines: $($realBlockerLines.Count)"
+    foreach ($line in ($realBlockerLines | Select-Object -Last 40)) {
+        Write-ProofLine $line.Line
+    }
+    Write-ProofLine "Known tolerated missing default mesh lines: $($knownNoiseLines.Count)"
+    foreach ($line in ($knownNoiseLines | Select-Object -Last 20)) {
         Write-ProofLine $line.Line
     }
 
@@ -274,6 +323,9 @@ finally {
     Remove-Item Env:OPENMW_FNV_BOOTSTRAP_CAMERA_DISTANCE -ErrorAction SilentlyContinue
     Remove-Item Env:OPENMW_FNV_BOOTSTRAP_CELL -ErrorAction SilentlyContinue
     Remove-Item Env:OPENMW_PROOF_DISABLE_SKY -ErrorAction SilentlyContinue
+    Remove-Item Env:OPENMW_PROOF_GUI_MODE -ErrorAction SilentlyContinue
+    Remove-Item Env:OPENMW_PROOF_GUI_FRAME -ErrorAction SilentlyContinue
+    Remove-Item Env:OPENMW_FNV_INVENTORY_PLAYER_PROXY -ErrorAction SilentlyContinue
     Remove-Item Env:OPENMW_PROOF_ACTOR_TARGET -ErrorAction SilentlyContinue
     Remove-Item Env:OPENMW_PROOF_ACTOR_FRAME -ErrorAction SilentlyContinue
     Remove-Item Env:OPENMW_PROOF_ACTOR_VIEW_OFFSET_X -ErrorAction SilentlyContinue
