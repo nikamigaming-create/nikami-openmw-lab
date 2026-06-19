@@ -1,5 +1,7 @@
 #include "mapwindow.hpp"
 
+#include <cstdlib>
+
 #include <osg/Texture2D>
 
 #include <MyGUI_Button.h>
@@ -14,9 +16,13 @@
 #include <MyGUI_TextIterator.h>
 #include <MyGUI_Window.h>
 
+#include <components/debug/debuglog.hpp>
 #include <components/esm3/esmwriter.hpp>
 #include <components/esm3/globalmap.hpp>
+#include <components/misc/resourcehelpers.hpp>
+#include <components/misc/strings/algorithm.hpp>
 #include <components/myguiplatform/myguitexture.hpp>
+#include <components/resource/resourcesystem.hpp>
 #include <components/settings/values.hpp>
 
 #include "../mwbase/environment.hpp"
@@ -40,6 +46,34 @@ namespace
 
     constexpr int cellSize = Constants::CellSizeInUnits;
     constexpr float speed = 1.08f; // the zoom speed, it should be greater than 1
+
+    bool hasFalloutContent()
+    {
+        if (std::getenv("OPENMW_FNV_PROOF_PIPBOY_SURFACE") != nullptr)
+            return true;
+
+        const MWBase::World* world = MWBase::Environment::get().getWorld();
+        if (world == nullptr)
+            return false;
+
+        for (const std::string& file : world->getContentFiles())
+            if (Misc::StringUtils::ciEndsWith(file, "FalloutNV.esm"))
+                return true;
+
+        return false;
+    }
+
+    std::string getFalloutWorldMapTexture()
+    {
+        const VFS::Manager* const vfs = MWBase::Environment::get().getResourceSystem()->getVFS();
+        return Misc::ResourceHelpers::correctTexturePath(
+            VFS::Path::toNormalized("textures\\interface\\worldmap\\wasteland_nv_1024_no_map.png"), *vfs);
+    }
+
+    const char* getFalloutMapToggleLabel(bool global)
+    {
+        return global ? "LOCAL MAP" : "MOJAVE";
+    }
 
     enum LocalMapWidgetDepth
     {
@@ -833,9 +867,17 @@ namespace MWGui
         getWidget(mButton, "WorldButton");
         mButton->eventMouseButtonClick += MyGUI::newDelegate(this, &MapWindow::onWorldButtonClicked);
 
+        if (hasFalloutContent())
+            Settings::map().mGlobal.set(true);
         const bool global = Settings::map().mGlobal;
 
-        mButton->setCaptionWithReplacing(global ? "#{sLocal}" : "#{sWorld}");
+        if (hasFalloutContent())
+        {
+            mButton->setCaption(getFalloutMapToggleLabel(global));
+            Log(Debug::Info) << "FNV/ESM4 proof: map pane defaults to Mojave global map";
+        }
+        else
+            mButton->setCaptionWithReplacing(global ? "#{sLocal}" : "#{sWorld}");
 
         getWidget(mEventBoxGlobal, "EventBoxGlobal");
         mEventBoxGlobal->eventMouseDrag += MyGUI::newDelegate(this, &MapWindow::onMouseDrag);
@@ -1018,6 +1060,17 @@ namespace MWGui
 
     void MapWindow::updateGlobalMap()
     {
+        if (hasFalloutContent())
+        {
+            mGlobalMapZoom = 1.f;
+            mGlobalMap->setCanvasSize(1024, 1024);
+            mGlobalMapImage->setSize(1024, 1024);
+            mGlobalMapOverlay->setSize(1024, 1024);
+            mPlayerArrowGlobal->setPosition(MyGUI::IntPoint(496, 496));
+            mGlobalMap->setViewOffset(MyGUI::IntPoint(0, 0));
+            return;
+        }
+
         resizeGlobalMap();
 
         float x = mCurPos.x(), y = mCurPos.y();
@@ -1259,7 +1312,10 @@ namespace MWGui
         mGlobalMap->setVisible(global);
         mLocalMap->setVisible(!global);
 
-        mButton->setCaptionWithReplacing(global ? "#{sLocal}" : "#{sWorld}");
+        if (hasFalloutContent())
+            mButton->setCaption(getFalloutMapToggleLabel(global));
+        else
+            mButton->setCaptionWithReplacing(global ? "#{sLocal}" : "#{sWorld}");
         mControllerButtons.mX = global ? "#{Interface:Local}" : "#{Interface:World}";
         MWBase::Environment::get().getWindowManager()->updateControllerButtonsOverlay();
     }
@@ -1307,6 +1363,12 @@ namespace MWGui
 
     void MapWindow::centerView()
     {
+        if (hasFalloutContent() && Settings::map().mGlobal)
+        {
+            mGlobalMap->setViewOffset(MyGUI::IntPoint(0, 0));
+            return;
+        }
+
         LocalMapBase::centerView();
         // set the view offset so that player is in the center
         MyGUI::IntSize viewsize = mGlobalMap->getSize();
@@ -1334,6 +1396,32 @@ namespace MWGui
 
     void MapWindow::ensureGlobalMapLoaded()
     {
+        if (hasFalloutContent())
+        {
+            const std::string mapTexture = getFalloutWorldMapTexture();
+            if (!mGlobalMapTexture)
+            {
+                mGlobalMapTexture = std::make_unique<MyGUIPlatform::OSGTexture>(
+                    mapTexture, MWBase::Environment::get().getResourceSystem()->getImageManager());
+                mGlobalMapTexture->loadFromFile(mapTexture);
+            }
+
+            mGlobalMapImage->setRenderItemTexture(mGlobalMapTexture.get());
+            mGlobalMapImage->setImageTexture(mapTexture);
+            mGlobalMapImage->getSubWidgetMain()->_setUVSet(MyGUI::FloatRect(0.f, 0.f, 1.f, 1.f));
+            mGlobalMapImage->setImageCoord(MyGUI::IntCoord(0, 0, 1024, 1024));
+            mGlobalMapOverlay->setVisible(false);
+            mGlobalMapOverlay->setImageTexture({});
+            mGlobalMapOverlay->setImageCoord(MyGUI::IntCoord(0, 0, 1024, 1024));
+            mGlobalMapImage->setSize(1024, 1024);
+            mGlobalMapOverlay->setSize(1024, 1024);
+            mGlobalMap->setCanvasSize(1024, 1024);
+            mGlobalMap->setViewOffset(MyGUI::IntPoint(0, 0));
+            mGlobalMap->getParent()->_updateChilds();
+            Log(Debug::Info) << "FNV/ESM4 proof: Fallout world map texture bound " << mapTexture;
+            return;
+        }
+
         if (!mGlobalMapTexture.get())
         {
             // The generated unexplored map and explored map RTT images are Y-up so the UVs are inverted

@@ -48,6 +48,7 @@
 #include <components/widgets/widgets.hpp>
 
 #include <components/misc/frameratelimiter.hpp>
+#include <components/misc/strings/algorithm.hpp>
 
 #include <components/l10n/manager.hpp>
 
@@ -144,6 +145,19 @@ namespace MWGui
                 default:
                     return nullptr;
             }
+        }
+
+        bool hasFalloutContent()
+        {
+            const MWBase::World* world = MWBase::Environment::get().getWorld();
+            if (world == nullptr)
+                return false;
+
+            for (const std::string& file : world->getContentFiles())
+                if (Misc::StringUtils::ciEndsWith(file, "FalloutNV.esm"))
+                    return true;
+
+            return false;
         }
     }
 
@@ -712,6 +726,8 @@ namespace MWGui
             // user has opened/closed (the 'shown' variable) and by what
             // windows we are allowed to show (the 'allowed' var.)
             int eff = mShown & mAllowed & ~mForceHidden;
+            if (hasFalloutContent())
+                eff = (GW_Map | GW_Inventory | GW_Magic | GW_Stats) & mAllowed & ~mForceHidden;
             mMap->setVisible(eff & GW_Map);
             mInventoryWindow->setVisible(eff & GW_Inventory);
             mSpellWindow->setVisible(eff & GW_Magic);
@@ -1602,14 +1618,14 @@ namespace MWGui
         if (player->getDrawState() == MWMechanics::DrawState::Spell)
             player->setDrawState(MWMechanics::DrawState::Nothing);
 
-        mSpellWindow->setTitle("#{Interface:None}");
+        mSpellWindow->setTitle(hasFalloutContent() ? "DATA" : "#{Interface:None}");
     }
 
     void WindowManager::unsetSelectedWeapon()
     {
         mSelectedWeapon = MWWorld::Ptr();
         mHud->unsetSelectedWeapon();
-        mInventoryWindow->setTitle("#{sSkillHandtohand}");
+        mInventoryWindow->setTitle(hasFalloutContent() ? "ITEMS" : "#{sSkillHandtohand}");
     }
 
     void WindowManager::getMousePosition(int& x, int& y)

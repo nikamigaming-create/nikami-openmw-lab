@@ -7,6 +7,11 @@
 #include "spellmodel.hpp"
 #include "windowpinnablebase.hpp"
 
+namespace MyGUI
+{
+    class TextBox;
+}
+
 namespace MWGui
 {
     class SpellView;
@@ -47,6 +52,7 @@ namespace MWGui
         SpellView* mSpellView;
         std::unique_ptr<SpellIcons> mSpellIcons;
         MyGUI::EditBox* mFilterEdit;
+        MyGUI::TextBox* mFalloutDataPlaceholder = nullptr;
 
     private:
         float mUpdateTimer;

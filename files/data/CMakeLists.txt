@@ -11,6 +11,7 @@ set(BUILTIN_DATA_FILES
     textures/omw_menu_scroll_center_h.dds
     textures/omw_menu_scroll_center_v.dds
     textures/omw_menu_icon_active.dds
+    icons/nikami_proof_item.dds
     textures/omw_psx_button_circle.dds
     textures/omw_psx_button_dpad.dds
     textures/omw_psx_button_square.dds

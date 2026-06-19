@@ -8,6 +8,7 @@
 #include <cstdlib>
 #include <cctype>
 #include <future>
+#include <optional>
 #include <string_view>
 #include <system_error>
 #include <vector>
@@ -22,6 +23,7 @@
 #include <components/debug/gldebug.hpp>
 
 #include <components/misc/rng.hpp>
+#include <components/misc/strings/algorithm.hpp>
 #include <components/misc/strings/format.hpp>
 #include <components/misc/strings/lower.hpp>
 
@@ -326,6 +328,17 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
             }
         }
 
+        static bool proofHourApplied = false;
+        if (!proofHourApplied && std::getenv("OPENMW_FNV_BOOTSTRAP_HOUR") != nullptr
+            && mStateManager->getState() != MWBase::StateManager::State_NoGame)
+        {
+            const float proofHour = getProofFloat("OPENMW_FNV_BOOTSTRAP_HOUR", 12.f);
+            mWorld->setGlobalFloat(MWWorld::Globals::sGameHour, proofHour);
+            mWorld->advanceTime(0.0, false);
+            proofHourApplied = true;
+            Log(Debug::Info) << "FNV/ESM4 proof: applied proof gamehour=" << proofHour;
+        }
+
         // update mechanics
         {
             ScopedProfile<UserStatsType::Mechanics> profile(frameStart, frameNumber, *timer, *stats);
@@ -410,17 +423,6 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
 
     // if there is a separate Lua thread, it starts the update now
     mLuaWorker->allowUpdate(frameStart, frameNumber, *stats);
-
-    static bool proofHourApplied = false;
-    if (!proofHourApplied && std::getenv("OPENMW_FNV_BOOTSTRAP_HOUR") != nullptr
-        && mStateManager->getState() == MWBase::StateManager::State_Running)
-    {
-        const float proofHour = getProofFloat("OPENMW_FNV_BOOTSTRAP_HOUR", 12.f);
-        mWorld->setGlobalFloat(MWWorld::Globals::sGameHour, proofHour);
-        mWorld->advanceTime(0.0, false);
-        proofHourApplied = true;
-        Log(Debug::Info) << "FNV/ESM4 proof: applied proof gamehour=" << proofHour;
-    }
 
     static bool proofPlacementApplied = false;
     if (!proofPlacementApplied && std::getenv("OPENMW_FNV_BOOTSTRAP_POS_X") != nullptr
@@ -654,6 +656,36 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
     }
 
     static const std::vector<int> proofScreenshotFrames = getProofFrames("OPENMW_PROOF_SCREENSHOT_FRAME");
+    static bool proofGuiModeApplied = false;
+    const char* proofGuiMode = std::getenv("OPENMW_PROOF_GUI_MODE");
+    const int proofGuiFrame = static_cast<int>(getProofFloat("OPENMW_PROOF_GUI_FRAME", 240.f));
+    if (!proofGuiModeApplied && proofGuiMode != nullptr && *proofGuiMode != '\0'
+        && frameNumber >= static_cast<unsigned>(proofGuiFrame)
+        && mStateManager->getState() == MWBase::StateManager::State_Running)
+    {
+        const std::string mode(proofGuiMode);
+        std::optional<std::size_t> activeInventoryWindow;
+        if (Misc::StringUtils::ciEqual(mode, "map"))
+            activeInventoryWindow = 0;
+        else if (Misc::StringUtils::ciEqual(mode, "inventory") || Misc::StringUtils::ciEqual(mode, "items"))
+            activeInventoryWindow = 1;
+        else if (Misc::StringUtils::ciEqual(mode, "magic") || Misc::StringUtils::ciEqual(mode, "data"))
+            activeInventoryWindow = 2;
+        else if (Misc::StringUtils::ciEqual(mode, "stats") || Misc::StringUtils::ciEqual(mode, "status"))
+            activeInventoryWindow = 3;
+
+        if (activeInventoryWindow.has_value())
+        {
+            mWindowManager->pushGuiMode(MWGui::GM_Inventory);
+            mWindowManager->setActiveControllerWindow(MWGui::GM_Inventory, *activeInventoryWindow);
+            Log(Debug::Info) << "FNV/ESM4 proof: pushed inventory GUI mode page=\"" << mode
+                             << "\" activeWindow=" << *activeInventoryWindow << " at frame " << frameNumber;
+        }
+        else
+            Log(Debug::Warning) << "FNV/ESM4 proof: unsupported proof GUI mode \"" << mode << "\"";
+        proofGuiModeApplied = true;
+    }
+
     static std::size_t proofScreenshotFrameIndex = 0;
     if (proofScreenshotFrameIndex < proofScreenshotFrames.size()
         && frameNumber >= static_cast<unsigned>(proofScreenshotFrames[proofScreenshotFrameIndex])

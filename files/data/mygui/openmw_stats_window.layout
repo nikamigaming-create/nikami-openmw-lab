@@ -17,7 +17,7 @@
                     <UserString key="ImageTexture_HealthImage" value="icons\k\health.dds"/>
                     <Widget type="TextBox" skin="NormalText" position="0 0 70 18" name="Health_str" align="Left Top HStretch">
                         <Property key="NeedMouse" value="false"/>
-                        <Property key="Caption" value="#{sHealth}"/>
+                        <Property key="Caption" value="HP"/>
                     </Widget>
                     <Widget type="ProgressBar" skin="MW_Progress_Red" position="74 0 130 18" name="HBar" align="Right Top">
                         <Property key="NeedMouse" value="false"/>
@@ -35,7 +35,7 @@
                     <UserString key="ImageTexture_HealthImage" value="icons\k\magicka.dds"/>
 
                     <Widget type="TextBox" skin="NormalText" position="0 0 70 18" name="Magicka_str" align="Left Top HStretch">
-                        <Property key="Caption" value="#{sMagic}"/>
+                        <Property key="Caption" value="AP"/>
                         <Property key="NeedMouse" value="false"/>
                     </Widget>
 
@@ -55,7 +55,7 @@
                     <UserString key="ImageTexture_HealthImage" value="icons\k\fatigue.dds"/>
 
                     <Widget type="TextBox" skin="NormalText" position="0 0 70 18" name="Fatigue_str" align="Left Top HStretch">
-                        <Property key="Caption" value="#{sFatigue}"/>
+                        <Property key="Caption" value="WG"/>
                         <Property key="NeedMouse" value="false"/>
                     </Widget>
 
@@ -72,7 +72,7 @@
             <Widget type="Widget" skin="MW_Box" position="8 78 212 62" align="Top HStretch">
                 <Widget type="HBox" position="4 4 204 18" align="Top HStretch">
                     <Widget type="AutoSizedTextBox" skin="NormalText" position="0 0 200 18" name="Level_str" align="Left Top">
-                        <Property key="Caption" value="#{sLevel}"/>
+                        <Property key="Caption" value="LEVEL"/>
                         <UserString key="ToolTipType" value="Layout"/>
                         <UserString key="ToolTipLayout" value="LevelToolTip"/>
                     </Widget>
@@ -86,7 +86,7 @@
                 </Widget>
                 <Widget type="HBox" position="4 24 204 18" align="Top HStretch">
                     <Widget type="AutoSizedTextBox" skin="NormalText" position="0 0 95 18" name="Race_str" align="Left Top">
-                        <Property key="Caption" value="#{sRace}"/>
+                        <Property key="Caption" value="RACE"/>
                         <UserString key="ToolTipType" value="Layout"/>
                         <UserString key="ToolTipLayout" value="RaceToolTip"/>
                     </Widget>
@@ -99,7 +99,7 @@
                 </Widget>
                 <Widget type="HBox" position="4 42 204 18" align="Top HStretch">
                     <Widget type="AutoSizedTextBox" skin="NormalText" position="0 0 95 18" name="Class_str" align="Left Top">
-                        <Property key="Caption" value="#{sClass}"/>
+                        <Property key="Caption" value="CLASS"/>
                         <UserString key="ToolTipType" value="Layout"/>
                         <UserString key="ToolTipLayout" value="ClassToolTip"/>
                     </Widget>

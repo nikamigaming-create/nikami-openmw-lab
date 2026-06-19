@@ -1,12 +1,17 @@
 #include "spellwindow.hpp"
 
+#include <cstdlib>
+
 #include <MyGUI_EditBox.h>
 #include <MyGUI_InputManager.h>
 #include <MyGUI_RenderManager.h>
+#include <MyGUI_TextBox.h>
 #include <MyGUI_Window.h>
 
+#include <components/debug/debuglog.hpp>
 #include <components/esm3/loadbsgn.hpp>
 #include <components/esm3/loadrace.hpp>
+#include <components/misc/strings/algorithm.hpp>
 #include <components/misc/strings/format.hpp>
 #include <components/settings/values.hpp>
 
@@ -33,6 +38,24 @@
 
 namespace MWGui
 {
+    namespace
+    {
+        bool hasFalloutContent()
+        {
+            if (std::getenv("OPENMW_FNV_PROOF_PIPBOY_SURFACE") != nullptr)
+                return true;
+
+            const MWBase::World* world = MWBase::Environment::get().getWorld();
+            if (world == nullptr)
+                return false;
+
+            for (const std::string& file : world->getContentFiles())
+                if (Misc::StringUtils::ciEndsWith(file, "FalloutNV.esm"))
+                    return true;
+
+            return false;
+        }
+    }
 
     SpellWindow::SpellWindow(DragAndDrop* drag)
         : WindowPinnableBase("openmw_spell_window.layout")
@@ -48,6 +71,7 @@ namespace MWGui
         getWidget(mSpellView, "SpellView");
         getWidget(mEffectBox, "EffectsBox");
         getWidget(mFilterEdit, "FilterEdit");
+        getWidget(mFalloutDataPlaceholder, "FalloutDataPlaceholder");
 
         mSpellView->eventSpellClicked += MyGUI::newDelegate(this, &SpellWindow::onModelIndexSelected);
         mFilterEdit->eventEditTextChange += MyGUI::newDelegate(this, &SpellWindow::onFilterChanged);
@@ -58,6 +82,20 @@ namespace MWGui
         // Adjust the spell filtering widget size because of MyGUI limitations.
         int filterWidth = mSpellView->getSize().width - deleteButton->getSize().width - 3;
         mFilterEdit->setSize(filterWidth, mFilterEdit->getSize().height);
+
+        if (hasFalloutContent())
+        {
+            setTitle("DATA");
+            mSpellView->setVisible(false);
+            mEffectBox->getParent()->setVisible(false);
+            mFilterEdit->setVisible(false);
+            deleteButton->setVisible(false);
+            mFalloutDataPlaceholder->setCaption(
+                "QUESTS\n  No quest records wired yet\n\nNOTES\n  No note records wired yet\n\nRADIO\n  No radio station records wired yet\n\nPERKS / TRAITS\n  STATUS owns SPECIAL and skills\n\nALT AMMO\n  HUD counts FNV ammo records/proof inventory\n  Ammo swap records not wired yet");
+            mFalloutDataPlaceholder->setVisible(true);
+            Log(Debug::Info)
+                << "FNV/ESM4 proof: DATA pane placeholder active for QUESTS/NOTES/RADIO/PERKS/ALT AMMO until records are wired";
+        }
 
         if (Settings::gui().mControllerMenus)
         {
@@ -112,6 +150,12 @@ namespace MWGui
 
     void SpellWindow::updateSpells()
     {
+        if (hasFalloutContent())
+        {
+            mFalloutDataPlaceholder->setVisible(true);
+            return;
+        }
+
         mSpellIcons->updateWidgets(mEffectBox, false);
 
         mSpellView->setModel(new SpellModel(MWMechanics::getPlayer(), mFilterEdit->getCaption()));
