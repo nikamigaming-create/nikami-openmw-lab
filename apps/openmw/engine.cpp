@@ -1,9 +1,16 @@
 #include "engine.hpp"
 
 #include <cerrno>
+#include <algorithm>
+#include <charconv>
 #include <chrono>
+#include <cmath>
+#include <cstdlib>
+#include <cctype>
 #include <future>
+#include <string_view>
 #include <system_error>
+#include <vector>
 
 #include <osgDB/ReaderWriter>
 #include <osgDB/Registry>
@@ -16,6 +23,7 @@
 
 #include <components/misc/rng.hpp>
 #include <components/misc/strings/format.hpp>
+#include <components/misc/strings/lower.hpp>
 
 #include <components/vfs/manager.hpp>
 #include <components/vfs/registerarchives.hpp>
@@ -43,6 +51,8 @@
 #include <components/loadinglistener/asynclistener.hpp>
 #include <components/loadinglistener/loadinglistener.hpp>
 
+#include <components/esm4/loadnpc.hpp>
+
 #include <components/misc/frameratelimiter.hpp>
 
 #include <components/sceneutil/color.hpp>
@@ -68,10 +78,14 @@
 #include "mwsound/soundmanagerimp.hpp"
 
 #include "mwworld/class.hpp"
+#include "mwworld/cellstore.hpp"
 #include "mwworld/datetimemanager.hpp"
+#include "mwworld/globals.hpp"
+#include "mwworld/scene.hpp"
 #include "mwworld/worldimp.hpp"
 
 #include "mwrender/vismask.hpp"
+#include "mwrender/camera.hpp"
 
 #include "mwclass/classes.hpp"
 
@@ -171,6 +185,52 @@ namespace
         viewer.getCameras(cameras);
         for (osg::Camera* camera : cameras)
             camera->getStats()->report(stream, frameNumber);
+    }
+
+    std::vector<int> getProofFrames(const char* name)
+    {
+        std::vector<int> frames;
+        const char* env = std::getenv(name);
+        if (env == nullptr || *env == '\0')
+            return frames;
+
+        std::string_view value(env);
+        while (!value.empty())
+        {
+            const std::size_t comma = value.find(',');
+            std::string_view token = value.substr(0, comma);
+            while (!token.empty() && std::isspace(static_cast<unsigned char>(token.front())))
+                token.remove_prefix(1);
+            while (!token.empty() && std::isspace(static_cast<unsigned char>(token.back())))
+                token.remove_suffix(1);
+
+            int frame = -1;
+            const auto result = std::from_chars(token.data(), token.data() + token.size(), frame);
+            if (result.ec == std::errc() && result.ptr == token.data() + token.size() && frame >= 0)
+                frames.push_back(frame);
+
+            if (comma == std::string_view::npos)
+                break;
+            value.remove_prefix(comma + 1);
+        }
+
+        std::sort(frames.begin(), frames.end());
+        frames.erase(std::unique(frames.begin(), frames.end()), frames.end());
+        return frames;
+    }
+
+    float getProofFloat(const char* name, float fallback)
+    {
+        const char* env = std::getenv(name);
+        if (env == nullptr || *env == '\0')
+            return fallback;
+
+        char* end = nullptr;
+        const float value = std::strtof(env, &end);
+        if (end == env || *end != '\0')
+            return fallback;
+
+        return value;
     }
 }
 
@@ -350,6 +410,260 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
 
     // if there is a separate Lua thread, it starts the update now
     mLuaWorker->allowUpdate(frameStart, frameNumber, *stats);
+
+    static bool proofHourApplied = false;
+    if (!proofHourApplied && std::getenv("OPENMW_FNV_BOOTSTRAP_HOUR") != nullptr
+        && mStateManager->getState() == MWBase::StateManager::State_Running)
+    {
+        const float proofHour = getProofFloat("OPENMW_FNV_BOOTSTRAP_HOUR", 12.f);
+        mWorld->setGlobalFloat(MWWorld::Globals::sGameHour, proofHour);
+        mWorld->advanceTime(0.0, false);
+        proofHourApplied = true;
+        Log(Debug::Info) << "FNV/ESM4 proof: applied proof gamehour=" << proofHour;
+    }
+
+    static bool proofPlacementApplied = false;
+    if (!proofPlacementApplied && std::getenv("OPENMW_FNV_BOOTSTRAP_POS_X") != nullptr
+        && mStateManager->getState() == MWBase::StateManager::State_Running)
+    {
+        ESM::Position position;
+        position.pos[0] = getProofFloat("OPENMW_FNV_BOOTSTRAP_POS_X", -67735.f);
+        position.pos[1] = getProofFloat("OPENMW_FNV_BOOTSTRAP_POS_Y", 3204.f);
+        position.pos[2] = getProofFloat("OPENMW_FNV_BOOTSTRAP_POS_Z", 8425.f);
+        position.rot[0] = getProofFloat("OPENMW_FNV_BOOTSTRAP_ROT_X", 0.f);
+        position.rot[1] = getProofFloat("OPENMW_FNV_BOOTSTRAP_ROT_Y", 0.f);
+        position.rot[2] = getProofFloat("OPENMW_FNV_BOOTSTRAP_ROT_Z", -0.6981317f);
+
+        ESM::Position cellProbe = position;
+        ESM::RefId cellId;
+        if (const char* proofCell = std::getenv("OPENMW_FNV_BOOTSTRAP_CELL");
+            proofCell != nullptr && *proofCell != '\0')
+        {
+            try
+            {
+                cellId = ESM::RefId::deserializeText(proofCell);
+            }
+            catch (const std::exception& e)
+            {
+                Log(Debug::Warning) << "FNV/ESM4 proof: failed to parse proof cell \"" << proofCell
+                                    << "\": " << e.what();
+            }
+        }
+        if (cellId.empty())
+            cellId = mWorld->findExteriorPosition("Goodsprings", cellProbe);
+        if (!cellId.empty())
+        {
+            mWorld->changeToCell(cellId, position, false, true);
+            MWWorld::Ptr player = mWorld->getPlayerPtr();
+            player = mWorld->moveObject(player, position.asVec3(), true, true);
+            mWorld->rotateObject(player, osg::Vec3f(position.rot[0], position.rot[1], position.rot[2]));
+
+            if (MWRender::Camera* camera = mWorld->getCamera())
+            {
+                const float cameraDistance = getProofFloat("OPENMW_FNV_BOOTSTRAP_CAMERA_DISTANCE", 0.f);
+                camera->attachTo(player);
+                camera->setMode(MWRender::Camera::Mode::FirstPerson, true);
+                camera->setPreferredCameraDistance(cameraDistance);
+                camera->update(0.f, false);
+                camera->setPitch(-position.rot[0], true);
+                camera->setYaw(-position.rot[2], true);
+                camera->setRoll(0.f);
+                camera->updateCamera(mViewer->getCamera());
+            }
+
+            proofPlacementApplied = true;
+            Log(Debug::Info) << "FNV/ESM4 proof: moved player to proof Goodsprings pos=(" << position.pos[0] << ","
+                             << position.pos[1] << "," << position.pos[2] << ") rot=(" << position.rot[0] << ","
+                             << position.rot[1] << "," << position.rot[2] << ") cell=" << cellId.toDebugString();
+        }
+        else
+        {
+            proofPlacementApplied = true;
+            Log(Debug::Warning) << "FNV/ESM4 proof: failed to resolve proof Goodsprings position";
+        }
+    }
+
+    static bool proofSkyDisabled = false;
+    if (!proofSkyDisabled && std::getenv("OPENMW_PROOF_DISABLE_SKY") != nullptr
+        && mStateManager->getState() == MWBase::StateManager::State_Running)
+    {
+        bool skyEnabled = mWorld->toggleSky();
+        if (skyEnabled)
+            skyEnabled = mWorld->toggleSky();
+        proofSkyDisabled = true;
+        Log(Debug::Info) << "FNV/ESM4 proof: disabled sky finalEnabled=" << skyEnabled;
+    }
+
+    static bool proofActorCameraApplied = false;
+    const char* proofActorTarget = std::getenv("OPENMW_PROOF_ACTOR_TARGET");
+    const int proofActorFrame = static_cast<int>(getProofFloat("OPENMW_PROOF_ACTOR_FRAME", 240.f));
+    if (!proofActorCameraApplied && proofActorTarget != nullptr && *proofActorTarget != '\0'
+        && frameNumber >= static_cast<unsigned>(proofActorFrame)
+        && mStateManager->getState() == MWBase::StateManager::State_Running)
+    {
+        MWWorld::Ptr proofActor;
+        int scanned = 0;
+        int actors = 0;
+        const std::string target(proofActorTarget);
+        const std::string targetLower = Misc::StringUtils::lowerCase(target);
+
+        for (MWWorld::CellStore* cellstore : mWorld->getWorldScene().getActiveCells())
+        {
+            if (cellstore == nullptr)
+                continue;
+
+            cellstore->forEach([&](const MWWorld::Ptr& ptr) {
+                ++scanned;
+                if (ptr.isEmpty() || !ptr.getClass().isActor())
+                    return true;
+                ++actors;
+
+                std::string actorName;
+                try
+                {
+                    actorName = std::string(ptr.getClass().getName(ptr));
+                }
+                catch (const std::exception&)
+                {
+                }
+
+                const std::string baseId = ptr.getCellRef().getRefId().toDebugString();
+                const std::string refId = ptr.getCellRef().getRefNum().toString("FormId:");
+                std::string baseEditorId;
+                std::string baseFullName;
+                if (ptr.getType() == ESM::REC_NPC_4)
+                {
+                    if (const MWWorld::LiveCellRef<ESM4::Npc>* ref = ptr.get<ESM4::Npc>())
+                    {
+                        if (ref->mBase != nullptr)
+                        {
+                            baseEditorId = ref->mBase->mEditorId;
+                            baseFullName = ref->mBase->mFullName;
+                        }
+                    }
+                }
+                const std::string actorNameLower = Misc::StringUtils::lowerCase(actorName);
+                const std::string baseIdLower = Misc::StringUtils::lowerCase(baseId);
+                const std::string refIdLower = Misc::StringUtils::lowerCase(refId);
+                const std::string baseEditorLower = Misc::StringUtils::lowerCase(baseEditorId);
+                const std::string baseFullLower = Misc::StringUtils::lowerCase(baseFullName);
+
+                if (baseIdLower == targetLower || refIdLower == targetLower || actorNameLower == targetLower
+                    || baseEditorLower == targetLower || baseFullLower == targetLower
+                    || (!actorNameLower.empty() && actorNameLower.find(targetLower) != std::string::npos)
+                    || (!baseEditorLower.empty() && baseEditorLower.find(targetLower) != std::string::npos)
+                    || (!baseFullLower.empty() && baseFullLower.find(targetLower) != std::string::npos)
+                    || (!targetLower.empty() && targetLower.find(actorNameLower) != std::string::npos))
+                {
+                    proofActor = ptr;
+                    const ESM::Position& actorPos = ptr.getRefData().getPosition();
+                    Log(Debug::Info) << "FNV/ESM4 proof: active-cell actor match target=\"" << target
+                                     << "\" ref=" << refId << " base=" << baseId << " name=\"" << actorName
+                                     << "\" baseEditor=\"" << baseEditorId << "\" baseFull=\"" << baseFullName
+                                     << "\" pos=(" << actorPos.pos[0] << "," << actorPos.pos[1] << ","
+                                     << actorPos.pos[2] << ") rot=(" << actorPos.rot[0] << ","
+                                     << actorPos.rot[1] << "," << actorPos.rot[2] << ") scanned=" << scanned
+                                     << " actors=" << actors;
+                    return false;
+                }
+
+                return true;
+            });
+
+            if (!proofActor.isEmpty())
+                break;
+        }
+
+        if (!proofActor.isEmpty())
+        {
+            if (std::getenv("OPENMW_PROOF_STAGE_ACTOR") != nullptr)
+            {
+                const ESM::Position& current = proofActor.getRefData().getPosition();
+                const osg::Vec3f stagePos(getProofFloat("OPENMW_PROOF_ACTOR_STAGE_X", current.pos[0]),
+                    getProofFloat("OPENMW_PROOF_ACTOR_STAGE_Y", current.pos[1]),
+                    getProofFloat("OPENMW_PROOF_ACTOR_STAGE_Z", current.pos[2]));
+                const osg::Vec3f stageRot(getProofFloat("OPENMW_PROOF_ACTOR_STAGE_ROT_X", current.rot[0]),
+                    getProofFloat("OPENMW_PROOF_ACTOR_STAGE_ROT_Y", current.rot[1]),
+                    getProofFloat("OPENMW_PROOF_ACTOR_STAGE_ROT_Z", current.rot[2]));
+                proofActor = mWorld->moveObject(proofActor, stagePos, true, true);
+                mWorld->rotateObject(proofActor, stageRot);
+                Log(Debug::Info) << "FNV/ESM4 proof: staged actor target=\"" << target << "\" pos=("
+                                 << stagePos.x() << "," << stagePos.y() << "," << stagePos.z() << ") rot=("
+                                 << stageRot.x() << "," << stageRot.y() << "," << stageRot.z()
+                                 << ") ptr=" << proofActor.toString();
+            }
+
+            const ESM::Position& actorPos = proofActor.getRefData().getPosition();
+            const float offsetX = getProofFloat("OPENMW_PROOF_ACTOR_VIEW_OFFSET_X", 34.f);
+            const float offsetY = getProofFloat("OPENMW_PROOF_ACTOR_VIEW_OFFSET_Y", 0.f);
+            const float offsetZ = getProofFloat("OPENMW_PROOF_ACTOR_VIEW_OFFSET_Z", 102.f);
+            const float targetZ = getProofFloat("OPENMW_PROOF_ACTOR_VIEW_TARGET_Z", 116.f);
+            const float playerEyeZ = getProofFloat("OPENMW_PROOF_ACTOR_VIEW_PLAYER_EYE_Z", 124.f);
+            const float cameraDistance = getProofFloat("OPENMW_PROOF_ACTOR_VIEW_CAMERA_DISTANCE", 0.f);
+            const osg::Vec3d actorAim(actorPos.pos[0], actorPos.pos[1], actorPos.pos[2] + targetZ);
+            const osg::Vec3f requestedCameraPos(
+                static_cast<float>(actorAim.x() + offsetX),
+                static_cast<float>(actorAim.y() + offsetY),
+                static_cast<float>(actorPos.pos[2] + offsetZ));
+            MWWorld::Ptr player = mWorld->getPlayerPtr();
+            const osg::Vec3f playerTargetPos(requestedCameraPos.x(), requestedCameraPos.y(),
+                requestedCameraPos.z() - playerEyeZ);
+            player = mWorld->moveObject(player, playerTargetPos, true, true);
+
+            const float yawToActor
+                = static_cast<float>(std::atan2(actorAim.x() - requestedCameraPos.x(), actorAim.y() - requestedCameraPos.y()));
+            mWorld->rotateObject(player, osg::Vec3f(0.f, 0.f, -yawToActor));
+
+            if (MWRender::Camera* camera = mWorld->getCamera())
+            {
+                camera->attachTo(player);
+                camera->setMode(MWRender::Camera::Mode::ThirdPerson, true);
+                camera->setPreferredCameraDistance(cameraDistance);
+                camera->update(0.f, false);
+
+                const osg::Vec3d cameraPos = camera->getPosition();
+                const float dx = static_cast<float>(actorAim.x() - cameraPos.x());
+                const float dy = static_cast<float>(actorAim.y() - cameraPos.y());
+                const float dz = static_cast<float>(actorAim.z() - cameraPos.z());
+                const float horizontal = std::sqrt(dx * dx + dy * dy);
+                camera->setPitch(static_cast<float>(std::atan2(dz, horizontal)), true);
+                camera->setYaw(-yawToActor, true);
+                camera->setRoll(0.f);
+                camera->updateCamera(mViewer->getCamera());
+
+                const osg::Vec3d finalCameraPos = camera->getPosition();
+                Log(Debug::Info) << "FNV/ESM4 proof: aligned player camera to actor target=\"" << target
+                                 << "\" playerPos=(" << playerTargetPos.x() << "," << playerTargetPos.y()
+                                 << "," << playerTargetPos.z() << ") actorPos=(" << actorPos.pos[0] << ","
+                                 << actorPos.pos[1] << "," << actorPos.pos[2] << ") actorAim=("
+                                 << actorAim.x() << "," << actorAim.y() << "," << actorAim.z()
+                                 << ") requestedCameraPos=(" << requestedCameraPos.x() << ","
+                                 << requestedCameraPos.y() << "," << requestedCameraPos.z()
+                                 << ") cameraPos=(" << finalCameraPos.x() << "," << finalCameraPos.y()
+                                 << "," << finalCameraPos.z() << ") cameraPitch=" << camera->getPitch()
+                                 << " cameraYaw=" << camera->getYaw();
+            }
+        }
+        else
+        {
+            Log(Debug::Warning) << "FNV/ESM4 proof: active-cell actor lookup failed target=\"" << target
+                                << "\" scanned=" << scanned << " actors=" << actors;
+        }
+
+        proofActorCameraApplied = true;
+    }
+
+    static const std::vector<int> proofScreenshotFrames = getProofFrames("OPENMW_PROOF_SCREENSHOT_FRAME");
+    static std::size_t proofScreenshotFrameIndex = 0;
+    if (proofScreenshotFrameIndex < proofScreenshotFrames.size()
+        && frameNumber >= static_cast<unsigned>(proofScreenshotFrames[proofScreenshotFrameIndex])
+        && mStateManager->getState() == MWBase::StateManager::State_Running && mScreenCaptureHandler != nullptr)
+    {
+        Log(Debug::Info) << "FNV/ESM4 proof: queuing native screenshot at frame " << frameNumber;
+        mScreenCaptureHandler->setFramesToCapture(1);
+        mScreenCaptureHandler->captureNextFrame(*mViewer);
+        ++proofScreenshotFrameIndex;
+    }
 
     mViewer->renderingTraversals();
 

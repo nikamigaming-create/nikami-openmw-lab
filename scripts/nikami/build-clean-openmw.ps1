@@ -115,6 +115,9 @@ if (!(Test-Path -LiteralPath $LuaJitLibrary)) {
 }
 
 Import-VisualStudioEnvironment
+$PathValue = $env:Path
+Remove-Item Env:PATH -ErrorAction SilentlyContinue
+$env:Path = $PathValue
 
 if (!$SkipConfigure) {
     $ConfigureArgs = @(

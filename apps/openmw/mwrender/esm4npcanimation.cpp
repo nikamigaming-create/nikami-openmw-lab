@@ -37,7 +37,7 @@ namespace MWRender
             updatePartsTES4(*traits);
         else if (traits->mIsFONV)
         {
-            // Not implemented yet
+            updatePartsFONV(*traits);
         }
         else
         {
@@ -89,6 +89,46 @@ namespace MWRender
 
         for (const ESM4::Armor* armor : MWClass::ESM4Npc::getEquippedArmor(mPtr))
             insertPart(chooseTes4EquipmentModel(armor, isFemale));
+        for (const ESM4::Clothing* clothing : MWClass::ESM4Npc::getEquippedClothing(mPtr))
+            insertPart(chooseTes4EquipmentModel(clothing, isFemale));
+    }
+
+    void ESM4NpcAnimation::updatePartsFONV(const ESM4::Npc& traits)
+    {
+        const ESM4::Race* race = MWClass::ESM4Npc::getRace(mPtr);
+        if (race == nullptr)
+        {
+            Log(Debug::Warning) << "FNV/ESM4 diag: race not found while assembling FONV NPC parts for "
+                                << traits.mEditorId;
+            return;
+        }
+
+        const bool isFemale = MWClass::ESM4Npc::isFemale(mPtr);
+
+        Log(Debug::Info) << "FNV/ESM4 diag: assembling minimal FONV NPC parts for " << traits.mEditorId
+                         << " race=" << ESM::RefId(race->mId) << " female=" << isFemale;
+
+        for (const ESM4::Race::BodyPart& bodyPart : (isFemale ? race->mBodyPartsFemale : race->mBodyPartsMale))
+            insertPart(bodyPart.mesh);
+
+        for (const ESM4::Race::BodyPart& bodyPart : race->mHeadParts)
+            insertPart(bodyPart.mesh);
+
+        if (!traits.mHair.isZeroOrUnset())
+        {
+            const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
+            if (const ESM4::Hair* hair = store->get<ESM4::Hair>().search(traits.mHair))
+                insertPart(hair->mModel);
+            else
+                Log(Debug::Error) << "Hair not found: " << ESM::RefId(traits.mHair);
+        }
+
+        std::set<uint32_t> usedHeadPartTypes;
+        insertHeadParts(traits.mHeadParts, usedHeadPartTypes);
+
+        for (const ESM4::Armor* armor : MWClass::ESM4Npc::getEquippedArmor(mPtr))
+            insertPart(chooseTes4EquipmentModel(armor, isFemale));
+
         for (const ESM4::Clothing* clothing : MWClass::ESM4Npc::getEquippedClothing(mPtr))
             insertPart(chooseTes4EquipmentModel(clothing, isFemale));
     }

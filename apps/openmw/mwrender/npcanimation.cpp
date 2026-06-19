@@ -522,15 +522,37 @@ namespace MWRender
             smodel = Misc::ResourceHelpers::correctActorModelPath(model, mResourceSystem->getVFS());
         }
 
+        Log(Debug::Info) << "FNV/ESM4: NPC animation setup base=" << base << " defaultSkeleton=" << defaultSkeleton
+                         << " smodel=" << smodel;
+
         setObjectRoot(smodel, true, true, false);
 
         updateParts();
 
-        if (!base.empty())
-            addAnimSource(base, smodel);
+        const auto addActorAnimSourceIfPresent = [this, &smodel](std::string_view source) {
+            if (source.empty())
+                return;
+
+            VFS::Path::Normalized path(source);
+            VFS::Path::Normalized keyframe(path);
+            constexpr VFS::Path::ExtensionView nif("nif");
+            constexpr VFS::Path::ExtensionView kf("kf");
+            if (keyframe.extension() == nif)
+                keyframe.changeExtension(kf);
+
+            if (!mResourceSystem->getVFS()->exists(path) && !mResourceSystem->getVFS()->exists(keyframe))
+            {
+                Log(Debug::Info) << "FNV/ESM4: skipped missing default actor animation source " << source;
+                return;
+            }
+
+            addAnimSource(source, smodel);
+        };
+
+        addActorAnimSourceIfPresent(base);
 
         if (defaultSkeleton != base)
-            addAnimSource(defaultSkeleton, smodel);
+            addActorAnimSourceIfPresent(defaultSkeleton);
 
         if (isCustomModel)
             addAnimSource(smodel, smodel);

@@ -437,6 +437,9 @@ namespace MWClass
     std::string_view Npc::getModel(const MWWorld::ConstPtr& ptr) const
     {
         const MWWorld::LiveCellRef<ESM::NPC>* ref = ptr.get<ESM::NPC>();
+        if (!ref->mBase->mModel.empty())
+            return ref->mBase->mModel;
+
         const VFS::Path::NormalizedView model = [&]() -> VFS::Path::NormalizedView {
             const ESM::Race* race = MWBase::Environment::get().getESMStore()->get<ESM::Race>().find(ref->mBase->mRace);
             if (race->mData.mFlags & ESM::Race::Beast)
@@ -454,6 +457,8 @@ namespace MWClass
     VFS::Path::Normalized Npc::getCorrectedModel(const MWWorld::ConstPtr& ptr) const
     {
         const MWWorld::LiveCellRef<ESM::NPC>* ref = ptr.get<ESM::NPC>();
+        if (!ref->mBase->mModel.empty())
+            return Misc::ResourceHelpers::correctMeshPath(VFS::Path::Normalized(ref->mBase->mModel));
 
         const ESM::Race* race = MWBase::Environment::get().getESMStore()->get<ESM::Race>().find(ref->mBase->mRace);
         if (race->mData.mFlags & ESM::Race::Beast)

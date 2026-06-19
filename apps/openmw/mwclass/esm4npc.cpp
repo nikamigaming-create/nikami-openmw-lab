@@ -10,6 +10,10 @@
 
 #include <components/misc/resourcehelpers.hpp>
 
+#include "../mwmechanics/creaturestats.hpp"
+#include "../mwmechanics/movement.hpp"
+
+#include "../mwworld/containerstore.hpp"
 #include "../mwworld/customdata.hpp"
 #include "../mwworld/esmstore.hpp"
 
@@ -64,14 +68,100 @@ namespace MWClass
         const ESM4::Npc* mBaseData;
         const ESM4::Race* mRace;
         bool mIsFemale;
+        MWMechanics::CreatureStats mCreatureStats;
+        MWMechanics::Movement mMovement;
+        std::unique_ptr<MWWorld::ContainerStore> mContainerStore;
 
         // TODO: Use InventoryStore instead (currently doesn't support ESM4 objects)
         std::vector<const ESM4::Armor*> mEquippedArmor;
         std::vector<const ESM4::Clothing*> mEquippedClothing;
 
+        ESM4NpcCustomData()
+            : mTraits(nullptr)
+            , mBaseData(nullptr)
+            , mRace(nullptr)
+            , mIsFemale(false)
+            , mContainerStore(std::make_unique<MWWorld::ContainerStore>())
+        {
+        }
+
+        ESM4NpcCustomData(const ESM4NpcCustomData& other)
+            : mTraits(other.mTraits)
+            , mBaseData(other.mBaseData)
+            , mRace(other.mRace)
+            , mIsFemale(other.mIsFemale)
+            , mCreatureStats(other.mCreatureStats)
+            , mMovement(other.mMovement)
+            , mContainerStore(other.mContainerStore ? other.mContainerStore->clone()
+                                                    : std::make_unique<MWWorld::ContainerStore>())
+            , mEquippedArmor(other.mEquippedArmor)
+            , mEquippedClothing(other.mEquippedClothing)
+        {
+        }
+
         ESM4NpcCustomData& asESM4NpcCustomData() override { return *this; }
         const ESM4NpcCustomData& asESM4NpcCustomData() const override { return *this; }
     };
+
+    static int positiveOrDefault(int value, int fallback)
+    {
+        value = value < 0 ? -value : value;
+        return value > 0 ? value : fallback;
+    }
+
+    static int getLevel(const ESM4::Npc& npc)
+    {
+        if (npc.mIsFONV)
+            return positiveOrDefault(npc.mBaseConfig.fo3.levelOrMult, 1);
+        if (npc.mIsFO4)
+            return positiveOrDefault(npc.mBaseConfig.fo4.levelOrMult, 1);
+        if (npc.mIsTES4)
+            return positiveOrDefault(npc.mBaseConfig.tes4.levelOrOffset, 1);
+        return positiveOrDefault(npc.mBaseConfig.tes5.levelOrMult, 1);
+    }
+
+    static float getSpeedMultiplier(const ESM4::Npc& npc)
+    {
+        int multiplier = 100;
+        if (npc.mIsFONV)
+            multiplier = npc.mBaseConfig.fo3.speedMultiplier;
+        else if (!npc.mIsFO4 && !npc.mIsTES4)
+            multiplier = npc.mBaseConfig.tes5.speedMultiplier;
+
+        return std::max(multiplier, 1) / 100.f;
+    }
+
+    static void initialiseActorStats(ESM4NpcCustomData& data)
+    {
+        const ESM4::Npc* statsRecord = data.mBaseData != nullptr ? data.mBaseData : data.mTraits;
+        if (statsRecord == nullptr)
+            return;
+
+        MWMechanics::CreatureStats& stats = data.mCreatureStats;
+        stats.setLevel(getLevel(*statsRecord));
+
+        const ESM4::AttributeValues& attributes = statsRecord->mData.attribs;
+        stats.setAttribute(ESM::Attribute::Strength, attributes.strength ? attributes.strength : 50);
+        stats.setAttribute(ESM::Attribute::Intelligence, attributes.intelligence ? attributes.intelligence : 50);
+        stats.setAttribute(ESM::Attribute::Willpower, attributes.willpower ? attributes.willpower : 50);
+        stats.setAttribute(ESM::Attribute::Agility, attributes.agility ? attributes.agility : 50);
+        stats.setAttribute(ESM::Attribute::Speed, attributes.speed ? attributes.speed : 50);
+        stats.setAttribute(ESM::Attribute::Endurance, attributes.endurance ? attributes.endurance : 50);
+        stats.setAttribute(ESM::Attribute::Personality, attributes.personality ? attributes.personality : 50);
+        stats.setAttribute(ESM::Attribute::Luck, attributes.luck ? attributes.luck : 50);
+
+        const float health = statsRecord->mData.health > 0 ? static_cast<float>(statsRecord->mData.health) : 100.f;
+        const float fatigue = statsRecord->mIsFONV && statsRecord->mBaseConfig.fo3.fatigue > 0
+            ? static_cast<float>(statsRecord->mBaseConfig.fo3.fatigue)
+            : 100.f;
+        stats.setHealth(health);
+        stats.setMagicka(0.f);
+        stats.setFatigue(fatigue);
+        stats.setAiSetting(MWMechanics::AiSetting::Hello, 30);
+        stats.setAiSetting(MWMechanics::AiSetting::Fight, statsRecord->mAIData.aggression);
+        stats.setAiSetting(MWMechanics::AiSetting::Flee, 100 - statsRecord->mAIData.confidence);
+        stats.setAiSetting(MWMechanics::AiSetting::Alarm, statsRecord->mAIData.responsibility);
+    }
 
     ESM4NpcCustomData& ESM4Npc::getCustomData(const MWWorld::ConstPtr& ptr)
     {
@@ -145,6 +235,8 @@ namespace MWClass
             }
         }
 
+        initialiseActorStats(*data);
+
         ESM4NpcCustomData& res = *data;
         refData.setCustomData(std::move(data));
         return res;
@@ -191,5 +283,73 @@ namespace MWClass
         if (baseData == nullptr)
             return {};
         return baseData->mFullName;
+    }
+
+    MWMechanics::CreatureStats& ESM4Npc::getCreatureStats(const MWWorld::Ptr& ptr) const
+    {
+        return getCustomData(ptr).mCreatureStats;
+    }
+
+    MWMechanics::Movement& ESM4Npc::getMovementSettings(const MWWorld::Ptr& ptr) const
+    {
+        return getCustomData(ptr).mMovement;
+    }
+
+    MWWorld::ContainerStore& ESM4Npc::getContainerStore(const MWWorld::Ptr& ptr) const
+    {
+        return *getCustomData(ptr).mContainerStore;
+    }
+
+    float ESM4Npc::getCapacity(const MWWorld::Ptr& ptr) const
+    {
+        return 200.f;
+    }
+
+    float ESM4Npc::getMaxSpeed(const MWWorld::Ptr& ptr) const
+    {
+        const ESM4NpcCustomData& data = getCustomData(ptr);
+        const ESM4::Npc* statsRecord = data.mBaseData != nullptr ? data.mBaseData : data.mTraits;
+        return statsRecord != nullptr ? 100.f * getSpeedMultiplier(*statsRecord) : 100.f;
+    }
+
+    float ESM4Npc::getWalkSpeed(const MWWorld::Ptr& ptr) const
+    {
+        return getMaxSpeed(ptr);
+    }
+
+    float ESM4Npc::getRunSpeed(const MWWorld::Ptr& ptr) const
+    {
+        return getMaxSpeed(ptr) * 1.5f;
+    }
+
+    float ESM4Npc::getSwimSpeed(const MWWorld::Ptr& ptr) const
+    {
+        return getMaxSpeed(ptr);
+    }
+
+    float ESM4Npc::getSkill(const MWWorld::Ptr& ptr, ESM::RefId id) const
+    {
+        return 50.f;
+    }
+
+    bool ESM4Npc::isPersistent(const MWWorld::ConstPtr& ptr) const
+    {
+        const ESM4::Npc* baseData = getCustomData(ptr).mBaseData;
+        return baseData != nullptr && (baseData->mFlags & ESM::FLAG_Persistent) != 0;
+    }
+
+    bool ESM4Npc::isBipedal(const MWWorld::ConstPtr& ptr) const
+    {
+        return true;
+    }
+
+    bool ESM4Npc::canSwim(const MWWorld::ConstPtr& ptr) const
+    {
+        return true;
+    }
+
+    bool ESM4Npc::canWalk(const MWWorld::ConstPtr& ptr) const
+    {
+        return true;
     }
 }

@@ -1610,10 +1610,25 @@ namespace MWRender
             }
         }
 
+        const auto isDefaultActorModel = [](VFS::Path::NormalizedView path) {
+            const std::string_view basename = path.filename().value();
+            return basename.starts_with("base_anim") || basename.starts_with("xbase_anim")
+                || basename.starts_with("xargonian_swimkna") || basename.starts_with("skin");
+        };
+        const VFS::Path::Normalized normalizedModel = VFS::Path::toNormalized(model);
+        const bool useEmptyMissingDefaultActorRoot
+            = !model.empty() && isDefaultActorModel(normalizedModel) && !mResourceSystem->getVFS()->exists(normalizedModel);
+
         if (!forceskeleton)
         {
-            osg::ref_ptr<osg::Node> created
-                = getModelInstance(mResourceSystem, model, baseonly, inject, defaultSkeleton);
+            osg::ref_ptr<osg::Node> created;
+            if (useEmptyMissingDefaultActorRoot)
+            {
+                Log(Debug::Info) << "FNV/ESM4: skipped missing default actor model " << model;
+                created = new osg::Group;
+            }
+            else
+                created = getModelInstance(mResourceSystem, model, baseonly, inject, defaultSkeleton);
             mInsert->addChild(created);
             mObjectRoot = created->asGroup();
             if (!mObjectRoot)
@@ -1629,8 +1644,14 @@ namespace MWRender
         }
         else
         {
-            osg::ref_ptr<osg::Node> created
-                = getModelInstance(mResourceSystem, model, baseonly, inject, defaultSkeleton);
+            osg::ref_ptr<osg::Node> created;
+            if (useEmptyMissingDefaultActorRoot)
+            {
+                Log(Debug::Info) << "FNV/ESM4: skipped missing default actor skeleton " << model;
+                created = new SceneUtil::Skeleton;
+            }
+            else
+                created = getModelInstance(mResourceSystem, model, baseonly, inject, defaultSkeleton);
             osg::ref_ptr<SceneUtil::Skeleton> skel = dynamic_cast<SceneUtil::Skeleton*>(created.get());
             if (!skel)
             {

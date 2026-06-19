@@ -3,24 +3,28 @@
 
 #include <components/esm4/loadcrea.hpp>
 #include <components/esm4/loadnpc.hpp>
+#include <components/esm4/loadweap.hpp>
+#include <components/vfs/pathutil.hpp>
 
 #include "../mwgui/tooltips.hpp"
 
+#include "../mwphysics/physicssystem.hpp"
 #include "../mwrender/objects.hpp"
 #include "../mwrender/renderinginterface.hpp"
 #include "../mwworld/cellstore.hpp"
 #include "../mwworld/class.hpp"
 #include "../mwworld/registeredclass.hpp"
 
+#include "actor.hpp"
 #include "esm4base.hpp"
 
 namespace MWClass
 {
-    class ESM4Npc final : public MWWorld::RegisteredClass<ESM4Npc>
+    class ESM4Npc final : public MWWorld::RegisteredClass<ESM4Npc, Actor>
     {
     public:
         ESM4Npc()
-            : MWWorld::RegisteredClass<ESM4Npc>(ESM4::Npc::sRecordId)
+            : MWWorld::RegisteredClass<ESM4Npc, Actor>(ESM4::Npc::sRecordId)
         {
         }
 
@@ -45,7 +49,8 @@ namespace MWClass
         void insertObjectPhysics(const MWWorld::Ptr& ptr, const std::string& model, const osg::Quat& rotation,
             MWPhysics::PhysicsSystem& physics) const override
         {
-            // ESM4Impl::insertObjectPhysics(ptr, getModel(ptr), rotation, physics);
+            (void)rotation;
+            physics.addActor(ptr, VFS::Path::toNormalized(model.empty() ? std::string(getModel(ptr)) : model));
         }
 
         bool hasToolTip(const MWWorld::ConstPtr& ptr) const override { return true; }
@@ -56,6 +61,19 @@ namespace MWClass
 
         std::string_view getModel(const MWWorld::ConstPtr& ptr) const override;
         std::string_view getName(const MWWorld::ConstPtr& ptr) const override;
+        MWMechanics::CreatureStats& getCreatureStats(const MWWorld::Ptr& ptr) const override;
+        MWMechanics::Movement& getMovementSettings(const MWWorld::Ptr& ptr) const override;
+        MWWorld::ContainerStore& getContainerStore(const MWWorld::Ptr& ptr) const override;
+        float getCapacity(const MWWorld::Ptr& ptr) const override;
+        float getMaxSpeed(const MWWorld::Ptr& ptr) const override;
+        float getWalkSpeed(const MWWorld::Ptr& ptr) const override;
+        float getRunSpeed(const MWWorld::Ptr& ptr) const override;
+        float getSwimSpeed(const MWWorld::Ptr& ptr) const override;
+        float getSkill(const MWWorld::Ptr& ptr, ESM::RefId id) const override;
+        bool isPersistent(const MWWorld::ConstPtr& ptr) const override;
+        bool isBipedal(const MWWorld::ConstPtr& ptr) const override;
+        bool canSwim(const MWWorld::ConstPtr& ptr) const override;
+        bool canWalk(const MWWorld::ConstPtr& ptr) const override;
 
         static const ESM4::Npc* getTraitsRecord(const MWWorld::Ptr& ptr);
         static const ESM4::Race* getRace(const MWWorld::Ptr& ptr);
