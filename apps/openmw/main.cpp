@@ -15,7 +15,23 @@
 #include "engine.hpp"
 #include "options.hpp"
 
+#if !defined(OPENMW_ENABLE_VR) && !defined(OPENMW_VR)
+#include "mwvr/openxrinput.hpp"
+#include "mwvr/vranimation.hpp"
+#include "mwvr/vrinputmanager.hpp"
+
+#include <components/vr/frame.hpp>
+#include <components/vr/session.hpp>
+#include <components/vr/space.hpp>
+#include <components/vr/swapchain.hpp>
+#include <components/vr/vr.hpp>
+#endif
+
 #include <boost/program_options/variables_map.hpp>
+
+#if !defined(OPENMW_ENABLE_VR) && !defined(OPENMW_VR)
+#include <type_traits>
+#endif
 
 #if defined(_WIN32)
 #include <components/misc/windows.hpp>
@@ -29,6 +45,130 @@ extern "C" __declspec(dllexport) DWORD AmdPowerXpressRequestHighPerformance = 0x
 
 #if (defined(__APPLE__) || defined(__linux) || defined(__unix) || defined(__posix))
 #include <unistd.h>
+#endif
+
+#if !defined(OPENMW_ENABLE_VR) && !defined(OPENMW_VR)
+namespace VR
+{
+    Frame::Frame() = default;
+    Frame::~Frame() = default;
+
+    XrPath stringToXrPath(const std::string&) { return XR_NULL_PATH; }
+    std::string xrPathToString(XrPath) { return {}; }
+
+    bool getVR() { return false; }
+    bool getKBMouseModeActive() { return false; }
+    bool getSteamVR() { return false; }
+    bool getControllerActive(XrPath) { return false; }
+    XrPath getControllerInteractionProfile(XrPath) { return XR_NULL_PATH; }
+    bool getLeftControllerActive() { return false; }
+    bool getRightControllerActive() { return false; }
+    bool getLocatingSpacesAllowed() { return false; }
+    bool getLeftHandedMode() { return false; }
+    Stereo::Unit getPlayerHeight() { return {}; }
+    DisplayTime getPredictedDisplayTime() { return 0; }
+    DisplayTime getPredictedDisplayPeriod() { return 0; }
+    std::string getRuntimeName() { return {}; }
+    const char* getPreferredAimPath() { return Paths::RIGHT_HAND_AIM; }
+
+    void setVR(bool) {}
+    void setControllerActive(XrPath, XrPath, bool) {}
+    void setSteamVR(bool) {}
+    void setSneakOffsetEnabled(bool) {}
+    void setPredictedDisplayTime(DisplayTime) {}
+    void setPredictedDisplayPeriod(DisplayTime) {}
+    void setLocatingSpacesAllowed(bool) {}
+    void setRuntimeName(std::string) {}
+    void setLeftHandedMode(bool) {}
+
+    void recenterXY() {}
+    void recenterZ() {}
+    bool getShouldRecenterXY() { return false; }
+    bool getShouldRecenterZ() { return false; }
+    void setShouldRecenterXY(bool) {}
+    void setShouldRecenterZ(bool) {}
+
+    Session::Listener::Listener() = default;
+    Session::Listener::~Listener() = default;
+    Session::Session() = default;
+    Session::~Session() = default;
+
+    class FlatSession final : public Session
+    {
+    public:
+        std::shared_ptr<Swapchain> createSwapchain(
+            uint32_t, uint32_t, uint32_t, uint32_t, Swapchain::Attachment, const std::string&) override
+        {
+            return nullptr;
+        }
+
+        std::array<Stereo::View, 2> locateViews(int64_t, Space&) override { return {}; }
+        std::array<SwapchainConfig, 2> getRecommendedSwapchainConfig() const override { return {}; }
+        std::vector<ReferenceSpace> getSupportedReferenceSpaceTypes() const override { return {}; }
+        void setReferenceWorldPose(Stereo::Pose) override {}
+        std::shared_ptr<Space> getReferenceSpace(ReferenceSpace) override { return nullptr; }
+
+    protected:
+        void newFrame(uint64_t, bool& shouldSyncFrame, bool& shouldSyncInput) override
+        {
+            shouldSyncFrame = false;
+            shouldSyncInput = false;
+        }
+
+        void syncFrameUpdate(uint64_t, bool& shouldRender, uint64_t& predictedDisplayTime,
+            uint64_t& predictedDisplayPeriod) override
+        {
+            shouldRender = false;
+            predictedDisplayTime = 0;
+            predictedDisplayPeriod = 0;
+        }
+
+        void syncFrameRender(Frame&) override {}
+        void syncFrameEnd(Frame&) override {}
+    };
+
+    Session& Session::instance()
+    {
+        static FlatSession session;
+        return session;
+    }
+
+    void Session::computePlayerScale() {}
+    void Session::setCharHeight(Stereo::Unit height) { mCharHeight = height; }
+    void Session::processChangedSettings(const std::set<std::pair<std::string, std::string>>&) {}
+    Frame Session::newFrame() { return {}; }
+    void Session::frameBeginUpdate(Frame&) {}
+    void Session::updateSpaces() {}
+    void Session::frameBeginRender(Frame&) {}
+    void Session::frameEnd(osg::RenderInfo&, Frame&) {}
+    void Session::swapBuffers(osg::GraphicsContext*, Frame&) {}
+    void Session::instantTransition() {}
+    void Session::setInteractionProfileActive(XrPath, XrPath, bool) {}
+    bool Session::getInteractionProfileActive(XrPath) const { return false; }
+    void Session::setSneak(bool) {}
+    void Session::addListener(Listener*) {}
+    void Session::removeListener(Listener*) {}
+    void Session::recenter() {}
+    void Session::readSettings() {}
+}
+
+namespace MWVR
+{
+    OpenXRInput& OpenXRInput::instance()
+    {
+        static std::aligned_storage_t<sizeof(OpenXRInput), alignof(OpenXRInput)> input;
+        return *reinterpret_cast<OpenXRInput*>(&input);
+    }
+
+    std::shared_ptr<VR::Space> OpenXRInput::getSpace(const std::string&) const { return nullptr; }
+    void OpenXRInput::onFrameUpdate(VR::Frame&) {}
+
+    bool hasFallbackMovementInput() { return false; }
+    osg::Vec2f getFallbackMovementInput() { return {}; }
+    bool consumeFallbackSnapTurn(float&) { return false; }
+
+    void VRAnimation::modifyMovement(osg::Vec3&) {}
+}
 #endif
 
 /**
