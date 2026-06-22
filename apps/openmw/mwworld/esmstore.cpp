@@ -54,11 +54,13 @@ namespace
         std::size_t mQuestDialogues = 0;
         std::size_t mTopicDialogues = 0;
         std::size_t mQuestInfos = 0;
+        std::size_t mResolvedInfoSounds = 0;
         std::size_t mSkippedGameSettings = 0;
         std::size_t mSkippedGlobals = 0;
         std::size_t mSkippedScripts = 0;
         std::size_t mSkippedDialogues = 0;
         std::size_t mSkippedInfos = 0;
+        std::size_t mUnresolvedInfoSounds = 0;
     };
 
     std::int32_t clampFloatToInt(float value)
@@ -167,6 +169,26 @@ namespace
         return ESM::RefId::formIdRefId(id);
     }
 
+    std::string resolveEsm4SoundFile(const MWWorld::ESMStore& store, ESM::FormId soundId, unsigned int depth = 0)
+    {
+        constexpr unsigned int maxDepth = 8;
+        if (soundId.isZeroOrUnset() || depth >= maxDepth)
+            return {};
+
+        if (const ESM4::SoundReference* reference = store.get<ESM4::SoundReference>().search(soundId))
+        {
+            if (!reference->mSoundFile.empty())
+                return reference->mSoundFile;
+            if (!reference->mSoundId.isZeroOrUnset())
+                return resolveEsm4SoundFile(store, reference->mSoundId, depth + 1);
+        }
+
+        if (const ESM4::Sound* sound = store.get<ESM4::Sound>().search(soundId))
+            return sound->mSoundFile;
+
+        return {};
+    }
+
     void bridgeEsm4QuestDialogueStores(MWWorld::ESMStore& store, Esm4RuntimeBridgeCounts& counts)
     {
         MWWorld::Store<ESM::Dialogue>& targetDialogues = store.getWritable<ESM::Dialogue>();
@@ -234,9 +256,17 @@ namespace
             ESM::DialInfo info;
             info.blank();
             info.mId = formIdRefId(source.mId);
-            // ESM3 INFO sound is a playable path, not a FormId. Keep journal entries silent until SNDR/SOUN
-            // path resolution is bridged.
-            info.mSound.clear();
+            if (!source.mSound.isZeroOrUnset())
+            {
+                const std::string infoSound = resolveEsm4SoundFile(store, source.mSound);
+                if (infoSound.empty())
+                    ++counts.mUnresolvedInfoSounds;
+                else
+                {
+                    info.mSound = infoSound;
+                    ++counts.mResolvedInfoSounds;
+                }
+            }
             info.mResponse = source.mResponse;
             info.mResultScript = source.mScript.scriptSource;
             info.mData.mType = ESM::Dialogue::Journal;
@@ -1072,11 +1102,13 @@ namespace MWWorld
                          << " questDialogues=" << bridgeCounts.mQuestDialogues
                          << " topicDialogues=" << bridgeCounts.mTopicDialogues
                          << " questInfos=" << bridgeCounts.mQuestInfos
+                         << " resolvedInfoSounds=" << bridgeCounts.mResolvedInfoSounds
                          << " skippedGmst=" << bridgeCounts.mSkippedGameSettings
                          << " skippedGlobals=" << bridgeCounts.mSkippedGlobals
                          << " skippedScripts=" << bridgeCounts.mSkippedScripts
                          << " skippedDialogues=" << bridgeCounts.mSkippedDialogues
-                         << " skippedInfos=" << bridgeCounts.mSkippedInfos;
+                         << " skippedInfos=" << bridgeCounts.mSkippedInfos
+                         << " unresolvedInfoSounds=" << bridgeCounts.mUnresolvedInfoSounds;
 
         getWritable<ESM::Skill>().setUp(get<ESM::GameSetting>());
         getWritable<ESM::Attribute>().setUp(get<ESM::GameSetting>());

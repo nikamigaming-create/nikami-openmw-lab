@@ -56,15 +56,24 @@ void ESM4::DialogInfo::load(ESM4::Reader& reader)
                 break; // FO3 (not used in FONV?)
             case ESM::fourCC("TRDT"):
             {
+                bool hasSoundField = false;
                 if (subHdr.dataSize == 16) // TES4
                     reader.get(&mResponseData, 16);
                 else if (subHdr.dataSize == 20) // FO3
+                {
                     reader.get(&mResponseData, 20);
+                    hasSoundField = true;
+                }
                 else // FO3/FONV
                 {
                     reader.get(mResponseData);
-                    if (mResponseData.sound)
-                        reader.adjustFormId(mResponseData.sound);
+                    hasSoundField = true;
+                }
+
+                if (hasSoundField && mResponseData.sound)
+                {
+                    reader.adjustFormId(mResponseData.sound);
+                    mSound = ESM::FormId::fromUint32(mResponseData.sound);
                 }
 
                 break;
