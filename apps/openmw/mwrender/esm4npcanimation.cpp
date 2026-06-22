@@ -313,10 +313,12 @@ namespace MWRender
                 const bool forceOpen = std::getenv("OPENMW_FNV_PROOF_MOUTH_FORCE_OPEN") != nullptr;
                 if (transform != nullptr && (forceOpen || MWBase::Environment::get().getSoundManager()->sayActive(mActor)))
                 {
+                    const float lip = forceOpen ? 1.f
+                                                : MWBase::Environment::get().getSoundManager()->getSaySoundLipValue(mActor);
                     const float loudness = forceOpen
                         ? 1.f
                         : MWBase::Environment::get().getSoundManager()->getSaySoundLoudness(mActor);
-                    const float open = forceOpen ? 1.f : std::clamp(loudness * 5.0f, 0.f, 0.65f);
+                    const float open = forceOpen ? 1.f : std::clamp(std::max(lip, loudness * 5.0f), 0.f, 0.65f);
                     osg::Vec3f offset(0.f, -0.15f * open, -1.8f * open);
                     osg::Vec3f scale(1.f, 1.f, 1.f + 0.24f * open);
                     if (mModel.find("teethlower") != std::string::npos)
@@ -340,8 +342,8 @@ namespace MWRender
                     if (!mLogged)
                     {
                         Log(Debug::Info) << "FNV/ESM4 proof: mouth driver active for " << mActor.toString()
-                                         << " model=" << mModel << " loudness=" << loudness << " open=" << open
-                                         << " force=" << forceOpen
+                                         << " model=" << mModel << " lip=" << lip << " loudness=" << loudness
+                                         << " open=" << open << " force=" << forceOpen
                                          << " offset=(" << offset.x() << "," << offset.y() << "," << offset.z()
                                          << ")";
                         mLogged = true;
@@ -1644,8 +1646,9 @@ namespace MWRender
                     open = 1.f;
                 else if (MWBase::Environment::get().getSoundManager()->sayActive(mActor))
                 {
+                    const float lip = MWBase::Environment::get().getSoundManager()->getSaySoundLipValue(mActor);
                     const float loudness = MWBase::Environment::get().getSoundManager()->getSaySoundLoudness(mActor);
-                    open = std::clamp(loudness * 5.0f, 0.f, 0.65f);
+                    open = std::clamp(std::max(lip, loudness * 5.0f), 0.f, 0.65f);
                 }
 
                 if (open != mLastOpen)

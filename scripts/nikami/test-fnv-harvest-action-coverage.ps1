@@ -188,11 +188,14 @@ $runtimeRules = @{
         New-Anchor "components/vfs/manager.hpp" "Files::IStreamPtr get" "VFS can expose TAI streams"
         New-Anchor "components/myguiplatform/myguitexture.cpp" "mImageManager->getImage" "MyGUI texture loading path exists for paired interface textures"
     ) "Identify the TAI format for textures/interface/interfaceshared.tai and connect it to the FNV menu renderer if required."
-    ".lip" = New-Rule "blocked-runtime-support" "voice-lip-sync" "Voice audio is playable, but FNV .lip phoneme timing is not yet parsed/applied to mouth animation" @(
-        New-Anchor "apps/openmw/mwrender/esm4npcanimation.cpp" "FalloutProofMouthDriver" "current mouth driver is proof/runtime geometry movement, not LIP-driven phonemes"
-        New-Anchor "apps/openmw/mwsound/soundmanagerimp.cpp" "SoundManager::say" "voice audio path exists while lip timing remains a separate blocker"
-        New-Anchor "scripts/nikami/test-fnv-dialogue-voice-lip-ledger.ps1" "INFO FormId voice LIP sidecars" "voice/LIP ledger proves harvested sidecars by INFO FormId without claiming runtime playback"
-    ) "LIP sidecars are discovered by INFO FormId; implement LIP parser and connect dialogue playback to timed mouth visemes before moving this to runtime-supported."
+    ".lip" = New-Rule "vfs-readable-runtime-conditional" "voice-lip-sync" "Voice sidecar bytes are loaded through VFS, parsed into a timed envelope, and sampled by FNV mouth animation; exact phoneme/viseme mapping remains a follow-up gate" @(
+        New-Anchor "apps/openmw/mwsound/soundmanagerimp.cpp" "loadVoiceLipSync" "voice playback resolves and parses matching LIP sidecars"
+        New-Anchor "apps/openmw/mwsound/soundmanagerimp.cpp" "FNV/ESM4 diag: loaded LIP sync" "runtime logs parsed LIP sidecar metadata"
+        New-Anchor "apps/openmw/mwbase/soundmanager.hpp" "getSaySoundLipValue" "sound interface exposes a timed LIP mouth value"
+        New-Anchor "apps/openmw/mwrender/esm4npcanimation.cpp" "getSaySoundLipValue" "FNV mouth/TRI drivers consume the LIP mouth value"
+        New-Anchor "apps/openmw/mwsound/soundmanagerimp.cpp" "SoundManager::say" "voice audio path owns the LIP sidecar for active say streams"
+        New-Anchor "scripts/nikami/test-fnv-dialogue-voice-lip-ledger.ps1" "INFO FormId voice LIP sidecars" "voice/LIP ledger proves harvested sidecars by INFO FormId"
+    ) "Runtime now consumes LIP sidecar duration/payload as a mouth envelope. Promote to runtime-supported only after exact FNV phoneme/viseme mapping is decoded and gated."
     ".egm" = New-Rule "runtime-supported" "facegen-morphs" "VFS stream -> FaceGen EGM reader -> NPC head/body morph application" @(
         New-Anchor "apps/openmw/mwrender/esm4npcanimation.cpp" "loadFaceGenEgm" "FaceGen EGM reader loads external morph bytes"
         New-Anchor "apps/openmw/mwrender/esm4npcanimation.cpp" "applyFaceGenEgmMorph" "FaceGen EGM morphs are applied to NPC geometry"
