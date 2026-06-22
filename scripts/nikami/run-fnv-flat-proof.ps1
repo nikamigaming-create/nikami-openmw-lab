@@ -10,6 +10,7 @@ param(
     [int]$RunSeconds = 16,
     [string]$StartCell = "Goodsprings",
     [switch]$WithMenu,
+    [switch]$IncludeFnvrPlugin,
     [string]$ScreenshotFrames = "",
     [string[]]$RequireLogPattern = @(),
     [string]$TerrainProbePoints = "",
@@ -207,6 +208,7 @@ try {
     if (![string]::IsNullOrWhiteSpace($FnvConfigData)) { $flatArgs.FnvConfigData = $FnvConfigData }
     if (![string]::IsNullOrWhiteSpace($ExtraOsgPluginDir)) { $flatArgs.ExtraOsgPluginDir = $ExtraOsgPluginDir }
     if ($WithMenu) { $flatArgs.WithMenu = $true }
+    if ($IncludeFnvrPlugin) { $flatArgs.IncludeFnvrPlugin = $true }
     if ($NoSound) { $flatArgs.NoSound = $true }
 
     Write-ProofLine "FNV flat runtime proof $Stamp"

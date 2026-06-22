@@ -12,6 +12,7 @@ param(
     [int]$MaxRunSeconds = 0,
     [switch]$Detached,
     [switch]$WithMenu,
+    [switch]$IncludeFnvrPlugin,
     [switch]$DisableTerrainTrace,
     [switch]$NoSound
 )
@@ -172,6 +173,15 @@ if (![string]::IsNullOrWhiteSpace($FnvConfigData)) {
     $OptionalDataLine = "data=$($FnvConfigData.Replace("\", "/"))"
 }
 
+$FnvrContentLine = ""
+if ($IncludeFnvrPlugin) {
+    $FnvrPlugin = Join-Path $FnvData "FNVR.esp"
+    if (!(Test-Path -LiteralPath $FnvrPlugin)) {
+        throw "Requested -IncludeFnvrPlugin but FNVR.esp is missing: $FnvrPlugin"
+    }
+    $FnvrContentLine = "content=FNVR.esp"
+}
+
 $ConfigText = @"
 replace=config
 replace=data-local
@@ -220,7 +230,7 @@ content=CaravanPack.esm
 content=ClassicPack.esm
 content=MercenaryPack.esm
 content=TribalPack.esm
-content=FNVR.esp
+$FnvrContentLine
 
 encoding=win1252
 
