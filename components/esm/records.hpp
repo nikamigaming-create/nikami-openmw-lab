@@ -57,9 +57,12 @@
 #include <components/esm4/loaddoor.hpp>
 #include <components/esm4/loadflor.hpp>
 #include <components/esm4/loadfurn.hpp>
+#include <components/esm4/loadglob.hpp>
+#include <components/esm4/loadgmst.hpp>
 #include <components/esm4/loadhair.hpp>
 #include <components/esm4/loadhdpt.hpp>
 #include <components/esm4/loadimod.hpp>
+#include <components/esm4/loadinfo.hpp>
 #include <components/esm4/loadingr.hpp>
 #include <components/esm4/loadland.hpp>
 #include <components/esm4/loadligh.hpp>
@@ -73,6 +76,7 @@
 #include <components/esm4/loadotft.hpp>
 #include <components/esm4/loadrace.hpp>
 #include <components/esm4/loadrefr.hpp>
+#include <components/esm4/loadscpt.hpp>
 #include <components/esm4/loadscol.hpp>
 #include <components/esm4/loadsndr.hpp>
 #include <components/esm4/loadsoun.hpp>

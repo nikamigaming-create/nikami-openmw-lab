@@ -1,7 +1,10 @@
 #ifndef GAME_MWCLASS_ESM4BASE_H
 #define GAME_MWCLASS_ESM4BASE_H
 
+#include <memory>
+
 #include <components/esm4/inventory.hpp>
+#include <components/esm4/loaddoor.hpp>
 #include <components/esm4/loadscol.hpp>
 #include <components/esm4/loadstat.hpp>
 #include <components/esm4/loadtree.hpp>
@@ -185,6 +188,31 @@ namespace MWClass
         }
 
         bool hasToolTip(const MWWorld::ConstPtr& ptr) const override { return !getName(ptr).empty(); }
+    };
+
+    class ESM4Door final : public MWWorld::RegisteredClass<ESM4Door, ESM4Base<ESM4::Door>>
+    {
+        friend MWWorld::RegisteredClass<ESM4Door, ESM4Base<ESM4::Door>>;
+
+        ESM4Door()
+            : MWWorld::RegisteredClass<ESM4Door, ESM4Base<ESM4::Door>>(ESM4::Door::sRecordId)
+        {
+        }
+
+    public:
+        std::string_view getName(const MWWorld::ConstPtr& ptr) const override
+        {
+            return ptr.get<ESM4::Door>()->mBase->mFullName;
+        }
+
+        MWGui::ToolTipInfo getToolTipInfo(const MWWorld::ConstPtr& ptr, int count) const override
+        {
+            return ESM4Impl::getToolTipInfo(getName(ptr), count);
+        }
+
+        bool hasToolTip(const MWWorld::ConstPtr& ptr) const override { return !getName(ptr).empty(); }
+        bool allowTelekinesis(const MWWorld::ConstPtr& ptr) const override;
+        std::unique_ptr<MWWorld::Action> activate(const MWWorld::Ptr& ptr, const MWWorld::Ptr& actor) const override;
     };
 }
 
