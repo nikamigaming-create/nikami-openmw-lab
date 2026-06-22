@@ -13,6 +13,7 @@
 #include <components/esm3/loadrace.hpp>
 #include <components/myguiplatform/myguitexture.hpp>
 #include <components/settings/values.hpp>
+#include <components/widgets/myguicompat.hpp>
 
 #include "../mwbase/environment.hpp"
 #include "../mwbase/windowmanager.hpp"
@@ -103,7 +104,7 @@ namespace MWGui
 
         getWidget(mOkButton, "OKButton");
         mOkButton->setCaption(
-            MyGUI::UString(MWBase::Environment::get().getWindowManager()->getGameSettingString("sOK", {})));
+            Gui::makeMyGUIUString(MWBase::Environment::get().getWindowManager()->getGameSettingString("sOK", {})));
         mOkButton->eventMouseButtonClick += MyGUI::newDelegate(this, &RaceDialog::onOkClicked);
 
         if (Settings::gui().mControllerMenus)
@@ -129,18 +130,21 @@ namespace MWGui
         if (shown)
         {
             okButton->setCaption(
-                MyGUI::UString(MWBase::Environment::get().getWindowManager()->getGameSettingString("sNext", {})));
+                Gui::makeMyGUIUString(
+                    MWBase::Environment::get().getWindowManager()->getGameSettingString("sNext", {})));
             mControllerButtons.mX = "#{Interface:Next}";
         }
         else if (Settings::gui().mControllerMenus)
         {
             okButton->setCaption(
-                MyGUI::UString(MWBase::Environment::get().getWindowManager()->getGameSettingString("sDone", {})));
+                Gui::makeMyGUIUString(
+                    MWBase::Environment::get().getWindowManager()->getGameSettingString("sDone", {})));
             mControllerButtons.mX = "#{Interface:Done}";
         }
         else
             okButton->setCaption(
-                MyGUI::UString(MWBase::Environment::get().getWindowManager()->getGameSettingString("sOK", {})));
+                Gui::makeMyGUIUString(
+                    MWBase::Environment::get().getWindowManager()->getGameSettingString("sOK", {})));
     }
 
     void RaceDialog::onOpen()

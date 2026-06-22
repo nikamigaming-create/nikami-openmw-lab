@@ -360,7 +360,7 @@ namespace MWGui
     void DialogueWindow::onTradeComplete()
     {
         MyGUI::UString message = MyGUI::LanguageManager::getInstance().replaceTags("#{sBarterDialog5}");
-        addResponse({}, message);
+        addResponse({}, static_cast<std::string>(message));
     }
 
     bool DialogueWindow::exit()

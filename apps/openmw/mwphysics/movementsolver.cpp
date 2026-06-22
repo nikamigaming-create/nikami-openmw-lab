@@ -5,10 +5,12 @@
 #include <BulletCollision/CollisionShapes/btConvexShape.h>
 
 #include <components/esm3/loadgmst.hpp>
+#include <components/debug/debuglog.hpp>
 #include <components/misc/convert.hpp>
 
 #include "../mwbase/environment.hpp"
 
+#include "../mwworld/cellstore.hpp"
 #include "../mwworld/esmstore.hpp"
 
 #include "actor.hpp"
@@ -23,6 +25,9 @@
 #include "trace.h"
 
 #include <cmath>
+#include <cstdlib>
+#include <string>
+#include <string_view>
 
 namespace MWPhysics
 {
@@ -39,6 +44,7 @@ namespace MWPhysics
         public:
             explicit ContactCollectionCallback(const btCollisionObject& me, const osg::Vec3f& velocity)
                 : mVelocity(Misc::Convert::toBullet(velocity))
+                , mSelf(&me)
             {
                 m_collisionFilterGroup = me.getBroadphaseHandle()->m_collisionFilterGroup;
                 m_collisionFilterMask = me.getBroadphaseHandle()->m_collisionFilterMask & ~CollisionType_Projectile;
@@ -50,6 +56,9 @@ namespace MWPhysics
             {
                 if (isActor(colObj0Wrap->getCollisionObject()) && isActor(colObj1Wrap->getCollisionObject()))
                     return 0.0;
+                const btCollisionObject* otherObject = colObj0Wrap->getCollisionObject() == mSelf
+                    ? colObj1Wrap->getCollisionObject()
+                    : colObj0Wrap->getCollisionObject();
                 // ignore overlap if we're moving in the same direction as it would push us out (don't change this to
                 // >=, that would break detection when not moving)
                 if (contact.m_normalWorldOnB.dot(mVelocity) > 0.0)
@@ -64,6 +73,7 @@ namespace MWPhysics
                     mDistance = contact.m_distance1;
                     mNormal = contact.m_normalWorldOnB;
                     mDelta = delta;
+                    mClosestObject = otherObject;
                     return mDistance;
                 }
                 else
@@ -79,10 +89,180 @@ namespace MWPhysics
             btVector3 mNormal{ 0.0, 0.0, 0.0 }; // points towards "me"
             btVector3 mDelta{ 0.0, 0.0, 0.0 }; // points towards "me"
             btScalar mDistance = 0.0; // negative or zero
+            const btCollisionObject* mClosestObject = nullptr;
 
         protected:
             btVector3 mVelocity;
+            const btCollisionObject* mSelf;
         };
+
+        int getCollisionGroup(const btCollisionObject* object)
+        {
+            return object != nullptr && object->getBroadphaseHandle() != nullptr
+                ? object->getBroadphaseHandle()->m_collisionFilterGroup
+                : 0;
+        }
+
+        int getCollisionMask(const btCollisionObject* object)
+        {
+            return object != nullptr && object->getBroadphaseHandle() != nullptr
+                ? object->getBroadphaseHandle()->m_collisionFilterMask
+                : 0;
+        }
+
+        bool isPtrBackedCollisionObject(const btCollisionObject* object)
+        {
+            const int group = getCollisionGroup(object);
+            return group == CollisionType_World || group == CollisionType_Door || group == CollisionType_Actor
+                || group == CollisionType_CameraOnly || group == CollisionType_VisualOnly;
+        }
+
+        MWWorld::Ptr getCollisionObjectPtr(const btCollisionObject* object)
+        {
+            if (object == nullptr || object->getUserPointer() == nullptr || !isPtrBackedCollisionObject(object))
+                return {};
+
+            return static_cast<const PtrHolder*>(object->getUserPointer())->getPtr();
+        }
+
+        std::string getCollisionObjectRefLabel(const btCollisionObject* object)
+        {
+            const MWWorld::Ptr ptr = getCollisionObjectPtr(object);
+            if (ptr.isEmpty())
+                return "<none>";
+
+            return ptr.getCellRef().getRefId().toDebugString();
+        }
+
+        bool isEsm4InteriorActor(const ActorFrameData& actor)
+        {
+            const MWWorld::Ptr ptr = getCollisionObjectPtr(actor.mCollisionObject);
+            return !ptr.isEmpty() && ptr.isInCell() && ptr.getCell() != nullptr && ptr.getCell()->getCell() != nullptr
+                && ptr.getCell()->getCell()->isEsm4() && !ptr.getCell()->getCell()->isExterior();
+        }
+
+        bool isEsm4Actor(const ActorFrameData& actor)
+        {
+            const MWWorld::Ptr ptr = getCollisionObjectPtr(actor.mCollisionObject);
+            return !ptr.isEmpty() && ptr.isInCell() && ptr.getCell() != nullptr && ptr.getCell()->getCell() != nullptr
+                && ptr.getCell()->getCell()->isEsm4();
+        }
+
+        void logFnvInteriorGroundProof(const ActorFrameData& actor, std::string_view event, const osg::Vec3f& from,
+            const osg::Vec3f& to, const ActorTracer& tracer, bool candidateOnGround,
+            const btCollisionWorld* collisionWorld)
+        {
+            if (!isEsm4InteriorActor(actor))
+                return;
+
+            static int sLogs = 0;
+            if (sLogs >= 160)
+                return;
+            ++sLogs;
+
+            const MWWorld::Ptr actorPtr = getCollisionObjectPtr(actor.mCollisionObject);
+            const MWWorld::Cell* cell = actorPtr.getCell()->getCell();
+
+            btCollisionWorld::ClosestRayResultCallback ray(
+                Misc::Convert::toBullet(from), Misc::Convert::toBullet(to));
+            ray.m_collisionFilterGroup = CollisionType_AnyPhysical;
+            ray.m_collisionFilterMask = CollisionType_World | CollisionType_HeightMap | CollisionType_Door;
+            const_cast<btCollisionWorld*>(collisionWorld)->rayTest(
+                Misc::Convert::toBullet(from), Misc::Convert::toBullet(to), ray);
+
+            const btCollisionObject* rayObject = ray.hasHit() ? ray.m_collisionObject : nullptr;
+            const osg::Vec3d rayHitRaw = ray.hasHit() ? Misc::Convert::toOsg(ray.m_hitPointWorld) : osg::Vec3d();
+            const osg::Vec3d rayNormalRaw = ray.hasHit() ? Misc::Convert::toOsg(ray.m_hitNormalWorld) : osg::Vec3d();
+            const osg::Vec3f rayHit(rayHitRaw.x(), rayHitRaw.y(), rayHitRaw.z());
+            const osg::Vec3f rayNormal(rayNormalRaw.x(), rayNormalRaw.y(), rayNormalRaw.z());
+
+            Log(Debug::Warning) << "FNV/ESM4 interior ground proof: event=" << event
+                                << " actor=" << actorPtr.getCellRef().getRefId()
+                                << " actorType=0x" << std::hex << actorPtr.getType() << std::dec
+                                << " player=" << actor.mIsPlayer
+                                << " cell=\"" << cell->getDescription() << "\""
+                                << " cellId=" << cell->getId()
+                                << " pos=(" << actor.mPosition.x() << "," << actor.mPosition.y() << ","
+                                << actor.mPosition.z() << ")"
+                                << " movement=(" << actor.mMovement.x() << "," << actor.mMovement.y() << ","
+                                << actor.mMovement.z() << ")"
+                                << " inertia=(" << actor.mInertia.x() << "," << actor.mInertia.y() << ","
+                                << actor.mInertia.z() << ")"
+                                << " wasOnGround=" << actor.mWasOnGround
+                                << " previousOnGround=" << actor.mIsOnGround
+                                << " candidateOnGround=" << candidateOnGround
+                                << " stuckFrames=" << actor.mStuckFrames
+                                << " halfExtentsZ=" << actor.mHalfExtentsZ
+                                << " actorGroup=0x" << std::hex << getCollisionGroup(actor.mCollisionObject)
+                                << " actorMask=0x" << getCollisionMask(actor.mCollisionObject) << std::dec
+                                << " supportFrom=(" << from.x() << "," << from.y() << "," << from.z() << ")"
+                                << " supportTo=(" << to.x() << "," << to.y() << "," << to.z() << ")"
+                                << " sweepHit=" << (tracer.mFraction < 1.f)
+                                << " sweepFraction=" << tracer.mFraction
+                                << " sweepHitObj=" << getCollisionObjectRefLabel(tracer.mHitObject)
+                                << " sweepHitGroup=0x" << std::hex << getCollisionGroup(tracer.mHitObject)
+                                << " sweepHitMask=0x" << getCollisionMask(tracer.mHitObject) << std::dec
+                                << " sweepHitPoint=(" << tracer.mHitPoint.x() << "," << tracer.mHitPoint.y()
+                                << "," << tracer.mHitPoint.z() << ")"
+                                << " sweepNormal=(" << tracer.mPlaneNormal.x() << "," << tracer.mPlaneNormal.y()
+                                << "," << tracer.mPlaneNormal.z() << ")"
+                                << " directRayHit=" << ray.hasHit()
+                                << " directRayObj=" << getCollisionObjectRefLabel(rayObject)
+                                << " directRayGroup=0x" << std::hex << getCollisionGroup(rayObject)
+                                << " directRayMask=0x" << getCollisionMask(rayObject) << std::dec
+                                << " directRayHitPos=(" << rayHit.x() << "," << rayHit.y() << "," << rayHit.z()
+                                << ")"
+                                << " directRayNormal=(" << rayNormal.x() << "," << rayNormal.y() << ","
+                                << rayNormal.z() << ")";
+        }
+
+        void logFnvStuckContactProof(const ActorFrameData& actor, const ContactCollectionCallback& contact,
+            const osg::Vec3f& velocity, const osg::Vec3f& refPosition)
+        {
+            if (!actor.mIsPlayer || !isEsm4Actor(actor))
+                return;
+
+            static int sLogs = 0;
+            if (sLogs >= 80)
+                return;
+            ++sLogs;
+
+            const MWWorld::Ptr actorPtr = getCollisionObjectPtr(actor.mCollisionObject);
+            const MWWorld::Cell* cell = actorPtr.getCell()->getCell();
+            const osg::Vec3f contactSum = Misc::Convert::toOsg(contact.mContactSum);
+            const osg::Vec3f contactNormal = Misc::Convert::toOsg(contact.mNormal);
+            const osg::Vec3f contactDelta = Misc::Convert::toOsg(contact.mDelta);
+
+            Log(Debug::Warning) << "FNV/ESM4 collision proof: event=player-stuck-contact"
+                                << " cell=\"" << cell->getDescription() << "\""
+                                << " exterior=" << cell->isExterior()
+                                << " actorPos=(" << actor.mPosition.x() << "," << actor.mPosition.y() << ","
+                                << actor.mPosition.z() << ")"
+                                << " hullCenter=(" << refPosition.x() << "," << refPosition.y() << ","
+                                << refPosition.z() << ")"
+                                << " movement=(" << actor.mMovement.x() << "," << actor.mMovement.y() << ","
+                                << actor.mMovement.z() << ")"
+                                << " velocity=(" << velocity.x() << "," << velocity.y() << "," << velocity.z()
+                                << ")"
+                                << " inertia=(" << actor.mInertia.x() << "," << actor.mInertia.y() << ","
+                                << actor.mInertia.z() << ")"
+                                << " wasOnGround=" << actor.mWasOnGround
+                                << " previousOnGround=" << actor.mIsOnGround
+                                << " stuckFrames=" << actor.mStuckFrames
+                                << " halfExtentsZ=" << actor.mHalfExtentsZ
+                                << " penetration=" << contact.mDistance
+                                << " maxDelta=(" << contact.mMaxX << "," << contact.mMaxY << "," << contact.mMaxZ
+                                << ")"
+                                << " contactSum=(" << contactSum.x() << "," << contactSum.y() << ","
+                                << contactSum.z() << ")"
+                                << " closestDelta=(" << contactDelta.x() << "," << contactDelta.y() << ","
+                                << contactDelta.z() << ")"
+                                << " closestNormal=(" << contactNormal.x() << "," << contactNormal.y() << ","
+                                << contactNormal.z() << ")"
+                                << " hitObj=" << getCollisionObjectRefLabel(contact.mClosestObject)
+                                << " hitGroup=0x" << std::hex << getCollisionGroup(contact.mClosestObject)
+                                << " hitMask=0x" << getCollisionMask(contact.mClosestObject) << std::dec;
+        }
     }
 
     osg::Vec3f MovementSolver::traceDown(const MWWorld::Ptr& ptr, const osg::Vec3f& position, Actor* actor,
@@ -383,6 +563,8 @@ namespace MWPhysics
             auto dropDistance = 2 * sGroundOffset + (actor.mIsOnGround ? sStepSizeDown : 0);
             osg::Vec3f to = newPosition - osg::Vec3f(0, 0, dropDistance);
             tracer.doTrace(actor.mCollisionObject, from, to, collisionWorld, actor.mIsOnGround);
+            const bool supportSweepHit = tracer.mFraction < 1.0f;
+            const bool supportHitActor = supportSweepHit && isActor(tracer.mHitObject);
             if (tracer.mFraction < 1.0f)
             {
                 if (!isActor(tracer.mHitObject))
@@ -416,12 +598,20 @@ namespace MWPhysics
                     isOnGround = false;
                 }
             }
+
             // forcibly treat stuck actors as if they're on flat ground because buggy collisions when inside of things
             // can/will break ground detection
             if (actor.mStuckFrames > 0)
             {
+                logFnvInteriorGroundProof(actor, "stuck-ground-forced", from, to, tracer, true, collisionWorld);
                 isOnGround = true;
                 isOnSlope = false;
+            }
+            else if (!isOnGround && (actor.mIsPlayer || actor.mWasOnGround || actor.mIsOnGround))
+            {
+                logFnvInteriorGroundProof(actor, supportSweepHit ? (supportHitActor ? "support-hit-actor" : "support-rejected")
+                                                                 : "support-missed",
+                    from, to, tracer, isOnGround, collisionWorld);
             }
         }
 
@@ -535,6 +725,7 @@ namespace MWPhysics
         auto contactCallback = gatherContacts({ 0.0, 0.0, 0.0 });
         if (contactCallback.mDistance < -sAllowedPenetration)
         {
+            logFnvStuckContactProof(actor, contactCallback, velocity, refPosition);
             ++actor.mStuckFrames;
             actor.mLastStuckPosition = actor.mPosition;
             // we are; try moving it out of the world

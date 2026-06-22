@@ -296,7 +296,7 @@ add_component_dir (esm4
 )
 
 add_component_dir (misc
-    barrier budgetmeasurement color compression constants convert coordinateconverter display endianness float16 frameratelimiter
+    barrier budgetmeasurement callbackmanager color compression constants convert coordinateconverter display endianness float16 frameratelimiter
     guarded math mathutil messageformatparser notnullptr objectpool osgpluginchecker osguservalues progressreporter resourcehelpers
     rng strongtypedef thread timeconvert timer tuplehelpers tuplemeta utf8stream weakcache windows
     )
@@ -517,6 +517,42 @@ else ()
         )
 endif()
 
+if(BUILD_OPENMW_VR)
+    add_component_dir(vr
+        actionmanager
+        actionset
+        constants
+        directx
+        frame
+        layer
+        rendertoswapchain
+        session
+        space
+        swapchain
+        trackinglistener
+        trackingmanager
+        trackingsource
+        trackingtransform
+        viewer
+        vr
+    )
+    add_component_dir(xr
+        action
+        actionset
+        debug
+        extensions
+        input
+        interactionprofiles
+        instance
+        platform
+        session
+        space
+        swapchain
+        tracking
+        typeconversion
+    )
+endif()
+
 add_component_dir(testing
     expecterror
     util
@@ -637,6 +673,20 @@ else()
 endif()
 
 target_link_libraries(components ${BULLET_LIBRARIES})
+
+if(BUILD_OPENMW_VR)
+    target_link_libraries(components openxr_loader)
+
+    if (ANDROID)
+        target_compile_options(components PUBLIC -DXR_USE_GRAPHICS_API_OPENGL_ES -DXR_USE_PLATFORM_ANDROID)
+        target_link_libraries(components EGL)
+    elseif (WIN32)
+        target_compile_options(components PUBLIC -DXR_USE_GRAPHICS_API_OPENGL -DXR_USE_GRAPHICS_API_D3D11 -DXR_USE_PLATFORM_WIN32)
+    elseif(UNIX)
+        target_compile_options(components PUBLIC -DXR_USE_GRAPHICS_API_OPENGL -DXR_USE_PLATFORM_XLIB -DXR_USE_PLATFORM_EGL)
+        target_link_libraries(components EGL)
+    endif()
+endif()
 
 if (USE_QT)
     add_library(components_qt STATIC ${COMPONENT_QT_FILES})

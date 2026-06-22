@@ -75,8 +75,10 @@ namespace MWGui
         MyGUI::Button* mMinimapButton = nullptr;
         MyGUI::ScrollView* mMinimap = nullptr;
         MyGUI::ImageBox* mCrosshair = nullptr;
-        MyGUI::TextBox* mCellNameBox = nullptr;
-        MyGUI::TextBox* mWeaponSpellBox = nullptr;
+        MyGUI::TextBox *mCellNameBox = nullptr, *mWeaponSpellBox = nullptr;
+        MyGUI::TextBox *mHealthLabel = nullptr, *mHealthValue = nullptr;
+        MyGUI::TextBox *mMagickaLabel = nullptr, *mMagickaValue = nullptr;
+        MyGUI::TextBox *mAmmoValue = nullptr, *mCompassHeading = nullptr;
         MyGUI::Widget *mDrowningBar = nullptr, *mDrowningFrame = nullptr, *mDrowningFlash = nullptr;
         DragAndDrop* mDragAndDrop;
         std::string mCellName;

@@ -42,7 +42,7 @@ namespace MyGUIPlatform
     {
     }
 
-    MyGUI::IDataStream* DataManager::getData(const std::string& name) const
+    MyGUI::IDataStream* DataManager::getData(const std::string& name) OPENMW_MYGUI_DATA_MANAGER_CONST
     {
         VFS::Path::Normalized path(mResourcePath);
         path /= name;
@@ -54,26 +54,38 @@ namespace MyGUIPlatform
         delete data;
     }
 
-    bool DataManager::isDataExist(const std::string& name) const
+    bool DataManager::isDataExist(const std::string& name) OPENMW_MYGUI_DATA_MANAGER_CONST
     {
         VFS::Path::Normalized path(mResourcePath);
         path /= name;
         return mVfs->exists(path);
     }
 
-    const MyGUI::VectorString& DataManager::getDataListNames(const std::string& /*pattern*/) const
+    const MyGUI::VectorString& DataManager::getDataListNames(const std::string& /*pattern*/) OPENMW_MYGUI_DATA_MANAGER_CONST
     {
         throw std::runtime_error("DataManager::getDataListNames is not implemented - VFS is used");
     }
 
-    std::string DataManager::getDataPath(const std::string& name) const
+    OPENMW_MYGUI_DATA_PATH_RETURN DataManager::getDataPath(const std::string& name) OPENMW_MYGUI_DATA_MANAGER_CONST
     {
         VFS::Path::Normalized path(mResourcePath);
         path /= name;
         if (!mVfs->exists(path))
+        {
+#if MYGUI_VERSION < MYGUI_DEFINE_VERSION(3, 4, 3)
+            mDataPath.clear();
+            return mDataPath;
+#else
             return {};
+#endif
+        }
 
+#if MYGUI_VERSION < MYGUI_DEFINE_VERSION(3, 4, 3)
+        mDataPath = path;
+        return mDataPath;
+#else
         return path;
+#endif
     }
 
 }

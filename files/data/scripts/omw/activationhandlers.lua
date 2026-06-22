@@ -6,14 +6,49 @@ local auxUtil = require('openmw_aux.util')
 
 local EnableObject = async:registerTimerCallback('EnableObject', function(obj) obj.enabled = true end)
 
+local function formatVec3(v)
+    if v == nil then
+        return '<nil>'
+    end
+    return string.format('(%.3f,%.3f,%.3f)', v.x, v.y, v.z)
+end
+
+local function objectCellText(obj)
+    if obj == nil or obj.cell == nil then
+        return '<none>'
+    end
+    return tostring(obj.cell)
+end
+
 local function ESM4DoorActivation(door, actor)
     -- TODO: Implement lockpicking minigame
     -- TODO: Play door opening animation
     local Door4 = types.ESM4Door
-    core.sound.playSound3d(Door4.record(door).openSound, actor)
+    local record = Door4.record(door)
+    core.sound.playSound3d(record.openSound, actor)
     if Door4.isTeleport(door) then
-        actor:teleport(Door4.destCell(door), Door4.destPosition(door), Door4.destRotation(door))
+        local destCell = Door4.destCell(door)
+        local destPosition = Door4.destPosition(door)
+        local destRotation = Door4.destRotation(door)
+        print('FNV/ESM4 door diag: activating teleport door',
+            tostring(door),
+            'base=' .. tostring(record.id),
+            'actor=' .. tostring(actor),
+            'fromCell=' .. objectCellText(actor),
+            'destCell=' .. tostring(destCell),
+            'destPosition=' .. formatVec3(destPosition))
+        actor:teleport(destCell, destPosition, destRotation)
+        print('FNV/ESM4 door diag: completed teleport door',
+            tostring(door),
+            'actor=' .. tostring(actor),
+            'toCell=' .. objectCellText(actor),
+            'toPosition=' .. formatVec3(actor.position))
     else
+        print('FNV/ESM4 door diag: activating non-teleport door',
+            tostring(door),
+            'base=' .. tostring(record.id),
+            'actor=' .. tostring(actor),
+            'cell=' .. objectCellText(actor))
         door.enabled = false
         async:newSimulationTimer(5, EnableObject, door)
     end

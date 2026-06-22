@@ -4,7 +4,10 @@
 #include <osg/Geometry>
 #include <osg/Matrixf>
 
+#include <array>
+#include <string>
 #include <string_view>
+#include <vector>
 
 namespace SceneUtil
 {
@@ -45,10 +48,14 @@ namespace SceneUtil
             osg::Matrixf mInvBindMatrix;
         };
 
+        using VertexWeight = std::pair<unsigned short, float>;
+        using VertexWeights = std::vector<VertexWeight>;
         using BoneWeight = std::pair<size_t, float>;
         using BoneWeights = std::vector<BoneWeight>;
 
         void setBoneInfo(std::vector<BoneInfo>&& bones);
+        // Convert influences in vertex and weight list per bone format
+        void setInfluences(const std::vector<VertexWeights>& influences);
         // Convert influences in bone and weight list per vertex format
         void setInfluences(const std::vector<BoneWeights>& influences);
 
@@ -60,7 +67,20 @@ namespace SceneUtil
 
         void setRootBone(std::string_view name);
 
+        std::string_view getRootBone() const;
+        std::size_t getBoneCount() const;
+        std::string_view getBoneName(std::size_t index) const;
+        bool getSkinningDebugData(std::vector<BoneInfo>& bones, std::vector<BoneWeights>& vertexInfluences,
+            std::vector<osg::Matrixf>& localBoneMatrices, std::vector<osg::Matrixf>& skeletonBoneMatrices,
+            osg::Matrixf& transform, osg::Matrixf& skinToSkelMatrix) const;
+        bool isFalloutCharacterRig() const;
+        void setFalloutFlagSkinning(bool enabled) { mFalloutFlagSkinning = enabled; }
+        bool getFalloutFingerVertexWeights(
+            std::vector<float>& thumb, std::vector<float>& index, std::vector<float>& grip) const;
+        bool getFalloutFingerBoneVertexWeights(std::array<std::vector<float>, 15>& fingerBones) const;
+
         osg::ref_ptr<osg::Geometry> getSourceGeometry() const;
+        osg::Geometry* getRenderGeometry(unsigned int index) const;
 
         void accept(osg::NodeVisitor& nv) override;
         bool supports(const osg::PrimitiveFunctor&) const override { return true; }
@@ -106,6 +126,25 @@ namespace SceneUtil
 
         unsigned int mLastFrameNumber{ 0 };
         bool mBoundsFirstFrame{ true };
+        bool mLoggedFalloutRigInit{ false };
+        bool mLoggedFalloutCullTraversal{ false };
+        bool mHaveFalloutMatrixBaseline{ false };
+        bool mLoggedFalloutMatrixChange{ false };
+        bool mLoggedFalloutVertexSkinning{ false };
+        bool mLoggedFalloutInfluenceSummary{ false };
+        bool mLoggedFalloutSkinningModes{ false };
+        bool mLoggedFalloutPoseSanity{ false };
+        bool mLoggedFalloutCullInitRecovery{ false };
+        bool mFalloutDerivedInvBindComputed{ false };
+        bool mLoggedFalloutDerivedInvBind{ false };
+        bool mFalloutFallbackDecided{ false };
+        bool mFalloutUseSourceFallback{ false };
+        bool mFalloutFlagSkinning{ false };
+        bool mLoggedFalloutFlagSkinning{ false };
+        mutable bool mFalloutCharacterRigComputed{ false };
+        mutable bool mFalloutCharacterRig{ false };
+        std::vector<osg::Matrixf> mFalloutMatrixBaseline;
+        std::vector<osg::Matrixf> mFalloutDerivedInvBindMatrices;
 
         bool initFromParentSkeleton(osg::NodeVisitor* nv);
 

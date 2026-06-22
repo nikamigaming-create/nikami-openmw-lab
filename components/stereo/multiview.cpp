@@ -52,7 +52,7 @@ namespace Stereo
 
         bool getTextureViewSupportedImpl(unsigned int contextID)
         {
-            if (!osg::isGLExtensionOrVersionSupported(contextID, "ARB_texture_view", 4.3f))
+            if (!osg::isGLExtensionOrVersionSupported(contextID, "ARB_texture_view", 4.3))
             {
                 Log(Debug::Verbose) << "Disabling texture views (opengl extension \"ARB_texture_view\" not supported)";
                 return false;
@@ -90,12 +90,6 @@ namespace Stereo
         }
 
         static bool sMultiview = false;
-
-        bool getMultiview(unsigned int contextID)
-        {
-            static bool multiView = getMultiviewImpl(contextID);
-            return multiView;
-        }
     }
 
     bool getTextureViewSupported()
@@ -105,7 +99,7 @@ namespace Stereo
 
     bool getMultiview()
     {
-        return getMultiview(0);
+        return sMultiview;
     }
 
     void configureExtensions(unsigned int contextID, bool enableMultiview)
@@ -115,7 +109,7 @@ namespace Stereo
 
         if (enableMultiview)
         {
-            sMultiview = getMultiview(contextID);
+            sMultiview = getMultiviewImpl(contextID);
         }
         else
         {
@@ -146,17 +140,17 @@ namespace Stereo
     class Texture2DViewSubloadCallback : public osg::Texture2D::SubloadCallback
     {
     public:
-        Texture2DViewSubloadCallback(osg::Texture2DArray* textureArray, int layer);
+        Texture2DViewSubloadCallback(const osg::Texture2DArray* textureArray, int layer);
 
         void load(const osg::Texture2D& texture, osg::State& state) const override;
         void subload(const osg::Texture2D& texture, osg::State& state) const override;
 
     private:
-        osg::ref_ptr<osg::Texture2DArray> mTextureArray;
+        osg::ref_ptr<const osg::Texture2DArray> mTextureArray;
         int mLayer;
     };
 
-    Texture2DViewSubloadCallback::Texture2DViewSubloadCallback(osg::Texture2DArray* textureArray, int layer)
+    Texture2DViewSubloadCallback::Texture2DViewSubloadCallback(const osg::Texture2DArray* textureArray, int layer)
         : mTextureArray(textureArray)
         , mLayer(layer)
     {
@@ -233,7 +227,7 @@ namespace Stereo
     }
 
     osg::ref_ptr<osg::Texture2D> createTextureView_Texture2DFromTexture2DArray(
-        osg::Texture2DArray* textureArray, int layer)
+        const osg::Texture2DArray* textureArray, int layer)
     {
         if (!getTextureViewSupported())
         {
@@ -361,7 +355,7 @@ namespace Stereo
         if (!projUniform)
         {
             projUniform = new osg::Uniform(osg::Uniform::FLOAT_MAT4, "projectionMatrixMultiView", 2);
-            stateset->addUniform(projUniform, osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
+            stateset->addUniform(projUniform, osg::StateAttribute::ON | osg::StateAttribute::PROTECTED);
         }
 
         projUniform->setElement(0, projection[0]);
@@ -373,7 +367,7 @@ namespace Stereo
             if (!invUniform)
             {
                 invUniform = new osg::Uniform(osg::Uniform::FLOAT_MAT4, "invProjectionMatrixMultiView", 2);
-                stateset->addUniform(invUniform, osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
+                stateset->addUniform(invUniform, osg::StateAttribute::ON | osg::StateAttribute::PROTECTED);
             }
 
             invUniform->setElement(0, osg::Matrix::inverse(projection[0]));
@@ -477,6 +471,39 @@ namespace Stereo
         }
     }
 
+//## VR_PATCH BEGIN
+    osg::FrameBufferAttachment createLayerAttachmentFromHandle(osg::State* state, uint32_t handle, uint32_t target,
+        uint32_t width, uint32_t height, uint32_t layer)
+    {
+        // Wrap subimage textures in texture objects, and attach them to a framebuffer object
+        if (target == GL_TEXTURE_2D)
+        {
+            auto texture2D = new osg::Texture2D();
+            texture2D->setTextureSize(width, height);
+            texture2D->setFilter(osg::Texture::MIN_FILTER, osg::Texture::LINEAR);
+            texture2D->setFilter(osg::Texture::MAG_FILTER, osg::Texture::LINEAR);
+
+            auto textureObject = new osg::Texture::TextureObject(texture2D, handle, GL_TEXTURE_2D);
+            texture2D->setTextureObject(state->getContextID(), textureObject);
+            return osg::FrameBufferAttachment(texture2D);
+        }
+#ifdef OSG_HAS_MULTIVIEW
+        else if (target == GL_TEXTURE_2D_ARRAY)
+        {
+            auto texture2DArray = new osg::Texture2DArray();
+            texture2DArray->setTextureSize(width, height, 2);
+            texture2DArray->setFilter(osg::Texture::MIN_FILTER, osg::Texture::LINEAR);
+            texture2DArray->setFilter(osg::Texture::MAG_FILTER, osg::Texture::LINEAR);
+
+            auto textureObject = new osg::Texture::TextureObject(texture2DArray, handle, GL_TEXTURE_2D_ARRAY);
+            texture2DArray->setTextureObject(state->getContextID(), textureObject);
+            return osg::FrameBufferAttachment(texture2DArray, layer);
+        }
+#endif
+        return osg::FrameBufferAttachment();
+    }
+
+//## VR_PATCH END
     unsigned int osgFaceControlledByMultiviewShader()
     {
 #ifdef OSG_HAS_MULTIVIEW
@@ -506,7 +533,8 @@ namespace Stereo
 
             if (!Stereo::getMultiview())
             {
-                auto eye = static_cast<int>(Stereo::Manager::instance().getEye(cv));
+                const Stereo::Eye stereoEye = Stereo::Manager::instance().getEye(cv);
+                const int eye = stereoEye == Stereo::Eye::Right ? 1 : 0;
                 if (eye < 2)
                 {
                     if (msaa)
@@ -597,12 +625,20 @@ namespace Stereo
         {
             for (unsigned i = 0; i < 2; i++)
             {
+#if defined(ANDROID)
+                if (mSamples > 1)
+                    mLayerMsaaFbo[i]->setAttachment(osg::Camera::PACKED_DEPTH_STENCIL_BUFFER,
+                        osg::FrameBufferAttachment(new osg::RenderBuffer(mWidth, mHeight, internalFormat, mSamples)));
+                mLayerFbo[i]->setAttachment(osg::Camera::PACKED_DEPTH_STENCIL_BUFFER,
+                    osg::FrameBufferAttachment(new osg::RenderBuffer(mWidth, mHeight, internalFormat, 0)));
+#else
                 if (mSamples > 1)
                     mLayerMsaaFbo[i]->setAttachment(osg::Camera::PACKED_DEPTH_STENCIL_BUFFER,
                         osg::FrameBufferAttachment(new osg::RenderBuffer(mWidth, mHeight, internalFormat, mSamples)));
                 mDepthTexture[i] = createTexture(sourceFormat, sourceType, internalFormat);
                 mLayerFbo[i]->setAttachment(
                     osg::Camera::PACKED_DEPTH_STENCIL_BUFFER, osg::FrameBufferAttachment(mDepthTexture[i]));
+#endif
             }
         }
     }
@@ -773,7 +809,7 @@ namespace Stereo
         {
             mResolveLayers[view]->apply(state, osg::FrameBufferObject::BindTarget::DRAW_FRAMEBUFFER);
             mMsaaLayers[view]->apply(state, osg::FrameBufferObject::BindTarget::READ_FRAMEBUFFER);
-            ext->glBlitFramebuffer(0, 0, mWidth, mHeight, 0, 0, mWidth, mHeight, GL_DEPTH_BUFFER_BIT, GL_NEAREST);
+            ext->glBlitFramebuffer(0, 0, mWidth, mHeight, 0, 0, mWidth, mHeight, mBlitMask, GL_NEAREST);
         }
     }
     void MultiviewFramebufferResolve::setupLayers()

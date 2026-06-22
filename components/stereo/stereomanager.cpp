@@ -17,6 +17,7 @@
 #include <map>
 #include <string>
 
+#include <components/debug/debuglog.hpp>
 #include <components/misc/constants.hpp>
 
 #include <components/sceneutil/color.hpp>
@@ -147,7 +148,7 @@ namespace Stereo
         else
             setupBruteForceTechnique();
 
-        updateStereoFramebuffer();
+        updateMultiviewFramebuffer();
     }
 
     void shaderStereoDefines(Shader::ShaderManager::DefineMap& defines)
@@ -169,13 +170,13 @@ namespace Stereo
         mEyeResolutionOverride = eyeResolution;
         mEyeResolutionOverriden = true;
 
-        // if (mMultiviewFramebuffer)
-        //     updateStereoFramebuffer();
+        if (mMultiviewFramebuffer)
+            updateMultiviewFramebuffer();
     }
 
     void Manager::screenResolutionChanged()
     {
-        updateStereoFramebuffer();
+        updateMultiviewFramebuffer();
     }
 
     osg::Vec2i Manager::eyeResolution()
@@ -272,21 +273,43 @@ namespace Stereo
         mMainCamera->addCullCallback(new MultiviewStereoStatesetUpdateCallback(this));
     }
 
-    void Manager::updateStereoFramebuffer()
+    void Manager::updateMultiviewFramebuffer()
     {
-        // VR-TODO: in VR, still need to have this framebuffer attached before the postprocessor is created
-        // auto samples = /*do not use Settings here*/;
-        // auto eyeRes = eyeResolution();
+        const auto eyeRes = eyeResolution();
+#if defined(ANDROID) && defined(XR_USE_PLATFORM_ANDROID)
+        Log(Debug::Info) << "Android VR stereo updateMultiviewFramebuffer: eyeRes=" << eyeRes.x() << "x"
+                         << eyeRes.y() << " samples=" << mSamples
+                         << " shouldAttachMain=" << mShouldAttachMultiviewFramebufferToMainCamera
+                         << " currentlyAttached=" << mMultiviewFramebufferIsAttached
+                         << " existingFramebuffer=" << (mMultiviewFramebuffer ? "yes" : "no")
+                         << " mainCameraAttachments=" << mMainCamera->getBufferAttachmentMap().size()
+                         << " mainCameraTarget=" << mMainCamera->getRenderTargetImplementation();
+#endif
 
-        // if (mMultiviewFramebuffer)
-        //     mMultiviewFramebuffer->detachFrom(mMainCamera);
-        // mMultiviewFramebuffer = std::make_shared<MultiviewFramebuffer>(static_cast<int>(eyeRes.x()),
-        // static_cast<int>(eyeRes.y()), samples);
-        // mMultiviewFramebuffer->attachColorComponent(SceneUtil::Color::colorSourceFormat(),
-        // SceneUtil::Color::colorSourceType(), SceneUtil::Color::colorInternalFormat());
-        // mMultiviewFramebuffer->attachDepthComponent(SceneUtil::AutoDepth::depthSourceFormat(),
-        // SceneUtil::AutoDepth::depthSourceType(), SceneUtil::AutoDepth::depthInternalFormat());
-        // mMultiviewFramebuffer->attachTo(mMainCamera);
+        if (mMultiviewFramebuffer && mMultiviewFramebufferIsAttached)
+        {
+            mMultiviewFramebuffer->detachFrom(mMainCamera);
+            mMultiviewFramebufferIsAttached = false;
+        }
+
+        mMultiviewFramebuffer = std::make_shared<MultiviewFramebuffer>(
+            static_cast<int>(eyeRes.x()), static_cast<int>(eyeRes.y()), mSamples);
+        mMultiviewFramebuffer->attachColorComponent(SceneUtil::Color::colorSourceFormat(),
+            SceneUtil::Color::colorSourceType(), SceneUtil::Color::colorInternalFormat());
+        mMultiviewFramebuffer->attachDepthComponent(SceneUtil::AutoDepth::depthSourceFormat(),
+            SceneUtil::AutoDepth::depthSourceType(), SceneUtil::AutoDepth::depthInternalFormat());
+
+        if (mShouldAttachMultiviewFramebufferToMainCamera)
+        {
+            mMultiviewFramebuffer->attachTo(mMainCamera);
+            mMultiviewFramebufferIsAttached = true;
+        }
+#if defined(ANDROID) && defined(XR_USE_PLATFORM_ANDROID)
+        Log(Debug::Info) << "Android VR stereo updateMultiviewFramebuffer complete: attached="
+                         << mMultiviewFramebufferIsAttached
+                         << " mainCameraAttachments=" << mMainCamera->getBufferAttachmentMap().size()
+                         << " mainCameraTarget=" << mMainCamera->getRenderTargetImplementation();
+#endif
     }
 
     void Manager::update()
@@ -373,6 +396,28 @@ namespace Stereo
         if (cv->getIdentifier() == mIdentifierRight)
             return Eye::Right;
         return Eye::Center;
+    }
+
+    void Manager::setShouldAttachMultiviewFramebufferToMainCamera(bool attach)
+    {
+#if defined(ANDROID) && defined(XR_USE_PLATFORM_ANDROID)
+        Log(Debug::Info) << "Android VR stereo setShouldAttachMultiviewFramebufferToMainCamera: old="
+                         << mShouldAttachMultiviewFramebufferToMainCamera << " new=" << attach;
+#endif
+        mShouldAttachMultiviewFramebufferToMainCamera = attach;
+        updateMultiviewFramebuffer();
+    }
+
+    void Manager::setSamples(int samples)
+    {
+        if (samples != mSamples)
+        {
+#if defined(ANDROID) && defined(XR_USE_PLATFORM_ANDROID)
+            Log(Debug::Info) << "Android VR stereo setSamples: old=" << mSamples << " new=" << samples;
+#endif
+            mSamples = samples;
+            updateMultiviewFramebuffer();
+        }
     }
 
     bool getStereo()

@@ -180,6 +180,8 @@ namespace MWWorld
 
         void update(float duration);
 
+        bool logFNVNamedTerrainProbePoints();
+
         void addObjectToScene(const Ptr& ptr);
         ///< Add an object that already exists in the world model to the scene.
 

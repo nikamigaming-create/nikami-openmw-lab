@@ -6,6 +6,9 @@
 #include <components/misc/rng.hpp>
 #include <components/platform/platform.hpp>
 #include <components/version/version.hpp>
+#if defined(OPENMW_ENABLE_VR) || defined(OPENMW_VR)
+#include <components/vr/vr.hpp>
+#endif
 
 #include "mwgui/debugwindow.hpp"
 
@@ -215,6 +218,10 @@ int runApplication(int argc, char* argv[])
 
 #ifdef __APPLE__
     setenv("OSG_GL_TEXTURE_STORAGE", "OFF", 0);
+#endif
+
+#if defined(OPENMW_ENABLE_VR) || defined(OPENMW_VR)
+    VR::setVR(true);
 #endif
 
     osg::setNotifyHandler(new OSGLogHandler());

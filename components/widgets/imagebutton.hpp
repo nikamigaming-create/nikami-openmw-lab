@@ -3,6 +3,8 @@
 
 #include <MyGUI_ImageBox.h>
 
+#include "myguicompat.hpp"
+
 namespace Gui
 {
 
@@ -32,7 +34,7 @@ namespace Gui
         static bool sDefaultNeedKeyFocus;
 
     protected:
-        void setPropertyOverride(std::string_view key, std::string_view value) override;
+        void setPropertyOverride(MyGUIStringParam key, MyGUIStringParam value) override;
         void onMouseLostFocus(MyGUI::Widget* newWidget) override;
         void onMouseSetFocus(MyGUI::Widget* oldWidget) override;
         void onMouseButtonPressed(int left, int top, MyGUI::MouseButton id) override;

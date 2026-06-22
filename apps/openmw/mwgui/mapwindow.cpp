@@ -1,5 +1,7 @@
 #include "mapwindow.hpp"
 
+#include <cstdlib>
+
 #include <osg/Texture2D>
 
 #include <MyGUI_Button.h>
@@ -14,9 +16,14 @@
 #include <MyGUI_TextIterator.h>
 #include <MyGUI_Window.h>
 
+#include <components/debug/debuglog.hpp>
+#include <components/esm/util.hpp>
 #include <components/esm3/esmwriter.hpp>
 #include <components/esm3/globalmap.hpp>
+#include <components/misc/resourcehelpers.hpp>
+#include <components/misc/strings/algorithm.hpp>
 #include <components/myguiplatform/myguitexture.hpp>
+#include <components/resource/resourcesystem.hpp>
 #include <components/settings/values.hpp>
 
 #include "../mwbase/environment.hpp"
@@ -38,8 +45,35 @@
 namespace
 {
 
-    constexpr int cellSize = Constants::CellSizeInUnits;
     constexpr float speed = 1.08f; // the zoom speed, it should be greater than 1
+
+    bool hasFalloutContent()
+    {
+        if (std::getenv("OPENMW_FNV_PROOF_PIPBOY_SURFACE") != nullptr)
+            return true;
+
+        const MWBase::World* world = MWBase::Environment::get().getWorld();
+        if (world == nullptr)
+            return false;
+
+        for (const std::string& file : world->getContentFiles())
+            if (Misc::StringUtils::ciEndsWith(file, "FalloutNV.esm"))
+                return true;
+
+        return false;
+    }
+
+    std::string getFalloutWorldMapTexture()
+    {
+        const VFS::Manager* const vfs = MWBase::Environment::get().getResourceSystem()->getVFS();
+        return Misc::ResourceHelpers::correctTexturePath(
+            VFS::Path::toNormalized("textures\\interface\\worldmap\\wasteland_nv_1024_no_map.png"), *vfs);
+    }
+
+    const char* getFalloutMapToggleLabel(bool global)
+    {
+        return global ? "LOCAL MAP" : "MOJAVE";
+    }
 
     enum LocalMapWidgetDepth
     {
@@ -89,16 +123,23 @@ namespace MWGui
         return { center.left - radius, center.top - radius, center.left + radius, center.top + radius };
     }
 
-    int getLocalViewingDistance()
+    int getLocalViewingDistance(ESM::RefId worldspace)
     {
         if (!Settings::map().mAllowZooming)
             return Constants::CellGridRadius;
         if (!Settings::terrain().mDistantTerrain)
             return Constants::CellGridRadius;
         const int viewingDistanceInCells
-            = static_cast<int>(Settings::camera().mViewingDistance / Constants::CellSizeInUnits);
+            = static_cast<int>(Settings::camera().mViewingDistance / ESM::getCellSize(worldspace));
         return std::clamp(
             viewingDistanceInCells, Constants::CellGridRadius, Settings::map().mMaxLocalViewingDistance.get());
+    }
+
+    int getCellSize(const MWWorld::Cell* cell)
+    {
+        if (cell != nullptr && cell->isExterior())
+            return ESM::getCellSize(cell->getWorldSpace());
+        return Constants::CellSizeInUnits;
     }
 
     ESM::RefId getCellIdInWorldSpace(const MWWorld::Cell& cell, int x, int y)
@@ -266,7 +307,9 @@ namespace MWGui
 
         if (mActiveCell->isExterior())
         {
-            ESM::ExteriorCellLocation cellPos = ESM::positionToExteriorCellLocation(worldX, worldY);
+            const ESM::RefId worldspace = mActiveCell->getWorldSpace();
+            const int cellSize = ESM::getCellSize(worldspace);
+            ESM::ExteriorCellLocation cellPos = ESM::positionToExteriorCellLocation(worldX, worldY, worldspace);
             cellIndex.x() = cellPos.mX;
             cellIndex.y() = cellPos.mY;
 
@@ -398,7 +441,7 @@ namespace MWGui
             if (mActiveCell && mActiveCell->isExterior())
                 previousActiveGrid
                     = createRect({ mActiveCell->getGridX(), mActiveCell->getGridY() }, Constants::CellGridRadius);
-            mGrid = createRect({ x, y }, getLocalViewingDistance());
+            mGrid = createRect({ x, y }, getLocalViewingDistance(cell.getWorldSpace()));
             const MyGUI::IntRect activeGrid = createRect({ x, y }, Constants::CellGridRadius);
 
             mExteriorDoorMarkerWidgets.clear();
@@ -522,6 +565,7 @@ namespace MWGui
 
             mCompass->setPosition(pos);
         }
+        const int cellSize = getCellSize(mActiveCell);
         osg::Vec2f curPos((cellX + nx) * cellSize, (cellY + 1 - ny) * cellSize);
         if ((curPos - mCurPos).length2() > 0.001)
         {
@@ -576,7 +620,7 @@ namespace MWGui
             MyGUI::ImageBox* markerWidget = mLocalMap->createWidget<MyGUI::ImageBox>("ImageBox",
                 getMarkerCoordinates(worldPos.pos[0], worldPos.pos[1], markerPos, 8), MyGUI::Align::Default);
             markerWidget->setDepth(Local_MarkerAboveFogLayer);
-            markerWidget->setImageTexture(markerTexture);
+            markerWidget->setImageTexture(std::string(markerTexture));
             markerWidget->setImageCoord(MyGUI::IntCoord(0, 0, 8, 8));
             markerWidget->setNeedMouseFocus(false);
             markerWidget->setUserData(markerPos);
@@ -621,8 +665,11 @@ namespace MWGui
             if (!entry.mMapTexture)
             {
                 if (mActiveCell->isExterior())
+                {
+                    const ESM::RefId worldspace = mActiveCell->getWorldSpace();
                     requestMapRender(&MWBase::Environment::get().getWorldModel()->getExterior(
-                        ESM::ExteriorCellLocation(entry.mCellX, entry.mCellY, ESM::Cell::sDefaultWorldspaceId)));
+                        ESM::ExteriorCellLocation(entry.mCellX, entry.mCellY, worldspace)));
+                }
 
                 osg::ref_ptr<osg::Texture2D> texture = mLocalMapRender->getMapTexture(entry.mCellX, entry.mCellY);
                 if (texture)
@@ -680,7 +727,7 @@ namespace MWGui
                     continue;
                 if (mExteriorDoorsByCell.contains({ entry.mCellX, entry.mCellY }))
                     continue;
-                ESM::ExteriorCellLocation id(entry.mCellX, entry.mCellY, ESM::Cell::sDefaultWorldspaceId);
+                ESM::ExteriorCellLocation id(entry.mCellX, entry.mCellY, mActiveCell->getWorldSpace());
                 world->getDoorMarkers(worldModel->getExterior(id), doors);
             }
         }
@@ -833,9 +880,17 @@ namespace MWGui
         getWidget(mButton, "WorldButton");
         mButton->eventMouseButtonClick += MyGUI::newDelegate(this, &MapWindow::onWorldButtonClicked);
 
+        if (hasFalloutContent())
+            Settings::map().mGlobal.set(true);
         const bool global = Settings::map().mGlobal;
 
-        mButton->setCaptionWithReplacing(global ? "#{sLocal}" : "#{sWorld}");
+        if (hasFalloutContent())
+        {
+            mButton->setCaption(getFalloutMapToggleLabel(global));
+            Log(Debug::Info) << "FNV/ESM4 proof: map pane defaults to Mojave global map";
+        }
+        else
+            mButton->setCaptionWithReplacing(global ? "#{sLocal}" : "#{sWorld}");
 
         getWidget(mEventBoxGlobal, "EventBoxGlobal");
         mEventBoxGlobal->eventMouseDrag += MyGUI::newDelegate(this, &MapWindow::onMouseDrag);
@@ -854,7 +909,7 @@ namespace MWGui
         if (allowZooming)
             mEventBoxLocal->eventMouseWheel += MyGUI::newDelegate(this, &MapWindow::onMapZoomed);
 
-        LocalMapBase::init(mLocalMap, mPlayerArrowLocal, getLocalViewingDistance());
+        LocalMapBase::init(mLocalMap, mPlayerArrowLocal, getLocalViewingDistance(ESM::Cell::sDefaultWorldspaceId));
 
         mGlobalMap->setVisible(global);
         mLocalMap->setVisible(!global);
@@ -924,6 +979,7 @@ namespace MWGui
         }
         else
         {
+            const int cellSize = getCellSize(mActiveCell);
             worldPos.x() = (x + nX) * cellSize;
             worldPos.y() = (y + (1.0f - nY)) * cellSize;
         }
@@ -1018,6 +1074,17 @@ namespace MWGui
 
     void MapWindow::updateGlobalMap()
     {
+        if (hasFalloutContent())
+        {
+            mGlobalMapZoom = 1.f;
+            mGlobalMap->setCanvasSize(1024, 1024);
+            mGlobalMapImage->setSize(1024, 1024);
+            mGlobalMapOverlay->setSize(1024, 1024);
+            mPlayerArrowGlobal->setPosition(MyGUI::IntPoint(496, 496));
+            mGlobalMap->setViewOffset(MyGUI::IntPoint(0, 0));
+            return;
+        }
+
         resizeGlobalMap();
 
         float x = mCurPos.x(), y = mCurPos.y();
@@ -1259,7 +1326,10 @@ namespace MWGui
         mGlobalMap->setVisible(global);
         mLocalMap->setVisible(!global);
 
-        mButton->setCaptionWithReplacing(global ? "#{sLocal}" : "#{sWorld}");
+        if (hasFalloutContent())
+            mButton->setCaption(getFalloutMapToggleLabel(global));
+        else
+            mButton->setCaptionWithReplacing(global ? "#{sLocal}" : "#{sWorld}");
         mControllerButtons.mX = global ? "#{Interface:Local}" : "#{Interface:World}";
         MWBase::Environment::get().getWindowManager()->updateControllerButtonsOverlay();
     }
@@ -1307,6 +1377,12 @@ namespace MWGui
 
     void MapWindow::centerView()
     {
+        if (hasFalloutContent() && Settings::map().mGlobal)
+        {
+            mGlobalMap->setViewOffset(MyGUI::IntPoint(0, 0));
+            return;
+        }
+
         LocalMapBase::centerView();
         // set the view offset so that player is in the center
         MyGUI::IntSize viewsize = mGlobalMap->getSize();
@@ -1334,6 +1410,32 @@ namespace MWGui
 
     void MapWindow::ensureGlobalMapLoaded()
     {
+        if (hasFalloutContent())
+        {
+            const std::string mapTexture = getFalloutWorldMapTexture();
+            if (!mGlobalMapTexture)
+            {
+                mGlobalMapTexture = std::make_unique<MyGUIPlatform::OSGTexture>(
+                    mapTexture, MWBase::Environment::get().getResourceSystem()->getImageManager());
+                mGlobalMapTexture->loadFromFile(mapTexture);
+            }
+
+            mGlobalMapImage->setRenderItemTexture(mGlobalMapTexture.get());
+            mGlobalMapImage->setImageTexture(mapTexture);
+            mGlobalMapImage->getSubWidgetMain()->_setUVSet(MyGUI::FloatRect(0.f, 0.f, 1.f, 1.f));
+            mGlobalMapImage->setImageCoord(MyGUI::IntCoord(0, 0, 1024, 1024));
+            mGlobalMapOverlay->setVisible(false);
+            mGlobalMapOverlay->setImageTexture({});
+            mGlobalMapOverlay->setImageCoord(MyGUI::IntCoord(0, 0, 1024, 1024));
+            mGlobalMapImage->setSize(1024, 1024);
+            mGlobalMapOverlay->setSize(1024, 1024);
+            mGlobalMap->setCanvasSize(1024, 1024);
+            mGlobalMap->setViewOffset(MyGUI::IntPoint(0, 0));
+            mGlobalMap->getParent()->_updateChilds();
+            Log(Debug::Info) << "FNV/ESM4 proof: Fallout world map texture bound " << mapTexture;
+            return;
+        }
+
         if (!mGlobalMapTexture.get())
         {
             // The generated unexplored map and explored map RTT images are Y-up so the UVs are inverted

@@ -8,6 +8,7 @@
 #include <MyGUI_Widget.h>
 
 #include "fontwrapper.hpp"
+#include "myguicompat.hpp"
 
 namespace Gui
 {
@@ -53,7 +54,7 @@ namespace Gui
         void setCaption(const MyGUI::UString& value) override;
 
     protected:
-        void setPropertyOverride(std::string_view key, std::string_view value) override;
+        void setPropertyOverride(MyGUIStringParam key, MyGUIStringParam value) override;
         std::string mFontSize;
     };
 
@@ -68,7 +69,7 @@ namespace Gui
         void initialiseOverride() override;
 
     protected:
-        void setPropertyOverride(std::string_view key, std::string_view value) override;
+        void setPropertyOverride(MyGUIStringParam key, MyGUIStringParam value) override;
         int getWidth();
         std::string mFontSize;
         bool mShrink = false;
@@ -85,7 +86,7 @@ namespace Gui
         void setCaption(const MyGUI::UString& value) override;
 
     protected:
-        void setPropertyOverride(std::string_view key, std::string_view value) override;
+        void setPropertyOverride(MyGUIStringParam key, MyGUIStringParam value) override;
         std::string mFontSize;
     };
 
@@ -105,7 +106,7 @@ namespace Gui
     protected:
         virtual void align() = 0;
 
-        virtual bool _setPropertyImpl(std::string_view key, std::string_view value);
+        virtual bool _setPropertyImpl(MyGUIStringParam key, MyGUIStringParam value);
 
         int mSpacing; // how much space to put between elements
 
@@ -137,7 +138,7 @@ namespace Gui
         void align() override;
         MyGUI::IntSize getRequestedSize() override;
 
-        void setPropertyOverride(std::string_view key, std::string_view value) override;
+        void setPropertyOverride(MyGUIStringParam key, MyGUIStringParam value) override;
 
         void onWidgetCreated(MyGUI::Widget* widget) override;
     };
@@ -156,7 +157,7 @@ namespace Gui
         void align() override;
         MyGUI::IntSize getRequestedSize() override;
 
-        void setPropertyOverride(std::string_view key, std::string_view value) override;
+        void setPropertyOverride(MyGUIStringParam key, MyGUIStringParam value) override;
 
         void onWidgetCreated(MyGUI::Widget* widget) override;
     };

@@ -22,55 +22,55 @@
     </Resource>
 
     <!-- Define the borders for pin button (up) -->
-    <Resource type="AutoSizedResourceSkin" name="PU_B" texture="textures\menu_rightbuttonup_bottom.dds">
+    <Resource type="AutoSizedResourceSkin" name="PU_B" texture="textures\omw_menu_icon_active.dds">
         <Property key="NeedMouse" value="false"/>
         <BasisSkin type="MainSkin">
             <State name="normal"/>
         </BasisSkin>
     </Resource>
-    <Resource type="AutoSizedResourceSkin" name="PU_BR" texture="textures\menu_rightbuttonup_bottom_right.dds">
+    <Resource type="AutoSizedResourceSkin" name="PU_BR" texture="textures\omw_menu_icon_active.dds">
         <Property key="NeedMouse" value="false"/>
         <BasisSkin type="MainSkin">
             <State name="normal"/>
         </BasisSkin>
     </Resource>
-    <Resource type="AutoSizedResourceSkin" name="PU_R" texture="textures\menu_rightbuttonup_right.dds">
+    <Resource type="AutoSizedResourceSkin" name="PU_R" texture="textures\omw_menu_icon_active.dds">
         <Property key="NeedMouse" value="false"/>
         <BasisSkin type="MainSkin">
             <State name="normal"/>
         </BasisSkin>
     </Resource>
-    <Resource type="AutoSizedResourceSkin" name="PU_TR" texture="textures\menu_rightbuttonup_top_right.dds">
+    <Resource type="AutoSizedResourceSkin" name="PU_TR" texture="textures\omw_menu_icon_active.dds">
         <Property key="NeedMouse" value="false"/>
         <BasisSkin type="MainSkin">
             <State name="normal"/>
         </BasisSkin>
     </Resource>
-    <Resource type="AutoSizedResourceSkin" name="PU_T" texture="textures\menu_rightbuttonup_top.dds">
+    <Resource type="AutoSizedResourceSkin" name="PU_T" texture="textures\omw_menu_icon_active.dds">
         <Property key="NeedMouse" value="false"/>
         <BasisSkin type="MainSkin">
             <State name="normal"/>
         </BasisSkin>
     </Resource>
-    <Resource type="AutoSizedResourceSkin" name="PU_TL" texture="textures\menu_rightbuttonup_top_left.dds">
+    <Resource type="AutoSizedResourceSkin" name="PU_TL" texture="textures\omw_menu_icon_active.dds">
         <Property key="NeedMouse" value="false"/>
         <BasisSkin type="MainSkin">
             <State name="normal"/>
         </BasisSkin>
     </Resource>
-    <Resource type="AutoSizedResourceSkin" name="PU_L" texture="textures\menu_rightbuttonup_left.dds">
+    <Resource type="AutoSizedResourceSkin" name="PU_L" texture="textures\omw_menu_icon_active.dds">
         <Property key="NeedMouse" value="false"/>
         <BasisSkin type="MainSkin">
             <State name="normal"/>
         </BasisSkin>
     </Resource>
-    <Resource type="AutoSizedResourceSkin" name="PU_BL" texture="textures\menu_rightbuttonup_bottom_left.dds">
+    <Resource type="AutoSizedResourceSkin" name="PU_BL" texture="textures\omw_menu_icon_active.dds">
         <Property key="NeedMouse" value="false"/>
         <BasisSkin type="MainSkin">
             <State name="normal"/>
         </BasisSkin>
     </Resource>
-    <Resource type="AutoSizedResourceSkin" name="PU_С" texture="textures\menu_rightbuttonup_center.dds">
+    <Resource type="AutoSizedResourceSkin" name="PU_С" texture="textures\omw_menu_icon_active.dds">
         <Property key="NeedMouse" value="false"/>
         <BasisSkin type="MainSkin">
             <State name="normal"/>
@@ -78,55 +78,55 @@
     </Resource>
 
     <!-- Define the borders for pin button (down) -->
-    <Resource type="AutoSizedResourceSkin" name="PD_B" texture="textures\menu_rightbuttondown_bottom.dds">
+    <Resource type="AutoSizedResourceSkin" name="PD_B" texture="textures\omw_menu_icon_active.dds">
         <Property key="NeedMouse" value="false"/>
         <BasisSkin type="MainSkin">
             <State name="normal"/>
         </BasisSkin>
     </Resource>
-    <Resource type="AutoSizedResourceSkin" name="PD_BR" texture="textures\menu_rightbuttondown_bottom_right.dds">
+    <Resource type="AutoSizedResourceSkin" name="PD_BR" texture="textures\omw_menu_icon_active.dds">
         <Property key="NeedMouse" value="false"/>
         <BasisSkin type="MainSkin">
             <State name="normal"/>
         </BasisSkin>
     </Resource>
-    <Resource type="AutoSizedResourceSkin" name="PD_R" texture="textures\menu_rightbuttondown_right.dds">
+    <Resource type="AutoSizedResourceSkin" name="PD_R" texture="textures\omw_menu_icon_active.dds">
         <Property key="NeedMouse" value="false"/>
         <BasisSkin type="MainSkin">
             <State name="normal"/>
         </BasisSkin>
     </Resource>
-    <Resource type="AutoSizedResourceSkin" name="PD_TR" texture="textures\menu_rightbuttondown_top_right.dds">
+    <Resource type="AutoSizedResourceSkin" name="PD_TR" texture="textures\omw_menu_icon_active.dds">
         <Property key="NeedMouse" value="false"/>
         <BasisSkin type="MainSkin">
             <State name="normal"/>
         </BasisSkin>
     </Resource>
-    <Resource type="AutoSizedResourceSkin" name="PD_T" texture="textures\menu_rightbuttondown_top.dds">
+    <Resource type="AutoSizedResourceSkin" name="PD_T" texture="textures\omw_menu_icon_active.dds">
         <Property key="NeedMouse" value="false"/>
         <BasisSkin type="MainSkin">
             <State name="normal"/>
         </BasisSkin>
     </Resource>
-    <Resource type="AutoSizedResourceSkin" name="PD_TL" texture="textures\menu_rightbuttondown_top_left.dds">
+    <Resource type="AutoSizedResourceSkin" name="PD_TL" texture="textures\omw_menu_icon_active.dds">
         <Property key="NeedMouse" value="false"/>
         <BasisSkin type="MainSkin">
             <State name="normal"/>
         </BasisSkin>
     </Resource>
-    <Resource type="AutoSizedResourceSkin" name="PD_L" texture="textures\menu_rightbuttondown_left.dds">
+    <Resource type="AutoSizedResourceSkin" name="PD_L" texture="textures\omw_menu_icon_active.dds">
         <Property key="NeedMouse" value="false"/>
         <BasisSkin type="MainSkin">
             <State name="normal"/>
         </BasisSkin>
     </Resource>
-    <Resource type="AutoSizedResourceSkin" name="PD_BL" texture="textures\menu_rightbuttondown_bottom_left.dds">
+    <Resource type="AutoSizedResourceSkin" name="PD_BL" texture="textures\omw_menu_icon_active.dds">
         <Property key="NeedMouse" value="false"/>
         <BasisSkin type="MainSkin">
             <State name="normal"/>
         </BasisSkin>
     </Resource>
-    <Resource type="AutoSizedResourceSkin" name="PD_С" texture="textures\menu_rightbuttondown_center.dds">
+    <Resource type="AutoSizedResourceSkin" name="PD_С" texture="textures\omw_menu_icon_active.dds">
         <Property key="NeedMouse" value="false"/>
         <BasisSkin type="MainSkin">
             <State name="normal"/>
@@ -187,7 +187,7 @@
     </Resource>
 
     <!-- These define the dialog borders -->
-    <Resource type="AutoSizedResourceSkin" name="DB_B" texture="textures\menu_thick_border_bottom.dds">
+    <Resource type="AutoSizedResourceSkin" name="DB_B" texture="textures\omw_menu_icon_active.dds">
         <BasisSkin type="TileRect" align="Stretch">
             <State name="normal">
                 <Property key="TileH" value="true"/>
@@ -196,7 +196,7 @@
         </BasisSkin>
     </Resource>
 
-    <Resource type="AutoSizedResourceSkin" name="DB_R" texture="textures\menu_thick_border_right.dds">
+    <Resource type="AutoSizedResourceSkin" name="DB_R" texture="textures\omw_menu_icon_active.dds">
         <BasisSkin type="TileRect" align="Stretch">
             <State name="normal">
                 <Property key="TileH" value="true"/>
@@ -205,7 +205,7 @@
         </BasisSkin>
     </Resource>
 
-    <Resource type="AutoSizedResourceSkin" name="DB_T" texture="textures\menu_thick_border_top.dds">
+    <Resource type="AutoSizedResourceSkin" name="DB_T" texture="textures\omw_menu_icon_active.dds">
         <BasisSkin type="TileRect" align="Stretch">
             <State name="normal">
                 <Property key="TileH" value="true"/>
@@ -214,7 +214,7 @@
         </BasisSkin>
     </Resource>
 
-    <Resource type="AutoSizedResourceSkin" name="DB_L" texture="textures\menu_thick_border_left.dds">
+    <Resource type="AutoSizedResourceSkin" name="DB_L" texture="textures\omw_menu_icon_active.dds">
         <BasisSkin type="TileRect" align="Stretch">
             <State name="normal">
                 <Property key="TileH" value="true"/>
@@ -224,30 +224,30 @@
     </Resource>
 
     <!-- Dialog border corners -->
-    <Resource type="AutoSizedResourceSkin" name="DB_BR" texture="textures\menu_thick_border_bottom_right_corner.dds">
+    <Resource type="AutoSizedResourceSkin" name="DB_BR" texture="textures\omw_menu_icon_active.dds">
         <BasisSkin type="MainSkin">
             <State name="normal"/>
         </BasisSkin>
     </Resource>
-    <Resource type="AutoSizedResourceSkin" name="DB_BL" texture="textures\menu_thick_border_bottom_left_corner.dds">
+    <Resource type="AutoSizedResourceSkin" name="DB_BL" texture="textures\omw_menu_icon_active.dds">
         <Property key="Pointer" value="dresize2"/>
         <BasisSkin type="MainSkin">
             <State name="normal"/>
         </BasisSkin>
     </Resource>
-    <Resource type="AutoSizedResourceSkin" name="DB_TR" texture="textures\menu_thick_border_top_right_corner.dds">
+    <Resource type="AutoSizedResourceSkin" name="DB_TR" texture="textures\omw_menu_icon_active.dds">
         <BasisSkin type="MainSkin">
             <State name="normal"/>
         </BasisSkin>
     </Resource>
-    <Resource type="AutoSizedResourceSkin" name="DB_TL" texture="textures\menu_thick_border_top_left_corner.dds">
+    <Resource type="AutoSizedResourceSkin" name="DB_TL" texture="textures\omw_menu_icon_active.dds">
         <BasisSkin type="MainSkin">
             <State name="normal"/>
         </BasisSkin>
     </Resource>
 
     <!-- These define the window borders -->
-    <Resource type="AutoSizedResourceSkin" name="TB_B" texture="textures\menu_thick_border_bottom.dds">
+    <Resource type="AutoSizedResourceSkin" name="TB_B" texture="textures\omw_menu_icon_active.dds">
         <Property key="Pointer" value="vresize"/>
         <BasisSkin type="TileRect" align="Stretch">
             <State name="normal">
@@ -257,7 +257,7 @@
         </BasisSkin>
     </Resource>
 
-    <Resource type="AutoSizedResourceSkin" name="TB_R" texture="textures\menu_thick_border_right.dds">
+    <Resource type="AutoSizedResourceSkin" name="TB_R" texture="textures\omw_menu_icon_active.dds">
         <Property key="Pointer" value="hresize"/>
         <BasisSkin type="TileRect" align="Stretch">
             <State name="normal">
@@ -267,7 +267,7 @@
         </BasisSkin>
     </Resource>
 
-    <Resource type="AutoSizedResourceSkin" name="TB_T" texture="textures\menu_thick_border_top.dds">
+    <Resource type="AutoSizedResourceSkin" name="TB_T" texture="textures\omw_menu_icon_active.dds">
         <Property key="Pointer" value="vresize"/>
         <BasisSkin type="TileRect" align="Stretch">
             <State name="normal">
@@ -277,7 +277,7 @@
         </BasisSkin>
     </Resource>
 
-    <Resource type="AutoSizedResourceSkin" name="TB_L" texture="textures\menu_thick_border_left.dds">
+    <Resource type="AutoSizedResourceSkin" name="TB_L" texture="textures\omw_menu_icon_active.dds">
         <Property key="Pointer" value="hresize"/>
         <BasisSkin type="TileRect" align="Stretch">
             <State name="normal">
@@ -288,25 +288,25 @@
     </Resource>
 
     <!-- Window border corners -->
-    <Resource type="AutoSizedResourceSkin" name="TB_BR" texture="textures\menu_thick_border_bottom_right_corner.dds">
+    <Resource type="AutoSizedResourceSkin" name="TB_BR" texture="textures\omw_menu_icon_active.dds">
         <Property key="Pointer" value="dresize"/>
         <BasisSkin type="MainSkin">
             <State name="normal"/>
         </BasisSkin>
     </Resource>
-    <Resource type="AutoSizedResourceSkin" name="TB_BL" texture="textures\menu_thick_border_bottom_left_corner.dds">
+    <Resource type="AutoSizedResourceSkin" name="TB_BL" texture="textures\omw_menu_icon_active.dds">
         <Property key="Pointer" value="dresize2"/>
         <BasisSkin type="MainSkin">
             <State name="normal"/>
         </BasisSkin>
     </Resource>
-    <Resource type="AutoSizedResourceSkin" name="TB_TR" texture="textures\menu_thick_border_top_right_corner.dds">
+    <Resource type="AutoSizedResourceSkin" name="TB_TR" texture="textures\omw_menu_icon_active.dds">
         <Property key="Pointer" value="dresize2"/>
         <BasisSkin type="MainSkin">
             <State name="normal"/>
         </BasisSkin>
     </Resource>
-    <Resource type="AutoSizedResourceSkin" name="TB_TL" texture="textures\menu_thick_border_top_left_corner.dds">
+    <Resource type="AutoSizedResourceSkin" name="TB_TL" texture="textures\omw_menu_icon_active.dds">
         <Property key="Pointer" value="dresize"/>
         <BasisSkin type="MainSkin">
             <State name="normal"/>
@@ -314,56 +314,56 @@
     </Resource>
 
     <!-- Expanded border corners, to get larger diagonal corner pointer area -->
-    <Resource type="AutoSizedResourceSkin" name="TB_TL_T" texture="textures\menu_thick_border_top.dds">
+    <Resource type="AutoSizedResourceSkin" name="TB_TL_T" texture="textures\omw_menu_icon_active.dds">
         <Property key="Pointer" value="dresize"/>
         <BasisSkin type="MainSkin">
             <State name="normal"/>
         </BasisSkin>
     </Resource>
 
-    <Resource type="AutoSizedResourceSkin" name="TB_TL_B" texture="textures\menu_thick_border_left.dds">
+    <Resource type="AutoSizedResourceSkin" name="TB_TL_B" texture="textures\omw_menu_icon_active.dds">
         <Property key="Pointer" value="dresize"/>
         <BasisSkin type="MainSkin">
             <State name="normal"/>
         </BasisSkin>
     </Resource>
 
-    <Resource type="AutoSizedResourceSkin" name="TB_TR_T" texture="textures\menu_thick_border_top.dds">
+    <Resource type="AutoSizedResourceSkin" name="TB_TR_T" texture="textures\omw_menu_icon_active.dds">
         <Property key="Pointer" value="dresize2"/>
         <BasisSkin type="MainSkin">
             <State name="normal"/>
         </BasisSkin>
     </Resource>
 
-    <Resource type="AutoSizedResourceSkin" name="TB_TR_B" texture="textures\menu_thick_border_right.dds">
+    <Resource type="AutoSizedResourceSkin" name="TB_TR_B" texture="textures\omw_menu_icon_active.dds">
         <Property key="Pointer" value="dresize2"/>
         <BasisSkin type="MainSkin">
             <State name="normal"/>
         </BasisSkin>
     </Resource>
 
-    <Resource type="AutoSizedResourceSkin" name="TB_BL_T" texture="textures\menu_thick_border_left.dds">
+    <Resource type="AutoSizedResourceSkin" name="TB_BL_T" texture="textures\omw_menu_icon_active.dds">
         <Property key="Pointer" value="dresize2"/>
         <BasisSkin type="MainSkin">
             <State name="normal"/>
         </BasisSkin>
     </Resource>
 
-    <Resource type="AutoSizedResourceSkin" name="TB_BL_B" texture="textures\menu_thick_border_bottom.dds">
+    <Resource type="AutoSizedResourceSkin" name="TB_BL_B" texture="textures\omw_menu_icon_active.dds">
         <Property key="Pointer" value="dresize2"/>
         <BasisSkin type="MainSkin">
             <State name="normal"/>
         </BasisSkin>
     </Resource>
 
-    <Resource type="AutoSizedResourceSkin" name="TB_BR_T" texture="textures\menu_thick_border_right.dds">
+    <Resource type="AutoSizedResourceSkin" name="TB_BR_T" texture="textures\omw_menu_icon_active.dds">
         <Property key="Pointer" value="dresize"/>
         <BasisSkin type="MainSkin">
             <State name="normal"/>
         </BasisSkin>
     </Resource>
 
-    <Resource type="AutoSizedResourceSkin" name="TB_BR_B" texture="textures\menu_thick_border_bottom.dds">
+    <Resource type="AutoSizedResourceSkin" name="TB_BR_B" texture="textures\omw_menu_icon_active.dds">
         <Property key="Pointer" value="dresize"/>
         <BasisSkin type="MainSkin">
             <State name="normal"/>
@@ -371,7 +371,7 @@
     </Resource>
 
     <!-- These parts defines the 'blocks' to the left and right of the caption -->
-    <Resource type="AutoSizedResourceSkin" name="HB_MID" texture="textures\menu_head_block_middle.dds">
+    <Resource type="AutoSizedResourceSkin" name="HB_MID" texture="textures\omw_menu_icon_active.dds">
         <BasisSkin type="TileRect" align="Stretch">
             <State name="normal">
                 <Property key="TileH" value="true"/>
@@ -380,7 +380,7 @@
         </BasisSkin>
     </Resource>
 
-    <Resource type="AutoSizedResourceSkin" name="HB_TOP" texture="textures\menu_head_block_top.dds">
+    <Resource type="AutoSizedResourceSkin" name="HB_TOP" texture="textures\omw_menu_icon_active.dds">
         <BasisSkin type="TileRect" align="Stretch">
             <State name="normal">
                 <Property key="TileH" value="true"/>
@@ -389,7 +389,7 @@
         </BasisSkin>
     </Resource>
 
-    <Resource type="AutoSizedResourceSkin" name="HB_BOTTOM" texture="textures\menu_head_block_bottom.dds">
+    <Resource type="AutoSizedResourceSkin" name="HB_BOTTOM" texture="textures\omw_menu_icon_active.dds">
         <BasisSkin type="TileRect" align="Stretch">
             <State name="normal">
                 <Property key="TileH" value="true"/>
@@ -398,34 +398,34 @@
         </BasisSkin>
     </Resource>
 
-    <Resource type="AutoSizedResourceSkin" name="HB_LEFT" texture="textures\menu_head_block_left.dds">
+    <Resource type="AutoSizedResourceSkin" name="HB_LEFT" texture="textures\omw_menu_icon_active.dds">
         <BasisSkin type="MainSkin">
             <State name="normal"/>
         </BasisSkin>
     </Resource>
 
-    <Resource type="AutoSizedResourceSkin" name="HB_RIGHT" texture="textures\menu_head_block_right.dds">
+    <Resource type="AutoSizedResourceSkin" name="HB_RIGHT" texture="textures\omw_menu_icon_active.dds">
         <BasisSkin type="MainSkin">
             <State name="normal"/>
         </BasisSkin>
     </Resource>
 
-    <Resource type="AutoSizedResourceSkin" name="HB_TR" texture="textures\menu_head_block_top_right_corner.dds">
+    <Resource type="AutoSizedResourceSkin" name="HB_TR" texture="textures\omw_menu_icon_active.dds">
         <BasisSkin type="MainSkin">
             <State name="normal"/>
         </BasisSkin>
     </Resource>
-    <Resource type="AutoSizedResourceSkin" name="HB_TL" texture="textures\menu_head_block_top_left_corner.dds">
+    <Resource type="AutoSizedResourceSkin" name="HB_TL" texture="textures\omw_menu_icon_active.dds">
         <BasisSkin type="MainSkin">
             <State name="normal"/>
         </BasisSkin>
     </Resource>
-    <Resource type="AutoSizedResourceSkin" name="HB_BR" texture="textures\menu_head_block_bottom_right_corner.dds">
+    <Resource type="AutoSizedResourceSkin" name="HB_BR" texture="textures\omw_menu_icon_active.dds">
         <BasisSkin type="MainSkin">
             <State name="normal"/>
         </BasisSkin>
     </Resource>
-    <Resource type="AutoSizedResourceSkin" name="HB_BL" texture="textures\menu_head_block_bottom_left_corner.dds">
+    <Resource type="AutoSizedResourceSkin" name="HB_BL" texture="textures\omw_menu_icon_active.dds">
         <BasisSkin type="MainSkin">
             <State name="normal"/>
         </BasisSkin>

@@ -6,6 +6,7 @@
 
 #include <SDL_gamecontroller.h>
 #include <SDL_mouse.h>
+#include <SDL_version.h>
 
 namespace SDLUtil
 {
@@ -33,6 +34,7 @@ namespace SDLUtil
                 return "Left Shoulder";
             case SDL_CONTROLLER_BUTTON_LEFTSTICK:
                 return "Left Stick Button";
+#if SDL_VERSION_ATLEAST(2, 0, 14)
             case SDL_CONTROLLER_BUTTON_MISC1:
                 return "Misc 1";
             case SDL_CONTROLLER_BUTTON_PADDLE1:
@@ -51,6 +53,10 @@ namespace SDLUtil
                 return "Start Button";
             case SDL_CONTROLLER_BUTTON_TOUCHPAD:
                 return "Touchpad";
+#else
+            case SDL_CONTROLLER_BUTTON_START:
+                return "Start Button";
+#endif
             case SDL_CONTROLLER_BUTTON_X:
                 return "X Button";
             case SDL_CONTROLLER_BUTTON_Y:

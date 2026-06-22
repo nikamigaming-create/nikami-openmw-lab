@@ -41,7 +41,7 @@ namespace Nif
     static std::unique_ptr<Record> construct()
     {
         auto result = std::make_unique<NodeType>();
-        result->mRecordType = recordType;
+        result->recType = recordType;
         return result;
     }
 
@@ -600,9 +600,7 @@ namespace Nif
         if (hasUserVersion)
             nif.read(mUserVersion);
 
-        const std::uint32_t recordsCount = nif.get<std::uint32_t>();
-
-        mRecords.reserve(recordsCount);
+        mRecords.resize(nif.get<std::uint32_t>());
 
         // Bethesda stream header
         {
@@ -648,14 +646,14 @@ namespace Nif
             else
             {
                 nif.getSizedStrings(recTypes, nif.get<std::uint16_t>());
-                nif.readVector(recTypeIndices, recordsCount);
+                nif.readVector(recTypeIndices, mRecords.size());
             }
         }
 
         if (hasRecordSizes) // Record sizes
         {
             std::vector<std::uint32_t> recSizes; // Currently unused
-            nif.readVector(recSizes, recordsCount);
+            nif.readVector(recSizes, mRecords.size());
         }
 
         if (hasStringTable)
@@ -672,11 +670,11 @@ namespace Nif
             nif.readVector(groups, nif.get<std::uint32_t>());
         }
 
-        for (std::size_t i = 0; i < recordsCount; i++)
+        for (std::size_t i = 0; i < mRecords.size(); i++)
         {
             std::unique_ptr<Record> r;
 
-            std::string rec = hasRecTypeListings ? recTypes.at(recTypeIndices[i]) : nif.get<std::string>();
+            std::string rec = hasRecTypeListings ? recTypes[recTypeIndices[i]] : nif.get<std::string>();
             if (rec.empty())
             {
                 std::stringstream error;
@@ -699,40 +697,30 @@ namespace Nif
                 Log(Debug::Verbose) << "NIF Debug: Reading record of type " << rec << ", index " << i;
 
             assert(r != nullptr);
-            assert(r->mRecordType != RC_MISSING);
-            r->mRecordName = std::move(rec);
-            r->mRecordIndex = static_cast<unsigned>(i);
+            assert(r->recType != RC_MISSING);
+            r->recName = std::move(rec);
+            r->recIndex = i;
             r->read(&nif);
-            mRecords.push_back(std::move(r));
+            mRecords[i] = std::move(r);
         }
 
         // Determine which records are roots
-        const std::uint32_t rootsCount = nif.get<uint32_t>();
-        mRoots.reserve(rootsCount);
-        constexpr std::uint32_t maxDoesNotPointWarnings = 10;
-        std::uint32_t doesNotPointWarnings = 0;
-        for (std::size_t i = 0; i < rootsCount; i++)
+        mRoots.resize(nif.get<uint32_t>());
+        for (std::size_t i = 0; i < mRoots.size(); i++)
         {
             std::int32_t idx;
             nif.read(idx);
             if (idx >= 0 && static_cast<std::size_t>(idx) < mRecords.size())
             {
-                mRoots.push_back(mRecords[idx].get());
+                mRoots[i] = mRecords[idx].get();
             }
             else
             {
-                mRoots.push_back(nullptr);
-                ++doesNotPointWarnings;
-                if (doesNotPointWarnings <= maxDoesNotPointWarnings)
-                {
-                    Log(Debug::Warning) << "NIFFile Warning: Root " << i + 1 << " does not point to a record: index "
-                                        << idx << ". File: " << mFilename;
-                }
+                mRoots[i] = nullptr;
+                Log(Debug::Warning) << "NIFFile Warning: Root " << i + 1 << " does not point to a record: index " << idx
+                                    << ". File: " << mFilename;
             }
         }
-        if (doesNotPointWarnings > maxDoesNotPointWarnings)
-            Log(Debug::Warning) << "NIFFile Warning: " << doesNotPointWarnings - maxDoesNotPointWarnings
-                                << " more roots did not point to a record. File: " << mFilename;
 
         // Once parsing is done, do post-processing.
         for (const auto& record : mRecords)

@@ -2,6 +2,8 @@
 
 #include "alignment.hpp"
 
+#include <components/widgets/myguicompat.hpp>
+
 namespace LuaUi
 {
     LuaText::LuaText()
@@ -61,7 +63,11 @@ namespace LuaUi
     MyGUI::IntSize LuaText::calculateSize() const
     {
         if (mAutoSized)
+#if MYGUI_VERSION >= MYGUI_DEFINE_VERSION(3, 4, 3)
             return getTextSize();
+#else
+            return const_cast<LuaText*>(this)->getTextSize();
+#endif
         else
             return WidgetExtension::calculateSize();
     }

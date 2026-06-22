@@ -46,6 +46,7 @@ option(BUILD_BULLETOBJECTTOOL   "Build Bullet object tool" ON)
 option(BUILD_OPENCS_TESTS       "Build OpenMW Construction Set tests" OFF)
 option(BUILD_OPENMW_TESTS       "Build OpenMW tests" OFF)
 option(PRECOMPILE_HEADERS_WITH_MSVC "Precompile most common used headers with MSVC (alternative to ccache)" ON)
+option(BUILD_OPENMW_VR          "Build OpenMW-VR executable" OFF)
 
 set(OpenGL_GL_PREFERENCE LEGACY)  # Use LEGACY as we use GL2; GLNVD is for GL3 and up.
 
@@ -74,6 +75,8 @@ set(CMAKE_MODULE_PATH ${CMAKE_SOURCE_DIR}/cmake/)
 
 if (ANDROID)
     set(CMAKE_FIND_ROOT_PATH ${OPENMW_DEPENDENCIES_DIR} "${CMAKE_FIND_ROOT_PATH}")
+    add_compile_definitions(_LIBCPP_ENABLE_CXX17_REMOVED_UNARY_BINARY_FUNCTION)
+    add_compile_options(-Wno-enum-constexpr-conversion)
 endif()
 
 # Version
@@ -304,9 +307,26 @@ set(USED_OSG_PLUGINS
     osgdb_serializers_osg
     osgdb_tga)
 
+if(ANDROID)
+    list(REMOVE_ITEM USED_OSG_PLUGINS osgdb_dae)
+endif()
+
+if(ANDROID)
+    option(OPENMW_ANDROID_DISABLE_ICU "Disable ICU C++ localization runtime for Android bootstrap builds" ON)
+else()
+    option(OPENMW_ANDROID_DISABLE_ICU "Disable ICU C++ localization runtime for Android bootstrap builds" OFF)
+endif()
+
 option(OPENMW_USE_SYSTEM_ICU "Use system ICU library instead of internal. If disabled, requires autotools" ON)
-if(OPENMW_USE_SYSTEM_ICU)
+if(OPENMW_ANDROID_DISABLE_ICU)
+    add_compile_definitions(OPENMW_ANDROID_DISABLE_ICU)
+    set(ICU_INCLUDE_DIRS "")
+    set(ICU_LIBRARIES "")
+elseif(OPENMW_USE_SYSTEM_ICU)
     find_package(ICU REQUIRED COMPONENTS uc i18n data)
+    if(ANDROID AND EXISTS "${ICU_INCLUDE_DIR}/../i18n")
+        include_directories(SYSTEM "${ICU_INCLUDE_DIR}/../i18n")
+    endif()
 endif()
 
 option(OPENMW_USE_SYSTEM_YAML_CPP "Use system yaml-cpp library instead of internal." ON)
@@ -329,42 +349,57 @@ add_subdirectory(extern)
 
 # Sound setup
 
+if(ANDROID)
+    option(OPENMW_ANDROID_DISABLE_FFMPEG "Disable FFmpeg-backed audio/video decoding for Android bootstrap builds" ON)
+else()
+    option(OPENMW_ANDROID_DISABLE_FFMPEG "Disable FFmpeg-backed audio/video decoding for Android bootstrap builds" OFF)
+endif()
+
 # Require at least ffmpeg 3.2 for now
 SET(FFVER_OK FALSE)
 
-find_package(FFmpeg REQUIRED COMPONENTS AVCODEC AVFORMAT AVUTIL SWSCALE SWRESAMPLE)
+if(NOT OPENMW_ANDROID_DISABLE_FFMPEG)
+    find_package(FFmpeg REQUIRED COMPONENTS AVCODEC AVFORMAT AVUTIL SWSCALE SWRESAMPLE)
+endif()
 
 if(FFmpeg_FOUND)
     SET(FFVER_OK TRUE)
 
-    if(FFmpeg_AVFORMAT_VERSION VERSION_LESS "57.56.100")
-        message(STATUS "libavformat is too old! (${FFmpeg_AVFORMAT_VERSION}, wanted 57.56.100)")
-        set(FFVER_OK FALSE)
-    endif()
-    if(FFmpeg_AVCODEC_VERSION VERSION_LESS "57.64.100")
-        message(STATUS "libavcodec is too old! (${FFmpeg_AVCODEC_VERSION}, wanted 57.64.100)")
-        set(FFVER_OK FALSE)
-    endif()
-    if(FFmpeg_AVUTIL_VERSION VERSION_LESS "55.34.100")
-        message(STATUS "libavutil is too old! (${FFmpeg_AVUTIL_VERSION}, wanted 55.34.100)")
-        set(FFVER_OK FALSE)
-    endif()
-    if(FFmpeg_SWSCALE_VERSION VERSION_LESS "4.2.100")
-        message(STATUS "libswscale is too old! (${FFmpeg_SWSCALE_VERSION}, wanted 4.2.100)")
-        set(FFVER_OK FALSE)
-    endif()
-    if(FFmpeg_SWRESAMPLE_VERSION VERSION_LESS "2.3.100")
-        message(STATUS "libswresample is too old! (${FFmpeg_SWRESAMPLE_VERSION}, wanted 2.3.100)")
-        set(FFVER_OK FALSE)
+    # Can not detect FFmpeg version on Windows or Android for now.
+    if (NOT WIN32 AND NOT ANDROID)
+        if(FFmpeg_AVFORMAT_VERSION VERSION_LESS "57.56.100")
+            message(STATUS "libavformat is too old! (${FFmpeg_AVFORMAT_VERSION}, wanted 57.56.100)")
+            set(FFVER_OK FALSE)
+        endif()
+        if(FFmpeg_AVCODEC_VERSION VERSION_LESS "57.64.100")
+            message(STATUS "libavcodec is too old! (${FFmpeg_AVCODEC_VERSION}, wanted 57.64.100)")
+            set(FFVER_OK FALSE)
+        endif()
+        if(FFmpeg_AVUTIL_VERSION VERSION_LESS "55.34.100")
+            message(STATUS "libavutil is too old! (${FFmpeg_AVUTIL_VERSION}, wanted 55.34.100)")
+            set(FFVER_OK FALSE)
+        endif()
+        if(FFmpeg_SWSCALE_VERSION VERSION_LESS "4.2.100")
+            message(STATUS "libswscale is too old! (${FFmpeg_SWSCALE_VERSION}, wanted 4.2.100)")
+            set(FFVER_OK FALSE)
+        endif()
+        if(FFmpeg_SWRESAMPLE_VERSION VERSION_LESS "2.3.100")
+            message(STATUS "libswresample is too old! (${FFmpeg_SWRESAMPLE_VERSION}, wanted 2.3.100)")
+            set(FFVER_OK FALSE)
+        endif()
     endif()
 
-    if(NOT FFVER_OK)
+    if(NOT FFVER_OK AND NOT APPLE)  # unable to detect version on MacOS < 11.0
         message(FATAL_ERROR "FFmpeg version is too old, 3.2 is required" )
     endif()
 endif()
 
-if(NOT FFmpeg_FOUND)
+if(NOT OPENMW_ANDROID_DISABLE_FFMPEG AND NOT FFmpeg_FOUND)
     message(FATAL_ERROR "FFmpeg was not found" )
+endif()
+
+if(OPENMW_ANDROID_DISABLE_FFMPEG)
+    add_compile_definitions(OPENMW_ANDROID_DISABLE_FFMPEG)
 endif()
 
 # Required for building the FFmpeg headers
@@ -470,6 +505,12 @@ if(OSG_STATIC)
     endif()
 
     find_package(collada_dom 2.5)
+    if(ANDROID AND OPENMW_DEPENDENCIES_DIR)
+        set(COLLADA_DOM_ROOT_DIR "${OPENMW_DEPENDENCIES_DIR}")
+        set(COLLADA_DOM_INCLUDE_DIRS "${OPENMW_DEPENDENCIES_DIR}/include/collada-dom2.5")
+        set(COLLADA_DOM_LIBRARY_DIRS "${OPENMW_DEPENDENCIES_DIR}/lib")
+        set(COLLADA_DOM_LIBRARIES "${OPENMW_DEPENDENCIES_DIR}/lib/libcollada-dom2.5-dp.so")
+    endif()
 
     link_directories(${COLLADA_DOM_LIBRARY_DIRS})
 
@@ -482,13 +523,49 @@ if(HAVE_MULTIVIEW)
 endif(HAVE_MULTIVIEW)
 
 set(BOOST_COMPONENTS iostreams program_options)
+set(BOOST_MIN_VERSION 1.70.0)
 
-find_package(Boost 1.70.0 CONFIG REQUIRED COMPONENTS ${BOOST_COMPONENTS} OPTIONAL_COMPONENTS ${BOOST_OPTIONAL_COMPONENTS})
+if(ANDROID)
+    set(BOOST_MIN_VERSION 1.69.0)
+    set(BOOST_OPTIONAL_COMPONENTS)
+    set(Boost_NO_BOOST_CMAKE ON)
+    find_package(Boost ${BOOST_MIN_VERSION} REQUIRED COMPONENTS ${BOOST_COMPONENTS} OPTIONAL_COMPONENTS ${BOOST_OPTIONAL_COMPONENTS})
+    if(NOT TARGET Boost::regex)
+        add_library(Boost::regex INTERFACE IMPORTED)
+    endif()
+else()
+    find_package(Boost ${BOOST_MIN_VERSION} CONFIG REQUIRED COMPONENTS ${BOOST_COMPONENTS} OPTIONAL_COMPONENTS ${BOOST_OPTIONAL_COMPONENTS})
+endif()
 
 if(OPENMW_USE_SYSTEM_MYGUI)
-    find_package(MyGUI 3.4.3 REQUIRED)
+    set(MYGUI_MIN_VERSION 3.4.3)
+    if(ANDROID)
+        set(MYGUI_MIN_VERSION 3.4.0)
+    endif()
+    find_package(MyGUI ${MYGUI_MIN_VERSION} REQUIRED)
 endif()
-find_package(SDL2 2.0.20 REQUIRED)
+if(ANDROID AND OPENMW_DEPENDENCIES_DIR)
+    find_library(FREETYPE_LIBRARY NAMES freetype PATHS "${OPENMW_DEPENDENCIES_DIR}/lib" NO_DEFAULT_PATH)
+    find_library(PNG_LIBRARY NAMES png16 png PATHS "${OPENMW_DEPENDENCIES_DIR}/lib" NO_DEFAULT_PATH)
+    if(NOT FREETYPE_LIBRARY)
+        message(FATAL_ERROR "Could not find Android FreeType library")
+    endif()
+endif()
+if(ANDROID)
+    find_path(SDL2_INCLUDE_DIR NAMES SDL.h)
+    find_library(SDL2_LIBRARY NAMES SDL2)
+    if(NOT SDL2_INCLUDE_DIR OR NOT SDL2_LIBRARY)
+        message(FATAL_ERROR "Could not find Android SDL2 headers/library")
+    endif()
+    if(NOT TARGET SDL2::SDL2)
+        add_library(SDL2::SDL2 SHARED IMPORTED)
+        set_target_properties(SDL2::SDL2 PROPERTIES
+            IMPORTED_LOCATION "${SDL2_LIBRARY}"
+            INTERFACE_INCLUDE_DIRECTORIES "${SDL2_INCLUDE_DIR}")
+    endif()
+else()
+    find_package(SDL2 2.0.20 REQUIRED)
+endif()
 find_package(OpenAL REQUIRED)
 find_package(ZLIB REQUIRED)
 
@@ -556,6 +633,10 @@ endif (APPLE)
 
 pack_resource_file(${OpenMW_SOURCE_DIR}/files/settings-default.cfg
     "${OpenMW_BINARY_DIR}" "defaults.bin")
+pack_resource_file(${OpenMW_SOURCE_DIR}/files/settings-overrides-vr.cfg
+    "${OpenMW_BINARY_DIR}" "settings-overrides-vr.cfg")
+configure_resource_file(${OpenMW_SOURCE_DIR}/files/openxrinteractionprofiles.xml
+    "${OpenMW_BINARY_DIR}" "openxrinteractionprofiles.xml")
 
 configure_resource_file(${OpenMW_SOURCE_DIR}/files/openmw.appdata.xml
     "${OpenMW_BINARY_DIR}" "openmw.appdata.xml")
@@ -615,7 +696,9 @@ endif()
 
 # Extern
 
-add_subdirectory (extern/osg-ffmpeg-videoplayer)
+if(NOT OPENMW_ANDROID_DISABLE_FFMPEG)
+    add_subdirectory (extern/osg-ffmpeg-videoplayer)
+endif()
 add_subdirectory (extern/oics)
 add_subdirectory (extern/Base64)
 if (BUILD_OPENCS OR BUILD_OPENCS_TESTS)
@@ -672,7 +755,7 @@ endif()
 add_subdirectory (components)
 
 # Apps and tools
-if (BUILD_OPENMW OR BUILD_OPENMW_TESTS)
+if (BUILD_OPENMW OR BUILD_OPENMW_TESTS OR BUILD_OPENMW_VR)
     add_subdirectory( apps/openmw )
 endif()
 

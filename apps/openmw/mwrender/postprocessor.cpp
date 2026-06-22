@@ -25,6 +25,7 @@
 #include <components/stereo/stereomanager.hpp>
 #include <components/vfs/manager.hpp>
 #include <components/vfs/recursivedirectoryiterator.hpp>
+#include <components/vr/vr.hpp>
 
 #include "../mwbase/environment.hpp"
 #include "../mwbase/windowmanager.hpp"
@@ -211,8 +212,20 @@ namespace MWRender
         addChild(mHUDCamera);
         addChild(mRootNode);
 
-        mViewer->setSceneData(this);
-        mViewer->getCamera()->setRenderTargetImplementation(osg::Camera::FRAME_BUFFER_OBJECT);
+#if defined(ANDROID)
+        if (VR::getVR())
+        {
+            mViewer->setSceneData(mRootNode);
+            Log(Debug::Info) << "Android VR: using direct scene root and disabling postprocessing for headset boot";
+            mViewer->getCamera()->setRenderTargetImplementation(osg::Camera::FRAME_BUFFER_OBJECT);
+            mUsePostProcessing = false;
+        }
+        else
+#endif
+        {
+            mViewer->setSceneData(this);
+            mViewer->getCamera()->setRenderTargetImplementation(osg::Camera::FRAME_BUFFER_OBJECT);
+        }
         mViewer->getCamera()->getGraphicsContext()->setResizedCallback(new ResizedCallback(this));
         mViewer->getCamera()->setUserData(this);
 

@@ -2,6 +2,7 @@
 #define OPENMW_MWRENDER_PINGPONGCANVAS_H
 
 #include <array>
+#include <memory>
 #include <optional>
 
 #include <osg/FrameBufferObject>
@@ -22,6 +23,15 @@ namespace MWRender
     class PingPongCanvas : public osg::Geometry
     {
     public:
+        class PingPongCallback
+        {
+        public:
+            virtual ~PingPongCallback() = default;
+
+            virtual void pingPongBegin(osg::State& state, const PingPongCanvas& canvas) = 0;
+            virtual void pingPongEnd(osg::State& state, const PingPongCanvas& canvas) = 0;
+        };
+
         PingPongCanvas(
             Shader::ShaderManager& shaderManager, const std::shared_ptr<LuminanceCalculator>& luminanceCalculator);
 
@@ -56,6 +66,15 @@ namespace MWRender
 
         const osg::ref_ptr<osg::Texture>& getSceneTexture(size_t frameId) const { return mTextureScene; }
 
+        void setDestinationFbo(osg::ref_ptr<osg::FrameBufferObject> fbo) const { mDestinationFBO = std::move(fbo); }
+
+        void setDestinationViewport(size_t frameId, osg::ref_ptr<osg::Viewport> viewport) const
+        {
+            mDestinationViewport = std::move(viewport);
+        }
+
+        void setPingPongCallback(std::unique_ptr<PingPongCallback> cb);
+
     private:
         bool mAvgLum = false;
         bool mPostprocessing = false;
@@ -78,8 +97,10 @@ namespace MWRender
         mutable osg::ref_ptr<osg::Viewport> mRenderViewport;
         mutable osg::ref_ptr<osg::FrameBufferObject> mMultiviewResolveFramebuffer;
         mutable osg::ref_ptr<osg::FrameBufferObject> mDestinationFBO;
+        mutable osg::ref_ptr<osg::Viewport> mDestinationViewport;
         mutable std::array<osg::ref_ptr<osg::FrameBufferObject>, 3> mFbos;
         mutable std::shared_ptr<LuminanceCalculator> mLuminanceCalculator;
+        std::unique_ptr<PingPongCallback> mPingPongCallback;
     };
 }
 

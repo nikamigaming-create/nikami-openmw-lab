@@ -76,7 +76,8 @@ namespace Resource
     ImageManager::ImageManager(const VFS::Manager* vfs, double expiryDelay)
         : ResourceManager(vfs, expiryDelay)
         , mWarningImage(createWarningImage())
-        , mOptions(new osgDB::Options("dds_dxt1_detect_rgba ignoreTga2Fields"))
+        , mOptions(new osgDB::Options("dds_flip dds_dxt1_detect_rgba ignoreTga2Fields"))
+        , mOptionsNoFlip(new osgDB::Options("dds_dxt1_detect_rgba ignoreTga2Fields"))
     {
     }
 
@@ -133,7 +134,8 @@ namespace Resource
                 stream->seekg(0);
             }
 
-            osgDB::ReaderWriter::ReadResult result = reader->readImage(*stream, mOptions);
+            osgDB::ReaderWriter::ReadResult result
+                = reader->readImage(*stream, disableFlip ? mOptionsNoFlip : mOptions);
             if (!result.success())
             {
                 Log(Debug::Error) << "Error loading " << path << ": " << result.message() << " code "

@@ -463,6 +463,7 @@ namespace MWInput
     void ControllerManager::enableGyroSensor()
     {
         mGyroAvailable = false;
+#if SDL_VERSION_ATLEAST(2, 0, 14)
         SDL_GameController* cntrl = mBindingsManager->getControllerOrNull();
         if (!cntrl)
             return;
@@ -474,6 +475,7 @@ namespace MWInput
             return;
         }
         mGyroAvailable = true;
+#endif
     }
 
     bool ControllerManager::isGyroAvailable() const
@@ -485,12 +487,16 @@ namespace MWInput
     {
         float gyro[3] = { 0.f };
         SDL_GameController* cntrl = mBindingsManager->getControllerOrNull();
+#if SDL_VERSION_ATLEAST(2, 0, 14)
         if (cntrl && mGyroAvailable)
         {
             const int result = SDL_GameControllerGetSensorData(cntrl, SDL_SENSOR_GYRO, gyro, 3);
             if (result < 0)
                 Log(Debug::Error) << "Failed to get game controller sensor data: " << SDL_GetError();
         }
+#else
+        (void)cntrl;
+#endif
         return std::array<float, 3>({ gyro[0], gyro[1], gyro[2] });
     }
 
@@ -508,7 +514,10 @@ namespace MWInput
 
         bool isXbox = controllerType == SDL_CONTROLLER_TYPE_XBOX360 || controllerType == SDL_CONTROLLER_TYPE_XBOXONE;
         bool isPsx = controllerType == SDL_CONTROLLER_TYPE_PS3 || controllerType == SDL_CONTROLLER_TYPE_PS4
-            || controllerType == SDL_CONTROLLER_TYPE_PS5;
+#if SDL_VERSION_ATLEAST(2, 0, 14)
+            || controllerType == SDL_CONTROLLER_TYPE_PS5
+#endif
+            ;
         bool isSwitch = controllerType == SDL_CONTROLLER_TYPE_NINTENDO_SWITCH_PRO;
 
         switch (button)
@@ -557,12 +566,14 @@ namespace MWInput
                     return "textures/omw_psx_button_triangle.dds";
                 return "textures/omw_steam_button_y.dds";
             case SDL_CONTROLLER_BUTTON_GUIDE:
+#if SDL_VERSION_ATLEAST(2, 0, 14)
             case SDL_CONTROLLER_BUTTON_MISC1:
             case SDL_CONTROLLER_BUTTON_PADDLE1:
             case SDL_CONTROLLER_BUTTON_PADDLE2:
             case SDL_CONTROLLER_BUTTON_PADDLE3:
             case SDL_CONTROLLER_BUTTON_PADDLE4:
             case SDL_CONTROLLER_BUTTON_TOUCHPAD:
+#endif
             default:
                 return {};
         }

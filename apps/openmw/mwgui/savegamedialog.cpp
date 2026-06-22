@@ -22,6 +22,7 @@
 #include <components/misc/timeconvert.hpp>
 #include <components/myguiplatform/myguitexture.hpp>
 #include <components/settings/values.hpp>
+#include <components/widgets/myguicompat.hpp>
 
 #include "../mwbase/environment.hpp"
 #include "../mwbase/statemanager.hpp"
@@ -229,7 +230,7 @@ namespace MWGui
                 }
 
                 title << " (#{OMWEngine:Level} " << signature.mPlayerLevel << " "
-                      << MyGUI::TextIterator::toTagsString(MyGUI::UString(className)) << ")";
+                      << MyGUI::TextIterator::toTagsString(Gui::makeMyGUIUString(className)) << ")";
 
                 const MyGUI::UString playerDesc = MyGUI::LanguageManager::getInstance().replaceTags(title.str());
                 mCharacterSelection->addItem(playerDesc, &*it);
@@ -338,7 +339,8 @@ namespace MWGui
 
         if (mSaving)
         {
-            MWBase::Environment::get().getStateManager()->saveGame(mSaveNameEdit->getCaption(), mCurrentSlot);
+            MWBase::Environment::get().getStateManager()->saveGame(
+                static_cast<std::string>(mSaveNameEdit->getCaption()), mCurrentSlot);
         }
         else
         {

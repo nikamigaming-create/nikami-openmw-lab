@@ -1,7 +1,6 @@
 #include "animationbindings.hpp"
 
 #include <components/lua/luastate.hpp>
-#include <components/lua/utilpackage.hpp>
 #include <components/misc/finitevalues.hpp>
 
 #include "../mwbase/environment.hpp"
@@ -112,6 +111,7 @@ namespace MWLua
                 { "Torso", BlendMask::BlendMask_Torso },
                 { "LeftArm", BlendMask::BlendMask_LeftArm },
                 { "RightArm", BlendMask::BlendMask_RightArm },
+                { "Head", BlendMask::BlendMask_Head },
                 { "UpperBody", BlendMask::BlendMask_UpperBody },
                 { "All", BlendMask::BlendMask_All },
             }));
@@ -122,6 +122,7 @@ namespace MWLua
                 { "Torso", BoneGroup::BoneGroup_Torso },
                 { "LeftArm", BoneGroup::BoneGroup_LeftArm },
                 { "RightArm", BoneGroup::BoneGroup_RightArm },
+                { "Head", BoneGroup::BoneGroup_Head },
             }));
 
         api["hasAnimation"] = [](const LObject& object) -> bool {
@@ -167,8 +168,8 @@ namespace MWLua
                 return completion;
             return sol::nullopt;
         };
-        api["getLoopCount"] = [](const LObject& object, std::string groupname) -> sol::optional<uint32_t> {
-            uint32_t loops = 0;
+        api["getLoopCount"] = [](const LObject& object, std::string groupname) -> sol::optional<size_t> {
+            size_t loops = 0;
             if (getConstAnimationOrThrow(object)->getInfo(groupname, nullptr, nullptr, &loops))
                 return loops;
             return sol::nullopt;
@@ -244,26 +245,15 @@ namespace MWLua
         api["addVfx"] = [context](const SelfObject& object, std::string_view model, sol::optional<sol::table> options) {
             if (options)
             {
-                sol::object transformObject = options->get<sol::object>("transform");
-                std::optional<osg::Matrix> transform;
-                if (transformObject.is<LuaUtil::TransformM>())
-                    transform = LuaUtil::cast<LuaUtil::TransformM>(transformObject).mM;
-                else if (transformObject.is<LuaUtil::TransformQ>())
-                    transform = osg::Matrix(LuaUtil::cast<LuaUtil::TransformQ>(transformObject).mQ);
-                if (transform.has_value() && !transform->valid())
-                    throw std::runtime_error("Transform provided for 'addVfx' is invalid");
-
                 context.mLuaManager->addAction(
                     [object = Object(object), model = std::string(model),
                         effectId = options->get_or<std::string>("vfxId", ""), loop = options->get_or("loop", false),
                         boneName = options->get_or<std::string>("boneName", ""),
                         particleTexture = options->get_or<std::string>("particleTextureOverride", ""),
-                        useAmbientLight = options->get_or("useAmbientLight", true),
-                        autoTransform = options->get_or("autoTransform", true), transform] {
+                        useAmbientLight = options->get_or("useAmbientLight", true)] {
                         MWRender::Animation* anim = getMutableAnimationOrThrow(object);
 
-                        anim->addEffect(model, effectId, loop, boneName, particleTexture, useAmbientLight,
-                            autoTransform, transform);
+                        anim->addEffect(model, effectId, loop, boneName, particleTexture, useAmbientLight);
                     },
                     "addVfxAction");
             }
@@ -296,18 +286,13 @@ namespace MWLua
                 "removeVfxAction");
         };
 
+
         return LuaUtil::makeReadOnly(api);
     }
 
     sol::table initWorldVfxBindings(const Context& context)
     {
         sol::table api(context.mLua->unsafeState(), sol::create);
-
-        api["remove"] = [context](std::string vfxId) {
-            context.mLuaManager->addAction(
-                [vfxId = std::move(vfxId)] { MWBase::Environment::get().getWorld()->removeEffect(vfxId); },
-                "openmw.vfx.remove");
-        };
 
         api["spawn"]
             = [context](std::string_view model, const osg::Vec3f& worldPos, sol::optional<sol::table> options) {
@@ -316,14 +301,12 @@ namespace MWLua
                       bool magicVfx = options->get_or("mwMagicVfx", true);
                       std::string texture = options->get_or<std::string>("particleTextureOverride", "");
                       float scale = options->get_or("scale", 1.f);
-                      std::string vfxId = options->get_or<std::string>("vfxId", "");
-                      bool loop = options->get_or("loop", false);
                       bool useAmbientLight = options->get_or("useAmbientLight", true);
                       context.mLuaManager->addAction(
                           [model = VFS::Path::Normalized(model), texture = std::move(texture), worldPos, scale,
-                              magicVfx, useAmbientLight, vfxId = std::move(vfxId), loop]() {
+                              magicVfx, useAmbientLight]() {
                               MWBase::Environment::get().getWorld()->spawnEffect(
-                                  model, texture, worldPos, scale, magicVfx, useAmbientLight, vfxId, loop);
+                                  model, texture, worldPos, scale, magicVfx, useAmbientLight);
                           },
                           "openmw.vfx.spawn");
                   }

@@ -38,23 +38,23 @@
                     <UserString key="Hidden" value="true"/>
                 </Widget>
                 <Widget type="AutoSizedButton" skin="MW_Button" position="0 0 60 24" name="AllButton">
-                    <Property key="Caption" value="#{sAllTab}"/>
+                    <Property key="Caption" value="ALL"/>
                     <Property key="NeedKey" value="false"/>
                 </Widget>
                 <Widget type="AutoSizedButton" skin="MW_Button" position="0 0 60 24" name="WeaponButton">
-                    <Property key="Caption" value="#{sWeaponTab}"/>
+                    <Property key="Caption" value="WEAPONS"/>
                     <Property key="NeedKey" value="false"/>
                 </Widget>
                 <Widget type="AutoSizedButton" skin="MW_Button" position="0 0 60 24" name="ApparelButton">
-                    <Property key="Caption" value="#{sApparelTab}"/>
+                    <Property key="Caption" value="APPAREL"/>
                     <Property key="NeedKey" value="false"/>
                 </Widget>
                 <Widget type="AutoSizedButton" skin="MW_Button" position="0 0 60 24" name="MagicButton">
-                    <Property key="Caption" value="#{sMagicTab}"/>
+                    <Property key="Caption" value="AID"/>
                     <Property key="NeedKey" value="false"/>
                 </Widget>
                 <Widget type="AutoSizedButton" skin="MW_Button" position="0 0 60 24" name="MiscButton">
-                    <Property key="Caption" value="#{sMiscTab}"/>
+                    <Property key="Caption" value="MISC / AMMO"/>
                     <Property key="NeedKey" value="false"/>
                 </Widget>
                 <Widget type="ImageBox" skin="ImageBox" position="0 0 24 24" name="BtnR1Image">

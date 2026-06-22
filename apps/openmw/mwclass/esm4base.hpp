@@ -2,6 +2,7 @@
 #define GAME_MWCLASS_ESM4BASE_H
 
 #include <components/esm4/inventory.hpp>
+#include <components/esm4/loadscol.hpp>
 #include <components/esm4/loadstat.hpp>
 #include <components/esm4/loadtree.hpp>
 #include <components/misc/strings/algorithm.hpp>
@@ -26,6 +27,8 @@ namespace MWClass
             const MWWorld::Ptr& ptr, const std::string& model, MWRender::RenderingInterface& renderingInterface);
         void insertObjectPhysics(const MWWorld::Ptr& ptr, const std::string& model, const osg::Quat& rotation,
             MWPhysics::PhysicsSystem& physics);
+        void insertStaticCollectionPhysics(const MWWorld::Ptr& ptr, const std::string& model,
+            const osg::Quat& rotation, MWPhysics::PhysicsSystem& physics);
         MWGui::ToolTipInfo getToolTipInfo(std::string_view name, int count);
 
         // We don't handle ESM4 player stats yet, so for resolving levelled object we use an arbitrary number.
@@ -133,6 +136,30 @@ namespace MWClass
         ESM4Tree()
             : MWWorld::RegisteredClass<ESM4Tree, ESM4Base<ESM4::Tree>>(ESM4::Tree::sRecordId)
         {
+        }
+    };
+
+    class ESM4StaticCollection final
+        : public MWWorld::RegisteredClass<ESM4StaticCollection, ESM4Base<ESM4::StaticCollection>>
+    {
+        friend MWWorld::RegisteredClass<ESM4StaticCollection, ESM4Base<ESM4::StaticCollection>>;
+        ESM4StaticCollection()
+            : MWWorld::RegisteredClass<ESM4StaticCollection, ESM4Base<ESM4::StaticCollection>>(
+                ESM4::StaticCollection::sRecordId)
+        {
+        }
+
+    public:
+        void insertObject(const MWWorld::Ptr& ptr, const std::string& model, const osg::Quat& rotation,
+            MWPhysics::PhysicsSystem& physics) const override
+        {
+            ESM4Impl::insertStaticCollectionPhysics(ptr, model, rotation, physics);
+        }
+
+        void insertObjectPhysics(const MWWorld::Ptr& ptr, const std::string& model, const osg::Quat& rotation,
+            MWPhysics::PhysicsSystem& physics) const override
+        {
+            ESM4Impl::insertStaticCollectionPhysics(ptr, model, rotation, physics);
         }
     };
 

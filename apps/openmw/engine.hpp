@@ -68,6 +68,29 @@ namespace SceneUtil
     }
 }
 
+#ifdef OPENMW_ENABLE_VR
+namespace Misc
+{
+    class CallbackManager;
+}
+
+namespace VR
+{
+    class Viewer;
+}
+
+namespace XR
+{
+    class Instance;
+    class Session;
+}
+
+namespace MWVR
+{
+    class VRGUIManager;
+}
+#endif
+
 namespace MWState
 {
     class StateManager;
@@ -142,6 +165,13 @@ namespace OMW
         std::unique_ptr<MWLua::LuaManager> mLuaManager;
         std::unique_ptr<MWLua::Worker> mLuaWorker;
         std::unique_ptr<L10n::Manager> mL10nManager;
+#ifdef OPENMW_ENABLE_VR
+        std::unique_ptr<Misc::CallbackManager> mCallbackManager;
+        std::unique_ptr<MWVR::VRGUIManager> mVrGUIManager;
+        std::unique_ptr<XR::Instance> mXrInstance;
+        std::shared_ptr<XR::Session> mXrSession;
+        std::unique_ptr<VR::Viewer> mVrViewer;
+#endif
         MWBase::Environment mEnvironment;
         ToUTF8::FromType mEncoding;
         std::unique_ptr<ToUTF8::Utf8Encoder> mEncoder;
@@ -265,6 +295,14 @@ namespace OMW
         void setRandomSeed(unsigned int seed);
 
         void setRecastMaxLogLevel(Debug::Level value) { mMaxRecastLogLevel = value; }
+
+#ifdef OPENMW_ENABLE_VR
+        void configureVRGraphics(osg::GraphicsContext* gc);
+        void configureVRInputProfiles();
+        void configureVRPreScene(const std::filesystem::path& userFile, bool userFileExists,
+            const std::filesystem::path& userControllerBindingsFile, const std::filesystem::path& controllerBindingsFile);
+        void configureVRScene();
+#endif
     };
 }
 

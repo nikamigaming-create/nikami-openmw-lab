@@ -31,9 +31,12 @@
 
 #include <components/fallback/fallback.hpp>
 
+#include <components/debug/debuglog.hpp>
 #include <components/sceneutil/statesetupdater.hpp>
+#include <components/vfs/manager.hpp>
 
 #include "../mwbase/environment.hpp"
+#include "../mwbase/world.hpp"
 
 #include "renderbin.hpp"
 #include "vismask.hpp"
@@ -82,10 +85,49 @@ namespace
         return geom;
     }
 
+    void setAlphaBlendedSkyBillboard(osg::StateSet& stateset, int renderBin = MWRender::RenderBin_DepthSorted)
+    {
+        osg::ref_ptr<osg::BlendFunc> blendFunc = new osg::BlendFunc;
+        blendFunc->setFunction(osg::BlendFunc::SRC_ALPHA, osg::BlendFunc::ONE_MINUS_SRC_ALPHA);
+        stateset.setAttributeAndModes(blendFunc, osg::StateAttribute::ON);
+        stateset.setMode(GL_BLEND, osg::StateAttribute::ON);
+        stateset.setRenderBinDetails(renderBin, "RenderBin");
+    }
+
+    bool hasFalloutSkyContent(Resource::SceneManager& sceneManager)
+    {
+        const VFS::Manager* vfs = sceneManager.getVFS();
+        if (vfs != nullptr
+            && (vfs->exists(VFS::Path::NormalizedView("meshes/creatures/nvraven/skeleton.nif"))
+                || vfs->exists(VFS::Path::NormalizedView("meshes/clutter/flags/nv_nevadaflag.nif"))
+                || vfs->exists(VFS::Path::NormalizedView("falloutnv.esm"))))
+            return true;
+
+        const MWBase::World* world = MWBase::Environment::get().getWorld();
+        if (world == nullptr)
+            return false;
+
+        for (const std::string& file : world->getContentFiles())
+        {
+            if (file.find("FalloutNV.esm") != std::string::npos || file.find("falloutnv.esm") != std::string::npos)
+                return true;
+        }
+
+        return false;
+    }
+
     struct DummyComputeBoundCallback : osg::Node::ComputeBoundingSphereCallback
     {
         osg::BoundingSphere computeBound(const osg::Node& node) const override { return osg::BoundingSphere(); }
     };
+
+    VFS::Path::Normalized chooseExistingTexture(
+        const VFS::Manager* vfs, VFS::Path::NormalizedView preferred, VFS::Path::NormalizedView fallback)
+    {
+        if (vfs != nullptr && vfs->exists(preferred))
+            return VFS::Path::Normalized(preferred);
+        return VFS::Path::Normalized(fallback);
+    }
 }
 
 namespace MWRender
@@ -635,6 +677,7 @@ namespace MWRender
 
     CelestialBody::CelestialBody(osg::Group* parentNode, float scaleFactor, int numUvSets, unsigned int visibleMask)
         : mVisibleMask(visibleMask)
+        , mAvailable(true)
     {
         mGeom = createTexturedQuad(numUvSets);
         mGeom->getOrCreateStateSet();
@@ -648,7 +691,14 @@ namespace MWRender
 
     void CelestialBody::setVisible(bool visible)
     {
-        mTransform->setNodeMask(visible ? mVisibleMask : 0);
+        mTransform->setNodeMask(visible && mAvailable ? mVisibleMask : 0);
+    }
+
+    void CelestialBody::setAvailable(bool available)
+    {
+        mAvailable = available;
+        if (!mAvailable)
+            mTransform->setNodeMask(0);
     }
 
     Sun::Sun(osg::Group* parentNode, Resource::SceneManager& sceneManager)
@@ -659,16 +709,21 @@ namespace MWRender
 
         Resource::ImageManager& imageManager = *sceneManager.getImageManager();
 
-        constexpr VFS::Path::NormalizedView image("textures/tx_sun_05.dds");
+        const VFS::Path::Normalized image = chooseExistingTexture(
+            sceneManager.getVFS(), VFS::Path::Normalized("textures/sky/sun.dds"),
+            VFS::Path::Normalized("textures/tx_sun_05.dds"));
+        if (hasFalloutSkyContent(sceneManager))
+            Log(Debug::Info) << "FNV/ESM4: enabled sun billboard using texture " << image.value();
 
         osg::ref_ptr<osg::Texture2D> sunTex = new osg::Texture2D(imageManager.getImage(image));
         sunTex->setWrap(osg::Texture::WRAP_S, osg::Texture::CLAMP_TO_EDGE);
         sunTex->setWrap(osg::Texture::WRAP_T, osg::Texture::CLAMP_TO_EDGE);
 
-        mGeom->getOrCreateStateSet()->setTextureAttributeAndModes(0, sunTex);
-        mGeom->getOrCreateStateSet()->setTextureAttributeAndModes(
-            0, new SceneUtil::TextureType("diffuseMap"), osg::StateAttribute::ON);
-        mGeom->getOrCreateStateSet()->addUniform(new osg::Uniform("pass", static_cast<int>(Pass::Sun)));
+        osg::StateSet* sunStateSet = mGeom->getOrCreateStateSet();
+        sunStateSet->setTextureAttributeAndModes(0, sunTex);
+        sunStateSet->setTextureAttributeAndModes(0, new SceneUtil::TextureType("diffuseMap"), osg::StateAttribute::ON);
+        sunStateSet->addUniform(new osg::Uniform("pass", static_cast<int>(Pass::Sun)));
+        setAlphaBlendedSkyBillboard(*sunStateSet);
 
         osg::ref_ptr<osg::Group> queryNode = new osg::Group;
         // Need to render after the world geometry so we can correctly test for occlusions
@@ -689,7 +744,7 @@ namespace MWRender
         mOcclusionQueryVisiblePixels = createOcclusionQueryNode(queryNode, true);
         mOcclusionQueryTotalPixels = createOcclusionQueryNode(queryNode, false);
 
-        createSunFlash(imageManager);
+        createSunFlash(sceneManager);
         createSunGlare();
     }
 
@@ -734,8 +789,10 @@ namespace MWRender
 
     void Sun::setSunglare(bool enabled)
     {
-        mSunGlareNode->setNodeMask(enabled ? ~0u : 0);
-        mSunFlashNode->setNodeMask(enabled ? ~0u : 0);
+        if (mSunGlareNode)
+            mSunGlareNode->setNodeMask(enabled ? ~0u : 0);
+        if (mSunFlashNode)
+            mSunFlashNode->setNodeMask(enabled ? ~0u : 0);
     }
 
     osg::ref_ptr<osg::OcclusionQueryNode> Sun::createOcclusionQueryNode(osg::Group* parent, bool queryVisible)
@@ -791,9 +848,12 @@ namespace MWRender
         return oqn;
     }
 
-    void Sun::createSunFlash(Resource::ImageManager& imageManager)
+    void Sun::createSunFlash(Resource::SceneManager& sceneManager)
     {
-        constexpr VFS::Path::NormalizedView image("textures/tx_sun_flash_grey_05.dds");
+        Resource::ImageManager& imageManager = *sceneManager.getImageManager();
+        const VFS::Path::Normalized image = chooseExistingTexture(
+            sceneManager.getVFS(), VFS::Path::Normalized("textures/sky/nv_sunglare.dds"),
+            VFS::Path::Normalized("textures/tx_sun_flash_grey_05.dds"));
         osg::ref_ptr<osg::Texture2D> tex = new osg::Texture2D(imageManager.getImage(image));
         tex->setWrap(osg::Texture::WRAP_S, osg::Texture::CLAMP_TO_EDGE);
         tex->setWrap(osg::Texture::WRAP_T, osg::Texture::CLAMP_TO_EDGE);
@@ -814,6 +874,7 @@ namespace MWRender
         stateset->setRenderBinDetails(RenderBin_SunGlare, "RenderBin");
         stateset->setNestRenderBins(false);
         stateset->addUniform(new osg::Uniform("pass", static_cast<int>(Pass::Sun)));
+        setAlphaBlendedSkyBillboard(*stateset, RenderBin_SunGlare);
 
         mSunFlashNode = group;
 
@@ -881,11 +942,18 @@ namespace MWRender
         : CelestialBody(parentNode, scaleFactor, 2)
         , mType(type)
         , mPhase(MoonState::Phase::Unspecified)
+        , mVFS(sceneManager.getVFS())
         , mUpdater(new MoonUpdater(*sceneManager.getImageManager()))
     {
+        if (hasFalloutSkyContent(sceneManager))
+            Log(Debug::Info) << "FNV/ESM4: enabled OpenMW "
+                             << (mType == Moon::Type_Secunda ? "Secunda" : "Masser")
+                             << " moon billboard with Fallout texture selection";
+
         setPhase(MoonState::Phase::Full);
         setVisible(true);
 
+        setAlphaBlendedSkyBillboard(*mGeom->getOrCreateStateSet());
         mGeom->addUpdateCallback(mUpdater);
     }
 
@@ -896,11 +964,16 @@ namespace MWRender
 
     void Moon::adjustTransparency(const float ratio)
     {
+        if (!mAvailable)
+            return;
         mUpdater->mTransparency *= ratio;
     }
 
     void Moon::setState(const MoonState state)
     {
+        if (!mAvailable)
+            return;
+
         float radsX = ((state.mRotationFromHorizon) * static_cast<float>(osg::PI)) / 180.0f;
         float radsZ = ((state.mRotationFromNorth) * static_cast<float>(osg::PI)) / 180.0f;
 
@@ -922,11 +995,15 @@ namespace MWRender
 
     void Moon::setAtmosphereColor(const osg::Vec4f& color)
     {
+        if (!mAvailable)
+            return;
         mUpdater->mAtmosphereColor = color;
     }
 
     void Moon::setColor(const osg::Vec4f& color)
     {
+        if (!mAvailable)
+            return;
         mUpdater->mMoonColor = color;
     }
 
@@ -957,60 +1034,66 @@ namespace MWRender
 
     void Moon::setPhase(const MoonState::Phase& phase)
     {
+        if (!mAvailable)
+            return;
+
         if (mPhase == phase)
             return;
 
         mPhase = phase;
 
-        std::string textureName = "textures/tx_";
-
-        if (mType == Moon::Type_Secunda)
-            textureName += "secunda_";
-        else
-            textureName += "masser_";
+        std::string suffix;
 
         switch (mPhase)
         {
             case MoonState::Phase::New:
-                textureName += "new";
+                suffix = "new";
                 break;
             case MoonState::Phase::WaxingCrescent:
-                textureName += "one_wax";
+                suffix = "one_wax";
                 break;
             case MoonState::Phase::FirstQuarter:
-                textureName += "half_wax";
+                suffix = "half_wax";
                 break;
             case MoonState::Phase::WaxingGibbous:
-                textureName += "three_wax";
+                suffix = "three_wax";
                 break;
             case MoonState::Phase::WaningCrescent:
-                textureName += "one_wan";
+                suffix = "one_wan";
                 break;
             case MoonState::Phase::ThirdQuarter:
-                textureName += "half_wan";
+                suffix = "half_wan";
                 break;
             case MoonState::Phase::WaningGibbous:
-                textureName += "three_wan";
+                suffix = "three_wan";
                 break;
             case MoonState::Phase::Full:
-                textureName += "full";
+                suffix = "full";
                 break;
             default:
                 break;
         }
 
-        textureName += ".dds";
-
-        const VFS::Path::Normalized texturePath(std::move(textureName));
+        const std::string fallbackTextureName
+            = "textures/tx_" + std::string(mType == Moon::Type_Secunda ? "secunda_" : "masser_") + suffix + ".dds";
+        const std::string fonvTextureName = mType == Moon::Type_Secunda
+            ? "textures/sky/skymoonfull.dds"
+            : "textures/sky/masser_" + suffix + ".dds";
+        const VFS::Path::Normalized texturePath = chooseExistingTexture(
+            mVFS, VFS::Path::Normalized(fonvTextureName), VFS::Path::Normalized(fallbackTextureName));
 
         if (mType == Moon::Type_Secunda)
         {
-            constexpr VFS::Path::NormalizedView secunda("textures/tx_mooncircle_full_s.dds");
+            const VFS::Path::Normalized secunda = chooseExistingTexture(
+                mVFS, VFS::Path::Normalized("textures/sky/skymoonfull.dds"),
+                VFS::Path::Normalized("textures/tx_mooncircle_full_s.dds"));
             mUpdater->setTextures(texturePath, secunda);
         }
         else
         {
-            constexpr VFS::Path::NormalizedView masser("textures/tx_mooncircle_full_m.dds");
+            const VFS::Path::Normalized masser = chooseExistingTexture(
+                mVFS, VFS::Path::Normalized("textures/sky/masser_full.dds"),
+                VFS::Path::Normalized("textures/tx_mooncircle_full_m.dds"));
             mUpdater->setTextures(texturePath, masser);
         }
     }

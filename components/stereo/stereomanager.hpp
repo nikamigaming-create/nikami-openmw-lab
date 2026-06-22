@@ -131,10 +131,13 @@ namespace Stereo
         /// Determine which view the cull visitor belongs to
         Eye getEye(const osgUtil::CullVisitor* cv) const;
 
+        void setShouldAttachMultiviewFramebufferToMainCamera(bool attach);
+        void setSamples(int samples);
+
     private:
         friend class MultiviewStereoStatesetUpdateCallback;
         void updateMultiviewStateset(osg::StateSet* stateset);
-        void updateStereoFramebuffer();
+        void updateMultiviewFramebuffer();
         void setupBruteForceTechnique();
         void setupOVRMultiView2Technique();
 
@@ -144,10 +147,13 @@ namespace Stereo
         std::string mError;
         osg::Matrixd mMasterProjectionMatrix;
         std::shared_ptr<MultiviewFramebuffer> mMultiviewFramebuffer;
+        bool mShouldAttachMultiviewFramebufferToMainCamera = false;
+        bool mMultiviewFramebufferIsAttached = false;
         bool mEyeResolutionOverriden;
         osg::Vec2i mEyeResolutionOverride;
         float mNear;
         float mFar;
+        int mSamples = 0;
 
         std::array<View, 2> mView;
         std::array<osg::Matrixd, 2> mViewOffsetMatrix;

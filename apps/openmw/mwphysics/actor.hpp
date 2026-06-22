@@ -188,7 +188,6 @@ namespace MWPhysics
         bool mInternalCollisionMode;
         bool mExternalCollisionMode;
         bool mActive;
-
         PhysicsTaskScheduler* mTaskScheduler;
 
         inline void updateScaleUnsafe();

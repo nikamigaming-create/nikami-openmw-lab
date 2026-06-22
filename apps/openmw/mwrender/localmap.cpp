@@ -1,16 +1,20 @@
 #include "localmap.hpp"
 
 #include <cstdint>
+#include <cstdlib>
 
 #include <osg/ComputeBoundsVisitor>
+#include <osg/Drawable>
 #include <osg/Fog>
 #include <osg/LightSource>
+#include <osg/Matrix>
 #include <osg/PolygonMode>
 #include <osg/Texture2D>
 
 #include <osgDB/ReadFile>
 
 #include <components/debug/debuglog.hpp>
+#include <components/esm/util.hpp>
 #include <components/esm3/fogstate.hpp>
 #include <components/esm3/loadcell.hpp>
 #include <components/files/memorystream.hpp>
@@ -34,6 +38,10 @@
 
 namespace
 {
+    constexpr unsigned int sLocalMapWorldMask
+        = MWRender::Mask_Scene | MWRender::Mask_SimpleWater | MWRender::Mask_Terrain | MWRender::Mask_Object
+        | MWRender::Mask_Static;
+
     float square(float val)
     {
         return val * val;
@@ -48,6 +56,95 @@ namespace
         const int segsY = static_cast<int>(std::ceil(length.y() / mapSize));
         return { segsX, segsY };
     }
+
+    class LocalMapProofVisitor : public osg::NodeVisitor
+    {
+    public:
+        LocalMapProofVisitor(float minX, float maxX, float minY, float maxY, float zmin, float zmax)
+            : osg::NodeVisitor(TRAVERSE_ALL_CHILDREN)
+            , mMinX(minX)
+            , mMaxX(maxX)
+            , mMinY(minY)
+            , mMaxY(maxY)
+            , mZMin(zmin)
+            , mZMax(zmax)
+        {
+            setTraversalMask(sLocalMapWorldMask);
+        }
+
+        void apply(osg::Node& node) override
+        {
+            ++mNodes;
+            const unsigned int mask = node.getNodeMask();
+            if (mask & MWRender::Mask_Terrain)
+                ++mTerrainNodes;
+            if (mask & MWRender::Mask_Static)
+                ++mStaticNodes;
+            if (mask & MWRender::Mask_Object)
+                ++mObjectNodes;
+            if (mask & MWRender::Mask_Scene)
+                ++mSceneNodes;
+            traverse(node);
+        }
+
+        void apply(osg::Drawable& drawable) override
+        {
+            ++mDrawables;
+            const unsigned int mask = drawable.getNodeMask();
+            if (mask & MWRender::Mask_Terrain)
+                ++mTerrainDrawables;
+            if (mask & MWRender::Mask_Static)
+                ++mStaticDrawables;
+            if (mask & MWRender::Mask_Object)
+                ++mObjectDrawables;
+
+            const osg::Matrix localToWorld = osg::computeLocalToWorld(getNodePath());
+            const osg::Vec3 center = drawable.getBound().center() * localToWorld;
+            if (center.x() >= mMinX && center.x() <= mMaxX && center.y() >= mMinY && center.y() <= mMaxY
+                && center.z() >= mZMin && center.z() <= mZMax)
+            {
+                ++mDrawablesInSlab;
+                if (mask & MWRender::Mask_Terrain)
+                    ++mTerrainDrawablesInSlab;
+                if (mask & MWRender::Mask_Static)
+                    ++mStaticDrawablesInSlab;
+                if (mask & MWRender::Mask_Object)
+                    ++mObjectDrawablesInSlab;
+
+                if (mSamples < 4)
+                {
+                    Log(Debug::Info) << "FNV/ESM4 proof: local map RTT slab drawable sample name='"
+                                     << drawable.getName() << "' class=" << drawable.className() << " mask=0x"
+                                     << std::hex << mask << std::dec << " center=(" << center.x() << ","
+                                     << center.y() << "," << center.z() << ") radius=" << drawable.getBound().radius();
+                    ++mSamples;
+                }
+            }
+        }
+
+        std::size_t mNodes = 0;
+        std::size_t mSceneNodes = 0;
+        std::size_t mTerrainNodes = 0;
+        std::size_t mStaticNodes = 0;
+        std::size_t mObjectNodes = 0;
+        std::size_t mDrawables = 0;
+        std::size_t mTerrainDrawables = 0;
+        std::size_t mStaticDrawables = 0;
+        std::size_t mObjectDrawables = 0;
+        std::size_t mDrawablesInSlab = 0;
+        std::size_t mTerrainDrawablesInSlab = 0;
+        std::size_t mStaticDrawablesInSlab = 0;
+        std::size_t mObjectDrawablesInSlab = 0;
+
+    private:
+        float mMinX;
+        float mMaxX;
+        float mMinY;
+        float mMaxY;
+        float mZMin;
+        float mZMax;
+        int mSamples = 0;
+    };
 }
 
 namespace MWRender
@@ -256,16 +353,53 @@ namespace MWRender
     void LocalMap::requestExteriorMap(const MWWorld::CellStore* cell, MapSegment& segment)
     {
         mInterior = false;
+        mMapWorldSize = ESM::getCellSize(cell->getCell()->getWorldSpace());
 
         const int x = cell->getCell()->getGridX();
         const int y = cell->getCell()->getGridY();
+        const osg::Vec2f center = ESM::indexToPosition(cell->getCell()->getExteriorCellLocation(), true);
+        const float centerX = center.x();
+        const float centerY = center.y();
 
         osg::BoundingSphere bound = mSceneRoot->getBound();
         float zmin = bound.center().z() - bound.radius();
         float zmax = bound.center().z() + bound.radius();
 
-        setupRenderToTexture(x, y, x * mMapWorldSize + mMapWorldSize / 2.f, y * mMapWorldSize + mMapWorldSize / 2.f,
-            osg::Vec3d(0, 1, 0), zmin, zmax);
+        if (std::getenv("OPENMW_FNV_LOCAL_MAP_DIAG") != nullptr)
+        {
+            osg::ComputeBoundsVisitor boundsVisitor;
+            boundsVisitor.setTraversalMask(sLocalMapWorldMask);
+            mSceneRoot->accept(boundsVisitor);
+            const osg::BoundingBox& bounds = boundsVisitor.getBoundingBox();
+
+            LocalMapProofVisitor proofVisitor(centerX - mMapWorldSize / 2.f, centerX + mMapWorldSize / 2.f,
+                centerY - mMapWorldSize / 2.f, centerY + mMapWorldSize / 2.f, zmin, zmax);
+            mSceneRoot->accept(proofVisitor);
+
+            Log(Debug::Info) << "FNV/ESM4 proof: local map RTT exterior request cell=(" << x << "," << y
+                             << ") worldspace=" << cell->getCell()->getWorldSpace() << " center=(" << centerX << ","
+                             << centerY << ") zRange=(" << zmin << "," << zmax << ") sceneBoundCenter=("
+                             << bound.center().x() << "," << bound.center().y() << "," << bound.center().z()
+                             << ") sceneBoundRadius=" << bound.radius() << " traversalBoundsValid=" << bounds.valid()
+                             << " traversalBoundsMin=(" << bounds.xMin() << "," << bounds.yMin() << ","
+                             << bounds.zMin() << ") traversalBoundsMax=(" << bounds.xMax() << "," << bounds.yMax()
+                             << "," << bounds.zMax() << ")";
+            Log(Debug::Info) << "FNV/ESM4 proof: local map RTT scene counts nodes=" << proofVisitor.mNodes
+                             << " sceneNodes=" << proofVisitor.mSceneNodes
+                             << " terrainNodes=" << proofVisitor.mTerrainNodes
+                             << " staticNodes=" << proofVisitor.mStaticNodes
+                             << " objectNodes=" << proofVisitor.mObjectNodes
+                             << " drawables=" << proofVisitor.mDrawables
+                             << " terrainDrawables=" << proofVisitor.mTerrainDrawables
+                             << " staticDrawables=" << proofVisitor.mStaticDrawables
+                             << " objectDrawables=" << proofVisitor.mObjectDrawables
+                             << " slabDrawables=" << proofVisitor.mDrawablesInSlab
+                             << " slabTerrainDrawables=" << proofVisitor.mTerrainDrawablesInSlab
+                             << " slabStaticDrawables=" << proofVisitor.mStaticDrawablesInSlab
+                             << " slabObjectDrawables=" << proofVisitor.mObjectDrawablesInSlab;
+        }
+
+        setupRenderToTexture(x, y, centerX, centerY, osg::Vec3d(0, 1, 0), zmin, zmax);
 
         if (segment.mFogOfWarImage != nullptr)
             return;
@@ -291,8 +425,10 @@ namespace MWRender
 
     void LocalMap::requestInteriorMap(const MWWorld::CellStore* cell)
     {
+        mMapWorldSize = Constants::CellSizeInUnits;
+
         osg::ComputeBoundsVisitor computeBoundsVisitor;
-        computeBoundsVisitor.setTraversalMask(Mask_Scene | Mask_Terrain | Mask_Object | Mask_Static);
+        computeBoundsVisitor.setTraversalMask(sLocalMapWorldMask);
         mSceneRoot->accept(computeBoundsVisitor);
 
         osg::BoundingBox bounds = computeBoundsVisitor.getBoundingBox();
@@ -718,9 +854,9 @@ namespace MWRender
         camera->setClearMask(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
         camera->setRenderOrder(osg::Camera::PRE_RENDER);
 
-        camera->setCullMask(Mask_Scene | Mask_SimpleWater | Mask_Terrain | Mask_Object | Mask_Static);
-        camera->setCullMaskLeft(Mask_Scene | Mask_SimpleWater | Mask_Terrain | Mask_Object | Mask_Static);
-        camera->setCullMaskRight(Mask_Scene | Mask_SimpleWater | Mask_Terrain | Mask_Object | Mask_Static);
+        camera->setCullMask(sLocalMapWorldMask);
+        camera->setCullMaskLeft(sLocalMapWorldMask);
+        camera->setCullMaskRight(sLocalMapWorldMask);
         camera->setNodeMask(Mask_RenderToTexture);
         camera->setProjectionMatrix(mProjectionMatrix);
         camera->setViewMatrix(mViewMatrix);

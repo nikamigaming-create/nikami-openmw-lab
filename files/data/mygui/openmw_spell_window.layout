@@ -12,12 +12,21 @@
         <!-- Spell list -->
         <Widget type="SpellView" skin="MW_SpellView" position="8 38 268 490" align="Left Top Stretch" name="SpellView">
         </Widget>
+        <Widget type="TextBox" skin="SandText" position="18 48 248 462" align="Left Top Stretch" name="FalloutDataPlaceholder">
+            <Property key="Visible" value="false"/>
+            <Property key="Caption" value=""/>
+            <Property key="TextAlign" value="Left Top"/>
+            <Property key="TextShadow" value="true"/>
+            <Property key="TextShadowColour" value="0 0 0"/>
+            <Property key="TextColour" value="0.8 0.71 0.54"/>
+            <Property key="NeedMouse" value="false"/>
+        </Widget>
 
         <Widget type="HBox" position="8 535 268 23" align="Right Bottom HStretch">
             <Widget type="Spacer"/>
             <!-- Spell deletion button -->
             <Widget type="AutoSizedButton" skin="MW_Button" align="Right Bottom" position="8 535 0 23" name="DeleteSpellButton">
-                <Property key="Caption" value="#{sDelete}"/>
+                <Property key="Caption" value="DELETE"/>
                 <Property key="NeedKey" value="false"/>
             </Widget>
         </Widget>

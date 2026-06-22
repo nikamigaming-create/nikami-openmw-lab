@@ -13,6 +13,7 @@
 #include <components/esm3/loadspel.hpp>
 #include <components/misc/resourcehelpers.hpp>
 #include <components/resource/resourcesystem.hpp>
+#include <components/widgets/myguicompat.hpp>
 
 #include "textcolours.hpp"
 
@@ -528,7 +529,7 @@ namespace MWGui::Widgets
     void MWDynamicStat::setTitle(std::string_view text)
     {
         if (mTextWidget)
-            mTextWidget->setCaption(MyGUI::UString(text));
+            mTextWidget->setCaption(Gui::makeMyGUIUString(text));
     }
 
     MWDynamicStat::~MWDynamicStat() {}

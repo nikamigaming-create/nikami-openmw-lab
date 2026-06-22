@@ -5,6 +5,8 @@
 #include <osg/Texture2DArray>
 #include <osgUtil/CullVisitor>
 
+#include <algorithm>
+
 #include <components/sceneutil/color.hpp>
 #include <components/sceneutil/depth.hpp>
 #include <components/sceneutil/nodecallback.hpp>
@@ -21,8 +23,8 @@ namespace SceneUtil
 
     RTTNode::RTTNode(uint32_t textureWidth, uint32_t textureHeight, uint32_t samples, bool generateMipmaps,
         int renderOrderNum, StereoAwareness stereoAwareness, bool addMSAAIntermediateTarget)
-        : mTextureWidth(textureWidth)
-        , mTextureHeight(textureHeight)
+        : mTextureWidth(std::max(textureWidth, 1u))
+        , mTextureHeight(std::max(textureHeight, 1u))
         , mSamples(samples)
         , mGenerateMipmaps(generateMipmaps)
         , mColorBufferInternalFormat(Color::colorInternalFormat())
@@ -250,18 +252,13 @@ namespace SceneUtil
                 }
             }
 
-            // OSG appears not to properly initialize this metadata. So when multisampling is enabled, OSG will use
-            // incorrect formats for the resolve buffers.
-            if (mSamples > 1)
-            {
-                camera->getBufferAttachmentMap()[osg::Camera::COLOR_BUFFER]._internalFormat
-                    = mColorBufferInternalFormat;
-                camera->getBufferAttachmentMap()[osg::Camera::COLOR_BUFFER]._mipMapGeneration = mGenerateMipmaps;
-                camera->getBufferAttachmentMap()[osg::Camera::PACKED_DEPTH_STENCIL_BUFFER]._internalFormat
-                    = mDepthBufferInternalFormat;
-                camera->getBufferAttachmentMap()[osg::Camera::PACKED_DEPTH_STENCIL_BUFFER]._mipMapGeneration
-                    = mGenerateMipmaps;
-            }
+            // OSG does not always initialize attachment metadata before FBO setup on Android/GLES.
+            camera->getBufferAttachmentMap()[osg::Camera::COLOR_BUFFER]._internalFormat = mColorBufferInternalFormat;
+            camera->getBufferAttachmentMap()[osg::Camera::COLOR_BUFFER]._mipMapGeneration = mGenerateMipmaps;
+            camera->getBufferAttachmentMap()[osg::Camera::PACKED_DEPTH_STENCIL_BUFFER]._internalFormat
+                = mDepthBufferInternalFormat;
+            camera->getBufferAttachmentMap()[osg::Camera::PACKED_DEPTH_STENCIL_BUFFER]._mipMapGeneration
+                = mGenerateMipmaps;
         }
 
         return mViewDependentDataMap[cv].get();

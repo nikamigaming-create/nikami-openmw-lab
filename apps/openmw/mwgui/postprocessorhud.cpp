@@ -38,7 +38,7 @@ namespace MWGui
     {
         std::shared_ptr<Fx::Technique>& getTechnique(const MyGUI::ListBox& list, size_t selected)
         {
-            return *list.getItemDataAt<std::shared_ptr<Fx::Technique>>(selected);
+            return *const_cast<MyGUI::ListBox&>(list).getItemDataAt<std::shared_ptr<Fx::Technique>>(selected);
         }
     }
 

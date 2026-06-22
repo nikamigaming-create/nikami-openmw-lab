@@ -1,8 +1,19 @@
 #include "scene.hpp"
 
+#include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
+#include <cmath>
+#include <cstdlib>
+#include <cstdint>
 #include <limits>
+#include <span>
+#include <sstream>
+#include <string>
+#include <string_view>
+#include <utility>
+#include <vector>
 
 #include <BulletCollision/CollisionDispatch/btCollisionObject.h>
 
@@ -15,9 +26,16 @@
 #include <components/esm/esmterrain.hpp>
 #include <components/esm/records.hpp>
 #include <components/esm3/loadcell.hpp>
+#include <components/esm4/loadfurn.hpp>
+#include <components/esm4/loadnpc.hpp>
+#include <components/esm4/loadpack.hpp>
+#include <components/esm4/loadrefr.hpp>
 #include <components/loadinglistener/loadinglistener.hpp>
 #include <components/misc/convert.hpp>
 #include <components/misc/resourcehelpers.hpp>
+#include <components/nif/extra.hpp>
+#include <components/nif/node.hpp>
+#include <components/resource/niffilemanager.hpp>
 #include <components/resource/resourcesystem.hpp>
 #include <components/resource/scenemanager.hpp>
 #include <components/sceneutil/positionattitudetransform.hpp>
@@ -31,6 +49,8 @@
 #include "../mwbase/soundmanager.hpp"
 #include "../mwbase/windowmanager.hpp"
 #include "../mwbase/world.hpp"
+
+#include "../mwclass/esm4npc.hpp"
 
 #include "../mwrender/landmanager.hpp"
 #include "../mwrender/postprocessor.hpp"
@@ -51,6 +71,7 @@
 #include "localscripts.hpp"
 #include "player.hpp"
 #include "worldimp.hpp"
+#include "worldmodel.hpp"
 
 namespace
 {
@@ -103,6 +124,367 @@ namespace
         return ptr.getClass().getCorrectedModel(ptr);
     }
 
+    bool fnvPackageHasExplicitTime(const ESM4::AIPackage& package)
+    {
+        return package.mSchedule.time != 0xff && package.mSchedule.duration != 0;
+    }
+
+    bool fnvPackageCoversHour(const ESM4::AIPackage& package, float hour)
+    {
+        if (!fnvPackageHasExplicitTime(package))
+            return false;
+
+        const float start = static_cast<float>(package.mSchedule.time);
+        const float duration = static_cast<float>(std::min<std::uint32_t>(package.mSchedule.duration, 24));
+        const float end = std::fmod(start + duration, 24.f);
+        if (duration >= 24.f)
+            return true;
+        if (start <= end)
+            return hour >= start && hour < end;
+        return hour >= start || hour < end;
+    }
+
+    const ESM4::Reference* resolveFnvPackageReference(
+        const MWWorld::ESMStore& store, const ESM4::AIPackage::PLDT& location)
+    {
+        if (location.type != 0 && location.type != 4)
+            return nullptr;
+        return store.get<ESM4::Reference>().search(ESM::FormId::fromUint32(location.location));
+    }
+
+    float getFnvPackageHour(const MWWorld::World& world, bool& usedHourOverride)
+    {
+        usedHourOverride = false;
+        float hour = world.getTimeStamp().getHour();
+        if (const char* env = std::getenv("OPENMW_FNV_PROCEDURE_HOUR"))
+        {
+            char* end = nullptr;
+            const float overrideHour = std::strtof(env, &end);
+            if (end != env && std::isfinite(overrideHour))
+            {
+                hour = std::fmod(std::max(0.f, overrideHour), 24.f);
+                usedHourOverride = true;
+            }
+        }
+        return hour;
+    }
+
+    enum class FnvPackagePrePlacement
+    {
+        None,
+        SameCell,
+        MovedToPackageCell
+    };
+
+    struct FnvFurnitureMarkerPlacement
+    {
+        osg::Vec3f mOffset;
+        float mHeading = 0.f;
+        std::uint16_t mType = 0;
+        std::uint16_t mEntryPoint = 0;
+        std::uint8_t mPositionRef = 0;
+        bool mLegacy = false;
+        bool mFound = false;
+    };
+
+    bool parseFnvIntEnv(const char* name, int& value)
+    {
+        const char* env = std::getenv(name);
+        if (env == nullptr || env[0] == '\0')
+            return false;
+
+        char* end = nullptr;
+        const long parsed = std::strtol(env, &end, 10);
+        if (end == env)
+            return false;
+
+        value = static_cast<int>(parsed);
+        return true;
+    }
+
+    osg::Vec3f transformFnvFurnitureMarkerOffsetForProof(osg::Vec3f offset)
+    {
+        const char* mode = std::getenv("OPENMW_FNV_FURNITURE_MARKER_OFFSET_MODE");
+        if (mode == nullptr || mode[0] == '\0')
+            return offset;
+
+        const std::string_view value(mode);
+        if (value == "negx")
+            return osg::Vec3f(-offset.x(), offset.y(), offset.z());
+        if (value == "negy")
+            return osg::Vec3f(offset.x(), -offset.y(), offset.z());
+        if (value == "negxy")
+            return osg::Vec3f(-offset.x(), -offset.y(), offset.z());
+        if (value == "swapxy")
+            return osg::Vec3f(offset.y(), offset.x(), offset.z());
+        if (value == "swapxynegx")
+            return osg::Vec3f(-offset.y(), offset.x(), offset.z());
+        if (value == "swapxynegy")
+            return osg::Vec3f(offset.y(), -offset.x(), offset.z());
+        if (value == "swapxynegxy")
+            return osg::Vec3f(-offset.y(), -offset.x(), offset.z());
+        return offset;
+    }
+
+    void collectFnvFurnitureMarkers(const Nif::NiObjectNET& object, std::vector<FnvFurnitureMarkerPlacement>& result)
+    {
+        for (const Nif::ExtraPtr& extra : object.getExtraList())
+        {
+            if (extra.empty() || extra->recType != Nif::RC_BSFurnitureMarker)
+                continue;
+
+            const auto* marker = static_cast<const Nif::BSFurnitureMarker*>(extra.getPtr());
+            for (const Nif::BSFurnitureMarker::LegacyFurniturePosition& legacy : marker->mLegacyMarkers)
+            {
+                FnvFurnitureMarkerPlacement placement;
+                placement.mOffset = legacy.mOffset;
+                placement.mHeading = static_cast<float>(legacy.mOrientation) / 1000.f;
+                placement.mPositionRef = legacy.mPositionRef;
+                placement.mLegacy = true;
+                placement.mFound = true;
+                result.push_back(placement);
+            }
+            for (const Nif::BSFurnitureMarker::FurniturePosition& current : marker->mMarkers)
+            {
+                FnvFurnitureMarkerPlacement placement;
+                placement.mOffset = current.mOffset;
+                placement.mHeading = current.mHeading;
+                placement.mType = current.mType;
+                placement.mEntryPoint = current.mEntryPoint;
+                placement.mFound = true;
+                result.push_back(placement);
+            }
+        }
+
+        if (const auto* node = dynamic_cast<const Nif::NiNode*>(&object))
+        {
+            for (const Nif::NiAVObjectPtr& child : node->mChildren)
+            {
+                if (child.empty())
+                    continue;
+                if (const auto* childObject = dynamic_cast<const Nif::NiObjectNET*>(child.getPtr()))
+                    collectFnvFurnitureMarkers(*childObject, result);
+            }
+        }
+    }
+
+    FnvFurnitureMarkerPlacement getFnvFurnitureMarkerPlacement(
+        const MWWorld::ESMStore& store, const ESM4::Reference& target)
+    {
+        FnvFurnitureMarkerPlacement fallback;
+        const ESM4::Furniture* furniture = store.get<ESM4::Furniture>().search(target.mBaseObj);
+        if (furniture == nullptr || furniture->mModel.empty())
+            return fallback;
+
+        try
+        {
+            VFS::Path::Normalized model = Misc::ResourceHelpers::correctMeshPath(VFS::Path::Normalized(furniture->mModel));
+            Resource::ResourceSystem* resourceSystem = MWBase::Environment::get().getResourceSystem();
+            Nif::NIFFilePtr nif = resourceSystem->getNifFileManager()->get(model);
+            Nif::FileView file(*nif);
+
+            std::vector<FnvFurnitureMarkerPlacement> markers;
+            for (std::size_t i = 0; i < file.numRoots(); ++i)
+            {
+                if (const auto* root = dynamic_cast<const Nif::NiObjectNET*>(file.getRoot(i)))
+                    collectFnvFurnitureMarkers(*root, markers);
+            }
+
+            Log(Debug::Info) << "FNV/ESM4 diag: furniture marker scan targetRef=" << target.mEditorId
+                             << " base=" << target.mBaseObj << " model=" << model.value()
+                             << " activeMarkers=0x" << std::hex << furniture->mActiveMarkerFlags << std::dec
+                             << " markers=" << markers.size();
+
+            for (std::size_t i = 0; i < markers.size(); ++i)
+            {
+                const FnvFurnitureMarkerPlacement& marker = markers[i];
+                Log(Debug::Info) << "FNV/ESM4 diag: furniture marker candidate index=" << i
+                                 << " offset=(" << marker.mOffset.x() << "," << marker.mOffset.y() << ","
+                                 << marker.mOffset.z() << ") heading=" << marker.mHeading
+                                 << " type=" << marker.mType << " entryPoint=" << marker.mEntryPoint
+                                 << " positionRef=" << static_cast<int>(marker.mPositionRef)
+                                 << " legacy=" << marker.mLegacy;
+            }
+
+            auto markerLess = [](const FnvFurnitureMarkerPlacement& left, const FnvFurnitureMarkerPlacement& right) {
+                return std::abs(left.mOffset.x()) < std::abs(right.mOffset.x());
+            };
+            if (!markers.empty())
+            {
+                int markerIndex = -1;
+                if (parseFnvIntEnv("OPENMW_FNV_FURNITURE_MARKER_INDEX", markerIndex) && markerIndex >= 0
+                    && markerIndex < static_cast<int>(markers.size()))
+                {
+                    Log(Debug::Info) << "FNV/ESM4 diag: selected furniture marker by proof index " << markerIndex;
+                    return markers[static_cast<std::size_t>(markerIndex)];
+                }
+
+                int positionRef = -1;
+                if (parseFnvIntEnv("OPENMW_FNV_FURNITURE_MARKER_POSITION_REF", positionRef))
+                {
+                    for (const FnvFurnitureMarkerPlacement& marker : markers)
+                    {
+                        if (static_cast<int>(marker.mPositionRef) == positionRef)
+                        {
+                            Log(Debug::Info) << "FNV/ESM4 diag: selected furniture marker by proof positionRef "
+                                             << positionRef;
+                            return marker;
+                        }
+                    }
+                }
+
+                const auto centered = std::min_element(markers.begin(), markers.end(), markerLess);
+                return centered != markers.end() ? *centered : markers.front();
+            }
+        }
+        catch (const std::exception& e)
+        {
+            Log(Debug::Warning) << "FNV/ESM4 diag: furniture marker scan failed targetRef=" << target.mEditorId
+                                << " error=" << e.what();
+        }
+
+        return fallback;
+    }
+
+    osg::Vec3f rotateFnvPackageOffset(const osg::Vec3f& offset, float rotZ)
+    {
+        const char* sign = std::getenv("OPENMW_FNV_FURNITURE_MARKER_ROTATION_SIGN");
+        const float zSign = (sign != nullptr && std::string_view(sign) == "positive") ? 1.f : -1.f;
+        const osg::Matrix rotation = osg::Matrix::rotate(osg::Quat(rotZ, osg::Vec3f(0.f, 0.f, zSign)));
+        const osg::Vec3d transformed = osg::Vec3d(offset) * rotation;
+        return osg::Vec3f(transformed.x(), transformed.y(), transformed.z());
+    }
+
+    float applyFnvFurnitureMarkerHeading(float targetRotZ, float markerHeading)
+    {
+        const char* mode = std::getenv("OPENMW_FNV_FURNITURE_MARKER_HEADING_MODE");
+        if (mode == nullptr || mode[0] == '\0' || std::string_view(mode) == "add")
+            return targetRotZ + markerHeading;
+        if (std::string_view(mode) == "subtract")
+            return targetRotZ - markerHeading;
+        if (std::string_view(mode) == "none")
+            return targetRotZ;
+        if (std::string_view(mode) == "marker")
+            return markerHeading;
+        return targetRotZ + markerHeading;
+    }
+
+    FnvPackagePrePlacement applyFnvPackagePrePlacement(const MWWorld::Ptr& ptr, const MWWorld::World& world)
+    {
+        if (std::getenv("OPENMW_FNV_DISABLE_PACKAGE_PREPLACEMENT") != nullptr
+            || std::getenv("OPENMW_FNV_DISABLE_AI_PACKAGES") != nullptr)
+            return FnvPackagePrePlacement::None;
+
+        if (ptr.getType() != ESM::REC_NPC_4)
+            return FnvPackagePrePlacement::None;
+
+        const ESM4::Npc* traits = MWClass::ESM4Npc::getTraitsRecord(ptr);
+        if (traits == nullptr || !traits->mIsFONV)
+            return FnvPackagePrePlacement::None;
+
+        const ESM4::Npc* packageRecord = MWClass::ESM4Npc::getAIPackageRecord(ptr);
+        if (packageRecord == nullptr || packageRecord->mAIPackages.empty())
+            return FnvPackagePrePlacement::None;
+
+        const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
+        if (store == nullptr || ptr.getCell() == nullptr || ptr.getCell()->getCell() == nullptr)
+            return FnvPackagePrePlacement::None;
+
+        bool usedHourOverride = false;
+        const float hour = getFnvPackageHour(world, usedHourOverride);
+        const auto& packageStore = store->get<ESM4::AIPackage>();
+
+        const ESM4::AIPackage* selected = nullptr;
+        for (ESM::FormId packageId : packageRecord->mAIPackages)
+        {
+            const ESM4::AIPackage* package = packageStore.search(packageId);
+            if (package != nullptr && fnvPackageCoversHour(*package, hour))
+            {
+                selected = package;
+                break;
+            }
+        }
+
+        if (selected == nullptr)
+            return FnvPackagePrePlacement::None;
+
+        const ESM4::Reference* target = resolveFnvPackageReference(*store, selected->mLocation);
+        if (target == nullptr)
+            return FnvPackagePrePlacement::None;
+
+        const ESM::RefId& currentCellId = ptr.getCell()->getCell()->getId();
+        const bool sameCell = target->mParent == currentCellId;
+        Log(Debug::Info) << "FNV/ESM4 diag: package pre-placement " << selected->mEditorId
+                         << " hour=" << hour << " override=" << usedHourOverride
+                         << " targetRef=" << target->mEditorId << " targetParent=" << target->mParent
+                         << " currentCell=" << currentCellId << " sameCell=" << sameCell << " for "
+                         << traits->mEditorId;
+
+        ESM::Position position = ptr.getRefData().getPosition();
+        position.pos[0] = target->mPos.pos[0];
+        position.pos[1] = target->mPos.pos[1];
+        position.pos[2] = target->mPos.pos[2];
+        position.rot[0] = 0.f;
+        position.rot[1] = 0.f;
+        position.rot[2] = target->mPos.rot[2];
+
+        const FnvFurnitureMarkerPlacement marker = getFnvFurnitureMarkerPlacement(*store, *target);
+        if (marker.mFound && std::getenv("OPENMW_FNV_DISABLE_FURNITURE_MARKER_PLACEMENT") == nullptr)
+        {
+            const osg::Vec3f proofOffset = transformFnvFurnitureMarkerOffsetForProof(marker.mOffset);
+            const osg::Vec3f worldOffset = rotateFnvPackageOffset(proofOffset, target->mPos.rot[2]);
+            position.pos[0] += worldOffset.x();
+            position.pos[1] += worldOffset.y();
+            position.pos[2] += worldOffset.z();
+            position.rot[2] = applyFnvFurnitureMarkerHeading(target->mPos.rot[2], marker.mHeading);
+            Log(Debug::Info) << "FNV/ESM4 diag: applied furniture marker package placement "
+                             << selected->mEditorId << " targetRef=" << target->mEditorId
+                             << " markerOffset=(" << marker.mOffset.x() << "," << marker.mOffset.y() << ","
+                             << marker.mOffset.z() << ") proofOffset=(" << proofOffset.x() << ","
+                             << proofOffset.y() << "," << proofOffset.z() << ") worldOffset=(" << worldOffset.x()
+                             << "," << worldOffset.y() << "," << worldOffset.z() << ") heading=" << marker.mHeading
+                             << " type=" << marker.mType << " entryPoint=" << marker.mEntryPoint
+                             << " positionRef=" << static_cast<int>(marker.mPositionRef)
+                             << " legacy=" << marker.mLegacy
+                             << " finalPos=(" << position.pos[0] << "," << position.pos[1] << ","
+                             << position.pos[2] << ") finalRotZ=" << position.rot[2] << " for "
+                             << traits->mEditorId;
+        }
+
+        if (!sameCell)
+        {
+            MWWorld::CellStore* targetCell
+                = MWBase::Environment::get().getWorldModel()->findCell(target->mParent, true);
+            if (targetCell == nullptr)
+            {
+                Log(Debug::Warning) << "FNV/ESM4 diag: package pre-placement target cell not found "
+                                    << target->mParent << " for " << selected->mEditorId << " actor "
+                                    << traits->mEditorId;
+                return FnvPackagePrePlacement::None;
+            }
+
+            ptr.getRefData().setPosition(position);
+            MWWorld::Ptr movedPtr = ptr.getCell()->moveTo(ptr, targetCell);
+            Log(Debug::Info) << "FNV/ESM4 diag: applied cross-cell package pre-placement "
+                             << selected->mEditorId << " actor=" << traits->mEditorId
+                             << " targetRef=" << target->mEditorId << " fromCell=" << currentCellId
+                             << " toCell=" << targetCell->getCell()->getId()
+                             << " toName='" << targetCell->getCell()->getNameId()
+                             << "' toDesc='" << targetCell->getCell()->getDescription() << "' pos=("
+                             << position.pos[0] << "," << position.pos[1] << "," << position.pos[2]
+                             << ") rotZ=" << position.rot[2]
+                             << " movedPtrCell=" << movedPtr.getCell()->getCell()->getId();
+            return FnvPackagePrePlacement::MovedToPackageCell;
+        }
+
+        ptr.getRefData().setPosition(position);
+        Log(Debug::Info) << "FNV/ESM4 diag: applied same-cell package pre-placement " << selected->mEditorId
+                         << " targetRef=" << target->mEditorId << " pos=(" << position.pos[0] << ","
+                         << position.pos[1] << "," << position.pos[2] << ") rotZ=" << position.rot[2] << " for "
+                         << traits->mEditorId;
+        return FnvPackagePrePlacement::SameCell;
+    }
+
     // Null node meant to distinguish objects that aren't in the scene from paged objects
     // TODO: find a more clever way to make paging exclusion more reliable?
     static osg::ref_ptr<SceneUtil::PositionAttitudeTransform> pagedNode = new SceneUtil::PositionAttitudeTransform;
@@ -115,6 +497,10 @@ namespace
             Log(Debug::Warning) << "Warning: Tried to add " << ptr.getCellRef().getRefId() << " to the scene twice";
             return;
         }
+
+        const FnvPackagePrePlacement fnvPackagePrePlacement = applyFnvPackagePrePlacement(ptr, world);
+        if (fnvPackagePrePlacement == FnvPackagePrePlacement::MovedToPackageCell)
+            return;
 
         const VFS::Path::Normalized model = getModel(ptr);
         const auto rotation = makeDirectNodeRotation(ptr);
@@ -309,6 +695,367 @@ namespace
             return getCellPositionPriority(lhs) < getCellPositionPriority(rhs);
         });
     }
+
+    void logFNVPlayerTerrainProbe(
+        const MWWorld::Ptr& player, MWRender::RenderingManager& rendering, MWPhysics::PhysicsSystem& physics)
+    {
+        if (player.isEmpty() || !player.isInCell() || !player.getCell()->getCell()->isExterior())
+            return;
+
+        const MWWorld::Cell& cell = *player.getCell()->getCell();
+        const ESM::RefId worldspace = cell.getWorldSpace();
+        if (!ESM::isEsm4Ext(worldspace))
+            return;
+
+        const osg::Vec3f pos = player.getRefData().getPosition().asVec3();
+        const ESM::ExteriorCellLocation playerCell
+            = ESM::positionToExteriorCellLocation(pos.x(), pos.y(), worldspace);
+        const bool hasHeightField = physics.getHeightField(playerCell.mX, playerCell.mY) != nullptr;
+
+        float terrainHeight = std::numeric_limits<float>::quiet_NaN();
+        if (Terrain::World* terrain = rendering.getTerrain())
+        {
+            if (terrain->getWorldspace() == worldspace)
+                terrainHeight = terrain->getHeightAt(pos);
+        }
+
+        const osg::Vec3f rayFrom = pos + osg::Vec3f(0.f, 0.f, 200.f);
+        const osg::Vec3f rayTo = pos - osg::Vec3f(0.f, 0.f, 4000.f);
+        const MWPhysics::RayCastingResult ray = physics.castRay(rayFrom, rayTo,
+            MWPhysics::CollisionType_World | MWPhysics::CollisionType_HeightMap | MWPhysics::CollisionType_Door);
+        const MWPhysics::Actor* actor = physics.getActor(player);
+        const bool actorOnGround = actor != nullptr && actor->getOnGround();
+        const bool actorCollisionMode = actor != nullptr && actor->getCollisionMode();
+        const osg::Vec3f actorCollisionPos = actor != nullptr ? actor->getCollisionObjectPosition() : osg::Vec3f();
+        const MWWorld::Ptr standingOn = actor != nullptr ? actor->getStandingOnPtr() : MWWorld::Ptr();
+        const VFS::Path::Normalized rayHitModel = ray.mHitObject.isEmpty() ? VFS::Path::Normalized() : getModel(ray.mHitObject);
+        const VFS::Path::Normalized standingOnModel = standingOn.isEmpty() ? VFS::Path::Normalized() : getModel(standingOn);
+        const osg::Vec3f standingOnPos = standingOn.isEmpty() ? osg::Vec3f() : standingOn.getRefData().getPosition().asVec3();
+
+        static constexpr float supportRadius = 64.f;
+        static const std::array<std::pair<const char*, osg::Vec3f>, 9> supportSamples = {
+            { { "center", osg::Vec3f(0.f, 0.f, 0.f) },
+                { "north", osg::Vec3f(0.f, supportRadius, 0.f) },
+                { "south", osg::Vec3f(0.f, -supportRadius, 0.f) },
+                { "east", osg::Vec3f(supportRadius, 0.f, 0.f) },
+                { "west", osg::Vec3f(-supportRadius, 0.f, 0.f) },
+                { "ne", osg::Vec3f(supportRadius, supportRadius, 0.f) },
+                { "nw", osg::Vec3f(-supportRadius, supportRadius, 0.f) },
+                { "se", osg::Vec3f(supportRadius, -supportRadius, 0.f) },
+                { "sw", osg::Vec3f(-supportRadius, -supportRadius, 0.f) } }
+        };
+
+        int supportHitCount = 0;
+        int supportHeightfieldHitCount = 0;
+        int supportObjectHitCount = 0;
+        int supportMissCount = 0;
+        float supportMinHitZ = std::numeric_limits<float>::infinity();
+        float supportMaxHitZ = -std::numeric_limits<float>::infinity();
+        std::string firstSupportMiss = "<none>";
+        std::string firstSupportObject = "<none>";
+        VFS::Path::Normalized firstSupportObjectModel;
+
+        for (const auto& [sampleName, offset] : supportSamples)
+        {
+            const osg::Vec3f samplePos = pos + offset;
+            const MWPhysics::RayCastingResult sampleRay = physics.castRay(samplePos + osg::Vec3f(0.f, 0.f, 200.f),
+                samplePos - osg::Vec3f(0.f, 0.f, 4000.f),
+                MWPhysics::CollisionType_World | MWPhysics::CollisionType_HeightMap | MWPhysics::CollisionType_Door);
+
+            if (!sampleRay.mHit)
+            {
+                ++supportMissCount;
+                if (firstSupportMiss == "<none>")
+                    firstSupportMiss = sampleName;
+                continue;
+            }
+
+            ++supportHitCount;
+            supportMinHitZ = std::min(supportMinHitZ, sampleRay.mHitPos.z());
+            supportMaxHitZ = std::max(supportMaxHitZ, sampleRay.mHitPos.z());
+            if (sampleRay.mHitObject.isEmpty())
+                ++supportHeightfieldHitCount;
+            else
+            {
+                ++supportObjectHitCount;
+                if (firstSupportObject == "<none>")
+                {
+                    firstSupportObject = sampleRay.mHitObject.toString();
+                    firstSupportObjectModel = getModel(sampleRay.mHitObject);
+                }
+            }
+        }
+
+        if (supportHitCount == 0)
+        {
+            supportMinHitZ = std::numeric_limits<float>::quiet_NaN();
+            supportMaxHitZ = std::numeric_limits<float>::quiet_NaN();
+        }
+
+        Log(Debug::Warning) << "Nikami FNV player terrain probe: pos=(" << pos.x() << ", " << pos.y() << ", "
+                            << pos.z() << ") cell=" << playerCell.mX << ", " << playerCell.mY
+                            << " worldspace=" << worldspace << " heightfield=" << hasHeightField
+                            << " terrainHeight=" << terrainHeight << " rayHit=" << ray.mHit
+                            << " rayHitPos=(" << ray.mHitPos.x() << ", " << ray.mHitPos.y() << ", "
+                            << ray.mHitPos.z() << ") rayHitObject="
+                            << (ray.mHitObject.isEmpty() ? std::string("<heightfield/world>") : ray.mHitObject.toString())
+                            << " actorOnGround=" << actorOnGround << " actorCollisionMode=" << actorCollisionMode
+                            << " actorCollisionPos=(" << actorCollisionPos.x() << ", " << actorCollisionPos.y()
+                            << ", " << actorCollisionPos.z() << ") standingOn="
+                            << (standingOn.isEmpty() ? std::string("<terrain/none>") : standingOn.toString())
+                            << " standingOnModel=" << standingOnModel << " standingOnPos=(" << standingOnPos.x()
+                            << ", " << standingOnPos.y() << ", " << standingOnPos.z() << ") rayHitModel="
+                            << rayHitModel << " supportSamples(radius=" << supportRadius << ") hits=" << supportHitCount
+                            << " heightfieldHits=" << supportHeightfieldHitCount
+                            << " objectHits=" << supportObjectHitCount << " misses=" << supportMissCount
+                            << " minHitZ=" << supportMinHitZ << " maxHitZ=" << supportMaxHitZ
+                            << " firstMiss=" << firstSupportMiss << " firstObject=" << firstSupportObject
+                            << " firstObjectModel=" << firstSupportObjectModel;
+    }
+
+    std::vector<std::pair<std::string, osg::Vec3f>> getFNVNamedTerrainProbePoints()
+    {
+        std::vector<std::pair<std::string, osg::Vec3f>> points;
+        const char* raw = std::getenv("OPENMW_FNV_TERRAIN_PROBE_POINTS");
+        if (raw == nullptr || raw[0] == '\0')
+            return points;
+
+        std::stringstream entries(raw);
+        std::string entry;
+        while (std::getline(entries, entry, ';'))
+        {
+            if (entry.empty())
+                continue;
+
+            const std::size_t equals = entry.find('=');
+            if (equals == std::string::npos)
+                continue;
+
+            const std::string label = entry.substr(0, equals);
+            std::stringstream coords(entry.substr(equals + 1));
+            std::string token;
+            std::array<float, 3> values{ 0.f, 0.f, 0.f };
+            std::size_t index = 0;
+            while (index < values.size() && std::getline(coords, token, ','))
+            {
+                try
+                {
+                    values[index++] = std::stof(token);
+                }
+                catch (const std::exception&)
+                {
+                    index = 0;
+                    break;
+                }
+            }
+
+            if (index == values.size())
+                points.emplace_back(label, osg::Vec3f(values[0], values[1], values[2]));
+        }
+
+        return points;
+    }
+
+    bool logFNVNamedTerrainProbePointsImpl(
+        const MWWorld::Ptr& player, MWRender::RenderingManager& rendering, MWPhysics::PhysicsSystem& physics)
+    {
+        if (player.isEmpty() || !player.isInCell() || !player.getCell()->getCell()->isExterior())
+            return false;
+
+        const MWWorld::Cell& cell = *player.getCell()->getCell();
+        const ESM::RefId worldspace = cell.getWorldSpace();
+        if (!ESM::isEsm4Ext(worldspace))
+            return false;
+
+        static const std::vector<std::pair<std::string, osg::Vec3f>> points = getFNVNamedTerrainProbePoints();
+        if (points.empty())
+            return false;
+
+        static constexpr float supportRadius = 64.f;
+        static const std::array<std::pair<const char*, osg::Vec3f>, 9> supportSamples = {
+            { { "center", osg::Vec3f(0.f, 0.f, 0.f) },
+                { "north", osg::Vec3f(0.f, supportRadius, 0.f) },
+                { "south", osg::Vec3f(0.f, -supportRadius, 0.f) },
+                { "east", osg::Vec3f(supportRadius, 0.f, 0.f) },
+                { "west", osg::Vec3f(-supportRadius, 0.f, 0.f) },
+                { "ne", osg::Vec3f(supportRadius, supportRadius, 0.f) },
+                { "nw", osg::Vec3f(-supportRadius, supportRadius, 0.f) },
+                { "se", osg::Vec3f(supportRadius, -supportRadius, 0.f) },
+                { "sw", osg::Vec3f(-supportRadius, -supportRadius, 0.f) } }
+        };
+
+        Terrain::World* terrain = rendering.getTerrain();
+        for (const auto& [label, pos] : points)
+        {
+            const ESM::ExteriorCellLocation probeCell
+                = ESM::positionToExteriorCellLocation(pos.x(), pos.y(), worldspace);
+            const bool hasHeightField = physics.getHeightField(probeCell.mX, probeCell.mY) != nullptr;
+            float terrainHeight = std::numeric_limits<float>::quiet_NaN();
+            if (terrain != nullptr && terrain->getWorldspace() == worldspace)
+                terrainHeight = terrain->getHeightAt(pos);
+
+            const MWPhysics::RayCastingResult ray = physics.castRay(pos + osg::Vec3f(0.f, 0.f, 400.f),
+                pos - osg::Vec3f(0.f, 0.f, 6000.f),
+                MWPhysics::CollisionType_World | MWPhysics::CollisionType_HeightMap | MWPhysics::CollisionType_Door);
+            const VFS::Path::Normalized rayHitModel = ray.mHitObject.isEmpty() ? VFS::Path::Normalized() : getModel(ray.mHitObject);
+
+            int supportHitCount = 0;
+            int supportHeightfieldHitCount = 0;
+            int supportObjectHitCount = 0;
+            int supportMissCount = 0;
+            float supportMinHitZ = std::numeric_limits<float>::infinity();
+            float supportMaxHitZ = -std::numeric_limits<float>::infinity();
+            std::string firstSupportMiss = "<none>";
+            std::string firstSupportObject = "<none>";
+            VFS::Path::Normalized firstSupportObjectModel;
+
+            for (const auto& [sampleName, offset] : supportSamples)
+            {
+                const osg::Vec3f samplePos = pos + offset;
+                const MWPhysics::RayCastingResult sampleRay = physics.castRay(samplePos + osg::Vec3f(0.f, 0.f, 400.f),
+                    samplePos - osg::Vec3f(0.f, 0.f, 6000.f),
+                    MWPhysics::CollisionType_World | MWPhysics::CollisionType_HeightMap | MWPhysics::CollisionType_Door);
+
+                if (!sampleRay.mHit)
+                {
+                    ++supportMissCount;
+                    if (firstSupportMiss == "<none>")
+                        firstSupportMiss = sampleName;
+                    continue;
+                }
+
+                ++supportHitCount;
+                supportMinHitZ = std::min(supportMinHitZ, sampleRay.mHitPos.z());
+                supportMaxHitZ = std::max(supportMaxHitZ, sampleRay.mHitPos.z());
+                if (sampleRay.mHitObject.isEmpty())
+                    ++supportHeightfieldHitCount;
+                else
+                {
+                    ++supportObjectHitCount;
+                    if (firstSupportObject == "<none>")
+                    {
+                        firstSupportObject = sampleRay.mHitObject.toString();
+                        firstSupportObjectModel = getModel(sampleRay.mHitObject);
+                    }
+                }
+            }
+
+            if (supportHitCount == 0)
+            {
+                supportMinHitZ = std::numeric_limits<float>::quiet_NaN();
+                supportMaxHitZ = std::numeric_limits<float>::quiet_NaN();
+            }
+
+            Log(Debug::Warning) << "Nikami FNV named terrain probe: label=" << label << " pos=(" << pos.x() << ", "
+                                << pos.y() << ", " << pos.z() << ") cell=" << probeCell.mX << ", " << probeCell.mY
+                                << " worldspace=" << worldspace << " heightfield=" << hasHeightField
+                                << " terrainHeight=" << terrainHeight << " rayHit=" << ray.mHit << " rayHitPos=("
+                                << ray.mHitPos.x() << ", " << ray.mHitPos.y() << ", " << ray.mHitPos.z()
+                                << ") rayHitObject="
+                                << (ray.mHitObject.isEmpty() ? std::string("<heightfield/world>") : ray.mHitObject.toString())
+                                << " rayHitModel=" << rayHitModel << " supportSamples(radius=" << supportRadius
+                                << ") hits=" << supportHitCount << " heightfieldHits=" << supportHeightfieldHitCount
+                                << " objectHits=" << supportObjectHitCount << " misses=" << supportMissCount
+                                << " minHitZ=" << supportMinHitZ << " maxHitZ=" << supportMaxHitZ
+                                << " firstMiss=" << firstSupportMiss << " firstObject=" << firstSupportObject
+                                << " firstObjectModel=" << firstSupportObjectModel;
+        }
+
+        return true;
+    }
+
+    bool isFalloutInteriorCell(const MWWorld::Ptr& player)
+    {
+        if (player.isEmpty() || !player.isInCell() || player.getCell() == nullptr || player.getCell()->getCell() == nullptr)
+            return false;
+
+        const MWWorld::Cell& cell = *player.getCell()->getCell();
+        return cell.isEsm4() && !cell.isExterior();
+    }
+
+    void logFNVPlayerInteriorProbe(const MWWorld::Ptr& player, MWPhysics::PhysicsSystem& physics)
+    {
+        if (!isFalloutInteriorCell(player))
+            return;
+
+        const MWWorld::Cell& cell = *player.getCell()->getCell();
+        const osg::Vec3f pos = player.getRefData().getPosition().asVec3();
+        const MWPhysics::Actor* actor = physics.getActor(player);
+        const bool actorOnGround = actor != nullptr && actor->getOnGround();
+        const bool actorCollisionMode = actor != nullptr && actor->getCollisionMode();
+        const osg::Vec3f actorCollisionPos = actor != nullptr ? actor->getCollisionObjectPosition() : osg::Vec3f();
+        const MWWorld::Ptr standingOn = actor != nullptr ? actor->getStandingOnPtr() : MWWorld::Ptr();
+        const VFS::Path::Normalized standingOnModel = standingOn.isEmpty() ? VFS::Path::Normalized() : getModel(standingOn);
+
+        static constexpr float supportRadius = 64.f;
+        static const std::array<std::pair<const char*, osg::Vec3f>, 9> supportSamples = {
+            { { "center", osg::Vec3f(0.f, 0.f, 0.f) },
+                { "north", osg::Vec3f(0.f, supportRadius, 0.f) },
+                { "south", osg::Vec3f(0.f, -supportRadius, 0.f) },
+                { "east", osg::Vec3f(supportRadius, 0.f, 0.f) },
+                { "west", osg::Vec3f(-supportRadius, 0.f, 0.f) },
+                { "ne", osg::Vec3f(supportRadius, supportRadius, 0.f) },
+                { "nw", osg::Vec3f(-supportRadius, supportRadius, 0.f) },
+                { "se", osg::Vec3f(supportRadius, -supportRadius, 0.f) },
+                { "sw", osg::Vec3f(-supportRadius, -supportRadius, 0.f) } }
+        };
+
+        int supportHitCount = 0;
+        int supportMissCount = 0;
+        float supportMinHitZ = std::numeric_limits<float>::infinity();
+        float supportMaxHitZ = -std::numeric_limits<float>::infinity();
+        std::string firstSupportMiss = "<none>";
+        std::string firstSupportObject = "<none>";
+        VFS::Path::Normalized firstSupportObjectModel;
+
+        const int supportMask
+            = MWPhysics::CollisionType_World | MWPhysics::CollisionType_HeightMap | MWPhysics::CollisionType_Door;
+        for (const auto& [sampleName, offset] : supportSamples)
+        {
+            const osg::Vec3f samplePos = pos + offset;
+            const MWPhysics::RayCastingResult sampleRay = physics.castRay(samplePos + osg::Vec3f(0.f, 0.f, 4096.f),
+                samplePos - osg::Vec3f(0.f, 0.f, 4096.f), supportMask);
+
+            if (!sampleRay.mHit)
+            {
+                ++supportMissCount;
+                if (firstSupportMiss == "<none>")
+                    firstSupportMiss = sampleName;
+                continue;
+            }
+
+            ++supportHitCount;
+            supportMinHitZ = std::min(supportMinHitZ, sampleRay.mHitPos.z());
+            supportMaxHitZ = std::max(supportMaxHitZ, sampleRay.mHitPos.z());
+            if (firstSupportObject == "<none>")
+            {
+                firstSupportObject = sampleRay.mHitObject.isEmpty() ? "<heightfield/world>" : sampleRay.mHitObject.toString();
+                firstSupportObjectModel = sampleRay.mHitObject.isEmpty() ? VFS::Path::Normalized() : getModel(sampleRay.mHitObject);
+            }
+        }
+
+        if (supportHitCount == 0)
+        {
+            supportMinHitZ = std::numeric_limits<float>::quiet_NaN();
+            supportMaxHitZ = std::numeric_limits<float>::quiet_NaN();
+        }
+
+        Log(Debug::Warning) << "Nikami FNV interior floor probe: cell=\"" << cell.getDescription()
+                            << "\" id=" << cell.getId() << " pos=(" << pos.x() << ", " << pos.y() << ", "
+                            << pos.z() << ") actorOnGround=" << actorOnGround
+                            << " actorCollisionMode=" << actorCollisionMode << " actorCollisionPos=("
+                            << actorCollisionPos.x() << ", " << actorCollisionPos.y() << ", "
+                            << actorCollisionPos.z() << ") standingOn="
+                            << (standingOn.isEmpty() ? std::string("<none>") : standingOn.toString())
+                            << " standingOnModel=" << standingOnModel << " supportSamples(radius=" << supportRadius
+                            << ") hits=" << supportHitCount << " misses=" << supportMissCount
+                            << " minHitZ=" << supportMinHitZ << " maxHitZ=" << supportMaxHitZ
+                            << " playerMinusMinHitZ=" << (supportHitCount > 0 ? pos.z() - supportMinHitZ : 0.f)
+                            << " playerMinusMaxHitZ=" << (supportHitCount > 0 ? pos.z() - supportMaxHitZ : 0.f)
+                            << " firstMiss=" << firstSupportMiss << " firstObject=" << firstSupportObject
+                            << " firstObjectModel=" << firstSupportObjectModel;
+    }
+
 }
 
 namespace MWWorld
@@ -356,8 +1103,41 @@ namespace MWWorld
             mChangeCellGridRequest.reset();
         }
 
+        static float fnvTerrainProbeTimer = 0.f;
+        static int fnvTerrainProbeCount = 0;
+        fnvTerrainProbeTimer += duration;
+        const float fnvTerrainProbeInterval = fnvTerrainProbeCount < 8 ? 2.f : 30.f;
+        if (std::getenv("OPENMW_FNV_TERRAIN_PROBE") != nullptr && fnvTerrainProbeTimer >= fnvTerrainProbeInterval)
+        {
+            fnvTerrainProbeTimer = 0.f;
+            ++fnvTerrainProbeCount;
+            logFNVPlayerTerrainProbe(mWorld.getPlayerPtr(), mRendering, *mPhysics);
+            logFNVPlayerInteriorProbe(mWorld.getPlayerPtr(), *mPhysics);
+        }
+
+        static float fnvCollisionProofTimer = 0.f;
+        static int fnvCollisionProofCount = 0;
+        fnvCollisionProofTimer += duration;
+        const float fnvCollisionProofInterval = fnvCollisionProofCount < 16 ? 1.f : 10.f;
+        if (mPhysics != nullptr && fnvCollisionProofCount < 64
+            && fnvCollisionProofTimer >= fnvCollisionProofInterval)
+        {
+            fnvCollisionProofTimer = 0.f;
+            ++fnvCollisionProofCount;
+            const MWWorld::Ptr player = mWorld.getPlayerPtr();
+            logFNVPlayerTerrainProbe(player, mRendering, *mPhysics);
+            logFNVPlayerInteriorProbe(player, *mPhysics);
+        }
+
         mPreloader->updateCache(mRendering.getReferenceTime());
         preloadCells(duration);
+    }
+
+    bool Scene::logFNVNamedTerrainProbePoints()
+    {
+        if (mPhysics == nullptr || std::getenv("OPENMW_FNV_TERRAIN_PROBE_POINTS") == nullptr)
+            return false;
+        return logFNVNamedTerrainProbePointsImpl(mWorld.getPlayerPtr(), mRendering, *mPhysics);
     }
 
     void Scene::unloadCell(CellStore* cell, const DetourNavigator::UpdateGuard* navigatorUpdateGuard)
@@ -450,12 +1230,29 @@ namespace MWWorld
             {
                 mPhysics->addHeightField(data->getHeights().data(), cellX, cellY, worldsize, verts,
                     data->getMinHeight(), data->getMaxHeight(), land.get());
+                if (ESM::isEsm4Ext(worldspace) && std::getenv("OPENMW_FNV_TERRAIN_PROBE") != nullptr)
+                {
+                    const std::span<const float> heights = data->getHeights();
+                    const std::size_t centerIndex = static_cast<std::size_t>(verts / 2 * verts + verts / 2);
+                    const float centerHeight = centerIndex < heights.size() ? heights[centerIndex] : 0.f;
+                    Log(Debug::Warning) << "Nikami FNV terrain collision: heightfield added cell " << cellX << ", "
+                                        << cellY << " worldspace=" << worldspace << " verts=" << verts
+                                        << " worldsize=" << worldsize << " minH=" << data->getMinHeight()
+                                        << " maxH=" << data->getMaxHeight() << " centerH=" << centerHeight
+                                        << " heightCount=" << heights.size();
+                }
             }
             else if (!ESM::isEsm4Ext(worldspace))
             {
                 static const std::vector<float> defaultHeight(verts * verts, ESM::Land::DEFAULT_HEIGHT);
                 mPhysics->addHeightField(defaultHeight.data(), cellX, cellY, worldsize, verts,
                     ESM::Land::DEFAULT_HEIGHT, ESM::Land::DEFAULT_HEIGHT, land.get());
+            }
+            else if (std::getenv("OPENMW_FNV_TERRAIN_PROBE") != nullptr)
+            {
+                Log(Debug::Warning) << "Nikami FNV terrain collision: missing LAND height data for exterior cell "
+                                    << cellX << ", " << cellY << " in " << worldspace
+                                    << "; relying on object collision";
             }
             if (mPhysics->getHeightField(cellX, cellY))
             {
@@ -578,6 +1375,9 @@ namespace MWWorld
         constexpr float lowestPointAdjustment = -90.0f;
         if (mCurrentCell->isExterior())
         {
+            if (mCurrentCell->getCell()->isEsm4() && std::getenv("OPENMW_FNV_LOCK_BOOTSTRAP_CELL_GRID") != nullptr)
+                return;
+
             osg::Vec2i newCell = getNewGridCenter(pos, &mCurrentGridCenter);
             if (newCell != mCurrentGridCenter)
                 requestChangeCellGrid(pos, newCell);

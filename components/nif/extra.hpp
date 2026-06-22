@@ -77,8 +77,6 @@ namespace Nif
         {
             float mTime;
             std::string mText;
-
-            void read(NIFStream* nif);
         };
         std::vector<TextKey> mList;
 

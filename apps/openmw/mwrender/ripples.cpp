@@ -54,7 +54,10 @@ namespace MWRender
             osg::ref_ptr<osg::StateSet> stateset = new osg::StateSet;
             // bindings are set in the compute shader
             if (!mUseCompute)
+            {
                 stateset->addUniform(new osg::Uniform("imageIn", 0));
+                stateset->addUniform(new osg::Uniform("scaling", osg::Vec2f(1.f, 1.f)));
+            }
 
             stateset->addUniform(new osg::Uniform("offset", osg::Vec2f()));
             stateset->addUniform(new osg::Uniform("positionCount", 0));

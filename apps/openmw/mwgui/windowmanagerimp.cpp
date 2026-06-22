@@ -44,10 +44,16 @@
 
 #include <components/vfs/manager.hpp>
 
+#ifdef OPENMW_ENABLE_VR
+#include <components/vr/vr.hpp>
+#endif
+
 #include <components/widgets/tags.hpp>
 #include <components/widgets/widgets.hpp>
+#include <components/widgets/myguicompat.hpp>
 
 #include <components/misc/frameratelimiter.hpp>
+#include <components/misc/strings/algorithm.hpp>
 
 #include <components/l10n/manager.hpp>
 
@@ -75,6 +81,10 @@
 #include "../mwmechanics/npcstats.hpp"
 
 #include "../mwrender/postprocessor.hpp"
+
+#ifdef OPENMW_ENABLE_VR
+#include "../mwvr/vrgui.hpp"
+#endif
 
 #include "alchemywindow.hpp"
 #include "backgroundimage.hpp"
@@ -144,6 +154,19 @@ namespace MWGui
                 default:
                     return nullptr;
             }
+        }
+
+        bool hasFalloutContent()
+        {
+            const MWBase::World* world = MWBase::Environment::get().getWorld();
+            if (world == nullptr)
+                return false;
+
+            for (const std::string& file : world->getContentFiles())
+                if (Misc::StringUtils::ciEndsWith(file, "FalloutNV.esm"))
+                    return true;
+
+            return false;
         }
     }
 
@@ -252,7 +275,15 @@ namespace MWGui
             "Resource", "ResourceImageSetPointer");
         MyGUI::FactoryManager::getInstance().registerFactory<AutoSizedResourceSkin>(
             "Resource", "AutoSizedResourceSkin");
-        MyGUI::ResourceManager::getInstance().load("core.xml");
+#ifdef OPENMW_ENABLE_VR
+        if (VR::getVR())
+        {
+            MWVR::VRGUIManager::registerMyGUIFactories();
+            MyGUI::ResourceManager::getInstance().load("core_vr.xml");
+        }
+        else
+#endif
+            MyGUI::ResourceManager::getInstance().load("core.xml");
 
         const bool keyboardNav = Settings::gui().mKeyboardNavigation;
         mKeyboardNavigation = std::make_unique<KeyboardNavigation>();
@@ -712,6 +743,8 @@ namespace MWGui
             // user has opened/closed (the 'shown' variable) and by what
             // windows we are allowed to show (the 'allowed' var.)
             int eff = mShown & mAllowed & ~mForceHidden;
+            if (hasFalloutContent())
+                eff = (GW_Map | GW_Inventory | GW_Magic | GW_Stats) & mAllowed & ~mForceHidden;
             mMap->setVisible(eff & GW_Map);
             mInventoryWindow->setVisible(eff & GW_Inventory);
             mSpellWindow->setVisible(eff & GW_Magic);
@@ -823,8 +856,8 @@ namespace MWGui
     {
         if (getMode() == GM_Dialogue && showInDialogueMode != MWGui::ShowInDialogueMode_Never)
         {
-            MyGUI::UString text = MyGUI::LanguageManager::getInstance().replaceTags(MyGUI::UString(message));
-            mDialogueWindow->addMessageBox(text);
+            MyGUI::UString text = MyGUI::LanguageManager::getInstance().replaceTags(Gui::makeMyGUIUString(message));
+            mDialogueWindow->addMessageBox(static_cast<std::string>(text));
         }
         else if (showInDialogueMode != MWGui::ShowInDialogueMode_Only)
         {
@@ -1230,7 +1263,8 @@ namespace MWGui
 
     void WindowManager::onRetrieveTag(const MyGUI::UString& tag, MyGUI::UString& result)
     {
-        std::string_view tagView = tag;
+        const std::string tagString = tag;
+        std::string_view tagView = tagString;
 
         constexpr std::string_view myGuiPrefix = "setting=";
 
@@ -1377,7 +1411,7 @@ namespace MWGui
         MWBase::Environment::get().getStateManager()->requestQuit();
     }
 
-    void WindowManager::onCursorChange(std::string_view name)
+    void WindowManager::onCursorChange(Gui::MyGUIStringParam name)
     {
         mCursorManager->cursorChanged(name);
     }
@@ -1602,14 +1636,14 @@ namespace MWGui
         if (player->getDrawState() == MWMechanics::DrawState::Spell)
             player->setDrawState(MWMechanics::DrawState::Nothing);
 
-        mSpellWindow->setTitle("#{Interface:None}");
+        mSpellWindow->setTitle(hasFalloutContent() ? "DATA" : "#{Interface:None}");
     }
 
     void WindowManager::unsetSelectedWeapon()
     {
         mSelectedWeapon = MWWorld::Ptr();
         mHud->unsetSelectedWeapon();
-        mInventoryWindow->setTitle("#{sSkillHandtohand}");
+        mInventoryWindow->setTitle(hasFalloutContent() ? "ITEMS" : "#{sSkillHandtohand}");
     }
 
     void WindowManager::getMousePosition(int& x, int& y)
@@ -2316,13 +2350,13 @@ namespace MWGui
             mWerewolfFader->notifyAlphaChanged(set ? 1.0f : 0.0f);
     }
 
-    void WindowManager::onClipboardChanged(std::string_view type, std::string_view data)
+    void WindowManager::onClipboardChanged(Gui::MyGUIStringParam type, Gui::MyGUIStringParam data)
     {
         if (type == "Text")
-            SDL_SetClipboardText(MyGUI::TextIterator::getOnlyText(MyGUI::UString(data)).asUTF8().c_str());
+            SDL_SetClipboardText(MyGUI::TextIterator::getOnlyText(Gui::makeMyGUIUString(data)).asUTF8().c_str());
     }
 
-    void WindowManager::onClipboardRequested(std::string_view type, std::string& data)
+    void WindowManager::onClipboardRequested(Gui::MyGUIStringParam type, std::string& data)
     {
         if (type != "Text")
             return;

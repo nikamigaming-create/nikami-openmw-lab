@@ -1,7 +1,9 @@
 #include "physicssystem.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <memory>
+#include <string_view>
 #include <vector>
 
 #include <osg/Group>
@@ -13,6 +15,7 @@
 #include <BulletCollision/CollisionDispatch/btCollisionWorld.h>
 #include <BulletCollision/CollisionDispatch/btDefaultCollisionConfiguration.h>
 #include <BulletCollision/CollisionShapes/btConeShape.h>
+#include <BulletCollision/CollisionShapes/btCollisionShape.h>
 #include <BulletCollision/CollisionShapes/btSphereShape.h>
 #include <BulletCollision/CollisionShapes/btStaticPlaneShape.h>
 
@@ -22,9 +25,13 @@
 #include <components/debug/debuglog.hpp>
 #include <components/esm3/loadgmst.hpp>
 #include <components/esm3/loadmgef.hpp>
+#include <components/esm4/loadcrea.hpp>
+#include <components/esm4/loadnpc.hpp>
+#include <components/esm4/loadrace.hpp>
 #include <components/misc/convert.hpp>
 #include <components/misc/resourcehelpers.hpp>
 #include <components/misc/strings/conversion.hpp>
+#include <components/resource/bulletshape.hpp>
 #include <components/resource/bulletshapemanager.hpp>
 #include <components/resource/resourcesystem.hpp>
 #include <components/settings/values.hpp>
@@ -58,6 +65,119 @@
 
 namespace
 {
+    bool isEsm4CellPtr(const MWWorld::Ptr& ptr)
+    {
+        return !ptr.isEmpty() && ptr.isInCell() && ptr.getCell() != nullptr && ptr.getCell()->getCell() != nullptr
+            && ptr.getCell()->getCell()->isEsm4();
+    }
+
+    bool isEsm4InteriorPtr(const MWWorld::Ptr& ptr)
+    {
+        return isEsm4CellPtr(ptr) && !ptr.getCell()->getCell()->isExterior();
+    }
+
+    void logFnvPhysicsShapeSkipped(
+        const MWWorld::Ptr& ptr, VFS::Path::NormalizedView mesh, std::string_view reason)
+    {
+        if (!isEsm4InteriorPtr(ptr))
+            return;
+
+        static int sLogs = 0;
+        if (sLogs >= 180)
+            return;
+        ++sLogs;
+
+        const MWWorld::Cell& cell = *ptr.getCell()->getCell();
+        const osg::Vec3f pos = ptr.getRefData().getPosition().asVec3();
+        Log(Debug::Warning) << "FNV/ESM4 collision proof: event=physics-shape-skipped"
+                            << " reason=" << reason
+                            << " cell=\"" << cell.getDescription() << "\""
+                            << " cellId=" << cell.getId()
+                            << " ref=" << ptr.getCellRef().getRefId()
+                            << " type=0x" << std::hex << ptr.getType() << std::dec
+                            << " model=" << mesh
+                            << " pos=(" << pos.x() << "," << pos.y() << "," << pos.z() << ")"
+                            << " scale=" << ptr.getCellRef().getScale();
+    }
+
+    void logFnvPhysicsShapeInserted(const MWWorld::Ptr& ptr, VFS::Path::NormalizedView mesh,
+        const Resource::BulletShapeInstance& shapeInstance, const btTransform& transform, int collisionType)
+    {
+        if (!isEsm4InteriorPtr(ptr))
+            return;
+
+        static int sLogs = 0;
+        if (sLogs >= 260)
+            return;
+        ++sLogs;
+
+        btVector3 aabbMin;
+        btVector3 aabbMax;
+        shapeInstance.mCollisionShape->getAabb(transform, aabbMin, aabbMax);
+        const osg::Vec3f min = Misc::Convert::toOsg(aabbMin);
+        const osg::Vec3f max = Misc::Convert::toOsg(aabbMax);
+        const osg::Vec3f pos = ptr.getRefData().getPosition().asVec3();
+        const MWWorld::Cell& cell = *ptr.getCell()->getCell();
+
+        Log(Debug::Warning) << "FNV/ESM4 collision proof: event=physics-shape-inserted"
+                            << " cell=\"" << cell.getDescription() << "\""
+                            << " cellId=" << cell.getId()
+                            << " ref=" << ptr.getCellRef().getRefId()
+                            << " type=0x" << std::hex << ptr.getType() << std::dec
+                            << " model=" << mesh
+                            << " pos=(" << pos.x() << "," << pos.y() << "," << pos.z() << ")"
+                            << " aabbMin=(" << min.x() << "," << min.y() << "," << min.z() << ")"
+                            << " aabbMax=(" << max.x() << "," << max.y() << "," << max.z() << ")"
+                            << " collisionType=0x" << std::hex << collisionType << std::dec
+                            << " visualCollision=" << static_cast<int>(shapeInstance.mVisualCollisionType)
+                            << " animated=" << shapeInstance.isAnimated()
+                            << " scale=" << ptr.getCellRef().getScale();
+    }
+
+    osg::Vec3f getFallbackActorHalfExtents(const MWWorld::Ptr& ptr)
+    {
+        float radius = 32.f;
+        float halfHeight = 64.f;
+
+        if (ptr.getType() == ESM4::Npc::sRecordId)
+        {
+            const ESM4::Npc* npc = ptr.get<ESM4::Npc>()->mBase;
+            if (npc->mBoundRadius > 1.f)
+                radius = npc->mBoundRadius;
+
+            if (const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore())
+            {
+                if (const ESM4::Race* race = store->get<ESM4::Race>().search(npc->mRace))
+                {
+                    const bool female = npc->mIsFONV && (npc->mBaseConfig.fo3.flags & ESM4::Npc::FO3_Female);
+                    const float height = female ? race->mHeightFemale : race->mHeightMale;
+                    if (std::isfinite(height) && height > 0.f)
+                        halfHeight *= height;
+                }
+            }
+        }
+        else if (ptr.getType() == ESM4::Creature::sRecordId)
+        {
+            const ESM4::Creature* creature = ptr.get<ESM4::Creature>()->mBase;
+            if (creature->mBoundRadius > 1.f)
+                radius = creature->mBoundRadius * std::max(creature->mBaseScale, 0.1f);
+            halfHeight = std::max(halfHeight, radius);
+        }
+
+        return osg::Vec3f(std::max(radius, 8.f), std::max(radius, 8.f), std::max(halfHeight, 24.f));
+    }
+
+    osg::ref_ptr<Resource::BulletShape> makeFallbackActorShape(const MWWorld::Ptr& ptr)
+    {
+        osg::ref_ptr<Resource::BulletShape> shape = new Resource::BulletShape;
+        shape->mCollisionBox.mExtents = getFallbackActorHalfExtents(ptr);
+        shape->mCollisionBox.mCenter = osg::Vec3f(0.f, 0.f, shape->mCollisionBox.mExtents.z());
+        Log(Debug::Info) << "FNV/ESM4 diag: using fallback actor collision box for " << ptr.getCellRef().getRefId()
+                         << " extents=(" << shape->mCollisionBox.mExtents.x() << ","
+                         << shape->mCollisionBox.mExtents.y() << "," << shape->mCollisionBox.mExtents.z() << ")";
+        return shape;
+    }
+
     void handleJump(const MWWorld::Ptr& ptr)
     {
         if (!ptr.getClass().isActor())
@@ -414,8 +534,16 @@ namespace MWPhysics
             ? Misc::ResourceHelpers::correctActorModelPath(mesh, mResourceSystem->getVFS())
             : VFS::Path::Normalized(mesh);
         osg::ref_ptr<Resource::BulletShapeInstance> shapeInstance = mShapeManager->getInstance(animationMesh);
-        if (!shapeInstance || !shapeInstance->mCollisionShape)
+        if (!shapeInstance)
+        {
+            logFnvPhysicsShapeSkipped(ptr, animationMesh, "missing-shape-instance");
             return;
+        }
+        if (!shapeInstance->mCollisionShape)
+        {
+            logFnvPhysicsShapeSkipped(ptr, animationMesh, "missing-collision-shape");
+            return;
+        }
 
         assert(!getObject(ptr));
 
@@ -434,6 +562,34 @@ namespace MWPhysics
 
         auto obj = std::make_shared<Object>(ptr, shapeInstance, rotation, collisionType, mTaskScheduler.get());
         mObjects.emplace(ptr.mRef, obj);
+        logFnvPhysicsShapeInserted(ptr, animationMesh, *shapeInstance, obj->getTransform(), collisionType);
+
+        if (obj->isAnimated())
+            mAnimatedObjects.emplace(obj.get(), false);
+    }
+
+    void PhysicsSystem::addObject(const MWWorld::Ptr& ptr, osg::ref_ptr<Resource::BulletShapeInstance> shapeInstance,
+        osg::Quat rotation, int collisionType)
+    {
+        if (ptr.mRef->mData.mPhysicsPostponed)
+            return;
+        if (!shapeInstance)
+        {
+            logFnvPhysicsShapeSkipped(ptr, VFS::Path::Normalized(), "missing-shape-instance");
+            return;
+        }
+        if (!shapeInstance->mCollisionShape)
+        {
+            logFnvPhysicsShapeSkipped(ptr, VFS::Path::Normalized(), "missing-collision-shape");
+            return;
+        }
+
+        assert(!getObject(ptr));
+
+        auto obj = std::make_shared<Object>(ptr, std::move(shapeInstance), rotation, collisionType, mTaskScheduler.get());
+        mObjects.emplace(ptr.mRef, obj);
+        logFnvPhysicsShapeInserted(
+            ptr, obj->getShapeInstance()->mFileName, *obj->getShapeInstance(), obj->getTransform(), collisionType);
 
         if (obj->isAnimated())
             mAnimatedObjects.emplace(obj.get(), false);
@@ -573,8 +729,8 @@ namespace MWPhysics
             }
         }
 
-        if (!shape)
-            return;
+        if (!shape || shape->mCollisionBox.mExtents.length2() == 0.f)
+            shape = makeFallbackActorShape(ptr);
 
         // check if Actor should spawn above water
         const MWMechanics::MagicEffects& effects = ptr.getClass().getCreatureStats(ptr).getMagicEffects();

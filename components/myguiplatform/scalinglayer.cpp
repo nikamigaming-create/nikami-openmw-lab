@@ -1,5 +1,7 @@
 #include "scalinglayer.hpp"
 
+#include <components/widgets/myguicompat.hpp>
+
 #include <MyGUI_RenderManager.h>
 #include <algorithm>
 
@@ -32,7 +34,7 @@ namespace MyGUIPlatform
             mTarget->doRender(buffer, texture, count);
         }
 
-        const MyGUI::RenderTargetInfo& getInfo() const override
+        const MyGUI::RenderTargetInfo& getInfo() OPENMW_MYGUI_RENDER_TARGET_CONST override
         {
             mInfo = mTarget->getInfo();
             mInfo.hOffset = mHOffset;

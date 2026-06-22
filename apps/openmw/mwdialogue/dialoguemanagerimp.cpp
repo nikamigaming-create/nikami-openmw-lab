@@ -7,6 +7,7 @@
 
 #include <components/debug/debuglog.hpp>
 
+#include <components/esm/defs.hpp>
 #include <components/esm3/dialoguestate.hpp>
 #include <components/esm3/esmwriter.hpp>
 #include <components/esm3/loaddial.hpp>
@@ -644,7 +645,14 @@ namespace MWDialogue
         }
 
         const MWWorld::ESMStore& store = *MWBase::Environment::get().getESMStore();
-        const ESM::Dialogue* dial = store.get<ESM::Dialogue>().find(topic);
+        const ESM::Dialogue* dial = store.get<ESM::Dialogue>().search(topic);
+        if (dial == nullptr)
+        {
+            Log(Debug::Info) << "FNV/ESM4 diag: skipped missing dialogue bark topic " << topic
+                             << " actor=" << actor.getCellRef().getRefId()
+                             << " type=" << ESM::printName(actor.getType());
+            return false;
+        }
 
         const MWMechanics::CreatureStats& creatureStats = actor.getClass().getCreatureStats(actor);
         Filter filter(actor, 0, creatureStats.hasTalkedToPlayer());

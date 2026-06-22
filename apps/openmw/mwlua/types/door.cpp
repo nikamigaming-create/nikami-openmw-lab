@@ -12,6 +12,7 @@
 #include <components/resource/resourcesystem.hpp>
 
 #include "apps/openmw/mwworld/class.hpp"
+#include "apps/openmw/mwworld/cellref.hpp"
 #include "apps/openmw/mwworld/worldmodel.hpp"
 
 namespace sol
@@ -164,7 +165,15 @@ namespace MWLua
             const MWWorld::CellRef& cellRef = door4Ptr(o).getCellRef();
             if (!cellRef.getTeleport())
                 return sol::nil;
-            MWWorld::CellStore& cell = MWBase::Environment::get().getWorldModel()->getCell(cellRef.getDestCell());
+            const ESM::RefId destCell = cellRef.getDestCell();
+            if (destCell.empty())
+            {
+                throw std::runtime_error("Unresolved ESM4 teleport door destination: ref="
+                    + door4Ptr(o).getCellRef().getRefNum().toString("FormId:") + " base="
+                    + door4Ptr(o).getCellRef().getRefId().toDebugString() + " destDoor="
+                    + ESM::RefId(cellRef.getEsm4DestDoor()).toDebugString());
+            }
+            MWWorld::CellStore& cell = MWBase::Environment::get().getWorldModel()->getCell(destCell);
             if (o.isGObject())
                 return sol::make_object(lua, GCell{ &cell });
             else

@@ -45,6 +45,9 @@
 #include <components/terrain/quadtreeworld.hpp>
 #include <components/terrain/terraingrid.hpp>
 
+#include <components/vfs/manager.hpp>
+#include <components/vfs/pathutil.hpp>
+
 #include <components/esm3/loadcell.hpp>
 #include <components/esm4/loadcell.hpp>
 
@@ -83,6 +86,11 @@
 #include "vismask.hpp"
 #include "water.hpp"
 
+#ifdef OPENMW_ENABLE_VR
+#include "../mwvr/vranimation.hpp"
+#include <components/vr/vr.hpp>
+#endif
+
 namespace MWRender
 {
     class PreloadCommonAssetsWorkItem : public SceneUtil::WorkItem
@@ -95,18 +103,60 @@ namespace MWRender
 
         void doWork() override
         {
-            try
+            const VFS::Manager* vfs = mResourceSystem->getVFS();
+            for (const VFS::Path::Normalized& v : mModels)
             {
-                for (const VFS::Path::Normalized& v : mModels)
+                if (v.empty())
+                    continue;
+                if (!vfs->exists(v))
+                {
+                    Log(Debug::Warning) << "Common asset preload skipped missing model " << v;
+                    continue;
+                }
+                try
+                {
                     mResourceSystem->getSceneManager()->getTemplate(v);
-                for (const VFS::Path::Normalized& v : mTextures)
-                    mResourceSystem->getImageManager()->getImage(v);
-                for (const VFS::Path::Normalized& v : mKeyframes)
-                    mResourceSystem->getKeyframeManager()->get(v);
+                }
+                catch (const std::exception& e)
+                {
+                    Log(Debug::Warning) << "Failed to preload common model " << v << ": " << e.what();
+                }
             }
-            catch (const std::exception& e)
+            for (const VFS::Path::Normalized& v : mTextures)
             {
-                Log(Debug::Warning) << "Failed to preload common assets: " << e.what();
+                if (v.empty())
+                    continue;
+                if (!vfs->exists(v))
+                {
+                    Log(Debug::Warning) << "Common asset preload skipped missing texture " << v;
+                    continue;
+                }
+                try
+                {
+                    mResourceSystem->getImageManager()->getImage(v);
+                }
+                catch (const std::exception& e)
+                {
+                    Log(Debug::Warning) << "Failed to preload common texture " << v << ": " << e.what();
+                }
+            }
+            for (const VFS::Path::Normalized& v : mKeyframes)
+            {
+                if (v.empty())
+                    continue;
+                if (!vfs->exists(v))
+                {
+                    Log(Debug::Warning) << "Common asset preload skipped missing keyframe " << v;
+                    continue;
+                }
+                try
+                {
+                    mResourceSystem->getKeyframeManager()->get(v);
+                }
+                catch (const std::exception& e)
+                {
+                    Log(Debug::Warning) << "Failed to preload common keyframe " << v << ": " << e.what();
+                }
             }
         }
 
@@ -121,7 +171,7 @@ namespace MWRender
     RenderingManager::RenderingManager(osgViewer::Viewer* viewer, osg::ref_ptr<osg::Group> rootNode,
         Resource::ResourceSystem* resourceSystem, SceneUtil::WorkQueue* workQueue,
         DetourNavigator::Navigator& navigator, const MWWorld::GroundcoverStore& groundcoverStore,
-        SceneUtil::UnrefQueue& unrefQueue)
+        SceneUtil::UnrefQueue& unrefQueue, std::unique_ptr<Camera> camera)
         : mSkyBlending(Settings::fog().mSkyBlending)
         , mViewer(viewer)
         , mRootNode(rootNode)
@@ -279,7 +329,7 @@ namespace MWRender
         mWater = std::make_unique<Water>(
             sceneRoot->getParent(0), sceneRoot, mResourceSystem, mViewer->getIncrementalCompileOperation());
 
-        mCamera = std::make_unique<Camera>(mViewer->getCamera());
+        mCamera = camera != nullptr ? std::move(camera) : std::make_unique<Camera>(mViewer->getCamera());
 
         mScreenshotManager = std::make_unique<ScreenshotManager>(viewer);
 
@@ -865,6 +915,8 @@ namespace MWRender
             {
                 result.mHit = true;
                 result.mHitPointWorld = intersection.getWorldIntersectPoint();
+                result.mHitPointLocal = intersection.getLocalIntersectPoint();
+                result.mHitNode = intersection.nodePath.empty() ? nullptr : intersection.nodePath.back();
                 result.mHitNormalWorld = intersection.getWorldIntersectNormal();
                 result.mRatio = static_cast<float>(intersection.ratio);
             }
@@ -935,7 +987,7 @@ namespace MWRender
 
     osg::ref_ptr<osgUtil::IntersectionVisitor> RenderingManager::getIntersectionVisitor(
         osgUtil::Intersector* intersector, bool ignorePlayer, bool ignoreActors,
-        std::span<const MWWorld::Ptr> ignoreList)
+        std::span<const MWWorld::Ptr> ignoreList, unsigned int ignoreMask)
     {
         if (!mIntersectionVisitor)
             mIntersectionVisitor = new IntersectionVisitorWithIgnoreList;
@@ -960,24 +1012,25 @@ namespace MWRender
 
         unsigned int mask = ~0u;
         mask &= ~(Mask_RenderToTexture | Mask_Sky | Mask_Debug | Mask_Effect | Mask_Water | Mask_SimpleWater
-            | Mask_Groundcover);
+            | Mask_Groundcover | Mask_Pointer);
         if (ignorePlayer)
             mask &= ~(Mask_Player);
         if (ignoreActors)
             mask &= ~(Mask_Actor | Mask_Player);
+        mask &= ~ignoreMask;
 
         mIntersectionVisitor->setTraversalMask(mask);
         return mIntersectionVisitor;
     }
 
     RenderingManager::RayResult RenderingManager::castRay(const osg::Vec3f& origin, const osg::Vec3f& dest,
-        bool ignorePlayer, bool ignoreActors, std::span<const MWWorld::Ptr> ignoreList)
+        bool ignorePlayer, bool ignoreActors, std::span<const MWWorld::Ptr> ignoreList, unsigned int ignoreMask)
     {
         osg::ref_ptr<osgUtil::LineSegmentIntersector> intersector(
             new osgUtil::LineSegmentIntersector(osgUtil::LineSegmentIntersector::MODEL, origin, dest));
         intersector->setIntersectionLimit(osgUtil::LineSegmentIntersector::LIMIT_NEAREST);
 
-        mRootNode->accept(*getIntersectionVisitor(intersector, ignorePlayer, ignoreActors, ignoreList));
+        mRootNode->accept(*getIntersectionVisitor(intersector, ignorePlayer, ignoreActors, ignoreList, ignoreMask));
 
         return getIntersectionResult(intersector, mIntersectionVisitor, ignoreList);
     }
@@ -1077,8 +1130,18 @@ namespace MWRender
 
     void RenderingManager::renderPlayer(const MWWorld::Ptr& player)
     {
-        mPlayerAnimation = new NpcAnimation(player, player.getRefData().getBaseNode(), mResourceSystem, 0,
-            NpcAnimation::VM_Normal, mFirstPersonFieldOfView);
+#ifdef OPENMW_ENABLE_VR
+        if (VR::getVR())
+        {
+            mPlayerAnimation
+                = new MWVR::VRAnimation(player, player.getRefData().getBaseNode(), mResourceSystem, false, mSceneRoot);
+            static_cast<MWVR::VRAnimation*>(mPlayerAnimation.get())->setEnableCrosshairs(
+                Settings::vr().mShow3DCrosshairs);
+        }
+        else
+#endif
+            mPlayerAnimation = new NpcAnimation(player, player.getRefData().getBaseNode(), mResourceSystem, 0,
+                NpcAnimation::VM_Normal, mFirstPersonFieldOfView);
 
         mCamera->setAnimation(mPlayerAnimation.get());
         mCamera->attachTo(player);

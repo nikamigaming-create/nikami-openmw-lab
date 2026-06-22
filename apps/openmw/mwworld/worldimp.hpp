@@ -202,7 +202,8 @@ namespace MWWorld
 
         // Must be called after `loadData`.
         void init(Debug::Level maxRecastLogLevel, osgViewer::Viewer* viewer, osg::ref_ptr<osg::Group> rootNode,
-            SceneUtil::WorkQueue* workQueue, SceneUtil::UnrefQueue& unrefQueue);
+            SceneUtil::WorkQueue* workQueue, SceneUtil::UnrefQueue& unrefQueue,
+            std::unique_ptr<MWRender::Camera> camera = nullptr);
 
         virtual ~World();
 
@@ -677,6 +678,9 @@ namespace MWWorld
         DateTimeManager* getTimeManager() override { return mTimeManager.get(); }
 
         void setActorActive(const MWWorld::Ptr& ptr, bool value) override;
+
+        float getTargetObject(MWRender::RenderingManager::RayResult& result, const osg::Vec3f& origin,
+            const osg::Quat& orientation, float maxDistance, bool ignorePlayer, uint32_t ignoreMask) override;
     };
 }
 

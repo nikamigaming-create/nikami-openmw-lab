@@ -12,6 +12,12 @@
 #include <components/misc/strings/format.hpp>
 #include <components/settings/values.hpp>
 
+#ifdef OPENMW_ENABLE_VR
+#include <components/vr/vr.hpp>
+
+#include "../mwvr/vrgui.hpp"
+#endif
+
 #include "context.hpp"
 #include "luamanagerimp.hpp"
 
@@ -129,7 +135,15 @@ namespace MWLua
         api["create"]
             = [luaManager = context.mLuaManager, menu](const sol::table& layout, sol::optional<sol::table> options) {
                   auto element = LuaUi::Element::make(layout, menu, options);
-                  luaManager->addAction([element] { element->create(); }, "Create UI");
+                  luaManager->addAction(
+                      [element] {
+                          element->create();
+#ifdef OPENMW_ENABLE_VR
+                          if (VR::getVR())
+                              MWVR::VRGUIManager::instance().registerLuaElement(element.get());
+#endif
+                      },
+                      "Create UI");
                   return element;
               };
 
@@ -138,7 +152,19 @@ namespace MWLua
                 if (e->mState == LuaUi::Element::Created)
                     e->mState = LuaUi::Element::Update;
             });
-            luaManager->addAction([menu]() { LuaUi::Element::forEach(menu, [](LuaUi::Element* e) { e->update(); }); },
+            luaManager->addAction([menu]() {
+                LuaUi::Element::forEach(menu, [](LuaUi::Element* e) {
+#ifdef OPENMW_ENABLE_VR
+                    if (VR::getVR())
+                        MWVR::VRGUIManager::instance().deregisterLuaElement(e);
+#endif
+                    e->update();
+#ifdef OPENMW_ENABLE_VR
+                    if (VR::getVR())
+                        MWVR::VRGUIManager::instance().registerLuaElement(e);
+#endif
+                });
+            },
                 "Update all menu UI elements");
         };
         api["_getMenuTransparency"] = []() -> float { return Settings::gui().mMenuTransparency; };
@@ -316,13 +342,33 @@ namespace MWLua
             uiElement["update"] = [luaManager = context.mLuaManager](const std::shared_ptr<LuaUi::Element>& element) {
                 if (element->mState != LuaUi::Element::Created)
                     return;
-                luaManager->addAction([element] { element->update(); }, "Update UI");
+                luaManager->addAction(
+                    [element] {
+#ifdef OPENMW_ENABLE_VR
+                        if (VR::getVR())
+                            MWVR::VRGUIManager::instance().deregisterLuaElement(element.get());
+#endif
+                        element->update();
+#ifdef OPENMW_ENABLE_VR
+                        if (VR::getVR())
+                            MWVR::VRGUIManager::instance().registerLuaElement(element.get());
+#endif
+                    },
+                    "Update UI");
                 element->mState = LuaUi::Element::Update;
             };
             uiElement["destroy"] = [luaManager = context.mLuaManager](const std::shared_ptr<LuaUi::Element>& element) {
                 if (element->mState == LuaUi::Element::Destroyed)
                     return;
-                luaManager->addAction([element] { LuaUi::Element::erase(element.get()); }, "Destroy UI");
+                luaManager->addAction(
+                    [element] {
+#ifdef OPENMW_ENABLE_VR
+                        if (VR::getVR())
+                            MWVR::VRGUIManager::instance().deregisterLuaElement(element.get());
+#endif
+                        LuaUi::Element::erase(element.get());
+                    },
+                    "Destroy UI");
                 element->mState = LuaUi::Element::Destroy;
             };
 

@@ -1,12 +1,23 @@
 #include "spellwindow.hpp"
 
+#include <array>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <string_view>
+#include <vector>
+
 #include <MyGUI_EditBox.h>
 #include <MyGUI_InputManager.h>
 #include <MyGUI_RenderManager.h>
+#include <MyGUI_TextBox.h>
 #include <MyGUI_Window.h>
 
+#include <components/debug/debuglog.hpp>
 #include <components/esm3/loadbsgn.hpp>
 #include <components/esm3/loadrace.hpp>
+#include <components/esm4/loadammo.hpp>
+#include <components/misc/strings/algorithm.hpp>
 #include <components/misc/strings/format.hpp>
 #include <components/settings/values.hpp>
 
@@ -33,6 +44,78 @@
 
 namespace MWGui
 {
+    namespace
+    {
+        bool hasFalloutContent()
+        {
+            if (std::getenv("OPENMW_FNV_PROOF_PIPBOY_SURFACE") != nullptr)
+                return true;
+
+            const MWBase::World* world = MWBase::Environment::get().getWorld();
+            if (world == nullptr)
+                return false;
+
+            for (const std::string& file : world->getContentFiles())
+                if (Misc::StringUtils::ciEndsWith(file, "FalloutNV.esm"))
+                    return true;
+
+            return false;
+        }
+
+        std::string getFalloutDataCaption()
+        {
+            std::ostringstream caption;
+            caption << "QUESTS\n  Source proven: VCG01, GSQuest, GSRadioQuest\n  Runtime quest journal binding pending\n\n";
+            caption << "NOTES\n  Source proven: CaravanRulesNote, CrimsonCaravanHolotapeNV\n  Runtime note/message binding pending\n\n";
+            caption << "RADIO\n  Source proven: RadioNewVegas, BlackMountainRadio\n  Runtime station/message binding pending\n\n";
+            caption << "PERKS / TRAITS\n  Source proven: PerkBuiltToDestroy, PerkWildWasteland\n  Runtime player perk/trait binding pending\n\n";
+            caption << "ALT AMMO\n";
+
+            const std::array<std::string_view, 8> wantedAmmo = { "Ammo9mm", "Ammo9mmHollowPoint", "Ammo9mmP",
+                "Ammo308", "Ammo308ArmorPiercing", "Ammo308HollowPoint", "AmmoMicroFusionCell",
+                "AmmoMicroFusionCellMaxCharge" };
+
+            const auto& ammoStore = MWBase::Environment::get().getESMStore()->get<ESM4::Ammunition>();
+            std::vector<const ESM4::Ammunition*> samples;
+            for (std::string_view wanted : wantedAmmo)
+            {
+                for (auto it = ammoStore.begin(); it != ammoStore.end(); ++it)
+                {
+                    if (it->mEditorId == wanted)
+                    {
+                        samples.push_back(&*it);
+                        break;
+                    }
+                }
+            }
+
+            if (samples.empty())
+            {
+                caption << "  No loaded AMMO records matched the FNV proof set";
+                Log(Debug::Warning) << "FNV/ESM4 proof: DATA pane found no loaded alternate ammo records";
+            }
+            else
+            {
+                std::ostringstream sampleLog;
+                for (const ESM4::Ammunition* ammo : samples)
+                {
+                    const std::string& label = ammo->mFullName.empty() ? ammo->mEditorId : ammo->mFullName;
+                    caption << "  " << label << " [" << ammo->mEditorId << "]"
+                            << " value=" << ammo->mData.mValue << " clip=" << static_cast<int>(ammo->mData.mClipRounds)
+                            << "\n";
+
+                    if (sampleLog.tellp() > 0)
+                        sampleLog << ",";
+                    sampleLog << ammo->mEditorId;
+                }
+
+                Log(Debug::Info) << "FNV/ESM4 proof: DATA pane bound alternate ammo records count=" << samples.size()
+                                 << " sample=" << sampleLog.str();
+            }
+
+            return caption.str();
+        }
+    }
 
     SpellWindow::SpellWindow(DragAndDrop* drag)
         : WindowPinnableBase("openmw_spell_window.layout")
@@ -48,6 +131,7 @@ namespace MWGui
         getWidget(mSpellView, "SpellView");
         getWidget(mEffectBox, "EffectsBox");
         getWidget(mFilterEdit, "FilterEdit");
+        getWidget(mFalloutDataPlaceholder, "FalloutDataPlaceholder");
 
         mSpellView->eventSpellClicked += MyGUI::newDelegate(this, &SpellWindow::onModelIndexSelected);
         mFilterEdit->eventEditTextChange += MyGUI::newDelegate(this, &SpellWindow::onFilterChanged);
@@ -58,6 +142,19 @@ namespace MWGui
         // Adjust the spell filtering widget size because of MyGUI limitations.
         int filterWidth = mSpellView->getSize().width - deleteButton->getSize().width - 3;
         mFilterEdit->setSize(filterWidth, mFilterEdit->getSize().height);
+
+        if (hasFalloutContent())
+        {
+            setTitle("DATA");
+            mSpellView->setVisible(false);
+            mEffectBox->getParent()->setVisible(false);
+            mFilterEdit->setVisible(false);
+            deleteButton->setVisible(false);
+            mFalloutDataPlaceholder->setCaption(getFalloutDataCaption());
+            mFalloutDataPlaceholder->setVisible(true);
+            Log(Debug::Info)
+                << "FNV/ESM4 proof: DATA pane source-backed alternate ammo active; quests/notes/radio/perks runtime binding pending";
+        }
 
         if (Settings::gui().mControllerMenus)
         {
@@ -112,6 +209,12 @@ namespace MWGui
 
     void SpellWindow::updateSpells()
     {
+        if (hasFalloutContent())
+        {
+            mFalloutDataPlaceholder->setVisible(true);
+            return;
+        }
+
         mSpellIcons->updateWidgets(mEffectBox, false);
 
         mSpellView->setModel(new SpellModel(MWMechanics::getPlayer(), mFilterEdit->getCaption()));

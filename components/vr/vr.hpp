@@ -1,0 +1,77 @@
+#ifndef VR_H
+#define VR_H
+
+#include <components/stereo/types.hpp>
+#include <components/vr/constants.hpp>
+#include <stdint.h>
+#include <openxr/openxr.h>
+
+namespace VR
+{
+    // Common paths
+    namespace Paths
+    {
+        constexpr const char* LEFT_HAND_AIM = "/user/hand/left/input/aim/pose";
+        constexpr const char* LEFT_HAND = "/user/hand/left";
+        constexpr const char* RIGHT_HAND_AIM = "/user/hand/right/input/aim/pose";
+        constexpr const char* RIGHT_HAND = "/user/hand/right";
+    }
+
+    //! Display time as a 64bit integer. Units and reference are undefined, value is as provided by the VR runtime.
+    using DisplayTime = int64_t;
+
+    enum class ReferenceSpace
+    {
+        View = 1,
+        Local = 2,
+        Stage = 3
+    };
+
+    //! A single tracked pose
+    struct TrackingPose
+    {
+        TrackingStatus status = TrackingStatus::Unknown; //!< State of the prediction.
+        Stereo::Pose pose = {}; //!< The predicted pose.
+        DisplayTime time = 0; //!< The time for which the pose was predicted.
+    };
+
+    //! Converts a string representation of a path to a VRTrackerPath identifier
+    XrPath stringToXrPath(const std::string& path);
+
+    //! Converts a path identifier back to string. Returns an empty string if no such identifier exists.
+    std::string xrPathToString(XrPath path);
+
+    bool getVR();
+    bool getKBMouseModeActive();
+    bool getSteamVR();
+    bool getControllerActive(XrPath controllerPath);
+    XrPath getControllerInteractionProfile(XrPath controllerPath);
+    bool getLeftControllerActive();
+    bool getRightControllerActive();
+    bool getLocatingSpacesAllowed();
+    bool getLeftHandedMode();
+    Stereo::Unit getPlayerHeight();
+    DisplayTime getPredictedDisplayTime();
+    DisplayTime getPredictedDisplayPeriod();
+    std::string getRuntimeName();
+    const char* getPreferredAimPath();
+
+    void setVR(bool VR);
+    void setControllerActive(XrPath controllerPath, XrPath interactionProfilePath, bool active);
+    void setSteamVR(bool steamVR);
+    void setSneakOffsetEnabled(bool enabled);
+    void setPredictedDisplayTime(DisplayTime time);
+    void setPredictedDisplayPeriod(DisplayTime time);
+    void setLocatingSpacesAllowed(bool allowed);
+    void setRuntimeName(std::string name);
+    void setLeftHandedMode(bool enable);
+
+    void recenterXY();
+    void recenterZ();
+    bool getShouldRecenterXY();
+    bool getShouldRecenterZ();
+    void setShouldRecenterXY(bool arg);
+    void setShouldRecenterZ(bool arg);
+}
+
+#endif

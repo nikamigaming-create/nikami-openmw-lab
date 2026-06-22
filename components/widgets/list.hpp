@@ -3,6 +3,8 @@
 
 #include <MyGUI_ScrollView.h>
 
+#include "myguicompat.hpp"
+
 namespace Gui
 {
     /**
@@ -50,7 +52,7 @@ namespace Gui
         void scrollToTop();
         void setViewOffset(int offset);
 
-        void setPropertyOverride(std::string_view key, std::string_view value) override;
+        void setPropertyOverride(MyGUIStringParam key, MyGUIStringParam value) override;
 
     protected:
         void initialiseOverride() override;

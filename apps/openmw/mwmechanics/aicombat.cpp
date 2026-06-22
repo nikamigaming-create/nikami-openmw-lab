@@ -1,5 +1,7 @@
 #include "aicombat.hpp"
 
+#include <components/debug/debuglog.hpp>
+#include <components/esm/defs.hpp>
 #include <components/detournavigator/navigatorutils.hpp>
 #include <components/esm3/aisequence.hpp>
 #include <components/misc/coordinateconverter.hpp>
@@ -41,6 +43,11 @@ namespace
     {
         ESM::RefNum hitNum = actor.getClass().getCreatureStats(actor).getHitAttemptActor();
         return hitNum.isSet() && target.getCellRef().getRefNum() == hitNum;
+    }
+
+    bool isEsm4Actor(const MWWorld::Ptr& actor)
+    {
+        return actor.getType() == ESM::REC_NPC_4 || actor.getType() == ESM::REC_CREA4;
     }
 }
 
@@ -232,6 +239,9 @@ namespace MWMechanics
             if (currentAction->isFleeing())
             {
                 storage.startFleeing();
+                if (isEsm4Actor(actor))
+                    Log(Debug::Info) << "FNV/ESM4 diag: combat flee started actor=" << actor.getCellRef().getRefId()
+                                     << " target=" << target.getCellRef().getRefId();
                 MWBase::Environment::get().getDialogueManager()->say(actor, ESM::RefId::stringRefId("flee"));
                 return false;
             }
@@ -335,6 +345,10 @@ namespace MWMechanics
                     currentAction = std::make_unique<ActionFlee>();
                     actionCooldown = currentAction->getActionCooldown();
                     storage.startFleeing();
+                    if (isEsm4Actor(actor))
+                        Log(Debug::Info) << "FNV/ESM4 diag: combat flee started after failed path actor="
+                                         << actor.getCellRef().getRefId()
+                                         << " target=" << target.getCellRef().getRefId();
                     MWBase::Environment::get().getDialogueManager()->say(actor, ESM::RefId::stringRefId("flee"));
                 }
             }

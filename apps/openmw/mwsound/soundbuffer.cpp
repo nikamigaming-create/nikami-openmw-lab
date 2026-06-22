@@ -14,6 +14,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 
 namespace MWSound
 {
@@ -38,6 +39,26 @@ namespace MWSound
             params.mAudioMinDistanceMult = settings.find("fAudioMinDistanceMult")->mValue.getFloat();
             params.mAudioMaxDistanceMult = settings.find("fAudioMaxDistanceMult")->mValue.getFloat();
             return params;
+        }
+
+        bool fnvSoundDiagEnabled()
+        {
+            return std::getenv("OPENMW_FNV_SOUND_DIAG") != nullptr;
+        }
+
+        void insertEditorIdAlias(std::unordered_map<ESM::RefId, SoundBuffer*>& map, const std::string& editorId,
+            SoundBuffer& sfx, const ESM::RefId& soundId)
+        {
+            if (editorId.empty())
+                return;
+
+            const ESM::RefId editorRefId = ESM::RefId::stringRefId(editorId);
+            if (map.find(editorRefId) != map.end())
+                return;
+
+            map.emplace(editorRefId, &sfx);
+            if (fnvSoundDiagEnabled())
+                Log(Debug::Info) << "FNV/ESM4 diag: aliased sound editor id " << editorId << " -> " << soundId;
         }
     }
 
@@ -85,9 +106,15 @@ namespace MWSound
 
         auto [handle, size] = mOutput->loadSound(sfx->getResourceName());
         if (handle == nullptr)
+        {
+            if (fnvSoundDiagEnabled())
+                Log(Debug::Warning) << "FNV/ESM4 diag: sound buffer load failed file=" << sfx->getResourceName();
             return {};
+        }
 
         sfx->mHandle = handle;
+        if (fnvSoundDiagEnabled())
+            Log(Debug::Info) << "FNV/ESM4 diag: sound buffer loaded file=" << sfx->getResourceName();
 
         mBufferCacheSize += size;
         if (mBufferCacheSize > mBufferCacheMax)
@@ -122,7 +149,11 @@ namespace MWSound
         {
             const ESM::Sound* sound = MWBase::Environment::get().getESMStore()->get<ESM::Sound>().search(soundId);
             if (sound == nullptr)
+            {
+                if (fnvSoundDiagEnabled())
+                    Log(Debug::Warning) << "FNV/ESM4 diag: sound id not found " << soundId;
                 return {};
+            }
             sfx = insertSound(soundId, *sound);
         }
 
@@ -206,6 +237,10 @@ namespace MWSound
         float volume = 1, min = 1, max = 255; // TODO: needs research
         SoundBuffer& sfx = mSoundBuffers.emplace_back(std::move(path), volume, min, max);
         mBufferNameMap.emplace(soundId, &sfx);
+        insertEditorIdAlias(mBufferNameMap, sound.mEditorId, sfx, soundId);
+        if (fnvSoundDiagEnabled())
+            Log(Debug::Info) << "FNV/ESM4 diag: registered SOUN4 " << sound.mEditorId << " id=" << soundId
+                             << " file=" << sfx.getResourceName() << " raw=" << sound.mSoundFile;
         return &sfx;
     }
 
@@ -218,6 +253,10 @@ namespace MWSound
         // ESMStore.
         SoundBuffer& sfx = mSoundBuffers.emplace_back(std::move(path), volume, min, max);
         mBufferNameMap.emplace(soundId, &sfx);
+        insertEditorIdAlias(mBufferNameMap, sound.mEditorId, sfx, soundId);
+        if (fnvSoundDiagEnabled())
+            Log(Debug::Info) << "FNV/ESM4 diag: registered SNDR4 " << sound.mEditorId << " id=" << soundId
+                             << " file=" << sfx.getResourceName() << " raw=" << sound.mSoundFile;
         return &sfx;
     }
 

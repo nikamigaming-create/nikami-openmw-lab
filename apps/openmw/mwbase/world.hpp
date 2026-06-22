@@ -17,6 +17,7 @@
 #include "../mwworld/ptr.hpp"
 #include "../mwworld/spellcaststate.hpp"
 
+#include "../mwrender/renderingmanager.hpp"
 #include "../mwrender/rendermode.hpp"
 
 namespace osg
@@ -604,6 +605,11 @@ namespace MWBase
         virtual MWWorld::DateTimeManager* getTimeManager() = 0;
 
         virtual void setActorActive(const MWWorld::Ptr& ptr, bool value) = 0;
+
+        /// Intersects the render scene from an origin/orientation and resolves the hit to a world object when possible.
+        virtual float getTargetObject(MWRender::RenderingManager::RayResult& result, const osg::Vec3f& origin,
+            const osg::Quat& orientation, float maxDistance, bool ignorePlayer, uint32_t ignoreMask = 0)
+            = 0;
     };
 }
 

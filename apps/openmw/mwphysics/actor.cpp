@@ -3,6 +3,7 @@
 #include <BulletCollision/CollisionShapes/btCylinderShape.h>
 
 #include <components/debug/debuglog.hpp>
+#include <components/esm/records.hpp>
 #include <components/misc/convert.hpp>
 #include <components/resource/bulletshape.hpp>
 #include <components/sceneutil/positionattitudetransform.hpp>
@@ -60,6 +61,20 @@ namespace MWPhysics
             if (mOriginalHalfExtents.length2() == 0.f)
                 Log(Debug::Error) << "Error: Failed to calculate bounding box for actor \""
                                   << ptr.getCellRef().getRefId() << "\".";
+        }
+
+        const bool fnvBipedActor = ptr.getClass().isNpc() || ptr.getType() == ESM::REC_NPC_4;
+        if (fnvBipedActor
+            && (mOriginalHalfExtents.z() < 32.f || mMeshTranslation.z() < 16.f || mOriginalHalfExtents.x() < 8.f
+                || mOriginalHalfExtents.y() < 8.f))
+        {
+            Log(Debug::Warning) << "FNV/ESM4 diag: replacing unusable biped actor collision box for "
+                                << ptr.getCellRef().getRefId() << " center=(" << mMeshTranslation.x() << ","
+                                << mMeshTranslation.y() << "," << mMeshTranslation.z() << ") extents=("
+                                << mOriginalHalfExtents.x() << "," << mOriginalHalfExtents.y() << ","
+                                << mOriginalHalfExtents.z() << ")";
+            mMeshTranslation = osg::Vec3f(0.f, 0.f, 64.f);
+            mOriginalHalfExtents = osg::Vec3f(20.f, 20.f, 64.f);
         }
 
         const btVector3 halfExtents = Misc::Convert::toBullet(mOriginalHalfExtents);

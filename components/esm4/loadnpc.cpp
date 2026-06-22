@@ -27,11 +27,50 @@
 #include "loadnpc.hpp"
 
 #include <cstring>
+#include <iomanip>
+#include <sstream>
 #include <stdexcept>
 #include <string> // getline
 
+#include <components/debug/debuglog.hpp>
+
 #include "reader.hpp"
 //#include "writer.hpp"
+
+namespace
+{
+    bool shouldLogFonvNpcFaceData(const ESM4::Npc& npc)
+    {
+        return npc.mIsFONV && (npc.mEditorId.rfind("GS", 0) == 0 || npc.mEditorId == "GSEasyPete");
+    }
+
+    void readAndLogFonvNpcFaceDataSubrecord(
+        ESM4::Reader& reader, const ESM4::Npc& npc, const ESM4::SubRecordHeader& subHdr)
+    {
+        if (!shouldLogFonvNpcFaceData(npc))
+        {
+            reader.skipSubRecordData();
+            return;
+        }
+
+        std::vector<unsigned char> bytes(subHdr.dataSize);
+        if (!bytes.empty())
+            reader.get(bytes.data(), bytes.size());
+
+        std::ostringstream hex;
+        const std::size_t count = std::min<std::size_t>(bytes.size(), 32);
+        for (std::size_t i = 0; i < count; ++i)
+        {
+            if (i != 0)
+                hex << ' ';
+            hex << std::hex << std::setw(2) << std::setfill('0') << static_cast<unsigned int>(bytes[i]);
+        }
+
+        Log(Debug::Info) << "FNV/ESM4 diag: raw NPC face/tint candidate " << npc.mEditorId << " "
+                         << ESM::printName(subHdr.typeId) << " size=" << subHdr.dataSize
+                         << " firstBytes=" << hex.str();
+    }
+}
 
 void ESM4::Npc::load(ESM4::Reader& reader)
 {
@@ -250,6 +289,64 @@ void ESM4::Npc::load(ESM4::Reader& reader)
             case ESM::fourCC("DPLT"):
                 reader.getFormId(mDefaultPkg);
                 break; // AI package list
+            case ESM::fourCC("TINI"):
+            {
+                TintLayer& tint = mTintLayers.emplace_back();
+                tint.hasIndex = true;
+                if (subHdr.dataSize == sizeof(std::uint16_t))
+                {
+                    std::uint16_t value = 0;
+                    reader.get(value);
+                    tint.index = value;
+                }
+                else if (subHdr.dataSize == sizeof(std::uint32_t))
+                    reader.get(tint.index);
+                else
+                    reader.skipSubRecordData();
+                break;
+            }
+            case ESM::fourCC("TINV"):
+            {
+                if (mTintLayers.empty())
+                    mTintLayers.emplace_back();
+                TintLayer& tint = mTintLayers.back();
+                tint.hasValue = true;
+                if (subHdr.dataSize == sizeof(float))
+                    reader.get(tint.value);
+                else
+                    reader.skipSubRecordData();
+                break;
+            }
+            case ESM::fourCC("TINC"):
+            {
+                if (mTintLayers.empty())
+                    mTintLayers.emplace_back();
+                TintLayer& tint = mTintLayers.back();
+                tint.hasColor = true;
+                if (subHdr.dataSize >= 3)
+                {
+                    reader.get(tint.color.red);
+                    reader.get(tint.color.green);
+                    reader.get(tint.color.blue);
+                    if (subHdr.dataSize >= 4)
+                        reader.get(tint.color.custom);
+                    else
+                        tint.color.custom = 255;
+                    if (subHdr.dataSize > 4)
+                        reader.skipSubRecordData(subHdr.dataSize - 4);
+                }
+                else
+                    reader.skipSubRecordData();
+                break;
+            }
+            case ESM::fourCC("NAM9"):
+            case ESM::fourCC("NAMA"):
+            case ESM::fourCC("QNAM"):
+            case ESM::fourCC("TIAS"):
+            {
+                readAndLogFonvNpcFaceDataSubrecord(reader, *this, subHdr);
+                break;
+            }
             case ESM::fourCC("DAMC"): // Destructible
             case ESM::fourCC("DEST"):
             case ESM::fourCC("DMDC"):
@@ -274,17 +371,10 @@ void ESM4::Npc::load(ESM4::Reader& reader)
             case ESM::fourCC("KWDA"):
             case ESM::fourCC("NAM5"):
             case ESM::fourCC("NAM8"):
-            case ESM::fourCC("NAM9"):
-            case ESM::fourCC("NAMA"):
             case ESM::fourCC("OBND"):
             case ESM::fourCC("PRKR"):
             case ESM::fourCC("PRKZ"):
-            case ESM::fourCC("QNAM"):
             case ESM::fourCC("SPCT"):
-            case ESM::fourCC("TIAS"):
-            case ESM::fourCC("TINC"):
-            case ESM::fourCC("TINI"):
-            case ESM::fourCC("TINV"):
             case ESM::fourCC("VMAD"):
             case ESM::fourCC("VTCK"):
             case ESM::fourCC("GNAM"):

@@ -102,6 +102,82 @@ namespace
         return true;
     }
 
+#if defined(__ANDROID__) || defined(ANDROID)
+    void removeShaderVersionLine(std::string& source)
+    {
+        if (!source.starts_with("#version"))
+            return;
+
+        const size_t versionLineEnd = source.find_first_of("\n\r");
+        source.erase(0, versionLineEnd == std::string::npos ? source.size() : versionLineEnd);
+    }
+
+    void removeShaderFunctionPrototypes(std::string& source)
+    {
+        static const std::regex prototypeRegex(
+            R"(^\s*(void|float|double|int|uint|bool|[biu]?vec[234]|mat[234](x[234])?)\s+\w+\s*\([^{}]*\)\s*;\s*$)");
+
+        std::stringstream input(source);
+        std::string line;
+        std::string filtered;
+        std::set<std::string> seenPrototypes;
+        while (std::getline(input, line))
+        {
+            if (std::regex_match(line, prototypeRegex))
+            {
+                const auto firstNonWhitespace = line.find_first_not_of(" \t");
+                const std::string prototype
+                    = firstNonWhitespace == std::string::npos ? line : line.substr(firstNonWhitespace);
+                if (!seenPrototypes.insert(prototype).second)
+                    continue;
+            }
+            filtered += line + "\n";
+        }
+        source = std::move(filtered);
+    }
+
+    void removeDuplicateUniformDeclarations(std::string& source)
+    {
+        static const std::regex uniformRegex(R"(^\s*uniform\s+[^;]*?\b([_A-Za-z][_A-Za-z0-9]*)\s*(\[[^;]*\])?\s*;\s*$)");
+
+        std::stringstream input(source);
+        std::string line;
+        std::string filtered;
+        std::set<std::string> seenUniforms;
+        int conditionalDepth = 0;
+        while (std::getline(input, line))
+        {
+            const auto firstNonWhitespace = line.find_first_not_of(" \t");
+            const std::string_view trimmed = firstNonWhitespace == std::string::npos
+                ? std::string_view()
+                : std::string_view(line).substr(firstNonWhitespace);
+
+            std::smatch match;
+            if (conditionalDepth == 0 && std::regex_match(line, match, uniformRegex))
+            {
+                if (!seenUniforms.insert(match[1].str()).second)
+                    continue;
+            }
+
+            filtered += line + "\n";
+
+            if (trimmed.starts_with("#if"))
+                ++conditionalDepth;
+            else if (trimmed.starts_with("#endif") && conditionalDepth > 0)
+                --conditionalDepth;
+        }
+        source = std::move(filtered);
+    }
+
+    void dedupeLinkedShaderNames(std::vector<std::string>& names)
+    {
+        std::set<std::string> seen;
+        names.erase(std::remove_if(names.begin(), names.end(),
+                        [&seen](const std::string& name) { return !seen.insert(name).second; }),
+            names.end());
+    }
+#endif
+
     // Recursively replaces include statements with the actual source of the included files.
     // Adjusts #line statements accordingly and detects cyclic includes.
     // cycleIncludeChecker is the set of files that include this file directly or indirectly, and is intentionally not a
@@ -677,6 +753,60 @@ namespace Shader
             return false;
         if (!parseDirectives(source, linkedShaderTemplateNames, defines, mGlobalDefines, templateName))
             return false;
+#if defined(__ANDROID__) || defined(ANDROID)
+        if (!linkedShaderTemplateNames.empty())
+        {
+            dedupeLinkedShaderNames(linkedShaderTemplateNames);
+
+            std::string linkedSources;
+            for (const std::string& linkedTemplateName : linkedShaderTemplateNames)
+            {
+                TemplateMap::iterator templateIt = mShaderTemplates.find(linkedTemplateName);
+                if (templateIt == mShaderTemplates.end())
+                {
+                    std::filesystem::path path = mPath / linkedTemplateName;
+                    std::ifstream stream;
+                    stream.open(path);
+                    if (stream.fail())
+                    {
+                        Log(Debug::Error) << "Failed to open linked shader " << path << ": "
+                                          << std::generic_category().message(errno);
+                        return false;
+                    }
+
+                    std::stringstream buffer;
+                    buffer << stream.rdbuf();
+                    int fileNumber = 1;
+                    std::set<std::filesystem::path> insertedPaths;
+                    std::string linkedSource = buffer.str();
+                    if (!addLineDirectivesAfterConditionalBlocks(linkedSource)
+                        || !parseIncludes(mPath, linkedSource, linkedTemplateName, fileNumber, {}, insertedPaths))
+                        return false;
+                    mHotReloadManager->templateIncludedFiles[linkedTemplateName] = std::move(insertedPaths);
+                    templateIt = mShaderTemplates.insert(std::make_pair(linkedTemplateName, linkedSource)).first;
+                }
+
+                std::string linkedSource = templateIt->second;
+                std::vector<std::string> nestedLinkedShaderNames;
+                if (!parseDefines(linkedSource, defines, mGlobalDefines, linkedTemplateName)
+                    || !parseDirectives(
+                        linkedSource, nestedLinkedShaderNames, defines, mGlobalDefines, linkedTemplateName))
+                    return false;
+
+                removeShaderVersionLine(linkedSource);
+                removeShaderFunctionPrototypes(linkedSource);
+                linkedSources += "\n#line 0\n" + linkedSource + "\n";
+            }
+
+            const size_t versionLineEnd
+                = source.starts_with("#version") ? source.find_first_of("\n\r") : std::string::npos;
+            const size_t insertPos = versionLineEnd == std::string::npos ? 0 : versionLineEnd + 1;
+            source.insert(insertPos == std::string::npos ? 0 : insertPos, linkedSources);
+            removeShaderFunctionPrototypes(source);
+            removeDuplicateUniformDeclarations(source);
+            linkedShaderTemplateNames.clear();
+        }
+#endif
         return true;
     }
 

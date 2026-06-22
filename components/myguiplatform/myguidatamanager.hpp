@@ -3,6 +3,7 @@
 
 #include <MyGUI_DataManager.h>
 
+#include <components/widgets/myguicompat.hpp>
 #include <string>
 
 #include <components/vfs/pathutil.hpp>
@@ -26,7 +27,7 @@ namespace MyGUIPlatform
         /** Get data stream from specified resource name.
             @param name Resource name (usually file name).
         */
-        MyGUI::IDataStream* getData(const std::string& name) const override;
+        MyGUI::IDataStream* getData(const std::string& name) OPENMW_MYGUI_DATA_MANAGER_CONST override;
 
         /** Free data stream.
             @param data Data stream.
@@ -36,21 +37,22 @@ namespace MyGUIPlatform
         /** Is data with specified name exist.
             @param name Resource name.
         */
-        bool isDataExist(const std::string& name) const override;
+        bool isDataExist(const std::string& name) OPENMW_MYGUI_DATA_MANAGER_CONST override;
 
         /** Get all data names with names that matches pattern.
             @param pattern Pattern to match (for example "*.layout").
         */
-        const MyGUI::VectorString& getDataListNames(const std::string& pattern) const override;
+        const MyGUI::VectorString& getDataListNames(const std::string& pattern) OPENMW_MYGUI_DATA_MANAGER_CONST override;
 
         /** Get full path to data.
             @param name Resource name.
             @return Return full path to specified data.
         */
-        std::string getDataPath(const std::string& name) const override;
+        OPENMW_MYGUI_DATA_PATH_RETURN getDataPath(const std::string& name) OPENMW_MYGUI_DATA_MANAGER_CONST override;
 
     private:
         VFS::Path::Normalized mResourcePath;
+        std::string mDataPath;
 
         const VFS::Manager* mVfs;
     };

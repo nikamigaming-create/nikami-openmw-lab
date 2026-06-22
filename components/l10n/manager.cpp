@@ -1,7 +1,9 @@
 #include "manager.hpp"
 
 #include <set>
+#ifndef OPENMW_ANDROID_DISABLE_ICU
 #include <unicode/errorcode.h>
+#endif
 
 #include <components/debug/debuglog.hpp>
 #include <components/vfs/manager.hpp>

@@ -87,6 +87,7 @@ namespace Resource
         , mFileName(other.mFileName)
         , mFileHash(other.mFileHash)
         , mVisualCollisionType(other.mVisualCollisionType)
+        , mCollisionSourceRefs(other.mCollisionSourceRefs)
     {
     }
 
@@ -100,6 +101,11 @@ namespace Resource
     osg::ref_ptr<BulletShapeInstance> makeInstance(osg::ref_ptr<const BulletShape> source)
     {
         return { new BulletShapeInstance(std::move(source)) };
+    }
+
+    CollisionShapePtr cloneCollisionShape(const btCollisionShape* shape)
+    {
+        return duplicateCollisionShape(shape);
     }
 
     BulletShapeInstance::BulletShapeInstance(osg::ref_ptr<const BulletShape> source)

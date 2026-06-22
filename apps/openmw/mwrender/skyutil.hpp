@@ -20,6 +20,11 @@ namespace Resource
     class SceneManager;
 }
 
+namespace VFS
+{
+    class Manager;
+}
+
 namespace MWRender
 {
     struct MoonUpdater;
@@ -232,7 +237,10 @@ namespace MWRender
         void setVisible(bool visible);
 
     protected:
+        void setAvailable(bool available);
+
         unsigned int mVisibleMask;
+        bool mAvailable;
         static const float mDistance;
         osg::ref_ptr<osg::PositionAttitudeTransform> mTransform;
         osg::ref_ptr<osg::Geometry> mGeom;
@@ -257,7 +265,7 @@ namespace MWRender
         /// pixels.
         osg::ref_ptr<osg::OcclusionQueryNode> createOcclusionQueryNode(osg::Group* parent, bool queryVisible);
 
-        void createSunFlash(Resource::ImageManager& imageManager);
+        void createSunFlash(Resource::SceneManager& sceneManager);
         void destroySunFlash();
 
         void createSunGlare();
@@ -295,6 +303,7 @@ namespace MWRender
     private:
         Type mType;
         MoonState::Phase mPhase;
+        const VFS::Manager* mVFS;
         osg::ref_ptr<MoonUpdater> mUpdater;
 
         void setPhase(const MoonState::Phase& phase);

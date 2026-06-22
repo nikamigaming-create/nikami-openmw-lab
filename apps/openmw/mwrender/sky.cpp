@@ -9,7 +9,14 @@
 #include <osgParticle/Operator>
 #include <osgParticle/ParticleSystemUpdater>
 
+#include <algorithm>
+#include <cstdlib>
+#include <string>
+#include <string_view>
+
 #include <components/settings/values.hpp>
+
+#include <components/debug/debuglog.hpp>
 
 #include <components/sceneutil/controller.hpp>
 #include <components/sceneutil/depth.hpp>
@@ -40,6 +47,100 @@
 
 namespace
 {
+    bool logMissingSkyAssets()
+    {
+        return std::getenv("OPENMW_FNV_SKY_MISSING_LOG") != nullptr;
+    }
+
+    bool isFalloutSkyMesh(VFS::Path::NormalizedView model)
+    {
+        const std::string_view value = model.value();
+        return value.rfind("meshes/sky/", 0) == 0;
+    }
+
+    float falloutSkyMeshScaleMultiplier()
+    {
+        if (const char* value = std::getenv("OPENMW_FNV_SKY_MESH_SCALE"))
+        {
+            char* end = nullptr;
+            const float parsed = std::strtof(value, &end);
+            if (end != value && parsed > 0.f)
+                return parsed;
+        }
+
+        return 1.f;
+    }
+
+    osg::PositionAttitudeTransform* createFalloutSkyMeshRoot(osg::Group* parentNode, VFS::Path::NormalizedView model)
+    {
+        osg::ref_ptr<osg::PositionAttitudeTransform> root = new osg::PositionAttitudeTransform;
+        root->setName(std::string("FNV camera-relative sky mesh: ") + std::string(model.value()));
+        root->setCullingActive(false);
+
+        osg::StateSet* stateset = root->getOrCreateStateSet();
+        osg::ref_ptr<osg::Depth> depth = new SceneUtil::AutoDepth(osg::Depth::ALWAYS, 0.0, 1.0, false);
+        stateset->setAttributeAndModes(depth, osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
+        stateset->setMode(GL_DEPTH_TEST, osg::StateAttribute::OFF | osg::StateAttribute::OVERRIDE);
+        stateset->setMode(GL_FOG, osg::StateAttribute::OFF | osg::StateAttribute::OVERRIDE);
+        stateset->setRenderBinDetails(MWRender::RenderBin_Sky, "RenderBin", osg::StateSet::OVERRIDE_RENDERBIN_DETAILS);
+        stateset->setNestRenderBins(false);
+
+        parentNode->addChild(root);
+        return root.release();
+    }
+
+    void fitFalloutSkyMeshToViewDistance(osg::PositionAttitudeTransform& root, const osg::Node& instance)
+    {
+        const float radius = static_cast<float>(instance.getBound().radius());
+        if (radius <= 1.f)
+            return;
+
+        const float viewDistance = Settings::camera().mViewingDistance.get();
+        const float targetRadius = std::max(1024.f, viewDistance * 0.82f);
+        const float scale = (targetRadius / radius) * falloutSkyMeshScaleMultiplier();
+        root.setScale(osg::Vec3f(scale, scale, scale));
+    }
+
+    osg::ref_ptr<osg::Node> getOptionalSkyInstance(Resource::SceneManager& sceneManager,
+        VFS::Path::NormalizedView model, osg::Group* parentNode, std::string_view label)
+    {
+        if (!sceneManager.getVFS()->exists(model))
+        {
+            if (logMissingSkyAssets())
+                Log(Debug::Info) << "FNV/ESM4: skipped missing OpenMW sky mesh " << label << " (" << model.value()
+                                 << ")";
+            return nullptr;
+        }
+
+        if (isFalloutSkyMesh(model))
+        {
+            osg::PositionAttitudeTransform* skyMeshRoot = createFalloutSkyMeshRoot(parentNode, model);
+            osg::ref_ptr<osg::Node> instance = sceneManager.getInstance(model, skyMeshRoot);
+            fitFalloutSkyMeshToViewDistance(*skyMeshRoot, *instance);
+            if (logMissingSkyAssets())
+                Log(Debug::Info) << "FNV/ESM4: wrapped sky mesh " << label << " (" << model.value()
+                                 << ") radius=" << instance->getBound().radius()
+                                 << " scale=" << skyMeshRoot->getScale().x();
+            return instance;
+        }
+
+        return sceneManager.getInstance(model, parentNode);
+    }
+
+    void pushOptionalSkyModel(Resource::SceneManager& sceneManager, std::vector<VFS::Path::Normalized>& models,
+        const VFS::Path::Normalized& model, std::string_view label)
+    {
+        if (!sceneManager.getVFS()->exists(model))
+        {
+            if (logMissingSkyAssets())
+                Log(Debug::Info) << "FNV/ESM4: skipped preload for missing OpenMW sky mesh " << label << " ("
+                                 << model.value() << ")";
+            return;
+        }
+
+        models.push_back(model);
+    }
+
     class WrapAroundOperator : public osgParticle::Operator
     {
     public:
@@ -295,12 +396,16 @@ namespace MWRender
     {
         assert(!mCreated);
 
-        mAtmosphereDay = mSceneManager->getInstance(Settings::models().mSkyatmosphere.get(), mEarlyRenderBinRoot);
-        ModVertexAlphaVisitor modAtmosphere(ModVertexAlphaVisitor::Atmosphere);
-        mAtmosphereDay->accept(modAtmosphere);
+        mAtmosphereDay = getOptionalSkyInstance(
+            *mSceneManager, Settings::models().mSkyatmosphere.get(), mEarlyRenderBinRoot, "day atmosphere");
+        if (mAtmosphereDay)
+        {
+            ModVertexAlphaVisitor modAtmosphere(ModVertexAlphaVisitor::Atmosphere);
+            mAtmosphereDay->accept(modAtmosphere);
 
-        mAtmosphereUpdater = new AtmosphereUpdater;
-        mAtmosphereDay->addUpdateCallback(mAtmosphereUpdater);
+            mAtmosphereUpdater = new AtmosphereUpdater;
+            mAtmosphereDay->addUpdateCallback(mAtmosphereUpdater);
+        }
 
         mAtmosphereNightNode = new osg::PositionAttitudeTransform;
         mAtmosphereNightNode->setNodeMask(0);
@@ -308,16 +413,21 @@ namespace MWRender
 
         osg::ref_ptr<osg::Node> atmosphereNight;
         if (mSceneManager->getVFS()->exists(Settings::models().mSkynight02.get()))
-            atmosphereNight = mSceneManager->getInstance(Settings::models().mSkynight02.get(), mAtmosphereNightNode);
+            atmosphereNight = getOptionalSkyInstance(
+                *mSceneManager, Settings::models().mSkynight02.get(), mAtmosphereNightNode, "night atmosphere");
         else
-            atmosphereNight = mSceneManager->getInstance(Settings::models().mSkynight01.get(), mAtmosphereNightNode);
-        atmosphereNight->getOrCreateStateSet()->setAttributeAndModes(
-            createAlphaTrackingUnlitMaterial(), osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
+            atmosphereNight = getOptionalSkyInstance(
+                *mSceneManager, Settings::models().mSkynight01.get(), mAtmosphereNightNode, "night atmosphere");
+        if (atmosphereNight)
+        {
+            atmosphereNight->getOrCreateStateSet()->setAttributeAndModes(
+                createAlphaTrackingUnlitMaterial(), osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
 
-        ModVertexAlphaVisitor modStars(ModVertexAlphaVisitor::Stars);
-        atmosphereNight->accept(modStars);
-        mAtmosphereNightUpdater = new AtmosphereNightUpdater(mSceneManager->getImageManager());
-        atmosphereNight->addUpdateCallback(mAtmosphereNightUpdater);
+            ModVertexAlphaVisitor modStars(ModVertexAlphaVisitor::Stars);
+            atmosphereNight->accept(modStars);
+            mAtmosphereNightUpdater = new AtmosphereNightUpdater(mSceneManager->getImageManager());
+            atmosphereNight->addUpdateCallback(mAtmosphereNightUpdater);
+        }
 
         mSun = std::make_unique<Sun>(mEarlyRenderBinRoot, *mSceneManager);
         mSun->setSunglare(mSunglareEnabled);
@@ -331,27 +441,36 @@ namespace MWRender
 
         mCloudMesh = new osg::PositionAttitudeTransform;
         osg::ref_ptr<osg::Node> cloudMeshChild
-            = mSceneManager->getInstance(Settings::models().mSkyclouds.get(), mCloudMesh);
-        mCloudUpdater = new CloudUpdater();
-        mCloudUpdater->setOpacity(1.f);
-        cloudMeshChild->addUpdateCallback(mCloudUpdater);
-        mCloudMesh->addChild(cloudMeshChild);
+            = getOptionalSkyInstance(*mSceneManager, Settings::models().mSkyclouds.get(), mCloudMesh, "clouds");
+        if (cloudMeshChild)
+        {
+            mCloudUpdater = new CloudUpdater();
+            mCloudUpdater->setOpacity(1.f);
+            cloudMeshChild->addUpdateCallback(mCloudUpdater);
+            mCloudMesh->addChild(cloudMeshChild);
+        }
 
         mNextCloudMesh = new osg::PositionAttitudeTransform;
         osg::ref_ptr<osg::Node> nextCloudMeshChild
-            = mSceneManager->getInstance(Settings::models().mSkyclouds.get(), mNextCloudMesh);
-        mNextCloudUpdater = new CloudUpdater();
-        mNextCloudUpdater->setOpacity(0.f);
-        nextCloudMeshChild->addUpdateCallback(mNextCloudUpdater);
+            = getOptionalSkyInstance(*mSceneManager, Settings::models().mSkyclouds.get(), mNextCloudMesh, "next clouds");
+        if (nextCloudMeshChild)
+        {
+            mNextCloudUpdater = new CloudUpdater();
+            mNextCloudUpdater->setOpacity(0.f);
+            nextCloudMeshChild->addUpdateCallback(mNextCloudUpdater);
+            mNextCloudMesh->addChild(nextCloudMeshChild);
+        }
         mNextCloudMesh->setNodeMask(0);
-        mNextCloudMesh->addChild(nextCloudMeshChild);
 
         mCloudNode->addChild(mCloudMesh);
         mCloudNode->addChild(mNextCloudMesh);
 
-        ModVertexAlphaVisitor modClouds(ModVertexAlphaVisitor::Clouds);
-        mCloudMesh->accept(modClouds);
-        mNextCloudMesh->accept(modClouds);
+        if (mCloudUpdater || mNextCloudUpdater)
+        {
+            ModVertexAlphaVisitor modClouds(ModVertexAlphaVisitor::Clouds);
+            mCloudMesh->accept(modClouds);
+            mNextCloudMesh->accept(modClouds);
+        }
 
         Shader::ShaderManager::DefineMap defines = {};
         Stereo::shaderStereoDefines(defines);
@@ -554,15 +673,18 @@ namespace MWRender
         if (mCloudAnimationTimer >= 4.f)
             mCloudAnimationTimer -= 4.f;
 
-        mNextCloudUpdater->setTextureCoord(mCloudAnimationTimer);
-        mCloudUpdater->setTextureCoord(mCloudAnimationTimer);
+        if (mNextCloudUpdater)
+            mNextCloudUpdater->setTextureCoord(mCloudAnimationTimer);
+        if (mCloudUpdater)
+            mCloudUpdater->setTextureCoord(mCloudAnimationTimer);
 
         // morrowind rotates each cloud mesh independently
         osg::Quat rotation;
         rotation.makeRotate(MWWorld::Weather::defaultDirection(), mStormDirection);
-        mCloudMesh->setAttitude(rotation);
+        if (mCloudMesh)
+            mCloudMesh->setAttitude(rotation);
 
-        if (mNextCloudMesh->getNodeMask())
+        if (mNextCloudMesh && mNextCloudMesh->getNodeMask())
         {
             rotation.makeRotate(MWWorld::Weather::defaultDirection(), mNextStormDirection);
             mNextCloudMesh->setAttitude(rotation);
@@ -570,7 +692,7 @@ namespace MWRender
 
         // rotate the stars by 360 degrees every 4 days
         mAtmosphereNightRoll += timeScale * duration * osg::DegreesToRadians(360.f) / (3600 * 96.f);
-        if (mAtmosphereNightNode->getNodeMask() != 0)
+        if (mAtmosphereNightNode && mAtmosphereNightNode->getNodeMask() != 0)
             mAtmosphereNightNode->setAttitude(osg::Quat(mAtmosphereNightRoll, osg::Vec3f(0, 0, 1)));
         mPrecipitationOccluder->update();
     }
@@ -689,6 +811,22 @@ namespace MWRender
             }
             else
             {
+                if (!mSceneManager->getVFS()->exists(mCurrentParticleEffect))
+                {
+                    if (logMissingSkyAssets())
+                        Log(Debug::Info) << "FNV/ESM4: skipped missing OpenMW weather mesh ("
+                                         << mCurrentParticleEffect.value() << ")";
+                    mCurrentParticleEffect.clear();
+                    if (mParticleNode)
+                    {
+                        mSkyNode->removeChild(mParticleNode);
+                        mParticleNode = nullptr;
+                    }
+                    if (mRainEffect.empty())
+                        mPrecipitationOccluder->disable();
+                }
+                else
+                {
                 if (!mParticleNode)
                 {
                     mParticleNode = new osg::PositionAttitudeTransform;
@@ -744,6 +882,7 @@ namespace MWRender
                     mPrecipitationOccluder->enable();
                     mPrecipitationOccluder->updateRange(defaultWrapRange);
                 }
+                }
             }
         }
 
@@ -751,15 +890,18 @@ namespace MWRender
         {
             mClouds = weather.mCloudTexture;
 
-            const VFS::Path::Normalized texture
-                = Misc::ResourceHelpers::correctTexturePath(VFS::Path::toNormalized(mClouds), *mSceneManager->getVFS());
+            if (mCloudUpdater)
+            {
+                const VFS::Path::Normalized texture = Misc::ResourceHelpers::correctTexturePath(
+                    VFS::Path::toNormalized(mClouds), *mSceneManager->getVFS());
 
-            osg::ref_ptr<osg::Texture2D> cloudTex
-                = new osg::Texture2D(mSceneManager->getImageManager()->getImage(texture));
-            cloudTex->setWrap(osg::Texture::WRAP_S, osg::Texture::REPEAT);
-            cloudTex->setWrap(osg::Texture::WRAP_T, osg::Texture::REPEAT);
+                osg::ref_ptr<osg::Texture2D> cloudTex
+                    = new osg::Texture2D(mSceneManager->getImageManager()->getImage(texture));
+                cloudTex->setWrap(osg::Texture::WRAP_S, osg::Texture::REPEAT);
+                cloudTex->setWrap(osg::Texture::WRAP_T, osg::Texture::REPEAT);
 
-            mCloudUpdater->setTexture(std::move(cloudTex));
+                mCloudUpdater->setTexture(std::move(cloudTex));
+            }
         }
 
         if (mStormDirection != weather.mStormDirection)
@@ -772,7 +914,7 @@ namespace MWRender
         {
             mNextClouds = weather.mNextCloudTexture;
 
-            if (!mNextClouds.empty())
+            if (!mNextClouds.empty() && mNextCloudUpdater)
             {
                 const VFS::Path::Normalized texture = Misc::ResourceHelpers::correctTexturePath(
                     VFS::Path::toNormalized(mNextClouds), *mSceneManager->getVFS());
@@ -791,9 +933,12 @@ namespace MWRender
         {
             mCloudBlendFactor = std::clamp(weather.mCloudBlendFactor, 0.f, 1.f);
 
-            mCloudUpdater->setOpacity(1.f - mCloudBlendFactor);
-            mNextCloudUpdater->setOpacity(mCloudBlendFactor);
-            mNextCloudMesh->setNodeMask(mCloudBlendFactor > 0.f ? ~0u : 0);
+            if (mCloudUpdater)
+                mCloudUpdater->setOpacity(1.f - mCloudBlendFactor);
+            if (mNextCloudUpdater)
+                mNextCloudUpdater->setOpacity(mCloudBlendFactor);
+            if (mNextCloudMesh)
+                mNextCloudMesh->setNodeMask(mCloudBlendFactor > 0.f && mNextCloudUpdater ? ~0u : 0);
         }
 
         if (mCloudColour != weather.mFogColor)
@@ -801,8 +946,10 @@ namespace MWRender
             osg::Vec4f clr(weather.mFogColor);
             clr += osg::Vec4f(0.13f, 0.13f, 0.13f, 0.f);
 
-            mCloudUpdater->setEmissionColor(clr);
-            mNextCloudUpdater->setEmissionColor(clr);
+            if (mCloudUpdater)
+                mCloudUpdater->setEmissionColor(clr);
+            if (mNextCloudUpdater)
+                mNextCloudUpdater->setEmissionColor(clr);
 
             mCloudColour = weather.mFogColor;
         }
@@ -811,7 +958,8 @@ namespace MWRender
         {
             mSkyColour = weather.mSkyColor;
 
-            mAtmosphereUpdater->setEmissionColor(mSkyColour);
+            if (mAtmosphereUpdater)
+                mAtmosphereUpdater->setEmissionColor(mSkyColour);
             mMasser->setAtmosphereColor(mSkyColour);
             mSecunda->setAtmosphereColor(mSkyColour);
         }
@@ -835,10 +983,12 @@ namespace MWRender
         {
             mStarsOpacity = nextStarsOpacity;
 
-            mAtmosphereNightUpdater->setFade(mStarsOpacity);
+            if (mAtmosphereNightUpdater)
+                mAtmosphereNightUpdater->setFade(mStarsOpacity);
         }
 
-        mAtmosphereNightNode->setNodeMask(weather.mNight ? ~0u : 0);
+        if (mAtmosphereNightNode)
+            mAtmosphereNightNode->setNodeMask(weather.mNight && mAtmosphereNightUpdater ? ~0u : 0);
         mPrecipitationAlpha = weather.mPrecipitationAlpha;
     }
 
@@ -916,16 +1066,17 @@ namespace MWRender
     void SkyManager::listAssetsToPreload(
         std::vector<VFS::Path::Normalized>& models, std::vector<VFS::Path::Normalized>& textures)
     {
-        models.push_back(Settings::models().mSkyatmosphere);
+        pushOptionalSkyModel(*mSceneManager, models, Settings::models().mSkyatmosphere, "day atmosphere");
         if (mSceneManager->getVFS()->exists(Settings::models().mSkynight02.get()))
-            models.push_back(Settings::models().mSkynight02);
-        models.push_back(Settings::models().mSkynight01);
-        models.push_back(Settings::models().mSkyclouds);
+            pushOptionalSkyModel(*mSceneManager, models, Settings::models().mSkynight02, "night atmosphere 02");
+        else
+            pushOptionalSkyModel(*mSceneManager, models, Settings::models().mSkynight01, "night atmosphere 01");
+        pushOptionalSkyModel(*mSceneManager, models, Settings::models().mSkyclouds, "clouds");
 
-        models.push_back(Settings::models().mWeatherashcloud);
-        models.push_back(Settings::models().mWeatherblightcloud);
-        models.push_back(Settings::models().mWeathersnow);
-        models.push_back(Settings::models().mWeatherblizzard);
+        pushOptionalSkyModel(*mSceneManager, models, Settings::models().mWeatherashcloud, "ash cloud");
+        pushOptionalSkyModel(*mSceneManager, models, Settings::models().mWeatherblightcloud, "blight cloud");
+        pushOptionalSkyModel(*mSceneManager, models, Settings::models().mWeathersnow, "snow");
+        pushOptionalSkyModel(*mSceneManager, models, Settings::models().mWeatherblizzard, "blizzard");
 
         textures.emplace_back("textures/tx_mooncircle_full_s.dds");
         textures.emplace_back("textures/tx_mooncircle_full_m.dds");

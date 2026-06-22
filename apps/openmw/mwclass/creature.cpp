@@ -587,7 +587,7 @@ namespace MWClass
 
         MWGui::ToolTipInfo info;
         std::string_view name = getName(ptr);
-        info.caption = MyGUI::TextIterator::toTagsString(MyGUI::UString(name));
+        info.caption = MyGUI::TextIterator::toTagsString(MyGUI::UString(std::string(name)));
 
         if (MWBase::Environment::get().getWindowManager()->getFullHelp())
             info.extra += MWGui::ToolTips::getMiscString(ref->mBase->mScript.getRefIdString(), "Script");

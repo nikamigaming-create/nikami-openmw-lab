@@ -4,6 +4,8 @@
 
 #include <osg/Stats>
 
+#include <components/debug/debuglog.hpp>
+
 #include <components/misc/rng.hpp>
 
 #include <components/esm/records.hpp>
@@ -28,6 +30,8 @@
 #include "../mwbase/statemanager.hpp"
 #include "../mwbase/windowmanager.hpp"
 #include "../mwbase/world.hpp"
+
+#include "../mwclass/esm4npc.hpp"
 
 #include "../mwsound/constants.hpp"
 
@@ -83,6 +87,39 @@ namespace
             rating3
                 = (stats.getSkill(ESM::Skill::Mercantile).getModified() + repTerm + luckTerm + persTerm) * fatigueTerm;
         }
+    }
+
+    bool isFnvCivilianSpontaneousCombat(
+        const MWWorld::Ptr& ptr, const MWWorld::Ptr& target, const MWMechanics::CreatureStats& stats)
+    {
+        if (ptr.getType() != ESM::REC_NPC_4 || target != MWMechanics::getPlayer())
+            return false;
+
+        const ESM4::Npc* traits = MWClass::ESM4Npc::getTraitsRecord(ptr);
+        if (traits == nullptr || !traits->mIsFONV)
+            return false;
+
+        const int fight = stats.getAiSetting(MWMechanics::AiSetting::Fight).getModified();
+        if (fight > 0)
+            return false;
+
+        const ESM::RefNum targetRef = target.getCellRef().getRefNum();
+        const ESM::RefNum actorRef = ptr.getCellRef().getRefNum();
+        const bool actorTriedToHitTarget = stats.getHitAttemptActor().isSet() && stats.getHitAttemptActor() == targetRef;
+        const bool targetTriedToHitActor = target.getClass().isActor()
+            && target.getClass().getCreatureStats(target).getHitAttemptActor().isSet()
+            && target.getClass().getCreatureStats(target).getHitAttemptActor() == actorRef;
+
+        if (actorTriedToHitTarget || targetTriedToHitActor)
+            return false;
+
+        Log(Debug::Info) << "FNV/ESM4 diag: blocked spontaneous civilian combat actor=" << traits->mEditorId
+                         << " ref=" << ptr.getCellRef().getRefId() << " target=" << target.getCellRef().getRefId()
+                         << " fight=" << fight << " flee="
+                         << stats.getAiSetting(MWMechanics::AiSetting::Flee).getModified()
+                         << " actorHitAttempt=" << stats.getHitAttemptActor()
+                         << " targetHitAttempt=" << target.getClass().getCreatureStats(target).getHitAttemptActor();
+        return true;
     }
 
     bool isOwned(const MWWorld::Ptr& ptr, const MWWorld::Ptr& target, MWWorld::Ptr& victim)
@@ -1689,6 +1726,9 @@ namespace MWMechanics
 
         // Don't add duplicate packages nor add packages to dead actors.
         if (stats.isDead() || stats.getAiSequence().isInCombat(target))
+            return;
+
+        if (isFnvCivilianSpontaneousCombat(ptr, target, stats))
             return;
 
         // The target is somehow the same as the actor. Early-out.

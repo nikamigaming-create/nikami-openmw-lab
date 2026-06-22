@@ -699,7 +699,7 @@ namespace Gui
         MyGUI::ResourceManager::getInstance().addResource(bookFont);
     }
 
-    void FontLoader::overrideLineHeight(MyGUI::xml::ElementPtr node, std::string_view file, MyGUI::Version version)
+    void FontLoader::overrideLineHeight(MyGUI::xml::ElementPtr node, MyGUIStringParam file, MyGUI::Version version)
     {
         // We should adjust line height for MyGUI widgets depending on font size
         MyGUI::xml::ElementEnumerator resourceNode = node->getElementEnumerator();

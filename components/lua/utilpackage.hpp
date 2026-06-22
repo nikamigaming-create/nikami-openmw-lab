@@ -9,6 +9,8 @@
 
 #include <sol/sol.hpp>
 
+#include <vector>
+
 namespace LuaUtil
 {
     using Vec2 = osg::Vec2f;
@@ -41,6 +43,15 @@ namespace LuaUtil
     }
 
     sol::table initUtilPackage(lua_State* state);
+
+    template <class T>
+    sol::table tableFromVector(sol::state_view lua, const std::vector<T>& values)
+    {
+        sol::table table(lua, sol::create);
+        for (const T& value : values)
+            table[table.size() + 1] = value;
+        return table;
+    }
 }
 
 #endif // COMPONENTS_LUA_UTILPACKAGE_H

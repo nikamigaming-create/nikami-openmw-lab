@@ -63,6 +63,11 @@ namespace MWRender
         osg::Geometry::drawImplementation(renderInfo);
     }
 
+    void PingPongCanvas::setPingPongCallback(std::unique_ptr<PingPongCallback> cb)
+    {
+        mPingPongCallback = std::move(cb);
+    }
+
     static void attachCloneOfTemplate(
         osg::FrameBufferObject* fbo, osg::Camera::BufferComponent component, osg::Texture* tex)
     {
@@ -91,7 +96,10 @@ namespace MWRender
             filtered.push_back(i);
         }
 
-        auto* resolveViewport = state.getCurrentViewport();
+        if (mPingPongCallback)
+            mPingPongCallback->pingPongBegin(state, *this);
+
+        auto* resolveViewport = mDestinationViewport ? mDestinationViewport.get() : state.getCurrentViewport();
 
         if (filtered.empty() || !mPostprocessing)
         {
@@ -107,6 +115,9 @@ namespace MWRender
             state.applyTextureAttribute(0, mTextureScene);
             resolveViewport->apply(state);
 
+            if (mDestinationFBO)
+                mDestinationFBO->apply(state, osg::FrameBufferObject::DRAW_FRAMEBUFFER);
+
             drawGeometry(renderInfo);
             state.popStateSet();
 
@@ -114,6 +125,9 @@ namespace MWRender
             {
                 state.popStateSet();
             }
+
+            if (mPingPongCallback)
+                mPingPongCallback->pingPongEnd(state, *this);
 
             return;
         }
@@ -353,5 +367,8 @@ namespace MWRender
         }
 
         mDirtyAttachments.clear();
+
+        if (mPingPongCallback)
+            mPingPongCallback->pingPongEnd(state, *this);
     }
 }

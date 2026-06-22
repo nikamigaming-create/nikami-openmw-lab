@@ -34,7 +34,7 @@ namespace Gui
         updateImage();
     }
 
-    void ImageButton::setPropertyOverride(std::string_view key, std::string_view value)
+    void ImageButton::setPropertyOverride(MyGUIStringParam key, MyGUIStringParam value)
     {
         if (key == "ImageHighlighted")
             mImageHighlighted = value;

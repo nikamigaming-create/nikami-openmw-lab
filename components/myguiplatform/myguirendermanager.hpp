@@ -3,6 +3,8 @@
 
 #include <MyGUI_RenderManager.h>
 
+#include <components/widgets/myguicompat.hpp>
+
 #include <osg/ref_ptr>
 
 namespace Resource
@@ -72,13 +74,13 @@ namespace MyGUIPlatform
             return static_cast<RenderManager*>(MyGUI::RenderManager::getInstancePtr());
         }
 
-        bool checkTexture(MyGUI::ITexture* texture) override;
+        bool checkTexture(MyGUI::ITexture* texture) OPENMW_MYGUI_CHECK_TEXTURE_OVERRIDE;
 
         /** @see RenderManager::getViewSize */
         const MyGUI::IntSize& getViewSize() const override { return mViewSize; }
 
         /** @see RenderManager::getVertexFormat */
-        MyGUI::VertexColourType getVertexFormat() const override { return mVertexFormat; }
+        MyGUI::VertexColourType getVertexFormat() OPENMW_MYGUI_VERTEX_FORMAT_CONST override { return mVertexFormat; }
 
         /** @see RenderManager::isFormatSupported */
         bool isFormatSupported(MyGUI::PixelFormat format, MyGUI::TextureUsage usage) override;
@@ -111,16 +113,18 @@ namespace MyGUIPlatform
         void setInjectState(osg::StateSet* stateSet);
 
         /** @see IRenderTarget::getInfo */
-        const MyGUI::RenderTargetInfo& getInfo() const override { return mInfo; }
+        const MyGUI::RenderTargetInfo& getInfo() OPENMW_MYGUI_RENDER_TARGET_CONST override { return mInfo; }
 
         void setViewSize(int width, int height) override;
 
         void registerShader(const std::string& shaderName, const std::string& vertexProgramFile,
-            const std::string& fragmentProgramFile) override;
+            const std::string& fragmentProgramFile) OPENMW_MYGUI_REGISTER_SHADER_OVERRIDE;
 
         /*internal:*/
 
         void collectDrawCalls();
+
+        osg::ref_ptr<osg::Camera> createGUICamera(int order, std::string layerFilter);
     };
 
 }

@@ -17,7 +17,11 @@
 #include "myguitexture.hpp"
 
 #define MYGUI_PLATFORM_LOG_SECTION "Platform"
+#ifdef __ANDROID__
+#define MYGUI_PLATFORM_LOG(level, text) (void)0
+#else
 #define MYGUI_PLATFORM_LOG(level, text) MYGUI_LOGGING(MYGUI_PLATFORM_LOG_SECTION, level, text)
+#endif
 
 #define MYGUI_PLATFORM_EXCEPT(dest)                                                                                    \
     do                                                                                                                 \
@@ -262,7 +266,7 @@ namespace MyGUIPlatform
         osg::VertexBufferObject* getVertexBuffer();
 
         void setVertexCount(size_t count) override;
-        size_t getVertexCount() const override;
+        size_t getVertexCount() OPENMW_MYGUI_VERTEX_BUFFER_CONST override;
 
         MyGUI::Vertex* lock() override;
         void unlock() override;
@@ -288,7 +292,7 @@ namespace MyGUIPlatform
         mNeedVertexCount = count;
     }
 
-    size_t OSGVertexBuffer::getVertexCount() const
+    size_t OSGVertexBuffer::getVertexCount() OPENMW_MYGUI_VERTEX_BUFFER_CONST
     {
         return mNeedVertexCount;
     }
@@ -505,6 +509,24 @@ namespace MyGUIPlatform
 
         onResizeView(mViewSize);
         mUpdate = true;
+    }
+
+    osg::ref_ptr<osg::Camera> RenderManager::createGUICamera(int order, std::string layerFilter)
+    {
+        osg::ref_ptr<osg::Camera> camera = new osg::Camera;
+        camera->setReferenceFrame(osg::Transform::ABSOLUTE_RF);
+        camera->setProjectionResizePolicy(osg::Camera::FIXED);
+        camera->setProjectionMatrix(osg::Matrix::identity());
+        camera->setViewMatrix(osg::Matrix::identity());
+        camera->setRenderOrder(static_cast<osg::Camera::RenderOrder>(order));
+        camera->setClearMask(GL_NONE);
+        if (mGuiRoot)
+            camera->setViewport(mGuiRoot->getViewport());
+
+        osg::ref_ptr<Drawable> drawable = new Drawable(this);
+        drawable->setCullingActive(false);
+        camera->addChild(drawable.get());
+        return camera;
     }
 
     bool RenderManager::isFormatSupported(MyGUI::PixelFormat /*format*/, MyGUI::TextureUsage /*usage*/)

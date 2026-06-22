@@ -7,6 +7,14 @@
 #include <MyGUI_Widget.h>
 #include <MyGUI_Window.h>
 
+#include <components/widgets/myguicompat.hpp>
+
+#ifdef OPENMW_ENABLE_VR
+#include <components/vr/vr.hpp>
+
+#include "../mwvr/vrgui.hpp"
+#endif
+
 namespace MWGui
 {
     void Layout::initialise(std::string_view layout)
@@ -45,21 +53,25 @@ namespace MWGui
     void Layout::setVisible(bool b)
     {
         mMainWidget->setVisible(b);
+#ifdef OPENMW_ENABLE_VR
+        if (VR::getVR())
+            MWVR::VRGUIManager::instance().setVisible(this, b);
+#endif
     }
 
     void Layout::setText(std::string_view name, std::string_view caption)
     {
         MyGUI::Widget* pt;
         getWidget(pt, name);
-        static_cast<MyGUI::TextBox*>(pt)->setCaption(MyGUI::UString(caption));
+        static_cast<MyGUI::TextBox*>(pt)->setCaption(Gui::makeMyGUIUString(caption));
     }
 
     void Layout::setTitle(std::string_view title)
     {
         MyGUI::Window* window = static_cast<MyGUI::Window*>(mMainWidget);
 
-        if (window->getCaption() != title)
-            window->setCaptionWithReplacing(MyGUI::UString(title));
+        if (static_cast<std::string>(window->getCaption()) != title)
+            window->setCaptionWithReplacing(Gui::makeMyGUIUString(title));
     }
 
     MyGUI::Widget* Layout::getWidget(std::string_view name) const

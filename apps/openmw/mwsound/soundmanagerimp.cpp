@@ -1,8 +1,12 @@
 #include "soundmanagerimp.hpp"
 
 #include <algorithm>
+#include <cstdint>
+#include <cstring>
+#include <istream>
 #include <map>
 #include <numeric>
+#include <stdexcept>
 #include <sstream>
 
 #include <osg/Matrixf>
@@ -26,7 +30,9 @@
 #include "../mwmechanics/actorutil.hpp"
 
 #include "constants.hpp"
+#ifndef OPENMW_ANDROID_DISABLE_FFMPEG
 #include "ffmpegdecoder.hpp"
+#endif
 #include "openaloutput.hpp"
 #include "sound.hpp"
 #include "soundbuffer.hpp"
@@ -97,10 +103,166 @@ namespace MWSound
                 case Type::Movie:
                 case Type::Mask:
                     break;
+        }
+
+        return volume;
+    }
+
+#ifdef OPENMW_ANDROID_DISABLE_FFMPEG
+        class AndroidWavDecoder final : public SoundDecoder
+        {
+            std::vector<char> mData;
+            size_t mOffset = 0;
+            int mSampleRate = 44100;
+            ChannelConfig mChannels = ChannelConfig_Mono;
+            SampleType mSampleType = SampleType_Int16;
+
+            static uint16_t readU16LE(const char* data)
+            {
+                return static_cast<uint16_t>(static_cast<unsigned char>(data[0]))
+                    | (static_cast<uint16_t>(static_cast<unsigned char>(data[1])) << 8);
             }
 
-            return volume;
-        }
+            static uint32_t readU32LE(const char* data)
+            {
+                return static_cast<uint32_t>(static_cast<unsigned char>(data[0]))
+                    | (static_cast<uint32_t>(static_cast<unsigned char>(data[1])) << 8)
+                    | (static_cast<uint32_t>(static_cast<unsigned char>(data[2])) << 16)
+                    | (static_cast<uint32_t>(static_cast<unsigned char>(data[3])) << 24);
+            }
+
+            static ChannelConfig channelConfig(uint16_t channels)
+            {
+                switch (channels)
+                {
+                    case 1:
+                        return ChannelConfig_Mono;
+                    case 2:
+                        return ChannelConfig_Stereo;
+                    case 4:
+                        return ChannelConfig_Quad;
+                    case 6:
+                        return ChannelConfig_5point1;
+                    case 8:
+                        return ChannelConfig_7point1;
+                    default:
+                        throw std::runtime_error("Unsupported WAV channel count: " + std::to_string(channels));
+                }
+            }
+
+        public:
+            explicit AndroidWavDecoder(const VFS::Manager* vfs)
+                : SoundDecoder(vfs)
+            {
+            }
+
+            void open(VFS::Path::NormalizedView fname) override
+            {
+                close();
+
+                Files::IStreamPtr stream = mResourceMgr->get(fname);
+                char header[12];
+                stream->read(header, sizeof(header));
+                if (stream->gcount() != sizeof(header) || std::memcmp(header, "RIFF", 4) != 0
+                    || std::memcmp(header + 8, "WAVE", 4) != 0)
+                    throw std::runtime_error("Android bootstrap decoder only supports RIFF/WAVE PCM");
+
+                bool haveFmt = false;
+                bool haveData = false;
+
+                while (*stream)
+                {
+                    char chunkHeader[8];
+                    stream->read(chunkHeader, sizeof(chunkHeader));
+                    if (stream->gcount() == 0)
+                        break;
+                    if (stream->gcount() != sizeof(chunkHeader))
+                        throw std::runtime_error("Truncated WAV chunk header");
+
+                    const uint32_t chunkSize = readU32LE(chunkHeader + 4);
+                    std::vector<char> chunk(chunkSize);
+                    if (chunkSize != 0)
+                    {
+                        stream->read(chunk.data(), chunk.size());
+                        if (stream->gcount() != static_cast<std::streamsize>(chunk.size()))
+                            throw std::runtime_error("Truncated WAV chunk data");
+                    }
+                    if ((chunkSize & 1u) != 0)
+                        stream->ignore(1);
+
+                    if (std::memcmp(chunkHeader, "fmt ", 4) == 0)
+                    {
+                        if (chunk.size() < 16)
+                            throw std::runtime_error("Invalid WAV fmt chunk");
+
+                        const uint16_t audioFormat = readU16LE(chunk.data());
+                        const uint16_t channels = readU16LE(chunk.data() + 2);
+                        const uint32_t sampleRate = readU32LE(chunk.data() + 4);
+                        const uint16_t bitsPerSample = readU16LE(chunk.data() + 14);
+
+                        mChannels = channelConfig(channels);
+                        mSampleRate = static_cast<int>(sampleRate);
+
+                        if (audioFormat == 1 && bitsPerSample == 8)
+                            mSampleType = SampleType_UInt8;
+                        else if (audioFormat == 1 && bitsPerSample == 16)
+                            mSampleType = SampleType_Int16;
+                        else if (audioFormat == 3 && bitsPerSample == 32)
+                            mSampleType = SampleType_Float32;
+                        else
+                            throw std::runtime_error("Unsupported WAV format in Android bootstrap decoder");
+
+                        haveFmt = true;
+                    }
+                    else if (std::memcmp(chunkHeader, "data", 4) == 0)
+                    {
+                        mData = std::move(chunk);
+                        haveData = true;
+                    }
+                }
+
+                if (!haveFmt || !haveData || mData.empty())
+                    throw std::runtime_error("WAV file is missing fmt or data chunk");
+
+                Log(Debug::Info) << "Android WAV decoder loaded " << fname << " bytes=" << mData.size()
+                                 << " rate=" << mSampleRate << " channels=" << getChannelConfigName(mChannels)
+                                 << " type=" << getSampleTypeName(mSampleType);
+            }
+
+            void close() override
+            {
+                mData.clear();
+                mOffset = 0;
+            }
+
+            std::string getName() override { return "Android WAV bootstrap decoder"; }
+            void getInfo(int* samplerate, ChannelConfig* chans, SampleType* type) override
+            {
+                *samplerate = mSampleRate;
+                *chans = mChannels;
+                *type = mSampleType;
+            }
+            size_t read(char* buffer, size_t bytes) override
+            {
+                const size_t remaining = mData.size() - std::min(mOffset, mData.size());
+                const size_t count = std::min(bytes, remaining);
+                if (count == 0)
+                    return 0;
+                std::memcpy(buffer, mData.data() + mOffset, count);
+                mOffset += count;
+                return count;
+            }
+            void readAll(std::vector<char>& output) override
+            {
+                output = mData;
+                mOffset = mData.size();
+            }
+            size_t getSampleOffset() override
+            {
+                return bytesToFrames(mOffset, mChannels, mSampleType);
+            }
+        };
+#endif
     }
 
     // For combining PlayMode and Type flags
@@ -170,7 +332,11 @@ namespace MWSound
     // Return a new decoder instance, used as needed by the output implementations
     DecoderPtr SoundManager::getDecoder()
     {
+#ifdef OPENMW_ANDROID_DISABLE_FFMPEG
+        return std::make_shared<AndroidWavDecoder>(mVFS);
+#else
         return std::make_shared<FFmpegDecoder>(mVFS);
+#endif
     }
 
     DecoderPtr SoundManager::loadVoice(VFS::Path::NormalizedView voicefile)

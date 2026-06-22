@@ -31,9 +31,11 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
 
 #include <components/esm/defs.hpp>
 #include <components/esm/formid.hpp>
+#include <components/esm/position.hpp>
 
 namespace ESM4
 {
@@ -42,12 +44,25 @@ namespace ESM4
 
     struct StaticCollection
     {
+        struct Placement
+        {
+            ESM::Position mPosition;
+            float mScale = 1.f;
+        };
+
+        struct Part
+        {
+            ESM::FormId mStatic;
+            std::vector<Placement> mPlacements;
+        };
+
         ESM::FormId mId; // from the header
         std::uint32_t mFlags; // from the header, see enum type RecordFlag for details
 
         std::string mEditorId;
         std::string mFullName;
         std::string mModel;
+        std::vector<Part> mParts;
 
         void load(ESM4::Reader& reader);
         // void save(ESM4::Writer& writer) const;
