@@ -231,9 +231,11 @@ $runtimeRules = @{
     ".dat" = New-Rule "blocked-runtime-support" "misc-data" "DAT bytes are VFS-visible but no runtime consumer is identified" @(
         New-Anchor "components/vfs/manager.hpp" "Files::IStreamPtr get" "VFS can expose DAT streams"
     ) "Identify DAT owner format and add a parser or explicit ignore rule with proof."
-    ".psd" = New-Rule "blocked-runtime-support" "source-art-leftover" "PSD source-art bytes are harvested; no runtime engine action is expected yet" @(
-        New-Anchor "components/vfs/manager.hpp" "Files::IStreamPtr get" "VFS can expose PSD streams"
-    ) "Verify whether PSD files are accidental shipped source art; if so, document as intentionally non-runtime."
+    ".psd" = New-Rule "asset-harvested-non-runtime" "source-art-leftover" "PSD source-art bytes are harvested and accounted for, but runtime consumes their DDS siblings instead of PSD payloads" @(
+        New-Anchor "scripts/nikami/test-fnv-source-art-nonruntime-contract.ps1" "FNV PSD source-art non-runtime contract" "proof gate verifies PSD entries have runtime DDS siblings"
+        New-Anchor "scripts/nikami/test-fnv-harvest-action-coverage.ps1" '".dds" = New-Rule "runtime-supported"' "DDS texture entries are runtime-supported"
+        New-Anchor "components/resource/imagemanager.cpp" "ImageManager::getImage" "runtime texture path consumes renderable image assets"
+    ) "Intentional non-runtime source art; keep harvested as metadata only and do not require a PSD renderer."
     "<none>" = New-Rule "blocked-runtime-support" "extensionless-assets" "Extensionless archive entries require per-path ownership before runtime support can be claimed" @(
         New-Anchor "components/vfs/manager.hpp" "Files::IStreamPtr get" "VFS can expose extensionless streams"
     ) "Add path-specific rules for any extensionless entries that appear in a harvest."
@@ -281,6 +283,7 @@ $unclassified = @()
 $blocked = @()
 $runtimeSupportedCount = 0
 $runtimeConditionalCount = 0
+$nonRuntimeCount = 0
 foreach ($ext in ($extensionCounts.Keys | Sort-Object)) {
     if (!$runtimeRules.ContainsKey($ext)) {
         $unclassified += $ext
@@ -306,6 +309,9 @@ foreach ($ext in ($extensionCounts.Keys | Sort-Object)) {
     }
     elseif ($rule.state -eq "blocked-runtime-support") {
         $blocked += $ext
+    }
+    elseif ($rule.state -eq "asset-harvested-non-runtime") {
+        ++$nonRuntimeCount
     }
 
     $extensionRows += [pscustomobject]@{
@@ -364,6 +370,7 @@ $summary = [pscustomobject]@{
         extensionTypes = $extensionRows.Count
         runtimeSupportedExtensionTypes = $runtimeSupportedCount
         runtimeConditionalExtensionTypes = $runtimeConditionalCount
+        nonRuntimeExtensionTypes = $nonRuntimeCount
         blockedRuntimeExtensionTypes = $blocked.Count
         unclassifiedExtensionTypes = $unclassified.Count
     }
@@ -386,6 +393,7 @@ Write-ProofLine "Archive entries classified: $(($extensionCounts.Values | Measur
 Write-ProofLine "Extension types: $($extensionRows.Count)"
 Write-ProofLine "Runtime-supported extension types: $runtimeSupportedCount"
 Write-ProofLine "Runtime-conditional extension types: $runtimeConditionalCount"
+Write-ProofLine "Accounted non-runtime extension types: $nonRuntimeCount"
 Write-ProofLine "Blocked runtime extension types: $($blocked.Count)"
 foreach ($ext in $blocked) {
     $row = $extensionRows | Where-Object { $_.extension -eq $ext } | Select-Object -First 1
