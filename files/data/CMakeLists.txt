@@ -11,6 +11,7 @@ set(BUILTIN_DATA_FILES
     textures/omw_menu_scroll_center_h.dds
     textures/omw_menu_scroll_center_v.dds
     textures/omw_menu_icon_active.dds
+    icons/nikami_proof_item.dds
     textures/omw_psx_button_circle.dds
     textures/omw_psx_button_dpad.dds
     textures/omw_psx_button_square.dds
@@ -115,6 +116,10 @@ set(BUILTIN_DATA_FILES
     l10n/OMWShaders/fr.yaml
     l10n/OMWShaders/pl.yaml
 
+    l10n/OMWVRInput/en.yaml
+    l10n/OMWVRTutorial/en.yaml
+    l10n/OMWVRUI/en.yaml
+
     openmw_aux/util.lua
     openmw_aux/time.lua
     openmw_aux/calendar.lua
@@ -163,7 +168,16 @@ set(BUILTIN_DATA_FILES
     scripts/omw/input/actionbindings.lua
     scripts/omw/input/smoothmovement.lua
     scripts/omw/input/gamepadcontrols.lua
-    
+    scripts/omw/vr/spaces.lua
+    scripts/omw/vr/ui/common.lua
+    scripts/omw/vr/ui/menu.lua
+    scripts/omw/vr/ui/player.lua
+    scripts/omw/vr/inputs/player.lua
+    scripts/omw/vr/inputs/common.lua
+    scripts/omw/vr/inputs/defaultBindingsLeftHanded.lua
+    scripts/omw/vr/inputs/defaultBindingsRightHanded.lua
+    scripts/omw/vr/inputs/menu.lua
+
     shaders/adjustments.omwfx
     shaders/bloomlinear.omwfx
     shaders/debug.omwfx
@@ -198,6 +212,7 @@ set(BUILTIN_DATA_FILES
     mygui/openmw_hud_box.skin.xml
     mygui/openmw_hud_energybar.skin.xml
     mygui/openmw_hud.layout
+    mygui/openmw_hud_vr.layout
     mygui/openmw_infobox.layout
     mygui/openmw_interactive_messagebox.layout
     mygui/openmw_interactive_messagebox_notransp.layout
@@ -228,6 +243,24 @@ set(BUILTIN_DATA_FILES
     mygui/openmw_trade_window.layout
     mygui/openmw_spell_buying_window.layout
     mygui/openmw_windows.skin.xml
+    mygui/core_vr.xml
+    mygui/openmw_alchemy_window_vr.layout
+    mygui/openmw_container_window_vr.layout
+    mygui/openmw_dialogue_window_vr.layout
+    mygui/openmw_inventory_window_vr.layout
+    mygui/openmw_layers_vr.xml
+    mygui/openmw_map_window_vr.layout
+    mygui/openmw_settings_window_vr.layout
+    mygui/openmw_spell_window_vr.layout
+    mygui/openmw_stats_window_vr.layout
+    mygui/openmw_tooltips_vr.layout
+    mygui/openmw_trade_window_vr.layout
+    mygui/openmw_vr_listbox.layout
+    mygui/openmw_vr_metamenu.layout
+    mygui/openmw_vr_radial_menu.layout
+    mygui/openmw_vr_virtual_keyboard.layout
+    mygui/openmw_windows_vr.skin.xml
+    mygui/skins_vr.xml
     mygui/openmw_quickkeys_menu.layout
     mygui/openmw_quickkeys_menu_assign.layout
     mygui/openmw_itemselection_dialog.layout

@@ -37,3 +37,14 @@ CUSTOM: scripts/omw/console/local.lua
 
 # Music system
 NPC,CREATURE: scripts/omw/music/actor.lua
+
+# VR
+PLAYER, MENU: scripts/omw/vr/spaces.lua
+
+# VR Bindings
+MENU: scripts/omw/vr/inputs/menu.lua
+PLAYER: scripts/omw/vr/inputs/player.lua
+
+# VR UI
+MENU: scripts/omw/vr/ui/menu.lua
+PLAYER: scripts/omw/vr/ui/player.lua

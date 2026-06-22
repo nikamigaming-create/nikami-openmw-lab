@@ -6,7 +6,15 @@
         <Widget type="ProgressBar" skin="MW_EnergyBar_Yellow" position="13 131 65 12" align="Left Bottom" name="EnemyHealth">
             <Property key="Visible" value="false"/>
         </Widget>
-        <Widget type="Button" skin="" position="13 146 65 12" align="Left Bottom" name="HealthFrame">
+        <Widget type="TextBox" skin="ProgressText" position="13 146 30 18" align="Left Bottom" name="HealthLabel">
+            <Property key="Caption" value="HP"/>
+            <Property key="TextAlign" value="Left VCenter"/>
+            <Property key="TextColour" value="0.25 1 0.25"/>
+            <Property key="TextShadow" value="true"/>
+            <Property key="TextShadowColour" value="0 0 0"/>
+            <Property key="NeedMouse" value="false"/>
+        </Widget>
+        <Widget type="Button" skin="" position="43 146 65 12" align="Left Bottom" name="HealthFrame">
             <UserString key="ToolTipType" value="Layout"/>
             <UserString key="ToolTipLayout" value="HealthToolTip"/>
             <UserString key="ImageTexture_HealthImage" value="icons\k\health.dds"/>
@@ -14,13 +22,45 @@
                 <Property key="NeedMouse" value="false"/>
             </Widget>
         </Widget>
-        <Widget type="Button" skin="" position="13 161 65 12" align="Left Bottom" name="MagickaFrame">
+        <Widget type="TextBox" skin="ProgressText" position="112 146 78 18" align="Left Bottom" name="HealthValue">
+            <Property key="Caption" value="--/--"/>
+            <Property key="TextAlign" value="Left VCenter"/>
+            <Property key="TextColour" value="0.25 1 0.25"/>
+            <Property key="TextShadow" value="true"/>
+            <Property key="TextShadowColour" value="0 0 0"/>
+            <Property key="NeedMouse" value="false"/>
+        </Widget>
+        <Widget type="TextBox" skin="ProgressText" position="13 161 30 18" align="Left Bottom" name="MagickaLabel">
+            <Property key="Caption" value="AP"/>
+            <Property key="TextAlign" value="Left VCenter"/>
+            <Property key="TextColour" value="0.25 1 0.25"/>
+            <Property key="TextShadow" value="true"/>
+            <Property key="TextShadowColour" value="0 0 0"/>
+            <Property key="NeedMouse" value="false"/>
+        </Widget>
+        <Widget type="Button" skin="" position="43 161 65 12" align="Left Bottom" name="MagickaFrame">
             <UserString key="ToolTipType" value="Layout"/>
             <UserString key="ToolTipLayout" value="HealthToolTip"/>
             <UserString key="ImageTexture_HealthImage" value="icons\k\magicka.dds"/>
             <Widget type="ProgressBar" skin="MW_EnergyBar_Blue" position="0 0 65 12" align="Left Bottom" name="Magicka">
                 <Property key="NeedMouse" value="false"/>
             </Widget>
+        </Widget>
+        <Widget type="TextBox" skin="ProgressText" position="112 161 78 18" align="Left Bottom" name="MagickaValue">
+            <Property key="Caption" value="--/--"/>
+            <Property key="TextAlign" value="Left VCenter"/>
+            <Property key="TextColour" value="0.25 1 0.25"/>
+            <Property key="TextShadow" value="true"/>
+            <Property key="TextShadowColour" value="0 0 0"/>
+            <Property key="NeedMouse" value="false"/>
+        </Widget>
+        <Widget type="TextBox" skin="ProgressText" position="192 146 96 18" align="Left Bottom" name="AmmoValue">
+            <Property key="Caption" value="AMMO --"/>
+            <Property key="TextAlign" value="Left VCenter"/>
+            <Property key="TextColour" value="0.25 1 0.25"/>
+            <Property key="TextShadow" value="true"/>
+            <Property key="TextShadowColour" value="0 0 0"/>
+            <Property key="NeedMouse" value="false"/>
         </Widget>
         <Widget type="Button" skin="" position="13 176 65 12" align="Left Bottom" name="FatigueFrame">
             <UserString key="ToolTipType" value="Layout"/>
@@ -104,6 +144,15 @@
                         <Property key="Depth" value="10"/>
                     </Widget>
 
+                </Widget>
+                <Widget type="TextBox" skin="ProgressText" position="8 20 49 22" align="Center" name="CompassHeading">
+                    <Property key="Caption" value="N"/>
+                    <Property key="Depth" value="20"/>
+                    <Property key="TextAlign" value="Center VCenter"/>
+                    <Property key="TextColour" value="0.25 1 0.25"/>
+                    <Property key="TextShadow" value="true"/>
+                    <Property key="TextShadowColour" value="0 0 0"/>
+                    <Property key="NeedMouse" value="false"/>
                 </Widget>
 
             </Widget>

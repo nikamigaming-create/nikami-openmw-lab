@@ -9,6 +9,7 @@
 
 #include <components/esm3/loadench.hpp>
 #include <components/settings/values.hpp>
+#include <components/widgets/myguicompat.hpp>
 
 #include "../mwbase/environment.hpp"
 #include "../mwbase/windowmanager.hpp"
@@ -133,7 +134,8 @@ namespace MWGui
 
         std::stable_sort(mLines.begin(), mLines.end(),
             [](const MWGui::ItemChargeView::Line& a, const MWGui::ItemChargeView::Line& b) {
-                return Misc::StringUtils::ciLess(a.mText->getCaption(), b.mText->getCaption());
+                return Misc::StringUtils::ciLess(
+                    static_cast<std::string>(a.mText->getCaption()), static_cast<std::string>(b.mText->getCaption()));
             });
 
         layoutWidgets();
@@ -194,7 +196,7 @@ namespace MWGui
     void ItemChargeView::updateLine(const ItemChargeView::Line& line)
     {
         std::string_view name = line.mItemPtr.getClass().getName(line.mItemPtr);
-        line.mText->setCaption(MyGUI::UString(name));
+        line.mText->setCaption(Gui::makeMyGUIUString(name));
 
         line.mCharge->setVisible(false);
         switch (mDisplayMode)

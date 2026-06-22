@@ -21,6 +21,7 @@
 namespace osg
 {
     class Group;
+    class Node;
     class PositionAttitudeTransform;
 }
 
@@ -113,7 +114,7 @@ namespace MWRender
         RenderingManager(osgViewer::Viewer* viewer, osg::ref_ptr<osg::Group> rootNode,
             Resource::ResourceSystem* resourceSystem, SceneUtil::WorkQueue* workQueue,
             DetourNavigator::Navigator& navigator, const MWWorld::GroundcoverStore& groundcoverStore,
-            SceneUtil::UnrefQueue& unrefQueue);
+            SceneUtil::UnrefQueue& unrefQueue, std::unique_ptr<Camera> camera = nullptr);
         ~RenderingManager();
 
         osgUtil::IncrementalCompileOperation* getIncrementalCompileOperation();
@@ -173,13 +174,15 @@ namespace MWRender
             bool mHit;
             osg::Vec3f mHitNormalWorld;
             osg::Vec3f mHitPointWorld;
+            osg::Vec3f mHitPointLocal;
+            osg::Node* mHitNode = nullptr;
             MWWorld::Ptr mHitObject;
             ESM::RefNum mHitRefnum;
             float mRatio;
         };
 
         RayResult castRay(const osg::Vec3f& origin, const osg::Vec3f& dest, bool ignorePlayer,
-            bool ignoreActors = false, std::span<const MWWorld::Ptr> ignoreList = {});
+            bool ignoreActors = false, std::span<const MWWorld::Ptr> ignoreList = {}, unsigned int ignoreMask = 0);
 
         /// Return the object under the mouse cursor / crosshair position, given by nX and nY normalized screen
         /// coordinates, where (0,0) is the top left corner.
@@ -309,7 +312,8 @@ namespace MWRender
         const bool mSkyBlending;
 
         osg::ref_ptr<osgUtil::IntersectionVisitor> getIntersectionVisitor(osgUtil::Intersector* intersector,
-            bool ignorePlayer, bool ignoreActors, std::span<const MWWorld::Ptr> ignoreList = {});
+            bool ignorePlayer, bool ignoreActors, std::span<const MWWorld::Ptr> ignoreList = {},
+            unsigned int ignoreMask = 0);
 
         osg::ref_ptr<IntersectionVisitorWithIgnoreList> mIntersectionVisitor;
 
@@ -367,6 +371,8 @@ namespace MWRender
         void operator=(const RenderingManager&);
         RenderingManager(const RenderingManager&);
     };
+
+    using RayResult = RenderingManager::RayResult;
 
 }
 

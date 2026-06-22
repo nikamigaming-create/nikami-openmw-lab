@@ -40,7 +40,7 @@ namespace Gui
         notifySizeChange(this);
     }
 
-    void AutoSizedTextBox::setPropertyOverride(std::string_view key, std::string_view value)
+    void AutoSizedTextBox::setPropertyOverride(MyGUIStringParam key, MyGUIStringParam value)
     {
         if (key == "ExpandDirection")
         {
@@ -103,7 +103,7 @@ namespace Gui
         setEditStatic(true);
     }
 
-    void AutoSizedEditBox::setPropertyOverride(std::string_view key, std::string_view value)
+    void AutoSizedEditBox::setPropertyOverride(MyGUIStringParam key, MyGUIStringParam value)
     {
         if (key == "ExpandDirection")
         {
@@ -136,7 +136,7 @@ namespace Gui
         notifySizeChange(this);
     }
 
-    void AutoSizedButton::setPropertyOverride(std::string_view key, std::string_view value)
+    void AutoSizedButton::setPropertyOverride(MyGUIStringParam key, MyGUIStringParam value)
     {
         if (key == "ExpandDirection")
         {
@@ -160,7 +160,7 @@ namespace Gui
         align();
     }
 
-    bool Box::_setPropertyImpl(std::string_view key, std::string_view value)
+    bool Box::_setPropertyImpl(MyGUIStringParam key, MyGUIStringParam value)
     {
         if (key == "Spacing")
             mSpacing = MyGUI::utility::parseValue<int>(value);
@@ -260,7 +260,7 @@ namespace Gui
         }
     }
 
-    void HBox::setPropertyOverride(std::string_view key, std::string_view value)
+    void HBox::setPropertyOverride(MyGUIStringParam key, MyGUIStringParam value)
     {
         if (!Box::_setPropertyImpl(key, value))
             MyGUI::Widget::setPropertyOverride(key, value);
@@ -415,7 +415,7 @@ namespace Gui
         }
     }
 
-    void VBox::setPropertyOverride(std::string_view key, std::string_view value)
+    void VBox::setPropertyOverride(MyGUIStringParam key, MyGUIStringParam value)
     {
         if (!Box::_setPropertyImpl(key, value))
             MyGUI::Widget::setPropertyOverride(key, value);

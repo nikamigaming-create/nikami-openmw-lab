@@ -1,0 +1,96 @@
+#include "space.hpp"
+#include <components/sceneutil/nodecallback.hpp>
+#include "space.hpp"
+#include "space.hpp"
+
+namespace VR
+{
+    SpaceTransform::SpaceTransform()
+    {
+    }
+    SpaceTransform::SpaceTransform(std::shared_ptr<Space> space)
+        : mSpace(space)
+    {
+    }
+
+    SpaceTransform::SpaceTransform(const SpaceTransform& transform, const osg::CopyOp& copyop)
+        : osg::Transform(transform, copyop)
+        , mSpace(transform.mSpace)
+    {
+    }
+
+    void SpaceTransform::setSpace(std::shared_ptr<VR::Space> space)
+    {
+        mSpace = space;
+    }
+
+    bool SpaceTransform::computeLocalToWorldMatrix(osg::Matrix& matrix, osg::NodeVisitor* nv) const
+    {
+        if (_referenceFrame == RELATIVE_RF)
+        {
+             matrix.preMult(mMatrix);
+        }
+        else // absolute
+        {
+            matrix = mMatrix;
+        }
+        return true;
+    }
+
+    bool SpaceTransform::computeWorldToLocalMatrix(osg::Matrix& matrix, osg::NodeVisitor* nv) const
+    {
+        const osg::Matrix& inverse = osg::Matrix::inverse(mMatrix);
+
+        if (_referenceFrame == RELATIVE_RF)
+        {
+            matrix.postMult(inverse);
+        }
+        else // absolute
+        {
+            matrix = inverse;
+        }
+        return true;
+    }
+
+    void SpaceTransform::onSpaceUpdate()
+    {
+        mMatrix.makeIdentity();
+        if (!mSpace)
+            return;
+
+        VR::TrackingPose tp = mSpace->locateInWorld();
+        if (!!tp.status)
+        {
+            mMatrix.makeRotate(tp.pose.orientation);
+            mMatrix.postMultTranslate(tp.pose.position.asMWUnits());
+        }
+    }
+
+    Space::Space() {}
+
+    VR::TrackingPose Space::locate(ReferenceSpace reference)
+    {
+        return locate(*Session::instance().getReferenceSpace(reference));
+    }
+
+    DerivedSpace::DerivedSpace(std::shared_ptr<Space> reference, Stereo::Pose pose)
+        : mReference(reference)
+        , mPose(pose)
+    {
+    }
+
+    TrackingPose VR::DerivedSpace::locate(Space& reference)
+    {
+        auto tp = mReference->locate(reference);
+        if (!!tp.status)
+            tp.pose += mPose;
+        return tp;
+    }
+    TrackingPose DerivedSpace::locateInWorld()
+    {
+        auto tp = mReference->locateInWorld();
+        if (!!tp.status)
+            tp.pose += mPose;
+        return tp;
+    }
+}

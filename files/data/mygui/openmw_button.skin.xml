@@ -2,7 +2,7 @@
 
 <MyGUI type="Resource" version="1.1">
     <!-- Button graphics -->
-    <Resource type="AutoSizedResourceSkin" name="BTN_Top" texture="textures\menu_button_frame_top.dds">
+    <Resource type="AutoSizedResourceSkin" name="BTN_Top" texture="textures\omw_menu_icon_active.dds">
         <Property key="NeedMouse" value="false"/>
         <BasisSkin type="TileRect" align="HStretch">
             <State name="normal">
@@ -11,7 +11,7 @@
             </State>
         </BasisSkin>
     </Resource>
-    <Resource type="AutoSizedResourceSkin" name="BTN_Bottom" texture="textures\menu_button_frame_bottom.dds">
+    <Resource type="AutoSizedResourceSkin" name="BTN_Bottom" texture="textures\omw_menu_icon_active.dds">
         <Property key="NeedMouse" value="false"/>
         <BasisSkin type="TileRect" align="HStretch">
             <State name="normal" >
@@ -20,7 +20,7 @@
             </State>
         </BasisSkin>
     </Resource>
-    <Resource type="AutoSizedResourceSkin" name="BTN_Left" texture="textures\menu_button_frame_left.dds">
+    <Resource type="AutoSizedResourceSkin" name="BTN_Left" texture="textures\omw_menu_icon_active.dds">
         <Property key="NeedMouse" value="false"/>
         <BasisSkin type="TileRect" align="VStretch">
             <State name="normal">
@@ -29,7 +29,7 @@
             </State>
         </BasisSkin>
     </Resource>
-    <Resource type="AutoSizedResourceSkin" name="BTN_Right" texture="textures\menu_button_frame_right.dds">
+    <Resource type="AutoSizedResourceSkin" name="BTN_Right" texture="textures\omw_menu_icon_active.dds">
         <Property key="NeedMouse" value="false"/>
         <BasisSkin type="TileRect" align="VStretch">
             <State name="normal">
@@ -38,25 +38,25 @@
             </State>
         </BasisSkin>
     </Resource>
-    <Resource type="AutoSizedResourceSkin" name="BTN_TopLeft" texture="textures\menu_button_frame_top_left_corner.dds">
+    <Resource type="AutoSizedResourceSkin" name="BTN_TopLeft" texture="textures\omw_menu_icon_active.dds">
         <Property key="NeedMouse" value="false"/>
         <BasisSkin type="MainSkin">
             <State name="normal"/>
         </BasisSkin>
     </Resource>
-    <Resource type="AutoSizedResourceSkin" name="BTN_TopRight" texture="textures\menu_button_frame_top_right_corner.dds">
+    <Resource type="AutoSizedResourceSkin" name="BTN_TopRight" texture="textures\omw_menu_icon_active.dds">
         <Property key="NeedMouse" value="false"/>
         <BasisSkin type="MainSkin">
             <State name="normal"/>
         </BasisSkin>
     </Resource>
-    <Resource type="AutoSizedResourceSkin" name="BTN_BottomLeft" texture="textures\menu_button_frame_bottom_left_corner.dds">
+    <Resource type="AutoSizedResourceSkin" name="BTN_BottomLeft" texture="textures\omw_menu_icon_active.dds">
         <Property key="NeedMouse" value="false"/>
         <BasisSkin type="MainSkin">
             <State name="normal"/>
         </BasisSkin>
     </Resource>
-    <Resource type="AutoSizedResourceSkin" name="BTN_BottomRight" texture="textures\menu_button_frame_bottom_right_corner.dds">
+    <Resource type="AutoSizedResourceSkin" name="BTN_BottomRight" texture="textures\omw_menu_icon_active.dds">
         <Property key="NeedMouse" value="false"/>
         <BasisSkin type="MainSkin">
             <State name="normal"/>

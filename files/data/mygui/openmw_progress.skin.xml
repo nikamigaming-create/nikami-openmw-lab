@@ -2,37 +2,37 @@
 
 <MyGUI type="Resource" version="1.1">
     <!-- Progress bar track, various colors -->
-    <Resource type="ResourceSkin" name="MW_Track_Red" size="2 14" texture="textures\menu_bar_gray.dds" >
+    <Resource type="ResourceSkin" name="MW_Track_Red" size="2 14" texture="textures\omw_menu_icon_active.dds" >
         <Property key="Colour" value="#{fontcolour=health}"/>
         <BasisSkin type="MainSkin" offset="0 0 16 16" align="Stretch">
             <State name="normal" offset="0 0 16 16"/>
         </BasisSkin>
     </Resource>
-    <Resource type="ResourceSkin" name="MW_Track_Blue" size="2 14" texture="textures\menu_bar_gray.dds" >
+    <Resource type="ResourceSkin" name="MW_Track_Blue" size="2 14" texture="textures\omw_menu_icon_active.dds" >
         <Property key="Colour" value="#{fontcolour=magic}"/>
         <BasisSkin type="MainSkin" offset="0 0 16 16">
             <State name="normal" offset="0 0 16 16"/>
         </BasisSkin>
     </Resource>
-    <Resource type="ResourceSkin" name="MW_Track_Green" size="2 14" texture="textures\menu_bar_gray.dds" >
+    <Resource type="ResourceSkin" name="MW_Track_Green" size="2 14" texture="textures\omw_menu_icon_active.dds" >
         <Property key="Colour" value="#{fontcolour=fatigue}"/>
         <BasisSkin type="MainSkin" offset="0 0 16 16" align="Stretch">
             <State name="normal" offset="0 0 16 16"/>
         </BasisSkin>
     </Resource>
-    <Resource type="ResourceSkin" name="MW_Progress_Drowning_Full_Small" size="16 2" texture="textures\menu_bar_gray.dds" >
+    <Resource type="ResourceSkin" name="MW_Progress_Drowning_Full_Small" size="16 2" texture="textures\omw_menu_icon_active.dds" >
         <Property key="Colour" value="0.235 0.745 0.745"/>
         <BasisSkin type="MainSkin" offset="0 0 16 2" align="Stretch">
             <State name="normal" offset="0 0 16 2"/>
         </BasisSkin>
     </Resource>
-    <Resource type="ResourceSkin" name="MW_Progress_Drowning_Small" size="16 2" texture="textures\menu_bar_gray.dds" >
+    <Resource type="ResourceSkin" name="MW_Progress_Drowning_Small" size="16 2" texture="textures\omw_menu_icon_active.dds" >
         <Property key="Colour" value="1 0 0"/>
         <BasisSkin type="MainSkin" offset="0 0 16 2" align="Stretch">
             <State name="normal" offset="0 0 16 2"/>
         </BasisSkin>
     </Resource>
-    <Resource type="ResourceSkin" name="MW_Progress_Loading_Small" size="16 2" texture="textures\menu_bar_gray.dds" >
+    <Resource type="ResourceSkin" name="MW_Progress_Loading_Small" size="16 2" texture="textures\omw_menu_icon_active.dds" >
         <Property key="Colour" value="0 0.815 0.820"/>
         <BasisSkin type="MainSkin" offset="0 0 16 2" align="Stretch">
             <State name="normal" offset="0 0 16 2"/>

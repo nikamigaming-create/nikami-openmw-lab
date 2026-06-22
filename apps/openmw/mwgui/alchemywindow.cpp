@@ -12,6 +12,7 @@
 #include <components/esm3/loadappa.hpp>
 #include <components/esm3/loadingr.hpp>
 #include <components/esm3/loadmgef.hpp>
+#include <components/widgets/myguicompat.hpp>
 
 #include "../mwbase/environment.hpp"
 #include "../mwbase/windowmanager.hpp"
@@ -174,7 +175,7 @@ namespace MWGui
         auto const& wm = MWBase::Environment::get().getWindowManager();
         std::string_view ingredient = wm->getGameSettingString("sIngredients", "Ingredients");
 
-        if (mFilterType->getCaption() == ingredient)
+        if (static_cast<std::string>(mFilterType->getCaption()) == ingredient)
         {
             if (Settings::gui().mControllerMenus)
                 switchFilterType(mFilterType);
@@ -194,14 +195,14 @@ namespace MWGui
         std::string_view ingredient = wm->getGameSettingString("sIngredients", "Ingredients");
         auto* button = sender->castType<MyGUI::Button>();
 
-        if (button->getCaption() == ingredient)
+        if (static_cast<std::string>(button->getCaption()) == ingredient)
         {
-            button->setCaption(MyGUI::UString(wm->getGameSettingString("sMagicEffects", "Magic Effects")));
+            button->setCaption(Gui::makeMyGUIUString(wm->getGameSettingString("sMagicEffects", "Magic Effects")));
             mCurrentFilter = FilterType::ByEffect;
         }
         else
         {
-            button->setCaption(MyGUI::UString(ingredient));
+            button->setCaption(Gui::makeMyGUIUString(ingredient));
             mCurrentFilter = FilterType::ByName;
         }
         mSortModel->setNameFilter({});

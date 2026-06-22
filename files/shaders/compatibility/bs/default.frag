@@ -52,7 +52,7 @@ void main()
     gl_FragData[0] = texture2D(diffuseMap, diffuseMapUV);
 
 #if defined(DISTORTION) && DISTORTION
-    vec2 screenCoords = gl_FragCoord.xy / (screenRes * @distorionRTRatio);
+    vec2 screenCoords = gl_FragCoord.xy / (screenRes * float(@distorionRTRatio));
     gl_FragData[0].a *= getDiffuseColor().a;
     gl_FragData[0] = applyDistortion(gl_FragData[0], distortionStrength, gl_FragCoord.z, sampleOpaqueDepthTex(screenCoords).x);
 

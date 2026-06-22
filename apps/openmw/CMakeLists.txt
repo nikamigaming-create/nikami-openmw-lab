@@ -71,9 +71,14 @@ add_openmw_dir (mwlua
     )
 
 add_openmw_dir (mwsound
-    soundmanagerimp openaloutput ffmpegdecoder sound soundbuffer sounddecoder soundoutput
-    loudness movieaudiofactory alext efx efxpresets regionsoundselector watersoundupdater
+    soundmanagerimp openaloutput sound soundbuffer sounddecoder soundoutput
+    loudness alext efx efxpresets regionsoundselector watersoundupdater
     )
+if(NOT OPENMW_ANDROID_DISABLE_FFMPEG)
+    add_openmw_dir (mwsound
+        ffmpegdecoder movieaudiofactory
+        )
+endif()
 
 add_openmw_dir (mwworld
     refdata worldimp scene globals class action nullaction actionteleport
@@ -95,7 +100,7 @@ add_openmw_dir (mwphysics
 add_openmw_dir (mwclass
     classes activator creature npc weapon armor potion apparatus book clothing container door
     ingredient creaturelevlist itemlevlist light lockpick misc probe repair static actor bodypart
-    esm4base esm4npc light4
+    esm4base esm4creature esm4npc light4
     )
 
 add_openmw_dir (mwmechanics
@@ -116,12 +121,27 @@ add_openmw_dir (mwbase
     inputmanager windowmanager statemanager luamanager
     )
 
+if(BUILD_OPENMW_VR)
+    add_openmw_dir(mwlua
+        vrbindings
+        )
+
+    add_openmw_dir (mwvr
+        openxrinput
+        vranimation vrgui vrinputmanager vrinput vrpointer vrpingpongcallback vrtracking vrtypes vrutil
+        )
+endif()
+
 # Main executable
 
 add_library(openmw-lib STATIC
     ${OPENMW_FILES}
     ${OPENMW_SOURCES}
 )
+
+if(BUILD_OPENMW_VR)
+    target_compile_definitions(openmw-lib PRIVATE OPENMW_ENABLE_VR=1)
+endif()
 
 if (MSVC)
     # these TUs take a lot of memory for codegen
@@ -155,6 +175,19 @@ if(BUILD_OPENMW)
 
     target_link_libraries(openmw openmw-lib)
 
+    if (ANDROID)
+        if (NOT ANDROID_NATIVE_APP_GLUE)
+            set(ANDROID_NATIVE_APP_GLUE "${CMAKE_ANDROID_NDK}/sources/android/native_app_glue")
+        endif()
+        target_sources(openmw PRIVATE
+            androidnative.cpp
+            ${ANDROID_NATIVE_APP_GLUE}/android_native_app_glue.c
+        )
+        target_include_directories(openmw PRIVATE ${ANDROID_NATIVE_APP_GLUE})
+        target_compile_definitions(openmw PRIVATE OPENMW_VR=1)
+        target_link_libraries(openmw android log)
+    endif()
+
     # Workaround necessary to ensure osgAnimation::MatrixLinearSampler dynamic casts work under Clang
     # NOTE: it's unclear whether the broken behavior is spec-compliant
     if (CMAKE_CXX_COMPILER_ID STREQUAL Clang)
@@ -162,11 +195,29 @@ if(BUILD_OPENMW)
     endif()
 endif()
 
+if(BUILD_OPENMW_VR)
+    openmw_add_executable(openmw_vr
+        ${APPLE_BUNDLE_RESOURCES}
+        ${OPENMW_RESOURCES}
+        main.cpp
+    )
+    target_link_libraries(openmw_vr openmw-lib)
+    target_compile_definitions(openmw_vr PRIVATE OPENMW_VR=1)
+endif()
+
 # Sound stuff - here so CMake doesn't stupidly recompile EVERYTHING
 # when we change the backend.
 include_directories(
     ${FFmpeg_INCLUDE_DIRS}
 )
+
+set(OPENMW_FFMPEG_TARGETS)
+if(NOT OPENMW_ANDROID_DISABLE_FFMPEG)
+    set(OPENMW_FFMPEG_TARGETS
+        ${FFmpeg_LIBRARIES}
+        osg-ffmpeg-videoplayer
+        )
+endif()
 
 target_link_libraries(openmw-lib
     # CMake's built-in OSG finder does not use pkgconfig, so we have to
@@ -182,11 +233,10 @@ target_link_libraries(openmw-lib
     ${OSG_LIBRARIES}
     Boost::program_options
     ${OPENAL_LIBRARY}
-    ${FFmpeg_LIBRARIES}
+    ${OPENMW_FFMPEG_TARGETS}
     ${MyGUI_LIBRARIES}
     SDL2::SDL2
     ${RecastNavigation_LIBRARIES}
-    osg-ffmpeg-videoplayer
     oics
     components
 )
@@ -275,4 +325,8 @@ endif()
 
 if (WIN32 AND BUILD_OPENMW)
     INSTALL(TARGETS openmw RUNTIME DESTINATION ".")
+endif()
+
+if (WIN32 AND BUILD_OPENMW_VR)
+    INSTALL(TARGETS openmw_vr RUNTIME DESTINATION ".")
 endif()

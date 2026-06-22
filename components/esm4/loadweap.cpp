@@ -109,34 +109,53 @@ void ESM4::Weapon::load(ESM4::Reader& reader)
             case ESM::fourCC("ZNAM"):
                 reader.getFormId(mDropSound);
                 break;
+            case ESM::fourCC("NAM0"):
+                reader.getFormId(mAmmo);
+                break;
+            case ESM::fourCC("REPL"):
+                reader.getFormId(mRepairList);
+                break;
+            case ESM::fourCC("ETYP"):
+                reader.getFormId(mEquipType);
+                break;
+            case ESM::fourCC("INAM"):
+                reader.getFormId(mImpactDataSet);
+                break;
+            case ESM::fourCC("WNAM"):
+                reader.getFormId(mWorldModel);
+                break;
+            case ESM::fourCC("SNAM"):
+            case ESM::fourCC("XNAM"):
+            case ESM::fourCC("TNAM"):
+            case ESM::fourCC("NAM8"):
+            case ESM::fourCC("NAM9"):
+            case ESM::fourCC("WMS1"):
+            case ESM::fourCC("WMS2"):
+            {
+                SoundRef sound;
+                sound.mType = subHdr.typeId;
+                reader.getFormId(sound.mSound);
+                mSoundRefs.push_back(sound);
+                break;
+            }
             case ESM::fourCC("MODT"): // Model data
             case ESM::fourCC("MODC"):
             case ESM::fourCC("MODS"):
             case ESM::fourCC("MODF"): // Model data end
             case ESM::fourCC("BAMT"):
             case ESM::fourCC("BIDS"):
-            case ESM::fourCC("INAM"):
             case ESM::fourCC("CNAM"):
             case ESM::fourCC("CRDT"):
             case ESM::fourCC("DNAM"):
             case ESM::fourCC("EAMT"):
             case ESM::fourCC("EITM"):
-            case ESM::fourCC("ETYP"):
             case ESM::fourCC("KSIZ"):
             case ESM::fourCC("KWDA"):
-            case ESM::fourCC("NAM8"):
-            case ESM::fourCC("NAM9"):
             case ESM::fourCC("OBND"):
-            case ESM::fourCC("SNAM"):
-            case ESM::fourCC("TNAM"):
             case ESM::fourCC("UNAM"):
             case ESM::fourCC("VMAD"):
             case ESM::fourCC("VNAM"):
-            case ESM::fourCC("WNAM"):
-            case ESM::fourCC("XNAM"): // Dawnguard only?
             case ESM::fourCC("NNAM"):
-            case ESM::fourCC("NAM0"): // FO3
-            case ESM::fourCC("REPL"): // FO3
             case ESM::fourCC("MOD2"): // FO3
             case ESM::fourCC("MO2T"): // FO3
             case ESM::fourCC("MO2S"): // FO3
@@ -164,25 +183,25 @@ void ESM4::Weapon::load(ESM4::Reader& reader)
             case ESM::fourCC("DSTF"): // Destructible end
             case ESM::fourCC("VATS"): // FONV
             case ESM::fourCC("VANM"): // FONV
-            case ESM::fourCC("MWD1"): // FONV
-            case ESM::fourCC("MWD2"): // FONV
-            case ESM::fourCC("MWD3"): // FONV
-            case ESM::fourCC("MWD4"): // FONV
-            case ESM::fourCC("MWD5"): // FONV
-            case ESM::fourCC("MWD6"): // FONV
-            case ESM::fourCC("MWD7"): // FONV
-            case ESM::fourCC("WMI1"): // FONV
-            case ESM::fourCC("WMI2"): // FONV
-            case ESM::fourCC("WMI3"): // FONV
-            case ESM::fourCC("WMS1"): // FONV
-            case ESM::fourCC("WMS2"): // FONV
-            case ESM::fourCC("WNM1"): // FONV
-            case ESM::fourCC("WNM2"): // FONV
-            case ESM::fourCC("WNM3"): // FONV
-            case ESM::fourCC("WNM4"): // FONV
-            case ESM::fourCC("WNM5"): // FONV
-            case ESM::fourCC("WNM6"): // FONV
-            case ESM::fourCC("WNM7"): // FONV
+                reader.skipSubRecordData();
+                break;
+            case ESM::fourCC("MWD1"): reader.getZString(mModModel[0]); break;
+            case ESM::fourCC("MWD2"): reader.getZString(mModModel[1]); break;
+            case ESM::fourCC("MWD3"): reader.getZString(mModModel[2]); break;
+            case ESM::fourCC("MWD4"): reader.getZString(mModModel[3]); break;
+            case ESM::fourCC("MWD5"): reader.getZString(mModModel[4]); break;
+            case ESM::fourCC("MWD6"): reader.getZString(mModModel[5]); break;
+            case ESM::fourCC("MWD7"): reader.getZString(mModModel[6]); break;
+            case ESM::fourCC("WMI1"): reader.getFormId(mModItem[0]); break;
+            case ESM::fourCC("WMI2"): reader.getFormId(mModItem[1]); break;
+            case ESM::fourCC("WMI3"): reader.getFormId(mModItem[2]); break;
+            case ESM::fourCC("WNM1"): reader.getFormId(mModdedWeapon[0]); break;
+            case ESM::fourCC("WNM2"): reader.getFormId(mModdedWeapon[1]); break;
+            case ESM::fourCC("WNM3"): reader.getFormId(mModdedWeapon[2]); break;
+            case ESM::fourCC("WNM4"): reader.getFormId(mModdedWeapon[3]); break;
+            case ESM::fourCC("WNM5"): reader.getFormId(mModdedWeapon[4]); break;
+            case ESM::fourCC("WNM6"): reader.getFormId(mModdedWeapon[5]); break;
+            case ESM::fourCC("WNM7"): reader.getFormId(mModdedWeapon[6]); break;
             case ESM::fourCC("EFSD"): // FONV DeadMoney
             case ESM::fourCC("APPR"): // FO4
             case ESM::fourCC("DAMA"): // FO4

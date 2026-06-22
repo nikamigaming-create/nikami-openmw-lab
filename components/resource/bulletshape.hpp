@@ -3,6 +3,7 @@
 
 #include <map>
 #include <memory>
+#include <vector>
 
 #include <osg/Object>
 #include <osg/Vec3f>
@@ -61,6 +62,7 @@ namespace Resource
         std::string mFileHash;
 
         VisualCollisionType mVisualCollisionType = VisualCollisionType::None;
+        std::vector<osg::ref_ptr<const BulletShape>> mCollisionSourceRefs;
 
         BulletShape() = default;
         // Note this is always a shallow copy and the copy will not autodelete underlying vertex data
@@ -88,6 +90,7 @@ namespace Resource
     };
 
     osg::ref_ptr<BulletShapeInstance> makeInstance(osg::ref_ptr<const BulletShape> source);
+    CollisionShapePtr cloneCollisionShape(const btCollisionShape* shape);
 
     // Subclass btBhvTriangleMeshShape to auto-delete the meshInterface
     struct TriangleMeshShape : public btBvhTriangleMeshShape

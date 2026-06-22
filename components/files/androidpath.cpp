@@ -7,10 +7,47 @@
 #include <filesystem>
 #include <jni.h>
 #include <pwd.h>
+#include <string>
 #include <unistd.h>
 
-static const char* g_path_global; //< Path to global directory root, e.g. /data/data/com.libopenmw.openmw
-static const char* g_path_user; //< Path to user root, e.g. /sdcard/Android/data/com.libopenmw.openmw
+static std::string g_path_global; //< Path to global directory root, e.g. /data/data/com.libopenmw.openmw
+static std::string g_path_user; //< Path to user root, e.g. /sdcard/Android/data/com.libopenmw.openmw
+
+static void setAndroidPaths(JNIEnv* env, jstring global, jstring user)
+{
+    const char* globalPath = env->GetStringUTFChars(global, nullptr);
+    const char* userPath = env->GetStringUTFChars(user, nullptr);
+
+    g_path_global = globalPath ? globalPath : "";
+    g_path_user = userPath ? userPath : "";
+
+    if (globalPath)
+        env->ReleaseStringUTFChars(global, globalPath);
+    if (userPath)
+        env->ReleaseStringUTFChars(user, userPath);
+}
+
+extern "C" void openmw_set_android_paths(const char* global, const char* user)
+{
+    g_path_global = global ? global : "";
+    g_path_user = user ? user : "";
+}
+
+static std::filesystem::path globalRoot()
+{
+    if (!g_path_global.empty())
+        return g_path_global;
+
+    return "/data/local/tmp/openmw-vrquest";
+}
+
+static std::filesystem::path userRoot()
+{
+    if (!g_path_user.empty())
+        return g_path_user;
+
+    return "/sdcard/Android/data/org.openmw.vrquest/files";
+}
 
 /**
  * \brief Called by java code to set up directory paths
@@ -18,8 +55,13 @@ static const char* g_path_user; //< Path to user root, e.g. /sdcard/Android/data
 extern "C" JNIEXPORT void JNICALL Java_ui_activity_GameActivity_getPathToJni(
     JNIEnv* env, jobject obj, jstring global, jstring user)
 {
-    g_path_global = env->GetStringUTFChars(global, nullptr);
-    g_path_user = env->GetStringUTFChars(user, nullptr);
+    setAndroidPaths(env, global, user);
+}
+
+extern "C" JNIEXPORT void JNICALL Java_org_openmw_vrquest_OpenMWActivity_setOpenMWPaths(
+    JNIEnv* env, jobject obj, jstring global, jstring user)
+{
+    setAndroidPaths(env, global, user);
 }
 
 namespace Files
@@ -30,28 +72,28 @@ namespace Files
     // /sdcard/Android/data/com.libopenmw.openmw/config
     std::filesystem::path AndroidPath::getUserConfigPath() const
     {
-        return std::filesystem::path(g_path_user) / "config";
+        return userRoot() / "config";
     }
 
     // /sdcard/Android/data/com.libopenmw.openmw/
     // (so that saves are placed at /sdcard/Android/data/com.libopenmw.openmw/saves)
     std::filesystem::path AndroidPath::getUserDataPath() const
     {
-        return std::filesystem::path(g_path_user);
+        return userRoot();
     }
 
     // /data/data/com.libopenmw.openmw/cache
     // (supposed to be "official" android cache location)
     std::filesystem::path AndroidPath::getCachePath() const
     {
-        return std::filesystem::path(g_path_global) / "cache";
+        return globalRoot() / "cache";
     }
 
     // /data/data/com.libopenmw.openmw/files/config
     // (note the addition of "files")
     std::filesystem::path AndroidPath::getGlobalConfigPath() const
     {
-        return std::filesystem::path(g_path_global) / "files" / "config";
+        return globalRoot() / "files" / "config";
     }
 
     std::filesystem::path AndroidPath::getLocalPath() const
@@ -63,7 +105,7 @@ namespace Files
     // (so that the data is at /sdcard/Android/data/com.libopenmw.openmw/data)
     std::filesystem::path AndroidPath::getGlobalDataPath() const
     {
-        return std::filesystem::path(g_path_user);
+        return userRoot();
     }
 
     std::vector<std::filesystem::path> AndroidPath::getInstallPaths() const

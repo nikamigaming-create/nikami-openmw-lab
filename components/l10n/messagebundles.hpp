@@ -8,8 +8,12 @@
 #include <unordered_map>
 #include <vector>
 
+#ifdef OPENMW_ANDROID_DISABLE_ICU
+#include <components/l10n/icustub.hpp>
+#else
 #include <unicode/locid.h>
 #include <unicode/msgfmt.h>
+#endif
 
 #include <components/misc/strings/algorithm.hpp>
 

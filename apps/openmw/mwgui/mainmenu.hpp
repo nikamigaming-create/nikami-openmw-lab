@@ -44,6 +44,7 @@ namespace MWGui
         int mHeight;
 
         bool mHasAnimatedMenu;
+        bool mHasFalloutMainBackground;
 
     public:
         MainMenu(int w, int h, const VFS::Manager* vfs, const std::string& versionDescription);

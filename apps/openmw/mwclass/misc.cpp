@@ -149,7 +149,8 @@ namespace MWClass
             countString = " (" + std::to_string(count) + ")";
 
         std::string_view name = getName(ptr);
-        info.caption = MyGUI::TextIterator::toTagsString(MyGUI::UString(name)) + MWGui::ToolTips::getCountString(count)
+        info.caption = MyGUI::TextIterator::toTagsString(MyGUI::UString(std::string(name)))
+            + MWGui::ToolTips::getCountString(count)
             + MWGui::ToolTips::getSoulString(ptr.getCellRef());
         info.icon = ref->mBase->mIcon;
 

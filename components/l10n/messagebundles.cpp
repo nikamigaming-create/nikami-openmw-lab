@@ -6,8 +6,10 @@
 #include <optional>
 #include <span>
 
+#ifndef OPENMW_ANDROID_DISABLE_ICU
 #include <unicode/calendar.h>
 #include <unicode/errorcode.h>
+#endif
 #include <yaml-cpp/yaml.h>
 
 #include <components/debug/debuglog.hpp>

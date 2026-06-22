@@ -12,6 +12,7 @@
 #include <components/esm3/loadrace.hpp>
 #include <components/esm3/loadspel.hpp>
 #include <components/settings/values.hpp>
+#include <components/widgets/myguicompat.hpp>
 
 #include "../mwbase/environment.hpp"
 #include "../mwbase/windowmanager.hpp"
@@ -127,7 +128,8 @@ namespace MWGui
             mControllerButtons.mB = "#{Interface:Back}";
             mControllerButtons.mX = "#{Interface:Done}";
             okButton->setCaption(
-                MyGUI::UString(MWBase::Environment::get().getWindowManager()->getGameSettingString("sDone", {})));
+                Gui::makeMyGUIUString(
+                    MWBase::Environment::get().getWindowManager()->getGameSettingString("sDone", {})));
         }
     }
 
@@ -289,7 +291,7 @@ namespace MWGui
         MyGUI::TextBox* groupWidget = mSkillView->createWidget<MyGUI::TextBox>("SandBrightText",
             MyGUI::IntCoord(0, coord1.top, coord1.width + coord2.width, coord1.height), MyGUI::Align::Default);
         groupWidget->eventMouseWheel += MyGUI::newDelegate(this, &ReviewDialog::onMouseWheel);
-        groupWidget->setCaption(MyGUI::UString(label));
+        groupWidget->setCaption(Gui::makeMyGUIUString(label));
         mSkillWidgets.push_back(groupWidget);
 
         const int lineHeight = Settings::gui().mFontSize + 2;
@@ -304,7 +306,7 @@ namespace MWGui
         MyGUI::TextBox* skillValueWidget;
 
         skillNameWidget = mSkillView->createWidget<MyGUI::TextBox>("SandText", coord1, MyGUI::Align::Default);
-        skillNameWidget->setCaption(MyGUI::UString(text));
+        skillNameWidget->setCaption(Gui::makeMyGUIUString(text));
         skillNameWidget->eventMouseWheel += MyGUI::newDelegate(this, &ReviewDialog::onMouseWheel);
 
         skillValueWidget = mSkillView->createWidget<MyGUI::TextBox>("SandTextRight", coord2, MyGUI::Align::Default);

@@ -10,6 +10,8 @@
 #include <MyGUI_LevelLogFilter.h>
 #include <MyGUI_LogSource.h>
 
+#include <components/widgets/myguicompat.hpp>
+
 namespace MyGUIPlatform
 {
 
@@ -30,8 +32,8 @@ namespace MyGUIPlatform
         void close() override;
         void flush() override;
 
-        void log(std::string_view section, MyGUI::LogLevel level, const struct tm* time, std::string_view message,
-            std::string_view file, int line) override;
+        void log(OPENMW_MYGUI_LOG_STRING_PARAM section, MyGUI::LogLevel level, const struct tm* time,
+            OPENMW_MYGUI_LOG_STRING_PARAM message, OPENMW_MYGUI_LOG_FILE_PARAM file, int line) override;
 
     private:
         std::ofstream mStream;

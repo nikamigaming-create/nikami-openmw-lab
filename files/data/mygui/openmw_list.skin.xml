@@ -216,7 +216,7 @@
 
     <!-- Horizontal line -->
 
-    <Resource type="ResourceSkin" name="MW_HLine" size="512 10" texture="textures\menu_thin_border_top.dds">
+    <Resource type="ResourceSkin" name="MW_HLine" size="512 10" texture="textures\omw_menu_icon_active.dds">
         <BasisSkin type="SubSkin" offset="0 0 512 2" align="Bottom HStretch">
             <State name="normal" offset="0 0 512 2"/>
         </BasisSkin>
@@ -224,7 +224,7 @@
 
     <!-- Vertical line -->
 
-    <Resource type="ResourceSkin" name="MW_VLine" size="10 512" texture="textures\menu_thin_border_left.dds">
+    <Resource type="ResourceSkin" name="MW_VLine" size="10 512" texture="textures\omw_menu_icon_active.dds">
         <BasisSkin type="SubSkin" offset="0 0 2 512" align="Bottom VStretch">
             <State name="normal" offset="0 0 2 512"/>
         </BasisSkin>

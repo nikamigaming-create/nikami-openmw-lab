@@ -439,12 +439,25 @@ namespace MWWorld
         const X* ptr = store.search(ref.mBaseObj);
         if (!ptr)
         {
-            Log(Debug::Warning) << "Warning: could not resolve cell reference " << ref.mId << " (dropping reference)";
+            Log(Debug::Warning) << "FNV/ESM4 diag: could not resolve placed reference " << ESM::RefId(ref.mId)
+                                << " base " << ESM::RefId(ref.mBaseObj) << " in parent cell " << ref.mParent
+                                << " (dropping reference)";
             return;
         }
         LiveCellRef<X> liveCellRef(ref, ptr);
         if (!isEnabled(ref, esmStore))
             liveCellRef.mData.disable();
+        if constexpr (isESM4ActorRec(X::sRecordId))
+        {
+            Log(Debug::Info) << "FNV/ESM4 diag: loaded placed actor ref " << ESM::RefId(ref.mId) << " editor '"
+                             << ref.mEditorId << "' full '" << ref.mFullName << "' base " << ESM::RefId(ref.mBaseObj)
+                             << " baseEditor '" << ptr->mEditorId << "' baseFull '" << ptr->mFullName << "' parent "
+                             << ref.mParent << " pos=(" << ref.mPos.pos[0] << ", " << ref.mPos.pos[1] << ", "
+                             << ref.mPos.pos[2] << ") flags=0x" << std::hex << ref.mFlags << std::dec
+                             << " enableParent=" << ESM::RefId(ref.mEsp.parent) << " enableFlags=0x" << std::hex
+                             << static_cast<int>(ref.mEsp.flags) << std::dec
+                             << " enabled=" << liveCellRef.mData.isEnabled();
+        }
         list.push_back(std::move(liveCellRef));
     }
 

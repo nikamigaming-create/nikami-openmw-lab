@@ -89,15 +89,26 @@ namespace ESM4
 #pragma pack(pop)
 
         ESM::FormId mId; // from the header
-        std::uint32_t mFlags; // from the header, see enum type RecordFlag for details
+        std::uint32_t mFlags = 0; // from the header, see enum type RecordFlag for details
 
         std::string mEditorId;
 
-        PKDT mData;
-        PSDT mSchedule;
-        PLDT mLocation;
-        PTDT mTarget;
+        PKDT mData{};
+        PSDT mSchedule{};
+        PLDT mLocation{};
+        PTDT mTarget{};
+        std::vector<PLDT> mExtraLocations;
+        std::vector<PTDT> mExtraTargets;
+        std::vector<float> mExtraTargetUnknowns;
         std::vector<CTDA> mConditions;
+        std::uint32_t mFo3PackageFlags = 0;
+        std::uint16_t mFo3ProcedureFlags = 0;
+        std::uint16_t mFo3TypeSpecificFlags = 0;
+        float mFo3TargetUnknown = 0.f;
+        std::uint8_t mIdleFlags = 0;
+        std::uint32_t mIdleCount = 0;
+        float mIdleTimer = 0.f;
+        std::vector<ESM::FormId> mIdleAnim;
 
         void load(ESM4::Reader& reader);
         // void save(ESM4::Writer& writer) const;

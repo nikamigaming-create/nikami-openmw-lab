@@ -1,0 +1,407 @@
+local ok, vr = pcall(require, 'openmw.vr')
+if not ok then
+    return {}
+end
+
+if not vr.isVr() then
+    return {}
+end
+
+local ui = require('openmw.ui')
+local util = require('openmw.util')
+local I = require('openmw.interfaces')
+local storage = require('openmw.storage')
+local input = require('openmw.input')
+local core = require('openmw.core')
+local async = require('openmw.async')
+local types = require('openmw.types')
+local Player = types.Player
+local Actor = types.Actor
+local self = require('openmw.self')
+local common = require('scripts.omw.vr.inputs.common')
+
+local function controlsAllowed()
+    return not core.isWorldPaused()
+        and Player.getControlSwitch(self, Player.CONTROL_SWITCH.Controls)
+        and not I.UI.getMode()
+end
+
+local function isFalloutContentLoaded()
+    return core.contentFiles and core.contentFiles.has and core.contentFiles.has('FalloutNV.esm')
+end
+
+local rightHanded = true
+local pointerRight = false
+local pointerLeft = false
+local physicalSneak = false
+local physicalSneakMessage = true
+local physicalSneakOffset = 25 * I.vrspaces.unitsPerMeter / 100
+local l10nContext = core.l10n(common.l10nKey)
+
+local referencePose = nil
+
+local function getView()
+    return I.vrspaces.locateSpace(I.vrspaces.referenceSpaces.View, I.vrspaces.referenceSpaces.Local) or referencePose
+end
+
+-- Note: 'MetaMenu' and 'MenuBack' are by default bound to the same key.
+-- Similar to how ESC by default opens the game menu, OR closes the current menu.
+-- The actions are disambiguated by the core.isWorldPaused check.
+input.registerTriggerHandler('MetaMenu', async:callback(function()
+    if not I.UI.getMode() and not core.isWorldPaused() then
+        I.UI.addMode(I.UI.MODE.VrMetaMenu)
+    end
+end))
+
+input.registerTriggerHandler('MenuBack', async:callback(function()
+    if I.UI.getMode() or core.isWorldPaused() then
+        -- There isn't a catch-all solution for closing the current menu item from lua.
+        -- I.UI.removeMode can only remove modes, not dialogue boxes, the console, or the postprocessing hud.
+        -- From VR I need a one click solution, so i am using this placeholder internal function.
+        ui._menuBack()
+    end
+end))
+
+common.setOnInputChangedBoolean(function(path, action)
+    if action.valueBoolean then
+        if not controlsAllowed() then
+            -- The Menu script doesn't process inputs itself, so we need to send
+            -- this event to allow input bindings to take place
+            types.Player.sendMenuEvent(self, "RecordVRBinding", {path = path})
+        end
+    end
+end)
+
+local pointerLeft = false
+local pointerRight = false
+
+local function updatePointer()
+    pointerLeft = input.getBooleanActionValue('PointerLeft')
+    pointerRight = input.getBooleanActionValue('PointerRight')
+
+    if pointerLeft and pointerRight then
+        -- Both pointers are being activated at the same time, but i only
+        -- support one pointer at a time
+        if rightHanded then
+            pointerLeft = false
+        else
+            pointerRight = false
+        end
+    end
+
+    if not controlsAllowed() and not (pointerLeft or pointerRight) then
+        -- We're in a menu of some sort. At least one pointer should always be active in this mode.
+        if rightHanded then
+            pointerRight = true
+        else
+            pointerLeft = true
+        end
+    end
+
+    vr._setPointerLeft(pointerLeft)
+    vr._setPointerRight(pointerRight)
+
+end
+
+local smoothTurn= false
+local smoothTurnSensitivity = 2.0
+local snapTurnRate = 30.0 * math.pi / 180
+local function updateControlsSettings()
+    smoothTurn = common.controlsSection:get('SmoothTurn')
+    smoothTurnSensitivity = common.controlsSection:get('SmoothTurnSensitivity')
+    snapTurnRate = common.controlsSection:get('SnapTurnRate') * math.pi / 180
+    physicalSneak = common.controlsSection:get('PhysicalSneak')
+    physicalSneakMessage = common.controlsSection:get('PhysicalSneakMessage')
+    physicalSneakOffset = common.controlsSection:get('PhysicalSneakOffset') * I.vrspaces.unitsPerMeter / 100
+end
+updateControlsSettings()
+common.controlsSection:subscribe(async:callback(updateControlsSettings))
+
+local startUse = false
+local function pointerMode()
+    return pointerLeft or pointerRight or not controlsAllowed()
+end
+
+local falloutPointerInputLogCount = 0
+local function logFalloutPointerInput(message)
+    if isFalloutContentLoaded() and falloutPointerInputLogCount < 20 then
+        falloutPointerInputLogCount = falloutPointerInputLogCount + 1
+        print('Fallout VR diag: ' .. message)
+    end
+end
+
+local falloutMovementInputLogCount = 0
+local function processMovementFromVR()
+    if not controlsAllowed() then return end
+
+    local movement = input.getRangeActionValue('MoveForward') - input.getRangeActionValue('MoveBackward')
+    local sideMovement = input.getRangeActionValue('MoveRight') - input.getRangeActionValue('MoveLeft')
+    if movement == 0 and sideMovement == 0 then return end
+
+    self.controls.movement = movement
+    self.controls.sideMovement = sideMovement
+    if isFalloutContentLoaded() and falloutMovementInputLogCount < 32 then
+        falloutMovementInputLogCount = falloutMovementInputLogCount + 1
+        print('Fallout VR diag: movement controls applied side=' .. tostring(sideMovement)
+            .. ' forward=' .. tostring(movement))
+    end
+end
+
+input.registerTriggerHandler('PointerActivate', async:callback(function()
+    if pointerMode() then
+        logFalloutPointerInput('PointerActivate trigger pointerMode=true')
+        vr._pointerActivate(true)
+    end
+end))
+
+input.registerTriggerHandler('Activate', async:callback(function()
+    logFalloutPointerInput('Activate trigger')
+    vr._pointerActivate(true)
+end))
+
+input.registerTriggerHandler('Recenter', async:callback(function()
+    I.vrspaces.recenterXY()
+end))
+
+local loggedFalloutRadialSuppressed = false
+input.registerTriggerHandler('RadialMenu', async:callback(function()
+    if isFalloutContentLoaded() then
+        if not loggedFalloutRadialSuppressed then
+            print('Fallout VR diag: radial menu trigger suppressed so shared button opens Pip-Boy inventory')
+            loggedFalloutRadialSuppressed = true
+        end
+        return
+    end
+
+    if not I.UI.getMode() then
+        I.UI.addMode('VrRadialMenu')
+    end
+end))
+
+input.registerActionHandler('SnapTurnLeft', async:callback(function(v)
+    if v and not smoothTurn then
+        self.controls.yawChange = -snapTurnRate
+    end
+end))
+
+input.registerActionHandler('SnapTurnRight', async:callback(function(v)
+    if v and not smoothTurn then
+        self.controls.yawChange = snapTurnRate
+    end
+end))
+
+input.registerActionHandler('Use', async:callback(function(v)
+    -- Use should double as menu interactions when in GUI mode or the pointer is active.
+    if v then
+        if not pointerMode() then
+            startUse = true
+        else
+            logFalloutPointerInput('Use action activated pointerMode=true kbMouse=' .. tostring(I.vrinputs.isKBMouseMode()))
+            vr._pointerActivate(true)
+        end
+    end
+end))
+
+local yawChanged = false
+input.registerActionHandler('LookLeft', async:callback(function(v)
+    yawChanged = true
+end))
+input.registerActionHandler('LookRight', async:callback(function(v)
+    yawChanged = true
+end))
+
+-- A few functions duplicated from playercontrols.lua
+-- We are overriding combat controls and have to change these funtions
+-- to respect pointer mode
+local function checkNotWerewolf()
+    if Player.isWerewolf(self) then
+        ui.showMessage(core.getGMST('sWerewolfRefusal'))
+        return false
+    else
+        return true
+    end
+end
+
+input.registerTriggerHandler('ToggleSpell', async:callback(function()
+    if pointerMode() then return end
+    if Actor.getStance(self) == Actor.STANCE.Spell then
+        Actor.setStance(self, Actor.STANCE.Nothing)
+    elseif Player.getControlSwitch(self, Player.CONTROL_SWITCH.Magic) then
+        if checkNotWerewolf() then
+            Actor.setStance(self, Actor.STANCE.Spell)
+        end
+    end
+end))
+
+input.registerTriggerHandler('ToggleWeapon', async:callback(function()
+    if pointerMode() then return end
+    if Actor.getStance(self) == Actor.STANCE.Weapon then
+        Actor.setStance(self, Actor.STANCE.Nothing)
+    elseif Player.getControlSwitch(self, Player.CONTROL_SWITCH.Fighting) then
+        Actor.setStance(self, Actor.STANCE.Weapon)
+    end
+end))
+
+local isPhysicalSneak = false
+
+local function processAttacking()
+    if pointerMode() then return end
+    -- for spell-casting, set controls.use to true for exactly one frame
+    -- otherwise spell casting is attempted every frame while Use is true
+    if Actor.getStance(self) == Actor.STANCE.Spell then
+        self.controls.use = startUse and 1 or 0
+    elseif Actor.getStance(self) == Actor.STANCE.Weapon and input.getBooleanActionValue('Use') and not pointerMode() then
+        self.controls.use = 1
+    else
+        self.controls.use = 0
+    end
+    startUse = false
+end
+
+input.bindAction('Sneak', async:callback(function(dt, v)
+	if physicalSneak and pose and referencePose then
+		local wasPhysicalSneak = isPhysicalSneak
+		local z = pose.position.z
+		isPhysicalSneak = z < (referencePose.position.z - physicalSneakOffset)
+		if isPhysicalSneak ~= wasPhysicalSneak and physicalSneakMessage then
+			if isPhysicalSneak then
+				ui.showMessage(l10nContext('entered_physical_sneak'))
+			else
+				ui.showMessage(l10nContext('left_physical_sneak'))
+			end
+		end
+		return isPhysicalSneak or v
+	end
+	return v
+end), {})
+
+local frameCount = 0
+local function onFrame(dt)
+    -- If a mod ever calls overrideCombatControls(false), it would break VR controls.
+    -- There's no API to detect this, so i call this every frame to make sure we stay
+    -- in control.
+    I.Controls.overrideCombatControls(true)
+
+    common.onFrame()
+    updatePointer()
+
+    -- It's important to only update this value when these actions changed
+    -- otherwise we'll cancel out the yaw change from mouse movement, which are still handled engine-side.
+    if smoothTurn and yawChanged then
+        local lookLeft = input.getRangeActionValue('LookLeft')
+        local lookRight = input.getRangeActionValue('LookRight')
+        local yawChange = (lookRight - lookLeft) * dt * smoothTurnSensitivity
+        self.controls.yawChange = yawChange
+    end
+
+    processMovementFromVR()
+    processAttacking()
+
+    local scrollSpeed = input.getRangeActionValue('MenuScrollUp') - input.getRangeActionValue('MenuScrollDown')
+    vr._setCurrentScroll(scrollSpeed)
+
+    -- Delay autogenerating input bindings for triggers/actions for 100 frames
+    -- to be sure all mods have had time to register theirs.
+    -- If some mod actually adds some later, /shrug.
+    frameCount = frameCount + 1
+    if frameCount == 100 then
+        common.registerAutogeneratedSettingsGroup()
+    end
+end
+
+local function resetPhysicalSneakReferencePose()
+    referencePose = getView()
+    if physicalSneak then
+        ui.showMessage(l10nContext('physical_sneak_reference_reset'))
+    end
+end
+
+local function onVRFrame()
+    if not referencePose then
+        resetPhysicalSneakReferencePose()
+    end
+    pose = getView()
+end
+
+local function onVRRecenter(vertical, horizontal)
+    if vertical then
+        -- TODO: A distinction between resetZ and non-resetZ recenters has not been implemented.
+        -- For now this code will never be hit
+        resetPhysicalSneakReferencePose()
+    end
+end
+
+return {
+    engineHandlers = {
+        onFrame = onFrame,
+        onVRFrame = onVRFrame,
+        onVRRecenter = onVRRecenter,
+    },
+
+    eventHandlers = {
+    },
+
+    interfaceName = 'vrinputs',
+    ---
+    -- vr inputs
+    -- @module vrinputs
+
+    --- Controller interaction paths
+    -- @type Controller
+    -- @field #string LEFT_HAND '/user/hand/left'
+    -- @field #string RIGHT_HAND '/user/hand/right'
+    --
+
+    interface = {
+        --- Interface version
+        -- @field [parent=#vrinputs] #number version
+        version = 0,
+
+        --- List of controllers and their corresponding interaction paths
+        -- @field [parent=#vrinputs] #table controllers
+        controllers = common.controllers,
+
+        --- Get the name of the currently active profile for the given controller
+        -- @function [parent=#vrinputs] getInteractionProfileOfController
+        -- @param #ReferenceSpace name The interaction path of the controller (one of the top level input paths )
+        -- @return #Controller The interaction profile name (one of '/user/hand/left' or '/user/hand/right')
+        getInteractionProfileOfController = common.getInteractionProfileOfController,
+
+        ---
+        -- Gets the current value of an interaction path
+        -- @function [parent=#vrinputs] getInputValue
+        -- @param #string path
+        -- @return #any Returns either a number or a boolean depending on the @{INTERACTION_VALUE_TYPE} corresponding to this action, if the action is active. If the action is inactive (i.e. if none of the active controller have this path), returns nil. If the provided path is not a valid or known interaction, throws an error.
+        getInputValue = vr._getInputValue,
+
+        ---
+        -- Sets the haptic value of an output for this frame
+        -- @function [parent=#vrinputs] setOutputValue
+        -- @param #string path
+        -- @param #number intensity Haptic intensity between 0 and 1
+        setOutputValue = vr._setOutputValue,
+
+        --- Check if the game is currently in keyboard+mouse mode, or using motion controllers.
+        -- @function [parent=#vrinputs] isKBMouseMode
+        -- @return #boolean True if the game is currently in keyboard+mouse mode, false if the game is currently in motion controllers mode.
+        isKBMouseMode = common.isKBMouseMode,
+
+        --- Get the list of currently active bindings for the given action. Note that this returns full interaction paths.
+        -- @function [parent=#vrinputs] getActiveActionBindings
+        -- @param #string Key The action key
+        -- @return list<#string> List of all active bindings. Will be an empty list if there are no bindings.
+        getActiveActionBindings = common.getActiveActionBindings,
+
+        --- Get the list of currently active bindings for the given trigger. Note that this returns full interaction paths.
+        -- @function [parent=#vrinputs] getActiveTriggerBindings
+        -- @param #string Key The trigger key
+        -- @return list<#string> List of all active bindings. Will be an empty list if there are no bindings.
+        getActiveTriggerBindings = common.getActiveTriggerBindings,
+
+        --- Translate an interaction path into a human readable name. Only english is currently supported.
+        -- @function [parent=#vrinputs] getInteractionName
+        -- @param #string Path The interaction path
+        -- @return #string The interaction name
+        getInteractionName = common.getInteractionName,
+    }
+}

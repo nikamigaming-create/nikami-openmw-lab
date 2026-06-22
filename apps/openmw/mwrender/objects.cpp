@@ -3,6 +3,7 @@
 #include <osg/Group>
 #include <osg/UserDataContainer>
 
+#include <components/esm4/loadcrea.hpp>
 #include <components/misc/resourcehelpers.hpp>
 #include <components/misc/strings/algorithm.hpp>
 #include <components/sceneutil/positionattitudetransform.hpp>
@@ -105,7 +106,10 @@ namespace MWRender
         // CreatureAnimation
         osg::ref_ptr<Animation> anim;
 
-        if (weaponsShields)
+        const bool isFalloutCreature
+            = dynamic_cast<MWWorld::LiveCellRef<ESM4::Creature>*>(ptr.getBase()) != nullptr;
+        const bool useCreatureWeaponAnimation = weaponsShields && !isFalloutCreature;
+        if (useCreatureWeaponAnimation)
             anim = new CreatureWeaponAnimation(ptr, animationMesh, mResourceSystem, animated);
         else
             anim = new CreatureAnimation(ptr, animationMesh, mResourceSystem, animated);

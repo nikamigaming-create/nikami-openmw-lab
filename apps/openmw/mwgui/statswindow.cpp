@@ -11,7 +11,14 @@
 #include <MyGUI_TextIterator.h>
 #include <MyGUI_Window.h>
 
+#include <algorithm>
+#include <array>
+#include <cctype>
+#include <cstdlib>
+
 #include <components/debug/debuglog.hpp>
+#include <components/misc/strings/algorithm.hpp>
+#include <components/widgets/myguicompat.hpp>
 
 #include <components/esm3/loadbsgn.hpp>
 #include <components/esm3/loadclas.hpp>
@@ -36,6 +43,33 @@
 
 namespace MWGui
 {
+    namespace
+    {
+        std::string lowerAscii(std::string value)
+        {
+            std::transform(value.begin(), value.end(), value.begin(),
+                [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+            return value;
+        }
+
+        bool isFalloutStatsContent()
+        {
+            if (std::getenv("OPENMW_FNV_PROOF_PIPBOY_SURFACE") != nullptr)
+                return true;
+
+            const MWBase::World* world = MWBase::Environment::get().getWorld();
+            if (world == nullptr)
+                return false;
+
+            for (const std::string& file : world->getContentFiles())
+                if (Misc::StringUtils::ciEndsWith(file, "FalloutNV.esm"))
+                    return true;
+
+            return false;
+        }
+
+    }
+
     StatsWindow::StatsWindow(DragAndDrop* drag)
         : WindowPinnableBase("openmw_stats_window.layout")
         , NoDrop(drag, mMainWidget)
@@ -50,22 +84,29 @@ namespace MWGui
         MyGUI::Widget* attributeView = getWidget("AttributeView");
         MyGUI::IntCoord coord{ 0, 0, 204, 18 };
         const MyGUI::Align alignment = MyGUI::Align::Left | MyGUI::Align::Top | MyGUI::Align::HStretch;
-        for (const ESM::Attribute& attribute : store.get<ESM::Attribute>())
+        const bool falloutContent = isFalloutStatsContent();
+        attributeView->setVisible(!falloutContent);
+        if (!falloutContent)
         {
-            auto* box = attributeView->createWidget<MyGUI::Button>({}, coord, alignment);
-            box->setUserString("ToolTipType", "Layout");
-            box->setUserString("ToolTipLayout", "AttributeToolTip");
-            box->setUserString("Caption_AttributeName", attribute.mName);
-            box->setUserString("Caption_AttributeDescription", attribute.mDescription);
-            box->setUserString("ImageTexture_AttributeImage", attribute.mIcon);
-            coord.top += coord.height;
-            auto* name = box->createWidget<MyGUI::TextBox>("SandText", { 0, 0, 160, 18 }, alignment);
-            name->setNeedMouseFocus(false);
-            name->setCaption(attribute.mName);
-            auto* value = box->createWidget<MyGUI::TextBox>(
-                "SandTextRight", { 160, 0, 44, 18 }, MyGUI::Align::Right | MyGUI::Align::Top);
-            value->setNeedMouseFocus(false);
-            mAttributeWidgets.emplace(attribute.mId, value);
+            for (const ESM::Attribute& attribute : store.get<ESM::Attribute>())
+            {
+                const std::string displayName = attribute.mName;
+
+                auto* box = attributeView->createWidget<MyGUI::Button>({}, coord, alignment);
+                box->setUserString("ToolTipType", "Layout");
+                box->setUserString("ToolTipLayout", "AttributeToolTip");
+                box->setUserString("Caption_AttributeName", displayName);
+                box->setUserString("Caption_AttributeDescription", attribute.mDescription);
+                box->setUserString("ImageTexture_AttributeImage", attribute.mIcon);
+                coord.top += coord.height;
+                auto* name = box->createWidget<MyGUI::TextBox>("SandText", { 0, 0, 160, 18 }, alignment);
+                name->setNeedMouseFocus(false);
+                name->setCaption(displayName);
+                auto* value = box->createWidget<MyGUI::TextBox>(
+                    "SandTextRight", { 160, 0, 44, 18 }, MyGUI::Align::Right | MyGUI::Align::Top);
+                value->setNeedMouseFocus(false);
+                mAttributeWidgets.emplace(attribute.mId, value);
+            }
         }
 
         getWidget(mSkillView, "SkillView");
@@ -179,6 +220,9 @@ namespace MWGui
             else
                 box->_setWidgetState("normal");
         }
+
+        if (isFalloutStatsContent())
+            mChanged = true;
     }
 
     void StatsWindow::setValue(std::string_view id, const MWMechanics::DynamicStat<float>& value)
@@ -425,7 +469,7 @@ namespace MWGui
         MyGUI::TextBox* groupWidget = mSkillView->createWidget<MyGUI::TextBox>("SandBrightText",
             MyGUI::IntCoord(0, coord1.top, coord1.width + coord2.width, coord1.height),
             MyGUI::Align::Left | MyGUI::Align::Top | MyGUI::Align::HStretch);
-        groupWidget->setCaption(MyGUI::UString(label));
+        groupWidget->setCaption(Gui::makeMyGUIUString(label));
         groupWidget->eventMouseWheel += MyGUI::newDelegate(this, &StatsWindow::onMouseWheel);
         mSkillWidgets.push_back(groupWidget);
 
@@ -441,7 +485,7 @@ namespace MWGui
 
         skillNameWidget = mSkillView->createWidget<MyGUI::TextBox>(
             "SandText", coord1, MyGUI::Align::Left | MyGUI::Align::Top | MyGUI::Align::HStretch);
-        skillNameWidget->setCaption(MyGUI::UString(text));
+        skillNameWidget->setCaption(Gui::makeMyGUIUString(text));
         skillNameWidget->eventMouseWheel += MyGUI::newDelegate(this, &StatsWindow::onMouseWheel);
 
         skillValueWidget = mSkillView->createWidget<MyGUI::TextBox>(
@@ -551,6 +595,9 @@ namespace MWGui
         const int valueSize = 40;
         MyGUI::IntCoord coord1(10, 0, mSkillView->getWidth() - (10 + valueSize) - 24, 18);
         MyGUI::IntCoord coord2(coord1.left + coord1.width, coord1.top, valueSize, coord1.height);
+
+        if (isFalloutStatsContent() && updateFalloutStatsArea())
+            return;
 
         if (!mMajorSkills.empty())
             addSkills(mMajorSkills, "sSkillClassMajor", "Major Skills", coord1, coord2);
@@ -712,6 +759,97 @@ namespace MWGui
         mSkillView->setVisibleVScroll(false);
         mSkillView->setCanvasSize(mSkillView->getWidth(), std::max(mSkillView->getHeight(), coord1.top));
         mSkillView->setVisibleVScroll(true);
+    }
+
+    bool StatsWindow::updateFalloutStatsArea()
+    {
+        const int valueSize = 40;
+        MyGUI::IntCoord coord1(10, 0, mSkillView->getWidth() - (10 + valueSize) - 24, 18);
+        MyGUI::IntCoord coord2(coord1.left + coord1.width, coord1.top, valueSize, coord1.height);
+
+        const MWWorld::ESMStore& esmStore = *MWBase::Environment::get().getESMStore();
+        MWWorld::Ptr player = MWBase::Environment::get().getWorld()->getPlayerPtr();
+        const MWMechanics::NpcStats& npcStats = player.getClass().getNpcStats(player);
+        const auto findAttributeValue = [&](ESM::RefId id, int fallback) {
+            try
+            {
+                const int value = static_cast<int>(npcStats.getAttribute(id).getModified());
+                if (value > 10)
+                    return std::clamp((value + 5) / 10, 1, 10);
+                return value;
+            }
+            catch (const std::exception&)
+            {
+                return fallback;
+            }
+        };
+        const auto findSkillValue = [&](std::string_view sourceName, int fallback) {
+            const std::string wanted(sourceName);
+            for (const ESM::Skill& skill : esmStore.get<ESM::Skill>())
+            {
+                if (lowerAscii(skill.mName) != wanted)
+                    continue;
+                const auto found = mSkillValues.find(skill.mId);
+                if (found != mSkillValues.end())
+                    return static_cast<int>(found->second.getModified());
+            }
+            return fallback;
+        };
+
+        addGroup("S.P.E.C.I.A.L.", coord1, coord2);
+        addValueItem("Strength", MyGUI::utility::toString(findAttributeValue(ESM::Attribute::Strength, 6)), "normal",
+            coord1, coord2);
+        addValueItem("Perception", MyGUI::utility::toString(findAttributeValue(ESM::Attribute::Willpower, 5)),
+            "normal", coord1, coord2);
+        addValueItem("Endurance", MyGUI::utility::toString(findAttributeValue(ESM::Attribute::Endurance, 6)),
+            "normal", coord1, coord2);
+        addValueItem("Charisma", MyGUI::utility::toString(findAttributeValue(ESM::Attribute::Personality, 5)),
+            "normal", coord1, coord2);
+        addValueItem("Intelligence", MyGUI::utility::toString(findAttributeValue(ESM::Attribute::Intelligence, 6)),
+            "normal", coord1, coord2);
+        addValueItem("Agility", MyGUI::utility::toString(findAttributeValue(ESM::Attribute::Agility, 6)), "normal",
+            coord1, coord2);
+        addValueItem("Luck", MyGUI::utility::toString(findAttributeValue(ESM::Attribute::Luck, 6)), "normal", coord1,
+            coord2);
+
+        addSeparator(coord1, coord2);
+        addGroup("SKILLS", coord1, coord2);
+        const std::array<std::pair<std::string_view, std::string_view>, 13> falloutSkills{ {
+            { "Barter", "mercantile" },
+            { "Energy Weapons", "destruction" },
+            { "Explosives", "conjuration" },
+            { "Guns", "marksman" },
+            { "Lockpick", "security" },
+            { "Medicine", "restoration" },
+            { "Melee Weapons", "longblade" },
+            { "Repair", "armorer" },
+            { "Science", "mysticism" },
+            { "Sneak", "sneak" },
+            { "Speech", "speechcraft" },
+            { "Survival", "unarmored" },
+            { "Unarmed", "handtohand" },
+        } };
+        for (const auto& [label, sourceName] : falloutSkills)
+            addValueItem(label, MyGUI::utility::toString(findSkillValue(sourceName, 35)), "normal", coord1, coord2);
+
+        addSeparator(coord1, coord2);
+        addGroup("REPUTATION", coord1, coord2);
+        addValueItem("Reputation", MyGUI::utility::toString(static_cast<int>(mReputation)), "normal", coord1, coord2);
+        addValueItem("Bounty", MyGUI::utility::toString(static_cast<int>(mBounty)), "normal", coord1, coord2);
+
+        mSkillView->setVisibleVScroll(false);
+        mSkillView->setCanvasSize(mSkillView->getWidth(), std::max(mSkillView->getHeight(), coord1.top));
+        mSkillView->setVisibleVScroll(true);
+
+        static bool loggedFalloutStatsArea = false;
+        if (!loggedFalloutStatsArea)
+        {
+            Log(Debug::Info)
+                << "FNV/ESM4 proof: Fallout stats area applied SPECIAL/SKILLS Barter Guns Lockpick Medicine Science";
+            loggedFalloutStatsArea = true;
+        }
+
+        return true;
     }
 
     void StatsWindow::onPinToggled()

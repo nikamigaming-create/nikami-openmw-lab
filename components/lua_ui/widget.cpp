@@ -4,6 +4,7 @@
 
 #include <SDL_events.h>
 #include <components/sdlutil/sdlmappings.hpp>
+#include <components/widgets/myguicompat.hpp>
 #include <ranges>
 
 namespace
@@ -86,7 +87,9 @@ namespace LuaUi
         w->eventMouseButtonPressed.clear();
         w->eventMouseButtonReleased.clear();
         w->eventMouseMove.clear();
+#if MYGUI_VERSION >= MYGUI_DEFINE_VERSION(3, 4, 3)
         w->eventMouseDrag.clear();
+#endif
 
         w->eventMouseSetFocus.clear();
         w->eventMouseLostFocus.clear();

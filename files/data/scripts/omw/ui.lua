@@ -99,26 +99,43 @@ local function removeMode(mode)
 end
 
 local oldMode = nil
+local function uiModeStep(label, fn)
+    local ok, result = pcall(fn)
+    if not ok then
+        error('onUiModeChanged ' .. label .. ' failed: ' .. tostring(result))
+    end
+    return result
+end
+
 local function onUiModeChanged(changedByLua, arg)
-    local newStack = ui._getUiModeStack()
+    local newStack = uiModeStep('get stack', ui._getUiModeStack)
     for i = 1, math.max(#modeStack, #newStack) do
         modeStack[i] = newStack[i]
     end
-    for w, state in pairs(replacedWindows) do
-        if state.visible then
-            state.hideFn()
-            state.visible = false
+    uiModeStep('hide replaced windows', function()
+        for w, state in pairs(replacedWindows) do
+            if state.visible then
+                state.hideFn()
+                state.visible = false
+            end
         end
-    end
+    end)
     local mode = newStack[#newStack]
     if mode then
         if not changedByLua then
-            updateHidden(mode)
+            uiModeStep('update hidden mode ' .. tostring(mode), function()
+                updateHidden(mode)
+            end)
         end
-        for _, w in pairs(ui._getAllowedWindows(mode)) do
+        local allowedWindows = uiModeStep('get allowed windows mode ' .. tostring(mode), function()
+            return ui._getAllowedWindows(mode)
+        end)
+        for _, w in pairs(allowedWindows) do
             local state = replacedWindows[w]
             if state and not hiddenWindows[w] then
-                state.showFn(arg)
+                uiModeStep('show window ' .. tostring(w) .. ' mode ' .. tostring(mode), function()
+                    state.showFn(arg)
+                end)
                 state.visible = true
             end
         end
@@ -128,11 +145,17 @@ local function onUiModeChanged(changedByLua, arg)
         shouldPause = shouldPause or modePause[m]
     end
     if shouldPause then
-        core.sendGlobalEvent('Pause', 'ui')
+        uiModeStep('send Pause', function()
+            core.sendGlobalEvent('Pause', 'ui')
+        end)
     else
-        core.sendGlobalEvent('Unpause', 'ui')
+        uiModeStep('send Unpause', function()
+            core.sendGlobalEvent('Unpause', 'ui')
+        end)
     end
-    self:sendEvent('UiModeChanged', {oldMode = oldMode, newMode = mode, arg = arg})
+    uiModeStep('send UiModeChanged event', function()
+        self:sendEvent('UiModeChanged', {oldMode = oldMode, newMode = mode, arg = arg})
+    end)
     oldMode = mode
 end
 

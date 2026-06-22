@@ -37,6 +37,7 @@ namespace MWRender
 
 namespace Resource
 {
+    class BulletShapeInstance;
     class BulletShapeManager;
     class ResourceSystem;
 }
@@ -163,6 +164,8 @@ namespace MWPhysics
 
         void addObject(const MWWorld::Ptr& ptr, VFS::Path::NormalizedView mesh, osg::Quat rotation,
             int collisionType = CollisionType_World);
+        void addObject(const MWWorld::Ptr& ptr, osg::ref_ptr<Resource::BulletShapeInstance> shapeInstance,
+            osg::Quat rotation, int collisionType = CollisionType_World);
         void addActor(const MWWorld::Ptr& ptr, VFS::Path::NormalizedView mesh);
 
         int addProjectile(

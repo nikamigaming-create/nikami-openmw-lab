@@ -822,6 +822,15 @@ namespace MWGui
 
         struct GlyphStream
         {
+            static uint32_t toColourARGB(MyGUI::Colour colour)
+            {
+                const auto channel = [](float value) {
+                    return static_cast<uint32_t>(std::clamp(value, 0.f, 1.f) * 255.f);
+                };
+                return (channel(colour.alpha) << 24) | (channel(colour.red) << 16) | (channel(colour.green) << 8)
+                    | channel(colour.blue);
+            }
+
             float mZ;
             uint32_t mC;
             MyGUI::IFont* mFont;
@@ -850,7 +859,7 @@ namespace MWGui
 
             void reset(float left, float top, MyGUI::Colour colour)
             {
-                mC = MyGUI::texture_utility::toNativeColour(colour, MyGUI::VertexColourType::ColourARGB) | 0xFF000000;
+                mC = toColourARGB(colour) | 0xFF000000;
                 MyGUI::texture_utility::convertColour(mC, mVertexColourType);
 
                 mCursor.left = mOrigin.left + left;

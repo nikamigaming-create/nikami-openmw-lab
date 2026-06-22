@@ -6,6 +6,7 @@ param(
     [string]$ExtraOsgPluginDir = $env:NIKAMI_EXTRA_OSG_PLUGIN_DIR,
     [string]$Triplet = "x64-windows",
     [int]$Parallel = 8,
+    [switch]$BuildOpenMwVr,
     [switch]$SkipConfigure
 )
 
@@ -115,6 +116,9 @@ if (!(Test-Path -LiteralPath $LuaJitLibrary)) {
 }
 
 Import-VisualStudioEnvironment
+$PathValue = $env:Path
+Remove-Item Env:PATH -ErrorAction SilentlyContinue
+$env:Path = $PathValue
 
 if (!$SkipConfigure) {
     $ConfigureArgs = @(
@@ -127,7 +131,7 @@ if (!$SkipConfigure) {
         "-DLuaJit_INCLUDE_DIR=$LuaJitInclude",
         "-DLuaJit_LIBRARY=$LuaJitLibrary",
         "-DBUILD_OPENMW=ON",
-        "-DBUILD_OPENMW_VR=OFF",
+        "-DBUILD_OPENMW_VR=$($BuildOpenMwVr.IsPresent)",
         "-DBUILD_LAUNCHER=OFF",
         "-DBUILD_WIZARD=OFF",
         "-DBUILD_OPENCS=OFF",
@@ -140,7 +144,8 @@ if (!$SkipConfigure) {
     Invoke-CheckedNative -Command "cmake" -Arguments $ConfigureArgs
 }
 
-$BuildArgs = @("--build", $BuildPath, "--config", $Configuration, "--target", "openmw", "--parallel", "$Parallel")
+$BuildTarget = if ($BuildOpenMwVr) { "openmw_vr" } else { "openmw" }
+$BuildArgs = @("--build", $BuildPath, "--config", $Configuration, "--target", $BuildTarget, "--parallel", "$Parallel")
 Invoke-CheckedNative -Command "cmake" -Arguments $BuildArgs
 
 $OutputDir = Join-Path $BuildPath $Configuration

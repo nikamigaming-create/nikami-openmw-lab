@@ -7,6 +7,12 @@
 #include "../mwbase/environment.hpp"
 #include "../mwbase/windowmanager.hpp"
 
+#ifdef OPENMW_ENABLE_VR
+#include <components/vr/vr.hpp>
+
+#include "../mwvr/vrgui.hpp"
+#endif
+
 #include <components/settings/values.hpp>
 #include <components/widgets/imagebutton.hpp>
 
@@ -78,6 +84,10 @@ void WindowBase::setVisible(bool visible)
     visible = visible && !mDisabledByLua;
     bool wasVisible = mMainWidget->getVisible();
     mMainWidget->setVisible(visible);
+#ifdef OPENMW_ENABLE_VR
+    if (VR::getVR())
+        MWVR::VRGUIManager::instance().setVisible(this, visible);
+#endif
 
     if (visible)
         onOpen();

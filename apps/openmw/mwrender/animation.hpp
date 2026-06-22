@@ -18,7 +18,6 @@
 #include <components/vfs/pathutil.hpp>
 
 #include <map>
-#include <optional>
 #include <span>
 #include <string>
 #include <unordered_map>
@@ -145,7 +144,20 @@ namespace MWRender
             float getValue(osg::NodeVisitor* nv) override { return 0.f; }
         };
 
-        struct AnimSource;
+        struct AnimSource
+        {
+            osg::ref_ptr<const SceneUtil::KeyframeHolder> mKeyframes;
+            std::string mSourceName;
+
+            typedef std::map<std::string, osg::ref_ptr<SceneUtil::KeyframeController>> ControllerMap;
+
+            ControllerMap mControllerMap[sNumBlendMasks];
+
+            const SceneUtil::TextKeyMap& getTextKeys() const;
+
+            osg::ref_ptr<const SceneUtil::AnimBlendRules> mAnimBlendRules;
+            bool mFalloutProcedureIdle = false;
+        };
 
         struct AnimState
         {
@@ -168,9 +180,7 @@ namespace MWRender
 
             std::string mGroupname;
             std::string mStartKey;
-            std::string mStopKey;
 
-            float getCompletion() const;
             float getTime() const { return *mTime; }
             void setTime(float time) { *mTime = time; }
             bool blendMaskContains(size_t blendMask) const { return (mBlendMask & (1 << blendMask)); }
@@ -291,11 +301,12 @@ namespace MWRender
         /** Adds the keyframe controllers in the specified model as a new animation source.
          * @note Later added animation sources have the highest priority when it comes to finding a particular
          * animation.
-         * @param kfname The file to add the keyframes for. Note that the .nif file extension will be replaced with .kf.
+         * @param model The file to add the keyframes for. Note that the .nif file extension will be replaced with .kf.
          * @param baseModel The filename of the mObjectRoot, only used for error messages.
          */
-        void addAnimSource(std::string_view model, const std::string& baseModel);
-        std::shared_ptr<AnimSource> addSingleAnimSource(VFS::Path::NormalizedView kfname, const std::string& baseModel);
+        virtual void addAnimSource(std::string_view model, const std::string& baseModel);
+        std::shared_ptr<AnimSource> addSingleAnimSource(
+            const std::string& model, const std::string& baseModel, bool falloutProcedureIdle = false);
 
         /** Adds an additional light to the given node using the specified ESM record. */
         void addExtraLight(osg::ref_ptr<osg::Group> parent, const SceneUtil::LightCommon& light);
@@ -317,8 +328,6 @@ namespace MWRender
             std::map<osg::ref_ptr<osg::Node>, osg::ref_ptr<ControllerType>>& blendControllers,
             const AnimBlendStateData& stateData, const osg::ref_ptr<const SceneUtil::AnimBlendRules>& blendRules,
             const AnimState& active);
-
-        void animationEnded(AnimState& state) const;
 
     public:
         Animation(
@@ -348,14 +357,12 @@ namespace MWRender
          *              you need to remove it manually using removeEffect when the effect should end.
          * @param bonename Bone to attach to, or empty string to use the scene node instead
          * @param texture override the texture specified in the model's materials - if empty, do not override
-         * @param useAmbientLight attach white ambient light to the root VFX node of the scenegraph (Morrowind default)
-         * @param autoTransform auto-calculate vfx transform
-         * @param transform apply a relative transform
+         * @param useAmbientLight attach white ambient light to the root VFX node of the scenegraph (Morrowind
+         * default)
          * @note Will not add an effect twice.
          */
         void addEffect(std::string_view model, std::string_view effectId, bool loop = false,
-            std::string_view bonename = {}, std::string_view texture = {}, bool useAmbientLight = true,
-            bool autoTransform = true, const std::optional<osg::Matrix>& transform = std::nullopt);
+            std::string_view bonename = {}, std::string_view texture = {}, bool useAmbientLight = true);
 
         void removeEffect(std::string_view effectId);
         void removeEffects();
@@ -418,7 +425,7 @@ namespace MWRender
          * \return True if the animation is active, false otherwise.
          */
         bool getInfo(std::string_view groupname, float* complete = nullptr, float* speedmult = nullptr,
-            uint32_t* loopcount = nullptr) const;
+            size_t* loopcount = nullptr) const;
 
         /// Returns the group name of the animation currently active on that bone group.
         std::string_view getActiveGroup(BoneGroup boneGroup) const;
@@ -440,6 +447,9 @@ namespace MWRender
 
         /** Retrieves the velocity (in units per second) that the animation will move. */
         float getVelocity(std::string_view groupname) const;
+
+        /** Retrieves the interpolated value of the requested Fallout head animation track */
+        float getFalloutHeadAnimTrackValue(std::string_view trackName) const;
 
         virtual osg::Vec3f runAnimation(float duration);
 
@@ -495,6 +505,11 @@ namespace MWRender
 
         virtual void removeFromScene();
 
+//## VR_PATCH BEGIN
+        virtual void updateCrosshairs(){}
+        bool useSmoothAnimationTransitions() const;
+
+//## VR_PATCH END
     private:
         Animation(const Animation&);
         void operator=(Animation&);

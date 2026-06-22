@@ -16,25 +16,25 @@
                 <Property key="Alpha" value="0.7"/>
             </Widget>
             <Widget type="Button" skin="SandTextButton" align="Center" position="0 0 100 48" name="TabMap">
-                <Property key="Caption" value="#{sMap}"/>
+                <Property key="Caption" value="MAP"/>
                 <Property key="TextAlign" value="Center"/>
                 <Property key="TextShadow" value="true"/>
                 <Property key="TextShadowColour" value="0 0 0"/>
             </Widget>
             <Widget type="Button" skin="SandTextButton" align="Center" position="0 0 100 48" name="TabInventory">
-                <Property key="Caption" value="#{sInventory}"/>
+                <Property key="Caption" value="ITEMS"/>
                 <Property key="TextAlign" value="Center"/>
                 <Property key="TextShadow" value="true"/>
                 <Property key="TextShadowColour" value="0 0 0"/>
             </Widget>
             <Widget type="Button" skin="SandTextButton" align="Center" position="0 0 100 48" name="TabSpells">
-                <Property key="Caption" value="#{sMagicMenu}"/>
+                <Property key="Caption" value="DATA"/>
                 <Property key="TextAlign" value="Center"/>
                 <Property key="TextShadow" value="true"/>
                 <Property key="TextShadowColour" value="0 0 0"/>
             </Widget>
             <Widget type="Button" skin="SandTextButton" align="Center" position="0 0 100 48" name="TabStats">
-                <Property key="Caption" value="#{sStats}"/>
+                <Property key="Caption" value="STAT"/>
                 <Property key="TextAlign" value="Center"/>
                 <Property key="TextShadow" value="true"/>
                 <Property key="TextShadowColour" value="0 0 0"/>

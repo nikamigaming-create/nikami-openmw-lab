@@ -1,11 +1,30 @@
 #include "mousemanager.hpp"
 
+#include <algorithm>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <string_view>
+#include <vector>
+
 #include <MyGUI_Button.h>
 #include <MyGUI_InputManager.h>
 #include <MyGUI_RenderManager.h>
 
+#include <osg/NodeVisitor>
+
 #include <components/sdlutil/sdlinputwrapper.hpp>
 #include <components/sdlutil/sdlmappings.hpp>
+#include <components/debug/debuglog.hpp>
+#include <components/esm/refid.hpp>
+#include <components/esm3/loadcrea.hpp>
+#include <components/esm3/loadnpc.hpp>
+#include <components/esm4/loadcrea.hpp>
+#include <components/esm4/loadmstt.hpp>
+#include <components/esm4/loadnpc.hpp>
+#include <components/esm4/loadrace.hpp>
+#include <components/misc/strings/algorithm.hpp>
+#include <components/sceneutil/positionattitudetransform.hpp>
 #include <components/settings/values.hpp>
 
 #include "../mwbase/environment.hpp"
@@ -16,13 +35,301 @@
 
 #include "../mwgui/settingswindow.hpp"
 
+#include "../mwclass/esm4npc.hpp"
+
+#include "../mwmechanics/creaturestats.hpp"
+
+#include "../mwworld/class.hpp"
 #include "../mwworld/player.hpp"
+#include "../mwworld/refdata.hpp"
 
 #include "actions.hpp"
 #include "bindingsmanager.hpp"
 
 namespace MWInput
 {
+    namespace
+    {
+        bool hasFalloutContent()
+        {
+            if (std::getenv("OPENMW_FNV_TARGET_DIAG") != nullptr)
+                return true;
+
+            const MWBase::World* world = MWBase::Environment::get().getWorld();
+            if (world == nullptr)
+                return false;
+
+            for (const std::string& file : world->getContentFiles())
+                if (Misc::StringUtils::ciEndsWith(file, "FalloutNV.esm"))
+                    return true;
+
+            return false;
+        }
+
+        std::string formIdText(const ESM::FormId& id)
+        {
+            return ESM::RefId(id).toDebugString();
+        }
+
+        std::string joinFormIds(const std::vector<ESM::FormId>& ids, std::size_t maxCount = 12)
+        {
+            std::ostringstream stream;
+            for (std::size_t i = 0; i < ids.size() && i < maxCount; ++i)
+            {
+                if (i != 0)
+                    stream << ",";
+                stream << formIdText(ids[i]);
+            }
+            if (ids.size() > maxCount)
+                stream << ",+" << (ids.size() - maxCount) << " more";
+            return stream.str();
+        }
+
+        std::string safeName(const MWWorld::Ptr& ptr)
+        {
+            try
+            {
+                return std::string(ptr.getClass().getName(ptr));
+            }
+            catch (const std::exception& e)
+            {
+                return std::string("<name error: ") + e.what() + ">";
+            }
+        }
+
+        std::string safeModel(const MWWorld::Ptr& ptr)
+        {
+            try
+            {
+                return ptr.getClass().getCorrectedModel(ptr).value();
+            }
+            catch (const std::exception& e)
+            {
+                return std::string("<model error: ") + e.what() + ">";
+            }
+        }
+
+        class FalloutTargetNodeDiagVisitor final : public osg::NodeVisitor
+        {
+        public:
+            FalloutTargetNodeDiagVisitor()
+                : osg::NodeVisitor(osg::NodeVisitor::TRAVERSE_ALL_CHILDREN)
+            {
+            }
+
+            void apply(osg::Node& node) override
+            {
+                ++mTotalNodes;
+                const std::string& name = node.getName();
+                if (!name.empty())
+                {
+                    ++mNamedNodes;
+                    const std::string lower = Misc::StringUtils::lowerCase(name);
+                    if (isInteresting(lower) && mInterestingNames.size() < 64
+                        && std::find(mInterestingNames.begin(), mInterestingNames.end(), name) == mInterestingNames.end())
+                    {
+                        mInterestingNames.push_back(name);
+                    }
+                }
+                traverse(node);
+            }
+
+            std::string summary() const
+            {
+                std::ostringstream stream;
+                stream << "nodes=" << mTotalNodes << " named=" << mNamedNodes << " interesting=[";
+                for (std::size_t i = 0; i < mInterestingNames.size(); ++i)
+                {
+                    if (i != 0)
+                        stream << " | ";
+                    stream << mInterestingNames[i];
+                }
+                stream << "]";
+                return stream.str();
+            }
+
+        private:
+            static bool isInteresting(const std::string& lower)
+            {
+                static constexpr std::string_view terms[] = {
+                    "bip01", "bone", "head", "hair", "eye", "mouth", "teeth", "tongue", "face", "skin",
+                    "body", "hand", "neck", "spine", "pelvis", "npc", "fnv", "fallout", "weapon",
+                };
+
+                for (std::string_view term : terms)
+                    if (lower.find(term) != std::string::npos)
+                        return true;
+                return false;
+            }
+
+            std::size_t mTotalNodes = 0;
+            std::size_t mNamedNodes = 0;
+            std::vector<std::string> mInterestingNames;
+        };
+
+        void logEsm4NpcDiagnostic(const MWWorld::Ptr& ptr)
+        {
+            if (ptr.getType() != ESM4::Npc::sRecordId)
+                return;
+
+            const ESM4::Npc* traits = MWClass::ESM4Npc::getTraitsRecord(ptr);
+            const ESM4::Npc* model = MWClass::ESM4Npc::getModelRecord(ptr);
+            const ESM4::Race* race = MWClass::ESM4Npc::getRace(ptr);
+
+            Log(Debug::Info) << "FNV/ESM4 target diag: npc traits="
+                             << (traits == nullptr ? std::string("<null>") : traits->mEditorId)
+                             << " traitsForm=" << (traits == nullptr ? std::string("<null>") : formIdText(traits->mId))
+                             << " modelRecord=" << (model == nullptr ? std::string("<null>") : model->mEditorId)
+                             << " race=" << (race == nullptr ? std::string("<null>") : race->mEditorId)
+                             << " female=" << (traits != nullptr ? MWClass::ESM4Npc::isFemale(ptr) : false)
+                             << " hair=" << (traits == nullptr ? std::string("<null>") : formIdText(traits->mHair))
+                             << " eyes=" << (traits == nullptr ? std::string("<null>") : formIdText(traits->mEyes))
+                             << " headParts=["
+                             << (traits == nullptr ? std::string() : joinFormIds(traits->mHeadParts)) << "]"
+                             << " tintLayers=" << (traits == nullptr ? 0 : traits->mTintLayers.size())
+                             << " kf=["
+                             << (model == nullptr ? std::string() : [&]() {
+                                    std::ostringstream stream;
+                                    for (std::size_t i = 0; i < model->mKf.size() && i < 12; ++i)
+                                    {
+                                        if (i != 0)
+                                            stream << ",";
+                                        stream << model->mKf[i];
+                                    }
+                                    if (model->mKf.size() > 12)
+                                        stream << ",+" << (model->mKf.size() - 12) << " more";
+                                    return stream.str();
+                                }())
+                             << "]";
+        }
+
+        void logEsm4CreatureDiagnostic(const MWWorld::Ptr& ptr)
+        {
+            if (ptr.getType() != ESM4::Creature::sRecordId)
+                return;
+
+            const MWWorld::LiveCellRef<ESM4::Creature>* ref = ptr.get<ESM4::Creature>();
+            const ESM4::Creature* creature = ref == nullptr ? nullptr : ref->mBase;
+            if (creature == nullptr)
+                return;
+
+            std::ostringstream kf;
+            for (std::size_t i = 0; i < creature->mKf.size() && i < 12; ++i)
+            {
+                if (i != 0)
+                    kf << ",";
+                kf << creature->mKf[i];
+            }
+            if (creature->mKf.size() > 12)
+                kf << ",+" << (creature->mKf.size() - 12) << " more";
+
+            Log(Debug::Info) << "FNV/ESM4 target diag: creature editor=" << creature->mEditorId
+                             << " form=" << formIdText(creature->mId) << " fullName=" << creature->mFullName
+                             << " model=" << creature->mModel << " bodyParts=[" << joinFormIds(creature->mBodyParts)
+                             << "] kf=[" << kf.str() << "] flags=0x" << std::hex << creature->mBaseConfig.fo3.flags
+                             << std::dec << " health=" << creature->mData.health << " damage=" << creature->mData.damage;
+        }
+
+        void logEsm4MovableStaticDiagnostic(const MWWorld::Ptr& ptr)
+        {
+            if (ptr.getType() != ESM4::MovableStatic::sRecordId)
+                return;
+
+            const MWWorld::LiveCellRef<ESM4::MovableStatic>* ref = ptr.get<ESM4::MovableStatic>();
+            const ESM4::MovableStatic* movable = ref == nullptr ? nullptr : ref->mBase;
+            if (movable == nullptr)
+                return;
+
+            Log(Debug::Info) << "FNV/ESM4 target diag: movable static editor=" << movable->mEditorId
+                             << " form=" << formIdText(movable->mId) << " fullName=" << movable->mFullName
+                             << " model=" << movable->mModel << " data=" << static_cast<int>(movable->mData)
+                             << " loopingSound=" << formIdText(movable->mLoopingSound);
+        }
+
+        void logEsm3ActorDiagnostic(const MWWorld::Ptr& ptr)
+        {
+            if (ptr.getType() == ESM::NPC::sRecordId)
+            {
+                const MWWorld::LiveCellRef<ESM::NPC>* npcRef = ptr.get<ESM::NPC>();
+                if (npcRef == nullptr || npcRef->mBase == nullptr)
+                    return;
+
+                Log(Debug::Info) << "FNV/ESM4 target diag: esm3 npc id=" << npcRef->mBase->mId
+                                 << " race=" << npcRef->mBase->mRace << " class=" << npcRef->mBase->mClass
+                                 << " hair=" << npcRef->mBase->mHair << " head=" << npcRef->mBase->mHead
+                                 << " model=" << npcRef->mBase->mModel;
+            }
+            else if (ptr.getType() == ESM::Creature::sRecordId)
+            {
+                const MWWorld::LiveCellRef<ESM::Creature>* creatureRef = ptr.get<ESM::Creature>();
+                if (creatureRef == nullptr || creatureRef->mBase == nullptr)
+                    return;
+
+                Log(Debug::Info) << "FNV/ESM4 target diag: esm3 creature id=" << creatureRef->mBase->mId
+                                 << " model=" << creatureRef->mBase->mModel
+                                 << " creatureType=" << creatureRef->mBase->mData.mType
+                                 << " level=" << creatureRef->mBase->mData.mLevel
+                                 << " health=" << creatureRef->mBase->mData.mHealth;
+            }
+        }
+
+        void logFalloutFocusDiagnostic()
+        {
+            MWBase::World* world = MWBase::Environment::get().getWorld();
+            MWWorld::Ptr target = world == nullptr ? MWWorld::Ptr() : world->getFocusObject();
+            if (target.isEmpty())
+            {
+                Log(Debug::Info) << "FNV/ESM4 target diag: middle-click focus is empty";
+                return;
+            }
+
+            const ESM::Position& pos = target.getRefData().getPosition();
+            SceneUtil::PositionAttitudeTransform* baseNode = target.getRefData().getBaseNode();
+
+            Log(Debug::Info) << "FNV/ESM4 target diag: BEGIN " << target.toString()
+                             << " name=\"" << safeName(target) << "\" type=0x" << std::hex << target.getType()
+                             << std::dec << " typeDesc=" << target.getTypeDescription()
+                             << " actor=" << target.getClass().isActor() << " npc=" << target.getClass().isNpc()
+                             << " model=" << safeModel(target) << " pos=(" << pos.pos[0] << "," << pos.pos[1]
+                             << "," << pos.pos[2] << ") rot=(" << pos.rot[0] << "," << pos.rot[1] << ","
+                             << pos.rot[2] << ") enabled=" << target.getRefData().isEnabled()
+                             << " baseNode=" << (baseNode != nullptr);
+
+            if (target.getClass().isActor())
+            {
+                try
+                {
+                    const MWMechanics::CreatureStats& stats = target.getClass().getCreatureStats(target);
+                    Log(Debug::Info) << "FNV/ESM4 target diag: actor stats level=" << stats.getLevel()
+                                     << " dead=" << stats.isDead() << " health="
+                                     << stats.getHealth().getCurrent() << "/" << stats.getHealth().getModified()
+                                     << " fatigue=" << stats.getFatigue().getCurrent() << "/"
+                                     << stats.getFatigue().getModified();
+                }
+                catch (const std::exception& e)
+                {
+                    Log(Debug::Warning) << "FNV/ESM4 target diag: actor stats failed: " << e.what();
+                }
+            }
+
+            logEsm4NpcDiagnostic(target);
+            logEsm4CreatureDiagnostic(target);
+            logEsm4MovableStaticDiagnostic(target);
+            logEsm3ActorDiagnostic(target);
+
+            if (baseNode != nullptr)
+            {
+                FalloutTargetNodeDiagVisitor visitor;
+                baseNode->accept(visitor);
+                Log(Debug::Info) << "FNV/ESM4 target diag: scene graph " << visitor.summary();
+            }
+            else
+                Log(Debug::Warning) << "FNV/ESM4 target diag: no rendered base node for focus object";
+
+            Log(Debug::Info) << "FNV/ESM4 target diag: END " << target.getCellRef().getRefId().toDebugString();
+        }
+    }
+
     MouseManager::MouseManager(
         BindingsManager* bindingsManager, SDLUtil::InputWrapper* inputWrapper, SDL_Window* window)
         : mBindingsManager(bindingsManager)
@@ -162,6 +469,9 @@ namespace MWInput
         MWBase::InputManager* input = MWBase::Environment::get().getInputManager();
         input->setJoystickLastUsed(false);
         bool guiMode = false;
+
+        if (id == SDL_BUTTON_MIDDLE && hasFalloutContent())
+            logFalloutFocusDiagnostic();
 
         if (id == SDL_BUTTON_LEFT || id == SDL_BUTTON_RIGHT) // MyGUI only uses these mouse events
         {

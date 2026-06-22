@@ -1,7 +1,9 @@
 #include "esmstore.hpp"
 
 #include <algorithm>
+#include <cstdlib>
 #include <fstream>
+#include <string_view>
 #include <tuple>
 
 #include <components/debug/debuglog.hpp>
@@ -9,10 +11,13 @@
 #include <components/esm/records.hpp>
 #include <components/esm3/esmreader.hpp>
 #include <components/esm3/esmwriter.hpp>
+#include <components/esm3/loaddial.hpp>
+#include <components/esm3/loadmgef.hpp>
 #include <components/esm3/readerscache.hpp>
 #include <components/esm4/common.hpp>
 #include <components/esm4/reader.hpp>
 #include <components/esm4/readerutils.hpp>
+#include <components/esm4/records.hpp>
 #include <components/esmloader/load.hpp>
 #include <components/loadinglistener/loadinglistener.hpp>
 #include <components/lua/configuration.hpp>
@@ -89,6 +94,213 @@ namespace
         if (it != races.end())
             return it->mId;
         throw std::runtime_error("List of NPC races is empty!");
+    }
+
+    void ensureFalloutCharacterDefaults(MWWorld::Store<ESM::Class>& classes, MWWorld::Store<ESM::Race>& races,
+        MWWorld::Store<ESM::Skill>& skills, MWWorld::Store<ESM::MagicEffect>& magicEffects,
+        MWWorld::Store<ESM::NPC>& npcs, MWWorld::Store<ESM::Weapon>& weapons, MWWorld::Store<ESM::Potion>& potions,
+        MWWorld::Store<ESM::Miscellaneous>& miscItems)
+    {
+        const ESM::RefId classId = ESM::RefId::stringRefId("FNV_Courier");
+        const ESM::RefId raceId = ESM::RefId::stringRefId("FNV_Wastelander");
+
+        if (classes.begin() == classes.end())
+        {
+            ESM::Class courier;
+            courier.mId = classId;
+            courier.blank();
+            courier.mName = "Courier";
+            courier.mDescription = "FNV proof default player class";
+            courier.mData.mIsPlayable = 1;
+            courier.mData.mAttribute[0] = 0;
+            courier.mData.mAttribute[1] = 3;
+            courier.mData.mSpecialization = ESM::Class::Combat;
+            courier.mData.mSkills = { { { 5, 10 }, { 12, 13 }, { 14, 15 }, { 16, 17 }, { 18, 19 } } };
+            classes.insertStatic(courier);
+            Log(Debug::Info) << "FNV/ESM4: inserted fallback ESM3 player class FNV_Courier";
+        }
+
+        if (races.begin() == races.end())
+        {
+            ESM::Race wastelander;
+            wastelander.mId = raceId;
+            wastelander.blank();
+            wastelander.mName = "Wastelander";
+            wastelander.mDescription = "FNV proof default player race";
+            wastelander.mData.mFlags = ESM::Race::Playable;
+            for (int i = 0; i < ESM::Attribute::Length; ++i)
+            {
+                wastelander.mData.mAttributeValues[i] = 50;
+                wastelander.mData.mAttributeValues[i + ESM::Attribute::Length] = 50;
+            }
+            races.insertStatic(wastelander);
+            Log(Debug::Info) << "FNV/ESM4: inserted fallback ESM3 player race FNV_Wastelander";
+        }
+
+        int insertedSkills = 0;
+        for (int i = 0; i < ESM::Skill::Length; ++i)
+        {
+            const ESM::RefId id = ESM::Skill::indexToRefId(i);
+            if (id.empty() || skills.searchStatic(id) != nullptr)
+                continue;
+
+            ESM::Skill skill;
+            skill.mId = ESM::SkillId(id.serializeText());
+            skill.mRecordFlags = 0;
+            skill.mName = id.serializeText();
+            skill.mDescription.clear();
+            skill.mIcon.clear();
+            skill.mWerewolfValue = 1.f;
+            skill.mData.mAttribute = i % ESM::Attribute::Length;
+            skill.mData.mSpecialization = i < 9 ? ESM::Class::Combat : (i < 18 ? ESM::Class::Magic : ESM::Class::Stealth);
+            for (float& value : skill.mData.mUseValue)
+                value = 1.f;
+            skills.insertStatic(skill);
+            ++insertedSkills;
+        }
+        if (insertedSkills > 0)
+            Log(Debug::Info) << "FNV/ESM4: inserted fallback ESM3 skills count=" << insertedSkills;
+
+        int insertedMagicEffects = 0;
+        for (int i = 0; i < ESM::MagicEffect::Length; ++i)
+        {
+            const ESM::RefId id = ESM::MagicEffect::indexToRefId(i);
+            if (magicEffects.search(id) != nullptr)
+                continue;
+
+            ESM::MagicEffect effect;
+            effect.mId = id;
+            effect.blank();
+            effect.mData.mFlags = ESM::MagicEffect::NoDuration | ESM::MagicEffect::NoMagnitude;
+            effect.mData.mRed = 128;
+            effect.mData.mGreen = 128;
+            effect.mData.mBlue = 128;
+            magicEffects.insertStatic(effect);
+            ++insertedMagicEffects;
+        }
+        if (insertedMagicEffects > 0)
+            Log(Debug::Info) << "FNV/ESM4: inserted fallback ESM3 magic effects count=" << insertedMagicEffects;
+
+        if (npcs.searchStatic(ESM::RefId::stringRefId("Player")) == nullptr)
+        {
+            ESM::NPC player;
+            player.mId = ESM::RefId::stringRefId("Player");
+            player.blank();
+            player.mName = "Courier";
+            player.mModel = "characters/_male/skeleton.nif";
+            player.mRace = raceId;
+            player.mClass = classId;
+            player.mNpdt.mLevel = 1;
+            player.mNpdt.mAttributes.fill(50);
+            player.mNpdt.mSkills.fill(35);
+            player.mNpdt.mHealth = 125;
+            player.mNpdt.mMana = 60;
+            player.mNpdt.mFatigue = 220;
+            player.mNpdt.mDisposition = 50;
+            player.mNpdt.mGold = 0;
+            const auto addProofItem = [&player](std::string_view id, int count) {
+                ESM::ContItem item;
+                item.mCount = count;
+                item.mItem = ESM::RefId::stringRefId(id);
+                player.mInventory.mList.push_back(item);
+            };
+            addProofItem("FNV_PROOF_9MM_PISTOL", 1);
+            addProofItem("FNV_PROOF_VARMINT_RIFLE", 1);
+            addProofItem("FNV_PROOF_STIMPAK", 3);
+            addProofItem("FNV_PROOF_9MM_AMMO", 48);
+            addProofItem("FNV_PROOF_BOBBY_PIN", 5);
+            addProofItem("FNV_PROOF_CAPS", 37);
+            npcs.insertStatic(player);
+            Log(Debug::Info) << "FNV/ESM4: inserted fallback ESM3 Player NPC for normal save/load with proof inventory";
+        }
+
+        const auto ensureWeapon = [&weapons](
+                                      std::string_view id, std::string_view name, std::string_view icon, int value) {
+            const ESM::RefId refId = ESM::RefId::stringRefId(id);
+            if (weapons.searchStatic(refId) != nullptr)
+                return;
+
+            ESM::Weapon weapon;
+            weapon.mId = refId;
+            weapon.blank();
+            weapon.mName = std::string(name);
+            weapon.mIcon = std::string(icon);
+            weapon.mData.mWeight = 2.f;
+            weapon.mData.mValue = value;
+            weapon.mData.mType = ESM::Weapon::MarksmanThrown;
+            weapon.mData.mHealth = 100;
+            weapon.mData.mSpeed = 1.f;
+            weapon.mData.mReach = 1.f;
+            weapon.mData.mChop = { 4, 12 };
+            weapon.mData.mSlash = { 4, 12 };
+            weapon.mData.mThrust = { 4, 12 };
+            weapons.insertStatic(weapon);
+            Log(Debug::Info) << "FNV/ESM4: inserted fallback inventory weapon " << id;
+        };
+
+        const auto ensurePotion = [&potions](
+                                      std::string_view id, std::string_view name, std::string_view icon, int value) {
+            const ESM::RefId refId = ESM::RefId::stringRefId(id);
+            if (potions.searchStatic(refId) != nullptr)
+                return;
+
+            ESM::Potion potion;
+            potion.mId = refId;
+            potion.blank();
+            potion.mName = std::string(name);
+            potion.mIcon = std::string(icon);
+            potion.mData.mWeight = 0.1f;
+            potion.mData.mValue = value;
+            potions.insertStatic(potion);
+            Log(Debug::Info) << "FNV/ESM4: inserted fallback inventory potion " << id;
+        };
+
+        const auto ensureMisc = [&miscItems](std::string_view id, std::string_view name, std::string_view icon,
+                                    float weight, int value) {
+            const ESM::RefId refId = ESM::RefId::stringRefId(id);
+            if (miscItems.searchStatic(refId) != nullptr)
+                return;
+
+            ESM::Miscellaneous item;
+            item.mId = refId;
+            item.blank();
+            item.mName = std::string(name);
+            item.mIcon = std::string(icon);
+            item.mData.mWeight = weight;
+            item.mData.mValue = value;
+            miscItems.insertStatic(item);
+            Log(Debug::Info) << "FNV/ESM4: inserted fallback inventory misc " << id;
+        };
+
+        constexpr std::string_view proofIcon = "nikami_proof_item.dds";
+        ensureWeapon("FNV_PROOF_9MM_PISTOL", "9mm Pistol", proofIcon, 100);
+        ensureWeapon("FNV_PROOF_VARMINT_RIFLE", "Varmint Rifle", proofIcon, 75);
+        ensurePotion("FNV_PROOF_STIMPAK", "Stimpak", proofIcon, 25);
+        ensureMisc("FNV_PROOF_9MM_AMMO", "9mm Round", proofIcon, 0.01f, 1);
+        ensureMisc("FNV_PROOF_BOBBY_PIN", "Bobby Pin", proofIcon, 0.01f, 1);
+        ensureMisc("FNV_PROOF_CAPS", "Bottle Cap", proofIcon, 0.f, 1);
+    }
+
+    bool shouldEnsureFalloutProofCharacterDefaults()
+    {
+        return std::getenv("OPENMW_FNV_BOOTSTRAP_LEVEL1_COURIER") != nullptr
+            || std::getenv("OPENMW_FNV_BOOTSTRAP_DOC_SENT") != nullptr
+            || std::getenv("OPENMW_FNV_PROOF_ENABLE_ESM3_FALLBACKS") != nullptr;
+    }
+
+    bool shouldEnsureFalloutCharacterDefaults(const MWWorld::Store<ESM::Class>& classes,
+        const MWWorld::Store<ESM::Race>& races, const MWWorld::Store<ESM::NPC>& esm3Npcs,
+        const MWWorld::Store<ESM::Creature>& esm3Creatures, const MWWorld::Store<ESM4::Npc>& esm4Npcs,
+        const MWWorld::Store<ESM4::Creature>& esm4Creatures, const MWWorld::Store<ESM4::Race>& esm4Races)
+    {
+        if (shouldEnsureFalloutProofCharacterDefaults())
+            return true;
+
+        const bool missingEsm3CharacterBasis = classes.begin() == classes.end() || races.begin() == races.end();
+        const bool hasCharacterData = esm3Npcs.begin() != esm3Npcs.end() || esm3Creatures.begin() != esm3Creatures.end()
+            || esm4Npcs.begin() != esm4Npcs.end() || esm4Creatures.begin() != esm4Creatures.end()
+            || esm4Races.begin() != esm4Races.end();
+        return missingEsm3CharacterBasis && hasCharacterData;
     }
 
     std::vector<ESM::NPC> getNPCsToReplace(const MWWorld::Store<ESM::Faction>& factions,
@@ -472,13 +684,52 @@ namespace MWWorld
     {
         if (listener != nullptr)
             listener->setProgressRange(::EsmLoader::fileProgress);
-        auto visitorRec = [this, listener](ESM4::Reader& r) {
+
+        std::map<ESM::RecNameInts, std::size_t> loadedRecordCounts;
+        std::map<ESM::RecNameInts, std::size_t> skippedRecordCounts;
+
+        auto visitorRec = [this, listener, &loadedRecordCounts, &skippedRecordCounts](ESM4::Reader& r) {
+            const auto recordType = static_cast<ESM4::RecordTypes>(r.hdr().record.typeId);
+            const auto recName = static_cast<ESM::RecNameInts>(ESM::esm4Recname(recordType));
             bool result = ESMStoreImp::readRecord(r, *this);
+            if (result)
+                ++loadedRecordCounts[recName];
+            else
+                ++skippedRecordCounts[recName];
             if (listener != nullptr)
                 listener->setProgress(::EsmLoader::fileProgress * r.getFileOffset() / r.getFileSize());
             return result;
         };
         ESM4::ReaderUtils::readAll(reader, visitorRec, [](ESM4::Reader&) {});
+
+        std::size_t loadedRecords = 0;
+        std::size_t skippedRecords = 0;
+        for (const auto& [_, count] : loadedRecordCounts)
+            loadedRecords += count;
+        for (const auto& [_, count] : skippedRecordCounts)
+            skippedRecords += count;
+
+        Log(Debug::Info) << "FNV/ESM4 inventory: loaded record total=" << loadedRecords
+                         << " types=" << loadedRecordCounts.size() << " skipped record total=" << skippedRecords
+                         << " types=" << skippedRecordCounts.size();
+        for (const auto& [recName, count] : loadedRecordCounts)
+            Log(Debug::Info) << "FNV/ESM4 inventory loaded: " << ESM::getRecNameString(recName).toStringView()
+                             << " count=" << count;
+        for (const auto& [recName, count] : skippedRecordCounts)
+            Log(Debug::Warning) << "FNV/ESM4 inventory skipped unsupported: "
+                                << ESM::getRecNameString(recName).toStringView() << " count=" << count;
+
+        if (std::getenv("OPENMW_FNV_STRICT_ESM4_RECORDS") != nullptr && !skippedRecordCounts.empty())
+        {
+            std::string message = "FNV strict ESM4 record gate failed; unsupported record types:";
+            for (const auto& [recName, count] : skippedRecordCounts)
+            {
+                message += " ";
+                message += ESM::getRecNameString(recName).toStringView();
+                message += "=" + std::to_string(count);
+            }
+            throw std::runtime_error(message);
+        }
     }
 
     void ESMStore::setIdType(const ESM::RefId& id, ESM::RecNameInts type)
@@ -601,6 +852,16 @@ namespace MWWorld
     void ESMStore::validate()
     {
         auto& npcs = getWritable<ESM::NPC>();
+        if (shouldEnsureFalloutCharacterDefaults(getWritable<ESM::Class>(), getWritable<ESM::Race>(), npcs,
+                getWritable<ESM::Creature>(), getWritable<ESM4::Npc>(), getWritable<ESM4::Creature>(),
+                getWritable<ESM4::Race>()))
+            ensureFalloutCharacterDefaults(
+                getWritable<ESM::Class>(), getWritable<ESM::Race>(), getWritable<ESM::Skill>(),
+                getWritable<ESM::MagicEffect>(), npcs, getWritable<ESM::Weapon>(), getWritable<ESM::Potion>(),
+                getWritable<ESM::Miscellaneous>());
+        rebuildIdsIndex();
+        mStoreImp->mStaticIds = mStoreImp->mIds;
+
         std::vector<ESM::NPC> npcsToReplace = getNPCsToReplace(getWritable<ESM::Faction>(), getWritable<ESM::Class>(),
             getWritable<ESM::Race>(), getWritable<ESM::Script>(), npcs.mStatic);
 
@@ -642,6 +903,15 @@ namespace MWWorld
     void ESMStore::validateDynamic()
     {
         auto& npcs = getWritable<ESM::NPC>();
+        if (shouldEnsureFalloutCharacterDefaults(getWritable<ESM::Class>(), getWritable<ESM::Race>(), npcs,
+                getWritable<ESM::Creature>(), getWritable<ESM4::Npc>(), getWritable<ESM4::Creature>(),
+                getWritable<ESM4::Race>()))
+            ensureFalloutCharacterDefaults(
+                getWritable<ESM::Class>(), getWritable<ESM::Race>(), getWritable<ESM::Skill>(),
+                getWritable<ESM::MagicEffect>(), npcs, getWritable<ESM::Weapon>(), getWritable<ESM::Potion>(),
+                getWritable<ESM::Miscellaneous>());
+        rebuildIdsIndex();
+
         auto& scripts = getWritable<ESM::Script>();
 
         std::vector<ESM::NPC> npcsToReplace = getNPCsToReplace(getWritable<ESM::Faction>(), getWritable<ESM::Class>(),

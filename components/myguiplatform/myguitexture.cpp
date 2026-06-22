@@ -1,5 +1,7 @@
 #include "myguitexture.hpp"
 
+#include <algorithm>
+#include <cctype>
 #include <stdexcept>
 
 #include <osg/StateSet>
@@ -10,6 +12,19 @@
 
 namespace MyGUIPlatform
 {
+    namespace
+    {
+        bool shouldDisableReaderFlip(const std::string& fname)
+        {
+            std::string normalized = fname;
+            std::replace(normalized.begin(), normalized.end(), '\\', '/');
+            std::transform(normalized.begin(), normalized.end(), normalized.begin(),
+                [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+
+            return normalized.rfind("textures/interface/loading/", 0) == 0
+                || normalized.rfind("splash/", 0) == 0;
+        }
+    }
 
     OSGTexture::OSGTexture(const std::string& name, Resource::ImageManager* imageManager)
         : mName(name)
@@ -95,7 +110,8 @@ namespace MyGUIPlatform
         if (!mImageManager)
             throw std::runtime_error("No imagemanager set");
 
-        osg::ref_ptr<osg::Image> image(mImageManager->getImage(VFS::Path::Normalized(fname)));
+        osg::ref_ptr<osg::Image> image(
+            mImageManager->getImage(VFS::Path::Normalized(fname), shouldDisableReaderFlip(fname)));
         mTexture = new osg::Texture2D(image);
         mTexture->setWrap(osg::Texture::WRAP_S, osg::Texture::CLAMP_TO_EDGE);
         mTexture->setWrap(osg::Texture::WRAP_T, osg::Texture::CLAMP_TO_EDGE);

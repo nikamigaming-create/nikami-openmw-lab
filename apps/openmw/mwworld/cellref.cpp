@@ -118,6 +118,17 @@ namespace MWWorld
         return std::visit(ESM::VisitOverload{ esm3Visit, esm4Visit, actorDestCell }, mCellRef.mVariant);
     }
 
+    ESM::FormId CellRef::getEsm4DestDoor() const
+    {
+        return std::visit(
+            ESM::VisitOverload{
+                [](const ESM4::Reference& ref) { return ref.mDoor.destDoor; },
+                [](const ESM::CellRef&) { return ESM::FormId(); },
+                [](const ESM4::ActorCharacter&) -> ESM::FormId { throw std::logic_error("Not applicable"); },
+            },
+            mCellRef.mVariant);
+    }
+
     void CellRef::setScale(float scale)
     {
         if (scale != getScale())

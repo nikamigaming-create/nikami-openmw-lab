@@ -622,6 +622,13 @@ namespace sol { namespace stack {
 #if SOL_IS_ON(SOL_SAFE_STACK_CHECK)
 			luaL_checkstack(L, 1, detail::not_enough_stack_space_generic);
 #endif // make sure stack doesn't overflow
+#if defined(__ANDROID__) && defined(LUAJIT_VERSION)
+			if ((reinterpret_cast<std::uintptr_t>(userdata) >> 47) != 0) {
+				void** storage = static_cast<void**>(lua_newuserdata(L, sizeof(void*)));
+				*storage = userdata;
+				return 1;
+			}
+#endif
 			lua_pushlightuserdata(L, userdata);
 			return 1;
 		}
@@ -633,6 +640,13 @@ namespace sol { namespace stack {
 #if SOL_IS_ON(SOL_SAFE_STACK_CHECK)
 			luaL_checkstack(L, 1, detail::not_enough_stack_space_generic);
 #endif // make sure stack doesn't overflow
+#if defined(__ANDROID__) && defined(LUAJIT_VERSION)
+			if ((reinterpret_cast<std::uintptr_t>(userdata) >> 47) != 0) {
+				void** storage = static_cast<void**>(lua_newuserdata(L, sizeof(void*)));
+				*storage = const_cast<void*>(userdata);
+				return 1;
+			}
+#endif
 			lua_pushlightuserdata(L, const_cast<void*>(userdata));
 			return 1;
 		}
@@ -644,6 +658,13 @@ namespace sol { namespace stack {
 #if SOL_IS_ON(SOL_SAFE_STACK_CHECK)
 			luaL_checkstack(L, 1, detail::not_enough_stack_space_generic);
 #endif // make sure stack doesn't overflow
+#if defined(__ANDROID__) && defined(LUAJIT_VERSION)
+			if ((reinterpret_cast<std::uintptr_t>(userdata.value) >> 47) != 0) {
+				void** storage = static_cast<void**>(lua_newuserdata(L, sizeof(void*)));
+				*storage = userdata.value;
+				return 1;
+			}
+#endif
 			lua_pushlightuserdata(L, userdata);
 			return 1;
 		}
@@ -655,7 +676,15 @@ namespace sol { namespace stack {
 #if SOL_IS_ON(SOL_SAFE_STACK_CHECK)
 			luaL_checkstack(L, 1, detail::not_enough_stack_space_generic);
 #endif // make sure stack doesn't overflow
-			lua_pushlightuserdata(L, static_cast<void*>(l.value()));
+			void* userdata = static_cast<void*>(l.value());
+#if defined(__ANDROID__) && defined(LUAJIT_VERSION)
+			if ((reinterpret_cast<std::uintptr_t>(userdata) >> 47) != 0) {
+				void** storage = static_cast<void**>(lua_newuserdata(L, sizeof(void*)));
+				*storage = userdata;
+				return 1;
+			}
+#endif
+			lua_pushlightuserdata(L, userdata);
 			return 1;
 		}
 	};

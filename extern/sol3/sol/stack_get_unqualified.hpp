@@ -634,7 +634,15 @@ namespace sol { namespace stack {
 	struct unqualified_getter<lightuserdata_value> {
 		static lightuserdata_value get(lua_State* L, int index, record& tracking) {
 			tracking.use(1);
-			return lightuserdata_value(lua_touserdata(L, index));
+			void* memory = lua_touserdata(L, index);
+#if defined(__ANDROID__) && defined(LUAJIT_VERSION)
+			if (lua_type(L, index) == LUA_TUSERDATA && memory != nullptr) {
+				if (lua_getmetatable(L, index) == 0)
+					return lightuserdata_value(*static_cast<void**>(memory));
+				lua_pop(L, 1);
+			}
+#endif
+			return lightuserdata_value(memory);
 		}
 	};
 
@@ -872,7 +880,15 @@ namespace sol { namespace stack {
 	struct unqualified_getter<void*> {
 		static void* get(lua_State* L, int index, record& tracking) {
 			tracking.use(1);
-			return lua_touserdata(L, index);
+			void* memory = lua_touserdata(L, index);
+#if defined(__ANDROID__) && defined(LUAJIT_VERSION)
+			if (lua_type(L, index) == LUA_TUSERDATA && memory != nullptr) {
+				if (lua_getmetatable(L, index) == 0)
+					return *static_cast<void**>(memory);
+				lua_pop(L, 1);
+			}
+#endif
+			return memory;
 		}
 	};
 
@@ -880,7 +896,15 @@ namespace sol { namespace stack {
 	struct unqualified_getter<const void*> {
 		static const void* get(lua_State* L, int index, record& tracking) {
 			tracking.use(1);
-			return lua_touserdata(L, index);
+			void* memory = lua_touserdata(L, index);
+#if defined(__ANDROID__) && defined(LUAJIT_VERSION)
+			if (lua_type(L, index) == LUA_TUSERDATA && memory != nullptr) {
+				if (lua_getmetatable(L, index) == 0)
+					return *static_cast<void**>(memory);
+				lua_pop(L, 1);
+			}
+#endif
+			return memory;
 		}
 	};
 

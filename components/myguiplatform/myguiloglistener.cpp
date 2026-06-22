@@ -25,8 +25,8 @@ namespace MyGUIPlatform
             mStream.flush();
     }
 
-    void CustomLogListener::log(std::string_view section, MyGUI::LogLevel level, const tm* time,
-        std::string_view message, std::string_view file, int line)
+    void CustomLogListener::log(OPENMW_MYGUI_LOG_STRING_PARAM section, MyGUI::LogLevel level, const tm* time,
+        OPENMW_MYGUI_LOG_STRING_PARAM message, OPENMW_MYGUI_LOG_FILE_PARAM file, int line)
     {
         if (mStream.is_open())
         {

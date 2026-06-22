@@ -8,6 +8,7 @@
 #include <MyGUI_UString.h>
 
 #include <components/esm/refid.hpp>
+#include <components/widgets/myguicompat.hpp>
 
 namespace MWGui
 {
@@ -38,10 +39,12 @@ namespace MWGui
 
         if (shown)
             okButton->setCaption(
-                MyGUI::UString(MWBase::Environment::get().getWindowManager()->getGameSettingString("sNext", {})));
+                Gui::makeMyGUIUString(
+                    MWBase::Environment::get().getWindowManager()->getGameSettingString("sNext", {})));
         else
             okButton->setCaption(
-                MyGUI::UString(MWBase::Environment::get().getWindowManager()->getGameSettingString("sOK", {})));
+                Gui::makeMyGUIUString(
+                    MWBase::Environment::get().getWindowManager()->getGameSettingString("sOK", {})));
     }
 
     void TextInputDialog::setTextLabel(std::string_view label)
@@ -79,7 +82,7 @@ namespace MWGui
 
     std::string TextInputDialog::getTextInput() const
     {
-        return mTextEdit->getCaption();
+        return static_cast<std::string>(mTextEdit->getCaption());
     }
 
     void TextInputDialog::setTextInput(const std::string& text)

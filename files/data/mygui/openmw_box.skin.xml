@@ -5,7 +5,7 @@ as around the sections of the stats window, or around popup info windows -->
 
 <MyGUI type="Resource" version="1.1">
     <!-- Box borders -->
-    <Resource type="AutoSizedResourceSkin" name="IB_T" texture="textures\menu_thin_border_top.dds">
+    <Resource type="AutoSizedResourceSkin" name="IB_T" texture="textures\omw_menu_icon_active.dds">
         <BasisSkin type="TileRect" align="HStretch">
             <State name="normal">
                 <Property key="TileH" value="true"/>
@@ -13,7 +13,7 @@ as around the sections of the stats window, or around popup info windows -->
             </State>
         </BasisSkin>
     </Resource>
-    <Resource type="AutoSizedResourceSkin" name="IB_B" texture="textures\menu_thin_border_bottom.dds">
+    <Resource type="AutoSizedResourceSkin" name="IB_B" texture="textures\omw_menu_icon_active.dds">
         <BasisSkin type="TileRect" align="HStretch">
             <State name="normal">
                 <Property key="TileH" value="true"/>
@@ -21,7 +21,7 @@ as around the sections of the stats window, or around popup info windows -->
             </State>
         </BasisSkin>
     </Resource>
-    <Resource type="AutoSizedResourceSkin" name="IB_L" texture="textures\menu_thin_border_left.dds">
+    <Resource type="AutoSizedResourceSkin" name="IB_L" texture="textures\omw_menu_icon_active.dds">
         <BasisSkin type="TileRect" align="VStretch">
             <State name="normal">
                 <Property key="TileH" value="true"/>
@@ -29,7 +29,7 @@ as around the sections of the stats window, or around popup info windows -->
             </State>
         </BasisSkin>
     </Resource>
-    <Resource type="AutoSizedResourceSkin" name="IB_R" texture="textures\menu_thin_border_right.dds">
+    <Resource type="AutoSizedResourceSkin" name="IB_R" texture="textures\omw_menu_icon_active.dds">
         <BasisSkin type="TileRect" align="VStretch">
             <State name="normal">
                 <Property key="TileH" value="true"/>
@@ -37,22 +37,22 @@ as around the sections of the stats window, or around popup info windows -->
             </State>
         </BasisSkin>
     </Resource>
-    <Resource type="AutoSizedResourceSkin" name="IB_TL" texture="textures\menu_thin_border_top_left_corner.dds">
+    <Resource type="AutoSizedResourceSkin" name="IB_TL" texture="textures\omw_menu_icon_active.dds">
         <BasisSkin type="MainSkin">
             <State name="normal"/>
         </BasisSkin>
     </Resource>
-    <Resource type="AutoSizedResourceSkin" name="IB_TR" texture="textures\menu_thin_border_top_right_corner.dds">
+    <Resource type="AutoSizedResourceSkin" name="IB_TR" texture="textures\omw_menu_icon_active.dds">
         <BasisSkin type="MainSkin">
             <State name="normal"/>
         </BasisSkin>
     </Resource>
-    <Resource type="AutoSizedResourceSkin" name="IB_BL" texture="textures\menu_thin_border_bottom_left_corner.dds">
+    <Resource type="AutoSizedResourceSkin" name="IB_BL" texture="textures\omw_menu_icon_active.dds">
         <BasisSkin type="MainSkin">
             <State name="normal"/>
         </BasisSkin>
     </Resource>
-    <Resource type="AutoSizedResourceSkin" name="IB_BR" texture="textures\menu_thin_border_bottom_right_corner.dds">
+    <Resource type="AutoSizedResourceSkin" name="IB_BR" texture="textures\omw_menu_icon_active.dds">
         <BasisSkin type="MainSkin">
             <State name="normal"/>
         </BasisSkin>

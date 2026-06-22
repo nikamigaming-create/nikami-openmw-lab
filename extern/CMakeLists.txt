@@ -296,3 +296,23 @@ if ((BUILD_COMPONENTS_TESTS OR BUILD_OPENCS_TESTS OR BUILD_OPENMW_TESTS) AND NOT
     add_library(GTest::GTest ALIAS gtest)
     add_library(GMock::GMock ALIAS gmock)
 endif()
+
+# Note: This must be placed after OpenSceneGraph to avoid a target name collision on "uninstall",
+# as OSG does not check that this target doesn't already exist.
+if(BUILD_OPENMW_VR)
+    # The OpenXR SDK does not check the system jsoncpp version, so force its bundled copy.
+    cmake_policy(SET CMP0077 NEW)
+    set(BUILD_WITH_SYSTEM_JSONCPP off)
+    set(DYNAMIC_LOADER off)
+    include(FetchContent)
+    FetchContent_Declare(
+        OpenXR
+        GIT_REPOSITORY https://github.com/KhronosGroup/OpenXR-SDK.git
+        GIT_TAG release-1.0.24
+    )
+    FetchContent_MakeAvailable(OpenXR)
+
+    if (CMAKE_CXX_COMPILER_ID STREQUAL GNU OR CMAKE_CXX_COMPILER_ID STREQUAL Clang)
+        target_compile_options(openxr_loader PRIVATE -Wno-everything)
+    endif()
+endif()

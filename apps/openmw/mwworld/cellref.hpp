@@ -72,6 +72,9 @@ namespace MWWorld
         // Destination cell for doors (optional)
         ESM::RefId getDestCell() const;
 
+        // Linked ESM4 destination door for teleport doors, if present.
+        ESM::FormId getEsm4DestDoor() const;
+
         // Scale applied to mesh
         float getScale() const
         {

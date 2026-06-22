@@ -3,6 +3,8 @@
 
 #include <MyGUI_ITexture.h>
 
+#include <components/widgets/myguicompat.hpp>
+
 #include <osg/ref_ptr>
 
 namespace osg
@@ -52,18 +54,18 @@ namespace MyGUIPlatform
 
         void* lock(MyGUI::TextureUsage access) override;
         void unlock() override;
-        bool isLocked() const override { return mLockedImage.valid(); }
+        bool isLocked() OPENMW_MYGUI_TEXTURE_CONST override { return mLockedImage.valid(); }
 
-        int getWidth() const override { return mWidth; }
-        int getHeight() const override { return mHeight; }
+        int getWidth() OPENMW_MYGUI_TEXTURE_CONST override { return mWidth; }
+        int getHeight() OPENMW_MYGUI_TEXTURE_CONST override { return mHeight; }
 
-        MyGUI::PixelFormat getFormat() const override { return mFormat; }
-        MyGUI::TextureUsage getUsage() const override { return mUsage; }
-        size_t getNumElemBytes() const override { return mNumElemBytes; }
+        MyGUI::PixelFormat getFormat() OPENMW_MYGUI_TEXTURE_CONST override { return mFormat; }
+        MyGUI::TextureUsage getUsage() OPENMW_MYGUI_TEXTURE_CONST override { return mUsage; }
+        size_t getNumElemBytes() OPENMW_MYGUI_TEXTURE_CONST override { return mNumElemBytes; }
 
         MyGUI::IRenderTarget* getRenderTarget() override;
 
-        void setShader(const std::string& shaderName) override;
+        void setShader(const std::string& shaderName) OPENMW_MYGUI_SET_SHADER_OVERRIDE;
 
         /*internal:*/
         osg::Texture2D* getTexture() const { return mTexture.get(); }

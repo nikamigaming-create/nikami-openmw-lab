@@ -109,7 +109,7 @@ namespace Gui
         mScrollView->setViewOffset(MyGUI::IntPoint(0, -viewPosition));
     }
 
-    void MWList::setPropertyOverride(std::string_view key, std::string_view value)
+    void MWList::setPropertyOverride(MyGUIStringParam key, MyGUIStringParam value)
     {
         if (key == "ListItemSkin")
             mListItemSkin = value;

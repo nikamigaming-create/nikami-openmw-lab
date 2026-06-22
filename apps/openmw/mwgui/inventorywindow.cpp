@@ -1,5 +1,6 @@
 #include "inventorywindow.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <stdexcept>
 
@@ -12,11 +13,13 @@
 
 #include <osg/Texture2D>
 
+#include <components/debug/debuglog.hpp>
 #include <components/misc/strings/algorithm.hpp>
 
 #include <components/myguiplatform/myguitexture.hpp>
 
 #include <components/settings/values.hpp>
+#include <components/widgets/myguicompat.hpp>
 
 #include "../mwbase/environment.hpp"
 #include "../mwbase/inputmanager.hpp"
@@ -56,6 +59,19 @@ namespace
             return false;
         std::vector<int> equipmentSlots = item.getClass().getEquipmentSlots(item).first;
         return (!equipmentSlots.empty() && equipmentSlots.front() == MWWorld::InventoryStore::Slot_CarriedRight);
+    }
+
+    bool hasFalloutContent()
+    {
+        const MWBase::World* world = MWBase::Environment::get().getWorld();
+        if (world == nullptr)
+            return false;
+
+        for (const std::string& file : world->getContentFiles())
+            if (Misc::StringUtils::ciEndsWith(file, "FalloutNV.esm"))
+                return true;
+
+        return false;
     }
 
 }
@@ -134,6 +150,17 @@ namespace MWGui
 
         mFilterAll->setStateSelected(true);
 
+        if (hasFalloutContent())
+        {
+            mFilterAll->setCaption("ALL");
+            mFilterWeapon->setCaption("WEAPONS");
+            mFilterApparel->setCaption("APPAREL");
+            mFilterMagic->setCaption("AID");
+            mFilterMisc->setCaption("MISC / AMMO");
+            mMainWidget->castType<MyGUI::Window>()->setCaption("ITEMS");
+            Log(Debug::Info) << "FNV/ESM4 proof: inventory tabs applied ALL/WEAPONS/APPAREL/AID/MISC / AMMO";
+        }
+
         setGuiMode(mGuiMode);
 
         if (Settings::gui().mControllerMenus)
@@ -160,11 +187,23 @@ namespace MWGui
 
     void InventoryWindow::adjustPanes()
     {
-        const float aspect = 0.5; // fixed aspect ratio for the avatar image
-        int leftPaneWidth = static_cast<int>((mMainWidget->getSize().height - 44 - mArmorRating->getHeight()) * aspect);
-        mLeftPane->setSize(leftPaneWidth, mMainWidget->getSize().height - 44);
+        const bool falloutContent = hasFalloutContent();
+        const int windowWidth = mMainWidget->getSize().width;
+        const int contentHeight = mMainWidget->getSize().height - 44;
+        const float aspect = falloutContent ? 0.78f : 0.5f;
+        const int maxPaperDollWidth = std::max(1, windowWidth - 80);
+        int leftPaneWidth = static_cast<int>((contentHeight - mArmorRating->getHeight()) * aspect);
+        if (falloutContent)
+            leftPaneWidth = std::clamp(static_cast<int>(windowWidth * 0.38f), 260, maxPaperDollWidth);
+
+        mLeftPane->setVisible(true);
+        mRightPane->setVisible(true);
+        mAvatar->setVisible(true);
+        mArmorRating->setVisible(true);
+
+        mLeftPane->setSize(leftPaneWidth, contentHeight);
         mRightPane->setCoord(mLeftPane->getPosition().left + leftPaneWidth + 4, mRightPane->getPosition().top,
-            mMainWidget->getSize().width - 12 - leftPaneWidth - 15, mMainWidget->getSize().height - 44);
+            std::max(1, windowWidth - 12 - leftPaneWidth - 15), contentHeight);
     }
 
     void InventoryWindow::updatePlayer()
@@ -352,7 +391,7 @@ namespace MWGui
                 dialog->eventOkClicked += MyGUI::newDelegate(this, &InventoryWindow::sellItem);
             else if (mPendingControllerAction == ControllerAction::Drop)
                 dialog->eventOkClicked += MyGUI::newDelegate(this, &InventoryWindow::dropItem);
-            else if (MyGUI::InputManager::getInstance().isAltPressed()
+            else if (Gui::isMyGUIAltPressed()
                 || mPendingControllerAction == ControllerAction::Transfer)
                 dialog->eventOkClicked += MyGUI::newDelegate(this, &InventoryWindow::transferItem);
             else
@@ -370,7 +409,7 @@ namespace MWGui
                 equipItem(count);
             else if (mPendingControllerAction == ControllerAction::Drop)
                 dropItem(nullptr, count);
-            else if (MyGUI::InputManager::getInstance().isAltPressed()
+            else if (Gui::isMyGUIAltPressed()
                 || mPendingControllerAction == ControllerAction::Transfer)
                 transferItem(nullptr, count);
             else
@@ -501,11 +540,18 @@ namespace MWGui
 
         if (!mPtr.isEmpty())
         {
+            if (hasFalloutContent())
+            {
+                mPreview->updatePtr(mPtr);
+                mPreview->rebuild();
+                mPreview->update();
+            }
             updateEncumbranceBar();
             mItemView->update();
             notifyContentChanged();
         }
         adjustPanes();
+        updatePreviewSize();
 
         mItemTransfer->addTarget(*mItemView);
     }
@@ -559,6 +605,8 @@ namespace MWGui
         const float right = viewport.width / static_cast<float>(mPreview->getTextureWidth());
         // The widget is Y-down, the RTT image is Y-up, so this UV is inverted
         mAvatarImage->getSubWidgetMain()->_setUVSet(MyGUI::FloatRect(0.f, top, right, 0.f));
+        if (hasFalloutContent())
+            mPreview->update();
     }
 
     void InventoryWindow::onNameFilterChanged(MyGUI::EditBox* sender)
@@ -857,7 +905,7 @@ namespace MWGui
         if (mDragAndDrop->mIsOnDragAndDrop)
             mDragAndDrop->finish();
 
-        if (MyGUI::InputManager::getInstance().isAltPressed())
+        if (Gui::isMyGUIAltPressed())
         {
             const MWWorld::Ptr item = mTradeModel->getItem(static_cast<ItemModel::ModelIndex>(i)).mBase;
             MWBase::Environment::get().getWindowManager()->playSound(item.getClass().getDownSoundId(item));

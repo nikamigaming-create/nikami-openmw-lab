@@ -71,6 +71,7 @@ namespace MWGui
         size_t mProgress;
 
         bool mShowWallpaper;
+        bool mUseFalloutLoadingWallpaper = false;
         double mOldIcoMin = 0.0;
         unsigned int mOldIcoMax = 0;
 

@@ -10,6 +10,7 @@
 #include <components/fallback/fallback.hpp>
 #include <components/settings/values.hpp>
 #include <components/widgets/box.hpp>
+#include <components/widgets/myguicompat.hpp>
 
 #include "../mwbase/environment.hpp"
 #include "../mwbase/soundmanager.hpp"
@@ -97,7 +98,8 @@ namespace MWGui
             mControllerButtons.mA = "#{Interface:Select}";
             mControllerButtons.mX = "#{Interface:Done}";
             mOkButton->setCaption(
-                MyGUI::UString(MWBase::Environment::get().getWindowManager()->getGameSettingString("sDone", {})));
+                Gui::makeMyGUIUString(
+                    MWBase::Environment::get().getWindowManager()->getGameSettingString("sDone", {})));
         }
 
         center();
@@ -190,7 +192,7 @@ namespace MWGui
         if (levelupdescription.empty())
             levelupdescription = Fallback::Map::getString("Level_Up_Default");
 
-        mLevelDescription->setCaption(MyGUI::UString(levelupdescription));
+        mLevelDescription->setCaption(Gui::makeMyGUIUString(levelupdescription));
 
         unsigned int availableAttributes = 0;
         for (const ESM::Attribute& attribute : MWBase::Environment::get().getESMStore()->get<ESM::Attribute>())

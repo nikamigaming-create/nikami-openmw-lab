@@ -20,6 +20,7 @@
 #include <components/resource/resourcesystem.hpp>
 #include <components/settings/values.hpp>
 #include <components/vfs/manager.hpp>
+#include <components/widgets/myguicompat.hpp>
 
 #include "tooltips.hpp"
 
@@ -166,18 +167,21 @@ namespace MWGui
         if (shown)
         {
             okButton->setCaption(
-                MyGUI::UString(MWBase::Environment::get().getWindowManager()->getGameSettingString("sNext", {})));
+                Gui::makeMyGUIUString(
+                    MWBase::Environment::get().getWindowManager()->getGameSettingString("sNext", {})));
             mControllerButtons.mX = "#{Interface:Next}";
         }
         else if (Settings::gui().mControllerMenus)
         {
             okButton->setCaption(
-                MyGUI::UString(MWBase::Environment::get().getWindowManager()->getGameSettingString("sDone", {})));
+                Gui::makeMyGUIUString(
+                    MWBase::Environment::get().getWindowManager()->getGameSettingString("sDone", {})));
             mControllerButtons.mX = "#{Interface:Done}";
         }
         else
             okButton->setCaption(
-                MyGUI::UString(MWBase::Environment::get().getWindowManager()->getGameSettingString("sOK", {})));
+                Gui::makeMyGUIUString(
+                    MWBase::Environment::get().getWindowManager()->getGameSettingString("sOK", {})));
     }
 
     void PickClassDialog::onOpen()
@@ -302,7 +306,7 @@ namespace MWGui
 
         std::string_view specName = MWBase::Environment::get().getWindowManager()->getGameSettingString(
             ESM::Class::sGmstSpecializationIds[specialization], ESM::Class::sGmstSpecializationIds[specialization]);
-        mSpecializationName->setCaption(MyGUI::UString(specName));
+        mSpecializationName->setCaption(Gui::makeMyGUIUString(specName));
         ToolTips::createSpecializationToolTip(mSpecializationName, specName, specialization);
 
         mFavoriteAttribute[0]->setAttributeId(ESM::Attribute::indexToRefId(currentClass->mData.mAttribute[0]));
@@ -677,18 +681,21 @@ namespace MWGui
         if (shown)
         {
             okButton->setCaption(
-                MyGUI::UString(MWBase::Environment::get().getWindowManager()->getGameSettingString("sNext", {})));
+                Gui::makeMyGUIUString(
+                    MWBase::Environment::get().getWindowManager()->getGameSettingString("sNext", {})));
             mControllerButtons.mX = "#{Interface:Next}";
         }
         else if (Settings::gui().mControllerMenus)
         {
             okButton->setCaption(
-                MyGUI::UString(MWBase::Environment::get().getWindowManager()->getGameSettingString("sDone", {})));
+                Gui::makeMyGUIUString(
+                    MWBase::Environment::get().getWindowManager()->getGameSettingString("sDone", {})));
             mControllerButtons.mX = "#{Interface:Done}";
         }
         else
             okButton->setCaption(
-                MyGUI::UString(MWBase::Environment::get().getWindowManager()->getGameSettingString("sOK", {})));
+                Gui::makeMyGUIUString(
+                    MWBase::Environment::get().getWindowManager()->getGameSettingString("sOK", {})));
     }
 
     bool CreateClassDialog::onControllerButtonEvent(const SDL_ControllerButtonEvent& arg)
@@ -1172,7 +1179,8 @@ namespace MWGui
         getWidget(okButton, "OKButton");
         okButton->eventMouseButtonClick += MyGUI::newDelegate(this, &DescriptionDialog::onOkClicked);
         okButton->setCaption(
-            MyGUI::UString(MWBase::Environment::get().getWindowManager()->getGameSettingString("sInputMenu1", {})));
+            Gui::makeMyGUIUString(
+                MWBase::Environment::get().getWindowManager()->getGameSettingString("sInputMenu1", {})));
 
         // Make sure the edit box has focus
         MWBase::Environment::get().getWindowManager()->setKeyFocusWidget(mTextEdit);

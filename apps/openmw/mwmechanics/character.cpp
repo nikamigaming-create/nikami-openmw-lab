@@ -22,7 +22,10 @@
 #include <array>
 #include <unordered_set>
 
+#include <components/debug/debuglog.hpp>
 #include <components/esm/records.hpp>
+#include <components/esm4/loadcrea.hpp>
+#include <components/esm4/loadnpc.hpp>
 #include <components/misc/mathutil.hpp>
 #include <components/misc/resourcehelpers.hpp>
 #include <components/misc/rng.hpp>
@@ -32,6 +35,7 @@
 #include <components/settings/values.hpp>
 
 #include <components/sceneutil/positionattitudetransform.hpp>
+#include <components/vr/vr.hpp>
 
 #include "../mwrender/animation.hpp"
 
@@ -41,6 +45,11 @@
 #include "../mwbase/soundmanager.hpp"
 #include "../mwbase/windowmanager.hpp"
 #include "../mwbase/world.hpp"
+
+#include "../mwclass/esm4npc.hpp"
+
+#include "../mwvr/vrinputmanager.hpp"
+#include "../mwvr/vranimation.hpp"
 
 #include "../mwworld/class.hpp"
 #include "../mwworld/esmstore.hpp"
@@ -100,6 +109,50 @@ namespace
             default:
                 return state;
         }
+    }
+
+    bool isFalloutActor(const MWWorld::Ptr& ptr)
+    {
+        if (ptr.getType() == ESM4::Creature::sRecordId)
+            return true;
+        if (ptr.getType() != ESM::REC_NPC_4)
+            return false;
+        const ESM4::Npc* traits = MWClass::ESM4Npc::getTraitsRecord(ptr);
+        return traits != nullptr && traits->mIsFONV;
+    }
+
+    bool suppressFalloutVrPlayerBodyAnimations(const MWWorld::Ptr& ptr)
+    {
+        return std::getenv("OPENMW_FNV_VR_SUPPRESS_PLAYER_BODY_ANIMS") != nullptr
+            && (ptr == MWMechanics::getPlayer() || ptr.getCellRef().getRefId() == "Player");
+    }
+
+    std::string_view getFalloutFlyingMovementFallback(const MWWorld::Ptr& ptr, const MWRender::Animation& animation)
+    {
+        if (ptr.getType() != ESM4::Creature::sRecordId || !ptr.getClass().canFly(ptr)
+            || ptr.getClass().isBipedal(ptr))
+            return {};
+
+        static constexpr std::array<std::string_view, 12> groups = {
+            "flyforward",
+            "flightforward",
+            "flight",
+            "flapforward",
+            "flap",
+            "hoverforward",
+            "hover",
+            "forward",
+            "walkforward",
+            "idle",
+            "idle2",
+            "idle3",
+        };
+
+        for (std::string_view group : groups)
+            if (animation.hasAnimation(group))
+                return group;
+
+        return {};
     }
 
     // Converts a Hit state to its equivalent Death state.
@@ -643,6 +696,23 @@ namespace MWMechanics
         if (movement == mMovementState && !force)
             return;
 
+        if (suppressFalloutVrPlayerBodyAnimations(mPtr))
+        {
+            static unsigned int sSuppressedPlayerMovementLogs = 0;
+            if (!mCurrentMovement.empty())
+                clearStateAnimation(mCurrentMovement);
+            mMovementState = movement;
+            mMovementAnimationHasMovement = false;
+            mAdjustMovementAnimSpeed = false;
+            if (sSuppressedPlayerMovementLogs < 32 && movement != CharState_None)
+            {
+                ++sSuppressedPlayerMovementLogs;
+                Log(Debug::Info) << "FNV/ESM4 diag: suppressed VR player body movement animation for "
+                                 << mPtr.getCellRef().getRefId() << " state=" << static_cast<int>(movement);
+            }
+            return;
+        }
+
         std::string_view movementAnimGroup = movementStateToAnimGroup(movement);
 
         if (movementAnimGroup.empty())
@@ -702,6 +772,22 @@ namespace MWMechanics
 
             if (!mAnimation->hasAnimation(movementAnimName))
             {
+                if (std::string_view flyingMovement = getFalloutFlyingMovementFallback(mPtr, *mAnimation);
+                    !flyingMovement.empty())
+                {
+                    if (isFalloutActor(mPtr))
+                        Log(Debug::Info) << "FNV/ESM4 diag: using '" << flyingMovement
+                                         << "' as flying movement fallback for " << mPtr.getCellRef().getRefId()
+                                         << " requested='" << movementAnimName << "'";
+                    movementAnimName = std::string(flyingMovement);
+                }
+            }
+
+            if (!mAnimation->hasAnimation(movementAnimName))
+            {
+                if (isFalloutActor(mPtr))
+                    Log(Debug::Warning) << "FNV/ESM4 diag: movement animation missing for "
+                                        << mPtr.getCellRef().getRefId() << " group '" << movementAnimName << "'";
                 if (!mCurrentMovement.empty())
                     resetCurrentIdleState();
                 resetCurrentMovementState();
@@ -772,6 +858,21 @@ namespace MWMechanics
             return;
         }
 
+        if (suppressFalloutVrPlayerBodyAnimations(mPtr))
+        {
+            static unsigned int sSuppressedPlayerIdleLogs = 0;
+            if (!mCurrentIdle.empty())
+                clearStateAnimation(mCurrentIdle);
+            mIdleState = CharState_None;
+            if (sSuppressedPlayerIdleLogs < 16 && idle != CharState_None)
+            {
+                ++sSuppressedPlayerIdleLogs;
+                Log(Debug::Info) << "FNV/ESM4 diag: suppressed VR player body idle animation for "
+                                 << mPtr.getCellRef().getRefId() << " state=" << static_cast<int>(idle);
+            }
+            return;
+        }
+
         if (!force && idle == mIdleState && (mAnimation->isPlaying(mCurrentIdle) || !mAnimQueue.empty()))
             return;
 
@@ -814,8 +915,29 @@ namespace MWMechanics
             }
         }
 
+        if (isFalloutActor(mPtr))
+        {
+            if (const char* forcedIdleGroup = std::getenv("OPENMW_FNV_FORCE_IDLE_GROUP"))
+            {
+                std::string forced = Misc::StringUtils::lowerCase(forcedIdleGroup);
+                if (forced == "idle" || forced == "sitchairlisten" || forced == "sitchairtalk"
+                    || forced == "sitchaireat")
+                {
+                    Log(Debug::Info) << "FNV/ESM4 diag: forcing idle group '" << forced << "' for "
+                                     << mPtr.getCellRef().getRefId();
+                    idleGroup = std::move(forced);
+                }
+                else
+                    Log(Debug::Warning) << "FNV/ESM4 diag: ignoring invalid OPENMW_FNV_FORCE_IDLE_GROUP='"
+                                        << forcedIdleGroup << "'";
+            }
+        }
+
         if (!mAnimation->hasAnimation(idleGroup))
         {
+            if (isFalloutActor(mPtr))
+                Log(Debug::Warning) << "FNV/ESM4 diag: idle animation missing for " << mPtr.getCellRef().getRefId()
+                                    << " group '" << idleGroup << "'";
             resetCurrentIdleState();
             return;
         }
@@ -828,8 +950,74 @@ namespace MWMechanics
 
         clearStateAnimation(mCurrentIdle);
         mCurrentIdle = std::move(idleGroup);
+        if (isFalloutActor(mPtr))
+            Log(Debug::Info) << "FNV/ESM4 diag: CharacterController playing idle for "
+                             << mPtr.getCellRef().getRefId() << " group '" << mCurrentIdle << "'";
         playBlendedAnimation(mCurrentIdle, priority, MWRender::BlendMask_All, false, 1.0f, "start", "stop", startPoint,
             static_cast<uint32_t>(numLoops), true);
+
+        if (isFalloutActor(mPtr))
+        {
+            if (const char* forcedOverlayGroup = std::getenv("OPENMW_FNV_FORCED_OVERLAY_GROUP"))
+            {
+                std::string overlayGroup = Misc::StringUtils::lowerCase(forcedOverlayGroup);
+                if (!overlayGroup.empty())
+                {
+                    if (mAnimation->hasAnimation(overlayGroup))
+                    {
+                        MWRender::Animation::AnimPriority overlayPriority(Priority_Default);
+                        overlayPriority[MWRender::BoneGroup_RightArm] = Priority_Weapon;
+                        Log(Debug::Info)
+                            << "FNV/ESM4 diag: CharacterController layering forced right-arm overlay group '"
+                            << overlayGroup << "' for " << mPtr.getCellRef().getRefId();
+                        playBlendedAnimation(overlayGroup,
+                            overlayPriority, MWRender::BlendMask_RightArm, false, 1.0f, "start", "stop", 0.f,
+                            static_cast<uint32_t>(numLoops), true);
+                    }
+                    else
+                        Log(Debug::Warning) << "FNV/ESM4 diag: forced overlay group missing for "
+                                            << mPtr.getCellRef().getRefId() << " group '" << overlayGroup << "'";
+                }
+            }
+
+            const bool hasFalloutSitTalk = mAnimation->hasAnimation("sitchairtalk")
+                && std::getenv("OPENMW_FNV_DISABLE_SIT_TALK_OVERLAY") == nullptr;
+            if (mCurrentIdle == "idle" && mAnimation->hasAnimation("sitchairlisten") && !hasFalloutSitTalk
+                && std::getenv("OPENMW_FNV_ENABLE_SIT_LISTEN_OVERLAY") != nullptr)
+            {
+                MWRender::Animation::AnimPriority listenPriority(Priority_Default);
+                listenPriority[MWRender::BoneGroup_LeftArm] = Priority_Weapon;
+                listenPriority[MWRender::BoneGroup_RightArm] = Priority_Weapon;
+                Log(Debug::Info) << "FNV/ESM4 diag: CharacterController layering package sit/listen overlay for "
+                                 << mPtr.getCellRef().getRefId();
+                playBlendedAnimation("sitchairlisten",
+                    listenPriority, MWRender::BlendMask_LeftArm | MWRender::BlendMask_RightArm, false, 1.0f,
+                    "start", "stop", 0.f, static_cast<uint32_t>(numLoops), true);
+            }
+            if (mCurrentIdle == "idle" && hasFalloutSitTalk
+                && std::getenv("OPENMW_FNV_ENABLE_SIT_LISTEN_OVERLAY") != nullptr)
+            {
+                MWRender::Animation::AnimPriority talkPriority(Priority_Default);
+                talkPriority[MWRender::BoneGroup_Head] = Priority_Weapon;
+                int talkMask = MWRender::BlendMask_Head;
+                if (std::getenv("OPENMW_FNV_SIT_TALK_OVERLAY_TORSO") != nullptr)
+                {
+                    talkPriority[MWRender::BoneGroup_Torso] = Priority_Weapon;
+                    talkMask |= MWRender::BlendMask_Torso;
+                }
+                if (std::getenv("OPENMW_FNV_SIT_TALK_OVERLAY_ARMS") != nullptr)
+                {
+                    talkPriority[MWRender::BoneGroup_LeftArm] = Priority_Weapon;
+                    talkPriority[MWRender::BoneGroup_RightArm] = Priority_Weapon;
+                    talkMask |= MWRender::BlendMask_LeftArm | MWRender::BlendMask_RightArm;
+                }
+                Log(Debug::Info) << "FNV/ESM4 diag: CharacterController layering package sit/talk overlay for "
+                                 << mPtr.getCellRef().getRefId();
+                playBlendedAnimation("sitchairtalk",
+                    talkPriority, talkMask, false, 1.0f, "start", "stop", 0.f,
+                    static_cast<uint32_t>(numLoops), true);
+            }
+        }
     }
 
     void CharacterController::refreshCurrentAnims(
@@ -1931,9 +2119,10 @@ namespace MWMechanics
         else
         {
             float complete;
-            uint32_t loopcount;
+            size_t loopcount;
             mAnimation->getInfo(mAnimQueue.front().mGroup, &complete, nullptr, &loopcount);
-            mAnimQueue.front().mLoopCount = loopcount;
+            mAnimQueue.front().mLoopCount
+                = static_cast<uint32_t>(std::min<size_t>(loopcount, std::numeric_limits<uint32_t>::max()));
             mAnimQueue.front().mTime = complete;
         }
 
@@ -2008,6 +2197,32 @@ namespace MWMechanics
             bool isrunning = cls.getCreatureStats(mPtr).getStance(MWMechanics::CreatureStats::Stance_Run) && !flying;
             CreatureStats& stats = cls.getCreatureStats(mPtr);
             Movement& movementSettings = cls.getMovementSettings(mPtr);
+            const bool logFalloutVrPlayerMovement = VR::getVR() && isPlayer;
+            if (logFalloutVrPlayerMovement && MWVR::hasFallbackMovementInput())
+            {
+                const osg::Vec2f fallbackMovement = MWVR::getFallbackMovementInput();
+                movementSettings.mPosition[0] = fallbackMovement.x();
+                movementSettings.mPosition[1] = fallbackMovement.y();
+                movementSettings.mSpeedFactor = std::min(fallbackMovement.length(), 1.f);
+            }
+            if (logFalloutVrPlayerMovement)
+            {
+                static unsigned int sPlayerMovementInputLogs = 0;
+                if (sPlayerMovementInputLogs < 48
+                    && (movementSettings.mPosition[0] != 0.f || movementSettings.mPosition[1] != 0.f
+                        || movementSettings.mPosition[2] != 0.f))
+                {
+                    ++sPlayerMovementInputLogs;
+                    Log(Debug::Info) << "FNV/ESM4 diag: CharacterController player input settings"
+                                     << " raw=(" << movementSettings.mPosition[0] << ","
+                                     << movementSettings.mPosition[1] << "," << movementSettings.mPosition[2]
+                                     << ") speedFactor=" << movementSettings.mSpeedFactor
+                                     << " duration=" << duration << " onground=" << onground
+                                     << " inwater=" << inwater << " flying=" << flying << " solid=" << solid
+                                     << " run=" << isrunning << " sneak=" << sneak
+                                     << " maxSpeed=" << cls.getMaxSpeed(mPtr);
+                }
+            }
 
             // Force Jump Logic
 
@@ -2024,6 +2239,16 @@ namespace MWMechanics
             }
 
             osg::Vec3f rot = cls.getRotationVector(mPtr);
+            if (logFalloutVrPlayerMovement)
+            {
+                float snapYaw = 0.f;
+                if (MWVR::consumeFallbackSnapTurn(snapYaw))
+                {
+                    rot.z() += snapYaw;
+                    Log(Debug::Info) << "FNV/ESM4 diag: CharacterController applied VR snap turn yaw="
+                                     << snapYaw;
+                }
+            }
             osg::Vec3f vec(movementSettings.asVec3());
             movementSettings.mSpeedFactor = std::min(vec.length(), 1.f);
             vec.normalize();
@@ -2118,6 +2343,20 @@ namespace MWMechanics
             speed = cls.getCurrentSpeed(mPtr);
             vec.x() *= speed;
             vec.y() *= speed;
+            if (logFalloutVrPlayerMovement)
+            {
+                static unsigned int sPlayerMovementSpeedLogs = 0;
+                if (sPlayerMovementSpeedLogs < 48
+                    && (movementSettings.mPosition[0] != 0.f || movementSettings.mPosition[1] != 0.f
+                        || movementSettings.mSpeedFactor != 0.f))
+                {
+                    ++sPlayerMovementSpeedLogs;
+                    Log(Debug::Info) << "FNV/ESM4 diag: CharacterController player speed resolved"
+                                     << " currentSpeed=" << speed << " vecAfterSpeed=(" << vec.x() << ","
+                                     << vec.y() << "," << vec.z() << ") speedFactor="
+                                     << movementSettings.mSpeedFactor;
+                }
+            }
 
             if (isKnockedOut() || isKnockedDown() || isRecovery() || isScriptedAnimPlaying())
                 vec = osg::Vec3f();
@@ -2452,7 +2691,11 @@ namespace MWMechanics
 
         if (mPtr.getClass().isActor() && !isScriptedAnimPlaying())
         {
-            if (isMovementAnimationControlled())
+            const bool suppressFalloutNpcRootMovement
+                = !isPlayer && mPtr.getType() == ESM::REC_NPC_4 && isFalloutActor(mPtr);
+            const bool immobilizeFalloutNpc
+                = suppressFalloutNpcRootMovement && mPtr.getClass().getMaxSpeed(mPtr) <= 0.f;
+            if (isMovementAnimationControlled() && !suppressFalloutNpcRootMovement)
             {
                 if (duration != 0.f && movementFromAnimation != osg::Vec3f())
                 {
@@ -2485,6 +2728,32 @@ namespace MWMechanics
             {
                 movement = osg::Vec3f();
             }
+            else if (suppressFalloutNpcRootMovement && movementFromAnimation != osg::Vec3f())
+            {
+                static unsigned int sSuppressedRootMovementLogs = 0;
+                if (sSuppressedRootMovementLogs < 32)
+                {
+                    ++sSuppressedRootMovementLogs;
+                    Log(Debug::Info) << "FNV/ESM4 diag: suppressed animation root movement for "
+                                     << mPtr.getCellRef().getRefId() << " delta=(" << movementFromAnimation.x()
+                                     << "," << movementFromAnimation.y() << "," << movementFromAnimation.z()
+                                     << ") movement=(" << movement.x() << "," << movement.y() << ","
+                                     << movement.z() << ")";
+                }
+            }
+
+            if (immobilizeFalloutNpc && movement != osg::Vec3f())
+            {
+                static unsigned int sSuppressedNativeMovementLogs = 0;
+                if (sSuppressedNativeMovementLogs < 32)
+                {
+                    ++sSuppressedNativeMovementLogs;
+                    Log(Debug::Info) << "FNV/ESM4 diag: suppressed native movement for "
+                                     << mPtr.getCellRef().getRefId() << " movement=(" << movement.x() << ","
+                                     << movement.y() << "," << movement.z() << ")";
+                }
+                movement = osg::Vec3f();
+            }
 
             if (mFloatToSurface && world->isSwimming(mPtr))
             {
@@ -2502,6 +2771,21 @@ namespace MWMechanics
 
             movement.x() *= scale;
             movement.y() *= scale;
+            if (VR::getVR() && isPlayer)
+                static_cast<MWVR::VRAnimation*>(mAnimation)->modifyMovement(movement);
+
+            if (VR::getVR() && isPlayer)
+            {
+                static unsigned int sPlayerQueuedMovementLogs = 0;
+                if (sPlayerQueuedMovementLogs < 48
+                    && (movement.x() != 0.f || movement.y() != 0.f || movement.z() != 0.f))
+                {
+                    ++sPlayerQueuedMovementLogs;
+                    Log(Debug::Info) << "FNV/ESM4 diag: CharacterController queue player movement"
+                                     << " movement=(" << movement.x() << "," << movement.y() << ","
+                                     << movement.z() << ") scale=" << scale << " speed=" << speed;
+                }
+            }
             world->queueMovement(mPtr, movement);
         }
 
@@ -2527,10 +2811,11 @@ namespace MWMechanics
             if (iter == mAnimQueue.begin() && mAnimation)
             {
                 float complete;
-                uint32_t loopcount;
+                size_t loopcount;
                 mAnimation->getInfo(anim.mGroup, &complete, nullptr, &loopcount);
                 anim.mTime = complete;
-                anim.mLoopCount = loopcount;
+                anim.mLoopCount
+                    = static_cast<uint32_t>(std::min<size_t>(loopcount, std::numeric_limits<uint32_t>::max()));
             }
             else
             {
@@ -2718,8 +3003,15 @@ namespace MWMechanics
 
     bool CharacterController::isMovementAnimationControlled() const
     {
+        // VR locomotion is driven by headset/controller input, not actor root motion.
+        if (mPtr == getPlayer() && VR::getVR())
+            return false;
+
         if (mHitState != CharState_None || mDeathState != CharState_None)
             return true;
+
+        if (suppressFalloutVrPlayerBodyAnimations(mPtr))
+            return false;
 
         if (Settings::game().mPlayerMovementIgnoresAnimation && mPtr == getPlayer())
             return false;

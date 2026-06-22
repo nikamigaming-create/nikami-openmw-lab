@@ -408,7 +408,8 @@ namespace MWGui
         {
             for (const MyGUI::UString& keyword : keywords)
             {
-                if (Misc::StringUtils::ciEqual(keyword, button->getCaption()))
+                if (Misc::StringUtils::ciEqual(
+                        static_cast<std::string>(keyword), static_cast<std::string>(button->getCaption())))
                 {
                     return button;
                 }

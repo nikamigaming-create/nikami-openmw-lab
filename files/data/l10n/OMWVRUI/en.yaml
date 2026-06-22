@@ -1,0 +1,22 @@
+UiPage: "OpenMW VR UI settings"
+UiPageDescription: "Settings related to UI in VR"
+
+SpacesGroup: "VR Spaces"
+OtherGroup: "Other Spaces"
+UiGroup: "Other UI"
+
+HUDSpace: "HUD Space"
+HUDSpaceDescription: |
+    Where in space the hud should appear. Note that all Wrist options require motion controllers, and do not work in KB+Mouse or gamepad mode.
+
+TooltipSpace: "Tooltip Space"
+TooltipSpaceDescription: |
+    Where in space tooltips should appear. Note that all Wrist options require motion controllers, and do not work in KB+Mouse or gamepad mode.
+
+DialogueSpace: "Lower dialogue window"
+DialogueSpaceDescription: |
+    Lower the dialogue window somewhat to avoid blocking the view of the NPC's head. Can improve immersion, especially with some mods that make the scene less static during dialogue.
+
+ShowTutorials: "Show Tutorials"
+ShowTutorialsDescription: |
+    Show a few tutorial messages when a character is loaded into VR for the first time (including new game).

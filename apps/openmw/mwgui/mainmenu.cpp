@@ -96,6 +96,7 @@ namespace MWGui
         : WindowBase("openmw_mainmenu.layout")
         , mWidth(w)
         , mHeight(h)
+        , mHasFalloutMainBackground(false)
         , mVFS(vfs)
         , mButtonBox(nullptr)
         , mBackground(nullptr)
@@ -104,8 +105,19 @@ namespace MWGui
         mVersionText->setCaption(versionDescription);
 
         constexpr VFS::Path::NormalizedView menuBackgroundVideo("video/menu_background.bik");
+        const VFS::Path::Normalized falloutMainBackground("textures/interface/main/main_background.dds");
+        const bool hasFalloutMainMenu = mVFS->exists(VFS::Path::NormalizedView("menus/options/main_menu.xml"));
 
         mHasAnimatedMenu = mVFS->exists(menuBackgroundVideo);
+        mHasFalloutMainBackground = hasFalloutMainMenu && mVFS->exists(falloutMainBackground);
+        if (hasFalloutMainMenu && mHasFalloutMainBackground)
+        {
+            Log(Debug::Info) << "FNV/ESM4 proof: main menu background source " << falloutMainBackground.value()
+                             << " archive=" << mVFS->getArchive(falloutMainBackground);
+        }
+        else if (hasFalloutMainMenu)
+            Log(Debug::Warning) << "FNV/ESM4 diag: menus/options/main_menu.xml is present but "
+                                   "textures/interface/main/main_background.dds is missing";
         mDisableGamepadCursor = Settings::gui().mControllerMenus;
 
         updateMenu();
@@ -267,7 +279,10 @@ namespace MWGui
             {
                 mBackground = MyGUI::Gui::getInstance().createWidgetReal<BackgroundImage>(
                     "ImageBox", 0, 0, 1, 1, MyGUI::Align::Stretch, "MainMenuBackground");
-                mBackground->setBackgroundImage("textures\\menu_morrowind.dds", true, stretch);
+                mBackground->setBackgroundImage(mHasFalloutMainBackground
+                        ? "textures/interface/main/main_background.dds"
+                        : "textures\\menu_morrowind.dds",
+                    true, stretch);
             }
             mBackground->setVisible(true);
         }

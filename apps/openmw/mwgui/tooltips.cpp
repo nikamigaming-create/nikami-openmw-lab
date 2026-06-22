@@ -585,7 +585,7 @@ namespace MWGui
             extraWidget->setEditStatic(true);
             extraWidget->setEditMultiLine(true);
             extraWidget->setEditWordWrap(info.wordWrap);
-            extraWidget->setCaptionWithReplacing(extra);
+            extraWidget->setCaptionWithReplacing(std::string(extra));
             extraWidget->setTextAlign(MyGUI::Align::HCenter | MyGUI::Align::Top);
             extraWidget->setNeedKeyFocus(false);
 
@@ -855,7 +855,7 @@ namespace MWGui
 
     void ToolTips::createSpecializationToolTip(MyGUI::Widget* widget, std::string_view name, int specId)
     {
-        widget->setUserString("Caption_Caption", name);
+        widget->setUserString("Caption_Caption", std::string(name));
         std::string specText;
         // get all skills of this specialisation
         const MWWorld::Store<ESM::Skill>& skills = MWBase::Environment::get().getESMStore()->get<ESM::Skill>();

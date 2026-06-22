@@ -22,6 +22,7 @@
 #include <components/sdlutil/sdlvideowrapper.hpp>
 #include <components/settings/settings.hpp>
 #include <components/toutf8/toutf8.hpp>
+#include <components/widgets/myguicompat.hpp>
 
 #include "charactercreation.hpp"
 #include "draganddrop.hpp"
@@ -587,7 +588,7 @@ namespace MWGui
          */
         void onRetrieveTag(const MyGUI::UString& tag, MyGUI::UString& result);
 
-        void onCursorChange(std::string_view name);
+        void onCursorChange(Gui::MyGUIStringParam name);
         void onKeyFocusChanged(MyGUI::Widget* widget);
 
         // Key pressed while playing a video
@@ -595,8 +596,8 @@ namespace MWGui
 
         void sizeVideo(int screenWidth, int screenHeight);
 
-        void onClipboardChanged(std::string_view type, std::string_view data);
-        void onClipboardRequested(std::string_view type, std::string& data);
+        void onClipboardChanged(Gui::MyGUIStringParam type, Gui::MyGUIStringParam data);
+        void onClipboardRequested(Gui::MyGUIStringParam type, std::string& data);
 
         void createTextures();
         void createCursors();

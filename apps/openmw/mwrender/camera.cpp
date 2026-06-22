@@ -1,7 +1,10 @@
 #include "camera.hpp"
 
+#include <vector>
+
 #include <osg/Camera>
 
+#include <components/debug/debuglog.hpp>
 #include <components/misc/mathutil.hpp>
 #include <components/sceneutil/nodecallback.hpp>
 #include <components/sceneutil/positionattitudetransform.hpp>
@@ -19,6 +22,11 @@
 #include "../mwphysics/raycasting.hpp"
 
 #include "npcanimation.hpp"
+
+#include <components/vr/session.hpp>
+#include <components/vr/vr.hpp>
+
+#include "../mwvr/openxrinput.hpp"
 
 namespace
 {
@@ -76,7 +84,27 @@ namespace MWRender
         , mDeferredRotationDisabled(false)
     {
         mUpdateCallback = new UpdateRenderCameraCallback(this);
-        mCamera->addUpdateCallback(mUpdateCallback);
+        if (mCamera->getUpdateCallback())
+        {
+            // Keep our view update ahead of callbacks that consume the camera matrix.
+            std::vector<osg::ref_ptr<osg::Callback>> callbacks;
+            while (auto* callback = mCamera->getUpdateCallback())
+            {
+                callbacks.push_back(callback);
+                mCamera->removeUpdateCallback(callback);
+            }
+            mCamera->addUpdateCallback(mUpdateCallback);
+            for (auto& callback : callbacks)
+                mCamera->addUpdateCallback(callback);
+        }
+        else
+            mCamera->addUpdateCallback(mUpdateCallback);
+
+        if (VR::getVR())
+        {
+            mMode = Mode::VR;
+            processViewChange();
+        }
     }
 
     Camera::~Camera()
@@ -84,18 +112,58 @@ namespace MWRender
         mCamera->removeUpdateCallback(mUpdateCallback);
     }
 
-    osg::Vec3d Camera::calculateTrackedPosition() const
+    void Camera::updateTrackedPosition() const
     {
         if (!mTrackingNode)
-            return osg::Vec3d();
+            return;
         osg::NodePathList nodepaths = mTrackingNode->getParentalNodePaths();
         if (nodepaths.empty())
-            return osg::Vec3d();
-        osg::Matrix worldMat = osg::computeLocalToWorld(nodepaths[0]);
-        osg::Vec3d res = worldMat.getTrans();
-        if (mMode != Mode::FirstPerson)
-            res.z() += mHeight * mHeightScale;
-        return res;
+            return;
+        mTrackedWorldMatrix = osg::computeLocalToWorld(nodepaths[0]);
+        if (mMode != Mode::FirstPerson && mMode != Mode::VR)
+        {
+            osg::Vec3d trans = mTrackedWorldMatrix.getTrans();
+            trans.z() += mHeight * mHeightScale;
+            mTrackedWorldMatrix.setTrans(trans);
+        }
+    }
+
+    void Camera::updateCamera()
+    {
+        updateCamera(mCamera);
+    }
+
+    void Camera::setPose(const Stereo::Pose& pose)
+    {
+        mTrackedPose = pose;
+        mPosition = mTrackedPose.position.asMWUnits();
+#if defined(ANDROID)
+        if (mMode == Mode::VR)
+        {
+            static int sLoggedPose = 0;
+            if (sLoggedPose < 96)
+            {
+                ++sLoggedPose;
+                updateTrackedPosition();
+                const auto anchored = calculateFirstPersonPosition(mTrackedWorldMatrix.getTrans());
+                const auto tracked = mTrackedPose.position.asMWUnits();
+                Log(Debug::Warning) << "Android VR camera proof: trackedPoseMW=(" << tracked.x() << "," << tracked.y()
+                                    << "," << tracked.z() << ") anchoredFirstPersonMW=(" << anchored.x() << ","
+                                    << anchored.y() << "," << anchored.z() << ")"
+                                    << " trackingNode=" << (mTrackingNode.valid() ? "yes" : "no");
+            }
+        }
+#endif
+        updateCamera();
+    }
+
+    void Camera::onSpaceUpdate()
+    {
+        auto tp = MWVR::OpenXRInput::instance().getSpace(MWVR::OpenXRInput::DefaultReferenceSpaceView)->locateInWorld();
+        if (!tp.status)
+            setPose(mTrackedPose);
+        else
+            setPose(tp.pose);
     }
 
     osg::Vec3d Camera::getFocalPointOffset() const
@@ -107,13 +175,21 @@ namespace MWRender
         return offset;
     }
 
-    void Camera::updateCamera(osg::Camera* cam)
+    void Camera::getOrientation(osg::Quat& orientation) const
     {
-        osg::Quat orient = getOrient();
-        osg::Vec3d forward = orient * osg::Vec3d(0, 1, 0);
-        osg::Vec3d up = orient * osg::Vec3d(0, 0, 1);
+        if (mMode == Mode::VR)
+            orientation = mTrackedPose.orientation;
+        else
+        {
+            orientation = osg::Quat(mRoll + mExtraRoll, osg::Vec3d(0, 1, 0))
+                * osg::Quat(mPitch + mExtraPitch, osg::Vec3d(1, 0, 0))
+                * osg::Quat(mYaw + mExtraYaw, osg::Vec3d(0, 0, 1));
+        }
+    }
 
-        osg::Vec3d pos = mPosition;
+    void Camera::getPosition(osg::Vec3d& position) const
+    {
+        position = mPosition;
         if (mMode == Mode::FirstPerson)
         {
             // It is a hack. Camera position depends on neck animation.
@@ -121,9 +197,23 @@ namespace MWRender
             // recalculate the position here. Note that it becomes different from mPosition that
             // is used in other parts of the code.
             // TODO: detach camera from OSG animation and get rid of this hack.
-            osg::Vec3d recalculatedTrackedPosition = calculateTrackedPosition();
-            pos = calculateFirstPersonPosition(recalculatedTrackedPosition);
+            updateTrackedPosition();
+            position = calculateFirstPersonPosition(mTrackedWorldMatrix.getTrans());
         }
+        if (mMode == Mode::VR)
+            position = mTrackedPose.position.asMWUnits();
+    }
+
+    void Camera::updateCamera(osg::Camera* cam)
+    {
+        osg::Vec3d pos;
+        getPosition(pos);
+
+        osg::Quat orient;
+        getOrientation(orient);
+        osg::Vec3d forward = orient * osg::Vec3d(0, 1, 0);
+        osg::Vec3d up = orient * osg::Vec3d(0, 0, 1);
+
         cam->setViewMatrixAsLookAt(pos, pos + forward, up);
         mViewMatrix = cam->getViewMatrix();
         mProjectionMatrix = cam->getProjectionMatrix();
@@ -159,7 +249,8 @@ namespace MWRender
 
     void Camera::updatePosition()
     {
-        mTrackedPosition = calculateTrackedPosition();
+        updateTrackedPosition();
+        mTrackedPosition = mTrackedWorldMatrix.getTrans();
         if (mMode == Mode::Static)
             return;
         if (mMode == Mode::FirstPerson)
@@ -168,6 +259,8 @@ namespace MWRender
             mCameraDistance = 0;
             return;
         }
+        if (mMode == Mode::VR)
+            return;
 
         constexpr float cameraObstacleLimit = 5.0f;
         constexpr float focalObstacleLimit = 10.f;
@@ -221,6 +314,8 @@ namespace MWRender
             mQueuedMode = std::nullopt;
             return;
         }
+        if (newMode != Mode::VR && VR::getVR())
+            return;
         Mode oldMode = mMode;
         if (!force && (newMode == Mode::FirstPerson || oldMode == Mode::FirstPerson) && mAnimation
             && !mAnimation->upperBodyReady())
@@ -232,11 +327,13 @@ namespace MWRender
         }
         mMode = newMode;
         mQueuedMode = std::nullopt;
-        if (newMode == Mode::FirstPerson)
+        if (newMode == Mode::FirstPerson || newMode == Mode::VR)
             mFirstPersonView = true;
         else if (newMode == Mode::ThirdPerson)
+        {
             mFirstPersonView = false;
-        calculateDeferredRotation();
+            calculateDeferredRotation();
+        }
         if (oldMode == Mode::FirstPerson || newMode == Mode::FirstPerson)
         {
             instantTransition();
@@ -295,11 +392,15 @@ namespace MWRender
 
     void Camera::toggleViewMode(bool force)
     {
+        if (mMode == Mode::VR)
+            return;
         setMode(mFirstPersonView ? Mode::ThirdPerson : Mode::FirstPerson, force);
     }
 
     bool Camera::toggleVanityMode(bool enable)
     {
+        if (mMode == Mode::VR)
+            return false;
         if (!enable)
             setMode(mFirstPersonView ? Mode::FirstPerson : Mode::ThirdPerson, false);
         else if (mVanityAllowed)
@@ -310,6 +411,8 @@ namespace MWRender
     void Camera::setSneakOffset(float offset)
     {
         mAnimation->setFirstPersonOffset(osg::Vec3f(0, 0, -offset));
+        if (VR::getVR())
+            VR::setSneakOffsetEnabled(offset != 0.f);
     }
 
     void Camera::setYaw(float angle, bool force)
@@ -341,10 +444,36 @@ namespace MWRender
     {
         mAnimation = anim;
         mProcessViewChange = true;
+        if (VR::getVR())
+        {
+            mMode = Mode::VR;
+            processViewChange();
+        }
     }
 
     void Camera::processViewChange()
     {
+        if (mMode == Mode::VR)
+        {
+            if (mAnimation)
+            {
+                mAnimation->setViewMode(NpcAnimation::VM_VRFirstPerson);
+                mTrackingNode = mAnimation->getNode("Camera");
+                if (!mTrackingNode)
+                    mTrackingNode = mAnimation->getNode("Head");
+                if (!mTrackingNode)
+                    mTrackingNode = mAnimation->getNode("Bip01 Head");
+                if (!mTrackingNode)
+                    mTrackingNode = mAnimation->getNode("Bip01 Neck");
+                mHeightScale = 1.f;
+            }
+#if defined(ANDROID)
+            Log(Debug::Warning) << "Android VR camera proof: processViewChange trackingNode="
+                                << (mTrackingNode.valid() ? "yes" : "no");
+#endif
+            mProcessViewChange = false;
+            return;
+        }
         if (mTrackingPtr.isEmpty())
             return;
         if (mMode == Mode::FirstPerson)
@@ -403,7 +532,7 @@ namespace MWRender
 
     void Camera::rotateCameraToTrackingPtr()
     {
-        if (mMode == Mode::Static || mTrackingPtr.isEmpty())
+        if (mMode == Mode::Static || mMode == Mode::VR || mTrackingPtr.isEmpty())
             return;
         setPitch(-mTrackingPtr.getRefData().getPosition().rot[0] - mDeferredRotation.x());
         setYaw(-mTrackingPtr.getRefData().getPosition().rot[2] - mDeferredRotation.z());
@@ -415,6 +544,8 @@ namespace MWRender
         mDeferredRotationDisabled = false;
         mDeferredRotation = osg::Vec3f();
         rotateCameraToTrackingPtr();
+        if (VR::getVR())
+            VR::Session::instance().instantTransition();
     }
 
     void Camera::calculateDeferredRotation()
@@ -427,7 +558,7 @@ namespace MWRender
         MWWorld::Ptr ptr = mTrackingPtr;
         if (mMode == Mode::Preview || mMode == Mode::Vanity || ptr.isEmpty())
             return;
-        if (mFirstPersonView)
+        if (mFirstPersonView || mMode == Mode::VR)
         {
             instantTransition();
             return;

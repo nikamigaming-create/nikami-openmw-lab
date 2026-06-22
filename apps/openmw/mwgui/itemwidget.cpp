@@ -10,6 +10,7 @@
 #include <components/resource/resourcesystem.hpp>
 #include <components/settings/values.hpp>
 #include <components/vfs/manager.hpp>
+#include <components/vfs/pathutil.hpp>
 
 #include "../mwbase/environment.hpp"
 
@@ -189,6 +190,13 @@ namespace MWGui
         if (!backgroundTex.empty())
             backgroundTex += ".dds";
 
+        if (!backgroundTex.empty())
+        {
+            const auto normalizedBackground = VFS::Path::toNormalized(backgroundTex);
+            if (!MWBase::Environment::get().getResourceSystem()->getVFS()->exists(normalizedBackground))
+                backgroundTex = "textures\\omw_menu_icon_active.dds";
+        }
+
         float scale = 1.f;
         if (!backgroundTex.empty())
         {
@@ -229,9 +237,9 @@ namespace MWGui
         {
             mCurrentIcon = icon;
             if (mItemShadow)
-                mItemShadow->setImageTexture(icon);
+                mItemShadow->setImageTexture(std::string(icon));
             if (mItem)
-                mItem->setImageTexture(icon);
+                mItem->setImageTexture(std::string(icon));
         }
     }
 

@@ -46,6 +46,32 @@ namespace
     }
 
     template <typename T>
+    float getRecordWeight(const T& record)
+    {
+        return record.mData.mWeight;
+    }
+
+    float getRecordWeight(const ESM4::Armor& record)
+    {
+        return record.mData.weight;
+    }
+
+    float getRecordWeight(const ESM4::Potion& record)
+    {
+        return record.mData.weight;
+    }
+
+    float getRecordWeight(const ESM4::MiscItem& record)
+    {
+        return record.mData.weight;
+    }
+
+    float getRecordWeight(const ESM4::Weapon& record)
+    {
+        return record.mData.weight;
+    }
+
+    template <typename T>
     float getTotalWeight(const MWWorld::CellRefList<T>& cellRefList)
     {
         float sum = 0;
@@ -53,7 +79,7 @@ namespace
         for (const MWWorld::LiveCellRef<T>& liveCellRef : cellRefList.mList)
         {
             if (const int count = liveCellRef.mRef.getCount(); count > 0)
-                sum += count * liveCellRef.mBase->mData.mWeight;
+                sum += count * getRecordWeight(*liveCellRef.mBase);
         }
 
         return sum;
@@ -580,6 +606,26 @@ MWWorld::ContainerStoreIterator MWWorld::ContainerStore::addNewStack(const Const
             mLists.mWeapons.mList.push_back(*ptr.get<ESM::Weapon>());
             it = ContainerStoreIterator(this, --mLists.mWeapons.mList.end());
             break;
+        case Type_ESM4Ammunition:
+            mLists.mESM4Ammunition.mList.push_back(*ptr.get<ESM4::Ammunition>());
+            it = ContainerStoreIterator(this, --mLists.mESM4Ammunition.mList.end());
+            break;
+        case Type_ESM4Armor:
+            mLists.mESM4Armors.mList.push_back(*ptr.get<ESM4::Armor>());
+            it = ContainerStoreIterator(this, --mLists.mESM4Armors.mList.end());
+            break;
+        case Type_ESM4Miscellaneous:
+            mLists.mESM4MiscItems.mList.push_back(*ptr.get<ESM4::MiscItem>());
+            it = ContainerStoreIterator(this, --mLists.mESM4MiscItems.mList.end());
+            break;
+        case Type_ESM4Weapon:
+            mLists.mESM4Weapons.mList.push_back(*ptr.get<ESM4::Weapon>());
+            it = ContainerStoreIterator(this, --mLists.mESM4Weapons.mList.end());
+            break;
+        case Type_ESM4Potion:
+            mLists.mESM4Potions.mList.push_back(*ptr.get<ESM4::Potion>());
+            it = ContainerStoreIterator(this, --mLists.mESM4Potions.mList.end());
+            break;
     }
 
     it->getCellRef().setCount(count);
@@ -875,6 +921,11 @@ float MWWorld::ContainerStore::getWeight() const
         mCachedWeight += getTotalWeight(mLists.mProbes);
         mCachedWeight += getTotalWeight(mLists.mRepairs);
         mCachedWeight += getTotalWeight(mLists.mWeapons);
+        mCachedWeight += getTotalWeight(mLists.mESM4Ammunition);
+        mCachedWeight += getTotalWeight(mLists.mESM4Armors);
+        mCachedWeight += getTotalWeight(mLists.mESM4MiscItems);
+        mCachedWeight += getTotalWeight(mLists.mESM4Weapons);
+        mCachedWeight += getTotalWeight(mLists.mESM4Potions);
 
         mWeightUpToDate = true;
     }
@@ -922,6 +973,21 @@ int MWWorld::ContainerStore::getType(const ConstPtr& ptr)
 
     if (ptr.getType() == ESM::Weapon::sRecordId)
         return Type_Weapon;
+
+    if (ptr.getType() == ESM4::Ammunition::sRecordId)
+        return Type_ESM4Ammunition;
+
+    if (ptr.getType() == ESM4::Armor::sRecordId)
+        return Type_ESM4Armor;
+
+    if (ptr.getType() == ESM4::MiscItem::sRecordId)
+        return Type_ESM4Miscellaneous;
+
+    if (ptr.getType() == ESM4::Weapon::sRecordId)
+        return Type_ESM4Weapon;
+
+    if (ptr.getType() == ESM4::Potion::sRecordId)
+        return Type_ESM4Potion;
 
     throw std::runtime_error("Object " + ptr.getCellRef().getRefId().toDebugString() + " of type "
         + std::string(ptr.getTypeDescription()) + " can not be placed into a container");
@@ -1024,6 +1090,36 @@ MWWorld::Ptr MWWorld::ContainerStore::search(const ESM::RefId& id)
             return ptr;
     }
 
+    {
+        Ptr ptr = searchId(mLists.mESM4Ammunition, id, this);
+        if (!ptr.isEmpty())
+            return ptr;
+    }
+
+    {
+        Ptr ptr = searchId(mLists.mESM4Armors, id, this);
+        if (!ptr.isEmpty())
+            return ptr;
+    }
+
+    {
+        Ptr ptr = searchId(mLists.mESM4MiscItems, id, this);
+        if (!ptr.isEmpty())
+            return ptr;
+    }
+
+    {
+        Ptr ptr = searchId(mLists.mESM4Weapons, id, this);
+        if (!ptr.isEmpty())
+            return ptr;
+    }
+
+    {
+        Ptr ptr = searchId(mLists.mESM4Potions, id, this);
+        if (!ptr.isEmpty())
+            return ptr;
+    }
+
     return Ptr();
 }
 
@@ -1060,6 +1156,11 @@ void MWWorld::ContainerStore::writeState(ESM::InventoryState& state) const
     storeStates(mLists.mRepairs, state, index);
     storeStates(mLists.mWeapons, state, index, true);
     storeStates(mLists.mLights, state, index, true);
+    storeStates(mLists.mESM4Ammunition, state, index);
+    storeStates(mLists.mESM4Armors, state, index, true);
+    storeStates(mLists.mESM4MiscItems, state, index);
+    storeStates(mLists.mESM4Weapons, state, index, true);
+    storeStates(mLists.mESM4Potions, state, index);
 }
 
 void MWWorld::ContainerStore::readState(const ESM::InventoryState& inventory)
@@ -1112,6 +1213,21 @@ void MWWorld::ContainerStore::readState(const ESM::InventoryState& inventory)
                 break;
             case ESM::REC_LIGH:
                 readEquipmentState(getState(mLists.mLights, state), thisIndex, inventory);
+                break;
+            case ESM::REC_AMMO4:
+                getState(mLists.mESM4Ammunition, state);
+                break;
+            case ESM::REC_ARMO4:
+                readEquipmentState(getState(mLists.mESM4Armors, state), thisIndex, inventory);
+                break;
+            case ESM::REC_MISC4:
+                getState(mLists.mESM4MiscItems, state);
+                break;
+            case ESM::REC_WEAP4:
+                readEquipmentState(getState(mLists.mESM4Weapons, state), thisIndex, inventory);
+                break;
+            case ESM::REC_ALCH4:
+                getState(mLists.mESM4Potions, state);
                 break;
             case 0:
                 Log(Debug::Warning) << "Dropping inventory reference to '" << state.mRef.mRefID
@@ -1170,6 +1286,21 @@ void MWWorld::ContainerStoreIteratorBase<PtrType>::copy(const ContainerStoreIter
             break;
         case MWWorld::ContainerStore::Type_Weapon:
             mWeapon = src.mWeapon;
+            break;
+        case MWWorld::ContainerStore::Type_ESM4Ammunition:
+            mESM4Ammunition = src.mESM4Ammunition;
+            break;
+        case MWWorld::ContainerStore::Type_ESM4Armor:
+            mESM4Armor = src.mESM4Armor;
+            break;
+        case MWWorld::ContainerStore::Type_ESM4Miscellaneous:
+            mESM4Miscellaneous = src.mESM4Miscellaneous;
+            break;
+        case MWWorld::ContainerStore::Type_ESM4Weapon:
+            mESM4Weapon = src.mESM4Weapon;
+            break;
+        case MWWorld::ContainerStore::Type_ESM4Potion:
+            mESM4Potion = src.mESM4Potion;
             break;
         case -1:
             break;
@@ -1269,6 +1400,31 @@ bool MWWorld::ContainerStoreIteratorBase<PtrType>::resetIterator()
 
             mWeapon = mContainer->mLists.mWeapons.mList.begin();
             return mWeapon != mContainer->mLists.mWeapons.mList.end();
+
+        case ContainerStore::Type_ESM4Ammunition:
+
+            mESM4Ammunition = mContainer->mLists.mESM4Ammunition.mList.begin();
+            return mESM4Ammunition != mContainer->mLists.mESM4Ammunition.mList.end();
+
+        case ContainerStore::Type_ESM4Armor:
+
+            mESM4Armor = mContainer->mLists.mESM4Armors.mList.begin();
+            return mESM4Armor != mContainer->mLists.mESM4Armors.mList.end();
+
+        case ContainerStore::Type_ESM4Miscellaneous:
+
+            mESM4Miscellaneous = mContainer->mLists.mESM4MiscItems.mList.begin();
+            return mESM4Miscellaneous != mContainer->mLists.mESM4MiscItems.mList.end();
+
+        case ContainerStore::Type_ESM4Weapon:
+
+            mESM4Weapon = mContainer->mLists.mESM4Weapons.mList.begin();
+            return mESM4Weapon != mContainer->mLists.mESM4Weapons.mList.end();
+
+        case ContainerStore::Type_ESM4Potion:
+
+            mESM4Potion = mContainer->mLists.mESM4Potions.mList.begin();
+            return mESM4Potion != mContainer->mLists.mESM4Potions.mList.end();
     }
 
     return false;
@@ -1338,6 +1494,31 @@ bool MWWorld::ContainerStoreIteratorBase<PtrType>::incIterator()
 
             ++mWeapon;
             return mWeapon == mContainer->mLists.mWeapons.mList.end();
+
+        case ContainerStore::Type_ESM4Ammunition:
+
+            ++mESM4Ammunition;
+            return mESM4Ammunition == mContainer->mLists.mESM4Ammunition.mList.end();
+
+        case ContainerStore::Type_ESM4Armor:
+
+            ++mESM4Armor;
+            return mESM4Armor == mContainer->mLists.mESM4Armors.mList.end();
+
+        case ContainerStore::Type_ESM4Miscellaneous:
+
+            ++mESM4Miscellaneous;
+            return mESM4Miscellaneous == mContainer->mLists.mESM4MiscItems.mList.end();
+
+        case ContainerStore::Type_ESM4Weapon:
+
+            ++mESM4Weapon;
+            return mESM4Weapon == mContainer->mLists.mESM4Weapons.mList.end();
+
+        case ContainerStore::Type_ESM4Potion:
+
+            ++mESM4Potion;
+            return mESM4Potion == mContainer->mLists.mESM4Potions.mList.end();
     }
 
     return true;
@@ -1379,6 +1560,16 @@ bool MWWorld::ContainerStoreIteratorBase<PtrType>::isEqual(const ContainerStoreI
             return mRepair == other.mRepair;
         case ContainerStore::Type_Weapon:
             return mWeapon == other.mWeapon;
+        case ContainerStore::Type_ESM4Ammunition:
+            return mESM4Ammunition == other.mESM4Ammunition;
+        case ContainerStore::Type_ESM4Armor:
+            return mESM4Armor == other.mESM4Armor;
+        case ContainerStore::Type_ESM4Miscellaneous:
+            return mESM4Miscellaneous == other.mESM4Miscellaneous;
+        case ContainerStore::Type_ESM4Weapon:
+            return mESM4Weapon == other.mESM4Weapon;
+        case ContainerStore::Type_ESM4Potion:
+            return mESM4Potion == other.mESM4Potion;
         case -1:
             return true;
     }
@@ -1435,6 +1626,21 @@ PtrType MWWorld::ContainerStoreIteratorBase<PtrType>::operator*() const
             break;
         case ContainerStore::Type_Weapon:
             ptr = PtrType(&*mWeapon, nullptr);
+            break;
+        case ContainerStore::Type_ESM4Ammunition:
+            ptr = PtrType(&*mESM4Ammunition, nullptr);
+            break;
+        case ContainerStore::Type_ESM4Armor:
+            ptr = PtrType(&*mESM4Armor, nullptr);
+            break;
+        case ContainerStore::Type_ESM4Miscellaneous:
+            ptr = PtrType(&*mESM4Miscellaneous, nullptr);
+            break;
+        case ContainerStore::Type_ESM4Weapon:
+            ptr = PtrType(&*mESM4Weapon, nullptr);
+            break;
+        case ContainerStore::Type_ESM4Potion:
+            ptr = PtrType(&*mESM4Potion, nullptr);
             break;
     }
 
@@ -1628,6 +1834,56 @@ MWWorld::ContainerStoreIteratorBase<PtrType>::ContainerStoreIteratorBase(
     , mMask(MWWorld::ContainerStore::Type_All)
     , mContainer(container)
     , mWeapon(iterator)
+{
+}
+
+template <class PtrType>
+MWWorld::ContainerStoreIteratorBase<PtrType>::ContainerStoreIteratorBase(
+    ContainerStoreType container, typename Iterator<ESM4::Ammunition>::type iterator)
+    : mType(MWWorld::ContainerStore::Type_ESM4Ammunition)
+    , mMask(MWWorld::ContainerStore::Type_All)
+    , mContainer(container)
+    , mESM4Ammunition(iterator)
+{
+}
+
+template <class PtrType>
+MWWorld::ContainerStoreIteratorBase<PtrType>::ContainerStoreIteratorBase(
+    ContainerStoreType container, typename Iterator<ESM4::Armor>::type iterator)
+    : mType(MWWorld::ContainerStore::Type_ESM4Armor)
+    , mMask(MWWorld::ContainerStore::Type_All)
+    , mContainer(container)
+    , mESM4Armor(iterator)
+{
+}
+
+template <class PtrType>
+MWWorld::ContainerStoreIteratorBase<PtrType>::ContainerStoreIteratorBase(
+    ContainerStoreType container, typename Iterator<ESM4::MiscItem>::type iterator)
+    : mType(MWWorld::ContainerStore::Type_ESM4Miscellaneous)
+    , mMask(MWWorld::ContainerStore::Type_All)
+    , mContainer(container)
+    , mESM4Miscellaneous(iterator)
+{
+}
+
+template <class PtrType>
+MWWorld::ContainerStoreIteratorBase<PtrType>::ContainerStoreIteratorBase(
+    ContainerStoreType container, typename Iterator<ESM4::Weapon>::type iterator)
+    : mType(MWWorld::ContainerStore::Type_ESM4Weapon)
+    , mMask(MWWorld::ContainerStore::Type_All)
+    , mContainer(container)
+    , mESM4Weapon(iterator)
+{
+}
+
+template <class PtrType>
+MWWorld::ContainerStoreIteratorBase<PtrType>::ContainerStoreIteratorBase(
+    ContainerStoreType container, typename Iterator<ESM4::Potion>::type iterator)
+    : mType(MWWorld::ContainerStore::Type_ESM4Potion)
+    , mMask(MWWorld::ContainerStore::Type_All)
+    , mContainer(container)
+    , mESM4Potion(iterator)
 {
 }
 

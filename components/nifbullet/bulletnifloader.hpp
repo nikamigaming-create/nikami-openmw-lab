@@ -7,6 +7,7 @@
 #include <string>
 
 #include <osg/BoundingBox>
+#include <osg/Matrixf>
 #include <osg/Referenced>
 #include <osg/ref_ptr>
 
@@ -22,6 +23,7 @@ class btCollisionShape;
 
 namespace Nif
 {
+    struct bhkShape;
     struct NiAVObject;
     struct NiNode;
     struct NiGeometry;
@@ -63,6 +65,8 @@ namespace NifBullet
         void handleRoot(Nif::FileView nif, const Nif::NiAVObject& node, HandleNodeArgs args);
         void handleNode(const Nif::NiAVObject& node, const Nif::Parent* parent, HandleNodeArgs args);
         void handleGeometry(const Nif::NiGeometry& nifNode, const Nif::Parent* parent, HandleNodeArgs args);
+        bool handleBhkCollision(const Nif::NiAVObject& node);
+        bool handleBhkShape(const Nif::bhkShape& shape, const osg::Matrixf& transform);
 
         std::unique_ptr<btCompoundShape, Resource::DeleteCollisionShape> mCompoundShape;
         std::unique_ptr<btCompoundShape, Resource::DeleteCollisionShape> mAvoidCompoundShape;

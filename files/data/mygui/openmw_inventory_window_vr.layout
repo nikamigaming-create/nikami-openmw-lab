@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<MyGUI type="Layout">
+    <Widget type="Window" skin="MW_Window_Pinnable" layer="InventoryWindow" position="0 0 900 420" name="_Main">
+        <Property key="MinSize" value="40 40"/>
+
+        <Widget type="Widget" skin="" position="0 0 224 343" align="Left Top" name="LeftPane">
+
+            <!-- Player encumbrance -->
+            <Widget type="MWDynamicStat" skin="MW_ChargeBar_Blue" position="8 8 212 24" name="EncumbranceBar" align="Left Top HStretch">
+            </Widget>
+
+            <!-- Avatar -->
+            <Widget type="Widget" skin="MW_Box" position="8 38 212 305" name="Avatar" align="Left Top Stretch">
+                <Widget type="ImageBox" skin="ImageBox" position="3 3 206 278" align="Stretch" name="AvatarImage">
+                    <UserString key="ToolTipType" value="AvatarItemSelection"/>
+                </Widget>
+                <Widget type="TextBox" skin="ProgressText" position="0 281 212 24" align="HStretch Bottom" name="ArmorRating">
+                    <Property key="NeedMouse" value="false"/>
+                </Widget>
+            </Widget>
+
+        </Widget>
+
+        <Widget type="Widget" skin="" position="228 0 650 343" align="Left Top" name="RightPane">
+
+            <!-- Items in inventory -->
+            <Widget type="ItemView" skin="MW_ItemView" position="0 38 650 305" name="ItemView" align="Left Top Stretch">
+            </Widget>
+
+            <!-- Categories -->
+            <Widget type="HBox" position="0 6 650 28" align="Left Top HStretch" name="Categories">
+                <Widget type="AutoSizedButton" skin="MW_Button" position="0 0 60 24" name="AllButton">
+                    <Property key="Caption" value="ALL"/>
+                    <Property key="NeedKey" value="false"/>
+                </Widget>
+                <Widget type="AutoSizedButton" skin="MW_Button" position="0 0 60 24" name="WeaponButton">
+                    <Property key="Caption" value="WEAPONS"/>
+                    <Property key="NeedKey" value="false"/>
+                </Widget>
+                <Widget type="AutoSizedButton" skin="MW_Button" position="0 0 60 24" name="ApparelButton">
+                    <Property key="Caption" value="APPAREL"/>
+                    <Property key="NeedKey" value="false"/>
+                </Widget>
+                <Widget type="AutoSizedButton" skin="MW_Button" position="0 0 60 24" name="MagicButton">
+                    <Property key="Caption" value="AID"/>
+                    <Property key="NeedKey" value="false"/>
+                </Widget>
+                <Widget type="AutoSizedButton" skin="MW_Button" position="0 0 60 24" name="MiscButton">
+                    <Property key="Caption" value="MISC"/>
+                    <Property key="NeedKey" value="false"/>
+                </Widget>
+                <!-- Search box-->
+                <Widget type="EditBox" skin="MW_TextBoxEditWithBorder" position="0 0 0 23" name="FilterEdit">
+                    <UserString key="HStretch" value="true"/>
+                    <UserString key="AcceptTab" value="true"/>
+                </Widget>
+            </Widget>
+
+        </Widget>
+
+    </Widget>
+</MyGUI>

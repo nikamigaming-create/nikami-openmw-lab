@@ -2,7 +2,11 @@
 
 #include <array>
 
+#ifdef OPENMW_ANDROID_DISABLE_ICU
+#include <components/l10n/icustub.hpp>
+#else
 #include <unicode/locid.h>
+#endif
 
 #include <MyGUI_ComboBox.h>
 #include <MyGUI_Gui.h>
@@ -145,7 +149,7 @@ namespace MWGui
                 std::string_view initialValue
                     = Settings::get<bool>(getSettingCategory(current), getSettingName(current)) ? "#{Interface:On}"
                                                                                                 : "#{Interface:Off}";
-                current->castType<MyGUI::Button>()->setCaptionWithReplacing(initialValue);
+                current->castType<MyGUI::Button>()->setCaptionWithReplacing(std::string(initialValue));
                 if (init)
                     current->eventMouseButtonClick += MyGUI::newDelegate(this, &SettingsWindow::onButtonToggled);
             }
@@ -355,7 +359,7 @@ namespace MWGui
         highlightCurrentResolution();
 
         mTextureFilteringButton->setCaptionWithReplacing(
-            textureFilteringToStr(Settings::general().mTextureMipmap, Settings::general().mTextureMinFilter));
+            std::string(textureFilteringToStr(Settings::general().mTextureMipmap, Settings::general().mTextureMinFilter)));
 
         int waterTextureSize = Settings::water().mRttSize;
         if (waterTextureSize >= 512)

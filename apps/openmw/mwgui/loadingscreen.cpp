@@ -65,8 +65,71 @@ namespace MWGui
                 && std::find(supportedExtensions.begin(), supportedExtensions.end(), ext) != supportedExtensions.end();
         };
 
+        const VFS::Manager* vfs = mResourceSystem->getVFS();
+        const bool hasFalloutLoadingMenu = vfs->exists(VFS::Path::NormalizedView("menus/loading_menu.xml"));
+        const bool hasFalloutLoadingArt
+            = vfs->exists(VFS::Path::NormalizedView("textures/interface/loading/loading_screen01.dds"));
+        if (hasFalloutLoadingMenu)
+        {
+            static constexpr std::array<const char*, 20> falloutLoadingScreens{ {
+                "textures/interface/loading/loading_screen_legal.dds",
+                "textures/interface/loading/loading_screen_bethsoft.dds",
+                "textures/interface/loading/loading_screen_bgs.dds",
+                "textures/interface/loading/loading_screen01.dds",
+                "textures/interface/loading/loading_desktop01.dds",
+                "textures/interface/loading/loading_desktop02.dds",
+                "textures/interface/loading/loading_desktop03.dds",
+                "textures/interface/loading/loading_desktop04.dds",
+                "textures/interface/loading/loading_desktop05.dds",
+                "textures/interface/loading/loading_desktop06.dds",
+                "textures/interface/loading/loading_desktop07.dds",
+                "textures/interface/loading/loading_desktop08.dds",
+                "textures/interface/loading/loading_building01.dds",
+                "textures/interface/loading/loading_building02.dds",
+                "textures/interface/loading/loading_building03.dds",
+                "textures/interface/loading/loading_posters01.dds",
+                "textures/interface/loading/loading_posters02.dds",
+                "textures/interface/loading/loading_posters03.dds",
+                "textures/interface/loading/loading_billboard01.dds",
+                "textures/interface/loading/loading_bulletinboard01.dds",
+            } };
+
+            if (!hasFalloutLoadingArt)
+            {
+                Log(Debug::Warning)
+                    << "FNV/ESM4 diag: menus/loading_menu.xml is present but loading_screen01.dds is missing";
+            }
+            else
+            {
+                for (const char* screen : falloutLoadingScreens)
+                {
+                    const VFS::Path::Normalized path(screen);
+                    if (!vfs->exists(path))
+                    {
+                        Log(Debug::Warning) << "FNV/ESM4 diag: missing FNV loading screen asset " << screen;
+                        continue;
+                    }
+
+                    mSplashScreens.emplace_back(screen);
+                    Log(Debug::Info) << "FNV/ESM4 proof: loading screen source " << screen
+                                     << " archive=" << vfs->getArchive(path);
+                }
+            }
+
+            if (!mSplashScreens.empty())
+            {
+                mUseFalloutLoadingWallpaper = true;
+                Log(Debug::Info) << "FNV/ESM4 proof: bound " << mSplashScreens.size()
+                                 << " real FNV loading screen texture(s) from menus/loading_menu.xml context";
+            }
+            else
+                Log(Debug::Warning) << "FNV/ESM4 diag: no usable FNV loading screen texture was resolved";
+
+            return;
+        }
+
         constexpr VFS::Path::NormalizedView splash("splash/");
-        for (const auto& name : mResourceSystem->getVFS()->getRecursiveDirectoryIterator(splash))
+        for (const auto& name : vfs->getRecursiveDirectoryIterator(splash))
         {
             if (isSupportedExtension(Misc::getFileExtension(name)))
                 mSplashScreens.push_back(name);
@@ -162,7 +225,13 @@ namespace MWGui
 
         setVisible(true);
 
-        mShowWallpaper = MWBase::Environment::get().getStateManager()->getState() == MWBase::StateManager::State_NoGame;
+        const bool noGame
+            = MWBase::Environment::get().getStateManager()->getState() == MWBase::StateManager::State_NoGame;
+        mShowWallpaper = noGame || mUseFalloutLoadingWallpaper;
+        Log(Debug::Info) << "FNV/ESM4 proof: loading screen mode "
+                         << (mShowWallpaper ? "wallpaper" : "scene-copy")
+                         << " falloutWallpaper=" << (mUseFalloutLoadingWallpaper ? "true" : "false")
+                         << " noGame=" << (noGame ? "true" : "false");
 
         if (mShowWallpaper)
         {
@@ -183,7 +252,8 @@ namespace MWGui
             // we may still want to show the label if the caller requested it
             if (mImportantLabel)
             {
-                MWBase::Environment::get().getWindowManager()->messageBox(mLoadingText->getCaption());
+                MWBase::Environment::get().getWindowManager()->messageBox(
+                    static_cast<std::string>(mLoadingText->getCaption()));
                 mImportantLabel = false;
             }
         }
@@ -216,6 +286,7 @@ namespace MWGui
             // as 4:3
             mSplashImage->setVisible(true);
             mSplashImage->setBackgroundImage(randomSplash, true, Settings::gui().mStretchMenuBackground);
+            Log(Debug::Info) << "FNV/ESM4 proof: loading screen wallpaper selected " << randomSplash;
         }
         mSceneImage->setBackgroundImage({});
         mSceneImage->setVisible(false);

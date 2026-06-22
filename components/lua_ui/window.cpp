@@ -4,6 +4,8 @@
 #include <MyGUI_MouseButton.h>
 #include <MyGUI_Types.h>
 
+#include <components/widgets/myguicompat.hpp>
+
 namespace LuaUi
 {
     LuaWindow::LuaWindow()
@@ -16,7 +18,9 @@ namespace LuaUi
         for (auto& [w, _] : mActionWidgets)
         {
             w->eventMouseButtonPressed.clear();
+#if MYGUI_VERSION >= MYGUI_DEFINE_VERSION(3, 4, 3)
             w->eventMouseDrag.clear();
+#endif
         }
         mActionWidgets.clear();
 

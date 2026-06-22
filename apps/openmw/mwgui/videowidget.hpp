@@ -60,7 +60,9 @@ namespace MWGui
     private:
         const VFS::Manager* mVFS;
         std::unique_ptr<MyGUI::ITexture> mTexture;
+#ifndef OPENMW_ANDROID_DISABLE_FFMPEG
         std::unique_ptr<Video::VideoPlayer> mPlayer;
+#endif
     };
 
 }

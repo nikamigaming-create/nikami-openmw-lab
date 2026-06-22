@@ -4,6 +4,7 @@
 #include <MyGUI_InputManager.h>
 
 #include <components/settings/values.hpp>
+#include <components/widgets/myguicompat.hpp>
 
 #include "../mwbase/environment.hpp"
 #include "../mwbase/mechanicsmanager.hpp"
@@ -98,12 +99,12 @@ namespace MWGui
             name += MWGui::ToolTips::getSoulString(object.getCellRef());
             dialog->openCountDialog(name, "#{sTake}", static_cast<int>(count));
             dialog->eventOkClicked.clear();
-            if (Settings::gui().mControllerMenus || MyGUI::InputManager::getInstance().isAltPressed())
+            if (Settings::gui().mControllerMenus || Gui::isMyGUIAltPressed())
                 dialog->eventOkClicked += MyGUI::newDelegate(this, &ContainerWindow::transferItem);
             else
                 dialog->eventOkClicked += MyGUI::newDelegate(this, &ContainerWindow::dragItem);
         }
-        else if (Settings::gui().mControllerMenus || MyGUI::InputManager::getInstance().isAltPressed())
+        else if (Settings::gui().mControllerMenus || Gui::isMyGUIAltPressed())
             transferItem(nullptr, count);
         else
             dragItem(nullptr, count);
