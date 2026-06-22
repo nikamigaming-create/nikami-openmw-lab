@@ -191,7 +191,8 @@ $runtimeRules = @{
     ".lip" = New-Rule "blocked-runtime-support" "voice-lip-sync" "Voice audio is playable, but FNV .lip phoneme timing is not yet parsed/applied to mouth animation" @(
         New-Anchor "apps/openmw/mwrender/esm4npcanimation.cpp" "FalloutProofMouthDriver" "current mouth driver is proof/runtime geometry movement, not LIP-driven phonemes"
         New-Anchor "apps/openmw/mwsound/soundmanagerimp.cpp" "SoundManager::say" "voice audio path exists while lip timing remains a separate blocker"
-    ) "Implement LIP parser and connect dialogue INFO/sound playback to mouth visemes."
+        New-Anchor "scripts/nikami/test-fnv-dialogue-voice-lip-ledger.ps1" "INFO FormId voice LIP sidecars" "voice/LIP ledger proves harvested sidecars by INFO FormId without claiming runtime playback"
+    ) "LIP sidecars are discovered by INFO FormId; implement LIP parser and connect dialogue playback to timed mouth visemes before moving this to runtime-supported."
     ".egm" = New-Rule "runtime-supported" "facegen-morphs" "VFS stream -> FaceGen EGM reader -> NPC head/body morph application" @(
         New-Anchor "apps/openmw/mwrender/esm4npcanimation.cpp" "loadFaceGenEgm" "FaceGen EGM reader loads external morph bytes"
         New-Anchor "apps/openmw/mwrender/esm4npcanimation.cpp" "applyFaceGenEgmMorph" "FaceGen EGM morphs are applied to NPC geometry"
