@@ -75,7 +75,9 @@ foreach ($needle in @(
     Assert-Text $flat $needle "flat proof parameter $needle"
 }
 
-Assert-Text $doc "DocMitchellREF" "Doc Mitchell actor target"
+Assert-Text $doc "ActorTarget = `"DocMitchell`"" "Doc Mitchell actor target"
+Assert-Text $doc "FNV/ESM4 FACE CHECK DocMitchell:" "Doc Mitchell face asset assertion"
+Assert-Text $doc "FNV/ESM4 diag: play matched FormId:0x1104c0c group 'idle'" "Doc Mitchell animation assertion"
 Assert-Text $walk "FNV/ESM4 proof walk: summary reached=1 dropped=0" "walk replay completion assertion"
 Assert-Text $ui "ProofGuiMode = `"data`"" "UI baseline DATA pane request"
 Assert-Text $collision "Movable static physics classification lines:" "movable static removed-classification anchor"

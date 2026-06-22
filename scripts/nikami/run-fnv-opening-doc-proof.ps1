@@ -24,24 +24,25 @@ $args = @{
     ProofRoot = $ProofRoot
     RunSeconds = $RunSeconds
     BootstrapCell = "GSDocMitchellHouse"
-    BootstrapX = 0
-    BootstrapY = 0
-    BootstrapZ = 128
+    BootstrapX = 2243
+    BootstrapY = 2276
+    BootstrapZ = 7360
     BootstrapRotX = 0
     BootstrapRotZ = 0
-    ActorTarget = "DocMitchellREF"
-    ActorFrame = 180
+    BootstrapCameraDistance = 0
+    ActorTarget = "DocMitchell"
+    ActorFrame = 120
     ActorViewOffsetX = 96
     ActorViewOffsetY = 0
     ActorViewOffsetZ = 96
     ActorViewTargetZ = 92
-    ScreenshotFrames = "220"
-    RequireFlatCameraSettled = $true
-    RequirePlayerTerrainSupport = $true
+    ScreenshotFrames = "170"
     RequireLogPattern = @(
         "FNV/ESM4 proof: moved player to proof cell.*request=`"GSDocMitchellHouse`".*type=interior",
-        "Nikami FNV interior floor probe:",
-        "FNV/ESM4 proof: active-cell actor match target=`"DocMitchellREF`""
+        "FNV/ESM4 FACE CHECK DocMitchell:.*head=OK.*leftEye=OK.*rightEye=OK.*eyeTexture=OK.*hairAttached=OK",
+        "FNV/ESM4 diag: actor controller audit result .*matched=[1-9][0-9]* missing=0",
+        "FNV/ESM4 diag: play matched FormId:0x1104c0c group 'idle'.*controllers=[1-9][0-9]*.*playing=1",
+        "FNV/ESM4 proof: active-cell actor match target=`"DocMitchell`""
     )
 }
 if (![string]::IsNullOrWhiteSpace($FnvConfigData)) { $args.FnvConfigData = $FnvConfigData }

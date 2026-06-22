@@ -29,14 +29,14 @@ $args = @{
     BootstrapZ = 8425
     BootstrapRotX = 0
     BootstrapRotZ = -1.2
-    TerrainProbePoints = "walk_start=-67450,2600,8425;walk_end=-67700,1900,8425"
-    WalkEndX = -67700
-    WalkEndY = 1900
-    WalkEndZ = 8425
+    TerrainProbePoints = "walk_start=-67450,2600,8425;walk_end=-67620,2357,8386"
+    WalkEndX = -67620
+    WalkEndY = 2357
+    WalkEndZ = 8386
     WalkStartFrame = 160
     WalkEndFrame = 620
     WalkSpeed = 180
-    WalkReachRadius = 128
+    WalkReachRadius = 96
     WalkMinZ = 8150
     ScreenshotFrames = "180,360,620"
     RequireFlatCameraSettled = $true

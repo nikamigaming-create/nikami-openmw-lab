@@ -1159,6 +1159,7 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
         int actors = 0;
         const std::string target(proofActorTarget);
         const std::string targetLower = Misc::StringUtils::lowerCase(target);
+        static unsigned int lastProofActorLookupFailureLogFrame = 0;
         const bool proofActorLogThisFrame = !proofActorCameraApplied || frameNumber % 60 == 0;
 
         for (MWWorld::CellStore* cellstore : mWorld->getWorldScene().getActiveCells())
@@ -1334,11 +1335,16 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
         }
         else
         {
-            Log(Debug::Warning) << "FNV/ESM4 proof: active-cell actor lookup failed target=\"" << target
-                                << "\" scanned=" << scanned << " actors=" << actors;
+            if (lastProofActorLookupFailureLogFrame == 0 || frameNumber - lastProofActorLookupFailureLogFrame >= 60)
+            {
+                Log(Debug::Warning) << "FNV/ESM4 proof: active-cell actor lookup failed target=\"" << target
+                                    << "\" scanned=" << scanned << " actors=" << actors;
+                lastProofActorLookupFailureLogFrame = frameNumber;
+            }
         }
 
-        proofActorCameraApplied = true;
+        if (!proofActor.isEmpty())
+            proofActorCameraApplied = true;
     }
 
     static const std::vector<int> proofScreenshotFrames = getProofFrames("OPENMW_PROOF_SCREENSHOT_FRAME");
