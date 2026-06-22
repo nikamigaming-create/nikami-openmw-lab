@@ -143,8 +143,8 @@ data-local=$DeviceRoot/data
 user-data=$DeviceRoot/user
 resources=$DeviceRoot/resources
 data=$DeviceRoot/resources/vfs-mw
-$OptionalOverlayLine
 data=$FnvDeviceData
+$OptionalOverlayLine
 $($FallbackLines -join "`n")
 $($ArchiveLines -join "`n")
 $($ContentLines -join "`n")

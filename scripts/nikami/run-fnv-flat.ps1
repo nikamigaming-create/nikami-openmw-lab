@@ -11,6 +11,7 @@ param(
     [int]$BootstrapHour = 10,
     [int]$MaxRunSeconds = 0,
     [switch]$Detached,
+    [switch]$WithMenu,
     [switch]$DisableTerrainTrace,
     [switch]$NoSound
 )
@@ -182,8 +183,8 @@ resources=$($Resources.Replace("\", "/"))
 user-data=$($RuntimeDir.Replace("\", "/"))
 data-local=$($DataLocalDir.Replace("\", "/"))
 data=$((Join-Path $Resources "vfs-mw").Replace("\", "/"))
-$OptionalDataLine
 data=$($FnvData.Replace("\", "/"))
+$OptionalDataLine
 
 $FnvFallbackText
 
@@ -287,7 +288,10 @@ stats hidden = true
 Set-Content -LiteralPath $ConfigPath -Value $ConfigText -Encoding ASCII
 Set-Content -LiteralPath $SettingsPath -Value $SettingsText -Encoding ASCII
 
-$OpenMwArgs = @("--replace", "config", "--config", $ConfigDir, "--user-data", $RuntimeDir, "--skip-menu", "--start", $StartCell, "--no-grab")
+$OpenMwArgs = @("--replace", "config", "--config", $ConfigDir, "--user-data", $RuntimeDir, "--no-grab")
+if (!$WithMenu) {
+    $OpenMwArgs += @("--skip-menu", "--start", $StartCell)
+}
 if ($NoSound) {
     $OpenMwArgs += "--no-sound"
 }
