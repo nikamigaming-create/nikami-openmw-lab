@@ -213,6 +213,9 @@ function Write-Esm4CoverageInventory([string]$EsmPath) {
         "NOTE" = "DATA note source store"
         "DIAL" = "DATA radio/dialogue source store"
         "TACT" = "DATA radio talking-activator source store"
+        "GMST" = "ESM4-to-runtime game setting bridge"
+        "GLOB" = "ESM4-to-runtime global variable bridge"
+        "SCPT" = "ESM4-to-runtime script source bridge"
     }
 
     $unsupported = @()

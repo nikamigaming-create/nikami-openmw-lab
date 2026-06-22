@@ -2,9 +2,13 @@
 
 #include <algorithm>
 #include <cstdlib>
+#include <cmath>
+#include <cstdint>
 #include <fstream>
+#include <limits>
 #include <string_view>
 #include <tuple>
+#include <variant>
 
 #include <components/debug/debuglog.hpp>
 
@@ -40,6 +44,179 @@ namespace
     };
 
     constexpr std::size_t deletedRefID = std::numeric_limits<std::size_t>::max();
+
+    struct Esm4RuntimeBridgeCounts
+    {
+        std::size_t mGameSettings = 0;
+        std::size_t mGlobals = 0;
+        std::size_t mScripts = 0;
+        std::size_t mSkippedGameSettings = 0;
+        std::size_t mSkippedGlobals = 0;
+        std::size_t mSkippedScripts = 0;
+    };
+
+    std::int32_t clampFloatToInt(float value)
+    {
+        if (!std::isfinite(value))
+            return 0;
+        if (value > static_cast<float>(std::numeric_limits<std::int32_t>::max()))
+            return std::numeric_limits<std::int32_t>::max();
+        if (value < static_cast<float>(std::numeric_limits<std::int32_t>::min()))
+            return std::numeric_limits<std::int32_t>::min();
+        return static_cast<std::int32_t>(std::lround(value));
+    }
+
+    bool convertEsm4GameSettingValue(const ESM4::GameSetting::Data& source, ESM::Variant& target)
+    {
+        if (std::holds_alternative<std::monostate>(source))
+            return false;
+
+        if (const auto* value = std::get_if<bool>(&source))
+        {
+            target.setType(ESM::VT_Int);
+            target.setInteger(*value ? 1 : 0);
+            return true;
+        }
+
+        if (const auto* value = std::get_if<float>(&source))
+        {
+            target.setType(ESM::VT_Float);
+            target.setFloat(*value);
+            return true;
+        }
+
+        if (const auto* value = std::get_if<std::int32_t>(&source))
+        {
+            target.setType(ESM::VT_Int);
+            target.setInteger(*value);
+            return true;
+        }
+
+        if (const auto* value = std::get_if<std::string>(&source))
+        {
+            target.setType(ESM::VT_String);
+            target.setString(*value);
+            return true;
+        }
+
+        if (const auto* value = std::get_if<std::uint32_t>(&source))
+        {
+            if (*value <= static_cast<std::uint32_t>(std::numeric_limits<std::int32_t>::max()))
+            {
+                target.setType(ESM::VT_Int);
+                target.setInteger(static_cast<std::int32_t>(*value));
+            }
+            else
+            {
+                target.setType(ESM::VT_Float);
+                target.setFloat(static_cast<float>(*value));
+            }
+            return true;
+        }
+
+        return false;
+    }
+
+    ESM::VarType convertEsm4GlobalType(std::uint8_t type)
+    {
+        switch (type)
+        {
+            case 's':
+            case 'S':
+            case 0:
+                return ESM::VT_Short;
+            case 'l':
+            case 'L':
+            case 1:
+                return ESM::VT_Long;
+            case 'f':
+            case 'F':
+            case 2:
+                return ESM::VT_Float;
+            default:
+                return ESM::VT_Unknown;
+        }
+    }
+
+    Esm4RuntimeBridgeCounts bridgeEsm4RuntimeStores(MWWorld::ESMStore& store)
+    {
+        Esm4RuntimeBridgeCounts counts;
+
+        MWWorld::Store<ESM::GameSetting>& targetGameSettings = store.getWritable<ESM::GameSetting>();
+        for (const ESM4::GameSetting& source : store.get<ESM4::GameSetting>())
+        {
+            if (source.mEditorId.empty())
+            {
+                ++counts.mSkippedGameSettings;
+                continue;
+            }
+
+            ESM::GameSetting target;
+            target.mRecordFlags = source.mFlags;
+            target.mId = ESM::RefId::stringRefId(source.mEditorId);
+            if (!convertEsm4GameSettingValue(source.mData, target.mValue))
+            {
+                ++counts.mSkippedGameSettings;
+                continue;
+            }
+
+            targetGameSettings.insert(target);
+            ++counts.mGameSettings;
+        }
+
+        MWWorld::Store<ESM::Global>& targetGlobals = store.getWritable<ESM::Global>();
+        for (const ESM4::GlobalVariable& source : store.get<ESM4::GlobalVariable>())
+        {
+            if (source.mEditorId.empty())
+            {
+                ++counts.mSkippedGlobals;
+                continue;
+            }
+
+            const ESM::VarType type = convertEsm4GlobalType(source.mType);
+            if (type == ESM::VT_Unknown)
+            {
+                ++counts.mSkippedGlobals;
+                continue;
+            }
+
+            ESM::Global target;
+            target.mRecordFlags = source.mFlags;
+            target.mId = ESM::RefId::stringRefId(source.mEditorId);
+            target.mValue.setType(type);
+            if (type == ESM::VT_Float)
+                target.mValue.setFloat(source.mValue);
+            else
+                target.mValue.setInteger(clampFloatToInt(source.mValue));
+
+            targetGlobals.insert(target);
+            ++counts.mGlobals;
+        }
+
+        MWWorld::Store<ESM::Script>& targetScripts = store.getWritable<ESM::Script>();
+        for (const ESM4::Script& source : store.get<ESM4::Script>())
+        {
+            if (source.mEditorId.empty() || source.mScript.scriptSource.empty())
+            {
+                ++counts.mSkippedScripts;
+                continue;
+            }
+
+            ESM::Script target;
+            target.blank();
+            target.mRecordFlags = source.mFlags;
+            target.mId = ESM::RefId::stringRefId(source.mEditorId);
+            target.mNumShorts = 0;
+            target.mNumLongs = 0;
+            target.mNumFloats = 0;
+            target.mScriptText = source.mScript.scriptSource;
+
+            targetScripts.insert(target);
+            ++counts.mScripts;
+        }
+
+        return counts;
+    }
 
     void readRefs(const ESM::Cell& cell, std::vector<Ref>& refs, std::vector<ESM::RefId>& refIDs,
         std::set<ESM::RefId>& keyIDs, ESM::ReadersCache& readers)
@@ -774,6 +951,14 @@ namespace MWWorld
 
         for (const auto& [_, store] : mStoreImp->mRecNameToStore)
             store->setUp();
+
+        const Esm4RuntimeBridgeCounts bridgeCounts = bridgeEsm4RuntimeStores(*this);
+        Log(Debug::Info) << "FNV/ESM4 proof: bridged runtime records gmst=" << bridgeCounts.mGameSettings
+                         << " globals=" << bridgeCounts.mGlobals
+                         << " scripts=" << bridgeCounts.mScripts
+                         << " skippedGmst=" << bridgeCounts.mSkippedGameSettings
+                         << " skippedGlobals=" << bridgeCounts.mSkippedGlobals
+                         << " skippedScripts=" << bridgeCounts.mSkippedScripts;
 
         getWritable<ESM::Skill>().setUp(get<ESM::GameSetting>());
         getWritable<ESM::Attribute>().setUp(get<ESM::GameSetting>());
