@@ -8,6 +8,7 @@
 #include <limits>
 #include <string_view>
 #include <tuple>
+#include <unordered_map>
 #include <variant>
 
 #include <components/debug/debuglog.hpp>
@@ -50,9 +51,14 @@ namespace
         std::size_t mGameSettings = 0;
         std::size_t mGlobals = 0;
         std::size_t mScripts = 0;
+        std::size_t mQuestDialogues = 0;
+        std::size_t mTopicDialogues = 0;
+        std::size_t mQuestInfos = 0;
         std::size_t mSkippedGameSettings = 0;
         std::size_t mSkippedGlobals = 0;
         std::size_t mSkippedScripts = 0;
+        std::size_t mSkippedDialogues = 0;
+        std::size_t mSkippedInfos = 0;
     };
 
     std::int32_t clampFloatToInt(float value)
@@ -138,6 +144,111 @@ namespace
         }
     }
 
+    ESM::Dialogue::Type convertEsm4DialogueType(std::uint8_t type)
+    {
+        switch (type)
+        {
+            case 1:
+                return ESM::Dialogue::Voice;
+            case 2:
+                return ESM::Dialogue::Greeting;
+            case 3:
+                return ESM::Dialogue::Persuasion;
+            case 4:
+                return ESM::Dialogue::Journal;
+            case 0:
+            default:
+                return ESM::Dialogue::Topic;
+        }
+    }
+
+    ESM::RefId formIdRefId(ESM::FormId id)
+    {
+        return ESM::RefId::formIdRefId(id);
+    }
+
+    void bridgeEsm4QuestDialogueStores(MWWorld::ESMStore& store, Esm4RuntimeBridgeCounts& counts)
+    {
+        MWWorld::Store<ESM::Dialogue>& targetDialogues = store.getWritable<ESM::Dialogue>();
+        std::unordered_map<ESM::FormId, ESM::RefId> questDialogueIds;
+
+        for (const ESM4::Quest& source : store.get<ESM4::Quest>())
+        {
+            if (source.mEditorId.empty())
+            {
+                ++counts.mSkippedDialogues;
+                continue;
+            }
+
+            ESM::Dialogue target;
+            target.blank();
+            target.mId = ESM::RefId::stringRefId(source.mEditorId);
+            target.mStringId = source.mQuestName.empty() ? source.mEditorId : source.mQuestName;
+            target.mType = ESM::Dialogue::Journal;
+
+            targetDialogues.insert(target);
+            questDialogueIds[source.mId] = target.mId;
+            ++counts.mQuestDialogues;
+        }
+
+        for (const ESM4::Dialogue& source : store.get<ESM4::Dialogue>())
+        {
+            if (source.mEditorId.empty())
+            {
+                ++counts.mSkippedDialogues;
+                continue;
+            }
+
+            ESM::Dialogue target;
+            target.blank();
+            target.mId = ESM::RefId::stringRefId(source.mEditorId);
+            target.mStringId = source.mTopicName.empty() ? source.mEditorId : source.mTopicName;
+            target.mType = convertEsm4DialogueType(source.mDialType);
+
+            targetDialogues.insert(target);
+            ++counts.mTopicDialogues;
+        }
+
+        for (const ESM4::DialogInfo& source : store.get<ESM4::DialogInfo>())
+        {
+            if (source.mQuest.isZeroOrUnset() || source.mResponse.empty())
+            {
+                ++counts.mSkippedInfos;
+                continue;
+            }
+
+            const auto quest = questDialogueIds.find(source.mQuest);
+            if (quest == questDialogueIds.end())
+            {
+                ++counts.mSkippedInfos;
+                continue;
+            }
+
+            ESM::Dialogue* dialogue = targetDialogues.search(quest->second);
+            if (dialogue == nullptr)
+            {
+                ++counts.mSkippedInfos;
+                continue;
+            }
+
+            ESM::DialInfo info;
+            info.blank();
+            info.mId = formIdRefId(source.mId);
+            // ESM3 INFO sound is a playable path, not a FormId. Keep journal entries silent until SNDR/SOUN
+            // path resolution is bridged.
+            info.mSound.clear();
+            info.mResponse = source.mResponse;
+            info.mResultScript = source.mScript.scriptSource;
+            info.mData.mType = ESM::Dialogue::Journal;
+            info.mData.mJournalIndex = static_cast<std::int32_t>(source.mResponseData.responseNo);
+
+            dialogue->mInfo.push_back(std::move(info));
+            ++counts.mQuestInfos;
+        }
+
+        targetDialogues.rebuildRuntimeIndex();
+    }
+
     Esm4RuntimeBridgeCounts bridgeEsm4RuntimeStores(MWWorld::ESMStore& store)
     {
         Esm4RuntimeBridgeCounts counts;
@@ -214,6 +325,8 @@ namespace
             targetScripts.insert(target);
             ++counts.mScripts;
         }
+
+        bridgeEsm4QuestDialogueStores(store, counts);
 
         return counts;
     }
@@ -956,9 +1069,14 @@ namespace MWWorld
         Log(Debug::Info) << "FNV/ESM4 proof: bridged runtime records gmst=" << bridgeCounts.mGameSettings
                          << " globals=" << bridgeCounts.mGlobals
                          << " scripts=" << bridgeCounts.mScripts
+                         << " questDialogues=" << bridgeCounts.mQuestDialogues
+                         << " topicDialogues=" << bridgeCounts.mTopicDialogues
+                         << " questInfos=" << bridgeCounts.mQuestInfos
                          << " skippedGmst=" << bridgeCounts.mSkippedGameSettings
                          << " skippedGlobals=" << bridgeCounts.mSkippedGlobals
-                         << " skippedScripts=" << bridgeCounts.mSkippedScripts;
+                         << " skippedScripts=" << bridgeCounts.mSkippedScripts
+                         << " skippedDialogues=" << bridgeCounts.mSkippedDialogues
+                         << " skippedInfos=" << bridgeCounts.mSkippedInfos;
 
         getWritable<ESM::Skill>().setUp(get<ESM::GameSetting>());
         getWritable<ESM::Attribute>().setUp(get<ESM::GameSetting>());

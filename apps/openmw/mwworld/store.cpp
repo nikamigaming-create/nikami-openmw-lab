@@ -1013,13 +1013,8 @@ namespace MWWorld
 
     Store<ESM::Dialogue>::Store() {}
 
-    void Store<ESM::Dialogue>::setUp()
+    void Store<ESM::Dialogue>::rebuildRuntimeIndex()
     {
-        // DialInfos marked as deleted are kept during the loading phase, so that the linked list
-        // structure is kept intact for inserting further INFOs. Delete them now that loading is done.
-        for (auto& [_, dial] : mStatic)
-            dial.setUp();
-
         mShared.clear();
         mShared.reserve(mStatic.size());
         for (auto& [_, dial] : mStatic)
@@ -1028,8 +1023,33 @@ namespace MWWorld
         // TODO: if we require this behaviour, maybe we should move it to the place that requires it
         std::sort(mShared.begin(), mShared.end(),
             [](const ESM::Dialogue* l, const ESM::Dialogue* r) -> bool { return l->mId < r->mId; });
-
         mKeywordSearchModFlag = true;
+    }
+
+    void Store<ESM::Dialogue>::setUp()
+    {
+        // DialInfos marked as deleted are kept during the loading phase, so that the linked list
+        // structure is kept intact for inserting further INFOs. Delete them now that loading is done.
+        for (auto& [_, dial] : mStatic)
+            dial.setUp();
+
+        rebuildRuntimeIndex();
+    }
+
+    ESM::Dialogue* Store<ESM::Dialogue>::insert(const ESM::Dialogue& dialogue)
+    {
+        const auto result = mStatic.insert_or_assign(dialogue.mId, dialogue);
+        mKeywordSearchModFlag = true;
+        return &result.first->second;
+    }
+
+    ESM::Dialogue* Store<ESM::Dialogue>::search(const ESM::RefId& id)
+    {
+        typename Static::iterator it = mStatic.find(id);
+        if (it != mStatic.end())
+            return &(it->second);
+
+        return nullptr;
     }
 
     const ESM::Dialogue* Store<ESM::Dialogue>::search(const ESM::RefId& id) const

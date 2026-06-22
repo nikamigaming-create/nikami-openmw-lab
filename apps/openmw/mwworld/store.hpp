@@ -514,9 +514,12 @@ namespace MWWorld
 
         void setUp() override;
 
+        ESM::Dialogue* insert(const ESM::Dialogue& dialogue);
+        ESM::Dialogue* search(const ESM::RefId& id);
         const ESM::Dialogue* search(const ESM::RefId& id) const;
         const ESM::Dialogue* find(const ESM::RefId& id) const;
 
+        void rebuildRuntimeIndex();
         iterator begin() const;
         iterator end() const;
 
