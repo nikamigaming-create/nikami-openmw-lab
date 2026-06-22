@@ -201,10 +201,14 @@ $runtimeRules = @{
         New-Anchor "apps/openmw/mwrender/esm4npcanimation.cpp" "applyFaceGenEgmMorph" "FaceGen EGM morphs are applied to NPC geometry"
         New-Anchor "apps/openmw/mwrender/esm4npcanimation.cpp" "FNV/ESM4 diag: loaded FaceGen EGM" "runtime logs successful EGM loading"
     )
-    ".egt" = New-Rule "blocked-runtime-support" "facegen-tint-maps" "FaceGen EGT tint bytes are harvested but not yet parsed/applied to NPC faces" @(
-        New-Anchor "apps/openmw/mwrender/esm4npcanimation.cpp" "npcBodyTexture" "current actor texture override path exists"
-        New-Anchor "components/resource/imagemanager.cpp" "ImageManager::getImage" "texture loading path exists for converted/standard textures"
-    ) "Add EGT reader/conversion and wire race/NPC complexion/tint data into material generation."
+    ".egt" = New-Rule "vfs-readable-runtime-conditional" "facegen-tint-maps" "FaceGen EGT bytes are loaded through VFS, validated as FREGT003 texture-mode maps, and folded into NPC skin material tinting; exact per-pixel FaceGen texture synthesis remains a follow-up gate" @(
+        New-Anchor "apps/openmw/mwrender/esm4npcanimation.cpp" "loadFaceGenEgt" "FaceGen EGT reader loads external tint-map bytes"
+        New-Anchor "apps/openmw/mwrender/esm4npcanimation.cpp" '"FREGT003"' "FaceGen EGT magic is validated"
+        New-Anchor "apps/openmw/mwrender/esm4npcanimation.cpp" "deriveFaceGenEgtMaterialTint" "FGTS texture coefficients derive runtime complexion tint"
+        New-Anchor "apps/openmw/mwrender/esm4npcanimation.cpp" "applyFaceGenEgtTint" "FaceGen EGT material tint is applied to actor skin surfaces"
+        New-Anchor "apps/openmw/mwrender/esm4npcanimation.cpp" "FNV/ESM4 diag: loaded FaceGen EGT" "runtime logs parsed EGT metadata"
+        New-Anchor "scripts/nikami/test-fnv-egt-runtime-contract.ps1" "FNV EGT runtime contract" "retail-safe EGT proof gate validates local headers without storing payloads"
+    ) "Promote to runtime-supported after exact FNV FaceGen per-pixel synthesis is decoded and gated."
     ".tri" = New-Rule "runtime-supported" "facegen-tri-morph-targets" "VFS stream -> FaceGen TRI reader -> static/dialogue morph application" @(
         New-Anchor "apps/openmw/mwrender/esm4npcanimation.cpp" "loadFaceGenTri" "FaceGen TRI reader loads external morph target bytes"
         New-Anchor "apps/openmw/mwrender/esm4npcanimation.cpp" "FaceGenTriMorphVisitor" "FaceGen TRI morph visitor applies morph target geometry"
