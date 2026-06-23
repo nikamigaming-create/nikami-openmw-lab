@@ -110,7 +110,7 @@ def parse_tree_records(path, plugin):
                         "editorId": first_zstring(subrecords, "EDID"),
                         "model": model,
                         "normalizedModel": normalized_model,
-                        "currentObjectPagingPath": normalize_asset_path(f"meshes\\{normalized_model}")
+                        "legacyObjectPagingPath": normalize_asset_path(f"meshes\\{normalized_model}")
                         if normalized_model
                         else "",
                         "leafTexture": leaf_texture,
@@ -198,8 +198,22 @@ def main():
     assert_text(
         repo_root,
         Path("components/esm4/loadtree.cpp"),
+        "normalizeFalloutTreeModel",
+        "TREE loader normalizes bare Fallout SPT paths into the trees directory",
+        proof_line,
+    )
+    assert_text(
+        repo_root,
+        Path("components/esm4/loadtree.cpp"),
         "reader.getZString(mLeafTexture)",
         "TREE loader captures ICON leaf textures",
+        proof_line,
+    )
+    assert_text(
+        repo_root,
+        Path("apps/openmw/mwrender/objectpaging.cpp"),
+        "correctEsm4StaticModelPath",
+        "object paging uses ESM4-specific model path correction",
         proof_line,
     )
     assert_text(
@@ -244,11 +258,12 @@ def main():
     for row in spt_tree_records:
         resolved = resolve_spt_archive_path(row["normalizedModel"], harvest_path_set)
         row["resolvedArchivePath"] = resolved
+        row["runtimeResolvedModelPath"] = resolved
         row["requiresTreesDirectoryFallback"] = bool(resolved and resolved != row["normalizedModel"])
     resolved_tree_models = sorted({row["resolvedArchivePath"] for row in spt_tree_records if row["resolvedArchivePath"]})
     missing_archive_models = sorted({row["normalizedModel"] for row in spt_tree_records if not row["resolvedArchivePath"]})
     unreferenced_archive_paths = [path for path in harvest_paths if path not in resolved_tree_models]
-    prefixed_render_paths = sorted({row["currentObjectPagingPath"] for row in spt_tree_records})
+    legacy_object_paging_paths = sorted({row["legacyObjectPagingPath"] for row in spt_tree_records})
 
     if not spt_tree_records:
         raise SystemExit("No TREE records reference SPT models; the SPT runtime blocker proof is invalid.")
@@ -266,7 +281,7 @@ def main():
         "uniqueTreeSptModels": unique_tree_models,
         "resolvedTreeSptModels": resolved_tree_models,
         "unreferencedArchiveSptPaths": unreferenced_archive_paths,
-        "currentObjectPagingPrefixedPaths": prefixed_render_paths,
+        "legacyObjectPagingPrefixedPaths": legacy_object_paging_paths,
         "treeRecords": tree_records,
     }
     ledger_path = proof_dir / "speedtree-spt-ledger.json"

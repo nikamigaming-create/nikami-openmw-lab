@@ -227,7 +227,9 @@ $runtimeRules = @{
     ".spt" = New-Rule "blocked-runtime-support" "speedtree-tree-assets" "SpeedTree SPT assets are harvested but not yet parsed/rendered" @(
         New-Anchor "scripts/nikami/test-fnv-speedtree-spt-ledger.ps1" "FNV SpeedTree SPT ledger proof" "proof gate verifies exact shipped SPT set and TREE record references without storing payloads"
         New-Anchor "scripts/nikami/fnv_speedtree_spt_ledger.py" "collect_harvest_spt_paths" "ledger parser compares harvested SPT paths with parsed TREE record MODL values"
+        New-Anchor "components/esm4/loadtree.cpp" "normalizeFalloutTreeModel" "TREE loader normalizes bare Fallout SPT paths into trees"
         New-Anchor "apps/openmw/mwclass/esm4base.hpp" "ESM4Tree" "ESM4 TREE records have a world class"
+        New-Anchor "apps/openmw/mwrender/objectpaging.cpp" "correctEsm4StaticModelPath" "object paging resolves TREE SPT paths without generic meshes prefixing"
         New-Anchor "apps/openmw/mwrender/objectpaging.cpp" "case ESM::REC_TREE4" "object paging attempts to page TREE records into the world"
         New-Anchor "components/resource/scenemanager.cpp" "Ignoring SpeedTree data file" "current runtime still returns empty nodes for SPT files"
         New-Anchor "components/bgsm/file.hpp" "mTree" "tree material flag support exists"
