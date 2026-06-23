@@ -6,6 +6,8 @@
 #include <cstdint>
 #include <fstream>
 #include <limits>
+#include <map>
+#include <string>
 #include <string_view>
 #include <tuple>
 #include <unordered_map>
@@ -13,6 +15,7 @@
 
 #include <components/debug/debuglog.hpp>
 
+#include <components/esm/common.hpp>
 #include <components/esm/records.hpp>
 #include <components/esm3/esmreader.hpp>
 #include <components/esm3/esmwriter.hpp>
@@ -780,6 +783,7 @@ namespace MWWorld
             std::uint32_t mHeaderDataSize = 0;
             std::size_t mSubrecords = 0;
             std::size_t mPayloadBytes = 0;
+            std::map<std::uint32_t, std::size_t> mSubrecordTypeCounts;
         };
 
         std::map<ESM::RecNameInts, std::vector<Esm4LoadedPendingRecord>> mEsm4LoadedPendingRecords;
@@ -799,6 +803,23 @@ namespace MWWorld
             if (wanted == name)
                 return true;
             return name.size() > 1 && name.back() == '4' && wanted == name.substr(0, name.size() - 1);
+        }
+
+        static std::string formatLoadedPendingSubrecordTypeCounts(
+            const std::map<std::uint32_t, std::size_t>& counts)
+        {
+            std::string result;
+            for (const auto& [typeId, count] : counts)
+            {
+                if (!result.empty())
+                    result += ",";
+                result += ESM::printName(typeId);
+                result += ":";
+                result += std::to_string(count);
+            }
+            if (result.empty())
+                return "-";
+            return result;
         }
 
         static bool isLoadedPendingEsm4Record(ESM::RecNameInts recName)
@@ -910,18 +931,21 @@ namespace MWWorld
             record.mId = reader.getFormIdFromHeader();
             record.mFlags = header.flags;
             record.mHeaderDataSize = header.dataSize;
+            const bool traceLoadedPending = shouldTraceLoadedPendingEsm4Record(recName);
 
             while (reader.getSubRecordHeader())
             {
                 const ESM4::SubRecordHeader& subrecord = reader.subRecordHeader();
                 ++record.mSubrecords;
                 record.mPayloadBytes += subrecord.dataSize;
+                if (traceLoadedPending)
+                    ++record.mSubrecordTypeCounts[subrecord.typeId];
                 reader.skipSubRecordData();
             }
 
             store.mStoreImp->mEsm4LoadedPendingRecordBytes += record.mPayloadBytes;
             store.mStoreImp->mEsm4LoadedPendingRecords[recName].push_back(std::move(record));
-            if (shouldTraceLoadedPendingEsm4Record(recName))
+            if (traceLoadedPending)
             {
                 const Esm4LoadedPendingRecord& stored = store.mStoreImp->mEsm4LoadedPendingRecords[recName].back();
                 Log(Debug::Info) << "FNV/ESM4 inventory raw-loaded pending detail: "
@@ -929,7 +953,9 @@ namespace MWWorld
                                  << " flags=0x" << std::hex << stored.mFlags << std::dec
                                  << " header-bytes=" << stored.mHeaderDataSize
                                  << " subrecords=" << stored.mSubrecords
-                                 << " payload-bytes=" << stored.mPayloadBytes;
+                                 << " payload-bytes=" << stored.mPayloadBytes
+                                 << " reader-visible-subrecord-types="
+                                 << formatLoadedPendingSubrecordTypeCounts(stored.mSubrecordTypeCounts);
             }
             return true;
         }
@@ -1218,8 +1244,39 @@ namespace MWWorld
                              << " types=" << loadedPendingRecordCounts.size()
                              << " payload-bytes=" << mStoreImp->mEsm4LoadedPendingRecordBytes;
             for (const auto& [recName, count] : loadedPendingRecordCounts)
+            {
                 Log(Debug::Info) << "FNV/ESM4 inventory raw-loaded pending: "
                                  << ESM::getRecNameString(recName).toStringView() << " count=" << count;
+                if (ESMStoreImp::shouldTraceLoadedPendingEsm4Record(recName))
+                {
+                    std::map<std::uint32_t, std::size_t> subrecordTypeCounts;
+                    std::size_t subrecords = 0;
+                    std::size_t payloadBytes = 0;
+                    const auto records = mStoreImp->mEsm4LoadedPendingRecords.find(recName);
+                    if (records != mStoreImp->mEsm4LoadedPendingRecords.end())
+                    {
+                        std::size_t start = 0;
+                        if (records->second.size() > count)
+                            start = records->second.size() - count;
+                        for (std::size_t i = start; i < records->second.size(); ++i)
+                        {
+                            const auto& record = records->second[i];
+                            subrecords += record.mSubrecords;
+                            payloadBytes += record.mPayloadBytes;
+                            for (const auto& [typeId, typeCount] : record.mSubrecordTypeCounts)
+                                subrecordTypeCounts[typeId] += typeCount;
+                        }
+                    }
+                    Log(Debug::Info) << "FNV/ESM4 inventory raw-loaded pending subrecords: "
+                                     << ESM::getRecNameString(recName).toStringView()
+                                     << " records=" << count
+                                     << " subrecords=" << subrecords
+                                     << " payload-bytes=" << payloadBytes
+                                     << " types=" << subrecordTypeCounts.size()
+                                     << " reader-visible-subrecord-types="
+                                     << ESMStoreImp::formatLoadedPendingSubrecordTypeCounts(subrecordTypeCounts);
+                }
+            }
         }
         for (const auto& [recName, count] : skippedRecordCounts)
             Log(Debug::Warning) << "FNV/ESM4 inventory skipped unsupported: "
