@@ -415,13 +415,28 @@ def classify_runtime_profiles(rows, repo_root, pcvr_reference_config_dir):
         priority="pc-flat-first",
     )
 
+    pcvr_runner = repo_root / "scripts/nikami/run-fnv-pcvr-proof.ps1"
+    pcvr_runner_contract = repo_root / "scripts/nikami/test-fnv-pcvr-publish-runner-contract.ps1"
+    pcvr_runner_text = pcvr_runner.read_text(encoding="utf-8", errors="replace") if pcvr_runner.is_file() else ""
+    has_pcvr_runner = (
+        pcvr_runner.is_file()
+        and pcvr_runner_contract.is_file()
+        and "Runtime mode: pcvr" in pcvr_runner_text
+        and "openmw_vr.exe" in pcvr_runner_text
+        and "content=FNVR.esp" in pcvr_runner_text
+        and "force shaders = true" in pcvr_runner_text
+        and "stereo enabled = true" in pcvr_runner_text
+        and "GenerateOnly" in pcvr_runner_text
+    )
     add_main_row(
         rows,
         "runtime-config",
         "pcvr-publish-runner",
         "scripts/nikami/run-fnv-pcvr-proof.ps1",
-        "known-blocked",
-        "No publish-tree PCVR proof runner is present yet; D:/Modlists/fnv/run_vr.bat proves an external build, not this repo build.",
+        "loaded-pending-runtime" if has_pcvr_runner else "known-blocked",
+        "Publish-tree PCVR runner generates an openmw_vr.exe profile with FNVR.esp last; OpenXR runtime execution remains a separate hardware proof."
+        if has_pcvr_runner
+        else "No publish-tree PCVR proof runner is present yet; D:/Modlists/fnv/run_vr.bat proves an external build, not this repo build.",
         priority="pcvr-second",
     )
 
