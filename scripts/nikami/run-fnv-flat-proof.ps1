@@ -51,6 +51,7 @@ param(
     [switch]$RequireFlatCameraSettled,
     [switch]$FnvPartMatrixAudit,
     [switch]$FnvDisableNativeAnimationCallbacks,
+    [switch]$FnvDlodSettingsDiag,
     [string]$TraceRawPendingRecord = "",
     [string]$ClassificationDir = "",
     [switch]$RequireSkyColorSanity,
@@ -405,6 +406,7 @@ try {
     if ($RequirePlayerTerrainSupport) { Set-ProofEnv $previousEnv "OPENMW_FNV_FLOOR_WATCHDOG" "1" }
     if ($FnvPartMatrixAudit) { Set-ProofEnv $previousEnv "OPENMW_FNV_PART_MATRIX_AUDIT" "1" }
     if ($FnvDisableNativeAnimationCallbacks) { Set-ProofEnv $previousEnv "OPENMW_FNV_DISABLE_NATIVE_ANIMATION_CALLBACKS" "1" }
+    if ($FnvDlodSettingsDiag) { Set-ProofEnv $previousEnv "OPENMW_FNV_DLODSETTINGS_DIAG" "1" }
     Set-ProofEnv $previousEnv "OPENMW_FNV_TRACE_RAW_PENDING_RECORD" $TraceRawPendingRecord
     Set-ProofEnv $previousEnv "OPENMW_FNV_RENDER_DISTANCE_DIAG" "1"
     Set-ProofEnv $previousEnv "OPENMW_FNV_SKY_MISSING_LOG" "1"
@@ -435,6 +437,7 @@ try {
     Write-ProofLine "WithMenu: $WithMenu"
     Write-ProofLine "RequireSkyColorSanity: $RequireSkyColorSanity"
     Write-ProofLine "BootstrapCell: $BootstrapCell"
+    Write-ProofLine "FnvDlodSettingsDiag: $FnvDlodSettingsDiag"
     Write-ProofLine "TraceRawPendingRecord: $TraceRawPendingRecord"
     Write-ProofLine "TerrainProbePoints: $probePoints"
     Write-ProofLine ""

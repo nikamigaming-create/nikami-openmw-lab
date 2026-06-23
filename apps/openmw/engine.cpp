@@ -9,6 +9,8 @@
 #include <cctype>
 #include <future>
 #include <filesystem>
+#include <istream>
+#include <limits>
 #include <map>
 #include <memory>
 #include <optional>
@@ -180,6 +182,42 @@ namespace
     {
         void operator()(std::string) const {}
     };
+
+    void logFnvDlodSettingsProbe(const VFS::Manager& vfs)
+    {
+        if (std::getenv("OPENMW_FNV_DLODSETTINGS_DIAG") == nullptr)
+            return;
+
+        std::size_t count = 0;
+        std::size_t totalBytes = 0;
+        for (const VFS::Path::Normalized& path : vfs.getRecursiveDirectoryIterator("lodsettings/"))
+        {
+            if (!Misc::StringUtils::ciEndsWith(path.value(), ".dlodsettings"))
+                continue;
+
+            try
+            {
+                Files::IStreamPtr stream = vfs.get(path);
+                stream->ignore(std::numeric_limits<std::streamsize>::max());
+                const std::streamoff bytes = stream->gcount();
+                if (bytes < 0)
+                    throw std::runtime_error("negative byte count");
+
+                ++count;
+                totalBytes += static_cast<std::size_t>(bytes);
+                Log(Debug::Info) << "FNV/ESM4 proof: DLOD settings loaded path=" << path.value()
+                                 << " archive=\"" << vfs.getArchive(path) << "\" bytes=" << bytes;
+            }
+            catch (const std::exception& e)
+            {
+                Log(Debug::Warning) << "FNV/ESM4 proof: DLOD settings load failed path=" << path.value()
+                                    << " error=" << e.what();
+            }
+        }
+
+        Log(Debug::Info) << "FNV/ESM4 proof: DLOD settings summary count=" << count << " totalBytes=" << totalBytes
+                         << " pagingBinding=loaded-pending-runtime";
+    }
 
     class IdentifyOpenGLOperation : public osg::GraphicsOperation
     {
@@ -1866,6 +1904,7 @@ void OMW::Engine::prepareEngine()
     mVFS = std::make_unique<VFS::Manager>();
 
     VFS::registerArchives(mVFS.get(), mFileCollections, mArchives, true, &mEncoder.get()->getStatelessEncoder());
+    logFnvDlodSettingsProbe(*mVFS);
 
     mResourceSystem = std::make_unique<Resource::ResourceSystem>(
         mVFS.get(), Settings::cells().mCacheExpiryDelay, &mEncoder.get()->getStatelessEncoder());

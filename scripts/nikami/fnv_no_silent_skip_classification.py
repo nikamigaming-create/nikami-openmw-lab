@@ -146,7 +146,7 @@ EXTENSION_RULES = {
     ".ctl": ("loaded-pending-runtime", "facegen-control-basis", "CTL bytes are read and validated; full FaceGen control semantics remain pending."),
     ".dat": ("non-runtime-support-file", "lip-generation-support-tables", "LSDATA tables support lip generation tooling; runtime consumes baked LIP sidecars."),
     ".dds": ("runtime-supported", "textures-ui-world", "DDS files are consumed by ImageManager/MyGUI/material texture binding."),
-    ".dlodsettings": ("known-blocked", "distant-lod", "DLOD settings are harvested but not consumed by terrain/object paging yet."),
+    ".dlodsettings": ("loaded-pending-runtime", "distant-lod", "DLOD settings are read through VFS in PC-flat proof; terrain/object paging binding remains pending."),
     ".egm": ("runtime-supported", "facegen-morphs", "EGM morphs are loaded and applied to NPC geometry."),
     ".egt": ("loaded-pending-runtime", "facegen-tint-maps", "EGT bytes are read and tint is approximated; exact texture synthesis remains pending."),
     ".fnt": ("runtime-supported", "bitmap-fonts", "Bitmap font metadata is consumed by FontLoader."),

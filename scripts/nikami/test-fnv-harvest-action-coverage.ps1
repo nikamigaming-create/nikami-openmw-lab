@@ -227,13 +227,14 @@ $runtimeRules = @{
         New-Anchor "apps/openmw/mwrender/esm4npcanimation.cpp" "FaceGenTriMorphVisitor" "FaceGen TRI morph visitor applies morph target geometry"
         New-Anchor "apps/openmw/mwrender/esm4npcanimation.cpp" "applyFalloutDialogueMorph" "FaceGen TRI morphs can drive dialogue/head animation"
     )
-    ".dlodsettings" = New-Rule "known-blocked" "distant-lod" "Distant LOD settings are harvested but not yet consumed by terrain/object paging" @(
-        New-Anchor "scripts/nikami/test-fnv-dlodsettings-contract.ps1" "FNV DLOD settings contract" "proof gate verifies the exact shipped DLOD settings set and current runtime absence"
+    ".dlodsettings" = New-Rule "loaded-pending-runtime" "distant-lod" "Distant LOD settings are VFS-visible and byte-read in the PC-flat runtime proof; terrain/object paging binding remains pending" @(
+        New-Anchor "scripts/nikami/test-fnv-dlodsettings-contract.ps1" "FNV DLOD settings contract" "proof gate verifies the exact shipped DLOD settings set and runtime VFS byte loading"
+        New-Anchor "apps/openmw/engine.cpp" "FNV/ESM4 proof: DLOD settings summary count=" "runtime diagnostic logs shipped DLOD settings count and byte total"
         New-Anchor "apps/openmw/mwrender/objectpaging.cpp" "getLODMeshName" "object paging uses generated LOD mesh names"
         New-Anchor "apps/openmw/mwrender/renderingmanager.cpp" "QuadTreeWorld" "terrain/object quad tree exists"
         New-Anchor "components/esm4/loadstat.cpp" "mLOD" "STAT loader captures ESM4 LOD model strings"
-        New-Anchor "components/esm4/loadrefr.cpp" "XLOD" "REFR loader sees XLOD data but no DLOD settings file routing is present"
-    ) "Add FNV DLOD settings parser and route to object paging/terrain LOD."
+        New-Anchor "components/esm4/loadrefr.cpp" "XLOD" "REFR loader sees XLOD data while DLOD settings paging semantics remain pending"
+    ) "Parse FNV DLOD settings semantics and route them into object paging/terrain LOD before promoting to runtime-supported."
     ".spt" = New-Rule "loaded-pending-runtime" "speedtree-billboard-fallback" "SpeedTree SPT assets are VFS-visible and rendered through a billboard fallback; full SpeedTree geometry/collision remains a follow-up gate" @(
         New-Anchor "scripts/nikami/test-fnv-speedtree-spt-ledger.ps1" "FNV SpeedTree SPT ledger proof" "proof gate verifies exact shipped SPT set and TREE record references without storing payloads"
         New-Anchor "scripts/nikami/fnv_speedtree_spt_ledger.py" "collect_harvest_spt_paths" "ledger parser compares harvested SPT paths with parsed TREE record MODL values"
