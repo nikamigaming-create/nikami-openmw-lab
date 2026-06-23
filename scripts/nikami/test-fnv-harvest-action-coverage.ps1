@@ -218,8 +218,11 @@ $runtimeRules = @{
         New-Anchor "apps/openmw/mwrender/esm4npcanimation.cpp" "applyFalloutDialogueMorph" "FaceGen TRI morphs can drive dialogue/head animation"
     )
     ".dlodsettings" = New-Rule "blocked-runtime-support" "distant-lod" "Distant LOD settings are harvested but not yet consumed by terrain/object paging" @(
-        New-Anchor "apps/openmw/mwrender/objectpaging.cpp" "ObjectPaging" "object paging subsystem exists"
+        New-Anchor "scripts/nikami/test-fnv-dlodsettings-contract.ps1" "FNV DLOD settings contract" "proof gate verifies the exact shipped DLOD settings set and current runtime absence"
+        New-Anchor "apps/openmw/mwrender/objectpaging.cpp" "getLODMeshName" "object paging uses generated LOD mesh names"
         New-Anchor "apps/openmw/mwrender/renderingmanager.cpp" "QuadTreeWorld" "terrain/object quad tree exists"
+        New-Anchor "components/esm4/loadstat.cpp" "mLOD" "STAT loader captures ESM4 LOD model strings"
+        New-Anchor "components/esm4/loadrefr.cpp" "XLOD" "REFR loader sees XLOD data but no DLOD settings file routing is present"
     ) "Add FNV DLOD settings parser and route to object paging/terrain LOD."
     ".spt" = New-Rule "blocked-runtime-support" "speedtree-tree-assets" "SpeedTree SPT assets are harvested but not yet parsed/rendered" @(
         New-Anchor "scripts/nikami/test-fnv-speedtree-spt-ledger.ps1" "FNV SpeedTree SPT ledger proof" "proof gate verifies exact shipped SPT set and TREE record references without storing payloads"
