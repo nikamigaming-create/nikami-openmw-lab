@@ -149,7 +149,7 @@ namespace MWDialogue
                                  << " info=" << entry.mInfoId.toDebugString()
                                  << " scriptBytes=" << info->mResultScript.size()
                                  << " runtimeBoundary=selected-stage-fragment-result-script-runtime-supported"
-                                 << " setStageRuntime=loaded-pending-runtime"
+                                 << " setStageRuntime=runtime-supported"
                                  << " conditionRuntime=loaded-pending-runtime"
                                  << " fullQuestCompletionRuntime=loaded-pending-runtime";
             }

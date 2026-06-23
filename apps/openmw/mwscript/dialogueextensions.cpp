@@ -61,6 +61,29 @@ namespace MWScript
                              << " fallbackSetIndex=" << fallbackSetIndex;
         }
 
+        void setQuestStageFromScript(
+            const char* opcode, const ESM::RefId& quest, int index, const MWWorld::Ptr& actor)
+        {
+            bool entryAdded = false;
+            bool fallbackSetIndex = false;
+            try
+            {
+                MWBase::Environment::get().getJournal()->addEntry(quest, index, actor);
+                entryAdded = true;
+            }
+            catch (...)
+            {
+                if (MWBase::Environment::get().getJournal()->getJournalIndex(quest) < index)
+                {
+                    MWBase::Environment::get().getJournal()->setJournalIndex(quest, index);
+                    fallbackSetIndex = true;
+                }
+            }
+            const int currentIndex = MWBase::Environment::get().getJournal()->getJournalIndex(quest);
+            logQuestJournalScriptTrace(
+                opcode, quest, index, currentIndex, entryAdded ? 1 : 0, fallbackSetIndex ? 1 : 0);
+        }
+
         template <class R>
         class OpJournal : public Interpreter::Opcode0
         {
@@ -78,24 +101,24 @@ namespace MWScript
                 runtime.pop();
 
                 // Invoking Journal with a non-existing index is allowed, and triggers no errors. Seriously? :(
-                bool entryAdded = false;
-                bool fallbackSetIndex = false;
-                try
-                {
-                    MWBase::Environment::get().getJournal()->addEntry(quest, index, ptr);
-                    entryAdded = true;
-                }
-                catch (...)
-                {
-                    if (MWBase::Environment::get().getJournal()->getJournalIndex(quest) < index)
-                    {
-                        MWBase::Environment::get().getJournal()->setJournalIndex(quest, index);
-                        fallbackSetIndex = true;
-                    }
-                }
-                const int currentIndex = MWBase::Environment::get().getJournal()->getJournalIndex(quest);
-                logQuestJournalScriptTrace(
-                    "Journal", quest, index, currentIndex, entryAdded ? 1 : 0, fallbackSetIndex ? 1 : 0);
+                setQuestStageFromScript("Journal", quest, index, ptr);
+            }
+        };
+
+        class OpSetStage : public Interpreter::Opcode0
+        {
+        public:
+            void execute(Interpreter::Runtime& runtime) override
+            {
+                MWWorld::Ptr ptr = MWBase::Environment::get().getWorld()->getPlayerPtr();
+
+                ESM::RefId quest = ESM::RefId::stringRefId(runtime.getStringLiteral(runtime[0].mInteger));
+                runtime.pop();
+
+                Interpreter::Type_Integer index = runtime[0].mInteger;
+                runtime.pop();
+
+                setQuestStageFromScript("SetStage", quest, index, ptr);
             }
         };
 
@@ -128,6 +151,21 @@ namespace MWScript
 
                 runtime.push(index);
                 logQuestJournalScriptTrace("GetJournalIndex", quest, -1, index, -1, -1);
+            }
+        };
+
+        class OpGetStage : public Interpreter::Opcode0
+        {
+        public:
+            void execute(Interpreter::Runtime& runtime) override
+            {
+                ESM::RefId quest = ESM::RefId::stringRefId(runtime.getStringLiteral(runtime[0].mInteger));
+                runtime.pop();
+
+                int index = MWBase::Environment::get().getJournal()->getJournalIndex(quest);
+
+                runtime.push(index);
+                logQuestJournalScriptTrace("GetStage", quest, -1, index, -1, -1);
             }
         };
 
@@ -446,6 +484,8 @@ namespace MWScript
             interpreter.installSegment5<OpJournal<ExplicitRef>>(Compiler::Dialogue::opcodeJournalExplicit);
             interpreter.installSegment5<OpSetJournalIndex>(Compiler::Dialogue::opcodeSetJournalIndex);
             interpreter.installSegment5<OpGetJournalIndex>(Compiler::Dialogue::opcodeGetJournalIndex);
+            interpreter.installSegment5<OpSetStage>(Compiler::Dialogue::opcodeSetStage);
+            interpreter.installSegment5<OpGetStage>(Compiler::Dialogue::opcodeGetStage);
             interpreter.installSegment5<OpFillJournal>(Compiler::Dialogue::opcodeFillJournal);
             interpreter.installSegment5<OpSetObjectiveDisplayed>(Compiler::Dialogue::opcodeSetObjectiveDisplayed);
             interpreter.installSegment5<OpSetObjectiveCompleted>(Compiler::Dialogue::opcodeSetObjectiveCompleted);

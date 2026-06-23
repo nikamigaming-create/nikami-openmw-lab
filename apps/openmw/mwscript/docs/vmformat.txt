@@ -491,4 +491,6 @@ op 0x2000328: SetObjectiveCompleted
 op 0x2000329: GetObjectiveDisplayed
 op 0x200032a: GetObjectiveCompleted
 
-opcodes 0x200032b-0x3ffffff unused
+op 0x200032b: SetStage
+op 0x200032c: GetStage
+opcodes 0x200032d-0x3ffffff unused
