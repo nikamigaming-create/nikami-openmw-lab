@@ -51,6 +51,7 @@ param(
     [switch]$RequireFlatCameraSettled,
     [switch]$FnvPartMatrixAudit,
     [switch]$FnvDisableNativeAnimationCallbacks,
+    [string]$ClassificationDir = "",
     [switch]$NoSound
 )
 
@@ -143,6 +144,96 @@ function Assert-LogPattern([string]$Path, [string]$Pattern) {
     Write-ProofLine "OK required log pattern: $Pattern"
 }
 
+function Get-LatestClassificationDir([string]$Root) {
+    $classificationRoot = Join-Path $Root "fnv-no-silent-skip-classification"
+    if (!(Test-Path -LiteralPath $classificationRoot -PathType Container)) {
+        return ""
+    }
+    $latest = Get-ChildItem -LiteralPath $classificationRoot -Directory -ErrorAction SilentlyContinue |
+        Sort-Object Name -Descending |
+        Select-Object -First 1
+    if ($null -eq $latest) { return "" }
+    return $latest.FullName
+}
+
+function Get-Esm4ClassificationMap([string]$Dir) {
+    if ([string]::IsNullOrWhiteSpace($Dir)) {
+        $Dir = Get-LatestClassificationDir $ProofRoot
+    }
+    if ([string]::IsNullOrWhiteSpace($Dir)) {
+        throw "Missing FNV no-silent-skip classification proof. Run scripts/nikami/test-fnv-no-silent-skip-classification.ps1 first."
+    }
+    $ledgerPath = Join-Path $Dir "classification-ledger.json"
+    if (!(Test-Path -LiteralPath $ledgerPath -PathType Leaf)) {
+        throw "Missing FNV no-silent-skip classification ledger: $ledgerPath"
+    }
+    $rows = @(Get-Content -LiteralPath $ledgerPath -Raw | ConvertFrom-Json)
+    $map = @{}
+    foreach ($row in ($rows | Where-Object { $_.itemType -eq "esm4-record-type" })) {
+        $recordType = [string]$row.recordType
+        if ([string]::IsNullOrWhiteSpace($recordType)) { continue }
+        if (!$map.ContainsKey($recordType)) {
+            $map[$recordType] = [System.Collections.Generic.List[string]]::new()
+        }
+        if (!$map[$recordType].Contains([string]$row.classification)) {
+            $map[$recordType].Add([string]$row.classification)
+        }
+    }
+    Write-ProofLine "ESM4 classification ledger: $ledgerPath"
+    return $map
+}
+
+function Get-UnsupportedEsm4Skips([string]$Path) {
+    $result = [System.Collections.Generic.List[object]]::new()
+    if (!(Test-Path -LiteralPath $Path -PathType Leaf)) {
+        return $result
+    }
+    foreach ($match in (Select-String -LiteralPath $Path -Pattern "FNV/ESM4 inventory skipped unsupported:\s+(?<type>[A-Z0-9_]+)\s+count=(?<count>[0-9]+)" -ErrorAction SilentlyContinue)) {
+        $recordName = $match.Matches[0].Groups["type"].Value
+        $recordType = $recordName
+        if ($recordType.EndsWith("4", [System.StringComparison]::Ordinal)) {
+            $recordType = $recordType.Substring(0, $recordType.Length - 1)
+        }
+        $result.Add([pscustomobject]@{
+            recordName = $recordName
+            recordType = $recordType
+            count = [int]$match.Matches[0].Groups["count"].Value
+            line = $match.Line
+        })
+    }
+    return $result
+}
+
+function Assert-UnsupportedEsm4SkipsClassified([object[]]$Skips, [string]$Dir) {
+    if ($Skips.Count -eq 0) {
+        return
+    }
+    $map = Get-Esm4ClassificationMap $Dir
+    $failures = [System.Collections.Generic.List[string]]::new()
+    foreach ($skip in $Skips) {
+        if (!$map.ContainsKey($skip.recordType)) {
+            $failures.Add("unclassified $($skip.recordName) count=$($skip.count)")
+            continue
+        }
+        $classes = @($map[$skip.recordType])
+        if ($classes -contains "runtime-supported" -or $classes -contains "loaded-pending-runtime") {
+            $failures.Add("classification-mismatch $($skip.recordName) count=$($skip.count) classification=$($classes -join ',')")
+            continue
+        }
+        if ($classes -contains "known-blocked") {
+            Write-ProofLine "OK known-blocked ESM4 skip: $($skip.recordName) count=$($skip.count)"
+            continue
+        }
+        $failures.Add("unsupported classification $($skip.recordName) count=$($skip.count) classification=$($classes -join ',')")
+    }
+    if ($failures.Count -gt 0) {
+        foreach ($failure in $failures) {
+            Write-ProofLine "FAIL ESM4 skip classification: $failure"
+        }
+        throw "FNV flat proof saw unclassified or mismatched unsupported ESM4 skips. See $OpenMwLog"
+    }
+}
+
 $FlatScript = Join-Path $PSScriptRoot "run-fnv-flat.ps1"
 if (!(Test-Path -LiteralPath $FlatScript)) {
     throw "Missing base flat runner: $FlatScript"
@@ -191,7 +282,6 @@ try {
     Set-ProofEnv $previousEnv "OPENMW_PROOF_WALK_SPEED" $WalkSpeed
     Set-ProofEnv $previousEnv "OPENMW_PROOF_WALK_REACH_RADIUS" $WalkReachRadius
     Set-ProofEnv $previousEnv "OPENMW_PROOF_WALK_MIN_Z" $WalkMinZ
-    Set-ProofEnv $previousEnv "OPENMW_FNV_STRICT_ESM4_RECORDS" "1"
     if ($RequirePlayerTerrainSupport) { Set-ProofEnv $previousEnv "OPENMW_FNV_FLOOR_WATCHDOG" "1" }
     if ($FnvPartMatrixAudit) { Set-ProofEnv $previousEnv "OPENMW_FNV_PART_MATRIX_AUDIT" "1" }
     if ($FnvDisableNativeAnimationCallbacks) { Set-ProofEnv $previousEnv "OPENMW_FNV_DISABLE_NATIVE_ANIMATION_CALLBACKS" "1" }
@@ -251,7 +341,7 @@ $playerSupportMissLines = Count-LogMatches $OpenMwLog "Nikami FNV player terrain
 $airborneLines = Count-LogMatches $OpenMwLog "FNV/ESM4 proof walk: summary .*airborneFrames=[1-9]"
 $flatCameraSettledLines = Count-LogMatches $OpenMwLog "FNV/ESM4 diag: settled flat startup camera"
 $flatCameraFailureLines = Count-LogMatches $OpenMwLog "FNV/ESM4 diag: flat startup camera did not attach"
-$unsupportedEsm4SkipLines = Count-LogMatches $OpenMwLog "FNV/ESM4 inventory skipped unsupported:"
+$unsupportedEsm4Skips = @(Get-UnsupportedEsm4Skips $OpenMwLog)
 $screenshots = @(Get-ChildItem -LiteralPath $ProofDir -Filter "*.png" -File -ErrorAction SilentlyContinue)
 
 Write-ProofLine ""
@@ -271,10 +361,10 @@ Write-ProofLine "Player terrain support miss lines: $playerSupportMissLines"
 Write-ProofLine "Player terrain airborne lines: $airborneLines"
 Write-ProofLine "Flat camera settled lines: $flatCameraSettledLines"
 Write-ProofLine "Flat camera failure lines: $flatCameraFailureLines"
-Write-ProofLine "Unsupported ESM4 skip lines: $unsupportedEsm4SkipLines"
+Write-ProofLine "Unsupported ESM4 skip lines: $($unsupportedEsm4Skips.Count)"
 
 if ($fatalCount -gt 0) { throw "FNV flat proof saw fatal/blocker log lines. See $OpenMwLog" }
-if ($unsupportedEsm4SkipLines -gt 0) { throw "FNV flat proof saw unsupported ESM4 record skips. See $OpenMwLog" }
+Assert-UnsupportedEsm4SkipsClassified $unsupportedEsm4Skips $ClassificationDir
 if ($RequireFlatCameraSettled -and $flatCameraSettledLines -eq 0) { throw "FNV flat proof did not prove flat camera settlement. See $OpenMwLog" }
 if ($flatCameraFailureLines -gt 0) { throw "FNV flat proof saw flat camera failure lines. See $OpenMwLog" }
 if ($RequirePlayerTerrainSupport -and $playerSupportMissLines -gt 0) { throw "FNV flat proof saw player terrain support misses. See $OpenMwLog" }

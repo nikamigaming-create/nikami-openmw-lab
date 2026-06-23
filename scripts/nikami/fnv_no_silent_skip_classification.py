@@ -353,15 +353,19 @@ def classify_runtime_profiles(rows, repo_root, pcvr_reference_config_dir):
         )
 
     flat_proof_text = flat_proof.read_text(encoding="utf-8", errors="replace") if flat_proof.is_file() else ""
+    has_classified_skip_gate = (
+        "Assert-UnsupportedEsm4SkipsClassified" in flat_proof_text
+        and "Get-Esm4ClassificationMap" in flat_proof_text
+    )
     add_main_row(
         rows,
         "runtime-config",
-        "pc-flat-strict-esm4-runtime-gate",
+        "pc-flat-classified-esm4-skip-gate",
         "scripts/nikami/run-fnv-flat-proof.ps1",
-        "runtime-supported" if "OPENMW_FNV_STRICT_ESM4_RECORDS" in flat_proof_text else "known-blocked",
-        "Flat proof sets OPENMW_FNV_STRICT_ESM4_RECORDS so unsupported ESM4 skips throw instead of logging silently."
-        if "OPENMW_FNV_STRICT_ESM4_RECORDS" in flat_proof_text
-        else "Flat proof does not force strict ESM4 record loading yet.",
+        "runtime-supported" if has_classified_skip_gate else "known-blocked",
+        "Flat proof checks skipped ESM4 record types against the no-silent-skip classification ledger and fails unclassified or mismatched skips."
+        if has_classified_skip_gate
+        else "Flat proof does not classify unsupported ESM4 record skips yet.",
         priority="pc-flat-first",
     )
 
