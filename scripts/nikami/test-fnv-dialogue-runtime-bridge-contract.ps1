@@ -85,6 +85,13 @@ function Assert-Equal([string]$Description, [int]$Actual, [int]$Expected) {
     Write-ProofLine "OK ${Description}: $Actual"
 }
 
+function Assert-GreaterThan([string]$Description, [int]$Actual, [int]$Minimum) {
+    if ($Actual -le $Minimum) {
+        throw "Unexpected ${Description}: actual=$Actual minimumExclusive=$Minimum"
+    }
+    Write-ProofLine "OK ${Description}: $Actual"
+}
+
 function Get-FlatLedgerRecordCounts([string]$RecordsPath) {
     $flatContentSet = @{}
     foreach ($content in $FlatContent) {
@@ -149,6 +156,10 @@ Assert-Text "apps/openmw/mwworld/store.hpp" "ESM::Dialogue* insert(const ESM::Di
 Assert-Text "apps/openmw/mwworld/store.hpp" "void rebuildRuntimeIndex();" "dialogue store runtime index rebuild"
 Assert-Text "apps/openmw/mwworld/esmstore.cpp" "bridgeEsm4QuestDialogueStores" "ESM4 quest/dialogue bridge helper"
 Assert-Text "apps/openmw/mwworld/esmstore.cpp" "questDialogues=" "runtime bridge quest dialogue count log"
+Assert-Text "apps/openmw/mwworld/esmstore.cpp" "questNameInfos=" "runtime bridge quest name INFO count log"
+Assert-Text "apps/openmw/mwworld/esmstore.cpp" "questStageInfos=" "runtime bridge QUST stage INFO count log"
+Assert-Text "apps/openmw/mwworld/esmstore.cpp" "questObjectives=" "runtime bridge QUST objective accounting log"
+Assert-Text "apps/openmw/mwworld/esmstore.cpp" "addRuntimeDialogueInfo" "runtime bridge feeds ordered and direct dialogue info stores"
 Assert-Text "apps/openmw/mwworld/esmstore.cpp" "topicDialogues=" "runtime bridge topic dialogue count log"
 Assert-Text "apps/openmw/mwworld/esmstore.cpp" "questInfos=" "runtime bridge quest INFO count log"
 Assert-Text "components/esm4/loadinfo.cpp" "mSound = ESM::FormId::fromUint32(mResponseData.sound);" "FNV TRDT INFO sound loader"
@@ -156,7 +167,7 @@ Assert-Text "apps/openmw/mwworld/esmstore.cpp" "resolveEsm4SoundFile" "ESM4 INFO
 Assert-Text "apps/openmw/mwworld/esmstore.cpp" "info.mSound = infoSound;" "INFO sound path transfer"
 Assert-Text "apps/openmw/mwworld/esmstore.cpp" "resolvedInfoSounds=" "runtime bridge resolved INFO sound count log"
 Assert-Text "apps/openmw/mwworld/esmstore.cpp" "info.mResultScript = source.mScript.scriptSource;" "INFO result script transfer"
-Assert-Text "scripts/nikami/test-fnv-data-inventory.ps1" '"INFO" = "ESM4-to-runtime quest INFO response bridge"' "INFO runtime inventory classification"
+Assert-Text "scripts/nikami/fnv_no_silent_skip_classification.py" '"INFO": "dialogue INFO rows are stored and partially bridged pending exhaustive conditions, choices, and result-script parity"' "INFO loaded-pending runtime boundary"
 
 $ContentLedgerScript = Join-Path $PSScriptRoot "test-fnv-content-ledger.ps1"
 & $ContentLedgerScript -FnvRoot $FnvRoot -FnvData $FnvData -ProofRoot $ProofRoot
@@ -167,6 +178,30 @@ if ($LASTEXITCODE -ne 0) {
 $ContentLedgerDir = Get-LatestProofDir (Join-Path $ProofRoot "fnv-content-ledger") "FNV content ledger"
 $RecordsPath = Join-Path $ContentLedgerDir "records.json"
 $FlatCounts = Get-FlatLedgerRecordCounts $RecordsPath
+$FlatContentSet = @{}
+foreach ($content in $FlatContent) {
+    $FlatContentSet[$content] = $true
+}
+$QuestNameCount = 0
+$QuestStageTextEntryCount = 0
+$QuestObjectiveCount = 0
+$QuestObjectiveTargetCount = 0
+foreach ($row in (Read-JsonArray (Join-Path $ContentLedgerDir "quests.json") "content ledger quests")) {
+    if (!$FlatContentSet.ContainsKey([string]$row.plugin)) {
+        continue
+    }
+    if ([string]::IsNullOrWhiteSpace([string]$row.editorId)) {
+        continue
+    }
+    if ([int]$row.questNameLength -gt 0) {
+        ++$QuestNameCount
+    }
+    $QuestStageTextEntryCount += [int]$row.stageTextEntryCount
+    $QuestObjectiveCount += [int]$row.objectiveCount
+    $QuestObjectiveTargetCount += [int]$row.objectiveTargetCount
+}
+Assert-GreaterThan "flat quest stage text ledger count" $QuestStageTextEntryCount 0
+Assert-GreaterThan "flat quest objective ledger count" $QuestObjectiveCount 0
 
 $FlatProofScript = Join-Path $PSScriptRoot "run-fnv-flat-proof.ps1"
 & $FlatProofScript `
@@ -198,6 +233,12 @@ Assert-Equal "skipped dialogue count" ([int]$BridgeCounts["skippedDialogues"]) 0
 Assert-Equal "skipped INFO count" ([int]$BridgeCounts["skippedInfos"]) 9
 Assert-Equal "unresolved INFO sound count" ([int]$BridgeCounts["unresolvedInfoSounds"]) 0
 Assert-Equal "resolved INFO sound count" ([int]$BridgeCounts["resolvedInfoSounds"]) 228
+$QuestNameRawToFinalDelta = $QuestNameCount - [int]$BridgeCounts["questNameInfos"]
+Assert-Equal "quest name raw-to-final override delta" $QuestNameRawToFinalDelta 1
+Assert-GreaterThan "quest name INFO count" ([int]$BridgeCounts["questNameInfos"]) 0
+Assert-Equal "QUST stage INFO bridge count" ([int]$BridgeCounts["questStageInfos"]) $QuestStageTextEntryCount
+Assert-Equal "QUST objective accounting count" ([int]$BridgeCounts["questObjectives"]) $QuestObjectiveCount
+Assert-Equal "QUST objective target accounting count" ([int]$BridgeCounts["questObjectiveTargets"]) $QuestObjectiveTargetCount
 Assert-Equal "GMST override row count" ([int]$RuntimeLoaded["GMST"] - [int]$BridgeCounts["gmst"] - [int]$BridgeCounts["skippedGmst"]) 1
 Assert-Equal "SCPT override row count" ([int]$RuntimeLoaded["SCPT"] - [int]$BridgeCounts["scripts"] - [int]$BridgeCounts["skippedScripts"]) 8
 Assert-Equal "quest override row count" ([int]$RuntimeLoaded["QUST"] - [int]$BridgeCounts["questDialogues"]) 2
@@ -213,6 +254,13 @@ $metadata = [ordered]@{
     flatProofDir = $FlatProofDir
     runtimeLoaded = $RuntimeLoaded
     bridgeCounts = $BridgeCounts
+    questLedgerCounts = [ordered]@{
+        namedQuests = $QuestNameCount
+        namedQuestFinalStoreDelta = $QuestNameRawToFinalDelta
+        stageTextEntries = $QuestStageTextEntryCount
+        objectives = $QuestObjectiveCount
+        objectiveTargets = $QuestObjectiveTargetCount
+    }
     overrideRows = [ordered]@{
         gameSettings = [int]$RuntimeLoaded["GMST"] - [int]$BridgeCounts["gmst"] - [int]$BridgeCounts["skippedGmst"]
         scripts = [int]$RuntimeLoaded["SCPT"] - [int]$BridgeCounts["scripts"] - [int]$BridgeCounts["skippedScripts"]

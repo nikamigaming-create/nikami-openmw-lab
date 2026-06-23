@@ -31,8 +31,8 @@ $FlatContent = @(
 )
 
 $TargetClassifications = [ordered]@{
-    QUST = "runtime-supported"
-    SCPT = "runtime-supported"
+    QUST = "loaded-pending-runtime"
+    SCPT = "loaded-pending-runtime"
     PERK = "loaded-pending-runtime"
     AVIF = "loaded-pending-runtime"
     LVLC = "loaded-pending-runtime"
@@ -48,6 +48,12 @@ $ExpectedBridgeKeys = @(
     "globals",
     "scripts",
     "questDialogues",
+    "questNameInfos",
+    "questStageInfos",
+    "completeQuestStageInfos",
+    "failedQuestStageInfos",
+    "questObjectives",
+    "questObjectiveTargets",
     "topicDialogues",
     "questInfos",
     "resolvedInfoSounds",
@@ -373,6 +379,13 @@ Assert-NoUnqualifiedGameplayClaim $RuntimeBoundary "runtime boundary"
 Write-ProofLine ""
 
 Assert-Text "components/esm4/loadqust.hpp" "REC_QUST4" "QUST typed loader record id"
+Assert-Text "components/esm4/loadqust.hpp" "QuestStageEntry" "QUST stage entry store"
+Assert-Text "components/esm4/loadqust.hpp" "QuestObjectiveTarget" "QUST objective target store"
+Assert-Text "components/esm4/loadqust.cpp" "mStages.emplace_back" "QUST stage collection loading"
+Assert-Text "components/esm4/loadqust.cpp" "mObjectives.emplace_back" "QUST objective collection loading"
+Assert-Text "apps/openmw/mwworld/esmstore.cpp" "questStageInfoId" "QUST stage journal info IDs"
+Assert-Text "apps/openmw/mwworld/esmstore.cpp" "questStageInfos=" "QUST stage bridge count log"
+Assert-Text "apps/openmw/mwworld/esmstore.cpp" "questObjectiveTargets=" "QUST objective target count log"
 Assert-Text "components/esm4/loadscpt.hpp" "REC_SCPT4" "SCPT typed loader record id"
 Assert-Text "components/esm4/loadperk.hpp" "REC_PERK4" "PERK typed loader record id"
 Assert-Text "components/esm4/loadlvlc.hpp" "REC_LVLC4" "LVLC typed loader record id"
@@ -402,6 +415,30 @@ $GameplaySystemsPath = Join-Path $ContentLedgerDir "gameplay-systems.json"
 Assert-LedgerRowsBounded $QuestsPath "quest content ledger" "loaded-pending-runtime" "runtime-quest-execution"
 Assert-LedgerRowsBounded $ScriptsPath "script content ledger" "loaded-pending-runtime" "missing-fnv-script-runtime"
 Assert-PerkTraitRows $GameplaySystemsPath (Get-Count $LedgerCounts "PERK")
+$QuestRows = Read-JsonArray $QuestsPath "quest content ledger structured rows"
+$QuestNameCount = 0
+$QuestStageCount = 0
+$QuestStageLogEntryCount = 0
+$QuestStageTextEntryCount = 0
+$QuestObjectiveCount = 0
+$QuestObjectiveTargetCount = 0
+foreach ($row in $QuestRows) {
+    if ([string]::IsNullOrWhiteSpace([string]$row.editorId)) {
+        continue
+    }
+    if ([int]$row.questNameLength -gt 0) {
+        ++$QuestNameCount
+    }
+    $QuestStageCount += [int]$row.stageCount
+    $QuestStageLogEntryCount += [int]$row.stageLogEntryCount
+    $QuestStageTextEntryCount += [int]$row.stageTextEntryCount
+    $QuestObjectiveCount += [int]$row.objectiveCount
+    $QuestObjectiveTargetCount += [int]$row.objectiveTargetCount
+}
+Assert-GreaterThan "quest ledger stage count" $QuestStageCount 0
+Assert-GreaterThan "quest ledger stage text entry count" $QuestStageTextEntryCount 0
+Assert-GreaterThan "quest ledger objective count" $QuestObjectiveCount 0
+Assert-GreaterThan "quest ledger objective target count" $QuestObjectiveTargetCount 0
 Write-ProofLine "Flat content ledger: $ContentLedgerDir"
 
 $ClassificationScript = Join-Path $PSScriptRoot "test-fnv-no-silent-skip-classification.ps1"
@@ -505,6 +542,14 @@ Assert-Equal "bridge unresolved INFO sound count" ([int]$BridgeCounts["unresolve
 Assert-Equal "bridge resolved INFO sound count" ([int]$BridgeCounts["resolvedInfoSounds"]) 228
 Assert-GreaterThan "bridged runtime script count" ([int]$BridgeCounts["scripts"]) 0
 Assert-GreaterThan "bridged quest dialogue count" ([int]$BridgeCounts["questDialogues"]) 0
+$QuestNameRawToFinalDelta = $QuestNameCount - [int]$BridgeCounts["questNameInfos"]
+Assert-Equal "quest name raw-to-final override delta" $QuestNameRawToFinalDelta 1
+Assert-GreaterThan "bridged quest name info count" ([int]$BridgeCounts["questNameInfos"]) 0
+Assert-Equal "bridged QUST stage info count" ([int]$BridgeCounts["questStageInfos"]) $QuestStageTextEntryCount
+Assert-GreaterThan "bridged complete QUST stage info count" ([int]$BridgeCounts["completeQuestStageInfos"]) 0
+Assert-GreaterThan "accounted failed QUST stage info count" ([int]$BridgeCounts["failedQuestStageInfos"]) 0
+Assert-Equal "accounted QUST objective count" ([int]$BridgeCounts["questObjectives"]) $QuestObjectiveCount
+Assert-Equal "accounted QUST objective target count" ([int]$BridgeCounts["questObjectiveTargets"]) $QuestObjectiveTargetCount
 Assert-Equal "SCPT bridge override row count" ((Get-Count $LoadedCounts "SCPT") - [int]$BridgeCounts["scripts"] - [int]$BridgeCounts["skippedScripts"]) 8
 Assert-Equal "QUST bridge override row count" ((Get-Count $LoadedCounts "QUST") - [int]$BridgeCounts["questDialogues"]) 2
 
@@ -551,6 +596,15 @@ $summary = [ordered]@{
     flatProofDir = $FlatProofDir
     flatContent = $FlatContent
     rows = $Rows
+    questLedgerCounts = [ordered]@{
+        namedQuests = $QuestNameCount
+        namedQuestFinalStoreDelta = $QuestNameRawToFinalDelta
+        stages = $QuestStageCount
+        stageLogEntries = $QuestStageLogEntryCount
+        stageTextEntries = $QuestStageTextEntryCount
+        objectives = $QuestObjectiveCount
+        objectiveTargets = $QuestObjectiveTargetCount
+    }
     bridgeCounts = $BridgeCounts
     avifSubrecordTrace = [ordered]@{
         records = [int]$AvifTrace.records

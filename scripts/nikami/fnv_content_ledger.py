@@ -213,9 +213,112 @@ def script_block(subrecords):
     }
 
 
+def quest_stages(subrecords):
+    stages = []
+    current_stage = None
+    current_entry = None
+    current_target = None
+
+    for rec_type, payload in subrecords:
+        if rec_type == "QOBJ":
+            current_stage = None
+            current_entry = None
+            current_target = None
+            continue
+        if rec_type == "INDX":
+            current_stage = {
+                "stageIndex": get_u16(payload, 0),
+                "logEntries": [],
+            }
+            stages.append(current_stage)
+            current_entry = None
+            current_target = None
+        elif rec_type == "QSDT":
+            if current_stage is None:
+                current_stage = {
+                    "stageIndex": None,
+                    "logEntries": [],
+                }
+                stages.append(current_stage)
+            current_entry = {
+                "flags": payload[0] if payload else None,
+                "conditionCount": 0,
+                "nextQuest": "",
+                **text_summary("log", ""),
+                "script": {
+                    "sourceLength": 0,
+                    "sourceHash": "",
+                    "localVariableCount": 0,
+                    "referencedFormCount": 0,
+                },
+            }
+            current_stage["logEntries"].append(current_entry)
+            current_target = None
+        elif rec_type == "CNAM" and current_entry is not None:
+            current_entry.update(text_summary("log", zstring(payload)))
+        elif rec_type == "NAM0" and current_entry is not None and len(payload) >= 4:
+            current_entry["nextQuest"] = hex_form(struct.unpack_from("<I", payload, 0)[0])
+        elif rec_type in ("CTDA", "CTDT") and current_entry is not None and current_target is None:
+            current_entry["conditionCount"] += 1
+        elif rec_type == "SCHR" and current_entry is not None:
+            current_entry["script"]["headerSize"] = len(payload)
+        elif rec_type == "SCTX" and current_entry is not None:
+            source = zstring(payload)
+            current_entry["script"]["sourceLength"] = len(source)
+            current_entry["script"]["sourceHash"] = text_hash(source)
+        elif rec_type == "SLSD" and current_entry is not None:
+            current_entry["script"]["localVariableCount"] += 1
+        elif rec_type == "SCRO" and current_entry is not None:
+            current_entry["script"]["referencedFormCount"] += 1
+    return stages
+
+
+def quest_objectives(subrecords):
+    objectives = []
+    current_objective = None
+    current_target = None
+
+    for rec_type, payload in subrecords:
+        if rec_type == "INDX":
+            current_objective = None
+            current_target = None
+            continue
+        if rec_type == "QOBJ":
+            current_objective = {
+                "objectiveIndex": get_u32(payload, 0),
+                **text_summary("description", ""),
+                "targets": [],
+            }
+            objectives.append(current_objective)
+            current_target = None
+        elif rec_type == "NNAM" and current_objective is not None:
+            current_objective.update(text_summary("description", zstring(payload)))
+        elif rec_type == "QSTA" and current_objective is not None:
+            target = get_u32(payload, 0)
+            current_target = {
+                "targetFormId": hex_form(target) if target is not None else "",
+                "flags": payload[4] if len(payload) >= 5 else None,
+                "conditionCount": 0,
+            }
+            current_objective["targets"].append(current_target)
+        elif rec_type in ("CTDA", "CTDT") and current_target is not None:
+            current_target["conditionCount"] += 1
+    return objectives
+
+
 def quest_row(plugin, record, subrecords):
     data = first(subrecords, "DATA")
     quest_name = first_zstring(subrecords, "FULL")
+    stages = quest_stages(subrecords)
+    objectives = quest_objectives(subrecords)
+    stage_log_count = sum(len(stage["logEntries"]) for stage in stages)
+    stage_text_count = sum(
+        1
+        for stage in stages
+        for entry in stage["logEntries"]
+        if entry.get("logLength", 0) > 0
+    )
+    objective_target_count = sum(len(objective["targets"]) for objective in objectives)
     return {
         "plugin": plugin,
         "formId": record["formId"],
@@ -228,6 +331,13 @@ def quest_row(plugin, record, subrecords):
         "questScript": (all_form_ids(subrecords, "SCRI") or [None])[0],
         "targetConditions": conditions(subrecords),
         "embeddedScript": script_block(subrecords),
+        "stages": stages,
+        "objectives": objectives,
+        "stageCount": len(stages),
+        "stageLogEntryCount": stage_log_count,
+        "stageTextEntryCount": stage_text_count,
+        "objectiveCount": len(objectives),
+        "objectiveTargetCount": objective_target_count,
         "objectiveSubrecords": [
             {"type": rec_type, "size": len(payload), **text_summary("text", zstring(payload))}
             for rec_type, payload in subrecords
@@ -600,6 +710,11 @@ def main():
     references = [item for row in plugin_ledgers for item in row["references"]]
     total_records = sum(record["count"] for plugin in records for record in plugin["records"])
     gameplay_counts = Counter(item["recordType"] for item in gameplay_systems)
+    quest_stage_count = sum(int(item.get("stageCount", 0)) for item in quests)
+    quest_stage_log_entry_count = sum(int(item.get("stageLogEntryCount", 0)) for item in quests)
+    quest_stage_text_entry_count = sum(int(item.get("stageTextEntryCount", 0)) for item in quests)
+    quest_objective_count = sum(int(item.get("objectiveCount", 0)) for item in quests)
+    quest_objective_target_count = sum(int(item.get("objectiveTargetCount", 0)) for item in quests)
 
     artifacts = {
         "records": proof_dir / "records.json",
@@ -632,6 +747,11 @@ def main():
         "pluginCount": len(plugin_ledgers),
         "recordTotal": total_records,
         "questCount": len(quests),
+        "questStageCount": quest_stage_count,
+        "questStageLogEntryCount": quest_stage_log_entry_count,
+        "questStageTextEntryCount": quest_stage_text_entry_count,
+        "questObjectiveCount": quest_objective_count,
+        "questObjectiveTargetCount": quest_objective_target_count,
         "dialogueRowCount": len(dialogue),
         "scriptCount": len(scripts),
         "globalCount": len(globals_),
@@ -660,11 +780,18 @@ def main():
     proof_line()
     proof_line("FNV structured content ledger proof PASS")
     proof_line(
-        "plugins={plugins} records={records} quests={quests} dialogueRows={dialogue} scripts={scripts} "
+        "plugins={plugins} records={records} quests={quests} questStages={questStages} "
+        "questStageLogs={questStageLogs} questStageTexts={questStageTexts} questObjectives={questObjectives} "
+        "questObjectiveTargets={questObjectiveTargets} dialogueRows={dialogue} scripts={scripts} "
         "globals={globals} gameSettings={settings} gameplaySystems={gameplay} references={references}".format(
             plugins=len(plugin_ledgers),
             records=total_records,
             quests=len(quests),
+            questStages=quest_stage_count,
+            questStageLogs=quest_stage_log_entry_count,
+            questStageTexts=quest_stage_text_entry_count,
+            questObjectives=quest_objective_count,
+            questObjectiveTargets=quest_objective_target_count,
             dialogue=len(dialogue),
             scripts=len(scripts),
             globals=len(globals_),

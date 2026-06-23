@@ -47,7 +47,7 @@ Assert-CodeString "apps/openmw/mwworld/esmstore.cpp" "Store<ESM::Script>" "write
 Assert-CodeString "apps/openmw/mwworld/esmstore.cpp" "FNV/ESM4 proof: bridged runtime records gmst=" "runtime bridge proof log"
 Assert-CodeString "scripts/nikami/test-fnv-data-inventory.ps1" '"GMST" = "ESM4-to-runtime game setting bridge"' "GMST inventory runtime claim"
 Assert-CodeString "scripts/nikami/test-fnv-data-inventory.ps1" '"GLOB" = "ESM4-to-runtime global variable bridge"' "GLOB inventory runtime claim"
-Assert-CodeString "scripts/nikami/test-fnv-data-inventory.ps1" '"SCPT" = "ESM4-to-runtime script source bridge"' "SCPT inventory runtime claim"
+Assert-CodeString "scripts/nikami/fnv_no_silent_skip_classification.py" '"SCPT": "script source is stored and bridged as evidence pending full FNV script VM/runtime semantics"' "SCPT loaded-pending runtime boundary"
 
 Write-ProofLine ""
 Write-ProofLine "FNV runtime bridge contract PASS"

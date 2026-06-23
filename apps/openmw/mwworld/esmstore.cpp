@@ -11,6 +11,7 @@
 #include <string_view>
 #include <tuple>
 #include <unordered_map>
+#include <utility>
 #include <variant>
 
 #include <components/debug/debuglog.hpp>
@@ -55,6 +56,12 @@ namespace
         std::size_t mGlobals = 0;
         std::size_t mScripts = 0;
         std::size_t mQuestDialogues = 0;
+        std::size_t mQuestNameInfos = 0;
+        std::size_t mQuestStageInfos = 0;
+        std::size_t mCompleteQuestStageInfos = 0;
+        std::size_t mFailedQuestStageInfos = 0;
+        std::size_t mQuestObjectives = 0;
+        std::size_t mQuestObjectiveTargets = 0;
         std::size_t mTopicDialogues = 0;
         std::size_t mQuestInfos = 0;
         std::size_t mResolvedInfoSounds = 0;
@@ -172,6 +179,34 @@ namespace
         return ESM::RefId::formIdRefId(id);
     }
 
+    ESM::RefId questStageInfoId(const ESM4::Quest& quest, std::int16_t stageIndex, std::size_t entryIndex)
+    {
+        return ESM::RefId::stringRefId(
+            quest.mEditorId + ":stage:" + std::to_string(stageIndex) + ":" + std::to_string(entryIndex));
+    }
+
+    ESM::DialInfo makeJournalInfo(const ESM::RefId& id, std::int32_t journalIndex, std::string response)
+    {
+        ESM::DialInfo info;
+        info.blank();
+        info.mId = id;
+        info.mResponse = std::move(response);
+        info.mData.mType = ESM::Dialogue::Journal;
+        info.mData.mJournalIndex = journalIndex;
+        return info;
+    }
+
+    void addRuntimeDialogueInfo(ESM::Dialogue& dialogue, ESM::DialInfo info)
+    {
+        if (!dialogue.mInfoOrder.getOrderedInfo().empty())
+            info.mPrev = dialogue.mInfoOrder.getOrderedInfo().back().mId;
+        else if (!dialogue.mInfo.empty())
+            info.mPrev = dialogue.mInfo.back().mId;
+
+        dialogue.mInfoOrder.insertInfo(info, false);
+        dialogue.mInfo.push_back(std::move(info));
+    }
+
     std::string resolveEsm4SoundFile(const MWWorld::ESMStore& store, ESM::FormId soundId, unsigned int depth = 0)
     {
         constexpr unsigned int maxDepth = 8;
@@ -211,9 +246,49 @@ namespace
             target.mStringId = source.mQuestName.empty() ? source.mEditorId : source.mQuestName;
             target.mType = ESM::Dialogue::Journal;
 
-            targetDialogues.insert(target);
+            ESM::Dialogue* dialogue = targetDialogues.insert(target);
             questDialogueIds[source.mId] = target.mId;
             ++counts.mQuestDialogues;
+
+            if (dialogue == nullptr)
+                continue;
+
+            if (!source.mQuestName.empty())
+            {
+                ESM::DialInfo nameInfo = makeJournalInfo(
+                    ESM::RefId::stringRefId(source.mEditorId + ":name"), -1, source.mQuestName);
+                nameInfo.mQuestStatus = ESM::DialInfo::QS_Name;
+                addRuntimeDialogueInfo(*dialogue, std::move(nameInfo));
+                ++counts.mQuestNameInfos;
+            }
+
+            for (const ESM4::QuestStage& stage : source.mStages)
+            {
+                for (std::size_t entryIndex = 0; entryIndex < stage.mEntries.size(); ++entryIndex)
+                {
+                    const ESM4::QuestStageEntry& entry = stage.mEntries[entryIndex];
+                    if (entry.mLogEntry.empty())
+                        continue;
+
+                    ESM::DialInfo info = makeJournalInfo(
+                        questStageInfoId(source, stage.mIndex, entryIndex), stage.mIndex, entry.mLogEntry);
+                    info.mResultScript = entry.mScript.scriptSource;
+                    if ((entry.mFlags & ESM4::QuestStageEntry::Flag_CompleteQuest) != 0)
+                    {
+                        info.mQuestStatus = ESM::DialInfo::QS_Finished;
+                        ++counts.mCompleteQuestStageInfos;
+                    }
+                    if ((entry.mFlags & ESM4::QuestStageEntry::Flag_FailQuest) != 0)
+                        ++counts.mFailedQuestStageInfos;
+
+                    addRuntimeDialogueInfo(*dialogue, std::move(info));
+                    ++counts.mQuestStageInfos;
+                }
+            }
+
+            counts.mQuestObjectives += source.mObjectives.size();
+            for (const ESM4::QuestObjective& objective : source.mObjectives)
+                counts.mQuestObjectiveTargets += objective.mTargets.size();
         }
 
         for (const ESM4::Dialogue& source : store.get<ESM4::Dialogue>())
@@ -275,7 +350,7 @@ namespace
             info.mData.mType = ESM::Dialogue::Journal;
             info.mData.mJournalIndex = static_cast<std::int32_t>(source.mResponseData.responseNo);
 
-            dialogue->mInfo.push_back(std::move(info));
+            addRuntimeDialogueInfo(*dialogue, std::move(info));
             ++counts.mQuestInfos;
         }
 
@@ -1343,6 +1418,12 @@ namespace MWWorld
                          << " globals=" << bridgeCounts.mGlobals
                          << " scripts=" << bridgeCounts.mScripts
                          << " questDialogues=" << bridgeCounts.mQuestDialogues
+                         << " questNameInfos=" << bridgeCounts.mQuestNameInfos
+                         << " questStageInfos=" << bridgeCounts.mQuestStageInfos
+                         << " completeQuestStageInfos=" << bridgeCounts.mCompleteQuestStageInfos
+                         << " failedQuestStageInfos=" << bridgeCounts.mFailedQuestStageInfos
+                         << " questObjectives=" << bridgeCounts.mQuestObjectives
+                         << " questObjectiveTargets=" << bridgeCounts.mQuestObjectiveTargets
                          << " topicDialogues=" << bridgeCounts.mTopicDialogues
                          << " questInfos=" << bridgeCounts.mQuestInfos
                          << " resolvedInfoSounds=" << bridgeCounts.mResolvedInfoSounds

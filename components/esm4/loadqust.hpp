@@ -43,12 +43,47 @@ namespace ESM4
 #pragma pack(push, 1)
     struct QuestData
     {
-        std::uint8_t flags; // Quest_Flags
-        std::uint8_t priority;
-        std::uint16_t padding; // FO3
-        float questDelay; // FO3
+        std::uint8_t flags = 0; // Quest_Flags
+        std::uint8_t priority = 0;
+        std::uint16_t padding = 0; // FO3
+        float questDelay = 0.f; // FO3
     };
 #pragma pack(pop)
+
+    struct QuestObjectiveTarget
+    {
+        ESM::FormId mTarget;
+        std::uint8_t mFlags = 0;
+        std::vector<TargetCondition> mConditions;
+    };
+
+    struct QuestObjective
+    {
+        std::int32_t mIndex = 0;
+        std::string mDescription;
+        std::vector<QuestObjectiveTarget> mTargets;
+    };
+
+    struct QuestStageEntry
+    {
+        enum StageFlags
+        {
+            Flag_CompleteQuest = 0x01,
+            Flag_FailQuest = 0x02
+        };
+
+        std::uint8_t mFlags = 0;
+        std::vector<TargetCondition> mConditions;
+        std::string mLogEntry;
+        ScriptDefinition mScript;
+        ESM::FormId mNextQuest;
+    };
+
+    struct QuestStage
+    {
+        std::int16_t mIndex = 0;
+        std::vector<QuestStageEntry> mEntries;
+    };
 
     struct Quest
     {
@@ -71,6 +106,8 @@ namespace ESM4
         QuestData mData;
 
         std::vector<TargetCondition> mTargetConditions;
+        std::vector<QuestStage> mStages;
+        std::vector<QuestObjective> mObjectives;
 
         ScriptDefinition mScript;
 
