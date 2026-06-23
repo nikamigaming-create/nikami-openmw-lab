@@ -61,6 +61,7 @@ $SkyFrag = Join-Path $RepoRoot "files/shaders/compatibility/sky.frag"
 $SkyPasses = Join-Path $RepoRoot "files/shaders/lib/sky/passes.glsl"
 $ShaderSettings = Join-Path $RepoRoot "components/settings/categories/shaders.hpp"
 $SettingsDefault = Join-Path $RepoRoot "files/settings-default.cfg"
+$SkyTextureStatsScript = Join-Path $RepoRoot "scripts/nikami/fnv_sky_texture_stats.py"
 $FlatScript = Join-Path $RepoRoot "scripts/nikami/run-fnv-flat.ps1"
 $FlatProofScript = Join-Path $RepoRoot "scripts/nikami/run-fnv-flat-proof.ps1"
 $VrDeployScript = Join-Path $RepoRoot "scripts/nikami/deploy-fnv-vr-headset.ps1"
@@ -181,6 +182,11 @@ Assert-FileContains $WeatherFallbackScript "SunSunsetDisc" "FNV WTHR fallback ge
 Assert-FileContains $WeatherFallbackScript "sourceWthrBytesClassification" "FNV WTHR fallback generator separates source byte classification"
 Assert-FileContains $WeatherFallbackScript "payloadPolicy" "FNV WTHR fallback generator emits no-retail payload policy"
 Assert-FileContains $WeatherFallbackScript "runtimeColorCoverage" "FNV WTHR fallback generator classifies vertical sky color coverage"
+Assert-FileContains $SkyTextureStatsScript "derived-sky-texture-stats-no-retail-payloads" "FNV sky texture stats generator has no-payload policy"
+Assert-FileContains $SkyTextureStatsScript "sunWarmChannelOrder" "FNV sky texture stats generator checks warm sun channel order"
+Assert-FileContains $SkyTextureStatsScript "moonCoolChannelOrder" "FNV sky texture stats generator checks cool moon channel order"
+Assert-FileContains $SkyTextureStatsScript "clearCloudTopBrighterThanBottom" "FNV sky texture stats generator checks cloud texture vertical orientation"
+Assert-FileContains $SkyTextureStatsScript "wastelandUpperSkyBlueDominance" "FNV sky texture stats generator checks upper sky channel dominance"
 Assert-FileContains $RuntimeSettingsScript "Get-NikamiFnvWeatherFallbacks" "runtime settings expose generated FNV WTHR weather fallbacks"
 Assert-FileContains $FlatScript "Get-NikamiFnvWeatherFallbacks" "FNV flat uses generated WTHR weather fallbacks"
 Assert-FileContains $VrDeployScript "Get-NikamiFnvWeatherFallbacks" "FNV headset deploy uses generated WTHR weather fallbacks"
@@ -200,6 +206,31 @@ Assert-BsaContains "Fallout - Textures2.bsa" "textures[\\/]+sky[\\/]+skymoonfull
 Assert-BsaContains "Fallout - Textures2.bsa" "textures[\\/]+sky[\\/]+nv_sunglare\.dds$" "FNV sunglare texture entry"
 Assert-BsaContains "Fallout - Textures2.bsa" "textures[\\/]+sky[\\/]+nvcloudlight\.dds$" "FNV WTHR-selected clear cloud texture entry"
 Assert-BsaContains "Fallout - Textures2.bsa" "textures[\\/]+sky[\\/]+nv_wastelanduppersky\.dds$" "FNV WTHR-selected cloudy cloud texture entry"
+
+$skyTextureProofDir = Join-Path $ProofDir "sky-texture-stats"
+$skyTextureBsaTool = Get-BsaTool
+& python $SkyTextureStatsScript --fnv-data $FnvData --bsa-tool $skyTextureBsaTool --proof-dir $skyTextureProofDir |
+    ForEach-Object { Write-ProofLine $_ }
+if ($LASTEXITCODE -ne 0) {
+    throw "FNV sky texture stats generator failed with exit code $LASTEXITCODE"
+}
+$skyTextureStatsJson = Join-Path $skyTextureProofDir "fnv-sky-texture-stats.json"
+Assert-FileContains $skyTextureStatsJson '"status"\s*:\s*"PASS"' "derived FNV sky texture stats status"
+Assert-FileContains $skyTextureStatsJson '"payloadPolicy"\s*:\s*"derived-sky-texture-stats-no-retail-payloads"' "derived FNV sky texture stats payload policy"
+Assert-FileContains $skyTextureStatsJson '"classification"\s*:\s*"runtime-supported"' "derived FNV sky texture runtime classifications"
+Assert-FileContains $skyTextureStatsJson '"entry"\s*:\s*"textures/sky/sun\.dds"' "derived FNV sun texture stats row"
+Assert-FileContains $skyTextureStatsJson '"sunWarmChannelOrder"\s*:\s*true' "derived FNV sun warm channel order"
+Assert-FileContains $skyTextureStatsJson '"sunHasCutoutAlpha"\s*:\s*true' "derived FNV sun alpha cutout"
+Assert-FileContains $skyTextureStatsJson '"entry"\s*:\s*"textures/sky/nv_sunglare\.dds"' "derived FNV sunglare texture stats row"
+Assert-FileContains $skyTextureStatsJson '"sunglareNeutralChannelBalance"\s*:\s*true' "derived FNV sunglare neutral channel balance"
+Assert-FileContains $skyTextureStatsJson '"entry"\s*:\s*"textures/sky/skymoonfull\.dds"' "derived FNV moon texture stats row"
+Assert-FileContains $skyTextureStatsJson '"moonCoolChannelOrder"\s*:\s*true' "derived FNV moon cool channel order"
+Assert-FileContains $skyTextureStatsJson '"entry"\s*:\s*"textures/sky/nvcloudlight\.dds"' "derived FNV clear cloud texture stats row"
+Assert-FileContains $skyTextureStatsJson '"clearCloudBlueGreenRedOrder"\s*:\s*true' "derived FNV clear cloud channel order"
+Assert-FileContains $skyTextureStatsJson '"clearCloudTopBrighterThanBottom"\s*:\s*true' "derived FNV clear cloud vertical orientation stats"
+Assert-FileContains $skyTextureStatsJson '"entry"\s*:\s*"textures/sky/nv_wastelanduppersky\.dds"' "derived FNV wasteland upper sky texture stats row"
+Assert-FileContains $skyTextureStatsJson '"wastelandUpperSkyBlueDominance"\s*:\s*true' "derived FNV wasteland upper sky blue dominance"
+Assert-FileNotContains $skyTextureStatsJson '"status"\s*:\s*"FAIL"' "derived FNV sky texture stats failure"
 
 $requiredLogPatterns = @(
     "FNV/ESM4: sky shader mode forceShaders=0 falloutSkyModels=1 program=sky-interpreted",
@@ -438,6 +469,7 @@ $result = [ordered]@{
     proofDir = $ProofDir
     flatProofDir = $latestFlatProof.FullName
     sunVisibleProofDir = $sunProof.FullName
+    skyTextureStatsJson = $skyTextureStatsJson
     classification = "runtime-supported"
     checked = @(
         "explicit FNV sky model settings",
@@ -454,6 +486,7 @@ $result = [ordered]@{
         "FNV screenshot palette is compared against generated Clear/Day WTHR sky colors without committed image baselines",
         "FNV screenshot palette separately proves upper/lower sky bands and horizon band placement",
         "FNV screenshot sky color sanity rejects raw red channel/mask leakage and stale Morrowind blue palette leakage",
+        "FNV sky DDS texture stats prove expected sun/moon/cloud channel signatures and cloud vertical orientation without storing retail payloads",
         "FNV sun/moon billboard path uses Fallout sky textures",
         "FNV sun-facing screenshot proves visible sun disc/glare core",
         "FNV runtime sun vector chain is logged and internally consistent while retail orbit parity remains pending",
