@@ -36,7 +36,7 @@ $args = @{
     RequireLogPattern = @(
         "FNV/ESM4 proof: flat Fallout HUD readouts active HP/AP/AMMO/text compass",
         "FNV/ESM4 proof: pushed inventory GUI mode page=`"data`"",
-        "FNV/ESM4 proof: DATA pane source-backed alternate ammo active; quests/notes/radio/perks runtime binding pending"
+        "FNV/ESM4 proof: DATA pane source-backed alternate ammo active; quest objective script state active; notes/radio pending; perk membership runtime active; perk effects/level-up pending"
     )
 }
 if (![string]::IsNullOrWhiteSpace($FnvConfigData)) { $args.FnvConfigData = $FnvConfigData }

@@ -423,7 +423,7 @@ Assert-Text "apps/openmw/mwworld/esmstore.cpp" "raw-loaded pending subrecords" "
 Assert-Text "scripts/nikami/run-fnv-flat-proof.ps1" "TraceRawPendingRecord" "flat proof raw-pending trace parameter"
 Assert-Text "scripts/nikami/fnv_content_ledger.py" "def actor_value_row" "content ledger writes AVIF progression rows"
 Assert-Text "scripts/nikami/fnv_content_ledger.py" "runtime-actor-value-progression-binding" "content ledger bounds AVIF progression rows"
-Assert-Text "apps/openmw/mwgui/spellwindow.cpp" "Runtime player perk/trait binding pending" "perk/trait runtime boundary is explicit"
+Assert-Text "apps/openmw/mwgui/spellwindow.cpp" "Runtime membership active; owned=" "perk/trait membership runtime boundary is explicit"
 
 $ContentLedgerScript = Join-Path $PSScriptRoot "test-fnv-content-ledger.ps1"
 & $ContentLedgerScript -FnvRoot $FnvRoot -FnvData $FnvData -ProofRoot $ProofRoot -Content $FlatContent

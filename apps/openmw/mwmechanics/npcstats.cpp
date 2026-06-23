@@ -302,6 +302,21 @@ bool MWMechanics::NpcStats::hasBeenUsed(const ESM::RefId& id) const
     return mUsedIds.find(id) != mUsedIds.end();
 }
 
+void MWMechanics::NpcStats::addFalloutPerk(const ESM::RefId& id)
+{
+    mFalloutPerks.insert(id);
+}
+
+bool MWMechanics::NpcStats::hasFalloutPerk(const ESM::RefId& id) const
+{
+    return mFalloutPerks.find(id) != mFalloutPerks.end();
+}
+
+const std::set<ESM::RefId>& MWMechanics::NpcStats::getFalloutPerks() const
+{
+    return mFalloutPerks;
+}
+
 int MWMechanics::NpcStats::getBounty() const
 {
     return mBounty;
@@ -462,6 +477,7 @@ void MWMechanics::NpcStats::writeState(ESM::NpcStats& state) const
         state.mSpecIncreases[i] = mSpecIncreases[i];
 
     std::copy(mUsedIds.begin(), mUsedIds.end(), std::back_inserter(state.mUsedIds));
+    std::copy(mFalloutPerks.begin(), mFalloutPerks.end(), std::back_inserter(state.mFalloutPerks));
 
     state.mTimeToStartDrowning = mTimeToStartDrowning;
 }
@@ -515,6 +531,10 @@ void MWMechanics::NpcStats::readState(const ESM::NpcStats& state)
     for (auto iter(state.mUsedIds.begin()); iter != state.mUsedIds.end(); ++iter)
         if (store.find(*iter))
             mUsedIds.insert(*iter);
+
+    for (auto iter(state.mFalloutPerks.begin()); iter != state.mFalloutPerks.end(); ++iter)
+        if (store.find(*iter) == ESM::REC_PERK4)
+            mFalloutPerks.insert(*iter);
 
     mTimeToStartDrowning = state.mTimeToStartDrowning;
 }

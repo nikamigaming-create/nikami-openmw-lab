@@ -64,6 +64,7 @@
 
 #include <components/esm4/loadammo.hpp>
 #include <components/esm4/loadnpc.hpp>
+#include <components/esm4/loadperk.hpp>
 #include <components/esm4/loadproj.hpp>
 #include <components/esm4/loadweap.hpp>
 
@@ -127,6 +128,7 @@
 
 #include "mwmechanics/creaturestats.hpp"
 #include "mwmechanics/mechanicsmanagerimp.hpp"
+#include "mwmechanics/npcstats.hpp"
 
 #include "mwstate/statemanagerimp.hpp"
 
@@ -377,6 +379,68 @@ namespace
                 return &*it;
         }
         return nullptr;
+    }
+
+    const ESM4::Perk* findEsm4PerkByEditorId(const MWWorld::ESMStore& store, std::string_view editorId)
+    {
+        const auto& perks = store.get<ESM4::Perk>();
+        for (auto it = perks.begin(); it != perks.end(); ++it)
+        {
+            if (Misc::StringUtils::ciEqual(it->mEditorId, editorId))
+                return &*it;
+        }
+        return nullptr;
+    }
+
+    void runFalloutPlayerPerkProof(MWWorld::Ptr player)
+    {
+        if (player.isEmpty() || !player.getClass().isNpc())
+        {
+            Log(Debug::Warning) << "FNV/ESM4 proof: player perk runtime BLOCKED reason=no-player-npc";
+            return;
+        }
+
+        const MWWorld::ESMStore& store = *MWBase::Environment::get().getESMStore();
+        const ESM4::Perk* builtToDestroy = findEsm4PerkByEditorId(store, "BuiltToDestroy");
+        const ESM4::Perk* wildWasteland = findEsm4PerkByEditorId(store, "WildWasteland");
+        const int builtRecordType = builtToDestroy != nullptr ? store.find(ESM::RefId(builtToDestroy->mId)) : 0;
+        const int wildRecordType = wildWasteland != nullptr ? store.find(ESM::RefId(wildWasteland->mId)) : 0;
+
+        MWMechanics::NpcStats& stats = player.getClass().getNpcStats(player);
+        const std::size_t beforeCount = stats.getFalloutPerks().size();
+        if (builtToDestroy != nullptr)
+            stats.addFalloutPerk(ESM::RefId(builtToDestroy->mId));
+        if (wildWasteland != nullptr)
+            stats.addFalloutPerk(ESM::RefId(wildWasteland->mId));
+
+        const bool hasBuilt = builtToDestroy != nullptr && stats.hasFalloutPerk(ESM::RefId(builtToDestroy->mId));
+        const bool hasWild = wildWasteland != nullptr && stats.hasFalloutPerk(ESM::RefId(wildWasteland->mId));
+        const bool pass = builtToDestroy != nullptr && wildWasteland != nullptr && builtRecordType == ESM::REC_PERK4
+            && wildRecordType == ESM::REC_PERK4 && hasBuilt && hasWild;
+
+        Log(Debug::Info) << "FNV/ESM4 proof: player perk runtime " << (pass ? "PASS" : "FAIL")
+                         << " perks=" << store.get<ESM4::Perk>().getSize()
+                         << " builtEdid=" << (builtToDestroy != nullptr ? builtToDestroy->mEditorId : "")
+                         << " builtId="
+                         << (builtToDestroy != nullptr ? ESM::RefId(builtToDestroy->mId) : ESM::RefId())
+                         << " builtRecordType=0x" << std::hex << builtRecordType << std::dec
+                         << " builtHas=" << hasBuilt
+                         << " builtEffectTypes="
+                         << (builtToDestroy != nullptr ? builtToDestroy->mEffectTypes.size() : 0)
+                         << " builtEffectData="
+                         << (builtToDestroy != nullptr ? builtToDestroy->mEffectData.size() : 0)
+                         << " wildEdid=" << (wildWasteland != nullptr ? wildWasteland->mEditorId : "")
+                         << " wildId="
+                         << (wildWasteland != nullptr ? ESM::RefId(wildWasteland->mId) : ESM::RefId())
+                         << " wildRecordType=0x" << std::hex << wildRecordType << std::dec
+                         << " wildHas=" << hasWild
+                         << " beforeCount=" << beforeCount
+                         << " afterCount=" << stats.getFalloutPerks().size()
+                         << " saveSubrecord=FPRK"
+                         << " runtimeBoundary=player-perk-membership-runtime-supported"
+                         << " effectsRuntime=loaded-pending-runtime"
+                         << " levelUpSelectionRuntime=loaded-pending-runtime"
+                         << " actorValueRuntime=loaded-pending-runtime";
     }
 
     void runFalloutNonzeroProjectileProof()
@@ -940,6 +1004,19 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
         {
             proofNonzeroProjectileApplied = true;
             runFalloutNonzeroProjectileProof();
+        }
+
+        static bool proofPlayerPerkApplied = false;
+        const char* proofPlayerPerk = std::getenv("OPENMW_FNV_PROOF_PLAYER_PERKS");
+        const bool proofPlayerPerkEnabled = proofPlayerPerk != nullptr && *proofPlayerPerk != '\0';
+        const int proofPlayerPerkFrame
+            = static_cast<int>(getProofFloat("OPENMW_FNV_PROOF_PLAYER_PERKS_FRAME", 150.f));
+        if (!proofPlayerPerkApplied && proofPlayerPerkEnabled
+            && frameNumber >= static_cast<unsigned>(proofPlayerPerkFrame)
+            && mStateManager->getState() == MWBase::StateManager::State_Running)
+        {
+            proofPlayerPerkApplied = true;
+            runFalloutPlayerPerkProof(mWorld->getPlayerPtr());
         }
 
         // update mechanics

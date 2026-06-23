@@ -68,6 +68,9 @@ namespace ESM
         while (esm.isNextSub("USED"))
             mUsedIds.push_back(esm.getRefId());
 
+        while (esm.isNextSub("FPRK"))
+            mFalloutPerks.push_back(esm.getRefId());
+
         mTimeToStartDrowning = 0;
         esm.getHNOT(mTimeToStartDrowning, "DRTI");
 
@@ -136,6 +139,9 @@ namespace ESM
         for (const RefId& id : mUsedIds)
             esm.writeHNRefId("USED", id);
 
+        for (const RefId& id : mFalloutPerks)
+            esm.writeHNRefId("FPRK", id);
+
         if (mTimeToStartDrowning)
             esm.writeHNT("DRTI", mTimeToStartDrowning);
 
@@ -154,6 +160,8 @@ namespace ESM
         mLevelProgress = 0;
         mSkillIncrease.fill(0);
         mSpecIncreases.fill(0);
+        mUsedIds.clear();
+        mFalloutPerks.clear();
         mTimeToStartDrowning = 20;
         mCrimeId = -1;
     }

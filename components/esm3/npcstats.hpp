@@ -42,6 +42,7 @@ namespace ESM
         std::array<int32_t, ESM::Attribute::Length> mSkillIncrease;
         std::array<int32_t, 3> mSpecIncreases;
         std::vector<ESM::RefId> mUsedIds;
+        std::vector<ESM::RefId> mFalloutPerks;
         float mTimeToStartDrowning;
         int32_t mCrimeId;
 

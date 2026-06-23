@@ -17,6 +17,7 @@
 #include <components/esm3/loadbsgn.hpp>
 #include <components/esm3/loadrace.hpp>
 #include <components/esm4/loadammo.hpp>
+#include <components/esm4/loadperk.hpp>
 #include <components/misc/strings/algorithm.hpp>
 #include <components/misc/strings/format.hpp>
 #include <components/settings/values.hpp>
@@ -34,6 +35,7 @@
 
 #include "../mwmechanics/actorutil.hpp"
 #include "../mwmechanics/creaturestats.hpp"
+#include "../mwmechanics/npcstats.hpp"
 #include "../mwmechanics/spells.hpp"
 #include "../mwmechanics/spellutil.hpp"
 
@@ -68,7 +70,32 @@ namespace MWGui
             caption << "QUESTS\n  Source proven: VCG01, GSQuest, GSRadioQuest\n  Runtime stage journal bridge and objective script state active; HUD target routing pending\n\n";
             caption << "NOTES\n  Source proven: CaravanRulesNote, CrimsonCaravanHolotapeNV\n  Runtime note/message binding pending\n\n";
             caption << "RADIO\n  Source proven: RadioNewVegas, BlackMountainRadio\n  Runtime station/message binding pending\n\n";
-            caption << "PERKS / TRAITS\n  Source proven: PerkBuiltToDestroy, PerkWildWasteland\n  Runtime player perk/trait binding pending\n\n";
+            caption << "PERKS / TRAITS\n  Source proven: BuiltToDestroy, WildWasteland\n";
+            const MWWorld::Ptr player = MWMechanics::getPlayer();
+            if (!player.isEmpty() && player.getClass().isNpc())
+            {
+                const auto& perkStore = MWBase::Environment::get().getESMStore()->get<ESM4::Perk>();
+                const auto& ownedPerks = player.getClass().getNpcStats(player).getFalloutPerks();
+                std::vector<std::string> ownedLabels;
+                for (const ESM::RefId& id : ownedPerks)
+                {
+                    if (const ESM4::Perk* perk = perkStore.search(id))
+                        ownedLabels.push_back(perk->mFullName.empty() ? perk->mEditorId : perk->mFullName);
+                }
+
+                caption << "  Runtime membership active; owned=" << ownedLabels.size()
+                        << "; effects/level-up selection pending";
+                if (!ownedLabels.empty())
+                {
+                    caption << "\n";
+                    for (const std::string& label : ownedLabels)
+                        caption << "  " << label << "\n";
+                }
+                caption << "\n";
+            }
+            else
+                caption << "  Runtime membership active; effects/level-up selection pending\n";
+            caption << "\n";
             caption << "ALT AMMO\n";
 
             const std::array<std::string_view, 8> wantedAmmo = { "Ammo9mm", "Ammo9mmHollowPoint", "Ammo9mmP",
@@ -153,7 +180,7 @@ namespace MWGui
             mFalloutDataPlaceholder->setCaption(getFalloutDataCaption());
             mFalloutDataPlaceholder->setVisible(true);
             Log(Debug::Info)
-                << "FNV/ESM4 proof: DATA pane source-backed alternate ammo active; quest objective script state active; notes/radio/perks runtime binding pending";
+                << "FNV/ESM4 proof: DATA pane source-backed alternate ammo active; quest objective script state active; notes/radio pending; perk membership runtime active; perk effects/level-up pending";
         }
 
         if (Settings::gui().mControllerMenus)

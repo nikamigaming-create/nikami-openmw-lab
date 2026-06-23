@@ -43,6 +43,7 @@ namespace MWMechanics
         std::vector<int> mSpecIncreases; // number of skill increases for each specialization (accumulates throughout
                                          // the entire game)
         std::set<ESM::RefId> mUsedIds;
+        std::set<ESM::RefId> mFalloutPerks;
         // ---------------------------------------------------------------------------
 
         /// Countdown to getting damage while underwater
@@ -108,6 +109,10 @@ namespace MWMechanics
 
         bool hasBeenUsed(const ESM::RefId& id) const;
         ///< @note Id must be lower-case
+
+        void addFalloutPerk(const ESM::RefId& id);
+        bool hasFalloutPerk(const ESM::RefId& id) const;
+        const std::set<ESM::RefId>& getFalloutPerks() const;
 
         int getBounty() const;
 
