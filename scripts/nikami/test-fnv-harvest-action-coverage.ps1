@@ -229,9 +229,13 @@ $runtimeRules = @{
         New-Anchor "components/resource/scenemanager.cpp" "Ignoring SpeedTree data file" "current runtime still returns empty nodes for SPT files"
         New-Anchor "components/bgsm/file.hpp" "mTree" "tree material flag support exists"
     ) "Add SPT reader or conversion path for FNV tree assets."
-    ".psa" = New-Rule "blocked-runtime-support" "procedural/animation-support" "PSA support assets are harvested but no runtime reader is wired" @(
+    ".psa" = New-Rule "blocked-runtime-support" "actor-deathpose-animation" "PSA death-pose assets are harvested but no actor/creature death-pose runtime reader is wired" @(
+        New-Anchor "scripts/nikami/test-fnv-psa-deathpose-contract.ps1" "FNV PSA death-pose contract" "proof gate verifies the exact shipped death-pose PSA set and current runtime absence"
         New-Anchor "apps/niftest/niftest.cpp" 'extension == ".psa"' "test tool recognizes PSA as a NIF-adjacent asset"
-    ) "Identify PSA consumer in Gamebryo/FNV pipeline, then add reader or explicit runtime bypass."
+        New-Anchor "apps/openmw/mwrender/animation.hpp" "class Animation" "actor animation runtime owns any future death-pose playback"
+        New-Anchor "apps/openmw/mwrender/creatureanimation.cpp" "CreatureAnimation" "creature animation runtime owns creature death-pose playback"
+        New-Anchor "apps/openmw/mwrender/npcanimation.cpp" "NpcAnimation" "NPC animation runtime owns humanoid death-pose playback"
+    ) "Add PSA death-pose reader/playback or prove an explicit fallback to existing KF/ragdoll death behavior."
     ".ctl" = New-Rule "vfs-readable-runtime-conditional" "facegen-control-basis" "FaceGen CTL bytes are loaded through VFS, validated as FRCTL001, and used to verify the FNV FaceGen 50/30/50 coefficient basis; full control payload semantics remain a follow-up gate" @(
         New-Anchor "apps/openmw/mwrender/esm4npcanimation.cpp" "loadFaceGenCtl" "FaceGen CTL reader loads external control bytes"
         New-Anchor "apps/openmw/mwrender/esm4npcanimation.cpp" '"FRCTL001"' "FaceGen CTL magic is validated"
