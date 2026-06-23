@@ -61,6 +61,9 @@ namespace MWBase
         virtual int getJournalIndex(const ESM::RefId& id) const = 0;
         ///< Get the journal index.
 
+        virtual bool isQuestStageDone(const ESM::RefId& id, int index) const = 0;
+        ///< Return whether a specific quest stage entry has been added.
+
         virtual bool isQuestStarted(const ESM::RefId& id) const = 0;
         ///< Return whether a quest has runtime journal state.
 

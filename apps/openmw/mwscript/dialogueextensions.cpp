@@ -61,6 +61,18 @@ namespace MWScript
                              << " fallbackSetIndex=" << fallbackSetIndex;
         }
 
+        void logQuestStageDoneScriptTrace(
+            const char* opcode, const ESM::RefId& quest, int requestedIndex, int currentIndex, int stageDone)
+        {
+            if (!isQuestJournalScriptTraceEnabled())
+                return;
+
+            Log(Debug::Info) << "FNV/ESM4 proof: quest stage-done MWScript opcode " << opcode
+                             << " quest=" << quest.toDebugString() << " requestedIndex=" << requestedIndex
+                             << " currentIndex=" << currentIndex << " stageDone=" << stageDone
+                             << " runtimeBoundary=selected-stage-done-entry-state-runtime-supported";
+        }
+
         void logQuestStatusScriptTrace(
             const char* opcode, const ESM::RefId& quest, bool started, bool running, bool completed, int currentIndex)
         {
@@ -187,6 +199,24 @@ namespace MWScript
 
                 runtime.push(index);
                 logQuestJournalScriptTrace("GetStage", quest, -1, index, -1, -1);
+            }
+        };
+
+        class OpGetStageDone : public Interpreter::Opcode0
+        {
+        public:
+            void execute(Interpreter::Runtime& runtime) override
+            {
+                ESM::RefId quest = ESM::RefId::stringRefId(runtime.getStringLiteral(runtime[0].mInteger));
+                runtime.pop();
+
+                Interpreter::Type_Integer index = runtime[0].mInteger;
+                runtime.pop();
+
+                MWBase::Journal* journal = MWBase::Environment::get().getJournal();
+                const int done = journal->isQuestStageDone(quest, index) ? 1 : 0;
+                runtime.push(done);
+                logQuestStageDoneScriptTrace("GetStageDone", quest, index, journal->getJournalIndex(quest), done);
             }
         };
 
@@ -562,6 +592,7 @@ namespace MWScript
             interpreter.installSegment5<OpGetJournalIndex>(Compiler::Dialogue::opcodeGetJournalIndex);
             interpreter.installSegment5<OpSetStage>(Compiler::Dialogue::opcodeSetStage);
             interpreter.installSegment5<OpGetStage>(Compiler::Dialogue::opcodeGetStage);
+            interpreter.installSegment5<OpGetStageDone>(Compiler::Dialogue::opcodeGetStageDone);
             interpreter.installSegment5<OpStartQuest>(Compiler::Dialogue::opcodeStartQuest);
             interpreter.installSegment5<OpCompleteQuest>(Compiler::Dialogue::opcodeCompleteQuest);
             interpreter.installSegment5<OpGetQuestCompleted>(Compiler::Dialogue::opcodeGetQuestCompleted);

@@ -169,6 +169,7 @@ namespace Compiler
             extensions.registerInstruction("completequest", "c", opcodeCompleteQuest);
             extensions.registerFunction("getquestcompleted", 'l', "c", opcodeGetQuestCompleted);
             extensions.registerFunction("getquestrunning", 'l', "c", opcodeGetQuestRunning);
+            extensions.registerFunction("getstagedone", 'l', "cl", opcodeGetStageDone);
             extensions.registerInstruction("filljournal", "", opcodeFillJournal);
             extensions.registerInstruction("setobjectivedisplayed", "cll", opcodeSetObjectiveDisplayed);
             extensions.registerInstruction("setobjectivecompleted", "cll", opcodeSetObjectiveCompleted);

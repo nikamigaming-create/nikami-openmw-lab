@@ -151,7 +151,7 @@ Assert-Text "apps/openmw/mwdialogue/journalimp.cpp" "OPENMW_FNV_PROOF_QUEST_STAG
 Assert-Text "apps/openmw/mwdialogue/journalimp.cpp" "selected-stage-fragment-result-script-runtime-supported" "bounded stage fragment runtime classification"
 Assert-Text "apps/openmw/mwscript/dialogueextensions.cpp" "OPENMW_FNV_PROOF_QUEST_OBJECTIVE_SCRIPT_TRACE" "objective opcode proof trace switch"
 Assert-Text "scripts/nikami/run-fnv-flat-proof.ps1" "FnvQuestStageFragmentTrace" "flat proof can trace stage fragments"
-Assert-Text "scripts/nikami/fnv_no_silent_skip_classification.py" '"QUST": "quest records are stored, QUST stage journal entries are bridged, selected SetStage/GetStage, StartQuest/CompleteQuest/GetQuestCompleted/GetQuestRunning, and stage fragments execute, selected objective target references can resolve, and objective displayed/completed script state is bound pending full quest lifecycle/HUD-marker/condition parity"' "QUST remains loaded-pending runtime with selected stage, fragment, and target support"
+Assert-Text "scripts/nikami/fnv_no_silent_skip_classification.py" '"QUST": "quest records are stored, QUST stage journal entries are bridged, selected SetStage/GetStage/GetStageDone, StartQuest/CompleteQuest/GetQuestCompleted/GetQuestRunning, and stage fragments execute, selected objective target references can resolve, and objective displayed/completed script state is bound pending full quest lifecycle/HUD-marker/condition parity"' "QUST remains loaded-pending runtime with selected stage, fragment, and target support"
 
 $ContentLedgerScript = Join-Path $PSScriptRoot "test-fnv-content-ledger.ps1"
 & $ContentLedgerScript -FnvRoot $FnvRoot -FnvData $FnvData -ProofRoot $ProofDir -Content $FlatContent

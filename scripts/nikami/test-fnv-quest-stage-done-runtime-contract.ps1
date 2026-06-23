@@ -31,13 +31,11 @@ $FlatContent = @(
 )
 
 $QuestId = "VMS57"
-$ObjectiveIndex = 10
-$TargetIndex = 0
-$ExpectedTargetFormId = "0x000e61a2"
-$ExpectedRuntimeTargetFormIdPattern = "FormId:0x10e61a2"
+$StageIndex = 10
+$ExpectedStageTextEntries = 1
 $ScreenshotFrames = "180,300"
 $Stamp = Get-Date -Format "yyyyMMdd_HHmmss"
-$ProofDir = Join-Path $ProofRoot "fnv-quest-target-runtime-contract/$Stamp"
+$ProofDir = Join-Path $ProofRoot "fnv-quest-stage-done-runtime-contract/$Stamp"
 $SummaryFile = Join-Path $ProofDir "summary.txt"
 New-Item -ItemType Directory -Force -Path $ProofDir | Out-Null
 $RuntimeRunSeconds = [Math]::Max($RunSeconds, 30)
@@ -129,25 +127,27 @@ function Get-BridgeCounts([string]$OpenMwLog) {
     return $counts
 }
 
-Write-ProofLine "FNV quest target runtime contract $Stamp"
+Write-ProofLine "FNV quest stage-done runtime contract $Stamp"
 Write-ProofLine "RepoRoot: $RepoRoot"
 Write-ProofLine "FnvData: $FnvData"
 Write-ProofLine "ProofDir: $ProofDir"
 Write-ProofLine "RunSeconds: $RuntimeRunSeconds"
 Write-ProofLine "QuestId: $QuestId"
-Write-ProofLine "ObjectiveIndex: $ObjectiveIndex"
-Write-ProofLine "TargetIndex: $TargetIndex"
+Write-ProofLine "StageIndex: $StageIndex"
 Write-ProofLine ""
-Write-ProofLine "Runtime boundary: This proves one selected real FNV QSTA objective target resolves at runtime to a loaded placed reference with parent cell, base record, and finite position. It does not claim HUD marker rendering, target condition execution, pathing, compass/map routing, or full quest completion parity."
+Write-ProofLine "Runtime boundary: This proves selected Fallout-native GetStageDone is compiler-bound and runtime-bound on PC-flat against actual quest entry state. SetJournalIndex alone moves current stage but does not mark the stage done; SetStage adds the real harvested stage entry and GetStageDone then returns true. It does not claim exhaustive condition evaluation, quest script semantics, rewards, target/HUD routing, or full quest lifecycle parity."
 Write-ProofLine ""
 
-Assert-Text "components/esm4/loadqust.hpp" "QuestObjectiveTarget" "QUST objective target store"
-Assert-Text "components/esm4/loadqust.cpp" 'case ESM::fourCC("QSTA")' "QSTA target subrecord loader"
-Assert-Text "apps/openmw/engine.cpp" "resolveFalloutQuestTarget" "runtime QSTA target resolver"
-Assert-Text "apps/openmw/engine.cpp" "runFalloutQuestTargetProof" "runtime QSTA target proof hook"
-Assert-Text "apps/openmw/engine.cpp" "selected-quest-objective-target-resolution-runtime-supported" "bounded target runtime classification"
-Assert-Text "scripts/nikami/run-fnv-flat-proof.ps1" "FnvQuestTargetTrace" "flat proof can trace quest targets"
-Assert-Text "scripts/nikami/fnv_no_silent_skip_classification.py" '"QUST": "quest records are stored, QUST stage journal entries are bridged, selected SetStage/GetStage/GetStageDone, StartQuest/CompleteQuest/GetQuestCompleted/GetQuestRunning, and stage fragments execute, selected objective target references can resolve, and objective displayed/completed script state is bound pending full quest lifecycle/HUD-marker/condition parity"' "QUST remains loaded-pending runtime with selected stage and target support"
+Assert-Text "apps/openmw/mwbase/journal.hpp" "isQuestStageDone" "journal stage-done state API"
+Assert-Text "apps/openmw/mwdialogue/journalimp.cpp" "JournalEntry::idFromIndex(id, index)" "stage-done resolves real journal info id"
+Assert-Text "apps/openmw/mwdialogue/journalimp.cpp" "iter->mInfoId == infoId" "stage-done checks actual quest entry"
+Assert-Text "components/compiler/opcodes.hpp" "opcodeGetStageDone = 0x2000331" "GetStageDone opcode id"
+Assert-Text "components/compiler/extensions0.cpp" 'extensions.registerFunction("getstagedone", ''l'', "cl", opcodeGetStageDone)' "GetStageDone compiler function"
+Assert-Text "apps/openmw/mwscript/dialogueextensions.cpp" "class OpGetStageDone" "GetStageDone runtime opcode"
+Assert-Text "apps/openmw/mwscript/dialogueextensions.cpp" "installSegment5<OpGetStageDone>" "GetStageDone opcode installed"
+Assert-Text "apps/openmw/mwscript/dialogueextensions.cpp" "selected-stage-done-entry-state-runtime-supported" "bounded stage-done runtime classification"
+Assert-Text "apps/openmw/mwscript/docs/vmformat.txt" "op 0x2000331: GetStageDone" "VM docs GetStageDone"
+Assert-Text "scripts/nikami/fnv_no_silent_skip_classification.py" '"QUST": "quest records are stored, QUST stage journal entries are bridged, selected SetStage/GetStage/GetStageDone, StartQuest/CompleteQuest/GetQuestCompleted/GetQuestRunning, and stage fragments execute, selected objective target references can resolve, and objective displayed/completed script state is bound pending full quest lifecycle/HUD-marker/condition parity"' "QUST remains loaded-pending runtime with selected stage-done support"
 
 $ContentLedgerScript = Join-Path $PSScriptRoot "test-fnv-content-ledger.ps1"
 & $ContentLedgerScript -FnvRoot $FnvRoot -FnvData $FnvData -ProofRoot $ProofDir -Content $FlatContent
@@ -160,7 +160,7 @@ $QuestObjectiveCount = 0
 $QuestObjectiveTargetCount = 0
 $QuestStageTextEntryCount = 0
 $QuestRow = $null
-$ObjectiveRow = $null
+$StageRow = $null
 foreach ($row in (Read-JsonArray (Join-Path $ContentLedgerDir "quests.json") "content ledger quests")) {
     if ([string]::IsNullOrWhiteSpace([string]$row.editorId)) {
         continue
@@ -175,27 +175,32 @@ foreach ($row in (Read-JsonArray (Join-Path $ContentLedgerDir "quests.json") "co
 if ($null -eq $QuestRow) {
     throw "Missing expected real FNV quest in content ledger: $QuestId"
 }
-foreach ($objective in @($QuestRow.objectives)) {
-    if ([int]$objective.objectiveIndex -eq $ObjectiveIndex) {
-        $ObjectiveRow = $objective
+foreach ($stage in @($QuestRow.stages)) {
+    if ([int]$stage.stageIndex -eq $StageIndex) {
+        $StageRow = $stage
         break
     }
 }
-if ($null -eq $ObjectiveRow) {
-    throw "Missing expected real FNV objective in content ledger: ${QuestId}:${ObjectiveIndex}"
+if ($null -eq $StageRow) {
+    throw "Missing expected real FNV quest stage in content ledger: ${QuestId}:${StageIndex}"
 }
-$ObjectiveTargets = @($ObjectiveRow.targets)
-if ($TargetIndex -ge $ObjectiveTargets.Count) {
-    throw "Selected target index is out of range: targetIndex=$TargetIndex targetCount=$($ObjectiveTargets.Count)"
-}
-$SelectedTarget = $ObjectiveTargets[$TargetIndex]
+$StageTextEntries = @($StageRow.logEntries | Where-Object { [int]$_.logLength -gt 0 })
 Assert-GreaterThan "ledger quest objective definitions" $QuestObjectiveCount 0
 Assert-GreaterThan "ledger quest objective targets" $QuestObjectiveTargetCount 0
 Assert-GreaterThan "ledger quest stage text entries" $QuestStageTextEntryCount 0
-Assert-GreaterThan "selected objective targets" $ObjectiveTargets.Count 0
-Assert-Equal "selected target form id" ([string]$SelectedTarget.targetFormId) $ExpectedTargetFormId
-Assert-Equal "selected target condition count" ([int]$SelectedTarget.conditionCount) 0
-Write-ProofLine "Selected objective source: plugin=$($QuestRow.plugin) formId=$($QuestRow.formId) objective=$ObjectiveIndex target=$ExpectedTargetFormId targets=$($ObjectiveTargets.Count)"
+Assert-Equal "selected quest stage text entries" $StageTextEntries.Count $ExpectedStageTextEntries
+Write-ProofLine "Selected quest source: plugin=$($QuestRow.plugin) formId=$($QuestRow.formId) stage=$StageIndex textEntries=$($StageTextEntries.Count)"
+
+$StageDoneStartupScript = Join-Path $ProofDir "quest-stage-done-opcodes-startup.txt"
+@(
+    "GetStageDone $QuestId $StageIndex",
+    "SetJournalIndex $QuestId $StageIndex",
+    "GetStage $QuestId",
+    "GetStageDone $QuestId $StageIndex",
+    "SetStage $QuestId $StageIndex",
+    "GetStageDone $QuestId $StageIndex"
+) | Set-Content -LiteralPath $StageDoneStartupScript -Encoding ASCII
+Write-ProofLine "Stage-done opcode startup script: $StageDoneStartupScript"
 
 $CommonSkyPatterns = @(
     "FNV/ESM4: sky shader mode forceShaders=0 falloutSkyModels=1 program=sky-interpreted",
@@ -207,7 +212,12 @@ $CommonSkyPatterns = @(
     "FNV/ESM4 proof: render sun direction .* normalizedSky=.*"
 )
 $RuntimePatterns = @(
-    "FNV/ESM4 proof: quest target runtime PASS .*quest=$QuestId .*questFound=1 .*objective=$ObjectiveIndex .*objectiveFound=1 .*targetIndex=$TargetIndex .*targetCount=$($ObjectiveTargets.Count) .*targetFormId=$ExpectedRuntimeTargetFormIdPattern .*targetFlags=0 .*targetConditions=0 .*targetResolved=1 .*targetRecordType=(REFR4|ACHR4|ACRE4) .*cellFound=1 .*baseFormId=FormId:0x[0-9a-fA-F]+ .*baseRecordType=[A-Z0-9_]+ .*baseRecordTypeHex=0x[1-9a-fA-F][0-9a-fA-F]* .*positionFinite=1 .*runtimeBoundary=selected-quest-objective-target-resolution-runtime-supported .*hudMarkerRuntime=loaded-pending-runtime .*conditionRuntime=loaded-pending-runtime .*pathingRuntime=loaded-pending-runtime"
+    "FNV/ESM4 proof: quest stage-done MWScript opcode GetStageDone .*quest=.*$QuestId.*requestedIndex=$StageIndex .*currentIndex=0 .*stageDone=0 .*runtimeBoundary=selected-stage-done-entry-state-runtime-supported",
+    "FNV/ESM4 proof: quest journal MWScript opcode SetJournalIndex .*quest=.*$QuestId.*requestedIndex=$StageIndex .*currentIndex=$StageIndex",
+    "FNV/ESM4 proof: quest journal MWScript opcode GetStage .*quest=.*$QuestId.*currentIndex=$StageIndex",
+    "FNV/ESM4 proof: quest stage-done MWScript opcode GetStageDone .*quest=.*$QuestId.*requestedIndex=$StageIndex .*currentIndex=$StageIndex .*stageDone=0 .*runtimeBoundary=selected-stage-done-entry-state-runtime-supported",
+    "FNV/ESM4 proof: quest journal MWScript opcode SetStage .*quest=.*$QuestId.*requestedIndex=$StageIndex .*currentIndex=$StageIndex .*entryAdded=1 .*fallbackSetIndex=0",
+    "FNV/ESM4 proof: quest stage-done MWScript opcode GetStageDone .*quest=.*$QuestId.*requestedIndex=$StageIndex .*currentIndex=$StageIndex .*stageDone=1 .*runtimeBoundary=selected-stage-done-entry-state-runtime-supported"
 ) + $CommonSkyPatterns
 
 $FlatProofScript = Join-Path $PSScriptRoot "run-fnv-flat-proof.ps1"
@@ -220,11 +230,8 @@ $FlatProofScript = Join-Path $PSScriptRoot "run-fnv-flat-proof.ps1"
     -RequireSkyColorSanity `
     -RequireSkyPaletteMatch `
     -RequireSunDirectionRuntime `
-    -FnvQuestTargetTrace `
-    -FnvQuestTargetQuest $QuestId `
-    -FnvQuestTargetObjective $ObjectiveIndex `
-    -FnvQuestTargetIndex $TargetIndex `
-    -FnvQuestTargetFrame 150 `
+    -StartupScript $StageDoneStartupScript `
+    -FnvQuestJournalScriptTrace `
     -RequireLogPattern $RuntimePatterns `
     -NoSound
 if ($LASTEXITCODE -ne 0) {
@@ -234,11 +241,9 @@ if ($LASTEXITCODE -ne 0) {
 $FlatProofDir = Get-LatestProofDir (Join-Path $ProofDir "fnv-flat-proof") "FNV flat proof"
 $OpenMwLog = Join-Path $FlatProofDir "openmw.log"
 $FlatSummary = Join-Path $FlatProofDir "summary.txt"
-$runtimeMatch = Assert-FileContains $OpenMwLog "FNV/ESM4 proof: quest target runtime PASS .*quest=$QuestId" "runtime quest target proof"
-Assert-FileContains $FlatSummary "^FnvQuestTargetTrace: True$" "flat proof required quest target trace" | Out-Null
-Assert-FileContains $FlatSummary "^FnvQuestTargetQuest: $QuestId$" "flat proof selected target quest" | Out-Null
-Assert-FileContains $FlatSummary "^FnvQuestTargetObjective: $ObjectiveIndex$" "flat proof selected target objective" | Out-Null
-Assert-FileContains $FlatSummary "^FnvQuestTargetIndex: $TargetIndex$" "flat proof selected target index" | Out-Null
+$runtimeMatch = Assert-FileContains $OpenMwLog "FNV/ESM4 proof: quest stage-done MWScript opcode GetStageDone .*quest=.*$QuestId.*stageDone=1" "runtime GetStageDone proof"
+Assert-FileContains $OpenMwLog "FNV/ESM4 proof: quest stage-done MWScript opcode GetStageDone .*quest=.*$QuestId.*currentIndex=$StageIndex .*stageDone=0" "runtime SetJournalIndex negative proof" | Out-Null
+Assert-FileContains $FlatSummary "^FnvQuestJournalScriptTrace: True$" "flat proof required journal/stage-done trace" | Out-Null
 Assert-FileContains $FlatSummary "^Screenshots: [1-9][0-9]*$" "flat proof kept sky screenshot sentinel" | Out-Null
 $BridgeCounts = Get-BridgeCounts $OpenMwLog
 Assert-Equal "runtime QUST objective definition accounting" ([int]$BridgeCounts["questObjectives"]) $QuestObjectiveCount
@@ -255,11 +260,7 @@ $metadata = [ordered]@{
     questId = $QuestId
     questPlugin = $QuestRow.plugin
     questFormId = $QuestRow.formId
-    objectiveIndex = $ObjectiveIndex
-    targetIndex = $TargetIndex
-    expectedLedgerTargetFormId = $ExpectedTargetFormId
-    expectedRuntimeTargetFormId = $ExpectedRuntimeTargetFormIdPattern
-    selectedObjectiveTargets = $ObjectiveTargets.Count
+    stageIndex = $StageIndex
     questObjectiveCount = $QuestObjectiveCount
     questObjectiveTargetCount = $QuestObjectiveTargetCount
     questStageTextEntryCount = $QuestStageTextEntryCount
@@ -267,25 +268,25 @@ $metadata = [ordered]@{
     runtimeLog = $runtimeMatch.Line
     classifications = @(
         [ordered]@{
-            system = "selected FNV quest objective target reference resolution"
+            system = "selected FNV GetStageDone entry-backed stage state"
             classification = "runtime-supported"
-            proof = "VMS57 objective 10 QSTA target 0 resolves to a loaded placed reference with parent cell, base record, and finite position."
+            proof = "GetStageDone VMS57 10 stays false after SetJournalIndex VMS57 10 and becomes true only after SetStage VMS57 10 adds the real harvested stage entry."
         },
         [ordered]@{
-            system = "HUD markers, target conditions, pathing, compass/map routing, full quest completion"
+            system = "condition evaluation, quest script semantics, rewards, HUD markers, target routing, full quest lifecycle"
             classification = "loaded-pending-runtime"
-            proof = "Target reference resolution works, but display/routing and condition semantics remain separate gates."
+            proof = "Selected stage-done state works, but full FNV quest condition and lifecycle parity remains separate gates."
         }
     )
-    runtimeBoundary = "Selected FNV QUST objective target reference resolution is runtime-supported; HUD markers, target conditions, pathing, compass/map routing, and full quest completion remain loaded-pending-runtime."
+    runtimeBoundary = "Selected FNV GetStageDone is runtime-supported against actual quest entry state; conditions, quest script semantics, rewards, HUD markers, target routing, and full lifecycle parity remain loaded-pending-runtime."
     skySentinel = "Runtime proof required sky color sanity, palette match, sun-direction runtime, and sky/sun/moon texture log anchors."
 }
-$metadataPath = Join-Path $ProofDir "fnv-quest-target-runtime-contract.json"
+$metadataPath = Join-Path $ProofDir "fnv-quest-stage-done-runtime-contract.json"
 $metadata | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $metadataPath -Encoding UTF8
 
 Write-ProofLine ""
 Write-ProofLine "Content ledger: $ContentLedgerDir"
 Write-ProofLine "Flat proof: $FlatProofDir"
 Write-ProofLine "Contract JSON: $metadataPath"
-Write-ProofLine "FNV quest target runtime contract PASS"
+Write-ProofLine "FNV quest stage-done runtime contract PASS"
 Write-ProofLine "ProofDir: $ProofDir"

@@ -497,4 +497,5 @@ op 0x200032d: StartQuest
 op 0x200032e: CompleteQuest
 op 0x200032f: GetQuestCompleted
 op 0x2000330: GetQuestRunning
-opcodes 0x2000331-0x3ffffff unused
+op 0x2000331: GetStageDone
+opcodes 0x2000332-0x3ffffff unused

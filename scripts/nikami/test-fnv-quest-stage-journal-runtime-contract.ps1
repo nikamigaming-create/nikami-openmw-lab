@@ -153,7 +153,7 @@ Assert-Text "apps/openmw/engine.cpp" "OPENMW_FNV_PROOF_STARTUP_SCRIPT" "startup 
 Assert-Text "apps/openmw/mwgui/console.cpp" "OPENMW_FNV_PROOF_CONSOLE_SCRIPT_TRACE" "console startup script proof trace"
 Assert-Text "scripts/nikami/run-fnv-flat.ps1" '"--script-run"' "flat runner can execute startup scripts"
 Assert-Text "scripts/nikami/run-fnv-flat-proof.ps1" "FnvQuestJournalScriptTrace" "flat proof can trace journal opcodes"
-Assert-Text "scripts/nikami/fnv_no_silent_skip_classification.py" '"QUST": "quest records are stored, QUST stage journal entries are bridged, selected SetStage/GetStage, StartQuest/CompleteQuest/GetQuestCompleted/GetQuestRunning, and stage fragments execute, selected objective target references can resolve, and objective displayed/completed script state is bound pending full quest lifecycle/HUD-marker/condition parity"' "QUST remains loaded-pending runtime"
+Assert-Text "scripts/nikami/fnv_no_silent_skip_classification.py" '"QUST": "quest records are stored, QUST stage journal entries are bridged, selected SetStage/GetStage/GetStageDone, StartQuest/CompleteQuest/GetQuestCompleted/GetQuestRunning, and stage fragments execute, selected objective target references can resolve, and objective displayed/completed script state is bound pending full quest lifecycle/HUD-marker/condition parity"' "QUST remains loaded-pending runtime"
 
 $ContentLedgerScript = Join-Path $PSScriptRoot "test-fnv-content-ledger.ps1"
 & $ContentLedgerScript -FnvRoot $FnvRoot -FnvData $FnvData -ProofRoot $ProofRoot -Content $FlatContent

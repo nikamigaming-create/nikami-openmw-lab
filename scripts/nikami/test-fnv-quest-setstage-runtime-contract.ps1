@@ -154,7 +154,7 @@ Assert-Text "apps/openmw/mwscript/dialogueextensions.cpp" "installSegment5<OpGet
 Assert-Text "apps/openmw/mwscript/docs/vmformat.txt" "op 0x200032b: SetStage" "VM docs SetStage"
 Assert-Text "apps/openmw/mwscript/docs/vmformat.txt" "op 0x200032c: GetStage" "VM docs GetStage"
 Assert-Text "apps/openmw/mwdialogue/journalimp.cpp" "executeScript(info->mResultScript" "stage result fragment executes through journal add-entry"
-Assert-Text "scripts/nikami/fnv_no_silent_skip_classification.py" '"QUST": "quest records are stored, QUST stage journal entries are bridged, selected SetStage/GetStage, StartQuest/CompleteQuest/GetQuestCompleted/GetQuestRunning, and stage fragments execute, selected objective target references can resolve, and objective displayed/completed script state is bound pending full quest lifecycle/HUD-marker/condition parity"' "QUST remains loaded-pending runtime with selected SetStage/GetStage support"
+Assert-Text "scripts/nikami/fnv_no_silent_skip_classification.py" '"QUST": "quest records are stored, QUST stage journal entries are bridged, selected SetStage/GetStage/GetStageDone, StartQuest/CompleteQuest/GetQuestCompleted/GetQuestRunning, and stage fragments execute, selected objective target references can resolve, and objective displayed/completed script state is bound pending full quest lifecycle/HUD-marker/condition parity"' "QUST remains loaded-pending runtime with selected SetStage/GetStage support"
 
 $ContentLedgerScript = Join-Path $PSScriptRoot "test-fnv-content-ledger.ps1"
 & $ContentLedgerScript -FnvRoot $FnvRoot -FnvData $FnvData -ProofRoot $ProofDir -Content $FlatContent
