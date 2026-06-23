@@ -71,6 +71,15 @@ namespace ESM
         while (esm.isNextSub("FPRK"))
             mFalloutPerks.push_back(esm.getRefId());
 
+        while (esm.isNextSub("FAVB"))
+        {
+            FalloutActorValue value;
+            value.mId = esm.getRefId();
+            value.mBase = 0.f;
+            esm.getHNOT(value.mBase, "FAVF");
+            mFalloutActorValues.push_back(value);
+        }
+
         mTimeToStartDrowning = 0;
         esm.getHNOT(mTimeToStartDrowning, "DRTI");
 
@@ -142,6 +151,12 @@ namespace ESM
         for (const RefId& id : mFalloutPerks)
             esm.writeHNRefId("FPRK", id);
 
+        for (const FalloutActorValue& value : mFalloutActorValues)
+        {
+            esm.writeHNRefId("FAVB", value.mId);
+            esm.writeHNT("FAVF", value.mBase);
+        }
+
         if (mTimeToStartDrowning)
             esm.writeHNT("DRTI", mTimeToStartDrowning);
 
@@ -162,6 +177,7 @@ namespace ESM
         mSpecIncreases.fill(0);
         mUsedIds.clear();
         mFalloutPerks.clear();
+        mFalloutActorValues.clear();
         mTimeToStartDrowning = 20;
         mCrimeId = -1;
     }

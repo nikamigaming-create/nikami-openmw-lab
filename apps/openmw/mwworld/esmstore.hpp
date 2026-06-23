@@ -77,6 +77,7 @@ namespace ESM4
     struct Activator;
     struct ActorCharacter;
     struct ActorCreature;
+    struct ActorValueInfo;
     struct AIPackage;
     struct Ammunition;
     struct Armor;
@@ -158,7 +159,8 @@ namespace MWWorld
             // Special entry which is hardcoded and not loaded from an ESM
             Store<ESM::Attribute>,
 
-            Store<ESM4::Activator>, Store<ESM4::ActorCharacter>, Store<ESM4::ActorCreature>, Store<ESM4::AIPackage>,
+            Store<ESM4::Activator>, Store<ESM4::ActorCharacter>, Store<ESM4::ActorCreature>,
+            Store<ESM4::ActorValueInfo>, Store<ESM4::AIPackage>,
             Store<ESM4::Ammunition>, Store<ESM4::Armor>, Store<ESM4::ArmorAddon>, Store<ESM4::BodyPartData>, Store<ESM4::Book>,
             Store<ESM4::Cell>, Store<ESM4::Clothing>, Store<ESM4::Container>, Store<ESM4::Creature>,
             Store<ESM4::Dialogue>, Store<ESM4::DialogInfo>, Store<ESM4::Door>, Store<ESM4::Eyes>,

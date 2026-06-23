@@ -31,6 +31,12 @@ namespace ESM
 
         bool mIsWerewolf;
 
+        struct FalloutActorValue
+        {
+            ESM::RefId mId;
+            float mBase;
+        };
+
         std::map<ESM::RefId, Faction> mFactions;
         int32_t mDisposition;
         int32_t mCrimeDispositionModifier;
@@ -43,6 +49,7 @@ namespace ESM
         std::array<int32_t, 3> mSpecIncreases;
         std::vector<ESM::RefId> mUsedIds;
         std::vector<ESM::RefId> mFalloutPerks;
+        std::vector<FalloutActorValue> mFalloutActorValues;
         float mTimeToStartDrowning;
         int32_t mCrimeId;
 

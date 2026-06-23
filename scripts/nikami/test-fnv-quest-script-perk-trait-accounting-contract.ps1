@@ -40,9 +40,9 @@ $TargetClassifications = [ordered]@{
     LVLN = "loaded-pending-runtime"
 }
 
-$RawPendingTargets = @("AVIF")
-$TypedPendingTargets = @("PERK", "LVLC", "LVLI", "LVLN")
-$RuntimeBoundary = "PC-flat proves record accounting, typed/raw loading, and selected runtime bridges. It does not claim quest stage execution, FNV script VM semantics, player perk/trait effects, actor value binding, or full leveled-list parity. Loaded-pending-runtime means bytes or typed records are accounted and not silently skipped while gameplay parity remains gated separately."
+$RawPendingTargets = @()
+$TypedPendingTargets = @("AVIF", "PERK", "LVLC", "LVLI", "LVLN")
+$RuntimeBoundary = "PC-flat proves record accounting, typed loading, and selected runtime bridges. It does not claim quest stage execution, FNV script VM semantics, player perk/trait effects, actor value progression, or full leveled-list parity. Loaded-pending-runtime means bytes or typed records are accounted and not silently skipped while gameplay parity remains gated separately."
 $ExpectedBridgeKeys = @(
     "gmst",
     "globals",
@@ -303,74 +303,6 @@ function Get-BridgeCounts([string]$OpenMwLog) {
     return $counts
 }
 
-function Add-SubrecordTypeCountsFromText([hashtable]$Counts, [string]$Pairs) {
-    $sum = 0
-    if ($Pairs -eq "-") {
-        return $sum
-    }
-    foreach ($pair in ($Pairs -split ",")) {
-        if ([string]::IsNullOrWhiteSpace($pair)) {
-            continue
-        }
-        $parts = $pair.Split(":", 2)
-        if ($parts.Count -ne 2) {
-            throw "Invalid AVIF subrecord type pair: $pair"
-        }
-        $count = [int]$parts[1]
-        Add-Count $Counts $parts[0] $count
-        $sum += $count
-    }
-    return $sum
-}
-
-function Get-AvifSubrecordTrace([string]$OpenMwLog) {
-    $result = [ordered]@{
-        records = 0
-        subrecords = 0
-        payloadBytes = 0
-        detailLines = 0
-        uniqueFormIds = 0
-        typeCounts = @{}
-    }
-
-    $formIds = @{}
-    $detailPattern = "FNV/ESM4 inventory raw-loaded pending detail:\s+AVIF4 formId=(?<formId>\S+) flags=0x(?<flags>[0-9a-fA-F]+) header-bytes=(?<header>[0-9]+) subrecords=(?<subrecords>[0-9]+) payload-bytes=(?<payload>[0-9]+) reader-visible-subrecord-types=(?<pairs>\S+)"
-    foreach ($line in @(Select-String -LiteralPath $OpenMwLog -Pattern $detailPattern -AllMatches -ErrorAction SilentlyContinue)) {
-        foreach ($match in $line.Matches) {
-            ++$result.detailLines
-            $formId = [string]$match.Groups["formId"].Value
-            $formIds[$formId] = $true
-            $headerBytes = [int]$match.Groups["header"].Value
-            $subrecords = [int]$match.Groups["subrecords"].Value
-            $payloadBytes = [int]$match.Groups["payload"].Value
-            if ($headerBytes -le 0 -or $subrecords -le 0 -or $payloadBytes -le 0) {
-                throw "Invalid AVIF detail sizes: $($line.Line)"
-            }
-            $detailTypeCounts = @{}
-            $typeSum = Add-SubrecordTypeCountsFromText $detailTypeCounts ([string]$match.Groups["pairs"].Value)
-            if ($typeSum -ne $subrecords) {
-                throw "AVIF detail subrecord type sum mismatch: formId=$formId subrecords=$subrecords typeSum=$typeSum"
-            }
-        }
-    }
-    $result.uniqueFormIds = $formIds.Count
-
-    $summaryPattern = "FNV/ESM4 inventory raw-loaded pending subrecords:\s+AVIF4 records=(?<records>[0-9]+) subrecords=(?<subrecords>[0-9]+) payload-bytes=(?<payload>[0-9]+) types=(?<types>[0-9]+) reader-visible-subrecord-types=(?<pairs>\S+)"
-    foreach ($line in @(Select-String -LiteralPath $OpenMwLog -Pattern $summaryPattern -AllMatches -ErrorAction SilentlyContinue)) {
-        foreach ($match in $line.Matches) {
-            $result.records += [int]$match.Groups["records"].Value
-            $result.subrecords += [int]$match.Groups["subrecords"].Value
-            $result.payloadBytes += [int]$match.Groups["payload"].Value
-            $typeSum = Add-SubrecordTypeCountsFromText $result.typeCounts ([string]$match.Groups["pairs"].Value)
-            $matchSubrecords = [int]$match.Groups["subrecords"].Value
-            if ($typeSum -ne $matchSubrecords) {
-                throw "AVIF aggregate subrecord type sum mismatch: subrecords=$matchSubrecords typeSum=$typeSum"
-            }
-        }
-    }
-    return $result
-}
-
 function Assert-FlatContentLines([string]$OpenMwCfg) {
     if (!(Test-Path -LiteralPath $OpenMwCfg -PathType Leaf)) {
         throw "Missing generated openmw.cfg: $OpenMwCfg"
@@ -417,7 +349,10 @@ Assert-Text "apps/openmw/mwworld/esmstore.hpp" "Store<ESM4::Perk>" "PERK store r
 Assert-Text "apps/openmw/mwworld/esmstore.hpp" "Store<ESM4::LevelledCreature>" "LVLC store registered"
 Assert-Text "apps/openmw/mwworld/esmstore.hpp" "Store<ESM4::LevelledItem>" "LVLI store registered"
 Assert-Text "apps/openmw/mwworld/esmstore.hpp" "Store<ESM4::LevelledNpc>" "LVLN store registered"
-Assert-Text "apps/openmw/mwworld/esmstore.cpp" "case ESM::REC_AVIF4:" "AVIF raw-pending fallback"
+Assert-Text "components/esm4/loadavif.hpp" "REC_AVIF4" "AVIF typed loader record id"
+Assert-Text "components/esm4/loadavif.cpp" "mProgressionMarkers" "AVIF typed loader captures progression markers"
+Assert-Text "apps/openmw/mwworld/esmstore.hpp" "Store<ESM4::ActorValueInfo>" "AVIF store registered"
+Assert-Text "apps/openmw/mwworld/store.cpp" "TypedDynamicStore<ESM4::ActorValueInfo>" "AVIF dynamic store is explicitly instantiated"
 Assert-Text "apps/openmw/mwworld/esmstore.cpp" "mSubrecordTypeCounts" "raw-pending subrecord type inventory"
 Assert-Text "apps/openmw/mwworld/esmstore.cpp" "raw-loaded pending subrecords" "raw-pending subrecord summary log"
 Assert-Text "scripts/nikami/run-fnv-flat-proof.ps1" "TraceRawPendingRecord" "flat proof raw-pending trace parameter"
@@ -426,11 +361,11 @@ Assert-Text "scripts/nikami/fnv_content_ledger.py" "runtime-actor-value-progress
 Assert-Text "apps/openmw/mwgui/spellwindow.cpp" "Runtime membership active; owned=" "perk/trait membership runtime boundary is explicit"
 
 $ContentLedgerScript = Join-Path $PSScriptRoot "test-fnv-content-ledger.ps1"
-& $ContentLedgerScript -FnvRoot $FnvRoot -FnvData $FnvData -ProofRoot $ProofRoot -Content $FlatContent
+& $ContentLedgerScript -FnvRoot $FnvRoot -FnvData $FnvData -ProofRoot $ProofDir -Content $FlatContent
 if ($LASTEXITCODE -ne 0) {
     throw "FNV flat content ledger proof failed with exit code $LASTEXITCODE."
 }
-$ContentLedgerDir = Get-LatestProofDir (Join-Path $ProofRoot "fnv-content-ledger") "FNV flat content ledger"
+$ContentLedgerDir = Get-LatestProofDir (Join-Path $ProofDir "fnv-content-ledger") "FNV flat content ledger"
 $RecordsPath = Join-Path $ContentLedgerDir "records.json"
 $LedgerCounts = Get-LedgerRecordCounts $RecordsPath
 $QuestsPath = Join-Path $ContentLedgerDir "quests.json"
@@ -497,8 +432,7 @@ $FlatProofScript = Join-Path $PSScriptRoot "run-fnv-flat-proof.ps1"
     -ProofRoot $ProofRoot `
     -RunSeconds $RunSeconds `
     -NoSound `
-    -ClassificationDir $ClassificationDir `
-    -TraceRawPendingRecord "AVIF"
+    -ClassificationDir $ClassificationDir
 if ($LASTEXITCODE -ne 0) {
     throw "FNV flat proof failed with exit code $LASTEXITCODE."
 }
@@ -509,9 +443,6 @@ if (!(Test-Path -LiteralPath $OpenMwLog -PathType Leaf)) {
     throw "Missing FNV flat OpenMW log: $OpenMwLog"
 }
 Assert-FlatContentLines $OpenMwCfg
-$FlatProofSummary = Join-Path $FlatProofDir "summary.txt"
-Assert-FileContains $FlatProofSummary "^TraceRawPendingRecord:\s*AVIF$" "flat proof requested AVIF raw-pending trace"
-
 $LoadedCounts = Get-RuntimeInventoryCounts $OpenMwLog "FNV/ESM4 inventory loaded:\s+(?<type>[A-Z0-9_]+)\s+count=(?<count>[0-9]+)"
 $RawPendingCounts = Get-RuntimeInventoryCounts $OpenMwLog "FNV/ESM4 inventory raw-loaded pending:\s+(?<type>[A-Z0-9_]+)\s+count=(?<count>[0-9]+)"
 $SkippedCounts = Get-RuntimeInventoryCounts $OpenMwLog "FNV/ESM4 inventory skipped unsupported:\s+(?<type>[A-Z0-9_]+)\s+count=(?<count>[0-9]+)"
@@ -578,38 +509,6 @@ Assert-Equal "accounted QUST objective target count" ([int]$BridgeCounts["questO
 Assert-Equal "SCPT bridge override row count" ((Get-Count $LoadedCounts "SCPT") - [int]$BridgeCounts["scripts"] - [int]$BridgeCounts["skippedScripts"]) 8
 Assert-Equal "QUST bridge override row count" ((Get-Count $LoadedCounts "QUST") - [int]$BridgeCounts["questDialogues"]) 2
 
-$AvifTrace = Get-AvifSubrecordTrace $OpenMwLog
-$AvifCount = Get-Count $LedgerCounts "AVIF"
-Assert-Equal "AVIF raw-pending trace detail lines" ([int]$AvifTrace.detailLines) $AvifCount
-Assert-Equal "AVIF raw-pending trace unique form ids" ([int]$AvifTrace.uniqueFormIds) $AvifCount
-Assert-Equal "AVIF raw-pending trace records" ([int]$AvifTrace.records) $AvifCount
-Assert-GreaterThan "AVIF raw-pending trace subrecords" ([int]$AvifTrace.subrecords) $AvifCount
-Assert-GreaterThan "AVIF raw-pending trace payload bytes" ([int]$AvifTrace.payloadBytes) 0
-Assert-GreaterThan "AVIF raw-pending trace subrecord type count" ([int]$AvifTrace.typeCounts.Count) 0
-foreach ($requiredType in @("EDID", "ANAM")) {
-    if (!$AvifTrace.typeCounts.ContainsKey($requiredType)) {
-        throw "AVIF reader-visible subrecord inventory missing $requiredType"
-    }
-    Write-ProofLine "OK AVIF reader-visible subrecord type: $requiredType=$($AvifTrace.typeCounts[$requiredType])"
-}
-$progressionMarkers = @("ANAM", "CNAM", "AVSK")
-$progressionMarkerFound = $false
-foreach ($marker in $progressionMarkers) {
-    if ($AvifTrace.typeCounts.ContainsKey($marker)) {
-        $progressionMarkerFound = $true
-        Write-ProofLine "OK AVIF progression-marker subrecord type: $marker=$($AvifTrace.typeCounts[$marker])"
-    }
-}
-if (!$progressionMarkerFound) {
-    throw "AVIF reader-visible subrecord inventory missing one of: $($progressionMarkers -join ', ')"
-}
-
-$AvifSubrecordTypes = @{}
-foreach ($key in $AvifTrace.typeCounts.Keys) {
-    $AvifSubrecordTypes[[string]$key] = [int]$AvifTrace.typeCounts[$key]
-}
-Write-ProofLine "OK AVIF subrecord inventory: records=$($AvifTrace.records) subrecords=$($AvifTrace.subrecords) payloadBytes=$($AvifTrace.payloadBytes) types=$($AvifSubrecordTypes.Count)"
-
 $summary = [ordered]@{
     status = "PASS"
     stamp = $Stamp
@@ -631,14 +530,6 @@ $summary = [ordered]@{
         objectiveTargets = $QuestObjectiveTargetCount
     }
     bridgeCounts = $BridgeCounts
-    avifSubrecordTrace = [ordered]@{
-        records = [int]$AvifTrace.records
-        subrecords = [int]$AvifTrace.subrecords
-        payloadBytes = [int]$AvifTrace.payloadBytes
-        detailLines = [int]$AvifTrace.detailLines
-        uniqueFormIds = [int]$AvifTrace.uniqueFormIds
-        typeCounts = $AvifSubrecordTypes
-    }
     runtimeBoundary = $RuntimeBoundary
 }
 $ContractPath = Join-Path $ProofDir "fnv-quest-script-perk-trait-accounting-contract.json"

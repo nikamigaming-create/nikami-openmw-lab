@@ -11,9 +11,11 @@
 #include <filesystem>
 #include <istream>
 #include <limits>
+#include <array>
 #include <map>
 #include <memory>
 #include <optional>
+#include <sstream>
 #include <string_view>
 #include <system_error>
 #include <vector>
@@ -63,6 +65,7 @@
 #include <components/loadinglistener/loadinglistener.hpp>
 
 #include <components/esm4/loadammo.hpp>
+#include <components/esm4/loadavif.hpp>
 #include <components/esm4/loadnpc.hpp>
 #include <components/esm4/loadperk.hpp>
 #include <components/esm4/loadproj.hpp>
@@ -390,6 +393,103 @@ namespace
                 return &*it;
         }
         return nullptr;
+    }
+
+    const ESM4::ActorValueInfo* findEsm4ActorValueByEditorId(
+        const MWWorld::ESMStore& store, std::string_view editorId)
+    {
+        const auto& actorValues = store.get<ESM4::ActorValueInfo>();
+        for (auto it = actorValues.begin(); it != actorValues.end(); ++it)
+        {
+            if (Misc::StringUtils::ciEqual(it->mEditorId, editorId))
+                return &*it;
+        }
+        return nullptr;
+    }
+
+    void runFalloutActorValueProof(MWWorld::Ptr player)
+    {
+        if (player.isEmpty() || !player.getClass().isNpc())
+        {
+            Log(Debug::Warning) << "FNV/ESM4 proof: actor value runtime BLOCKED reason=no-player-npc";
+            return;
+        }
+
+        const std::array<std::pair<std::string_view, float>, 7> special = { {
+            { "AVStrength", 5.f },
+            { "AVPerception", 5.f },
+            { "AVEndurance", 5.f },
+            { "AVCharisma", 5.f },
+            { "AVIntelligence", 5.f },
+            { "AVAgility", 5.f },
+            { "AVLuck", 5.f },
+        } };
+
+        const MWWorld::ESMStore& store = *MWBase::Environment::get().getESMStore();
+        MWMechanics::NpcStats& stats = player.getClass().getNpcStats(player);
+        std::vector<std::string> missing;
+        std::vector<std::string> badRecordTypes;
+        std::vector<std::string> missingPlayerValues;
+        std::vector<std::string> labels;
+        std::size_t markerCount = 0;
+        std::size_t iconCount = 0;
+        std::size_t descriptionCount = 0;
+
+        const std::size_t beforeCount = stats.getFalloutActorValues().size();
+        for (const auto& [editorId, value] : special)
+        {
+            const ESM4::ActorValueInfo* actorValue = findEsm4ActorValueByEditorId(store, editorId);
+            if (actorValue == nullptr)
+            {
+                missing.emplace_back(editorId);
+                continue;
+            }
+
+            const ESM::RefId id(actorValue->mId);
+            const int recordType = store.find(id);
+            if (recordType != ESM::REC_AVIF4)
+                badRecordTypes.emplace_back(std::string(editorId));
+
+            stats.setFalloutActorValue(id, value);
+            if (!stats.hasFalloutActorValue(id) || stats.getFalloutActorValue(id) != value)
+                missingPlayerValues.emplace_back(std::string(editorId));
+
+            markerCount += actorValue->mProgressionMarkers.size();
+            if (!actorValue->mIcon.empty())
+                ++iconCount;
+            if (!actorValue->mDescription.empty())
+                ++descriptionCount;
+            labels.push_back(actorValue->mEditorId);
+        }
+
+        const bool pass = missing.empty() && badRecordTypes.empty() && missingPlayerValues.empty()
+            && markerCount >= special.size() && iconCount == special.size() && descriptionCount == special.size();
+
+        std::ostringstream labelLog;
+        for (const std::string& label : labels)
+        {
+            if (labelLog.tellp() > 0)
+                labelLog << ",";
+            labelLog << label;
+        }
+
+        Log(Debug::Info) << "FNV/ESM4 proof: actor value runtime " << (pass ? "PASS" : "FAIL")
+                         << " avifRecords=" << store.get<ESM4::ActorValueInfo>().getSize()
+                         << " selectedSpecial=" << labels.size()
+                         << " labels=" << labelLog.str()
+                         << " missing=" << missing.size()
+                         << " badRecordTypes=" << badRecordTypes.size()
+                         << " playerMissingValues=" << missingPlayerValues.size()
+                         << " beforeCount=" << beforeCount
+                         << " afterCount=" << stats.getFalloutActorValues().size()
+                         << " progressionMarkers=" << markerCount
+                         << " icons=" << iconCount
+                         << " descriptions=" << descriptionCount
+                         << " saveSubrecords=FAVB,FAVF"
+                         << " runtimeBoundary=selected-special-actor-value-state-runtime-supported"
+                         << " progressionRuntime=loaded-pending-runtime"
+                         << " maxLevelRuntime=loaded-pending-runtime"
+                         << " perkEffectRuntime=loaded-pending-runtime";
     }
 
     void runFalloutPlayerPerkProof(MWWorld::Ptr player)
@@ -1017,6 +1117,19 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
         {
             proofPlayerPerkApplied = true;
             runFalloutPlayerPerkProof(mWorld->getPlayerPtr());
+        }
+
+        static bool proofActorValueApplied = false;
+        const char* proofActorValue = std::getenv("OPENMW_FNV_PROOF_ACTOR_VALUES");
+        const bool proofActorValueEnabled = proofActorValue != nullptr && *proofActorValue != '\0';
+        const int proofActorValueFrame
+            = static_cast<int>(getProofFloat("OPENMW_FNV_PROOF_ACTOR_VALUES_FRAME", 150.f));
+        if (!proofActorValueApplied && proofActorValueEnabled
+            && frameNumber >= static_cast<unsigned>(proofActorValueFrame)
+            && mStateManager->getState() == MWBase::StateManager::State_Running)
+        {
+            proofActorValueApplied = true;
+            runFalloutActorValueProof(mWorld->getPlayerPtr());
         }
 
         // update mechanics

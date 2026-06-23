@@ -317,6 +317,29 @@ const std::set<ESM::RefId>& MWMechanics::NpcStats::getFalloutPerks() const
     return mFalloutPerks;
 }
 
+void MWMechanics::NpcStats::setFalloutActorValue(const ESM::RefId& id, float value)
+{
+    mFalloutActorValues[id] = value;
+}
+
+bool MWMechanics::NpcStats::hasFalloutActorValue(const ESM::RefId& id) const
+{
+    return mFalloutActorValues.find(id) != mFalloutActorValues.end();
+}
+
+float MWMechanics::NpcStats::getFalloutActorValue(const ESM::RefId& id) const
+{
+    const auto it = mFalloutActorValues.find(id);
+    if (it == mFalloutActorValues.end())
+        return 0.f;
+    return it->second;
+}
+
+const std::map<ESM::RefId, float>& MWMechanics::NpcStats::getFalloutActorValues() const
+{
+    return mFalloutActorValues;
+}
+
 int MWMechanics::NpcStats::getBounty() const
 {
     return mBounty;
@@ -478,6 +501,8 @@ void MWMechanics::NpcStats::writeState(ESM::NpcStats& state) const
 
     std::copy(mUsedIds.begin(), mUsedIds.end(), std::back_inserter(state.mUsedIds));
     std::copy(mFalloutPerks.begin(), mFalloutPerks.end(), std::back_inserter(state.mFalloutPerks));
+    for (const auto& [id, value] : mFalloutActorValues)
+        state.mFalloutActorValues.push_back({ id, value });
 
     state.mTimeToStartDrowning = mTimeToStartDrowning;
 }
@@ -535,6 +560,10 @@ void MWMechanics::NpcStats::readState(const ESM::NpcStats& state)
     for (auto iter(state.mFalloutPerks.begin()); iter != state.mFalloutPerks.end(); ++iter)
         if (store.find(*iter) == ESM::REC_PERK4)
             mFalloutPerks.insert(*iter);
+
+    for (const ESM::NpcStats::FalloutActorValue& value : state.mFalloutActorValues)
+        if (store.find(value.mId) == ESM::REC_AVIF4)
+            mFalloutActorValues[value.mId] = value.mBase;
 
     mTimeToStartDrowning = state.mTimeToStartDrowning;
 }

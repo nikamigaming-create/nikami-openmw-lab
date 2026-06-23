@@ -44,6 +44,7 @@ namespace MWMechanics
                                          // the entire game)
         std::set<ESM::RefId> mUsedIds;
         std::set<ESM::RefId> mFalloutPerks;
+        std::map<ESM::RefId, float> mFalloutActorValues;
         // ---------------------------------------------------------------------------
 
         /// Countdown to getting damage while underwater
@@ -113,6 +114,11 @@ namespace MWMechanics
         void addFalloutPerk(const ESM::RefId& id);
         bool hasFalloutPerk(const ESM::RefId& id) const;
         const std::set<ESM::RefId>& getFalloutPerks() const;
+
+        void setFalloutActorValue(const ESM::RefId& id, float value);
+        bool hasFalloutActorValue(const ESM::RefId& id) const;
+        float getFalloutActorValue(const ESM::RefId& id) const;
+        const std::map<ESM::RefId, float>& getFalloutActorValues() const;
 
         int getBounty() const;
 

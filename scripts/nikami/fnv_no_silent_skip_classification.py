@@ -56,7 +56,7 @@ LOADED_PENDING_RECORDS = {
     "ARMA": "armor addon data is loaded; full equipment/body binding remains gated separately",
     "ARMO": "armor data is loaded; full equipment/body binding remains gated separately",
     "ASPC": "acoustic space data is loaded pending runtime audio-space binding",
-    "AVIF": "actor value and perk tree bytes are inventoried pending full progression/SPECIAL runtime binding",
+    "AVIF": "actor value and perk tree records are typed-loaded pending full progression/SPECIAL runtime binding",
     "BOOK": "book records are loaded pending full UI/readable-content parity",
     "BPTD": "body part data is loaded pending dismemberment/body-part runtime parity",
     "CAMS": "camera shot bytes are inventoried pending full camera/scene runtime binding",

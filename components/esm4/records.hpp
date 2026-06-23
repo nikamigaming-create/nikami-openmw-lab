@@ -11,6 +11,7 @@
 #include <components/esm4/loadarma.hpp>
 #include <components/esm4/loadarmo.hpp>
 #include <components/esm4/loadaspc.hpp>
+#include <components/esm4/loadavif.hpp>
 #include <components/esm4/loadbook.hpp>
 #include <components/esm4/loadbptd.hpp>
 #include <components/esm4/loadcell.hpp>

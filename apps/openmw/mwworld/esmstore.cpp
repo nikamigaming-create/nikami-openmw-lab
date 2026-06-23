@@ -910,7 +910,6 @@ namespace MWWorld
                 case ESM::REC_ARMA4:
                 case ESM::REC_ARMO4:
                 case ESM::REC_ASPC4:
-                case ESM::REC_AVIF4:
                 case ESM::REC_BOOK4:
                 case ESM::REC_BPTD4:
                 case ESM::REC_CAMS4:
@@ -1154,6 +1153,7 @@ namespace MWWorld
             case ESM::REC_ALCH4:
             case ESM::REC_AMMO4:
             case ESM::REC_ARMO4:
+            case ESM::REC_AVIF4:
             case ESM::REC_BOOK4:
             case ESM::REC_CONT4:
             case ESM::REC_CREA4:

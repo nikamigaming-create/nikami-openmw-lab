@@ -17,12 +17,24 @@ if ([string]::IsNullOrWhiteSpace($FnvData)) {
     $FnvData = Join-Path $FnvRoot "Data"
 }
 
+$FlatContent = @(
+    "FalloutNV.esm",
+    "DeadMoney.esm",
+    "HonestHearts.esm",
+    "OldWorldBlues.esm",
+    "LonesomeRoad.esm",
+    "GunRunnersArsenal.esm",
+    "CaravanPack.esm",
+    "ClassicPack.esm",
+    "MercenaryPack.esm",
+    "TribalPack.esm"
+)
+
 $RecordCounts = [ordered]@{
     ADDN = 38
     ALOC = 101
     AMEF = 80
     ANIO = 161
-    AVIF = 65
     CAMS = 276
     CCRD = 324
     CDCK = 13
@@ -164,12 +176,12 @@ foreach ($entry in $RecordCounts.GetEnumerator()) {
 }
 
 $ContentLedgerScript = Join-Path $PSScriptRoot "test-fnv-content-ledger.ps1"
-& $ContentLedgerScript -FnvRoot $FnvRoot -FnvData $FnvData -ProofRoot $ProofRoot
+& $ContentLedgerScript -FnvRoot $FnvRoot -FnvData $FnvData -ProofRoot $ProofDir -Content $FlatContent
 if ($LASTEXITCODE -ne 0) {
     throw "FNV content ledger proof failed with exit code $LASTEXITCODE."
 }
 
-$ContentLedgerDir = Get-LatestProofDir (Join-Path $ProofRoot "fnv-content-ledger") "FNV content ledger"
+$ContentLedgerDir = Get-LatestProofDir (Join-Path $ProofDir "fnv-content-ledger") "FNV content ledger"
 $RecordsPath = Join-Path $ContentLedgerDir "records.json"
 if (!(Test-Path -LiteralPath $RecordsPath -PathType Leaf)) {
     throw "Missing content ledger records: $RecordsPath"

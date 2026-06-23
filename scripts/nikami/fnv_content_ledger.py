@@ -668,7 +668,7 @@ def actor_value_row(plugin, record, subrecords):
         "classification": "loaded-pending-runtime",
         "readiness": "loaded-pending-runtime",
         "firstFailingGate": "runtime-actor-value-progression-binding",
-        "runtimeBoundary": "AVIF actor-value and perk-tree bytes are harvested and raw-loaded pending SPECIAL/skills/level-up/perk-tree runtime binding.",
+        "runtimeBoundary": "AVIF actor-value and perk-tree bytes are harvested and typed-loaded pending full SPECIAL/skills/level-up/perk-tree runtime binding.",
     }
 
 
