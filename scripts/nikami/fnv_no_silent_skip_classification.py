@@ -581,7 +581,17 @@ def main():
                 count=count,
             )
 
-    for ext, (classification, subsystem, proof) in EXTENSION_RULES.items():
+    archive_extension_totals = Counter()
+    for archive_entry in archive_entry_ledger:
+        list_path = harvest_dir / archive_entry["entryList"]
+        for entry in list_path.read_text(encoding="utf-8", errors="replace").splitlines():
+            archive_extension_totals[get_ext(entry)] += 1
+
+    for ext in sorted(archive_extension_totals):
+        classification, subsystem, proof = EXTENSION_RULES.get(
+            ext,
+            ("known-blocked", "unclassified-extension", "Extension is not in the asset classification map."),
+        )
         add_main_row(
             main_rows,
             "asset-type",
@@ -590,6 +600,7 @@ def main():
             classification,
             proof,
             subsystem=subsystem,
+            count=archive_extension_totals[ext],
         )
 
     entry_jsonl = proof_dir / "archive-entry-classification.jsonl"
@@ -656,6 +667,7 @@ def main():
             "result": str(proof_dir / "result.json"),
         },
         "harvestManifestCounts": manifest.get("counts", {}),
+        "archiveExtensionTotals": dict(sorted(archive_extension_totals.items())),
     }
 
     if unclassified:
