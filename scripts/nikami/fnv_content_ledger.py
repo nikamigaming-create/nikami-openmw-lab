@@ -62,6 +62,12 @@ def get_u16(raw, offset):
     return struct.unpack_from("<H", raw, offset)[0]
 
 
+def get_u8(raw, offset):
+    if len(raw) < offset + 1:
+        return None
+    return raw[offset]
+
+
 def get_u32(raw, offset):
     if len(raw) < offset + 4:
         return None
@@ -117,6 +123,14 @@ def all_form_ids(subrecords, rec_type):
     for current_type, payload in subrecords:
         if current_type == rec_type and len(payload) >= 4:
             result.append(hex_form(struct.unpack_from("<I", payload, 0)[0]))
+    return result
+
+
+def all_form_ids_at_offset(subrecords, rec_type, offset):
+    result = []
+    for current_type, payload in subrecords:
+        if current_type == rec_type and len(payload) >= offset + 4:
+            result.append(hex_form(struct.unpack_from("<I", payload, offset)[0]))
     return result
 
 
@@ -439,6 +453,171 @@ def perk_row(plugin, record, subrecords):
     }
 
 
+def weapon_data(data):
+    if data is None:
+        return {"size": 0}
+    result = {"size": len(data)}
+    if len(data) == 15:
+        result.update(
+            {
+                "value": get_u32(data, 0),
+                "health": get_u32(data, 4),
+                "weight": get_float(data, 8),
+                "damage": get_u16(data, 12),
+                "clipSize": get_u8(data, 14),
+            }
+        )
+    elif len(data) == 10:
+        result.update(
+            {
+                "value": get_u32(data, 0),
+                "weight": get_float(data, 4),
+                "damage": get_u16(data, 8),
+            }
+        )
+    elif len(data) >= 26:
+        result.update(
+            {
+                "type": get_u32(data, 0),
+                "speed": get_float(data, 4),
+                "reach": get_float(data, 8),
+                "flags": get_u32(data, 12),
+                "value": get_u32(data, 16),
+                "health": get_u32(data, 20),
+                "weight": get_float(data, 24) if len(data) >= 28 else None,
+                "damage": get_u16(data, 28) if len(data) >= 30 else None,
+            }
+        )
+    return result
+
+
+def weapon_row(plugin, record, subrecords):
+    full_name = first_zstring(subrecords, "FULL")
+    description = first_zstring(subrecords, "DESC")
+    sound_refs = []
+    for rec_type, payload in subrecords:
+        if rec_type in ("SNAM", "XNAM", "TNAM", "NAM8", "NAM9", "WMS1", "WMS2") and len(payload) >= 4:
+            sound_refs.append({"type": rec_type, "formId": hex_form(struct.unpack_from("<I", payload, 0)[0])})
+    return {
+        "plugin": plugin,
+        "recordType": "WEAP",
+        "formId": record["formId"],
+        "editorId": first_zstring(subrecords, "EDID"),
+        **text_summary("fullName", full_name),
+        "descriptionLength": len(description),
+        "descriptionHash": text_hash(description),
+        "model": first_zstring(subrecords, "MODL"),
+        "icon": first_zstring(subrecords, "ICON"),
+        "miniIcon": first_zstring(subrecords, "MICO"),
+        "data": weapon_data(first(subrecords, "DATA")),
+        "ammo": (all_form_ids(subrecords, "NAM0") or [""])[0],
+        "repairList": (all_form_ids(subrecords, "REPL") or [""])[0],
+        "equipType": (all_form_ids(subrecords, "ETYP") or [""])[0],
+        "impactDataSet": (all_form_ids(subrecords, "INAM") or [""])[0],
+        "worldModel": (all_form_ids(subrecords, "WNAM") or [""])[0],
+        "script": (all_form_ids(subrecords, "SCRI") or [""])[0],
+        "pickupSound": (all_form_ids(subrecords, "YNAM") or [""])[0],
+        "dropSound": (all_form_ids(subrecords, "ZNAM") or [""])[0],
+        "modItems": all_form_ids(subrecords, "WMI1")
+        + all_form_ids(subrecords, "WMI2")
+        + all_form_ids(subrecords, "WMI3"),
+        "moddedWeapons": all_form_ids(subrecords, "WNM1")
+        + all_form_ids(subrecords, "WNM2")
+        + all_form_ids(subrecords, "WNM3")
+        + all_form_ids(subrecords, "WNM4")
+        + all_form_ids(subrecords, "WNM5")
+        + all_form_ids(subrecords, "WNM6")
+        + all_form_ids(subrecords, "WNM7"),
+        "modModelCount": sum(1 for rec_type, _ in subrecords if rec_type.startswith("MWD")),
+        "soundRefs": sound_refs,
+        "classification": "runtime-supported",
+        "readiness": "runtime-supported",
+        "runtimeScope": "record load/store, ManualRef construction, inventory equip, HUD-safe form id, icon lookup, and the real 10mm firing slice",
+        "runtimeProofGate": "fnv-real-10mm-runtime-contract",
+        "unprovenGameplayGates": [
+            "exhaustive-per-weapon-combat-behavior",
+            "weapon-mod-application",
+            "reload-and-attack-animation-parity",
+            "weapon-sound-event-parity",
+            "projectile-visual-impact-binding",
+        ],
+    }
+
+
+def ammo_data(subrecords):
+    data = first(subrecords, "DATA")
+    dnam = first(subrecords, "DNAM")
+    dat2 = first(subrecords, "DAT2")
+    result = {"dataSize": len(data) if data else 0}
+    if data and len(data) >= 13:
+        result.update(
+            {
+                "speed": get_float(data, 0),
+                "flags": get_u32(data, 4),
+                "value": get_u32(data, 8),
+                "clipRounds": get_u8(data, 12),
+            }
+        )
+    if dnam and len(dnam) >= 16:
+        result.update(
+            {
+                "projectile": hex_form(get_u32(dnam, 0)),
+                "dnamFlags": get_u32(dnam, 4),
+                "damage": get_float(dnam, 8),
+                "health": get_u32(dnam, 12),
+            }
+        )
+    if dat2 and len(dat2) >= 20:
+        result.update(
+            {
+                "projectilesPerShot": get_u32(dat2, 0),
+                "dat2Projectile": hex_form(get_u32(dat2, 4)),
+                "weight": get_float(dat2, 8),
+                "consumedAmmo": hex_form(get_u32(dat2, 12)),
+                "consumedPercentage": get_float(dat2, 16),
+            }
+        )
+    return result
+
+
+def ammo_row(plugin, record, subrecords):
+    full_name = first_zstring(subrecords, "FULL")
+    description = first_zstring(subrecords, "DESC")
+    data = ammo_data(subrecords)
+    return {
+        "plugin": plugin,
+        "recordType": "AMMO",
+        "formId": record["formId"],
+        "editorId": first_zstring(subrecords, "EDID"),
+        **text_summary("fullName", full_name),
+        "shortNameLength": len(first_zstring(subrecords, "ONAM")),
+        "shortNameHash": text_hash(first_zstring(subrecords, "ONAM")),
+        "abbrevLength": len(first_zstring(subrecords, "QNAM")),
+        "abbrevHash": text_hash(first_zstring(subrecords, "QNAM")),
+        "descriptionLength": len(description),
+        "descriptionHash": text_hash(description),
+        "model": first_zstring(subrecords, "MODL"),
+        "icon": first_zstring(subrecords, "ICON"),
+        "miniIcon": first_zstring(subrecords, "MICO"),
+        "data": data,
+        "projectile": data.get("projectile", "") or data.get("dat2Projectile", ""),
+        "ammoEffects": all_form_ids(subrecords, "RCIL"),
+        "script": (all_form_ids(subrecords, "SCRI") or [""])[0],
+        "pickupSound": (all_form_ids(subrecords, "YNAM") or [""])[0],
+        "dropSound": (all_form_ids(subrecords, "ZNAM") or [""])[0],
+        "classification": "runtime-supported",
+        "readiness": "runtime-supported",
+        "runtimeScope": "record load/store, ManualRef construction, ammunition slot equip, HUD-safe form id, projectile-reference carry-through, and the real 10mm ammo decrement slice",
+        "runtimeProofGate": "fnv-real-10mm-runtime-contract",
+        "unprovenGameplayGates": [
+            "ammo-effect-binding",
+            "projectile-visual-impact-binding",
+            "all-ammo-variant-ballistics",
+            "consumed-ammo-chain-runtime",
+        ],
+    }
+
+
 def projectile_row(plugin, record, subrecords):
     full_name = first_zstring(subrecords, "FULL")
     return {
@@ -561,7 +740,7 @@ def parse_plugin(path, plugin):
                 )
 
             counts[rec_type] += 1
-            if rec_type in {"QUST", "DIAL", "INFO", "SCPT", "GLOB", "GMST", "PERK", "PROJ", "EXPL"}:
+            if rec_type in {"QUST", "DIAL", "INFO", "SCPT", "GLOB", "GMST", "WEAP", "AMMO", "PERK", "PROJ", "EXPL"}:
                 payload = data[offset:next_offset]
                 subrecords = read_subrecords(payload)
                 record = {
@@ -611,6 +790,62 @@ def parse_plugin(path, plugin):
                     globals_.append(simple_row(plugin, record, subrecords))
                 elif rec_type == "GMST":
                     game_settings.append(simple_row(plugin, record, subrecords))
+                elif rec_type == "WEAP":
+                    gameplay_systems.append(weapon_row(plugin, record, subrecords))
+                    add_form_id_subrecord_refs(
+                        references,
+                        plugin,
+                        "WEAP",
+                        record["formId"],
+                        subrecords,
+                        [
+                            ("SCRI", "script"),
+                            ("NAM0", "ammo"),
+                            ("REPL", "repairList"),
+                            ("ETYP", "equipType"),
+                            ("INAM", "impactDataSet"),
+                            ("WNAM", "worldModel"),
+                            ("YNAM", "pickupSound"),
+                            ("ZNAM", "dropSound"),
+                            ("WMI1", "modItem"),
+                            ("WMI2", "modItem"),
+                            ("WMI3", "modItem"),
+                            ("WNM1", "moddedWeapon"),
+                            ("WNM2", "moddedWeapon"),
+                            ("WNM3", "moddedWeapon"),
+                            ("WNM4", "moddedWeapon"),
+                            ("WNM5", "moddedWeapon"),
+                            ("WNM6", "moddedWeapon"),
+                            ("WNM7", "moddedWeapon"),
+                            ("SNAM", "sound"),
+                            ("XNAM", "sound"),
+                            ("TNAM", "sound"),
+                            ("NAM8", "sound"),
+                            ("NAM9", "sound"),
+                            ("WMS1", "sound"),
+                            ("WMS2", "sound"),
+                        ],
+                    )
+                elif rec_type == "AMMO":
+                    gameplay_systems.append(ammo_row(plugin, record, subrecords))
+                    add_form_id_subrecord_refs(
+                        references,
+                        plugin,
+                        "AMMO",
+                        record["formId"],
+                        subrecords,
+                        [
+                            ("DNAM", "projectile"),
+                            ("RCIL", "ammoEffect"),
+                            ("SCRI", "script"),
+                            ("YNAM", "pickupSound"),
+                            ("ZNAM", "dropSound"),
+                        ],
+                    )
+                    for target in all_form_ids_at_offset(subrecords, "DAT2", 4):
+                        add_reference(references, plugin, "AMMO", record["formId"], "dat2Projectile", int(target, 16))
+                    for target in all_form_ids_at_offset(subrecords, "DAT2", 12):
+                        add_reference(references, plugin, "AMMO", record["formId"], "consumedAmmo", int(target, 16))
                 elif rec_type == "PERK":
                     gameplay_systems.append(perk_row(plugin, record, subrecords))
                     add_form_id_subrecord_refs(
