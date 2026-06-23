@@ -164,7 +164,6 @@ if (![string]::IsNullOrWhiteSpace($FnvRoot) -or ![string]::IsNullOrWhiteSpace($B
                 length = $item.Length
                 firstUInt32 = Read-UInt32LE $bytes 0
                 secondUInt32 = Read-UInt32LE $bytes 4
-                hex32 = (($bytes | ForEach-Object { $_.ToString("X2") }) -join " ")
             }
             Write-ProofLine "OK retail DAT metadata: path=$sample length=$($item.Length) firstUInt32=$(Read-UInt32LE $bytes 0)"
         }
