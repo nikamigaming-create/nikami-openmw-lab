@@ -56,6 +56,7 @@
 #include <cstdlib>
 #include <cstdint>
 #include <istream>
+#include <limits>
 #include <map>
 #include <memory>
 #include <sstream>
@@ -1103,6 +1104,15 @@ namespace MWRender
             std::map<std::string, std::vector<std::pair<std::uint32_t, osg::Vec3f>>, std::less<>> mStaticMorphs;
         };
 
+        struct FaceGenCtl
+        {
+            std::uint32_t mBasisVersion = 0;
+            std::uint32_t mSymmetricShapeModeCount = 0;
+            std::uint32_t mAsymmetricShapeModeCount = 0;
+            std::uint32_t mTextureModeCount = 0;
+            std::uint32_t mPayloadBytes = 0;
+        };
+
         struct FaceGenEgt
         {
             std::uint32_t mWidth = 0;
@@ -1125,6 +1135,72 @@ namespace MWRender
             while (!value.empty() && value.back() == '\0')
                 value.pop_back();
             return static_cast<bool>(stream);
+        }
+
+        std::shared_ptr<const FaceGenCtl> loadFaceGenCtl(Resource::ResourceSystem* resourceSystem)
+        {
+            const VFS::Path::Normalized correctedPath("facegen/si.ctl");
+            const std::string cacheKey = correctedPath.value();
+            static std::map<std::string, std::shared_ptr<const FaceGenCtl>> sCache;
+            if (const auto found = sCache.find(cacheKey); found != sCache.end())
+                return found->second;
+
+            const VFS::Manager* vfs = resourceSystem->getVFS();
+            if (!vfs->exists(correctedPath))
+            {
+                sCache.emplace(cacheKey, nullptr);
+                return nullptr;
+            }
+
+            auto stream = vfs->get(correctedPath);
+            char magic[8] = {};
+            stream->read(magic, sizeof(magic));
+            if (!*stream || std::string_view(magic, sizeof(magic)) != "FRCTL001")
+            {
+                Log(Debug::Warning) << "FNV/ESM4 diag: unsupported FaceGen CTL " << cacheKey;
+                sCache.emplace(cacheKey, nullptr);
+                return nullptr;
+            }
+
+            std::uint32_t controlSignature = 0;
+            auto ctl = std::make_shared<FaceGenCtl>();
+            if (!readBinary(*stream, controlSignature) || !readBinary(*stream, ctl->mBasisVersion)
+                || !readBinary(*stream, ctl->mSymmetricShapeModeCount)
+                || !readBinary(*stream, ctl->mAsymmetricShapeModeCount) || !readBinary(*stream, ctl->mTextureModeCount))
+            {
+                Log(Debug::Warning) << "FNV/ESM4 diag: failed to read FaceGen CTL header " << cacheKey;
+                sCache.emplace(cacheKey, nullptr);
+                return nullptr;
+            }
+
+            std::uint32_t reserved = 0;
+            if (!readBinary(*stream, reserved))
+                reserved = 0;
+
+            stream->seekg(0, std::ios::end);
+            const std::streamoff totalBytes = stream->tellg();
+            if (totalBytes > 32)
+                ctl->mPayloadBytes = static_cast<std::uint32_t>(std::min<std::streamoff>(totalBytes - 32,
+                    static_cast<std::streamoff>(std::numeric_limits<std::uint32_t>::max())));
+
+            if (ctl->mBasisVersion == 0 || ctl->mSymmetricShapeModeCount == 0
+                || ctl->mAsymmetricShapeModeCount == 0 || ctl->mTextureModeCount == 0)
+            {
+                Log(Debug::Warning) << "FNV/ESM4 diag: invalid FaceGen CTL counts " << cacheKey << " basis="
+                                    << ctl->mBasisVersion << " symShape=" << ctl->mSymmetricShapeModeCount
+                                    << " asymShape=" << ctl->mAsymmetricShapeModeCount
+                                    << " texture=" << ctl->mTextureModeCount;
+                sCache.emplace(cacheKey, nullptr);
+                return nullptr;
+            }
+
+            Log(Debug::Info) << "FNV/ESM4 diag: loaded FaceGen CTL " << cacheKey << " basis="
+                             << ctl->mBasisVersion << " symShape=" << ctl->mSymmetricShapeModeCount
+                             << " asymShape=" << ctl->mAsymmetricShapeModeCount
+                             << " texture=" << ctl->mTextureModeCount << " payloadBytes=" << ctl->mPayloadBytes
+                             << " signature=0x" << std::hex << controlSignature << std::dec;
+            sCache.emplace(cacheKey, ctl);
+            return ctl;
         }
 
         std::shared_ptr<const FaceGenEgm> loadFaceGenEgm(Resource::ResourceSystem* resourceSystem, std::string_view model)
@@ -3920,6 +3996,36 @@ namespace MWRender
             return true;
         }
 
+        void validateFaceGenCtlBasis(const FaceGenCtl* ctl, const ESM4::Npc& traits)
+        {
+            if (ctl == nullptr)
+                return;
+
+            const auto matches = [](std::size_t actual, std::uint32_t expected) {
+                return actual == 0 || actual == static_cast<std::size_t>(expected);
+            };
+            const bool shapeOk = matches(traits.mSymShapeModeCoefficients.size(), ctl->mSymmetricShapeModeCount);
+            const bool asymOk = matches(traits.mAsymShapeModeCoefficients.size(), ctl->mAsymmetricShapeModeCount);
+            const bool textureOk = matches(traits.mSymTextureModeCoefficients.size(), ctl->mTextureModeCount);
+            if (shapeOk && asymOk && textureOk)
+            {
+                Log(Debug::Info) << "FNV/ESM4 diag: FaceGen CTL basis validated for " << traits.mEditorId
+                                 << " basis=" << ctl->mBasisVersion << " shape="
+                                 << traits.mSymShapeModeCoefficients.size() << "/" << ctl->mSymmetricShapeModeCount
+                                 << " asym=" << traits.mAsymShapeModeCoefficients.size() << "/"
+                                 << ctl->mAsymmetricShapeModeCount << " texture="
+                                 << traits.mSymTextureModeCoefficients.size() << "/" << ctl->mTextureModeCount;
+                return;
+            }
+
+            Log(Debug::Warning) << "FNV/ESM4 diag: FaceGen CTL basis mismatch for " << traits.mEditorId
+                                << " basis=" << ctl->mBasisVersion << " shape="
+                                << traits.mSymShapeModeCoefficients.size() << "/" << ctl->mSymmetricShapeModeCount
+                                << " asym=" << traits.mAsymShapeModeCoefficients.size() << "/"
+                                << ctl->mAsymmetricShapeModeCount << " texture="
+                                << traits.mSymTextureModeCoefficients.size() << "/" << ctl->mTextureModeCount;
+        }
+
         void overrideFalloutEquipmentSkinTextures(osg::Node* attached, std::string_view model, const ESM4::Npc& traits,
             Resource::ResourceSystem* resourceSystem, std::string_view bodyTexture, std::string_view faceTexture)
         {
@@ -5035,6 +5141,8 @@ namespace MWRender
         }
 
         const bool isFemale = MWClass::ESM4Npc::isFemale(mPtr);
+        const std::shared_ptr<const FaceGenCtl> faceGenCtl = loadFaceGenCtl(mResourceSystem);
+        validateFaceGenCtlBasis(faceGenCtl.get(), traits);
         const uint32_t coveredBodySlots = getFonvCoveredBodySlots(mPtr);
         const std::string npcFaceTexture = findFonvNpcFaceTexture(mResourceSystem, traits);
         const std::string npcFaceDetailTexture

@@ -228,9 +228,13 @@ $runtimeRules = @{
     ".psa" = New-Rule "blocked-runtime-support" "procedural/animation-support" "PSA support assets are harvested but no runtime reader is wired" @(
         New-Anchor "apps/niftest/niftest.cpp" 'extension == ".psa"' "test tool recognizes PSA as a NIF-adjacent asset"
     ) "Identify PSA consumer in Gamebryo/FNV pipeline, then add reader or explicit runtime bypass."
-    ".ctl" = New-Rule "blocked-runtime-support" "misc-control-data" "CTL misc-control bytes are VFS-visible but no runtime consumer is identified" @(
-        New-Anchor "components/bsa/compressedbsafile.hpp" "FileFlag_MISC = 0x100" "archive reader classifies CTL and similar misc files"
-    ) "Identify CTL owner format and add a parser or explicit ignore rule with proof."
+    ".ctl" = New-Rule "vfs-readable-runtime-conditional" "facegen-control-basis" "FaceGen CTL bytes are loaded through VFS, validated as FRCTL001, and used to verify the FNV FaceGen 50/30/50 coefficient basis; full control payload semantics remain a follow-up gate" @(
+        New-Anchor "apps/openmw/mwrender/esm4npcanimation.cpp" "loadFaceGenCtl" "FaceGen CTL reader loads external control bytes"
+        New-Anchor "apps/openmw/mwrender/esm4npcanimation.cpp" '"FRCTL001"' "FaceGen CTL magic is validated"
+        New-Anchor "apps/openmw/mwrender/esm4npcanimation.cpp" "validateFaceGenCtlBasis" "FaceGen CTL basis validates NPC coefficient arrays"
+        New-Anchor "apps/openmw/mwrender/esm4npcanimation.cpp" "FNV/ESM4 diag: loaded FaceGen CTL" "runtime logs parsed CTL metadata"
+        New-Anchor "scripts/nikami/test-fnv-facegen-ctl-contract.ps1" "FNV FaceGen CTL contract" "retail-safe CTL proof validates local header without storing payloads"
+    ) "Promote to runtime-supported after the full FaceGen control payload beyond the basis header is decoded and gated."
     ".dat" = New-Rule "blocked-runtime-support" "misc-data" "DAT bytes are VFS-visible but no runtime consumer is identified" @(
         New-Anchor "components/vfs/manager.hpp" "Files::IStreamPtr get" "VFS can expose DAT streams"
     ) "Identify DAT owner format and add a parser or explicit ignore rule with proof."
