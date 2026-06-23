@@ -68,6 +68,8 @@ namespace MWBase
 
         virtual bool say(const MWWorld::Ptr& actor, const ESM::RefId& topic) = 0;
 
+        virtual void executeScript(const std::string& script, const MWWorld::Ptr& actor) = 0;
+
         virtual void keywordSelected(std::string_view keyword, ResponseCallback* callback) = 0;
         virtual void goodbyeSelected() = 0;
         virtual void questionAnswered(int answer, ResponseCallback* callback) = 0;

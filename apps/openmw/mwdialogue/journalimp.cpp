@@ -1,15 +1,19 @@
 #include "journalimp.hpp"
 
+#include <cstdlib>
 #include <iterator>
 
+#include <components/debug/debuglog.hpp>
 #include <components/esm3/esmreader.hpp>
 #include <components/esm3/esmwriter.hpp>
 #include <components/esm3/journalentry.hpp>
+#include <components/esm3/loadinfo.hpp>
 #include <components/esm3/questobjectivestate.hpp>
 #include <components/esm3/queststate.hpp>
 
 #include <components/misc/strings/algorithm.hpp>
 
+#include "../mwbase/dialoguemanager.hpp"
 #include "../mwworld/class.hpp"
 #include "../mwworld/esmstore.hpp"
 
@@ -19,6 +23,24 @@
 
 namespace MWDialogue
 {
+    namespace
+    {
+        const ESM::DialInfo* findJournalInfo(const ESM::RefId& topic, const ESM::RefId& infoId)
+        {
+            const ESM::Dialogue* dialogue = MWBase::Environment::get().getESMStore()->get<ESM::Dialogue>().find(topic);
+            for (const ESM::DialInfo& info : dialogue->mInfo)
+                if (info.mId == infoId)
+                    return &info;
+            return nullptr;
+        }
+
+        bool isQuestStageFragmentTraceEnabled()
+        {
+            const char* value = std::getenv("OPENMW_FNV_PROOF_QUEST_STAGE_FRAGMENT_TRACE");
+            return value != nullptr && value[0] != '\0';
+        }
+    }
+
     Quest& Journal::getOrStartQuest(const ESM::RefId& id)
     {
         TQuestContainer::iterator iter = mQuests.find(id);
@@ -96,9 +118,11 @@ namespace MWDialogue
             }
 
         StampedJournalEntry entry = StampedJournalEntry::makeFromQuest(id, index, actor);
+        const ESM::DialInfo* info = findJournalInfo(id, entry.mInfoId);
 
         Quest& quest = getOrStartQuest(id);
-        if (quest.addEntry(entry)) // we are doing slicing on purpose here
+        const bool restarted = quest.addEntry(entry); // we are doing slicing on purpose here
+        if (restarted)
         {
             // Restart all "other" quests with the same name as well
             std::string_view name = quest.getName();
@@ -106,6 +130,28 @@ namespace MWDialogue
             {
                 if (it.second.isFinished() && Misc::StringUtils::ciEqual(it.second.getName(), name))
                     it.second.setFinished(false);
+            }
+        }
+
+        if (info != nullptr && !info->mResultScript.empty())
+        {
+            MWWorld::Ptr scriptActor = actor;
+            if (scriptActor.isEmpty())
+                scriptActor = MWBase::Environment::get().getWorld()->getPlayerPtr();
+
+            MWBase::Environment::get().getDialogueManager()->executeScript(info->mResultScript, scriptActor);
+
+            if (isQuestStageFragmentTraceEnabled())
+            {
+                Log(Debug::Info) << "FNV/ESM4 proof: quest stage fragment runtime executed"
+                                 << " quest=" << id.toDebugString()
+                                 << " stageIndex=" << index
+                                 << " info=" << entry.mInfoId.toDebugString()
+                                 << " scriptBytes=" << info->mResultScript.size()
+                                 << " runtimeBoundary=selected-stage-fragment-result-script-runtime-supported"
+                                 << " setStageRuntime=loaded-pending-runtime"
+                                 << " conditionRuntime=loaded-pending-runtime"
+                                 << " fullQuestCompletionRuntime=loaded-pending-runtime";
             }
         }
 

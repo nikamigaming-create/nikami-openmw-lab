@@ -68,6 +68,7 @@ param(
     [int]$FnvQuestSaveLoadFrame = 0,
     [switch]$FnvQuestObjectiveScriptTrace,
     [switch]$FnvQuestJournalScriptTrace,
+    [switch]$FnvQuestStageFragmentTrace,
     [switch]$FnvNonzeroProjectileBindingTrace,
     [switch]$FnvPlayerPerkTrace,
     [switch]$FnvActorValueTrace,
@@ -999,6 +1000,9 @@ try {
         Set-ProofEnv $previousEnv "OPENMW_FNV_PROOF_QUEST_JOURNAL_SCRIPT_TRACE" "1"
         Set-ProofEnv $previousEnv "OPENMW_FNV_PROOF_CONSOLE_SCRIPT_TRACE" "1"
     }
+    if ($FnvQuestStageFragmentTrace) {
+        Set-ProofEnv $previousEnv "OPENMW_FNV_PROOF_QUEST_STAGE_FRAGMENT_TRACE" "1"
+    }
     if ($FnvNonzeroProjectileBindingTrace) {
         Set-ProofEnv $previousEnv "OPENMW_FNV_PROOF_NONZERO_PROJECTILE" "1"
     }
@@ -1066,6 +1070,7 @@ try {
     Write-ProofLine "FnvQuestSaveLoadFrame: $FnvQuestSaveLoadFrame"
     Write-ProofLine "FnvQuestObjectiveScriptTrace: $FnvQuestObjectiveScriptTrace"
     Write-ProofLine "FnvQuestJournalScriptTrace: $FnvQuestJournalScriptTrace"
+    Write-ProofLine "FnvQuestStageFragmentTrace: $FnvQuestStageFragmentTrace"
     Write-ProofLine "FnvNonzeroProjectileBindingTrace: $FnvNonzeroProjectileBindingTrace"
     Write-ProofLine "TraceRawPendingRecord: $TraceRawPendingRecord"
     Write-ProofLine "TerrainProbePoints: $probePoints"

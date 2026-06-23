@@ -72,8 +72,6 @@ namespace MWDialogue
 
         std::optional<Interpreter::Program> compile(const std::string& cmd, const MWWorld::Ptr& actor);
 
-        void executeScript(const std::string& script, const MWWorld::Ptr& actor);
-
         void executeTopic(const ESM::RefId& topic, ResponseCallback* callback);
 
         const ESM::Dialogue* searchDialogue(const ESM::RefId& id);
@@ -106,6 +104,8 @@ namespace MWDialogue
         bool checkServiceRefused(ResponseCallback* callback, ServiceType service = ServiceType::Any) override;
 
         bool say(const MWWorld::Ptr& actor, const ESM::RefId& topic) override;
+
+        void executeScript(const std::string& script, const MWWorld::Ptr& actor) override;
 
         // calbacks for the GUI
         void keywordSelected(std::string_view keyword, ResponseCallback* callback) override;
