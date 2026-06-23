@@ -153,7 +153,17 @@ $GeneratedState = @(
 foreach ($Name in $GeneratedState) {
     $Path = Join-Path $ConfigDir $Name
     if (Test-Path -LiteralPath $Path) {
-        Remove-Item -LiteralPath $Path -Force
+        $removed = $false
+        for ($attempt = 1; $attempt -le 5 -and !$removed; $attempt++) {
+            try {
+                Remove-Item -LiteralPath $Path -Force -ErrorAction Stop
+                $removed = $true
+            }
+            catch {
+                if ($attempt -eq 5) { throw }
+                Start-Sleep -Milliseconds (200 * $attempt)
+            }
+        }
     }
 }
 

@@ -52,6 +52,7 @@ Write-ProofLine ""
 
 $SkyCpp = Join-Path $RepoRoot "apps/openmw/mwrender/sky.cpp"
 $SkyUtilCpp = Join-Path $RepoRoot "apps/openmw/mwrender/skyutil.cpp"
+$SkyVert = Join-Path $RepoRoot "files/shaders/compatibility/sky.vert"
 $SkyFrag = Join-Path $RepoRoot "files/shaders/compatibility/sky.frag"
 $SkyPasses = Join-Path $RepoRoot "files/shaders/lib/sky/passes.glsl"
 $ShaderSettings = Join-Path $RepoRoot "components/settings/categories/shaders.hpp"
@@ -98,7 +99,20 @@ Assert-FileContains $SkyCpp "FNV/ESM4: sky shader mode" "sky renderer emits shad
 Assert-FileContains $SkyCpp "sky-interpreted" "FNV flat sky uses interpreted shader path"
 Assert-FileContains $SkyCpp "interpreted sky material" "FNV flat sky attaches sky updaters"
 Assert-FileContains $SkyCpp "updatersAttached=1" "FNV flat sky proves updater ownership"
-Assert-FileContains $SkyCpp "vertexAlpha=authored" "FNV flat sky preserves authored vertex alpha"
+Assert-FileContains $SkyCpp "generated-z-gradient" "FNV flat atmosphere uses generated vertex alpha gradient"
+Assert-FileContains $SkyCpp "texture-alpha" "FNV flat clouds/stars use texture alpha mode"
+Assert-FileContains $SkyCpp "vertexColorRgb=" "FNV flat sky logs vertex RGB usage"
+Assert-FileContains $SkyCpp "not-used" "FNV flat sky logs vertex RGB disabled state"
+Assert-FileContains $SkyCpp "sky mesh vertex colors" "FNV flat sky logs runtime vertex color stats"
+Assert-FileContains $SkyCpp "rgbNonzero=" "FNV flat sky probes nonzero vertex RGB"
+Assert-FileContains $SkyCpp "rgbVarying=" "FNV flat sky probes varying vertex RGB"
+Assert-FileContains $SkyCpp "generated atmosphere shader alpha" "FNV flat sky logs generated atmosphere shader alpha"
+Assert-FileContains $SkyCpp "calculateFalloutAtmosphereAlpha" "FNV flat sky calculates Fallout atmosphere alpha range"
+Assert-FileContains $SkyUtilCpp "setFalloutAtmosphereZGradient" "FNV flat atmosphere updater exposes z-gradient uniform controls"
+Assert-FileContains $SkyVert "useFalloutAtmosphereZGradient" "FNV flat sky vertex shader gates Fallout atmosphere z-gradient"
+Assert-FileContains $SkyVert "falloutAtmosphereZRange" "FNV flat sky vertex shader consumes Fallout atmosphere z range"
+Assert-FileContains $SkyVert "passColor\.a = clamp" "FNV flat sky vertex shader generates alpha from z range"
+Assert-FileNotContains $SkyFrag "useVertexColorRgb" "unsupported FNV vertex RGB shader path"
 Assert-FileNotContains $SkyCpp "updatersSkipped=1" "stale FNV raw sky bypass"
 Assert-FileContains $ShaderSettings "mForceShaders" "shader settings expose explicit force-shaders key"
 Assert-FileContains $SettingsDefault "force shaders = false" "default shader force flag is explicit off"
@@ -114,13 +128,18 @@ Assert-FileContains $SkyPasses "#define PASS_MOON 3" "sky shader pass table keep
 Assert-FileNotContains $SkyFrag "vec4 blendedLayer = phase \* moonBlend" "downstream legacy moon shader blend"
 Assert-FileContains $FlatProofScript "OPENMW_FNV_SKY_MISSING_LOG" "flat proof enables sky diagnostics"
 Assert-FileContains $FlatProofScript "RequireSkyColorSanity" "flat proof can gate sky screenshot colors"
+Assert-FileContains $FlatProofScript "RequireSunVisible" "flat proof can gate visible sun screenshot"
+Assert-FileContains $FlatProofScript "OPENMW_FNV_FLAT_CAMERA_YAW" "flat proof can steer camera toward sun"
 Assert-FileContains $FlatProofScript "rawRedMaskLeak" "flat proof detects raw red sky-mask leakage"
 Assert-FileContains $FlatProofScript "morrowindBluePaletteLeak" "flat proof detects stale Morrowind blue sky palette"
 Assert-FileContains $FlatScript "force shaders = false" "FNV flat explicitly disables forced sky shader"
 Assert-FileContains $WeatherFallbackScript "NAM0_GROUPS" "FNV WTHR fallback generator decodes NAM0 color groups"
 Assert-FileContains $WeatherFallbackScript "SkyUpper" "FNV WTHR fallback generator maps Sky-Upper color"
+Assert-FileContains $WeatherFallbackScript "SkyLower" "FNV WTHR fallback generator accounts for Sky-Lower color"
+Assert-FileContains $WeatherFallbackScript "Horizon" "FNV WTHR fallback generator accounts for Horizon color"
 Assert-FileContains $WeatherFallbackScript "Sunlight" "FNV WTHR fallback generator maps sunlight color"
 Assert-FileContains $WeatherFallbackScript "payloadPolicy" "FNV WTHR fallback generator emits no-retail payload policy"
+Assert-FileContains $WeatherFallbackScript "runtimeColorCoverage" "FNV WTHR fallback generator classifies vertical sky color coverage"
 Assert-FileContains $RuntimeSettingsScript "Get-NikamiFnvWeatherFallbacks" "runtime settings expose generated FNV WTHR weather fallbacks"
 Assert-FileContains $FlatScript "Get-NikamiFnvWeatherFallbacks" "FNV flat uses generated WTHR weather fallbacks"
 Assert-FileContains $VrDeployScript "Get-NikamiFnvWeatherFallbacks" "FNV headset deploy uses generated WTHR weather fallbacks"
@@ -143,10 +162,12 @@ Assert-BsaContains "Fallout - Textures2.bsa" "textures[\\/]+sky[\\/]+nv_wastelan
 
 $requiredLogPatterns = @(
     "FNV/ESM4: sky shader mode forceShaders=0 falloutSkyModels=1 program=sky-interpreted",
-    "FNV/ESM4: interpreted sky material day atmosphere \(meshes/sky/atmosphere\.nif\) nativeMaterial=0 skyProgram=sky skyPass=atmosphere updatersAttached=1 vertexAlpha=authored",
-    "FNV/ESM4: interpreted sky material night atmosphere \(meshes/sky/stars\.nif\) nativeMaterial=0 skyProgram=sky skyPass=atmosphere-night updatersAttached=1 vertexAlpha=authored",
-    "FNV/ESM4: interpreted sky material clouds \(meshes/sky/clouds\.nif\) nativeMaterial=0 skyProgram=sky skyPass=clouds updatersAttached=1 vertexAlpha=authored",
-    "FNV/ESM4: interpreted sky material next clouds \(meshes/sky/clouds\.nif\) nativeMaterial=0 skyProgram=sky skyPass=clouds updatersAttached=1 vertexAlpha=authored",
+    "FNV/ESM4: sky mesh vertex colors day atmosphere \(meshes/sky/atmosphere\.nif\).*colorArrays=0 samples=0 rgbNonzero=0 rgbVarying=0",
+    "FNV/ESM4: generated atmosphere shader alpha day atmosphere \(meshes/sky/atmosphere\.nif\).*mode=bound-z-gradient.*applied=1",
+    "FNV/ESM4: interpreted sky material day atmosphere \(meshes/sky/atmosphere\.nif\) nativeMaterial=0 skyProgram=sky skyPass=atmosphere updatersAttached=1 vertexAlpha=generated-z-gradient vertexColorRgb=not-used",
+    "FNV/ESM4: interpreted sky material night atmosphere \(meshes/sky/stars\.nif\) nativeMaterial=0 skyProgram=sky skyPass=atmosphere-night updatersAttached=1 vertexAlpha=texture-alpha vertexColorRgb=not-used",
+    "FNV/ESM4: interpreted sky material clouds \(meshes/sky/clouds\.nif\) nativeMaterial=0 skyProgram=sky skyPass=clouds updatersAttached=1 vertexAlpha=texture-alpha vertexColorRgb=not-used",
+    "FNV/ESM4: interpreted sky material next clouds \(meshes/sky/clouds\.nif\) nativeMaterial=0 skyProgram=sky skyPass=clouds updatersAttached=1 vertexAlpha=texture-alpha vertexColorRgb=not-used",
     "FNV/ESM4: wrapped sky mesh day atmosphere \(meshes/sky/atmosphere\.nif\)",
     "FNV/ESM4: wrapped sky mesh night atmosphere \(meshes/sky/stars\.nif\)",
     "FNV/ESM4: wrapped sky mesh clouds \(meshes/sky/clouds\.nif\)",
@@ -221,6 +242,11 @@ Assert-FileContains $flatSettings "^sky blending = true$" "generated flat sky bl
 Assert-FileContains $flatSummary "^RequireSkyColorSanity: True$" "flat proof required sky color sanity"
 Assert-FileContains $weatherFallbackJson '"payloadPolicy"\s*:\s*"derived-weather-fallbacks-no-retail-assets"' "generated weather fallback payload policy"
 Assert-FileContains $weatherFallbackJson '"selectedWeather"' "generated weather fallback selected weather map"
+Assert-FileContains $weatherFallbackJson '"skyColorGroups"' "generated weather fallback vertical sky color proof"
+Assert-FileContains $weatherFallbackJson '"SkyLower"' "generated weather fallback SkyLower proof"
+Assert-FileContains $weatherFallbackJson '"Horizon"' "generated weather fallback Horizon proof"
+Assert-FileContains $weatherFallbackJson '"SkyLower"\s*:\s*"loaded-pending-runtime"' "generated weather fallback SkyLower runtime classification"
+Assert-FileContains $weatherFallbackJson '"Horizon"\s*:\s*"loaded-pending-runtime"' "generated weather fallback Horizon runtime classification"
 Assert-FileContains $weatherFallbackJson '"Clear"' "generated weather fallback clear selection"
 Assert-FileContains $weatherFallbackJson '"runtimeBoundary"' "generated weather fallback runtime boundary"
 Assert-FileContains $weatherFallbackLines "^fallback=Weather_Clear_Sky_Day_Color,[0-9]{3},[0-9]{3},[0-9]{3}$" "generated weather fallback clear sky line"
@@ -239,10 +265,12 @@ Assert-FileNotContains $flatOpenMwLog "marker_error|Failed to compile|failed to 
 Assert-FileContains $flatOpenMwLog "Adding BSA archive .*Fallout - Meshes\.bsa" "runtime registered meshes BSA"
 Assert-FileContains $flatOpenMwLog "Adding BSA archive .*Fallout - Textures2\.bsa" "runtime registered textures2 BSA"
 Assert-FileContains $flatOpenMwLog "FNV/ESM4: sky shader mode forceShaders=0 falloutSkyModels=1 program=sky-interpreted" "runtime FNV flat sky shader mode"
-Assert-FileContains $flatOpenMwLog "FNV/ESM4: interpreted sky material day atmosphere \(meshes/sky/atmosphere\.nif\) nativeMaterial=0 skyProgram=sky skyPass=atmosphere updatersAttached=1 vertexAlpha=authored" "runtime interpreted FNV atmosphere material"
-Assert-FileContains $flatOpenMwLog "FNV/ESM4: interpreted sky material clouds \(meshes/sky/clouds\.nif\) nativeMaterial=0 skyProgram=sky skyPass=clouds updatersAttached=1 vertexAlpha=authored" "runtime interpreted FNV clouds material"
-Assert-FileContains $flatOpenMwLog "FNV/ESM4: interpreted sky material next clouds \(meshes/sky/clouds\.nif\) nativeMaterial=0 skyProgram=sky skyPass=clouds updatersAttached=1 vertexAlpha=authored" "runtime interpreted FNV next clouds material"
-Assert-FileContains $flatOpenMwLog "FNV/ESM4: interpreted sky material night atmosphere \(meshes/sky/stars\.nif\) nativeMaterial=0 skyProgram=sky skyPass=atmosphere-night updatersAttached=1 vertexAlpha=authored" "runtime interpreted FNV stars material"
+Assert-FileContains $flatOpenMwLog "FNV/ESM4: sky mesh vertex colors day atmosphere \(meshes/sky/atmosphere\.nif\).*colorArrays=0 samples=0 rgbNonzero=0 rgbVarying=0" "runtime FNV atmosphere creation-time vertex RGB probe"
+Assert-FileContains $flatOpenMwLog "FNV/ESM4: generated atmosphere shader alpha day atmosphere \(meshes/sky/atmosphere\.nif\).*mode=bound-z-gradient.*applied=1" "runtime FNV atmosphere generated alpha"
+Assert-FileContains $flatOpenMwLog "FNV/ESM4: interpreted sky material day atmosphere \(meshes/sky/atmosphere\.nif\) nativeMaterial=0 skyProgram=sky skyPass=atmosphere updatersAttached=1 vertexAlpha=generated-z-gradient vertexColorRgb=not-used" "runtime interpreted FNV atmosphere material"
+Assert-FileContains $flatOpenMwLog "FNV/ESM4: interpreted sky material clouds \(meshes/sky/clouds\.nif\) nativeMaterial=0 skyProgram=sky skyPass=clouds updatersAttached=1 vertexAlpha=texture-alpha vertexColorRgb=not-used" "runtime interpreted FNV clouds material"
+Assert-FileContains $flatOpenMwLog "FNV/ESM4: interpreted sky material next clouds \(meshes/sky/clouds\.nif\) nativeMaterial=0 skyProgram=sky skyPass=clouds updatersAttached=1 vertexAlpha=texture-alpha vertexColorRgb=not-used" "runtime interpreted FNV next clouds material"
+Assert-FileContains $flatOpenMwLog "FNV/ESM4: interpreted sky material night atmosphere \(meshes/sky/stars\.nif\) nativeMaterial=0 skyProgram=sky skyPass=atmosphere-night updatersAttached=1 vertexAlpha=texture-alpha vertexColorRgb=not-used" "runtime interpreted FNV stars material"
 Assert-FileNotContains $flatOpenMwLog "native sky material .*updatersSkipped=1|program=fixed-function-protected" "runtime stale FNV raw sky bypass"
 Assert-FileContains $flatOpenMwLog "FNV/ESM4: wrapped sky mesh day atmosphere \(meshes/sky/atmosphere\.nif\)" "runtime wrapped FNV atmosphere"
 Assert-FileContains $flatOpenMwLog "FNV/ESM4: wrapped sky mesh clouds \(meshes/sky/clouds\.nif\)" "runtime wrapped FNV clouds"
@@ -258,21 +286,72 @@ Assert-FileNotContains $flatSkyColorSanity '"rawRedMaskLeak"\s*:\s*true' "runtim
 Assert-FileContains $flatSkyColorSanity '"morrowindBluePaletteLeak"\s*:\s*false' "runtime no stale Morrowind blue sky palette"
 Assert-FileNotContains $flatSkyColorSanity '"morrowindBluePaletteLeak"\s*:\s*true' "runtime stale Morrowind blue sky palette leakage"
 
+$sunProofBefore = @()
+if (Test-Path -LiteralPath $flatProofRoot) {
+    $sunProofBefore = @(Get-ChildItem -LiteralPath $flatProofRoot -Directory -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName })
+}
+$sunLogPatterns = @(
+    "FNV/ESM4: enabled FNV sun billboard using texture textures/sky/sun\.dds",
+    "FNV/ESM4: enabled FNV sun glare using texture textures/sky/nv_sunglare\.dds",
+    "FNV/ESM4 diag: settled flat startup camera .*cameraPitch=0\.35 cameraYaw=-1\.16"
+)
+
+& $FlatProofScript `
+    -FnvData $FnvData `
+    -VcpkgRoot $VcpkgRoot `
+    -ProofRoot $ProofRoot `
+    -RunSeconds $RunSeconds `
+    -NoSound `
+    -ScreenshotFrames "180,300" `
+    -FlatCameraYaw -1.16 `
+    -FlatCameraPitch 0.35 `
+    -RequireSunVisible `
+    -RequireLogPattern $sunLogPatterns
+
+$sunProofAfter = @(Get-ChildItem -LiteralPath $flatProofRoot -Directory -ErrorAction SilentlyContinue |
+    Sort-Object LastWriteTime -Descending)
+$sunProof = $sunProofAfter | Where-Object { $sunProofBefore -notcontains $_.FullName } | Select-Object -First 1
+if ($null -eq $sunProof) {
+    $sunProof = $sunProofAfter | Select-Object -First 1
+}
+if ($null -eq $sunProof) {
+    throw "No FNV sun-visible proof directory was produced"
+}
+
+$sunOpenMwLog = Join-Path $sunProof.FullName "openmw.log"
+$sunSummary = Join-Path $sunProof.FullName "summary.txt"
+$sunVisibilityJson = Join-Path $sunProof.FullName "sun-visibility.json"
+Write-ProofLine ""
+Write-ProofLine "Sun-visible proof: $($sunProof.FullName)"
+Write-ProofLine "Sun-visible log: $sunOpenMwLog"
+Assert-FileContains $sunSummary "^RequireSunVisible: True$" "sun proof required visible sun"
+Assert-FileContains $sunSummary "^FlatCameraYaw: -1\.16$" "sun proof camera yaw"
+Assert-FileContains $sunSummary "^FlatCameraPitch: 0\.35$" "sun proof camera pitch"
+Assert-FileContains $sunOpenMwLog "FNV/ESM4: enabled FNV sun billboard using texture textures/sky/sun\.dds" "sun proof FNV sun texture"
+Assert-FileContains $sunOpenMwLog "FNV/ESM4: enabled FNV sun glare using texture textures/sky/nv_sunglare\.dds" "sun proof FNV glare texture"
+Assert-FileContains $sunOpenMwLog "FNV/ESM4 diag: settled flat startup camera .*cameraPitch=0\.35 cameraYaw=-1\.16" "sun proof camera points at sun"
+Assert-FileContains $sunVisibilityJson '"sunVisible"\s*:\s*true' "runtime visible FNV sun screenshot"
+
 $result = [ordered]@{
     stamp = $Stamp
     repoRoot = $RepoRoot
     fnvData = $FnvData
     proofDir = $ProofDir
     flatProofDir = $latestFlatProof.FullName
+    sunVisibleProofDir = $sunProof.FullName
     classification = "runtime-supported"
     checked = @(
         "explicit FNV sky model settings",
         "camera-relative wrapped FNV atmosphere/cloud/star meshes",
         "FNV atmosphere/cloud/star meshes use interpreted sky shader passes in PC flat",
-        "FNV sky shader path preserves authored Fallout vertex alpha instead of Morrowind vertex-index alpha",
+        "FNV creation-time log records no loaded atmosphere vertex RGB arrays and the shader keeps vertex RGB disabled",
+        "FNV atmosphere runtime generates a bound-derived shader z-gradient before the sky shader uses passColor alpha",
+        "FNV sky shader does not consume unsupported vertex RGB data",
         "FNV WTHR-derived weather fallbacks supply sky/fog/ambient/sun colors without committing retail assets",
+        "FNV WTHR SkyLower and Horizon colors are harvested into proof metadata and classified loaded-pending-runtime",
         "FNV screenshot sky color sanity rejects raw red channel/mask leakage and stale Morrowind blue palette leakage",
         "FNV sun/moon billboard path uses Fallout sky textures",
+        "FNV sun-facing screenshot proves visible sun disc/glare core",
         "FNV flat shader mode is sky-interpreted",
         "FNV sky meshes and sun/moon textures present in retail BSA inventory",
         "sky shader pass ids and premultiplied moon blend guarded",

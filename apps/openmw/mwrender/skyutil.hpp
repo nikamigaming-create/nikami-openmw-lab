@@ -5,6 +5,7 @@
 #include <osg/Matrixf>
 #include <osg/Texture2D>
 #include <osg/Transform>
+#include <osg/Vec2f>
 #include <osg/Vec4f>
 
 #include <osgParticle/ConstantRateCounter>
@@ -133,6 +134,7 @@ namespace MWRender
     {
     public:
         void setEmissionColor(const osg::Vec4f& emissionColor);
+        void setFalloutAtmosphereZGradient(float minZ, float maxZ);
 
     protected:
         void setDefaults(osg::StateSet* stateset) override;
@@ -140,6 +142,8 @@ namespace MWRender
 
     private:
         osg::Vec4f mEmissionColor;
+        osg::Vec2f mFalloutAtmosphereZRange = osg::Vec2f(0.f, 1.f);
+        bool mUseFalloutAtmosphereZGradient = false;
     };
 
     class AtmosphereNightUpdater : public SceneUtil::StateSetUpdater

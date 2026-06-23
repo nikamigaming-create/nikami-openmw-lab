@@ -24,6 +24,8 @@ param(
     [double]$BootstrapRotY = [double]::NaN,
     [double]$BootstrapRotZ = [double]::NaN,
     [double]$BootstrapCameraDistance = [double]::NaN,
+    [double]$FlatCameraPitch = [double]::NaN,
+    [double]$FlatCameraYaw = [double]::NaN,
     [string]$ActorTarget = "",
     [int]$ActorFrame = 240,
     [switch]$StageActor,
@@ -56,6 +58,7 @@ param(
     [string]$TraceRawPendingRecord = "",
     [string]$ClassificationDir = "",
     [switch]$RequireSkyColorSanity,
+    [switch]$RequireSunVisible,
     [switch]$NoSound
 )
 
@@ -273,6 +276,82 @@ function Assert-SkyColorSanity([object[]]$Screenshots, [string]$ProofDir) {
     }
 }
 
+function Get-SunVisibilityStats([string]$Path) {
+    Add-Type -AssemblyName System.Drawing -ErrorAction SilentlyContinue
+
+    $bitmap = [System.Drawing.Bitmap]::FromFile($Path)
+    try {
+        $width = $bitmap.Width
+        $height = $bitmap.Height
+        $samples = 0
+        $core = 0
+        $maxLuma = 0.0
+        $sumX = 0.0
+        $sumY = 0.0
+
+        $endY = [int]($height * 0.70)
+        for ($y = 0; $y -lt $endY; $y += 2) {
+            for ($x = 0; $x -lt $width; $x += 2) {
+                $pixel = $bitmap.GetPixel($x, $y)
+                $r = [double]$pixel.R
+                $g = [double]$pixel.G
+                $b = [double]$pixel.B
+                $luma = (0.2126 * $r) + (0.7152 * $g) + (0.0722 * $b)
+                $samples++
+                if ($luma -gt $maxLuma) {
+                    $maxLuma = $luma
+                }
+                if ($r -ge 245.0 -and $g -ge 245.0 -and $b -ge 235.0 -and $luma -ge 245.0) {
+                    $core++
+                    $sumX += $x
+                    $sumY += $y
+                }
+            }
+        }
+
+        $coreRatio = if ($samples -gt 0) { $core / $samples } else { 0.0 }
+        return [ordered]@{
+            path = $Path
+            width = $width
+            height = $height
+            samples = $samples
+            sunCoreSamples = $core
+            sunCoreRatio = [Math]::Round($coreRatio, 6)
+            maxLuma = [Math]::Round($maxLuma, 4)
+            centroidX = if ($core -gt 0) { [Math]::Round($sumX / $core, 2) } else { $null }
+            centroidY = if ($core -gt 0) { [Math]::Round($sumY / $core, 2) } else { $null }
+            sunVisible = ($core -ge 250 -and $coreRatio -ge 0.0005 -and $maxLuma -ge 250.0)
+        }
+    }
+    finally {
+        $bitmap.Dispose()
+    }
+}
+
+function Assert-SunVisible([object[]]$Screenshots, [string]$ProofDir) {
+    if ($Screenshots.Count -eq 0) {
+        throw "FNV sun visibility requires screenshots. Pass -ScreenshotFrames with at least one frame."
+    }
+
+    $stats = @()
+    foreach ($screenshot in $Screenshots) {
+        $stats += [pscustomobject](Get-SunVisibilityStats $screenshot.FullName)
+    }
+
+    $statsPath = Join-Path $ProofDir "sun-visibility.json"
+    $stats | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $statsPath -Encoding UTF8
+    Write-ProofLine "Sun visibility JSON: $statsPath"
+    foreach ($stat in $stats) {
+        Write-ProofLine ("Sun visibility sample {0}: core={1} ratio={2} maxLuma={3} centroid=({4},{5}) visible={6}" -f `
+            (Split-Path $stat.path -Leaf), $stat.sunCoreSamples, $stat.sunCoreRatio, $stat.maxLuma, `
+            $stat.centroidX, $stat.centroidY, $stat.sunVisible)
+    }
+
+    if (@($stats | Where-Object { $_.sunVisible }).Count -eq 0) {
+        throw "FNV sun visibility did not find a bright sun/glare core in generated screenshots. See $statsPath"
+    }
+}
+
 function Get-LatestClassificationDir([string]$Root) {
     $classificationRoot = Join-Path $Root "fnv-no-silent-skip-classification"
     if (!(Test-Path -LiteralPath $classificationRoot -PathType Container)) {
@@ -391,6 +470,8 @@ try {
     Set-ProofEnv $previousEnv "OPENMW_FNV_BOOTSTRAP_ROT_Y" $BootstrapRotY
     Set-ProofEnv $previousEnv "OPENMW_FNV_BOOTSTRAP_ROT_Z" $BootstrapRotZ
     Set-ProofEnv $previousEnv "OPENMW_FNV_BOOTSTRAP_CAMERA_DISTANCE" $BootstrapCameraDistance
+    Set-ProofEnv $previousEnv "OPENMW_FNV_FLAT_CAMERA_PITCH" $FlatCameraPitch
+    Set-ProofEnv $previousEnv "OPENMW_FNV_FLAT_CAMERA_YAW" $FlatCameraYaw
     Set-ProofEnv $previousEnv "OPENMW_PROOF_ACTOR_TARGET" $ActorTarget
     Set-ProofEnv $previousEnv "OPENMW_PROOF_ACTOR_FRAME" $ActorFrame
     if ($StageActor) { Set-ProofEnv $previousEnv "OPENMW_PROOF_STAGE_ACTOR" "1" }
@@ -448,7 +529,10 @@ try {
     Write-ProofLine "RunSeconds: $RunSeconds"
     Write-ProofLine "WithMenu: $WithMenu"
     Write-ProofLine "RequireSkyColorSanity: $RequireSkyColorSanity"
+    Write-ProofLine "RequireSunVisible: $RequireSunVisible"
     Write-ProofLine "BootstrapCell: $BootstrapCell"
+    Write-ProofLine "FlatCameraPitch: $FlatCameraPitch"
+    Write-ProofLine "FlatCameraYaw: $FlatCameraYaw"
     Write-ProofLine "FnvDlodSettingsDiag: $FnvDlodSettingsDiag"
     Write-ProofLine "FnvPsaDeathPoseDiag: $FnvPsaDeathPoseDiag"
     Write-ProofLine "TraceRawPendingRecord: $TraceRawPendingRecord"
@@ -510,6 +594,7 @@ Write-ProofLine "Unsupported ESM4 skip lines: $($unsupportedEsm4Skips.Count)"
 if ($fatalCount -gt 0) { throw "FNV flat proof saw fatal/blocker log lines. See $OpenMwLog" }
 Assert-NoShaderBlockers @($OpenMwLog, $MyGuiLog, $StdoutLog, $StderrLog, $HarnessLog)
 if ($RequireSkyColorSanity) { Assert-SkyColorSanity $screenshots $ProofDir }
+if ($RequireSunVisible) { Assert-SunVisible $screenshots $ProofDir }
 Assert-UnsupportedEsm4SkipsClassified $unsupportedEsm4Skips $ClassificationDir
 if ($RequireFlatCameraSettled -and $flatCameraSettledLines -eq 0) { throw "FNV flat proof did not prove flat camera settlement. See $OpenMwLog" }
 if ($flatCameraFailureLines -gt 0) { throw "FNV flat proof saw flat camera failure lines. See $OpenMwLog" }

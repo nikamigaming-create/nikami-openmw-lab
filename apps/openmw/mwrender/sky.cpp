@@ -1,6 +1,8 @@
 #include "sky.hpp"
 
 #include <osg/Depth>
+#include <osg/Geode>
+#include <osg/Geometry>
 #include <osg/PositionAttitudeTransform>
 
 #include <osgParticle/BoxPlacer>
@@ -11,6 +13,8 @@
 
 #include <algorithm>
 #include <cstdlib>
+#include <limits>
+#include <sstream>
 #include <string>
 #include <string_view>
 
@@ -83,11 +87,12 @@ namespace
     }
 
     void logInterpretedFalloutSkyMaterial(std::string_view label, VFS::Path::NormalizedView model,
-        std::string_view skyPass)
+        std::string_view skyPass, std::string_view vertexAlphaMode, std::string_view vertexColorRgbMode)
     {
         Log(Debug::Info) << "FNV/ESM4: interpreted sky material " << label << " (" << model.value()
                          << ") nativeMaterial=0 skyProgram=sky skyPass=" << skyPass
-                         << " updatersAttached=1 vertexAlpha=authored";
+                         << " updatersAttached=1 vertexAlpha=" << vertexAlphaMode
+                         << " vertexColorRgb=" << vertexColorRgbMode;
     }
 
     float falloutSkyMeshScaleMultiplier()
@@ -111,6 +116,124 @@ namespace
         float mScale = 0.f;
         bool mApplied = false;
     };
+
+    struct SkyVertexColorStats
+    {
+        unsigned int mColorArrays = 0;
+        unsigned int mSamples = 0;
+        osg::Vec4f mMin = osg::Vec4f(
+            std::numeric_limits<float>::max(), std::numeric_limits<float>::max(),
+            std::numeric_limits<float>::max(), std::numeric_limits<float>::max());
+        osg::Vec4f mMax = osg::Vec4f(
+            std::numeric_limits<float>::lowest(), std::numeric_limits<float>::lowest(),
+            std::numeric_limits<float>::lowest(), std::numeric_limits<float>::lowest());
+
+        void add(const osg::Vec4f& color)
+        {
+            ++mSamples;
+            for (int i = 0; i < 4; ++i)
+            {
+                mMin[i] = std::min(mMin[i], color[i]);
+                mMax[i] = std::max(mMax[i], color[i]);
+            }
+        }
+
+        bool hasNonZeroRgb() const
+        {
+            return mSamples != 0 && std::max({ mMax.r(), mMax.g(), mMax.b() }) > 0.001f;
+        }
+
+        bool hasVaryingRgb() const
+        {
+            if (mSamples == 0)
+                return false;
+
+            return std::max({ mMax.r() - mMin.r(), mMax.g() - mMin.g(), mMax.b() - mMin.b() }) > 0.001f;
+        }
+    };
+
+    struct FalloutAtmosphereAlphaStats
+    {
+        float mMinZ = 0.f;
+        float mMaxZ = 0.f;
+        bool mApplied = false;
+    };
+
+    class SkyVertexColorStatsVisitor : public osg::NodeVisitor
+    {
+    public:
+        SkyVertexColorStatsVisitor()
+            : osg::NodeVisitor(TRAVERSE_ALL_CHILDREN)
+        {
+        }
+
+        void apply(osg::Geode& geode) override
+        {
+            for (unsigned int i = 0; i < geode.getNumDrawables(); ++i)
+            {
+                const osg::Geometry* geometry = dynamic_cast<const osg::Geometry*>(geode.getDrawable(i));
+                if (geometry == nullptr)
+                    continue;
+
+                const osg::Vec4Array* colors = dynamic_cast<const osg::Vec4Array*>(geometry->getColorArray());
+                if (colors == nullptr)
+                    continue;
+
+                ++mStats.mColorArrays;
+                for (const osg::Vec4f& color : *colors)
+                    mStats.add(color);
+            }
+
+            traverse(geode);
+        }
+
+        const SkyVertexColorStats& getStats() const { return mStats; }
+
+    private:
+        SkyVertexColorStats mStats;
+    };
+
+    std::string formatVec4(const osg::Vec4f& value)
+    {
+        std::ostringstream stream;
+        stream << value.r() << "," << value.g() << "," << value.b() << "," << value.a();
+        return stream.str();
+    }
+
+    void logFalloutSkyVertexColorStats(std::string_view label, VFS::Path::NormalizedView model, osg::Node& instance)
+    {
+        SkyVertexColorStatsVisitor visitor;
+        instance.accept(visitor);
+        const SkyVertexColorStats& stats = visitor.getStats();
+        Log(Debug::Info) << "FNV/ESM4: sky mesh vertex colors " << label << " (" << model.value()
+                         << ") colorArrays=" << stats.mColorArrays << " samples=" << stats.mSamples
+                         << " rgbNonzero=" << stats.hasNonZeroRgb() << " rgbVarying=" << stats.hasVaryingRgb()
+                         << " min=" << (stats.mSamples == 0 ? "none" : formatVec4(stats.mMin))
+                         << " max=" << (stats.mSamples == 0 ? "none" : formatVec4(stats.mMax));
+    }
+
+    void logFalloutAtmosphereAlphaStats(
+        std::string_view label, VFS::Path::NormalizedView model, const FalloutAtmosphereAlphaStats& stats)
+    {
+        Log(Debug::Info) << "FNV/ESM4: generated atmosphere shader alpha " << label << " (" << model.value()
+                         << ") mode=bound-z-gradient"
+                         << " zMin=" << (stats.mApplied ? stats.mMinZ : 0.f)
+                         << " zMax=" << (stats.mApplied ? stats.mMaxZ : 0.f)
+                         << " alphaMin=0 alphaMax=1 applied=" << stats.mApplied;
+    }
+
+    FalloutAtmosphereAlphaStats calculateFalloutAtmosphereAlpha(osg::Node& instance)
+    {
+        FalloutAtmosphereAlphaStats stats;
+        const osg::BoundingSphere bound = instance.getBound();
+        if (bound.valid() && bound.radius() > 1.f)
+        {
+            stats.mMinZ = bound.center().z() - bound.radius();
+            stats.mMaxZ = bound.center().z() + bound.radius();
+            stats.mApplied = stats.mMaxZ - stats.mMinZ > 0.001f;
+        }
+        return stats;
+    }
 
     osg::PositionAttitudeTransform* createFalloutSkyMeshRoot(osg::Group* parentNode, VFS::Path::NormalizedView model)
     {
@@ -171,6 +294,7 @@ namespace
                                  << ") radius=" << instance->getBound().radius() << " viewDistance="
                                  << fit.mViewDistance << " targetRadius=" << fit.mTargetRadius
                                  << " scale=" << skyMeshRoot->getScale().x() << " fitApplied=" << fit.mApplied;
+                logFalloutSkyVertexColorStats(label, model, *instance);
             }
             return instance;
         }
@@ -463,17 +587,27 @@ namespace MWRender
         if (mAtmosphereDay)
         {
             const bool falloutAtmosphere = isFalloutSkyMesh(Settings::models().mSkyatmosphere.get());
+            FalloutAtmosphereAlphaStats falloutAlphaStats;
             if (!falloutAtmosphere)
             {
                 ModVertexAlphaVisitor modAtmosphere(ModVertexAlphaVisitor::Atmosphere);
                 mAtmosphereDay->accept(modAtmosphere);
             }
+            else
+            {
+                falloutAlphaStats = calculateFalloutAtmosphereAlpha(*mAtmosphereDay);
+                logFalloutAtmosphereAlphaStats(
+                    "day atmosphere", Settings::models().mSkyatmosphere.get(), falloutAlphaStats);
+            }
 
             mAtmosphereUpdater = new AtmosphereUpdater;
+            if (falloutAtmosphere && falloutAlphaStats.mApplied)
+                mAtmosphereUpdater->setFalloutAtmosphereZGradient(falloutAlphaStats.mMinZ, falloutAlphaStats.mMaxZ);
             mAtmosphereDay->addUpdateCallback(mAtmosphereUpdater);
             if (falloutAtmosphere)
                 logInterpretedFalloutSkyMaterial(
-                    "day atmosphere", Settings::models().mSkyatmosphere.get(), "atmosphere");
+                    "day atmosphere", Settings::models().mSkyatmosphere.get(), "atmosphere",
+                    "generated-z-gradient", "not-used");
         }
 
         mAtmosphereNightNode = new osg::PositionAttitudeTransform;
@@ -505,7 +639,8 @@ namespace MWRender
             mAtmosphereNightUpdater = new AtmosphereNightUpdater(mSceneManager->getImageManager());
             atmosphereNight->addUpdateCallback(mAtmosphereNightUpdater);
             if (falloutNightAtmosphere)
-                logInterpretedFalloutSkyMaterial("night atmosphere", nightAtmosphereModel, "atmosphere-night");
+                logInterpretedFalloutSkyMaterial(
+                    "night atmosphere", nightAtmosphereModel, "atmosphere-night", "texture-alpha", "not-used");
         }
 
         mSun = std::make_unique<Sun>(mEarlyRenderBinRoot, *mSceneManager);
@@ -527,7 +662,8 @@ namespace MWRender
             mCloudUpdater->setOpacity(1.f);
             cloudMeshChild->addUpdateCallback(mCloudUpdater);
             if (isFalloutSkyMesh(Settings::models().mSkyclouds.get()))
-                logInterpretedFalloutSkyMaterial("clouds", Settings::models().mSkyclouds.get(), "clouds");
+                logInterpretedFalloutSkyMaterial(
+                    "clouds", Settings::models().mSkyclouds.get(), "clouds", "texture-alpha", "not-used");
             attachSkyNodeIfUnattached(*mCloudMesh, *cloudMeshChild);
         }
 
@@ -540,7 +676,8 @@ namespace MWRender
             mNextCloudUpdater->setOpacity(0.f);
             nextCloudMeshChild->addUpdateCallback(mNextCloudUpdater);
             if (isFalloutSkyMesh(Settings::models().mSkyclouds.get()))
-                logInterpretedFalloutSkyMaterial("next clouds", Settings::models().mSkyclouds.get(), "clouds");
+                logInterpretedFalloutSkyMaterial(
+                    "next clouds", Settings::models().mSkyclouds.get(), "clouds", "texture-alpha", "not-used");
             attachSkyNodeIfUnattached(*mNextCloudMesh, *nextCloudMeshChild);
         }
         mNextCloudMesh->setNodeMask(0);

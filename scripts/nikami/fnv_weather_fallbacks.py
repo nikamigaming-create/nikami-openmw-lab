@@ -249,6 +249,7 @@ def build_weather_fallbacks(records_by_editor):
     for openmw_name, candidates in WEATHER_SELECTIONS.items():
         record, requested = select_record(records_by_editor, candidates)
         cloud = choose_cloud_texture(record)
+        sky_color_groups = OrderedDict()
         selected[openmw_name] = {
             "requestedCandidates": list(candidates),
             "selectedEditorId": record["editorId"],
@@ -256,10 +257,30 @@ def build_weather_fallbacks(records_by_editor):
             "selectedFormId": record["formId"],
             "weatherClassification": record["weatherClassification"],
             "cloudTexture": cloud,
+            "skyColorGroups": sky_color_groups,
+            "runtimeColorCoverage": OrderedDict(
+                [
+                    ("SkyUpper", "runtime-supported"),
+                    ("SkyLower", "loaded-pending-runtime"),
+                    ("Horizon", "loaded-pending-runtime"),
+                    ("Fog", "runtime-supported"),
+                    ("Ambient", "runtime-supported"),
+                    ("Sunlight", "runtime-supported"),
+                    ("Sun", "runtime-supported"),
+                ]
+            ),
         }
 
         lines.append(f"fallback=Weather_{openmw_name}_Cloud_Texture,{cloud['texture']}")
         for openmw_time, source_time in OPENMW_TIME_KEYS.items():
+            sky_color_groups[openmw_time] = OrderedDict(
+                [
+                    ("SkyUpper", list(color_at(record, "SkyUpper", source_time))),
+                    ("SkyLower", list(color_at(record, "SkyLower", source_time))),
+                    ("Horizon", list(color_at(record, "Horizon", source_time))),
+                    ("Fog", list(color_at(record, "Fog", source_time))),
+                ]
+            )
             lines.append(
                 f"fallback=Weather_{openmw_name}_Sky_{openmw_time}_Color,"
                 f"{color_text(color_at(record, 'SkyUpper', source_time))}"
@@ -324,6 +345,7 @@ def main():
             "OpenMW weather fallback keys support sunrise/day/sunset/night; FNV WTHR high-noon and midnight colors are harvested but not emitted by this compatibility bridge.",
             "OpenMW exposes one cloud texture per weather; the generator selects the first non-alpha FNV WTHR cloud layer, preferring layer 3 then layers 0-2.",
             "OpenMW directional sun color is sourced from FNV NAM0 Sunlight; sunset sun-disc color is sourced from FNV NAM0 Sun.",
+            "FNV WTHR SkyLower and Horizon colors are harvested into proof metadata but remain loaded-pending-runtime until the renderer has distinct FNV sky-gradient uniforms.",
         ],
         "classification": "loaded-pending-runtime",
         "runtimeBoundary": "Generated fallbacks repair the current OpenMW WeatherManager palette path, but full CLMT/WTHR/REGN runtime weather binding remains a separate gate.",
