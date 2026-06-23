@@ -1232,7 +1232,17 @@ namespace MWRender
         // Since our fog is not radial yet, we should take FOV in account, otherwise terrain near viewing distance may
         // disappear. Limit FOV here just for sure, otherwise viewing distance can be too high.
         float distanceMult = std::cos(osg::DegreesToRadians(std::min(fov, 140.f)) / 2.f);
-        mTerrain->setViewDistance(mViewDistance * (distanceMult ? 1.f / distanceMult : 1.f));
+        const float terrainViewDistance = mViewDistance * (distanceMult ? 1.f / distanceMult : 1.f);
+        mTerrain->setViewDistance(terrainViewDistance);
+
+        if (std::getenv("OPENMW_FNV_RENDER_DISTANCE_DIAG") != nullptr)
+        {
+            Log(Debug::Info) << "FNV/ESM4 proof: render distance viewDistance=" << mViewDistance
+                             << " near=" << mNearClip << " fov=" << fov << " aspect=" << aspect
+                             << " projectionFar=" << mViewDistance << " sharedFar=" << mViewDistance
+                             << " terrainViewDistance=" << terrainViewDistance
+                             << " reverseZ=" << SceneUtil::AutoDepth::isReversed();
+        }
 
         if (mPostProcessor)
         {

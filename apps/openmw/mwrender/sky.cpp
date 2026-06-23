@@ -71,6 +71,15 @@ namespace
         return 1.f;
     }
 
+    struct FalloutSkyMeshFit
+    {
+        float mRadius = 0.f;
+        float mViewDistance = 0.f;
+        float mTargetRadius = 0.f;
+        float mScale = 0.f;
+        bool mApplied = false;
+    };
+
     osg::PositionAttitudeTransform* createFalloutSkyMeshRoot(osg::Group* parentNode, VFS::Path::NormalizedView model)
     {
         osg::ref_ptr<osg::PositionAttitudeTransform> root = new osg::PositionAttitudeTransform;
@@ -89,16 +98,23 @@ namespace
         return root.release();
     }
 
-    void fitFalloutSkyMeshToViewDistance(osg::PositionAttitudeTransform& root, const osg::Node& instance)
+    FalloutSkyMeshFit fitFalloutSkyMeshToViewDistance(osg::PositionAttitudeTransform& root, const osg::Node& instance)
     {
+        FalloutSkyMeshFit fit;
         const float radius = static_cast<float>(instance.getBound().radius());
         if (radius <= 1.f)
-            return;
+            return fit;
 
         const float viewDistance = Settings::camera().mViewingDistance.get();
         const float targetRadius = std::max(1024.f, viewDistance * 0.82f);
         const float scale = (targetRadius / radius) * falloutSkyMeshScaleMultiplier();
         root.setScale(osg::Vec3f(scale, scale, scale));
+        fit.mRadius = radius;
+        fit.mViewDistance = viewDistance;
+        fit.mTargetRadius = targetRadius;
+        fit.mScale = scale;
+        fit.mApplied = true;
+        return fit;
     }
 
     osg::ref_ptr<osg::Node> getOptionalSkyInstance(Resource::SceneManager& sceneManager,
@@ -116,11 +132,14 @@ namespace
         {
             osg::PositionAttitudeTransform* skyMeshRoot = createFalloutSkyMeshRoot(parentNode, model);
             osg::ref_ptr<osg::Node> instance = sceneManager.getInstance(model, skyMeshRoot);
-            fitFalloutSkyMeshToViewDistance(*skyMeshRoot, *instance);
+            const FalloutSkyMeshFit fit = fitFalloutSkyMeshToViewDistance(*skyMeshRoot, *instance);
             if (logMissingSkyAssets())
+            {
                 Log(Debug::Info) << "FNV/ESM4: wrapped sky mesh " << label << " (" << model.value()
-                                 << ") radius=" << instance->getBound().radius()
-                                 << " scale=" << skyMeshRoot->getScale().x();
+                                 << ") radius=" << instance->getBound().radius() << " viewDistance="
+                                 << fit.mViewDistance << " targetRadius=" << fit.mTargetRadius
+                                 << " scale=" << skyMeshRoot->getScale().x() << " fitApplied=" << fit.mApplied;
+            }
             return instance;
         }
 
