@@ -214,6 +214,28 @@ function Assert-PerkTraitRows([string]$GameplaySystemsPath, [int]$ExpectedPerks)
     Write-ProofLine "OK bounded PERK/trait rows: PERK=$($rows.Count) traits=BuiltToDestroy,WildWasteland gate=runtime-player-perk-trait-binding"
 }
 
+function Assert-AvifProgressionRows([string]$GameplaySystemsPath, [int]$ExpectedAvif) {
+    $rows = @(Read-JsonArray $GameplaySystemsPath "gameplay systems ledger" | Where-Object {
+            [string]$_.recordType -eq "AVIF"
+        })
+    Assert-Equal "AVIF progression row count" $rows.Count $ExpectedAvif
+    $markerTotal = 0
+    foreach ($row in $rows) {
+        if ([string]$row.classification -ne "loaded-pending-runtime") {
+            throw "Unexpected AVIF gameplay classification for $($row.editorId): $($row.classification)"
+        }
+        if ([string]$row.readiness -ne "loaded-pending-runtime") {
+            throw "Unexpected AVIF gameplay readiness for $($row.editorId): $($row.readiness)"
+        }
+        if ([string]$row.firstFailingGate -ne "runtime-actor-value-progression-binding") {
+            throw "Unexpected AVIF first failing gate for $($row.editorId): $($row.firstFailingGate)"
+        }
+        $markerTotal += [int]$row.progressionMarkerTotal
+    }
+    Assert-GreaterThan "AVIF progression marker total" $markerTotal 0
+    Write-ProofLine "OK bounded AVIF progression rows: AVIF=$($rows.Count) markerTotal=$markerTotal gate=runtime-actor-value-progression-binding"
+}
+
 function Get-ClassificationByRecord([string]$ClassificationLedger) {
     $result = @{}
     foreach ($row in (Read-JsonArray $ClassificationLedger "classification ledger")) {
@@ -399,6 +421,8 @@ Assert-Text "apps/openmw/mwworld/esmstore.cpp" "case ESM::REC_AVIF4:" "AVIF raw-
 Assert-Text "apps/openmw/mwworld/esmstore.cpp" "mSubrecordTypeCounts" "raw-pending subrecord type inventory"
 Assert-Text "apps/openmw/mwworld/esmstore.cpp" "raw-loaded pending subrecords" "raw-pending subrecord summary log"
 Assert-Text "scripts/nikami/run-fnv-flat-proof.ps1" "TraceRawPendingRecord" "flat proof raw-pending trace parameter"
+Assert-Text "scripts/nikami/fnv_content_ledger.py" "def actor_value_row" "content ledger writes AVIF progression rows"
+Assert-Text "scripts/nikami/fnv_content_ledger.py" "runtime-actor-value-progression-binding" "content ledger bounds AVIF progression rows"
 Assert-Text "apps/openmw/mwgui/spellwindow.cpp" "Runtime player perk/trait binding pending" "perk/trait runtime boundary is explicit"
 
 $ContentLedgerScript = Join-Path $PSScriptRoot "test-fnv-content-ledger.ps1"
@@ -415,6 +439,7 @@ $GameplaySystemsPath = Join-Path $ContentLedgerDir "gameplay-systems.json"
 Assert-LedgerRowsBounded $QuestsPath "quest content ledger" "loaded-pending-runtime" "runtime-quest-execution"
 Assert-LedgerRowsBounded $ScriptsPath "script content ledger" "loaded-pending-runtime" "missing-fnv-script-runtime"
 Assert-PerkTraitRows $GameplaySystemsPath (Get-Count $LedgerCounts "PERK")
+Assert-AvifProgressionRows $GameplaySystemsPath (Get-Count $LedgerCounts "AVIF")
 $QuestRows = Read-JsonArray $QuestsPath "quest content ledger structured rows"
 $QuestNameCount = 0
 $QuestStageCount = 0

@@ -618,6 +618,39 @@ def ammo_row(plugin, record, subrecords):
     }
 
 
+def subrecord_type_counts(subrecords):
+    counts = Counter(rec_type for rec_type, _ in subrecords)
+    return dict(sorted(counts.items()))
+
+
+def actor_value_row(plugin, record, subrecords):
+    full_name = first_zstring(subrecords, "FULL")
+    description = first_zstring(subrecords, "DESC")
+    marker_types = ("ANAM", "CNAM", "AVSK")
+    marker_counts = {
+        marker: sum(1 for rec_type, _ in subrecords if rec_type == marker)
+        for marker in marker_types
+    }
+    return {
+        "plugin": plugin,
+        "recordType": "AVIF",
+        "formId": record["formId"],
+        "editorId": first_zstring(subrecords, "EDID"),
+        **text_summary("fullName", full_name),
+        "descriptionLength": len(description),
+        "descriptionHash": text_hash(description),
+        "icon": first_zstring(subrecords, "ICON"),
+        "dataSizes": subrecord_sizes(subrecords, "DATA"),
+        "progressionMarkerCounts": marker_counts,
+        "progressionMarkerTotal": sum(marker_counts.values()),
+        "subrecordTypeCounts": subrecord_type_counts(subrecords),
+        "classification": "loaded-pending-runtime",
+        "readiness": "loaded-pending-runtime",
+        "firstFailingGate": "runtime-actor-value-progression-binding",
+        "runtimeBoundary": "AVIF actor-value and perk-tree bytes are harvested and raw-loaded pending SPECIAL/skills/level-up/perk-tree runtime binding.",
+    }
+
+
 def projectile_row(plugin, record, subrecords):
     full_name = first_zstring(subrecords, "FULL")
     return {
@@ -740,7 +773,7 @@ def parse_plugin(path, plugin):
                 )
 
             counts[rec_type] += 1
-            if rec_type in {"QUST", "DIAL", "INFO", "SCPT", "GLOB", "GMST", "WEAP", "AMMO", "PERK", "PROJ", "EXPL"}:
+            if rec_type in {"QUST", "DIAL", "INFO", "SCPT", "GLOB", "GMST", "WEAP", "AMMO", "AVIF", "PERK", "PROJ", "EXPL"}:
                 payload = data[offset:next_offset]
                 subrecords = read_subrecords(payload)
                 record = {
@@ -846,6 +879,8 @@ def parse_plugin(path, plugin):
                         add_reference(references, plugin, "AMMO", record["formId"], "dat2Projectile", int(target, 16))
                     for target in all_form_ids_at_offset(subrecords, "DAT2", 12):
                         add_reference(references, plugin, "AMMO", record["formId"], "consumedAmmo", int(target, 16))
+                elif rec_type == "AVIF":
+                    gameplay_systems.append(actor_value_row(plugin, record, subrecords))
                 elif rec_type == "PERK":
                     gameplay_systems.append(perk_row(plugin, record, subrecords))
                     add_form_id_subrecord_refs(
