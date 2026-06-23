@@ -69,6 +69,11 @@ param(
     [switch]$FnvQuestObjectiveScriptTrace,
     [switch]$FnvQuestJournalScriptTrace,
     [switch]$FnvQuestStageFragmentTrace,
+    [switch]$FnvQuestTargetTrace,
+    [string]$FnvQuestTargetQuest = "",
+    [int]$FnvQuestTargetObjective = -1,
+    [int]$FnvQuestTargetIndex = -1,
+    [int]$FnvQuestTargetFrame = 0,
     [switch]$FnvNonzeroProjectileBindingTrace,
     [switch]$FnvPlayerPerkTrace,
     [switch]$FnvActorValueTrace,
@@ -1003,6 +1008,19 @@ try {
     if ($FnvQuestStageFragmentTrace) {
         Set-ProofEnv $previousEnv "OPENMW_FNV_PROOF_QUEST_STAGE_FRAGMENT_TRACE" "1"
     }
+    if ($FnvQuestTargetTrace) {
+        Set-ProofEnv $previousEnv "OPENMW_FNV_PROOF_QUEST_TARGETS" "1"
+        Set-ProofEnv $previousEnv "OPENMW_FNV_PROOF_QUEST_TARGET_QUEST" $FnvQuestTargetQuest
+        if ($FnvQuestTargetObjective -ge 0) {
+            Set-ProofEnv $previousEnv "OPENMW_FNV_PROOF_QUEST_TARGET_OBJECTIVE" $FnvQuestTargetObjective
+        }
+        if ($FnvQuestTargetIndex -ge 0) {
+            Set-ProofEnv $previousEnv "OPENMW_FNV_PROOF_QUEST_TARGET_INDEX" $FnvQuestTargetIndex
+        }
+        if ($FnvQuestTargetFrame -gt 0) {
+            Set-ProofEnv $previousEnv "OPENMW_FNV_PROOF_QUEST_TARGET_FRAME" $FnvQuestTargetFrame
+        }
+    }
     if ($FnvNonzeroProjectileBindingTrace) {
         Set-ProofEnv $previousEnv "OPENMW_FNV_PROOF_NONZERO_PROJECTILE" "1"
     }
@@ -1071,6 +1089,11 @@ try {
     Write-ProofLine "FnvQuestObjectiveScriptTrace: $FnvQuestObjectiveScriptTrace"
     Write-ProofLine "FnvQuestJournalScriptTrace: $FnvQuestJournalScriptTrace"
     Write-ProofLine "FnvQuestStageFragmentTrace: $FnvQuestStageFragmentTrace"
+    Write-ProofLine "FnvQuestTargetTrace: $FnvQuestTargetTrace"
+    Write-ProofLine "FnvQuestTargetQuest: $FnvQuestTargetQuest"
+    Write-ProofLine "FnvQuestTargetObjective: $FnvQuestTargetObjective"
+    Write-ProofLine "FnvQuestTargetIndex: $FnvQuestTargetIndex"
+    Write-ProofLine "FnvQuestTargetFrame: $FnvQuestTargetFrame"
     Write-ProofLine "FnvNonzeroProjectileBindingTrace: $FnvNonzeroProjectileBindingTrace"
     Write-ProofLine "TraceRawPendingRecord: $TraceRawPendingRecord"
     Write-ProofLine "TerrainProbePoints: $probePoints"

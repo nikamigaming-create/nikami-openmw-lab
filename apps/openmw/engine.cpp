@@ -65,10 +65,13 @@
 #include <components/loadinglistener/loadinglistener.hpp>
 
 #include <components/esm4/loadammo.hpp>
+#include <components/esm4/loadachr.hpp>
 #include <components/esm4/loadavif.hpp>
 #include <components/esm4/loadnpc.hpp>
 #include <components/esm4/loadperk.hpp>
 #include <components/esm4/loadproj.hpp>
+#include <components/esm4/loadqust.hpp>
+#include <components/esm4/loadrefr.hpp>
 #include <components/esm4/loadweap.hpp>
 
 #include <components/misc/frameratelimiter.hpp>
@@ -427,6 +430,93 @@ namespace
         return nullptr;
     }
 
+    const ESM4::Quest* findEsm4QuestByEditorId(const MWWorld::ESMStore& store, std::string_view editorId)
+    {
+        const auto& quests = store.get<ESM4::Quest>();
+        for (auto it = quests.begin(); it != quests.end(); ++it)
+        {
+            if (Misc::StringUtils::ciEqual(it->mEditorId, editorId))
+                return &*it;
+        }
+        return nullptr;
+    }
+
+    const ESM4::QuestObjective* findEsm4QuestObjective(
+        const ESM4::Quest& quest, int objectiveIndex)
+    {
+        for (const ESM4::QuestObjective& objective : quest.mObjectives)
+        {
+            if (objective.mIndex == objectiveIndex)
+                return &objective;
+        }
+        return nullptr;
+    }
+
+    struct FalloutQuestTargetResolution
+    {
+        ESM::RecNameInts mTargetRecordType = static_cast<ESM::RecNameInts>(0);
+        ESM::RefId mParentCell;
+        ESM::FormId mBaseObject;
+        ESM::Position mPosition;
+        std::string mEditorId;
+        std::string mFullName;
+    };
+
+    std::optional<FalloutQuestTargetResolution> resolveFalloutQuestTarget(
+        const MWWorld::ESMStore& store, ESM::FormId target)
+    {
+        if (const ESM4::Reference* ref = store.get<ESM4::Reference>().searchStatic(target))
+        {
+            return FalloutQuestTargetResolution{
+                .mTargetRecordType = ESM::REC_REFR4,
+                .mParentCell = ref->mParent,
+                .mBaseObject = ref->mBaseObj,
+                .mPosition = ref->mPos,
+                .mEditorId = ref->mEditorId,
+                .mFullName = ref->mFullName,
+            };
+        }
+
+        if (const ESM4::ActorCharacter* ref = store.get<ESM4::ActorCharacter>().searchStatic(target))
+        {
+            return FalloutQuestTargetResolution{
+                .mTargetRecordType = ESM::REC_ACHR4,
+                .mParentCell = ref->mParent,
+                .mBaseObject = ref->mBaseObj,
+                .mPosition = ref->mPos,
+                .mEditorId = ref->mEditorId,
+                .mFullName = ref->mFullName,
+            };
+        }
+
+        if (const ESM4::ActorCharacter* ref = store.get<ESM4::ActorCreature>().searchStatic(target))
+        {
+            return FalloutQuestTargetResolution{
+                .mTargetRecordType = ESM::REC_ACRE4,
+                .mParentCell = ref->mParent,
+                .mBaseObject = ref->mBaseObj,
+                .mPosition = ref->mPos,
+                .mEditorId = ref->mEditorId,
+                .mFullName = ref->mFullName,
+            };
+        }
+
+        return std::nullopt;
+    }
+
+    bool hasFinitePosition(const ESM::Position& position)
+    {
+        return std::isfinite(position.pos[0]) && std::isfinite(position.pos[1]) && std::isfinite(position.pos[2])
+            && std::isfinite(position.rot[0]) && std::isfinite(position.rot[1]) && std::isfinite(position.rot[2]);
+    }
+
+    std::string recNameToProofString(ESM::RecNameInts recName)
+    {
+        if (recName == static_cast<ESM::RecNameInts>(0))
+            return "";
+        return std::string(ESM::getRecNameString(recName).toStringView());
+    }
+
     int getRuntimeGameSettingInt(const MWWorld::ESMStore& store, std::string_view id, int fallback, bool& found)
     {
         const ESM::GameSetting* setting = store.get<ESM::GameSetting>().search(id);
@@ -593,6 +683,81 @@ namespace
         }
 
         stateManager.requestQuit();
+    }
+
+    void runFalloutQuestTargetProof()
+    {
+        const MWWorld::ESMStore& store = *MWBase::Environment::get().getESMStore();
+        const char* questEnv = std::getenv("OPENMW_FNV_PROOF_QUEST_TARGET_QUEST");
+        const std::string_view questId(questEnv != nullptr && *questEnv != '\0' ? questEnv : "VMS57");
+        const int objectiveIndex = std::max(0, getProofInt("OPENMW_FNV_PROOF_QUEST_TARGET_OBJECTIVE", 10));
+        const int targetIndex = std::max(0, getProofInt("OPENMW_FNV_PROOF_QUEST_TARGET_INDEX", 0));
+
+        const ESM4::Quest* quest = findEsm4QuestByEditorId(store, questId);
+        const ESM4::QuestObjective* objective = quest != nullptr ? findEsm4QuestObjective(*quest, objectiveIndex)
+                                                                 : nullptr;
+        const int targetCount = objective != nullptr ? static_cast<int>(objective->mTargets.size()) : 0;
+        const ESM4::QuestObjectiveTarget* target
+            = objective != nullptr && targetIndex < targetCount ? &objective->mTargets[targetIndex] : nullptr;
+
+        std::optional<FalloutQuestTargetResolution> resolution;
+        bool cellFound = false;
+        int baseRecordType = 0;
+        if (target != nullptr && !target->mTarget.isZeroOrUnset())
+        {
+            resolution = resolveFalloutQuestTarget(store, target->mTarget);
+            if (resolution)
+            {
+                cellFound = store.get<ESM4::Cell>().search(resolution->mParentCell) != nullptr;
+                baseRecordType = store.find(ESM::RefId(resolution->mBaseObject));
+            }
+        }
+
+        const bool positionFinite = resolution && hasFinitePosition(resolution->mPosition);
+        const bool pass = quest != nullptr && objective != nullptr && target != nullptr
+            && !target->mTarget.isZeroOrUnset() && resolution.has_value() && cellFound && baseRecordType != 0
+            && positionFinite;
+        const ESM::RecNameInts targetRecordType
+            = resolution ? resolution->mTargetRecordType : static_cast<ESM::RecNameInts>(0);
+        const std::string targetRecordTypeName = recNameToProofString(targetRecordType);
+        const std::string baseRecordTypeName
+            = recNameToProofString(static_cast<ESM::RecNameInts>(baseRecordType));
+
+        Log(Debug::Info) << "FNV/ESM4 proof: quest target runtime " << (pass ? "PASS" : "FAIL")
+                         << " quest=" << questId
+                         << " questFound=" << (quest != nullptr)
+                         << " objective=" << objectiveIndex
+                         << " objectiveFound=" << (objective != nullptr)
+                         << " targetIndex=" << targetIndex
+                         << " targetCount=" << targetCount
+                         << " targetFormId="
+                         << (target != nullptr ? target->mTarget.toString("FormId:") : "FormId:0x0")
+                         << " targetFlags=" << (target != nullptr ? static_cast<int>(target->mFlags) : 0)
+                         << " targetConditions="
+                         << (target != nullptr ? static_cast<int>(target->mConditions.size()) : 0)
+                         << " targetResolved=" << resolution.has_value()
+                         << " targetRecordType=" << targetRecordTypeName
+                         << " targetRecordTypeHex=0x" << std::hex << static_cast<int>(targetRecordType) << std::dec
+                         << " targetEditorId=\"" << (resolution ? resolution->mEditorId : "") << "\""
+                         << " targetFullName=\"" << (resolution ? resolution->mFullName : "") << "\""
+                         << " parentCell="
+                         << (resolution ? resolution->mParentCell.toDebugString() : ESM::RefId().toDebugString())
+                         << " cellFound=" << cellFound
+                         << " baseFormId="
+                         << (resolution ? resolution->mBaseObject.toString("FormId:") : "FormId:0x0")
+                         << " baseRecordType=" << baseRecordTypeName
+                         << " baseRecordTypeHex=0x" << std::hex << baseRecordType << std::dec
+                         << " positionFinite=" << positionFinite
+                         << " pos=(" << (resolution ? resolution->mPosition.pos[0] : 0.f) << ","
+                         << (resolution ? resolution->mPosition.pos[1] : 0.f) << ","
+                         << (resolution ? resolution->mPosition.pos[2] : 0.f) << ")"
+                         << " rot=(" << (resolution ? resolution->mPosition.rot[0] : 0.f) << ","
+                         << (resolution ? resolution->mPosition.rot[1] : 0.f) << ","
+                         << (resolution ? resolution->mPosition.rot[2] : 0.f) << ")"
+                         << " runtimeBoundary=selected-quest-objective-target-resolution-runtime-supported"
+                         << " hudMarkerRuntime=loaded-pending-runtime"
+                         << " conditionRuntime=loaded-pending-runtime"
+                         << " pathingRuntime=loaded-pending-runtime";
     }
 
     void runFalloutActorValueProof(MWWorld::Ptr player)
@@ -1344,6 +1509,19 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
         {
             proofQuestSaveLoadApplied = true;
             runFalloutQuestSaveLoadProof(*mStateManager, mWorld->getPlayerPtr());
+        }
+
+        static bool proofQuestTargetApplied = false;
+        const char* proofQuestTarget = std::getenv("OPENMW_FNV_PROOF_QUEST_TARGETS");
+        const bool proofQuestTargetEnabled = proofQuestTarget != nullptr && *proofQuestTarget != '\0';
+        const int proofQuestTargetFrame
+            = static_cast<int>(getProofFloat("OPENMW_FNV_PROOF_QUEST_TARGET_FRAME", 150.f));
+        if (!proofQuestTargetApplied && proofQuestTargetEnabled
+            && frameNumber >= static_cast<unsigned>(proofQuestTargetFrame)
+            && mStateManager->getState() == MWBase::StateManager::State_Running)
+        {
+            proofQuestTargetApplied = true;
+            runFalloutQuestTargetProof();
         }
 
         // update mechanics
