@@ -235,9 +235,12 @@ $runtimeRules = @{
         New-Anchor "apps/openmw/mwrender/esm4npcanimation.cpp" "FNV/ESM4 diag: loaded FaceGen CTL" "runtime logs parsed CTL metadata"
         New-Anchor "scripts/nikami/test-fnv-facegen-ctl-contract.ps1" "FNV FaceGen CTL contract" "retail-safe CTL proof validates local header without storing payloads"
     ) "Promote to runtime-supported after the full FaceGen control payload beyond the basis header is decoded and gated."
-    ".dat" = New-Rule "blocked-runtime-support" "misc-data" "DAT bytes are VFS-visible but no runtime consumer is identified" @(
-        New-Anchor "components/vfs/manager.hpp" "Files::IStreamPtr get" "VFS can expose DAT streams"
-    ) "Identify DAT owner format and add a parser or explicit ignore rule with proof."
+    ".dat" = New-Rule "asset-harvested-non-runtime" "lip-generation-support-tables" "The shipped DAT files are the six lsdata support tables used for lip-generation tooling; runtime voice playback consumes baked LIP sidecars instead" @(
+        New-Anchor "scripts/nikami/test-fnv-lsdata-dat-contract.ps1" "FNV LSDATA DAT contract" "proof gate verifies the exact shipped DAT set and samples metadata without storing payloads"
+        New-Anchor "apps/openmw/mwsound/soundmanagerimp.cpp" "loadVoiceLipSync" "runtime voice playback resolves baked LIP sidecars"
+        New-Anchor "apps/openmw/mwbase/soundmanager.hpp" "getSaySoundLipValue" "runtime mouth value is sourced from active voice/LIP playback"
+        New-Anchor "apps/openmw/mwrender/esm4npcanimation.cpp" "getSaySoundLipValue" "mouth animation consumes baked LIP playback values"
+    ) "Do not require a DAT runtime reader unless future evidence shows FNV evaluates lsdata tables during gameplay instead of using baked LIP sidecars."
     ".psd" = New-Rule "asset-harvested-non-runtime" "source-art-leftover" "PSD source-art bytes are harvested and accounted for, but runtime consumes their DDS siblings instead of PSD payloads" @(
         New-Anchor "scripts/nikami/test-fnv-source-art-nonruntime-contract.ps1" "FNV PSD source-art non-runtime contract" "proof gate verifies PSD entries have runtime DDS siblings"
         New-Anchor "scripts/nikami/test-fnv-harvest-action-coverage.ps1" '".dds" = New-Rule "runtime-supported"' "DDS texture entries are runtime-supported"
