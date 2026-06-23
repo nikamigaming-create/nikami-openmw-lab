@@ -362,6 +362,26 @@ namespace
         return value;
     }
 
+    int getProofInt(const char* name, int fallback)
+    {
+        const char* env = std::getenv(name);
+        if (env == nullptr || *env == '\0')
+            return fallback;
+
+        char* end = nullptr;
+        const long value = std::strtol(env, &end, 10);
+        if (end == env || *end != '\0')
+            return fallback;
+
+        return static_cast<int>(value);
+    }
+
+    ESM::RefId getProofRefId(const char* name, const char* fallback)
+    {
+        const char* env = std::getenv(name);
+        return ESM::RefId::stringRefId(env != nullptr && *env != '\0' ? env : fallback);
+    }
+
     const ESM4::Weapon* findEsm4WeaponByEditorId(const MWWorld::ESMStore& store, std::string_view editorId)
     {
         const auto& weapons = store.get<ESM4::Weapon>();
@@ -483,6 +503,96 @@ namespace
                          << " skillPointFormulaRuntime=loaded-pending-runtime"
                          << " perkAwardRuntime=loaded-pending-runtime"
                          << " traitMenuRuntime=loaded-pending-runtime";
+    }
+
+    void runFalloutQuestSaveLoadProof(MWState::StateManager& stateManager, MWWorld::Ptr player)
+    {
+        if (player.isEmpty())
+        {
+            Log(Debug::Warning) << "FNV/ESM4 proof: quest save/load runtime BLOCKED reason=no-player";
+            stateManager.requestQuit();
+            return;
+        }
+
+        const char* modeEnv = std::getenv("OPENMW_FNV_PROOF_QUEST_SAVELOAD");
+        const std::string_view mode(modeEnv != nullptr && *modeEnv != '\0' ? modeEnv : "save");
+        const bool savePhase = mode == "save";
+        const bool loadPhase = mode == "load";
+        if (!savePhase && !loadPhase)
+        {
+            Log(Debug::Warning) << "FNV/ESM4 proof: quest save/load runtime BLOCKED reason=bad-mode mode="
+                                << mode;
+            stateManager.requestQuit();
+            return;
+        }
+
+        MWBase::Journal& journal = *MWBase::Environment::get().getJournal();
+        const ESM::RefId journalQuest = getProofRefId("OPENMW_FNV_PROOF_QUEST_SAVELOAD_STAGE_QUEST", "VMS57");
+        const int stageIndex = std::max(0, getProofInt("OPENMW_FNV_PROOF_QUEST_SAVELOAD_STAGE", 10));
+        const ESM::RefId objectiveQuest
+            = getProofRefId("OPENMW_FNV_PROOF_QUEST_SAVELOAD_OBJECTIVE_QUEST", "VCG01");
+        const int objectiveIndex = std::max(0, getProofInt("OPENMW_FNV_PROOF_QUEST_SAVELOAD_OBJECTIVE", 10));
+
+        int entryAdded = -1;
+        int fallbackSetIndex = -1;
+        if (savePhase)
+        {
+            entryAdded = 0;
+            fallbackSetIndex = 0;
+            try
+            {
+                journal.addEntry(journalQuest, stageIndex, player);
+                entryAdded = 1;
+            }
+            catch (...)
+            {
+                if (journal.getJournalIndex(journalQuest) < stageIndex)
+                {
+                    journal.setJournalIndex(journalQuest, stageIndex);
+                    fallbackSetIndex = 1;
+                }
+            }
+            journal.setQuestObjectiveDisplayed(objectiveQuest, objectiveIndex, true);
+            journal.setQuestObjectiveCompleted(objectiveQuest, objectiveIndex, true);
+        }
+
+        const int currentIndex = journal.getJournalIndex(journalQuest);
+        const bool displayed = journal.getQuestObjectiveDisplayed(objectiveQuest, objectiveIndex);
+        const bool completed = journal.getQuestObjectiveCompleted(objectiveQuest, objectiveIndex);
+        const std::size_t journalEntries = journal.getEntries().size();
+        const std::size_t questCount = journal.getQuests().size();
+        const std::size_t objectiveStateCount = journal.countQuestObjectiveStates();
+        const bool pass = currentIndex == stageIndex && displayed && completed
+            && (!savePhase || entryAdded == 1);
+
+        Log(Debug::Info) << "FNV/ESM4 proof: quest save/load runtime " << (pass ? "PASS" : "FAIL")
+                         << " phase=" << mode
+                         << " journalQuest=" << journalQuest.toDebugString()
+                         << " stageIndex=" << stageIndex
+                         << " currentIndex=" << currentIndex
+                         << " entryAdded=" << entryAdded
+                         << " fallbackSetIndex=" << fallbackSetIndex
+                         << " objectiveQuest=" << objectiveQuest.toDebugString()
+                         << " objective=" << objectiveIndex
+                         << " displayed=" << (displayed ? 1 : 0)
+                         << " completed=" << (completed ? 1 : 0)
+                         << " journalEntries=" << journalEntries
+                         << " questCount=" << questCount
+                         << " objectiveStateCount=" << objectiveStateCount
+                         << " saveRecords=QUES,JOUR,QOBJ"
+                         << " runtimeBoundary=selected-fnv-quest-stage-and-objective-save-load-runtime-supported"
+                         << " resultScriptRuntime=loaded-pending-runtime"
+                         << " conditionRuntime=loaded-pending-runtime"
+                         << " targetMarkerRuntime=loaded-pending-runtime"
+                         << " fullQuestCompletionRuntime=loaded-pending-runtime";
+
+        if (savePhase && pass)
+        {
+            stateManager.saveGame("fnv-quest-saveload-proof");
+            Log(Debug::Info) << "FNV/ESM4 proof: quest save/load runtime saved description=fnv-quest-saveload-proof";
+        }
+
+        stateManager.requestQuit();
     }
 
     void runFalloutActorValueProof(MWWorld::Ptr player)
@@ -1221,6 +1331,19 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
         {
             proofProgressionApplied = true;
             runFalloutProgressionProof(mWorld->getPlayerPtr());
+        }
+
+        static bool proofQuestSaveLoadApplied = false;
+        const char* proofQuestSaveLoad = std::getenv("OPENMW_FNV_PROOF_QUEST_SAVELOAD");
+        const bool proofQuestSaveLoadEnabled = proofQuestSaveLoad != nullptr && *proofQuestSaveLoad != '\0';
+        const int proofQuestSaveLoadFrame
+            = static_cast<int>(getProofFloat("OPENMW_FNV_PROOF_QUEST_SAVELOAD_FRAME", 150.f));
+        if (!proofQuestSaveLoadApplied && proofQuestSaveLoadEnabled
+            && frameNumber >= static_cast<unsigned>(proofQuestSaveLoadFrame)
+            && mStateManager->getState() == MWBase::StateManager::State_Running)
+        {
+            proofQuestSaveLoadApplied = true;
+            runFalloutQuestSaveLoadProof(*mStateManager, mWorld->getPlayerPtr());
         }
 
         // update mechanics

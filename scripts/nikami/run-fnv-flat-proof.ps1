@@ -63,6 +63,9 @@ param(
     [switch]$RequireSunVisible,
     [switch]$RequireSunDirectionRuntime,
     [string]$StartupScript = "",
+    [string]$LoadSavegame = "",
+    [string]$FnvQuestSaveLoadMode = "",
+    [int]$FnvQuestSaveLoadFrame = 0,
     [switch]$FnvQuestObjectiveScriptTrace,
     [switch]$FnvQuestJournalScriptTrace,
     [switch]$FnvNonzeroProjectileBindingTrace,
@@ -1008,6 +1011,10 @@ try {
     if ($FnvProgressionTrace) {
         Set-ProofEnv $previousEnv "OPENMW_FNV_PROOF_PROGRESSION" "1"
     }
+    Set-ProofEnv $previousEnv "OPENMW_FNV_PROOF_QUEST_SAVELOAD" $FnvQuestSaveLoadMode
+    if ($FnvQuestSaveLoadFrame -gt 0) {
+        Set-ProofEnv $previousEnv "OPENMW_FNV_PROOF_QUEST_SAVELOAD_FRAME" $FnvQuestSaveLoadFrame
+    }
     Set-ProofEnv $previousEnv "OPENMW_FNV_TRACE_RAW_PENDING_RECORD" $TraceRawPendingRecord
     Set-ProofEnv $previousEnv "OPENMW_FNV_RENDER_DISTANCE_DIAG" "1"
     Set-ProofEnv $previousEnv "OPENMW_FNV_SKY_MISSING_LOG" "1"
@@ -1027,6 +1034,7 @@ try {
     if (![string]::IsNullOrWhiteSpace($FnvConfigData)) { $flatArgs.FnvConfigData = $FnvConfigData }
     if (![string]::IsNullOrWhiteSpace($ExtraOsgPluginDir)) { $flatArgs.ExtraOsgPluginDir = $ExtraOsgPluginDir }
     if (![string]::IsNullOrWhiteSpace($StartupScript)) { $flatArgs.StartupScript = $StartupScript }
+    if (![string]::IsNullOrWhiteSpace($LoadSavegame)) { $flatArgs.LoadSavegame = $LoadSavegame }
     if ($WithMenu) { $flatArgs.WithMenu = $true }
     if ($IncludeFnvrPlugin) { $flatArgs.IncludeFnvrPlugin = $true }
     if ($NoSound) { $flatArgs.NoSound = $true }
@@ -1053,6 +1061,9 @@ try {
     Write-ProofLine "FnvActorValueTrace: $FnvActorValueTrace"
     Write-ProofLine "FnvProgressionTrace: $FnvProgressionTrace"
     Write-ProofLine "StartupScript: $StartupScript"
+    Write-ProofLine "LoadSavegame: $LoadSavegame"
+    Write-ProofLine "FnvQuestSaveLoadMode: $FnvQuestSaveLoadMode"
+    Write-ProofLine "FnvQuestSaveLoadFrame: $FnvQuestSaveLoadFrame"
     Write-ProofLine "FnvQuestObjectiveScriptTrace: $FnvQuestObjectiveScriptTrace"
     Write-ProofLine "FnvQuestJournalScriptTrace: $FnvQuestJournalScriptTrace"
     Write-ProofLine "FnvNonzeroProjectileBindingTrace: $FnvNonzeroProjectileBindingTrace"

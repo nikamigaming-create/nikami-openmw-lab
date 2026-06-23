@@ -11,6 +11,7 @@ param(
     [double]$BootstrapHour = 10,
     [int]$MaxRunSeconds = 0,
     [string]$StartupScript = "",
+    [string]$LoadSavegame = "",
     [switch]$Detached,
     [switch]$WithMenu,
     [switch]$IncludeFnvrPlugin,
@@ -329,7 +330,16 @@ Set-Content -LiteralPath $SettingsPath -Value $SettingsText -Encoding ASCII
 
 $OpenMwArgs = @("--replace", "config", "--config", $ConfigDir, "--user-data", $RuntimeDir, "--no-grab")
 if (!$WithMenu) {
-    $OpenMwArgs += @("--skip-menu", "--start", $StartCell)
+    $OpenMwArgs += "--skip-menu"
+    if ([string]::IsNullOrWhiteSpace($LoadSavegame)) {
+        $OpenMwArgs += @("--start", $StartCell)
+    }
+}
+if (![string]::IsNullOrWhiteSpace($LoadSavegame)) {
+    if (!(Test-Path -LiteralPath $LoadSavegame -PathType Leaf)) {
+        throw "Missing load savegame: $LoadSavegame"
+    }
+    $OpenMwArgs += @("--load-savegame", (Resolve-Path -LiteralPath $LoadSavegame).Path)
 }
 if ($NoSound) {
     $OpenMwArgs += "--no-sound"
@@ -347,6 +357,7 @@ Write-Host "Config $ConfigPath"
 Write-Host "OpenMW log $((Join-Path $ConfigDir "openmw.log"))"
 Write-Host "FNV bootstrap/package hour: $BootstrapHour"
 Write-Host "Startup script: $StartupScript"
+Write-Host "Load savegame: $LoadSavegame"
 Write-Host "Player terrain trace enabled: $(!$DisableTerrainTrace)"
 Write-Host "MSTT collision surgery: removed; generic object collision path required"
 if ($Detached) {
