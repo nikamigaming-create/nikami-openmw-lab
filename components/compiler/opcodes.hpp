@@ -164,6 +164,10 @@ namespace Compiler
         const int opcodeSetJournalIndex = 0x2000134;
         const int opcodeGetJournalIndex = 0x2000135;
         const int opcodeFillJournal = 0x2000326;
+        const int opcodeSetObjectiveDisplayed = 0x2000327;
+        const int opcodeSetObjectiveCompleted = 0x2000328;
+        const int opcodeGetObjectiveDisplayed = 0x2000329;
+        const int opcodeGetObjectiveCompleted = 0x200032a;
         const int opcodeAddTopic = 0x200013a;
         const int opcodeChoice = 0x2000a;
         const int opcodeForceGreeting = 0x200014f;

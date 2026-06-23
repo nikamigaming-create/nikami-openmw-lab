@@ -5,6 +5,7 @@
 #include <MyGUI_InputManager.h>
 #include <MyGUI_LayerManager.h>
 
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <regex>
@@ -14,6 +15,7 @@
 #include <components/compiler/lineparser.hpp>
 #include <components/compiler/locals.hpp>
 #include <components/compiler/scanner.hpp>
+#include <components/debug/debuglog.hpp>
 #include <components/files/conversion.hpp>
 #include <components/interpreter/interpreter.hpp>
 #include <components/misc/utf8stream.hpp>
@@ -37,6 +39,12 @@ namespace
     bool isWhitespace(MyGUI::UString::code_point c)
     {
         return c == ' ' || c == '\t';
+    }
+
+    bool isConsoleScriptTraceEnabled()
+    {
+        const char* value = std::getenv("OPENMW_FNV_PROOF_CONSOLE_SCRIPT_TRACE");
+        return value != nullptr && value[0] != '\0';
     }
 }
 
@@ -273,9 +281,19 @@ namespace MWGui
             return;
         }
 
+        if (isConsoleScriptTraceEnabled())
+            Log(Debug::Info) << "FNV/ESM4 proof: executing console startup script "
+                             << Files::pathToUnicodeString(path);
+
         std::string line;
+        std::size_t lineNumber = 0;
         while (std::getline(stream, line))
+        {
+            ++lineNumber;
+            if (isConsoleScriptTraceEnabled())
+                Log(Debug::Info) << "FNV/ESM4 proof: console startup script line " << lineNumber << ": " << line;
             execute(line);
+        }
     }
 
     void Console::clear()

@@ -10,6 +10,7 @@ param(
     [string]$StartCell = "Goodsprings",
     [int]$BootstrapHour = 10,
     [int]$MaxRunSeconds = 0,
+    [string]$StartupScript = "",
     [switch]$Detached,
     [switch]$WithMenu,
     [switch]$IncludeFnvrPlugin,
@@ -333,11 +334,19 @@ if (!$WithMenu) {
 if ($NoSound) {
     $OpenMwArgs += "--no-sound"
 }
+if (![string]::IsNullOrWhiteSpace($StartupScript)) {
+    if (!(Test-Path -LiteralPath $StartupScript -PathType Leaf)) {
+        throw "Missing startup script: $StartupScript"
+    }
+    $OpenMwArgs += @("--script-run", (Resolve-Path -LiteralPath $StartupScript).Path)
+}
 
 Write-Host "Launching $Exe"
+Write-Host "OpenMW args: $($OpenMwArgs -join ' ')"
 Write-Host "Config $ConfigPath"
 Write-Host "OpenMW log $((Join-Path $ConfigDir "openmw.log"))"
 Write-Host "FNV bootstrap/package hour: $BootstrapHour"
+Write-Host "Startup script: $StartupScript"
 Write-Host "Player terrain trace enabled: $(!$DisableTerrainTrace)"
 Write-Host "MSTT collision surgery: removed; generic object collision path required"
 if ($Detached) {

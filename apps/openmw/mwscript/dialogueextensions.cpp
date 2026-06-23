@@ -1,5 +1,7 @@
 #include "dialogueextensions.hpp"
 
+#include <cstdlib>
+
 #include <components/compiler/extensions.hpp>
 #include <components/compiler/opcodes.hpp>
 #include <components/debug/debuglog.hpp>
@@ -24,6 +26,22 @@ namespace MWScript
 {
     namespace Dialogue
     {
+        bool isQuestObjectiveScriptTraceEnabled()
+        {
+            const char* value = std::getenv("OPENMW_FNV_PROOF_QUEST_OBJECTIVE_SCRIPT_TRACE");
+            return value != nullptr && value[0] != '\0';
+        }
+
+        void logQuestObjectiveScriptTrace(const char* opcode, const ESM::RefId& quest, int objective, int value)
+        {
+            if (!isQuestObjectiveScriptTraceEnabled())
+                return;
+
+            Log(Debug::Info) << "FNV/ESM4 proof: quest objective MWScript opcode " << opcode
+                             << " quest=" << quest.toDebugString() << " objective=" << objective
+                             << " value=" << value;
+        }
+
         template <class R>
         class OpJournal : public Interpreter::Opcode0
         {
@@ -112,6 +130,82 @@ namespace MWScript
                         dialogueManager->addTopic(dialogue.mId);
                     }
                 }
+            }
+        };
+
+        class OpSetObjectiveDisplayed : public Interpreter::Opcode0
+        {
+        public:
+            void execute(Interpreter::Runtime& runtime) override
+            {
+                ESM::RefId quest = ESM::RefId::stringRefId(runtime.getStringLiteral(runtime[0].mInteger));
+                runtime.pop();
+
+                Interpreter::Type_Integer objective = runtime[0].mInteger;
+                runtime.pop();
+
+                Interpreter::Type_Integer displayed = runtime[0].mInteger;
+                runtime.pop();
+
+                MWBase::Environment::get().getJournal()->setQuestObjectiveDisplayed(
+                    quest, objective, displayed != 0);
+                logQuestObjectiveScriptTrace("SetObjectiveDisplayed", quest, objective, displayed != 0 ? 1 : 0);
+            }
+        };
+
+        class OpSetObjectiveCompleted : public Interpreter::Opcode0
+        {
+        public:
+            void execute(Interpreter::Runtime& runtime) override
+            {
+                ESM::RefId quest = ESM::RefId::stringRefId(runtime.getStringLiteral(runtime[0].mInteger));
+                runtime.pop();
+
+                Interpreter::Type_Integer objective = runtime[0].mInteger;
+                runtime.pop();
+
+                Interpreter::Type_Integer completed = runtime[0].mInteger;
+                runtime.pop();
+
+                MWBase::Environment::get().getJournal()->setQuestObjectiveCompleted(
+                    quest, objective, completed != 0);
+                logQuestObjectiveScriptTrace("SetObjectiveCompleted", quest, objective, completed != 0 ? 1 : 0);
+            }
+        };
+
+        class OpGetObjectiveDisplayed : public Interpreter::Opcode0
+        {
+        public:
+            void execute(Interpreter::Runtime& runtime) override
+            {
+                ESM::RefId quest = ESM::RefId::stringRefId(runtime.getStringLiteral(runtime[0].mInteger));
+                runtime.pop();
+
+                Interpreter::Type_Integer objective = runtime[0].mInteger;
+                runtime.pop();
+
+                const int displayed
+                    = MWBase::Environment::get().getJournal()->getQuestObjectiveDisplayed(quest, objective) ? 1 : 0;
+                runtime.push(displayed);
+                logQuestObjectiveScriptTrace("GetObjectiveDisplayed", quest, objective, displayed);
+            }
+        };
+
+        class OpGetObjectiveCompleted : public Interpreter::Opcode0
+        {
+        public:
+            void execute(Interpreter::Runtime& runtime) override
+            {
+                ESM::RefId quest = ESM::RefId::stringRefId(runtime.getStringLiteral(runtime[0].mInteger));
+                runtime.pop();
+
+                Interpreter::Type_Integer objective = runtime[0].mInteger;
+                runtime.pop();
+
+                const int completed
+                    = MWBase::Environment::get().getJournal()->getQuestObjectiveCompleted(quest, objective) ? 1 : 0;
+                runtime.push(completed);
+                logQuestObjectiveScriptTrace("GetObjectiveCompleted", quest, objective, completed);
             }
         };
 
@@ -322,6 +416,10 @@ namespace MWScript
             interpreter.installSegment5<OpSetJournalIndex>(Compiler::Dialogue::opcodeSetJournalIndex);
             interpreter.installSegment5<OpGetJournalIndex>(Compiler::Dialogue::opcodeGetJournalIndex);
             interpreter.installSegment5<OpFillJournal>(Compiler::Dialogue::opcodeFillJournal);
+            interpreter.installSegment5<OpSetObjectiveDisplayed>(Compiler::Dialogue::opcodeSetObjectiveDisplayed);
+            interpreter.installSegment5<OpSetObjectiveCompleted>(Compiler::Dialogue::opcodeSetObjectiveCompleted);
+            interpreter.installSegment5<OpGetObjectiveDisplayed>(Compiler::Dialogue::opcodeGetObjectiveDisplayed);
+            interpreter.installSegment5<OpGetObjectiveCompleted>(Compiler::Dialogue::opcodeGetObjectiveCompleted);
             interpreter.installSegment5<OpAddTopic>(Compiler::Dialogue::opcodeAddTopic);
             interpreter.installSegment3<OpChoice>(Compiler::Dialogue::opcodeChoice);
             interpreter.installSegment5<OpForceGreeting<ImplicitRef>>(Compiler::Dialogue::opcodeForceGreeting);

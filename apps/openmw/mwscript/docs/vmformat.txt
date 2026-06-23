@@ -486,5 +486,9 @@ op 0x2000323: SetPCVisionBonus
 op 0x2000324: ModPCVisionBonus
 op 0x2000325: TestModels, T3D
 op 0x2000326: FillJournal
+op 0x2000327: SetObjectiveDisplayed
+op 0x2000328: SetObjectiveCompleted
+op 0x2000329: GetObjectiveDisplayed
+op 0x200032a: GetObjectiveCompleted
 
-opcodes 0x2000327-0x3ffffff unused
+opcodes 0x200032b-0x3ffffff unused

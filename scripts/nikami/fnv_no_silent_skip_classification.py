@@ -119,7 +119,7 @@ LOADED_PENDING_RECORDS = {
     "PERK": "perk/trait records are source-backed and stored pending player progression binding",
     "PGRE": "placed grenade records are loaded pending projectile/explosive runtime parity",
     "PROJ": "projectile records are source-backed and stored pending runtime projectile binding",
-    "QUST": "quest records are stored and QUST stage journal entries are bridged pending full quest execution/objective/condition parity",
+    "QUST": "quest records are stored, QUST stage journal entries are bridged, and objective displayed/completed script state is bound pending full quest execution/objective-target/condition parity",
     "PWAT": "placeable water records are loaded pending full water placement parity",
     "RACE": "race records feed actors pending full character creation/body parity",
     "RADS": "radiation stage bytes are inventoried pending full actor effect/status runtime binding",

@@ -2245,10 +2245,23 @@ void OMW::Engine::go()
         mStateManager->newGame(!mNewGame);
     }
 
-    if (!mStartupScript.empty() && mStateManager->getState() == MWState::StateManager::State_Running)
+    if (mStartupScript.empty())
     {
-        mWindowManager->executeInConsole(mStartupScript);
+        const char* fnvProofStartupScript = std::getenv("OPENMW_FNV_PROOF_STARTUP_SCRIPT");
+        if (fnvProofStartupScript != nullptr && fnvProofStartupScript[0] != '\0')
+            mStartupScript = fnvProofStartupScript;
     }
+
+    bool startupScriptExecuted = false;
+    const auto executeStartupScriptWhenRunning = [&] {
+        if (startupScriptExecuted || mStartupScript.empty()
+            || mStateManager->getState() != MWState::StateManager::State_Running)
+            return;
+
+        mWindowManager->executeInConsole(mStartupScript);
+        startupScriptExecuted = true;
+    };
+    executeStartupScriptWhenRunning();
 
     // Start the main rendering loop
     MWWorld::DateTimeManager& timeManager = *mWorld->getTimeManager();
@@ -2256,6 +2269,8 @@ void OMW::Engine::go()
     const std::chrono::steady_clock::duration maxSimulationInterval(std::chrono::milliseconds(200));
     while (!mViewer->done() && !mStateManager->hasQuitRequest())
     {
+        executeStartupScriptWhenRunning();
+
         const double dt = std::chrono::duration_cast<std::chrono::duration<double>>(
                               std::min(frameRateLimiter.getLastFrameDuration(), maxSimulationInterval))
                               .count()

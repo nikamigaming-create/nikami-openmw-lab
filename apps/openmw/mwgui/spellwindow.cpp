@@ -65,7 +65,7 @@ namespace MWGui
         std::string getFalloutDataCaption()
         {
             std::ostringstream caption;
-            caption << "QUESTS\n  Source proven: VCG01, GSQuest, GSRadioQuest\n  Runtime stage journal bridge active; objective HUD/script binding pending\n\n";
+            caption << "QUESTS\n  Source proven: VCG01, GSQuest, GSRadioQuest\n  Runtime stage journal bridge and objective script state active; HUD target routing pending\n\n";
             caption << "NOTES\n  Source proven: CaravanRulesNote, CrimsonCaravanHolotapeNV\n  Runtime note/message binding pending\n\n";
             caption << "RADIO\n  Source proven: RadioNewVegas, BlackMountainRadio\n  Runtime station/message binding pending\n\n";
             caption << "PERKS / TRAITS\n  Source proven: PerkBuiltToDestroy, PerkWildWasteland\n  Runtime player perk/trait binding pending\n\n";
@@ -153,7 +153,7 @@ namespace MWGui
             mFalloutDataPlaceholder->setCaption(getFalloutDataCaption());
             mFalloutDataPlaceholder->setVisible(true);
             Log(Debug::Info)
-                << "FNV/ESM4 proof: DATA pane source-backed alternate ammo active; quests/notes/radio/perks runtime binding pending";
+                << "FNV/ESM4 proof: DATA pane source-backed alternate ammo active; quest objective script state active; notes/radio/perks runtime binding pending";
         }
 
         if (Settings::gui().mControllerMenus)

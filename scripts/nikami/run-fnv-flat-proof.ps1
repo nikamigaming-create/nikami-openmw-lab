@@ -60,6 +60,8 @@ param(
     [switch]$RequireSkyColorSanity,
     [switch]$RequireSkyPaletteMatch,
     [switch]$RequireSunVisible,
+    [string]$StartupScript = "",
+    [switch]$FnvQuestObjectiveScriptTrace,
     [switch]$NoSound
 )
 
@@ -704,6 +706,11 @@ try {
     if ($FnvDisableNativeAnimationCallbacks) { Set-ProofEnv $previousEnv "OPENMW_FNV_DISABLE_NATIVE_ANIMATION_CALLBACKS" "1" }
     if ($FnvDlodSettingsDiag) { Set-ProofEnv $previousEnv "OPENMW_FNV_DLODSETTINGS_DIAG" "1" }
     if ($FnvPsaDeathPoseDiag) { Set-ProofEnv $previousEnv "OPENMW_FNV_PSA_DEATHPOSE_DIAG" "1" }
+    Set-ProofEnv $previousEnv "OPENMW_FNV_PROOF_STARTUP_SCRIPT" $StartupScript
+    if ($FnvQuestObjectiveScriptTrace) {
+        Set-ProofEnv $previousEnv "OPENMW_FNV_PROOF_QUEST_OBJECTIVE_SCRIPT_TRACE" "1"
+        Set-ProofEnv $previousEnv "OPENMW_FNV_PROOF_CONSOLE_SCRIPT_TRACE" "1"
+    }
     Set-ProofEnv $previousEnv "OPENMW_FNV_TRACE_RAW_PENDING_RECORD" $TraceRawPendingRecord
     Set-ProofEnv $previousEnv "OPENMW_FNV_RENDER_DISTANCE_DIAG" "1"
     Set-ProofEnv $previousEnv "OPENMW_FNV_SKY_MISSING_LOG" "1"
@@ -721,6 +728,7 @@ try {
     }
     if (![string]::IsNullOrWhiteSpace($FnvConfigData)) { $flatArgs.FnvConfigData = $FnvConfigData }
     if (![string]::IsNullOrWhiteSpace($ExtraOsgPluginDir)) { $flatArgs.ExtraOsgPluginDir = $ExtraOsgPluginDir }
+    if (![string]::IsNullOrWhiteSpace($StartupScript)) { $flatArgs.StartupScript = $StartupScript }
     if ($WithMenu) { $flatArgs.WithMenu = $true }
     if ($IncludeFnvrPlugin) { $flatArgs.IncludeFnvrPlugin = $true }
     if ($NoSound) { $flatArgs.NoSound = $true }
@@ -742,6 +750,8 @@ try {
     Write-ProofLine "FlatCameraYaw: $FlatCameraYaw"
     Write-ProofLine "FnvDlodSettingsDiag: $FnvDlodSettingsDiag"
     Write-ProofLine "FnvPsaDeathPoseDiag: $FnvPsaDeathPoseDiag"
+    Write-ProofLine "StartupScript: $StartupScript"
+    Write-ProofLine "FnvQuestObjectiveScriptTrace: $FnvQuestObjectiveScriptTrace"
     Write-ProofLine "TraceRawPendingRecord: $TraceRawPendingRecord"
     Write-ProofLine "TerrainProbePoints: $probePoints"
     Write-ProofLine ""

@@ -3,7 +3,7 @@ param(
     [string]$FnvData = "",
     [string]$VcpkgRoot = "D:\code\c\FMODS\vcpkg",
     [string]$ProofRoot = "",
-    [int]$RunSeconds = 8
+    [int]$RunSeconds = 20
 )
 
 $ErrorActionPreference = "Stop"
@@ -34,6 +34,7 @@ $Stamp = Get-Date -Format "yyyyMMdd_HHmmss"
 $ProofDir = Join-Path $ProofRoot "fnv-quest-objective-runtime-contract/$Stamp"
 $SummaryFile = Join-Path $ProofDir "summary.txt"
 New-Item -ItemType Directory -Force -Path $ProofDir | Out-Null
+$RuntimeRunSeconds = [Math]::Max($RunSeconds, 20)
 
 function Write-ProofLine([string]$Text = "") {
     Write-Host $Text
@@ -114,8 +115,9 @@ Write-ProofLine "FNV quest objective runtime contract $Stamp"
 Write-ProofLine "RepoRoot: $RepoRoot"
 Write-ProofLine "FnvData: $FnvData"
 Write-ProofLine "ProofDir: $ProofDir"
+Write-ProofLine "RunSeconds: $RuntimeRunSeconds"
 Write-ProofLine ""
-Write-ProofLine "Runtime boundary: QUST objective definitions and displayed/completed state are runtime-addressable and persisted through save-game QOBJ records. This does not claim HUD marker rendering, target marker routing, SetObjectiveDisplayed/GetObjectiveDisplayed MWScript opcode parity, or exhaustive condition execution."
+Write-ProofLine "Runtime boundary: QUST objective definitions and displayed/completed state are runtime-addressable, persisted through save-game QOBJ records, and bound to basic Set/Get Objective Displayed/Completed MWScript state opcodes. This does not claim HUD marker rendering, target marker routing, quest stage execution, exhaustive condition execution, or full FNV script VM parity."
 Write-ProofLine ""
 
 Assert-Text "apps/openmw/mwbase/journal.hpp" "setQuestObjectiveDisplayed" "journal objective displayed setter"
@@ -132,13 +134,28 @@ Assert-Text "apps/openmw/mwdialogue/journalimp.cpp" "writer.startRecord(ESM::REC
 Assert-Text "apps/openmw/mwdialogue/journalimp.cpp" "ESM::QuestObjectiveState record" "objective state load record"
 Assert-Text "apps/openmw/mwdialogue/journalimp.cpp" "mQuestObjectiveStates[QuestObjectiveKey(record.mTopic, record.mObjective)] = state" "objective state restore path"
 Assert-Text "apps/openmw/mwstate/statemanagerimp.cpp" "case ESM::REC_QOBJ:" "state manager routes objective saved-game record"
+Assert-Text "components/compiler/opcodes.hpp" "opcodeSetObjectiveDisplayed = 0x2000327" "objective displayed opcode id"
+Assert-Text "components/compiler/opcodes.hpp" "opcodeGetObjectiveCompleted = 0x200032a" "objective completed getter opcode id"
+Assert-Text "components/compiler/extensions0.cpp" 'extensions.registerInstruction("setobjectivedisplayed", "cll", opcodeSetObjectiveDisplayed)' "objective displayed compiler instruction"
+Assert-Text "components/compiler/extensions0.cpp" 'extensions.registerFunction("getobjectivecompleted", ''l'', "cl", opcodeGetObjectiveCompleted)' "objective completed compiler function"
+Assert-Text "apps/openmw/mwscript/dialogueextensions.cpp" "class OpSetObjectiveDisplayed" "objective displayed opcode runtime class"
+Assert-Text "apps/openmw/mwscript/dialogueextensions.cpp" "setQuestObjectiveDisplayed(" "objective displayed opcode mutates journal"
+Assert-Text "apps/openmw/mwscript/dialogueextensions.cpp" "getQuestObjectiveCompleted(quest, objective) ? 1 : 0" "objective completed opcode reads journal"
+Assert-Text "apps/openmw/mwscript/dialogueextensions.cpp" "installSegment5<OpGetObjectiveCompleted>" "objective completed opcode installed"
+Assert-Text "apps/openmw/mwscript/dialogueextensions.cpp" "OPENMW_FNV_PROOF_QUEST_OBJECTIVE_SCRIPT_TRACE" "objective opcode proof trace switch"
+Assert-Text "apps/openmw/mwscript/docs/vmformat.txt" "op 0x2000327: SetObjectiveDisplayed" "objective displayed opcode documented"
+Assert-Text "apps/openmw/engine.cpp" "executeStartupScriptWhenRunning" "startup script executes after state is running"
+Assert-Text "apps/openmw/engine.cpp" "OPENMW_FNV_PROOF_STARTUP_SCRIPT" "startup script proof fallback"
+Assert-Text "apps/openmw/mwgui/console.cpp" "OPENMW_FNV_PROOF_CONSOLE_SCRIPT_TRACE" "console startup script proof trace"
+Assert-Text "scripts/nikami/run-fnv-flat.ps1" '"--script-run"' "flat runner can execute startup scripts"
+Assert-Text "scripts/nikami/run-fnv-flat-proof.ps1" "FnvQuestObjectiveScriptTrace" "flat proof can trace objective script opcodes"
 Assert-Text "apps/openmw/mwlua/types/player.cpp" "struct QuestObjective" "Lua quest objective handle"
 Assert-Text "apps/openmw/mwlua/types/player.cpp" 'quest["objectives"]' "Lua quest objectives entry point"
 Assert-Text "apps/openmw/mwlua/types/player.cpp" "findQuestObjectiveDefinition" "Lua objective definition guard"
 Assert-Text "apps/openmw/mwlua/types/player.cpp" "setQuestObjectiveDisplayedAction" "Lua displayed mutation action"
 Assert-Text "apps/openmw/mwlua/types/player.cpp" "setQuestObjectiveCompletedAction" "Lua completed mutation action"
-Assert-Text "apps/openmw/mwgui/spellwindow.cpp" "Runtime stage journal bridge active; objective HUD/script binding pending" "proof UI bounded quest claim"
-Assert-Text "scripts/nikami/fnv_no_silent_skip_classification.py" '"QUST": "quest records are stored and QUST stage journal entries are bridged pending full quest execution/objective/condition parity"' "QUST remains loaded-pending runtime"
+Assert-Text "apps/openmw/mwgui/spellwindow.cpp" "Runtime stage journal bridge and objective script state active; HUD target routing pending" "proof UI bounded quest claim"
+Assert-Text "scripts/nikami/fnv_no_silent_skip_classification.py" '"QUST": "quest records are stored, QUST stage journal entries are bridged, and objective displayed/completed script state is bound pending full quest execution/objective-target/condition parity"' "QUST remains loaded-pending runtime"
 
 $ContentLedgerScript = Join-Path $PSScriptRoot "test-fnv-content-ledger.ps1"
 & $ContentLedgerScript -FnvRoot $FnvRoot -FnvData $FnvData -ProofRoot $ProofRoot -Content $FlatContent
@@ -162,12 +179,29 @@ Assert-GreaterThan "ledger quest objective definitions" $QuestObjectiveCount 0
 Assert-GreaterThan "ledger quest objective targets" $QuestObjectiveTargetCount 0
 Assert-GreaterThan "ledger quest stage text entries" $QuestStageTextEntryCount 0
 
+$ObjectiveOpcodeScript = Join-Path $ProofDir "quest-objective-opcodes-startup.txt"
+@(
+    "SetObjectiveDisplayed VCG01 10 1",
+    "SetObjectiveCompleted VCG01 10 1",
+    "GetObjectiveDisplayed VCG01 10",
+    "GetObjectiveCompleted VCG01 10"
+) | Set-Content -LiteralPath $ObjectiveOpcodeScript -Encoding ASCII
+Write-ProofLine "Objective opcode startup script: $ObjectiveOpcodeScript"
+
 $FlatProofScript = Join-Path $PSScriptRoot "run-fnv-flat-proof.ps1"
 & $FlatProofScript `
     -FnvData $FnvData `
     -VcpkgRoot $VcpkgRoot `
     -ProofRoot $ProofRoot `
-    -RunSeconds $RunSeconds `
+    -RunSeconds $RuntimeRunSeconds `
+    -StartupScript $ObjectiveOpcodeScript `
+    -FnvQuestObjectiveScriptTrace `
+    -RequireLogPattern @(
+        "FNV/ESM4 proof: quest objective MWScript opcode SetObjectiveDisplayed .* objective=10 value=1",
+        "FNV/ESM4 proof: quest objective MWScript opcode SetObjectiveCompleted .* objective=10 value=1",
+        "FNV/ESM4 proof: quest objective MWScript opcode GetObjectiveDisplayed .* objective=10 value=1",
+        "FNV/ESM4 proof: quest objective MWScript opcode GetObjectiveCompleted .* objective=10 value=1"
+    ) `
     -NoSound
 if ($LASTEXITCODE -ne 0) {
     throw "FNV flat proof failed with exit code $LASTEXITCODE."
@@ -190,8 +224,9 @@ $metadata = [ordered]@{
     questObjectiveCount = $QuestObjectiveCount
     questObjectiveTargetCount = $QuestObjectiveTargetCount
     questStageTextEntryCount = $QuestStageTextEntryCount
+    runSeconds = $RuntimeRunSeconds
     bridgeCounts = $BridgeCounts
-    runtimeBoundary = "Objective definitions and displayed/completed state are runtime-addressable and saved as QOBJ records. HUD markers, target routing, FNV MWScript opcodes, and conditions remain pending."
+    runtimeBoundary = "Objective definitions and displayed/completed state are runtime-addressable, saved as QOBJ records, and bound to basic Set/Get Objective Displayed/Completed MWScript state opcodes. HUD markers, target routing, quest stage execution, exhaustive conditions, and full FNV script VM parity remain pending."
 }
 $metadataPath = Join-Path $ProofDir "fnv-quest-objective-runtime-contract.json"
 $metadata | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $metadataPath -Encoding UTF8
