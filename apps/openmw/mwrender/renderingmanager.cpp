@@ -574,6 +574,26 @@ namespace MWRender
         // need to wrap this in a StateUpdater?
         mSunLight->setPosition(osg::Vec4f(sunlightPos, 0.f));
 
+        if (std::getenv("OPENMW_FNV_PROOF_WEATHER_ID") != nullptr)
+        {
+            static int proofSunDirectionLogs = 0;
+            if (proofSunDirectionLogs < 12)
+            {
+                osg::Vec3f normalizedSky = position;
+                if (normalizedSky.length2() > 0.f)
+                    normalizedSky.normalize();
+                Log(Debug::Info) << "FNV/ESM4 proof: render sun direction raw=(" << direction.x() << ","
+                                 << direction.y() << "," << direction.z() << ") skyPosition=(" << position.x()
+                                 << "," << position.y() << "," << position.z() << ") sunlightPosition=("
+                                 << sunlightPos.x() << "," << sunlightPos.y() << "," << sunlightPos.z()
+                                 << ") normalizedSky=(" << normalizedSky.x() << "," << normalizedSky.y() << ","
+                                 << normalizedSky.z() << ") night=" << (mNight ? 1 : 0)
+                                 << " matchSunlightToSun="
+                                 << (Settings::shaders().mMatchSunlightToSun ? 1 : 0);
+                ++proofSunDirectionLogs;
+            }
+        }
+
         mSky->setSunDirection(position);
 
         mPostProcessor->getStateUpdater()->setSunPos(osg::Vec4f(position, 0.f), mNight);

@@ -944,6 +944,26 @@ namespace MWWorld
 
             // Hardcoded constant from Morrowind
             const osg::Vec3f sunDir(-400.f * orbit, 75.f, -100.f);
+            if (std::getenv("OPENMW_FNV_PROOF_WEATHER_ID") != nullptr)
+            {
+                static int proofSunOrbitLogs = 0;
+                if (proofSunOrbitLogs < 12)
+                {
+                    osg::Vec3f skyPosition = -sunDir;
+                    skyPosition.z() = 400.f - std::abs(skyPosition.x());
+                    Log(Debug::Info) << "FNV/ESM4 proof: sun orbit hour=" << time.getHour()
+                                     << " sunrise=" << mSunriseTime
+                                     << " nightStart=" << mTimeSettings.mNightStart
+                                     << " dayDuration=" << dayDuration
+                                     << " nightDuration=" << nightDuration
+                                     << " orbit=" << orbit
+                                     << " isNight=" << (isNight ? 1 : 0)
+                                     << " rawDirection=(" << sunDir.x() << "," << sunDir.y() << "," << sunDir.z()
+                                     << ") expectedSkyPosition=(" << skyPosition.x() << "," << skyPosition.y() << ","
+                                     << skyPosition.z() << ")";
+                    ++proofSunOrbitLogs;
+                }
+            }
             mRendering.setSunDirection(sunDir);
             mRendering.setNight(isNight);
         }

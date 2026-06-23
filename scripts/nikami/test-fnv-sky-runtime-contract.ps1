@@ -52,6 +52,7 @@ Write-ProofLine ""
 
 $SkyCpp = Join-Path $RepoRoot "apps/openmw/mwrender/sky.cpp"
 $SkyUtilCpp = Join-Path $RepoRoot "apps/openmw/mwrender/skyutil.cpp"
+$RenderingManagerCpp = Join-Path $RepoRoot "apps/openmw/mwrender/renderingmanager.cpp"
 $WeatherCpp = Join-Path $RepoRoot "apps/openmw/mwworld/weather.cpp"
 $WeatherHpp = Join-Path $RepoRoot "apps/openmw/mwworld/weather.hpp"
 $FallbackValidateCpp = Join-Path $RepoRoot "components/fallback/validate.cpp"
@@ -120,6 +121,8 @@ Assert-FileContains $WeatherHpp "mSkyHorizonColor" "weather result stores FNV Ho
 Assert-FileContains $WeatherCpp "getOptionalWeatherColourInterpolator" "weather runtime reads optional generated FNV sky band fallbacks"
 Assert-FileContains $WeatherCpp "skyLower=" "weather proof log emits runtime SkyLower color"
 Assert-FileContains $WeatherCpp "skyHorizon=" "weather proof log emits runtime Horizon color"
+Assert-FileContains $WeatherCpp "FNV/ESM4 proof: sun orbit" "weather proof log emits runtime sun orbit"
+Assert-FileContains $RenderingManagerCpp "FNV/ESM4 proof: render sun direction" "renderer proof log emits consumed sun vector"
 Assert-FileContains $FallbackValidateCpp "Sky_Lower" "fallback validator accepts generated FNV SkyLower keys"
 Assert-FileContains $FallbackValidateCpp "Sky_Horizon" "fallback validator accepts generated FNV Horizon keys"
 Assert-FileContains $SkyVert "useFalloutAtmosphereZGradient" "FNV flat sky vertex shader gates Fallout atmosphere z-gradient"
@@ -148,6 +151,8 @@ Assert-FileContains $FlatProofScript "RequireSkyPaletteMatch" "flat proof can ga
 Assert-FileContains $FlatProofScript "sky-palette-match.json" "flat proof emits generated sky palette match proof"
 Assert-FileContains $FlatProofScript "nearestExpectedNormalizedDistance" "flat proof compares screenshot palette to generated WTHR palette"
 Assert-FileContains $FlatProofScript "RequireSunVisible" "flat proof can gate visible sun screenshot"
+Assert-FileContains $FlatProofScript "RequireSunDirectionRuntime" "flat proof can gate runtime sun vector chain"
+Assert-FileContains $FlatProofScript "sun-direction.json" "flat proof emits runtime sun vector proof"
 Assert-FileContains $FlatProofScript "OPENMW_FNV_FLAT_CAMERA_YAW" "flat proof can steer camera toward sun"
 Assert-FileContains $FlatProofScript "rawRedMaskLeak" "flat proof detects raw red sky-mask leakage"
 Assert-FileContains $FlatProofScript "morrowindBluePaletteLeak" "flat proof detects stale Morrowind blue sky palette"
@@ -159,6 +164,10 @@ Assert-FileContains $WeatherFallbackScript "Horizon" "FNV WTHR fallback generato
 Assert-FileContains $WeatherFallbackScript "Weather_\{openmw_name\}_Sky_Lower_\{openmw_time\}_Color" "FNV WTHR fallback generator emits SkyLower fallback keys"
 Assert-FileContains $WeatherFallbackScript "Weather_\{openmw_name\}_Sky_Horizon_\{openmw_time\}_Color" "FNV WTHR fallback generator emits Horizon fallback keys"
 Assert-FileContains $WeatherFallbackScript "Sunlight" "FNV WTHR fallback generator maps sunlight color"
+Assert-FileContains $WeatherFallbackScript "nam0Matrix" "FNV WTHR fallback generator emits NAM0 matrix proof"
+Assert-FileContains $WeatherFallbackScript "rawRgbaBytes" "FNV WTHR fallback generator emits raw NAM0 slot bytes"
+Assert-FileContains $WeatherFallbackScript "SunSunsetDisc" "FNV WTHR fallback generator separates sunset sun-disc coverage"
+Assert-FileContains $WeatherFallbackScript "sourceWthrBytesClassification" "FNV WTHR fallback generator separates source byte classification"
 Assert-FileContains $WeatherFallbackScript "payloadPolicy" "FNV WTHR fallback generator emits no-retail payload policy"
 Assert-FileContains $WeatherFallbackScript "runtimeColorCoverage" "FNV WTHR fallback generator classifies vertical sky color coverage"
 Assert-FileContains $RuntimeSettingsScript "Get-NikamiFnvWeatherFallbacks" "runtime settings expose generated FNV WTHR weather fallbacks"
@@ -198,7 +207,9 @@ $requiredLogPatterns = @(
     "FNV/ESM4: enabled FNV sun billboard using texture textures/sky/sun\.dds",
     "FNV/ESM4: enabled FNV sun glare using texture textures/sky/nv_sunglare\.dds",
     "FNV/ESM4: enabled FNV Masser moon billboard using texture textures/sky/masser_full\.dds",
-    "FNV/ESM4: enabled FNV Secunda moon billboard using texture textures/sky/skymoonfull\.dds"
+    "FNV/ESM4: enabled FNV Secunda moon billboard using texture textures/sky/skymoonfull\.dds",
+    "FNV/ESM4 proof: sun orbit .* expectedSkyPosition=.*",
+    "FNV/ESM4 proof: render sun direction .* normalizedSky=.*"
 )
 
 $flatProofRoot = Join-Path $ProofRoot "fnv-flat-proof"
@@ -217,6 +228,7 @@ $SkyRunSeconds = [Math]::Max($RunSeconds, 30)
     -ScreenshotFrames "180,300" `
     -RequireSkyColorSanity `
     -RequireSkyPaletteMatch `
+    -RequireSunDirectionRuntime `
     -RequireLogPattern $requiredLogPatterns
 
 $after = @(Get-ChildItem -LiteralPath $flatProofRoot -Directory -ErrorAction SilentlyContinue |
@@ -235,6 +247,7 @@ $flatOpenMwCfg = Join-Path $latestFlatProof.FullName "openmw.cfg"
 $flatSummary = Join-Path $latestFlatProof.FullName "summary.txt"
 $flatSkyColorSanity = Join-Path $latestFlatProof.FullName "sky-color-sanity.json"
 $flatSkyPaletteMatch = Join-Path $latestFlatProof.FullName "sky-palette-match.json"
+$flatSunDirection = Join-Path $latestFlatProof.FullName "sun-direction.json"
 $weatherFallbackRoot = Join-Path $ProofRoot "fnv-weather-fallbacks"
 $latestWeatherFallback = Get-ChildItem -LiteralPath $weatherFallbackRoot -Directory -ErrorAction SilentlyContinue |
     Sort-Object LastWriteTime -Descending |
@@ -270,15 +283,25 @@ Assert-FileContains $flatSettings "^sky blending = true$" "generated flat sky bl
 Assert-FileContains $flatSummary "^ScreenshotFrames: 180,300$" "flat proof screenshot frames"
 Assert-FileContains $flatSummary "^RequireSkyColorSanity: True$" "flat proof required sky color sanity"
 Assert-FileContains $flatSummary "^RequireSkyPaletteMatch: True$" "flat proof required generated sky palette match"
+Assert-FileContains $flatSummary "^RequireSunDirectionRuntime: True$" "flat proof required runtime sun vector chain"
 Assert-FileContains $weatherFallbackJson '"payloadPolicy"\s*:\s*"derived-weather-fallbacks-no-retail-assets"' "generated weather fallback payload policy"
+Assert-FileContains $weatherFallbackJson '"sourceFormat"\s*:\s*"FNV WTHR NAM0 color layout"' "generated weather fallback source format"
+Assert-FileContains $weatherFallbackJson '"sourceWthrBytesClassification"\s*:\s*"loaded-pending-runtime"' "generated weather fallback source byte classification"
+Assert-FileContains $weatherFallbackJson '"derivedFallbackRenderingClassification"\s*:\s*"runtime-supported"' "generated weather fallback runtime classification"
 Assert-FileContains $weatherFallbackJson '"selectedWeather"' "generated weather fallback selected weather map"
 Assert-FileContains $weatherFallbackJson '"skyColorGroups"' "generated weather fallback vertical sky color proof"
+Assert-FileContains $weatherFallbackJson '"nam0Matrix"' "generated weather fallback NAM0 matrix proof"
+Assert-FileContains $weatherFallbackJson '"rawRgbaBytes"' "generated weather fallback raw NAM0 slot proof"
+Assert-FileContains $weatherFallbackJson '"emittedFallbackKey"\s*:\s*"Weather_Clear_Sun_Disc_Sunset_Color"' "generated weather fallback sun disc target"
 Assert-FileContains $weatherFallbackJson '"SkyLower"' "generated weather fallback SkyLower proof"
 Assert-FileContains $weatherFallbackJson '"Horizon"' "generated weather fallback Horizon proof"
 Assert-FileContains $weatherFallbackJson '"SkyLower"\s*:\s*"runtime-supported"' "generated weather fallback SkyLower runtime classification"
 Assert-FileContains $weatherFallbackJson '"Horizon"\s*:\s*"runtime-supported"' "generated weather fallback Horizon runtime classification"
+Assert-FileContains $weatherFallbackJson '"Sun"\s*:\s*"loaded-pending-runtime"' "generated weather fallback full Sun coverage remains pending"
+Assert-FileContains $weatherFallbackJson '"SunSunsetDisc"\s*:\s*"runtime-supported"' "generated weather fallback sunset sun-disc runtime classification"
 Assert-FileNotContains $weatherFallbackJson '"SkyLower"\s*:\s*"loaded-pending-runtime"' "stale SkyLower loaded-pending classification"
 Assert-FileNotContains $weatherFallbackJson '"Horizon"\s*:\s*"loaded-pending-runtime"' "stale Horizon loaded-pending classification"
+Assert-FileNotContains $weatherFallbackJson '"sourceFormat"\s*:\s*"FNV WTHR NAM0/PNAM layout"' "stale unsupported PNAM proof claim"
 Assert-FileContains $weatherFallbackJson '"Clear"' "generated weather fallback clear selection"
 Assert-FileContains $weatherFallbackJson '"runtimeBoundary"' "generated weather fallback runtime boundary"
 Assert-FileContains $weatherFallbackLines "^fallback=Weather_Clear_Sky_Day_Color,[0-9]{3},[0-9]{3},[0-9]{3}$" "generated weather fallback clear sky line"
@@ -327,6 +350,10 @@ Assert-FileContains $flatSkyPaletteMatch '"expectedTime"\s*:\s*"Day"' "runtime g
 Assert-FileContains $flatSkyPaletteMatch '"channelOrderMatches"\s*:\s*true' "runtime sky palette channel ordering"
 Assert-FileContains $flatSkyPaletteMatch '"normalizedDistancePass"\s*:\s*true' "runtime sky palette normalized distance"
 Assert-FileNotContains $flatSkyPaletteMatch '"paletteMatches"\s*:\s*false' "runtime generated sky palette mismatch"
+Assert-FileContains $flatSunDirection '"status"\s*:\s*"PASS"' "runtime sun vector proof status"
+Assert-FileContains $flatSunDirection '"chainMatches"\s*:\s*true' "runtime sun vector weather/render chain"
+Assert-FileContains $flatSunDirection '"skyPositionZPositive"\s*:\s*true' "runtime sun vector above horizon"
+Assert-FileContains $flatSunDirection '"fnvOrbitParity"\s*:\s*"loaded-pending-runtime"' "runtime sun orbit parity remains bounded"
 
 $sunProofBefore = @()
 if (Test-Path -LiteralPath $flatProofRoot) {
@@ -348,6 +375,7 @@ $sunLogPatterns = @(
     -FlatCameraYaw -1.16 `
     -FlatCameraPitch 0.35 `
     -RequireSunVisible `
+    -RequireSunDirectionRuntime `
     -RequireLogPattern $sunLogPatterns
 
 $sunProofAfter = @(Get-ChildItem -LiteralPath $flatProofRoot -Directory -ErrorAction SilentlyContinue |
@@ -363,10 +391,12 @@ if ($null -eq $sunProof) {
 $sunOpenMwLog = Join-Path $sunProof.FullName "openmw.log"
 $sunSummary = Join-Path $sunProof.FullName "summary.txt"
 $sunVisibilityJson = Join-Path $sunProof.FullName "sun-visibility.json"
+$sunDirectionJson = Join-Path $sunProof.FullName "sun-direction.json"
 Write-ProofLine ""
 Write-ProofLine "Sun-visible proof: $($sunProof.FullName)"
 Write-ProofLine "Sun-visible log: $sunOpenMwLog"
 Assert-FileContains $sunSummary "^RequireSunVisible: True$" "sun proof required visible sun"
+Assert-FileContains $sunSummary "^RequireSunDirectionRuntime: True$" "sun proof required runtime sun vector chain"
 Assert-FileContains $sunSummary "^ScreenshotFrames: 180,300$" "sun proof screenshot frames"
 Assert-FileContains $sunSummary "^FlatCameraYaw: -1\.16$" "sun proof camera yaw"
 Assert-FileContains $sunSummary "^FlatCameraPitch: 0\.35$" "sun proof camera pitch"
@@ -374,6 +404,8 @@ Assert-FileContains $sunOpenMwLog "FNV/ESM4: enabled FNV sun billboard using tex
 Assert-FileContains $sunOpenMwLog "FNV/ESM4: enabled FNV sun glare using texture textures/sky/nv_sunglare\.dds" "sun proof FNV glare texture"
 Assert-FileContains $sunOpenMwLog "FNV/ESM4 diag: settled flat startup camera .*cameraPitch=0\.35 cameraYaw=-1\.16" "sun proof camera points at sun"
 Assert-FileContains $sunVisibilityJson '"sunVisible"\s*:\s*true' "runtime visible FNV sun screenshot"
+Assert-FileContains $sunDirectionJson '"status"\s*:\s*"PASS"' "sun proof runtime sun vector status"
+Assert-FileContains $sunDirectionJson '"chainMatches"\s*:\s*true' "sun proof runtime sun vector chain"
 
 $result = [ordered]@{
     stamp = $Stamp
@@ -392,11 +424,14 @@ $result = [ordered]@{
         "FNV weather runtime interpolates SkyUpper, SkyLower, and Horizon and binds them to atmosphere shader uniforms",
         "FNV sky shader does not consume unsupported vertex RGB data",
         "FNV WTHR-derived weather fallbacks supply sky/fog/ambient/sun colors without committing retail assets",
+        "FNV WTHR NAM0 matrix proof separates loaded source bytes from derived runtime fallback targets",
         "FNV WTHR SkyLower and Horizon colors are emitted into generated fallback config and classified runtime-supported",
+        "FNV NAM0 Sunlight is bound to directional sun color while NAM0 Sun is only sunset-disc runtime-supported",
         "FNV screenshot palette is compared against generated Clear/Day WTHR sky colors without committed image baselines",
         "FNV screenshot sky color sanity rejects raw red channel/mask leakage and stale Morrowind blue palette leakage",
         "FNV sun/moon billboard path uses Fallout sky textures",
         "FNV sun-facing screenshot proves visible sun disc/glare core",
+        "FNV runtime sun vector chain is logged and internally consistent while retail orbit parity remains pending",
         "FNV flat shader mode is sky-interpreted",
         "FNV sky meshes and sun/moon textures present in retail BSA inventory",
         "sky shader pass ids and premultiplied moon blend guarded",

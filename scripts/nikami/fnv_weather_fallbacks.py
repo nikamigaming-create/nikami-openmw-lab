@@ -224,11 +224,23 @@ def read_wthr_records(fnv_data, content):
 
 
 def color_at(record, group_name, time_name):
+    return tuple(color_slot(record, group_name, time_name)["decodedRgb"])
+
+
+def color_slot(record, group_name, time_name):
     group_index = NAM0_GROUPS[group_name]
     time_index = TIME_INDICES[time_name]
     offset = ((group_index * len(TIME_INDICES)) + time_index) * 4
     rgba = record["nam0"][offset : offset + 4]
-    return tuple(int(component) for component in rgba[:3])
+    return {
+        "group": group_name,
+        "groupIndex": group_index,
+        "time": time_name,
+        "timeIndex": time_index,
+        "byteOffset": offset,
+        "rawRgbaBytes": [int(component) for component in rgba],
+        "decodedRgb": [int(component) for component in rgba[:3]],
+    }
 
 
 def color_text(rgb):
@@ -243,6 +255,15 @@ def select_record(records_by_editor, candidates):
     raise ValueError(f"None of the requested WTHR records exist: {', '.join(candidates)}")
 
 
+def nam0_matrix_row(record, group_name, time_name, emitted_key, runtime_target, classification, proof):
+    slot = color_slot(record, group_name, time_name)
+    slot["emittedFallbackKey"] = emitted_key
+    slot["runtimeTarget"] = runtime_target
+    slot["classification"] = classification
+    slot["proof"] = proof
+    return slot
+
+
 def build_weather_fallbacks(records_by_editor):
     lines = []
     selected = OrderedDict()
@@ -250,6 +271,7 @@ def build_weather_fallbacks(records_by_editor):
         record, requested = select_record(records_by_editor, candidates)
         cloud = choose_cloud_texture(record)
         sky_color_groups = OrderedDict()
+        nam0_matrix = []
         selected[openmw_name] = {
             "requestedCandidates": list(candidates),
             "selectedEditorId": record["editorId"],
@@ -258,6 +280,7 @@ def build_weather_fallbacks(records_by_editor):
             "weatherClassification": record["weatherClassification"],
             "cloudTexture": cloud,
             "skyColorGroups": sky_color_groups,
+            "nam0Matrix": nam0_matrix,
             "runtimeColorCoverage": OrderedDict(
                 [
                     ("SkyUpper", "runtime-supported"),
@@ -266,7 +289,8 @@ def build_weather_fallbacks(records_by_editor):
                     ("Fog", "runtime-supported"),
                     ("Ambient", "runtime-supported"),
                     ("Sunlight", "runtime-supported"),
-                    ("Sun", "runtime-supported"),
+                    ("Sun", "loaded-pending-runtime"),
+                    ("SunSunsetDisc", "runtime-supported"),
                 ]
             ),
         }
@@ -285,25 +309,107 @@ def build_weather_fallbacks(records_by_editor):
                 f"fallback=Weather_{openmw_name}_Sky_{openmw_time}_Color,"
                 f"{color_text(color_at(record, 'SkyUpper', source_time))}"
             )
+            nam0_matrix.append(
+                nam0_matrix_row(
+                    record,
+                    "SkyUpper",
+                    source_time,
+                    f"Weather_{openmw_name}_Sky_{openmw_time}_Color",
+                    "Weather::mSkyColor / atmosphere upper emission",
+                    "runtime-supported",
+                    "Emitted as generated OpenMW fallback and consumed by WeatherManager.",
+                )
+            )
             lines.append(
                 f"fallback=Weather_{openmw_name}_Sky_Lower_{openmw_time}_Color,"
                 f"{color_text(color_at(record, 'SkyLower', source_time))}"
+            )
+            nam0_matrix.append(
+                nam0_matrix_row(
+                    record,
+                    "SkyLower",
+                    source_time,
+                    f"Weather_{openmw_name}_Sky_Lower_{openmw_time}_Color",
+                    "Weather::mSkyLowerColor / Fallout atmosphere gradient lower band",
+                    "runtime-supported",
+                    "Emitted as generated OpenMW fallback and bound to the PC-flat sky shader.",
+                )
             )
             lines.append(
                 f"fallback=Weather_{openmw_name}_Sky_Horizon_{openmw_time}_Color,"
                 f"{color_text(color_at(record, 'Horizon', source_time))}"
             )
+            nam0_matrix.append(
+                nam0_matrix_row(
+                    record,
+                    "Horizon",
+                    source_time,
+                    f"Weather_{openmw_name}_Sky_Horizon_{openmw_time}_Color",
+                    "Weather::mSkyHorizonColor / Fallout atmosphere gradient horizon band",
+                    "runtime-supported",
+                    "Emitted as generated OpenMW fallback and bound to the PC-flat sky shader.",
+                )
+            )
             lines.append(
                 f"fallback=Weather_{openmw_name}_Fog_{openmw_time}_Color,"
                 f"{color_text(color_at(record, 'Fog', source_time))}"
+            )
+            nam0_matrix.append(
+                nam0_matrix_row(
+                    record,
+                    "Fog",
+                    source_time,
+                    f"Weather_{openmw_name}_Fog_{openmw_time}_Color",
+                    "Weather::mFogColor",
+                    "runtime-supported",
+                    "Emitted as generated OpenMW fallback and consumed by WeatherManager.",
+                )
             )
             lines.append(
                 f"fallback=Weather_{openmw_name}_Ambient_{openmw_time}_Color,"
                 f"{color_text(color_at(record, 'Ambient', source_time))}"
             )
+            nam0_matrix.append(
+                nam0_matrix_row(
+                    record,
+                    "Ambient",
+                    source_time,
+                    f"Weather_{openmw_name}_Ambient_{openmw_time}_Color",
+                    "Weather::mAmbientColor",
+                    "runtime-supported",
+                    "Emitted as generated OpenMW fallback and consumed by WeatherManager.",
+                )
+            )
             lines.append(
                 f"fallback=Weather_{openmw_name}_Sun_{openmw_time}_Color,"
                 f"{color_text(color_at(record, 'Sunlight', source_time))}"
+            )
+            nam0_matrix.append(
+                nam0_matrix_row(
+                    record,
+                    "Sunlight",
+                    source_time,
+                    f"Weather_{openmw_name}_Sun_{openmw_time}_Color",
+                    "Weather::mSunColor / directional sunlight",
+                    "runtime-supported",
+                    "FNV NAM0 Sunlight is emitted to OpenMW Sun color fallback keys.",
+                )
+            )
+            sun_key = (
+                f"Weather_{openmw_name}_Sun_Disc_Sunset_Color" if source_time == "Sunset" else None
+            )
+            nam0_matrix.append(
+                nam0_matrix_row(
+                    record,
+                    "Sun",
+                    source_time,
+                    sun_key,
+                    "Weather::mSunDiscSunsetColor" if source_time == "Sunset" else "loaded NAM0 Sun color only",
+                    "runtime-supported" if source_time == "Sunset" else "loaded-pending-runtime",
+                    "Only FNV NAM0 Sun/Sunset is emitted today as the OpenMW sunset sun-disc tint."
+                    if source_time == "Sunset"
+                    else "FNV NAM0 Sun non-sunset colors are inventoried but not yet bound to a full sun-disc time series.",
+                )
             )
         lines.append(
             f"fallback=Weather_{openmw_name}_Sun_Disc_Sunset_Color,"
@@ -341,7 +447,9 @@ def main():
         "stamp": datetime.now().strftime("%Y%m%d_%H%M%S"),
         "fnvData": str(fnv_data),
         "payloadPolicy": "derived-weather-fallbacks-no-retail-assets",
-        "sourceFormat": "FNV WTHR NAM0/PNAM layout",
+        "sourceFormat": "FNV WTHR NAM0 color layout",
+        "sourceWthrBytesClassification": "loaded-pending-runtime",
+        "derivedFallbackRenderingClassification": "runtime-supported",
         "sourceRecordCount": len(records_by_editor),
         "unsupportedSourceRecordCount": len(unsupported),
         "sources": sources,
@@ -356,7 +464,7 @@ def main():
             "FNV WTHR SkyUpper, SkyLower, and Horizon colors are emitted as generated fallback keys and bound to the PC-flat atmosphere shader gradient.",
         ],
         "classification": "runtime-supported",
-        "runtimeBoundary": "Generated fallbacks repair the current OpenMW WeatherManager palette path, but full CLMT/WTHR/REGN runtime weather binding remains a separate gate.",
+        "runtimeBoundary": "Generated fallbacks repair the current OpenMW WeatherManager palette path. Source WTHR bytes remain loaded-pending-runtime for full CLMT/WTHR/REGN binding, and FNV NAM0 Sun is only runtime-bound for sunset sun-disc tint.",
     }
     output_json.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
     print(str(output_lines))

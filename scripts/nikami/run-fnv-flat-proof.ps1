@@ -60,6 +60,7 @@ param(
     [switch]$RequireSkyColorSanity,
     [switch]$RequireSkyPaletteMatch,
     [switch]$RequireSunVisible,
+    [switch]$RequireSunDirectionRuntime,
     [string]$StartupScript = "",
     [switch]$FnvQuestObjectiveScriptTrace,
     [switch]$NoSound
@@ -558,6 +559,133 @@ function Assert-SunVisible([object[]]$Screenshots, [string]$ProofDir) {
     }
 }
 
+function Get-MatchDouble([System.Text.RegularExpressions.Match]$Match, [string]$Name) {
+    return [double]$Match.Groups[$Name].Value
+}
+
+function Get-VectorDistance([double[]]$A, [double[]]$B) {
+    return [Math]::Sqrt(
+        [Math]::Pow($A[0] - $B[0], 2.0) +
+        [Math]::Pow($A[1] - $B[1], 2.0) +
+        [Math]::Pow($A[2] - $B[2], 2.0))
+}
+
+function Assert-SunDirectionRuntime([string]$OpenMwLog, [string]$ProofDir) {
+    $number = "[-+]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][-+]?[0-9]+)?"
+    $weatherPattern = "FNV/ESM4 proof: sun orbit hour=(?<hour>$number) sunrise=(?<sunrise>$number) nightStart=(?<nightStart>$number) dayDuration=(?<dayDuration>$number) nightDuration=(?<nightDuration>$number) orbit=(?<orbit>$number) isNight=(?<isNight>[01]) rawDirection=\((?<rawX>$number),(?<rawY>$number),(?<rawZ>$number)\) expectedSkyPosition=\((?<skyX>$number),(?<skyY>$number),(?<skyZ>$number)\)"
+    $renderPattern = "FNV/ESM4 proof: render sun direction raw=\((?<rawX>$number),(?<rawY>$number),(?<rawZ>$number)\) skyPosition=\((?<skyX>$number),(?<skyY>$number),(?<skyZ>$number)\) sunlightPosition=\((?<lightX>$number),(?<lightY>$number),(?<lightZ>$number)\) normalizedSky=\((?<normX>$number),(?<normY>$number),(?<normZ>$number)\) night=(?<night>[01]) matchSunlightToSun=(?<match>[01])"
+
+    $weatherLines = @(Select-String -LiteralPath $OpenMwLog -Pattern $weatherPattern -AllMatches -ErrorAction SilentlyContinue)
+    $renderLines = @(Select-String -LiteralPath $OpenMwLog -Pattern $renderPattern -AllMatches -ErrorAction SilentlyContinue)
+    if ($weatherLines.Count -eq 0) {
+        throw "FNV sun direction proof did not find weather sun orbit logs. See $OpenMwLog"
+    }
+    if ($renderLines.Count -eq 0) {
+        throw "FNV sun direction proof did not find render sun direction logs. See $OpenMwLog"
+    }
+
+    $weatherMatch = $weatherLines[0].Matches[0]
+    $renderMatch = $renderLines[0].Matches[0]
+    $weatherSky = @(
+        (Get-MatchDouble $weatherMatch "skyX"),
+        (Get-MatchDouble $weatherMatch "skyY"),
+        (Get-MatchDouble $weatherMatch "skyZ")
+    )
+    $renderSky = @(
+        (Get-MatchDouble $renderMatch "skyX"),
+        (Get-MatchDouble $renderMatch "skyY"),
+        (Get-MatchDouble $renderMatch "skyZ")
+    )
+    $renderRaw = @(
+        (Get-MatchDouble $renderMatch "rawX"),
+        (Get-MatchDouble $renderMatch "rawY"),
+        (Get-MatchDouble $renderMatch "rawZ")
+    )
+    $weatherRaw = @(
+        (Get-MatchDouble $weatherMatch "rawX"),
+        (Get-MatchDouble $weatherMatch "rawY"),
+        (Get-MatchDouble $weatherMatch "rawZ")
+    )
+    $norm = @(
+        (Get-MatchDouble $renderMatch "normX"),
+        (Get-MatchDouble $renderMatch "normY"),
+        (Get-MatchDouble $renderMatch "normZ")
+    )
+    $chainDistance = Get-VectorDistance $weatherSky $renderSky
+    $normLength = [Math]::Sqrt(($norm[0] * $norm[0]) + ($norm[1] * $norm[1]) + ($norm[2] * $norm[2]))
+    $dayDuration = Get-MatchDouble $weatherMatch "dayDuration"
+    $nightDuration = Get-MatchDouble $weatherMatch "nightDuration"
+    $orbit = Get-MatchDouble $weatherMatch "orbit"
+    $hour = Get-MatchDouble $weatherMatch "hour"
+    $sunrise = Get-MatchDouble $weatherMatch "sunrise"
+    $nightStart = Get-MatchDouble $weatherMatch "nightStart"
+    $adjustedHour = $hour
+    $adjustedNightStart = $nightStart
+    if ($hour -lt $sunrise) { $adjustedHour += 24.0 }
+    if ($nightStart -lt $sunrise) { $adjustedNightStart += 24.0 }
+    $isNight = $adjustedHour -ge $adjustedNightStart
+    if (!$isNight) {
+        $expectedOrbit = 1.0 - (2.0 * (($adjustedHour - $sunrise) / $dayDuration))
+    }
+    else {
+        $expectedOrbit = 2.0 * (($adjustedHour - $adjustedNightStart) / $nightDuration) - 1.0
+    }
+    $expectedRaw = @((-400.0 * $expectedOrbit), 75.0, -100.0)
+    $expectedSkyFromFormula = @(-$expectedRaw[0], -$expectedRaw[1], (400.0 - [Math]::Abs(-$expectedRaw[0])))
+    $skyPositionZPositive = $renderSky[2] -gt 0.0
+    $chainMatches = $chainDistance -le 0.01
+    $orbitMatches = [Math]::Abs($orbit - $expectedOrbit) -le 0.001
+    $rawDirectionMatches = (Get-VectorDistance $renderRaw $expectedRaw) -le 0.05 -and (Get-VectorDistance $weatherRaw $expectedRaw) -le 0.05
+    $skyFormulaMatches = (Get-VectorDistance $renderSky $expectedSkyFromFormula) -le 0.05
+    $normalizedSkyUnitLength = [Math]::Abs($normLength - 1.0) -le 0.01
+
+    $result = [ordered]@{
+        status = if ($chainMatches -and $orbitMatches -and $rawDirectionMatches -and $skyFormulaMatches -and $normalizedSkyUnitLength -and $skyPositionZPositive -and $dayDuration -gt 0.0 -and $nightDuration -gt 0.0) { "PASS" } else { "FAIL" }
+        classification = "runtime-supported"
+        fnvOrbitParity = "loaded-pending-runtime"
+        runtimeBoundary = "Current OpenMW sun orbit and renderer vector chain are proved for PC-flat; this does not claim retail FNV sun-orbit parity."
+        weatherLogCount = $weatherLines.Count
+        renderLogCount = $renderLines.Count
+        sample = [ordered]@{
+            hour = $hour
+            sunrise = $sunrise
+            nightStart = $nightStart
+            dayDuration = $dayDuration
+            nightDuration = $nightDuration
+            orbit = $orbit
+            expectedOrbit = [Math]::Round($expectedOrbit, 6)
+            orbitMatches = $orbitMatches
+            weatherIsNight = [int]$weatherMatch.Groups["isNight"].Value
+            renderNight = [int]$renderMatch.Groups["night"].Value
+            renderMatchSunlightToSun = [int]$renderMatch.Groups["match"].Value
+            rawDirection = $renderRaw
+            expectedRawDirection = $expectedRaw
+            rawDirectionMatches = $rawDirectionMatches
+            expectedSkyPosition = $weatherSky
+            expectedSkyPositionFromFormula = $expectedSkyFromFormula
+            renderSkyPosition = $renderSky
+            chainDistance = [Math]::Round($chainDistance, 6)
+            chainMatches = $chainMatches
+            skyFormulaMatches = $skyFormulaMatches
+            normalizedSky = $norm
+            normalizedSkyLength = [Math]::Round($normLength, 6)
+            normalizedSkyUnitLength = $normalizedSkyUnitLength
+            skyPositionZPositive = $skyPositionZPositive
+        }
+    }
+
+    $statsPath = Join-Path $ProofDir "sun-direction.json"
+    $result | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $statsPath -Encoding UTF8
+    Write-ProofLine "Sun direction JSON: $statsPath"
+    Write-ProofLine ("Sun direction sample: hour={0} orbit={1} sky=({2},{3},{4}) chainDistance={5} normLength={6} zPositive={7}" -f `
+        $result.sample.hour, $result.sample.orbit, $renderSky[0], $renderSky[1], $renderSky[2], `
+        $result.sample.chainDistance, $result.sample.normalizedSkyLength, $result.sample.skyPositionZPositive)
+
+    if ($result.status -ne "PASS") {
+        throw "FNV sun direction proof failed. See $statsPath"
+    }
+}
+
 function Get-LatestClassificationDir([string]$Root) {
     $classificationRoot = Join-Path $Root "fnv-no-silent-skip-classification"
     if (!(Test-Path -LiteralPath $classificationRoot -PathType Container)) {
@@ -745,6 +873,7 @@ try {
     Write-ProofLine "RequireSkyColorSanity: $RequireSkyColorSanity"
     Write-ProofLine "RequireSkyPaletteMatch: $RequireSkyPaletteMatch"
     Write-ProofLine "RequireSunVisible: $RequireSunVisible"
+    Write-ProofLine "RequireSunDirectionRuntime: $RequireSunDirectionRuntime"
     Write-ProofLine "BootstrapCell: $BootstrapCell"
     Write-ProofLine "FlatCameraPitch: $FlatCameraPitch"
     Write-ProofLine "FlatCameraYaw: $FlatCameraYaw"
@@ -813,6 +942,7 @@ Assert-NoShaderBlockers @($OpenMwLog, $MyGuiLog, $StdoutLog, $StderrLog, $Harnes
 if ($RequireSkyColorSanity) { Assert-SkyColorSanity $screenshots $ProofDir }
 if ($RequireSkyPaletteMatch) { Assert-SkyPaletteMatch $screenshots $ProofDir $ProofRoot }
 if ($RequireSunVisible) { Assert-SunVisible $screenshots $ProofDir }
+if ($RequireSunDirectionRuntime) { Assert-SunDirectionRuntime $OpenMwLog $ProofDir }
 Assert-UnsupportedEsm4SkipsClassified $unsupportedEsm4Skips $ClassificationDir
 if ($RequireFlatCameraSettled -and $flatCameraSettledLines -eq 0) { throw "FNV flat proof did not prove flat camera settlement. See $OpenMwLog" }
 if ($flatCameraFailureLines -gt 0) { throw "FNV flat proof saw flat camera failure lines. See $OpenMwLog" }
