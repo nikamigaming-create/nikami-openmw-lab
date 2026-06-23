@@ -170,6 +170,7 @@ function Get-SkyColorSanityStats([string]$Path) {
         $height = $bitmap.Height
         $samples = 0
         $redDominant = 0
+        $blueDominant = 0
         $cyanDominant = 0
         $bright = 0
         $sumR = 0.0
@@ -199,6 +200,9 @@ function Get-SkyColorSanityStats([string]$Path) {
                 if ($r -gt ($g + 35.0) -and $r -gt ($b + 35.0)) {
                     $redDominant++
                 }
+                if ($b -gt ($r + 45.0) -and $b -gt ($g + 20.0)) {
+                    $blueDominant++
+                }
                 if ($g -gt ($r + 25.0) -and $b -gt ($r + 25.0)) {
                     $cyanDominant++
                 }
@@ -216,7 +220,10 @@ function Get-SkyColorSanityStats([string]$Path) {
         $avgG = $sumG / $samples
         $avgB = $sumB / $samples
         $redDominantRatio = $redDominant / $samples
+        $blueDominantRatio = $blueDominant / $samples
+        $cyanDominantRatio = $cyanDominant / $samples
         $rawRedMaskLeak = $redDominantRatio -gt 0.55 -and $avgR -gt ($avgG + 35.0) -and $avgR -gt ($avgB + 35.0)
+        $morrowindBluePaletteLeak = $cyanDominantRatio -gt 0.75 -and $avgB -gt ($avgR + 55.0) -and $avgB -gt ($avgG + 30.0)
 
         return [ordered]@{
             path = $Path
@@ -227,9 +234,11 @@ function Get-SkyColorSanityStats([string]$Path) {
             avgG = [Math]::Round($avgG, 4)
             avgB = [Math]::Round($avgB, 4)
             redDominantRatio = [Math]::Round($redDominantRatio, 6)
-            cyanDominantRatio = [Math]::Round(($cyanDominant / $samples), 6)
+            blueDominantRatio = [Math]::Round($blueDominantRatio, 6)
+            cyanDominantRatio = [Math]::Round($cyanDominantRatio, 6)
             brightRatio = [Math]::Round(($bright / $samples), 6)
             rawRedMaskLeak = $rawRedMaskLeak
+            morrowindBluePaletteLeak = $morrowindBluePaletteLeak
         }
     }
     finally {
@@ -251,15 +260,16 @@ function Assert-SkyColorSanity([object[]]$Screenshots, [string]$ProofDir) {
     $stats | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $statsPath -Encoding UTF8
     Write-ProofLine "Sky color sanity JSON: $statsPath"
 
-    $failures = @($stats | Where-Object { $_.rawRedMaskLeak })
+    $failures = @($stats | Where-Object { $_.rawRedMaskLeak -or $_.morrowindBluePaletteLeak })
     foreach ($stat in $stats) {
-        Write-ProofLine ("Sky color sample {0}: avg=({1},{2},{3}) redDominant={4} cyanDominant={5} rawRedMaskLeak={6}" -f `
+        Write-ProofLine ("Sky color sample {0}: avg=({1},{2},{3}) redDominant={4} blueDominant={5} cyanDominant={6} rawRedMaskLeak={7} morrowindBluePaletteLeak={8}" -f `
             (Split-Path $stat.path -Leaf), $stat.avgR, $stat.avgG, $stat.avgB, `
-            $stat.redDominantRatio, $stat.cyanDominantRatio, $stat.rawRedMaskLeak)
+            $stat.redDominantRatio, $stat.blueDominantRatio, $stat.cyanDominantRatio, $stat.rawRedMaskLeak, `
+            $stat.morrowindBluePaletteLeak)
     }
 
     if ($failures.Count -gt 0) {
-        throw "FNV sky color sanity detected raw red/mask sky leakage. See $statsPath"
+        throw "FNV sky color sanity detected raw red/mask leakage or Morrowind blue-palette leakage. See $statsPath"
     }
 }
 

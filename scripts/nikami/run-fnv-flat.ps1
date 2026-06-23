@@ -170,16 +170,9 @@ if (Test-Path -LiteralPath $FnvDefaultIni) {
         }
     }
 }
-$FnvFallbackLines += @(
-    "fallback=Weather_Clear_Cloud_Texture,textures/sky/nv_wastelandoverheadcloud.dds",
-    "fallback=Weather_Cloudy_Cloud_Texture,textures/sky/wastelandcloudcloudyupper01.dds",
-    "fallback=Weather_Foggy_Cloud_Texture,textures/sky/nv_wastelandoverheadcloud.dds",
-    "fallback=Weather_Thunderstorm_Cloud_Texture,textures/sky/urbancloudovercastupper01.dds",
-    "fallback=Weather_Rain_Cloud_Texture,textures/sky/urbancloudovercastlower01.dds",
-    "fallback=Weather_Overcast_Cloud_Texture,textures/sky/urbancloudovercastupper01.dds",
-    "fallback=Weather_Snow_Cloud_Texture,textures/sky/nv_wastelandoverheadcloud.dds",
-    "fallback=Weather_Blizzard_Cloud_Texture,textures/sky/urbancloudovercastupper01.dds"
-)
+$FnvWeatherFallbacks = Get-NikamiFnvWeatherFallbacks -FnvData $FnvData -ProofRoot $ProofRoot
+Write-Host "Using generated FNV WTHR weather fallbacks: $($FnvWeatherFallbacks.JsonPath)"
+$FnvFallbackLines += $FnvWeatherFallbacks.Lines
 $FnvFallbackText = $FnvFallbackLines -join "`r`n"
 
 $OptionalDataLine = ""

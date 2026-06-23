@@ -59,6 +59,8 @@ $SettingsDefault = Join-Path $RepoRoot "files/settings-default.cfg"
 $FlatScript = Join-Path $RepoRoot "scripts/nikami/run-fnv-flat.ps1"
 $FlatProofScript = Join-Path $RepoRoot "scripts/nikami/run-fnv-flat-proof.ps1"
 $VrDeployScript = Join-Path $RepoRoot "scripts/nikami/deploy-fnv-vr-headset.ps1"
+$WeatherFallbackScript = Join-Path $RepoRoot "scripts/nikami/fnv_weather_fallbacks.py"
+$RuntimeSettingsScript = Join-Path $RepoRoot "scripts/nikami/fnv-runtime-settings.ps1"
 
 function Get-BsaTool() {
     $candidate = Join-Path $RepoRoot "build-clean/Release/bsatool.exe"
@@ -113,9 +115,14 @@ Assert-FileNotContains $SkyFrag "vec4 blendedLayer = phase \* moonBlend" "downst
 Assert-FileContains $FlatProofScript "OPENMW_FNV_SKY_MISSING_LOG" "flat proof enables sky diagnostics"
 Assert-FileContains $FlatProofScript "RequireSkyColorSanity" "flat proof can gate sky screenshot colors"
 Assert-FileContains $FlatProofScript "rawRedMaskLeak" "flat proof detects raw red sky-mask leakage"
+Assert-FileContains $FlatProofScript "morrowindBluePaletteLeak" "flat proof detects stale Morrowind blue sky palette"
 Assert-FileContains $FlatScript "force shaders = false" "FNV flat explicitly disables forced sky shader"
-Assert-FileContains $FlatScript "Weather_Clear_Cloud_Texture,textures/sky/nv_wastelandoverheadcloud.dds" "FNV flat clear cloud fallback"
-Assert-FileContains $FlatScript "Weather_Cloudy_Cloud_Texture,textures/sky/wastelandcloudcloudyupper01.dds" "FNV flat cloudy cloud fallback"
+Assert-FileContains $WeatherFallbackScript "NAM0_GROUPS" "FNV WTHR fallback generator decodes NAM0 color groups"
+Assert-FileContains $WeatherFallbackScript "SkyUpper" "FNV WTHR fallback generator maps Sky-Upper color"
+Assert-FileContains $WeatherFallbackScript "Sunlight" "FNV WTHR fallback generator maps sunlight color"
+Assert-FileContains $WeatherFallbackScript "payloadPolicy" "FNV WTHR fallback generator emits no-retail payload policy"
+Assert-FileContains $RuntimeSettingsScript "Get-NikamiFnvWeatherFallbacks" "runtime settings expose generated FNV WTHR weather fallbacks"
+Assert-FileContains $FlatScript "Get-NikamiFnvWeatherFallbacks" "FNV flat uses generated WTHR weather fallbacks"
 Assert-FileContains $VrDeployScript "force shaders = true" "FNV VR explicitly keeps forced shader path"
 foreach ($scriptPath in @($FlatScript, $VrDeployScript)) {
     Assert-FileContains $scriptPath "skyatmosphere = meshes/sky/atmosphere.nif" "FNV atmosphere setting in $(Split-Path $scriptPath -Leaf)"
@@ -130,8 +137,8 @@ Assert-BsaContains "Fallout - Meshes.bsa" "meshes[\\/]+sky[\\/]+stars\.nif$" "FN
 Assert-BsaContains "Fallout - Textures2.bsa" "textures[\\/]+sky[\\/]+sun\.dds$" "FNV sun texture entry"
 Assert-BsaContains "Fallout - Textures2.bsa" "textures[\\/]+sky[\\/]+skymoonfull\.dds$" "FNV moon texture entry"
 Assert-BsaContains "Fallout - Textures2.bsa" "textures[\\/]+sky[\\/]+nv_sunglare\.dds$" "FNV sunglare texture entry"
-Assert-BsaContains "Fallout - Textures2.bsa" "textures[\\/]+sky[\\/]+nv_wastelandoverheadcloud\.dds$" "FNV clear cloud texture entry"
-Assert-BsaContains "Fallout - Textures2.bsa" "textures[\\/]+sky[\\/]+wastelandcloudcloudyupper01\.dds$" "FNV cloudy cloud texture entry"
+Assert-BsaContains "Fallout - Textures2.bsa" "textures[\\/]+sky[\\/]+nvcloudlight\.dds$" "FNV WTHR-selected clear cloud texture entry"
+Assert-BsaContains "Fallout - Textures2.bsa" "textures[\\/]+sky[\\/]+nv_wastelanduppersky\.dds$" "FNV WTHR-selected cloudy cloud texture entry"
 
 $requiredLogPatterns = @(
     "FNV/ESM4: sky shader mode forceShaders=0 falloutSkyModels=1 program=sky-interpreted",
@@ -180,17 +187,29 @@ $flatSettings = Join-Path $latestFlatProof.FullName "settings.cfg"
 $flatOpenMwCfg = Join-Path $latestFlatProof.FullName "openmw.cfg"
 $flatSummary = Join-Path $latestFlatProof.FullName "summary.txt"
 $flatSkyColorSanity = Join-Path $latestFlatProof.FullName "sky-color-sanity.json"
+$weatherFallbackRoot = Join-Path $ProofRoot "fnv-weather-fallbacks"
+$latestWeatherFallback = Get-ChildItem -LiteralPath $weatherFallbackRoot -Directory -ErrorAction SilentlyContinue |
+    Sort-Object LastWriteTime -Descending |
+    Select-Object -First 1
+if ($null -eq $latestWeatherFallback) {
+    throw "No generated FNV weather fallback proof directory under $weatherFallbackRoot"
+}
+$weatherFallbackJson = Join-Path $latestWeatherFallback.FullName "fnv-weather-fallbacks.json"
+$weatherFallbackLines = Join-Path $latestWeatherFallback.FullName "fallbacks.cfg"
 Write-ProofLine ""
 Write-ProofLine "Flat proof: $($latestFlatProof.FullName)"
 Write-ProofLine "OpenMW log: $flatOpenMwLog"
 Write-ProofLine "Settings: $flatSettings"
+Write-ProofLine "Weather fallback proof: $weatherFallbackJson"
 
 Assert-FileContains $flatSummary "^Runtime mode: pc-flat$" "flat proof runtime mode"
 Assert-FileContains $flatSummary "^IncludeFnvrPlugin: False$" "flat proof excludes FNVR/PCVR layer"
 Assert-FileContains $flatOpenMwCfg "^fallback-archive=Fallout - Meshes\.bsa$" "generated flat meshes BSA"
 Assert-FileContains $flatOpenMwCfg "^fallback-archive=Fallout - Textures2\.bsa$" "generated flat sky texture BSA"
-Assert-FileContains $flatOpenMwCfg "^fallback=Weather_Clear_Cloud_Texture,textures/sky/nv_wastelandoverheadcloud\.dds$" "generated FNV clear cloud fallback"
-Assert-FileContains $flatOpenMwCfg "^fallback=Weather_Cloudy_Cloud_Texture,textures/sky/wastelandcloudcloudyupper01\.dds$" "generated FNV cloudy cloud fallback"
+Assert-FileContains $flatOpenMwCfg "^fallback=Weather_Clear_Cloud_Texture,textures/sky/.+\.dds$" "generated FNV clear cloud fallback"
+Assert-FileContains $flatOpenMwCfg "^fallback=Weather_Clear_Sky_Day_Color,[0-9]{3},[0-9]{3},[0-9]{3}$" "generated FNV clear sky day color fallback"
+Assert-FileContains $flatOpenMwCfg "^fallback=Weather_Clear_Fog_Day_Color,[0-9]{3},[0-9]{3},[0-9]{3}$" "generated FNV clear fog day color fallback"
+Assert-FileNotContains $flatOpenMwCfg "^fallback=Weather_Clear_Sky_Day_Color,095,135,203$" "stale OpenMW/Morrowind clear sky day color"
 Assert-FileContains $flatSettings "^skyatmosphere = meshes/sky/atmosphere\.nif$" "generated flat atmosphere setting"
 Assert-FileContains $flatSettings "^skyclouds = meshes/sky/clouds\.nif$" "generated flat cloud setting"
 Assert-FileContains $flatSettings "^skynight01 = meshes/sky/stars\.nif$" "generated flat stars setting"
@@ -199,6 +218,20 @@ Assert-FileContains $flatSettings "^force shaders = false$" "generated flat forc
 Assert-FileNotContains $flatSettings "^force shaders = true$" "generated flat VR shader mode"
 Assert-FileContains $flatSettings "^sky blending = true$" "generated flat sky blending"
 Assert-FileContains $flatSummary "^RequireSkyColorSanity: True$" "flat proof required sky color sanity"
+Assert-FileContains $weatherFallbackJson '"payloadPolicy"\s*:\s*"derived-weather-fallbacks-no-retail-assets"' "generated weather fallback payload policy"
+Assert-FileContains $weatherFallbackJson '"selectedWeather"' "generated weather fallback selected weather map"
+Assert-FileContains $weatherFallbackJson '"Clear"' "generated weather fallback clear selection"
+Assert-FileContains $weatherFallbackJson '"runtimeBoundary"' "generated weather fallback runtime boundary"
+Assert-FileContains $weatherFallbackLines "^fallback=Weather_Clear_Sky_Day_Color,[0-9]{3},[0-9]{3},[0-9]{3}$" "generated weather fallback clear sky line"
+
+$flatConfigText = Get-Content -LiteralPath $flatOpenMwCfg -Raw
+foreach ($line in (Get-Content -LiteralPath $weatherFallbackLines)) {
+    if ([string]::IsNullOrWhiteSpace($line)) { continue }
+    if (!$flatConfigText.Contains($line)) {
+        throw "Generated openmw.cfg missing WTHR fallback line: $line"
+    }
+}
+Write-ProofLine "OK generated openmw.cfg includes every WTHR fallback line from $weatherFallbackLines"
 
 Assert-FileNotContains $flatOpenMwLog "meshes/sky_atmosphere\.nif|meshes/sky_clouds_01\.nif|meshes/sky_night_01\.nif" "legacy OpenMW sky mesh path"
 Assert-FileNotContains $flatOpenMwLog "marker_error|Failed to compile|failed to compile|linking failed|GLSL.*error|shader.*error" "sky shader/blocker line"
@@ -221,6 +254,8 @@ Assert-FileContains $flatOpenMwLog "FNV/ESM4: enabled FNV Secunda moon billboard
 Assert-FileNotContains $flatOpenMwLog "FNV/ESM4: disabled OpenMW sun billboard|FNV/ESM4: disabled OpenMW .* moon billboard" "stale FNV sun/moon disable path"
 Assert-FileContains $flatSkyColorSanity '"rawRedMaskLeak"\s*:\s*false' "runtime sky screenshot color sanity"
 Assert-FileNotContains $flatSkyColorSanity '"rawRedMaskLeak"\s*:\s*true' "runtime raw red sky-mask leakage"
+Assert-FileContains $flatSkyColorSanity '"morrowindBluePaletteLeak"\s*:\s*false' "runtime no stale Morrowind blue sky palette"
+Assert-FileNotContains $flatSkyColorSanity '"morrowindBluePaletteLeak"\s*:\s*true' "runtime stale Morrowind blue sky palette leakage"
 
 $result = [ordered]@{
     stamp = $Stamp
@@ -234,8 +269,8 @@ $result = [ordered]@{
         "camera-relative wrapped FNV atmosphere/cloud/star meshes",
         "FNV atmosphere/cloud/star meshes use interpreted sky shader passes in PC flat",
         "FNV sky shader path preserves authored Fallout vertex alpha instead of Morrowind vertex-index alpha",
-        "FNV cloud weather fallbacks point at New Vegas sky textures",
-        "FNV screenshot sky color sanity rejects raw red channel/mask leakage",
+        "FNV WTHR-derived weather fallbacks supply sky/fog/ambient/sun colors without committing retail assets",
+        "FNV screenshot sky color sanity rejects raw red channel/mask leakage and stale Morrowind blue palette leakage",
         "FNV sun/moon billboard path uses Fallout sky textures",
         "FNV flat shader mode is sky-interpreted",
         "FNV sky meshes and sun/moon textures present in retail BSA inventory",
