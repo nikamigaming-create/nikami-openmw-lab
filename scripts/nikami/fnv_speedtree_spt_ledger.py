@@ -184,8 +184,8 @@ def main():
     assert_text(
         repo_root,
         Path("scripts/nikami/test-fnv-harvest-action-coverage.ps1"),
-        '"blocked-runtime-support" "speedtree-tree-assets"',
-        "harvest gate keeps SPT as a runtime blocker",
+        '"vfs-readable-runtime-conditional" "speedtree-billboard-fallback"',
+        "harvest gate records SPT as conditional billboard fallback support",
         proof_line,
     )
     assert_text(
@@ -226,8 +226,15 @@ def main():
     assert_text(
         repo_root,
         Path("components/resource/scenemanager.cpp"),
-        "Ignoring SpeedTree data file",
-        "scene manager currently emits empty SpeedTree nodes",
+        "loadFalloutSpeedTreeBillboard",
+        "scene manager builds a SpeedTree billboard fallback",
+        proof_line,
+    )
+    assert_text(
+        repo_root,
+        Path("components/resource/scenemanager.cpp"),
+        "textures/trees/billboards/",
+        "scene manager derives FNV tree billboard texture paths",
         proof_line,
     )
 
@@ -275,6 +282,8 @@ def main():
         "repoRoot": str(repo_root),
         "fnvData": str(fnv_data),
         "harvestDir": str(harvest_dir),
+        "classification": "vfs-readable-runtime-conditional",
+        "subsystem": "speedtree-billboard-fallback",
         "harvestSptPaths": harvest_spt,
         "treeRecordCount": len(tree_records),
         "sptTreeRecordCount": len(spt_tree_records),
@@ -296,7 +305,7 @@ def main():
     proof_line(f"Ledger JSON: {ledger_path}")
     proof_line()
     proof_line("FNV SpeedTree SPT ledger proof PASS")
-    proof_line("SPT remains blocked until the runtime has a real SpeedTree reader/converter or a proved TREE billboard fallback.")
+    proof_line("SPT remains conditional until a real SpeedTree reader/converter proves full tree geometry and collision.")
 
 
 if __name__ == "__main__":

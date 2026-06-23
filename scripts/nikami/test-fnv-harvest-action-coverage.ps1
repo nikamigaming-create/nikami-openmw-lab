@@ -224,16 +224,18 @@ $runtimeRules = @{
         New-Anchor "components/esm4/loadstat.cpp" "mLOD" "STAT loader captures ESM4 LOD model strings"
         New-Anchor "components/esm4/loadrefr.cpp" "XLOD" "REFR loader sees XLOD data but no DLOD settings file routing is present"
     ) "Add FNV DLOD settings parser and route to object paging/terrain LOD."
-    ".spt" = New-Rule "blocked-runtime-support" "speedtree-tree-assets" "SpeedTree SPT assets are harvested but not yet parsed/rendered" @(
+    ".spt" = New-Rule "vfs-readable-runtime-conditional" "speedtree-billboard-fallback" "SpeedTree SPT assets are VFS-visible and rendered through a billboard fallback; full SpeedTree geometry/collision remains a follow-up gate" @(
         New-Anchor "scripts/nikami/test-fnv-speedtree-spt-ledger.ps1" "FNV SpeedTree SPT ledger proof" "proof gate verifies exact shipped SPT set and TREE record references without storing payloads"
         New-Anchor "scripts/nikami/fnv_speedtree_spt_ledger.py" "collect_harvest_spt_paths" "ledger parser compares harvested SPT paths with parsed TREE record MODL values"
         New-Anchor "components/esm4/loadtree.cpp" "normalizeFalloutTreeModel" "TREE loader normalizes bare Fallout SPT paths into trees"
         New-Anchor "apps/openmw/mwclass/esm4base.hpp" "ESM4Tree" "ESM4 TREE records have a world class"
         New-Anchor "apps/openmw/mwrender/objectpaging.cpp" "correctEsm4StaticModelPath" "object paging resolves TREE SPT paths without generic meshes prefixing"
         New-Anchor "apps/openmw/mwrender/objectpaging.cpp" "case ESM::REC_TREE4" "object paging attempts to page TREE records into the world"
-        New-Anchor "components/resource/scenemanager.cpp" "Ignoring SpeedTree data file" "current runtime still returns empty nodes for SPT files"
+        New-Anchor "components/resource/scenemanager.cpp" "loadFalloutSpeedTreeBillboard" "scene manager builds a crossed billboard fallback for SPT files"
+        New-Anchor "components/resource/scenemanager.cpp" "textures/trees/billboards/" "billboard fallback derives FNV tree billboard texture paths from SPT names"
+        New-Anchor "components/resource/scenemanager.cpp" "Ignoring SpeedTree data file" "runtime still fails closed to an empty node if billboard fallback cannot load"
         New-Anchor "components/bgsm/file.hpp" "mTree" "tree material flag support exists"
-    ) "Add SPT reader or conversion path for FNV tree assets."
+    ) "Promote to runtime-supported after a real SPT reader/conversion path proves tree geometry and collision beyond billboard fallback."
     ".psa" = New-Rule "blocked-runtime-support" "actor-deathpose-animation" "PSA death-pose assets are harvested but no actor/creature death-pose runtime reader is wired" @(
         New-Anchor "scripts/nikami/test-fnv-psa-deathpose-contract.ps1" "FNV PSA death-pose contract" "proof gate verifies the exact shipped death-pose PSA set and current runtime absence"
         New-Anchor "apps/niftest/niftest.cpp" 'extension == ".psa"' "test tool recognizes PSA as a NIF-adjacent asset"
