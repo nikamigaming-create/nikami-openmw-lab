@@ -127,6 +127,12 @@ namespace
         return sceneManager.getInstance(model, parentNode);
     }
 
+    void attachSkyNodeIfUnattached(osg::Group& parentNode, osg::Node& node)
+    {
+        if (node.getNumParents() == 0)
+            parentNode.addChild(&node);
+    }
+
     void pushOptionalSkyModel(Resource::SceneManager& sceneManager, std::vector<VFS::Path::Normalized>& models,
         const VFS::Path::Normalized& model, std::string_view label)
     {
@@ -447,7 +453,7 @@ namespace MWRender
             mCloudUpdater = new CloudUpdater();
             mCloudUpdater->setOpacity(1.f);
             cloudMeshChild->addUpdateCallback(mCloudUpdater);
-            mCloudMesh->addChild(cloudMeshChild);
+            attachSkyNodeIfUnattached(*mCloudMesh, *cloudMeshChild);
         }
 
         mNextCloudMesh = new osg::PositionAttitudeTransform;
@@ -458,7 +464,7 @@ namespace MWRender
             mNextCloudUpdater = new CloudUpdater();
             mNextCloudUpdater->setOpacity(0.f);
             nextCloudMeshChild->addUpdateCallback(mNextCloudUpdater);
-            mNextCloudMesh->addChild(nextCloudMeshChild);
+            attachSkyNodeIfUnattached(*mNextCloudMesh, *nextCloudMeshChild);
         }
         mNextCloudMesh->setNodeMask(0);
 

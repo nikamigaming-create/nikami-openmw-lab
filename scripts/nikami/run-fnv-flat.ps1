@@ -257,6 +257,10 @@ texture min filter = linear
 
 [Models]
 load unsupported nif files = true
+skyatmosphere = meshes/sky/atmosphere.nif
+skyclouds = meshes/sky/clouds.nif
+skynight01 = meshes/sky/stars.nif
+skynight02 = meshes/sky/stars.nif
 
 [Shaders]
 apply lighting to environment maps = true

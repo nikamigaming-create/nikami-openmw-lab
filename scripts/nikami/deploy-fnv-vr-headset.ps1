@@ -188,6 +188,10 @@ global = true
 
 [Models]
 load unsupported nif files = true
+skyatmosphere = meshes/sky/atmosphere.nif
+skyclouds = meshes/sky/clouds.nif
+skynight01 = meshes/sky/stars.nif
+skynight02 = meshes/sky/stars.nif
 
 [Saves]
 character = player - 1

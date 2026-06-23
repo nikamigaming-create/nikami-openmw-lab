@@ -288,6 +288,7 @@ try {
     if ($RequirePlayerTerrainSupport) { Set-ProofEnv $previousEnv "OPENMW_FNV_FLOOR_WATCHDOG" "1" }
     if ($FnvPartMatrixAudit) { Set-ProofEnv $previousEnv "OPENMW_FNV_PART_MATRIX_AUDIT" "1" }
     if ($FnvDisableNativeAnimationCallbacks) { Set-ProofEnv $previousEnv "OPENMW_FNV_DISABLE_NATIVE_ANIMATION_CALLBACKS" "1" }
+    Set-ProofEnv $previousEnv "OPENMW_FNV_SKY_MISSING_LOG" "1"
 
     $flatArgs = @{
         BuildDir = $BuildDir
