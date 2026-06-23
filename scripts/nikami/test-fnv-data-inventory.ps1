@@ -179,6 +179,17 @@ function Get-Esm4CodeCoverage {
     $recordsHeader = Get-Content -LiteralPath (Join-Path $RepoRoot "components/esm4/records.hpp") -Raw
     $storeHeader = Get-Content -LiteralPath (Join-Path $RepoRoot "apps/openmw/mwworld/esmstore.hpp") -Raw
     $storeCpp = Get-Content -LiteralPath (Join-Path $RepoRoot "apps/openmw/mwworld/store.cpp") -Raw
+    $esmstoreCpp = Get-Content -LiteralPath (Join-Path $RepoRoot "apps/openmw/mwworld/esmstore.cpp") -Raw
+    $rawPendingRecords = @{}
+    $rawPendingMatch = [regex]::Match(
+        $esmstoreCpp,
+        "static bool isLoadedPendingEsm4Record(?<body>[\s\S]*?)static bool readLoadedPendingEsm4Record"
+    )
+    if ($rawPendingMatch.Success) {
+        foreach ($match in [regex]::Matches($rawPendingMatch.Groups["body"].Value, "case\s+ESM::REC_(?<record>[A-Z0-9_]+)4\s*:")) {
+            $rawPendingRecords[$match.Groups["record"].Value] = $true
+        }
+    }
 
     @{
         LoaderByRecord = $loaderByRecord
@@ -186,6 +197,8 @@ function Get-Esm4CodeCoverage {
         RecordsHeader = $recordsHeader
         StoreHeader = $storeHeader
         StoreCpp = $storeCpp
+        EsmStoreCpp = $esmstoreCpp
+        RawPendingRecords = $rawPendingRecords
     }
 }
 
@@ -209,15 +222,18 @@ function Write-Esm4CoverageInventory([string]$EsmPath) {
         "SCOL" = "static collection placement"
         "TXST" = "texture set rendering"
         "WEAP" = "weapon data/HUD ammo source"
-        "QUST" = "DATA quest source store"
+        "QUST" = "ESM4-to-runtime journal dialogue bridge"
         "NOTE" = "DATA note source store"
-        "DIAL" = "DATA radio/dialogue source store"
+        "DIAL" = "ESM4-to-runtime topic/dialogue bridge"
+        "INFO" = "ESM4-to-runtime quest INFO response bridge"
         "TACT" = "DATA radio talking-activator source store"
+        "GMST" = "ESM4-to-runtime game setting bridge"
+        "GLOB" = "ESM4-to-runtime global variable bridge"
+        "SCPT" = "ESM4-to-runtime script source bridge"
     }
 
-    $unsupported = @()
-    $sourceOnly = @()
-    $storeOnly = @()
+    $knownBlocked = @()
+    $loadedPendingRuntime = @()
     $runtimeSupported = @()
     $total = 0
 
@@ -234,31 +250,36 @@ function Write-Esm4CoverageInventory([string]$EsmPath) {
         $recordsHeader = $loader -and $coverage.RecordsHeader -match [regex]::Escape((Split-Path $loaderPath -Leaf).Replace(".hpp", ".hpp"))
         $store = (-not [string]::IsNullOrWhiteSpace($cppType)) -and $coverage.StoreHeader -match "Store<ESM4::$([regex]::Escape($cppType))>"
         $instantiated = (-not [string]::IsNullOrWhiteSpace($cppType)) -and $coverage.StoreCpp -match "TypedDynamicStore<ESM4::$([regex]::Escape($cppType))"
+        $rawPending = $coverage.RawPendingRecords.ContainsKey($type)
         $runtime = $runtimeClaims.ContainsKey($type)
 
         if ($loader -and $recordsHeader -and $store -and $instantiated -and $runtime) {
             $runtimeSupported += $row
             Write-ProofLine "OK ESM4 record type runtime-supported: $type count=$($row.Count) loader=1 records.hpp=1 store=1 instantiation=1 runtime=$($runtimeClaims[$type])"
         }
+        elseif ($rawPending) {
+            $loadedPendingRuntime += $row
+            Write-ProofLine "WARN ESM4 record type loaded-pending-runtime: $type count=$($row.Count) rawPending=1 runtime=0"
+        }
         elseif ($loader -and $recordsHeader -and $store -and $instantiated) {
-            $storeOnly += $row
-            Write-ProofLine "WARN ESM4 record type store-supported only: $type count=$($row.Count) loader=1 records.hpp=1 store=1 instantiation=1 runtime=0"
+            $loadedPendingRuntime += $row
+            Write-ProofLine "WARN ESM4 record type loaded-pending-runtime: $type count=$($row.Count) loader=1 records.hpp=1 store=1 instantiation=1 runtime=0"
         }
         elseif ($loader) {
-            $sourceOnly += $row
-            Write-ProofLine "FAIL ESM4 record type source-only: $type count=$($row.Count) loader=1 records.hpp=$([int]$recordsHeader) store=$([int]$store) instantiation=$([int]$instantiated) runtime=$([int]$runtime)"
+            $knownBlocked += $row
+            Write-ProofLine "FAIL ESM4 record type known-blocked: $type count=$($row.Count) loader=1 records.hpp=$([int]$recordsHeader) store=$([int]$store) instantiation=$([int]$instantiated) runtime=$([int]$runtime)"
         }
         else {
-            $unsupported += $row
-            Write-ProofLine "FAIL ESM4 record type unsupported: $type count=$($row.Count) loader=0 records.hpp=0 store=0 instantiation=0 runtime=0"
+            $knownBlocked += $row
+            Write-ProofLine "FAIL ESM4 record type known-blocked: $type count=$($row.Count) loader=0 records.hpp=0 store=0 instantiation=0 runtime=0"
         }
     }
 
     Write-ProofLine "OK ESM4 inventory parsed: topLevelRecordTypes=$($inventory.Count) totalRecords=$total"
-    Write-ProofLine "FNV ESM4 no-silent-drop discovery summary unsupportedTypes=$($unsupported.Count) sourceOnlyTypes=$($sourceOnly.Count) storeOnlyTypes=$($storeOnly.Count) runtimeSupportedTypes=$($runtimeSupported.Count)"
+    Write-ProofLine "FNV ESM4 no-silent-drop discovery summary knownBlockedTypes=$($knownBlocked.Count) loadedPendingRuntimeTypes=$($loadedPendingRuntime.Count) runtimeSupportedTypes=$($runtimeSupported.Count)"
 
-    if ($StrictNoSilentDrop -and ($unsupported.Count -gt 0 -or $sourceOnly.Count -gt 0)) {
-        throw "FNV ESM4 no-silent-drop strict proof failed unsupportedTypes=$($unsupported.Count) sourceOnlyTypes=$($sourceOnly.Count). See $SummaryFile."
+    if ($StrictNoSilentDrop -and $knownBlocked.Count -gt 0) {
+        throw "FNV ESM4 no-silent-drop strict proof failed knownBlockedTypes=$($knownBlocked.Count). See $SummaryFile."
     }
 }
 

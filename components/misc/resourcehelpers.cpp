@@ -18,6 +18,8 @@ namespace
     constexpr VFS::Path::NormalizedView textures("textures");
     constexpr VFS::Path::NormalizedView bookart("bookart");
     constexpr VFS::Path::NormalizedView icons("icons");
+    constexpr VFS::Path::NormalizedView falloutRelativeInterfaceIcons("interface/icons");
+    constexpr VFS::Path::NormalizedView falloutInterfaceIcons("textures/interface/icons");
     constexpr VFS::Path::NormalizedView materials("materials");
     constexpr VFS::Path::ExtensionView dds("dds");
     constexpr VFS::Path::ExtensionView kf("kf");
@@ -69,6 +71,45 @@ namespace
             throw std::runtime_error("Path should start with '" + std::string(dir) + "\\'");
         }
         return resPath.substr(dir.size() + 1);
+    }
+
+    VFS::Path::Normalized stripTopLevelDirectory(
+        VFS::Path::NormalizedView resPath, VFS::Path::NormalizedView directory)
+    {
+        const std::string_view pathValue = resPath.value();
+        const std::string_view directoryValue = directory.value();
+        if (pathValue.length() <= directoryValue.length() + 1
+            || !Misc::StringUtils::ciStartsWith(pathValue, directoryValue)
+            || pathValue[directoryValue.length()] != VFS::Path::separator)
+            return VFS::Path::Normalized(resPath);
+
+        return VFS::Path::Normalized(pathValue.substr(directoryValue.length() + 1));
+    }
+
+    VFS::Path::Normalized correctFalloutInterfaceIconPath(
+        VFS::Path::NormalizedView resPath, const VFS::Manager& vfs)
+    {
+        const VFS::Path::Normalized falloutPath = Misc::ResourceHelpers::correctResourcePath(
+            { { falloutInterfaceIcons } }, resPath, vfs, dds);
+        if (vfs.exists(falloutPath))
+            return falloutPath;
+
+        const VFS::Path::Normalized withoutIcons = stripTopLevelDirectory(resPath, icons);
+        if (withoutIcons != resPath)
+        {
+            const VFS::Path::Normalized strippedPath = Misc::ResourceHelpers::correctResourcePath(
+                { { falloutInterfaceIcons } }, withoutIcons, vfs, dds);
+            if (vfs.exists(strippedPath))
+                return strippedPath;
+        }
+
+        const VFS::Path::Normalized withoutInterfaceIcons
+            = stripTopLevelDirectory(resPath, falloutRelativeInterfaceIcons);
+        if (withoutInterfaceIcons != resPath)
+            return Misc::ResourceHelpers::correctResourcePath(
+                { { falloutInterfaceIcons } }, withoutInterfaceIcons, vfs, dds);
+
+        return falloutPath;
     }
 }
 
@@ -142,7 +183,22 @@ VFS::Path::Normalized Misc::ResourceHelpers::correctTexturePath(
 
 VFS::Path::Normalized Misc::ResourceHelpers::correctIconPath(VFS::Path::NormalizedView resPath, const VFS::Manager& vfs)
 {
-    return correctResourcePath({ { icons } }, resPath, vfs, dds);
+    if (findDirectory(resPath, falloutInterfaceIcons) != std::string_view::npos)
+    {
+        const VFS::Path::Normalized falloutPath = correctFalloutInterfaceIconPath(resPath, vfs);
+        if (vfs.exists(falloutPath))
+            return falloutPath;
+    }
+
+    const VFS::Path::Normalized iconPath = correctResourcePath({ { icons } }, resPath, vfs, dds);
+    if (vfs.exists(iconPath))
+        return iconPath;
+
+    const VFS::Path::Normalized falloutPath = correctFalloutInterfaceIconPath(resPath, vfs);
+    if (vfs.exists(falloutPath))
+        return falloutPath;
+
+    return iconPath;
 }
 
 VFS::Path::Normalized Misc::ResourceHelpers::correctBigIconPath(

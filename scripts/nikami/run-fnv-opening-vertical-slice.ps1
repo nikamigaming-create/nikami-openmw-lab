@@ -121,6 +121,12 @@ Invoke-Gate "05-menu-movie-startup" (Join-Path $PSScriptRoot "run-fnv-flat-proof
 $WorldArgs = $FlatArgs.Clone()
 $WorldArgs.RunSeconds = 24
 $WorldArgs.ScreenshotFrames = "90,180,300"
+$WorldArgs.BootstrapCell = "FormId:0x10daeb9"
+$WorldArgs.BootstrapX = -67450
+$WorldArgs.BootstrapY = 2600
+$WorldArgs.BootstrapZ = 8425
+$WorldArgs.BootstrapRotX = 0
+$WorldArgs.BootstrapRotZ = -1.2
 $WorldArgs.TerrainProbePoints = "baseline=-67450,2600,8425;flag_guess=-67620,1780,8500"
 $WorldArgs.TerrainProbeGrid = "saloon_sweep=-67800,800,-67100,2600,8425,350"
 $WorldArgs.RequireTerrainProbeFullSupport = $true

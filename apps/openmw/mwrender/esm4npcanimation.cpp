@@ -56,6 +56,7 @@
 #include <cstdlib>
 #include <cstdint>
 #include <istream>
+#include <limits>
 #include <map>
 #include <memory>
 #include <sstream>
@@ -313,10 +314,12 @@ namespace MWRender
                 const bool forceOpen = std::getenv("OPENMW_FNV_PROOF_MOUTH_FORCE_OPEN") != nullptr;
                 if (transform != nullptr && (forceOpen || MWBase::Environment::get().getSoundManager()->sayActive(mActor)))
                 {
+                    const float lip = forceOpen ? 1.f
+                                                : MWBase::Environment::get().getSoundManager()->getSaySoundLipValue(mActor);
                     const float loudness = forceOpen
                         ? 1.f
                         : MWBase::Environment::get().getSoundManager()->getSaySoundLoudness(mActor);
-                    const float open = forceOpen ? 1.f : std::clamp(loudness * 5.0f, 0.f, 0.65f);
+                    const float open = forceOpen ? 1.f : std::clamp(std::max(lip, loudness * 5.0f), 0.f, 0.65f);
                     osg::Vec3f offset(0.f, -0.15f * open, -1.8f * open);
                     osg::Vec3f scale(1.f, 1.f, 1.f + 0.24f * open);
                     if (mModel.find("teethlower") != std::string::npos)
@@ -340,8 +343,8 @@ namespace MWRender
                     if (!mLogged)
                     {
                         Log(Debug::Info) << "FNV/ESM4 proof: mouth driver active for " << mActor.toString()
-                                         << " model=" << mModel << " loudness=" << loudness << " open=" << open
-                                         << " force=" << forceOpen
+                                         << " model=" << mModel << " lip=" << lip << " loudness=" << loudness
+                                         << " open=" << open << " force=" << forceOpen
                                          << " offset=(" << offset.x() << "," << offset.y() << "," << offset.z()
                                          << ")";
                         mLogged = true;
@@ -1101,6 +1104,25 @@ namespace MWRender
             std::map<std::string, std::vector<std::pair<std::uint32_t, osg::Vec3f>>, std::less<>> mStaticMorphs;
         };
 
+        struct FaceGenCtl
+        {
+            std::uint32_t mBasisVersion = 0;
+            std::uint32_t mSymmetricShapeModeCount = 0;
+            std::uint32_t mAsymmetricShapeModeCount = 0;
+            std::uint32_t mTextureModeCount = 0;
+            std::uint32_t mPayloadBytes = 0;
+        };
+
+        struct FaceGenEgt
+        {
+            std::uint32_t mWidth = 0;
+            std::uint32_t mHeight = 0;
+            std::uint32_t mTextureModeCount = 0;
+            std::uint32_t mBasisVersion = 0;
+            std::vector<osg::Vec3f> mModeAverages;
+            osg::Vec3f mMeanAverage{ 0.f, 0.f, 0.f };
+        };
+
         bool readFaceGenString(std::istream& stream, std::string& value)
         {
             std::int32_t length = 0;
@@ -1113,6 +1135,72 @@ namespace MWRender
             while (!value.empty() && value.back() == '\0')
                 value.pop_back();
             return static_cast<bool>(stream);
+        }
+
+        std::shared_ptr<const FaceGenCtl> loadFaceGenCtl(Resource::ResourceSystem* resourceSystem)
+        {
+            const VFS::Path::Normalized correctedPath("facegen/si.ctl");
+            const std::string cacheKey = correctedPath.value();
+            static std::map<std::string, std::shared_ptr<const FaceGenCtl>> sCache;
+            if (const auto found = sCache.find(cacheKey); found != sCache.end())
+                return found->second;
+
+            const VFS::Manager* vfs = resourceSystem->getVFS();
+            if (!vfs->exists(correctedPath))
+            {
+                sCache.emplace(cacheKey, nullptr);
+                return nullptr;
+            }
+
+            auto stream = vfs->get(correctedPath);
+            char magic[8] = {};
+            stream->read(magic, sizeof(magic));
+            if (!*stream || std::string_view(magic, sizeof(magic)) != "FRCTL001")
+            {
+                Log(Debug::Warning) << "FNV/ESM4 diag: unsupported FaceGen CTL " << cacheKey;
+                sCache.emplace(cacheKey, nullptr);
+                return nullptr;
+            }
+
+            std::uint32_t controlSignature = 0;
+            auto ctl = std::make_shared<FaceGenCtl>();
+            if (!readBinary(*stream, controlSignature) || !readBinary(*stream, ctl->mBasisVersion)
+                || !readBinary(*stream, ctl->mSymmetricShapeModeCount)
+                || !readBinary(*stream, ctl->mAsymmetricShapeModeCount) || !readBinary(*stream, ctl->mTextureModeCount))
+            {
+                Log(Debug::Warning) << "FNV/ESM4 diag: failed to read FaceGen CTL header " << cacheKey;
+                sCache.emplace(cacheKey, nullptr);
+                return nullptr;
+            }
+
+            std::uint32_t reserved = 0;
+            if (!readBinary(*stream, reserved))
+                reserved = 0;
+
+            stream->seekg(0, std::ios::end);
+            const std::streamoff totalBytes = stream->tellg();
+            if (totalBytes > 32)
+                ctl->mPayloadBytes = static_cast<std::uint32_t>(std::min<std::streamoff>(totalBytes - 32,
+                    static_cast<std::streamoff>(std::numeric_limits<std::uint32_t>::max())));
+
+            if (ctl->mBasisVersion == 0 || ctl->mSymmetricShapeModeCount == 0
+                || ctl->mAsymmetricShapeModeCount == 0 || ctl->mTextureModeCount == 0)
+            {
+                Log(Debug::Warning) << "FNV/ESM4 diag: invalid FaceGen CTL counts " << cacheKey << " basis="
+                                    << ctl->mBasisVersion << " symShape=" << ctl->mSymmetricShapeModeCount
+                                    << " asymShape=" << ctl->mAsymmetricShapeModeCount
+                                    << " texture=" << ctl->mTextureModeCount;
+                sCache.emplace(cacheKey, nullptr);
+                return nullptr;
+            }
+
+            Log(Debug::Info) << "FNV/ESM4 diag: loaded FaceGen CTL " << cacheKey << " basis="
+                             << ctl->mBasisVersion << " symShape=" << ctl->mSymmetricShapeModeCount
+                             << " asymShape=" << ctl->mAsymmetricShapeModeCount
+                             << " texture=" << ctl->mTextureModeCount << " payloadBytes=" << ctl->mPayloadBytes
+                             << " signature=0x" << std::hex << controlSignature << std::dec;
+            sCache.emplace(cacheKey, ctl);
+            return ctl;
         }
 
         std::shared_ptr<const FaceGenEgm> loadFaceGenEgm(Resource::ResourceSystem* resourceSystem, std::string_view model)
@@ -1343,6 +1431,158 @@ namespace MWRender
                              << tri->mStaticMorphs.size();
             sCache.emplace(cacheKey, tri);
             return tri;
+        }
+
+        std::shared_ptr<const FaceGenEgt> loadFaceGenEgt(Resource::ResourceSystem* resourceSystem, std::string_view model)
+        {
+            std::string egtPath(model);
+            const std::size_t dot = egtPath.find_last_of('.');
+            if (dot == std::string::npos)
+                return nullptr;
+            egtPath.replace(dot, std::string::npos, ".egt");
+
+            const VFS::Path::Normalized correctedPath = Misc::ResourceHelpers::correctMeshPath(VFS::Path::Normalized(egtPath));
+            const std::string cacheKey = correctedPath.value();
+            static std::map<std::string, std::shared_ptr<const FaceGenEgt>> sCache;
+            if (const auto found = sCache.find(cacheKey); found != sCache.end())
+                return found->second;
+
+            const VFS::Manager* vfs = resourceSystem->getVFS();
+            if (!vfs->exists(correctedPath))
+            {
+                sCache.emplace(cacheKey, nullptr);
+                return nullptr;
+            }
+
+            auto stream = vfs->get(correctedPath);
+            char magic[8] = {};
+            stream->read(magic, sizeof(magic));
+            if (!*stream || std::string_view(magic, sizeof(magic)) != "FREGT003")
+            {
+                Log(Debug::Warning) << "FNV/ESM4 diag: unsupported FaceGen EGT " << cacheKey;
+                sCache.emplace(cacheKey, nullptr);
+                return nullptr;
+            }
+
+            constexpr std::uint32_t headerSize = 264;
+            std::uint32_t width = 0;
+            std::uint32_t height = 0;
+            std::uint32_t textureModeCount = 0;
+            std::uint32_t unknownZeroA = 0;
+            std::uint32_t basisVersion = 0;
+            std::uint32_t unknownZeroB = 0;
+            if (!readBinary(*stream, width) || !readBinary(*stream, height) || !readBinary(*stream, textureModeCount)
+                || !readBinary(*stream, unknownZeroA) || !readBinary(*stream, basisVersion)
+                || !readBinary(*stream, unknownZeroB) || width == 0 || height == 0 || width > 4096
+                || height > 4096 || textureModeCount == 0 || textureModeCount > 256)
+            {
+                Log(Debug::Warning) << "FNV/ESM4 diag: failed to read FaceGen EGT header " << cacheKey;
+                sCache.emplace(cacheKey, nullptr);
+                return nullptr;
+            }
+
+            stream->ignore(headerSize - 32);
+            if (!*stream)
+            {
+                Log(Debug::Warning) << "FNV/ESM4 diag: truncated FaceGen EGT header " << cacheKey;
+                sCache.emplace(cacheKey, nullptr);
+                return nullptr;
+            }
+
+            const std::uint64_t pixelCount64 = static_cast<std::uint64_t>(width) * static_cast<std::uint64_t>(height);
+            const std::uint64_t modeByteCount64 = pixelCount64 * 3u;
+            const std::uint64_t payloadByteCount64 = modeByteCount64 * textureModeCount;
+            if (pixelCount64 == 0 || modeByteCount64 > 64u * 1024u * 1024u
+                || payloadByteCount64 > 512u * 1024u * 1024u)
+            {
+                Log(Debug::Warning) << "FNV/ESM4 diag: rejected oversized FaceGen EGT " << cacheKey << " size="
+                                    << width << "x" << height << " modes=" << textureModeCount;
+                sCache.emplace(cacheKey, nullptr);
+                return nullptr;
+            }
+
+            const std::size_t modeByteCount = static_cast<std::size_t>(modeByteCount64);
+            std::vector<unsigned char> pixels(modeByteCount);
+            auto egt = std::make_shared<FaceGenEgt>();
+            egt->mWidth = width;
+            egt->mHeight = height;
+            egt->mTextureModeCount = textureModeCount;
+            egt->mBasisVersion = basisVersion;
+            egt->mModeAverages.reserve(textureModeCount);
+
+            for (std::uint32_t mode = 0; mode < textureModeCount; ++mode)
+            {
+                stream->read(reinterpret_cast<char*>(pixels.data()), static_cast<std::streamsize>(pixels.size()));
+                if (!*stream)
+                {
+                    Log(Debug::Warning) << "FNV/ESM4 diag: truncated FaceGen EGT payload " << cacheKey
+                                        << " mode=" << mode << "/" << textureModeCount;
+                    sCache.emplace(cacheKey, nullptr);
+                    return nullptr;
+                }
+
+                double red = 0.0;
+                double green = 0.0;
+                double blue = 0.0;
+                for (std::size_t i = 0; i + 2 < pixels.size(); i += 3)
+                {
+                    red += pixels[i];
+                    green += pixels[i + 1];
+                    blue += pixels[i + 2];
+                }
+
+                const float inv = 1.f / (static_cast<float>(pixelCount64) * 255.f);
+                const osg::Vec3f average(static_cast<float>(red) * inv, static_cast<float>(green) * inv,
+                    static_cast<float>(blue) * inv);
+                egt->mModeAverages.push_back(average);
+                egt->mMeanAverage += average;
+            }
+
+            egt->mMeanAverage /= static_cast<float>(egt->mModeAverages.size());
+
+            Log(Debug::Info) << "FNV/ESM4 diag: loaded FaceGen EGT " << cacheKey << " size=" << width << "x"
+                             << height << " modes=" << textureModeCount << " basis=" << basisVersion
+                             << " headerBytes=" << headerSize << " payloadBytes=" << payloadByteCount64
+                             << " mean=(" << egt->mMeanAverage.x() << ", " << egt->mMeanAverage.y() << ", "
+                             << egt->mMeanAverage.z() << ")";
+            sCache.emplace(cacheKey, egt);
+            return egt;
+        }
+
+        osg::Vec4f deriveFaceGenEgtMaterialTint(const FaceGenEgt& egt, const ESM4::Npc& traits)
+        {
+            osg::Vec3f tint(1.f, 1.f, 1.f);
+            osg::Vec3f textureDelta(0.f, 0.f, 0.f);
+            float totalWeight = 0.f;
+            const std::size_t modeCount = std::min(egt.mModeAverages.size(), traits.mSymTextureModeCoefficients.size());
+            for (std::size_t mode = 0; mode < modeCount; ++mode)
+            {
+                const float coefficient = traits.mSymTextureModeCoefficients[mode];
+                if (std::abs(coefficient) <= 0.0001f)
+                    continue;
+
+                textureDelta += (egt.mModeAverages[mode] - egt.mMeanAverage) * coefficient;
+                totalWeight += std::abs(coefficient);
+            }
+
+            if (totalWeight > 0.0001f)
+                tint += textureDelta * (0.85f / std::max(totalWeight, 1.f));
+
+            for (const ESM4::Npc::TintLayer& layer : traits.mTintLayers)
+            {
+                if (!layer.hasColor)
+                    continue;
+
+                const float value = std::clamp(layer.hasValue ? layer.value : 1.f, 0.f, 1.f);
+                if (value <= 0.0001f)
+                    continue;
+
+                const osg::Vec3f color(layer.color.red / 255.f, layer.color.green / 255.f, layer.color.blue / 255.f);
+                tint += (color - tint) * (value * 0.12f);
+            }
+
+            return osg::Vec4f(std::clamp(tint.x(), 0.45f, 1.55f), std::clamp(tint.y(), 0.45f, 1.55f),
+                std::clamp(tint.z(), 0.45f, 1.55f), 1.f);
         }
 
         osg::ref_ptr<osg::Geometry> makeFaceGenMorphedGeometry(const osg::Geometry& source, const FaceGenEgm& egm,
@@ -1644,8 +1884,9 @@ namespace MWRender
                     open = 1.f;
                 else if (MWBase::Environment::get().getSoundManager()->sayActive(mActor))
                 {
+                    const float lip = MWBase::Environment::get().getSoundManager()->getSaySoundLipValue(mActor);
                     const float loudness = MWBase::Environment::get().getSoundManager()->getSaySoundLoudness(mActor);
-                    open = std::clamp(loudness * 5.0f, 0.f, 0.65f);
+                    open = std::clamp(std::max(lip, loudness * 5.0f), 0.f, 0.65f);
                 }
 
                 if (open != mLastOpen)
@@ -3733,6 +3974,58 @@ namespace MWRender
                              << " vertexColorArrays=" << visitor.mNeutralizedVertexColorArrays;
         }
 
+        bool applyFaceGenEgtTint(Resource::ResourceSystem* resourceSystem, osg::Node* attached, std::string_view model,
+            const ESM4::Npc& traits)
+        {
+            if (attached == nullptr)
+                return false;
+
+            const std::shared_ptr<const FaceGenEgt> egt = loadFaceGenEgt(resourceSystem, model);
+            if (!egt)
+                return false;
+
+            const osg::Vec4f tint = deriveFaceGenEgtMaterialTint(*egt, traits);
+            tintFalloutSkinMaterial(attached, model, traits, tint);
+            const auto [textureNonZero, textureTotal] = summarizeCoefficients(traits.mSymTextureModeCoefficients);
+            Log(Debug::Info) << "FNV/ESM4 diag: applied FaceGen EGT complexion " << model << " size=" << egt->mWidth
+                             << "x" << egt->mHeight << " modes=" << egt->mTextureModeCount << " textureCoeffs="
+                             << textureNonZero << "/" << traits.mSymTextureModeCoefficients.size()
+                             << " sumAbs=" << textureTotal << " tintLayers=" << traits.mTintLayers.size()
+                             << " materialTint=(" << tint.x() << ", " << tint.y() << ", " << tint.z() << ") for "
+                             << traits.mEditorId;
+            return true;
+        }
+
+        void validateFaceGenCtlBasis(const FaceGenCtl* ctl, const ESM4::Npc& traits)
+        {
+            if (ctl == nullptr)
+                return;
+
+            const auto matches = [](std::size_t actual, std::uint32_t expected) {
+                return actual == 0 || actual == static_cast<std::size_t>(expected);
+            };
+            const bool shapeOk = matches(traits.mSymShapeModeCoefficients.size(), ctl->mSymmetricShapeModeCount);
+            const bool asymOk = matches(traits.mAsymShapeModeCoefficients.size(), ctl->mAsymmetricShapeModeCount);
+            const bool textureOk = matches(traits.mSymTextureModeCoefficients.size(), ctl->mTextureModeCount);
+            if (shapeOk && asymOk && textureOk)
+            {
+                Log(Debug::Info) << "FNV/ESM4 diag: FaceGen CTL basis validated for " << traits.mEditorId
+                                 << " basis=" << ctl->mBasisVersion << " shape="
+                                 << traits.mSymShapeModeCoefficients.size() << "/" << ctl->mSymmetricShapeModeCount
+                                 << " asym=" << traits.mAsymShapeModeCoefficients.size() << "/"
+                                 << ctl->mAsymmetricShapeModeCount << " texture="
+                                 << traits.mSymTextureModeCoefficients.size() << "/" << ctl->mTextureModeCount;
+                return;
+            }
+
+            Log(Debug::Warning) << "FNV/ESM4 diag: FaceGen CTL basis mismatch for " << traits.mEditorId
+                                << " basis=" << ctl->mBasisVersion << " shape="
+                                << traits.mSymShapeModeCoefficients.size() << "/" << ctl->mSymmetricShapeModeCount
+                                << " asym=" << traits.mAsymShapeModeCoefficients.size() << "/"
+                                << ctl->mAsymmetricShapeModeCount << " texture="
+                                << traits.mSymTextureModeCoefficients.size() << "/" << ctl->mTextureModeCount;
+        }
+
         void overrideFalloutEquipmentSkinTextures(osg::Node* attached, std::string_view model, const ESM4::Npc& traits,
             Resource::ResourceSystem* resourceSystem, std::string_view bodyTexture, std::string_view faceTexture)
         {
@@ -4848,6 +5141,8 @@ namespace MWRender
         }
 
         const bool isFemale = MWClass::ESM4Npc::isFemale(mPtr);
+        const std::shared_ptr<const FaceGenCtl> faceGenCtl = loadFaceGenCtl(mResourceSystem);
+        validateFaceGenCtlBasis(faceGenCtl.get(), traits);
         const uint32_t coveredBodySlots = getFonvCoveredBodySlots(mPtr);
         const std::string npcFaceTexture = findFonvNpcFaceTexture(mResourceSystem, traits);
         const std::string npcFaceDetailTexture
@@ -4934,6 +5229,9 @@ namespace MWRender
             {
                 forceFalloutActorPartVisible(attached.get(), bodyPart.mesh, traits);
                 neutralizeFalloutSkinMaterial(attached.get(), bodyPart.mesh, traits);
+                const bool appliedEgtTint = applyFaceGenEgtTint(mResourceSystem, attached.get(), bodyPart.mesh, traits);
+                if (!appliedEgtTint && npcBodyDetailIsTinyTint)
+                    tintFalloutSkinMaterial(attached.get(), bodyPart.mesh, traits, npcBodyMaterialTint);
                 if (!npcBodyDetailTexture.empty() && !npcBodyDetailIsTinyTint)
                 {
                     Log(Debug::Info) << "FNV/ESM4 diag: applying NPC body tint/detail " << npcBodyDetailTexture
@@ -4999,6 +5297,7 @@ namespace MWRender
                     overrideFalloutPartNormalTexture(npcFaceNormalTexture, mResourceSystem, *attached);
                 }
                 neutralizeFalloutSkinMaterial(attached.get(), headPart.mesh, traits);
+                applyFaceGenEgtTint(mResourceSystem, attached.get(), headPart.mesh, traits);
                 DisableCullVisitor visitor;
                 attached->accept(visitor);
                 Log(Debug::Info) << "FNV/ESM4 diag: made head skin surface double-sided " << headPart.mesh

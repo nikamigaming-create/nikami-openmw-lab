@@ -9,13 +9,14 @@ param(
     [switch]$SkipResources,
     [switch]$Launch,
     [int]$LaunchSeconds = 25,
-    [int]$ViewingDistance = 10000
+    [int]$ViewingDistance = 0
 )
 
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
 $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "../..")).Path
+. (Join-Path $PSScriptRoot "fnv-runtime-settings.ps1")
 $ProofRoot = Join-Path $RepoRoot "proof/headset-fnv-vr"
 $StageRoot = Join-Path $ProofRoot "stage"
 $ConfigStage = Join-Path $StageRoot "config"
@@ -35,6 +36,11 @@ if ([string]::IsNullOrWhiteSpace($FnvData)) {
 
 if (!(Test-Path -LiteralPath $FnvData)) {
     throw "Missing FNV data directory: $FnvData"
+}
+
+if ($ViewingDistance -le 0) {
+    $ViewingDistance = Get-NikamiFnvViewingDistance -FnvData $FnvData
+    Write-Host "Using FNV viewing distance from harvested fBlockLoadDistance: $ViewingDistance"
 }
 
 if ([string]::IsNullOrWhiteSpace($FnvConfigData)) {
@@ -143,8 +149,8 @@ data-local=$DeviceRoot/data
 user-data=$DeviceRoot/user
 resources=$DeviceRoot/resources
 data=$DeviceRoot/resources/vfs-mw
-$OptionalOverlayLine
 data=$FnvDeviceData
+$OptionalOverlayLine
 $($FallbackLines -join "`n")
 $($ArchiveLines -join "`n")
 $($ContentLines -join "`n")
@@ -188,6 +194,10 @@ global = true
 
 [Models]
 load unsupported nif files = true
+skyatmosphere = meshes/sky/atmosphere.nif
+skyclouds = meshes/sky/clouds.nif
+skynight01 = meshes/sky/stars.nif
+skynight02 = meshes/sky/stars.nif
 
 [Saves]
 character = player - 1

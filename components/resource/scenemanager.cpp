@@ -4,10 +4,14 @@
 #include <filesystem>
 
 #include <osg/AlphaFunc>
+#include <osg/BlendFunc>
 #include <osg/Capability>
 #include <osg/ColorMaski>
+#include <osg/Geode>
+#include <osg/Geometry>
 #include <osg/Group>
 #include <osg/Node>
+#include <osg/Texture2D>
 #include <osg/UserDataContainer>
 
 #include <osgAnimation/BasicAnimationManager>
@@ -781,6 +785,63 @@ namespace Resource
         }
     }
 
+    osg::ref_ptr<osg::Node> loadFalloutSpeedTreeBillboard(
+        VFS::Path::NormalizedView normalizedFilename, Resource::ImageManager* imageManager)
+    {
+        std::string stem(normalizedFilename.filename().value());
+        const std::string::size_type dot = stem.rfind('.');
+        if (dot != std::string::npos)
+            stem.erase(dot);
+
+        VFS::Path::Normalized texturePath("textures/trees/billboards/" + stem + ".dds");
+
+        osg::ref_ptr<osg::Texture2D> texture = new osg::Texture2D(imageManager->getImage(texturePath));
+        texture->setResizeNonPowerOfTwoHint(false);
+
+        constexpr float halfWidth = 96.f;
+        constexpr float height = 256.f;
+
+        osg::ref_ptr<osg::Vec3Array> vertices = new osg::Vec3Array;
+        vertices->reserve(8);
+        vertices->push_back(osg::Vec3f(-halfWidth, 0.f, 0.f));
+        vertices->push_back(osg::Vec3f(halfWidth, 0.f, 0.f));
+        vertices->push_back(osg::Vec3f(halfWidth, 0.f, height));
+        vertices->push_back(osg::Vec3f(-halfWidth, 0.f, height));
+        vertices->push_back(osg::Vec3f(0.f, -halfWidth, 0.f));
+        vertices->push_back(osg::Vec3f(0.f, halfWidth, 0.f));
+        vertices->push_back(osg::Vec3f(0.f, halfWidth, height));
+        vertices->push_back(osg::Vec3f(0.f, -halfWidth, height));
+
+        osg::ref_ptr<osg::Vec2Array> texCoords = new osg::Vec2Array;
+        texCoords->reserve(8);
+        for (int i = 0; i < 2; ++i)
+        {
+            texCoords->push_back(osg::Vec2f(0.f, 0.f));
+            texCoords->push_back(osg::Vec2f(1.f, 0.f));
+            texCoords->push_back(osg::Vec2f(1.f, 1.f));
+            texCoords->push_back(osg::Vec2f(0.f, 1.f));
+        }
+
+        osg::ref_ptr<osg::Geometry> geometry = new osg::Geometry;
+        geometry->setVertexArray(vertices);
+        geometry->setTexCoordArray(0, texCoords);
+        geometry->addPrimitiveSet(new osg::DrawArrays(osg::PrimitiveSet::QUADS, 0, 8));
+
+        osg::StateSet* stateSet = geometry->getOrCreateStateSet();
+        stateSet->setTextureAttributeAndModes(0, texture, osg::StateAttribute::ON);
+        stateSet->setAttributeAndModes(new osg::BlendFunc, osg::StateAttribute::ON);
+        stateSet->setAttributeAndModes(new osg::AlphaFunc(osg::AlphaFunc::GREATER, 0.1f), osg::StateAttribute::ON);
+        stateSet->setRenderingHint(osg::StateSet::TRANSPARENT_BIN);
+
+        osg::ref_ptr<osg::Geode> geode = new osg::Geode;
+        geode->setName("FNV SpeedTree billboard fallback");
+        geode->addDrawable(geometry);
+
+        Log(Debug::Info) << "FNV/ESM4 diag: loaded SpeedTree billboard fallback " << normalizedFilename
+                         << " texture=" << texturePath;
+        return geode;
+    }
+
     osg::ref_ptr<osg::Node> load(VFS::Path::NormalizedView normalizedFilename, const VFS::Manager* vfs,
         Resource::ImageManager* imageManager, Resource::NifFileManager* nifFileManager,
         Resource::BgsmFileManager* materialMgr)
@@ -790,8 +851,16 @@ namespace Resource
             return NifOsg::Loader::load(*nifFileManager->get(normalizedFilename), imageManager, materialMgr);
         else if (ext == "spt")
         {
-            Log(Debug::Warning) << "Ignoring SpeedTree data file " << normalizedFilename;
-            return new osg::Node();
+            try
+            {
+                return loadFalloutSpeedTreeBillboard(normalizedFilename, imageManager);
+            }
+            catch (const std::exception& e)
+            {
+                Log(Debug::Warning) << "Ignoring SpeedTree data file " << normalizedFilename
+                                    << ": billboard fallback failed: " << e.what();
+                return new osg::Node();
+            }
         }
         else
             return loadNonNif(normalizedFilename, *vfs->get(normalizedFilename), imageManager);

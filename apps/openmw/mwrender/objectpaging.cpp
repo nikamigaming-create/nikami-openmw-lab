@@ -111,6 +111,26 @@ namespace MWRender
                     return {};
             }
         }
+
+        VFS::Path::Normalized correctEsm4StaticModelPath(
+            int type, VFS::Path::NormalizedView model, const VFS::Manager& vfs)
+        {
+            constexpr VFS::Path::ExtensionView spt("spt");
+            if (type == ESM::REC_TREE4 && model.extension() == spt)
+            {
+                if (vfs.exists(model))
+                    return VFS::Path::Normalized(model);
+
+                constexpr VFS::Path::NormalizedView trees("trees");
+                const VFS::Path::Normalized treePath = trees / model.filename();
+                if (vfs.exists(treePath))
+                    return treePath;
+
+                return VFS::Path::Normalized(model);
+            }
+
+            return Misc::ResourceHelpers::correctMeshPath(model);
+        }
     }
 
     osg::ref_ptr<osg::Node> ObjectPaging::getChunk(float size, const osg::Vec2f& center, unsigned char /*lod*/,
@@ -743,7 +763,7 @@ namespace MWRender
             VFS::Path::Normalized model(getModel(type, ref.mRefId, store));
             if (model.empty())
                 continue;
-            model = Misc::ResourceHelpers::correctMeshPath(model);
+            model = correctEsm4StaticModelPath(type, model, *mSceneManager->getVFS());
 
             if (activeGrid && type != ESM::REC_STAT && type != ESM::REC_STAT4)
             {

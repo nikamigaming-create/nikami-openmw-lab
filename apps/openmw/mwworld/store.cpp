@@ -11,11 +11,14 @@
 #include <components/esm3/esmwriter.hpp>
 #include <components/esm4/loadbptd.hpp>
 #include <components/esm4/loaddial.hpp>
+#include <components/esm4/loadexpl.hpp>
 #include <components/esm4/loadeyes.hpp>
 #include <components/esm4/loadidle.hpp>
 #include <components/esm4/loadidlm.hpp>
 #include <components/esm4/loadnote.hpp>
 #include <components/esm4/loadpack.hpp>
+#include <components/esm4/loadperk.hpp>
+#include <components/esm4/loadproj.hpp>
 #include <components/esm4/loadqust.hpp>
 #include <components/esm4/loadtact.hpp>
 
@@ -1013,13 +1016,8 @@ namespace MWWorld
 
     Store<ESM::Dialogue>::Store() {}
 
-    void Store<ESM::Dialogue>::setUp()
+    void Store<ESM::Dialogue>::rebuildRuntimeIndex()
     {
-        // DialInfos marked as deleted are kept during the loading phase, so that the linked list
-        // structure is kept intact for inserting further INFOs. Delete them now that loading is done.
-        for (auto& [_, dial] : mStatic)
-            dial.setUp();
-
         mShared.clear();
         mShared.reserve(mStatic.size());
         for (auto& [_, dial] : mStatic)
@@ -1028,8 +1026,33 @@ namespace MWWorld
         // TODO: if we require this behaviour, maybe we should move it to the place that requires it
         std::sort(mShared.begin(), mShared.end(),
             [](const ESM::Dialogue* l, const ESM::Dialogue* r) -> bool { return l->mId < r->mId; });
-
         mKeywordSearchModFlag = true;
+    }
+
+    void Store<ESM::Dialogue>::setUp()
+    {
+        // DialInfos marked as deleted are kept during the loading phase, so that the linked list
+        // structure is kept intact for inserting further INFOs. Delete them now that loading is done.
+        for (auto& [_, dial] : mStatic)
+            dial.setUp();
+
+        rebuildRuntimeIndex();
+    }
+
+    ESM::Dialogue* Store<ESM::Dialogue>::insert(const ESM::Dialogue& dialogue)
+    {
+        const auto result = mStatic.insert_or_assign(dialogue.mId, dialogue);
+        mKeywordSearchModFlag = true;
+        return &result.first->second;
+    }
+
+    ESM::Dialogue* Store<ESM::Dialogue>::search(const ESM::RefId& id)
+    {
+        typename Static::iterator it = mStatic.find(id);
+        if (it != mStatic.end())
+            return &(it->second);
+
+        return nullptr;
     }
 
     const ESM::Dialogue* Store<ESM::Dialogue>::search(const ESM::RefId& id) const
@@ -1261,10 +1284,14 @@ template class MWWorld::TypedDynamicStore<ESM4::Clothing>;
 template class MWWorld::TypedDynamicStore<ESM4::Container>;
 template class MWWorld::TypedDynamicStore<ESM4::Creature>;
 template class MWWorld::TypedDynamicStore<ESM4::Dialogue>;
+template class MWWorld::TypedDynamicStore<ESM4::DialogInfo>;
 template class MWWorld::TypedDynamicStore<ESM4::Door>;
 template class MWWorld::TypedDynamicStore<ESM4::Eyes>;
+template class MWWorld::TypedDynamicStore<ESM4::Explosion>;
 template class MWWorld::TypedDynamicStore<ESM4::Flora>;
 template class MWWorld::TypedDynamicStore<ESM4::Furniture>;
+template class MWWorld::TypedDynamicStore<ESM4::GameSetting>;
+template class MWWorld::TypedDynamicStore<ESM4::GlobalVariable>;
 template class MWWorld::TypedDynamicStore<ESM4::Hair>;
 template class MWWorld::TypedDynamicStore<ESM4::HeadPart>;
 template class MWWorld::TypedDynamicStore<ESM4::IdleAnimation>;
@@ -1282,9 +1309,12 @@ template class MWWorld::TypedDynamicStore<ESM4::MovableStatic>;
 template class MWWorld::TypedDynamicStore<ESM4::Note>;
 template class MWWorld::TypedDynamicStore<ESM4::Npc>;
 template class MWWorld::TypedDynamicStore<ESM4::Outfit>;
+template class MWWorld::TypedDynamicStore<ESM4::Perk>;
 template class MWWorld::TypedDynamicStore<ESM4::Potion>;
+template class MWWorld::TypedDynamicStore<ESM4::Projectile>;
 template class MWWorld::TypedDynamicStore<ESM4::Quest>;
 template class MWWorld::TypedDynamicStore<ESM4::Race>;
+template class MWWorld::TypedDynamicStore<ESM4::Script>;
 template class MWWorld::TypedDynamicStore<ESM4::Sound>;
 template class MWWorld::TypedDynamicStore<ESM4::SoundReference>;
 template class MWWorld::TypedDynamicStore<ESM4::Static>;

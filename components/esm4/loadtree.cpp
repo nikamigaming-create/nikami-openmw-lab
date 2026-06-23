@@ -26,10 +26,27 @@
 */
 #include "loadtree.hpp"
 
+#include <algorithm>
 #include <stdexcept>
+
+#include <components/misc/strings/algorithm.hpp>
 
 #include "reader.hpp"
 //#include "writer.hpp"
+
+namespace
+{
+    void normalizeFalloutTreeModel(std::string& model)
+    {
+        while (!model.empty() && (model.front() == '\\' || model.front() == '/'))
+            model.erase(model.begin());
+
+        std::replace(model.begin(), model.end(), '/', '\\');
+
+        if (Misc::StringUtils::ciEndsWith(model, ".spt") && model.find('\\') == std::string::npos)
+            model.insert(0, "trees\\");
+    }
+}
 
 void ESM4::Tree::load(ESM4::Reader& reader)
 {
@@ -46,6 +63,7 @@ void ESM4::Tree::load(ESM4::Reader& reader)
                 break;
             case ESM::fourCC("MODL"):
                 reader.getZString(mModel);
+                normalizeFalloutTreeModel(mModel);
                 break;
             case ESM::fourCC("ICON"):
                 reader.getZString(mLeafTexture);

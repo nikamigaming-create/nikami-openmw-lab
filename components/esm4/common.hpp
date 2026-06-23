@@ -173,7 +173,22 @@ namespace ESM4
         REC_CCRD = fourCC("CCRD"), // Caravan Card
         REC_CMNY = fourCC("CMNY"), // Caravan Money
         REC_ALOC = fourCC("ALOC"), // Audio Location Controller
-        REC_MSET = fourCC("MSET") // Media Set
+        REC_MSET = fourCC("MSET"), // Media Set
+        REC_AMEF = fourCC("AMEF"), // Ammo Effect
+        REC_CDCK = fourCC("CDCK"), // Caravan Deck
+        REC_CHAL = fourCC("CHAL"), // Challenge
+        REC_CHIP = fourCC("CHIP"), // Casino Chip
+        REC_CSNO = fourCC("CSNO"), // Casino
+        REC_DEHY = fourCC("DEHY"), // Dehydration Stage
+        REC_HUNG = fourCC("HUNG"), // Hunger Stage
+        REC_LSCT = fourCC("LSCT"), // Load Screen Type
+        REC_MICN = fourCC("MICN"), // Menu Icon
+        REC_RADS = fourCC("RADS"), // Radiation Stage
+        REC_RCCT = fourCC("RCCT"), // Recipe Category
+        REC_RCPE = fourCC("RCPE"), // Recipe
+        REC_REPU = fourCC("REPU"), // Reputation
+        REC_RGDL = fourCC("RGDL"), // Ragdoll
+        REC_SLPD = fourCC("SLPD") // Sleep Deprivation Stage
     };
 
     // Based on http://www.uesp.net/wiki/Tes5Mod:Mod_File_Format#Records

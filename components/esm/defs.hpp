@@ -285,7 +285,22 @@ namespace ESM
         REC_CCRD4 = esm4Recname(ESM4::REC_CCRD), // Caravan Card
         REC_CMNY4 = esm4Recname(ESM4::REC_CMNY), // Caravan Money
         REC_ALOC4 = esm4Recname(ESM4::REC_ALOC), // Audio Location Controller
-        REC_MSET4 = esm4Recname(ESM4::REC_MSET) // Media Set
+        REC_MSET4 = esm4Recname(ESM4::REC_MSET), // Media Set
+        REC_AMEF4 = esm4Recname(ESM4::REC_AMEF), // Ammo Effect
+        REC_CDCK4 = esm4Recname(ESM4::REC_CDCK), // Caravan Deck
+        REC_CHAL4 = esm4Recname(ESM4::REC_CHAL), // Challenge
+        REC_CHIP4 = esm4Recname(ESM4::REC_CHIP), // Casino Chip
+        REC_CSNO4 = esm4Recname(ESM4::REC_CSNO), // Casino
+        REC_DEHY4 = esm4Recname(ESM4::REC_DEHY), // Dehydration Stage
+        REC_HUNG4 = esm4Recname(ESM4::REC_HUNG), // Hunger Stage
+        REC_LSCT4 = esm4Recname(ESM4::REC_LSCT), // Load Screen Type
+        REC_MICN4 = esm4Recname(ESM4::REC_MICN), // Menu Icon
+        REC_RADS4 = esm4Recname(ESM4::REC_RADS), // Radiation Stage
+        REC_RCCT4 = esm4Recname(ESM4::REC_RCCT), // Recipe Category
+        REC_RCPE4 = esm4Recname(ESM4::REC_RCPE), // Recipe
+        REC_REPU4 = esm4Recname(ESM4::REC_REPU), // Reputation
+        REC_RGDL4 = esm4Recname(ESM4::REC_RGDL), // Ragdoll
+        REC_SLPD4 = esm4Recname(ESM4::REC_SLPD) // Sleep Deprivation Stage
     };
 
     constexpr bool isESM4Rec(RecNameInts value)

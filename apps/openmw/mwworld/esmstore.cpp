@@ -2,9 +2,14 @@
 
 #include <algorithm>
 #include <cstdlib>
+#include <cmath>
+#include <cstdint>
 #include <fstream>
+#include <limits>
 #include <string_view>
 #include <tuple>
+#include <unordered_map>
+#include <variant>
 
 #include <components/debug/debuglog.hpp>
 
@@ -40,6 +45,321 @@ namespace
     };
 
     constexpr std::size_t deletedRefID = std::numeric_limits<std::size_t>::max();
+
+    struct Esm4RuntimeBridgeCounts
+    {
+        std::size_t mGameSettings = 0;
+        std::size_t mGlobals = 0;
+        std::size_t mScripts = 0;
+        std::size_t mQuestDialogues = 0;
+        std::size_t mTopicDialogues = 0;
+        std::size_t mQuestInfos = 0;
+        std::size_t mResolvedInfoSounds = 0;
+        std::size_t mSkippedGameSettings = 0;
+        std::size_t mSkippedGlobals = 0;
+        std::size_t mSkippedScripts = 0;
+        std::size_t mSkippedDialogues = 0;
+        std::size_t mSkippedInfos = 0;
+        std::size_t mUnresolvedInfoSounds = 0;
+    };
+
+    std::int32_t clampFloatToInt(float value)
+    {
+        if (!std::isfinite(value))
+            return 0;
+        if (value > static_cast<float>(std::numeric_limits<std::int32_t>::max()))
+            return std::numeric_limits<std::int32_t>::max();
+        if (value < static_cast<float>(std::numeric_limits<std::int32_t>::min()))
+            return std::numeric_limits<std::int32_t>::min();
+        return static_cast<std::int32_t>(std::lround(value));
+    }
+
+    bool convertEsm4GameSettingValue(const ESM4::GameSetting::Data& source, ESM::Variant& target)
+    {
+        if (std::holds_alternative<std::monostate>(source))
+            return false;
+
+        if (const auto* value = std::get_if<bool>(&source))
+        {
+            target.setType(ESM::VT_Int);
+            target.setInteger(*value ? 1 : 0);
+            return true;
+        }
+
+        if (const auto* value = std::get_if<float>(&source))
+        {
+            target.setType(ESM::VT_Float);
+            target.setFloat(*value);
+            return true;
+        }
+
+        if (const auto* value = std::get_if<std::int32_t>(&source))
+        {
+            target.setType(ESM::VT_Int);
+            target.setInteger(*value);
+            return true;
+        }
+
+        if (const auto* value = std::get_if<std::string>(&source))
+        {
+            target.setType(ESM::VT_String);
+            target.setString(*value);
+            return true;
+        }
+
+        if (const auto* value = std::get_if<std::uint32_t>(&source))
+        {
+            if (*value <= static_cast<std::uint32_t>(std::numeric_limits<std::int32_t>::max()))
+            {
+                target.setType(ESM::VT_Int);
+                target.setInteger(static_cast<std::int32_t>(*value));
+            }
+            else
+            {
+                target.setType(ESM::VT_Float);
+                target.setFloat(static_cast<float>(*value));
+            }
+            return true;
+        }
+
+        return false;
+    }
+
+    ESM::VarType convertEsm4GlobalType(std::uint8_t type)
+    {
+        switch (type)
+        {
+            case 's':
+            case 'S':
+            case 0:
+                return ESM::VT_Short;
+            case 'l':
+            case 'L':
+            case 1:
+                return ESM::VT_Long;
+            case 'f':
+            case 'F':
+            case 2:
+                return ESM::VT_Float;
+            default:
+                return ESM::VT_Unknown;
+        }
+    }
+
+    ESM::Dialogue::Type convertEsm4DialogueType(std::uint8_t type)
+    {
+        switch (type)
+        {
+            case 1:
+                return ESM::Dialogue::Voice;
+            case 2:
+                return ESM::Dialogue::Greeting;
+            case 3:
+                return ESM::Dialogue::Persuasion;
+            case 4:
+                return ESM::Dialogue::Journal;
+            case 0:
+            default:
+                return ESM::Dialogue::Topic;
+        }
+    }
+
+    ESM::RefId formIdRefId(ESM::FormId id)
+    {
+        return ESM::RefId::formIdRefId(id);
+    }
+
+    std::string resolveEsm4SoundFile(const MWWorld::ESMStore& store, ESM::FormId soundId, unsigned int depth = 0)
+    {
+        constexpr unsigned int maxDepth = 8;
+        if (soundId.isZeroOrUnset() || depth >= maxDepth)
+            return {};
+
+        if (const ESM4::SoundReference* reference = store.get<ESM4::SoundReference>().search(soundId))
+        {
+            if (!reference->mSoundFile.empty())
+                return reference->mSoundFile;
+            if (!reference->mSoundId.isZeroOrUnset())
+                return resolveEsm4SoundFile(store, reference->mSoundId, depth + 1);
+        }
+
+        if (const ESM4::Sound* sound = store.get<ESM4::Sound>().search(soundId))
+            return sound->mSoundFile;
+
+        return {};
+    }
+
+    void bridgeEsm4QuestDialogueStores(MWWorld::ESMStore& store, Esm4RuntimeBridgeCounts& counts)
+    {
+        MWWorld::Store<ESM::Dialogue>& targetDialogues = store.getWritable<ESM::Dialogue>();
+        std::unordered_map<ESM::FormId, ESM::RefId> questDialogueIds;
+
+        for (const ESM4::Quest& source : store.get<ESM4::Quest>())
+        {
+            if (source.mEditorId.empty())
+            {
+                ++counts.mSkippedDialogues;
+                continue;
+            }
+
+            ESM::Dialogue target;
+            target.blank();
+            target.mId = ESM::RefId::stringRefId(source.mEditorId);
+            target.mStringId = source.mQuestName.empty() ? source.mEditorId : source.mQuestName;
+            target.mType = ESM::Dialogue::Journal;
+
+            targetDialogues.insert(target);
+            questDialogueIds[source.mId] = target.mId;
+            ++counts.mQuestDialogues;
+        }
+
+        for (const ESM4::Dialogue& source : store.get<ESM4::Dialogue>())
+        {
+            if (source.mEditorId.empty())
+            {
+                ++counts.mSkippedDialogues;
+                continue;
+            }
+
+            ESM::Dialogue target;
+            target.blank();
+            target.mId = ESM::RefId::stringRefId(source.mEditorId);
+            target.mStringId = source.mTopicName.empty() ? source.mEditorId : source.mTopicName;
+            target.mType = convertEsm4DialogueType(source.mDialType);
+
+            targetDialogues.insert(target);
+            ++counts.mTopicDialogues;
+        }
+
+        for (const ESM4::DialogInfo& source : store.get<ESM4::DialogInfo>())
+        {
+            if (source.mQuest.isZeroOrUnset() || source.mResponse.empty())
+            {
+                ++counts.mSkippedInfos;
+                continue;
+            }
+
+            const auto quest = questDialogueIds.find(source.mQuest);
+            if (quest == questDialogueIds.end())
+            {
+                ++counts.mSkippedInfos;
+                continue;
+            }
+
+            ESM::Dialogue* dialogue = targetDialogues.search(quest->second);
+            if (dialogue == nullptr)
+            {
+                ++counts.mSkippedInfos;
+                continue;
+            }
+
+            ESM::DialInfo info;
+            info.blank();
+            info.mId = formIdRefId(source.mId);
+            if (!source.mSound.isZeroOrUnset())
+            {
+                const std::string infoSound = resolveEsm4SoundFile(store, source.mSound);
+                if (infoSound.empty())
+                    ++counts.mUnresolvedInfoSounds;
+                else
+                {
+                    info.mSound = infoSound;
+                    ++counts.mResolvedInfoSounds;
+                }
+            }
+            info.mResponse = source.mResponse;
+            info.mResultScript = source.mScript.scriptSource;
+            info.mData.mType = ESM::Dialogue::Journal;
+            info.mData.mJournalIndex = static_cast<std::int32_t>(source.mResponseData.responseNo);
+
+            dialogue->mInfo.push_back(std::move(info));
+            ++counts.mQuestInfos;
+        }
+
+        targetDialogues.rebuildRuntimeIndex();
+    }
+
+    Esm4RuntimeBridgeCounts bridgeEsm4RuntimeStores(MWWorld::ESMStore& store)
+    {
+        Esm4RuntimeBridgeCounts counts;
+
+        MWWorld::Store<ESM::GameSetting>& targetGameSettings = store.getWritable<ESM::GameSetting>();
+        for (const ESM4::GameSetting& source : store.get<ESM4::GameSetting>())
+        {
+            if (source.mEditorId.empty())
+            {
+                ++counts.mSkippedGameSettings;
+                continue;
+            }
+
+            ESM::GameSetting target;
+            target.mRecordFlags = source.mFlags;
+            target.mId = ESM::RefId::stringRefId(source.mEditorId);
+            if (!convertEsm4GameSettingValue(source.mData, target.mValue))
+            {
+                ++counts.mSkippedGameSettings;
+                continue;
+            }
+
+            targetGameSettings.insert(target);
+            ++counts.mGameSettings;
+        }
+
+        MWWorld::Store<ESM::Global>& targetGlobals = store.getWritable<ESM::Global>();
+        for (const ESM4::GlobalVariable& source : store.get<ESM4::GlobalVariable>())
+        {
+            if (source.mEditorId.empty())
+            {
+                ++counts.mSkippedGlobals;
+                continue;
+            }
+
+            const ESM::VarType type = convertEsm4GlobalType(source.mType);
+            if (type == ESM::VT_Unknown)
+            {
+                ++counts.mSkippedGlobals;
+                continue;
+            }
+
+            ESM::Global target;
+            target.mRecordFlags = source.mFlags;
+            target.mId = ESM::RefId::stringRefId(source.mEditorId);
+            target.mValue.setType(type);
+            if (type == ESM::VT_Float)
+                target.mValue.setFloat(source.mValue);
+            else
+                target.mValue.setInteger(clampFloatToInt(source.mValue));
+
+            targetGlobals.insert(target);
+            ++counts.mGlobals;
+        }
+
+        MWWorld::Store<ESM::Script>& targetScripts = store.getWritable<ESM::Script>();
+        for (const ESM4::Script& source : store.get<ESM4::Script>())
+        {
+            if (source.mEditorId.empty() || source.mScript.scriptSource.empty())
+            {
+                ++counts.mSkippedScripts;
+                continue;
+            }
+
+            ESM::Script target;
+            target.blank();
+            target.mRecordFlags = source.mFlags;
+            target.mId = ESM::RefId::stringRefId(source.mEditorId);
+            target.mNumShorts = 0;
+            target.mNumLongs = 0;
+            target.mNumFloats = 0;
+            target.mScriptText = source.mScript.scriptSource;
+
+            targetScripts.insert(target);
+            ++counts.mScripts;
+        }
+
+        bridgeEsm4QuestDialogueStores(store, counts);
+
+        return counts;
+    }
 
     void readRefs(const ESM::Cell& cell, std::vector<Ref>& refs, std::vector<ESM::RefId>& refIDs,
         std::set<ESM::RefId>& keyIDs, ESM::ReadersCache& readers)
@@ -453,6 +773,167 @@ namespace MWWorld
         IDMap mIds;
         IDMap mStaticIds;
 
+        struct Esm4LoadedPendingRecord
+        {
+            ESM::FormId mId;
+            std::uint32_t mFlags = 0;
+            std::uint32_t mHeaderDataSize = 0;
+            std::size_t mSubrecords = 0;
+            std::size_t mPayloadBytes = 0;
+        };
+
+        std::map<ESM::RecNameInts, std::vector<Esm4LoadedPendingRecord>> mEsm4LoadedPendingRecords;
+        std::size_t mEsm4LoadedPendingRecordBytes = 0;
+
+        static bool shouldTraceLoadedPendingEsm4Record(ESM::RecNameInts recName)
+        {
+            const char* trace = std::getenv("OPENMW_FNV_TRACE_RAW_PENDING_RECORD");
+            if (trace == nullptr || *trace == '\0')
+                return false;
+
+            const std::string_view wanted(trace);
+            if (wanted == "*")
+                return true;
+
+            const std::string_view name = ESM::getRecNameString(recName).toStringView();
+            if (wanted == name)
+                return true;
+            return name.size() > 1 && name.back() == '4' && wanted == name.substr(0, name.size() - 1);
+        }
+
+        static bool isLoadedPendingEsm4Record(ESM::RecNameInts recName)
+        {
+            switch (recName)
+            {
+                case ESM::REC_ACTI4:
+                case ESM::REC_ADDN4:
+                case ESM::REC_ALCH4:
+                case ESM::REC_ALOC4:
+                case ESM::REC_AMEF4:
+                case ESM::REC_ANIO4:
+                case ESM::REC_ARMA4:
+                case ESM::REC_ARMO4:
+                case ESM::REC_ASPC4:
+                case ESM::REC_AVIF4:
+                case ESM::REC_BOOK4:
+                case ESM::REC_BPTD4:
+                case ESM::REC_CAMS4:
+                case ESM::REC_CCRD4:
+                case ESM::REC_CDCK4:
+                case ESM::REC_CHAL4:
+                case ESM::REC_CHIP4:
+                case ESM::REC_CLAS4:
+                case ESM::REC_CLOT4:
+                case ESM::REC_CLMT4:
+                case ESM::REC_CMNY4:
+                case ESM::REC_CONT4:
+                case ESM::REC_CPTH4:
+                case ESM::REC_CSNO4:
+                case ESM::REC_CSTY4:
+                case ESM::REC_DEBR4:
+                case ESM::REC_DEHY4:
+                case ESM::REC_DOBJ4:
+                case ESM::REC_DOOR4:
+                case ESM::REC_ECZN4:
+                case ESM::REC_EFSH4:
+                case ESM::REC_ENCH4:
+                case ESM::REC_EXPL4:
+                case ESM::REC_EYES4:
+                case ESM::REC_FACT4:
+                case ESM::REC_FLOR4:
+                case ESM::REC_FLST4:
+                case ESM::REC_FURN4:
+                case ESM::REC_GRAS4:
+                case ESM::REC_HAIR4:
+                case ESM::REC_HDPT4:
+                case ESM::REC_HUNG4:
+                case ESM::REC_IDLE4:
+                case ESM::REC_IDLM4:
+                case ESM::REC_IMGS4:
+                case ESM::REC_IMAD4:
+                case ESM::REC_IMOD4:
+                case ESM::REC_INGR4:
+                case ESM::REC_IPCT4:
+                case ESM::REC_IPDS4:
+                case ESM::REC_KEYM4:
+                case ESM::REC_LGTM4:
+                case ESM::REC_LIGH4:
+                case ESM::REC_LSCR4:
+                case ESM::REC_LSCT4:
+                case ESM::REC_LVLC4:
+                case ESM::REC_LVLI4:
+                case ESM::REC_LVLN4:
+                case ESM::REC_MESG4:
+                case ESM::REC_MGEF4:
+                case ESM::REC_MICN4:
+                case ESM::REC_MISC4:
+                case ESM::REC_MSET4:
+                case ESM::REC_MUSC4:
+                case ESM::REC_NAVI4:
+                case ESM::REC_NAVM4:
+                case ESM::REC_PACK4:
+                case ESM::REC_PERK4:
+                case ESM::REC_PGRE4:
+                case ESM::REC_PROJ4:
+                case ESM::REC_PWAT4:
+                case ESM::REC_RACE4:
+                case ESM::REC_RADS4:
+                case ESM::REC_RCCT4:
+                case ESM::REC_RCPE4:
+                case ESM::REC_REGN4:
+                case ESM::REC_REPU4:
+                case ESM::REC_RGDL4:
+                case ESM::REC_SCEN4:
+                case ESM::REC_SLPD4:
+                case ESM::REC_SPEL4:
+                case ESM::REC_TERM4:
+                case ESM::REC_TREE4:
+                case ESM::REC_VTYP4:
+                case ESM::REC_WATR4:
+                case ESM::REC_WRLD4:
+                case ESM::REC_WTHR4:
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        static bool readLoadedPendingEsm4Record(ESM4::Reader& reader, ESMStore& store, ESM::RecNameInts recName)
+        {
+            if (!isLoadedPendingEsm4Record(recName))
+                return false;
+
+            const ESM4::RecordTypeHeader header = reader.hdr().record;
+            reader.getRecordData();
+
+            Esm4LoadedPendingRecord record;
+            record.mId = reader.getFormIdFromHeader();
+            record.mFlags = header.flags;
+            record.mHeaderDataSize = header.dataSize;
+
+            while (reader.getSubRecordHeader())
+            {
+                const ESM4::SubRecordHeader& subrecord = reader.subRecordHeader();
+                ++record.mSubrecords;
+                record.mPayloadBytes += subrecord.dataSize;
+                reader.skipSubRecordData();
+            }
+
+            store.mStoreImp->mEsm4LoadedPendingRecordBytes += record.mPayloadBytes;
+            store.mStoreImp->mEsm4LoadedPendingRecords[recName].push_back(std::move(record));
+            if (shouldTraceLoadedPendingEsm4Record(recName))
+            {
+                const Esm4LoadedPendingRecord& stored = store.mStoreImp->mEsm4LoadedPendingRecords[recName].back();
+                Log(Debug::Info) << "FNV/ESM4 inventory raw-loaded pending detail: "
+                                 << ESM::getRecNameString(recName).toStringView() << " formId=" << stored.mId
+                                 << " flags=0x" << std::hex << stored.mFlags << std::dec
+                                 << " header-bytes=" << stored.mHeaderDataSize
+                                 << " subrecords=" << stored.mSubrecords
+                                 << " payload-bytes=" << stored.mPayloadBytes;
+            }
+            return true;
+        }
+
         template <typename T>
         static void assignStoreToIndex(ESMStore& stores, Store<T>& store)
         {
@@ -688,12 +1169,25 @@ namespace MWWorld
         std::map<ESM::RecNameInts, std::size_t> loadedRecordCounts;
         std::map<ESM::RecNameInts, std::size_t> skippedRecordCounts;
 
-        auto visitorRec = [this, listener, &loadedRecordCounts, &skippedRecordCounts](ESM4::Reader& r) {
+        std::map<ESM::RecNameInts, std::size_t> loadedPendingRecordCounts;
+
+        auto visitorRec = [this, listener, &loadedRecordCounts, &loadedPendingRecordCounts, &skippedRecordCounts](
+                              ESM4::Reader& r) {
             const auto recordType = static_cast<ESM4::RecordTypes>(r.hdr().record.typeId);
             const auto recName = static_cast<ESM::RecNameInts>(ESM::esm4Recname(recordType));
             bool result = ESMStoreImp::readRecord(r, *this);
+            bool loadedPending = false;
+            if (!result)
+            {
+                loadedPending = ESMStoreImp::readLoadedPendingEsm4Record(r, *this, recName);
+                result = loadedPending;
+            }
             if (result)
+            {
                 ++loadedRecordCounts[recName];
+                if (loadedPending)
+                    ++loadedPendingRecordCounts[recName];
+            }
             else
                 ++skippedRecordCounts[recName];
             if (listener != nullptr)
@@ -715,6 +1209,18 @@ namespace MWWorld
         for (const auto& [recName, count] : loadedRecordCounts)
             Log(Debug::Info) << "FNV/ESM4 inventory loaded: " << ESM::getRecNameString(recName).toStringView()
                              << " count=" << count;
+        if (!loadedPendingRecordCounts.empty())
+        {
+            std::size_t loadedPendingRecords = 0;
+            for (const auto& [_, count] : loadedPendingRecordCounts)
+                loadedPendingRecords += count;
+            Log(Debug::Info) << "FNV/ESM4 inventory raw-loaded pending record total=" << loadedPendingRecords
+                             << " types=" << loadedPendingRecordCounts.size()
+                             << " payload-bytes=" << mStoreImp->mEsm4LoadedPendingRecordBytes;
+            for (const auto& [recName, count] : loadedPendingRecordCounts)
+                Log(Debug::Info) << "FNV/ESM4 inventory raw-loaded pending: "
+                                 << ESM::getRecNameString(recName).toStringView() << " count=" << count;
+        }
         for (const auto& [recName, count] : skippedRecordCounts)
             Log(Debug::Warning) << "FNV/ESM4 inventory skipped unsupported: "
                                 << ESM::getRecNameString(recName).toStringView() << " count=" << count;
@@ -774,6 +1280,21 @@ namespace MWWorld
 
         for (const auto& [_, store] : mStoreImp->mRecNameToStore)
             store->setUp();
+
+        const Esm4RuntimeBridgeCounts bridgeCounts = bridgeEsm4RuntimeStores(*this);
+        Log(Debug::Info) << "FNV/ESM4 proof: bridged runtime records gmst=" << bridgeCounts.mGameSettings
+                         << " globals=" << bridgeCounts.mGlobals
+                         << " scripts=" << bridgeCounts.mScripts
+                         << " questDialogues=" << bridgeCounts.mQuestDialogues
+                         << " topicDialogues=" << bridgeCounts.mTopicDialogues
+                         << " questInfos=" << bridgeCounts.mQuestInfos
+                         << " resolvedInfoSounds=" << bridgeCounts.mResolvedInfoSounds
+                         << " skippedGmst=" << bridgeCounts.mSkippedGameSettings
+                         << " skippedGlobals=" << bridgeCounts.mSkippedGlobals
+                         << " skippedScripts=" << bridgeCounts.mSkippedScripts
+                         << " skippedDialogues=" << bridgeCounts.mSkippedDialogues
+                         << " skippedInfos=" << bridgeCounts.mSkippedInfos
+                         << " unresolvedInfoSounds=" << bridgeCounts.mUnresolvedInfoSounds;
 
         getWritable<ESM::Skill>().setUp(get<ESM::GameSetting>());
         getWritable<ESM::Attribute>().setUp(get<ESM::GameSetting>());

@@ -1,0 +1,231 @@
+param(
+    [string]$FnvRoot = "D:\SteamLibrary\steamapps\common\Fallout New Vegas",
+    [string]$FnvData = "",
+    [string]$VcpkgRoot = "D:\code\c\FMODS\vcpkg",
+    [string]$ProofRoot = "",
+    [int]$RunSeconds = 8
+)
+
+$ErrorActionPreference = "Stop"
+Set-StrictMode -Version Latest
+
+$RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "../..")).Path
+if ([string]::IsNullOrWhiteSpace($ProofRoot)) {
+    $ProofRoot = Join-Path (Split-Path $RepoRoot -Parent) "proof"
+}
+if ([string]::IsNullOrWhiteSpace($FnvData)) {
+    $FnvData = Join-Path $FnvRoot "Data"
+}
+
+$Stamp = Get-Date -Format "yyyyMMdd_HHmmss"
+$ProofDir = Join-Path $ProofRoot "fnv-sky-runtime-contract/$Stamp"
+$SummaryFile = Join-Path $ProofDir "summary.txt"
+New-Item -ItemType Directory -Force -Path $ProofDir | Out-Null
+
+function Write-ProofLine([string]$Text = "") {
+    Write-Host $Text
+    Add-Content -LiteralPath $SummaryFile -Value $Text
+}
+
+function Assert-FileContains([string]$Path, [string]$Pattern, [string]$Label) {
+    if (!(Test-Path -LiteralPath $Path)) { throw "Missing file for ${Label}: $Path" }
+    if (!(Select-String -LiteralPath $Path -Pattern $Pattern -Quiet)) {
+        throw "Missing ${Label}: $Pattern in $Path"
+    }
+    Write-ProofLine "OK ${Label}: $Pattern"
+}
+
+function Assert-FileNotContains([string]$Path, [string]$Pattern, [string]$Label) {
+    if (!(Test-Path -LiteralPath $Path)) { throw "Missing file for ${Label}: $Path" }
+    $matches = @(Select-String -LiteralPath $Path -Pattern $Pattern -ErrorAction SilentlyContinue)
+    if ($matches.Count -gt 0) {
+        throw "Unexpected ${Label}: $($matches[0].Line.Trim())"
+    }
+    Write-ProofLine "OK absent ${Label}: $Pattern"
+}
+
+Write-ProofLine "FNV sky runtime contract $Stamp"
+Write-ProofLine "RepoRoot: $RepoRoot"
+Write-ProofLine "FnvData: $FnvData"
+Write-ProofLine "ProofDir: $ProofDir"
+Write-ProofLine ""
+
+$SkyCpp = Join-Path $RepoRoot "apps/openmw/mwrender/sky.cpp"
+$SkyUtilCpp = Join-Path $RepoRoot "apps/openmw/mwrender/skyutil.cpp"
+$SkyFrag = Join-Path $RepoRoot "files/shaders/compatibility/sky.frag"
+$SkyPasses = Join-Path $RepoRoot "files/shaders/lib/sky/passes.glsl"
+$ShaderSettings = Join-Path $RepoRoot "components/settings/categories/shaders.hpp"
+$SettingsDefault = Join-Path $RepoRoot "files/settings-default.cfg"
+$FlatScript = Join-Path $RepoRoot "scripts/nikami/run-fnv-flat.ps1"
+$FlatProofScript = Join-Path $RepoRoot "scripts/nikami/run-fnv-flat-proof.ps1"
+$VrDeployScript = Join-Path $RepoRoot "scripts/nikami/deploy-fnv-vr-headset.ps1"
+
+function Get-BsaTool() {
+    $candidate = Join-Path $RepoRoot "build-clean/Release/bsatool.exe"
+    if (Test-Path -LiteralPath $candidate -PathType Leaf) {
+        return $candidate
+    }
+    $downstream = "D:\Modlists\fnv\openmw-source\MSVC2022_64\Release\bsatool.exe"
+    if (Test-Path -LiteralPath $downstream -PathType Leaf) {
+        return $downstream
+    }
+    return "bsatool.exe"
+}
+
+function Assert-BsaContains([string]$BsaName, [string]$Pattern, [string]$Label) {
+    $bsaPath = Join-Path $FnvData $BsaName
+    if (!(Test-Path -LiteralPath $bsaPath -PathType Leaf)) {
+        throw "Missing BSA for ${Label}: $bsaPath"
+    }
+    $bsaTool = Get-BsaTool
+    $entries = @(& $bsaTool list $bsaPath)
+    if ($LASTEXITCODE -ne 0) {
+        throw "bsatool failed for $bsaPath exit=$LASTEXITCODE"
+    }
+    $matches = @($entries | Where-Object { $_ -match $Pattern })
+    if ($matches.Count -eq 0) {
+        throw "Missing ${Label}: $Pattern in $bsaPath"
+    }
+    Write-ProofLine "OK BSA ${Label}: $($matches[0])"
+}
+
+Assert-FileContains $SkyCpp "attachSkyNodeIfUnattached" "sky renderer preserves existing FNV wrapper parent"
+Assert-FileContains $SkyCpp "FNV camera-relative sky mesh" "sky renderer creates camera-relative FNV wrapper"
+Assert-FileContains $SkyCpp "hasConfiguredFalloutSkyModels" "sky renderer detects configured FNV sky models"
+Assert-FileContains $SkyCpp "FNV/ESM4: sky shader mode" "sky renderer emits shader mode proof"
+Assert-FileContains $SkyCpp "fixed-function-protected" "FNV flat sky protects authored fixed-function materials"
+Assert-FileContains $SkyCpp "native sky material" "FNV flat sky skips Morrowind sky updaters"
+Assert-FileContains $ShaderSettings "mForceShaders" "shader settings expose explicit force-shaders key"
+Assert-FileContains $SettingsDefault "force shaders = false" "default shader force flag is explicit off"
+Assert-FileContains $SkyUtilCpp "enabled FNV sun billboard using texture" "FNV sky enables FNV sun billboard"
+Assert-FileContains $SkyUtilCpp "enabled FNV sun glare using texture" "FNV sky enables FNV sun glare"
+Assert-FileContains $SkyUtilCpp "enabled FNV " "FNV sky emits FNV moon billboard prefix"
+Assert-FileContains $SkyUtilCpp " moon billboard using texture" "FNV sky enables FNV moon billboards"
+Assert-FileNotContains $SkyUtilCpp "disabled OpenMW sun billboard for Fallout sky content" "stale FNV sun disable source path"
+Assert-FileNotContains $SkyUtilCpp " moon billboard for Fallout sky content" "stale FNV moon disable source path"
+Assert-FileContains $SkyFrag "premultiplied alpha blending" "moon shader keeps premultiplied blend path"
+Assert-FileContains $SkyPasses "#define PASS_SUN 4" "sky shader pass table keeps sun pass id"
+Assert-FileContains $SkyPasses "#define PASS_MOON 3" "sky shader pass table keeps moon pass id"
+Assert-FileNotContains $SkyFrag "vec4 blendedLayer = phase \* moonBlend" "downstream legacy moon shader blend"
+Assert-FileContains $FlatProofScript "OPENMW_FNV_SKY_MISSING_LOG" "flat proof enables sky diagnostics"
+Assert-FileContains $FlatScript "force shaders = false" "FNV flat explicitly disables forced sky shader"
+Assert-FileContains $VrDeployScript "force shaders = true" "FNV VR explicitly keeps forced shader path"
+foreach ($scriptPath in @($FlatScript, $VrDeployScript)) {
+    Assert-FileContains $scriptPath "skyatmosphere = meshes/sky/atmosphere.nif" "FNV atmosphere setting in $(Split-Path $scriptPath -Leaf)"
+    Assert-FileContains $scriptPath "skyclouds = meshes/sky/clouds.nif" "FNV cloud setting in $(Split-Path $scriptPath -Leaf)"
+    Assert-FileContains $scriptPath "skynight01 = meshes/sky/stars.nif" "FNV stars setting in $(Split-Path $scriptPath -Leaf)"
+    Assert-FileContains $scriptPath "skynight02 = meshes/sky/stars.nif" "FNV alternate stars setting in $(Split-Path $scriptPath -Leaf)"
+}
+
+Assert-BsaContains "Fallout - Meshes.bsa" "meshes[\\/]+sky[\\/]+atmosphere\.nif$" "FNV atmosphere mesh entry"
+Assert-BsaContains "Fallout - Meshes.bsa" "meshes[\\/]+sky[\\/]+clouds\.nif$" "FNV cloud mesh entry"
+Assert-BsaContains "Fallout - Meshes.bsa" "meshes[\\/]+sky[\\/]+stars\.nif$" "FNV stars mesh entry"
+Assert-BsaContains "Fallout - Textures2.bsa" "textures[\\/]+sky[\\/]+sun\.dds$" "FNV sun texture entry"
+Assert-BsaContains "Fallout - Textures2.bsa" "textures[\\/]+sky[\\/]+skymoonfull\.dds$" "FNV moon texture entry"
+Assert-BsaContains "Fallout - Textures2.bsa" "textures[\\/]+sky[\\/]+nv_sunglare\.dds$" "FNV sunglare texture entry"
+
+$requiredLogPatterns = @(
+    "FNV/ESM4: sky shader mode forceShaders=0 falloutSkyModels=1 program=fixed-function-protected",
+    "FNV/ESM4: native sky material day atmosphere \(meshes/sky/atmosphere\.nif\) nativeMaterial=1 skyProgramBypass=1 skyPass=none updatersSkipped=1",
+    "FNV/ESM4: native sky material night atmosphere \(meshes/sky/stars\.nif\) nativeMaterial=1 skyProgramBypass=1 skyPass=none updatersSkipped=1",
+    "FNV/ESM4: native sky material clouds \(meshes/sky/clouds\.nif\) nativeMaterial=1 skyProgramBypass=1 skyPass=none updatersSkipped=1",
+    "FNV/ESM4: native sky material next clouds \(meshes/sky/clouds\.nif\) nativeMaterial=1 skyProgramBypass=1 skyPass=none updatersSkipped=1",
+    "FNV/ESM4: wrapped sky mesh day atmosphere \(meshes/sky/atmosphere\.nif\)",
+    "FNV/ESM4: wrapped sky mesh night atmosphere \(meshes/sky/stars\.nif\)",
+    "FNV/ESM4: wrapped sky mesh clouds \(meshes/sky/clouds\.nif\)",
+    "FNV/ESM4: wrapped sky mesh next clouds \(meshes/sky/clouds\.nif\)",
+    "FNV/ESM4: enabled FNV sun billboard using texture textures/sky/sun\.dds",
+    "FNV/ESM4: enabled FNV sun glare using texture textures/sky/nv_sunglare\.dds",
+    "FNV/ESM4: enabled FNV Masser moon billboard using texture textures/sky/masser_full\.dds",
+    "FNV/ESM4: enabled FNV Secunda moon billboard using texture textures/sky/skymoonfull\.dds"
+)
+
+$flatProofRoot = Join-Path $ProofRoot "fnv-flat-proof"
+$before = @()
+if (Test-Path -LiteralPath $flatProofRoot) {
+    $before = @(Get-ChildItem -LiteralPath $flatProofRoot -Directory -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName })
+}
+
+& $FlatProofScript `
+    -FnvData $FnvData `
+    -VcpkgRoot $VcpkgRoot `
+    -ProofRoot $ProofRoot `
+    -RunSeconds $RunSeconds `
+    -NoSound `
+    -RequireLogPattern $requiredLogPatterns
+
+$after = @(Get-ChildItem -LiteralPath $flatProofRoot -Directory -ErrorAction SilentlyContinue |
+    Sort-Object LastWriteTime -Descending)
+$latestFlatProof = $after | Where-Object { $before -notcontains $_.FullName } | Select-Object -First 1
+if ($null -eq $latestFlatProof) {
+    $latestFlatProof = $after | Select-Object -First 1
+}
+if ($null -eq $latestFlatProof) {
+    throw "No FNV flat proof directory was produced"
+}
+
+$flatOpenMwLog = Join-Path $latestFlatProof.FullName "openmw.log"
+$flatSettings = Join-Path $latestFlatProof.FullName "settings.cfg"
+$flatOpenMwCfg = Join-Path $latestFlatProof.FullName "openmw.cfg"
+$flatSummary = Join-Path $latestFlatProof.FullName "summary.txt"
+Write-ProofLine ""
+Write-ProofLine "Flat proof: $($latestFlatProof.FullName)"
+Write-ProofLine "OpenMW log: $flatOpenMwLog"
+Write-ProofLine "Settings: $flatSettings"
+
+Assert-FileContains $flatSummary "^Runtime mode: pc-flat$" "flat proof runtime mode"
+Assert-FileContains $flatSummary "^IncludeFnvrPlugin: False$" "flat proof excludes FNVR/PCVR layer"
+Assert-FileContains $flatOpenMwCfg "^fallback-archive=Fallout - Meshes\.bsa$" "generated flat meshes BSA"
+Assert-FileContains $flatOpenMwCfg "^fallback-archive=Fallout - Textures2\.bsa$" "generated flat sky texture BSA"
+Assert-FileContains $flatSettings "^skyatmosphere = meshes/sky/atmosphere\.nif$" "generated flat atmosphere setting"
+Assert-FileContains $flatSettings "^skyclouds = meshes/sky/clouds\.nif$" "generated flat cloud setting"
+Assert-FileContains $flatSettings "^skynight01 = meshes/sky/stars\.nif$" "generated flat stars setting"
+Assert-FileContains $flatSettings "^skynight02 = meshes/sky/stars\.nif$" "generated flat alternate stars setting"
+Assert-FileContains $flatSettings "^force shaders = false$" "generated flat force-shaders setting"
+Assert-FileNotContains $flatSettings "^force shaders = true$" "generated flat VR shader mode"
+Assert-FileContains $flatSettings "^sky blending = true$" "generated flat sky blending"
+
+Assert-FileNotContains $flatOpenMwLog "meshes/sky_atmosphere\.nif|meshes/sky_clouds_01\.nif|meshes/sky_night_01\.nif" "legacy OpenMW sky mesh path"
+Assert-FileNotContains $flatOpenMwLog "marker_error|Failed to compile|failed to compile|linking failed|GLSL.*error|shader.*error" "sky shader/blocker line"
+Assert-FileContains $flatOpenMwLog "Adding BSA archive .*Fallout - Meshes\.bsa" "runtime registered meshes BSA"
+Assert-FileContains $flatOpenMwLog "Adding BSA archive .*Fallout - Textures2\.bsa" "runtime registered textures2 BSA"
+Assert-FileContains $flatOpenMwLog "FNV/ESM4: sky shader mode forceShaders=0 falloutSkyModels=1 program=fixed-function-protected" "runtime FNV flat sky shader mode"
+Assert-FileContains $flatOpenMwLog "FNV/ESM4: native sky material day atmosphere \(meshes/sky/atmosphere\.nif\) nativeMaterial=1 skyProgramBypass=1 skyPass=none updatersSkipped=1" "runtime native FNV atmosphere material"
+Assert-FileContains $flatOpenMwLog "FNV/ESM4: native sky material clouds \(meshes/sky/clouds\.nif\) nativeMaterial=1 skyProgramBypass=1 skyPass=none updatersSkipped=1" "runtime native FNV clouds material"
+Assert-FileContains $flatOpenMwLog "FNV/ESM4: native sky material next clouds \(meshes/sky/clouds\.nif\) nativeMaterial=1 skyProgramBypass=1 skyPass=none updatersSkipped=1" "runtime native FNV next clouds material"
+Assert-FileContains $flatOpenMwLog "FNV/ESM4: native sky material night atmosphere \(meshes/sky/stars\.nif\) nativeMaterial=1 skyProgramBypass=1 skyPass=none updatersSkipped=1" "runtime native FNV stars material"
+Assert-FileContains $flatOpenMwLog "FNV/ESM4: wrapped sky mesh day atmosphere \(meshes/sky/atmosphere\.nif\)" "runtime wrapped FNV atmosphere"
+Assert-FileContains $flatOpenMwLog "FNV/ESM4: wrapped sky mesh clouds \(meshes/sky/clouds\.nif\)" "runtime wrapped FNV clouds"
+Assert-FileContains $flatOpenMwLog "FNV/ESM4: wrapped sky mesh next clouds \(meshes/sky/clouds\.nif\)" "runtime wrapped FNV next clouds"
+Assert-FileContains $flatOpenMwLog "FNV/ESM4: wrapped sky mesh night atmosphere \(meshes/sky/stars\.nif\)" "runtime wrapped FNV stars"
+Assert-FileContains $flatOpenMwLog "FNV/ESM4: enabled FNV sun billboard using texture textures/sky/sun\.dds" "runtime FNV sun texture"
+Assert-FileContains $flatOpenMwLog "FNV/ESM4: enabled FNV sun glare using texture textures/sky/nv_sunglare\.dds" "runtime FNV sun glare texture"
+Assert-FileContains $flatOpenMwLog "FNV/ESM4: enabled FNV Masser moon billboard using texture textures/sky/masser_full\.dds" "runtime FNV Masser texture"
+Assert-FileContains $flatOpenMwLog "FNV/ESM4: enabled FNV Secunda moon billboard using texture textures/sky/skymoonfull\.dds" "runtime FNV Secunda texture"
+Assert-FileNotContains $flatOpenMwLog "FNV/ESM4: disabled OpenMW sun billboard|FNV/ESM4: disabled OpenMW .* moon billboard" "stale FNV sun/moon disable path"
+
+$result = [ordered]@{
+    stamp = $Stamp
+    repoRoot = $RepoRoot
+    fnvData = $FnvData
+    proofDir = $ProofDir
+    flatProofDir = $latestFlatProof.FullName
+    classification = "runtime-supported"
+    checked = @(
+        "explicit FNV sky model settings",
+        "camera-relative wrapped FNV atmosphere/cloud/star meshes",
+        "FNV atmosphere/cloud/star meshes keep native authored materials in PC flat",
+        "FNV sun/moon billboard path uses Fallout sky textures",
+        "FNV flat shader mode protects authored sky materials",
+        "FNV sky meshes and sun/moon textures present in retail BSA inventory",
+        "sky shader pass ids and premultiplied moon blend guarded",
+        "no legacy OpenMW sky mesh fallback",
+        "no shader/blocker log lines"
+    )
+}
+$resultPath = Join-Path $ProofDir "fnv-sky-runtime-contract.json"
+$result | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $resultPath -Encoding UTF8
+
+Write-ProofLine ""
+Write-ProofLine "Contract JSON: $resultPath"
+Write-ProofLine "FNV sky runtime contract PASS"

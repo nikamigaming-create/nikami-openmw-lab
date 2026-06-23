@@ -11,6 +11,8 @@ param(
     [int]$BootstrapHour = 10,
     [int]$MaxRunSeconds = 0,
     [switch]$Detached,
+    [switch]$WithMenu,
+    [switch]$IncludeFnvrPlugin,
     [switch]$DisableTerrainTrace,
     [switch]$NoSound
 )
@@ -19,6 +21,7 @@ $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
 $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "../..")).Path
+. (Join-Path $PSScriptRoot "fnv-runtime-settings.ps1")
 $BuildPath = Join-Path $RepoRoot $BuildDir
 
 if ([string]::IsNullOrWhiteSpace($FnvData)) {
@@ -59,6 +62,9 @@ if (!(Test-Path -LiteralPath $BuildConfig)) {
 if (!(Test-Path -LiteralPath $FnvData)) {
     throw "Missing FNV data directory: $FnvData"
 }
+
+$ViewingDistance = Get-NikamiFnvViewingDistance -FnvData $FnvData
+Write-Host "Using FNV viewing distance from harvested fBlockLoadDistance: $ViewingDistance"
 
 function Test-FnvOverlayDataPath([string]$Path) {
     if ([string]::IsNullOrWhiteSpace($Path) -or !(Test-Path -LiteralPath $Path)) {
@@ -171,6 +177,15 @@ if (![string]::IsNullOrWhiteSpace($FnvConfigData)) {
     $OptionalDataLine = "data=$($FnvConfigData.Replace("\", "/"))"
 }
 
+$FnvrContentLine = ""
+if ($IncludeFnvrPlugin) {
+    $FnvrPlugin = Join-Path $FnvData "FNVR.esp"
+    if (!(Test-Path -LiteralPath $FnvrPlugin)) {
+        throw "Requested -IncludeFnvrPlugin but FNVR.esp is missing: $FnvrPlugin"
+    }
+    $FnvrContentLine = "content=FNVR.esp"
+}
+
 $ConfigText = @"
 replace=config
 replace=data-local
@@ -182,8 +197,8 @@ resources=$($Resources.Replace("\", "/"))
 user-data=$($RuntimeDir.Replace("\", "/"))
 data-local=$($DataLocalDir.Replace("\", "/"))
 data=$((Join-Path $Resources "vfs-mw").Replace("\", "/"))
-$OptionalDataLine
 data=$($FnvData.Replace("\", "/"))
+$OptionalDataLine
 
 $FnvFallbackText
 
@@ -219,7 +234,7 @@ content=CaravanPack.esm
 content=ClassicPack.esm
 content=MercenaryPack.esm
 content=TribalPack.esm
-content=FNVR.esp
+$FnvrContentLine
 
 encoding=win1252
 
@@ -230,7 +245,7 @@ enable=false
 $SettingsText = @"
 [Camera]
 field of view = 91
-viewing distance = 10000
+viewing distance = $ViewingDistance
 
 [Fog]
 sky blending start = 0.8
@@ -246,8 +261,13 @@ texture min filter = linear
 
 [Models]
 load unsupported nif files = true
+skyatmosphere = meshes/sky/atmosphere.nif
+skyclouds = meshes/sky/clouds.nif
+skynight01 = meshes/sky/stars.nif
+skynight02 = meshes/sky/stars.nif
 
 [Shaders]
+force shaders = false
 apply lighting to environment maps = true
 auto use object normal maps = true
 auto use object specular maps = true
@@ -287,7 +307,10 @@ stats hidden = true
 Set-Content -LiteralPath $ConfigPath -Value $ConfigText -Encoding ASCII
 Set-Content -LiteralPath $SettingsPath -Value $SettingsText -Encoding ASCII
 
-$OpenMwArgs = @("--replace", "config", "--config", $ConfigDir, "--user-data", $RuntimeDir, "--skip-menu", "--start", $StartCell, "--no-grab")
+$OpenMwArgs = @("--replace", "config", "--config", $ConfigDir, "--user-data", $RuntimeDir, "--no-grab")
+if (!$WithMenu) {
+    $OpenMwArgs += @("--skip-menu", "--start", $StartCell)
+}
 if ($NoSound) {
     $OpenMwArgs += "--no-sound"
 }

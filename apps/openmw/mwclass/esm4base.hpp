@@ -1,10 +1,17 @@
 #ifndef GAME_MWCLASS_ESM4BASE_H
 #define GAME_MWCLASS_ESM4BASE_H
 
+#include <concepts>
+#include <memory>
+#include <type_traits>
+
 #include <components/esm4/inventory.hpp>
+#include <components/esm4/loadammo.hpp>
+#include <components/esm4/loaddoor.hpp>
 #include <components/esm4/loadscol.hpp>
 #include <components/esm4/loadstat.hpp>
 #include <components/esm4/loadtree.hpp>
+#include <components/esm4/loadweap.hpp>
 #include <components/misc/strings/algorithm.hpp>
 
 #include "../mwbase/environment.hpp"
@@ -14,6 +21,7 @@
 #include "../mwworld/cellstore.hpp"
 #include "../mwworld/class.hpp"
 #include "../mwworld/esmstore.hpp"
+#include "../mwworld/inventorystore.hpp"
 #include "../mwworld/registeredclass.hpp"
 
 #include "classmodel.hpp"
@@ -68,6 +76,14 @@ namespace MWClass
         {
             return Misc::StringUtils::ciEndsWith(model, "lod.nif");
         }
+
+        template <typename T>
+        concept HasIcon = requires(const T& record) { record.mIcon; };
+
+        template <typename T>
+        concept HasEnchantmentFormId = requires(const T& record) {
+            { record.mEnchantment } -> std::convertible_to<ESM::FormId>;
+        };
     }
 
     // Base for many ESM4 Classes
@@ -184,7 +200,59 @@ namespace MWClass
             return ESM4Impl::getToolTipInfo(getName(ptr), count);
         }
 
+        std::pair<std::vector<int>, bool> getEquipmentSlots(const MWWorld::ConstPtr& ptr) const override
+        {
+            if constexpr (std::is_same_v<Record, ESM4::Ammunition>)
+                return { { int(MWWorld::InventoryStore::Slot_Ammunition) }, true };
+            else if constexpr (std::is_same_v<Record, ESM4::Weapon>)
+                return { { int(MWWorld::InventoryStore::Slot_CarriedRight) }, false };
+            else
+                return ESM4Base<Record>::getEquipmentSlots(ptr);
+        }
+
+        const std::string& getInventoryIcon(const MWWorld::ConstPtr& ptr) const override
+        {
+            static const std::string empty;
+            if constexpr (ESM4Impl::HasIcon<Record>)
+                return ptr.get<Record>()->mBase->mIcon;
+            else
+                return empty;
+        }
+
+        ESM::RefId getEnchantment(const MWWorld::ConstPtr& ptr) const override
+        {
+            if constexpr (ESM4Impl::HasEnchantmentFormId<Record>)
+                return ESM::RefId(ptr.get<Record>()->mBase->mEnchantment);
+            else
+                return {};
+        }
+
         bool hasToolTip(const MWWorld::ConstPtr& ptr) const override { return !getName(ptr).empty(); }
+    };
+
+    class ESM4Door final : public MWWorld::RegisteredClass<ESM4Door, ESM4Base<ESM4::Door>>
+    {
+        friend MWWorld::RegisteredClass<ESM4Door, ESM4Base<ESM4::Door>>;
+
+        ESM4Door()
+            : MWWorld::RegisteredClass<ESM4Door, ESM4Base<ESM4::Door>>(ESM4::Door::sRecordId)
+        {
+        }
+
+    public:
+        std::string_view getName(const MWWorld::ConstPtr& ptr) const override
+        {
+            return ptr.get<ESM4::Door>()->mBase->mFullName;
+        }
+
+        MWGui::ToolTipInfo getToolTipInfo(const MWWorld::ConstPtr& ptr, int count) const override
+        {
+            return ESM4Impl::getToolTipInfo(getName(ptr), count);
+        }
+
+        bool hasToolTip(const MWWorld::ConstPtr& ptr) const override { return !getName(ptr).empty(); }
+        bool allowTelekinesis(const MWWorld::ConstPtr& ptr) const override;
+        std::unique_ptr<MWWorld::Action> activate(const MWWorld::Ptr& ptr, const MWWorld::Ptr& actor) const override;
     };
 }
 

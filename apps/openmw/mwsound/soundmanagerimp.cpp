@@ -1,9 +1,11 @@
 #include "soundmanagerimp.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <istream>
+#include <iterator>
 #include <map>
 #include <numeric>
 #include <stdexcept>
@@ -107,6 +109,22 @@ namespace MWSound
 
         return volume;
     }
+
+        template <class T>
+        bool readBinary(std::istream& stream, T& value)
+        {
+            stream.read(reinterpret_cast<char*>(&value), sizeof(T));
+            return stream.gcount() == static_cast<std::streamsize>(sizeof(T));
+        }
+
+        std::vector<unsigned char> readRemainingBytes(std::istream& stream)
+        {
+            std::vector<unsigned char> data;
+            for (std::istreambuf_iterator<char> it(stream), end; it != end; ++it)
+                data.push_back(static_cast<unsigned char>(*it));
+            return data;
+        }
+
 
 #ifdef OPENMW_ANDROID_DISABLE_FFMPEG
         class AndroidWavDecoder final : public SoundDecoder
@@ -355,6 +373,100 @@ namespace MWSound
         return nullptr;
     }
 
+    std::shared_ptr<const SoundManager::LipSyncData> SoundManager::loadVoiceLipSync(
+        VFS::Path::NormalizedView voicefile) const
+    {
+        static constexpr VFS::Path::ExtensionView lip("lip");
+        static std::map<std::string, std::shared_ptr<const LipSyncData>> sCache;
+
+        VFS::Path::Normalized lipPath = Misc::ResourceHelpers::correctSoundPath(voicefile, *mVFS);
+        if (!lipPath.changeExtension(lip))
+            return nullptr;
+
+        const std::string cacheKey = lipPath.value();
+        if (const auto cached = sCache.find(cacheKey); cached != sCache.end())
+            return cached->second;
+
+        if (!mVFS->exists(lipPath))
+        {
+            sCache.emplace(cacheKey, nullptr);
+            return nullptr;
+        }
+
+        try
+        {
+            Files::IStreamPtr stream = mVFS->get(lipPath);
+            std::uint32_t version = 0;
+            std::uint32_t durationMilliseconds = 0;
+            std::uint32_t trackCount = 0;
+            std::uint16_t keyCount = 0;
+            std::uint16_t schema = 0;
+            if (!readBinary(*stream, version) || !readBinary(*stream, durationMilliseconds)
+                || !readBinary(*stream, trackCount) || !readBinary(*stream, keyCount) || !readBinary(*stream, schema))
+                throw std::runtime_error("truncated LIP header");
+
+            if (version != 1 || durationMilliseconds == 0 || durationMilliseconds > 20u * 60u * 1000u
+                || trackCount == 0 || keyCount == 0)
+                throw std::runtime_error("unsupported LIP header");
+
+            const std::vector<unsigned char> payload = readRemainingBytes(*stream);
+            if (payload.empty())
+                throw std::runtime_error("empty LIP payload");
+
+            auto lipSync = std::make_shared<LipSyncData>();
+            lipSync->mPath = lipPath;
+            lipSync->mDuration = static_cast<float>(durationMilliseconds) / 1000.f;
+
+            const std::size_t frameCount = std::clamp<std::size_t>(
+                static_cast<std::size_t>(std::ceil(lipSync->mDuration * 30.f)) + 1, 2, 1800);
+            std::vector<float> raw(frameCount, 0.f);
+            float maxRaw = 0.f;
+            for (std::size_t frame = 0; frame < frameCount; ++frame)
+            {
+                const std::size_t begin = frame * payload.size() / frameCount;
+                const std::size_t end = std::max(begin + 1, (frame + 1) * payload.size() / frameCount);
+                float sum = 0.f;
+                std::size_t samples = 0;
+                for (std::size_t i = begin; i < end && i < payload.size(); ++i)
+                {
+                    const unsigned char current = payload[i];
+                    const unsigned char previous = i > 0 ? payload[i - 1] : current;
+                    sum += std::abs(static_cast<int>(current) - static_cast<int>(previous)) / 255.f;
+                    ++samples;
+                }
+                raw[frame] = samples > 0 ? sum / static_cast<float>(samples) : 0.f;
+                maxRaw = std::max(maxRaw, raw[frame]);
+            }
+
+            lipSync->mFrames.reserve(frameCount);
+            for (std::size_t frame = 0; frame < frameCount; ++frame)
+            {
+                const float previous = frame > 0 ? raw[frame - 1] : raw[frame];
+                const float next = frame + 1 < frameCount ? raw[frame + 1] : raw[frame];
+                const float smoothed = (previous + raw[frame] * 2.f + next) * 0.25f;
+                const float normalized = maxRaw > 0.f ? smoothed / maxRaw : 0.f;
+                const float value = normalized < 0.08f ? 0.f : std::clamp(normalized * 0.9f, 0.f, 1.f);
+                const float time = lipSync->mDuration * static_cast<float>(frame) / static_cast<float>(frameCount - 1);
+                lipSync->mFrames.push_back({ time, value });
+            }
+            lipSync->mFrames.front().mValue = 0.f;
+            lipSync->mFrames.back().mValue = 0.f;
+
+            Log(Debug::Info) << "FNV/ESM4 diag: loaded LIP sync " << lipPath << " duration="
+                             << lipSync->mDuration << "s headerKeys=" << keyCount << " trackCount=" << trackCount
+                             << " schema=" << schema << " payloadBytes=" << payload.size()
+                             << " envelopeFrames=" << lipSync->mFrames.size();
+            sCache.emplace(cacheKey, lipSync);
+            return lipSync;
+        }
+        catch (const std::exception& e)
+        {
+            Log(Debug::Warning) << "FNV/ESM4 diag: failed to load LIP sync " << lipPath << ": " << e.what();
+            sCache.emplace(cacheKey, nullptr);
+            return nullptr;
+        }
+    }
+
     SoundPtr SoundManager::getSoundRef()
     {
         return mSounds.get();
@@ -487,6 +599,7 @@ namespace MWSound
         DecoderPtr decoder = loadVoice(filename);
         if (!decoder)
             return;
+        std::shared_ptr<const LipSyncData> lipSync = loadVoiceLipSync(filename);
 
         MWBase::World* world = MWBase::Environment::get().getWorld();
         const osg::Vec3f pos = world->getActorHeadTransform(ptr).getTrans();
@@ -496,7 +609,7 @@ namespace MWSound
         if (!sound)
             return;
 
-        mSaySoundsQueue.emplace(ptr.mRef, SaySound{ ptr.mCell, std::move(sound) });
+        mSaySoundsQueue.emplace(ptr.mRef, SaySound{ ptr.mCell, std::move(sound), std::move(lipSync) });
     }
 
     float SoundManager::getSaySoundLoudness(const MWWorld::ConstPtr& ptr) const
@@ -511,6 +624,43 @@ namespace MWSound
         return 0.0f;
     }
 
+    float SoundManager::getSaySoundLipValue(const SaySound& saySound) const
+    {
+        if (!saySound.mLipSync || saySound.mLipSync->mFrames.empty() || !saySound.mStream)
+            return 0.f;
+
+        const float offset = mOutput->getStreamOffset(saySound.mStream.get());
+        const LipSyncData& lipSync = *saySound.mLipSync;
+        if (offset < 0.f || offset > lipSync.mDuration)
+            return 0.f;
+
+        const auto upper = std::upper_bound(lipSync.mFrames.begin(), lipSync.mFrames.end(), offset,
+            [](float time, const LipSyncFrame& frame) { return time < frame.mTime; });
+        if (upper == lipSync.mFrames.begin())
+            return upper->mValue;
+        if (upper == lipSync.mFrames.end())
+            return lipSync.mFrames.back().mValue;
+
+        const LipSyncFrame& next = *upper;
+        const LipSyncFrame& previous = *(upper - 1);
+        const float duration = std::max(next.mTime - previous.mTime, 0.001f);
+        const float alpha = std::clamp((offset - previous.mTime) / duration, 0.f, 1.f);
+        return previous.mValue + (next.mValue - previous.mValue) * alpha;
+    }
+
+    float SoundManager::getSaySoundLipValue(const MWWorld::ConstPtr& ptr) const
+    {
+        SaySoundMap::const_iterator snditer = mActiveSaySounds.find(ptr.mRef);
+        if (snditer != mActiveSaySounds.end())
+            return getSaySoundLipValue(snditer->second);
+
+        snditer = mSaySoundsQueue.find(ptr.mRef);
+        if (snditer != mSaySoundsQueue.end())
+            return getSaySoundLipValue(snditer->second);
+
+        return 0.f;
+    }
+
     void SoundManager::say(VFS::Path::NormalizedView filename)
     {
         if (!mOutput->isInitialized())
@@ -519,13 +669,14 @@ namespace MWSound
         DecoderPtr decoder = loadVoice(filename);
         if (!decoder)
             return;
+        std::shared_ptr<const LipSyncData> lipSync = loadVoiceLipSync(filename);
 
         stopSay(MWWorld::ConstPtr());
         StreamPtr sound = playVoice(std::move(decoder), osg::Vec3f(), true);
         if (!sound)
             return;
 
-        mActiveSaySounds.emplace(nullptr, SaySound{ nullptr, std::move(sound) });
+        mActiveSaySounds.emplace(nullptr, SaySound{ nullptr, std::move(sound), std::move(lipSync) });
     }
 
     bool SoundManager::sayDone(const MWWorld::ConstPtr& ptr) const

@@ -6,6 +6,7 @@
 #include <string>
 #include <unordered_map>
 #include <utility>
+#include <vector>
 
 #include <components/fallback/fallback.hpp>
 #include <components/misc/objectpool.hpp>
@@ -72,10 +73,24 @@ namespace MWSound
         typedef std::map<const MWWorld::LiveCellRefBase*, ActiveSound> SoundMap;
         SoundMap mActiveSounds;
 
+        struct LipSyncFrame
+        {
+            float mTime = 0.f;
+            float mValue = 0.f;
+        };
+
+        struct LipSyncData
+        {
+            VFS::Path::Normalized mPath;
+            float mDuration = 0.f;
+            std::vector<LipSyncFrame> mFrames;
+        };
+
         struct SaySound
         {
             const MWWorld::CellStore* mCell;
             StreamPtr mStream;
+            std::shared_ptr<const LipSyncData> mLipSync;
         };
 
         typedef std::map<const MWWorld::LiveCellRefBase*, SaySound> SaySoundMap;
@@ -114,6 +129,8 @@ namespace MWSound
 
         // returns a decoder to start streaming, or nullptr if the sound was not found
         DecoderPtr loadVoice(VFS::Path::NormalizedView voicefile);
+        std::shared_ptr<const LipSyncData> loadVoiceLipSync(VFS::Path::NormalizedView voicefile) const;
+        float getSaySoundLipValue(const SaySound& sound) const;
 
         SoundPtr getSoundRef();
         StreamPtr getStreamRef();
@@ -202,6 +219,9 @@ namespace MWSound
         ///< Check the currently playing say sound for this actor
         /// and get an average loudness value (scale [0,1]) at the current time position.
         /// If the actor is not saying anything, returns 0.
+
+        float getSaySoundLipValue(const MWWorld::ConstPtr& reference) const override;
+        ///< Get current LIP sidecar mouth value for this actor
 
         Stream* playTrack(const DecoderPtr& decoder, Type type) override;
         ///< Play a 2D audio track, using a custom decoder

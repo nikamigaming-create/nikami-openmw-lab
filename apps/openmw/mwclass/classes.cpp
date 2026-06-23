@@ -83,7 +83,7 @@ namespace MWClass
         ESM4Named<ESM4::Clothing>::registerSelf();
         ESM4Creature::registerSelf();
         ESM4Named<ESM4::Container>::registerSelf();
-        ESM4Named<ESM4::Door>::registerSelf();
+        ESM4Door::registerSelf();
         ESM4Named<ESM4::Flora>::registerSelf();
         ESM4Named<ESM4::Furniture>::registerSelf();
         ESM4Named<ESM4::Ingredient>::registerSelf();

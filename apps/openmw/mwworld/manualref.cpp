@@ -1,6 +1,11 @@
 #include "manualref.hpp"
 #include <components/esm/records.hpp>
+#include <components/esm4/loadalch.hpp>
+#include <components/esm4/loadammo.hpp>
+#include <components/esm4/loadarmo.hpp>
+#include <components/esm4/loadmisc.hpp>
 #include <components/esm4/loadstat.hpp>
+#include <components/esm4/loadweap.hpp>
 
 #include "esmstore.hpp"
 
@@ -75,10 +80,20 @@ namespace
                 return func(store.get<ESM::Weapon>());
             case ESM::REC_BODY:
                 return func(store.get<ESM::BodyPart>());
+            case ESM::REC_ALCH4:
+                return func(store.get<ESM4::Potion>());
+            case ESM::REC_AMMO4:
+                return func(store.get<ESM4::Ammunition>());
+            case ESM::REC_ARMO4:
+                return func(store.get<ESM4::Armor>());
+            case ESM::REC_MISC4:
+                return func(store.get<ESM4::MiscItem>());
             case ESM::REC_STAT4:
                 return func(store.get<ESM4::Static>());
             case ESM::REC_TERM4:
                 return func(store.get<ESM4::Terminal>());
+            case ESM::REC_WEAP4:
+                return func(store.get<ESM4::Weapon>());
             case 0:
                 throw std::logic_error(
                     "failed to create manual cell ref for " + name.toDebugString() + " (unknown ID)");
