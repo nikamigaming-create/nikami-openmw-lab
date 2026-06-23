@@ -61,6 +61,21 @@ namespace MWBase
         virtual int getJournalIndex(const ESM::RefId& id) const = 0;
         ///< Get the journal index.
 
+        virtual void setQuestObjectiveDisplayed(const ESM::RefId& id, int objective, bool displayed) = 0;
+        ///< Set Fallout-style quest objective display state.
+
+        virtual bool getQuestObjectiveDisplayed(const ESM::RefId& id, int objective) const = 0;
+        ///< Get Fallout-style quest objective display state.
+
+        virtual void setQuestObjectiveCompleted(const ESM::RefId& id, int objective, bool completed) = 0;
+        ///< Set Fallout-style quest objective completion state.
+
+        virtual bool getQuestObjectiveCompleted(const ESM::RefId& id, int objective) const = 0;
+        ///< Get Fallout-style quest objective completion state.
+
+        virtual size_t countQuestObjectiveStates() const = 0;
+        ///< Count objective state rows currently stored in the runtime journal.
+
         virtual void addTopic(const ESM::RefId& topicId, const ESM::RefId& infoId, const MWWorld::Ptr& actor) = 0;
         /// \note topicId must be lowercase
 

@@ -76,6 +76,7 @@ namespace MWDialogue
         mJournal.clear();
         mQuests.clear();
         mTopics.clear();
+        mQuestObjectiveStates.clear();
     }
 
     void Journal::addEntry(const ESM::RefId& id, int index, const MWWorld::Ptr& actor)
@@ -149,6 +150,30 @@ namespace MWDialogue
             return 0;
 
         return iter->second.getIndex();
+    }
+
+    void Journal::setQuestObjectiveDisplayed(const ESM::RefId& id, int objective, bool displayed)
+    {
+        QuestObjectiveState& state = mQuestObjectiveStates[QuestObjectiveKey(id, objective)];
+        state.mDisplayed = displayed;
+    }
+
+    bool Journal::getQuestObjectiveDisplayed(const ESM::RefId& id, int objective) const
+    {
+        const auto it = mQuestObjectiveStates.find(QuestObjectiveKey(id, objective));
+        return it != mQuestObjectiveStates.end() && it->second.mDisplayed;
+    }
+
+    void Journal::setQuestObjectiveCompleted(const ESM::RefId& id, int objective, bool completed)
+    {
+        QuestObjectiveState& state = mQuestObjectiveStates[QuestObjectiveKey(id, objective)];
+        state.mCompleted = completed;
+    }
+
+    bool Journal::getQuestObjectiveCompleted(const ESM::RefId& id, int objective) const
+    {
+        const auto it = mQuestObjectiveStates.find(QuestObjectiveKey(id, objective));
+        return it != mQuestObjectiveStates.end() && it->second.mCompleted;
     }
 
     size_t Journal::countSavedGameRecords() const

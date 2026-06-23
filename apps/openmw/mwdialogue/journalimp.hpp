@@ -10,9 +10,18 @@ namespace MWDialogue
     /// \brief The player's journal
     class Journal : public MWBase::Journal
     {
+        struct QuestObjectiveState
+        {
+            bool mDisplayed = false;
+            bool mCompleted = false;
+        };
+
+        using QuestObjectiveKey = std::pair<ESM::RefId, int>;
+
         TEntryContainer mJournal;
         TQuestContainer mQuests;
         TTopicContainer mTopics;
+        std::map<QuestObjectiveKey, QuestObjectiveState> mQuestObjectiveStates;
 
     private:
         Topic& getTopic(const ESM::RefId& id);
@@ -39,6 +48,16 @@ namespace MWDialogue
 
         int getJournalIndex(const ESM::RefId& id) const override;
         ///< Get the journal index.
+
+        void setQuestObjectiveDisplayed(const ESM::RefId& id, int objective, bool displayed) override;
+
+        bool getQuestObjectiveDisplayed(const ESM::RefId& id, int objective) const override;
+
+        void setQuestObjectiveCompleted(const ESM::RefId& id, int objective, bool completed) override;
+
+        bool getQuestObjectiveCompleted(const ESM::RefId& id, int objective) const override;
+
+        size_t countQuestObjectiveStates() const override { return mQuestObjectiveStates.size(); }
 
         void addTopic(const ESM::RefId& topicId, const ESM::RefId& infoId, const MWWorld::Ptr& actor) override;
         /// \note topicId must be lowercase

@@ -1,7 +1,10 @@
 #include "types.hpp"
 
+#include <vector>
+
 #include <components/esm3/loadbsgn.hpp>
 #include <components/esm3/loadfact.hpp>
+#include <components/esm4/loadqust.hpp>
 #include <components/lua/util.hpp>
 
 #include "../birthsignbindings.hpp"
@@ -29,6 +32,17 @@ namespace MWLua
         ESM::RefId mQuestId;
         bool mMutable = false;
     };
+    struct QuestObjectives
+    {
+        ESM::RefId mQuestId;
+        bool mMutable = false;
+    };
+    struct QuestObjective
+    {
+        ESM::RefId mQuestId;
+        int mObjectiveIndex = 0;
+        bool mMutable = false;
+    };
     struct Topics
     {
     };
@@ -49,6 +63,14 @@ namespace sol
     };
     template <>
     struct is_automagical<MWLua::Quest> : std::false_type
+    {
+    };
+    template <>
+    struct is_automagical<MWLua::QuestObjectives> : std::false_type
+    {
+    };
+    template <>
+    struct is_automagical<MWLua::QuestObjective> : std::false_type
     {
     };
     template <>
@@ -108,6 +130,44 @@ namespace
         if (it == journal->getTopics().end())
             throw std::runtime_error("Topic " + topicId.toDebugString() + " could not be found in the journal");
         return it->second;
+    }
+
+    const ESM4::Quest* findQuestDefinition(const ESM::RefId& questId)
+    {
+        const auto& quests = MWBase::Environment::get().getESMStore()->get<ESM4::Quest>();
+        for (const ESM4::Quest& quest : quests)
+        {
+            if (!quest.mEditorId.empty() && ESM::RefId::stringRefId(quest.mEditorId) == questId)
+                return &quest;
+        }
+        return nullptr;
+    }
+
+    const ESM4::QuestObjective* findQuestObjectiveDefinition(const ESM::RefId& questId, int objectiveIndex)
+    {
+        const ESM4::Quest* quest = findQuestDefinition(questId);
+        if (quest == nullptr)
+            return nullptr;
+
+        for (const ESM4::QuestObjective& objective : quest->mObjectives)
+        {
+            if (objective.mIndex == objectiveIndex)
+                return &objective;
+        }
+        return nullptr;
+    }
+
+    std::vector<int> listQuestObjectiveIndices(const ESM::RefId& questId)
+    {
+        std::vector<int> result;
+        const ESM4::Quest* quest = findQuestDefinition(questId);
+        if (quest == nullptr)
+            return result;
+
+        result.reserve(quest->mObjectives.size());
+        for (const ESM4::QuestObjective& objective : quest->mObjectives)
+            result.push_back(objective.mIndex);
+        return result;
     }
 }
 
@@ -367,6 +427,92 @@ namespace MWLua
                 },
                 "addJournalEntryAction");
         };
+        quest["objectives"] = sol::readonly_property([](const Quest& q) {
+            return QuestObjectives{ .mQuestId = q.mQuestId, .mMutable = q.mMutable };
+        });
+
+        sol::usertype<QuestObjectives> questObjectives = lua.new_usertype<QuestObjectives>("QuestObjectives");
+        questObjectives[sol::meta_function::to_string]
+            = [](const QuestObjectives& self) { return "QuestObjectives[" + self.mQuestId.serializeText() + "]"; };
+        questObjectives[sol::meta_function::index]
+            = [](const QuestObjectives& self, int objectiveIndex) -> sol::optional<QuestObjective> {
+            if (findQuestObjectiveDefinition(self.mQuestId, objectiveIndex) == nullptr)
+                return sol::nullopt;
+            return QuestObjective{
+                .mQuestId = self.mQuestId,
+                .mObjectiveIndex = objectiveIndex,
+                .mMutable = self.mMutable,
+            };
+        };
+        questObjectives[sol::meta_function::length]
+            = [](const QuestObjectives& self) { return listQuestObjectiveIndices(self.mQuestId).size(); };
+        questObjectives[sol::meta_function::pairs] = [](const QuestObjectives& self) {
+            std::vector<int> indices = listQuestObjectiveIndices(self.mQuestId);
+            size_t i = 0;
+            return sol::as_function([indices = std::move(indices), i, self]() mutable
+                                        -> sol::optional<std::tuple<int, QuestObjective>> {
+                if (i >= indices.size())
+                    return sol::nullopt;
+                const int objectiveIndex = indices[i++];
+                return std::make_tuple(objectiveIndex,
+                    QuestObjective{
+                        .mQuestId = self.mQuestId,
+                        .mObjectiveIndex = objectiveIndex,
+                        .mMutable = self.mMutable,
+                    });
+            });
+        };
+
+        sol::usertype<QuestObjective> questObjective = lua.new_usertype<QuestObjective>("QuestObjective");
+        questObjective[sol::meta_function::to_string] = [](const QuestObjective& self) {
+            return "QuestObjective[" + self.mQuestId.serializeText() + ":" + std::to_string(self.mObjectiveIndex)
+                + "]";
+        };
+        questObjective["id"] = sol::readonly_property([](const QuestObjective& self) { return self.mObjectiveIndex; });
+        questObjective["description"] = sol::readonly_property([](const QuestObjective& self) -> std::string_view {
+            const ESM4::QuestObjective* objective = findQuestObjectiveDefinition(self.mQuestId, self.mObjectiveIndex);
+            if (objective == nullptr)
+                return {};
+            return objective->mDescription;
+        });
+        questObjective["targetCount"] = sol::readonly_property([](const QuestObjective& self) -> size_t {
+            const ESM4::QuestObjective* objective = findQuestObjectiveDefinition(self.mQuestId, self.mObjectiveIndex);
+            if (objective == nullptr)
+                return 0;
+            return objective->mTargets.size();
+        });
+        questObjective["displayed"] = sol::property(
+            [journal](const QuestObjective& self) {
+                return journal->getQuestObjectiveDisplayed(self.mQuestId, self.mObjectiveIndex);
+            },
+            [context](const QuestObjective& self, bool displayed) {
+                if (!self.mMutable)
+                    throw std::runtime_error("Value can only be changed in global or player scripts!");
+                if (findQuestObjectiveDefinition(self.mQuestId, self.mObjectiveIndex) == nullptr)
+                    throw std::runtime_error("Quest objective definition is not loaded");
+                context.mLuaManager->addAction(
+                    [self, displayed] {
+                        MWBase::Environment::get().getJournal()->setQuestObjectiveDisplayed(
+                            self.mQuestId, self.mObjectiveIndex, displayed);
+                    },
+                    "setQuestObjectiveDisplayedAction");
+            });
+        questObjective["completed"] = sol::property(
+            [journal](const QuestObjective& self) {
+                return journal->getQuestObjectiveCompleted(self.mQuestId, self.mObjectiveIndex);
+            },
+            [context](const QuestObjective& self, bool completed) {
+                if (!self.mMutable)
+                    throw std::runtime_error("Value can only be changed in global or player scripts!");
+                if (findQuestObjectiveDefinition(self.mQuestId, self.mObjectiveIndex) == nullptr)
+                    throw std::runtime_error("Quest objective definition is not loaded");
+                context.mLuaManager->addAction(
+                    [self, completed] {
+                        MWBase::Environment::get().getJournal()->setQuestObjectiveCompleted(
+                            self.mQuestId, self.mObjectiveIndex, completed);
+                    },
+                    "setQuestObjectiveCompletedAction");
+            });
 
         player["CONTROL_SWITCH"]
             = LuaUtil::makeStrictReadOnly(LuaUtil::tableFromPairs<std::string_view, std::string_view>(lua,
