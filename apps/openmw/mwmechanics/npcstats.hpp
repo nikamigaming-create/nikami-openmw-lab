@@ -45,6 +45,10 @@ namespace MWMechanics
         std::set<ESM::RefId> mUsedIds;
         std::set<ESM::RefId> mFalloutPerks;
         std::map<ESM::RefId, float> mFalloutActorValues;
+        int mFalloutExperience;
+        int mFalloutPendingPerkPoints;
+        int mFalloutPendingTraitPoints;
+        int mFalloutMaxLevel;
         // ---------------------------------------------------------------------------
 
         /// Countdown to getting damage while underwater
@@ -119,6 +123,12 @@ namespace MWMechanics
         bool hasFalloutActorValue(const ESM::RefId& id) const;
         float getFalloutActorValue(const ESM::RefId& id) const;
         const std::map<ESM::RefId, float>& getFalloutActorValues() const;
+
+        void setFalloutProgressionState(int experience, int pendingPerkPoints, int pendingTraitPoints, int maxLevel);
+        int getFalloutExperience() const;
+        int getFalloutPendingPerkPoints() const;
+        int getFalloutPendingTraitPoints() const;
+        int getFalloutMaxLevel() const;
 
         int getBounty() const;
 

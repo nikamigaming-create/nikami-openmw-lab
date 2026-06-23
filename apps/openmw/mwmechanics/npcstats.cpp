@@ -1,5 +1,6 @@
 #include "npcstats.hpp"
 
+#include <algorithm>
 #include <cassert>
 #include <iomanip>
 #include <sstream>
@@ -26,6 +27,10 @@ MWMechanics::NpcStats::NpcStats()
     , mBounty(0)
     , mWerewolfKills(0)
     , mLevelProgress(0)
+    , mFalloutExperience(0)
+    , mFalloutPendingPerkPoints(0)
+    , mFalloutPendingTraitPoints(0)
+    , mFalloutMaxLevel(0)
     , mTimeToStartDrowning(-1.0) // set breath to special value, it will be replaced during actor update
     , mIsWerewolf(false)
 {
@@ -340,6 +345,35 @@ const std::map<ESM::RefId, float>& MWMechanics::NpcStats::getFalloutActorValues(
     return mFalloutActorValues;
 }
 
+void MWMechanics::NpcStats::setFalloutProgressionState(
+    int experience, int pendingPerkPoints, int pendingTraitPoints, int maxLevel)
+{
+    mFalloutExperience = std::max(0, experience);
+    mFalloutPendingPerkPoints = std::max(0, pendingPerkPoints);
+    mFalloutPendingTraitPoints = std::max(0, pendingTraitPoints);
+    mFalloutMaxLevel = std::max(0, maxLevel);
+}
+
+int MWMechanics::NpcStats::getFalloutExperience() const
+{
+    return mFalloutExperience;
+}
+
+int MWMechanics::NpcStats::getFalloutPendingPerkPoints() const
+{
+    return mFalloutPendingPerkPoints;
+}
+
+int MWMechanics::NpcStats::getFalloutPendingTraitPoints() const
+{
+    return mFalloutPendingTraitPoints;
+}
+
+int MWMechanics::NpcStats::getFalloutMaxLevel() const
+{
+    return mFalloutMaxLevel;
+}
+
 int MWMechanics::NpcStats::getBounty() const
 {
     return mBounty;
@@ -503,6 +537,10 @@ void MWMechanics::NpcStats::writeState(ESM::NpcStats& state) const
     std::copy(mFalloutPerks.begin(), mFalloutPerks.end(), std::back_inserter(state.mFalloutPerks));
     for (const auto& [id, value] : mFalloutActorValues)
         state.mFalloutActorValues.push_back({ id, value });
+    state.mFalloutExperience = mFalloutExperience;
+    state.mFalloutPendingPerkPoints = mFalloutPendingPerkPoints;
+    state.mFalloutPendingTraitPoints = mFalloutPendingTraitPoints;
+    state.mFalloutMaxLevel = mFalloutMaxLevel;
 
     state.mTimeToStartDrowning = mTimeToStartDrowning;
 }
@@ -564,6 +602,11 @@ void MWMechanics::NpcStats::readState(const ESM::NpcStats& state)
     for (const ESM::NpcStats::FalloutActorValue& value : state.mFalloutActorValues)
         if (store.find(value.mId) == ESM::REC_AVIF4)
             mFalloutActorValues[value.mId] = value.mBase;
+
+    mFalloutExperience = std::max(0, state.mFalloutExperience);
+    mFalloutPendingPerkPoints = std::max(0, state.mFalloutPendingPerkPoints);
+    mFalloutPendingTraitPoints = std::max(0, state.mFalloutPendingTraitPoints);
+    mFalloutMaxLevel = std::max(0, state.mFalloutMaxLevel);
 
     mTimeToStartDrowning = state.mTimeToStartDrowning;
 }

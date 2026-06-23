@@ -50,6 +50,10 @@ namespace ESM
         std::vector<ESM::RefId> mUsedIds;
         std::vector<ESM::RefId> mFalloutPerks;
         std::vector<FalloutActorValue> mFalloutActorValues;
+        int32_t mFalloutExperience;
+        int32_t mFalloutPendingPerkPoints;
+        int32_t mFalloutPendingTraitPoints;
+        int32_t mFalloutMaxLevel;
         float mTimeToStartDrowning;
         int32_t mCrimeId;
 

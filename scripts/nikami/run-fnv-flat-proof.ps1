@@ -68,6 +68,7 @@ param(
     [switch]$FnvNonzeroProjectileBindingTrace,
     [switch]$FnvPlayerPerkTrace,
     [switch]$FnvActorValueTrace,
+    [switch]$FnvProgressionTrace,
     [switch]$NoSound
 )
 
@@ -1004,6 +1005,9 @@ try {
     if ($FnvActorValueTrace) {
         Set-ProofEnv $previousEnv "OPENMW_FNV_PROOF_ACTOR_VALUES" "1"
     }
+    if ($FnvProgressionTrace) {
+        Set-ProofEnv $previousEnv "OPENMW_FNV_PROOF_PROGRESSION" "1"
+    }
     Set-ProofEnv $previousEnv "OPENMW_FNV_TRACE_RAW_PENDING_RECORD" $TraceRawPendingRecord
     Set-ProofEnv $previousEnv "OPENMW_FNV_RENDER_DISTANCE_DIAG" "1"
     Set-ProofEnv $previousEnv "OPENMW_FNV_SKY_MISSING_LOG" "1"
@@ -1047,6 +1051,7 @@ try {
     Write-ProofLine "FnvPsaDeathPoseDiag: $FnvPsaDeathPoseDiag"
     Write-ProofLine "FnvPlayerPerkTrace: $FnvPlayerPerkTrace"
     Write-ProofLine "FnvActorValueTrace: $FnvActorValueTrace"
+    Write-ProofLine "FnvProgressionTrace: $FnvProgressionTrace"
     Write-ProofLine "StartupScript: $StartupScript"
     Write-ProofLine "FnvQuestObjectiveScriptTrace: $FnvQuestObjectiveScriptTrace"
     Write-ProofLine "FnvQuestJournalScriptTrace: $FnvQuestJournalScriptTrace"

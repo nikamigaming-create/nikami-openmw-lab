@@ -407,6 +407,84 @@ namespace
         return nullptr;
     }
 
+    int getRuntimeGameSettingInt(const MWWorld::ESMStore& store, std::string_view id, int fallback, bool& found)
+    {
+        const ESM::GameSetting* setting = store.get<ESM::GameSetting>().search(id);
+        found = setting != nullptr;
+        if (setting == nullptr)
+            return fallback;
+        try
+        {
+            return setting->mValue.getInteger();
+        }
+        catch (const std::exception&)
+        {
+            return fallback;
+        }
+    }
+
+    void runFalloutProgressionProof(MWWorld::Ptr player)
+    {
+        if (player.isEmpty() || !player.getClass().isNpc())
+        {
+            Log(Debug::Warning) << "FNV/ESM4 proof: progression runtime BLOCKED reason=no-player-npc";
+            return;
+        }
+
+        const MWWorld::ESMStore& store = *MWBase::Environment::get().getESMStore();
+        bool maxLevelFound = false;
+        bool traitSlotsFound = false;
+        bool skillBaseFound = false;
+        bool skillIntervalFound = false;
+        bool xpBumpFound = false;
+        const int maxLevel = std::max(1, getRuntimeGameSettingInt(store, "iMaxCharacterLevel", 30, maxLevelFound));
+        const int traitSlots
+            = std::max(0, getRuntimeGameSettingInt(store, "iTraitMenuMaxNumTraits", 2, traitSlotsFound));
+        const int skillPointBase
+            = std::max(0, getRuntimeGameSettingInt(store, "iLevelUpSkillPointsBase", 0, skillBaseFound));
+        const int skillPointInterval
+            = std::max(1, getRuntimeGameSettingInt(store, "iLevelUpSkillPointsInterval", 1, skillIntervalFound));
+        const int xpBumpBase = std::max(0, getRuntimeGameSettingInt(store, "iXPBumpBase", 0, xpBumpFound));
+
+        MWMechanics::NpcStats& stats = player.getClass().getNpcStats(player);
+        const int beforeLevel = stats.getLevel();
+        const int beforeExperience = stats.getFalloutExperience();
+        const int pendingPerkPoints = std::max(0, maxLevel - 1);
+        const int syntheticExperience = xpBumpBase * maxLevel;
+        const int pendingSkillPointBaseline = skillPointBase + (maxLevel / skillPointInterval);
+
+        stats.setLevel(maxLevel);
+        stats.setFalloutProgressionState(syntheticExperience, pendingPerkPoints, traitSlots, maxLevel);
+
+        const bool gmstsFound
+            = maxLevelFound && traitSlotsFound && skillBaseFound && skillIntervalFound && xpBumpFound;
+        const bool pass = gmstsFound && stats.getLevel() == maxLevel && stats.getFalloutMaxLevel() == maxLevel
+            && stats.getFalloutExperience() == syntheticExperience
+            && stats.getFalloutPendingPerkPoints() == pendingPerkPoints
+            && stats.getFalloutPendingTraitPoints() == traitSlots;
+
+        Log(Debug::Info) << "FNV/ESM4 proof: progression runtime " << (pass ? "PASS" : "FAIL")
+                         << " maxLevelGmst=" << maxLevel
+                         << " traitSlotsGmst=" << traitSlots
+                         << " skillPointBaseGmst=" << skillPointBase
+                         << " skillPointIntervalGmst=" << skillPointInterval
+                         << " xpBumpBaseGmst=" << xpBumpBase
+                         << " gmstsFound=" << gmstsFound
+                         << " beforeLevel=" << beforeLevel
+                         << " afterLevel=" << stats.getLevel()
+                         << " beforeExperience=" << beforeExperience
+                         << " afterExperience=" << stats.getFalloutExperience()
+                         << " pendingPerkPoints=" << stats.getFalloutPendingPerkPoints()
+                         << " pendingTraitPoints=" << stats.getFalloutPendingTraitPoints()
+                         << " pendingSkillPointBaseline=" << pendingSkillPointBaseline
+                         << " saveSubrecords=FEXP,FPPT,FTPT,FMLV"
+                         << " runtimeBoundary=player-max-level-progression-state-runtime-supported"
+                         << " xpCurveRuntime=loaded-pending-runtime"
+                         << " skillPointFormulaRuntime=loaded-pending-runtime"
+                         << " perkAwardRuntime=loaded-pending-runtime"
+                         << " traitMenuRuntime=loaded-pending-runtime";
+    }
+
     void runFalloutActorValueProof(MWWorld::Ptr player)
     {
         if (player.isEmpty() || !player.getClass().isNpc())
@@ -1130,6 +1208,19 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
         {
             proofActorValueApplied = true;
             runFalloutActorValueProof(mWorld->getPlayerPtr());
+        }
+
+        static bool proofProgressionApplied = false;
+        const char* proofProgression = std::getenv("OPENMW_FNV_PROOF_PROGRESSION");
+        const bool proofProgressionEnabled = proofProgression != nullptr && *proofProgression != '\0';
+        const int proofProgressionFrame
+            = static_cast<int>(getProofFloat("OPENMW_FNV_PROOF_PROGRESSION_FRAME", 150.f));
+        if (!proofProgressionApplied && proofProgressionEnabled
+            && frameNumber >= static_cast<unsigned>(proofProgressionFrame)
+            && mStateManager->getState() == MWBase::StateManager::State_Running)
+        {
+            proofProgressionApplied = true;
+            runFalloutProgressionProof(mWorld->getPlayerPtr());
         }
 
         // update mechanics

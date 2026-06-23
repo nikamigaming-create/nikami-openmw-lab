@@ -80,6 +80,18 @@ namespace ESM
             mFalloutActorValues.push_back(value);
         }
 
+        mFalloutExperience = 0;
+        esm.getHNOT(mFalloutExperience, "FEXP");
+
+        mFalloutPendingPerkPoints = 0;
+        esm.getHNOT(mFalloutPendingPerkPoints, "FPPT");
+
+        mFalloutPendingTraitPoints = 0;
+        esm.getHNOT(mFalloutPendingTraitPoints, "FTPT");
+
+        mFalloutMaxLevel = 0;
+        esm.getHNOT(mFalloutMaxLevel, "FMLV");
+
         mTimeToStartDrowning = 0;
         esm.getHNOT(mTimeToStartDrowning, "DRTI");
 
@@ -157,6 +169,18 @@ namespace ESM
             esm.writeHNT("FAVF", value.mBase);
         }
 
+        if (mFalloutExperience)
+            esm.writeHNT("FEXP", mFalloutExperience);
+
+        if (mFalloutPendingPerkPoints)
+            esm.writeHNT("FPPT", mFalloutPendingPerkPoints);
+
+        if (mFalloutPendingTraitPoints)
+            esm.writeHNT("FTPT", mFalloutPendingTraitPoints);
+
+        if (mFalloutMaxLevel)
+            esm.writeHNT("FMLV", mFalloutMaxLevel);
+
         if (mTimeToStartDrowning)
             esm.writeHNT("DRTI", mTimeToStartDrowning);
 
@@ -178,6 +202,10 @@ namespace ESM
         mUsedIds.clear();
         mFalloutPerks.clear();
         mFalloutActorValues.clear();
+        mFalloutExperience = 0;
+        mFalloutPendingPerkPoints = 0;
+        mFalloutPendingTraitPoints = 0;
+        mFalloutMaxLevel = 0;
         mTimeToStartDrowning = 20;
         mCrimeId = -1;
     }
