@@ -61,6 +61,15 @@ namespace MWBase
         virtual int getJournalIndex(const ESM::RefId& id) const = 0;
         ///< Get the journal index.
 
+        virtual bool isQuestStarted(const ESM::RefId& id) const = 0;
+        ///< Return whether a quest has runtime journal state.
+
+        virtual void setQuestFinished(const ESM::RefId& id, bool finished) = 0;
+        ///< Set Fallout-style quest completion state.
+
+        virtual bool getQuestFinished(const ESM::RefId& id) const = 0;
+        ///< Get Fallout-style quest completion state.
+
         virtual void setQuestObjectiveDisplayed(const ESM::RefId& id, int objective, bool displayed) = 0;
         ///< Set Fallout-style quest objective display state.
 

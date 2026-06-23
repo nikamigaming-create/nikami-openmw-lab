@@ -61,6 +61,27 @@ namespace MWScript
                              << " fallbackSetIndex=" << fallbackSetIndex;
         }
 
+        void logQuestStatusScriptTrace(
+            const char* opcode, const ESM::RefId& quest, bool started, bool running, bool completed, int currentIndex)
+        {
+            if (!isQuestJournalScriptTraceEnabled())
+                return;
+
+            Log(Debug::Info) << "FNV/ESM4 proof: quest status MWScript opcode " << opcode
+                             << " quest=" << quest.toDebugString() << " started=" << (started ? 1 : 0)
+                             << " running=" << (running ? 1 : 0) << " completed=" << (completed ? 1 : 0)
+                             << " currentIndex=" << currentIndex;
+        }
+
+        void logQuestStatusScriptTrace(const char* opcode, const ESM::RefId& quest)
+        {
+            MWBase::Journal* journal = MWBase::Environment::get().getJournal();
+            const bool started = journal->isQuestStarted(quest);
+            const bool completed = journal->getQuestFinished(quest);
+            logQuestStatusScriptTrace(opcode, quest, started, started && !completed, completed,
+                journal->getJournalIndex(quest));
+        }
+
         void setQuestStageFromScript(
             const char* opcode, const ESM::RefId& quest, int index, const MWWorld::Ptr& actor)
         {
@@ -166,6 +187,61 @@ namespace MWScript
 
                 runtime.push(index);
                 logQuestJournalScriptTrace("GetStage", quest, -1, index, -1, -1);
+            }
+        };
+
+        class OpStartQuest : public Interpreter::Opcode0
+        {
+        public:
+            void execute(Interpreter::Runtime& runtime) override
+            {
+                ESM::RefId quest = ESM::RefId::stringRefId(runtime.getStringLiteral(runtime[0].mInteger));
+                runtime.pop();
+
+                MWBase::Environment::get().getJournal()->setQuestFinished(quest, false);
+                logQuestStatusScriptTrace("StartQuest", quest);
+            }
+        };
+
+        class OpCompleteQuest : public Interpreter::Opcode0
+        {
+        public:
+            void execute(Interpreter::Runtime& runtime) override
+            {
+                ESM::RefId quest = ESM::RefId::stringRefId(runtime.getStringLiteral(runtime[0].mInteger));
+                runtime.pop();
+
+                MWBase::Environment::get().getJournal()->setQuestFinished(quest, true);
+                logQuestStatusScriptTrace("CompleteQuest", quest);
+            }
+        };
+
+        class OpGetQuestCompleted : public Interpreter::Opcode0
+        {
+        public:
+            void execute(Interpreter::Runtime& runtime) override
+            {
+                ESM::RefId quest = ESM::RefId::stringRefId(runtime.getStringLiteral(runtime[0].mInteger));
+                runtime.pop();
+
+                const bool completed = MWBase::Environment::get().getJournal()->getQuestFinished(quest);
+                runtime.push(completed ? 1 : 0);
+                logQuestStatusScriptTrace("GetQuestCompleted", quest);
+            }
+        };
+
+        class OpGetQuestRunning : public Interpreter::Opcode0
+        {
+        public:
+            void execute(Interpreter::Runtime& runtime) override
+            {
+                ESM::RefId quest = ESM::RefId::stringRefId(runtime.getStringLiteral(runtime[0].mInteger));
+                runtime.pop();
+
+                MWBase::Journal* journal = MWBase::Environment::get().getJournal();
+                const bool running = journal->isQuestStarted(quest) && !journal->getQuestFinished(quest);
+                runtime.push(running ? 1 : 0);
+                logQuestStatusScriptTrace("GetQuestRunning", quest);
             }
         };
 
@@ -486,6 +562,10 @@ namespace MWScript
             interpreter.installSegment5<OpGetJournalIndex>(Compiler::Dialogue::opcodeGetJournalIndex);
             interpreter.installSegment5<OpSetStage>(Compiler::Dialogue::opcodeSetStage);
             interpreter.installSegment5<OpGetStage>(Compiler::Dialogue::opcodeGetStage);
+            interpreter.installSegment5<OpStartQuest>(Compiler::Dialogue::opcodeStartQuest);
+            interpreter.installSegment5<OpCompleteQuest>(Compiler::Dialogue::opcodeCompleteQuest);
+            interpreter.installSegment5<OpGetQuestCompleted>(Compiler::Dialogue::opcodeGetQuestCompleted);
+            interpreter.installSegment5<OpGetQuestRunning>(Compiler::Dialogue::opcodeGetQuestRunning);
             interpreter.installSegment5<OpFillJournal>(Compiler::Dialogue::opcodeFillJournal);
             interpreter.installSegment5<OpSetObjectiveDisplayed>(Compiler::Dialogue::opcodeSetObjectiveDisplayed);
             interpreter.installSegment5<OpSetObjectiveCompleted>(Compiler::Dialogue::opcodeSetObjectiveCompleted);

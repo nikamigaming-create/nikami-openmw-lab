@@ -170,6 +170,10 @@ namespace Compiler
         const int opcodeGetObjectiveCompleted = 0x200032a;
         const int opcodeSetStage = 0x200032b;
         const int opcodeGetStage = 0x200032c;
+        const int opcodeStartQuest = 0x200032d;
+        const int opcodeCompleteQuest = 0x200032e;
+        const int opcodeGetQuestCompleted = 0x200032f;
+        const int opcodeGetQuestRunning = 0x2000330;
         const int opcodeAddTopic = 0x200013a;
         const int opcodeChoice = 0x2000a;
         const int opcodeForceGreeting = 0x200014f;

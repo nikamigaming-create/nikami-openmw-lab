@@ -493,4 +493,8 @@ op 0x200032a: GetObjectiveCompleted
 
 op 0x200032b: SetStage
 op 0x200032c: GetStage
-opcodes 0x200032d-0x3ffffff unused
+op 0x200032d: StartQuest
+op 0x200032e: CompleteQuest
+op 0x200032f: GetQuestCompleted
+op 0x2000330: GetQuestRunning
+opcodes 0x2000331-0x3ffffff unused

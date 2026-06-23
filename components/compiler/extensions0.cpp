@@ -165,6 +165,10 @@ namespace Compiler
             extensions.registerFunction("getjournalindex", 'l', "c", opcodeGetJournalIndex);
             extensions.registerInstruction("setstage", "cl", opcodeSetStage);
             extensions.registerFunction("getstage", 'l', "c", opcodeGetStage);
+            extensions.registerInstruction("startquest", "c", opcodeStartQuest);
+            extensions.registerInstruction("completequest", "c", opcodeCompleteQuest);
+            extensions.registerFunction("getquestcompleted", 'l', "c", opcodeGetQuestCompleted);
+            extensions.registerFunction("getquestrunning", 'l', "c", opcodeGetQuestRunning);
             extensions.registerInstruction("filljournal", "", opcodeFillJournal);
             extensions.registerInstruction("setobjectivedisplayed", "cll", opcodeSetObjectiveDisplayed);
             extensions.registerInstruction("setobjectivecompleted", "cll", opcodeSetObjectiveCompleted);

@@ -49,6 +49,12 @@ namespace MWDialogue
         int getJournalIndex(const ESM::RefId& id) const override;
         ///< Get the journal index.
 
+        bool isQuestStarted(const ESM::RefId& id) const override;
+
+        void setQuestFinished(const ESM::RefId& id, bool finished) override;
+
+        bool getQuestFinished(const ESM::RefId& id) const override;
+
         void setQuestObjectiveDisplayed(const ESM::RefId& id, int objective, bool displayed) override;
 
         bool getQuestObjectiveDisplayed(const ESM::RefId& id, int objective) const override;

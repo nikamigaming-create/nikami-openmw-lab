@@ -147,7 +147,7 @@ Assert-Text "apps/openmw/engine.cpp" "resolveFalloutQuestTarget" "runtime QSTA t
 Assert-Text "apps/openmw/engine.cpp" "runFalloutQuestTargetProof" "runtime QSTA target proof hook"
 Assert-Text "apps/openmw/engine.cpp" "selected-quest-objective-target-resolution-runtime-supported" "bounded target runtime classification"
 Assert-Text "scripts/nikami/run-fnv-flat-proof.ps1" "FnvQuestTargetTrace" "flat proof can trace quest targets"
-Assert-Text "scripts/nikami/fnv_no_silent_skip_classification.py" '"QUST": "quest records are stored, QUST stage journal entries are bridged, selected SetStage/GetStage and stage fragments execute, selected objective target references can resolve, and objective displayed/completed script state is bound pending full quest completion/HUD-marker/condition parity"' "QUST remains loaded-pending runtime with selected stage and target support"
+Assert-Text "scripts/nikami/fnv_no_silent_skip_classification.py" '"QUST": "quest records are stored, QUST stage journal entries are bridged, selected SetStage/GetStage, StartQuest/CompleteQuest/GetQuestCompleted/GetQuestRunning, and stage fragments execute, selected objective target references can resolve, and objective displayed/completed script state is bound pending full quest lifecycle/HUD-marker/condition parity"' "QUST remains loaded-pending runtime with selected stage and target support"
 
 $ContentLedgerScript = Join-Path $PSScriptRoot "test-fnv-content-ledger.ps1"
 & $ContentLedgerScript -FnvRoot $FnvRoot -FnvData $FnvData -ProofRoot $ProofDir -Content $FlatContent

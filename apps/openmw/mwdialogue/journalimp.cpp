@@ -199,6 +199,22 @@ namespace MWDialogue
         return iter->second.getIndex();
     }
 
+    bool Journal::isQuestStarted(const ESM::RefId& id) const
+    {
+        return mQuests.find(id) != mQuests.end();
+    }
+
+    void Journal::setQuestFinished(const ESM::RefId& id, bool finished)
+    {
+        getOrStartQuest(id).setFinished(finished);
+    }
+
+    bool Journal::getQuestFinished(const ESM::RefId& id) const
+    {
+        TQuestContainer::const_iterator iter = mQuests.find(id);
+        return iter != mQuests.end() && iter->second.isFinished();
+    }
+
     void Journal::setQuestObjectiveDisplayed(const ESM::RefId& id, int objective, bool displayed)
     {
         const QuestObjectiveKey key(id, objective);
