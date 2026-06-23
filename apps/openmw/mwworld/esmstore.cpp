@@ -798,6 +798,7 @@ namespace MWWorld
                 case ESM::REC_BPTD4:
                 case ESM::REC_CLAS4:
                 case ESM::REC_CLOT4:
+                case ESM::REC_CLMT4:
                 case ESM::REC_CONT4:
                 case ESM::REC_CSTY4:
                 case ESM::REC_DOOR4:
@@ -814,6 +815,7 @@ namespace MWWorld
                 case ESM::REC_HDPT4:
                 case ESM::REC_IDLE4:
                 case ESM::REC_IDLM4:
+                case ESM::REC_IMGS4:
                 case ESM::REC_IMAD4:
                 case ESM::REC_IMOD4:
                 case ESM::REC_INGR4:
@@ -839,6 +841,7 @@ namespace MWWorld
                 case ESM::REC_PROJ4:
                 case ESM::REC_PWAT4:
                 case ESM::REC_RACE4:
+                case ESM::REC_REGN4:
                 case ESM::REC_SCEN4:
                 case ESM::REC_SPEL4:
                 case ESM::REC_TERM4:
@@ -846,6 +849,7 @@ namespace MWWorld
                 case ESM::REC_VTYP4:
                 case ESM::REC_WATR4:
                 case ESM::REC_WRLD4:
+                case ESM::REC_WTHR4:
                     return true;
                 default:
                     return false;

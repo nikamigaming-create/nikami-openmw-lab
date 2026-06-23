@@ -47,10 +47,6 @@ RUNTIME_SUPPORTED_RECORDS = {
 
 
 KNOWN_BLOCKED_RECORDS = {
-    "CLMT": "FNV climate records are parsed only as metadata; weather runtime does not consume them yet",
-    "REGN": "FNV region weather/audio data is incomplete; RDWT weather data is skipped",
-    "WTHR": "FNV weather records are not bridged into the weather manager yet",
-    "IMGS": "image space records are not connected to runtime post-processing yet",
 }
 
 
@@ -64,6 +60,7 @@ LOADED_PENDING_RECORDS = {
     "BPTD": "body part data is loaded pending dismemberment/body-part runtime parity",
     "CLAS": "class records are loaded pending player/NPC gameplay parity",
     "CLOT": "clothing records are loaded pending full equipment/body binding",
+    "CLMT": "climate bytes are inventoried pending full FNV climate/weather runtime binding",
     "CONT": "container records are loaded pending full inventory/container behavior parity",
     "CSTY": "combat style data is known but combat tuning parity remains pending",
     "DOOR": "door records are loaded pending full activation/lock/teleport parity",
@@ -81,6 +78,7 @@ LOADED_PENDING_RECORDS = {
     "IDLE": "idle animation records are loaded pending complete package/idle runtime parity",
     "IDLM": "idle marker records are loaded pending complete idle-marker runtime parity",
     "IMAD": "image-space modifier records are loaded pending full post-process binding",
+    "IMGS": "image-space bytes are inventoried pending full post-process binding",
     "IMOD": "item mod records are loaded pending full weapon-mod gameplay binding",
     "INGR": "ingredient records are loaded pending full effects/crafting parity",
     "IPCT": "impact data records are loaded pending full projectile/impact binding",
@@ -105,6 +103,7 @@ LOADED_PENDING_RECORDS = {
     "PROJ": "projectile records are source-backed and stored pending runtime projectile binding",
     "PWAT": "placeable water records are loaded pending full water placement parity",
     "RACE": "race records feed actors pending full character creation/body parity",
+    "REGN": "region bytes are inventoried pending full FNV weather/audio-region runtime binding",
     "SCEN": "scene records are known pending full scene runtime parity",
     "SPEL": "spell records are known pending full effects/runtime parity",
     "TERM": "terminal records are loaded pending full terminal UI/script parity",
@@ -112,6 +111,7 @@ LOADED_PENDING_RECORDS = {
     "VTYP": "voice type records are loaded pending exhaustive voice selection parity",
     "WATR": "water records are loaded pending full water shader/behavior parity",
     "WRLD": "world records are loaded pending full climate/weather/world runtime parity",
+    "WTHR": "weather bytes are inventoried pending WeatherManager binding",
 }
 
 
@@ -215,11 +215,14 @@ def parse_loader_coverage(repo_root):
     store_cpp = (repo_root / "apps" / "openmw" / "mwworld" / "store.cpp").read_text(
         encoding="utf-8", errors="replace"
     )
+    esmstore_cpp = (repo_root / "apps" / "openmw" / "mwworld" / "esmstore.cpp").read_text(
+        encoding="utf-8", errors="replace"
+    )
     raw_pending_records = set()
-    raw_pending_start = store_cpp.find("static bool isLoadedPendingEsm4Record")
-    raw_pending_end = store_cpp.find("static bool readLoadedPendingEsm4Record", raw_pending_start)
+    raw_pending_start = esmstore_cpp.find("static bool isLoadedPendingEsm4Record")
+    raw_pending_end = esmstore_cpp.find("static bool readLoadedPendingEsm4Record", raw_pending_start)
     if raw_pending_start >= 0 and raw_pending_end > raw_pending_start:
-        raw_pending_source = store_cpp[raw_pending_start:raw_pending_end]
+        raw_pending_source = esmstore_cpp[raw_pending_start:raw_pending_end]
         raw_pending_records = set(re.findall(r"case\s+ESM::REC_([A-Z0-9_]+)4\s*:", raw_pending_source))
     return {
         "loaderByRecord": loader_by_record,
@@ -228,6 +231,7 @@ def parse_loader_coverage(repo_root):
         "recordsHeader": records_header,
         "storeHeader": store_header,
         "storeCpp": store_cpp,
+        "esmstoreCpp": esmstore_cpp,
     }
 
 

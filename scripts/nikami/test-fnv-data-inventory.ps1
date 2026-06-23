@@ -179,6 +179,17 @@ function Get-Esm4CodeCoverage {
     $recordsHeader = Get-Content -LiteralPath (Join-Path $RepoRoot "components/esm4/records.hpp") -Raw
     $storeHeader = Get-Content -LiteralPath (Join-Path $RepoRoot "apps/openmw/mwworld/esmstore.hpp") -Raw
     $storeCpp = Get-Content -LiteralPath (Join-Path $RepoRoot "apps/openmw/mwworld/store.cpp") -Raw
+    $esmstoreCpp = Get-Content -LiteralPath (Join-Path $RepoRoot "apps/openmw/mwworld/esmstore.cpp") -Raw
+    $rawPendingRecords = @{}
+    $rawPendingMatch = [regex]::Match(
+        $esmstoreCpp,
+        "static bool isLoadedPendingEsm4Record(?<body>[\s\S]*?)static bool readLoadedPendingEsm4Record"
+    )
+    if ($rawPendingMatch.Success) {
+        foreach ($match in [regex]::Matches($rawPendingMatch.Groups["body"].Value, "case\s+ESM::REC_(?<record>[A-Z0-9_]+)4\s*:")) {
+            $rawPendingRecords[$match.Groups["record"].Value] = $true
+        }
+    }
 
     @{
         LoaderByRecord = $loaderByRecord
@@ -186,6 +197,8 @@ function Get-Esm4CodeCoverage {
         RecordsHeader = $recordsHeader
         StoreHeader = $storeHeader
         StoreCpp = $storeCpp
+        EsmStoreCpp = $esmstoreCpp
+        RawPendingRecords = $rawPendingRecords
     }
 }
 
@@ -237,11 +250,16 @@ function Write-Esm4CoverageInventory([string]$EsmPath) {
         $recordsHeader = $loader -and $coverage.RecordsHeader -match [regex]::Escape((Split-Path $loaderPath -Leaf).Replace(".hpp", ".hpp"))
         $store = (-not [string]::IsNullOrWhiteSpace($cppType)) -and $coverage.StoreHeader -match "Store<ESM4::$([regex]::Escape($cppType))>"
         $instantiated = (-not [string]::IsNullOrWhiteSpace($cppType)) -and $coverage.StoreCpp -match "TypedDynamicStore<ESM4::$([regex]::Escape($cppType))"
+        $rawPending = $coverage.RawPendingRecords.ContainsKey($type)
         $runtime = $runtimeClaims.ContainsKey($type)
 
         if ($loader -and $recordsHeader -and $store -and $instantiated -and $runtime) {
             $runtimeSupported += $row
             Write-ProofLine "OK ESM4 record type runtime-supported: $type count=$($row.Count) loader=1 records.hpp=1 store=1 instantiation=1 runtime=$($runtimeClaims[$type])"
+        }
+        elseif ($rawPending) {
+            $loadedPendingRuntime += $row
+            Write-ProofLine "WARN ESM4 record type loaded-pending-runtime: $type count=$($row.Count) rawPending=1 runtime=0"
         }
         elseif ($loader -and $recordsHeader -and $store -and $instantiated) {
             $loadedPendingRuntime += $row
