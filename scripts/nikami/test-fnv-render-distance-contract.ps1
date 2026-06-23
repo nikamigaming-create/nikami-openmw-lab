@@ -71,6 +71,77 @@ function Assert-RelativeNumberWithin([string]$Label, [double]$Actual, [double]$E
     Write-ProofLine "OK ${Label}: actual=$Actual expected=$Expected relativeDelta=$delta tolerance=$RelativeTolerance"
 }
 
+function Get-SettingsViewingDistance([string]$Path) {
+    if ([string]::IsNullOrWhiteSpace($Path) -or !(Test-Path -LiteralPath $Path -PathType Leaf)) {
+        return $null
+    }
+    $match = Select-String -LiteralPath $Path `
+        -Pattern "^\s*viewing distance\s*=\s*(?<value>[-+]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+))\s*$" |
+        Select-Object -First 1
+    if ($null -eq $match) {
+        return $null
+    }
+    return [double]$match.Matches[0].Groups["value"].Value
+}
+
+function Add-SettingsAuditRow(
+    [System.Collections.Generic.List[object]]$Rows,
+    [System.Collections.Generic.List[string]]$Failures,
+    [string]$Path,
+    [string]$Scope,
+    [double]$ExpectedViewingDistance,
+    [bool]$Required,
+    [bool]$MustMatchExpected,
+    [string]$MismatchClassification,
+    [string]$Proof
+) {
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+        return
+    }
+
+    $exists = Test-Path -LiteralPath $Path -PathType Leaf
+    $value = if ($exists) { Get-SettingsViewingDistance $Path } else { $null }
+    $matchesExpected = $false
+    if ($null -ne $value) {
+        $matchesExpected = [Math]::Abs($value - $ExpectedViewingDistance) -le 0.01
+    }
+
+    $classification = "runtime-supported"
+    $passesCurrentRequirement = $true
+    $rowProof = $Proof
+    if (!$exists) {
+        $classification = if ($Required) { "known-blocked" } else { "intentionally-excluded-with-proof" }
+        $passesCurrentRequirement = !$Required
+        $rowProof = if ($Required) { "Required current generated FNV settings.cfg is missing." } else { $Proof }
+    }
+    elseif ($null -eq $value) {
+        $classification = if ($MustMatchExpected) { "known-blocked" } else { $MismatchClassification }
+        $passesCurrentRequirement = !$MustMatchExpected
+        $rowProof = "settings.cfg has no parseable Camera/viewing distance line."
+    }
+    elseif (!$matchesExpected -or $value -le 10000) {
+        $classification = if ($MustMatchExpected) { "known-blocked" } else { $MismatchClassification }
+        $passesCurrentRequirement = !$MustMatchExpected
+    }
+
+    if (!$passesCurrentRequirement) {
+        $Failures.Add("$Scope path=$Path viewingDistance=$value expected=$ExpectedViewingDistance")
+    }
+
+    $Rows.Add([ordered]@{
+        scope = $Scope
+        path = $Path
+        exists = $exists
+        viewingDistance = $value
+        expectedViewingDistance = $ExpectedViewingDistance
+        matchesExpected = $matchesExpected
+        required = $Required
+        mustMatchExpected = $MustMatchExpected
+        classification = $classification
+        proof = $rowProof
+    })
+}
+
 Write-ProofLine "FNV render distance contract $Stamp"
 Write-ProofLine "RepoRoot: $RepoRoot"
 Write-ProofLine "FnvData: $FnvData"
@@ -107,6 +178,8 @@ Assert-FileContains $FlatProofScript "OPENMW_FNV_RENDER_DISTANCE_DIAG" "flat pro
 Assert-FileContains $RenderingManagerCpp "FNV/ESM4 proof: render distance viewDistance=" "renderer logs consumed render distance"
 Assert-FileContains $SkyCpp "targetRadius=" "FNV sky wrap logs target radius"
 Assert-FileContains $VrDeployScript "Get-NikamiFnvViewingDistance" "VR/headset deploy derives viewing distance from helper"
+Assert-FileContains $VrDeployScript '\[string\]\$ProofRoot = ""' "VR/headset deploy accepts external proof root"
+Assert-FileContains $VrDeployScript 'Split-Path \$RepoRoot -Parent' "VR/headset deploy defaults generated output outside repo"
 Assert-FileContains $FlatScript "distant terrain = true" "flat runner enables generated distant terrain"
 Assert-FileContains $FlatScript "object paging = true" "flat runner enables generated object paging"
 Assert-FileContains $PcvrProofScript "distant terrain = true" "PCVR runner enables generated distant terrain"
@@ -115,6 +188,7 @@ Assert-FileContains $VrDeployScript "distant terrain = true" "VR/headset deploy 
 Assert-FileContains $VrDeployScript "object paging min size = 0.01" "VR/headset deploy uses known-good object paging min size"
 Assert-FileNotContains $FlatScript "viewing distance = 10000" "flat runner hardcoded low viewing distance"
 Assert-FileNotContains $VrDeployScript "ViewingDistance = 10000|viewing distance = 10000" "VR/headset hardcoded low viewing distance"
+Assert-FileNotContains $VrDeployScript 'Join-Path \$RepoRoot "proof/headset-fnv-vr"' "VR/headset repo-local generated proof root"
 
 $flatProofRoot = Join-Path $ProofRoot "fnv-flat-proof"
 $before = @()
@@ -154,6 +228,73 @@ Assert-FileContains $flatSettings "^object paging active grid = true$" "generate
 Assert-FileContains $flatSettings "^object paging min size = 0\.01$" "generated flat object paging min size"
 Assert-FileNotContains $flatSettings "^viewing distance = 10000$" "generated low fallback viewing distance"
 Assert-FileNotContains $flatOpenMwLog "Failed to compile|failed to compile|linking failed|GLSL.*error|shader.*error" "shader/blocker line"
+
+$settingsAuditRows = [System.Collections.Generic.List[object]]::new()
+$settingsAuditFailures = [System.Collections.Generic.List[string]]::new()
+Add-SettingsAuditRow $settingsAuditRows $settingsAuditFailures `
+    (Join-Path $ProofRoot "configs/fnv-flat-clean/settings.cfg") `
+    "current-generated-flat-config" $ExpectedViewingDistance $true $true "known-blocked" `
+    "Current generated PC-flat config must use harvested FNV fBlockLoadDistance."
+Add-SettingsAuditRow $settingsAuditRows $settingsAuditFailures `
+    $flatSettings `
+    "current-flat-proof-copy" $ExpectedViewingDistance $true $true "known-blocked" `
+    "Current flat proof copy must match the generated PC-flat launch config."
+Add-SettingsAuditRow $settingsAuditRows $settingsAuditFailures `
+    (Join-Path $ProofRoot "configs/fnv-pcvr-clean/settings.cfg") `
+    "optional-current-pcvr-config" $ExpectedViewingDistance $false $true "known-blocked" `
+    "If a generated PCVR config exists, it must use harvested FNV fBlockLoadDistance."
+
+$pcvrProofRoot = Join-Path $ProofRoot "fnv-pcvr-proof"
+$latestPcvrProof = $null
+if (Test-Path -LiteralPath $pcvrProofRoot -PathType Container) {
+    $latestPcvrProof = Get-ChildItem -LiteralPath $pcvrProofRoot -Directory -ErrorAction SilentlyContinue |
+        Sort-Object LastWriteTime -Descending |
+        Select-Object -First 1
+}
+if ($null -ne $latestPcvrProof) {
+    Add-SettingsAuditRow $settingsAuditRows $settingsAuditFailures `
+        (Join-Path $latestPcvrProof.FullName "settings.cfg") `
+        "optional-latest-pcvr-proof-copy" $ExpectedViewingDistance $false $true "known-blocked" `
+        "If a PCVR proof copy exists, it must match harvested FNV fBlockLoadDistance."
+}
+
+Add-SettingsAuditRow $settingsAuditRows $settingsAuditFailures `
+    (Join-Path $ProofRoot "headset-fnv-vr/stage/config/settings.cfg") `
+    "optional-current-external-headset-stage" $ExpectedViewingDistance $false $true "known-blocked" `
+    "Current headset deploy staging now lives outside the repo and must use harvested FNV fBlockLoadDistance when present."
+Add-SettingsAuditRow $settingsAuditRows $settingsAuditFailures `
+    (Join-Path $RepoRoot "proof/headset-fnv-vr/stage/config/settings.cfg") `
+    "stale-repo-local-headset-stage-output" $ExpectedViewingDistance $false $false "intentionally-excluded-with-proof" `
+    "Ignored generated stage output left from the old repo-local deploy path; not current publish evidence after deploy script externalized ProofRoot."
+
+$localModlistSettings = "D:\Modlists\fnv\openmw-config\settings.cfg"
+Add-SettingsAuditRow $settingsAuditRows $settingsAuditFailures `
+    $localModlistSettings `
+    "external-local-modlist-config" $ExpectedViewingDistance $false $false "loaded-pending-runtime" `
+    "External local modlist settings are inventoried but are not the generated launch config used by current proof runners."
+
+$flatUiProofRoot = "D:\Modlists\fnv\openmw-config\flat-ui-proof"
+if (Test-Path -LiteralPath $flatUiProofRoot -PathType Container) {
+    Get-ChildItem -LiteralPath $flatUiProofRoot -Recurse -Filter "settings.cfg" -File -ErrorAction SilentlyContinue |
+        ForEach-Object {
+            Add-SettingsAuditRow $settingsAuditRows $settingsAuditFailures `
+                $_.FullName `
+                "historical-external-flat-ui-proof-output" $ExpectedViewingDistance $false $false "intentionally-excluded-with-proof" `
+                "Historical external flat UI proof output is inventoried but not current publish evidence."
+        }
+}
+
+$settingsAuditPath = Join-Path $ProofDir "settings-distance-audit.json"
+$settingsAuditRows | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $settingsAuditPath -Encoding UTF8
+Write-ProofLine "Settings distance audit: $settingsAuditPath"
+Write-ProofLine "Settings audit rows: $($settingsAuditRows.Count)"
+if ($settingsAuditFailures.Count -gt 0) {
+    foreach ($failure in $settingsAuditFailures) {
+        Write-ProofLine "FAIL settings audit: $failure"
+    }
+    throw "FNV render distance settings audit failed. See $settingsAuditPath"
+}
+Write-ProofLine "OK settings audit current generated FNV configs match harvested viewing distance"
 
 $renderMatch = Get-RequiredLogMatch $flatOpenMwLog `
     "FNV/ESM4 proof: render distance viewDistance=(?<view>[0-9.eE+-]+) near=(?<near>[0-9.eE+-]+) fov=(?<fov>[0-9.eE+-]+) aspect=(?<aspect>[0-9.eE+-]+) projectionFar=(?<projectionFar>[0-9.eE+-]+) sharedFar=(?<sharedFar>[0-9.eE+-]+) terrainViewDistance=(?<terrain>[0-9.eE+-]+)" `
@@ -210,6 +351,9 @@ $result = [ordered]@{
     harvestedSource = $BlockDistance.source
     harvestedValue = $BlockDistance.value
     generatedViewingDistance = $ExpectedViewingDistance
+    settingsAuditPath = $settingsAuditPath
+    settingsAuditRows = $settingsAuditRows.Count
+    settingsAuditFailures = $settingsAuditFailures.Count
     runtimeRenderDistance = [ordered]@{
         viewDistance = $runtimeViewDistance
         projectionFar = $runtimeProjectionFar
@@ -223,6 +367,8 @@ $result = [ordered]@{
         "retail FNV INI fBlockLoadDistance harvested from disk",
         "flat generated settings.cfg uses harvested viewing distance",
         "flat generated settings.cfg enables distant terrain and object paging from the known-good FNV PCVR profile",
+        "current generated flat/PCVR/headset settings are audited against harvested viewing distance when present",
+        "stale repo-local and external historical FNV settings outputs are explicitly classified instead of silently used as proof",
         "renderer consumed harvested viewing distance as projection/shared far distance",
         "terrain view distance derived from harvested viewing distance and FOV",
         "FNV sky mesh radius/scale derived from harvested viewing distance",

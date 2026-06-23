@@ -3,6 +3,7 @@ param(
     [string]$DeviceRoot = "/sdcard/OpenMWVR",
     [string]$FnvData = $env:NIKAMI_FNV_DATA,
     [string]$FnvConfigData = $env:NIKAMI_FNV_CONFIG_DATA,
+    [string]$ProofRoot = "",
     [switch]$FullData,
     [switch]$ConfigOnly,
     [switch]$UpdateResources,
@@ -17,7 +18,9 @@ Set-StrictMode -Version Latest
 
 $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "../..")).Path
 . (Join-Path $PSScriptRoot "fnv-runtime-settings.ps1")
-$ProofRoot = Join-Path $RepoRoot "proof/headset-fnv-vr"
+if ([string]::IsNullOrWhiteSpace($ProofRoot)) {
+    $ProofRoot = Join-Path (Split-Path $RepoRoot -Parent) "proof/headset-fnv-vr"
+}
 $StageRoot = Join-Path $ProofRoot "stage"
 $ConfigStage = Join-Path $StageRoot "config"
 $OverlayStage = Join-Path $StageRoot "fnv-config"
