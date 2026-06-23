@@ -219,6 +219,44 @@ namespace
                          << " pagingBinding=loaded-pending-runtime";
     }
 
+    void logFnvPsaDeathPoseProbe(const VFS::Manager& vfs)
+    {
+        if (std::getenv("OPENMW_FNV_PSA_DEATHPOSE_DIAG") == nullptr)
+            return;
+
+        std::size_t count = 0;
+        std::size_t totalBytes = 0;
+        for (const VFS::Path::Normalized& path : vfs.getRecursiveDirectoryIterator("meshes/"))
+        {
+            if (!Misc::StringUtils::ciEndsWith(path.value(), ".psa"))
+                continue;
+            if (path.value().find("deathpose") == std::string::npos)
+                continue;
+
+            try
+            {
+                Files::IStreamPtr stream = vfs.get(path);
+                stream->ignore(std::numeric_limits<std::streamsize>::max());
+                const std::streamoff bytes = stream->gcount();
+                if (bytes < 0)
+                    throw std::runtime_error("negative byte count");
+
+                ++count;
+                totalBytes += static_cast<std::size_t>(bytes);
+                Log(Debug::Info) << "FNV/ESM4 proof: PSA death-pose loaded path=" << path.value()
+                                 << " archive=\"" << vfs.getArchive(path) << "\" bytes=" << bytes;
+            }
+            catch (const std::exception& e)
+            {
+                Log(Debug::Warning) << "FNV/ESM4 proof: PSA death-pose load failed path=" << path.value()
+                                    << " error=" << e.what();
+            }
+        }
+
+        Log(Debug::Info) << "FNV/ESM4 proof: PSA death-pose summary count=" << count << " totalBytes=" << totalBytes
+                         << " playbackBinding=loaded-pending-runtime";
+    }
+
     class IdentifyOpenGLOperation : public osg::GraphicsOperation
     {
     public:
@@ -1905,6 +1943,7 @@ void OMW::Engine::prepareEngine()
 
     VFS::registerArchives(mVFS.get(), mFileCollections, mArchives, true, &mEncoder.get()->getStatelessEncoder());
     logFnvDlodSettingsProbe(*mVFS);
+    logFnvPsaDeathPoseProbe(*mVFS);
 
     mResourceSystem = std::make_unique<Resource::ResourceSystem>(
         mVFS.get(), Settings::cells().mCacheExpiryDelay, &mEncoder.get()->getStatelessEncoder());

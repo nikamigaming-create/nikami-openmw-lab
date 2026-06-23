@@ -247,13 +247,14 @@ $runtimeRules = @{
         New-Anchor "components/resource/scenemanager.cpp" "Ignoring SpeedTree data file" "runtime still fails closed to an empty node if billboard fallback cannot load"
         New-Anchor "components/bgsm/file.hpp" "mTree" "tree material flag support exists"
     ) "Promote to runtime-supported after a real SPT reader/conversion path proves tree geometry and collision beyond billboard fallback."
-    ".psa" = New-Rule "known-blocked" "actor-deathpose-animation" "PSA death-pose assets are harvested but no actor/creature death-pose runtime reader is wired" @(
-        New-Anchor "scripts/nikami/test-fnv-psa-deathpose-contract.ps1" "FNV PSA death-pose contract" "proof gate verifies the exact shipped death-pose PSA set and current runtime absence"
+    ".psa" = New-Rule "loaded-pending-runtime" "actor-deathpose-animation" "PSA death-pose assets are VFS-visible and byte-read in the PC-flat runtime proof; actor/creature death playback remains pending" @(
+        New-Anchor "scripts/nikami/test-fnv-psa-deathpose-contract.ps1" "FNV PSA death-pose contract" "proof gate verifies the exact shipped death-pose PSA set and runtime VFS byte loading"
+        New-Anchor "apps/openmw/engine.cpp" "FNV/ESM4 proof: PSA death-pose summary count=" "runtime diagnostic logs shipped PSA death-pose count and byte total"
         New-Anchor "apps/niftest/niftest.cpp" 'extension == ".psa"' "test tool recognizes PSA as a NIF-adjacent asset"
         New-Anchor "apps/openmw/mwrender/animation.hpp" "class Animation" "actor animation runtime owns any future death-pose playback"
         New-Anchor "apps/openmw/mwrender/creatureanimation.cpp" "CreatureAnimation" "creature animation runtime owns creature death-pose playback"
         New-Anchor "apps/openmw/mwrender/npcanimation.cpp" "NpcAnimation" "NPC animation runtime owns humanoid death-pose playback"
-    ) "Add PSA death-pose reader/playback or prove an explicit fallback to existing KF/ragdoll death behavior."
+    ) "Parse PSA death-pose animation semantics and bind actor/creature death playback before promoting to runtime-supported."
     ".ctl" = New-Rule "loaded-pending-runtime" "facegen-control-basis" "FaceGen CTL bytes are loaded through VFS, validated as FRCTL001, and used to verify the FNV FaceGen 50/30/50 coefficient basis; full control payload semantics remain a follow-up gate" @(
         New-Anchor "apps/openmw/mwrender/esm4npcanimation.cpp" "loadFaceGenCtl" "FaceGen CTL reader loads external control bytes"
         New-Anchor "apps/openmw/mwrender/esm4npcanimation.cpp" '"FRCTL001"' "FaceGen CTL magic is validated"

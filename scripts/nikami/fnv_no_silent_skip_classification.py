@@ -155,7 +155,7 @@ EXTENSION_RULES = {
     ".mp3": ("runtime-supported", "music-radio", "MP3 files are streamed by the sound/music manager."),
     ".nif": ("runtime-supported", "scene-mesh-collision", "NIF files are loaded for render nodes and collision users."),
     ".ogg": ("runtime-supported", "sound-voice", "OGG files are decoded by the sound manager."),
-    ".psa": ("known-blocked", "actor-deathpose-animation", "PSA death-pose runtime playback is not wired yet."),
+    ".psa": ("loaded-pending-runtime", "actor-deathpose-animation", "PSA death-pose bytes are read through VFS in PC-flat proof; actor/creature death playback remains pending."),
     ".psd": ("non-runtime-support-file", "source-art-leftover", "PSD source art is not a runtime file; DDS siblings are runtime assets."),
     ".spt": ("loaded-pending-runtime", "speedtree-billboard-fallback", "SPT files render through a billboard fallback pending real SpeedTree geometry/collision."),
     ".tai": ("runtime-supported", "interface-texture-atlas-index", "TAI atlas metadata is parsed for InterfaceShared DDS regions."),

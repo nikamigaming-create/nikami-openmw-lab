@@ -52,6 +52,7 @@ param(
     [switch]$FnvPartMatrixAudit,
     [switch]$FnvDisableNativeAnimationCallbacks,
     [switch]$FnvDlodSettingsDiag,
+    [switch]$FnvPsaDeathPoseDiag,
     [string]$TraceRawPendingRecord = "",
     [string]$ClassificationDir = "",
     [switch]$RequireSkyColorSanity,
@@ -407,6 +408,7 @@ try {
     if ($FnvPartMatrixAudit) { Set-ProofEnv $previousEnv "OPENMW_FNV_PART_MATRIX_AUDIT" "1" }
     if ($FnvDisableNativeAnimationCallbacks) { Set-ProofEnv $previousEnv "OPENMW_FNV_DISABLE_NATIVE_ANIMATION_CALLBACKS" "1" }
     if ($FnvDlodSettingsDiag) { Set-ProofEnv $previousEnv "OPENMW_FNV_DLODSETTINGS_DIAG" "1" }
+    if ($FnvPsaDeathPoseDiag) { Set-ProofEnv $previousEnv "OPENMW_FNV_PSA_DEATHPOSE_DIAG" "1" }
     Set-ProofEnv $previousEnv "OPENMW_FNV_TRACE_RAW_PENDING_RECORD" $TraceRawPendingRecord
     Set-ProofEnv $previousEnv "OPENMW_FNV_RENDER_DISTANCE_DIAG" "1"
     Set-ProofEnv $previousEnv "OPENMW_FNV_SKY_MISSING_LOG" "1"
@@ -438,6 +440,7 @@ try {
     Write-ProofLine "RequireSkyColorSanity: $RequireSkyColorSanity"
     Write-ProofLine "BootstrapCell: $BootstrapCell"
     Write-ProofLine "FnvDlodSettingsDiag: $FnvDlodSettingsDiag"
+    Write-ProofLine "FnvPsaDeathPoseDiag: $FnvPsaDeathPoseDiag"
     Write-ProofLine "TraceRawPendingRecord: $TraceRawPendingRecord"
     Write-ProofLine "TerrainProbePoints: $probePoints"
     Write-ProofLine ""
