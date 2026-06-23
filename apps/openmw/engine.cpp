@@ -28,11 +28,13 @@
 #include <components/debug/gldebug.hpp>
 
 #include <components/misc/rng.hpp>
+#include <components/misc/resourcehelpers.hpp>
 #include <components/misc/strings/algorithm.hpp>
 #include <components/misc/strings/format.hpp>
 #include <components/misc/strings/lower.hpp>
 
 #include <components/vfs/manager.hpp>
+#include <components/vfs/recursivedirectoryiterator.hpp>
 #include <components/vfs/registerarchives.hpp>
 
 #include <components/sdlutil/imagetosurface.hpp>
@@ -310,24 +312,70 @@ namespace
 
         const MWWorld::ESMStore& store = *MWBase::Environment::get().getESMStore();
         const ESM4::Weapon* weapon = findEsm4WeaponByEditorId(store, "Weap10mmPistol");
-        const ESM4::Ammunition* ammo = findEsm4AmmoByEditorId(store, "Ammo10mm");
+        const ESM4::Ammunition* namedAmmo = findEsm4AmmoByEditorId(store, "Ammo10mm");
+        const ESM4::Ammunition* weaponAmmo = nullptr;
+        int weaponAmmoRecordType = 0;
+        if (weapon != nullptr && !weapon->mAmmo.isZeroOrUnset())
+        {
+            weaponAmmoRecordType = store.find(ESM::RefId(weapon->mAmmo));
+            weaponAmmo = store.get<ESM4::Ammunition>().search(ESM::RefId(weapon->mAmmo));
+        }
+        const ESM4::Ammunition* ammo = weaponAmmo != nullptr ? weaponAmmo : namedAmmo;
         Log(Debug::Info) << "FNV/ESM4 proof: real 10mm store scan weapons=" << store.get<ESM4::Weapon>().getSize()
                          << " ammo=" << store.get<ESM4::Ammunition>().getSize()
                          << " weaponFound=" << (weapon != nullptr)
-                         << " ammoFound=" << (ammo != nullptr);
+                         << " weaponAmmoFound=" << (weaponAmmo != nullptr)
+                         << " weaponAmmoRecordType=0x" << std::hex << weaponAmmoRecordType << std::dec
+                         << " namedAmmoFound=" << (namedAmmo != nullptr)
+                         << " ammoFound=" << (ammo != nullptr)
+                         << " ammoSource=" << (weaponAmmo != nullptr ? "weaponAmmo" : "editorIdFallback");
 
         if (weapon == nullptr || ammo == nullptr)
         {
             Log(Debug::Warning) << "FNV/ESM4 proof: real 10mm equip BLOCKED reason=missing-real-record"
                                 << " weaponFound=" << (weapon != nullptr)
+                                << " weaponAmmoFound=" << (weaponAmmo != nullptr)
+                                << " namedAmmoFound=" << (namedAmmo != nullptr)
                                 << " ammoFound=" << (ammo != nullptr);
             return;
         }
 
-        if (!weapon->mAmmo.isZeroOrUnset() && !(weapon->mAmmo == ammo->mId))
+        if (weaponAmmo == nullptr && !weapon->mAmmo.isZeroOrUnset() && !(weapon->mAmmo == ammo->mId))
         {
-            Log(Debug::Warning) << "FNV/ESM4 proof: real 10mm ammo compatibility WARN weaponAmmo="
-                                << ESM::RefId(weapon->mAmmo) << " selectedAmmo=" << ESM::RefId(ammo->mId);
+            Log(Debug::Info) << "FNV/ESM4 proof: real 10mm ammo reference classified known-blocked"
+                             << " reason=weapon-ammo-reference-not-loaded-as-AMMO"
+                             << " weaponAmmo=" << ESM::RefId(weapon->mAmmo)
+                             << " weaponAmmoRecordType=0x" << std::hex << weaponAmmoRecordType << std::dec
+                             << " selectedAmmo=" << ESM::RefId(ammo->mId)
+                             << " selectedAmmoEdid=" << ammo->mEditorId;
+        }
+
+        if (!weapon->mIcon.empty())
+        {
+            const VFS::Manager* const vfs = MWBase::Environment::get().getResourceSystem()->getVFS();
+            const VFS::Path::Normalized rawIcon = VFS::Path::toNormalized(weapon->mIcon);
+            const VFS::Path::Normalized resolvedIcon = Misc::ResourceHelpers::correctIconPath(rawIcon, *vfs);
+            const VFS::Path::Normalized canonicalIcon(
+                "textures/interface/icons/pipboyimages/weapons/weapons_10mm_pistol.dds");
+            int tenMillimeterIconMatches = 0;
+            for (const VFS::Path::Normalized& path :
+                vfs->getRecursiveDirectoryIterator("textures/interface/icons/pipboyimages/weapons"))
+            {
+                if (path.value().find("10mm") != std::string::npos)
+                    ++tenMillimeterIconMatches;
+                if (tenMillimeterIconMatches >= 16)
+                    break;
+            }
+
+            Log(Debug::Info) << "FNV/ESM4 proof: real 10mm icon probe"
+                             << " rawIcon=\"" << rawIcon << "\""
+                             << " resolvedIcon=\"" << resolvedIcon << "\""
+                             << " resolvedExists=" << vfs->exists(resolvedIcon)
+                             << " resolvedArchive=\"" << vfs->getArchive(resolvedIcon) << "\""
+                             << " canonicalIcon=\"" << canonicalIcon << "\""
+                             << " canonicalExists=" << vfs->exists(canonicalIcon)
+                             << " canonicalArchive=\"" << vfs->getArchive(canonicalIcon) << "\""
+                             << " tenMillimeterIconMatches=" << tenMillimeterIconMatches;
         }
 
         MWWorld::InventoryStore& inventory = player.getClass().getInventoryStore(player);

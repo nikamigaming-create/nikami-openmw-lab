@@ -64,7 +64,7 @@ namespace MWGui
             if (item.getType() == ESM4::Ammunition::sRecordId)
                 return true;
 
-            const std::string id = Misc::StringUtils::lowerCase(item.getCellRef().getRefId().getRefIdString());
+            const std::string id = Misc::StringUtils::lowerCase(item.getCellRef().getRefId().serializeText());
             return id.find("ammo") != std::string::npos || id.find("9mm") != std::string::npos
                 || id.find("round") != std::string::npos;
         }
