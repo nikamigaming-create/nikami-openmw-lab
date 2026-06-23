@@ -3,7 +3,7 @@ param(
     [string]$FnvData = "",
     [string]$VcpkgRoot = "D:\code\c\FMODS\vcpkg",
     [string]$ProofRoot = "",
-    [int]$RunSeconds = 8,
+    [int]$RunSeconds = 20,
     [int]$ProofFrame = 150
 )
 
@@ -87,6 +87,46 @@ function Restore-ProofEnv([hashtable]$Previous) {
     }
 }
 
+$AllowedClassifications = @(
+    "runtime-supported",
+    "loaded-pending-runtime",
+    "known-blocked",
+    "non-runtime-support-file",
+    "intentionally-excluded-with-proof"
+)
+
+function Assert-SystemBoundaryRows([object[]]$Rows) {
+    $expectedSystems = @("WEAP", "AMMO", "PROJ", "EXPL", "WEAP.mAmmo")
+    $seen = @{}
+    foreach ($row in $Rows) {
+        $system = [string]$row.system
+        if ([string]::IsNullOrWhiteSpace($system)) {
+            throw "Runtime boundary row is missing system"
+        }
+        if ($seen.ContainsKey($system)) {
+            throw "Duplicate runtime boundary row: $system"
+        }
+        $seen[$system] = $true
+
+        $classification = [string]$row.classification
+        if ($AllowedClassifications -notcontains $classification) {
+            throw "Unexpected runtime boundary classification for ${system}: $classification"
+        }
+        if ([string]::IsNullOrWhiteSpace([string]$row.firstGate)) {
+            throw "Runtime boundary row missing firstGate: $system"
+        }
+        if ([string]::IsNullOrWhiteSpace([string]$row.proof)) {
+            throw "Runtime boundary row missing proof: $system"
+        }
+    }
+    foreach ($system in $expectedSystems) {
+        if (!$seen.ContainsKey($system)) {
+            throw "Missing runtime boundary row: $system"
+        }
+    }
+    Write-ProofLine "OK runtime boundary rows: $($expectedSystems -join ', ')"
+}
+
 Write-ProofLine "FNV real 10mm runtime contract $Stamp"
 Write-ProofLine "RepoRoot: $RepoRoot"
 Write-ProofLine "FnvData: $FnvData"
@@ -99,6 +139,7 @@ Assert-Text "apps/openmw/engine.cpp" "Ammo10mm" "real 10mm ammo editor id"
 Assert-Text "apps/openmw/engine.cpp" "weaponAmmoFound=" "real 10mm weapon-linked ammo proof"
 Assert-Text "apps/openmw/engine.cpp" "real 10mm firing trace PASS" "real 10mm firing proof log"
 Assert-Text "apps/openmw/engine.cpp" "real 10mm icon probe" "real 10mm icon resolver proof log"
+Assert-Text "apps/openmw/engine.cpp" "physical ESM4 projectile visual deferred" "real 10mm proof keeps projectile visuals bounded"
 Assert-Text "apps/openmw/mwclass/esm4base.hpp" "std::is_same_v<Record, ESM4::Weapon>" "ESM4 weapon equipment slot classification"
 Assert-Text "apps/openmw/mwclass/esm4base.hpp" "MWWorld::InventoryStore::Slot_Ammunition" "ESM4 ammo equipment slot classification"
 Assert-Text "apps/openmw/mwgui/hud.cpp" "getRefId().serializeText()" "HUD form-id-safe ammo fallback"
@@ -111,6 +152,8 @@ Assert-Text "apps/openmw/mwworld/manualref.cpp" "case ESM::REC_MISC4:" "ManualRe
 Assert-Text "apps/openmw/mwworld/manualref.cpp" "case ESM::REC_ALCH4:" "ManualRef ESM4 potion construction"
 Assert-Text "scripts/nikami/fnv_no_silent_skip_classification.py" '"WEAP": "weapon records feed inventory, actor, and HUD ammo paths"' "WEAP runtime-supported classification"
 Assert-Text "scripts/nikami/fnv_no_silent_skip_classification.py" '"AMMO": "ammo records feed weapon/HUD ammo paths"' "AMMO runtime-supported classification"
+Assert-Text "scripts/nikami/fnv_no_silent_skip_classification.py" '"PROJ": "projectile records are source-backed and stored pending runtime projectile binding"' "PROJ loaded-pending runtime classification"
+Assert-Text "scripts/nikami/fnv_no_silent_skip_classification.py" '"EXPL": "explosion records are source-backed and stored pending runtime effect binding"' "EXPL loaded-pending runtime classification"
 
 $FlatProofScript = Join-Path $PSScriptRoot "run-fnv-flat-proof.ps1"
 $previousEnv = @{}
@@ -142,9 +185,60 @@ $OpenMwLog = Join-Path $FlatProofDir "openmw.log"
 Assert-FileNotContains $OpenMwLog "FNV/ESM4 proof: real 10mm (equip|firing) BLOCKED|FNV/ESM4 proof: real 10mm equip FAIL" "real 10mm blocker/failure line"
 Assert-FileNotContains $OpenMwLog "FNV/ESM4 proof: real 10mm ammo compatibility WARN|Error in frame: RefId is not a string" "real 10mm compatibility/frame id failure"
 Assert-FileNotContains $OpenMwLog "Failed to open image: 'icons/pipboyimages/weapons/weapons_10mm_pistol.dds'" "10mm icon fallback"
-Assert-FileContains $OpenMwLog "FNV/ESM4 proof: real 10mm ammo reference classified known-blocked .*weaponAmmo=FormId:0x11537e6.*selectedAmmo=.*selectedAmmoEdid=Ammo10mm" "real 10mm ammo reference classification" | Out-Null
+$storeMatch = Assert-FileContains $OpenMwLog "FNV/ESM4 proof: real 10mm store scan weapons=(?<weapons>[0-9]+) ammo=(?<ammo>[0-9]+).*weaponFound=1.*weaponAmmoFound=0.*namedAmmoFound=1.*ammoFound=1.*ammoSource=editorIdFallback" "real 10mm store scan proof"
+$ammoReferenceMatch = Assert-FileContains $OpenMwLog "FNV/ESM4 proof: real 10mm ammo reference classified known-blocked .*weaponAmmo=(?<weaponAmmo>FormId:0x[0-9a-fA-F]+).*selectedAmmo=(?<selectedAmmo>\S+).*selectedAmmoEdid=Ammo10mm" "real 10mm ammo reference classification"
 $equipMatch = Assert-FileContains $OpenMwLog "FNV/ESM4 proof: real 10mm equip PASS .*weaponEdid=(?<weaponEdid>[^ ]+).*damage=(?<damage>[0-9]+).*clipSize=(?<clip>[0-9]+).*ammoEdid=(?<ammoEdid>[^ ]+).*ammoProjectile=(?<projectile>[^ ]+).*ammoDamage=(?<ammoDamage>[0-9.]+).*ammoCount=(?<ammoCount>[0-9]+)" "real 10mm equip proof"
 $fireMatch = Assert-FileContains $OpenMwLog "FNV/ESM4 proof: real 10mm firing trace PASS ammoBefore=(?<before>[0-9]+) ammoAfter=(?<after>[0-9]+) raycastAvailable=(?<raycast>[01]) hit=(?<hit>[01])" "real 10mm firing trace proof"
+
+$systemBoundary = @(
+    [ordered]@{
+        system = "WEAP"
+        recordType = "WEAP"
+        item = $equipMatch.Groups["weaponEdid"].Value
+        classification = "runtime-supported"
+        firstGate = "pc-flat-real-10mm-equip-hud-icon-raytrace"
+        proof = "ManualRef construction, inventory equip, selected weapon HUD path, icon resolution, muzzle ray trace request, and ammo decrement are proved for the real 10mm pistol slice."
+        notProven = "This does not prove every weapon's reload animation, spread, condition, mods, sounds, NPC combat use, projectile visuals, or all weapon subclasses."
+    }
+    [ordered]@{
+        system = "AMMO"
+        recordType = "AMMO"
+        item = $equipMatch.Groups["ammoEdid"].Value
+        classification = "runtime-supported"
+        firstGate = "pc-flat-real-10mm-ammo-equip-decrement"
+        proof = "ManualRef construction, ammunition slot equip, HUD-safe form id path, projectile reference carry-through, and 48-to-47 decrement are proved for Ammo10mm."
+        notProven = "This does not prove ammo effects, all ammo variants, full ballistic physics, or projectile impact effects."
+    }
+    [ordered]@{
+        system = "PROJ"
+        recordType = "PROJ"
+        item = $equipMatch.Groups["projectile"].Value
+        classification = "loaded-pending-runtime"
+        firstGate = "runtime-projectile-visual-effect-binding"
+        proof = "Ammo10mm's projectile reference is carried through equip and firing proof logs, but this gate only casts a ray and explicitly defers physical ESM4 projectile visuals."
+        notProven = "No spawned ESM4 projectile mesh, physics projectile, tracer, impact data, or explosion chain is claimed here."
+    }
+    [ordered]@{
+        system = "EXPL"
+        recordType = "EXPL"
+        item = "all EXPL records"
+        classification = "loaded-pending-runtime"
+        firstGate = "runtime-explosion-effect-binding"
+        proof = "EXPL source/store accounting is covered by the gameplay record store contract; the 10mm runtime gate does not trigger an explosion effect."
+        notProven = "No explosion radius, damage, impact dataset, decal, sound, or visual effect runtime parity is claimed here."
+    }
+    [ordered]@{
+        system = "WEAP.mAmmo"
+        recordType = "WEAP/AMMO reference"
+        item = $ammoReferenceMatch.Groups["weaponAmmo"].Value
+        classification = "known-blocked"
+        firstGate = "weapon-ammo-reference-not-loaded-as-AMMO"
+        proof = "Weap10mmPistol mAmmo does not resolve to the AMMO store in this load order, so the runtime proof selects Ammo10mm by editor id and records the blocked reference explicitly."
+        selectedAmmo = $ammoReferenceMatch.Groups["selectedAmmo"].Value
+        notProven = "The direct weapon mAmmo reference cannot be treated as working until the referenced form resolves to an AMMO record or an explicit compatibility mapping exists."
+    }
+)
+Assert-SystemBoundaryRows $systemBoundary
 
 $metadata = [ordered]@{
     status = "PASS"
@@ -152,6 +246,10 @@ $metadata = [ordered]@{
     repoRoot = $RepoRoot
     fnvData = $FnvData
     flatProofDir = $FlatProofDir
+    storeCounts = [ordered]@{
+        weapons = [int]$storeMatch.Groups["weapons"].Value
+        ammo = [int]$storeMatch.Groups["ammo"].Value
+    }
     weapon = [ordered]@{
         editorId = $equipMatch.Groups["weaponEdid"].Value
         damage = [int]$equipMatch.Groups["damage"].Value
@@ -167,6 +265,7 @@ $metadata = [ordered]@{
     }
     raycastAvailable = [int]$fireMatch.Groups["raycast"].Value
     hit = [int]$fireMatch.Groups["hit"].Value
+    systemBoundary = $systemBoundary
     runtimeBoundary = "This proves PC-flat ESM4 WEAP/AMMO store lookup, ManualRef construction, equip slots, HUD-safe form ids, retail icon resolution, ray trace request, and ammo decrement. The Weap10mmPistol mAmmo reference is explicitly known-blocked because it does not resolve to the AMMO store in this load order; full projectile visuals/effects remain separate PROJ/EXPL gates."
 }
 $metadataPath = Join-Path $ProofDir "fnv-real-10mm-runtime-contract.json"
