@@ -785,23 +785,56 @@ namespace MWWorld
         std::map<ESM::RecNameInts, std::vector<Esm4LoadedPendingRecord>> mEsm4LoadedPendingRecords;
         std::size_t mEsm4LoadedPendingRecordBytes = 0;
 
+        static bool shouldTraceLoadedPendingEsm4Record(ESM::RecNameInts recName)
+        {
+            const char* trace = std::getenv("OPENMW_FNV_TRACE_RAW_PENDING_RECORD");
+            if (trace == nullptr || *trace == '\0')
+                return false;
+
+            const std::string_view wanted(trace);
+            if (wanted == "*")
+                return true;
+
+            const std::string_view name = ESM::getRecNameString(recName).toStringView();
+            if (wanted == name)
+                return true;
+            return name.size() > 1 && name.back() == '4' && wanted == name.substr(0, name.size() - 1);
+        }
+
         static bool isLoadedPendingEsm4Record(ESM::RecNameInts recName)
         {
             switch (recName)
             {
                 case ESM::REC_ACTI4:
+                case ESM::REC_ADDN4:
                 case ESM::REC_ALCH4:
+                case ESM::REC_ALOC4:
+                case ESM::REC_AMEF4:
+                case ESM::REC_ANIO4:
                 case ESM::REC_ARMA4:
                 case ESM::REC_ARMO4:
                 case ESM::REC_ASPC4:
+                case ESM::REC_AVIF4:
                 case ESM::REC_BOOK4:
                 case ESM::REC_BPTD4:
+                case ESM::REC_CAMS4:
+                case ESM::REC_CCRD4:
+                case ESM::REC_CDCK4:
+                case ESM::REC_CHAL4:
+                case ESM::REC_CHIP4:
                 case ESM::REC_CLAS4:
                 case ESM::REC_CLOT4:
                 case ESM::REC_CLMT4:
+                case ESM::REC_CMNY4:
                 case ESM::REC_CONT4:
+                case ESM::REC_CPTH4:
+                case ESM::REC_CSNO4:
                 case ESM::REC_CSTY4:
+                case ESM::REC_DEBR4:
+                case ESM::REC_DEHY4:
+                case ESM::REC_DOBJ4:
                 case ESM::REC_DOOR4:
+                case ESM::REC_ECZN4:
                 case ESM::REC_EFSH4:
                 case ESM::REC_ENCH4:
                 case ESM::REC_EXPL4:
@@ -813,6 +846,7 @@ namespace MWWorld
                 case ESM::REC_GRAS4:
                 case ESM::REC_HAIR4:
                 case ESM::REC_HDPT4:
+                case ESM::REC_HUNG4:
                 case ESM::REC_IDLE4:
                 case ESM::REC_IDLM4:
                 case ESM::REC_IMGS4:
@@ -825,11 +859,13 @@ namespace MWWorld
                 case ESM::REC_LGTM4:
                 case ESM::REC_LIGH4:
                 case ESM::REC_LSCR4:
+                case ESM::REC_LSCT4:
                 case ESM::REC_LVLC4:
                 case ESM::REC_LVLI4:
                 case ESM::REC_LVLN4:
                 case ESM::REC_MESG4:
                 case ESM::REC_MGEF4:
+                case ESM::REC_MICN4:
                 case ESM::REC_MISC4:
                 case ESM::REC_MSET4:
                 case ESM::REC_MUSC4:
@@ -841,8 +877,14 @@ namespace MWWorld
                 case ESM::REC_PROJ4:
                 case ESM::REC_PWAT4:
                 case ESM::REC_RACE4:
+                case ESM::REC_RADS4:
+                case ESM::REC_RCCT4:
+                case ESM::REC_RCPE4:
                 case ESM::REC_REGN4:
+                case ESM::REC_REPU4:
+                case ESM::REC_RGDL4:
                 case ESM::REC_SCEN4:
+                case ESM::REC_SLPD4:
                 case ESM::REC_SPEL4:
                 case ESM::REC_TERM4:
                 case ESM::REC_TREE4:
@@ -879,6 +921,16 @@ namespace MWWorld
 
             store.mStoreImp->mEsm4LoadedPendingRecordBytes += record.mPayloadBytes;
             store.mStoreImp->mEsm4LoadedPendingRecords[recName].push_back(std::move(record));
+            if (shouldTraceLoadedPendingEsm4Record(recName))
+            {
+                const Esm4LoadedPendingRecord& stored = store.mStoreImp->mEsm4LoadedPendingRecords[recName].back();
+                Log(Debug::Info) << "FNV/ESM4 inventory raw-loaded pending detail: "
+                                 << ESM::getRecNameString(recName).toStringView() << " formId=" << stored.mId
+                                 << " flags=0x" << std::hex << stored.mFlags << std::dec
+                                 << " header-bytes=" << stored.mHeaderDataSize
+                                 << " subrecords=" << stored.mSubrecords
+                                 << " payload-bytes=" << stored.mPayloadBytes;
+            }
             return true;
         }
 
