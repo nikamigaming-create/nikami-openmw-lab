@@ -9,13 +9,14 @@ param(
     [switch]$SkipResources,
     [switch]$Launch,
     [int]$LaunchSeconds = 25,
-    [int]$ViewingDistance = 10000
+    [int]$ViewingDistance = 0
 )
 
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
 $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "../..")).Path
+. (Join-Path $PSScriptRoot "fnv-runtime-settings.ps1")
 $ProofRoot = Join-Path $RepoRoot "proof/headset-fnv-vr"
 $StageRoot = Join-Path $ProofRoot "stage"
 $ConfigStage = Join-Path $StageRoot "config"
@@ -35,6 +36,11 @@ if ([string]::IsNullOrWhiteSpace($FnvData)) {
 
 if (!(Test-Path -LiteralPath $FnvData)) {
     throw "Missing FNV data directory: $FnvData"
+}
+
+if ($ViewingDistance -le 0) {
+    $ViewingDistance = Get-NikamiFnvViewingDistance -FnvData $FnvData
+    Write-Host "Using FNV viewing distance from harvested fBlockLoadDistance: $ViewingDistance"
 }
 
 if ([string]::IsNullOrWhiteSpace($FnvConfigData)) {

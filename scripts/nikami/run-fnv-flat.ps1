@@ -21,6 +21,7 @@ $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
 $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "../..")).Path
+. (Join-Path $PSScriptRoot "fnv-runtime-settings.ps1")
 $BuildPath = Join-Path $RepoRoot $BuildDir
 
 if ([string]::IsNullOrWhiteSpace($FnvData)) {
@@ -61,6 +62,9 @@ if (!(Test-Path -LiteralPath $BuildConfig)) {
 if (!(Test-Path -LiteralPath $FnvData)) {
     throw "Missing FNV data directory: $FnvData"
 }
+
+$ViewingDistance = Get-NikamiFnvViewingDistance -FnvData $FnvData
+Write-Host "Using FNV viewing distance from harvested fBlockLoadDistance: $ViewingDistance"
 
 function Test-FnvOverlayDataPath([string]$Path) {
     if ([string]::IsNullOrWhiteSpace($Path) -or !(Test-Path -LiteralPath $Path)) {
@@ -241,7 +245,7 @@ enable=false
 $SettingsText = @"
 [Camera]
 field of view = 91
-viewing distance = 10000
+viewing distance = $ViewingDistance
 
 [Fog]
 sky blending start = 0.8

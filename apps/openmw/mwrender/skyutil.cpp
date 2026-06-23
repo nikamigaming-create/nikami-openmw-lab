@@ -705,6 +705,13 @@ namespace MWRender
         : CelestialBody(parentNode, 1.0f, 1, Mask_Sun)
         , mUpdater(new SunUpdater)
     {
+        if (hasFalloutSkyContent(sceneManager))
+        {
+            setAvailable(false);
+            Log(Debug::Info) << "FNV/ESM4: disabled OpenMW sun billboard for Fallout sky content";
+            return;
+        }
+
         mTransform->addUpdateCallback(mUpdater);
 
         Resource::ImageManager& imageManager = *sceneManager.getImageManager();
@@ -712,8 +719,6 @@ namespace MWRender
         const VFS::Path::Normalized image = chooseExistingTexture(
             sceneManager.getVFS(), VFS::Path::Normalized("textures/sky/sun.dds"),
             VFS::Path::Normalized("textures/tx_sun_05.dds"));
-        if (hasFalloutSkyContent(sceneManager))
-            Log(Debug::Info) << "FNV/ESM4: enabled sun billboard using texture " << image.value();
 
         osg::ref_ptr<osg::Texture2D> sunTex = new osg::Texture2D(imageManager.getImage(image));
         sunTex->setWrap(osg::Texture::WRAP_S, osg::Texture::CLAMP_TO_EDGE);
@@ -946,9 +951,13 @@ namespace MWRender
         , mUpdater(new MoonUpdater(*sceneManager.getImageManager()))
     {
         if (hasFalloutSkyContent(sceneManager))
-            Log(Debug::Info) << "FNV/ESM4: enabled OpenMW "
+        {
+            setAvailable(false);
+            Log(Debug::Info) << "FNV/ESM4: disabled OpenMW "
                              << (mType == Moon::Type_Secunda ? "Secunda" : "Masser")
-                             << " moon billboard with Fallout texture selection";
+                             << " moon billboard for Fallout sky content";
+            return;
+        }
 
         setPhase(MoonState::Phase::Full);
         setVisible(true);

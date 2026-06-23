@@ -51,12 +51,22 @@ Write-ProofLine "ProofDir: $ProofDir"
 Write-ProofLine ""
 
 $SkyCpp = Join-Path $RepoRoot "apps/openmw/mwrender/sky.cpp"
+$SkyUtilCpp = Join-Path $RepoRoot "apps/openmw/mwrender/skyutil.cpp"
+$SkyFrag = Join-Path $RepoRoot "files/shaders/compatibility/sky.frag"
+$SkyPasses = Join-Path $RepoRoot "files/shaders/lib/sky/passes.glsl"
 $FlatScript = Join-Path $RepoRoot "scripts/nikami/run-fnv-flat.ps1"
 $FlatProofScript = Join-Path $RepoRoot "scripts/nikami/run-fnv-flat-proof.ps1"
 $VrDeployScript = Join-Path $RepoRoot "scripts/nikami/deploy-fnv-vr-headset.ps1"
 
 Assert-FileContains $SkyCpp "attachSkyNodeIfUnattached" "sky renderer preserves existing FNV wrapper parent"
 Assert-FileContains $SkyCpp "FNV camera-relative sky mesh" "sky renderer creates camera-relative FNV wrapper"
+Assert-FileContains $SkyUtilCpp "disabled OpenMW sun billboard for Fallout sky content" "FNV sky disables duplicate OpenMW sun billboard"
+Assert-FileContains $SkyUtilCpp "FNV/ESM4: disabled OpenMW " "FNV sky emits duplicate moon disable prefix"
+Assert-FileContains $SkyUtilCpp " moon billboard for Fallout sky content" "FNV sky disables duplicate OpenMW moon billboards"
+Assert-FileContains $SkyFrag "premultiplied alpha blending" "moon shader keeps premultiplied blend path"
+Assert-FileContains $SkyPasses "#define PASS_SUN 4" "sky shader pass table keeps sun pass id"
+Assert-FileContains $SkyPasses "#define PASS_MOON 3" "sky shader pass table keeps moon pass id"
+Assert-FileNotContains $SkyFrag "vec4 blendedLayer = phase \* moonBlend" "downstream legacy moon shader blend"
 Assert-FileContains $FlatProofScript "OPENMW_FNV_SKY_MISSING_LOG" "flat proof enables sky diagnostics"
 foreach ($scriptPath in @($FlatScript, $VrDeployScript)) {
     Assert-FileContains $scriptPath "skyatmosphere = meshes/sky/atmosphere.nif" "FNV atmosphere setting in $(Split-Path $scriptPath -Leaf)"
@@ -70,9 +80,9 @@ $requiredLogPatterns = @(
     "FNV/ESM4: wrapped sky mesh night atmosphere \(meshes/sky/stars\.nif\)",
     "FNV/ESM4: wrapped sky mesh clouds \(meshes/sky/clouds\.nif\)",
     "FNV/ESM4: wrapped sky mesh next clouds \(meshes/sky/clouds\.nif\)",
-    "FNV/ESM4: enabled sun billboard using texture textures/sky/sun\.dds",
-    "FNV/ESM4: enabled OpenMW Masser moon billboard with Fallout texture selection",
-    "FNV/ESM4: enabled OpenMW Secunda moon billboard with Fallout texture selection"
+    "FNV/ESM4: disabled OpenMW sun billboard for Fallout sky content",
+    "FNV/ESM4: disabled OpenMW Masser moon billboard for Fallout sky content",
+    "FNV/ESM4: disabled OpenMW Secunda moon billboard for Fallout sky content"
 )
 
 $flatProofRoot = Join-Path $ProofRoot "fnv-flat-proof"
@@ -117,7 +127,10 @@ Assert-FileContains $flatOpenMwLog "FNV/ESM4: wrapped sky mesh day atmosphere \(
 Assert-FileContains $flatOpenMwLog "FNV/ESM4: wrapped sky mesh clouds \(meshes/sky/clouds\.nif\)" "runtime wrapped FNV clouds"
 Assert-FileContains $flatOpenMwLog "FNV/ESM4: wrapped sky mesh next clouds \(meshes/sky/clouds\.nif\)" "runtime wrapped FNV next clouds"
 Assert-FileContains $flatOpenMwLog "FNV/ESM4: wrapped sky mesh night atmosphere \(meshes/sky/stars\.nif\)" "runtime wrapped FNV stars"
-Assert-FileContains $flatOpenMwLog "FNV/ESM4: enabled sun billboard using texture textures/sky/sun\.dds" "runtime FNV sun texture"
+Assert-FileContains $flatOpenMwLog "FNV/ESM4: disabled OpenMW sun billboard for Fallout sky content" "runtime duplicate OpenMW sun disabled"
+Assert-FileContains $flatOpenMwLog "FNV/ESM4: disabled OpenMW Masser moon billboard for Fallout sky content" "runtime duplicate OpenMW Masser disabled"
+Assert-FileContains $flatOpenMwLog "FNV/ESM4: disabled OpenMW Secunda moon billboard for Fallout sky content" "runtime duplicate OpenMW Secunda disabled"
+Assert-FileNotContains $flatOpenMwLog "enabled sun billboard using texture|enabled OpenMW Masser moon billboard|enabled OpenMW Secunda moon billboard" "old duplicate FNV sun/moon billboard path"
 
 $result = [ordered]@{
     stamp = $Stamp
@@ -129,7 +142,9 @@ $result = [ordered]@{
     checked = @(
         "explicit FNV sky model settings",
         "camera-relative wrapped FNV atmosphere/cloud/star meshes",
-        "FNV sun and moon texture selection",
+        "Fallout sky owns FNV sun/moon visuals",
+        "OpenMW duplicate sun/moon billboard path disabled for FNV",
+        "sky shader pass ids and premultiplied moon blend guarded",
         "no legacy OpenMW sky mesh fallback",
         "no shader/blocker log lines"
     )
