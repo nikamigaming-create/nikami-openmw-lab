@@ -184,10 +184,13 @@ $runtimeRules = @{
         New-Anchor "components/vfs/manager.hpp" "Files::IStreamPtr get" "VFS exposes arbitrary files by normalized path"
         New-Anchor "components/esm4/reader.cpp" "Reader::getStringImpl" "ESM4 reader consumes text/string payloads from plugins"
     ) "Tracked so text assets are not silent drops; add targeted runtime gates when specific TXT assets are referenced."
-    ".tai" = New-Rule "blocked-runtime-support" "interface-texture-atlas-index" "FNV interface TAI atlas/index bytes are harvested but no runtime consumer is identified" @(
-        New-Anchor "components/vfs/manager.hpp" "Files::IStreamPtr get" "VFS can expose TAI streams"
-        New-Anchor "components/myguiplatform/myguitexture.cpp" "mImageManager->getImage" "MyGUI texture loading path exists for paired interface textures"
-    ) "Identify the TAI format for textures/interface/interfaceshared.tai and connect it to the FNV menu renderer if required."
+    ".tai" = New-Rule "runtime-supported" "interface-texture-atlas-index" "FNV interface TAI atlas metadata is parsed at runtime so atlas-only MyGUI texture requests crop from InterfaceShared DDS" @(
+        New-Anchor "components/myguiplatform/myguitexture.cpp" "loadFalloutTaiAtlas" "MyGUI texture loading parses InterfaceShared TAI metadata"
+        New-Anchor "components/myguiplatform/myguitexture.cpp" "cropFalloutTaiAtlasImage" "MyGUI texture loading crops atlas-only DDS regions"
+        New-Anchor "components/myguiplatform/myguitexture.cpp" "FNV/ESM4 diag: resolved TAI atlas texture" "runtime logs successful TAI atlas resolution"
+        New-Anchor "scripts/nikami/test-fnv-harvest-action-coverage.ps1" '".dds" = New-Rule "runtime-supported"' "DDS texture entries are runtime-supported"
+        New-Anchor "scripts/nikami/test-fnv-tai-atlas-contract.ps1" "FNV TAI atlas contract" "retail-safe TAI proof parses local atlas metadata without storing payloads"
+    )
     ".lip" = New-Rule "vfs-readable-runtime-conditional" "voice-lip-sync" "Voice sidecar bytes are loaded through VFS, parsed into a timed envelope, and sampled by FNV mouth animation; exact phoneme/viseme mapping remains a follow-up gate" @(
         New-Anchor "apps/openmw/mwsound/soundmanagerimp.cpp" "loadVoiceLipSync" "voice playback resolves and parses matching LIP sidecars"
         New-Anchor "apps/openmw/mwsound/soundmanagerimp.cpp" "FNV/ESM4 diag: loaded LIP sync" "runtime logs parsed LIP sidecar metadata"
