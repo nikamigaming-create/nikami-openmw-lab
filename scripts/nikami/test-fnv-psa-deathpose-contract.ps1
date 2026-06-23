@@ -83,7 +83,7 @@ Write-ProofLine "HarvestDir: $HarvestDir"
 Write-ProofLine "ProofDir: $ProofDir"
 Write-ProofLine ""
 
-Assert-Text "scripts/nikami/test-fnv-harvest-action-coverage.ps1" '"blocked-runtime-support" "actor-deathpose-animation"' "harvest gate keeps PSA as an actor death-pose runtime blocker"
+Assert-Text "scripts/nikami/test-fnv-harvest-action-coverage.ps1" '"known-blocked" "actor-deathpose-animation"' "harvest gate keeps PSA as an actor death-pose runtime blocker"
 Assert-Text "apps/niftest/niftest.cpp" 'extension == ".psa"' "niftest recognizes PSA as NIF-adjacent tooling input"
 Assert-NoText "components/resource/scenemanager.cpp" 'extension == "psa"' "scene manager has no PSA runtime load branch"
 Assert-NoText "apps/openmw/mwrender/animation.cpp" ".psa" "main animation runtime has no PSA reader"
@@ -140,7 +140,7 @@ $metadataPath = Join-Path $ProofDir "psa-deathpose-contract.json"
     repoRoot = $RepoRoot
     harvestDir = $HarvestDir
     proofDir = $ProofDir
-    classification = "blocked-runtime-support"
+    classification = "known-blocked"
     subsystem = "actor-deathpose-animation"
     expectedPsaPaths = $ExpectedPsaPaths
     archiveCounts = $archiveCounts

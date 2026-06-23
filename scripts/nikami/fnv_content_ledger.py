@@ -106,6 +106,10 @@ def all_form_ids(subrecords, rec_type):
     return result
 
 
+def subrecord_sizes(subrecords, rec_type):
+    return [len(payload) for current_type, payload in subrecords if current_type == rec_type]
+
+
 def add_reference(references, plugin, owner_type, owner_form_id, field, value):
     if value is None or value == 0:
         return
@@ -213,7 +217,8 @@ def quest_row(plugin, record, subrecords):
             for rec_type, payload in subrecords
             if rec_type in ("INDX", "QSDT", "CNAM", "NNAM", "QOBJ", "QSTA", "NAM0")
         ],
-        "readiness": "parsed-only",
+        "classification": "loaded-pending-runtime",
+        "readiness": "loaded-pending-runtime",
         "firstFailingGate": "runtime-quest-execution",
     }
 
@@ -231,7 +236,8 @@ def dialogue_row(plugin, record, subrecords):
         "removedQuests": all_form_ids(subrecords, "QSTR"),
         "dialDataSize": len(data) if data else 0,
         "priority": get_float(pnam, 0) if pnam else None,
-        "readiness": "stored-partial",
+        "classification": "loaded-pending-runtime",
+        "readiness": "loaded-pending-runtime",
         "firstFailingGate": "runtime-info-selection",
     }
 
@@ -255,7 +261,8 @@ def info_row(plugin, record, subrecords):
         "addTopics": all_form_ids(subrecords, "NAME"),
         "conditions": conditions(subrecords),
         "resultScript": script_block(subrecords),
-        "readiness": "parsed-only",
+        "classification": "loaded-pending-runtime",
+        "readiness": "loaded-pending-runtime",
         "firstFailingGate": "missing-esm4-info-store",
     }
 
@@ -271,8 +278,73 @@ def script_row(plugin, record, subrecords):
         "sourceLength": script["sourceLength"],
         "localVariables": script["localVariables"],
         "referencedForms": script["referencedForms"],
-        "readiness": "parsed-only",
+        "classification": "loaded-pending-runtime",
+        "readiness": "loaded-pending-runtime",
         "firstFailingGate": "missing-fnv-script-runtime",
+    }
+
+
+def perk_row(plugin, record, subrecords):
+    script = script_block(subrecords)
+    return {
+        "plugin": plugin,
+        "recordType": "PERK",
+        "formId": record["formId"],
+        "editorId": first_zstring(subrecords, "EDID"),
+        "fullName": first_zstring(subrecords, "FULL"),
+        "descriptionLength": len(first_zstring(subrecords, "DESC")),
+        "icon": first_zstring(subrecords, "ICON"),
+        "dataSizes": subrecord_sizes(subrecords, "DATA"),
+        "conditionCount": len(conditions(subrecords)),
+        "effectTypeCount": len(subrecord_sizes(subrecords, "EPFT")),
+        "effectDataSizes": subrecord_sizes(subrecords, "EPFD"),
+        "effectRankCount": len(subrecord_sizes(subrecords, "PRKC")),
+        "effectEntryCount": len(subrecord_sizes(subrecords, "PRKE")),
+        "scriptSourceLength": script["sourceLength"],
+        "scriptReferenceCount": len(script["referencedForms"]),
+        "classification": "loaded-pending-runtime",
+        "readiness": "loaded-pending-runtime",
+        "firstFailingGate": "runtime-player-perk-trait-binding",
+    }
+
+
+def projectile_row(plugin, record, subrecords):
+    return {
+        "plugin": plugin,
+        "recordType": "PROJ",
+        "formId": record["formId"],
+        "editorId": first_zstring(subrecords, "EDID"),
+        "fullName": first_zstring(subrecords, "FULL"),
+        "model": first_zstring(subrecords, "MODL"),
+        "dataSizes": subrecord_sizes(subrecords, "DATA"),
+        "objectBoundsSizes": subrecord_sizes(subrecords, "OBND"),
+        "modelDataSizes": subrecord_sizes(subrecords, "MODT"),
+        "nameData1Sizes": subrecord_sizes(subrecords, "NAM1"),
+        "nameData2Sizes": subrecord_sizes(subrecords, "NAM2"),
+        "soundLevelValues": [get_u32(payload, 0) for current_type, payload in subrecords if current_type == "VNAM"],
+        "destructibleChunkCount": len(subrecord_sizes(subrecords, "DEST"))
+        + len(subrecord_sizes(subrecords, "DSTD")),
+        "classification": "loaded-pending-runtime",
+        "readiness": "loaded-pending-runtime",
+        "firstFailingGate": "runtime-projectile-definition-binding",
+    }
+
+
+def explosion_row(plugin, record, subrecords):
+    return {
+        "plugin": plugin,
+        "recordType": "EXPL",
+        "formId": record["formId"],
+        "editorId": first_zstring(subrecords, "EDID"),
+        "fullName": first_zstring(subrecords, "FULL"),
+        "model": first_zstring(subrecords, "MODL"),
+        "dataSizes": subrecord_sizes(subrecords, "DATA"),
+        "magicEffects": all_form_ids(subrecords, "EITM"),
+        "impactDataSets": all_form_ids(subrecords, "MNAM"),
+        "modelDataSizes": subrecord_sizes(subrecords, "MODT"),
+        "classification": "loaded-pending-runtime",
+        "readiness": "loaded-pending-runtime",
+        "firstFailingGate": "runtime-explosion-effect-binding",
     }
 
 
@@ -303,7 +375,8 @@ def simple_row(plugin, record, subrecords):
         "value": simple_value(record["type"], editor_id, data),
         "dataSize": len(data) if data else 0,
         "subrecordTypes": [rec_type for rec_type, _ in subrecords],
-        "readiness": "parsed-only",
+        "classification": "loaded-pending-runtime",
+        "readiness": "loaded-pending-runtime",
         "firstFailingGate": "missing-esm4-runtime-store",
     }
 
@@ -316,6 +389,7 @@ def parse_plugin(path, plugin):
     scripts = []
     globals_ = []
     game_settings = []
+    gameplay_systems = []
     references = []
 
     def read_range(offset, end):
@@ -342,7 +416,7 @@ def parse_plugin(path, plugin):
                 )
 
             counts[rec_type] += 1
-            if rec_type in {"QUST", "DIAL", "INFO", "SCPT", "GLOB", "GMST"}:
+            if rec_type in {"QUST", "DIAL", "INFO", "SCPT", "GLOB", "GMST", "PERK", "PROJ", "EXPL"}:
                 payload = data[offset:next_offset]
                 subrecords = read_subrecords(payload)
                 record = {
@@ -392,6 +466,23 @@ def parse_plugin(path, plugin):
                     globals_.append(simple_row(plugin, record, subrecords))
                 elif rec_type == "GMST":
                     game_settings.append(simple_row(plugin, record, subrecords))
+                elif rec_type == "PERK":
+                    gameplay_systems.append(perk_row(plugin, record, subrecords))
+                    add_form_id_subrecord_refs(
+                        references, plugin, "PERK", record["formId"], subrecords, [("SCRO", "scriptRef")]
+                    )
+                elif rec_type == "PROJ":
+                    gameplay_systems.append(projectile_row(plugin, record, subrecords))
+                elif rec_type == "EXPL":
+                    gameplay_systems.append(explosion_row(plugin, record, subrecords))
+                    add_form_id_subrecord_refs(
+                        references,
+                        plugin,
+                        "EXPL",
+                        record["formId"],
+                        subrecords,
+                        [("EITM", "magicEffect"), ("MNAM", "impactDataSet")],
+                    )
             offset = next_offset
         return offset
 
@@ -406,6 +497,7 @@ def parse_plugin(path, plugin):
         "scripts": scripts,
         "globals": globals_,
         "gameSettings": game_settings,
+        "gameplaySystems": gameplay_systems,
         "references": references,
     }
 
@@ -469,8 +561,10 @@ def main():
     scripts = [item for row in plugin_ledgers for item in row["scripts"]]
     globals_ = [item for row in plugin_ledgers for item in row["globals"]]
     game_settings = [item for row in plugin_ledgers for item in row["gameSettings"]]
+    gameplay_systems = [item for row in plugin_ledgers for item in row["gameplaySystems"]]
     references = [item for row in plugin_ledgers for item in row["references"]]
     total_records = sum(record["count"] for plugin in records for record in plugin["records"])
+    gameplay_counts = Counter(item["recordType"] for item in gameplay_systems)
 
     artifacts = {
         "records": proof_dir / "records.json",
@@ -479,6 +573,7 @@ def main():
         "scripts": proof_dir / "scripts.json",
         "globals": proof_dir / "globals.json",
         "gameSettings": proof_dir / "game-settings.json",
+        "gameplaySystems": proof_dir / "gameplay-systems.json",
         "references": proof_dir / "references.json",
         "summary": summary_file,
         "result": proof_dir / "result.json",
@@ -489,6 +584,7 @@ def main():
     write_json(artifacts["scripts"], scripts)
     write_json(artifacts["globals"], globals_)
     write_json(artifacts["gameSettings"], game_settings)
+    write_json(artifacts["gameplaySystems"], gameplay_systems)
     write_json(artifacts["references"], references)
 
     result = {
@@ -504,6 +600,8 @@ def main():
         "scriptCount": len(scripts),
         "globalCount": len(globals_),
         "gameSettingCount": len(game_settings),
+        "gameplaySystemCount": len(gameplay_systems),
+        "gameplaySystemCounts": dict(sorted(gameplay_counts.items())),
         "referenceCount": len(references),
         "artifacts": {key: str(value) for key, value in artifacts.items()},
     }
@@ -511,13 +609,23 @@ def main():
 
     proof_line()
     proof_line("FNV structured ledger artifacts:")
-    for key in ("records", "quests", "dialogue", "scripts", "globals", "gameSettings", "references", "result"):
+    for key in (
+        "records",
+        "quests",
+        "dialogue",
+        "scripts",
+        "globals",
+        "gameSettings",
+        "gameplaySystems",
+        "references",
+        "result",
+    ):
         proof_line(f"{key}: {artifacts[key]}")
     proof_line()
     proof_line("FNV structured content ledger proof PASS")
     proof_line(
         "plugins={plugins} records={records} quests={quests} dialogueRows={dialogue} scripts={scripts} "
-        "globals={globals} gameSettings={settings} references={references}".format(
+        "globals={globals} gameSettings={settings} gameplaySystems={gameplay} references={references}".format(
             plugins=len(plugin_ledgers),
             records=total_records,
             quests=len(quests),
@@ -525,9 +633,11 @@ def main():
             scripts=len(scripts),
             globals=len(globals_),
             settings=len(game_settings),
+            gameplay=len(gameplay_systems),
             references=len(references),
         )
     )
+    proof_line("gameplaySystemCounts=" + json.dumps(dict(sorted(gameplay_counts.items())), sort_keys=True))
 
 
 if __name__ == "__main__":

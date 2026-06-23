@@ -219,9 +219,8 @@ function Write-Esm4CoverageInventory([string]$EsmPath) {
         "SCPT" = "ESM4-to-runtime script source bridge"
     }
 
-    $unsupported = @()
-    $sourceOnly = @()
-    $storeOnly = @()
+    $knownBlocked = @()
+    $loadedPendingRuntime = @()
     $runtimeSupported = @()
     $total = 0
 
@@ -245,24 +244,24 @@ function Write-Esm4CoverageInventory([string]$EsmPath) {
             Write-ProofLine "OK ESM4 record type runtime-supported: $type count=$($row.Count) loader=1 records.hpp=1 store=1 instantiation=1 runtime=$($runtimeClaims[$type])"
         }
         elseif ($loader -and $recordsHeader -and $store -and $instantiated) {
-            $storeOnly += $row
-            Write-ProofLine "WARN ESM4 record type store-supported only: $type count=$($row.Count) loader=1 records.hpp=1 store=1 instantiation=1 runtime=0"
+            $loadedPendingRuntime += $row
+            Write-ProofLine "WARN ESM4 record type loaded-pending-runtime: $type count=$($row.Count) loader=1 records.hpp=1 store=1 instantiation=1 runtime=0"
         }
         elseif ($loader) {
-            $sourceOnly += $row
-            Write-ProofLine "FAIL ESM4 record type source-only: $type count=$($row.Count) loader=1 records.hpp=$([int]$recordsHeader) store=$([int]$store) instantiation=$([int]$instantiated) runtime=$([int]$runtime)"
+            $knownBlocked += $row
+            Write-ProofLine "FAIL ESM4 record type known-blocked: $type count=$($row.Count) loader=1 records.hpp=$([int]$recordsHeader) store=$([int]$store) instantiation=$([int]$instantiated) runtime=$([int]$runtime)"
         }
         else {
-            $unsupported += $row
-            Write-ProofLine "FAIL ESM4 record type unsupported: $type count=$($row.Count) loader=0 records.hpp=0 store=0 instantiation=0 runtime=0"
+            $knownBlocked += $row
+            Write-ProofLine "FAIL ESM4 record type known-blocked: $type count=$($row.Count) loader=0 records.hpp=0 store=0 instantiation=0 runtime=0"
         }
     }
 
     Write-ProofLine "OK ESM4 inventory parsed: topLevelRecordTypes=$($inventory.Count) totalRecords=$total"
-    Write-ProofLine "FNV ESM4 no-silent-drop discovery summary unsupportedTypes=$($unsupported.Count) sourceOnlyTypes=$($sourceOnly.Count) storeOnlyTypes=$($storeOnly.Count) runtimeSupportedTypes=$($runtimeSupported.Count)"
+    Write-ProofLine "FNV ESM4 no-silent-drop discovery summary knownBlockedTypes=$($knownBlocked.Count) loadedPendingRuntimeTypes=$($loadedPendingRuntime.Count) runtimeSupportedTypes=$($runtimeSupported.Count)"
 
-    if ($StrictNoSilentDrop -and ($unsupported.Count -gt 0 -or $sourceOnly.Count -gt 0)) {
-        throw "FNV ESM4 no-silent-drop strict proof failed unsupportedTypes=$($unsupported.Count) sourceOnlyTypes=$($sourceOnly.Count). See $SummaryFile."
+    if ($StrictNoSilentDrop -and $knownBlocked.Count -gt 0) {
+        throw "FNV ESM4 no-silent-drop strict proof failed knownBlockedTypes=$($knownBlocked.Count). See $SummaryFile."
     }
 }
 

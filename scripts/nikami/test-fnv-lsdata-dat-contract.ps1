@@ -100,7 +100,7 @@ Write-ProofLine "HarvestDir: $HarvestDir"
 Write-ProofLine "ProofDir: $ProofDir"
 Write-ProofLine ""
 
-Assert-Text "scripts/nikami/test-fnv-harvest-action-coverage.ps1" '"asset-harvested-non-runtime" "lip-generation-support-tables"' "harvest gate records LSDATA DAT as accounted non-runtime support tables"
+Assert-Text "scripts/nikami/test-fnv-harvest-action-coverage.ps1" '"non-runtime-support-file" "lip-generation-support-tables"' "harvest gate records LSDATA DAT as accounted non-runtime support tables"
 Assert-Text "apps/openmw/mwsound/soundmanagerimp.cpp" "loadVoiceLipSync" "runtime voice path consumes baked LIP sidecars"
 Assert-Text "apps/openmw/mwsound/soundmanagerimp.cpp" "FNV/ESM4 diag: loaded LIP sync" "runtime LIP metadata is parsed"
 Assert-Text "apps/openmw/mwbase/soundmanager.hpp" "getSaySoundLipValue" "sound interface exposes runtime mouth values"

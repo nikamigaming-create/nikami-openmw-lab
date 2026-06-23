@@ -65,7 +65,7 @@ $tempExtractDirs = @(
 
 $rawByteMatches = @()
 $textFiles = Get-ChildItem -LiteralPath $ProofRoot -Recurse -File -Force |
-    Where-Object { @(".json", ".txt", ".log", ".csv", ".md") -contains $_.Extension.ToLowerInvariant() }
+    Where-Object { @(".json", ".jsonl", ".txt", ".log", ".csv", ".md") -contains $_.Extension.ToLowerInvariant() }
 foreach ($file in $textFiles) {
     $text = Get-Content -LiteralPath $file.FullName -Raw
     foreach ($pattern in $RawByteTextPatterns) {

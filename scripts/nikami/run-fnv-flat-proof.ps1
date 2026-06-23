@@ -191,6 +191,7 @@ try {
     Set-ProofEnv $previousEnv "OPENMW_PROOF_WALK_SPEED" $WalkSpeed
     Set-ProofEnv $previousEnv "OPENMW_PROOF_WALK_REACH_RADIUS" $WalkReachRadius
     Set-ProofEnv $previousEnv "OPENMW_PROOF_WALK_MIN_Z" $WalkMinZ
+    Set-ProofEnv $previousEnv "OPENMW_FNV_STRICT_ESM4_RECORDS" "1"
     if ($RequirePlayerTerrainSupport) { Set-ProofEnv $previousEnv "OPENMW_FNV_FLOOR_WATCHDOG" "1" }
     if ($FnvPartMatrixAudit) { Set-ProofEnv $previousEnv "OPENMW_FNV_PART_MATRIX_AUDIT" "1" }
     if ($FnvDisableNativeAnimationCallbacks) { Set-ProofEnv $previousEnv "OPENMW_FNV_DISABLE_NATIVE_ANIMATION_CALLBACKS" "1" }
@@ -250,6 +251,7 @@ $playerSupportMissLines = Count-LogMatches $OpenMwLog "Nikami FNV player terrain
 $airborneLines = Count-LogMatches $OpenMwLog "FNV/ESM4 proof walk: summary .*airborneFrames=[1-9]"
 $flatCameraSettledLines = Count-LogMatches $OpenMwLog "FNV/ESM4 diag: settled flat startup camera"
 $flatCameraFailureLines = Count-LogMatches $OpenMwLog "FNV/ESM4 diag: flat startup camera did not attach"
+$unsupportedEsm4SkipLines = Count-LogMatches $OpenMwLog "FNV/ESM4 inventory skipped unsupported:"
 $screenshots = @(Get-ChildItem -LiteralPath $ProofDir -Filter "*.png" -File -ErrorAction SilentlyContinue)
 
 Write-ProofLine ""
@@ -269,8 +271,10 @@ Write-ProofLine "Player terrain support miss lines: $playerSupportMissLines"
 Write-ProofLine "Player terrain airborne lines: $airborneLines"
 Write-ProofLine "Flat camera settled lines: $flatCameraSettledLines"
 Write-ProofLine "Flat camera failure lines: $flatCameraFailureLines"
+Write-ProofLine "Unsupported ESM4 skip lines: $unsupportedEsm4SkipLines"
 
 if ($fatalCount -gt 0) { throw "FNV flat proof saw fatal/blocker log lines. See $OpenMwLog" }
+if ($unsupportedEsm4SkipLines -gt 0) { throw "FNV flat proof saw unsupported ESM4 record skips. See $OpenMwLog" }
 if ($RequireFlatCameraSettled -and $flatCameraSettledLines -eq 0) { throw "FNV flat proof did not prove flat camera settlement. See $OpenMwLog" }
 if ($flatCameraFailureLines -gt 0) { throw "FNV flat proof saw flat camera failure lines. See $OpenMwLog" }
 if ($RequirePlayerTerrainSupport -and $playerSupportMissLines -gt 0) { throw "FNV flat proof saw player terrain support misses. See $OpenMwLog" }

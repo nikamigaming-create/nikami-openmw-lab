@@ -71,7 +71,7 @@ Assert-Text "apps/openmw/mwsound/soundmanagerimp.cpp" "durationMilliseconds" "LI
 Assert-Text "apps/openmw/mwsound/soundmanagerimp.cpp" "FNV/ESM4 diag: loaded LIP sync" "runtime LIP parse log"
 Assert-Text "apps/openmw/mwsound/soundmanagerimp.cpp" "getStreamOffset" "LIP sampling follows active stream offset"
 Assert-Text "apps/openmw/mwrender/esm4npcanimation.cpp" "getSaySoundLipValue" "FNV mouth animation consumes LIP value"
-Assert-Text "scripts/nikami/test-fnv-harvest-action-coverage.ps1" '"vfs-readable-runtime-conditional" "voice-lip-sync"' "harvest gate records LIP as conditional runtime support"
+Assert-Text "scripts/nikami/test-fnv-harvest-action-coverage.ps1" '"loaded-pending-runtime" "voice-lip-sync"' "harvest gate records LIP as conditional runtime support"
 
 $metadataPath = Join-Path $ProofDir "lip-runtime-contract.json"
 $retailProbe = $null

@@ -94,7 +94,7 @@ Write-ProofLine "HarvestDir: $HarvestDir"
 Write-ProofLine "ProofDir: $ProofDir"
 Write-ProofLine ""
 
-Assert-Text "scripts/nikami/test-fnv-harvest-action-coverage.ps1" '"blocked-runtime-support" "distant-lod"' "harvest gate keeps DLOD settings as a runtime blocker"
+Assert-Text "scripts/nikami/test-fnv-harvest-action-coverage.ps1" '"known-blocked" "distant-lod"' "harvest gate keeps DLOD settings as a runtime blocker"
 Assert-Text "apps/openmw/mwrender/renderingmanager.cpp" "QuadTreeWorld" "terrain quad tree runtime exists"
 Assert-Text "apps/openmw/mwrender/objectpaging.cpp" "getLODMeshName" "object paging currently derives LOD mesh names"
 Assert-Text "components/misc/resourcehelpers.cpp" "getLODMeshName" "resource helper uses filename-pattern LOD lookup"
@@ -152,7 +152,7 @@ $metadataPath = Join-Path $ProofDir "dlodsettings-contract.json"
     repoRoot = $RepoRoot
     harvestDir = $HarvestDir
     proofDir = $ProofDir
-    classification = "blocked-runtime-support"
+    classification = "known-blocked"
     subsystem = "distant-lod"
     expectedDlodSettingsPaths = $ExpectedDlodSettingsPaths
     archiveCounts = $archiveCounts

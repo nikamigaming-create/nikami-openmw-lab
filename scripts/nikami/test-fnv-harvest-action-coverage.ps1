@@ -97,6 +97,16 @@ function Get-EntryExtension([string]$Entry) {
 }
 
 function New-Rule([string]$State, [string]$Subsystem, [string]$Action, [object[]]$Anchors, [string]$Notes = "") {
+    $allowedStates = @(
+        "runtime-supported",
+        "loaded-pending-runtime",
+        "known-blocked",
+        "non-runtime-support-file",
+        "intentionally-excluded-with-proof"
+    )
+    if ($allowedStates -notcontains $State) {
+        throw "Invalid FNV classification state: $State"
+    }
     [pscustomobject]@{
         state = $State
         subsystem = $Subsystem
@@ -121,7 +131,7 @@ $pluginAnchors = @(
     New-Anchor "apps/openmw/mwworld/esmstore.cpp" "ESMStore::loadESM4" "ESM4 plugin content is routed through ESMStore"
     New-Anchor "components/esm4/reader.cpp" "REC_TES4" "ESM4 reader recognizes TES4 plugin headers"
     New-Anchor "components/esm4/reader.cpp" "Reader::getLocalizedString" "ESM4 reader consumes localized/string subrecords"
-    New-Anchor "scripts/nikami/test-fnv-data-inventory.ps1" "FNV ESM4 no-silent-drop discovery summary" "record coverage gate names unsupported/source-only/store/runtime surfaces"
+    New-Anchor "scripts/nikami/test-fnv-data-inventory.ps1" "FNV ESM4 no-silent-drop discovery summary" "record coverage gate names five-state record-runtime surfaces"
 )
 $iniAnchors = @(
     New-Anchor "components/config/gamesettings.cpp" "GameSettings::getArchiveList" "OpenMW config reads archive/content settings"
@@ -180,7 +190,7 @@ $runtimeRules = @{
         New-Anchor "apps/openmw/mwgui/mainmenu.cpp" "video/menu_background.bik" "animated FNV menu background is acted on"
         New-Anchor "apps/openmw/mwgui/windowmanagerimp.cpp" "mVideoWidget->playVideo" "window manager plays requested videos"
     )
-    ".txt" = New-Rule "vfs-readable-runtime-conditional" "text-assets" "VFS can stream text assets; runtime action depends on a referencing menu/script/record" @(
+    ".txt" = New-Rule "loaded-pending-runtime" "text-assets" "VFS can stream text assets; runtime action depends on a referencing menu/script/record" @(
         New-Anchor "components/vfs/manager.hpp" "Files::IStreamPtr get" "VFS exposes arbitrary files by normalized path"
         New-Anchor "components/esm4/reader.cpp" "Reader::getStringImpl" "ESM4 reader consumes text/string payloads from plugins"
     ) "Tracked so text assets are not silent drops; add targeted runtime gates when specific TXT assets are referenced."
@@ -191,7 +201,7 @@ $runtimeRules = @{
         New-Anchor "scripts/nikami/test-fnv-harvest-action-coverage.ps1" '".dds" = New-Rule "runtime-supported"' "DDS texture entries are runtime-supported"
         New-Anchor "scripts/nikami/test-fnv-tai-atlas-contract.ps1" "FNV TAI atlas contract" "retail-safe TAI proof parses local atlas metadata without storing payloads"
     )
-    ".lip" = New-Rule "vfs-readable-runtime-conditional" "voice-lip-sync" "Voice sidecar bytes are loaded through VFS, parsed into a timed envelope, and sampled by FNV mouth animation; exact phoneme/viseme mapping remains a follow-up gate" @(
+    ".lip" = New-Rule "loaded-pending-runtime" "voice-lip-sync" "Voice sidecar bytes are loaded through VFS, parsed into a timed envelope, and sampled by FNV mouth animation; exact phoneme/viseme mapping remains a follow-up gate" @(
         New-Anchor "apps/openmw/mwsound/soundmanagerimp.cpp" "loadVoiceLipSync" "voice playback resolves and parses matching LIP sidecars"
         New-Anchor "apps/openmw/mwsound/soundmanagerimp.cpp" "FNV/ESM4 diag: loaded LIP sync" "runtime logs parsed LIP sidecar metadata"
         New-Anchor "apps/openmw/mwbase/soundmanager.hpp" "getSaySoundLipValue" "sound interface exposes a timed LIP mouth value"
@@ -204,7 +214,7 @@ $runtimeRules = @{
         New-Anchor "apps/openmw/mwrender/esm4npcanimation.cpp" "applyFaceGenEgmMorph" "FaceGen EGM morphs are applied to NPC geometry"
         New-Anchor "apps/openmw/mwrender/esm4npcanimation.cpp" "FNV/ESM4 diag: loaded FaceGen EGM" "runtime logs successful EGM loading"
     )
-    ".egt" = New-Rule "vfs-readable-runtime-conditional" "facegen-tint-maps" "FaceGen EGT bytes are loaded through VFS, validated as FREGT003 texture-mode maps, and folded into NPC skin material tinting; exact per-pixel FaceGen texture synthesis remains a follow-up gate" @(
+    ".egt" = New-Rule "loaded-pending-runtime" "facegen-tint-maps" "FaceGen EGT bytes are loaded through VFS, validated as FREGT003 texture-mode maps, and folded into NPC skin material tinting; exact per-pixel FaceGen texture synthesis remains a follow-up gate" @(
         New-Anchor "apps/openmw/mwrender/esm4npcanimation.cpp" "loadFaceGenEgt" "FaceGen EGT reader loads external tint-map bytes"
         New-Anchor "apps/openmw/mwrender/esm4npcanimation.cpp" '"FREGT003"' "FaceGen EGT magic is validated"
         New-Anchor "apps/openmw/mwrender/esm4npcanimation.cpp" "deriveFaceGenEgtMaterialTint" "FGTS texture coefficients derive runtime complexion tint"
@@ -217,14 +227,14 @@ $runtimeRules = @{
         New-Anchor "apps/openmw/mwrender/esm4npcanimation.cpp" "FaceGenTriMorphVisitor" "FaceGen TRI morph visitor applies morph target geometry"
         New-Anchor "apps/openmw/mwrender/esm4npcanimation.cpp" "applyFalloutDialogueMorph" "FaceGen TRI morphs can drive dialogue/head animation"
     )
-    ".dlodsettings" = New-Rule "blocked-runtime-support" "distant-lod" "Distant LOD settings are harvested but not yet consumed by terrain/object paging" @(
+    ".dlodsettings" = New-Rule "known-blocked" "distant-lod" "Distant LOD settings are harvested but not yet consumed by terrain/object paging" @(
         New-Anchor "scripts/nikami/test-fnv-dlodsettings-contract.ps1" "FNV DLOD settings contract" "proof gate verifies the exact shipped DLOD settings set and current runtime absence"
         New-Anchor "apps/openmw/mwrender/objectpaging.cpp" "getLODMeshName" "object paging uses generated LOD mesh names"
         New-Anchor "apps/openmw/mwrender/renderingmanager.cpp" "QuadTreeWorld" "terrain/object quad tree exists"
         New-Anchor "components/esm4/loadstat.cpp" "mLOD" "STAT loader captures ESM4 LOD model strings"
         New-Anchor "components/esm4/loadrefr.cpp" "XLOD" "REFR loader sees XLOD data but no DLOD settings file routing is present"
     ) "Add FNV DLOD settings parser and route to object paging/terrain LOD."
-    ".spt" = New-Rule "vfs-readable-runtime-conditional" "speedtree-billboard-fallback" "SpeedTree SPT assets are VFS-visible and rendered through a billboard fallback; full SpeedTree geometry/collision remains a follow-up gate" @(
+    ".spt" = New-Rule "loaded-pending-runtime" "speedtree-billboard-fallback" "SpeedTree SPT assets are VFS-visible and rendered through a billboard fallback; full SpeedTree geometry/collision remains a follow-up gate" @(
         New-Anchor "scripts/nikami/test-fnv-speedtree-spt-ledger.ps1" "FNV SpeedTree SPT ledger proof" "proof gate verifies exact shipped SPT set and TREE record references without storing payloads"
         New-Anchor "scripts/nikami/fnv_speedtree_spt_ledger.py" "collect_harvest_spt_paths" "ledger parser compares harvested SPT paths with parsed TREE record MODL values"
         New-Anchor "components/esm4/loadtree.cpp" "normalizeFalloutTreeModel" "TREE loader normalizes bare Fallout SPT paths into trees"
@@ -236,32 +246,32 @@ $runtimeRules = @{
         New-Anchor "components/resource/scenemanager.cpp" "Ignoring SpeedTree data file" "runtime still fails closed to an empty node if billboard fallback cannot load"
         New-Anchor "components/bgsm/file.hpp" "mTree" "tree material flag support exists"
     ) "Promote to runtime-supported after a real SPT reader/conversion path proves tree geometry and collision beyond billboard fallback."
-    ".psa" = New-Rule "blocked-runtime-support" "actor-deathpose-animation" "PSA death-pose assets are harvested but no actor/creature death-pose runtime reader is wired" @(
+    ".psa" = New-Rule "known-blocked" "actor-deathpose-animation" "PSA death-pose assets are harvested but no actor/creature death-pose runtime reader is wired" @(
         New-Anchor "scripts/nikami/test-fnv-psa-deathpose-contract.ps1" "FNV PSA death-pose contract" "proof gate verifies the exact shipped death-pose PSA set and current runtime absence"
         New-Anchor "apps/niftest/niftest.cpp" 'extension == ".psa"' "test tool recognizes PSA as a NIF-adjacent asset"
         New-Anchor "apps/openmw/mwrender/animation.hpp" "class Animation" "actor animation runtime owns any future death-pose playback"
         New-Anchor "apps/openmw/mwrender/creatureanimation.cpp" "CreatureAnimation" "creature animation runtime owns creature death-pose playback"
         New-Anchor "apps/openmw/mwrender/npcanimation.cpp" "NpcAnimation" "NPC animation runtime owns humanoid death-pose playback"
     ) "Add PSA death-pose reader/playback or prove an explicit fallback to existing KF/ragdoll death behavior."
-    ".ctl" = New-Rule "vfs-readable-runtime-conditional" "facegen-control-basis" "FaceGen CTL bytes are loaded through VFS, validated as FRCTL001, and used to verify the FNV FaceGen 50/30/50 coefficient basis; full control payload semantics remain a follow-up gate" @(
+    ".ctl" = New-Rule "loaded-pending-runtime" "facegen-control-basis" "FaceGen CTL bytes are loaded through VFS, validated as FRCTL001, and used to verify the FNV FaceGen 50/30/50 coefficient basis; full control payload semantics remain a follow-up gate" @(
         New-Anchor "apps/openmw/mwrender/esm4npcanimation.cpp" "loadFaceGenCtl" "FaceGen CTL reader loads external control bytes"
         New-Anchor "apps/openmw/mwrender/esm4npcanimation.cpp" '"FRCTL001"' "FaceGen CTL magic is validated"
         New-Anchor "apps/openmw/mwrender/esm4npcanimation.cpp" "validateFaceGenCtlBasis" "FaceGen CTL basis validates NPC coefficient arrays"
         New-Anchor "apps/openmw/mwrender/esm4npcanimation.cpp" "FNV/ESM4 diag: loaded FaceGen CTL" "runtime logs parsed CTL metadata"
         New-Anchor "scripts/nikami/test-fnv-facegen-ctl-contract.ps1" "FNV FaceGen CTL contract" "retail-safe CTL proof validates local header without storing payloads"
     ) "Promote to runtime-supported after the full FaceGen control payload beyond the basis header is decoded and gated."
-    ".dat" = New-Rule "asset-harvested-non-runtime" "lip-generation-support-tables" "The shipped DAT files are the six lsdata support tables used for lip-generation tooling; runtime voice playback consumes baked LIP sidecars instead" @(
+    ".dat" = New-Rule "non-runtime-support-file" "lip-generation-support-tables" "The shipped DAT files are the six lsdata support tables used for lip-generation tooling; runtime voice playback consumes baked LIP sidecars instead" @(
         New-Anchor "scripts/nikami/test-fnv-lsdata-dat-contract.ps1" "FNV LSDATA DAT contract" "proof gate verifies the exact shipped DAT set and samples metadata without storing payloads"
         New-Anchor "apps/openmw/mwsound/soundmanagerimp.cpp" "loadVoiceLipSync" "runtime voice playback resolves baked LIP sidecars"
         New-Anchor "apps/openmw/mwbase/soundmanager.hpp" "getSaySoundLipValue" "runtime mouth value is sourced from active voice/LIP playback"
         New-Anchor "apps/openmw/mwrender/esm4npcanimation.cpp" "getSaySoundLipValue" "mouth animation consumes baked LIP playback values"
     ) "Do not require a DAT runtime reader unless future evidence shows FNV evaluates lsdata tables during gameplay instead of using baked LIP sidecars."
-    ".psd" = New-Rule "asset-harvested-non-runtime" "source-art-leftover" "PSD source-art bytes are harvested and accounted for, but runtime consumes their DDS siblings instead of PSD payloads" @(
+    ".psd" = New-Rule "non-runtime-support-file" "source-art-leftover" "PSD source-art bytes are harvested and accounted for, but runtime consumes their DDS siblings instead of PSD payloads" @(
         New-Anchor "scripts/nikami/test-fnv-source-art-nonruntime-contract.ps1" "FNV PSD source-art non-runtime contract" "proof gate verifies PSD entries have runtime DDS siblings"
         New-Anchor "scripts/nikami/test-fnv-harvest-action-coverage.ps1" '".dds" = New-Rule "runtime-supported"' "DDS texture entries are runtime-supported"
         New-Anchor "components/resource/imagemanager.cpp" "ImageManager::getImage" "runtime texture path consumes renderable image assets"
     ) "Intentional non-runtime source art; keep harvested as metadata only and do not require a PSD renderer."
-    "<none>" = New-Rule "blocked-runtime-support" "extensionless-assets" "Extensionless archive entries require per-path ownership before runtime support can be claimed" @(
+    "<none>" = New-Rule "known-blocked" "extensionless-assets" "Extensionless archive entries require per-path ownership before runtime support can be claimed" @(
         New-Anchor "components/vfs/manager.hpp" "Files::IStreamPtr get" "VFS can expose extensionless streams"
     ) "Add path-specific rules for any extensionless entries that appear in a harvest."
 }
@@ -307,7 +317,7 @@ $extensionRows = @()
 $unclassified = @()
 $blocked = @()
 $runtimeSupportedCount = 0
-$runtimeConditionalCount = 0
+$loadedPendingRuntimeCount = 0
 $nonRuntimeCount = 0
 foreach ($ext in ($extensionCounts.Keys | Sort-Object)) {
     if (!$runtimeRules.ContainsKey($ext)) {
@@ -329,13 +339,13 @@ foreach ($ext in ($extensionCounts.Keys | Sort-Object)) {
     if ($rule.state -eq "runtime-supported") {
         ++$runtimeSupportedCount
     }
-    elseif ($rule.state -eq "vfs-readable-runtime-conditional") {
-        ++$runtimeConditionalCount
+    elseif ($rule.state -eq "loaded-pending-runtime") {
+        ++$loadedPendingRuntimeCount
     }
-    elseif ($rule.state -eq "blocked-runtime-support") {
+    elseif ($rule.state -eq "known-blocked") {
         $blocked += $ext
     }
-    elseif ($rule.state -eq "asset-harvested-non-runtime") {
+    elseif ($rule.state -eq "non-runtime-support-file") {
         ++$nonRuntimeCount
     }
 
@@ -355,7 +365,7 @@ $pluginRows = @($plugins | ForEach-Object {
         name = $_.name
         bytes = $_.bytes
         sha256 = $_.sha256
-        state = "runtime-reader-routed"
+        state = "runtime-supported"
         action = "ESM/ESP bytes are routed into ESM4 Reader/ESMStore; per-record runtime coverage is checked by test-fnv-data-inventory.ps1 and content ledger gates."
         anchors = $resolvedPluginAnchors
     }
@@ -365,7 +375,7 @@ $archiveManifestRows = @($archives | ForEach-Object {
         name = $_.name
         bytes = $_.bytes
         sha256 = $_.sha256
-        state = "vfs-archive-routed"
+        state = "runtime-supported"
         action = "BSA bytes are registered as fallback archives and entries are streamed/decompressed through VFS."
         anchors = $resolvedVfsAnchors
     }
@@ -375,7 +385,7 @@ $iniRows = @($iniShapes | ForEach-Object {
         name = $_.name
         bytes = $_.bytes
         sha256 = $_.sha256
-        state = "shape-harvested-config-routed"
+        state = "loaded-pending-runtime"
         action = "INI keys are harvested as shape metadata; runtime OpenMW config/menu/video hooks consume the relevant FNV settings without copying INI payloads."
         sectionCount = $_.sectionCount
         anchors = $resolvedIniAnchors
@@ -394,7 +404,7 @@ $summary = [pscustomobject]@{
         archiveEntries = ($extensionCounts.Values | Measure-Object -Sum).Sum
         extensionTypes = $extensionRows.Count
         runtimeSupportedExtensionTypes = $runtimeSupportedCount
-        runtimeConditionalExtensionTypes = $runtimeConditionalCount
+        loadedPendingRuntimeExtensionTypes = $loadedPendingRuntimeCount
         nonRuntimeExtensionTypes = $nonRuntimeCount
         blockedRuntimeExtensionTypes = $blocked.Count
         unclassifiedExtensionTypes = $unclassified.Count
@@ -417,12 +427,12 @@ Write-ProofLine "INI shapes routed: $($iniRows.Count)"
 Write-ProofLine "Archive entries classified: $(($extensionCounts.Values | Measure-Object -Sum).Sum)"
 Write-ProofLine "Extension types: $($extensionRows.Count)"
 Write-ProofLine "Runtime-supported extension types: $runtimeSupportedCount"
-Write-ProofLine "Runtime-conditional extension types: $runtimeConditionalCount"
-Write-ProofLine "Accounted non-runtime extension types: $nonRuntimeCount"
-Write-ProofLine "Blocked runtime extension types: $($blocked.Count)"
+Write-ProofLine "Loaded-pending-runtime extension types: $loadedPendingRuntimeCount"
+Write-ProofLine "Non-runtime-support-file extension types: $nonRuntimeCount"
+Write-ProofLine "Known-blocked extension types: $($blocked.Count)"
 foreach ($ext in $blocked) {
     $row = $extensionRows | Where-Object { $_.extension -eq $ext } | Select-Object -First 1
-    Write-ProofLine "BLOCKED runtime: $ext count=$($row.count) subsystem=$($row.subsystem)"
+    Write-ProofLine "KNOWN-BLOCKED: $ext count=$($row.count) subsystem=$($row.subsystem)"
 }
 Write-ProofLine "Unclassified extension types: $($unclassified.Count)"
 foreach ($ext in $unclassified) {

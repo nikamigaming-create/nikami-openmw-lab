@@ -52,7 +52,7 @@ Write-ProofLine "HarvestDir: $HarvestDir"
 Write-ProofLine "ProofDir: $ProofDir"
 Write-ProofLine ""
 
-Assert-Text "scripts/nikami/test-fnv-harvest-action-coverage.ps1" '"asset-harvested-non-runtime" "source-art-leftover"' "harvest gate records PSD as accounted non-runtime source art"
+Assert-Text "scripts/nikami/test-fnv-harvest-action-coverage.ps1" '"non-runtime-support-file" "source-art-leftover"' "harvest gate records PSD as accounted non-runtime source art"
 Assert-Text "scripts/nikami/test-fnv-harvest-action-coverage.ps1" '".dds" = New-Rule "runtime-supported"' "DDS siblings are runtime-supported texture assets"
 Assert-Text "components/resource/imagemanager.cpp" "ImageManager::getImage" "runtime texture path consumes DDS, not PSD source art"
 

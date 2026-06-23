@@ -118,7 +118,7 @@ Assert-Text "apps/openmw/mwrender/esm4npcanimation.cpp" "mSymTextureModeCoeffici
 Assert-Text "apps/openmw/mwrender/esm4npcanimation.cpp" "applyFaceGenEgtTint" "EGT tint is applied to actor skin parts"
 Assert-Text "apps/openmw/mwrender/esm4npcanimation.cpp" "FNV/ESM4 diag: loaded FaceGen EGT" "runtime EGT parse log"
 Assert-Text "apps/openmw/mwrender/esm4npcanimation.cpp" "FNV/ESM4 diag: applied FaceGen EGT complexion" "runtime EGT application log"
-Assert-Text "scripts/nikami/test-fnv-harvest-action-coverage.ps1" '"vfs-readable-runtime-conditional" "facegen-tint-maps"' "harvest gate records EGT as conditional runtime support"
+Assert-Text "scripts/nikami/test-fnv-harvest-action-coverage.ps1" '"loaded-pending-runtime" "facegen-tint-maps"' "harvest gate records EGT as conditional runtime support"
 
 $metadataPath = Join-Path $ProofDir "egt-runtime-contract.json"
 $retailProbe = @()

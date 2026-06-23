@@ -184,7 +184,7 @@ def main():
     assert_text(
         repo_root,
         Path("scripts/nikami/test-fnv-harvest-action-coverage.ps1"),
-        '"vfs-readable-runtime-conditional" "speedtree-billboard-fallback"',
+        '"loaded-pending-runtime" "speedtree-billboard-fallback"',
         "harvest gate records SPT as conditional billboard fallback support",
         proof_line,
     )
@@ -282,7 +282,7 @@ def main():
         "repoRoot": str(repo_root),
         "fnvData": str(fnv_data),
         "harvestDir": str(harvest_dir),
-        "classification": "vfs-readable-runtime-conditional",
+        "classification": "loaded-pending-runtime",
         "subsystem": "speedtree-billboard-fallback",
         "harvestSptPaths": harvest_spt,
         "treeRecordCount": len(tree_records),

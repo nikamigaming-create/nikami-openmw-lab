@@ -105,7 +105,7 @@ Assert-Text "apps/openmw/mwrender/esm4npcanimation.cpp" '"FRCTL001"' "FaceGen CT
 Assert-Text "apps/openmw/mwrender/esm4npcanimation.cpp" "validateFaceGenCtlBasis" "FaceGen CTL validates NPC coefficient basis"
 Assert-Text "apps/openmw/mwrender/esm4npcanimation.cpp" "FNV/ESM4 diag: loaded FaceGen CTL" "runtime CTL parse log"
 Assert-Text "apps/openmw/mwrender/esm4npcanimation.cpp" "FaceGen CTL basis validated" "runtime CTL basis validation log"
-Assert-Text "scripts/nikami/test-fnv-harvest-action-coverage.ps1" '"vfs-readable-runtime-conditional" "facegen-control-basis"' "harvest gate records CTL as conditional runtime support"
+Assert-Text "scripts/nikami/test-fnv-harvest-action-coverage.ps1" '"loaded-pending-runtime" "facegen-control-basis"' "harvest gate records CTL as conditional runtime support"
 
 $metadataPath = Join-Path $ProofDir "facegen-ctl-contract.json"
 $retailProbe = $null

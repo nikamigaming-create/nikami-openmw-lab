@@ -23,17 +23,58 @@ Set-StrictMode -Version Latest
 $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "../..")).Path
 $Parser = Join-Path $PSScriptRoot "fnv_content_ledger.py"
 
-$Python = Get-Command python -ErrorAction SilentlyContinue
+$Python = ""
 $PythonArgs = @()
-if ($null -eq $Python) {
-    $Python = Get-Command py -ErrorAction SilentlyContinue
-    if ($null -ne $Python) {
-        $PythonArgs += "-3"
+
+foreach ($candidate in @(
+        @{ Command = "python"; Args = @() },
+        @{ Command = "python.exe"; Args = @() },
+        @{ Command = "py"; Args = @("-3") },
+        @{ Command = "py.exe"; Args = @("-3") }
+    )) {
+    try {
+        & ($candidate["Command"]) @($candidate["Args"]) --version *> $null
+        if ($LASTEXITCODE -eq 0) {
+            $Python = $candidate["Command"]
+            $PythonArgs = @($candidate["Args"])
+            break
+        }
+    }
+    catch {
     }
 }
-if ($null -eq $Python) {
+
+if ([string]::IsNullOrWhiteSpace($Python)) {
+    $pythonCandidates = @()
+    if (![string]::IsNullOrWhiteSpace($env:LOCALAPPDATA)) {
+        $pythonCandidates += Get-ChildItem -Path (Join-Path $env:LOCALAPPDATA "Programs/Python/Python*/python.exe") `
+            -File -ErrorAction SilentlyContinue
+    }
+    foreach ($path in @("C:/Python312/python.exe", "C:/Python311/python.exe")) {
+        if (Test-Path -LiteralPath $path -PathType Leaf) {
+            $pythonCandidates += Get-Item -LiteralPath $path
+        }
+    }
+    $candidate = $pythonCandidates | Sort-Object FullName | Select-Object -First 1
+    if ($null -ne $candidate) {
+        $Python = $candidate.FullName
+    }
+}
+if ([string]::IsNullOrWhiteSpace($Python) -and !( [string]::IsNullOrWhiteSpace($env:USERPROFILE))) {
+    foreach ($path in @(
+            (Join-Path $env:USERPROFILE "AppData/Local/Programs/Python/Python311/python.exe"),
+            (Join-Path $env:USERPROFILE "AppData/Local/Programs/Python/Python312/python.exe")
+        )) {
+        if (Test-Path -LiteralPath $path -PathType Leaf) {
+            $Python = $path
+            break
+        }
+    }
+}
+if ([string]::IsNullOrWhiteSpace($Python)) {
     throw "Python 3 is required to run the FNV content ledger proof."
 }
+Write-Host "Using Python: $Python"
 
 $ArgsList = @()
 $ArgsList += $PythonArgs
@@ -51,7 +92,7 @@ $ArgsList += @("--repo-root", $RepoRoot)
 $ArgsList += "--content"
 $ArgsList += $Content
 
-& $Python.Source @ArgsList
+& $Python @ArgsList
 if ($LASTEXITCODE -ne 0) {
     throw "FNV content ledger proof failed with exit code $LASTEXITCODE."
 }
