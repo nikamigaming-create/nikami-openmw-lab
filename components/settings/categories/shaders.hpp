@@ -18,6 +18,7 @@ namespace Settings
     {
         using WithIndex::WithIndex;
 
+        SettingValue<bool> mForceShaders{ mIndex, "Shaders", "force shaders" };
         SettingValue<bool> mForcePerPixelLighting{ mIndex, "Shaders", "force per pixel lighting" };
         SettingValue<bool> mClampLighting{ mIndex, "Shaders", "clamp lighting" };
         SettingValue<bool> mParticlePointLighting{ mIndex, "Shaders", "particle point lighting" };

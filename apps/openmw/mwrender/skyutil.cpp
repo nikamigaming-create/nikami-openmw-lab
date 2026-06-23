@@ -704,14 +704,8 @@ namespace MWRender
     Sun::Sun(osg::Group* parentNode, Resource::SceneManager& sceneManager)
         : CelestialBody(parentNode, 1.0f, 1, Mask_Sun)
         , mUpdater(new SunUpdater)
+        , mFalloutSkyContent(hasFalloutSkyContent(sceneManager))
     {
-        if (hasFalloutSkyContent(sceneManager))
-        {
-            setAvailable(false);
-            Log(Debug::Info) << "FNV/ESM4: disabled OpenMW sun billboard for Fallout sky content";
-            return;
-        }
-
         mTransform->addUpdateCallback(mUpdater);
 
         Resource::ImageManager& imageManager = *sceneManager.getImageManager();
@@ -719,6 +713,8 @@ namespace MWRender
         const VFS::Path::Normalized image = chooseExistingTexture(
             sceneManager.getVFS(), VFS::Path::Normalized("textures/sky/sun.dds"),
             VFS::Path::Normalized("textures/tx_sun_05.dds"));
+        if (mFalloutSkyContent)
+            Log(Debug::Info) << "FNV/ESM4: enabled FNV sun billboard using texture " << image.value();
 
         osg::ref_ptr<osg::Texture2D> sunTex = new osg::Texture2D(imageManager.getImage(image));
         sunTex->setWrap(osg::Texture::WRAP_S, osg::Texture::CLAMP_TO_EDGE);
@@ -859,6 +855,8 @@ namespace MWRender
         const VFS::Path::Normalized image = chooseExistingTexture(
             sceneManager.getVFS(), VFS::Path::Normalized("textures/sky/nv_sunglare.dds"),
             VFS::Path::Normalized("textures/tx_sun_flash_grey_05.dds"));
+        if (mFalloutSkyContent)
+            Log(Debug::Info) << "FNV/ESM4: enabled FNV sun glare using texture " << image.value();
         osg::ref_ptr<osg::Texture2D> tex = new osg::Texture2D(imageManager.getImage(image));
         tex->setWrap(osg::Texture::WRAP_S, osg::Texture::CLAMP_TO_EDGE);
         tex->setWrap(osg::Texture::WRAP_T, osg::Texture::CLAMP_TO_EDGE);
@@ -949,16 +947,8 @@ namespace MWRender
         , mPhase(MoonState::Phase::Unspecified)
         , mVFS(sceneManager.getVFS())
         , mUpdater(new MoonUpdater(*sceneManager.getImageManager()))
+        , mFalloutSkyContent(hasFalloutSkyContent(sceneManager))
     {
-        if (hasFalloutSkyContent(sceneManager))
-        {
-            setAvailable(false);
-            Log(Debug::Info) << "FNV/ESM4: disabled OpenMW "
-                             << (mType == Moon::Type_Secunda ? "Secunda" : "Masser")
-                             << " moon billboard for Fallout sky content";
-            return;
-        }
-
         setPhase(MoonState::Phase::Full);
         setVisible(true);
 
@@ -1090,6 +1080,10 @@ namespace MWRender
             : "textures/sky/masser_" + suffix + ".dds";
         const VFS::Path::Normalized texturePath = chooseExistingTexture(
             mVFS, VFS::Path::Normalized(fonvTextureName), VFS::Path::Normalized(fallbackTextureName));
+        if (mFalloutSkyContent)
+            Log(Debug::Info) << "FNV/ESM4: enabled FNV "
+                             << (mType == Moon::Type_Secunda ? "Secunda" : "Masser")
+                             << " moon billboard using texture " << texturePath.value();
 
         if (mType == Moon::Type_Secunda)
         {

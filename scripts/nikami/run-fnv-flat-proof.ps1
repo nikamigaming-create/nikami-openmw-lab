@@ -144,6 +144,19 @@ function Assert-LogPattern([string]$Path, [string]$Pattern) {
     Write-ProofLine "OK required log pattern: $Pattern"
 }
 
+function Assert-NoShaderBlockers([string[]]$Paths) {
+    $shaderBlockerPattern = "failed initializing shader: sky|Failed to open shader .*sky\.(vert|frag)|Shader .*sky.* error|Failed to compile|failed to compile|linking failed|GLSL.*error|shader.*error"
+    foreach ($path in $Paths) {
+        if ([string]::IsNullOrWhiteSpace($path) -or !(Test-Path -LiteralPath $path -PathType Leaf)) {
+            continue
+        }
+        if ((Count-LogMatches $path $shaderBlockerPattern) -gt 0) {
+            throw "FNV flat proof saw sky shader/blocker lines in $path"
+        }
+        Write-ProofLine "OK absent shader blockers: $path"
+    }
+}
+
 function Get-LatestClassificationDir([string]$Root) {
     $classificationRoot = Join-Path $Root "fnv-no-silent-skip-classification"
     if (!(Test-Path -LiteralPath $classificationRoot -PathType Container)) {
@@ -308,6 +321,9 @@ try {
     if ($NoSound) { $flatArgs.NoSound = $true }
 
     Write-ProofLine "FNV flat runtime proof $Stamp"
+    Write-ProofLine "Runtime mode: pc-flat"
+    Write-ProofLine "Runtime priority: pc-flat-first pcvr-second android-last"
+    Write-ProofLine "IncludeFnvrPlugin: $IncludeFnvrPlugin"
     Write-ProofLine "RepoRoot: $RepoRoot"
     Write-ProofLine "ProofDir: $ProofDir"
     Write-ProofLine "RunSeconds: $RunSeconds"
@@ -369,6 +385,7 @@ Write-ProofLine "Flat camera failure lines: $flatCameraFailureLines"
 Write-ProofLine "Unsupported ESM4 skip lines: $($unsupportedEsm4Skips.Count)"
 
 if ($fatalCount -gt 0) { throw "FNV flat proof saw fatal/blocker log lines. See $OpenMwLog" }
+Assert-NoShaderBlockers @($OpenMwLog, $MyGuiLog, $StdoutLog, $StderrLog, $HarnessLog)
 Assert-UnsupportedEsm4SkipsClassified $unsupportedEsm4Skips $ClassificationDir
 if ($RequireFlatCameraSettled -and $flatCameraSettledLines -eq 0) { throw "FNV flat proof did not prove flat camera settlement. See $OpenMwLog" }
 if ($flatCameraFailureLines -gt 0) { throw "FNV flat proof saw flat camera failure lines. See $OpenMwLog" }

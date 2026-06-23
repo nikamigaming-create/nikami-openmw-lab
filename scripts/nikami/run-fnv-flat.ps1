@@ -267,6 +267,7 @@ skynight01 = meshes/sky/stars.nif
 skynight02 = meshes/sky/stars.nif
 
 [Shaders]
+force shaders = false
 apply lighting to environment maps = true
 auto use object normal maps = true
 auto use object specular maps = true

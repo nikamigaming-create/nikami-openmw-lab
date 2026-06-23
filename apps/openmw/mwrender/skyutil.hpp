@@ -278,6 +278,7 @@ namespace MWRender
         osg::ref_ptr<SunGlareCallback> mSunGlareCallback;
         osg::ref_ptr<osg::OcclusionQueryNode> mOcclusionQueryVisiblePixels;
         osg::ref_ptr<osg::OcclusionQueryNode> mOcclusionQueryTotalPixels;
+        bool mFalloutSkyContent;
     };
 
     class Moon : public CelestialBody
@@ -305,6 +306,7 @@ namespace MWRender
         MoonState::Phase mPhase;
         const VFS::Manager* mVFS;
         osg::ref_ptr<MoonUpdater> mUpdater;
+        bool mFalloutSkyContent;
 
         void setPhase(const MoonState::Phase& phase);
     };
