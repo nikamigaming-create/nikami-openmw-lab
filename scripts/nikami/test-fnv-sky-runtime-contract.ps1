@@ -150,6 +150,9 @@ Assert-FileContains $FlatProofScript "RequireSkyColorSanity" "flat proof can gat
 Assert-FileContains $FlatProofScript "RequireSkyPaletteMatch" "flat proof can gate sky screenshot palette against generated WTHR colors"
 Assert-FileContains $FlatProofScript "sky-palette-match.json" "flat proof emits generated sky palette match proof"
 Assert-FileContains $FlatProofScript "nearestExpectedNormalizedDistance" "flat proof compares screenshot palette to generated WTHR palette"
+Assert-FileContains $FlatProofScript "verticalBands" "flat proof emits vertical sky band proof"
+Assert-FileContains $FlatProofScript "verticalBandOrderMatches" "flat proof gates vertical sky band ordering"
+Assert-FileContains $FlatProofScript "distinctVerticalBandsPass" "flat proof requires multiple generated sky bands in screenshots"
 Assert-FileContains $FlatProofScript "RequireSunVisible" "flat proof can gate visible sun screenshot"
 Assert-FileContains $FlatProofScript "RequireSunDirectionRuntime" "flat proof can gate runtime sun vector chain"
 Assert-FileContains $FlatProofScript "sun-direction.json" "flat proof emits runtime sun vector proof"
@@ -349,6 +352,11 @@ Assert-FileContains $flatSkyPaletteMatch '"expectedWeather"\s*:\s*"Clear"' "runt
 Assert-FileContains $flatSkyPaletteMatch '"expectedTime"\s*:\s*"Day"' "runtime generated sky palette match time"
 Assert-FileContains $flatSkyPaletteMatch '"channelOrderMatches"\s*:\s*true' "runtime sky palette channel ordering"
 Assert-FileContains $flatSkyPaletteMatch '"normalizedDistancePass"\s*:\s*true' "runtime sky palette normalized distance"
+Assert-FileContains $flatSkyPaletteMatch '"verticalBands"' "runtime sky palette vertical band samples"
+Assert-FileContains $flatSkyPaletteMatch '"nearestExpectedBand"\s*:\s*"Horizon"' "runtime sky palette observes generated horizon band"
+Assert-FileContains $flatSkyPaletteMatch '"verticalBandOrderMatches"\s*:\s*true' "runtime sky palette vertical band ordering"
+Assert-FileContains $flatSkyPaletteMatch '"distinctVerticalBandsPass"\s*:\s*true' "runtime sky palette distinct vertical bands"
+Assert-FileContains $flatSkyPaletteMatch '"verticalBandDistancePass"\s*:\s*true' "runtime sky palette per-band normalized distance"
 Assert-FileNotContains $flatSkyPaletteMatch '"paletteMatches"\s*:\s*false' "runtime generated sky palette mismatch"
 Assert-FileContains $flatSunDirection '"status"\s*:\s*"PASS"' "runtime sun vector proof status"
 Assert-FileContains $flatSunDirection '"chainMatches"\s*:\s*true' "runtime sun vector weather/render chain"
@@ -428,6 +436,7 @@ $result = [ordered]@{
         "FNV WTHR SkyLower and Horizon colors are emitted into generated fallback config and classified runtime-supported",
         "FNV NAM0 Sunlight is bound to directional sun color while NAM0 Sun is only sunset-disc runtime-supported",
         "FNV screenshot palette is compared against generated Clear/Day WTHR sky colors without committed image baselines",
+        "FNV screenshot palette separately proves upper/lower sky bands and horizon band placement",
         "FNV screenshot sky color sanity rejects raw red channel/mask leakage and stale Morrowind blue palette leakage",
         "FNV sun/moon billboard path uses Fallout sky textures",
         "FNV sun-facing screenshot proves visible sun disc/glare core",

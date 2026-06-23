@@ -322,6 +322,23 @@ function Get-NormalizedRgbDistance([double[]]$A, [double[]]$B) {
         [Math]::Pow($A[2] - $B[2], 2.0))
 }
 
+function Get-NearestExpectedSkyBand([double[]]$Normalized, [object]$Expected) {
+    $nearestName = ""
+    $nearestDistance = [double]::PositiveInfinity
+    foreach ($band in $Expected.normalizedBands) {
+        $distance = Get-NormalizedRgbDistance $Normalized @([double]$band.r, [double]$band.g, [double]$band.b)
+        if ($distance -lt $nearestDistance) {
+            $nearestDistance = $distance
+            $nearestName = [string]$band.name
+        }
+    }
+
+    return [ordered]@{
+        name = $nearestName
+        distance = $nearestDistance
+    }
+}
+
 function Get-FnvSkyPaletteExpected([string]$WeatherFallbackJson) {
     $metadata = Get-Content -LiteralPath $WeatherFallbackJson -Raw | ConvertFrom-Json
     $clear = $metadata.selectedWeather.Clear
@@ -363,6 +380,76 @@ function Get-FnvSkyPaletteExpected([string]$WeatherFallbackJson) {
         minExpectedLuma = ($expectedLumas | Measure-Object -Minimum).Minimum
         maxExpectedLuma = ($expectedLumas | Measure-Object -Maximum).Maximum
         normalizedBands = $normalizedBands
+    }
+}
+
+function Get-SkyPaletteBandStats(
+    [System.Drawing.Bitmap]$Bitmap,
+    [string]$Name,
+    [double]$StartYFraction,
+    [double]$EndYFraction,
+    [object]$Expected) {
+
+    $width = $Bitmap.Width
+    $height = $Bitmap.Height
+    $samples = 0
+    $sumR = 0.0
+    $sumG = 0.0
+    $sumB = 0.0
+
+    $startY = [int]($height * $StartYFraction)
+    $endY = [int]($height * $EndYFraction)
+    $startX = [int]($width * 0.10)
+    $endX = [int]($width * 0.90)
+
+    for ($y = $startY; $y -lt $endY; $y += 4) {
+        for ($x = $startX; $x -lt $endX; $x += 4) {
+            $pixel = $Bitmap.GetPixel($x, $y)
+            $r = [double]$pixel.R
+            $g = [double]$pixel.G
+            $b = [double]$pixel.B
+            $luma = (0.2126 * $r) + (0.7152 * $g) + (0.0722 * $b)
+            if ($luma -lt 25.0 -or $luma -gt 252.0) {
+                continue
+            }
+
+            $samples++
+            $sumR += $r
+            $sumG += $g
+            $sumB += $b
+        }
+    }
+
+    if ($samples -lt 1000) {
+        throw "FNV sky palette band '$Name' had too few sampled pixels: $samples"
+    }
+
+    $avgR = $sumR / $samples
+    $avgG = $sumG / $samples
+    $avgB = $sumB / $samples
+    $avgRgb = @($avgR, $avgG, $avgB)
+    $avgLuma = Get-RgbLuma $avgRgb
+    $normalized = Get-NormalizedRgb $avgR $avgG $avgB
+    $nearest = Get-NearestExpectedSkyBand $normalized $Expected
+
+    return [ordered]@{
+        name = $Name
+        startYFraction = $StartYFraction
+        endYFraction = $EndYFraction
+        samples = $samples
+        avgR = [Math]::Round($avgR, 4)
+        avgG = [Math]::Round($avgG, 4)
+        avgB = [Math]::Round($avgB, 4)
+        avgLuma = [Math]::Round($avgLuma, 4)
+        normalizedR = [Math]::Round($normalized[0], 6)
+        normalizedG = [Math]::Round($normalized[1], 6)
+        normalizedB = [Math]::Round($normalized[2], 6)
+        blueMinusGreen = [Math]::Round(($avgB - $avgG), 4)
+        greenMinusRed = [Math]::Round(($avgG - $avgR), 4)
+        nearestExpectedBand = $nearest.name
+        nearestExpectedNormalizedDistance = [Math]::Round($nearest.distance, 6)
+        channelOrderMatches = $avgB -gt ($avgG + 8.0) -and $avgG -gt ($avgR + 8.0)
+        normalizedDistancePass = $nearest.distance -le 0.12
     }
 }
 
@@ -411,18 +498,30 @@ function Get-SkyPaletteMatchStats([string]$Path, [object]$Expected) {
         $avgRgb = @($avgR, $avgG, $avgB)
         $avgLuma = Get-RgbLuma $avgRgb
         $normalized = Get-NormalizedRgb $avgR $avgG $avgB
-        $nearestDistance = [double]::PositiveInfinity
-        foreach ($band in $Expected.normalizedBands) {
-            $distance = Get-NormalizedRgbDistance $normalized @([double]$band.r, [double]$band.g, [double]$band.b)
-            if ($distance -lt $nearestDistance) {
-                $nearestDistance = $distance
-            }
-        }
+        $nearest = Get-NearestExpectedSkyBand $normalized $Expected
+        $nearestDistance = $nearest.distance
 
         $channelOrderMatches = $avgB -gt ($avgG + 8.0) -and $avgG -gt ($avgR + 8.0)
         $brightnessMatches = $avgLuma -ge ($Expected.minExpectedLuma * 0.45) `
             -and $avgLuma -le (($Expected.maxExpectedLuma * 1.15) + 20.0)
         $normalizedDistancePass = $nearestDistance -le 0.10
+        $verticalBands = @(
+            [pscustomobject](Get-SkyPaletteBandStats $bitmap "top" 0.05 0.18 $Expected)
+            [pscustomobject](Get-SkyPaletteBandStats $bitmap "upperMid" 0.18 0.32 $Expected)
+            [pscustomobject](Get-SkyPaletteBandStats $bitmap "mid" 0.32 0.45 $Expected)
+            [pscustomobject](Get-SkyPaletteBandStats $bitmap "lower" 0.45 0.60 $Expected)
+        )
+        $observedExpectedBands = @($verticalBands | Select-Object -ExpandProperty nearestExpectedBand -Unique)
+        $topBand = $verticalBands | Where-Object { $_.name -eq "top" } | Select-Object -First 1
+        $lowerBand = $verticalBands | Where-Object { $_.name -eq "lower" } | Select-Object -First 1
+        $upperLooksLikeSky = @("SkyUpper", "SkyLower") -contains $topBand.nearestExpectedBand
+        $lowerLooksLikeHorizon = $lowerBand.nearestExpectedBand -eq "Horizon"
+        $upperBlueDominance = [double]$topBand.blueMinusGreen
+        $lowerBlueDominance = [double]$lowerBand.blueMinusGreen
+        $verticalBlueGradientPass = ($upperBlueDominance - $lowerBlueDominance) -ge 12.0
+        $verticalBandOrderMatches = $upperLooksLikeSky -and $lowerLooksLikeHorizon -and $verticalBlueGradientPass
+        $distinctVerticalBandsPass = $observedExpectedBands.Count -ge 2
+        $verticalBandDistancePass = @($verticalBands | Where-Object { !$_.normalizedDistancePass }).Count -eq 0
 
         return [ordered]@{
             path = $Path
@@ -436,11 +535,19 @@ function Get-SkyPaletteMatchStats([string]$Path, [object]$Expected) {
             normalizedR = [Math]::Round($normalized[0], 6)
             normalizedG = [Math]::Round($normalized[1], 6)
             normalizedB = [Math]::Round($normalized[2], 6)
+            nearestExpectedBand = $nearest.name
             nearestExpectedNormalizedDistance = [Math]::Round($nearestDistance, 6)
             channelOrderMatches = $channelOrderMatches
             brightnessMatches = $brightnessMatches
             normalizedDistancePass = $normalizedDistancePass
-            paletteMatches = $channelOrderMatches -and $brightnessMatches -and $normalizedDistancePass
+            verticalBands = $verticalBands
+            observedExpectedBands = $observedExpectedBands
+            verticalBandOrderMatches = $verticalBandOrderMatches
+            verticalBlueGradientPass = $verticalBlueGradientPass
+            distinctVerticalBandsPass = $distinctVerticalBandsPass
+            verticalBandDistancePass = $verticalBandDistancePass
+            paletteMatches = $channelOrderMatches -and $brightnessMatches -and $normalizedDistancePass `
+                -and $verticalBandOrderMatches -and $distinctVerticalBandsPass -and $verticalBandDistancePass
         }
     }
     finally {
@@ -471,15 +578,21 @@ function Assert-SkyPaletteMatch([object[]]$Screenshots, [string]$ProofDir, [stri
     Write-ProofLine "Sky palette match JSON: $statsPath"
 
     foreach ($stat in $stats) {
-        Write-ProofLine ("Sky palette sample {0}: avg=({1},{2},{3}) normalized=({4},{5},{6}) nearestDistance={7} channelOrderMatches={8} brightnessMatches={9} normalizedDistancePass={10}" -f `
+        Write-ProofLine ("Sky palette sample {0}: avg=({1},{2},{3}) normalized=({4},{5},{6}) nearestBand={7} nearestDistance={8} channelOrderMatches={9} brightnessMatches={10} normalizedDistancePass={11} verticalBandOrderMatches={12} distinctVerticalBandsPass={13}" -f `
             (Split-Path $stat.path -Leaf), $stat.avgR, $stat.avgG, $stat.avgB, `
             $stat.normalizedR, $stat.normalizedG, $stat.normalizedB, `
-            $stat.nearestExpectedNormalizedDistance, $stat.channelOrderMatches, $stat.brightnessMatches, `
-            $stat.normalizedDistancePass)
+            $stat.nearestExpectedBand, $stat.nearestExpectedNormalizedDistance, $stat.channelOrderMatches, `
+            $stat.brightnessMatches, $stat.normalizedDistancePass, $stat.verticalBandOrderMatches, `
+            $stat.distinctVerticalBandsPass)
+        foreach ($band in $stat.verticalBands) {
+            Write-ProofLine ("  band {0}: avg=({1},{2},{3}) nearestBand={4} nearestDistance={5} blueMinusGreen={6} greenMinusRed={7}" -f `
+                $band.name, $band.avgR, $band.avgG, $band.avgB, $band.nearestExpectedBand, `
+                $band.nearestExpectedNormalizedDistance, $band.blueMinusGreen, $band.greenMinusRed)
+        }
     }
 
     if ($failures.Count -gt 0) {
-        throw "FNV sky palette match failed against generated WTHR Clear/Day colors. See $statsPath"
+        throw "FNV sky palette match failed against generated WTHR Clear/Day colors or vertical band ordering. See $statsPath"
     }
 }
 
