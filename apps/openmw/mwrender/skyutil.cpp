@@ -463,6 +463,14 @@ namespace MWRender
         mUseFalloutAtmosphereZGradient = maxZ - minZ > 0.001f;
     }
 
+    void AtmosphereUpdater::setFalloutAtmosphereGradientColors(
+        const osg::Vec4f& skyLowerColor, const osg::Vec4f& skyHorizonColor)
+    {
+        mFalloutAtmosphereSkyLowerColor = skyLowerColor;
+        mFalloutAtmosphereSkyHorizonColor = skyHorizonColor;
+        mHasFalloutAtmosphereGradientColors = true;
+    }
+
     void AtmosphereUpdater::setDefaults(osg::StateSet* stateset)
     {
         stateset->setAttributeAndModes(
@@ -470,16 +478,32 @@ namespace MWRender
         stateset->addUniform(new osg::Uniform("pass", static_cast<int>(Pass::Atmosphere)));
         stateset->addUniform(new osg::Uniform("useFalloutAtmosphereZGradient", 0));
         stateset->addUniform(new osg::Uniform("falloutAtmosphereZRange", osg::Vec2f(0.f, 1.f)));
+        stateset->addUniform(new osg::Uniform("useFalloutAtmosphereGradientColors", 0));
+        stateset->addUniform(
+            new osg::Uniform("falloutAtmosphereSkyLowerColor", osg::Vec4f(0.f, 0.f, 0.f, 1.f)));
+        stateset->addUniform(
+            new osg::Uniform("falloutAtmosphereSkyHorizonColor", osg::Vec4f(0.f, 0.f, 0.f, 1.f)));
     }
 
     void AtmosphereUpdater::apply(osg::StateSet* stateset, osg::NodeVisitor* /*nv*/)
     {
         osg::Material* mat = static_cast<osg::Material*>(stateset->getAttribute(osg::StateAttribute::MATERIAL));
         mat->setEmission(osg::Material::FRONT_AND_BACK, mEmissionColor);
+        const bool useFalloutAtmosphereGradientColors
+            = mUseFalloutAtmosphereZGradient && mHasFalloutAtmosphereGradientColors;
         if (osg::Uniform* useFalloutAtmosphereZGradient = stateset->getUniform("useFalloutAtmosphereZGradient"))
             useFalloutAtmosphereZGradient->set(mUseFalloutAtmosphereZGradient ? 1 : 0);
         if (osg::Uniform* falloutAtmosphereZRange = stateset->getUniform("falloutAtmosphereZRange"))
             falloutAtmosphereZRange->set(mFalloutAtmosphereZRange);
+        if (osg::Uniform* useFalloutAtmosphereGradientColorsUniform
+            = stateset->getUniform("useFalloutAtmosphereGradientColors"))
+            useFalloutAtmosphereGradientColorsUniform->set(useFalloutAtmosphereGradientColors ? 1 : 0);
+        if (osg::Uniform* falloutAtmosphereSkyLowerColor
+            = stateset->getUniform("falloutAtmosphereSkyLowerColor"))
+            falloutAtmosphereSkyLowerColor->set(mFalloutAtmosphereSkyLowerColor);
+        if (osg::Uniform* falloutAtmosphereSkyHorizonColor
+            = stateset->getUniform("falloutAtmosphereSkyHorizonColor"))
+            falloutAtmosphereSkyHorizonColor->set(mFalloutAtmosphereSkyHorizonColor);
     }
 
     AtmosphereNightUpdater::AtmosphereNightUpdater(Resource::ImageManager* imageManager)

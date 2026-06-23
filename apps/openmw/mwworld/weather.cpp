@@ -30,6 +30,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <string_view>
 
 namespace MWWorld
 {
@@ -61,6 +62,28 @@ namespace MWWorld
                 stormDirection.normalize();
             }
             return stormDirection;
+        }
+
+        osg::Vec4f getOptionalWeatherColour(const std::string& weatherName, std::string_view colourGroup,
+            std::string_view timeName, const osg::Vec4f& fallback)
+        {
+            const std::string key = "Weather_" + weatherName + "_" + std::string(colourGroup) + "_"
+                + std::string(timeName) + "_Color";
+            const auto& fallbackMap = Fallback::Map::getNonNumericFallbackMap();
+            if (fallbackMap.find(key) == fallbackMap.end())
+                return fallback;
+
+            return Fallback::Map::getColour(key);
+        }
+
+        TimeOfDayInterpolator<osg::Vec4f> getOptionalWeatherColourInterpolator(const std::string& weatherName,
+            std::string_view colourGroup, const TimeOfDayInterpolator<osg::Vec4f>& fallback)
+        {
+            return TimeOfDayInterpolator<osg::Vec4f>(
+                getOptionalWeatherColour(weatherName, colourGroup, "Sunrise", fallback.getSunriseValue()),
+                getOptionalWeatherColour(weatherName, colourGroup, "Day", fallback.getDayValue()),
+                getOptionalWeatherColour(weatherName, colourGroup, "Sunset", fallback.getSunsetValue()),
+                getOptionalWeatherColour(weatherName, colourGroup, "Night", fallback.getNightValue()));
         }
     }
 
@@ -159,6 +182,8 @@ namespace MWWorld
               Fallback::Map::getColour("Weather_" + name + "_Fog_Day_Color"),
               Fallback::Map::getColour("Weather_" + name + "_Fog_Sunset_Color"),
               Fallback::Map::getColour("Weather_" + name + "_Fog_Night_Color"))
+        , mSkyLowerColor(getOptionalWeatherColourInterpolator(name, "Sky_Lower", mSkyColor))
+        , mSkyHorizonColor(getOptionalWeatherColourInterpolator(name, "Sky_Horizon", mFogColor))
         , mAmbientColor(Fallback::Map::getColour("Weather_" + name + "_Ambient_Sunrise_Color"),
               Fallback::Map::getColour("Weather_" + name + "_Ambient_Day_Color"),
               Fallback::Map::getColour("Weather_" + name + "_Ambient_Sunset_Color"),
@@ -855,6 +880,12 @@ namespace MWWorld
                                  << mResult.mSunColor.b() << "," << mResult.mSunColor.a()
                                  << ") sky=(" << mResult.mSkyColor.r() << "," << mResult.mSkyColor.g() << ","
                                  << mResult.mSkyColor.b() << "," << mResult.mSkyColor.a()
+                                 << ") skyLower=(" << mResult.mSkyLowerColor.r() << ","
+                                 << mResult.mSkyLowerColor.g() << "," << mResult.mSkyLowerColor.b() << ","
+                                 << mResult.mSkyLowerColor.a()
+                                 << ") skyHorizon=(" << mResult.mSkyHorizonColor.r() << ","
+                                 << mResult.mSkyHorizonColor.g() << "," << mResult.mSkyHorizonColor.b() << ","
+                                 << mResult.mSkyHorizonColor.a()
                                  << ") fog=(" << mResult.mFogColor.r() << "," << mResult.mFogColor.g() << ","
                                  << mResult.mFogColor.b() << "," << mResult.mFogColor.a() << ")";
                 ++proofWeatherLogs;
@@ -1329,6 +1360,8 @@ namespace MWWorld
         mResult.mAmbientColor = current.mAmbientColor.getValue(gameHour, mTimeSettings, "Ambient");
         mResult.mSunColor = current.mSunColor.getValue(gameHour, mTimeSettings, "Sun");
         mResult.mSkyColor = current.mSkyColor.getValue(gameHour, mTimeSettings, "Sky");
+        mResult.mSkyLowerColor = current.mSkyLowerColor.getValue(gameHour, mTimeSettings, "Sky");
+        mResult.mSkyHorizonColor = current.mSkyHorizonColor.getValue(gameHour, mTimeSettings, "Sky");
         mResult.mNightFade = mNightFade.getValue(gameHour, mTimeSettings, "Stars");
         mResult.mDLFogFactor = current.mDL.FogFactor;
         mResult.mDLFogOffset = current.mDL.FogOffset;
@@ -1392,6 +1425,8 @@ namespace MWWorld
         mResult.mFogColor = lerp(current.mFogColor, other.mFogColor, factor);
         mResult.mSunColor = lerp(current.mSunColor, other.mSunColor, factor);
         mResult.mSkyColor = lerp(current.mSkyColor, other.mSkyColor, factor);
+        mResult.mSkyLowerColor = lerp(current.mSkyLowerColor, other.mSkyLowerColor, factor);
+        mResult.mSkyHorizonColor = lerp(current.mSkyHorizonColor, other.mSkyHorizonColor, factor);
 
         mResult.mAmbientColor = lerp(current.mAmbientColor, other.mAmbientColor, factor);
         mResult.mSunDiscColor = lerp(current.mSunDiscColor, other.mSunDiscColor, factor);

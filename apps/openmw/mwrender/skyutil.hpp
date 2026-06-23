@@ -44,6 +44,8 @@ namespace MWRender
         osg::Vec4f mAmbientColor;
 
         osg::Vec4f mSkyColor;
+        osg::Vec4f mSkyLowerColor;
+        osg::Vec4f mSkyHorizonColor;
 
         // sun light color
         osg::Vec4f mSunColor;
@@ -135,6 +137,8 @@ namespace MWRender
     public:
         void setEmissionColor(const osg::Vec4f& emissionColor);
         void setFalloutAtmosphereZGradient(float minZ, float maxZ);
+        void setFalloutAtmosphereGradientColors(
+            const osg::Vec4f& skyLowerColor, const osg::Vec4f& skyHorizonColor);
 
     protected:
         void setDefaults(osg::StateSet* stateset) override;
@@ -143,7 +147,10 @@ namespace MWRender
     private:
         osg::Vec4f mEmissionColor;
         osg::Vec2f mFalloutAtmosphereZRange = osg::Vec2f(0.f, 1.f);
+        osg::Vec4f mFalloutAtmosphereSkyLowerColor = osg::Vec4f(0.f, 0.f, 0.f, 1.f);
+        osg::Vec4f mFalloutAtmosphereSkyHorizonColor = osg::Vec4f(0.f, 0.f, 0.f, 1.f);
         bool mUseFalloutAtmosphereZGradient = false;
+        bool mHasFalloutAtmosphereGradientColors = false;
     };
 
     class AtmosphereNightUpdater : public SceneUtil::StateSetUpdater

@@ -503,6 +503,7 @@ try {
     Set-ProofEnv $previousEnv "OPENMW_FNV_TRACE_RAW_PENDING_RECORD" $TraceRawPendingRecord
     Set-ProofEnv $previousEnv "OPENMW_FNV_RENDER_DISTANCE_DIAG" "1"
     Set-ProofEnv $previousEnv "OPENMW_FNV_SKY_MISSING_LOG" "1"
+    Set-ProofEnv $previousEnv "OPENMW_FNV_PROOF_WEATHER_ID" "1"
 
     $flatArgs = @{
         BuildDir = $BuildDir

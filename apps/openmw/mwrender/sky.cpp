@@ -519,6 +519,7 @@ namespace MWRender
         , mCamera(camera)
         , mAtmosphereNightRoll(0.f)
         , mNativeAtmosphereNight(false)
+        , mFalloutAtmosphereDay(false)
         , mCreated(false)
         , mIsStorm(false)
         , mTimescaleClouds(Fallback::Map::getBool("Weather_Timescale_Clouds"))
@@ -530,6 +531,12 @@ namespace MWRender
         , mCloudBlendFactor(0.f)
         , mCloudSpeed(0.f)
         , mStarsOpacity(0.f)
+        , mCloudColour(0.f, 0.f, 0.f, 0.f)
+        , mSkyColour(0.f, 0.f, 0.f, 0.f)
+        , mSkyLowerColour(0.f, 0.f, 0.f, 0.f)
+        , mSkyHorizonColour(0.f, 0.f, 0.f, 0.f)
+        , mFogColour(0.f, 0.f, 0.f, 0.f)
+        , mLoggedFalloutAtmosphereGradient(false)
         , mRainSpeed(0.f)
         , mRainDiameter(0.f)
         , mRainMinHeight(0.f)
@@ -587,6 +594,7 @@ namespace MWRender
         if (mAtmosphereDay)
         {
             const bool falloutAtmosphere = isFalloutSkyMesh(Settings::models().mSkyatmosphere.get());
+            mFalloutAtmosphereDay = falloutAtmosphere;
             FalloutAtmosphereAlphaStats falloutAlphaStats;
             if (!falloutAtmosphere)
             {
@@ -1194,6 +1202,24 @@ namespace MWRender
                 mAtmosphereUpdater->setEmissionColor(mSkyColour);
             mMasser->setAtmosphereColor(mSkyColour);
             mSecunda->setAtmosphereColor(mSkyColour);
+        }
+
+        if (mSkyLowerColour != weather.mSkyLowerColor || mSkyHorizonColour != weather.mSkyHorizonColor)
+        {
+            mSkyLowerColour = weather.mSkyLowerColor;
+            mSkyHorizonColour = weather.mSkyHorizonColor;
+        }
+
+        if (mAtmosphereUpdater && mFalloutAtmosphereDay)
+        {
+            mAtmosphereUpdater->setFalloutAtmosphereGradientColors(mSkyLowerColour, mSkyHorizonColour);
+            if (!mLoggedFalloutAtmosphereGradient)
+            {
+                Log(Debug::Info) << "FNV/ESM4: atmosphere vertical colors runtime-supported skyUpper=("
+                                 << formatVec4(mSkyColour) << ") skyLower=(" << formatVec4(mSkyLowerColour)
+                                 << ") horizon=(" << formatVec4(mSkyHorizonColour) << ")";
+                mLoggedFalloutAtmosphereGradient = true;
+            }
         }
 
         if (mFogColour != weather.mFogColor)

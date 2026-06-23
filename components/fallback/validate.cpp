@@ -2,6 +2,7 @@
 
 #include <boost/any.hpp>
 #include <boost/program_options/errors.hpp>
+#include <array>
 #include <set>
 #include <string>
 
@@ -225,6 +226,33 @@ static const std::set<std::string_view> allowedKeysUnused = { "Inventory_Uniform
     "Water_TileTextureDivisor", "Weather_AlphaReduce", "Weather_Ashstorm_Storm_Threshold",
     "Weather_Blight_Disease_Chance", "Weather_Blight_Storm_Threshold" };
 
+namespace
+{
+    bool isAllowedFalloutVerticalSkyFallbackKey(std::string_view key)
+    {
+        static constexpr std::array<std::string_view, 10> weatherNames = { "Ashstorm", "Blight", "Blizzard", "Clear",
+            "Cloudy", "Foggy", "Overcast", "Rain", "Snow", "Thunderstorm" };
+        static constexpr std::array<std::string_view, 2> skyBands = { "Sky_Lower", "Sky_Horizon" };
+        static constexpr std::array<std::string_view, 4> times = { "Sunrise", "Day", "Sunset", "Night" };
+
+        for (std::string_view weatherName : weatherNames)
+        {
+            for (std::string_view skyBand : skyBands)
+            {
+                for (std::string_view time : times)
+                {
+                    const std::string expected = "Weather_" + std::string(weatherName) + "_"
+                        + std::string(skyBand) + "_" + std::string(time) + "_Color";
+                    if (key == expected)
+                        return true;
+                }
+            }
+        }
+
+        return false;
+    }
+}
+
 bool Fallback::isAllowedIntFallbackKey(std::string_view key)
 {
     return allowedKeysInt.contains(key);
@@ -238,7 +266,7 @@ bool Fallback::isAllowedFloatFallbackKey(std::string_view key)
 bool Fallback::isAllowedNonNumericFallbackKey(std::string_view key)
 {
     return allowedKeysNonNumeric.contains(key) || key.starts_with("Blood_Texture_")
-        || key.starts_with("Level_Up_Level");
+        || key.starts_with("Level_Up_Level") || isAllowedFalloutVerticalSkyFallbackKey(key);
 }
 
 bool Fallback::isAllowedUnusedFallbackKey(std::string_view key)

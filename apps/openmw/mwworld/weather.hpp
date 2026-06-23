@@ -142,6 +142,9 @@ namespace MWWorld
         TimeOfDayInterpolator<osg::Vec4f> mSkyColor;
         // Fog color
         TimeOfDayInterpolator<osg::Vec4f> mFogColor;
+        // Fallout weather vertical sky colors
+        TimeOfDayInterpolator<osg::Vec4f> mSkyLowerColor;
+        TimeOfDayInterpolator<osg::Vec4f> mSkyHorizonColor;
         // Ambient lighting color
         TimeOfDayInterpolator<osg::Vec4f> mAmbientColor;
         // Sun (directional) lighting color

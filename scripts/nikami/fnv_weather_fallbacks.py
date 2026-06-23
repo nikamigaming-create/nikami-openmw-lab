@@ -261,8 +261,8 @@ def build_weather_fallbacks(records_by_editor):
             "runtimeColorCoverage": OrderedDict(
                 [
                     ("SkyUpper", "runtime-supported"),
-                    ("SkyLower", "loaded-pending-runtime"),
-                    ("Horizon", "loaded-pending-runtime"),
+                    ("SkyLower", "runtime-supported"),
+                    ("Horizon", "runtime-supported"),
                     ("Fog", "runtime-supported"),
                     ("Ambient", "runtime-supported"),
                     ("Sunlight", "runtime-supported"),
@@ -284,6 +284,14 @@ def build_weather_fallbacks(records_by_editor):
             lines.append(
                 f"fallback=Weather_{openmw_name}_Sky_{openmw_time}_Color,"
                 f"{color_text(color_at(record, 'SkyUpper', source_time))}"
+            )
+            lines.append(
+                f"fallback=Weather_{openmw_name}_Sky_Lower_{openmw_time}_Color,"
+                f"{color_text(color_at(record, 'SkyLower', source_time))}"
+            )
+            lines.append(
+                f"fallback=Weather_{openmw_name}_Sky_Horizon_{openmw_time}_Color,"
+                f"{color_text(color_at(record, 'Horizon', source_time))}"
             )
             lines.append(
                 f"fallback=Weather_{openmw_name}_Fog_{openmw_time}_Color,"
@@ -345,9 +353,9 @@ def main():
             "OpenMW weather fallback keys support sunrise/day/sunset/night; FNV WTHR high-noon and midnight colors are harvested but not emitted by this compatibility bridge.",
             "OpenMW exposes one cloud texture per weather; the generator selects the first non-alpha FNV WTHR cloud layer, preferring layer 3 then layers 0-2.",
             "OpenMW directional sun color is sourced from FNV NAM0 Sunlight; sunset sun-disc color is sourced from FNV NAM0 Sun.",
-            "FNV WTHR SkyLower and Horizon colors are harvested into proof metadata but remain loaded-pending-runtime until the renderer has distinct FNV sky-gradient uniforms.",
+            "FNV WTHR SkyUpper, SkyLower, and Horizon colors are emitted as generated fallback keys and bound to the PC-flat atmosphere shader gradient.",
         ],
-        "classification": "loaded-pending-runtime",
+        "classification": "runtime-supported",
         "runtimeBoundary": "Generated fallbacks repair the current OpenMW WeatherManager palette path, but full CLMT/WTHR/REGN runtime weather binding remains a separate gate.",
     }
     output_json.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
