@@ -112,10 +112,14 @@ Assert-FileContains $SkyCpp "rgbNonzero=" "FNV flat sky probes nonzero vertex RG
 Assert-FileContains $SkyCpp "rgbVarying=" "FNV flat sky probes varying vertex RGB"
 Assert-FileContains $SkyCpp "generated atmosphere shader alpha" "FNV flat sky logs generated atmosphere shader alpha"
 Assert-FileContains $SkyCpp "calculateFalloutAtmosphereAlpha" "FNV flat sky calculates Fallout atmosphere alpha range"
+Assert-FileContains $SkyCpp "SkyVertexZRangeVisitor" "FNV flat sky derives atmosphere alpha range from vertex z"
+Assert-FileContains $SkyCpp "vertex-z-gradient" "FNV flat sky proves vertex z gradient mode"
 Assert-FileContains $SkyUtilCpp "setFalloutAtmosphereZGradient" "FNV flat atmosphere updater exposes z-gradient uniform controls"
 Assert-FileContains $SkyUtilCpp "setFalloutAtmosphereGradientColors" "FNV flat atmosphere updater exposes vertical sky color uniforms"
 Assert-FileContains $SkyUtilCpp "falloutAtmosphereSkyLowerColor" "FNV flat atmosphere updater binds SkyLower uniform"
 Assert-FileContains $SkyUtilCpp "falloutAtmosphereSkyHorizonColor" "FNV flat atmosphere updater binds Horizon uniform"
+Assert-FileContains $SkyUtilCpp "setFalloutSkyCloudVFlip" "FNV flat cloud updater exposes Fallout DDS V flip"
+Assert-FileContains $SkyUtilCpp "useFalloutSkyCloudVFlip" "FNV flat cloud updater binds Fallout DDS V flip uniform"
 Assert-FileContains $WeatherHpp "mSkyLowerColor" "weather result stores FNV SkyLower runtime color"
 Assert-FileContains $WeatherHpp "mSkyHorizonColor" "weather result stores FNV Horizon runtime color"
 Assert-FileContains $WeatherCpp "getOptionalWeatherColourInterpolator" "weather runtime reads optional generated FNV sky band fallbacks"
@@ -131,6 +135,7 @@ Assert-FileContains $SkyVert "passColor\.a = clamp" "FNV flat sky vertex shader 
 Assert-FileContains $SkyFrag "useFalloutAtmosphereGradientColors" "FNV flat sky fragment shader gates runtime vertical colors"
 Assert-FileContains $SkyFrag "falloutAtmosphereSkyLowerColor" "FNV flat sky fragment shader consumes SkyLower color"
 Assert-FileContains $SkyFrag "falloutAtmosphereSkyHorizonColor" "FNV flat sky fragment shader consumes Horizon color"
+Assert-FileContains $SkyFrag "useFalloutSkyCloudVFlip" "FNV flat sky fragment shader gates Fallout cloud V flip"
 Assert-FileNotContains $SkyFrag "useVertexColorRgb" "unsupported FNV vertex RGB shader path"
 Assert-FileNotContains $SkyCpp "updatersSkipped=1" "stale FNV raw sky bypass"
 Assert-FileContains $ShaderSettings "mForceShaders" "shader settings expose explicit force-shaders key"
@@ -150,6 +155,9 @@ Assert-FileContains $FlatProofScript "RequireSkyColorSanity" "flat proof can gat
 Assert-FileContains $FlatProofScript "RequireSkyPaletteMatch" "flat proof can gate sky screenshot palette against generated WTHR colors"
 Assert-FileContains $FlatProofScript "sky-palette-match.json" "flat proof emits generated sky palette match proof"
 Assert-FileContains $FlatProofScript "nearestExpectedNormalizedDistance" "flat proof compares screenshot palette to generated WTHR palette"
+Assert-FileContains $FlatProofScript "skyUpperPixelFraction" "flat proof counts visible generated SkyUpper pixels under cloud composite"
+Assert-FileContains $FlatProofScript "bestSkyUpperNormalizedDistance" "flat proof records best visible generated SkyUpper pixel distance"
+Assert-FileContains $FlatProofScript "topCloudCompositeBandPass" "flat proof separates cloud-composited top average from bare SkyUpper visibility"
 Assert-FileContains $FlatProofScript "verticalBands" "flat proof emits vertical sky band proof"
 Assert-FileContains $FlatProofScript "verticalBandOrderMatches" "flat proof gates vertical sky band ordering"
 Assert-FileContains $FlatProofScript "distinctVerticalBandsPass" "flat proof requires multiple generated sky bands in screenshots"
@@ -196,11 +204,13 @@ Assert-BsaContains "Fallout - Textures2.bsa" "textures[\\/]+sky[\\/]+nv_wastelan
 $requiredLogPatterns = @(
     "FNV/ESM4: sky shader mode forceShaders=0 falloutSkyModels=1 program=sky-interpreted",
     "FNV/ESM4: sky mesh vertex colors day atmosphere \(meshes/sky/atmosphere\.nif\).*colorArrays=0 samples=0 rgbNonzero=0 rgbVarying=0",
-    "FNV/ESM4: generated atmosphere shader alpha day atmosphere \(meshes/sky/atmosphere\.nif\).*mode=bound-z-gradient.*applied=1",
+    "FNV/ESM4: generated atmosphere shader alpha day atmosphere \(meshes/sky/atmosphere\.nif\).*mode=vertex-z-gradient.*vertexSamples=[1-9][0-9]*.*applied=1",
     "FNV/ESM4: interpreted sky material day atmosphere \(meshes/sky/atmosphere\.nif\) nativeMaterial=0 skyProgram=sky skyPass=atmosphere updatersAttached=1 vertexAlpha=generated-z-gradient vertexColorRgb=not-used",
     "FNV/ESM4: interpreted sky material night atmosphere \(meshes/sky/stars\.nif\) nativeMaterial=0 skyProgram=sky skyPass=atmosphere-night updatersAttached=1 vertexAlpha=texture-alpha vertexColorRgb=not-used",
     "FNV/ESM4: interpreted sky material clouds \(meshes/sky/clouds\.nif\) nativeMaterial=0 skyProgram=sky skyPass=clouds updatersAttached=1 vertexAlpha=texture-alpha vertexColorRgb=not-used",
+    "FNV/ESM4: cloud texture coordinates clouds \(meshes/sky/clouds\.nif\).*vMode=fallout-dds-v-flip runtime-supported",
     "FNV/ESM4: interpreted sky material next clouds \(meshes/sky/clouds\.nif\) nativeMaterial=0 skyProgram=sky skyPass=clouds updatersAttached=1 vertexAlpha=texture-alpha vertexColorRgb=not-used",
+    "FNV/ESM4: cloud texture coordinates next clouds \(meshes/sky/clouds\.nif\).*vMode=fallout-dds-v-flip runtime-supported",
     "FNV/ESM4: wrapped sky mesh day atmosphere \(meshes/sky/atmosphere\.nif\)",
     "FNV/ESM4: atmosphere vertical colors runtime-supported skyUpper=.*skyLower=.*horizon=.*",
     "FNV/ESM4 proof: weather render state .*sky=.*skyLower=.*skyHorizon=.*fog=.*",
@@ -326,9 +336,11 @@ Assert-FileContains $flatOpenMwLog "Adding BSA archive .*Fallout - Meshes\.bsa" 
 Assert-FileContains $flatOpenMwLog "Adding BSA archive .*Fallout - Textures2\.bsa" "runtime registered textures2 BSA"
 Assert-FileContains $flatOpenMwLog "FNV/ESM4: sky shader mode forceShaders=0 falloutSkyModels=1 program=sky-interpreted" "runtime FNV flat sky shader mode"
 Assert-FileContains $flatOpenMwLog "FNV/ESM4: sky mesh vertex colors day atmosphere \(meshes/sky/atmosphere\.nif\).*colorArrays=0 samples=0 rgbNonzero=0 rgbVarying=0" "runtime FNV atmosphere creation-time vertex RGB probe"
-Assert-FileContains $flatOpenMwLog "FNV/ESM4: generated atmosphere shader alpha day atmosphere \(meshes/sky/atmosphere\.nif\).*mode=bound-z-gradient.*applied=1" "runtime FNV atmosphere generated alpha"
+Assert-FileContains $flatOpenMwLog "FNV/ESM4: generated atmosphere shader alpha day atmosphere \(meshes/sky/atmosphere\.nif\).*mode=vertex-z-gradient.*vertexSamples=[1-9][0-9]*.*applied=1" "runtime FNV atmosphere generated alpha"
 Assert-FileContains $flatOpenMwLog "FNV/ESM4: interpreted sky material day atmosphere \(meshes/sky/atmosphere\.nif\) nativeMaterial=0 skyProgram=sky skyPass=atmosphere updatersAttached=1 vertexAlpha=generated-z-gradient vertexColorRgb=not-used" "runtime interpreted FNV atmosphere material"
 Assert-FileContains $flatOpenMwLog "FNV/ESM4: atmosphere vertical colors runtime-supported skyUpper=.*skyLower=.*horizon=.*" "runtime FNV atmosphere vertical color uniforms"
+Assert-FileContains $flatOpenMwLog "FNV/ESM4: cloud texture coordinates clouds \(meshes/sky/clouds\.nif\).*vMode=fallout-dds-v-flip runtime-supported" "runtime FNV cloud DDS V flip"
+Assert-FileContains $flatOpenMwLog "FNV/ESM4: cloud texture coordinates next clouds \(meshes/sky/clouds\.nif\).*vMode=fallout-dds-v-flip runtime-supported" "runtime FNV next-cloud DDS V flip"
 Assert-FileContains $flatOpenMwLog "FNV/ESM4 proof: weather render state .*sky=.*skyLower=.*skyHorizon=.*fog=.*" "runtime weather interpolation supplies vertical sky colors"
 Assert-FileContains $flatOpenMwLog "FNV/ESM4: interpreted sky material clouds \(meshes/sky/clouds\.nif\) nativeMaterial=0 skyProgram=sky skyPass=clouds updatersAttached=1 vertexAlpha=texture-alpha vertexColorRgb=not-used" "runtime interpreted FNV clouds material"
 Assert-FileContains $flatOpenMwLog "FNV/ESM4: interpreted sky material next clouds \(meshes/sky/clouds\.nif\) nativeMaterial=0 skyProgram=sky skyPass=clouds updatersAttached=1 vertexAlpha=texture-alpha vertexColorRgb=not-used" "runtime interpreted FNV next clouds material"
@@ -353,6 +365,10 @@ Assert-FileContains $flatSkyPaletteMatch '"expectedTime"\s*:\s*"Day"' "runtime g
 Assert-FileContains $flatSkyPaletteMatch '"channelOrderMatches"\s*:\s*true' "runtime sky palette channel ordering"
 Assert-FileContains $flatSkyPaletteMatch '"normalizedDistancePass"\s*:\s*true' "runtime sky palette normalized distance"
 Assert-FileContains $flatSkyPaletteMatch '"verticalBands"' "runtime sky palette vertical band samples"
+Assert-FileContains $flatSkyPaletteMatch '"skyUpperBandPass"\s*:\s*true' "runtime sky palette observes generated upper sky band at top"
+Assert-FileContains $flatSkyPaletteMatch '"skyUpperPixelFraction"\s*:\s*0\.[0-9]*[1-9][0-9]*' "runtime sky palette counts visible generated upper sky pixels"
+Assert-FileContains $flatSkyPaletteMatch '"skyUpperVisiblePass"\s*:\s*true' "runtime sky palette passes visible generated upper sky pixels"
+Assert-FileContains $flatSkyPaletteMatch '"topCloudCompositeBandPass"\s*:\s*true' "runtime sky palette accounts for FNV cloud-composited top band"
 Assert-FileContains $flatSkyPaletteMatch '"nearestExpectedBand"\s*:\s*"Horizon"' "runtime sky palette observes generated horizon band"
 Assert-FileContains $flatSkyPaletteMatch '"verticalBandOrderMatches"\s*:\s*true' "runtime sky palette vertical band ordering"
 Assert-FileContains $flatSkyPaletteMatch '"distinctVerticalBandsPass"\s*:\s*true' "runtime sky palette distinct vertical bands"

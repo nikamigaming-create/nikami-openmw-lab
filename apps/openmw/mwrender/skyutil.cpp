@@ -540,6 +540,11 @@ namespace MWRender
         mTexture = texture;
     }
 
+    void CloudUpdater::setFalloutSkyCloudVFlip(bool enabled)
+    {
+        mUseFalloutSkyCloudVFlip = enabled;
+    }
+
     void CloudUpdater::setEmissionColor(const osg::Vec4f& emissionColor)
     {
         mEmissionColor = emissionColor;
@@ -567,6 +572,7 @@ namespace MWRender
 
         stateset->addUniform(new osg::Uniform("opacity", 1.f));
         stateset->addUniform(new osg::Uniform("pass", static_cast<int>(Pass::Clouds)));
+        stateset->addUniform(new osg::Uniform("useFalloutSkyCloudVFlip", 0));
     }
 
     void CloudUpdater::apply(osg::StateSet* stateset, osg::NodeVisitor* nv)
@@ -580,6 +586,8 @@ namespace MWRender
         texMat->setMatrix(mTexMat);
 
         stateset->getUniform("opacity")->set(mOpacity);
+        if (osg::Uniform* useFalloutSkyCloudVFlip = stateset->getUniform("useFalloutSkyCloudVFlip"))
+            useFalloutSkyCloudVFlip->set(mUseFalloutSkyCloudVFlip ? 1 : 0);
     }
 
     class SkyStereoStatesetUpdater : public SceneUtil::StateSetUpdater

@@ -8,6 +8,7 @@ uniform sampler2D maskMap;      // PASS_MOON
 uniform float opacity;          // PASS_CLOUDS, PASS_ATMOSPHERE_NIGHT
 uniform vec4 moonBlend;         // PASS_MOON
 uniform vec4 atmosphereFade;    // PASS_MOON
+uniform int useFalloutSkyCloudVFlip; // PASS_CLOUDS
 uniform int useFalloutAtmosphereGradientColors; // PASS_ATMOSPHERE
 uniform vec4 falloutAtmosphereSkyLowerColor;    // PASS_ATMOSPHERE
 uniform vec4 falloutAtmosphereSkyHorizonColor;  // PASS_ATMOSPHERE
@@ -38,7 +39,10 @@ void paintAtmosphereNight(inout vec4 color)
 
 void paintClouds(inout vec4 color)
 {
-    color = texture2D(diffuseMap, diffuseMapUV);
+    vec2 cloudUV = diffuseMapUV;
+    if (useFalloutSkyCloudVFlip != 0)
+        cloudUV.y = 1.0 - cloudUV.y;
+    color = texture2D(diffuseMap, cloudUV);
     color.a *= passColor.a * opacity;
     color.xyz = clamp(color.xyz * gl_FrontMaterial.emission.xyz, 0.0, 1.0);
 

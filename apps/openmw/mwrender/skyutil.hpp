@@ -177,6 +177,7 @@ namespace MWRender
 
         void setTexture(osg::ref_ptr<osg::Texture2D> texture);
 
+        void setFalloutSkyCloudVFlip(bool enabled);
         void setEmissionColor(const osg::Vec4f& emissionColor);
         void setOpacity(float opacity);
         void setTextureCoord(float timer);
@@ -189,6 +190,7 @@ namespace MWRender
         osg::ref_ptr<osg::Texture2D> mTexture;
         osg::Vec4f mEmissionColor;
         float mOpacity;
+        bool mUseFalloutSkyCloudVFlip = false;
         osg::Matrixf mTexMat;
     };
 

@@ -95,6 +95,12 @@ namespace
                          << " vertexColorRgb=" << vertexColorRgbMode;
     }
 
+    void logFalloutSkyCloudUvMode(std::string_view label, VFS::Path::NormalizedView model)
+    {
+        Log(Debug::Info) << "FNV/ESM4: cloud texture coordinates " << label << " (" << model.value()
+                         << ") vMode=fallout-dds-v-flip runtime-supported";
+    }
+
     float falloutSkyMeshScaleMultiplier()
     {
         if (const char* value = std::getenv("OPENMW_FNV_SKY_MESH_SCALE"))
@@ -156,7 +162,47 @@ namespace
     {
         float mMinZ = 0.f;
         float mMaxZ = 0.f;
+        unsigned int mVertexArrays = 0;
+        unsigned int mVertexSamples = 0;
+        bool mUsedVertexZRange = false;
         bool mApplied = false;
+    };
+
+    class SkyVertexZRangeVisitor : public osg::NodeVisitor
+    {
+    public:
+        SkyVertexZRangeVisitor()
+            : osg::NodeVisitor(TRAVERSE_ALL_CHILDREN)
+        {
+        }
+
+        void apply(osg::Geometry& geometry) override
+        {
+            const osg::Vec3Array* vertices = dynamic_cast<const osg::Vec3Array*>(geometry.getVertexArray());
+            if (vertices == nullptr)
+                return;
+
+            ++mStats.mVertexArrays;
+            for (const osg::Vec3f& vertex : *vertices)
+            {
+                if (mStats.mVertexSamples == 0)
+                {
+                    mStats.mMinZ = vertex.z();
+                    mStats.mMaxZ = vertex.z();
+                }
+                else
+                {
+                    mStats.mMinZ = std::min(mStats.mMinZ, vertex.z());
+                    mStats.mMaxZ = std::max(mStats.mMaxZ, vertex.z());
+                }
+                ++mStats.mVertexSamples;
+            }
+        }
+
+        const FalloutAtmosphereAlphaStats& getStats() const { return mStats; }
+
+    private:
+        FalloutAtmosphereAlphaStats mStats;
     };
 
     class SkyVertexColorStatsVisitor : public osg::NodeVisitor
@@ -216,7 +262,9 @@ namespace
         std::string_view label, VFS::Path::NormalizedView model, const FalloutAtmosphereAlphaStats& stats)
     {
         Log(Debug::Info) << "FNV/ESM4: generated atmosphere shader alpha " << label << " (" << model.value()
-                         << ") mode=bound-z-gradient"
+                         << ") mode=" << (stats.mUsedVertexZRange ? "vertex-z-gradient" : "bound-z-gradient")
+                         << " vertexArrays=" << stats.mVertexArrays
+                         << " vertexSamples=" << stats.mVertexSamples
                          << " zMin=" << (stats.mApplied ? stats.mMinZ : 0.f)
                          << " zMax=" << (stats.mApplied ? stats.mMaxZ : 0.f)
                          << " alphaMin=0 alphaMax=1 applied=" << stats.mApplied;
@@ -224,7 +272,16 @@ namespace
 
     FalloutAtmosphereAlphaStats calculateFalloutAtmosphereAlpha(osg::Node& instance)
     {
-        FalloutAtmosphereAlphaStats stats;
+        SkyVertexZRangeVisitor visitor;
+        instance.accept(visitor);
+        FalloutAtmosphereAlphaStats stats = visitor.getStats();
+        stats.mUsedVertexZRange = stats.mVertexSamples != 0 && stats.mMaxZ - stats.mMinZ > 0.001f;
+        if (stats.mUsedVertexZRange)
+        {
+            stats.mApplied = true;
+            return stats;
+        }
+
         const osg::BoundingSphere bound = instance.getBound();
         if (bound.valid() && bound.radius() > 1.f)
         {
@@ -668,10 +725,15 @@ namespace MWRender
         {
             mCloudUpdater = new CloudUpdater();
             mCloudUpdater->setOpacity(1.f);
+            const bool falloutClouds = isFalloutSkyMesh(Settings::models().mSkyclouds.get());
+            mCloudUpdater->setFalloutSkyCloudVFlip(falloutClouds);
             cloudMeshChild->addUpdateCallback(mCloudUpdater);
-            if (isFalloutSkyMesh(Settings::models().mSkyclouds.get()))
+            if (falloutClouds)
+            {
                 logInterpretedFalloutSkyMaterial(
                     "clouds", Settings::models().mSkyclouds.get(), "clouds", "texture-alpha", "not-used");
+                logFalloutSkyCloudUvMode("clouds", Settings::models().mSkyclouds.get());
+            }
             attachSkyNodeIfUnattached(*mCloudMesh, *cloudMeshChild);
         }
 
@@ -682,10 +744,15 @@ namespace MWRender
         {
             mNextCloudUpdater = new CloudUpdater();
             mNextCloudUpdater->setOpacity(0.f);
+            const bool falloutClouds = isFalloutSkyMesh(Settings::models().mSkyclouds.get());
+            mNextCloudUpdater->setFalloutSkyCloudVFlip(falloutClouds);
             nextCloudMeshChild->addUpdateCallback(mNextCloudUpdater);
-            if (isFalloutSkyMesh(Settings::models().mSkyclouds.get()))
+            if (falloutClouds)
+            {
                 logInterpretedFalloutSkyMaterial(
                     "next clouds", Settings::models().mSkyclouds.get(), "clouds", "texture-alpha", "not-used");
+                logFalloutSkyCloudUvMode("next clouds", Settings::models().mSkyclouds.get());
+            }
             attachSkyNodeIfUnattached(*mNextCloudMesh, *nextCloudMeshChild);
         }
         mNextCloudMesh->setNodeMask(0);
