@@ -137,6 +137,9 @@ $GlobalOpenMwCfg = Join-Path $RepoRoot "files/openmw.cfg"
 if (Test-Path -LiteralPath $GlobalOpenMwCfg) {
     $FallbackLines = @(Get-Content -LiteralPath $GlobalOpenMwCfg | Where-Object { $_ -match "^\s*fallback=" })
 }
+$FnvWeatherFallbacks = Get-NikamiFnvWeatherFallbacks -FnvData $FnvData -ProofRoot $ProofRoot
+Write-Host "Using generated FNV WTHR weather fallbacks: $($FnvWeatherFallbacks.JsonPath)"
+$FallbackLines += $FnvWeatherFallbacks.Lines
 
 $OpenMwCfg = @"
 replace=data-local

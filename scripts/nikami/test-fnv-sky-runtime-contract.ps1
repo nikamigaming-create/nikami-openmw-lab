@@ -123,6 +123,7 @@ Assert-FileContains $WeatherFallbackScript "Sunlight" "FNV WTHR fallback generat
 Assert-FileContains $WeatherFallbackScript "payloadPolicy" "FNV WTHR fallback generator emits no-retail payload policy"
 Assert-FileContains $RuntimeSettingsScript "Get-NikamiFnvWeatherFallbacks" "runtime settings expose generated FNV WTHR weather fallbacks"
 Assert-FileContains $FlatScript "Get-NikamiFnvWeatherFallbacks" "FNV flat uses generated WTHR weather fallbacks"
+Assert-FileContains $VrDeployScript "Get-NikamiFnvWeatherFallbacks" "FNV headset deploy uses generated WTHR weather fallbacks"
 Assert-FileContains $VrDeployScript "force shaders = true" "FNV VR explicitly keeps forced shader path"
 foreach ($scriptPath in @($FlatScript, $VrDeployScript)) {
     Assert-FileContains $scriptPath "skyatmosphere = meshes/sky/atmosphere.nif" "FNV atmosphere setting in $(Split-Path $scriptPath -Leaf)"
