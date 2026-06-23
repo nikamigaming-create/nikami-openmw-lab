@@ -206,12 +206,13 @@ $before = @()
 if (Test-Path -LiteralPath $flatProofRoot) {
     $before = @(Get-ChildItem -LiteralPath $flatProofRoot -Directory -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName })
 }
+$SkyRunSeconds = [Math]::Max($RunSeconds, 30)
 
 & $FlatProofScript `
     -FnvData $FnvData `
     -VcpkgRoot $VcpkgRoot `
     -ProofRoot $ProofRoot `
-    -RunSeconds $RunSeconds `
+    -RunSeconds $SkyRunSeconds `
     -NoSound `
     -ScreenshotFrames "180,300" `
     -RequireSkyColorSanity `
@@ -266,6 +267,7 @@ Assert-FileContains $flatSettings "^skynight02 = meshes/sky/stars\.nif$" "genera
 Assert-FileContains $flatSettings "^force shaders = false$" "generated flat force-shaders setting"
 Assert-FileNotContains $flatSettings "^force shaders = true$" "generated flat VR shader mode"
 Assert-FileContains $flatSettings "^sky blending = true$" "generated flat sky blending"
+Assert-FileContains $flatSummary "^ScreenshotFrames: 180,300$" "flat proof screenshot frames"
 Assert-FileContains $flatSummary "^RequireSkyColorSanity: True$" "flat proof required sky color sanity"
 Assert-FileContains $flatSummary "^RequireSkyPaletteMatch: True$" "flat proof required generated sky palette match"
 Assert-FileContains $weatherFallbackJson '"payloadPolicy"\s*:\s*"derived-weather-fallbacks-no-retail-assets"' "generated weather fallback payload policy"
@@ -340,7 +342,7 @@ $sunLogPatterns = @(
     -FnvData $FnvData `
     -VcpkgRoot $VcpkgRoot `
     -ProofRoot $ProofRoot `
-    -RunSeconds $RunSeconds `
+    -RunSeconds $SkyRunSeconds `
     -NoSound `
     -ScreenshotFrames "180,300" `
     -FlatCameraYaw -1.16 `
@@ -365,6 +367,7 @@ Write-ProofLine ""
 Write-ProofLine "Sun-visible proof: $($sunProof.FullName)"
 Write-ProofLine "Sun-visible log: $sunOpenMwLog"
 Assert-FileContains $sunSummary "^RequireSunVisible: True$" "sun proof required visible sun"
+Assert-FileContains $sunSummary "^ScreenshotFrames: 180,300$" "sun proof screenshot frames"
 Assert-FileContains $sunSummary "^FlatCameraYaw: -1\.16$" "sun proof camera yaw"
 Assert-FileContains $sunSummary "^FlatCameraPitch: 0\.35$" "sun proof camera pitch"
 Assert-FileContains $sunOpenMwLog "FNV/ESM4: enabled FNV sun billboard using texture textures/sky/sun\.dds" "sun proof FNV sun texture"

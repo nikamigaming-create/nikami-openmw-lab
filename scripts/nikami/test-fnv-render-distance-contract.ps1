@@ -96,6 +96,7 @@ Write-ProofLine ""
 $HelperScript = Join-Path $RepoRoot "scripts/nikami/fnv-runtime-settings.ps1"
 $FlatScript = Join-Path $RepoRoot "scripts/nikami/run-fnv-flat.ps1"
 $FlatProofScript = Join-Path $RepoRoot "scripts/nikami/run-fnv-flat-proof.ps1"
+$PcvrProofScript = Join-Path $RepoRoot "scripts/nikami/run-fnv-pcvr-proof.ps1"
 $VrDeployScript = Join-Path $RepoRoot "scripts/nikami/deploy-fnv-vr-headset.ps1"
 $RenderingManagerCpp = Join-Path $RepoRoot "apps/openmw/mwrender/renderingmanager.cpp"
 $SkyCpp = Join-Path $RepoRoot "apps/openmw/mwrender/sky.cpp"
@@ -106,6 +107,12 @@ Assert-FileContains $FlatProofScript "OPENMW_FNV_RENDER_DISTANCE_DIAG" "flat pro
 Assert-FileContains $RenderingManagerCpp "FNV/ESM4 proof: render distance viewDistance=" "renderer logs consumed render distance"
 Assert-FileContains $SkyCpp "targetRadius=" "FNV sky wrap logs target radius"
 Assert-FileContains $VrDeployScript "Get-NikamiFnvViewingDistance" "VR/headset deploy derives viewing distance from helper"
+Assert-FileContains $FlatScript "distant terrain = true" "flat runner enables generated distant terrain"
+Assert-FileContains $FlatScript "object paging = true" "flat runner enables generated object paging"
+Assert-FileContains $PcvrProofScript "distant terrain = true" "PCVR runner enables generated distant terrain"
+Assert-FileContains $PcvrProofScript "object paging active grid = true" "PCVR runner enables generated active-grid object paging"
+Assert-FileContains $VrDeployScript "distant terrain = true" "VR/headset deploy enables generated distant terrain"
+Assert-FileContains $VrDeployScript "object paging min size = 0.01" "VR/headset deploy uses known-good object paging min size"
 Assert-FileNotContains $FlatScript "viewing distance = 10000" "flat runner hardcoded low viewing distance"
 Assert-FileNotContains $VrDeployScript "ViewingDistance = 10000|viewing distance = 10000" "VR/headset hardcoded low viewing distance"
 
@@ -114,12 +121,13 @@ $before = @()
 if (Test-Path -LiteralPath $flatProofRoot) {
     $before = @(Get-ChildItem -LiteralPath $flatProofRoot -Directory -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName })
 }
+$FlatRunSeconds = [Math]::Max($RunSeconds, 20)
 
 & $FlatProofScript `
     -FnvData $FnvData `
     -VcpkgRoot $VcpkgRoot `
     -ProofRoot $ProofRoot `
-    -RunSeconds $RunSeconds `
+    -RunSeconds $FlatRunSeconds `
     -NoSound
 
 $after = @(Get-ChildItem -LiteralPath $flatProofRoot -Directory -ErrorAction SilentlyContinue |
@@ -140,6 +148,10 @@ Write-ProofLine "Settings: $flatSettings"
 Write-ProofLine "OpenMW log: $flatOpenMwLog"
 
 Assert-FileContains $flatSettings "^viewing distance = $ExpectedViewingDistance$" "generated flat viewing distance"
+Assert-FileContains $flatSettings "^distant terrain = true$" "generated flat distant terrain"
+Assert-FileContains $flatSettings "^object paging = true$" "generated flat object paging"
+Assert-FileContains $flatSettings "^object paging active grid = true$" "generated flat active-grid object paging"
+Assert-FileContains $flatSettings "^object paging min size = 0\.01$" "generated flat object paging min size"
 Assert-FileNotContains $flatSettings "^viewing distance = 10000$" "generated low fallback viewing distance"
 Assert-FileNotContains $flatOpenMwLog "Failed to compile|failed to compile|linking failed|GLSL.*error|shader.*error" "shader/blocker line"
 
@@ -210,6 +222,7 @@ $result = [ordered]@{
     checked = @(
         "retail FNV INI fBlockLoadDistance harvested from disk",
         "flat generated settings.cfg uses harvested viewing distance",
+        "flat generated settings.cfg enables distant terrain and object paging from the known-good FNV PCVR profile",
         "renderer consumed harvested viewing distance as projection/shared far distance",
         "terrain view distance derived from harvested viewing distance and FOV",
         "FNV sky mesh radius/scale derived from harvested viewing distance",

@@ -732,6 +732,7 @@ try {
     Write-ProofLine "RepoRoot: $RepoRoot"
     Write-ProofLine "ProofDir: $ProofDir"
     Write-ProofLine "RunSeconds: $RunSeconds"
+    Write-ProofLine "ScreenshotFrames: $ScreenshotFrames"
     Write-ProofLine "WithMenu: $WithMenu"
     Write-ProofLine "RequireSkyColorSanity: $RequireSkyColorSanity"
     Write-ProofLine "RequireSkyPaletteMatch: $RequireSkyPaletteMatch"

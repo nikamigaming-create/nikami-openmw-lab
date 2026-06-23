@@ -172,6 +172,12 @@ exponential fog = true
 radial fog = true
 sky blending = true
 
+[Terrain]
+distant terrain = true
+object paging = true
+object paging active grid = true
+object paging min size = 0.01
+
 [Game]
 best attack = false
 smooth movement = false

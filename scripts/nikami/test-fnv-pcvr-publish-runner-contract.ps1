@@ -1,8 +1,8 @@
 param(
-    [string]$FnvRoot = $env:NIKAMI_FNV_ROOT,
+    [string]$FnvRoot = "D:\SteamLibrary\steamapps\common\Fallout New Vegas",
     [string]$FnvData = "",
     [string]$FnvConfigData = $env:NIKAMI_FNV_CONFIG_DATA,
-    [string]$VcpkgRoot = $env:NIKAMI_VCPKG_ROOT,
+    [string]$VcpkgRoot = "D:\code\c\FMODS\vcpkg",
     [string]$ProofRoot = ""
 )
 
@@ -71,6 +71,8 @@ Assert-Text "scripts/nikami/run-fnv-pcvr-proof.ps1" "openmw_vr.exe" "PCVR runner
 Assert-Text "scripts/nikami/run-fnv-pcvr-proof.ps1" "content=FNVR.esp" "PCVR runner includes FNVR plugin"
 Assert-Text "scripts/nikami/run-fnv-pcvr-proof.ps1" "force shaders = true" "PCVR runner forces shader path"
 Assert-Text "scripts/nikami/run-fnv-pcvr-proof.ps1" "stereo enabled = true" "PCVR runner enables stereo"
+Assert-Text "scripts/nikami/run-fnv-pcvr-proof.ps1" "distant terrain = true" "PCVR runner enables distant terrain"
+Assert-Text "scripts/nikami/run-fnv-pcvr-proof.ps1" "object paging active grid = true" "PCVR runner enables active-grid object paging"
 Assert-Text "scripts/nikami/run-fnv-pcvr-proof.ps1" "Get-NikamiFnvWeatherFallbacks" "PCVR runner uses generated WTHR weather fallbacks"
 Assert-Text "scripts/nikami/fnv_no_silent_skip_classification.py" "pcvr-publish-runner" "classifier owns PCVR publish runner row"
 
@@ -127,6 +129,10 @@ Assert-FileContains $pcvrOpenMwCfg "^content=FNVR\.esp$" "PCVR FNVR content line
 Assert-FileContains $pcvrSettings "^force shaders = true$" "PCVR force shaders setting"
 Assert-FileContains $pcvrSettings "^stereo enabled = true$" "PCVR stereo setting"
 Assert-FileContains $pcvrSettings "^viewing distance = [0-9]+$" "PCVR generated viewing distance"
+Assert-FileContains $pcvrSettings "^distant terrain = true$" "PCVR generated distant terrain"
+Assert-FileContains $pcvrSettings "^object paging = true$" "PCVR generated object paging"
+Assert-FileContains $pcvrSettings "^object paging active grid = true$" "PCVR generated active-grid object paging"
+Assert-FileContains $pcvrSettings "^object paging min size = 0\.01$" "PCVR generated object paging min size"
 
 $contentLines = @(Select-String -LiteralPath $pcvrOpenMwCfg -Pattern "^content=" | ForEach-Object { $_.Line.Trim() })
 if ($contentLines.Count -ne 11) {
@@ -156,6 +162,12 @@ $metadataPath = Join-Path $ProofDir "fnv-pcvr-publish-runner-contract.json"
     classification = "loaded-pending-runtime"
     runtimeBoundary = "Publish-tree PCVR profile generation is gated; OpenXR runtime execution remains a separate hardware proof."
     contentLines = $contentLines
+    terrainPaging = [ordered]@{
+        distantTerrain = $true
+        objectPaging = $true
+        objectPagingActiveGrid = $true
+        objectPagingMinSize = 0.01
+    }
 } | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $metadataPath -Encoding UTF8
 
 Write-ProofLine ""
