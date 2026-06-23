@@ -584,6 +584,24 @@ def ammo_row(plugin, record, subrecords):
     full_name = first_zstring(subrecords, "FULL")
     description = first_zstring(subrecords, "DESC")
     data = ammo_data(subrecords)
+    projectile = data.get("projectile", "") or data.get("dat2Projectile", "")
+    if projectile == "0x00000000":
+        projectile_binding_classification = "intentionally-excluded-with-proof"
+        projectile_binding_boundary = (
+            "AMMO projectile FormID is null in source bytes; this row has no PROJ record to bind. "
+            "Hitscan/raycast behavior must be proved by weapon/ammo runtime gates."
+        )
+    elif projectile:
+        projectile_binding_classification = "loaded-pending-runtime"
+        projectile_binding_boundary = (
+            "AMMO references a PROJ FormID; record bytes are accounted, but spawned projectile visuals, physics, "
+            "impacts, and explosions remain separate runtime gates."
+        )
+    else:
+        projectile_binding_classification = "loaded-pending-runtime"
+        projectile_binding_boundary = (
+            "AMMO row has no decoded projectile field; projectile behavior remains pending explicit parser/runtime proof."
+        )
     return {
         "plugin": plugin,
         "recordType": "AMMO",
@@ -600,17 +618,20 @@ def ammo_row(plugin, record, subrecords):
         "icon": first_zstring(subrecords, "ICON"),
         "miniIcon": first_zstring(subrecords, "MICO"),
         "data": data,
-        "projectile": data.get("projectile", "") or data.get("dat2Projectile", ""),
+        "projectile": projectile,
+        "projectileBindingClassification": projectile_binding_classification,
+        "projectileBindingBoundary": projectile_binding_boundary,
         "ammoEffects": all_form_ids(subrecords, "RCIL"),
         "script": (all_form_ids(subrecords, "SCRI") or [""])[0],
         "pickupSound": (all_form_ids(subrecords, "YNAM") or [""])[0],
         "dropSound": (all_form_ids(subrecords, "ZNAM") or [""])[0],
         "classification": "runtime-supported",
         "readiness": "runtime-supported",
-        "runtimeScope": "record load/store, ManualRef construction, ammunition slot equip, HUD-safe form id, projectile-reference carry-through, and the real 10mm ammo decrement slice",
+        "runtimeScope": "record load/store, ManualRef construction, ammunition slot equip, HUD-safe form id, null-projectile hitscan/raycast accounting, and the real 10mm ammo decrement slice",
         "runtimeProofGate": "fnv-real-10mm-runtime-contract",
         "unprovenGameplayGates": [
             "ammo-effect-binding",
+            "nonzero-projectile-form-binding",
             "projectile-visual-impact-binding",
             "all-ammo-variant-ballistics",
             "consumed-ammo-chain-runtime",

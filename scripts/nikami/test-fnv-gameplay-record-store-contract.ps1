@@ -167,6 +167,45 @@ function Assert-RuntimeSupportedGameplayRows([object[]]$Rows, [string]$RecordTyp
     Write-ProofLine "OK bounded runtime-supported gameplay rows: $RecordType=$($matches.Count)"
 }
 
+function Assert-AmmoProjectileBindingRows([object[]]$Rows) {
+    $ammoRows = @($Rows | Where-Object { [string]$_.recordType -eq "AMMO" })
+    Assert-Equal "AMMO projectile binding row count" $ammoRows.Count 145
+
+    $nullProjectileRows = @($ammoRows | Where-Object {
+            [string]$_.projectile -eq "0x00000000" -and
+            [string]$_.projectileBindingClassification -eq "intentionally-excluded-with-proof"
+        })
+    $nonzeroProjectileRows = @($ammoRows | Where-Object {
+            ![string]::IsNullOrWhiteSpace([string]$_.projectile) -and
+            [string]$_.projectile -ne "0x00000000" -and
+            [string]$_.projectileBindingClassification -eq "loaded-pending-runtime"
+        })
+    $undecodedProjectileRows = @($ammoRows | Where-Object {
+            [string]::IsNullOrWhiteSpace([string]$_.projectile) -and
+            [string]$_.projectileBindingClassification -eq "loaded-pending-runtime"
+        })
+
+    Assert-Equal "AMMO null projectile rows" $nullProjectileRows.Count 101
+    Assert-Equal "AMMO nonzero projectile pending rows" $nonzeroProjectileRows.Count 28
+    Assert-Equal "AMMO undecoded projectile pending rows" $undecodedProjectileRows.Count 16
+
+    $tenMillimeter = $ammoRows | Where-Object { [string]$_.editorId -eq "Ammo10mm" } | Select-Object -First 1
+    if ($null -eq $tenMillimeter) {
+        throw "Missing Ammo10mm gameplay ledger row"
+    }
+    if ([string]$tenMillimeter.projectile -ne "0x00000000") {
+        throw "Unexpected Ammo10mm projectile field: $($tenMillimeter.projectile)"
+    }
+    if ([string]$tenMillimeter.projectileBindingClassification -ne "intentionally-excluded-with-proof") {
+        throw "Unexpected Ammo10mm projectile binding classification: $($tenMillimeter.projectileBindingClassification)"
+    }
+    if ([string]$tenMillimeter.projectileBindingBoundary -notmatch "no PROJ record to bind") {
+        throw "Ammo10mm projectile boundary does not prove null-projectile exclusion"
+    }
+
+    Write-ProofLine "OK AMMO projectile binding classifications: null=$($nullProjectileRows.Count) nonzeroPending=$($nonzeroProjectileRows.Count) undecodedPending=$($undecodedProjectileRows.Count)"
+}
+
 function Assert-LoadedPendingGameplayRows([object[]]$Rows, [string]$RecordType, [int]$ExpectedCount, [string]$ExpectedGate) {
     $matches = @($Rows | Where-Object { [string]$_.recordType -eq $RecordType })
     Assert-Equal "$RecordType gameplay row count" $matches.Count $ExpectedCount
@@ -259,6 +298,7 @@ Assert-Count $result.gameplaySystemCounts "PROJ" 156
 Assert-Count $result.gameplaySystemCounts "EXPL" 225
 Assert-RuntimeSupportedGameplayRows -Rows $gameplay -RecordType "WEAP" -ExpectedCount 506
 Assert-RuntimeSupportedGameplayRows -Rows $gameplay -RecordType "AMMO" -ExpectedCount 145
+Assert-AmmoProjectileBindingRows -Rows $gameplay
 Assert-LoadedPendingGameplayRows -Rows $gameplay -RecordType "PROJ" -ExpectedCount 156 -ExpectedGate "runtime-projectile-definition-binding"
 Assert-LoadedPendingGameplayRows -Rows $gameplay -RecordType "EXPL" -ExpectedCount 225 -ExpectedGate "runtime-explosion-effect-binding"
 $uniqueRuntimeExpected = @{}
@@ -325,7 +365,7 @@ $summary = [pscustomobject]@{
     uniqueRuntimeExpected = $uniqueRuntimeExpected
     runtimeExpected = $runtimeExpected
     runtimeLoaded = $runtimeLoaded
-    runtimeBoundary = "WEAP/AMMO rows are runtime-supported only for bounded store, ManualRef, inventory, HUD, icon, and real 10mm ammo-decrement paths. This contract proves raw PC-flat source rows and raw runtime inventory accounting; final ESMStore weapon count is proved by the real 10mm runtime contract. PROJ/EXPL rows remain loaded-pending-runtime until spawned projectile visuals, impacts, and explosion effects have runtime proof gates."
+    runtimeBoundary = "WEAP/AMMO rows are runtime-supported only for bounded store, ManualRef, inventory, HUD, icon, null-projectile hitscan/raycast accounting, and real 10mm ammo-decrement paths. AMMO projectile subfields are separately classified: null projectile rows are intentionally-excluded-with-proof, nonzero/undecoded projectile rows remain loaded-pending-runtime. PROJ/EXPL rows remain loaded-pending-runtime until spawned projectile visuals, impacts, and explosion effects have runtime proof gates."
     anchors = @("Weap10mmPistol", "Ammo10mm", "BuiltToDestroy", "WildWasteland", "SecuritronGrenadeProjectile", "SecuritronGrenadeExplosion")
 }
 $ContractPath = Join-Path $ProofDir "gameplay-record-store-contract.json"

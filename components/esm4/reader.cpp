@@ -773,6 +773,10 @@ namespace ESM4
     //        (see https://www.uesp.net/wiki/Tes4Mod:Formid#ModIndex_Zero)
     void Reader::adjustFormId(FormId& id) const
     {
+        // Zero is a null ESM4 reference. Do not turn it into a load-order scoped FormId.
+        if (id.isZeroOrUnset())
+            return;
+
         if (id.hasContentFile() && id.mContentFile < static_cast<int>(mCtx.parentFileIndices.size()))
             id.mContentFile = mCtx.parentFileIndices[id.mContentFile];
         else

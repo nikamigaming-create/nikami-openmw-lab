@@ -472,6 +472,7 @@ namespace
                 && right->getCellRef().getRefId() == ESM::RefId(weapon->mId);
             const bool ammoOk = ammoSlot != inventory.end() && ammoSlot->getType() == ESM::REC_AMMO4
                 && ammoSlot->getCellRef().getRefId() == ESM::RefId(ammo->mId);
+            const bool ammoProjectileSet = !ammo->mData.mProjectile.isZeroOrUnset();
 
             Log(Debug::Info) << "FNV/ESM4 proof: real 10mm equip " << (rightOk && ammoOk ? "PASS" : "FAIL")
                              << " weaponEdid=" << weapon->mEditorId
@@ -488,6 +489,8 @@ namespace
                              << " ammoName=\"" << ammo->mFullName << "\""
                              << " ammoModel=\"" << ammo->mModel << "\""
                              << " ammoProjectile=" << ESM::RefId(ammo->mData.mProjectile)
+                             << " ammoProjectileFormId=" << ammo->mData.mProjectile.toString("FormId:")
+                             << " ammoProjectileSet=" << ammoProjectileSet
                              << " ammoDamage=" << ammo->mData.mDamage
                              << " ammoCount=" << (ammoSlot != inventory.end() ? ammoSlot->getCellRef().getCount() : 0)
                              << " ammoSlotType=0x" << std::hex
@@ -524,6 +527,8 @@ namespace
                                  << " ammoEdid=" << ammo->mEditorId
                                  << " ammoId=" << ESM::RefId(ammo->mId)
                                  << " ammoProjectile=" << ESM::RefId(ammo->mData.mProjectile)
+                                 << " ammoProjectileFormId=" << ammo->mData.mProjectile.toString("FormId:")
+                                 << " ammoProjectileSet=" << ammoProjectileSet
                                  << " ammoRecordSpeed=" << ammo->mData.mSpeed
                                  << " traceFrom=(" << launchPos.x() << "," << launchPos.y() << ","
                                  << launchPos.z() << ")"
@@ -546,7 +551,7 @@ namespace
                                                                  : trace.mHitObject.getCellRef().getRefId())
                                  << " hitPos=(" << trace.mHitPos.x() << "," << trace.mHitPos.y() << ","
                                  << trace.mHitPos.z() << ")"
-                                 << " note=physical ESM4 projectile visual deferred because Ammo10mm model is a pickup mesh";
+                                 << " note=physical ESM4 projectile visual deferred because Ammo10mm has no bound projectile form and its model is a pickup mesh";
             }
             else
             {

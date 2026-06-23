@@ -96,7 +96,7 @@ $AllowedClassifications = @(
 )
 
 function Assert-SystemBoundaryRows([object[]]$Rows) {
-    $expectedSystems = @("WEAP", "AMMO", "PROJ", "EXPL", "WEAP.mAmmo")
+    $expectedSystems = @("WEAP", "AMMO", "AMMO.mProjectile", "PROJ", "EXPL", "WEAP.mAmmo")
     $seen = @{}
     foreach ($row in $Rows) {
         $system = [string]$row.system
@@ -137,9 +137,12 @@ Assert-Text "apps/openmw/engine.cpp" "OPENMW_FNV_PROOF_REAL_10MM" "real 10mm pro
 Assert-Text "apps/openmw/engine.cpp" "Weap10mmPistol" "real 10mm weapon editor id"
 Assert-Text "apps/openmw/engine.cpp" "Ammo10mm" "real 10mm ammo editor id"
 Assert-Text "apps/openmw/engine.cpp" "weaponAmmoFound=" "real 10mm weapon-linked ammo proof"
+Assert-Text "apps/openmw/engine.cpp" "ammoProjectileFormId=" "real 10mm null projectile FormID proof"
+Assert-Text "apps/openmw/engine.cpp" "ammoProjectileSet=" "real 10mm null projectile set-state proof"
 Assert-Text "apps/openmw/engine.cpp" "real 10mm firing trace PASS" "real 10mm firing proof log"
 Assert-Text "apps/openmw/engine.cpp" "real 10mm icon probe" "real 10mm icon resolver proof log"
 Assert-Text "apps/openmw/engine.cpp" "physical ESM4 projectile visual deferred" "real 10mm proof keeps projectile visuals bounded"
+Assert-Text "components/esm4/reader.cpp" "Do not turn it into a load-order scoped FormId" "ESM4 null FormID preservation"
 Assert-Text "apps/openmw/mwclass/esm4base.hpp" "std::is_same_v<Record, ESM4::Weapon>" "ESM4 weapon equipment slot classification"
 Assert-Text "apps/openmw/mwclass/esm4base.hpp" "MWWorld::InventoryStore::Slot_Ammunition" "ESM4 ammo equipment slot classification"
 Assert-Text "apps/openmw/mwgui/hud.cpp" "getRefId().serializeText()" "HUD form-id-safe ammo fallback"
@@ -154,6 +157,7 @@ Assert-Text "scripts/nikami/fnv_no_silent_skip_classification.py" '"WEAP": "weap
 Assert-Text "scripts/nikami/fnv_no_silent_skip_classification.py" '"AMMO": "ammo records feed weapon/HUD ammo paths"' "AMMO runtime-supported classification"
 Assert-Text "scripts/nikami/fnv_no_silent_skip_classification.py" '"PROJ": "projectile records are source-backed and stored pending runtime projectile binding"' "PROJ loaded-pending runtime classification"
 Assert-Text "scripts/nikami/fnv_no_silent_skip_classification.py" '"EXPL": "explosion records are source-backed and stored pending runtime effect binding"' "EXPL loaded-pending runtime classification"
+Assert-Text "scripts/nikami/fnv_content_ledger.py" "projectileBindingClassification" "AMMO projectile subfield classification"
 
 $FlatProofScript = Join-Path $PSScriptRoot "run-fnv-flat-proof.ps1"
 $previousEnv = @{}
@@ -170,9 +174,9 @@ try {
             "FNV/ESM4 proof: real 10mm store scan .*weaponFound=1.*weaponAmmoFound=0.*namedAmmoFound=1.*ammoFound=1.*ammoSource=editorIdFallback",
             "FNV/ESM4 proof: real 10mm ammo reference classified known-blocked .*reason=weapon-ammo-reference-not-loaded-as-AMMO",
             "FNV/ESM4 proof: real 10mm icon probe .*rawIcon=`"interface/icons/pipboyimages/weapons/weapons_10mm_pistol.dds`".*resolvedIcon=`"textures/interface/icons/pipboyimages/weapons/weapons_10mm_pistol.dds`".*resolvedExists=1.*canonicalExists=1",
-            "FNV/ESM4 proof: real 10mm equip PASS",
+            "FNV/ESM4 proof: real 10mm equip PASS .*ammoProjectile=Empty\{\} ammoProjectileFormId=FormId:0x0 ammoProjectileSet=0",
             "FNV/ESM4 proof: real 10mm muzzle ray origin=",
-            "FNV/ESM4 proof: real 10mm firing trace request .*ammoBefore=48",
+            "FNV/ESM4 proof: real 10mm firing trace request .*ammoProjectile=Empty\{\} ammoProjectileFormId=FormId:0x0 ammoProjectileSet=0.*ammoBefore=48",
             "FNV/ESM4 proof: real 10mm firing trace PASS .*ammoBefore=48.*ammoAfter=47"
         )
 }
@@ -187,8 +191,15 @@ Assert-FileNotContains $OpenMwLog "FNV/ESM4 proof: real 10mm ammo compatibility 
 Assert-FileNotContains $OpenMwLog "Failed to open image: 'icons/pipboyimages/weapons/weapons_10mm_pistol.dds'" "10mm icon fallback"
 $storeMatch = Assert-FileContains $OpenMwLog "FNV/ESM4 proof: real 10mm store scan weapons=(?<weapons>[0-9]+) ammo=(?<ammo>[0-9]+).*weaponFound=1.*weaponAmmoFound=0.*namedAmmoFound=1.*ammoFound=1.*ammoSource=editorIdFallback" "real 10mm store scan proof"
 $ammoReferenceMatch = Assert-FileContains $OpenMwLog "FNV/ESM4 proof: real 10mm ammo reference classified known-blocked .*weaponAmmo=(?<weaponAmmo>FormId:0x[0-9a-fA-F]+).*selectedAmmo=(?<selectedAmmo>\S+).*selectedAmmoEdid=Ammo10mm" "real 10mm ammo reference classification"
-$equipMatch = Assert-FileContains $OpenMwLog "FNV/ESM4 proof: real 10mm equip PASS .*weaponEdid=(?<weaponEdid>[^ ]+).*damage=(?<damage>[0-9]+).*clipSize=(?<clip>[0-9]+).*ammoEdid=(?<ammoEdid>[^ ]+).*ammoProjectile=(?<projectile>[^ ]+).*ammoDamage=(?<ammoDamage>[0-9.]+).*ammoCount=(?<ammoCount>[0-9]+)" "real 10mm equip proof"
+$equipMatch = Assert-FileContains $OpenMwLog "FNV/ESM4 proof: real 10mm equip PASS .*weaponEdid=(?<weaponEdid>[^ ]+).*damage=(?<damage>[0-9]+).*clipSize=(?<clip>[0-9]+).*ammoEdid=(?<ammoEdid>[^ ]+).*ammoProjectile=(?<projectile>[^ ]+) ammoProjectileFormId=(?<projectileFormId>[^ ]+) ammoProjectileSet=(?<projectileSet>[01]).*ammoDamage=(?<ammoDamage>[0-9.]+).*ammoCount=(?<ammoCount>[0-9]+)" "real 10mm equip proof"
+$fireRequestMatch = Assert-FileContains $OpenMwLog "FNV/ESM4 proof: real 10mm firing trace request .*ammoProjectile=(?<projectile>[^ ]+) ammoProjectileFormId=(?<projectileFormId>[^ ]+) ammoProjectileSet=(?<projectileSet>[01]).*ammoBefore=48" "real 10mm firing trace request proof"
 $fireMatch = Assert-FileContains $OpenMwLog "FNV/ESM4 proof: real 10mm firing trace PASS ammoBefore=(?<before>[0-9]+) ammoAfter=(?<after>[0-9]+) raycastAvailable=(?<raycast>[01]) hit=(?<hit>[01])" "real 10mm firing trace proof"
+if ($equipMatch.Groups["projectile"].Value -ne "Empty{}" -or $equipMatch.Groups["projectileFormId"].Value -ne "FormId:0x0" -or $equipMatch.Groups["projectileSet"].Value -ne "0") {
+    throw "Ammo10mm projectile was not preserved as null in equip proof: projectile=$($equipMatch.Groups["projectile"].Value) projectileFormId=$($equipMatch.Groups["projectileFormId"].Value) projectileSet=$($equipMatch.Groups["projectileSet"].Value)"
+}
+if ($fireRequestMatch.Groups["projectile"].Value -ne "Empty{}" -or $fireRequestMatch.Groups["projectileFormId"].Value -ne "FormId:0x0" -or $fireRequestMatch.Groups["projectileSet"].Value -ne "0") {
+    throw "Ammo10mm projectile was not preserved as null in firing proof: projectile=$($fireRequestMatch.Groups["projectile"].Value) projectileFormId=$($fireRequestMatch.Groups["projectileFormId"].Value) projectileSet=$($fireRequestMatch.Groups["projectileSet"].Value)"
+}
 
 $systemBoundary = @(
     [ordered]@{
@@ -206,16 +217,25 @@ $systemBoundary = @(
         item = $equipMatch.Groups["ammoEdid"].Value
         classification = "runtime-supported"
         firstGate = "pc-flat-real-10mm-ammo-equip-decrement"
-        proof = "ManualRef construction, ammunition slot equip, HUD-safe form id path, projectile reference carry-through, and 48-to-47 decrement are proved for Ammo10mm."
-        notProven = "This does not prove ammo effects, all ammo variants, full ballistic physics, or projectile impact effects."
+        proof = "ManualRef construction, ammunition slot equip, HUD-safe form id path, null-projectile accounting, and 48-to-47 decrement are proved for Ammo10mm."
+        notProven = "This does not prove ammo effects, all ammo variants, nonzero projectile binding, full ballistic physics, or projectile impact effects."
+    }
+    [ordered]@{
+        system = "AMMO.mProjectile"
+        recordType = "AMMO projectile reference"
+        item = $equipMatch.Groups["projectileFormId"].Value
+        classification = "intentionally-excluded-with-proof"
+        firstGate = "ammo-null-projectile-no-proj-record"
+        proof = "Ammo10mm projectile RefId is Empty{} and raw FormID is FormId:0x0 after zero-preserving ESM4 FormID read; this row has no PROJ record to bind, and the runtime gate proves only raycast/decrement behavior."
+        notProven = "Nonzero AMMO projectile references still require a separate spawned projectile visual, physics, impact, and explosion binding gate."
     }
     [ordered]@{
         system = "PROJ"
         recordType = "PROJ"
-        item = $equipMatch.Groups["projectile"].Value
+        item = "all PROJ records"
         classification = "loaded-pending-runtime"
         firstGate = "runtime-projectile-visual-effect-binding"
-        proof = "Ammo10mm's projectile reference is carried through equip and firing proof logs, but this gate only casts a ray and explicitly defers physical ESM4 projectile visuals."
+        proof = "PROJ records are source/store accounted by the gameplay record store contract; this 10mm gate does not claim spawned ESM4 projectile visual, physics, impact, or effect behavior."
         notProven = "No spawned ESM4 projectile mesh, physics projectile, tracer, impact data, or explosion chain is claimed here."
     }
     [ordered]@{
@@ -258,6 +278,8 @@ $metadata = [ordered]@{
     ammo = [ordered]@{
         editorId = $equipMatch.Groups["ammoEdid"].Value
         projectile = $equipMatch.Groups["projectile"].Value
+        projectileFormId = $equipMatch.Groups["projectileFormId"].Value
+        projectileSet = [int]$equipMatch.Groups["projectileSet"].Value
         damage = [double]$equipMatch.Groups["ammoDamage"].Value
         equippedCount = [int]$equipMatch.Groups["ammoCount"].Value
         before = [int]$fireMatch.Groups["before"].Value
@@ -266,7 +288,7 @@ $metadata = [ordered]@{
     raycastAvailable = [int]$fireMatch.Groups["raycast"].Value
     hit = [int]$fireMatch.Groups["hit"].Value
     systemBoundary = $systemBoundary
-    runtimeBoundary = "This proves PC-flat ESM4 WEAP/AMMO store lookup, ManualRef construction, equip slots, HUD-safe form ids, retail icon resolution, ray trace request, and ammo decrement. The Weap10mmPistol mAmmo reference is explicitly known-blocked because it does not resolve to the AMMO store in this load order; full projectile visuals/effects remain separate PROJ/EXPL gates."
+    runtimeBoundary = "This proves PC-flat ESM4 WEAP/AMMO store lookup, ManualRef construction, equip slots, HUD-safe form ids, retail icon resolution, ray trace request, ammo decrement, and null-projectile accounting for Ammo10mm. The Weap10mmPistol mAmmo reference is explicitly known-blocked because it does not resolve to the AMMO store in this load order; nonzero projectile visuals/effects remain separate PROJ/EXPL gates."
 }
 $metadataPath = Join-Path $ProofDir "fnv-real-10mm-runtime-contract.json"
 $metadata | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $metadataPath -Encoding UTF8
