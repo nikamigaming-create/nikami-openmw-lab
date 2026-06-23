@@ -1,7 +1,9 @@
 param(
-    [string]$FnvRoot = $env:NIKAMI_FNV_ROOT,
+    [string]$FnvRoot = "D:\SteamLibrary\steamapps\common\Fallout New Vegas",
     [string]$FnvData = "",
-    [string]$ProofRoot = ""
+    [string]$VcpkgRoot = "D:\code\c\FMODS\vcpkg",
+    [string]$ProofRoot = "",
+    [int]$RunSeconds = 8
 )
 
 $ErrorActionPreference = "Stop"
@@ -20,6 +22,19 @@ if ([string]::IsNullOrWhiteSpace($FnvRoot)) {
 if ([string]::IsNullOrWhiteSpace($ProofRoot)) {
     $ProofRoot = Join-Path (Split-Path $RepoRoot -Parent) "proof"
 }
+
+$FlatContent = @(
+    "FalloutNV.esm",
+    "DeadMoney.esm",
+    "HonestHearts.esm",
+    "OldWorldBlues.esm",
+    "LonesomeRoad.esm",
+    "GunRunnersArsenal.esm",
+    "CaravanPack.esm",
+    "ClassicPack.esm",
+    "MercenaryPack.esm",
+    "TribalPack.esm"
+)
 
 $Stamp = Get-Date -Format "yyyyMMdd_HHmmss"
 $ProofDir = Join-Path $ProofRoot "fnv-gameplay-record-store-contract/$Stamp"
@@ -49,6 +64,87 @@ function Assert-Count([object]$Counts, [string]$RecordType, [int]$Expected) {
         throw "Unexpected $RecordType gameplay ledger count: actual=$actual expected=$Expected"
     }
     Write-ProofLine "OK gameplay ledger count: $RecordType=$actual"
+}
+
+function Get-LatestProofDir([string]$Root, [string]$Label) {
+    if (!(Test-Path -LiteralPath $Root -PathType Container)) {
+        throw "Missing $Label proof root: $Root"
+    }
+    $dir = Get-ChildItem -LiteralPath $Root -Directory | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+    if ($null -eq $dir) {
+        throw "Missing $Label proof directory under $Root"
+    }
+    return $dir.FullName
+}
+
+function Read-JsonArray([string]$Path, [string]$Label) {
+    if (!(Test-Path -LiteralPath $Path -PathType Leaf)) {
+        throw "Missing ${Label}: $Path"
+    }
+    $value = Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json
+    if ($null -eq $value) {
+        return @()
+    }
+    if ($value -is [System.Array]) {
+        return @($value)
+    }
+    return @($value)
+}
+
+function Assert-Equal([string]$Description, [int]$Actual, [int]$Expected) {
+    if ($Actual -ne $Expected) {
+        throw "Unexpected ${Description}: actual=$Actual expected=$Expected"
+    }
+    Write-ProofLine "OK ${Description}: $Actual"
+}
+
+function Get-FlatLedgerRecordCounts([string]$RecordsPath) {
+    $flatContentSet = @{}
+    foreach ($content in $FlatContent) {
+        $flatContentSet[$content] = $true
+    }
+
+    $counts = @{}
+    foreach ($plugin in (Read-JsonArray $RecordsPath "content ledger records")) {
+        if (!$flatContentSet.ContainsKey([string]$plugin.plugin)) {
+            continue
+        }
+        foreach ($record in @($plugin.records)) {
+            $type = [string]$record.type
+            if (!$counts.ContainsKey($type)) {
+                $counts[$type] = 0
+            }
+            $counts[$type] += [int]$record.count
+        }
+    }
+    return $counts
+}
+
+function Get-RecordCount([hashtable]$Counts, [string]$RecordType) {
+    if ($Counts.ContainsKey($RecordType)) {
+        return [int]$Counts[$RecordType]
+    }
+    return 0
+}
+
+function Get-RuntimeLoadedRecordTotal([string]$OpenMwLog, [string]$RecordType) {
+    $pattern = "FNV/ESM4 inventory loaded: $([Regex]::Escape($RecordType))4 count=(\d+)"
+    $total = 0
+    foreach ($line in @(Select-String -LiteralPath $OpenMwLog -Pattern $pattern -AllMatches)) {
+        foreach ($match in $line.Matches) {
+            $total += [int]$match.Groups[1].Value
+        }
+    }
+    return $total
+}
+
+function Assert-NoUnsupportedRecordSkip([string]$OpenMwLog, [string]$RecordType) {
+    $pattern = "FNV/ESM4 inventory skipped unsupported:\s+$([Regex]::Escape($RecordType))4\s+count="
+    $matches = @(Select-String -LiteralPath $OpenMwLog -Pattern $pattern -ErrorAction SilentlyContinue)
+    if ($matches.Count -ne 0) {
+        throw "Unexpected unsupported $RecordType runtime skip count in $OpenMwLog"
+    }
+    Write-ProofLine "OK no unsupported runtime skip: $RecordType"
 }
 
 Write-ProofLine "FNV gameplay record store contract $Stamp"
@@ -98,6 +194,7 @@ if (!(Test-Path -LiteralPath $GameplayPath -PathType Leaf)) {
 
 $result = Get-Content -LiteralPath $ResultPath -Raw | ConvertFrom-Json
 $gameplay = @(Get-Content -LiteralPath $GameplayPath -Raw | ConvertFrom-Json)
+$flatCounts = Get-FlatLedgerRecordCounts (Join-Path $LedgerDir.FullName "records.json")
 
 Assert-Count $result.gameplaySystemCounts "PERK" 259
 Assert-Count $result.gameplaySystemCounts "PROJ" 156
@@ -111,12 +208,40 @@ foreach ($needle in @("BuiltToDestroy", "WildWasteland", "SecuritronGrenadeProje
     Write-ProofLine "OK gameplay ledger anchor: $needle"
 }
 
+$FlatProofScript = Join-Path $PSScriptRoot "run-fnv-flat-proof.ps1"
+& $FlatProofScript `
+    -FnvData $FnvData `
+    -VcpkgRoot $VcpkgRoot `
+    -ProofRoot $ProofRoot `
+    -RunSeconds $RunSeconds `
+    -NoSound
+if ($LASTEXITCODE -ne 0) {
+    throw "FNV flat proof failed with exit code $LASTEXITCODE."
+}
+
+$FlatProofDir = Get-LatestProofDir (Join-Path $ProofRoot "fnv-flat-proof") "FNV flat proof"
+$OpenMwLog = Join-Path $FlatProofDir "openmw.log"
+if (!(Test-Path -LiteralPath $OpenMwLog -PathType Leaf)) {
+    throw "Missing FNV flat OpenMW log: $OpenMwLog"
+}
+
+$runtimeLoaded = @{}
+foreach ($recordType in @("PERK", "PROJ", "EXPL")) {
+    $expected = Get-RecordCount $flatCounts $recordType
+    $actual = Get-RuntimeLoadedRecordTotal $OpenMwLog $recordType
+    Assert-Equal "runtime loaded $recordType count" $actual $expected
+    Assert-NoUnsupportedRecordSkip $OpenMwLog $recordType
+    $runtimeLoaded[$recordType] = $actual
+}
+
 $summary = [pscustomobject]@{
     status = "PASS"
     repoRoot = $RepoRoot
     fnvData = $FnvData
     ledgerDir = $LedgerDir.FullName
+    flatProofDir = $FlatProofDir
     gameplaySystems = $result.gameplaySystemCounts
+    runtimeLoaded = $runtimeLoaded
     anchors = @("BuiltToDestroy", "WildWasteland", "SecuritronGrenadeProjectile", "SecuritronGrenadeExplosion")
 }
 $ContractPath = Join-Path $ProofDir "gameplay-record-store-contract.json"
@@ -124,6 +249,7 @@ $summary | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $ContractPath -Enc
 
 Write-ProofLine ""
 Write-ProofLine "Gameplay ledger JSON: $GameplayPath"
+Write-ProofLine "Flat proof: $FlatProofDir"
 Write-ProofLine "Contract JSON: $ContractPath"
 Write-ProofLine "FNV gameplay record store contract PASS"
-Write-ProofLine "PERK/PROJ/EXPL are source-backed and stored; gameplay execution remains gated separately."
+Write-ProofLine "PERK/PROJ/EXPL are source-backed, stored, and matched to PC-flat runtime inventory; gameplay execution remains gated separately."
