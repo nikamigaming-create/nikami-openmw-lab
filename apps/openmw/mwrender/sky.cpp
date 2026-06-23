@@ -2,7 +2,6 @@
 
 #include <osg/Depth>
 #include <osg/PositionAttitudeTransform>
-#include <osg/Program>
 
 #include <osgParticle/BoxPlacer>
 #include <osgParticle/ModularEmitter>
@@ -83,15 +82,12 @@ namespace
                 && vfs->exists(Settings::models().mSkynight02.get()));
     }
 
-    bool useNativeFalloutSkyMaterial(VFS::Path::NormalizedView model, bool forceShaders)
+    void logInterpretedFalloutSkyMaterial(std::string_view label, VFS::Path::NormalizedView model,
+        std::string_view skyPass)
     {
-        return isFalloutSkyMesh(model) && !forceShaders;
-    }
-
-    void logNativeFalloutSkyMaterial(std::string_view label, VFS::Path::NormalizedView model)
-    {
-        Log(Debug::Info) << "FNV/ESM4: native sky material " << label << " (" << model.value()
-                         << ") nativeMaterial=1 skyProgramBypass=1 skyPass=none updatersSkipped=1";
+        Log(Debug::Info) << "FNV/ESM4: interpreted sky material " << label << " (" << model.value()
+                         << ") nativeMaterial=0 skyProgram=sky skyPass=" << skyPass
+                         << " updatersAttached=1 vertexAlpha=authored";
     }
 
     float falloutSkyMeshScaleMultiplier()
@@ -427,11 +423,6 @@ namespace MWRender
     {
         mSkyRootNode = new CameraRelativeTransform;
         mSkyRootNode->setName("Sky Root");
-        if (hasAvailableConfiguredFalloutSkyModels(*mSceneManager) && !Settings::shaders().mForceShaders)
-        {
-            mSkyRootNode->getOrCreateStateSet()->setAttributeAndModes(new osg::Program(),
-                osg::StateAttribute::OVERRIDE | osg::StateAttribute::PROTECTED | osg::StateAttribute::ON);
-        }
         mSceneManager->setUpNormalsRTForStateSet(mSkyRootNode->getOrCreateStateSet(), false);
         SceneUtil::ShadowManager::instance().disableShadowsForStateSet(*mSkyRootNode->getOrCreateStateSet());
         parentNode->addChild(mSkyRootNode);
@@ -465,24 +456,24 @@ namespace MWRender
 
         const bool falloutSkyModels = hasAvailableConfiguredFalloutSkyModels(*mSceneManager);
         const bool forceShaders = Settings::shaders().mForceShaders;
-        const bool useSkyShader = !falloutSkyModels || forceShaders;
+        const bool useSkyShader = true;
 
         mAtmosphereDay = getOptionalSkyInstance(
             *mSceneManager, Settings::models().mSkyatmosphere.get(), mEarlyRenderBinRoot, "day atmosphere");
         if (mAtmosphereDay)
         {
-            if (useNativeFalloutSkyMaterial(Settings::models().mSkyatmosphere.get(), forceShaders))
-            {
-                logNativeFalloutSkyMaterial("day atmosphere", Settings::models().mSkyatmosphere.get());
-            }
-            else
+            const bool falloutAtmosphere = isFalloutSkyMesh(Settings::models().mSkyatmosphere.get());
+            if (!falloutAtmosphere)
             {
                 ModVertexAlphaVisitor modAtmosphere(ModVertexAlphaVisitor::Atmosphere);
                 mAtmosphereDay->accept(modAtmosphere);
-
-                mAtmosphereUpdater = new AtmosphereUpdater;
-                mAtmosphereDay->addUpdateCallback(mAtmosphereUpdater);
             }
+
+            mAtmosphereUpdater = new AtmosphereUpdater;
+            mAtmosphereDay->addUpdateCallback(mAtmosphereUpdater);
+            if (falloutAtmosphere)
+                logInterpretedFalloutSkyMaterial(
+                    "day atmosphere", Settings::models().mSkyatmosphere.get(), "atmosphere");
         }
 
         mAtmosphereNightNode = new osg::PositionAttitudeTransform;
@@ -502,21 +493,19 @@ namespace MWRender
                 = getOptionalSkyInstance(*mSceneManager, nightAtmosphereModel, mAtmosphereNightNode, "night atmosphere");
         if (atmosphereNight)
         {
-            if (useNativeFalloutSkyMaterial(nightAtmosphereModel, forceShaders))
-            {
-                mNativeAtmosphereNight = true;
-                logNativeFalloutSkyMaterial("night atmosphere", nightAtmosphereModel);
-            }
-            else
-            {
-                atmosphereNight->getOrCreateStateSet()->setAttributeAndModes(
-                    createAlphaTrackingUnlitMaterial(), osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
+            atmosphereNight->getOrCreateStateSet()->setAttributeAndModes(
+                createAlphaTrackingUnlitMaterial(), osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
 
+            const bool falloutNightAtmosphere = isFalloutSkyMesh(nightAtmosphereModel);
+            if (!falloutNightAtmosphere)
+            {
                 ModVertexAlphaVisitor modStars(ModVertexAlphaVisitor::Stars);
                 atmosphereNight->accept(modStars);
-                mAtmosphereNightUpdater = new AtmosphereNightUpdater(mSceneManager->getImageManager());
-                atmosphereNight->addUpdateCallback(mAtmosphereNightUpdater);
             }
+            mAtmosphereNightUpdater = new AtmosphereNightUpdater(mSceneManager->getImageManager());
+            atmosphereNight->addUpdateCallback(mAtmosphereNightUpdater);
+            if (falloutNightAtmosphere)
+                logInterpretedFalloutSkyMaterial("night atmosphere", nightAtmosphereModel, "atmosphere-night");
         }
 
         mSun = std::make_unique<Sun>(mEarlyRenderBinRoot, *mSceneManager);
@@ -534,16 +523,11 @@ namespace MWRender
             = getOptionalSkyInstance(*mSceneManager, Settings::models().mSkyclouds.get(), mCloudMesh, "clouds");
         if (cloudMeshChild)
         {
-            if (useNativeFalloutSkyMaterial(Settings::models().mSkyclouds.get(), forceShaders))
-            {
-                logNativeFalloutSkyMaterial("clouds", Settings::models().mSkyclouds.get());
-            }
-            else
-            {
-                mCloudUpdater = new CloudUpdater();
-                mCloudUpdater->setOpacity(1.f);
-                cloudMeshChild->addUpdateCallback(mCloudUpdater);
-            }
+            mCloudUpdater = new CloudUpdater();
+            mCloudUpdater->setOpacity(1.f);
+            cloudMeshChild->addUpdateCallback(mCloudUpdater);
+            if (isFalloutSkyMesh(Settings::models().mSkyclouds.get()))
+                logInterpretedFalloutSkyMaterial("clouds", Settings::models().mSkyclouds.get(), "clouds");
             attachSkyNodeIfUnattached(*mCloudMesh, *cloudMeshChild);
         }
 
@@ -552,16 +536,11 @@ namespace MWRender
             = getOptionalSkyInstance(*mSceneManager, Settings::models().mSkyclouds.get(), mNextCloudMesh, "next clouds");
         if (nextCloudMeshChild)
         {
-            if (useNativeFalloutSkyMaterial(Settings::models().mSkyclouds.get(), forceShaders))
-            {
-                logNativeFalloutSkyMaterial("next clouds", Settings::models().mSkyclouds.get());
-            }
-            else
-            {
-                mNextCloudUpdater = new CloudUpdater();
-                mNextCloudUpdater->setOpacity(0.f);
-                nextCloudMeshChild->addUpdateCallback(mNextCloudUpdater);
-            }
+            mNextCloudUpdater = new CloudUpdater();
+            mNextCloudUpdater->setOpacity(0.f);
+            nextCloudMeshChild->addUpdateCallback(mNextCloudUpdater);
+            if (isFalloutSkyMesh(Settings::models().mSkyclouds.get()))
+                logInterpretedFalloutSkyMaterial("next clouds", Settings::models().mSkyclouds.get(), "clouds");
             attachSkyNodeIfUnattached(*mNextCloudMesh, *nextCloudMeshChild);
         }
         mNextCloudMesh->setNodeMask(0);
@@ -571,9 +550,12 @@ namespace MWRender
 
         if (mCloudUpdater || mNextCloudUpdater)
         {
-            ModVertexAlphaVisitor modClouds(ModVertexAlphaVisitor::Clouds);
-            mCloudMesh->accept(modClouds);
-            mNextCloudMesh->accept(modClouds);
+            if (!isFalloutSkyMesh(Settings::models().mSkyclouds.get()))
+            {
+                ModVertexAlphaVisitor modClouds(ModVertexAlphaVisitor::Clouds);
+                mCloudMesh->accept(modClouds);
+                mNextCloudMesh->accept(modClouds);
+            }
         }
 
         if (useSkyShader)
@@ -589,7 +571,7 @@ namespace MWRender
         {
             Log(Debug::Info) << "FNV/ESM4: sky shader mode forceShaders=" << forceShaders
                              << " falloutSkyModels=" << falloutSkyModels << " program="
-                             << (useSkyShader ? "sky" : "fixed-function-protected");
+                             << (falloutSkyModels && !forceShaders ? "sky-interpreted" : "sky");
         }
 
         osg::ref_ptr<osg::Depth> depth = new SceneUtil::AutoDepth;

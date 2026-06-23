@@ -53,6 +53,7 @@ param(
     [switch]$FnvDisableNativeAnimationCallbacks,
     [string]$TraceRawPendingRecord = "",
     [string]$ClassificationDir = "",
+    [switch]$RequireSkyColorSanity,
     [switch]$NoSound
 )
 
@@ -155,6 +156,108 @@ function Assert-NoShaderBlockers([string[]]$Paths) {
             throw "FNV flat proof saw sky shader/blocker lines in $path"
         }
         Write-ProofLine "OK absent shader blockers: $path"
+    }
+}
+
+function Get-SkyColorSanityStats([string]$Path) {
+    Add-Type -AssemblyName System.Drawing -ErrorAction SilentlyContinue
+
+    $bitmap = [System.Drawing.Bitmap]::FromFile($Path)
+    try {
+        $width = $bitmap.Width
+        $height = $bitmap.Height
+        $samples = 0
+        $redDominant = 0
+        $cyanDominant = 0
+        $bright = 0
+        $sumR = 0.0
+        $sumG = 0.0
+        $sumB = 0.0
+
+        $startY = [int]($height * 0.05)
+        $endY = [int]($height * 0.45)
+        $startX = [int]($width * 0.10)
+        $endX = [int]($width * 0.90)
+
+        for ($y = $startY; $y -lt $endY; $y += 4) {
+            for ($x = $startX; $x -lt $endX; $x += 4) {
+                $pixel = $bitmap.GetPixel($x, $y)
+                $r = [double]$pixel.R
+                $g = [double]$pixel.G
+                $b = [double]$pixel.B
+                $luma = (0.2126 * $r) + (0.7152 * $g) + (0.0722 * $b)
+                if ($luma -lt 25.0) {
+                    continue
+                }
+
+                $samples++
+                $sumR += $r
+                $sumG += $g
+                $sumB += $b
+                if ($r -gt ($g + 35.0) -and $r -gt ($b + 35.0)) {
+                    $redDominant++
+                }
+                if ($g -gt ($r + 25.0) -and $b -gt ($r + 25.0)) {
+                    $cyanDominant++
+                }
+                if ($luma -gt 140.0) {
+                    $bright++
+                }
+            }
+        }
+
+        if ($samples -lt 1000) {
+            throw "Sky color sanity had too few sampled pixels in ${Path}: $samples"
+        }
+
+        $avgR = $sumR / $samples
+        $avgG = $sumG / $samples
+        $avgB = $sumB / $samples
+        $redDominantRatio = $redDominant / $samples
+        $rawRedMaskLeak = $redDominantRatio -gt 0.55 -and $avgR -gt ($avgG + 35.0) -and $avgR -gt ($avgB + 35.0)
+
+        return [ordered]@{
+            path = $Path
+            width = $width
+            height = $height
+            samples = $samples
+            avgR = [Math]::Round($avgR, 4)
+            avgG = [Math]::Round($avgG, 4)
+            avgB = [Math]::Round($avgB, 4)
+            redDominantRatio = [Math]::Round($redDominantRatio, 6)
+            cyanDominantRatio = [Math]::Round(($cyanDominant / $samples), 6)
+            brightRatio = [Math]::Round(($bright / $samples), 6)
+            rawRedMaskLeak = $rawRedMaskLeak
+        }
+    }
+    finally {
+        $bitmap.Dispose()
+    }
+}
+
+function Assert-SkyColorSanity([object[]]$Screenshots, [string]$ProofDir) {
+    if ($Screenshots.Count -eq 0) {
+        throw "FNV sky color sanity requires screenshots. Pass -ScreenshotFrames with at least one frame."
+    }
+
+    $stats = @()
+    foreach ($screenshot in $Screenshots) {
+        $stats += [pscustomobject](Get-SkyColorSanityStats $screenshot.FullName)
+    }
+
+    $statsPath = Join-Path $ProofDir "sky-color-sanity.json"
+    $stats | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $statsPath -Encoding UTF8
+    Write-ProofLine "Sky color sanity JSON: $statsPath"
+
+    $failures = @($stats | Where-Object { $_.rawRedMaskLeak })
+    foreach ($stat in $stats) {
+        Write-ProofLine ("Sky color sample {0}: avg=({1},{2},{3}) redDominant={4} cyanDominant={5} rawRedMaskLeak={6}" -f `
+            (Split-Path $stat.path -Leaf), $stat.avgR, $stat.avgG, $stat.avgB, `
+            $stat.redDominantRatio, $stat.cyanDominantRatio, $stat.rawRedMaskLeak)
+    }
+
+    if ($failures.Count -gt 0) {
+        throw "FNV sky color sanity detected raw red/mask sky leakage. See $statsPath"
     }
 }
 
@@ -330,6 +433,7 @@ try {
     Write-ProofLine "ProofDir: $ProofDir"
     Write-ProofLine "RunSeconds: $RunSeconds"
     Write-ProofLine "WithMenu: $WithMenu"
+    Write-ProofLine "RequireSkyColorSanity: $RequireSkyColorSanity"
     Write-ProofLine "BootstrapCell: $BootstrapCell"
     Write-ProofLine "TraceRawPendingRecord: $TraceRawPendingRecord"
     Write-ProofLine "TerrainProbePoints: $probePoints"
@@ -389,6 +493,7 @@ Write-ProofLine "Unsupported ESM4 skip lines: $($unsupportedEsm4Skips.Count)"
 
 if ($fatalCount -gt 0) { throw "FNV flat proof saw fatal/blocker log lines. See $OpenMwLog" }
 Assert-NoShaderBlockers @($OpenMwLog, $MyGuiLog, $StdoutLog, $StderrLog, $HarnessLog)
+if ($RequireSkyColorSanity) { Assert-SkyColorSanity $screenshots $ProofDir }
 Assert-UnsupportedEsm4SkipsClassified $unsupportedEsm4Skips $ClassificationDir
 if ($RequireFlatCameraSettled -and $flatCameraSettledLines -eq 0) { throw "FNV flat proof did not prove flat camera settlement. See $OpenMwLog" }
 if ($flatCameraFailureLines -gt 0) { throw "FNV flat proof saw flat camera failure lines. See $OpenMwLog" }

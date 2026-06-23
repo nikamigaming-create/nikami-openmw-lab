@@ -70,7 +70,8 @@ foreach ($needle in @(
     "[string]`$ActorTarget",
     "[switch]`$StageActor",
     "[switch]`$RequirePlayerTerrainSupport",
-    "[switch]`$RequireFlatCameraSettled"
+    "[switch]`$RequireFlatCameraSettled",
+    "[switch]`$RequireSkyColorSanity"
 )) {
     Assert-Text $flat $needle "flat proof parameter $needle"
 }
