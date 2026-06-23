@@ -15,6 +15,7 @@ param(
     [string[]]$RequireLogPattern = @(),
     [string]$TerrainProbePoints = "",
     [string]$TerrainProbeGrid = "",
+    [double]$BootstrapHour = [double]::NaN,
     [switch]$RequireTerrainProbeFullSupport,
     [string]$BootstrapCell = "",
     [double]$BootstrapX = [double]::NaN,
@@ -1010,6 +1011,7 @@ try {
         StartCell = $StartCell
         MaxRunSeconds = $RunSeconds
     }
+    if (![double]::IsNaN($BootstrapHour)) { $flatArgs.BootstrapHour = $BootstrapHour }
     if (![string]::IsNullOrWhiteSpace($FnvConfigData)) { $flatArgs.FnvConfigData = $FnvConfigData }
     if (![string]::IsNullOrWhiteSpace($ExtraOsgPluginDir)) { $flatArgs.ExtraOsgPluginDir = $ExtraOsgPluginDir }
     if (![string]::IsNullOrWhiteSpace($StartupScript)) { $flatArgs.StartupScript = $StartupScript }
@@ -1041,6 +1043,7 @@ try {
     Write-ProofLine "FnvNonzeroProjectileBindingTrace: $FnvNonzeroProjectileBindingTrace"
     Write-ProofLine "TraceRawPendingRecord: $TraceRawPendingRecord"
     Write-ProofLine "TerrainProbePoints: $probePoints"
+    Write-ProofLine "BootstrapHour: $BootstrapHour"
     Write-ProofLine ""
 
     & $FlatScript @flatArgs 2>&1 | Tee-Object -FilePath $HarnessLog | Out-Host

@@ -1301,6 +1301,18 @@ namespace MWRender
 
         mSun->setColor(weather.mSunDiscColor);
         mSun->adjustTransparency(weather.mGlareView * weather.mSunDiscColor.a());
+        if (std::getenv("OPENMW_FNV_PROOF_WEATHER_ID") != nullptr)
+        {
+            static int proofSunDiscMaterialLogs = 0;
+            if (proofSunDiscMaterialLogs < 12)
+            {
+                Log(Debug::Info) << "FNV/ESM4 proof: sky sun disc material runtime-supported sunDiscColor=("
+                                 << formatVec4(weather.mSunDiscColor)
+                                 << ") glareView=" << weather.mGlareView
+                                 << " shader=emission-modulated-texture";
+                ++proofSunDiscMaterialLogs;
+            }
+        }
 
         float nextStarsOpacity = weather.mNightFade * weather.mGlareView;
 

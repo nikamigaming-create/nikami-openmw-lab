@@ -137,12 +137,14 @@ Assert-FileContains $SkyFrag "useFalloutAtmosphereGradientColors" "FNV flat sky 
 Assert-FileContains $SkyFrag "falloutAtmosphereSkyLowerColor" "FNV flat sky fragment shader consumes SkyLower color"
 Assert-FileContains $SkyFrag "falloutAtmosphereSkyHorizonColor" "FNV flat sky fragment shader consumes Horizon color"
 Assert-FileContains $SkyFrag "useFalloutSkyCloudVFlip" "FNV flat sky fragment shader gates Fallout cloud V flip"
+Assert-FileContains $SkyFrag "color\.rgb = clamp\(color\.rgb \* gl_FrontMaterial\.emission\.rgb" "sun shader applies weather sun-disc material tint"
 Assert-FileNotContains $SkyFrag "useVertexColorRgb" "unsupported FNV vertex RGB shader path"
 Assert-FileNotContains $SkyCpp "updatersSkipped=1" "stale FNV raw sky bypass"
 Assert-FileContains $ShaderSettings "mForceShaders" "shader settings expose explicit force-shaders key"
 Assert-FileContains $SettingsDefault "force shaders = false" "default shader force flag is explicit off"
 Assert-FileContains $SkyUtilCpp "enabled FNV sun billboard using texture" "FNV sky enables FNV sun billboard"
 Assert-FileContains $SkyUtilCpp "enabled FNV sun glare using texture" "FNV sky enables FNV sun glare"
+Assert-FileContains $SkyCpp "shader=emission-modulated-texture" "renderer proves sun-disc material reaches emission-modulated shader"
 Assert-FileContains $SkyUtilCpp "enabled FNV " "FNV sky emits FNV moon billboard prefix"
 Assert-FileContains $SkyUtilCpp " moon billboard using texture" "FNV sky enables FNV moon billboards"
 Assert-FileNotContains $SkyUtilCpp "disabled OpenMW sun billboard for Fallout sky content" "stale FNV sun disable source path"
@@ -250,6 +252,7 @@ $requiredLogPatterns = @(
     "FNV/ESM4: wrapped sky mesh next clouds \(meshes/sky/clouds\.nif\)",
     "FNV/ESM4: enabled FNV sun billboard using texture textures/sky/sun\.dds",
     "FNV/ESM4: enabled FNV sun glare using texture textures/sky/nv_sunglare\.dds",
+    "FNV/ESM4 proof: sky sun disc material runtime-supported .*shader=emission-modulated-texture",
     "FNV/ESM4: enabled FNV Masser moon billboard using texture textures/sky/masser_full\.dds",
     "FNV/ESM4: enabled FNV Secunda moon billboard using texture textures/sky/skymoonfull\.dds",
     "FNV/ESM4 proof: sun orbit .* expectedSkyPosition=.*",
@@ -462,6 +465,44 @@ Assert-FileContains $sunVisibilityJson '"sunVisible"\s*:\s*true' "runtime visibl
 Assert-FileContains $sunDirectionJson '"status"\s*:\s*"PASS"' "sun proof runtime sun vector status"
 Assert-FileContains $sunDirectionJson '"chainMatches"\s*:\s*true' "sun proof runtime sun vector chain"
 
+$sunsetProofBefore = @()
+if (Test-Path -LiteralPath $flatProofRoot) {
+    $sunsetProofBefore = @(Get-ChildItem -LiteralPath $flatProofRoot -Directory -ErrorAction SilentlyContinue |
+            ForEach-Object { $_.FullName })
+}
+$sunsetLogPatterns = @(
+    "FNV/ESM4 proof: applied proof gamehour=17\.5",
+    "FNV/ESM4 proof: sky sun disc material runtime-supported sunDiscColor=\(1,1,0\.[0-9]+,1\).*shader=emission-modulated-texture"
+)
+
+& $FlatProofScript `
+    -FnvData $FnvData `
+    -VcpkgRoot $VcpkgRoot `
+    -ProofRoot $ProofRoot `
+    -RunSeconds $SkyRunSeconds `
+    -NoSound `
+    -BootstrapHour 17.5 `
+    -RequireLogPattern $sunsetLogPatterns
+
+$sunsetProofAfter = @(Get-ChildItem -LiteralPath $flatProofRoot -Directory -ErrorAction SilentlyContinue |
+    Sort-Object LastWriteTime -Descending)
+$sunsetProof = $sunsetProofAfter | Where-Object { $sunsetProofBefore -notcontains $_.FullName } | Select-Object -First 1
+if ($null -eq $sunsetProof) {
+    $sunsetProof = $sunsetProofAfter | Select-Object -First 1
+}
+if ($null -eq $sunsetProof) {
+    throw "No FNV sunset sun-disc proof directory was produced"
+}
+
+$sunsetOpenMwLog = Join-Path $sunsetProof.FullName "openmw.log"
+$sunsetSummary = Join-Path $sunsetProof.FullName "summary.txt"
+Write-ProofLine ""
+Write-ProofLine "Sunset sun-disc material proof: $($sunsetProof.FullName)"
+Write-ProofLine "Sunset sun-disc material log: $sunsetOpenMwLog"
+Assert-FileContains $sunsetSummary "^BootstrapHour: 17\.5$" "sunset proof required non-white sun-disc hour"
+Assert-FileContains $sunsetOpenMwLog "FNV/ESM4 proof: sky sun disc material runtime-supported sunDiscColor=\(1,1,0\.[0-9]+,1\).*shader=emission-modulated-texture" "runtime sunset sun-disc material tint"
+Assert-FileContains $sunsetOpenMwLog "FNV/ESM4: enabled FNV sun billboard using texture textures/sky/sun\.dds" "sunset proof FNV sun texture"
+
 $result = [ordered]@{
     stamp = $Stamp
     repoRoot = $RepoRoot
@@ -469,6 +510,7 @@ $result = [ordered]@{
     proofDir = $ProofDir
     flatProofDir = $latestFlatProof.FullName
     sunVisibleProofDir = $sunProof.FullName
+    sunsetSunDiscProofDir = $sunsetProof.FullName
     skyTextureStatsJson = $skyTextureStatsJson
     classification = "runtime-supported"
     checked = @(
@@ -489,6 +531,7 @@ $result = [ordered]@{
         "FNV sky DDS texture stats prove expected sun/moon/cloud channel signatures and cloud vertical orientation without storing retail payloads",
         "FNV sun/moon billboard path uses Fallout sky textures",
         "FNV sun-facing screenshot proves visible sun disc/glare core",
+        "FNV sunset runtime proof shows a non-white FNV sun-disc material color reaches the emission-modulated sun shader",
         "FNV runtime sun vector chain is logged and internally consistent while retail orbit parity remains pending",
         "FNV flat shader mode is sky-interpreted",
         "FNV sky meshes and sun/moon textures present in retail BSA inventory",

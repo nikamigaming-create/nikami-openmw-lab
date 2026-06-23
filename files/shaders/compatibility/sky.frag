@@ -79,6 +79,7 @@ void paintMoon(inout vec4 color)
 void paintSun(inout vec4 color)
 {
     color = texture2D(diffuseMap, diffuseMapUV);
+    color.rgb = clamp(color.rgb * gl_FrontMaterial.emission.rgb, 0.0, 1.0);
     color.a *= gl_FrontMaterial.diffuse.a;
 }
 

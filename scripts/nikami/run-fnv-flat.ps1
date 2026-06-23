@@ -8,7 +8,7 @@ param(
     [string]$Triplet = "x64-windows",
     [string]$ProofRoot = "",
     [string]$StartCell = "Goodsprings",
-    [int]$BootstrapHour = 10,
+    [double]$BootstrapHour = 10,
     [int]$MaxRunSeconds = 0,
     [string]$StartupScript = "",
     [switch]$Detached,
