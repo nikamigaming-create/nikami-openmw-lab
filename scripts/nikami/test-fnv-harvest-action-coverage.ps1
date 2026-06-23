@@ -27,6 +27,7 @@ $HarvestDir = (Resolve-Path $HarvestDir).Path
 $Stamp = Get-Date -Format "yyyyMMdd_HHmmss"
 $ProofDir = Join-Path $ProofRoot "fnv-harvest-action-coverage/$Stamp"
 $SummaryFile = Join-Path $ProofDir "summary.txt"
+$ArchiveEntryCoveragePath = Join-Path $ProofDir "archive-entry-coverage.jsonl"
 New-Item -ItemType Directory -Force -Path $ProofDir | Out-Null
 
 function Write-ProofLine([string]$Text = "") {
@@ -82,6 +83,14 @@ function New-Anchor([string]$Path, [string]$Needle, [string]$Description) {
     }
 }
 
+$AllowedCoverageStates = @(
+    "runtime-supported",
+    "loaded-pending-runtime",
+    "known-blocked",
+    "non-runtime-support-file",
+    "intentionally-excluded-with-proof"
+)
+
 function Resolve-Anchors([object[]]$Anchors) {
     @($Anchors | ForEach-Object { Assert-CodeAnchor $_.path $_.needle $_.description })
 }
@@ -97,14 +106,7 @@ function Get-EntryExtension([string]$Entry) {
 }
 
 function New-Rule([string]$State, [string]$Subsystem, [string]$Action, [object[]]$Anchors, [string]$Notes = "") {
-    $allowedStates = @(
-        "runtime-supported",
-        "loaded-pending-runtime",
-        "known-blocked",
-        "non-runtime-support-file",
-        "intentionally-excluded-with-proof"
-    )
-    if ($allowedStates -notcontains $State) {
+    if ($AllowedCoverageStates -notcontains $State) {
         throw "Invalid FNV classification state: $State"
     }
     [pscustomobject]@{
@@ -114,6 +116,69 @@ function New-Rule([string]$State, [string]$Subsystem, [string]$Action, [object[]
         anchors = $Anchors
         notes = $Notes
     }
+}
+
+function ConvertTo-JsonLiteral([string]$Value) {
+    if ($null -eq $Value) {
+        return "null"
+    }
+
+    $builder = [Text.StringBuilder]::new()
+    [void]$builder.Append('"')
+    foreach ($char in $Value.ToCharArray()) {
+        switch ([int][char]$char) {
+            8 { [void]$builder.Append('\b'); break }
+            9 { [void]$builder.Append('\t'); break }
+            10 { [void]$builder.Append('\n'); break }
+            12 { [void]$builder.Append('\f'); break }
+            13 { [void]$builder.Append('\r'); break }
+            34 { [void]$builder.Append('\"'); break }
+            92 { [void]$builder.Append('\\'); break }
+            default {
+                if ([int][char]$char -lt 32) {
+                    [void]$builder.Append('\u{0:x4}' -f [int][char]$char)
+                }
+                else {
+                    [void]$builder.Append($char)
+                }
+                break
+            }
+        }
+    }
+    [void]$builder.Append('"')
+    return $builder.ToString()
+}
+
+function Write-ArchiveEntryCoverageRow(
+    [IO.StreamWriter]$Writer,
+    [string]$Archive,
+    [string]$Entry,
+    [string]$Extension,
+    [string]$State,
+    [string]$Subsystem,
+    [string]$Action,
+    [string]$Proof,
+    [string]$Notes
+) {
+    $row = [Text.StringBuilder]::new()
+    [void]$row.Append('{"archive":')
+    [void]$row.Append((ConvertTo-JsonLiteral $Archive))
+    [void]$row.Append(',"entry":')
+    [void]$row.Append((ConvertTo-JsonLiteral $Entry))
+    [void]$row.Append(',"extension":')
+    [void]$row.Append((ConvertTo-JsonLiteral $Extension))
+    [void]$row.Append(',"state":')
+    [void]$row.Append((ConvertTo-JsonLiteral $State))
+    [void]$row.Append(',"subsystem":')
+    [void]$row.Append((ConvertTo-JsonLiteral $Subsystem))
+    [void]$row.Append(',"action":')
+    [void]$row.Append((ConvertTo-JsonLiteral $Action))
+    [void]$row.Append(',"proof":')
+    [void]$row.Append((ConvertTo-JsonLiteral $Proof))
+    [void]$row.Append(',"notes":')
+    [void]$row.Append((ConvertTo-JsonLiteral $Notes))
+    [void]$row.Append('}')
+    $Writer.WriteLine($row.ToString())
 }
 
 $manifest = Read-JsonFile (Join-Path $HarvestDir "manifest.json") "harvest manifest"
@@ -291,28 +356,83 @@ $resolvedIniAnchors = Resolve-Anchors $iniAnchors
 
 $extensionCounts = @{}
 $archiveRows = @()
-foreach ($archiveEntry in $archiveEntryLedger) {
-    $listPath = Join-Path $HarvestDir $archiveEntry.entryList
-    if (!(Test-Path -LiteralPath $listPath -PathType Leaf)) {
-        throw "Missing archive entry list for $($archiveEntry.archive): $listPath"
-    }
-    $perArchiveCounts = @{}
-    foreach ($entry in Get-Content -LiteralPath $listPath) {
-        $ext = Get-EntryExtension $entry
-        if (!$extensionCounts.ContainsKey($ext)) {
-            $extensionCounts[$ext] = 0
+$archiveEntryStateCounts = @{}
+foreach ($state in $AllowedCoverageStates) {
+    $archiveEntryStateCounts[$state] = 0
+}
+$archiveEntryRows = 0
+$archiveEntryDeclaredRows = 0
+$archiveEntryUnclassifiedRows = 0
+$archiveEntryWriter = [IO.StreamWriter]::new($ArchiveEntryCoveragePath, $false, [Text.UTF8Encoding]::new($false))
+try {
+    foreach ($archiveEntry in $archiveEntryLedger) {
+        $listPath = Join-Path $HarvestDir $archiveEntry.entryList
+        if (!(Test-Path -LiteralPath $listPath -PathType Leaf)) {
+            throw "Missing archive entry list for $($archiveEntry.archive): $listPath"
         }
-        if (!$perArchiveCounts.ContainsKey($ext)) {
-            $perArchiveCounts[$ext] = 0
+        $entries = @(Get-Content -LiteralPath $listPath)
+        $declaredEntryCount = [int]$archiveEntry.entryCount
+        $archiveEntryDeclaredRows += $declaredEntryCount
+        if ($entries.Count -ne $declaredEntryCount) {
+            throw "Archive entry list count mismatch for $($archiveEntry.archive): actual=$($entries.Count) declared=$declaredEntryCount"
         }
-        $extensionCounts[$ext] = [int]$extensionCounts[$ext] + 1
-        $perArchiveCounts[$ext] = [int]$perArchiveCounts[$ext] + 1
+
+        $perArchiveCounts = @{}
+        foreach ($entry in $entries) {
+            $ext = Get-EntryExtension $entry
+            if (!$extensionCounts.ContainsKey($ext)) {
+                $extensionCounts[$ext] = 0
+            }
+            if (!$perArchiveCounts.ContainsKey($ext)) {
+                $perArchiveCounts[$ext] = 0
+            }
+            $extensionCounts[$ext] = [int]$extensionCounts[$ext] + 1
+            $perArchiveCounts[$ext] = [int]$perArchiveCounts[$ext] + 1
+
+            if ($runtimeRules.ContainsKey($ext)) {
+                $rule = $runtimeRules[$ext]
+                if ($AllowedCoverageStates -notcontains $rule.state) {
+                    throw "Invalid archive entry state for $($archiveEntry.archive):$entry -> $($rule.state)"
+                }
+                $state = [string]$rule.state
+                $subsystem = [string]$rule.subsystem
+                $action = [string]$rule.action
+                $proof = "Classified by extension rule $ext; code anchors are recorded in archiveExtensionCoverage."
+                $notes = [string]$rule.notes
+                $archiveEntryStateCounts[$state] = [int]$archiveEntryStateCounts[$state] + 1
+            }
+            else {
+                $state = "unclassified"
+                $subsystem = "unclassified-extension"
+                $action = "No archive extension action rule exists for this path."
+                $proof = "Failing gate: add a five-state extension/path rule before this entry can be considered accounted."
+                $notes = ""
+                ++$archiveEntryUnclassifiedRows
+            }
+
+            ++$archiveEntryRows
+            Write-ArchiveEntryCoverageRow `
+                -Writer $archiveEntryWriter `
+                -Archive ([string]$archiveEntry.archive) `
+                -Entry $entry `
+                -Extension $ext `
+                -State $state `
+                -Subsystem $subsystem `
+                -Action $action `
+                -Proof $proof `
+                -Notes $notes
+        }
+
+        $archiveRows += [pscustomobject]@{
+            archive = $archiveEntry.archive
+            entryCount = $declaredEntryCount
+            classifiedEntryCount = $entries.Count
+            extensionCounts = [pscustomobject]$perArchiveCounts
+        }
     }
-    $archiveRows += [pscustomobject]@{
-        archive = $archiveEntry.archive
-        entryCount = $archiveEntry.entryCount
-        extensionCounts = [pscustomobject]$perArchiveCounts
-    }
+}
+finally {
+    $archiveEntryWriter.Dispose()
 }
 
 $extensionRows = @()
@@ -404,17 +524,22 @@ $summary = [pscustomobject]@{
         archives = $archiveManifestRows.Count
         iniShapes = $iniRows.Count
         archiveEntries = ($extensionCounts.Values | Measure-Object -Sum).Sum
+        archiveEntryRows = $archiveEntryRows
+        declaredArchiveEntries = $archiveEntryDeclaredRows
         extensionTypes = $extensionRows.Count
         runtimeSupportedExtensionTypes = $runtimeSupportedCount
         loadedPendingRuntimeExtensionTypes = $loadedPendingRuntimeCount
         nonRuntimeExtensionTypes = $nonRuntimeCount
         blockedRuntimeExtensionTypes = $blocked.Count
         unclassifiedExtensionTypes = $unclassified.Count
+        unclassifiedArchiveEntries = $archiveEntryUnclassifiedRows
+        archiveEntryStateCounts = [pscustomobject]$archiveEntryStateCounts
     }
     plugins = $pluginRows
     archives = $archiveManifestRows
     iniShapes = $iniRows
     archiveExtensionCoverage = $extensionRows
+    archiveEntryCoverageJsonl = $ArchiveEntryCoveragePath
     perArchiveExtensionCoverage = $archiveRows
     blockedRuntimeExtensions = $blocked
     unclassifiedExtensions = $unclassified
@@ -427,6 +552,12 @@ Write-ProofLine "Plugins routed: $($pluginRows.Count)"
 Write-ProofLine "Archives routed: $($archiveManifestRows.Count)"
 Write-ProofLine "INI shapes routed: $($iniRows.Count)"
 Write-ProofLine "Archive entries classified: $(($extensionCounts.Values | Measure-Object -Sum).Sum)"
+Write-ProofLine "Archive entry rows: $archiveEntryRows"
+Write-ProofLine "Declared archive entries: $archiveEntryDeclaredRows"
+Write-ProofLine "Archive entry coverage JSONL: $ArchiveEntryCoveragePath"
+foreach ($state in $AllowedCoverageStates) {
+    Write-ProofLine "Archive entry state count ${state}: $($archiveEntryStateCounts[$state])"
+}
 Write-ProofLine "Extension types: $($extensionRows.Count)"
 Write-ProofLine "Runtime-supported extension types: $runtimeSupportedCount"
 Write-ProofLine "Loaded-pending-runtime extension types: $loadedPendingRuntimeCount"
@@ -444,6 +575,12 @@ Write-ProofLine "Coverage JSON: $coveragePath"
 
 if ($unclassified.Count -gt 0) {
     throw "FNV harvest action coverage has unclassified archive extensions: $($unclassified -join ', '). See $SummaryFile."
+}
+if ($archiveEntryRows -ne $archiveEntryDeclaredRows) {
+    throw "FNV harvest action coverage classified $archiveEntryRows archive entries, expected $archiveEntryDeclaredRows."
+}
+if ($archiveEntryUnclassifiedRows -gt 0) {
+    throw "FNV harvest action coverage has $archiveEntryUnclassifiedRows unclassified archive entries. See $ArchiveEntryCoveragePath."
 }
 if ($RequireRuntimeSupported -and $blocked.Count -gt 0) {
     throw "FNV harvest runtime support is incomplete for $($blocked.Count) extension type(s): $($blocked -join ', '). See $SummaryFile."
