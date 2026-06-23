@@ -44,6 +44,18 @@ $RawByteTextPatterns = @(
     '"bytesBase64"\s*:'
 )
 
+$ContentLedgerTextPayloadPatterns = @(
+    '"source"\s*:',
+    '"questName"\s*:',
+    '"topicName"\s*:',
+    '"response"\s*:',
+    '"notes"\s*:',
+    '"edits"\s*:',
+    '"text"\s*:',
+    '"fullName"\s*:',
+    '"value"\s*:\s*"'
+)
+
 Write-ProofLine "Proof artifact payload safety $Stamp"
 Write-ProofLine "RepoRoot: $RepoRoot"
 Write-ProofLine "ProofRoot: $ProofRoot"
@@ -75,9 +87,25 @@ foreach ($file in $textFiles) {
     }
 }
 
+$contentLedgerTextMatches = @()
+$contentLedgerRoot = Join-Path $ProofRoot "fnv-content-ledger"
+if (Test-Path -LiteralPath $contentLedgerRoot -PathType Container) {
+    $contentLedgerFiles = Get-ChildItem -LiteralPath $contentLedgerRoot -Recurse -File -Force |
+        Where-Object { $_.Extension.ToLowerInvariant() -eq ".json" }
+    foreach ($file in $contentLedgerFiles) {
+        $text = Get-Content -LiteralPath $file.FullName -Raw
+        foreach ($pattern in $ContentLedgerTextPayloadPatterns) {
+            if ($text -match $pattern) {
+                $contentLedgerTextMatches += "$($file.FullName) pattern=$pattern"
+            }
+        }
+    }
+}
+
 Write-ProofLine "Payload extension files: $($payloadFiles.Count)"
 Write-ProofLine "Temp extract dirs: $($tempExtractDirs.Count)"
 Write-ProofLine "Raw byte text matches: $($rawByteMatches.Count)"
+Write-ProofLine "Content ledger text payload matches: $($contentLedgerTextMatches.Count)"
 
 if ($payloadFiles.Count -gt 0) {
     $payloadFiles | ForEach-Object { Write-ProofLine "FAIL payload file: $_" }
@@ -88,8 +116,11 @@ if ($tempExtractDirs.Count -gt 0) {
 if ($rawByteMatches.Count -gt 0) {
     $rawByteMatches | ForEach-Object { Write-ProofLine "FAIL raw byte text: $_" }
 }
+if ($contentLedgerTextMatches.Count -gt 0) {
+    $contentLedgerTextMatches | ForEach-Object { Write-ProofLine "FAIL content ledger text payload: $_" }
+}
 
-if ($payloadFiles.Count -gt 0 -or $tempExtractDirs.Count -gt 0 -or $rawByteMatches.Count -gt 0) {
+if ($payloadFiles.Count -gt 0 -or $tempExtractDirs.Count -gt 0 -or $rawByteMatches.Count -gt 0 -or $contentLedgerTextMatches.Count -gt 0) {
     throw "Proof artifact payload safety failed. See $SummaryFile."
 }
 

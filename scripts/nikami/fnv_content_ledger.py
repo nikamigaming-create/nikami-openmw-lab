@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import hashlib
 import json
 import os
 import struct
@@ -40,6 +41,19 @@ def zstring(raw):
     if end == 0:
         return ""
     return raw[:end].decode("cp1252", errors="replace")
+
+
+def text_hash(value):
+    if not value:
+        return ""
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def text_summary(prefix, value):
+    return {
+        f"{prefix}Length": len(value),
+        f"{prefix}Hash": text_hash(value),
+    }
 
 
 def get_u16(raw, offset):
@@ -185,14 +199,15 @@ def script_block(subrecords):
             last_local = {
                 "index": struct.unpack_from("<I", payload, 0)[0],
                 "type": struct.unpack_from("<I", payload, 16)[0],
-                "name": "",
             }
             local_vars.append(last_local)
         elif rec_type == "SCVR" and last_local is not None:
-            last_local["name"] = zstring(payload)
+            name = zstring(payload)
+            last_local.pop("name", None)
+            last_local.update(text_summary("name", name))
     return {
-        "source": source,
         "sourceLength": len(source),
+        "sourceHash": text_hash(source),
         "localVariables": local_vars,
         "referencedForms": all_form_ids(subrecords, "SCRO"),
     }
@@ -200,11 +215,12 @@ def script_block(subrecords):
 
 def quest_row(plugin, record, subrecords):
     data = first(subrecords, "DATA")
+    quest_name = first_zstring(subrecords, "FULL")
     return {
         "plugin": plugin,
         "formId": record["formId"],
         "editorId": first_zstring(subrecords, "EDID"),
-        "questName": first_zstring(subrecords, "FULL"),
+        **text_summary("questName", quest_name),
         "flags": record["flagsHex"],
         "questFlags": data[0] if data and len(data) >= 1 else None,
         "priority": data[1] if data and len(data) >= 2 else None,
@@ -213,7 +229,7 @@ def quest_row(plugin, record, subrecords):
         "targetConditions": conditions(subrecords),
         "embeddedScript": script_block(subrecords),
         "objectiveSubrecords": [
-            {"type": rec_type, "size": len(payload), "text": zstring(payload)}
+            {"type": rec_type, "size": len(payload), **text_summary("text", zstring(payload))}
             for rec_type, payload in subrecords
             if rec_type in ("INDX", "QSDT", "CNAM", "NNAM", "QOBJ", "QSTA", "NAM0")
         ],
@@ -226,12 +242,13 @@ def quest_row(plugin, record, subrecords):
 def dialogue_row(plugin, record, subrecords):
     data = first(subrecords, "DATA")
     pnam = first(subrecords, "PNAM")
+    topic_name = first_zstring(subrecords, "FULL")
     return {
         "plugin": plugin,
         "recordType": "DIAL",
         "formId": record["formId"],
         "editorId": first_zstring(subrecords, "EDID"),
-        "topicName": first_zstring(subrecords, "FULL"),
+        **text_summary("topicName", topic_name),
         "quests": all_form_ids(subrecords, "QSTI"),
         "removedQuests": all_form_ids(subrecords, "QSTR"),
         "dialDataSize": len(data) if data else 0,
@@ -245,15 +262,18 @@ def dialogue_row(plugin, record, subrecords):
 def info_row(plugin, record, subrecords):
     data = first(subrecords, "DATA")
     sounds = all_form_ids(subrecords, "SNDD") + all_form_ids(subrecords, "SNAM")
+    response = first_zstring(subrecords, "NAM1")
+    notes = first_zstring(subrecords, "NAM2")
+    edits = first_zstring(subrecords, "NAM3")
     return {
         "plugin": plugin,
         "recordType": "INFO",
         "formId": record["formId"],
         "quest": (all_form_ids(subrecords, "QSTI") or [None])[0],
         "sound": (sounds or [None])[0],
-        "response": first_zstring(subrecords, "NAM1"),
-        "notes": first_zstring(subrecords, "NAM2"),
-        "edits": first_zstring(subrecords, "NAM3"),
+        **text_summary("response", response),
+        **text_summary("notes", notes),
+        **text_summary("edits", edits),
         "dialType": data[0] if data and len(data) >= 1 else None,
         "nextSpeaker": data[1] if data and len(data) >= 2 else None,
         "infoFlags": get_u16(data, 2) if data and len(data) >= 4 else None,
@@ -274,8 +294,8 @@ def script_row(plugin, record, subrecords):
         "recordType": "SCPT",
         "formId": record["formId"],
         "editorId": first_zstring(subrecords, "EDID"),
-        "source": script["source"],
         "sourceLength": script["sourceLength"],
+        "sourceHash": script["sourceHash"],
         "localVariables": script["localVariables"],
         "referencedForms": script["referencedForms"],
         "classification": "loaded-pending-runtime",
@@ -286,12 +306,13 @@ def script_row(plugin, record, subrecords):
 
 def perk_row(plugin, record, subrecords):
     script = script_block(subrecords)
+    full_name = first_zstring(subrecords, "FULL")
     return {
         "plugin": plugin,
         "recordType": "PERK",
         "formId": record["formId"],
         "editorId": first_zstring(subrecords, "EDID"),
-        "fullName": first_zstring(subrecords, "FULL"),
+        **text_summary("fullName", full_name),
         "descriptionLength": len(first_zstring(subrecords, "DESC")),
         "icon": first_zstring(subrecords, "ICON"),
         "dataSizes": subrecord_sizes(subrecords, "DATA"),
@@ -309,12 +330,13 @@ def perk_row(plugin, record, subrecords):
 
 
 def projectile_row(plugin, record, subrecords):
+    full_name = first_zstring(subrecords, "FULL")
     return {
         "plugin": plugin,
         "recordType": "PROJ",
         "formId": record["formId"],
         "editorId": first_zstring(subrecords, "EDID"),
-        "fullName": first_zstring(subrecords, "FULL"),
+        **text_summary("fullName", full_name),
         "model": first_zstring(subrecords, "MODL"),
         "dataSizes": subrecord_sizes(subrecords, "DATA"),
         "objectBoundsSizes": subrecord_sizes(subrecords, "OBND"),
@@ -331,12 +353,13 @@ def projectile_row(plugin, record, subrecords):
 
 
 def explosion_row(plugin, record, subrecords):
+    full_name = first_zstring(subrecords, "FULL")
     return {
         "plugin": plugin,
         "recordType": "EXPL",
         "formId": record["formId"],
         "editorId": first_zstring(subrecords, "EDID"),
-        "fullName": first_zstring(subrecords, "FULL"),
+        **text_summary("fullName", full_name),
         "model": first_zstring(subrecords, "MODL"),
         "dataSizes": subrecord_sizes(subrecords, "DATA"),
         "magicEffects": all_form_ids(subrecords, "EITM"),
@@ -366,13 +389,25 @@ def simple_value(record_type, editor_id, data):
 def simple_row(plugin, record, subrecords):
     editor_id = first_zstring(subrecords, "EDID")
     data = first(subrecords, "DATA")
+    full_name = first_zstring(subrecords, "FULL")
+    value = simple_value(record["type"], editor_id, data)
+    if isinstance(value, str):
+        value_fields = {
+            "valueType": "string",
+            **text_summary("value", value),
+        }
+    else:
+        value_fields = {
+            "valueType": "numeric" if value is not None else "",
+            "value": value,
+        }
     return {
         "plugin": plugin,
         "recordType": record["type"],
         "formId": record["formId"],
         "editorId": editor_id,
-        "fullName": first_zstring(subrecords, "FULL"),
-        "value": simple_value(record["type"], editor_id, data),
+        **text_summary("fullName", full_name),
+        **value_fields,
         "dataSize": len(data) if data else 0,
         "subrecordTypes": [rec_type for rec_type, _ in subrecords],
         "classification": "loaded-pending-runtime",
@@ -592,6 +627,7 @@ def main():
         "stamp": stamp,
         "repoRoot": str(repo_root),
         "fnvData": str(fnv_data),
+        "payloadPolicy": "retail-text-redacted-v1",
         "content": args.content,
         "pluginCount": len(plugin_ledgers),
         "recordTotal": total_records,
