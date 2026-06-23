@@ -32,6 +32,12 @@ namespace MWScript
             return value != nullptr && value[0] != '\0';
         }
 
+        bool isQuestJournalScriptTraceEnabled()
+        {
+            const char* value = std::getenv("OPENMW_FNV_PROOF_QUEST_JOURNAL_SCRIPT_TRACE");
+            return value != nullptr && value[0] != '\0';
+        }
+
         void logQuestObjectiveScriptTrace(const char* opcode, const ESM::RefId& quest, int objective, int value)
         {
             if (!isQuestObjectiveScriptTraceEnabled())
@@ -40,6 +46,19 @@ namespace MWScript
             Log(Debug::Info) << "FNV/ESM4 proof: quest objective MWScript opcode " << opcode
                              << " quest=" << quest.toDebugString() << " objective=" << objective
                              << " value=" << value;
+        }
+
+        void logQuestJournalScriptTrace(
+            const char* opcode, const ESM::RefId& quest, int requestedIndex, int currentIndex, int entryAdded,
+            int fallbackSetIndex)
+        {
+            if (!isQuestJournalScriptTraceEnabled())
+                return;
+
+            Log(Debug::Info) << "FNV/ESM4 proof: quest journal MWScript opcode " << opcode
+                             << " quest=" << quest.toDebugString() << " requestedIndex=" << requestedIndex
+                             << " currentIndex=" << currentIndex << " entryAdded=" << entryAdded
+                             << " fallbackSetIndex=" << fallbackSetIndex;
         }
 
         template <class R>
@@ -59,15 +78,24 @@ namespace MWScript
                 runtime.pop();
 
                 // Invoking Journal with a non-existing index is allowed, and triggers no errors. Seriously? :(
+                bool entryAdded = false;
+                bool fallbackSetIndex = false;
                 try
                 {
                     MWBase::Environment::get().getJournal()->addEntry(quest, index, ptr);
+                    entryAdded = true;
                 }
                 catch (...)
                 {
                     if (MWBase::Environment::get().getJournal()->getJournalIndex(quest) < index)
+                    {
                         MWBase::Environment::get().getJournal()->setJournalIndex(quest, index);
+                        fallbackSetIndex = true;
+                    }
                 }
+                const int currentIndex = MWBase::Environment::get().getJournal()->getJournalIndex(quest);
+                logQuestJournalScriptTrace(
+                    "Journal", quest, index, currentIndex, entryAdded ? 1 : 0, fallbackSetIndex ? 1 : 0);
             }
         };
 
@@ -83,6 +111,8 @@ namespace MWScript
                 runtime.pop();
 
                 MWBase::Environment::get().getJournal()->setJournalIndex(quest, index);
+                const int currentIndex = MWBase::Environment::get().getJournal()->getJournalIndex(quest);
+                logQuestJournalScriptTrace("SetJournalIndex", quest, index, currentIndex, -1, -1);
             }
         };
 
@@ -97,6 +127,7 @@ namespace MWScript
                 int index = MWBase::Environment::get().getJournal()->getJournalIndex(quest);
 
                 runtime.push(index);
+                logQuestJournalScriptTrace("GetJournalIndex", quest, -1, index, -1, -1);
             }
         };
 
