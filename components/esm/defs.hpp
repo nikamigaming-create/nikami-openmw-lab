@@ -113,6 +113,7 @@ namespace ESM
         REC_SAVE = esm3Recname("SAVE"),
         REC_JOUR = esm3Recname("JOUR"),
         REC_QUES = esm3Recname("QUES"),
+        REC_QOBJ = esm3Recname("QOBJ"),
         REC_GSCR = esm3Recname("GSCR"),
         REC_PLAY = esm3Recname("PLAY"),
         REC_CSTA = esm3Recname("CSTA"),

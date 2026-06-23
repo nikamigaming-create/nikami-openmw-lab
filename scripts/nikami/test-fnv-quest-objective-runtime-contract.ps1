@@ -115,7 +115,7 @@ Write-ProofLine "RepoRoot: $RepoRoot"
 Write-ProofLine "FnvData: $FnvData"
 Write-ProofLine "ProofDir: $ProofDir"
 Write-ProofLine ""
-Write-ProofLine "Runtime boundary: QUST objective definitions and in-memory displayed/completed state are runtime-addressable. This does not claim saved objective state, HUD marker rendering, target marker routing, SetObjectiveDisplayed/GetObjectiveDisplayed MWScript opcode parity, or exhaustive condition execution."
+Write-ProofLine "Runtime boundary: QUST objective definitions and displayed/completed state are runtime-addressable and persisted through save-game QOBJ records. This does not claim HUD marker rendering, target marker routing, SetObjectiveDisplayed/GetObjectiveDisplayed MWScript opcode parity, or exhaustive condition execution."
 Write-ProofLine ""
 
 Assert-Text "apps/openmw/mwbase/journal.hpp" "setQuestObjectiveDisplayed" "journal objective displayed setter"
@@ -123,6 +123,15 @@ Assert-Text "apps/openmw/mwbase/journal.hpp" "getQuestObjectiveCompleted" "journ
 Assert-Text "apps/openmw/mwdialogue/journalimp.hpp" "mQuestObjectiveStates" "objective state backing store"
 Assert-Text "apps/openmw/mwdialogue/journalimp.cpp" "setQuestObjectiveDisplayed" "objective displayed runtime state implementation"
 Assert-Text "apps/openmw/mwdialogue/journalimp.cpp" "setQuestObjectiveCompleted" "objective completed runtime state implementation"
+Assert-Text "components/esm/defs.hpp" 'REC_QOBJ = esm3Recname("QOBJ")' "objective saved-game record id"
+Assert-Text "components/esm3/questobjectivestate.hpp" "struct QuestObjectiveState" "objective saved-game record schema"
+Assert-Text "components/esm3/questobjectivestate.cpp" 'esm.writeHNT("QDIS", mDisplayed)' "objective displayed save field"
+Assert-Text "components/esm3/questobjectivestate.cpp" 'esm.writeHNT("QDON", mCompleted)' "objective completed save field"
+Assert-Text "apps/openmw/mwdialogue/journalimp.cpp" "count += mQuestObjectiveStates.size();" "objective state save record count"
+Assert-Text "apps/openmw/mwdialogue/journalimp.cpp" "writer.startRecord(ESM::REC_QOBJ)" "objective state save path"
+Assert-Text "apps/openmw/mwdialogue/journalimp.cpp" "ESM::QuestObjectiveState record" "objective state load record"
+Assert-Text "apps/openmw/mwdialogue/journalimp.cpp" "mQuestObjectiveStates[QuestObjectiveKey(record.mTopic, record.mObjective)] = state" "objective state restore path"
+Assert-Text "apps/openmw/mwstate/statemanagerimp.cpp" "case ESM::REC_QOBJ:" "state manager routes objective saved-game record"
 Assert-Text "apps/openmw/mwlua/types/player.cpp" "struct QuestObjective" "Lua quest objective handle"
 Assert-Text "apps/openmw/mwlua/types/player.cpp" 'quest["objectives"]' "Lua quest objectives entry point"
 Assert-Text "apps/openmw/mwlua/types/player.cpp" "findQuestObjectiveDefinition" "Lua objective definition guard"
@@ -182,7 +191,7 @@ $metadata = [ordered]@{
     questObjectiveTargetCount = $QuestObjectiveTargetCount
     questStageTextEntryCount = $QuestStageTextEntryCount
     bridgeCounts = $BridgeCounts
-    runtimeBoundary = "Objective definitions and in-memory displayed/completed state are addressable. Save/load, HUD markers, target routing, FNV MWScript opcodes, and conditions remain pending."
+    runtimeBoundary = "Objective definitions and displayed/completed state are runtime-addressable and saved as QOBJ records. HUD markers, target routing, FNV MWScript opcodes, and conditions remain pending."
 }
 $metadataPath = Join-Path $ProofDir "fnv-quest-objective-runtime-contract.json"
 $metadata | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $metadataPath -Encoding UTF8

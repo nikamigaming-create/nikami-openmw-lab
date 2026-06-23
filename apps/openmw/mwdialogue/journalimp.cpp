@@ -5,6 +5,7 @@
 #include <components/esm3/esmreader.hpp>
 #include <components/esm3/esmwriter.hpp>
 #include <components/esm3/journalentry.hpp>
+#include <components/esm3/questobjectivestate.hpp>
 #include <components/esm3/queststate.hpp>
 
 #include <components/misc/strings/algorithm.hpp>
@@ -154,8 +155,11 @@ namespace MWDialogue
 
     void Journal::setQuestObjectiveDisplayed(const ESM::RefId& id, int objective, bool displayed)
     {
-        QuestObjectiveState& state = mQuestObjectiveStates[QuestObjectiveKey(id, objective)];
+        const QuestObjectiveKey key(id, objective);
+        QuestObjectiveState& state = mQuestObjectiveStates[key];
         state.mDisplayed = displayed;
+        if (!state.mDisplayed && !state.mCompleted)
+            mQuestObjectiveStates.erase(key);
     }
 
     bool Journal::getQuestObjectiveDisplayed(const ESM::RefId& id, int objective) const
@@ -166,8 +170,11 @@ namespace MWDialogue
 
     void Journal::setQuestObjectiveCompleted(const ESM::RefId& id, int objective, bool completed)
     {
-        QuestObjectiveState& state = mQuestObjectiveStates[QuestObjectiveKey(id, objective)];
+        const QuestObjectiveKey key(id, objective);
+        QuestObjectiveState& state = mQuestObjectiveStates[key];
         state.mCompleted = completed;
+        if (!state.mDisplayed && !state.mCompleted)
+            mQuestObjectiveStates.erase(key);
     }
 
     bool Journal::getQuestObjectiveCompleted(const ESM::RefId& id, int objective) const
@@ -187,6 +194,8 @@ namespace MWDialogue
 
         for (const auto& [_, topic] : mTopics)
             count += topic.size();
+
+        count += mQuestObjectiveStates.size();
 
         return count;
     }
@@ -236,6 +245,18 @@ namespace MWDialogue
                 writer.endRecord(ESM::REC_JOUR);
             }
         }
+
+        for (const auto& [key, state] : mQuestObjectiveStates)
+        {
+            ESM::QuestObjectiveState record;
+            record.mTopic = key.first;
+            record.mObjective = key.second;
+            record.mDisplayed = state.mDisplayed ? 1 : 0;
+            record.mCompleted = state.mCompleted ? 1 : 0;
+            writer.startRecord(ESM::REC_QOBJ);
+            record.save(writer);
+            writer.endRecord(ESM::REC_QOBJ);
+        }
     }
 
     void Journal::readRecord(ESM::ESMReader& reader, uint32_t type)
@@ -276,6 +297,20 @@ namespace MWDialogue
                 // reapply quest index, this is to handle users upgrading from only
                 // Morrowind.esm (no quest states) to Morrowind.esm + Tribunal.esm
                 result.first->second.setIndex(record.mState);
+            }
+        }
+        else if (type == ESM::REC_QOBJ)
+        {
+            ESM::QuestObjectiveState record;
+            record.load(reader);
+
+            if (record.mObjective >= 0 && isThere(record.mTopic))
+            {
+                QuestObjectiveState state;
+                state.mDisplayed = record.mDisplayed != 0;
+                state.mCompleted = record.mCompleted != 0;
+                if (state.mDisplayed || state.mCompleted)
+                    mQuestObjectiveStates[QuestObjectiveKey(record.mTopic, record.mObjective)] = state;
             }
         }
     }
