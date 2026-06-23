@@ -64,6 +64,7 @@ param(
     [string]$StartupScript = "",
     [switch]$FnvQuestObjectiveScriptTrace,
     [switch]$FnvQuestJournalScriptTrace,
+    [switch]$FnvNonzeroProjectileBindingTrace,
     [switch]$NoSound
 )
 
@@ -991,6 +992,9 @@ try {
         Set-ProofEnv $previousEnv "OPENMW_FNV_PROOF_QUEST_JOURNAL_SCRIPT_TRACE" "1"
         Set-ProofEnv $previousEnv "OPENMW_FNV_PROOF_CONSOLE_SCRIPT_TRACE" "1"
     }
+    if ($FnvNonzeroProjectileBindingTrace) {
+        Set-ProofEnv $previousEnv "OPENMW_FNV_PROOF_NONZERO_PROJECTILE" "1"
+    }
     Set-ProofEnv $previousEnv "OPENMW_FNV_TRACE_RAW_PENDING_RECORD" $TraceRawPendingRecord
     Set-ProofEnv $previousEnv "OPENMW_FNV_RENDER_DISTANCE_DIAG" "1"
     Set-ProofEnv $previousEnv "OPENMW_FNV_SKY_MISSING_LOG" "1"
@@ -1034,6 +1038,7 @@ try {
     Write-ProofLine "StartupScript: $StartupScript"
     Write-ProofLine "FnvQuestObjectiveScriptTrace: $FnvQuestObjectiveScriptTrace"
     Write-ProofLine "FnvQuestJournalScriptTrace: $FnvQuestJournalScriptTrace"
+    Write-ProofLine "FnvNonzeroProjectileBindingTrace: $FnvNonzeroProjectileBindingTrace"
     Write-ProofLine "TraceRawPendingRecord: $TraceRawPendingRecord"
     Write-ProofLine "TerrainProbePoints: $probePoints"
     Write-ProofLine ""

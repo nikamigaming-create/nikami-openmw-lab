@@ -64,6 +64,7 @@
 
 #include <components/esm4/loadammo.hpp>
 #include <components/esm4/loadnpc.hpp>
+#include <components/esm4/loadproj.hpp>
 #include <components/esm4/loadweap.hpp>
 
 #include <components/misc/frameratelimiter.hpp>
@@ -376,6 +377,55 @@ namespace
                 return &*it;
         }
         return nullptr;
+    }
+
+    void runFalloutNonzeroProjectileProof()
+    {
+        const MWWorld::ESMStore& store = *MWBase::Environment::get().getESMStore();
+        const ESM4::Ammunition* ammo = findEsm4AmmoByEditorId(store, "Ammo40mmGrenadeIncendiary");
+        const bool projectileSet = ammo != nullptr && !ammo->mData.mProjectile.isZeroOrUnset();
+        const int projectileRecordType = projectileSet ? store.find(ESM::RefId(ammo->mData.mProjectile)) : 0;
+        const ESM4::Projectile* projectile = projectileSet
+            ? store.get<ESM4::Projectile>().search(ESM::RefId(ammo->mData.mProjectile))
+            : nullptr;
+        const VFS::Manager* const vfs = MWBase::Environment::get().getResourceSystem()->getVFS();
+
+        VFS::Path::Normalized rawModel;
+        VFS::Path::Normalized resolvedModel;
+        bool modelExists = false;
+        std::string modelArchive;
+        if (projectile != nullptr && !projectile->mModel.empty() && vfs != nullptr)
+        {
+            rawModel = VFS::Path::toNormalized(projectile->mModel);
+            resolvedModel = Misc::ResourceHelpers::correctMeshPath(rawModel);
+            modelExists = vfs->exists(resolvedModel);
+            if (modelExists)
+                modelArchive = vfs->getArchive(resolvedModel);
+        }
+
+        const bool pass = ammo != nullptr && projectileSet && projectile != nullptr && modelExists
+            && Misc::StringUtils::ciEqual(projectile->mEditorId, "40mmGrenadeProjectileInc");
+        Log(Debug::Info) << "FNV/ESM4 proof: nonzero projectile binding " << (pass ? "PASS" : "FAIL")
+                         << " ammoEdid=" << (ammo != nullptr ? ammo->mEditorId : "")
+                         << " ammoId=" << (ammo != nullptr ? ESM::RefId(ammo->mId) : ESM::RefId())
+                         << " ammoProjectile="
+                         << (ammo != nullptr ? ESM::RefId(ammo->mData.mProjectile) : ESM::RefId())
+                         << " ammoProjectileFormId="
+                         << (ammo != nullptr ? ammo->mData.mProjectile.toString("FormId:") : "FormId:0x0")
+                         << " ammoProjectileSet=" << projectileSet
+                         << " projectileRecordType=0x" << std::hex << projectileRecordType << std::dec
+                         << " projectileFound=" << (projectile != nullptr)
+                         << " projectileEdid=" << (projectile != nullptr ? projectile->mEditorId : "")
+                         << " projectileId="
+                         << (projectile != nullptr ? ESM::RefId(projectile->mId) : ESM::RefId())
+                         << " projectileModelRaw=\"" << rawModel << "\""
+                         << " projectileModelResolved=\"" << resolvedModel << "\""
+                         << " projectileModelExists=" << modelExists
+                         << " projectileModelArchive=\"" << modelArchive << "\""
+                         << " projectileDataBytes=" << (projectile != nullptr ? projectile->mData.size() : 0)
+                         << " projectileSoundLevel=" << (projectile != nullptr ? projectile->mSoundLevel : 0)
+                         << " runtimeBoundary=definition-model-binding-runtime-supported"
+                         << " spawnedProjectileRuntime=loaded-pending-runtime";
     }
 
     void runFalloutReal10mmProof(MWWorld::Ptr player, MWGui::WindowManager& windowManager)
@@ -877,6 +927,19 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
         {
             proofReal10mmApplied = true;
             runFalloutReal10mmProof(mWorld->getPlayerPtr(), *mWindowManager);
+        }
+
+        static bool proofNonzeroProjectileApplied = false;
+        const char* proofNonzeroProjectile = std::getenv("OPENMW_FNV_PROOF_NONZERO_PROJECTILE");
+        const bool proofNonzeroProjectileEnabled = proofNonzeroProjectile != nullptr && *proofNonzeroProjectile != '\0';
+        const int proofNonzeroProjectileFrame
+            = static_cast<int>(getProofFloat("OPENMW_FNV_PROOF_NONZERO_PROJECTILE_FRAME", 150.f));
+        if (!proofNonzeroProjectileApplied && proofNonzeroProjectileEnabled
+            && frameNumber >= static_cast<unsigned>(proofNonzeroProjectileFrame)
+            && mStateManager->getState() == MWBase::StateManager::State_Running)
+        {
+            proofNonzeroProjectileApplied = true;
+            runFalloutNonzeroProjectileProof();
         }
 
         // update mechanics
