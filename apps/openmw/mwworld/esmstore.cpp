@@ -773,6 +773,111 @@ namespace MWWorld
         IDMap mIds;
         IDMap mStaticIds;
 
+        struct Esm4LoadedPendingRecord
+        {
+            ESM::FormId mId;
+            std::uint32_t mFlags = 0;
+            std::uint32_t mHeaderDataSize = 0;
+            std::size_t mSubrecords = 0;
+            std::size_t mPayloadBytes = 0;
+        };
+
+        std::map<ESM::RecNameInts, std::vector<Esm4LoadedPendingRecord>> mEsm4LoadedPendingRecords;
+        std::size_t mEsm4LoadedPendingRecordBytes = 0;
+
+        static bool isLoadedPendingEsm4Record(ESM::RecNameInts recName)
+        {
+            switch (recName)
+            {
+                case ESM::REC_ACTI4:
+                case ESM::REC_ALCH4:
+                case ESM::REC_ARMA4:
+                case ESM::REC_ARMO4:
+                case ESM::REC_ASPC4:
+                case ESM::REC_BOOK4:
+                case ESM::REC_BPTD4:
+                case ESM::REC_CLAS4:
+                case ESM::REC_CLOT4:
+                case ESM::REC_CONT4:
+                case ESM::REC_CSTY4:
+                case ESM::REC_DOOR4:
+                case ESM::REC_EFSH4:
+                case ESM::REC_ENCH4:
+                case ESM::REC_EXPL4:
+                case ESM::REC_EYES4:
+                case ESM::REC_FACT4:
+                case ESM::REC_FLOR4:
+                case ESM::REC_FLST4:
+                case ESM::REC_FURN4:
+                case ESM::REC_GRAS4:
+                case ESM::REC_HAIR4:
+                case ESM::REC_HDPT4:
+                case ESM::REC_IDLE4:
+                case ESM::REC_IDLM4:
+                case ESM::REC_IMAD4:
+                case ESM::REC_IMOD4:
+                case ESM::REC_INGR4:
+                case ESM::REC_IPCT4:
+                case ESM::REC_IPDS4:
+                case ESM::REC_KEYM4:
+                case ESM::REC_LGTM4:
+                case ESM::REC_LIGH4:
+                case ESM::REC_LSCR4:
+                case ESM::REC_LVLC4:
+                case ESM::REC_LVLI4:
+                case ESM::REC_LVLN4:
+                case ESM::REC_MESG4:
+                case ESM::REC_MGEF4:
+                case ESM::REC_MISC4:
+                case ESM::REC_MSET4:
+                case ESM::REC_MUSC4:
+                case ESM::REC_NAVI4:
+                case ESM::REC_NAVM4:
+                case ESM::REC_PACK4:
+                case ESM::REC_PERK4:
+                case ESM::REC_PGRE4:
+                case ESM::REC_PROJ4:
+                case ESM::REC_PWAT4:
+                case ESM::REC_RACE4:
+                case ESM::REC_SCEN4:
+                case ESM::REC_SPEL4:
+                case ESM::REC_TERM4:
+                case ESM::REC_TREE4:
+                case ESM::REC_VTYP4:
+                case ESM::REC_WATR4:
+                case ESM::REC_WRLD4:
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        static bool readLoadedPendingEsm4Record(ESM4::Reader& reader, ESMStore& store, ESM::RecNameInts recName)
+        {
+            if (!isLoadedPendingEsm4Record(recName))
+                return false;
+
+            const ESM4::RecordTypeHeader header = reader.hdr().record;
+            reader.getRecordData();
+
+            Esm4LoadedPendingRecord record;
+            record.mId = reader.getFormIdFromHeader();
+            record.mFlags = header.flags;
+            record.mHeaderDataSize = header.dataSize;
+
+            while (reader.getSubRecordHeader())
+            {
+                const ESM4::SubRecordHeader& subrecord = reader.subRecordHeader();
+                ++record.mSubrecords;
+                record.mPayloadBytes += subrecord.dataSize;
+                reader.skipSubRecordData();
+            }
+
+            store.mStoreImp->mEsm4LoadedPendingRecordBytes += record.mPayloadBytes;
+            store.mStoreImp->mEsm4LoadedPendingRecords[recName].push_back(std::move(record));
+            return true;
+        }
+
         template <typename T>
         static void assignStoreToIndex(ESMStore& stores, Store<T>& store)
         {
@@ -1008,12 +1113,25 @@ namespace MWWorld
         std::map<ESM::RecNameInts, std::size_t> loadedRecordCounts;
         std::map<ESM::RecNameInts, std::size_t> skippedRecordCounts;
 
-        auto visitorRec = [this, listener, &loadedRecordCounts, &skippedRecordCounts](ESM4::Reader& r) {
+        std::map<ESM::RecNameInts, std::size_t> loadedPendingRecordCounts;
+
+        auto visitorRec = [this, listener, &loadedRecordCounts, &loadedPendingRecordCounts, &skippedRecordCounts](
+                              ESM4::Reader& r) {
             const auto recordType = static_cast<ESM4::RecordTypes>(r.hdr().record.typeId);
             const auto recName = static_cast<ESM::RecNameInts>(ESM::esm4Recname(recordType));
             bool result = ESMStoreImp::readRecord(r, *this);
+            bool loadedPending = false;
+            if (!result)
+            {
+                loadedPending = ESMStoreImp::readLoadedPendingEsm4Record(r, *this, recName);
+                result = loadedPending;
+            }
             if (result)
+            {
                 ++loadedRecordCounts[recName];
+                if (loadedPending)
+                    ++loadedPendingRecordCounts[recName];
+            }
             else
                 ++skippedRecordCounts[recName];
             if (listener != nullptr)
@@ -1035,6 +1153,18 @@ namespace MWWorld
         for (const auto& [recName, count] : loadedRecordCounts)
             Log(Debug::Info) << "FNV/ESM4 inventory loaded: " << ESM::getRecNameString(recName).toStringView()
                              << " count=" << count;
+        if (!loadedPendingRecordCounts.empty())
+        {
+            std::size_t loadedPendingRecords = 0;
+            for (const auto& [_, count] : loadedPendingRecordCounts)
+                loadedPendingRecords += count;
+            Log(Debug::Info) << "FNV/ESM4 inventory raw-loaded pending record total=" << loadedPendingRecords
+                             << " types=" << loadedPendingRecordCounts.size()
+                             << " payload-bytes=" << mStoreImp->mEsm4LoadedPendingRecordBytes;
+            for (const auto& [recName, count] : loadedPendingRecordCounts)
+                Log(Debug::Info) << "FNV/ESM4 inventory raw-loaded pending: "
+                                 << ESM::getRecNameString(recName).toStringView() << " count=" << count;
+        }
         for (const auto& [recName, count] : skippedRecordCounts)
             Log(Debug::Warning) << "FNV/ESM4 inventory skipped unsupported: "
                                 << ESM::getRecNameString(recName).toStringView() << " count=" << count;

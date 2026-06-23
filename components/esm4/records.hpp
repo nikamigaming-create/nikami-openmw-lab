@@ -22,6 +22,7 @@
 #include <components/esm4/loaddial.hpp>
 #include <components/esm4/loaddobj.hpp>
 #include <components/esm4/loaddoor.hpp>
+#include <components/esm4/loadexpl.hpp>
 #include <components/esm4/loadeyes.hpp>
 #include <components/esm4/loadflor.hpp>
 #include <components/esm4/loadflst.hpp>
@@ -56,8 +57,10 @@
 #include <components/esm4/loadnpc.hpp>
 #include <components/esm4/loadotft.hpp>
 #include <components/esm4/loadpack.hpp>
+#include <components/esm4/loadperk.hpp>
 #include <components/esm4/loadpgrd.hpp>
 #include <components/esm4/loadpgre.hpp>
+#include <components/esm4/loadproj.hpp>
 #include <components/esm4/loadpwat.hpp>
 #include <components/esm4/loadqust.hpp>
 #include <components/esm4/loadrace.hpp>

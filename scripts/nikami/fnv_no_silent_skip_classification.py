@@ -215,9 +215,16 @@ def parse_loader_coverage(repo_root):
     store_cpp = (repo_root / "apps" / "openmw" / "mwworld" / "store.cpp").read_text(
         encoding="utf-8", errors="replace"
     )
+    raw_pending_records = set()
+    raw_pending_start = store_cpp.find("static bool isLoadedPendingEsm4Record")
+    raw_pending_end = store_cpp.find("static bool readLoadedPendingEsm4Record", raw_pending_start)
+    if raw_pending_start >= 0 and raw_pending_end > raw_pending_start:
+        raw_pending_source = store_cpp[raw_pending_start:raw_pending_end]
+        raw_pending_records = set(re.findall(r"case\s+ESM::REC_([A-Z0-9_]+)4\s*:", raw_pending_source))
     return {
         "loaderByRecord": loader_by_record,
         "typeByRecord": type_by_record,
+        "rawPendingRecords": raw_pending_records,
         "recordsHeader": records_header,
         "storeHeader": store_header,
         "storeCpp": store_cpp,
@@ -242,7 +249,16 @@ def classify_record_type(record, coverage):
             record, "record is loaded/stored but has no explicit full-runtime parity claim yet"
         )
     if record in LOADED_PENDING_RECORDS:
-        return "loaded-pending-runtime", LOADED_PENDING_RECORDS[record]
+        if record in coverage["rawPendingRecords"]:
+            return (
+                "loaded-pending-runtime",
+                LOADED_PENDING_RECORDS[record]
+                + "; ESMStore raw-pending fallback consumes and inventories the record bytes",
+            )
+        return (
+            "known-blocked",
+            "declared loaded-pending intent exists, but no typed loader/store or raw-pending runtime fallback is present",
+        )
     return "known-blocked", "no complete loader/store/runtime claim is present for this ESM4 record type"
 
 

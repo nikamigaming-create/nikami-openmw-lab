@@ -228,6 +228,7 @@ add_component_dir (esm4
     loaddial
     loaddobj
     loaddoor
+    loadexpl
     loadeyes
     loadflor
     loadflst
@@ -262,8 +263,10 @@ add_component_dir (esm4
     loadnpc
     loadotft
     loadpack
+    loadperk
     loadpgrd
     loadpgre
+    loadproj
     loadpwat
     loadqust
     loadrace

@@ -11,11 +11,14 @@
 #include <components/esm3/esmwriter.hpp>
 #include <components/esm4/loadbptd.hpp>
 #include <components/esm4/loaddial.hpp>
+#include <components/esm4/loadexpl.hpp>
 #include <components/esm4/loadeyes.hpp>
 #include <components/esm4/loadidle.hpp>
 #include <components/esm4/loadidlm.hpp>
 #include <components/esm4/loadnote.hpp>
 #include <components/esm4/loadpack.hpp>
+#include <components/esm4/loadperk.hpp>
+#include <components/esm4/loadproj.hpp>
 #include <components/esm4/loadqust.hpp>
 #include <components/esm4/loadtact.hpp>
 
@@ -1284,6 +1287,7 @@ template class MWWorld::TypedDynamicStore<ESM4::Dialogue>;
 template class MWWorld::TypedDynamicStore<ESM4::DialogInfo>;
 template class MWWorld::TypedDynamicStore<ESM4::Door>;
 template class MWWorld::TypedDynamicStore<ESM4::Eyes>;
+template class MWWorld::TypedDynamicStore<ESM4::Explosion>;
 template class MWWorld::TypedDynamicStore<ESM4::Flora>;
 template class MWWorld::TypedDynamicStore<ESM4::Furniture>;
 template class MWWorld::TypedDynamicStore<ESM4::GameSetting>;
@@ -1305,7 +1309,9 @@ template class MWWorld::TypedDynamicStore<ESM4::MovableStatic>;
 template class MWWorld::TypedDynamicStore<ESM4::Note>;
 template class MWWorld::TypedDynamicStore<ESM4::Npc>;
 template class MWWorld::TypedDynamicStore<ESM4::Outfit>;
+template class MWWorld::TypedDynamicStore<ESM4::Perk>;
 template class MWWorld::TypedDynamicStore<ESM4::Potion>;
+template class MWWorld::TypedDynamicStore<ESM4::Projectile>;
 template class MWWorld::TypedDynamicStore<ESM4::Quest>;
 template class MWWorld::TypedDynamicStore<ESM4::Race>;
 template class MWWorld::TypedDynamicStore<ESM4::Script>;

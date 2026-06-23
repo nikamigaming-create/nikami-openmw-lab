@@ -170,13 +170,16 @@ function Get-Esm4ClassificationMap([string]$Dir) {
     $rows = @(Get-Content -LiteralPath $ledgerPath -Raw | ConvertFrom-Json)
     $map = @{}
     foreach ($row in ($rows | Where-Object { $_.itemType -eq "esm4-record-type" })) {
-        $recordType = [string]$row.recordType
+        $recordTypeProperty = $row.PSObject.Properties["recordType"]
+        $classificationProperty = $row.PSObject.Properties["classification"]
+        if ($null -eq $recordTypeProperty -or $null -eq $classificationProperty) { continue }
+        $recordType = [string]$recordTypeProperty.Value
         if ([string]::IsNullOrWhiteSpace($recordType)) { continue }
         if (!$map.ContainsKey($recordType)) {
             $map[$recordType] = [System.Collections.Generic.List[string]]::new()
         }
-        if (!$map[$recordType].Contains([string]$row.classification)) {
-            $map[$recordType].Add([string]$row.classification)
+        if (!$map[$recordType].Contains([string]$classificationProperty.Value)) {
+            $map[$recordType].Add([string]$classificationProperty.Value)
         }
     }
     Write-ProofLine "ESM4 classification ledger: $ledgerPath"
