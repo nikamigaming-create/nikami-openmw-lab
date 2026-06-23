@@ -58,6 +58,7 @@ param(
     [string]$TraceRawPendingRecord = "",
     [string]$ClassificationDir = "",
     [switch]$RequireSkyColorSanity,
+    [switch]$RequireSkyPaletteMatch,
     [switch]$RequireSunVisible,
     [switch]$NoSound
 )
@@ -273,6 +274,209 @@ function Assert-SkyColorSanity([object[]]$Screenshots, [string]$ProofDir) {
 
     if ($failures.Count -gt 0) {
         throw "FNV sky color sanity detected raw red/mask leakage or Morrowind blue-palette leakage. See $statsPath"
+    }
+}
+
+function Get-LatestWeatherFallbackJson([string]$ProofRoot) {
+    $weatherFallbackRoot = Join-Path $ProofRoot "fnv-weather-fallbacks"
+    $latest = Get-ChildItem -LiteralPath $weatherFallbackRoot -Directory -ErrorAction SilentlyContinue |
+        Sort-Object LastWriteTime -Descending |
+        Select-Object -First 1
+    if ($null -eq $latest) {
+        throw "Missing generated FNV weather fallback proof under $weatherFallbackRoot"
+    }
+
+    $jsonPath = Join-Path $latest.FullName "fnv-weather-fallbacks.json"
+    if (!(Test-Path -LiteralPath $jsonPath -PathType Leaf)) {
+        throw "Missing generated FNV weather fallback JSON: $jsonPath"
+    }
+
+    return $jsonPath
+}
+
+function Convert-RgbTriplet([object]$Value, [string]$Label) {
+    $items = @($Value)
+    if ($items.Count -ne 3) {
+        throw "Expected RGB triplet for ${Label}, got $($items.Count) values"
+    }
+
+    return @($items | ForEach-Object { [double]$_ })
+}
+
+function Get-NormalizedRgb([double]$R, [double]$G, [double]$B) {
+    $sum = [Math]::Max(1.0, $R + $G + $B)
+    return @(($R / $sum), ($G / $sum), ($B / $sum))
+}
+
+function Get-RgbLuma([double[]]$Rgb) {
+    return (0.2126 * $Rgb[0]) + (0.7152 * $Rgb[1]) + (0.0722 * $Rgb[2])
+}
+
+function Get-NormalizedRgbDistance([double[]]$A, [double[]]$B) {
+    return [Math]::Sqrt(
+        [Math]::Pow($A[0] - $B[0], 2.0) +
+        [Math]::Pow($A[1] - $B[1], 2.0) +
+        [Math]::Pow($A[2] - $B[2], 2.0))
+}
+
+function Get-FnvSkyPaletteExpected([string]$WeatherFallbackJson) {
+    $metadata = Get-Content -LiteralPath $WeatherFallbackJson -Raw | ConvertFrom-Json
+    $clear = $metadata.selectedWeather.Clear
+    if ($null -eq $clear) {
+        throw "Generated weather fallback metadata has no Clear weather selection: $WeatherFallbackJson"
+    }
+    $day = $clear.skyColorGroups.Day
+    if ($null -eq $day) {
+        throw "Generated weather fallback metadata has no Clear/Day sky colors: $WeatherFallbackJson"
+    }
+
+    $skyUpper = Convert-RgbTriplet $day.SkyUpper "Clear/Day/SkyUpper"
+    $skyLower = Convert-RgbTriplet $day.SkyLower "Clear/Day/SkyLower"
+    $horizon = Convert-RgbTriplet $day.Horizon "Clear/Day/Horizon"
+    $expectedLumas = @(
+        (Get-RgbLuma $skyUpper)
+        (Get-RgbLuma $skyLower)
+        (Get-RgbLuma $horizon)
+    )
+    $normalizedSkyUpper = Get-NormalizedRgb -R ([double]$skyUpper[0]) -G ([double]$skyUpper[1]) -B ([double]$skyUpper[2])
+    $normalizedSkyLower = Get-NormalizedRgb -R ([double]$skyLower[0]) -G ([double]$skyLower[1]) -B ([double]$skyLower[2])
+    $normalizedHorizon = Get-NormalizedRgb -R ([double]$horizon[0]) -G ([double]$horizon[1]) -B ([double]$horizon[2])
+    $normalizedBands = @(
+        [ordered]@{ name = "SkyUpper"; r = $normalizedSkyUpper[0]; g = $normalizedSkyUpper[1]; b = $normalizedSkyUpper[2] }
+        [ordered]@{ name = "SkyLower"; r = $normalizedSkyLower[0]; g = $normalizedSkyLower[1]; b = $normalizedSkyLower[2] }
+        [ordered]@{ name = "Horizon"; r = $normalizedHorizon[0]; g = $normalizedHorizon[1]; b = $normalizedHorizon[2] }
+    )
+
+    return [ordered]@{
+        weatherFallbackJson = $WeatherFallbackJson
+        expectedWeather = "Clear"
+        expectedTime = "Day"
+        selectedEditorId = [string]$clear.selectedEditorId
+        selectedPlugin = [string]$clear.selectedPlugin
+        selectedFormId = [string]$clear.selectedFormId
+        SkyUpper = $skyUpper
+        SkyLower = $skyLower
+        Horizon = $horizon
+        minExpectedLuma = ($expectedLumas | Measure-Object -Minimum).Minimum
+        maxExpectedLuma = ($expectedLumas | Measure-Object -Maximum).Maximum
+        normalizedBands = $normalizedBands
+    }
+}
+
+function Get-SkyPaletteMatchStats([string]$Path, [object]$Expected) {
+    Add-Type -AssemblyName System.Drawing -ErrorAction SilentlyContinue
+
+    $bitmap = [System.Drawing.Bitmap]::FromFile($Path)
+    try {
+        $width = $bitmap.Width
+        $height = $bitmap.Height
+        $samples = 0
+        $sumR = 0.0
+        $sumG = 0.0
+        $sumB = 0.0
+
+        $startY = [int]($height * 0.05)
+        $endY = [int]($height * 0.45)
+        $startX = [int]($width * 0.10)
+        $endX = [int]($width * 0.90)
+
+        for ($y = $startY; $y -lt $endY; $y += 4) {
+            for ($x = $startX; $x -lt $endX; $x += 4) {
+                $pixel = $bitmap.GetPixel($x, $y)
+                $r = [double]$pixel.R
+                $g = [double]$pixel.G
+                $b = [double]$pixel.B
+                $luma = (0.2126 * $r) + (0.7152 * $g) + (0.0722 * $b)
+                if ($luma -lt 25.0 -or $luma -gt 252.0) {
+                    continue
+                }
+
+                $samples++
+                $sumR += $r
+                $sumG += $g
+                $sumB += $b
+            }
+        }
+
+        if ($samples -lt 1000) {
+            throw "FNV sky palette match had too few sampled pixels in ${Path}: $samples"
+        }
+
+        $avgR = $sumR / $samples
+        $avgG = $sumG / $samples
+        $avgB = $sumB / $samples
+        $avgRgb = @($avgR, $avgG, $avgB)
+        $avgLuma = Get-RgbLuma $avgRgb
+        $normalized = Get-NormalizedRgb $avgR $avgG $avgB
+        $nearestDistance = [double]::PositiveInfinity
+        foreach ($band in $Expected.normalizedBands) {
+            $distance = Get-NormalizedRgbDistance $normalized @([double]$band.r, [double]$band.g, [double]$band.b)
+            if ($distance -lt $nearestDistance) {
+                $nearestDistance = $distance
+            }
+        }
+
+        $channelOrderMatches = $avgB -gt ($avgG + 8.0) -and $avgG -gt ($avgR + 8.0)
+        $brightnessMatches = $avgLuma -ge ($Expected.minExpectedLuma * 0.45) `
+            -and $avgLuma -le (($Expected.maxExpectedLuma * 1.15) + 20.0)
+        $normalizedDistancePass = $nearestDistance -le 0.10
+
+        return [ordered]@{
+            path = $Path
+            width = $width
+            height = $height
+            samples = $samples
+            avgR = [Math]::Round($avgR, 4)
+            avgG = [Math]::Round($avgG, 4)
+            avgB = [Math]::Round($avgB, 4)
+            avgLuma = [Math]::Round($avgLuma, 4)
+            normalizedR = [Math]::Round($normalized[0], 6)
+            normalizedG = [Math]::Round($normalized[1], 6)
+            normalizedB = [Math]::Round($normalized[2], 6)
+            nearestExpectedNormalizedDistance = [Math]::Round($nearestDistance, 6)
+            channelOrderMatches = $channelOrderMatches
+            brightnessMatches = $brightnessMatches
+            normalizedDistancePass = $normalizedDistancePass
+            paletteMatches = $channelOrderMatches -and $brightnessMatches -and $normalizedDistancePass
+        }
+    }
+    finally {
+        $bitmap.Dispose()
+    }
+}
+
+function Assert-SkyPaletteMatch([object[]]$Screenshots, [string]$ProofDir, [string]$ProofRoot) {
+    if ($Screenshots.Count -eq 0) {
+        throw "FNV sky palette match requires screenshots. Pass -ScreenshotFrames with at least one frame."
+    }
+
+    $weatherFallbackJson = Get-LatestWeatherFallbackJson $ProofRoot
+    $expected = Get-FnvSkyPaletteExpected $weatherFallbackJson
+    $stats = @()
+    foreach ($screenshot in $Screenshots) {
+        $stats += [pscustomobject](Get-SkyPaletteMatchStats $screenshot.FullName $expected)
+    }
+
+    $failures = @($stats | Where-Object { !$_.paletteMatches })
+    $result = [ordered]@{
+        status = if ($failures.Count -eq 0) { "PASS" } else { "FAIL" }
+        expected = $expected
+        samples = $stats
+    }
+    $statsPath = Join-Path $ProofDir "sky-palette-match.json"
+    $result | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $statsPath -Encoding UTF8
+    Write-ProofLine "Sky palette match JSON: $statsPath"
+
+    foreach ($stat in $stats) {
+        Write-ProofLine ("Sky palette sample {0}: avg=({1},{2},{3}) normalized=({4},{5},{6}) nearestDistance={7} channelOrderMatches={8} brightnessMatches={9} normalizedDistancePass={10}" -f `
+            (Split-Path $stat.path -Leaf), $stat.avgR, $stat.avgG, $stat.avgB, `
+            $stat.normalizedR, $stat.normalizedG, $stat.normalizedB, `
+            $stat.nearestExpectedNormalizedDistance, $stat.channelOrderMatches, $stat.brightnessMatches, `
+            $stat.normalizedDistancePass)
+    }
+
+    if ($failures.Count -gt 0) {
+        throw "FNV sky palette match failed against generated WTHR Clear/Day colors. See $statsPath"
     }
 }
 
@@ -530,6 +734,7 @@ try {
     Write-ProofLine "RunSeconds: $RunSeconds"
     Write-ProofLine "WithMenu: $WithMenu"
     Write-ProofLine "RequireSkyColorSanity: $RequireSkyColorSanity"
+    Write-ProofLine "RequireSkyPaletteMatch: $RequireSkyPaletteMatch"
     Write-ProofLine "RequireSunVisible: $RequireSunVisible"
     Write-ProofLine "BootstrapCell: $BootstrapCell"
     Write-ProofLine "FlatCameraPitch: $FlatCameraPitch"
@@ -595,6 +800,7 @@ Write-ProofLine "Unsupported ESM4 skip lines: $($unsupportedEsm4Skips.Count)"
 if ($fatalCount -gt 0) { throw "FNV flat proof saw fatal/blocker log lines. See $OpenMwLog" }
 Assert-NoShaderBlockers @($OpenMwLog, $MyGuiLog, $StdoutLog, $StderrLog, $HarnessLog)
 if ($RequireSkyColorSanity) { Assert-SkyColorSanity $screenshots $ProofDir }
+if ($RequireSkyPaletteMatch) { Assert-SkyPaletteMatch $screenshots $ProofDir $ProofRoot }
 if ($RequireSunVisible) { Assert-SunVisible $screenshots $ProofDir }
 Assert-UnsupportedEsm4SkipsClassified $unsupportedEsm4Skips $ClassificationDir
 if ($RequireFlatCameraSettled -and $flatCameraSettledLines -eq 0) { throw "FNV flat proof did not prove flat camera settlement. See $OpenMwLog" }

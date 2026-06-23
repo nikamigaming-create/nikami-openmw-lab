@@ -144,6 +144,9 @@ Assert-FileContains $SkyPasses "#define PASS_MOON 3" "sky shader pass table keep
 Assert-FileNotContains $SkyFrag "vec4 blendedLayer = phase \* moonBlend" "downstream legacy moon shader blend"
 Assert-FileContains $FlatProofScript "OPENMW_FNV_SKY_MISSING_LOG" "flat proof enables sky diagnostics"
 Assert-FileContains $FlatProofScript "RequireSkyColorSanity" "flat proof can gate sky screenshot colors"
+Assert-FileContains $FlatProofScript "RequireSkyPaletteMatch" "flat proof can gate sky screenshot palette against generated WTHR colors"
+Assert-FileContains $FlatProofScript "sky-palette-match.json" "flat proof emits generated sky palette match proof"
+Assert-FileContains $FlatProofScript "nearestExpectedNormalizedDistance" "flat proof compares screenshot palette to generated WTHR palette"
 Assert-FileContains $FlatProofScript "RequireSunVisible" "flat proof can gate visible sun screenshot"
 Assert-FileContains $FlatProofScript "OPENMW_FNV_FLAT_CAMERA_YAW" "flat proof can steer camera toward sun"
 Assert-FileContains $FlatProofScript "rawRedMaskLeak" "flat proof detects raw red sky-mask leakage"
@@ -212,6 +215,7 @@ if (Test-Path -LiteralPath $flatProofRoot) {
     -NoSound `
     -ScreenshotFrames "180,300" `
     -RequireSkyColorSanity `
+    -RequireSkyPaletteMatch `
     -RequireLogPattern $requiredLogPatterns
 
 $after = @(Get-ChildItem -LiteralPath $flatProofRoot -Directory -ErrorAction SilentlyContinue |
@@ -229,6 +233,7 @@ $flatSettings = Join-Path $latestFlatProof.FullName "settings.cfg"
 $flatOpenMwCfg = Join-Path $latestFlatProof.FullName "openmw.cfg"
 $flatSummary = Join-Path $latestFlatProof.FullName "summary.txt"
 $flatSkyColorSanity = Join-Path $latestFlatProof.FullName "sky-color-sanity.json"
+$flatSkyPaletteMatch = Join-Path $latestFlatProof.FullName "sky-palette-match.json"
 $weatherFallbackRoot = Join-Path $ProofRoot "fnv-weather-fallbacks"
 $latestWeatherFallback = Get-ChildItem -LiteralPath $weatherFallbackRoot -Directory -ErrorAction SilentlyContinue |
     Sort-Object LastWriteTime -Descending |
@@ -262,6 +267,7 @@ Assert-FileContains $flatSettings "^force shaders = false$" "generated flat forc
 Assert-FileNotContains $flatSettings "^force shaders = true$" "generated flat VR shader mode"
 Assert-FileContains $flatSettings "^sky blending = true$" "generated flat sky blending"
 Assert-FileContains $flatSummary "^RequireSkyColorSanity: True$" "flat proof required sky color sanity"
+Assert-FileContains $flatSummary "^RequireSkyPaletteMatch: True$" "flat proof required generated sky palette match"
 Assert-FileContains $weatherFallbackJson '"payloadPolicy"\s*:\s*"derived-weather-fallbacks-no-retail-assets"' "generated weather fallback payload policy"
 Assert-FileContains $weatherFallbackJson '"selectedWeather"' "generated weather fallback selected weather map"
 Assert-FileContains $weatherFallbackJson '"skyColorGroups"' "generated weather fallback vertical sky color proof"
@@ -313,6 +319,12 @@ Assert-FileContains $flatSkyColorSanity '"rawRedMaskLeak"\s*:\s*false' "runtime 
 Assert-FileNotContains $flatSkyColorSanity '"rawRedMaskLeak"\s*:\s*true' "runtime raw red sky-mask leakage"
 Assert-FileContains $flatSkyColorSanity '"morrowindBluePaletteLeak"\s*:\s*false' "runtime no stale Morrowind blue sky palette"
 Assert-FileNotContains $flatSkyColorSanity '"morrowindBluePaletteLeak"\s*:\s*true' "runtime stale Morrowind blue sky palette leakage"
+Assert-FileContains $flatSkyPaletteMatch '"status"\s*:\s*"PASS"' "runtime generated sky palette match status"
+Assert-FileContains $flatSkyPaletteMatch '"expectedWeather"\s*:\s*"Clear"' "runtime generated sky palette match weather"
+Assert-FileContains $flatSkyPaletteMatch '"expectedTime"\s*:\s*"Day"' "runtime generated sky palette match time"
+Assert-FileContains $flatSkyPaletteMatch '"channelOrderMatches"\s*:\s*true' "runtime sky palette channel ordering"
+Assert-FileContains $flatSkyPaletteMatch '"normalizedDistancePass"\s*:\s*true' "runtime sky palette normalized distance"
+Assert-FileNotContains $flatSkyPaletteMatch '"paletteMatches"\s*:\s*false' "runtime generated sky palette mismatch"
 
 $sunProofBefore = @()
 if (Test-Path -LiteralPath $flatProofRoot) {
@@ -378,6 +390,7 @@ $result = [ordered]@{
         "FNV sky shader does not consume unsupported vertex RGB data",
         "FNV WTHR-derived weather fallbacks supply sky/fog/ambient/sun colors without committing retail assets",
         "FNV WTHR SkyLower and Horizon colors are emitted into generated fallback config and classified runtime-supported",
+        "FNV screenshot palette is compared against generated Clear/Day WTHR sky colors without committed image baselines",
         "FNV screenshot sky color sanity rejects raw red channel/mask leakage and stale Morrowind blue palette leakage",
         "FNV sun/moon billboard path uses Fallout sky textures",
         "FNV sun-facing screenshot proves visible sun disc/glare core",
