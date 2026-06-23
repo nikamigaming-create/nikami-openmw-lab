@@ -130,3 +130,52 @@ Write-Host "ContentLedgerDir: $ContentLedgerDir"
 if ($LASTEXITCODE -ne 0) {
     throw "FNV no-silent-skip classification gate failed with exit code $LASTEXITCODE."
 }
+
+$ClassificationDir = Get-LatestProofDir (Join-Path $ProofRoot "fnv-no-silent-skip-classification") "FNV no-silent-skip classification"
+$ResultPath = Join-Path $ClassificationDir "result.json"
+$LedgerPath = Join-Path $ClassificationDir "classification-ledger.json"
+$GeneratedOutputPath = Join-Path $ClassificationDir "generated-output-classification.jsonl"
+if (!(Test-Path -LiteralPath $ResultPath -PathType Leaf)) {
+    throw "Missing no-silent-skip result: $ResultPath"
+}
+if (!(Test-Path -LiteralPath $LedgerPath -PathType Leaf)) {
+    throw "Missing no-silent-skip classification ledger: $LedgerPath"
+}
+if (!(Test-Path -LiteralPath $GeneratedOutputPath -PathType Leaf)) {
+    throw "Missing generated output classification ledger: $GeneratedOutputPath"
+}
+
+$Result = Get-Content -LiteralPath $ResultPath -Raw | ConvertFrom-Json
+if ([string]$Result.status -ne "PASS") {
+    throw "No-silent-skip classifier did not pass: $ResultPath"
+}
+if (@($Result.preflightFailures).Count -ne 0) {
+    throw "No-silent-skip preflight failures were not empty: $(@($Result.preflightFailures) | ConvertTo-Json -Compress)"
+}
+if ([int]$Result.counts.generatedOutputRows -le 0) {
+    throw "Generated output classification rows were not emitted"
+}
+if ([int]$Result.counts.unclassified -ne 0) {
+    throw "Unclassified rows remain in no-silent-skip result"
+}
+if ([int]$Result.harvestManifestCounts.archives -ne [int]$Result.archiveEntryCoverage.entryListCount) {
+    throw "Archive entry list coverage does not match harvested archive count"
+}
+if (@($Result.archiveEntryCoverage.unknownExtensions).Count -ne 0) {
+    throw "Unknown BSA extensions remain: $(@($Result.archiveEntryCoverage.unknownExtensions) -join ', ')"
+}
+
+$Ledger = Get-Content -LiteralPath $LedgerPath -Raw | ConvertFrom-Json
+$fnvrCoverage = $Ledger | Where-Object {
+    [string]$_.scope -eq "content-record-coverage" -and
+    [string]$_.identifier -eq "FNVR.esp"
+} | Select-Object -First 1
+if ($null -eq $fnvrCoverage) {
+    throw "Missing explicit FNVR.esp content-record coverage row"
+}
+if ([string]$fnvrCoverage.classification -ne "intentionally-excluded-with-proof" -and [string]$fnvrCoverage.classification -ne "runtime-supported") {
+    throw "Unexpected FNVR.esp coverage classification: $($fnvrCoverage.classification)"
+}
+
+Write-Host "No-silent-skip result: $ResultPath"
+Write-Host "Generated output classification: $GeneratedOutputPath"

@@ -182,6 +182,44 @@ INI_RUNTIME_KEYS = {
 }
 
 
+CONTENT_ITEM_FILES = [
+    ("quests.json", "quest", "loaded-pending-runtime", "quest records are parsed; exhaustive quest execution remains gated"),
+    (
+        "dialogue.json",
+        "dialogue-or-info",
+        "loaded-pending-runtime",
+        "dialogue rows are parsed/bridged; exhaustive INFO selection remains gated",
+    ),
+    ("scripts.json", "script", "loaded-pending-runtime", "scripts are harvested as source pending full script VM parity"),
+    ("globals.json", "global", "runtime-supported", "globals are bridged into runtime global variables"),
+    ("game-settings.json", "game-setting-record", "runtime-supported", "GMST values are bridged into runtime game settings"),
+    (
+        "gameplay-systems.json",
+        "gameplay-system",
+        "loaded-pending-runtime",
+        "gameplay records are loaded/stored pending full gameplay binding",
+    ),
+    (
+        "references.json",
+        "form-reference",
+        "loaded-pending-runtime",
+        "form references are harvested pending exhaustive cross-reference resolution gates",
+    ),
+]
+
+
+CONTENT_ARTIFACT_COUNTS = {
+    "records.json": "pluginCount",
+    "quests.json": "questCount",
+    "dialogue.json": "dialogueRowCount",
+    "scripts.json": "scriptCount",
+    "globals.json": "globalCount",
+    "game-settings.json": "gameSettingCount",
+    "gameplay-systems.json": "gameplaySystemCount",
+    "references.json": "referenceCount",
+}
+
+
 def read_json(path):
     return json.loads(Path(path).read_text(encoding="utf-8-sig"))
 
@@ -306,39 +344,27 @@ def make_row(scope, item_type, identifier, classification, proof, **extra):
     return row
 
 
+def record_failure(failures, code, message, **extra):
+    row = {"code": code, "message": message}
+    row.update(extra)
+    failures.append(row)
+
+
 def add_main_row(rows, scope, item_type, identifier, classification, proof, **extra):
     rows.append(make_row(scope, item_type, identifier, classification, proof, **extra))
 
 
-def classify_content_items(content_dir, content_jsonl, counters):
-    files = [
-        ("quests.json", "quest", "loaded-pending-runtime", "quest records are parsed; exhaustive quest execution remains gated"),
-        (
-            "dialogue.json",
-            "dialogue-or-info",
-            "loaded-pending-runtime",
-            "dialogue rows are parsed/bridged; exhaustive INFO selection remains gated",
-        ),
-        ("scripts.json", "script", "loaded-pending-runtime", "scripts are harvested as source pending full script VM parity"),
-        ("globals.json", "global", "runtime-supported", "globals are bridged into runtime global variables"),
-        ("game-settings.json", "game-setting-record", "runtime-supported", "GMST values are bridged into runtime game settings"),
-        (
-            "gameplay-systems.json",
-            "gameplay-system",
-            "loaded-pending-runtime",
-            "gameplay records are loaded/stored pending full gameplay binding",
-        ),
-        (
-            "references.json",
-            "form-reference",
-            "loaded-pending-runtime",
-            "form references are harvested pending exhaustive cross-reference resolution gates",
-        ),
-    ]
+def classify_content_items(content_dir, content_jsonl, counters, failures):
     with content_jsonl.open("w", encoding="utf-8") as stream:
-        for filename, item_type, classification, proof in files:
+        for filename, item_type, classification, proof in CONTENT_ITEM_FILES:
             path = content_dir / filename
             if not path.is_file():
+                record_failure(
+                    failures,
+                    "missing-content-classification-artifact",
+                    f"Expected content artifact is missing: {filename}",
+                    sourceFile=filename,
+                )
                 continue
             values = read_json(path)
             if not isinstance(values, list):
@@ -365,6 +391,248 @@ def classify_content_items(content_dir, content_jsonl, counters):
                 stream.write(json.dumps(row, ensure_ascii=False) + "\n")
                 counters["contentRows"] += 1
                 counters[f"class:{classification}"] += 1
+
+
+def validate_content_artifacts(content_dir, content_result, content_records, failures):
+    coverage = {
+        "expectedArtifacts": sorted(CONTENT_ARTIFACT_COUNTS),
+        "checkedCounts": {},
+        "missingArtifacts": [],
+    }
+    for filename, count_key in CONTENT_ARTIFACT_COUNTS.items():
+        path = content_dir / filename
+        if not path.is_file():
+            coverage["missingArtifacts"].append(filename)
+            record_failure(
+                failures,
+                "missing-content-artifact",
+                f"Expected content ledger artifact is missing: {filename}",
+                sourceFile=filename,
+            )
+            continue
+        values = read_json(path)
+        if not isinstance(values, list):
+            record_failure(
+                failures,
+                "invalid-content-artifact-shape",
+                f"Expected content artifact to be a JSON list: {filename}",
+                sourceFile=filename,
+            )
+            continue
+        actual = len(values)
+        expected = int(content_result.get(count_key, -1))
+        coverage["checkedCounts"][filename] = {"actual": actual, "expected": expected, "countKey": count_key}
+        if actual != expected:
+            record_failure(
+                failures,
+                "content-artifact-count-mismatch",
+                f"Content artifact {filename} row count {actual} does not match result {count_key}={expected}",
+                sourceFile=filename,
+                actual=actual,
+                expected=expected,
+            )
+
+    record_plugin_count = len(content_records) if isinstance(content_records, list) else -1
+    result_plugin_count = int(content_result.get("pluginCount", -1))
+    coverage["recordPluginCount"] = {"actual": record_plugin_count, "expected": result_plugin_count}
+    if record_plugin_count != result_plugin_count:
+        record_failure(
+            failures,
+            "records-plugin-count-mismatch",
+            f"records.json plugin count {record_plugin_count} does not match result pluginCount={result_plugin_count}",
+            actual=record_plugin_count,
+            expected=result_plugin_count,
+        )
+    return coverage
+
+
+def validate_content_plugin_coverage(main_rows, plugins, content_result, content_records, failures):
+    harvested_plugins = {plugin.get("name", "") for plugin in plugins if plugin.get("name", "")}
+    content_plugins = set(content_result.get("content", []))
+    record_plugins = {plugin.get("plugin", "") for plugin in content_records if plugin.get("plugin", "")}
+    coverage = {
+        "harvestedPlugins": sorted(harvested_plugins),
+        "contentPlugins": sorted(content_plugins),
+        "recordPlugins": sorted(record_plugins),
+        "explicitExclusions": [],
+    }
+
+    for plugin in sorted(content_plugins):
+        if plugin not in harvested_plugins:
+            record_failure(
+                failures,
+                "content-plugin-not-harvested",
+                f"Content ledger includes plugin not present in harvest metadata: {plugin}",
+                plugin=plugin,
+            )
+        if plugin not in record_plugins:
+            record_failure(
+                failures,
+                "content-plugin-missing-records",
+                f"Content ledger declared plugin but records.json has no row: {plugin}",
+                plugin=plugin,
+            )
+
+    for plugin in sorted(record_plugins - content_plugins):
+        record_failure(
+            failures,
+            "records-plugin-not-declared",
+            f"records.json includes plugin not declared in content-ledger result content list: {plugin}",
+            plugin=plugin,
+        )
+
+    for plugin in sorted(harvested_plugins - record_plugins):
+        if plugin.lower() == "fnvr.esp" and plugin not in content_plugins:
+            coverage["explicitExclusions"].append(plugin)
+            add_main_row(
+                main_rows,
+                "content-record-coverage",
+                "pcvr-layer-plugin-records",
+                plugin,
+                "intentionally-excluded-with-proof",
+                "FNVR.esp is harvested as the PCVR overlay, but the current content ledger is the PC-flat-first 10-plugin layer; PCVR record execution remains a separate PCVR gate.",
+                priority="pcvr-second",
+                recordRowsPresent=False,
+            )
+            continue
+        record_failure(
+            failures,
+            "harvested-plugin-missing-records",
+            f"Harvested ESM/ESP has no records.json row and no explicit exclusion: {plugin}",
+            plugin=plugin,
+        )
+
+    for plugin in sorted(record_plugins):
+        add_main_row(
+            main_rows,
+            "content-record-coverage",
+            "parsed-plugin-records",
+            plugin,
+            "runtime-supported",
+            "Content ledger records.json contains a parsed record-count row for this active plugin layer.",
+            recordRowsPresent=True,
+        )
+    return coverage
+
+
+def validate_archive_entry_coverage(harvest_dir, manifest, archives, archive_entry_ledger, failures):
+    archive_names = {archive.get("name", "") for archive in archives if archive.get("name", "")}
+    entry_names = {entry.get("archive", "") for entry in archive_entry_ledger if entry.get("archive", "")}
+    coverage = {
+        "archiveCount": len(archives),
+        "entryListCount": len(archive_entry_ledger),
+        "archiveNames": sorted(archive_names),
+        "entryListArchives": sorted(entry_names),
+        "checkedEntryLists": [],
+        "unknownExtensions": [],
+    }
+
+    manifest_counts = manifest.get("counts", {})
+    expected_archive_count = int(manifest_counts.get("archives", -1))
+    expected_entry_lists = int(manifest_counts.get("archiveEntryLists", -1))
+    if len(archives) != expected_archive_count:
+        record_failure(
+            failures,
+            "archive-count-mismatch",
+            f"archives-metadata count {len(archives)} does not match manifest archives={expected_archive_count}",
+            actual=len(archives),
+            expected=expected_archive_count,
+        )
+    if len(archive_entry_ledger) != expected_entry_lists:
+        record_failure(
+            failures,
+            "archive-entry-list-count-mismatch",
+            f"archive-entry-ledger count {len(archive_entry_ledger)} does not match manifest archiveEntryLists={expected_entry_lists}",
+            actual=len(archive_entry_ledger),
+            expected=expected_entry_lists,
+        )
+    if archive_names != entry_names:
+        missing = sorted(archive_names - entry_names)
+        extra = sorted(entry_names - archive_names)
+        record_failure(
+            failures,
+            "archive-entry-list-coverage-mismatch",
+            "Archive entry list coverage does not match archive metadata.",
+            missingEntryLists=missing,
+            extraEntryLists=extra,
+        )
+
+    for archive_entry in archive_entry_ledger:
+        list_path = harvest_dir / archive_entry["entryList"]
+        if not list_path.is_file():
+            record_failure(
+                failures,
+                "missing-archive-entry-list",
+                f"Missing BSA entry list: {archive_entry['entryList']}",
+                archive=archive_entry.get("archive", ""),
+            )
+            continue
+        lines = [line for line in list_path.read_text(encoding="utf-8", errors="replace").splitlines() if line]
+        expected_count = int(archive_entry.get("entryCount", -1))
+        coverage["checkedEntryLists"].append(
+            {"archive": archive_entry.get("archive", ""), "actual": len(lines), "expected": expected_count}
+        )
+        if expected_count <= 0 or len(lines) <= 0:
+            record_failure(
+                failures,
+                "empty-archive-entry-list",
+                f"BSA entry list is empty for archive {archive_entry.get('archive', '')}",
+                archive=archive_entry.get("archive", ""),
+                entryList=archive_entry.get("entryList", ""),
+            )
+        if len(lines) != expected_count:
+            record_failure(
+                failures,
+                "archive-entry-list-row-count-mismatch",
+                f"BSA entry list row count {len(lines)} does not match ledger entryCount={expected_count}",
+                archive=archive_entry.get("archive", ""),
+                entryList=archive_entry.get("entryList", ""),
+                actual=len(lines),
+                expected=expected_count,
+            )
+        for entry in lines:
+            ext = get_ext(entry)
+            if ext not in EXTENSION_RULES:
+                coverage["unknownExtensions"].append(ext)
+    coverage["unknownExtensions"] = sorted(set(coverage["unknownExtensions"]))
+    for ext in coverage["unknownExtensions"]:
+        record_failure(
+            failures,
+            "unknown-bsa-entry-extension",
+            f"BSA entry extension lacks an explicit five-state classification rule: {ext}",
+            extension=ext,
+        )
+    return coverage
+
+
+def write_generated_output_classification(proof_dir, harvest_dir, content_dir, counters, planned_files=None):
+    output = proof_dir / "generated-output-classification.jsonl"
+    generated_files = set()
+    for root in (harvest_dir, content_dir, proof_dir):
+        if not root.is_dir():
+            continue
+        for path in sorted(root.rglob("*")):
+            if path.is_file():
+                generated_files.add(path)
+    for path in planned_files or []:
+        generated_files.add(Path(path))
+    generated_files.add(output)
+    with output.open("w", encoding="utf-8") as stream:
+        for path in sorted(generated_files):
+            size = path.stat().st_size if path.is_file() else None
+            row = make_row(
+                "generated-proof-output",
+                "generated-file",
+                rel_or_abs(path, proof_dir.parent),
+                "non-runtime-support-file",
+                "Generated proof/config/log output is evidence only and is not a retail runtime asset payload.",
+                extension=get_ext(path.name),
+                bytes=size,
+            )
+            stream.write(json.dumps(row, ensure_ascii=False) + "\n")
+            counters["generatedOutputRows"] += 1
+            counters["class:non-runtime-support-file"] += 1
+    return output
 
 
 def classify_runtime_profiles(rows, repo_root, pcvr_reference_config_dir):
@@ -523,6 +791,7 @@ def main():
     coverage = parse_loader_coverage(repo_root)
     main_rows = []
     counters = Counter()
+    failures = []
 
     manifest = read_json(harvest_dir / "manifest.json")
     plugins = read_json(harvest_dir / "plugins-metadata.json")
@@ -530,6 +799,15 @@ def main():
     ini_shapes = read_json(harvest_dir / "ini-shape-ledger.json")
     archive_entry_ledger = read_json(harvest_dir / "archive-entry-ledger.json")
     content_records = read_json(content_dir / "records.json")
+    content_result = read_json(content_dir / "result.json")
+
+    content_artifact_coverage = validate_content_artifacts(content_dir, content_result, content_records, failures)
+    content_plugin_coverage = validate_content_plugin_coverage(
+        main_rows, plugins, content_result, content_records, failures
+    )
+    archive_entry_coverage = validate_archive_entry_coverage(
+        harvest_dir, manifest, archives, archive_entry_ledger, failures
+    )
 
     for plugin in plugins:
         add_main_row(
@@ -603,10 +881,20 @@ def main():
             archive_extension_totals[get_ext(entry)] += 1
 
     for ext in sorted(archive_extension_totals):
-        classification, subsystem, proof = EXTENSION_RULES.get(
-            ext,
-            ("known-blocked", "unclassified-extension", "Extension is not in the asset classification map."),
-        )
+        if ext not in EXTENSION_RULES:
+            classification, subsystem, proof = (
+                "known-blocked",
+                "unclassified-extension",
+                "Extension is not in the asset classification map; this is a failing gate until explicitly classified.",
+            )
+            record_failure(
+                failures,
+                "unknown-bsa-entry-extension",
+                f"BSA entry extension lacks an explicit five-state classification rule: {ext}",
+                extension=ext,
+            )
+        else:
+            classification, subsystem, proof = EXTENSION_RULES[ext]
         add_main_row(
             main_rows,
             "asset-type",
@@ -625,10 +913,14 @@ def main():
             archive = archive_entry["archive"]
             for entry in list_path.read_text(encoding="utf-8", errors="replace").splitlines():
                 ext = get_ext(entry)
-                classification, subsystem, proof = EXTENSION_RULES.get(
-                    ext,
-                    ("known-blocked", "unclassified-extension", "Extension is not in the asset classification map."),
-                )
+                if ext not in EXTENSION_RULES:
+                    classification, subsystem, proof = (
+                        "known-blocked",
+                        "unclassified-extension",
+                        "Extension is not in the asset classification map; this is a failing gate until explicitly classified.",
+                    )
+                else:
+                    classification, subsystem, proof = EXTENSION_RULES[ext]
                 row = make_row(
                     "archive-entry",
                     "bsa-entry",
@@ -645,7 +937,7 @@ def main():
                 counters[f"class:{classification}"] += 1
 
     content_jsonl = proof_dir / "content-item-classification.jsonl"
-    classify_content_items(content_dir, content_jsonl, counters)
+    classify_content_items(content_dir, content_jsonl, counters, failures)
     classify_runtime_profiles(main_rows, repo_root, args.pcvr_reference_config_dir)
 
     for row in main_rows:
@@ -654,6 +946,17 @@ def main():
 
     unclassified = [row for row in main_rows if row["classification"] not in ALLOWED_CLASSIFICATIONS]
     known_blocked_count = counters["class:known-blocked"]
+    generated_output_jsonl = write_generated_output_classification(
+        proof_dir,
+        harvest_dir,
+        content_dir,
+        counters,
+        planned_files=[
+            proof_dir / "classification-ledger.json",
+            proof_dir / "result.json",
+            summary_file,
+        ],
+    )
     result = {
         "status": "PASS",
         "stamp": stamp,
@@ -666,6 +969,7 @@ def main():
             "mainRows": counters["mainRows"],
             "archiveEntryRows": counters["archiveEntryRows"],
             "contentRows": counters["contentRows"],
+            "generatedOutputRows": counters["generatedOutputRows"],
             "runtimeSupported": counters["class:runtime-supported"],
             "loadedPendingRuntime": counters["class:loaded-pending-runtime"],
             "knownBlocked": counters["class:known-blocked"],
@@ -678,16 +982,22 @@ def main():
             "mainLedger": str(proof_dir / "classification-ledger.json"),
             "archiveEntryClassification": str(entry_jsonl),
             "contentItemClassification": str(content_jsonl),
+            "generatedOutputClassification": str(generated_output_jsonl),
             "summary": str(summary_file),
             "result": str(proof_dir / "result.json"),
         },
         "harvestManifestCounts": manifest.get("counts", {}),
         "archiveExtensionTotals": dict(sorted(archive_extension_totals.items())),
+        "contentArtifactCoverage": content_artifact_coverage,
+        "contentPluginCoverage": content_plugin_coverage,
+        "archiveEntryCoverage": archive_entry_coverage,
+        "preflightFailures": failures,
     }
 
-    if unclassified:
+    if unclassified or failures:
         result["status"] = "FAIL"
-        result["unclassifiedRows"] = unclassified
+        if unclassified:
+            result["unclassifiedRows"] = unclassified
     if args.fail_known_blocked and known_blocked_count:
         result["status"] = "FAIL"
         result["knownBlockedFailure"] = True
