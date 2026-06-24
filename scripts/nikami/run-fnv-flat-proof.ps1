@@ -58,6 +58,8 @@ param(
     [double]$ScreenshotStabilityCropFraction = 0.65,
     [int]$ScreenshotTimingMinPostCameraFrames = 30,
     [int]$ScreenshotTimingMaxActorCameraAgeFrames = 90,
+    [switch]$RequireActorVisibleHandGeometry,
+    [double]$ActorVisibleHandMaxDistance = 30.0,
     [switch]$FnvPartMatrixAudit,
     [switch]$FnvDisableNativeAnimationCallbacks,
     [switch]$FnvDlodSettingsDiag,
@@ -206,6 +208,94 @@ function Count-ActorPostureMatches([string]$Path, [string[]]$ActorPatterns, [str
         $count += @((Select-String -LiteralPath $Path -Pattern "FNV/ESM4 diag: $Kind $pattern .* verdict=$Verdict" -ErrorAction SilentlyContinue)).Count
     }
     return $count
+}
+
+function Convert-LogFloat([string]$Text) {
+    return [double]::Parse($Text, [System.Globalization.CultureInfo]::InvariantCulture)
+}
+
+function Format-ProofNumber([object]$Value) {
+    if ($null -eq $Value) { return "n/a" }
+    return ([double]$Value).ToString("0.###", [System.Globalization.CultureInfo]::InvariantCulture)
+}
+
+function Get-ActorVisibleHandGeometryProbe([string]$Path, [string[]]$ActorPatterns, [double]$MaxDistance) {
+    if (!(Test-Path -LiteralPath $Path) -or $ActorPatterns.Count -eq 0) {
+        return [pscustomobject]@{
+            Status = "MISSING"
+            SampleCount = 0
+            LeftBestDistance = $null
+            RightBestDistance = $null
+            MaxDistance = $MaxDistance
+            FailureLine = $null
+        }
+    }
+
+    $seen = [System.Collections.Generic.HashSet[string]]::new()
+    $samples = [System.Collections.Generic.List[object]]::new()
+    foreach ($pattern in $ActorPatterns) {
+        $matches = @(Select-String -LiteralPath $Path -Pattern "FNV/ESM4 ACTOR HAND GEOMETRY AUDIT $pattern " -ErrorAction SilentlyContinue)
+        foreach ($match in $matches) {
+            if (!$seen.Add($match.Line)) { continue }
+
+            $side = "unknown"
+            if ($match.Line -match " side=([^ ]+)") { $side = $Matches[1] }
+
+            $renderValid = $false
+            if ($match.Line -match " renderValid=([^ ]+)") {
+                $renderValid = $Matches[1] -eq "1" -or $Matches[1] -eq "true"
+            }
+
+            $renderDistance = $null
+            if ($match.Line -match " renderDistance=([-+0-9.eE]+)") {
+                $renderDistance = Convert-LogFloat $Matches[1]
+            }
+
+            $samples.Add([pscustomobject]@{
+                Side = $side
+                RenderValid = $renderValid
+                RenderDistance = $renderDistance
+                Line = $match.Line
+            })
+        }
+    }
+
+    $bestLeft = $samples |
+        Where-Object { $_.Side -eq "left" -and $_.RenderValid -and $null -ne $_.RenderDistance -and $_.RenderDistance -ge 0 } |
+        Sort-Object RenderDistance |
+        Select-Object -First 1
+    $bestRight = $samples |
+        Where-Object { $_.Side -eq "right" -and $_.RenderValid -and $null -ne $_.RenderDistance -and $_.RenderDistance -ge 0 } |
+        Sort-Object RenderDistance |
+        Select-Object -First 1
+
+    $leftDistance = if ($null -ne $bestLeft) { [double]$bestLeft.RenderDistance } else { $null }
+    $rightDistance = if ($null -ne $bestRight) { [double]$bestRight.RenderDistance } else { $null }
+    $leftOk = $null -ne $leftDistance -and $leftDistance -le $MaxDistance
+    $rightOk = $null -ne $rightDistance -and $rightDistance -le $MaxDistance
+    $status = if ($leftOk -and $rightOk) { "PASS" } elseif ($samples.Count -gt 0) { "FAIL" } else { "MISSING" }
+
+    $failureLine = $null
+    if ($status -ne "PASS") {
+        if ($null -ne $bestLeft -and ($null -eq $failureLine -or [double]$bestLeft.RenderDistance -gt $MaxDistance)) {
+            $failureLine = $bestLeft.Line
+        }
+        if ($null -ne $bestRight -and [double]$bestRight.RenderDistance -gt $MaxDistance) {
+            $failureLine = $bestRight.Line
+        }
+        if ($null -eq $failureLine -and $samples.Count -gt 0) {
+            $failureLine = $samples[0].Line
+        }
+    }
+
+    return [pscustomobject]@{
+        Status = $status
+        SampleCount = $samples.Count
+        LeftBestDistance = $leftDistance
+        RightBestDistance = $rightDistance
+        MaxDistance = $MaxDistance
+        FailureLine = $failureLine
+    }
 }
 
 function Get-ScreenshotStabilityResult(
@@ -1381,6 +1471,8 @@ try {
     Write-ProofLine "ScreenshotStabilityCropFraction: $ScreenshotStabilityCropFraction"
     Write-ProofLine "ScreenshotTimingMinPostCameraFrames: $ScreenshotTimingMinPostCameraFrames"
     Write-ProofLine "ScreenshotTimingMaxActorCameraAgeFrames: $ScreenshotTimingMaxActorCameraAgeFrames"
+    Write-ProofLine "RequireActorVisibleHandGeometry: $RequireActorVisibleHandGeometry"
+    Write-ProofLine "ActorVisibleHandMaxDistance: $ActorVisibleHandMaxDistance"
     Write-ProofLine "BootstrapCell: $BootstrapCell"
     Write-ProofLine "FlatCameraPitch: $FlatCameraPitch"
     Write-ProofLine "FlatCameraYaw: $FlatCameraYaw"
@@ -1448,6 +1540,7 @@ $targetWorldPostureBadLines = Count-ActorPostureMatches $OpenMwLog $actorProofPa
 $targetWorldPostureOkLines = Count-ActorPostureMatches $OpenMwLog $actorProofPatterns "world posture" "OK"
 $targetStandingArmPoseBadLines = Count-ActorPostureMatches $OpenMwLog $actorProofPatterns "standing arm pose" "BAD"
 $targetStandingArmPoseOkLines = Count-ActorPostureMatches $OpenMwLog $actorProofPatterns "standing arm pose" "OK"
+$targetVisibleHandGeometry = Get-ActorVisibleHandGeometryProbe $OpenMwLog $actorProofPatterns $ActorVisibleHandMaxDistance
 $unsupportedEsm4Skips = @(Get-UnsupportedEsm4Skips $OpenMwLog)
 $screenshots = @(Get-ChildItem -LiteralPath $ProofDir -Filter "*.png" -File -ErrorAction SilentlyContinue)
 $screenshotStability = [pscustomobject](Get-ScreenshotStabilityResult `
@@ -1494,6 +1587,15 @@ Write-ProofLine "Target world posture OK lines: $targetWorldPostureOkLines"
 Write-ProofLine "Target world posture BAD lines: $targetWorldPostureBadLines"
 Write-ProofLine "Target standing arm pose OK lines: $targetStandingArmPoseOkLines"
 Write-ProofLine "Target standing arm pose BAD lines: $targetStandingArmPoseBadLines"
+Write-ProofLine "Target visible hand geometry status: $($targetVisibleHandGeometry.Status)"
+Write-ProofLine ("Target visible hand geometry samples: {0} leftBest={1} rightBest={2} maxDistance={3}" -f `
+    $targetVisibleHandGeometry.SampleCount, `
+    (Format-ProofNumber $targetVisibleHandGeometry.LeftBestDistance), `
+    (Format-ProofNumber $targetVisibleHandGeometry.RightBestDistance), `
+    (Format-ProofNumber $targetVisibleHandGeometry.MaxDistance))
+if (![string]::IsNullOrWhiteSpace($targetVisibleHandGeometry.FailureLine)) {
+    Write-ProofLine "Target visible hand geometry failure line: $($targetVisibleHandGeometry.FailureLine)"
+}
 Write-ProofLine "Screenshot stability status: $($screenshotStability.status)"
 Write-ProofLine "Screenshot timing status: $($screenshotTiming.status)"
 foreach ($pair in $screenshotStability.pairs) {
@@ -1523,6 +1625,9 @@ if (![string]::IsNullOrWhiteSpace($ActorTarget) -and $targetWorldPostureBadLines
 if (![string]::IsNullOrWhiteSpace($ActorTarget) -and $targetStandingArmPoseBadLines -gt 0) { throw "FNV actor proof saw target standing arm bind/T-pose lines. See $OpenMwLog" }
 if (![string]::IsNullOrWhiteSpace($ActorTarget) -and $targetWorldPostureOkLines -eq 0) { throw "FNV actor proof did not log target world posture lines. See $OpenMwLog" }
 if (![string]::IsNullOrWhiteSpace($ActorTarget) -and $targetStandingArmPoseOkLines -eq 0) { throw "FNV actor proof did not log target standing arm pose lines. See $OpenMwLog" }
+if ($RequireActorVisibleHandGeometry -and [string]::IsNullOrWhiteSpace($ActorTarget)) { throw "FNV actor visible hand geometry proof requires ActorTarget." }
+if ($RequireActorVisibleHandGeometry -and !$FnvPartMatrixAudit) { throw "FNV actor visible hand geometry proof requires FnvPartMatrixAudit." }
+if ($RequireActorVisibleHandGeometry -and $targetVisibleHandGeometry.Status -ne "PASS") { throw "FNV actor proof did not prove visible skinned hand geometry follows animated hand anchors. See $OpenMwLog" }
 if ($RequirePlayerTerrainSupport -and $playerSupportMissLines -gt 0) { throw "FNV flat proof saw player terrain support misses. See $OpenMwLog" }
 if ($RequirePlayerTerrainSupport -and $airborneLines -gt 0) { throw "FNV flat proof saw walk airborne frames. See $OpenMwLog" }
 if ($RequireTerrainProbeFullSupport -and $namedProbeLines -eq 0) { throw "FNV flat proof did not log named terrain probe lines. See $OpenMwLog" }

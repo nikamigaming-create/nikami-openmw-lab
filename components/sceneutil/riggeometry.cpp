@@ -1,6 +1,7 @@
 #include "riggeometry.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdlib>
 #include <limits>
@@ -101,6 +102,45 @@ namespace SceneUtil
             if (const char* env = std::getenv("OPENMW_FNV_USE_SKIN_TO_SKEL"))
                 return std::string_view(env) != "0";
             return false;
+        }
+
+        bool shouldLogFalloutMatrixAudit(std::string_view name, std::string_view rootBone)
+        {
+            const char* env = std::getenv("OPENMW_FNV_SKINNING_MATRIX_AUDIT");
+            if (env == nullptr)
+                return false;
+
+            const std::string_view filter(env);
+            if (filter.empty() || filter == "1" || Misc::StringUtils::ciEqual(filter, "true")
+                || Misc::StringUtils::ciEqual(filter, "all"))
+                return true;
+
+            return Misc::StringUtils::ciFind(name, filter) != std::string_view::npos
+                || Misc::StringUtils::ciFind(rootBone, filter) != std::string_view::npos;
+        }
+
+        osg::Matrixf makeFalloutSkinningAccumulator()
+        {
+            return osg::Matrixf(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1);
+        }
+
+        void addWeightedFalloutMatrix(osg::Matrixf& result, const osg::Matrixf& matrix, float weight)
+        {
+            const float* source = matrix.ptr();
+            float* destination = result.ptr();
+            for (int i = 0; i < 16; ++i, ++source, ++destination)
+            {
+                if (i % 4 == 3)
+                    continue;
+                *destination += *source * weight;
+            }
+        }
+
+        std::string vec3ToString(const osg::Vec3f& value)
+        {
+            std::ostringstream stream;
+            stream << "(" << value.x() << "," << value.y() << "," << value.z() << ")";
+            return stream.str();
         }
 
         osg::Matrixf composeFalloutBoneMatrix(
@@ -636,6 +676,174 @@ namespace SceneUtil
                              << " sourceFallback=" << mFalloutUseSourceFallback
                              << " hasSkinToSkel=" << static_cast<bool>(mSkinToSkelMatrix)
                              << " useSkinToSkel=" << useFalloutSkinToSkelMatrix();
+        }
+
+        if (falloutRig && !mLoggedFalloutMatrixAudit
+            && shouldLogFalloutMatrixAudit(getName(), mData->mRootBone) && positionSrc != nullptr
+            && !mData->mInfluences.empty())
+        {
+            mLoggedFalloutMatrixAudit = true;
+
+            osg::Matrixf identity;
+            identity.makeIdentity();
+            osg::Matrixf skinToSkel;
+            skinToSkel.makeIdentity();
+            if (mSkinToSkelMatrix != nullptr)
+                skinToSkel = *mSkinToSkelMatrix;
+            const osg::Matrixf skinToSkelThenTransform = skinToSkel * mData->mTransform;
+
+            std::ostringstream pathStream;
+            const osg::NodePath& path = nv->getNodePath();
+            for (std::size_t i = 0; i < path.size(); ++i)
+            {
+                if (i != 0)
+                    pathStream << "/";
+                const osg::Node* node = path[i];
+                pathStream << (node != nullptr && !node->getName().empty() ? node->getName() : "<unnamed>");
+            }
+
+            Log(Debug::Info) << "FNV/ESM4 SKIN MATRIX AUDIT rig='" << getName()
+                             << "' rootBone='" << mData->mRootBone
+                             << "' selected=" << falloutSkinningMode
+                             << " inventoryPaperDoll=" << falloutInventoryPaperDoll
+                             << " bones=" << mData->mBones.size()
+                             << " groups=" << mData->mInfluences.size()
+                             << " hasSkinToSkel=" << static_cast<bool>(mSkinToSkelMatrix)
+                             << " transformT=" << vec3ToString(mData->mTransform.getTrans())
+                             << " skinToSkelT=" << vec3ToString(skinToSkel.getTrans())
+                             << " skinToSkelThenTransformT=" << vec3ToString(skinToSkelThenTransform.getTrans())
+                             << " path='" << pathStream.str() << "'";
+
+            std::vector<std::pair<std::size_t, unsigned short>> samples;
+            auto addSample = [&](std::size_t groupIndex, unsigned short vertex) {
+                if (samples.size() >= 6)
+                    return;
+                const auto duplicate = std::find_if(samples.begin(), samples.end(), [&](const auto& sample) {
+                    return sample.first == groupIndex && sample.second == vertex;
+                });
+                if (duplicate == samples.end())
+                    samples.emplace_back(groupIndex, vertex);
+            };
+
+            const std::array<std::string_view, 8> targetBones = { "r hand", "l hand", "r upperarm", "l upperarm",
+                "spine2", "head", "r forearm", "l forearm" };
+            for (std::string_view target : targetBones)
+            {
+                std::size_t groupIndex = 0;
+                for (const auto& [influences, vertices] : mData->mInfluences)
+                {
+                    bool matched = false;
+                    for (const auto& [index, weight] : influences)
+                    {
+                        if (weight <= 0.f || index >= mData->mBones.size())
+                            continue;
+                        if (Misc::StringUtils::ciFind(mData->mBones[index].mName, target) != std::string_view::npos)
+                        {
+                            matched = true;
+                            break;
+                        }
+                    }
+                    if (matched && !vertices.empty())
+                    {
+                        addSample(groupIndex, vertices.front());
+                        break;
+                    }
+                    ++groupIndex;
+                }
+            }
+            if (samples.empty() && !mData->mInfluences.front().second.empty())
+                samples.emplace_back(0, mData->mInfluences.front().second.front());
+
+            auto weightedMatrixFor = [&](std::string_view mode, const BoneWeights& influences) {
+                osg::Matrixf result = makeFalloutSkinningAccumulator();
+                for (const auto& [index, weight] : influences)
+                {
+                    if (index >= mNodes.size() || index >= mData->mBones.size() || mNodes[index] == nullptr)
+                        continue;
+
+                    osg::Matrixf boneMat;
+                    if (mode == "selected")
+                        boneMat = boneMatrices[index];
+                    else if (mode == "legacy")
+                        boneMat = mData->mBones[index].mInvBindMatrix * mNodes[index]->mMatrixInSkeletonSpace;
+                    else
+                        boneMat = composeFalloutBoneMatrix(mData->mBones[index], mNodes[index], mode);
+                    addWeightedFalloutMatrix(result, boneMat, weight);
+                }
+                return result;
+            };
+
+            auto skinnedPosition = [&](const osg::Matrixf& weightedMatrix, const osg::Matrixf& skinTransform,
+                                       const osg::Vec3f& source) {
+                osg::Matrixf result = weightedMatrix;
+                result *= skinTransform;
+                return result.preMult(source);
+            };
+
+            for (std::size_t sampleIndex = 0; sampleIndex < samples.size(); ++sampleIndex)
+            {
+                const auto& [groupIndex, vertex] = samples[sampleIndex];
+                if (groupIndex >= mData->mInfluences.size() || vertex >= positionSrc->size())
+                    continue;
+
+                const BoneWeights& influences = mData->mInfluences[groupIndex].first;
+                const osg::Vec3f& source = (*positionSrc)[vertex];
+                const osg::Matrixf selected = weightedMatrixFor("selected", influences);
+                const osg::Matrixf legacy = weightedMatrixFor("legacy", influences);
+                const osg::Matrixf skeleton = weightedMatrixFor("skeleton", influences);
+                const osg::Matrixf skeletonThenInvBind = weightedMatrixFor("skeletonThenInvBind", influences);
+                const osg::Matrixf bindThenSkeleton = weightedMatrixFor("bindThenSkeleton", influences);
+                const osg::Matrixf skeletonThenBind = weightedMatrixFor("skeletonThenBind", influences);
+
+                std::ostringstream influenceStream;
+                for (std::size_t influenceIndex = 0; influenceIndex < influences.size(); ++influenceIndex)
+                {
+                    const auto& [boneIndex, weight] = influences[influenceIndex];
+                    if (influenceIndex != 0)
+                        influenceStream << ";";
+                    influenceStream << boneIndex << ":"
+                                    << (boneIndex < mData->mBones.size() ? mData->mBones[boneIndex].mName : "<bad>")
+                                    << "@" << weight;
+                    if (boneIndex < mData->mBones.size())
+                    {
+                        osg::Matrixf bind;
+                        const bool hasBind = bind.invert(mData->mBones[boneIndex].mInvBindMatrix);
+                        influenceStream << " invBindT="
+                                        << vec3ToString(mData->mBones[boneIndex].mInvBindMatrix.getTrans());
+                        if (hasBind)
+                            influenceStream << " bindT=" << vec3ToString(bind.getTrans());
+                    }
+                    if (boneIndex < mNodes.size() && mNodes[boneIndex] != nullptr)
+                    {
+                        influenceStream << " skelT="
+                                        << vec3ToString(mNodes[boneIndex]->mMatrixInSkeletonSpace.getTrans());
+                        if (mNodes[boneIndex]->mNode != nullptr)
+                            influenceStream << " localT=" << vec3ToString(mNodes[boneIndex]->mNode->getMatrix().getTrans());
+                    }
+                }
+
+                Log(Debug::Info) << "FNV/ESM4 SKIN MATRIX AUDIT rig='" << getName()
+                                 << "' sample=" << sampleIndex
+                                 << " group=" << groupIndex
+                                 << " vertex=" << vertex
+                                 << " source=" << vec3ToString(source)
+                                 << " selected=" << vec3ToString(skinnedPosition(selected, transform, source))
+                                 << " legacyNoRoot=" << vec3ToString(skinnedPosition(legacy, mData->mTransform, source))
+                                 << " legacySkinToSkel="
+                                 << vec3ToString(skinnedPosition(legacy, skinToSkelThenTransform, source))
+                                 << " skeletonNoRoot=" << vec3ToString(skinnedPosition(skeleton, mData->mTransform, source))
+                                 << " skeletonSkinToSkel="
+                                 << vec3ToString(skinnedPosition(skeleton, skinToSkelThenTransform, source))
+                                 << " skeletonThenInvBindNoRoot="
+                                 << vec3ToString(skinnedPosition(skeletonThenInvBind, mData->mTransform, source))
+                                 << " skeletonThenInvBindSkinToSkel="
+                                 << vec3ToString(skinnedPosition(skeletonThenInvBind, skinToSkelThenTransform, source))
+                                 << " bindThenSkeletonNoRoot="
+                                 << vec3ToString(skinnedPosition(bindThenSkeleton, mData->mTransform, source))
+                                 << " skeletonThenBindNoRoot="
+                                 << vec3ToString(skinnedPosition(skeletonThenBind, mData->mTransform, source))
+                                 << " influences=[" << influenceStream.str() << "]";
+            }
         }
 
         float maxFalloutVertexDelta = 0.f;

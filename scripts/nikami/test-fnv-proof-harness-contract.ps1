@@ -75,6 +75,8 @@ foreach ($needle in @(
     "[switch]`$RequireScreenshotStability",
     "[int]`$ScreenshotTimingMinPostCameraFrames",
     "[int]`$ScreenshotTimingMaxActorCameraAgeFrames",
+    "[switch]`$RequireActorVisibleHandGeometry",
+    "[double]`$ActorVisibleHandMaxDistance",
     "[switch]`$RequireSkyColorSanity"
 )) {
     Assert-Text $flat $needle "flat proof parameter $needle"
@@ -85,6 +87,8 @@ Assert-Text $flat "World posture BAD lines:" "flat proof reports bad world postu
 Assert-Text $flat "Standing arm pose BAD lines:" "flat proof reports standing arm bind/T-pose lines"
 Assert-Text $flat "Target world posture BAD lines:" "flat proof reports target bad world posture lines"
 Assert-Text $flat "Target standing arm pose BAD lines:" "flat proof reports target standing arm bind/T-pose lines"
+Assert-Text $flat "Target visible hand geometry status:" "flat proof reports target visible skinned hand geometry"
+Assert-Text $flat "did not prove visible skinned hand geometry follows animated hand anchors" "flat proof fails when visible hand skin does not follow skeleton"
 Assert-Text $flat "Screenshot stability status:" "flat proof reports screenshot stability"
 Assert-Text $flat "screenshot-stability.json" "flat proof writes screenshot stability JSON"
 Assert-Text $flat "Screenshot timing status:" "flat proof reports post-settle screenshot timing"
@@ -101,6 +105,7 @@ Assert-Text $mugshot "[switch]`$DisableNativeAnimationCallbacks" "mugshot native
 Assert-Text $mugshot "[double]`$BootstrapHour = 3" "mugshot defaults to neutral standing package hour"
 Assert-Text $mugshot "BootstrapHour = `$BootstrapHour" "mugshot passes explicit package hour to flat proof"
 Assert-Text $mugshot "RequireScreenshotStability = `$true" "mugshot requires screenshot stability"
+Assert-Text $mugshot "RequireActorVisibleHandGeometry = `$true" "mugshot requires visible skinned hand geometry"
 Assert-Text $mugshot "world posture .* verdict=BAD" "mugshot parses bad world posture failures"
 Assert-Text $mugshot "standing arm pose .* verdict=BAD" "mugshot parses standing arm bind/T-pose failures"
 Assert-Text $mugshot "MachineWorldPostureBad" "mugshot human review includes machine world posture failure column"

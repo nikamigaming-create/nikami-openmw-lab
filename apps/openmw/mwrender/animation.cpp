@@ -5651,6 +5651,7 @@ namespace MWRender
                     auditFalloutSeatedUpperBody(duplicateTransformTargets, mPtr);
                 }
                 auditFalloutWorldPosture(duplicateTransformTargets, mPtr);
+                auditFalloutStandingArmPose(duplicateTransformTargets, mPtr);
                 auditFalloutRuntimeParts(mObjectRoot.get(), duplicateTransformTargets, mPtr);
             }
         }

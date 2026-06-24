@@ -561,6 +561,7 @@ function Invoke-MugshotTarget {
         RequirePlayerTerrainSupport = $true
         RequireFlatCameraSettled = $true
         RequireScreenshotStability = $true
+        RequireActorVisibleHandGeometry = $true
         FnvPartMatrixAudit = $true
     }
     if ($DisableNativeAnimationCallbacks) { $proofArgs.FnvDisableNativeAnimationCallbacks = $true }

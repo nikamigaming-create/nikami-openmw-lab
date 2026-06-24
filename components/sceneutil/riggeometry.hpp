@@ -133,6 +133,7 @@ namespace SceneUtil
         bool mLoggedFalloutVertexSkinning{ false };
         bool mLoggedFalloutInfluenceSummary{ false };
         bool mLoggedFalloutSkinningModes{ false };
+        bool mLoggedFalloutMatrixAudit{ false };
         bool mLoggedFalloutPoseSanity{ false };
         bool mLoggedFalloutCullInitRecovery{ false };
         bool mFalloutDerivedInvBindComputed{ false };
