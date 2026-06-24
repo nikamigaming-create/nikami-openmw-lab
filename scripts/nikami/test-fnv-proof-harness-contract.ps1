@@ -71,6 +71,7 @@ foreach ($needle in @(
     "[switch]`$StageActor",
     "[switch]`$RequirePlayerTerrainSupport",
     "[switch]`$RequireFlatCameraSettled",
+    "[switch]`$RequireScreenshotStability",
     "[switch]`$RequireSkyColorSanity"
 )) {
     Assert-Text $flat $needle "flat proof parameter $needle"
@@ -79,13 +80,20 @@ foreach ($needle in @(
 Assert-Text $flat "OPENMW_PROOF_POSTURE_TARGET" "flat proof asks runtime to audit targeted actor posture"
 Assert-Text $flat "World posture BAD lines:" "flat proof reports bad world posture lines"
 Assert-Text $flat "Standing arm pose BAD lines:" "flat proof reports standing arm bind/T-pose lines"
+Assert-Text $flat "Target world posture BAD lines:" "flat proof reports target bad world posture lines"
+Assert-Text $flat "Target standing arm pose BAD lines:" "flat proof reports target standing arm bind/T-pose lines"
+Assert-Text $flat "Screenshot stability status:" "flat proof reports screenshot stability"
+Assert-Text $flat "screenshot-stability.json" "flat proof writes screenshot stability JSON"
 Assert-Text $flat "bad world posture" "flat proof fails targeted actor bad world posture"
 Assert-Text $flat "standing arm bind/T-pose" "flat proof fails targeted actor bind/T-pose posture"
+Assert-Text $flat "did not prove screenshot stability" "flat proof fails unstable screenshot capture"
 Assert-Text $mugshot "[switch]`$DisableNativeAnimationCallbacks" "mugshot native callback disable is explicit opt-in"
+Assert-Text $mugshot "RequireScreenshotStability = `$true" "mugshot requires screenshot stability"
 Assert-Text $mugshot "world posture .* verdict=BAD" "mugshot parses bad world posture failures"
 Assert-Text $mugshot "standing arm pose .* verdict=BAD" "mugshot parses standing arm bind/T-pose failures"
 Assert-Text $mugshot "MachineWorldPostureBad" "mugshot human review includes machine world posture failure column"
 Assert-Text $mugshot "MachineArmPoseBad" "mugshot human review includes machine arm pose failure column"
+Assert-Text $mugshot "MachineScreenshotStability" "mugshot human review includes screenshot stability column"
 Assert-Text $doc "ActorTarget = `"DocMitchell`"" "Doc Mitchell actor target"
 Assert-Text $doc "FNV/ESM4 FACE CHECK DocMitchell:" "Doc Mitchell face asset assertion"
 Assert-Text $doc "FNV/ESM4 diag: play matched FormId:0x1104c0c group 'idle'" "Doc Mitchell animation assertion"

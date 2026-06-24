@@ -52,6 +52,10 @@ param(
     [double]$WalkMinZ = [double]::NaN,
     [switch]$RequirePlayerTerrainSupport,
     [switch]$RequireFlatCameraSettled,
+    [switch]$RequireScreenshotStability,
+    [double]$ScreenshotStabilityMaxMeanAbsDelta = 18.0,
+    [double]$ScreenshotStabilityMaxHighDeltaRatio = 0.35,
+    [double]$ScreenshotStabilityCropFraction = 0.65,
     [switch]$FnvPartMatrixAudit,
     [switch]$FnvDisableNativeAnimationCallbacks,
     [switch]$FnvDlodSettingsDiag,
@@ -163,6 +167,132 @@ function Copy-IfPresent([string]$Source, [string]$Destination) {
 function Count-LogMatches([string]$Path, [string]$Pattern) {
     if (!(Test-Path -LiteralPath $Path)) { return 0 }
     return @((Select-String -LiteralPath $Path -Pattern $Pattern -ErrorAction SilentlyContinue)).Count
+}
+
+function Get-FirstLogLine([string]$Path, [string]$Pattern) {
+    if (!(Test-Path -LiteralPath $Path)) { return $null }
+    $match = Select-String -LiteralPath $Path -Pattern $Pattern -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($null -eq $match) { return $null }
+    return $match.Line
+}
+
+function Get-ActorProofPatterns([string]$Path, [string]$Target) {
+    $patterns = [System.Collections.Generic.List[string]]::new()
+    if ([string]::IsNullOrWhiteSpace($Target)) { return @() }
+
+    $patterns.Add([regex]::Escape($Target))
+    $targetPattern = [regex]::Escape($Target)
+    $matchLine = Get-FirstLogLine $Path "active-cell actor match target=`"$targetPattern`""
+    if ($matchLine) {
+        if ($matchLine -match "ref=([^ ]+)") { $patterns.Add([regex]::Escape($Matches[1])) }
+        if ($matchLine -match "base=([^ ]+)") { $patterns.Add([regex]::Escape($Matches[1])) }
+    }
+
+    $seen = [System.Collections.Generic.HashSet[string]]::new()
+    $result = [System.Collections.Generic.List[string]]::new()
+    foreach ($pattern in $patterns) {
+        if ($seen.Add($pattern)) { $result.Add($pattern) }
+    }
+    return @($result)
+}
+
+function Count-ActorPostureMatches([string]$Path, [string[]]$ActorPatterns, [string]$Kind, [string]$Verdict) {
+    if (!(Test-Path -LiteralPath $Path) -or $ActorPatterns.Count -eq 0) { return 0 }
+
+    $count = 0
+    foreach ($pattern in $ActorPatterns) {
+        $count += @((Select-String -LiteralPath $Path -Pattern "FNV/ESM4 diag: $Kind $pattern .* verdict=$Verdict" -ErrorAction SilentlyContinue)).Count
+    }
+    return $count
+}
+
+function Get-ScreenshotStabilityResult(
+    [object[]]$Screenshots,
+    [double]$MaxMeanAbsDelta,
+    [double]$MaxHighDeltaRatio,
+    [double]$CropFraction) {
+    Add-Type -AssemblyName System.Drawing -ErrorAction SilentlyContinue
+
+    $ordered = @($Screenshots | Sort-Object Name)
+    $pairs = @()
+    if ($ordered.Count -lt 2) {
+        return [ordered]@{
+            status = "MISSING"
+            screenshotCount = $ordered.Count
+            maxMeanAbsDelta = $MaxMeanAbsDelta
+            maxHighDeltaRatio = $MaxHighDeltaRatio
+            cropFraction = $CropFraction
+            pairs = $pairs
+        }
+    }
+
+    $allPass = $true
+    for ($index = 1; $index -lt $ordered.Count; ++$index) {
+        $previous = $ordered[$index - 1]
+        $current = $ordered[$index]
+        $previousBitmap = $null
+        $currentBitmap = $null
+        try {
+            $previousBitmap = [System.Drawing.Bitmap]::FromFile($previous.FullName)
+            $currentBitmap = [System.Drawing.Bitmap]::FromFile($current.FullName)
+            $width = [Math]::Min($previousBitmap.Width, $currentBitmap.Width)
+            $height = [Math]::Min($previousBitmap.Height, $currentBitmap.Height)
+            $crop = [Math]::Max(0.10, [Math]::Min(1.0, $CropFraction))
+            $cropWidth = [Math]::Max(1, [int][Math]::Round($width * $crop))
+            $cropHeight = [Math]::Max(1, [int][Math]::Round($height * $crop))
+            $startX = [Math]::Max(0, [int][Math]::Floor(($width - $cropWidth) / 2.0))
+            $startY = [Math]::Max(0, [int][Math]::Floor(($height - $cropHeight) / 2.0))
+            $stepX = [Math]::Max(1, [int][Math]::Floor($cropWidth / 96.0))
+            $stepY = [Math]::Max(1, [int][Math]::Floor($cropHeight / 54.0))
+            $samples = 0
+            $sumDelta = 0.0
+            $maxDelta = 0.0
+            $highDelta = 0
+
+            for ($y = $startY; $y -lt ($startY + $cropHeight); $y += $stepY) {
+                for ($x = $startX; $x -lt ($startX + $cropWidth); $x += $stepX) {
+                    $a = $previousBitmap.GetPixel($x, $y)
+                    $b = $currentBitmap.GetPixel($x, $y)
+                    $delta = ([Math]::Abs([double]$a.R - [double]$b.R) `
+                        + [Math]::Abs([double]$a.G - [double]$b.G) `
+                        + [Math]::Abs([double]$a.B - [double]$b.B)) / 3.0
+                    $sumDelta += $delta
+                    if ($delta -gt $maxDelta) { $maxDelta = $delta }
+                    if ($delta -gt 45.0) { $highDelta++ }
+                    $samples++
+                }
+            }
+
+            $meanDelta = if ($samples -gt 0) { $sumDelta / $samples } else { [double]::PositiveInfinity }
+            $highDeltaRatio = if ($samples -gt 0) { $highDelta / $samples } else { 1.0 }
+            $pass = $meanDelta -le $MaxMeanAbsDelta -and $highDeltaRatio -le $MaxHighDeltaRatio
+            if (!$pass) { $allPass = $false }
+            $pairs += [pscustomobject][ordered]@{
+                previous = $previous.Name
+                current = $current.Name
+                width = $width
+                height = $height
+                samples = $samples
+                meanAbsDelta = [Math]::Round($meanDelta, 4)
+                maxAbsDelta = [Math]::Round($maxDelta, 4)
+                highDeltaRatio = [Math]::Round($highDeltaRatio, 6)
+                pass = $pass
+            }
+        }
+        finally {
+            if ($null -ne $previousBitmap) { $previousBitmap.Dispose() }
+            if ($null -ne $currentBitmap) { $currentBitmap.Dispose() }
+        }
+    }
+
+    return [ordered]@{
+        status = if ($allPass) { "PASS" } else { "FAIL" }
+        screenshotCount = $ordered.Count
+        maxMeanAbsDelta = $MaxMeanAbsDelta
+        maxHighDeltaRatio = $MaxHighDeltaRatio
+        cropFraction = $CropFraction
+        pairs = $pairs
+    }
 }
 
 function Assert-LogPattern([string]$Path, [string]$Pattern) {
@@ -1086,6 +1216,10 @@ try {
     Write-ProofLine "RequireSkyPaletteMatch: $RequireSkyPaletteMatch"
     Write-ProofLine "RequireSunVisible: $RequireSunVisible"
     Write-ProofLine "RequireSunDirectionRuntime: $RequireSunDirectionRuntime"
+    Write-ProofLine "RequireScreenshotStability: $RequireScreenshotStability"
+    Write-ProofLine "ScreenshotStabilityMaxMeanAbsDelta: $ScreenshotStabilityMaxMeanAbsDelta"
+    Write-ProofLine "ScreenshotStabilityMaxHighDeltaRatio: $ScreenshotStabilityMaxHighDeltaRatio"
+    Write-ProofLine "ScreenshotStabilityCropFraction: $ScreenshotStabilityCropFraction"
     Write-ProofLine "BootstrapCell: $BootstrapCell"
     Write-ProofLine "FlatCameraPitch: $FlatCameraPitch"
     Write-ProofLine "FlatCameraYaw: $FlatCameraYaw"
@@ -1148,8 +1282,20 @@ $worldPostureBadLines = Count-LogMatches $OpenMwLog "FNV/ESM4 diag: world postur
 $worldPostureOkLines = Count-LogMatches $OpenMwLog "FNV/ESM4 diag: world posture .* verdict=OK"
 $standingArmPoseBadLines = Count-LogMatches $OpenMwLog "FNV/ESM4 diag: standing arm pose .* verdict=BAD"
 $standingArmPoseOkLines = Count-LogMatches $OpenMwLog "FNV/ESM4 diag: standing arm pose .* verdict=OK"
+$actorProofPatterns = @(Get-ActorProofPatterns $OpenMwLog $ActorTarget)
+$targetWorldPostureBadLines = Count-ActorPostureMatches $OpenMwLog $actorProofPatterns "world posture" "BAD"
+$targetWorldPostureOkLines = Count-ActorPostureMatches $OpenMwLog $actorProofPatterns "world posture" "OK"
+$targetStandingArmPoseBadLines = Count-ActorPostureMatches $OpenMwLog $actorProofPatterns "standing arm pose" "BAD"
+$targetStandingArmPoseOkLines = Count-ActorPostureMatches $OpenMwLog $actorProofPatterns "standing arm pose" "OK"
 $unsupportedEsm4Skips = @(Get-UnsupportedEsm4Skips $OpenMwLog)
 $screenshots = @(Get-ChildItem -LiteralPath $ProofDir -Filter "*.png" -File -ErrorAction SilentlyContinue)
+$screenshotStability = [pscustomobject](Get-ScreenshotStabilityResult `
+    $screenshots `
+    $ScreenshotStabilityMaxMeanAbsDelta `
+    $ScreenshotStabilityMaxHighDeltaRatio `
+    $ScreenshotStabilityCropFraction)
+$screenshotStabilityPath = Join-Path $ProofDir "screenshot-stability.json"
+$screenshotStability | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $screenshotStabilityPath -Encoding UTF8
 
 Write-ProofLine ""
 Write-ProofLine "Artifacts:"
@@ -1158,6 +1304,7 @@ Write-ProofLine "MyGUI log: $MyGuiLog"
 Write-ProofLine "Stdout log: $StdoutLog"
 Write-ProofLine "Stderr log: $StderrLog"
 Write-ProofLine "Screenshots: $($screenshots.Count)"
+Write-ProofLine "Screenshot stability JSON: $screenshotStabilityPath"
 Write-ProofLine ""
 Write-ProofLine "Runtime probes:"
 Write-ProofLine "Real fatal/blocker lines: $fatalCount"
@@ -1172,6 +1319,16 @@ Write-ProofLine "World posture OK lines: $worldPostureOkLines"
 Write-ProofLine "World posture BAD lines: $worldPostureBadLines"
 Write-ProofLine "Standing arm pose OK lines: $standingArmPoseOkLines"
 Write-ProofLine "Standing arm pose BAD lines: $standingArmPoseBadLines"
+Write-ProofLine "Target actor posture patterns: $($actorProofPatterns -join ',')"
+Write-ProofLine "Target world posture OK lines: $targetWorldPostureOkLines"
+Write-ProofLine "Target world posture BAD lines: $targetWorldPostureBadLines"
+Write-ProofLine "Target standing arm pose OK lines: $targetStandingArmPoseOkLines"
+Write-ProofLine "Target standing arm pose BAD lines: $targetStandingArmPoseBadLines"
+Write-ProofLine "Screenshot stability status: $($screenshotStability.status)"
+foreach ($pair in $screenshotStability.pairs) {
+    Write-ProofLine ("Screenshot stability pair {0}->{1}: meanAbsDelta={2} highDeltaRatio={3} pass={4}" -f `
+        $pair.previous, $pair.current, $pair.meanAbsDelta, $pair.highDeltaRatio, $pair.pass)
+}
 Write-ProofLine "Unsupported ESM4 skip lines: $($unsupportedEsm4Skips.Count)"
 
 if ($fatalCount -gt 0) { throw "FNV flat proof saw fatal/blocker log lines. See $OpenMwLog" }
@@ -1183,10 +1340,12 @@ if ($RequireSunDirectionRuntime) { Assert-SunDirectionRuntime $OpenMwLog $ProofD
 Assert-UnsupportedEsm4SkipsClassified $unsupportedEsm4Skips $ClassificationDir
 if ($RequireFlatCameraSettled -and $flatCameraSettledLines -eq 0) { throw "FNV flat proof did not prove flat camera settlement. See $OpenMwLog" }
 if ($flatCameraFailureLines -gt 0) { throw "FNV flat proof saw flat camera failure lines. See $OpenMwLog" }
-if (![string]::IsNullOrWhiteSpace($ActorTarget) -and $worldPostureBadLines -gt 0) { throw "FNV actor proof saw bad world posture lines. See $OpenMwLog" }
-if (![string]::IsNullOrWhiteSpace($ActorTarget) -and $standingArmPoseBadLines -gt 0) { throw "FNV actor proof saw standing arm bind/T-pose lines. See $OpenMwLog" }
-if (![string]::IsNullOrWhiteSpace($ActorTarget) -and $worldPostureOkLines -eq 0) { throw "FNV actor proof did not log world posture lines. See $OpenMwLog" }
-if (![string]::IsNullOrWhiteSpace($ActorTarget) -and $standingArmPoseOkLines -eq 0) { throw "FNV actor proof did not log standing arm pose lines. See $OpenMwLog" }
+if ($RequireScreenshotStability -and $screenshotStability.status -ne "PASS") { throw "FNV flat proof did not prove screenshot stability. See $screenshotStabilityPath" }
+if (![string]::IsNullOrWhiteSpace($ActorTarget) -and $actorProofPatterns.Count -eq 0) { throw "FNV actor proof did not resolve target actor patterns for $ActorTarget. See $OpenMwLog" }
+if (![string]::IsNullOrWhiteSpace($ActorTarget) -and $targetWorldPostureBadLines -gt 0) { throw "FNV actor proof saw target bad world posture lines. See $OpenMwLog" }
+if (![string]::IsNullOrWhiteSpace($ActorTarget) -and $targetStandingArmPoseBadLines -gt 0) { throw "FNV actor proof saw target standing arm bind/T-pose lines. See $OpenMwLog" }
+if (![string]::IsNullOrWhiteSpace($ActorTarget) -and $targetWorldPostureOkLines -eq 0) { throw "FNV actor proof did not log target world posture lines. See $OpenMwLog" }
+if (![string]::IsNullOrWhiteSpace($ActorTarget) -and $targetStandingArmPoseOkLines -eq 0) { throw "FNV actor proof did not log target standing arm pose lines. See $OpenMwLog" }
 if ($RequirePlayerTerrainSupport -and $playerSupportMissLines -gt 0) { throw "FNV flat proof saw player terrain support misses. See $OpenMwLog" }
 if ($RequirePlayerTerrainSupport -and $airborneLines -gt 0) { throw "FNV flat proof saw walk airborne frames. See $OpenMwLog" }
 if ($RequireTerrainProbeFullSupport -and $namedProbeLines -eq 0) { throw "FNV flat proof did not log named terrain probe lines. See $OpenMwLog" }

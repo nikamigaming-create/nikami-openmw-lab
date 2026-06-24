@@ -460,11 +460,13 @@ function Get-SummaryProbe {
             Airborne = "MISSING"
             Camera = "MISSING"
             CameraFailure = "MISSING"
+            ScreenshotStability = "MISSING"
             Blocker = "MISSING"
             TerrainSupportMissLine = $null
             AirborneLine = $null
             CameraSettledLine = $null
             CameraFailureLine = $null
+            ScreenshotStabilityLine = $null
             BlockerLine = $null
         }
     }
@@ -473,6 +475,8 @@ function Get-SummaryProbe {
     $airborneLine = Select-String -LiteralPath $SummaryPath -Pattern "Player terrain airborne lines: [1-9]" -ErrorAction SilentlyContinue | Select-Object -First 1
     $cameraSettledLine = Select-String -LiteralPath $SummaryPath -Pattern "Flat camera settled lines: [1-9]" -ErrorAction SilentlyContinue | Select-Object -First 1
     $cameraFailureLine = Select-String -LiteralPath $SummaryPath -Pattern "Flat camera failure lines: [1-9]" -ErrorAction SilentlyContinue | Select-Object -First 1
+    $screenshotStabilityPassLine = Select-String -LiteralPath $SummaryPath -Pattern "Screenshot stability status: PASS" -ErrorAction SilentlyContinue | Select-Object -First 1
+    $screenshotStabilityFailLine = Select-String -LiteralPath $SummaryPath -Pattern "Screenshot stability status: (FAIL|MISSING)" -ErrorAction SilentlyContinue | Select-Object -First 1
     $blockerLine = Select-String -LiteralPath $SummaryPath -Pattern "Real fatal/blocker lines: [1-9]" -ErrorAction SilentlyContinue | Select-Object -First 1
 
     return [pscustomobject]@{
@@ -480,11 +484,13 @@ function Get-SummaryProbe {
         Airborne = if ($airborneLine) { "FAIL" } else { "PASS" }
         Camera = if ($cameraSettledLine) { "PASS" } else { "FAIL" }
         CameraFailure = if ($cameraFailureLine) { "FAIL" } else { "PASS" }
+        ScreenshotStability = if ($screenshotStabilityPassLine) { "PASS" } elseif ($screenshotStabilityFailLine) { "FAIL" } else { "MISSING" }
         Blocker = if ($blockerLine) { "FAIL" } else { "PASS" }
         TerrainSupportMissLine = if ($terrainSupportMissLine) { $terrainSupportMissLine.Line } else { $null }
         AirborneLine = if ($airborneLine) { $airborneLine.Line } else { $null }
         CameraSettledLine = if ($cameraSettledLine) { $cameraSettledLine.Line } else { $null }
         CameraFailureLine = if ($cameraFailureLine) { $cameraFailureLine.Line } else { $null }
+        ScreenshotStabilityLine = if ($screenshotStabilityPassLine) { $screenshotStabilityPassLine.Line } elseif ($screenshotStabilityFailLine) { $screenshotStabilityFailLine.Line } else { $null }
         BlockerLine = if ($blockerLine) { $blockerLine.Line } else { $null }
     }
 }
@@ -500,6 +506,7 @@ function Get-OverallStatus {
     if ($Result.SummaryProbe.Airborne -ne "PASS") { return "FAIL" }
     if ($Result.SummaryProbe.Camera -ne "PASS") { return "FAIL" }
     if ($Result.SummaryProbe.CameraFailure -ne "PASS") { return "FAIL" }
+    if ($Result.SummaryProbe.ScreenshotStability -ne "PASS") { return "FAIL" }
     if ($Result.SummaryProbe.Blocker -ne "PASS") { return "FAIL" }
     if ($Result.LogProbe.ActorMatch -ne "PASS") { return "FAIL" }
     if ($Result.LogProbe.PartAssembly -eq "FAIL") { return "FAIL" }
@@ -544,6 +551,7 @@ function Invoke-MugshotTarget {
         ActorViewTargetZ = $ActorViewTargetZ
         RequirePlayerTerrainSupport = $true
         RequireFlatCameraSettled = $true
+        RequireScreenshotStability = $true
         FnvPartMatrixAudit = $true
     }
     if ($DisableNativeAnimationCallbacks) { $proofArgs.FnvDisableNativeAnimationCallbacks = $true }
@@ -751,7 +759,7 @@ function Write-Report {
 
     foreach ($result in $Results) {
         $imageStatus = "$($result.ImageQuality.Status) $($result.ImageQuality.Width)x$($result.ImageQuality.Height)"
-        $stabilityStatus = "terrain=$($result.SummaryProbe.TerrainSupport) airborne=$($result.SummaryProbe.Airborne) camera=$($result.SummaryProbe.Camera)"
+        $stabilityStatus = "terrain=$($result.SummaryProbe.TerrainSupport) airborne=$($result.SummaryProbe.Airborne) camera=$($result.SummaryProbe.Camera) screenshot=$($result.SummaryProbe.ScreenshotStability)"
         $lines.Add("| $(ConvertTo-MarkdownCell $result.Target) | $($result.Overall) | $($result.VisualReview) | $($result.LogProbe.ActorMatch) | $($result.LogProbe.Face) | $($result.LogProbe.Animation) | $($result.LogProbe.PartAssembly) | $(ConvertTo-MarkdownCell $stabilityStatus) | $(ConvertTo-MarkdownCell $imageStatus) | ``$(ConvertTo-MarkdownCell $result.MugshotImage)`` | ``$(ConvertTo-MarkdownCell $result.OpenMwLog)`` |")
     }
 
@@ -767,7 +775,7 @@ function Write-Report {
         $lines.Add("- Face check: $($result.LogProbe.Face)")
         $lines.Add("- Animation audit: $($result.LogProbe.Animation)")
         $lines.Add("- Part assembly audit: $($result.LogProbe.PartAssembly) suspect=$($result.LogProbe.PartAssemblySuspectCount)")
-        $lines.Add("- Stability: terrain=$($result.SummaryProbe.TerrainSupport) airborne=$($result.SummaryProbe.Airborne) camera=$($result.SummaryProbe.Camera) cameraFailure=$($result.SummaryProbe.CameraFailure) blockers=$($result.SummaryProbe.Blocker)")
+        $lines.Add("- Stability: terrain=$($result.SummaryProbe.TerrainSupport) airborne=$($result.SummaryProbe.Airborne) camera=$($result.SummaryProbe.Camera) cameraFailure=$($result.SummaryProbe.CameraFailure) screenshot=$($result.SummaryProbe.ScreenshotStability) blockers=$($result.SummaryProbe.Blocker)")
         $lines.Add("- Known tolerated missing mesh lines: $($result.LogProbe.KnownNoiseCount)")
         $lines.Add("- Screenshot auto-check: $($result.ImageQuality.Status) $($result.ImageQuality.Width)x$($result.ImageQuality.Height) stddev=$($result.ImageQuality.StdDev) buckets=$($result.ImageQuality.Buckets) dark=$($result.ImageQuality.DarkPercent)% markerPink=$($result.ImageQuality.MarkerPinkPercent)%")
         $lines.Add("- Proof dir: ``$($result.ProofDir)``")
@@ -796,6 +804,9 @@ function Write-Report {
         }
         if (![string]::IsNullOrWhiteSpace($result.SummaryProbe.CameraFailureLine)) {
             $lines.Add("- Camera failure line: ``$(ConvertTo-MarkdownCell $result.SummaryProbe.CameraFailureLine)``")
+        }
+        if (![string]::IsNullOrWhiteSpace($result.SummaryProbe.ScreenshotStabilityLine)) {
+            $lines.Add("- Screenshot stability line: ``$(ConvertTo-MarkdownCell $result.SummaryProbe.ScreenshotStabilityLine)``")
         }
         if (![string]::IsNullOrWhiteSpace($result.SummaryProbe.BlockerLine)) {
             $lines.Add("- Summary blocker line: ``$(ConvertTo-MarkdownCell $result.SummaryProbe.BlockerLine)``")
@@ -845,6 +856,7 @@ function Write-HumanReviewCsv {
             MachineArmPoseBad = if ($result.LogProbe.ArmPoseBadLine) { "YES" } else { "NO" }
             MachineParts = $result.LogProbe.PartAssembly
             MachineImage = $result.ImageQuality.Status
+            MachineScreenshotStability = $result.SummaryProbe.ScreenshotStability
             VisualReview = "REVIEW_REQUIRED"
             HumanReview = ""
             HumanNotes = ""
