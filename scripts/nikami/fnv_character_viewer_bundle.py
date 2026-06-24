@@ -31,6 +31,19 @@ HAIR_NEEDLES = ("hair", "beard", "brow", "headgear", "hat", "covered")
 ANIMATION_NEEDLES = ("animation", "idle", ".kf", "mouth driver", "dialogue", "TRI morph", "weapon")
 
 
+def layer_label(layer: str) -> str:
+    return {
+        "all": "All",
+        "body-skin": "Body Skin",
+        "head-skin": "Head Skin",
+        "face-organs": "Eyes Mouth Teeth",
+        "hair-beard": "Hair Beard",
+        "equipment-body": "Body Equipment",
+        "weapon": "Weapon",
+        "headgear": "Headgear",
+    }.get(layer, layer)
+
+
 def compact_line(line: str) -> str:
     return re.sub(r"\s+", " ", line.strip())
 
@@ -71,6 +84,116 @@ def unique_ordered(values: list[str]) -> list[str]:
         seen.add(value)
         result.append(value)
     return result
+
+
+def unique_dicts(values: list[dict[str, Any]], key: str) -> list[dict[str, Any]]:
+    seen: set[str] = set()
+    result: list[dict[str, Any]] = []
+    for value in values:
+        marker = str(value.get(key, ""))
+        if marker in seen:
+            continue
+        seen.add(marker)
+        result.append(value)
+    return result
+
+
+def shell_quote(value: str) -> str:
+    return "'" + value.replace("'", "''") + "'"
+
+
+def gate_controls(cases: list[dict[str, Any]], actor: str) -> dict[str, Any]:
+    gates: list[dict[str, Any]] = []
+    for case in cases:
+        gates.extend([gate for gate in as_list(case.get("gates")) if isinstance(gate, dict)])
+
+    part_toggles: list[dict[str, Any]] = []
+    for layer in LAYER_ORDER:
+        if layer == "all":
+            continue
+        models = unique_ordered(
+            [
+                str(gate.get("model", ""))
+                for gate in gates
+                if gate.get("category") == layer and str(gate.get("model", "")) not in {"", "<none>"}
+            ]
+        )
+        part_toggles.append(
+            {
+                "id": layer,
+                "label": layer_label(layer),
+                "category": layer,
+                "defaultEnabled": True,
+                "models": models,
+                "modelCount": len(models),
+            }
+        )
+
+    def slot(name: str, category: str) -> dict[str, Any]:
+        options = [
+            {
+                "id": f"{category}:{str(gate.get('model', ''))}",
+                "model": str(gate.get("model", "")),
+                "classification": str(gate.get("classification", "")),
+                "sourcePhase": str(gate.get("phase", "")),
+            }
+            for gate in gates
+            if gate.get("category") == category and str(gate.get("model", "")) not in {"", "<none>"}
+        ]
+        return {
+            "id": name,
+            "category": category,
+            "label": layer_label(category),
+            "allowAll": True,
+            "options": unique_dicts(options, "model"),
+        }
+
+    phase_controls = [
+        {
+            "id": phase,
+            "label": layer_label(phase) if phase in LAYER_ORDER else phase.title(),
+            "phase": phase,
+            "dialogueMouthProof": phase == "talk",
+            "command": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/nikami/run-fnv-character-viewer.ps1 "
+            f"-Targets {shell_quote(actor or 'GSEasyPete')} -Phases {shell_quote(phase)} -OpenViewer",
+        }
+        for phase in PHASE_ORDER
+        if phase != "full"
+    ]
+
+    return {
+        "partToggles": part_toggles,
+        "propSlots": [
+            slot("body-equipment", "equipment-body"),
+            slot("weapon", "weapon"),
+            slot("headgear", "headgear"),
+        ],
+        "animationControls": [
+            control for control in phase_controls if control["phase"] in {"body", "head", "face", "hair", "equipment", "weapon", "headgear"}
+        ],
+        "dialogueControls": [control for control in phase_controls if control["phase"] == "talk"],
+        "captureAngles": [{"id": angle, "label": angle} for angle in ANGLE_ORDER],
+        "botCommands": [
+            {
+                "id": "full-ladder",
+                "label": "Full Ladder",
+                "command": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/nikami/run-fnv-character-viewer.ps1 "
+                f"-Targets {shell_quote(actor or 'GSEasyPete')} -Phases body,head,face,hair,equipment,weapon,headgear,talk -OpenViewer",
+            },
+            {
+                "id": "headgear-only",
+                "label": "Headgear Only",
+                "command": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/nikami/run-fnv-character-viewer.ps1 "
+                f"-Targets {shell_quote(actor or 'GSEasyPete')} -Phases headgear -OpenViewer",
+            },
+            {
+                "id": "talk-only",
+                "label": "Talk Only",
+                "command": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/nikami/run-fnv-character-viewer.ps1 "
+                f"-Targets {shell_quote(actor or 'GSEasyPete')} -Phases talk -OpenViewer",
+            },
+        ],
+    }
 
 
 def line_matches_actor(line: str, patterns: list[str]) -> bool:
@@ -142,6 +265,10 @@ def load_suite(suite_dir: Path) -> dict[str, Any]:
             unique_ordered([str(item) for item in as_list(raw.get("screenshots"))] + [p.name for p in case_dir.glob("*.png")])
         )
         image = first_image(case_dir, screenshots)
+        merged_failures = unique_ordered(
+            [str(item) for item in as_list(raw.get("failures"))]
+            + [str(item) for item in as_list(report.get("failures"))]
+        )
         case_data: dict[str, Any] = {
             "case": str(raw.get("case") or f"{phase}_{angle}"),
             "phase": phase,
@@ -149,7 +276,7 @@ def load_suite(suite_dir: Path) -> dict[str, Any]:
             "runtimeGateStatus": str(raw.get("runtimeGateStatus") or "MISSING"),
             "runtimeGateError": str(raw.get("runtimeGateError") or ""),
             "reportStatus": str(raw.get("reportStatus") or report.get("status") or "MISSING"),
-            "failures": [str(item) for item in as_list(raw.get("failures") or report.get("failures"))],
+            "failures": merged_failures,
             "proofDir": str(raw.get("proofDir") or report.get("proofDir") or ""),
             "caseDir": str(case_dir),
             "caseDirRelative": rel_path(case_dir, suite_dir),
@@ -187,13 +314,14 @@ def load_suite(suite_dir: Path) -> dict[str, Any]:
         overall = "FAIL"
 
     return {
-        "schema": "nikami-fnv-character-viewer-v1",
+        "schema": "nikami-fnv-character-viewer-v2",
         "actor": actor,
         "suiteDir": str(suite_dir),
         "overallStatus": overall,
         "phases": sort_phases(phases),
         "angles": sort_angles(angles),
         "layers": LAYER_ORDER,
+        "controls": gate_controls(cases, actor),
         "cases": cases,
     }
 
@@ -233,6 +361,14 @@ main {{ padding: 14px 16px 28px; display: grid; gap: 14px; }}
 .label {{ color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }}
 button, select {{ border: 1px solid var(--line); border-radius: 5px; background: var(--panel2); color: var(--text); padding: 6px 9px; font: inherit; }}
 button.active {{ border-color: var(--accent); background: #26354d; }}
+.controlGrid {{ display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }}
+.controlPanel {{ background: #15181c; border: 1px solid var(--line); border-radius: 6px; padding: 9px; min-width: 0; }}
+.controlPanel h3 {{ margin: 0 0 8px; font-size: 13px; color: var(--muted); font-weight: 600; }}
+.toggleList {{ display: flex; flex-wrap: wrap; gap: 7px; }}
+.check {{ display: inline-flex; align-items: center; gap: 5px; border: 1px solid var(--line); border-radius: 5px; padding: 5px 7px; background: var(--panel2); }}
+.check input {{ margin: 0; }}
+.commandList {{ display: grid; gap: 5px; }}
+.command {{ font-family: Consolas, monospace; font-size: 12px; background: #101216; border: 1px solid #2b3038; border-radius: 4px; padding: 6px; white-space: pre-wrap; overflow-wrap: anywhere; }}
 .status {{ border-radius: 99px; padding: 3px 8px; font-weight: 600; }}
 .PASS {{ color: #07120b; background: var(--ok); }}
 .FAIL {{ color: #190502; background: var(--bad); }}
@@ -253,6 +389,7 @@ code {{ color: #d8e6ff; }}
 .line {{ font-family: Consolas, monospace; font-size: 12px; color: #dce6f7; background: #101216; border: 1px solid #2b3038; border-radius: 4px; padding: 5px 6px; }}
 a {{ color: #9fc2ff; }}
 @media (max-width: 980px) {{ .grid3 {{ grid-template-columns: 1fr; }} header {{ align-items: flex-start; flex-direction: column; }} }}
+@media (max-width: 980px) {{ .controlGrid {{ grid-template-columns: 1fr; }} }}
 </style>
 </head>
 <body>
@@ -265,6 +402,18 @@ a {{ color: #9fc2ff; }}
     <div class="group"><span class="label">Phase</span><span id="phaseButtons"></span></div>
     <div class="group"><span class="label">Math Angle</span><span id="angleButtons"></span></div>
     <div class="group"><span class="label">Layer</span><select id="layerSelect"></select></div>
+  </div>
+  <div class="section">
+    <h2>Runtime Controls</h2>
+    <div class="controlGrid">
+      <div class="controlPanel"><h3>Part Toggles</h3><div id="partToggleHost" class="toggleList"></div></div>
+      <div class="controlPanel"><h3>Prop Slots</h3><div id="propSlotHost" class="commandList"></div></div>
+      <div class="controlPanel"><h3>Animation Dialogue</h3><div id="runtimeControlHost" class="commandList"></div></div>
+    </div>
+  </div>
+  <div class="section">
+    <h2>Bot Commands</h2>
+    <div id="botCommandHost" class="commandList"></div>
   </div>
   <div id="cameraGrid" class="grid3"></div>
   <div class="section">
@@ -305,7 +454,9 @@ const MANIFEST = {data};
 const state = {{
   phase: MANIFEST.phases[0] || "full",
   angle: MANIFEST.angles[0] || "front",
-  layer: "all"
+  layer: "all",
+  enabledLayers: Object.fromEntries((MANIFEST.controls?.partToggles || []).map(t => [t.category, t.defaultEnabled !== false])),
+  slotFilters: Object.fromEntries((MANIFEST.controls?.propSlots || []).map(s => [s.id, "all"]))
 }};
 function esc(value) {{
   return String(value ?? "").replace(/[&<>"']/g, c => ({{"&":"&amp;","<":"&lt;",">":"&gt;","\\"":"&quot;","'":"&#39;"}}[c]));
@@ -329,10 +480,61 @@ function table(headers, rows) {{
   if (!rows.length) return `<div class="empty">No data</div>`;
   return `<table><thead><tr>${{headers.map(h => `<th>${{esc(h)}}</th>`).join("")}}</tr></thead><tbody>${{rows.join("")}}</tbody></table>`;
 }}
+function partCategoryFromText(part, cls) {{
+  const text = `${{part || ""}} ${{cls || ""}}`.toLowerCase();
+  if (text.includes("weapon")) return "weapon";
+  if (text.includes("headgear") || text.includes("hat") || text.includes("cowboyhat")) return "headgear";
+  if (text.includes("upperbody") || text.includes("lefthand") || text.includes("righthand") || text.includes("left hand") || text.includes("right hand")) return "body-skin";
+  if (text.includes("mouth") || text.includes("teeth") || text.includes("tongue") || text.includes("eye") || text.includes("brow")) return "face-organs";
+  if (text.includes("hair") || text.includes("beard")) return "hair-beard";
+  if (text.includes("headold") || text.includes("headhuman") || text.includes("class=head")) return "head-skin";
+  if (text.includes("armor")) return "equipment-body";
+  return "all";
+}}
+function categoryEnabled(category) {{
+  return category === "all" || state.enabledLayers[category] !== false;
+}}
+function slotAllows(category, model) {{
+  const slot = (MANIFEST.controls?.propSlots || []).find(s => s.category === category);
+  if (!slot) return true;
+  const selected = state.slotFilters[slot.id] || "all";
+  return selected === "all" || String(model || "") === selected;
+}}
 function filteredGates(c) {{
   const gates = c?.gates || [];
-  if (state.layer === "all") return gates;
-  return gates.filter(g => g.category === state.layer);
+  return gates.filter(g => (state.layer === "all" || g.category === state.layer) && categoryEnabled(g.category) && slotAllows(g.category, g.model));
+}}
+function filterPartRows(items, textGetter, classGetter) {{
+  return (items || []).filter(item => {{
+    const category = partCategoryFromText(textGetter(item), classGetter(item));
+    return (state.layer === "all" || category === state.layer || category === "all") && categoryEnabled(category);
+  }});
+}}
+function renderControls() {{
+  const partHost = document.getElementById("partToggleHost");
+  partHost.innerHTML = (MANIFEST.controls?.partToggles || []).map(t => `<label class="check"><input type="checkbox" data-category="${{esc(t.category)}}" ${{state.enabledLayers[t.category] !== false ? "checked" : ""}}> ${{esc(t.label)}} <span class="label">${{esc(t.modelCount)}} </span></label>`).join("");
+  partHost.querySelectorAll("input").forEach(input => input.addEventListener("change", () => {{
+    state.enabledLayers[input.dataset.category] = input.checked;
+    render();
+  }}));
+
+  const propHost = document.getElementById("propSlotHost");
+  propHost.innerHTML = (MANIFEST.controls?.propSlots || []).map(slot => {{
+    const options = [`<option value="all">all</option>`].concat((slot.options || []).map(o => `<option value="${{esc(o.model)}}">${{esc(o.model)}}</option>`)).join("");
+    return `<label><span class="label">${{esc(slot.label)}}</span><br><select data-slot="${{esc(slot.id)}}">${{options}}</select></label>`;
+  }}).join("");
+  propHost.querySelectorAll("select").forEach(select => {{
+    select.value = state.slotFilters[select.dataset.slot] || "all";
+    select.addEventListener("change", () => {{ state.slotFilters[select.dataset.slot] = select.value; render(); }});
+  }});
+
+  const runtime = [...(MANIFEST.controls?.animationControls || []), ...(MANIFEST.controls?.dialogueControls || [])];
+  document.getElementById("runtimeControlHost").innerHTML = runtime.map(control => `<button type="button" data-phase="${{esc(control.phase)}}">${{esc(control.label)}}</button><div class="command">${{esc(control.command)}}</div>`).join("");
+  document.getElementById("runtimeControlHost").querySelectorAll("button").forEach(button => button.addEventListener("click", () => {{
+    state.phase = button.dataset.phase;
+    render();
+  }}));
+  document.getElementById("botCommandHost").innerHTML = (MANIFEST.controls?.botCommands || []).map(command => `<div><span class="label">${{esc(command.label)}}</span><div class="command">${{esc(command.command)}}</div></div>`).join("");
 }}
 function renderImages() {{
   const host = document.getElementById("cameraGrid");
@@ -360,14 +562,14 @@ function renderGates(c) {{
   document.getElementById("gateTable").innerHTML = table(["Action", "Category", "Classification", "Model"], rows);
 }}
 function renderCoords(c) {{
-  const bounds = c?.attachmentBounds || [];
-  const audits = c?.runtimePartAudits || [];
+  const bounds = filterPartRows(c?.attachmentBounds || [], b => b.model, b => b.parent);
+  const audits = filterPartRows(c?.runtimePartAudits || [], a => a.part, a => a.class);
   const boundRows = bounds.map(b => `<tr><td>attachment</td><td><code>${{esc(b.model)}}</code></td><td>${{esc(b.parent)}}</td><td>${{esc(JSON.stringify(b.headRel))}}</td><td>${{esc(JSON.stringify(b.extent))}}</td><td>${{esc(b.verdict)}}</td></tr>`);
   const auditRows = audits.map(a => `<tr><td>runtime</td><td><code>${{esc(a.part)}}</code></td><td>${{esc(a.class)}}</td><td>${{esc(JSON.stringify(a.relLocal))}}</td><td>${{esc(a.distance)}} / ${{esc(a.limit)}}</td><td>${{esc(a.verdict)}}</td></tr>`);
   document.getElementById("coordTable").innerHTML = table(["Kind", "Part", "Parent/Class", "Head/Rel", "Extent/Distance", "Verdict"], boundRows.concat(auditRows));
 }}
 function renderDrift(c) {{
-  const rows = (c?.runtimeAuditSummary || []).map(a => `<tr><td><code>${{esc(a.part)}}</code></td><td>${{esc(a.class)}}</td><td>${{esc(a.firstVerdict)}} -> ${{esc(a.lastVerdict)}}</td><td>${{esc(a.badCount)}} / ${{esc(a.count)}}</td><td>${{esc(a.firstTimestamp)}} -> ${{esc(a.lastTimestamp)}}</td><td>${{esc(a.maxDistance)}}</td><td>${{esc(JSON.stringify(a.firstRelLocal))}}</td><td>${{esc(JSON.stringify(a.lastRelLocal))}}</td></tr>`);
+  const rows = filterPartRows(c?.runtimeAuditSummary || [], a => a.part, a => a.class).map(a => `<tr><td><code>${{esc(a.part)}}</code></td><td>${{esc(a.class)}}</td><td>${{esc(a.firstVerdict)}} -> ${{esc(a.lastVerdict)}}</td><td>${{esc(a.badCount)}} / ${{esc(a.count)}}</td><td>${{esc(a.firstTimestamp)}} -> ${{esc(a.lastTimestamp)}}</td><td>${{esc(a.maxDistance)}}</td><td>${{esc(JSON.stringify(a.firstRelLocal))}}</td><td>${{esc(JSON.stringify(a.lastRelLocal))}}</td></tr>`);
   document.getElementById("driftTable").innerHTML = table(["Part", "Class", "Verdict", "Bad", "Time", "Max Distance", "First Rel", "Last Rel"], rows);
 }}
 function renderLines(id, lines) {{
@@ -376,7 +578,7 @@ function renderLines(id, lines) {{
     : `<div class="empty">No evidence lines</div>`;
 }}
 function renderFace(c) {{
-  const rows = (c?.faceDrawables || []).map(f => `<tr><td><code>${{esc(f.model)}}</code></td><td>${{esc(f.drawable)}}</td><td>${{esc(f.texture)}}</td><td>${{esc(f.sourceVertices)}}/${{esc(f.renderVertices)}}</td><td>${{esc(JSON.stringify(f.sourceExtent))}}</td><td>${{esc(JSON.stringify(f.renderExtent))}}</td></tr>`);
+  const rows = filterPartRows(c?.faceDrawables || [], f => f.model, f => f.drawable).map(f => `<tr><td><code>${{esc(f.model)}}</code></td><td>${{esc(f.drawable)}}</td><td>${{esc(f.texture)}}</td><td>${{esc(f.sourceVertices)}}/${{esc(f.renderVertices)}}</td><td>${{esc(JSON.stringify(f.sourceExtent))}}</td><td>${{esc(JSON.stringify(f.renderExtent))}}</td></tr>`);
   document.getElementById("faceTable").innerHTML = table(["Model", "Drawable", "Texture", "Verts", "Source Extent", "Render Extent"], rows);
 }}
 function render() {{
@@ -389,6 +591,7 @@ function render() {{
   select.value = state.layer;
   select.onchange = () => {{ state.layer = select.value; render(); }};
   const c = selectedCase();
+  renderControls();
   renderImages();
   renderStatus(c);
   renderGates(c);
