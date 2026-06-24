@@ -22,6 +22,7 @@
 
 #include <osgDB/ReaderWriter>
 #include <osgDB/Registry>
+#include <osg/ComputeBoundsVisitor>
 #include <osgViewer/ViewerEventHandlers>
 
 #include <SDL.h>
@@ -126,6 +127,7 @@
 
 #include "mwrender/vismask.hpp"
 #include "mwrender/camera.hpp"
+#include "mwrender/renderingmanager.hpp"
 
 #include "mwclass/classes.hpp"
 
@@ -2389,6 +2391,193 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
     const int proofActorFrame = static_cast<int>(getProofFloat("OPENMW_PROOF_ACTOR_FRAME", 240.f));
     static unsigned int proofActorCameraFirstAppliedFrame = 0;
     static unsigned int proofActorCameraLastAppliedFrame = 0;
+    const char* proofItemModel = std::getenv("OPENMW_PROOF_ITEM_MODEL");
+    const char* proofItemTarget = std::getenv("OPENMW_PROOF_ITEM_TARGET");
+    const bool proofItemRequested = proofItemModel != nullptr && *proofItemModel != '\0';
+    const int proofItemFrame = static_cast<int>(getProofFloat("OPENMW_PROOF_ITEM_FRAME", 240.f));
+    static bool proofItemArmedLogged = false;
+    static bool proofItemSpawnAttempted = false;
+    static bool proofItemSpawned = false;
+    static bool proofItemCameraApplied = false;
+    static bool proofItemBoundsValid = false;
+    static osg::Vec3f proofItemBoundsCenter(0.f, 0.f, 42.f);
+    static osg::Vec3f proofItemBoundsSize(0.f, 0.f, 0.f);
+    static float proofItemFrameRadius = 42.f;
+    static unsigned int proofItemCameraFirstAppliedFrame = 0;
+    static unsigned int proofItemCameraLastAppliedFrame = 0;
+    static bool proofItemWorldIsolationApplied = false;
+    const bool proofRuntimeWorldExists = mStateManager->getState() != MWBase::StateManager::State_NoGame;
+    if (proofItemRequested && !proofItemArmedLogged && proofRuntimeWorldExists)
+    {
+        proofItemArmedLogged = true;
+        Log(Debug::Info) << "FNV/ESM4 proof item model spawn armed: target=\""
+                         << (proofItemTarget != nullptr ? proofItemTarget : "") << "\" model=\"" << proofItemModel
+                         << "\" requestedFrame=" << proofItemFrame << " currentFrame=" << frameNumber
+                         << " state=" << static_cast<int>(mStateManager->getState())
+                         << " runtime=loaded-pending-runtime gate=runtime-visual-model-spawn";
+    }
+    if (proofItemRequested && frameNumber >= static_cast<unsigned>(proofItemFrame)
+        && proofRuntimeWorldExists)
+    {
+        const std::string target = proofItemTarget != nullptr && *proofItemTarget != '\0' ? proofItemTarget : "proof-item";
+        const std::string model(proofItemModel);
+        const std::string kind = std::getenv("OPENMW_PROOF_ITEM_KIND") != nullptr ? std::getenv("OPENMW_PROOF_ITEM_KIND") : "";
+        const std::string recordType
+            = std::getenv("OPENMW_PROOF_ITEM_RECORD_TYPE") != nullptr ? std::getenv("OPENMW_PROOF_ITEM_RECORD_TYPE") : "";
+        const std::string formId = std::getenv("OPENMW_PROOF_ITEM_FORM_ID") != nullptr ? std::getenv("OPENMW_PROOF_ITEM_FORM_ID") : "";
+        const std::string plugin = std::getenv("OPENMW_PROOF_ITEM_PLUGIN") != nullptr ? std::getenv("OPENMW_PROOF_ITEM_PLUGIN") : "";
+        const osg::Vec3f itemPos(getProofFloat("OPENMW_PROOF_ITEM_STAGE_X", getProofFloat("OPENMW_PROOF_ACTOR_STAGE_X", 0.f)),
+            getProofFloat("OPENMW_PROOF_ITEM_STAGE_Y", getProofFloat("OPENMW_PROOF_ACTOR_STAGE_Y", 0.f)),
+            getProofFloat("OPENMW_PROOF_ITEM_STAGE_Z", getProofFloat("OPENMW_PROOF_ACTOR_STAGE_Z", 0.f)));
+        const osg::Vec3f itemRot(getProofFloat("OPENMW_PROOF_ITEM_STAGE_ROT_X", 0.f),
+            getProofFloat("OPENMW_PROOF_ITEM_STAGE_ROT_Y", 0.f),
+            getProofFloat("OPENMW_PROOF_ITEM_STAGE_ROT_Z", getProofFloat("OPENMW_PROOF_ACTOR_STAGE_ROT_Z", 0.f)));
+        const float itemScale = getProofFloat("OPENMW_PROOF_ITEM_STAGE_SCALE", 1.f);
+
+        if (!proofItemSpawnAttempted)
+        {
+            proofItemSpawnAttempted = true;
+            try
+            {
+                VFS::Path::Normalized correctedModel
+                    = Misc::ResourceHelpers::correctMeshPath(VFS::Path::toNormalized(model));
+                if (!mResourceSystem->getVFS()->exists(correctedModel))
+                {
+                    const VFS::Path::Normalized rawModel(VFS::Path::toNormalized(model));
+                    if (mResourceSystem->getVFS()->exists(rawModel))
+                        correctedModel = rawModel;
+                }
+
+                osg::ref_ptr<const osg::Node> templateNode
+                    = mResourceSystem->getSceneManager()->getTemplate(correctedModel);
+                osg::ComputeBoundsVisitor computeBoundsVisitor;
+                computeBoundsVisitor.setTraversalMask(~(MWRender::Mask_ParticleSystem | MWRender::Mask_Effect));
+                const_cast<osg::Node*>(templateNode.get())->accept(computeBoundsVisitor);
+                const osg::BoundingBox bounds = computeBoundsVisitor.getBoundingBox();
+                proofItemBoundsValid = bounds.valid();
+                if (proofItemBoundsValid)
+                {
+                    proofItemBoundsCenter = bounds.center();
+                    proofItemBoundsSize = osg::Vec3f(
+                        bounds.xMax() - bounds.xMin(), bounds.yMax() - bounds.yMin(), bounds.zMax() - bounds.zMin());
+                    proofItemFrameRadius = std::max(
+                        { proofItemBoundsSize.x(), proofItemBoundsSize.y(), proofItemBoundsSize.z(), 16.f });
+                }
+
+                if (MWRender::RenderingManager* rendering = mWorld->getRenderingManager())
+                {
+                    rendering->removeEffect("nikami-proof-item");
+                    rendering->spawnEffect(correctedModel, {}, itemPos, itemScale, false, false, "nikami-proof-item", true);
+                    proofItemSpawned = true;
+                }
+
+                Log(Debug::Info) << "FNV/ESM4 proof item model spawn: target=\"" << target << "\" kind=\"" << kind
+                                 << "\" recordType=\"" << recordType << "\" formId=\"" << formId << "\" plugin=\""
+                                 << plugin << "\" model=\"" << model << "\" correctedModel=\"" << correctedModel
+                                 << "\" frame=" << frameNumber << " pos=(" << itemPos.x() << "," << itemPos.y()
+                                 << "," << itemPos.z() << ") rot=(" << itemRot.x() << "," << itemRot.y() << ","
+                                 << itemRot.z() << ") scale=" << itemScale
+                                 << " rotationApplied=false runtime=runtime-supported gate=runtime-visual-model-spawn"
+                                 << " inventoryRuntime=loaded-pending-runtime collisionRuntime=loaded-pending-runtime"
+                                 << " boundsValid=" << bounds.valid() << " boundsMin=(" << bounds.xMin() << ","
+                                  << bounds.yMin() << "," << bounds.zMin() << ") boundsMax=(" << bounds.xMax() << ","
+                                  << bounds.yMax() << "," << bounds.zMax() << ") boundsCenter=("
+                                  << proofItemBoundsCenter.x() << "," << proofItemBoundsCenter.y() << ","
+                                  << proofItemBoundsCenter.z() << ") boundsSize=(" << proofItemBoundsSize.x() << ","
+                                  << proofItemBoundsSize.y() << "," << proofItemBoundsSize.z()
+                                  << ") frameRadius=" << proofItemFrameRadius
+                                  << " radius=" << templateNode->getBound().radius();
+            }
+            catch (const std::exception& e)
+            {
+                Log(Debug::Warning) << "FNV/ESM4 proof item model spawn failed: target=\"" << target << "\" model=\""
+                                    << model << "\" frame=" << frameNumber << " error=\"" << e.what()
+                                    << "\" runtime=known-blocked gate=runtime-visual-model-spawn";
+            }
+        }
+
+        if (proofItemSpawned)
+        {
+            if (!proofItemWorldIsolationApplied)
+            {
+                if (mWindowManager)
+                    mWindowManager->setHudVisibility(false);
+                if (MWRender::RenderingManager* rendering = mWorld->getRenderingManager())
+                {
+                    rendering->setWaterEnabled(false);
+                    rendering->setSkyEnabled(false);
+                    const MWWorld::Ptr player = mWorld->getPlayerPtr();
+                    if (!player.isEmpty() && player.isInCell() && player.getCell() != nullptr
+                        && player.getCell()->getCell() != nullptr)
+                        rendering->enableTerrain(false, player.getCell()->getCell()->getWorldSpace());
+                }
+                if (mViewer && mViewer->getCamera())
+                    mViewer->getCamera()->setClearColor(osg::Vec4(0.22f, 0.23f, 0.24f, 1.f));
+                proofItemWorldIsolationApplied = true;
+                Log(Debug::Info) << "FNV/ESM4 proof item viewer isolation: hud=hidden sky=hidden water=hidden"
+                                 << " terrain=hidden clearColor=(0.22,0.23,0.24,1)"
+                                 << " runtime=runtime-supported gate=runtime-neutral-view";
+            }
+
+            const float autoOffsetX = proofItemBoundsValid ? std::max(32.f, proofItemFrameRadius * 2.35f) : 84.f;
+            const float offsetX = getProofFloat("OPENMW_PROOF_ITEM_VIEW_OFFSET_X",
+                getProofFloat("OPENMW_PROOF_ACTOR_VIEW_OFFSET_X", autoOffsetX));
+            const float offsetY = getProofFloat("OPENMW_PROOF_ITEM_VIEW_OFFSET_Y", getProofFloat("OPENMW_PROOF_ACTOR_VIEW_OFFSET_Y", 0.f));
+            const float autoTargetZ = proofItemBoundsValid ? proofItemBoundsCenter.z() : 42.f;
+            const float targetZ = getProofFloat("OPENMW_PROOF_ITEM_VIEW_TARGET_Z",
+                getProofFloat("OPENMW_PROOF_ACTOR_VIEW_TARGET_Z", autoTargetZ));
+            const float offsetZ = getProofFloat("OPENMW_PROOF_ITEM_VIEW_OFFSET_Z",
+                getProofFloat("OPENMW_PROOF_ACTOR_VIEW_OFFSET_Z", targetZ));
+            const float cameraDistance = getProofFloat("OPENMW_PROOF_ITEM_VIEW_CAMERA_DISTANCE", getProofFloat("OPENMW_PROOF_ACTOR_VIEW_CAMERA_DISTANCE", 0.f));
+            const osg::Vec3d itemAim(itemPos.x(), itemPos.y(), itemPos.z() + targetZ);
+            osg::Vec2f viewOffset(offsetX, offsetY);
+            if (std::getenv("OPENMW_PROOF_ITEM_VIEW_LOCAL_OFFSET") != nullptr)
+            {
+                const float sinYaw = std::sin(itemRot.z());
+                const float cosYaw = std::cos(itemRot.z());
+                viewOffset = osg::Vec2f(offsetX * sinYaw + offsetY * cosYaw, offsetX * cosYaw - offsetY * sinYaw);
+            }
+            const osg::Vec3f requestedCameraPos(static_cast<float>(itemAim.x() + viewOffset.x()),
+                static_cast<float>(itemAim.y() + viewOffset.y()), itemPos.z() + offsetZ);
+
+            if (MWRender::Camera* camera = mWorld->getCamera())
+            {
+                const float dx = static_cast<float>(itemAim.x() - requestedCameraPos.x());
+                const float dy = static_cast<float>(itemAim.y() - requestedCameraPos.y());
+                const float dz = static_cast<float>(itemAim.z() - requestedCameraPos.z());
+                const float horizontal = std::sqrt(dx * dx + dy * dy);
+                const float yawToItem = static_cast<float>(-std::atan2(dx, dy));
+                const float pitchToItem = static_cast<float>(std::atan2(dz, horizontal));
+
+                camera->setMode(MWRender::Camera::Mode::Static, true);
+                camera->setStaticPosition(requestedCameraPos);
+                camera->setPreferredCameraDistance(cameraDistance);
+                camera->setPitch(pitchToItem, true);
+                camera->setYaw(yawToItem, true);
+                camera->setRoll(0.f);
+                camera->updateCamera(mViewer->getCamera());
+
+                const osg::Vec3d finalCameraPos = camera->getPosition();
+                if (proofItemCameraFirstAppliedFrame == 0)
+                    proofItemCameraFirstAppliedFrame = frameNumber;
+                proofItemCameraLastAppliedFrame = frameNumber;
+                if (!proofItemCameraApplied || frameNumber % 60 == 0)
+                    Log(Debug::Info) << "FNV/ESM4 proof: aligned player camera to item target=\"" << target
+                                     << "\" frame=" << frameNumber << " itemPos=(" << itemPos.x() << ","
+                                     << itemPos.y() << "," << itemPos.z() << ") itemAim=(" << itemAim.x() << ","
+                                     << itemAim.y() << "," << itemAim.z() << ") viewOffset=(" << viewOffset.x()
+                                     << "," << viewOffset.y() << ") localOffset="
+                                     << (std::getenv("OPENMW_PROOF_ITEM_VIEW_LOCAL_OFFSET") != nullptr)
+                                     << " requestedCameraPos=(" << requestedCameraPos.x() << ","
+                                     << requestedCameraPos.y() << "," << requestedCameraPos.z() << ") cameraPos=("
+                                     << finalCameraPos.x() << "," << finalCameraPos.y() << ","
+                                     << finalCameraPos.z() << ") cameraMode=static cameraPitch=" << camera->getPitch()
+                                     << " cameraYaw=" << camera->getYaw()
+                                     << " runtime=runtime-supported gate=runtime-neutral-view";
+                proofItemCameraApplied = true;
+            }
+        }
+    }
     if ((!proofActorCameraApplied || proofStageActorLock) && proofActorTarget != nullptr && *proofActorTarget != '\0'
         && frameNumber >= static_cast<unsigned>(proofActorFrame)
         && mStateManager->getState() == MWBase::StateManager::State_Running)
@@ -2642,9 +2831,11 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
     }
 
     static std::size_t proofScreenshotFrameIndex = 0;
+    const bool proofScreenshotStateReady = mStateManager->getState() == MWBase::StateManager::State_Running
+        || (proofItemRequested && proofItemCameraApplied);
     if (proofScreenshotFrameIndex < proofScreenshotFrames.size()
         && frameNumber >= static_cast<unsigned>(proofScreenshotFrames[proofScreenshotFrameIndex])
-        && mStateManager->getState() == MWBase::StateManager::State_Running && mScreenCaptureHandler != nullptr)
+        && proofScreenshotStateReady && mScreenCaptureHandler != nullptr)
     {
         Log(Debug::Info) << "FNV/ESM4 proof: queuing native screenshot at frame " << frameNumber
                          << " index=" << proofScreenshotFrameIndex
@@ -2654,7 +2845,12 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                          << " actorCameraApplied=" << proofActorCameraApplied
                          << " actorCameraFirstFrame=" << proofActorCameraFirstAppliedFrame
                          << " actorCameraLastFrame=" << proofActorCameraLastAppliedFrame
-                         << " actorStageLock=" << proofStageActorLock;
+                         << " actorStageLock=" << proofStageActorLock
+                         << " itemTarget=\"" << (proofItemTarget != nullptr ? proofItemTarget : "") << "\""
+                         << " itemModel=\"" << (proofItemModel != nullptr ? proofItemModel : "") << "\""
+                         << " itemCameraApplied=" << proofItemCameraApplied
+                         << " itemCameraFirstFrame=" << proofItemCameraFirstAppliedFrame
+                         << " itemCameraLastFrame=" << proofItemCameraLastAppliedFrame;
         mScreenCaptureHandler->setFramesToCapture(1);
         mScreenCaptureHandler->captureNextFrame(*mViewer);
         ++proofScreenshotFrameIndex;

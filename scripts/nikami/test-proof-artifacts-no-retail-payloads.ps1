@@ -56,6 +56,47 @@ $ContentLedgerTextPayloadPatterns = @(
     '"value"\s*:\s*"'
 )
 
+function Find-FirstPatternMatch([string]$Path, [string[]]$Patterns) {
+    $regexes = @($Patterns | ForEach-Object {
+        [System.Text.RegularExpressions.Regex]::new(
+            $_,
+            [System.Text.RegularExpressions.RegexOptions]::Compiled -bor
+                [System.Text.RegularExpressions.RegexOptions]::CultureInvariant
+        )
+    })
+    $stream = [System.IO.FileStream]::new(
+        $Path,
+        [System.IO.FileMode]::Open,
+        [System.IO.FileAccess]::Read,
+        [System.IO.FileShare]::ReadWrite -bor [System.IO.FileShare]::Delete
+    )
+    $reader = [System.IO.StreamReader]::new($stream, [System.Text.Encoding]::UTF8, $true, 1048576)
+    $buffer = New-Object char[] 1048576
+    $tail = ""
+    $charOffset = 0L
+    try {
+        while (($count = $reader.Read($buffer, 0, $buffer.Length)) -gt 0) {
+            $chunk = $tail + [string]::new($buffer, 0, $count)
+            for ($i = 0; $i -lt $regexes.Count; ++$i) {
+                if ($regexes[$i].IsMatch($chunk)) {
+                    return "pattern=$($Patterns[$i]) charOffset~$charOffset"
+                }
+            }
+            if ($chunk.Length -gt 512) {
+                $tail = $chunk.Substring($chunk.Length - 512)
+            }
+            else {
+                $tail = $chunk
+            }
+            $charOffset += $count
+        }
+        return $null
+    }
+    finally {
+        $reader.Dispose()
+    }
+}
+
 Write-ProofLine "Proof artifact payload safety $Stamp"
 Write-ProofLine "RepoRoot: $RepoRoot"
 Write-ProofLine "ProofRoot: $ProofRoot"
@@ -79,11 +120,9 @@ $rawByteMatches = @()
 $textFiles = Get-ChildItem -LiteralPath $ProofRoot -Recurse -File -Force |
     Where-Object { @(".json", ".jsonl", ".txt", ".log", ".csv", ".md") -contains $_.Extension.ToLowerInvariant() }
 foreach ($file in $textFiles) {
-    $text = Get-Content -LiteralPath $file.FullName -Raw
-    foreach ($pattern in $RawByteTextPatterns) {
-        if ($text -match $pattern) {
-            $rawByteMatches += "$($file.FullName) pattern=$pattern"
-        }
+    $match = Find-FirstPatternMatch $file.FullName $RawByteTextPatterns
+    if ($null -ne $match) {
+        $rawByteMatches += "$($file.FullName) $match"
     }
 }
 
@@ -93,11 +132,9 @@ if (Test-Path -LiteralPath $contentLedgerRoot -PathType Container) {
     $contentLedgerFiles = Get-ChildItem -LiteralPath $contentLedgerRoot -Recurse -File -Force |
         Where-Object { $_.Extension.ToLowerInvariant() -eq ".json" }
     foreach ($file in $contentLedgerFiles) {
-        $text = Get-Content -LiteralPath $file.FullName -Raw
-        foreach ($pattern in $ContentLedgerTextPayloadPatterns) {
-            if ($text -match $pattern) {
-                $contentLedgerTextMatches += "$($file.FullName) pattern=$pattern"
-            }
+        $match = Find-FirstPatternMatch $file.FullName $ContentLedgerTextPayloadPatterns
+        if ($null -ne $match) {
+            $contentLedgerTextMatches += "$($file.FullName) $match"
         }
     }
 }

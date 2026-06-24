@@ -29,6 +29,14 @@ ALLOWED_PREFIX = [
     "-File",
     "scripts/nikami/run-fnv-character-viewer.ps1",
 ]
+ALLOWED_ITEM_PREFIX = [
+    "powershell",
+    "-NoProfile",
+    "-ExecutionPolicy",
+    "Bypass",
+    "-File",
+    "scripts/nikami/run-fnv-item-viewer.ps1",
+]
 FORBIDDEN_CHARS = set("&;|<>`")
 STUDIO_SCHEMA = "nikami-fnv-character-studio-session-v1"
 STUDIO_REVIEW_SCHEMA = "nikami-fnv-character-studio-component-review-v1"
@@ -77,7 +85,7 @@ def as_list(value: Any) -> list[Any]:
 def catalog_search_entry(entry: dict[str, Any]) -> dict[str, Any]:
     compact = {key: entry.get(key) for key in CATALOG_SEARCH_ENTRY_FIELDS if key in entry}
     commands = entry.get("commands") if isinstance(entry.get("commands"), dict) else {}
-    compact["runnable"] = bool(commands.get("runtimeThreeCamera")) and entry.get("domain") == "actor"
+    compact["runnable"] = bool(commands.get("runtimeThreeCamera")) and entry.get("domain") in {"actor", "gameplay"}
     compact["hasFullDetails"] = False
     return compact
 
@@ -124,15 +132,24 @@ def command_to_args(command: str, runner: Path) -> list[str]:
     if any(char in FORBIDDEN_CHARS for char in command):
         raise ValueError("command contains shell metacharacters outside the actor-kit allowlist")
     tokens = split_powershell_command(command)
+    allowed_prefixes = (ALLOWED_PREFIX, ALLOWED_ITEM_PREFIX)
     if len(tokens) < len(ALLOWED_PREFIX):
         raise ValueError("command is too short")
     normalized = tokens[: len(ALLOWED_PREFIX)]
     normalized[0] = normalized[0].lower().removesuffix(".exe")
-    if normalized != ALLOWED_PREFIX:
-        raise ValueError("command does not match generated actor-kit runner prefix")
+    matched_prefix = None
+    for prefix in allowed_prefixes:
+        if normalized == prefix:
+            matched_prefix = prefix
+            break
+    if matched_prefix is None:
+        raise ValueError("command does not match generated actor-kit or item-viewer runner prefix")
     args = tokens[:]
     args[0] = "powershell"
-    args[5] = str(runner)
+    if matched_prefix == ALLOWED_ITEM_PREFIX:
+        args[5] = str(runner.with_name("run-fnv-item-viewer.ps1"))
+    else:
+        args[5] = str(runner)
     args = [arg for arg in args if arg != "-OpenViewer"]
     args = [arg for arg in args if arg != "-Serve"]
     args = [arg for arg in args if arg != "-LiveServe"]
@@ -477,6 +494,7 @@ class JobStore:
                 "generatedProofOutputsOnly": True,
                 "noRetailAssetsCommitted": True,
                 "allowedRunner": "scripts/nikami/run-fnv-character-viewer.ps1",
+                "allowedItemRunner": "scripts/nikami/run-fnv-item-viewer.ps1",
             },
         }
         with self.lock:
@@ -725,6 +743,74 @@ def structured_actor_job(entry: dict[str, Any], payload: dict[str, Any]) -> tupl
     return command, request
 
 
+def structured_item_job(entry: dict[str, Any], payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    command_key = str(payload.get("command") or payload.get("commandKey") or "runtimeThreeCamera")
+    if command_key not in {"runtimeThreeCamera", "runtimeFrontOnly"}:
+        raise ValueError("unsupported structured studio command")
+    if entry.get("domain") != "gameplay":
+        raise ValueError("structured item job requires a gameplay catalog entry")
+    model = first_text(payload.get("model"), entry.get("model"))
+    target = first_text(payload.get("target"), entry.get("target"), entry.get("label"), entry.get("formId"))
+    if not model:
+        raise ValueError("structured item job requires a harvested model path")
+    if not target:
+        raise ValueError("structured item job requires an item target")
+    angles = csv_values(selector_value(payload, "angles") or ("front" if command_key == "runtimeFrontOnly" else "front,front-left,front-right"))
+    if not angles:
+        raise ValueError("structured item job is missing camera angles")
+    command = (
+        "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/nikami/run-fnv-item-viewer.ps1 "
+        f"-ItemTarget {shell_quote(target)} "
+        f"-ItemKind {shell_quote(first_text(payload.get('itemKind'), entry.get('kind')))} "
+        f"-ItemRecordType {shell_quote(first_text(payload.get('recordType'), entry.get('recordType')))} "
+        f"-ItemFormId {shell_quote(first_text(payload.get('formId'), entry.get('formId')))} "
+        f"-ItemPlugin {shell_quote(first_text(payload.get('plugin'), entry.get('plugin')))} "
+        f"-ItemModel {shell_quote(model)} -Angles {shell_quote(','.join(angles))} -RequirePass"
+    )
+    request = {
+        "schema": "nikami-fnv-character-studio-job-request-v1",
+        "kind": first_text(payload.get("kind"), "item-runtime-visual-spawn"),
+        "entryId": first_text(payload.get("entryId"), entry.get("id")),
+        "commandKey": command_key,
+        "target": target,
+        "runtimeTarget": target,
+        "placedTarget": "",
+        "itemKind": first_text(payload.get("itemKind"), entry.get("kind")),
+        "recordType": first_text(payload.get("recordType"), entry.get("recordType")),
+        "formId": first_text(payload.get("formId"), entry.get("formId")),
+        "plugin": first_text(payload.get("plugin"), entry.get("plugin")),
+        "model": model,
+        "selectors": {
+            "angles": angles,
+            "parts": [],
+            "partModels": [],
+            "propSlots": [],
+            "propModels": [model],
+            "animationGroup": "",
+            "dialogueMode": "",
+        },
+        "gates": [
+            {
+                "gate": "runtime-visual-model-spawn",
+                "classification": "loaded-pending-runtime",
+                "proof": "Job must run PC-flat item viewer before this row has runtime visual proof.",
+            },
+            {
+                "gate": "inventory-equip-or-activate-behavior",
+                "classification": "loaded-pending-runtime",
+                "proof": "Visual model spawn does not claim equip, activation, pickup, collision, or gameplay behavior.",
+            },
+        ],
+    }
+    return command, request
+
+
+def structured_studio_job(entry: dict[str, Any], payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    if entry.get("domain") == "gameplay":
+        return structured_item_job(entry, payload)
+    return structured_actor_job(entry, payload)
+
+
 def structured_actor_command(entry: dict[str, Any], payload: dict[str, Any]) -> str:
     command, _request = structured_actor_job(entry, payload)
     return command
@@ -878,7 +964,7 @@ class LiveHandler(SimpleHTTPRequestHandler):
                     entry = self.server.catalog_store.entry(entry_id)  # type: ignore[attr-defined]
                     if entry is None:
                         raise ValueError("unknown catalog entry")
-                    command, request = structured_actor_job(entry, payload)
+                    command, request = structured_studio_job(entry, payload)
                     job = self.server.job_store.start(command, request, session_id)  # type: ignore[attr-defined]
                     self.server.studio_store.add_job(session_id, job["id"])  # type: ignore[attr-defined]
                     self.server.studio_store.append_event(

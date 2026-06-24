@@ -254,17 +254,23 @@ if ($creature.placementCommandArgs -notmatch "-BootstrapCell" -or $creature.sear
 if ($null -eq $creature.componentPhases -or $null -eq $creature.componentEvidence -or @($creature.componentEvidence).Count -eq 0) {
     throw "Studio catalog creature entry missing component phase/provenance evidence."
 }
-if ($null -eq $weapon -or $weapon.commands.runtimeThreeCamera -ne "") {
-    throw "Studio catalog weapon entry should be cataloged pending generic item runtime command."
+if ($null -eq $weapon -or $weapon.commands.runtimeThreeCamera -notmatch "run-fnv-item-viewer.ps1") {
+    throw "Studio catalog weapon entry should expose generated item visual viewer command."
 }
-if ($weapon.studioGates[0].gate -ne "item-studio-spawn-command") {
-    throw "Studio catalog weapon entry missing item-studio pending gate."
+if ($weapon.studioGates[0].gate -ne "runtime-visual-model-spawn" -or $weapon.studioGates[1].gate -ne "item-studio-spawn-command") {
+    throw "Studio catalog weapon entry missing visual-spawn gate plus pending item behavior gate."
 }
 if ($weapon.searchText -notmatch "contract pistol") {
     throw "Studio catalog search text did not split editor/model names into human-searchable tokens."
 }
-if ($null -eq $armor -or $armor.kind -ne "armor" -or $armor.studioGates[0].gate -ne "item-studio-spawn-command") {
-    throw "Studio catalog armor entry did not expose armor kind with explicit item studio gate."
+if ($null -eq $armor -or $armor.kind -ne "armor" -or $armor.studioGates[0].gate -ne "runtime-visual-model-spawn") {
+    throw "Studio catalog armor entry did not expose armor kind with explicit runtime visual spawn gate."
+}
+if ($armor.commands.runtimeThreeCamera -notmatch "run-fnv-item-viewer.ps1" -or $armor.commands.runtimeThreeCamera -notmatch "ContractArmor.nif") {
+    throw "Studio catalog armor entry did not expose generated item viewer command."
+}
+if ($armor.studioGates[1].gate -ne "item-studio-spawn-command") {
+    throw "Studio catalog armor entry did not preserve pending item behavior gate."
 }
 $html = Get-Content -LiteralPath $htmlPath -Raw
 if (!$html.Contains("FNV Character Studio Catalog") -or !$html.Contains("neutral stage pending") -or !$html.Contains("ContractPistol") -or !$html.Contains("ContractArmor")) {

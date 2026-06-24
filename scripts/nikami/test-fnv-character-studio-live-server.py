@@ -60,12 +60,41 @@ def main() -> int:
                 "-ActorStageX 11 -ActorStageY 22 -ActorStageZ 33"
             ),
         }
+        model_item_entry = {
+            "id": "gameplay:000001",
+            "domain": "gameplay",
+            "kind": "armor",
+            "recordType": "ARMO",
+            "label": "ContractArmor",
+            "target": "ContractArmor",
+            "formId": "0x00001004",
+            "plugin": "Contract.esm",
+            "model": "Armor\\Contract\\ContractArmor.nif",
+            "classification": "loaded-pending-runtime",
+            "searchText": "contract armor contractarmor armor contract/contractarmor.nif",
+            "commands": {
+                "runtimeThreeCamera": (
+                    "powershell -NoProfile -ExecutionPolicy Bypass -File "
+                    "scripts/nikami/run-fnv-item-viewer.ps1 -ItemTarget 'ContractArmor' "
+                    "-ItemKind 'armor' -ItemRecordType 'ARMO' -ItemFormId '0x00001004' "
+                    "-ItemPlugin 'Contract.esm' -ItemModel 'Armor\\Contract\\ContractArmor.nif' "
+                    "-Angles 'front,front-left,front-right' -RequirePass"
+                ),
+                "runtimeFrontOnly": (
+                    "powershell -NoProfile -ExecutionPolicy Bypass -File "
+                    "scripts/nikami/run-fnv-item-viewer.ps1 -ItemTarget 'ContractArmor' "
+                    "-ItemKind 'armor' -ItemRecordType 'ARMO' -ItemFormId '0x00001004' "
+                    "-ItemPlugin 'Contract.esm' -ItemModel 'Armor\\Contract\\ContractArmor.nif' "
+                    "-Angles 'front' -RequirePass"
+                ),
+            },
+        }
         write_json(
             catalog_dir / "character-studio-catalog.json",
             {
                 "schema": "nikami-fnv-character-studio-catalog-v1",
                 "status": "PASS",
-                "entries": [entry, placed_entry],
+                "entries": [entry, placed_entry, model_item_entry],
             },
         )
 
@@ -84,6 +113,10 @@ def main() -> int:
             raise AssertionError("catalog search returned giant searchText payloads instead of compact rows")
         if not search["entries"][0].get("runnable"):
             raise AssertionError("catalog search compact row did not preserve runnable actor status")
+        item_search = catalog.search({"q": ["contract armor"], "limit": ["5"]})
+        item_rows = [item for item in item_search["entries"] if item["id"] == "gameplay:000001"]
+        if not item_rows or not item_rows[0].get("runnable"):
+            raise AssertionError("catalog search compact row did not preserve runnable model-backed item status")
         full_entry = catalog.entry("actor:000001")
         if full_entry is None:
             raise AssertionError("catalog entry lookup failed")
@@ -177,18 +210,26 @@ def main() -> int:
             raise AssertionError("structured request did not normalize nested dialogue selector")
 
         item_entry = {
-            "id": "gameplay:000001",
+            "id": "gameplay:000002",
             "domain": "gameplay",
             "kind": "weapon",
             "commands": {"runtimeThreeCamera": "", "runtimeFrontOnly": ""},
         }
+        item_command, item_request = live.structured_studio_job(model_item_entry, {"entryId": "gameplay:000001", "commandKey": "runtimeFrontOnly"})
+        item_args = live.command_to_args(item_command, Path("scripts/nikami/run-fnv-character-viewer.ps1"))
+        if str(item_args[item_args.index("-File") + 1]).replace("\\", "/") != "scripts/nikami/run-fnv-item-viewer.ps1":
+            raise AssertionError("model-backed item command did not route to the generated item viewer runner")
+        if "-ItemModel" not in item_args or "Armor\\Contract\\ContractArmor.nif" not in item_args:
+            raise AssertionError("structured item command did not preserve model-backed item metadata")
+        if item_request["kind"] != "item-runtime-visual-spawn" or item_request["selectors"]["propModels"] != ["Armor\\Contract\\ContractArmor.nif"]:
+            raise AssertionError("structured item request did not expose visual-spawn gate metadata")
         try:
-            live.structured_actor_command(item_entry, {"entryId": "gameplay:000001"})
+            live.structured_studio_job(item_entry, {"entryId": "gameplay:000002"})
         except ValueError as exc:
-            if "actor or creature" not in str(exc):
+            if "harvested model path" not in str(exc):
                 raise
         else:
-            raise AssertionError("structured command incorrectly accepted item entry before item summon support")
+            raise AssertionError("structured studio job incorrectly accepted model-less item entry")
 
     print("FNV character studio live server contract PASS")
     return 0

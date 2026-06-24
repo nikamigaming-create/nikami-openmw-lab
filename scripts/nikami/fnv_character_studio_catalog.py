@@ -210,6 +210,24 @@ def actor_studio_command(entry: dict[str, Any], angles: str) -> str:
     return command
 
 
+def item_studio_command(entry: dict[str, Any], angles: str) -> str:
+    model = as_text(entry.get("model"))
+    target = as_text(entry.get("target")) or as_text(entry.get("label")) or as_text(entry.get("formId"))
+    if not model or not target:
+        return ""
+    command = (
+        "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/nikami/run-fnv-item-viewer.ps1 "
+        f"-ItemTarget {shell_quote(target)} "
+        f"-ItemKind {shell_quote(as_text(entry.get('kind')))} "
+        f"-ItemRecordType {shell_quote(as_text(entry.get('recordType')))} "
+        f"-ItemFormId {shell_quote(as_text(entry.get('formId')))} "
+        f"-ItemPlugin {shell_quote(as_text(entry.get('plugin')))} "
+        f"-ItemModel {shell_quote(model)} "
+        f"-Angles {shell_quote(angles)} -RequirePass"
+    )
+    return command
+
+
 def actor_entry(row: dict[str, Any], index: int) -> dict[str, Any]:
     selected_target = as_text(row.get("selectedTarget") or row.get("target"))
     runtime_target = actor_runtime_target(row)
@@ -320,6 +338,7 @@ def gameplay_entry(row: dict[str, Any], index: int) -> dict[str, Any]:
     domain = GAMEPLAY_RECORD_DOMAINS.get(record_type, record_type.lower() or "gameplay")
     label = as_text(row.get("editorId")) or as_text(row.get("formId")) or f"{domain}-{index:06d}"
     classification = normalize_classification(as_text(row.get("classification") or row.get("readiness")))
+    has_model = bool(as_text(row.get("model")))
     entry = {
         "id": f"gameplay:{index:06d}",
         "domain": "gameplay",
@@ -340,9 +359,18 @@ def gameplay_entry(row: dict[str, Any], index: int) -> dict[str, Any]:
         "placement": {},
         "studioGates": [
             {
+                "gate": "runtime-visual-model-spawn",
+                "classification": "loaded-pending-runtime" if has_model else "known-blocked",
+                "proof": (
+                    "Model-backed row can run the PC-flat item viewer for byte-to-pixel visual spawn proof."
+                    if has_model
+                    else "No model path was harvested for this row, so visual model spawn is blocked until a runtime source is identified."
+                ),
+            },
+            {
                 "gate": "item-studio-spawn-command",
                 "classification": "loaded-pending-runtime",
-                "proof": "Record bytes are cataloged, but a generic real-time studio summon/equip/manipulate command for this item domain is pending.",
+                "proof": "Record bytes are cataloged; visual model spawn can run for model-backed rows, while equip/activate/manipulate behavior remains pending.",
             }
         ],
         "commands": {
@@ -360,6 +388,8 @@ def gameplay_entry(row: dict[str, Any], index: int) -> dict[str, Any]:
         },
         "payloadPolicy": "generated identifiers and paths only; no retail payload bytes",
     }
+    entry["commands"]["runtimeThreeCamera"] = item_studio_command(entry, "front,front-left,front-right")
+    entry["commands"]["runtimeFrontOnly"] = item_studio_command(entry, "front")
     entry["searchText"] = search_text(
         entry["domain"],
         entry["kind"],
@@ -424,7 +454,7 @@ def build_catalog(plan: dict[str, Any], gameplay_rows: list[dict[str, Any]], lim
         },
         "commands": {
             "buildCatalog": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/nikami/run-fnv-character-studio-catalog.ps1 -OpenStudio",
-            "liveRuntimeNote": "Actor rows expose runtimeThreeCamera/runtimeFrontOnly commands; item rows are cataloged pending generic item studio summon/equip support.",
+            "liveRuntimeNote": "Actor rows expose runtimeThreeCamera/runtimeFrontOnly commands; model-backed item rows expose runtime visual model spawn, while equip/activate/collision remain pending.",
         },
         "entries": entries,
     }
@@ -433,7 +463,7 @@ def build_catalog(plan: dict[str, Any], gameplay_rows: list[dict[str, Any]], lim
 def compact_entry(entry: dict[str, Any]) -> dict[str, Any]:
     compact = {key: entry.get(key) for key in HTML_ENTRY_FIELDS if key in entry}
     commands = entry.get("commands") if isinstance(entry.get("commands"), dict) else {}
-    compact["runnable"] = bool(commands.get("runtimeThreeCamera")) and entry.get("domain") == "actor"
+    compact["runnable"] = bool(commands.get("runtimeThreeCamera")) and entry.get("domain") in {"actor", "gameplay"}
     compact["hasFullDetails"] = False
     return compact
 
@@ -1132,7 +1162,7 @@ function renderWorkbench() {{
   document.getElementById("selectedEntry").innerHTML = entry
     ? `<b>${{esc(entry.label)}}</b><div class="muted">${{esc(entry.id)}} / ${{esc(entry.kind)}} / ${{esc(entry.classification)}}</div><div class="muted">runtime: <code>${{esc(entry.runtimeTarget || entry.target)}}</code></div><div class="muted">assembly: <code>${{esc(entry.assemblyTarget || "")}}</code> placed: <code>${{esc(entry.placedTarget || "")}}</code></div>`
     : `<span class="muted">Select an actor or creature entry</span>`;
-  const runnable = live && entry && entry.domain === "actor";
+  const runnable = live && entry && (entry.commands?.runtimeThreeCamera || entry.runnable);
   document.getElementById("newSession").disabled = !live;
   document.getElementById("runThree").disabled = !runnable;
   document.getElementById("runFront").disabled = !runnable;
@@ -1170,7 +1200,7 @@ function render() {{
       ${{e.model ? `<div class="muted">model: <code>${{esc(e.model)}}</code></div>` : ""}}
       <div class="actions">
         <button type="button" data-select="${{esc(e.id)}}">Select</button>
-        <button type="button" data-run="${{esc(e.id)}}" ${{e.domain === "actor" ? "" : "disabled"}}>Run 3 Camera</button>
+        <button type="button" data-run="${{esc(e.id)}}" ${{e.runnable || e.commands?.runtimeThreeCamera ? "" : "disabled"}}>Run 3 Camera</button>
       </div>
       <div><b>Three Camera Runtime</b>${{commandBlock(e.commands?.runtimeThreeCamera || "")}}</div>
       <div><b>Front Runtime</b>${{commandBlock(e.commands?.runtimeFrontOnly || "")}}</div>

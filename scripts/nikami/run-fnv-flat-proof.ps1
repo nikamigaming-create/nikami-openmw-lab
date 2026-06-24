@@ -31,6 +31,26 @@ param(
     [ValidateSet("npc", "creature", "auto")]
     [string]$ActorKind = "npc",
     [int]$ActorFrame = 240,
+    [string]$ProofItemTarget = "",
+    [string]$ProofItemKind = "",
+    [string]$ProofItemRecordType = "",
+    [string]$ProofItemFormId = "",
+    [string]$ProofItemPlugin = "",
+    [string]$ProofItemModel = "",
+    [int]$ProofItemFrame = 240,
+    [double]$ProofItemStageX = [double]::NaN,
+    [double]$ProofItemStageY = [double]::NaN,
+    [double]$ProofItemStageZ = [double]::NaN,
+    [double]$ProofItemStageRotX = [double]::NaN,
+    [double]$ProofItemStageRotY = [double]::NaN,
+    [double]$ProofItemStageRotZ = [double]::NaN,
+    [double]$ProofItemStageScale = [double]::NaN,
+    [double]$ProofItemViewOffsetX = [double]::NaN,
+    [double]$ProofItemViewOffsetY = [double]::NaN,
+    [double]$ProofItemViewOffsetZ = [double]::NaN,
+    [double]$ProofItemViewTargetZ = [double]::NaN,
+    [double]$ProofItemViewCameraDistance = [double]::NaN,
+    [switch]$ProofItemViewLocalOffset,
     [switch]$StageActor,
     [double]$ActorStageX = [double]::NaN,
     [double]$ActorStageY = [double]::NaN,
@@ -1419,6 +1439,27 @@ try {
     Set-ProofEnv $previousEnv "OPENMW_FNV_PROOF_TARGET_NPC" $ActorTarget
     Set-ProofEnv $previousEnv "OPENMW_PROOF_ACTOR_KIND" $ActorKind
     Set-ProofEnv $previousEnv "OPENMW_PROOF_ACTOR_FRAME" $ActorFrame
+    Set-ProofEnv $previousEnv "OPENMW_PROOF_ITEM_TARGET" $ProofItemTarget
+    Set-ProofEnv $previousEnv "OPENMW_PROOF_ITEM_KIND" $ProofItemKind
+    Set-ProofEnv $previousEnv "OPENMW_PROOF_ITEM_RECORD_TYPE" $ProofItemRecordType
+    Set-ProofEnv $previousEnv "OPENMW_PROOF_ITEM_FORM_ID" $ProofItemFormId
+    Set-ProofEnv $previousEnv "OPENMW_PROOF_ITEM_PLUGIN" $ProofItemPlugin
+    Set-ProofEnv $previousEnv "OPENMW_PROOF_ITEM_MODEL" $ProofItemModel
+    Set-ProofEnv $previousEnv "OPENMW_PROOF_ITEM_FRAME" $ProofItemFrame
+    Set-ProofEnv $previousEnv "OPENMW_PROOF_ITEM_STAGE_X" $ProofItemStageX
+    Set-ProofEnv $previousEnv "OPENMW_PROOF_ITEM_STAGE_Y" $ProofItemStageY
+    Set-ProofEnv $previousEnv "OPENMW_PROOF_ITEM_STAGE_Z" $ProofItemStageZ
+    Set-ProofEnv $previousEnv "OPENMW_PROOF_ITEM_STAGE_ROT_X" $ProofItemStageRotX
+    Set-ProofEnv $previousEnv "OPENMW_PROOF_ITEM_STAGE_ROT_Y" $ProofItemStageRotY
+    Set-ProofEnv $previousEnv "OPENMW_PROOF_ITEM_STAGE_ROT_Z" $ProofItemStageRotZ
+    Set-ProofEnv $previousEnv "OPENMW_PROOF_ITEM_STAGE_SCALE" $ProofItemStageScale
+    Set-ProofEnv $previousEnv "OPENMW_PROOF_ITEM_VIEW_OFFSET_X" $ProofItemViewOffsetX
+    Set-ProofEnv $previousEnv "OPENMW_PROOF_ITEM_VIEW_OFFSET_Y" $ProofItemViewOffsetY
+    Set-ProofEnv $previousEnv "OPENMW_PROOF_ITEM_VIEW_OFFSET_Z" $ProofItemViewOffsetZ
+    Set-ProofEnv $previousEnv "OPENMW_PROOF_ITEM_VIEW_TARGET_Z" $ProofItemViewTargetZ
+    Set-ProofEnv $previousEnv "OPENMW_PROOF_ITEM_VIEW_CAMERA_DISTANCE" $ProofItemViewCameraDistance
+    if ($ProofItemViewLocalOffset) { Set-ProofEnv $previousEnv "OPENMW_PROOF_ITEM_VIEW_LOCAL_OFFSET" "1" }
+    else { Clear-ProofEnv $previousEnv "OPENMW_PROOF_ITEM_VIEW_LOCAL_OFFSET" }
     if ($StageActor) { Set-ProofEnv $previousEnv "OPENMW_PROOF_STAGE_ACTOR" "1" }
     Set-ProofEnv $previousEnv "OPENMW_PROOF_ACTOR_STAGE_X" $ActorStageX
     Set-ProofEnv $previousEnv "OPENMW_PROOF_ACTOR_STAGE_Y" $ActorStageY
@@ -1572,6 +1613,20 @@ try {
     Write-ProofLine "ActorTarget: $ActorTarget"
     Write-ProofLine "FnvProofTargetNpc: $ActorTarget"
     Write-ProofLine "ActorKind: $ActorKind"
+    Write-ProofLine "ProofItemTarget: $ProofItemTarget"
+    Write-ProofLine "ProofItemKind: $ProofItemKind"
+    Write-ProofLine "ProofItemRecordType: $ProofItemRecordType"
+    Write-ProofLine "ProofItemFormId: $ProofItemFormId"
+    Write-ProofLine "ProofItemPlugin: $ProofItemPlugin"
+    Write-ProofLine "ProofItemModel: $ProofItemModel"
+    Write-ProofLine "ProofItemFrame: $ProofItemFrame"
+    Write-ProofLine "ProofItemStagePosition: $ProofItemStageX,$ProofItemStageY,$ProofItemStageZ"
+    Write-ProofLine "ProofItemStageRotation: $ProofItemStageRotX,$ProofItemStageRotY,$ProofItemStageRotZ"
+    Write-ProofLine "ProofItemStageScale: $ProofItemStageScale"
+    Write-ProofLine "ProofItemViewOffset: $ProofItemViewOffsetX,$ProofItemViewOffsetY,$ProofItemViewOffsetZ"
+    Write-ProofLine "ProofItemViewTargetZ: $ProofItemViewTargetZ"
+    Write-ProofLine "ProofItemViewCameraDistance: $ProofItemViewCameraDistance"
+    Write-ProofLine "ProofItemViewLocalOffset: $ProofItemViewLocalOffset"
     Write-ProofLine "CreatureDiagnostics: $($CreatureDiagnostics -or $ActorKind -ieq 'creature')"
     Write-ProofLine "ActorViewLocalOffset: $ActorViewLocalOffset"
     Write-ProofLine "ActorViewOffsetX: $ActorViewOffsetX"

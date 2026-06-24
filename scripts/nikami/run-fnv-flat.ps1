@@ -362,6 +362,28 @@ if (![string]::IsNullOrWhiteSpace($StartupScript)) {
     $OpenMwArgs += @("--script-run", (Resolve-Path -LiteralPath $StartupScript).Path)
 }
 
+$ProofEnvNames = @(
+    "OPENMW_PROOF_SCREENSHOT_FRAME",
+    "OPENMW_FNV_BOOTSTRAP_POS_X",
+    "OPENMW_FNV_BOOTSTRAP_POS_Y",
+    "OPENMW_FNV_BOOTSTRAP_POS_Z",
+    "OPENMW_FNV_BOOTSTRAP_CELL",
+    "OPENMW_PROOF_ACTOR_TARGET",
+    "OPENMW_PROOF_ITEM_MODEL",
+    "OPENMW_PROOF_ITEM_TARGET",
+    "OPENMW_PROOF_ITEM_FRAME"
+)
+$ForwardedProofEnv = @()
+foreach ($Name in $ProofEnvNames) {
+    $Value = [Environment]::GetEnvironmentVariable($Name, "Process")
+    if (![string]::IsNullOrWhiteSpace($Value)) {
+        $ForwardedProofEnv += "$Name=$Value"
+    }
+}
+if ($ForwardedProofEnv.Count -gt 0) {
+    Write-Host "Proof env forwarded to OpenMW: $($ForwardedProofEnv -join '; ')"
+}
+
 Write-Host "Launching $Exe"
 Write-Host "OpenMW args: $($OpenMwArgs -join ' ')"
 Write-Host "Config $ConfigPath"
