@@ -983,6 +983,10 @@ try {
     Set-ProofEnv $previousEnv "OPENMW_PROOF_ACTOR_VIEW_OFFSET_Y" $ActorViewOffsetY
     Set-ProofEnv $previousEnv "OPENMW_PROOF_ACTOR_VIEW_OFFSET_Z" $ActorViewOffsetZ
     Set-ProofEnv $previousEnv "OPENMW_PROOF_ACTOR_VIEW_TARGET_Z" $ActorViewTargetZ
+    if (![string]::IsNullOrWhiteSpace($ActorTarget)) {
+        Set-ProofEnv $previousEnv "OPENMW_PROOF_POSTURE_TARGET" $ActorTarget
+        Set-ProofEnv $previousEnv "OPENMW_PROOF_POSTURE_LABEL" "fnv-actor-proof"
+    }
     Set-ProofEnv $previousEnv "OPENMW_PROOF_GUI_MODE" $ProofGuiMode
     Set-ProofEnv $previousEnv "OPENMW_PROOF_GUI_FRAME" $ProofGuiFrame
     Set-ProofEnv $previousEnv "OPENMW_PROOF_WALK_END_X" $WalkEndX
@@ -1140,6 +1144,10 @@ $playerSupportMissLines = Count-LogMatches $OpenMwLog "Nikami FNV player terrain
 $airborneLines = Count-LogMatches $OpenMwLog "FNV/ESM4 proof walk: summary .*airborneFrames=[1-9]"
 $flatCameraSettledLines = Count-LogMatches $OpenMwLog "FNV/ESM4 diag: settled flat startup camera"
 $flatCameraFailureLines = Count-LogMatches $OpenMwLog "FNV/ESM4 diag: flat startup camera did not attach"
+$worldPostureBadLines = Count-LogMatches $OpenMwLog "FNV/ESM4 diag: world posture .* verdict=BAD"
+$worldPostureOkLines = Count-LogMatches $OpenMwLog "FNV/ESM4 diag: world posture .* verdict=OK"
+$standingArmPoseBadLines = Count-LogMatches $OpenMwLog "FNV/ESM4 diag: standing arm pose .* verdict=BAD"
+$standingArmPoseOkLines = Count-LogMatches $OpenMwLog "FNV/ESM4 diag: standing arm pose .* verdict=OK"
 $unsupportedEsm4Skips = @(Get-UnsupportedEsm4Skips $OpenMwLog)
 $screenshots = @(Get-ChildItem -LiteralPath $ProofDir -Filter "*.png" -File -ErrorAction SilentlyContinue)
 
@@ -1160,6 +1168,10 @@ Write-ProofLine "Player terrain support miss lines: $playerSupportMissLines"
 Write-ProofLine "Player terrain airborne lines: $airborneLines"
 Write-ProofLine "Flat camera settled lines: $flatCameraSettledLines"
 Write-ProofLine "Flat camera failure lines: $flatCameraFailureLines"
+Write-ProofLine "World posture OK lines: $worldPostureOkLines"
+Write-ProofLine "World posture BAD lines: $worldPostureBadLines"
+Write-ProofLine "Standing arm pose OK lines: $standingArmPoseOkLines"
+Write-ProofLine "Standing arm pose BAD lines: $standingArmPoseBadLines"
 Write-ProofLine "Unsupported ESM4 skip lines: $($unsupportedEsm4Skips.Count)"
 
 if ($fatalCount -gt 0) { throw "FNV flat proof saw fatal/blocker log lines. See $OpenMwLog" }
@@ -1171,6 +1183,10 @@ if ($RequireSunDirectionRuntime) { Assert-SunDirectionRuntime $OpenMwLog $ProofD
 Assert-UnsupportedEsm4SkipsClassified $unsupportedEsm4Skips $ClassificationDir
 if ($RequireFlatCameraSettled -and $flatCameraSettledLines -eq 0) { throw "FNV flat proof did not prove flat camera settlement. See $OpenMwLog" }
 if ($flatCameraFailureLines -gt 0) { throw "FNV flat proof saw flat camera failure lines. See $OpenMwLog" }
+if (![string]::IsNullOrWhiteSpace($ActorTarget) -and $worldPostureBadLines -gt 0) { throw "FNV actor proof saw bad world posture lines. See $OpenMwLog" }
+if (![string]::IsNullOrWhiteSpace($ActorTarget) -and $standingArmPoseBadLines -gt 0) { throw "FNV actor proof saw standing arm bind/T-pose lines. See $OpenMwLog" }
+if (![string]::IsNullOrWhiteSpace($ActorTarget) -and $worldPostureOkLines -eq 0) { throw "FNV actor proof did not log world posture lines. See $OpenMwLog" }
+if (![string]::IsNullOrWhiteSpace($ActorTarget) -and $standingArmPoseOkLines -eq 0) { throw "FNV actor proof did not log standing arm pose lines. See $OpenMwLog" }
 if ($RequirePlayerTerrainSupport -and $playerSupportMissLines -gt 0) { throw "FNV flat proof saw player terrain support misses. See $OpenMwLog" }
 if ($RequirePlayerTerrainSupport -and $airborneLines -gt 0) { throw "FNV flat proof saw walk airborne frames. See $OpenMwLog" }
 if ($RequireTerrainProbeFullSupport -and $namedProbeLines -eq 0) { throw "FNV flat proof did not log named terrain probe lines. See $OpenMwLog" }

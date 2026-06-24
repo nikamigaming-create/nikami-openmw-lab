@@ -48,7 +48,7 @@ $walk = Assert-File "scripts/nikami/run-fnv-goodsprings-walk-replay-proof.ps1"
 $ui = Assert-File "scripts/nikami/run-fnv-ui-baseline-proof.ps1"
 $collision = Assert-File "scripts/nikami/run-fnv-goodsprings-collision-path-proof.ps1"
 Assert-File "scripts/nikami/run-fnv-opening-vertical-slice.ps1" | Out-Null
-Assert-File "scripts/nikami/run-fnv-actor-mugshot-sweep.ps1" | Out-Null
+$mugshot = Assert-File "scripts/nikami/run-fnv-actor-mugshot-sweep.ps1"
 Assert-File "scripts/nikami/run-fnv-easy-pete-angle-sweep.ps1" | Out-Null
 
 foreach ($needle in @(
@@ -76,6 +76,16 @@ foreach ($needle in @(
     Assert-Text $flat $needle "flat proof parameter $needle"
 }
 
+Assert-Text $flat "OPENMW_PROOF_POSTURE_TARGET" "flat proof asks runtime to audit targeted actor posture"
+Assert-Text $flat "World posture BAD lines:" "flat proof reports bad world posture lines"
+Assert-Text $flat "Standing arm pose BAD lines:" "flat proof reports standing arm bind/T-pose lines"
+Assert-Text $flat "bad world posture" "flat proof fails targeted actor bad world posture"
+Assert-Text $flat "standing arm bind/T-pose" "flat proof fails targeted actor bind/T-pose posture"
+Assert-Text $mugshot "[switch]`$DisableNativeAnimationCallbacks" "mugshot native callback disable is explicit opt-in"
+Assert-Text $mugshot "world posture .* verdict=BAD" "mugshot parses bad world posture failures"
+Assert-Text $mugshot "standing arm pose .* verdict=BAD" "mugshot parses standing arm bind/T-pose failures"
+Assert-Text $mugshot "MachineWorldPostureBad" "mugshot human review includes machine world posture failure column"
+Assert-Text $mugshot "MachineArmPoseBad" "mugshot human review includes machine arm pose failure column"
 Assert-Text $doc "ActorTarget = `"DocMitchell`"" "Doc Mitchell actor target"
 Assert-Text $doc "FNV/ESM4 FACE CHECK DocMitchell:" "Doc Mitchell face asset assertion"
 Assert-Text $doc "FNV/ESM4 diag: play matched FormId:0x1104c0c group 'idle'" "Doc Mitchell animation assertion"

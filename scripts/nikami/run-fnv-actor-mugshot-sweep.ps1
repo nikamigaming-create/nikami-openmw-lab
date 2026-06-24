@@ -38,6 +38,7 @@ param(
     [double]$ActorStageY = 1500,
     [double]$ActorStageZ = 8425,
     [double]$ActorStageRotZ = 1.5708,
+    [switch]$DisableNativeAnimationCallbacks,
     [switch]$NoSound,
     [switch]$RequirePass
 )
@@ -308,6 +309,23 @@ function Get-PartAssemblyProbe {
     }
 }
 
+function Get-FirstLogMatchForAnyPattern {
+    param(
+        [string]$LogPath,
+        [string]$LinePrefix,
+        [string[]]$Patterns,
+        [string]$LineSuffix
+    )
+
+    foreach ($pattern in $Patterns) {
+        if ([string]::IsNullOrWhiteSpace($pattern)) { continue }
+        $line = Get-FirstLogMatch -LogPath $LogPath -Pattern "$LinePrefix$pattern$LineSuffix"
+        if ($line) { return $line }
+    }
+
+    return $null
+}
+
 $KnownToleratedMissingMeshes = @(
     "meshes/sky_atmosphere.nif",
     "meshes/sky_night_01.nif",
@@ -397,13 +415,19 @@ function Get-LogProbe {
     if ($matchLine -and $matchLine -match "ref=([^ ]+)") {
         $partPatterns += [regex]::Escape($Matches[1])
     }
+    $worldPostureBadLine = Get-FirstLogMatchForAnyPattern -LogPath $LogPath -LinePrefix "world posture " -Patterns $partPatterns -LineSuffix " .* verdict=BAD"
+    if ($null -eq $worldPostureBadLine) { $worldPostureBadLine = Get-FirstLogMatch -LogPath $LogPath -Pattern "world posture .* verdict=BAD" }
+    $worldPostureOkLine = Get-FirstLogMatchForAnyPattern -LogPath $LogPath -LinePrefix "world posture " -Patterns $partPatterns -LineSuffix " .* verdict=OK"
+    $armPoseBadLine = Get-FirstLogMatchForAnyPattern -LogPath $LogPath -LinePrefix "standing arm pose " -Patterns $partPatterns -LineSuffix " .* verdict=BAD"
+    if ($null -eq $armPoseBadLine) { $armPoseBadLine = Get-FirstLogMatch -LogPath $LogPath -Pattern "standing arm pose .* verdict=BAD" }
+    $armPoseOkLine = Get-FirstLogMatchForAnyPattern -LogPath $LogPath -LinePrefix "standing arm pose " -Patterns $partPatterns -LineSuffix " .* verdict=OK"
     $partProbe = Get-PartAssemblyProbe -LogPath $LogPath -Patterns $partPatterns
     $blockerProbe = Get-LogBlockerProbe -LogPath $LogPath
     $blockerLine = $blockerProbe.RealBlockerLine
 
     $faceTokens = @("head=OK", "mouth=OK", "leftEye=OK", "rightEye=OK", "eyeTexture=OK", "hairRecord=OK", "hairAttached=OK")
     $faceStatus = if (Test-LineHasAllTokens -Line $faceLine -Tokens $faceTokens) { "PASS" } elseif ($faceLine) { "REVIEW" } else { "MISSING" }
-    $animStatus = if ($animLine -and $animLine -match "missing=0") { "PASS" } elseif ($animLine) { "REVIEW" } else { "MISSING" }
+    $animStatus = if ($worldPostureBadLine -or $armPoseBadLine) { "FAIL" } elseif ($animLine -and $animLine -match "missing=0" -and $worldPostureOkLine -and $armPoseOkLine) { "PASS" } elseif ($animLine -or $worldPostureOkLine -or $armPoseOkLine) { "REVIEW" } else { "MISSING" }
     $matchStatus = if ($matchLine) { "PASS" } elseif ($lookupFailLine) { "FAIL" } else { "MISSING" }
     if ($lookupFailLine -and !$blockerLine) { $blockerLine = $lookupFailLine }
 
@@ -418,6 +442,10 @@ function Get-LogProbe {
         MatchLine = $matchLine
         FaceLine = $faceLine
         AnimationLine = $animLine
+        WorldPostureBadLine = $worldPostureBadLine
+        WorldPostureOkLine = $worldPostureOkLine
+        ArmPoseBadLine = $armPoseBadLine
+        ArmPoseOkLine = $armPoseOkLine
         PartAssemblyLine = $partProbe.Line
         BlockerLine = $blockerLine
     }
@@ -517,8 +545,8 @@ function Invoke-MugshotTarget {
         RequirePlayerTerrainSupport = $true
         RequireFlatCameraSettled = $true
         FnvPartMatrixAudit = $true
-        FnvDisableNativeAnimationCallbacks = $true
     }
+    if ($DisableNativeAnimationCallbacks) { $proofArgs.FnvDisableNativeAnimationCallbacks = $true }
     if ($StageActor) {
         $proofArgs.StageActor = $true
         $proofArgs.ActorStageX = $ActorStageX
@@ -781,6 +809,18 @@ function Write-Report {
         if (![string]::IsNullOrWhiteSpace($result.LogProbe.AnimationLine)) {
             $lines.Add("- Animation line: ``$(ConvertTo-MarkdownCell $result.LogProbe.AnimationLine)``")
         }
+        if (![string]::IsNullOrWhiteSpace($result.LogProbe.WorldPostureBadLine)) {
+            $lines.Add("- World posture BAD line: ``$(ConvertTo-MarkdownCell $result.LogProbe.WorldPostureBadLine)``")
+        }
+        if (![string]::IsNullOrWhiteSpace($result.LogProbe.WorldPostureOkLine)) {
+            $lines.Add("- World posture OK line: ``$(ConvertTo-MarkdownCell $result.LogProbe.WorldPostureOkLine)``")
+        }
+        if (![string]::IsNullOrWhiteSpace($result.LogProbe.ArmPoseBadLine)) {
+            $lines.Add("- Arm pose BAD line: ``$(ConvertTo-MarkdownCell $result.LogProbe.ArmPoseBadLine)``")
+        }
+        if (![string]::IsNullOrWhiteSpace($result.LogProbe.ArmPoseOkLine)) {
+            $lines.Add("- Arm pose OK line: ``$(ConvertTo-MarkdownCell $result.LogProbe.ArmPoseOkLine)``")
+        }
         if (![string]::IsNullOrWhiteSpace($result.LogProbe.PartAssemblyLine)) {
             $lines.Add("- Part assembly line: ``$(ConvertTo-MarkdownCell $result.LogProbe.PartAssemblyLine)``")
         }
@@ -801,6 +841,8 @@ function Write-HumanReviewCsv {
             MachineOverall = $result.Overall
             MachineFace = $result.LogProbe.Face
             MachineAnimation = $result.LogProbe.Animation
+            MachineWorldPostureBad = if ($result.LogProbe.WorldPostureBadLine) { "YES" } else { "NO" }
+            MachineArmPoseBad = if ($result.LogProbe.ArmPoseBadLine) { "YES" } else { "NO" }
             MachineParts = $result.LogProbe.PartAssembly
             MachineImage = $result.ImageQuality.Status
             VisualReview = "REVIEW_REQUIRED"

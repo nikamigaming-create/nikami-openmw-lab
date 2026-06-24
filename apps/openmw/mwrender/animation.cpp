@@ -1700,6 +1700,107 @@ namespace
         return !bad;
     }
 
+    bool auditFalloutStandingArmPose(
+        const std::unordered_map<std::string, std::vector<osg::MatrixTransform*>>& targets, const MWWorld::Ptr& ptr)
+    {
+        const auto requireBone = [&](std::initializer_list<std::string_view> bones, osg::Vec3f& value) {
+            osg::MatrixTransform* node = findFalloutTargetAny(targets, bones);
+            if (node == nullptr)
+                return false;
+            value = transformFalloutPoint(osg::Vec3f(), getFalloutNodeWorldMatrix(node));
+            return true;
+        };
+
+        osg::Vec3f head;
+        osg::Vec3f spine2;
+        osg::Vec3f pelvis;
+        osg::Vec3f leftUpperArm;
+        osg::Vec3f rightUpperArm;
+        osg::Vec3f leftForearm;
+        osg::Vec3f rightForearm;
+        osg::Vec3f leftHand;
+        osg::Vec3f rightHand;
+        const bool hasRequired = requireBone({ "bip01 head" }, head)
+            && requireBone({ "bip01 spine2", "bip01 spine1", "bip01 spine" }, spine2)
+            && requireBone({ "bip01 pelvis" }, pelvis)
+            && requireBone({ "bip01 l upperarm" }, leftUpperArm)
+            && requireBone({ "bip01 r upperarm" }, rightUpperArm)
+            && requireBone({ "bip01 l forearm" }, leftForearm)
+            && requireBone({ "bip01 r forearm" }, rightForearm)
+            && requireBone({ "bip01 l hand" }, leftHand)
+            && requireBone({ "bip01 r hand" }, rightHand);
+        if (!hasRequired)
+        {
+            Log(Debug::Warning) << "FNV/ESM4 diag: standing arm pose " << ptr.getCellRef().getRefId()
+                                << " verdict=BAD reason=missing_bone";
+            return false;
+        }
+
+        osg::Matrix worldToPose = osg::Matrix::identity();
+        if (osg::MatrixTransform* root = findFalloutTarget(targets, "bip01"))
+            worldToPose.invert(getFalloutNodeWorldMatrix(root));
+
+        const auto toPose = [&](const osg::Vec3f& point) {
+            return transformFalloutPoint(point, worldToPose);
+        };
+        const osg::Vec3f headLocal = toPose(head);
+        const osg::Vec3f spine2Local = toPose(spine2);
+        const osg::Vec3f pelvisLocal = toPose(pelvis);
+        const osg::Vec3f leftUpperArmLocal = toPose(leftUpperArm);
+        const osg::Vec3f rightUpperArmLocal = toPose(rightUpperArm);
+        const osg::Vec3f leftForearmLocal = toPose(leftForearm);
+        const osg::Vec3f rightForearmLocal = toPose(rightForearm);
+        const osg::Vec3f leftHandLocal = toPose(leftHand);
+        const osg::Vec3f rightHandLocal = toPose(rightHand);
+
+        const float torsoHeight = std::max(1.f, std::abs(headLocal.z() - pelvisLocal.z()));
+        const float handSpread = osg::Vec2f(leftHandLocal.x() - rightHandLocal.x(),
+                                     leftHandLocal.y() - rightHandLocal.y())
+                                     .length();
+        const float upperArmSpread = osg::Vec2f(leftUpperArmLocal.x() - rightUpperArmLocal.x(),
+                                           leftUpperArmLocal.y() - rightUpperArmLocal.y())
+                                           .length();
+        const float forearmSpread = osg::Vec2f(leftForearmLocal.x() - rightForearmLocal.x(),
+                                          leftForearmLocal.y() - rightForearmLocal.y())
+                                          .length();
+        const float averageHandAbovePelvis
+            = ((leftHandLocal.z() - pelvisLocal.z()) + (rightHandLocal.z() - pelvisLocal.z())) * 0.5f;
+        const float averageForearmAbovePelvis
+            = ((leftForearmLocal.z() - pelvisLocal.z()) + (rightForearmLocal.z() - pelvisLocal.z())) * 0.5f;
+        const float averageUpperArmAbovePelvis
+            = ((leftUpperArmLocal.z() - pelvisLocal.z()) + (rightUpperArmLocal.z() - pelvisLocal.z())) * 0.5f;
+        const float averageUpperToHandDrop
+            = ((leftUpperArmLocal.z() - leftHandLocal.z()) + (rightUpperArmLocal.z() - rightHandLocal.z())) * 0.5f;
+
+        const bool armsWide = handSpread > torsoHeight * 1.45f && handSpread > upperArmSpread * 1.8f;
+        const bool forearmsWide = forearmSpread > upperArmSpread * 1.35f;
+        const bool handsNotAtSides = averageUpperToHandDrop < std::max(18.f, torsoHeight * 0.95f);
+        const bool bad = armsWide && forearmsWide && handsNotAtSides;
+        const char* reason = bad ? "arms_out_bind_pose" : "ok";
+
+        Log(bad ? Debug::Warning : Debug::Info)
+            << "FNV/ESM4 diag: standing arm pose " << ptr.getCellRef().getRefId()
+            << " headLocal=" << formatFalloutAuditVec3(headLocal)
+            << " spine2Local=" << formatFalloutAuditVec3(spine2Local)
+            << " pelvisLocal=" << formatFalloutAuditVec3(pelvisLocal)
+            << " leftUpperArmLocal=" << formatFalloutAuditVec3(leftUpperArmLocal)
+            << " rightUpperArmLocal=" << formatFalloutAuditVec3(rightUpperArmLocal)
+            << " leftForearmLocal=" << formatFalloutAuditVec3(leftForearmLocal)
+            << " rightForearmLocal=" << formatFalloutAuditVec3(rightForearmLocal)
+            << " leftHandLocal=" << formatFalloutAuditVec3(leftHandLocal)
+            << " rightHandLocal=" << formatFalloutAuditVec3(rightHandLocal)
+            << " torsoHeight=" << torsoHeight
+            << " handSpread=" << handSpread
+            << " upperArmSpread=" << upperArmSpread
+            << " forearmSpread=" << forearmSpread
+            << " averageHandAbovePelvis=" << averageHandAbovePelvis
+            << " averageForearmAbovePelvis=" << averageForearmAbovePelvis
+            << " averageUpperArmAbovePelvis=" << averageUpperArmAbovePelvis
+            << " averageUpperToHandDrop=" << averageUpperToHandDrop
+            << " verdict=" << (bad ? "BAD" : "OK") << " reason=" << reason;
+        return !bad;
+    }
+
     bool shouldAuditGenericProofPosture(const MWWorld::Ptr& ptr)
     {
         const char* target = std::getenv("OPENMW_PROOF_POSTURE_TARGET");
@@ -1764,6 +1865,7 @@ namespace
                                     : "");
         auditFalloutSkeletonBounds(targets, ptr);
         auditFalloutWorldPosture(targets, ptr);
+        auditFalloutStandingArmPose(targets, ptr);
         auditFalloutMirrorSymmetry(targets, ptr);
         if (std::getenv("OPENMW_PROOF_POSTURE_SEATED") != nullptr)
         {
@@ -5581,6 +5683,7 @@ namespace MWRender
                     auditFalloutSeatedUpperBody(duplicateTransformTargets, mPtr);
                 }
                 auditFalloutWorldPosture(duplicateTransformTargets, mPtr);
+                auditFalloutStandingArmPose(duplicateTransformTargets, mPtr);
                 auditFalloutRuntimeParts(mObjectRoot.get(), duplicateTransformTargets, mPtr);
             }
         }
