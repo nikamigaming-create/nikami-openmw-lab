@@ -200,6 +200,8 @@ def viewer_command(
     animation_start_point: str = "",
     animation_group: str = "",
     dialogue_mode: str = "",
+    neutral_preview_profile: str = "",
+    fnv_rotation_mode: str = "",
 ) -> str:
     command = (
         "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/nikami/run-fnv-character-viewer.ps1 "
@@ -218,6 +220,8 @@ def viewer_command(
     command += selector_arg("ActorKitAnimationStartPoint", animation_start_point)
     command += selector_arg("ActorKitAnimationGroup", animation_group)
     command += selector_arg("ActorKitDialogueMode", dialogue_mode)
+    command += selector_arg("NeutralActorPreviewProfile", neutral_preview_profile)
+    command += selector_arg("FnvRotationMode", fnv_rotation_mode)
     command += " -OpenViewer"
     return command
 
@@ -446,6 +450,57 @@ def gate_controls(cases: list[dict[str, Any]], actor: str, actor_kind: str) -> d
             ("mtidle", "mT Idle", "hair"),
         ]
     ]
+    rotation_controls = [
+        {
+            "id": f"rotation-{mode}",
+            "label": label,
+            "phase": "hair",
+            "controlType": "pose-math",
+            "fnvRotationMode": mode,
+            "dialogueMouthProof": False,
+            "command": viewer_command(
+                actor,
+                "npc",
+                "hair",
+                animation_source="pistol-pose",
+                animation_start_point="0.35",
+                animation_group="idle",
+                fnv_rotation_mode=mode,
+            ),
+        }
+        for mode, label in [
+            ("bindCoreBindLowerSplitUpper", "Pose Math Authoring"),
+            ("bindCoreBindLowerBindUpper", "Pose Math Bind A/B"),
+            ("rawCoreSplitLimbs", "Pose Math Raw Core"),
+            ("standingUpperBody", "Pose Math Standing"),
+        ]
+    ]
+    camera_controls = [
+        {
+            "id": f"camera-{profile}",
+            "label": label,
+            "phase": "full",
+            "controlType": "camera-profile",
+            "neutralPreviewProfile": profile,
+            "dialogueMouthProof": False,
+            "command": viewer_command(
+                actor,
+                "npc",
+                "full",
+                animation_source="pistol-pose",
+                animation_start_point="0.35",
+                animation_group="idle",
+                neutral_preview_profile=profile,
+                fnv_rotation_mode="bindCoreBindLowerSplitUpper",
+            ),
+        }
+        for profile, label in [
+            ("audit", "Audit Board"),
+            ("full-body", "Full Body"),
+            ("face", "Face Hat"),
+            ("hands", "Hands Weapon"),
+        ]
+    ]
     dialogue_controls = [
         {
             "id": "talk-mouth-open",
@@ -478,9 +533,25 @@ def gate_controls(cases: list[dict[str, Any]], actor: str, actor_kind: str) -> d
             control for control in phase_controls if control["phase"] in {"body", "head", "face", "hair", "equipment", "weapon", "headgear"}
         ]
         + animation_proofs,
+        "cameraControls": camera_controls,
+        "rotationControls": rotation_controls,
         "dialogueControls": dialogue_controls,
         "captureAngles": [{"id": angle, "label": angle} for angle in ANGLE_ORDER],
         "botCommands": [
+            {
+                "id": "audit-board",
+                "label": "Audit Board",
+                "command": viewer_command(
+                    actor,
+                    "npc",
+                    "full",
+                    animation_source="pistol-pose",
+                    animation_start_point="0.35",
+                    animation_group="idle",
+                    neutral_preview_profile="audit",
+                    fnv_rotation_mode="bindCoreBindLowerSplitUpper",
+                ),
+            },
             {
                 "id": "full-ladder",
                 "label": "Full Ladder",
@@ -500,6 +571,19 @@ def gate_controls(cases: list[dict[str, Any]], actor: str, actor_kind: str) -> d
                 "id": "idle-proof",
                 "label": "Idle Proof",
                 "command": viewer_command(actor, "npc", "hair", animation_group="idle"),
+            },
+            {
+                "id": "pose-math-authoring",
+                "label": "Pose Math Authoring",
+                "command": viewer_command(
+                    actor,
+                    "npc",
+                    "hair",
+                    animation_source="pistol-pose",
+                    animation_start_point="0.35",
+                    animation_group="idle",
+                    fnv_rotation_mode="bindCoreBindLowerSplitUpper",
+                ),
             },
         ]
         + failure_bot_commands(cases),
@@ -598,6 +682,8 @@ def build_failure_focus(
         animation_start_point = str(actor_kit_selection.get("animationStartPoint") or "")
         animation_group = str(actor_kit_selection.get("animationGroup") or "")
         dialogue_mode = str(actor_kit_selection.get("dialogueMode") or "")
+        neutral_preview_profile = str(actor_kit_selection.get("neutralPreviewProfile") or "")
+        fnv_rotation_mode = str(actor_kit_selection.get("fnvRotationMode") or "")
         command_kwargs: dict[str, str] = {
             "parts": category if category != "all" else "",
             "part_models": matched_model,
@@ -605,6 +691,8 @@ def build_failure_focus(
             "animation_start_point": animation_start_point,
             "animation_group": animation_group,
             "dialogue_mode": dialogue_mode,
+            "neutral_preview_profile": neutral_preview_profile,
+            "fnv_rotation_mode": fnv_rotation_mode,
         }
         if category in {"equipment-body", "weapon", "headgear"}:
             command_kwargs["prop_slots"] = category
@@ -721,6 +809,8 @@ def build_capture_failures(cases: list[dict[str, Any]], actor: str, actor_kind: 
                     prop_models=str(selection.get("propModels") or ""),
                     animation_group=str(selection.get("animationGroup") or ""),
                     dialogue_mode=str(selection.get("dialogueMode") or ""),
+                    neutral_preview_profile=str(selection.get("neutralPreviewProfile") or ""),
+                    fnv_rotation_mode=str(selection.get("fnvRotationMode") or ""),
                 ),
             }
         )
@@ -1380,7 +1470,7 @@ function renderControls() {{
     select.addEventListener("change", () => {{ state.slotFilters[select.dataset.slot] = select.value; render(); }});
   }});
 
-  const runtime = [...(MANIFEST.controls?.animationControls || []), ...(MANIFEST.controls?.dialogueControls || [])];
+  const runtime = [...(MANIFEST.controls?.animationControls || []), ...(MANIFEST.controls?.cameraControls || []), ...(MANIFEST.controls?.rotationControls || []), ...(MANIFEST.controls?.dialogueControls || [])];
   document.getElementById("runtimeControlHost").innerHTML = runtime.map(control => `<button type="button" data-phase="${{esc(control.phase)}}">${{esc(control.label)}}</button>${{commandBlock(control.command, control.label)}}`).join("");
   document.getElementById("runtimeControlHost").querySelectorAll("button").forEach(button => button.addEventListener("click", () => {{
     state.phase = button.dataset.phase;

@@ -40,6 +40,9 @@ param(
     [double]$ActorViewDistance = 52,
     [double]$ActorViewOffsetZ = 108,
     [double]$ActorViewTargetZ = 108,
+    [string]$NeutralActorPreviewProfile = "audit",
+    [string]$FnvRotationMode = "bindCoreBindLowerSplitUpper",
+    [switch]$FnvUseNativeAnimationCallbacks,
     [string]$SuiteDir = "",
     [switch]$NoRun,
     [switch]$CreatureDiagnostics,
@@ -403,6 +406,9 @@ Write-Host "ActorKitAnimationSource: $ActorKitAnimationSource"
 Write-Host "ActorKitAnimationStartPoint: $(Format-Double $ActorKitAnimationStartPoint)"
 Write-Host "ActorKitAnimationGroup: $ActorKitAnimationGroup"
 Write-Host "ActorKitDialogueMode: $ActorKitDialogueMode"
+Write-Host "NeutralActorPreviewProfile: $NeutralActorPreviewProfile"
+Write-Host "FnvRotationMode: $FnvRotationMode"
+Write-Host "FnvUseNativeAnimationCallbacks: $FnvUseNativeAnimationCallbacks"
 Write-Host "BootstrapCell: $BootstrapCell"
 Write-Host "BootstrapPosition: $BootstrapX,$BootstrapY,$BootstrapZ"
 Write-Host "ActorStagePosition: $ActorStageX,$ActorStageY,$ActorStageZ"
@@ -474,6 +480,8 @@ else {
             ActorViewDistance = $ActorViewDistance
             ActorViewOffsetZ = $ActorViewOffsetZ
             ActorViewTargetZ = $ActorViewTargetZ
+            NeutralActorPreviewProfile = $NeutralActorPreviewProfile
+            FnvRotationMode = $FnvRotationMode
         }
         if (![string]::IsNullOrWhiteSpace($ActorKitPartsCsv)) { $builderArgs.ActorKitParts = $ActorKitPartsCsv }
         if (![string]::IsNullOrWhiteSpace($ActorKitPartModelsCsv)) { $builderArgs.ActorKitPartModels = $ActorKitPartModelsCsv }
@@ -485,6 +493,7 @@ else {
         if (![string]::IsNullOrWhiteSpace($ActorKitDialogueMode)) { $builderArgs.ActorKitDialogueMode = $ActorKitDialogueMode }
         if (![string]::IsNullOrWhiteSpace($FnvConfigData)) { $builderArgs.FnvConfigData = $FnvConfigData }
         if (![string]::IsNullOrWhiteSpace($ExtraOsgPluginDir)) { $builderArgs.ExtraOsgPluginDir = $ExtraOsgPluginDir }
+        if ($FnvUseNativeAnimationCallbacks) { $builderArgs.FnvUseNativeAnimationCallbacks = $true }
         if ($CreatureDiagnostics -or $ActorKind -ieq "creature") { $builderArgs.CreatureDiagnostics = $true }
         if ($NoSound) { $builderArgs.NoSound = $true }
 

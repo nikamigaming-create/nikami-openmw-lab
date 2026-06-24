@@ -40,6 +40,9 @@ param(
     [double]$ActorViewDistance = 52,
     [double]$ActorViewOffsetZ = 108,
     [double]$ActorViewTargetZ = 108,
+    [string]$NeutralActorPreviewProfile = "audit",
+    [string]$FnvRotationMode = "bindCoreBindLowerSplitUpper",
+    [switch]$FnvUseNativeAnimationCallbacks,
     [switch]$CreatureDiagnostics,
     [switch]$NoSound,
     [switch]$RequirePass
@@ -252,12 +255,15 @@ Write-SuiteLine "ActorKitAnimationSource: $ActorKitAnimationSource"
 Write-SuiteLine "ActorKitAnimationStartPoint: $(Format-Double $ActorKitAnimationStartPoint)"
 Write-SuiteLine "ActorKitAnimationGroup: $ActorKitAnimationGroup"
 Write-SuiteLine "ActorKitDialogueMode: $ActorKitDialogueMode"
+Write-SuiteLine "FnvRotationMode: $FnvRotationMode"
+Write-SuiteLine "FnvUseNativeAnimationCallbacks: $FnvUseNativeAnimationCallbacks"
 Write-SuiteLine "Angles: $(@($CameraAngles | ForEach-Object { $_.Name }) -join ',')"
 Write-SuiteLine "BootstrapCell: $BootstrapCell"
 Write-SuiteLine "BootstrapPosition: $BootstrapX,$BootstrapY,$BootstrapZ"
 Write-SuiteLine "BootstrapRotation: $BootstrapRotX,$BootstrapRotY,$BootstrapRotZ"
 Write-SuiteLine "ActorStagePosition: $ActorStageX,$ActorStageY,$ActorStageZ"
 Write-SuiteLine "ActorStageRotation: $ActorStageRotX,$ActorStageRotY,$ActorStageRotZ"
+Write-SuiteLine "NeutralActorPreviewProfile: $NeutralActorPreviewProfile"
 Write-SuiteLine "Policy: no retail assets copied into repo; generated proof output only"
 Write-SuiteLine ""
 
@@ -302,6 +308,7 @@ foreach ($phase in $Phases) {
             ActorFrame = $ActorFrame
             NeutralActorPreview = $($ActorKind -ine "creature")
             NeutralActorPreviewStandingIdle = $($ActorKind -ine "creature")
+            NeutralActorPreviewProfile = $NeutralActorPreviewProfile
             ActorStageX = $ActorStageX
             ActorStageY = $ActorStageY
             ActorStageZ = $ActorStageZ
@@ -314,6 +321,7 @@ foreach ($phase in $Phases) {
             ActorViewTargetZ = $ActorViewTargetZ
             ActorViewLocalOffset = $true
             FnvPartMatrixAudit = $true
+            FnvRotationMode = $FnvRotationMode
             CharacterBuilderPhase = $phase
         }
         if (![string]::IsNullOrWhiteSpace($ActorKitPartsCsv)) { $proofArgs.ActorKitParts = $ActorKitPartsCsv }
@@ -326,6 +334,7 @@ foreach ($phase in $Phases) {
         if (![string]::IsNullOrWhiteSpace($ActorKitDialogueMode)) { $proofArgs.ActorKitDialogueMode = $ActorKitDialogueMode }
         if (![string]::IsNullOrWhiteSpace($FnvConfigData)) { $proofArgs.FnvConfigData = $FnvConfigData }
         if (![string]::IsNullOrWhiteSpace($ExtraOsgPluginDir)) { $proofArgs.ExtraOsgPluginDir = $ExtraOsgPluginDir }
+        if (!$FnvUseNativeAnimationCallbacks) { $proofArgs.FnvDisableNativeAnimationCallbacks = $true }
         if ($CreatureDiagnostics -or $ActorKind -ieq "creature") { $proofArgs.CreatureDiagnostics = $true }
         if ($phase -ieq "talk" -or $phase -ieq "dialogue") { $proofArgs.CharacterBuilderTalk = $true }
         if ($NoSound) { $proofArgs.NoSound = $true }
@@ -392,6 +401,7 @@ foreach ($phase in $Phases) {
             }
             actorCamera = [pscustomobject][ordered]@{
                 angle = $angle.Name
+                neutralPreviewProfile = $NeutralActorPreviewProfile
                 offsetX = [double]$angle.OffsetX
                 offsetY = [double]$angle.OffsetY
                 offsetZ = $ActorViewOffsetZ
@@ -407,6 +417,9 @@ foreach ($phase in $Phases) {
                 animationStartPoint = $ActorKitAnimationStartPointValue
                 animationGroup = $ActorKitAnimationGroup
                 dialogueMode = $ActorKitDialogueMode
+                neutralPreviewProfile = $NeutralActorPreviewProfile
+                fnvRotationMode = $FnvRotationMode
+                fnvUseNativeAnimationCallbacks = [bool]$FnvUseNativeAnimationCallbacks
             }
             failures = if ($null -ne $reportData) { @($reportData.failures) } else { @("report parser did not produce JSON") }
             screenshots = if ($null -ne $reportData) { @($reportData.screenshots) } else { @() }

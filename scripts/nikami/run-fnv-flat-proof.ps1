@@ -33,6 +33,7 @@ param(
     [int]$ActorFrame = 240,
     [switch]$NeutralActorPreview,
     [switch]$NeutralActorPreviewStandingIdle,
+    [string]$NeutralActorPreviewProfile = "",
     [string]$ProofItemTarget = "",
     [string]$ProofItemKind = "",
     [string]$ProofItemRecordType = "",
@@ -124,6 +125,7 @@ param(
     [switch]$FnvPlayerPerkTrace,
     [switch]$FnvActorValueTrace,
     [switch]$FnvProgressionTrace,
+    [string]$FnvRotationMode = $env:OPENMW_FNV_ROTATION_MODE,
     [switch]$NoSound
 )
 
@@ -1452,6 +1454,7 @@ try {
     else { Clear-ProofEnv $previousEnv "OPENMW_PROOF_NEUTRAL_ACTOR_PREVIEW" }
     if ($NeutralActorPreviewStandingIdle) { Set-ProofEnv $previousEnv "OPENMW_FNV_DISABLE_PACKAGE_PROCEDURE_IDLES" "1" }
     else { Clear-ProofEnv $previousEnv "OPENMW_FNV_DISABLE_PACKAGE_PROCEDURE_IDLES" }
+    Set-ProofEnv $previousEnv "OPENMW_FNV_NEUTRAL_ACTOR_PREVIEW_PROFILE" $NeutralActorPreviewProfile
     Set-ProofEnv $previousEnv "OPENMW_PROOF_ITEM_TARGET" $ProofItemTarget
     Set-ProofEnv $previousEnv "OPENMW_PROOF_ITEM_KIND" $ProofItemKind
     Set-ProofEnv $previousEnv "OPENMW_PROOF_ITEM_RECORD_TYPE" $ProofItemRecordType
@@ -1502,6 +1505,7 @@ try {
     Set-ProofEnv $previousEnv "OPENMW_PROOF_WALK_MIN_Z" $WalkMinZ
     if ($RequirePlayerTerrainSupport) { Set-ProofEnv $previousEnv "OPENMW_FNV_FLOOR_WATCHDOG" "1" }
     if ($FnvPartMatrixAudit) { Set-ProofEnv $previousEnv "OPENMW_FNV_PART_MATRIX_AUDIT" "1" }
+    Set-ProofEnv $previousEnv "OPENMW_FNV_ROTATION_MODE" $FnvRotationMode
     Set-ProofEnv $previousEnv "OPENMW_FNV_CHARACTER_BUILDER_PHASE" $CharacterBuilderPhase
     Set-ProofEnv $previousEnv "OPENMW_FNV_ACTOR_KIT_PARTS" $ActorKitPartsCsv
     Set-ProofEnv $previousEnv "OPENMW_FNV_ACTOR_KIT_PART_MODELS" $ActorKitPartModelsCsv
@@ -1632,6 +1636,7 @@ try {
     Write-ProofLine "ActorKind: $ActorKind"
     Write-ProofLine "NeutralActorPreview: $NeutralActorPreview"
     Write-ProofLine "NeutralActorPreviewStandingIdle: $NeutralActorPreviewStandingIdle"
+    Write-ProofLine "NeutralActorPreviewProfile: $NeutralActorPreviewProfile"
     Write-ProofLine "ProofItemTarget: $ProofItemTarget"
     Write-ProofLine "ProofItemKind: $ProofItemKind"
     Write-ProofLine "ProofItemRecordType: $ProofItemRecordType"
@@ -1660,6 +1665,8 @@ try {
     Write-ProofLine "FnvPlayerPerkTrace: $FnvPlayerPerkTrace"
     Write-ProofLine "FnvActorValueTrace: $FnvActorValueTrace"
     Write-ProofLine "FnvProgressionTrace: $FnvProgressionTrace"
+    Write-ProofLine "FnvRotationMode: $FnvRotationMode"
+    Write-ProofLine "FnvDisableNativeAnimationCallbacks: $FnvDisableNativeAnimationCallbacks"
     Write-ProofLine "StartupScript: $StartupScript"
     Write-ProofLine "LoadSavegame: $LoadSavegame"
     Write-ProofLine "FnvQuestSaveLoadMode: $FnvQuestSaveLoadMode"

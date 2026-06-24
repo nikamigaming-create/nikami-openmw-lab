@@ -162,6 +162,49 @@ namespace MWRender
                 return 0.35f;
             return std::clamp(parsed, 0.f, 0.999f);
         }
+
+        std::string_view getFalloutNeutralActorPreviewProfile()
+        {
+            const char* value = std::getenv("OPENMW_FNV_NEUTRAL_ACTOR_PREVIEW_PROFILE");
+            if (value == nullptr || value[0] == '\0')
+                return "upper";
+            return value;
+        }
+
+        float getFalloutNeutralActorPreviewFloat(const char* name, float fallback)
+        {
+            const char* value = std::getenv(name);
+            if (value == nullptr || value[0] == '\0')
+                return fallback;
+
+            char* end = nullptr;
+            const float parsed = std::strtof(value, &end);
+            if (end == value || !std::isfinite(parsed))
+                return fallback;
+            return parsed;
+        }
+
+        void applyFalloutNeutralActorOrbitCamera(FalloutActorPreview::ViewMode viewMode, float distance, float cameraZ,
+            float lookAtZ, osg::Vec3f& position, osg::Vec3f& lookAt, const char*& viewName)
+        {
+            const float diagonal = distance * 0.70710678118f;
+            position = osg::Vec3f(0.f, distance, cameraZ);
+            lookAt = osg::Vec3f(0.f, 0.f, lookAtZ);
+            viewName = "front";
+            switch (viewMode)
+            {
+                case FalloutActorPreview::ViewMode::Front:
+                    break;
+                case FalloutActorPreview::ViewMode::FrontLeft:
+                    position = osg::Vec3f(-diagonal, diagonal, cameraZ);
+                    viewName = "front-left";
+                    break;
+                case FalloutActorPreview::ViewMode::FrontRight:
+                    position = osg::Vec3f(diagonal, diagonal, cameraZ);
+                    viewName = "front-right";
+                    break;
+            }
+        }
     }
 
     class DrawOnceCallback : public SceneUtil::NodeCallback<DrawOnceCallback>
@@ -858,18 +901,72 @@ namespace MWRender
         osg::Vec3f position(0.f, 420.f, 112.f);
         osg::Vec3f lookAt(0.f, 0.f, 112.f);
         const char* viewName = "front";
-        switch (mViewMode)
+        const std::string_view profile = getFalloutNeutralActorPreviewProfile();
+        if (Misc::StringUtils::ciEqual(profile, "full-body") || Misc::StringUtils::ciEqual(profile, "fullbody"))
         {
-            case ViewMode::Front:
-                break;
-            case ViewMode::FrontLeft:
-                position = osg::Vec3f(-300.f, 300.f, 112.f);
-                viewName = "front-left";
-                break;
-            case ViewMode::FrontRight:
-                position = osg::Vec3f(300.f, 300.f, 112.f);
-                viewName = "front-right";
-                break;
+            applyFalloutNeutralActorOrbitCamera(mViewMode,
+                getFalloutNeutralActorPreviewFloat("OPENMW_FNV_NEUTRAL_ACTOR_PREVIEW_DISTANCE", 760.f),
+                getFalloutNeutralActorPreviewFloat("OPENMW_FNV_NEUTRAL_ACTOR_PREVIEW_CAMERA_Z", 78.f),
+                getFalloutNeutralActorPreviewFloat("OPENMW_FNV_NEUTRAL_ACTOR_PREVIEW_LOOK_Z", 78.f), position, lookAt,
+                viewName);
+        }
+        else if (Misc::StringUtils::ciEqual(profile, "face"))
+        {
+            applyFalloutNeutralActorOrbitCamera(mViewMode,
+                getFalloutNeutralActorPreviewFloat("OPENMW_FNV_NEUTRAL_ACTOR_PREVIEW_DISTANCE", 190.f),
+                getFalloutNeutralActorPreviewFloat("OPENMW_FNV_NEUTRAL_ACTOR_PREVIEW_CAMERA_Z", 116.f),
+                getFalloutNeutralActorPreviewFloat("OPENMW_FNV_NEUTRAL_ACTOR_PREVIEW_LOOK_Z", 116.f), position, lookAt,
+                viewName);
+        }
+        else if (Misc::StringUtils::ciEqual(profile, "hands"))
+        {
+            switch (mViewMode)
+            {
+                case ViewMode::Front:
+                    position = osg::Vec3f(0.f, 280.f, 91.f);
+                    lookAt = osg::Vec3f(0.f, 0.f, 91.f);
+                    viewName = "hands-wide";
+                    break;
+                case ViewMode::FrontLeft:
+                    position = osg::Vec3f(-48.f, 190.f, 90.f);
+                    lookAt = osg::Vec3f(-42.f, 0.f, 90.f);
+                    viewName = "left-hand";
+                    break;
+                case ViewMode::FrontRight:
+                    position = osg::Vec3f(48.f, 190.f, 90.f);
+                    lookAt = osg::Vec3f(42.f, 0.f, 90.f);
+                    viewName = "right-hand";
+                    break;
+            }
+        }
+        else if (Misc::StringUtils::ciEqual(profile, "audit") || Misc::StringUtils::ciEqual(profile, "bot-audit"))
+        {
+            switch (mViewMode)
+            {
+                case ViewMode::Front:
+                    position = osg::Vec3f(0.f, 760.f, 78.f);
+                    lookAt = osg::Vec3f(0.f, 0.f, 78.f);
+                    viewName = "full-body";
+                    break;
+                case ViewMode::FrontLeft:
+                    position = osg::Vec3f(-135.f, 135.f, 116.f);
+                    lookAt = osg::Vec3f(0.f, 0.f, 116.f);
+                    viewName = "face-hat";
+                    break;
+                case ViewMode::FrontRight:
+                    position = osg::Vec3f(54.f, 190.f, 91.f);
+                    lookAt = osg::Vec3f(42.f, 0.f, 91.f);
+                    viewName = "right-hand-weapon";
+                    break;
+            }
+        }
+        else
+        {
+            applyFalloutNeutralActorOrbitCamera(mViewMode,
+                getFalloutNeutralActorPreviewFloat("OPENMW_FNV_NEUTRAL_ACTOR_PREVIEW_DISTANCE", 420.f),
+                getFalloutNeutralActorPreviewFloat("OPENMW_FNV_NEUTRAL_ACTOR_PREVIEW_CAMERA_Z", 112.f),
+                getFalloutNeutralActorPreviewFloat("OPENMW_FNV_NEUTRAL_ACTOR_PREVIEW_LOOK_Z", 112.f), position, lookAt,
+                viewName);
         }
 
         mRTTNode->setViewMatrix(osg::Matrixf::lookAt(position * scale.z(), lookAt * scale.z(), osg::Vec3f(0, 0, 1)));
@@ -887,8 +984,8 @@ namespace MWRender
 
         Log(Debug::Info) << "FNV/ESM4 proof: neutral actor preview camera view=" << viewName << " position=("
                          << position.x() << "," << position.y() << "," << position.z() << ") lookAt=("
-                         << lookAt.x() << "," << lookAt.y() << "," << lookAt.z()
-                         << ") animationGroup=" << animationGroup << " startPoint=" << previewStart
+                         << lookAt.x() << "," << lookAt.y() << "," << lookAt.z() << ") profile=" << profile
+                         << " animationGroup=" << animationGroup << " startPoint=" << previewStart
                          << " simulationTime=" << previewStart
                          << " runtime=runtime-supported gate=runtime-neutral-actor-preview";
     }

@@ -712,6 +712,8 @@ def structured_actor_job(entry: dict[str, Any], payload: dict[str, Any]) -> tupl
         "animationStartPoint": first_text(selector_value(payload, "animationStartPoint")),
         "animationGroup": first_text(selector_value(payload, "animationGroup")),
         "dialogueMode": first_text(selector_value(payload, "dialogueMode")),
+        "neutralPreviewProfile": first_text(selector_value(payload, "neutralPreviewProfile")),
+        "fnvRotationMode": first_text(selector_value(payload, "fnvRotationMode")),
     }
     command = (
         "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/nikami/run-fnv-character-viewer.ps1 "
@@ -726,6 +728,8 @@ def structured_actor_job(entry: dict[str, Any], payload: dict[str, Any]) -> tupl
     command += selector_arg("ActorKitAnimationStartPoint", selectors["animationStartPoint"])
     command += selector_arg("ActorKitAnimationGroup", selectors["animationGroup"])
     command += selector_arg("ActorKitDialogueMode", selectors["dialogueMode"])
+    command += selector_arg("NeutralActorPreviewProfile", selectors["neutralPreviewProfile"])
+    command += selector_arg("FnvRotationMode", selectors["fnvRotationMode"])
     if actor_kind == "creature":
         command += " -CreatureDiagnostics"
     request = {
