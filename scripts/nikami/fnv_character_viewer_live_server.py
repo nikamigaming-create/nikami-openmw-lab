@@ -33,6 +33,29 @@ FORBIDDEN_CHARS = set("&;|<>`")
 STUDIO_SCHEMA = "nikami-fnv-character-studio-session-v1"
 STUDIO_REVIEW_SCHEMA = "nikami-fnv-character-studio-component-review-v1"
 REVIEW_STATES = {"review-pending", "pass", "fail", "blocked", "needs-rerun"}
+CATALOG_SEARCH_ENTRY_FIELDS = (
+    "id",
+    "source",
+    "domain",
+    "kind",
+    "recordType",
+    "label",
+    "plugin",
+    "target",
+    "selectedTarget",
+    "runtimeTarget",
+    "placedTarget",
+    "baseActorTarget",
+    "assemblyTarget",
+    "classification",
+    "firstFailingGate",
+    "formId",
+    "actorFormId",
+    "placedRefFormId",
+    "model",
+    "phases",
+    "studioGates",
+)
 
 
 def utc_now() -> str:
@@ -49,6 +72,14 @@ def as_list(value: Any) -> list[Any]:
     if isinstance(value, list):
         return value
     return [value]
+
+
+def catalog_search_entry(entry: dict[str, Any]) -> dict[str, Any]:
+    compact = {key: entry.get(key) for key in CATALOG_SEARCH_ENTRY_FIELDS if key in entry}
+    commands = entry.get("commands") if isinstance(entry.get("commands"), dict) else {}
+    compact["runnable"] = bool(commands.get("runtimeThreeCamera")) and entry.get("domain") == "actor"
+    compact["hasFullDetails"] = False
+    return compact
 
 
 def read_json(path: Path) -> Any:
@@ -201,6 +232,7 @@ class CatalogStore:
             limit = 100
         tokens = [token for token in text.split() if token]
         matches: list[dict[str, Any]] = []
+        total = 0
         for entry in as_list(catalog.get("entries")):
             if not isinstance(entry, dict):
                 continue
@@ -213,13 +245,15 @@ class CatalogStore:
             haystack = str(entry.get("searchText") or "")
             if tokens and not all(token in haystack for token in tokens):
                 continue
-            matches.append(entry)
-            if len(matches) >= limit:
-                break
+            total += 1
+            if len(matches) < limit:
+                matches.append(catalog_search_entry(entry))
         return {
             "schema": "nikami-fnv-character-studio-catalog-search-v1",
+            "schemaMarkers": ["compact-catalog-search-v1"],
             "catalog": str(self.path or ""),
             "count": len(matches),
+            "total": total,
             "entries": matches,
             "policy": {
                 "generatedMetadataOnly": True,

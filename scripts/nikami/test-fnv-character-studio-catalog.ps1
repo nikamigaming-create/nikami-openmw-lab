@@ -195,6 +195,12 @@ if (!@($catalog.schemaMarkers).Contains("component-selector-job-payload-v1")) {
 if (!@($catalog.schemaMarkers).Contains("component-review-rows-v1")) {
     throw "Studio catalog missing component review rows marker."
 }
+if (!@($catalog.schemaMarkers).Contains("compact-html-index-v1")) {
+    throw "Studio catalog missing compact HTML index marker."
+}
+if (!@($catalog.schemaMarkers).Contains("live-api-catalog-search-v1")) {
+    throw "Studio catalog missing live API catalog search marker."
+}
 if (!@($catalog.schemaMarkers).Contains("placed-runtime-target-map-v1")) {
     throw "Studio catalog missing placed/runtime target map marker."
 }
@@ -257,6 +263,15 @@ if (!$html.Contains("cameraStrip") -or !$html.Contains("selectedParts") -or !$ht
 }
 if (!$html.Contains("componentReviews") -or !$html.Contains("componentReviewRows") -or !$html.Contains("Save Component Review Rows") -or !$html.Contains("/reviews")) {
     throw "Studio catalog HTML does not expose per-component review row controls."
+}
+if (!$html.Contains("compact-index-full-row-on-select") -or !$html.Contains("/nikami/catalog/search") -or !$html.Contains("/nikami/catalog/entries/")) {
+    throw "Studio catalog HTML does not use compact live catalog search/detail loading."
+}
+if ($html.Contains("componentEvidence")) {
+    throw "Studio catalog HTML embedded full component evidence instead of compact search rows."
+}
+if ($html.Contains('"searchText"')) {
+    throw "Studio catalog HTML embedded giant searchText payloads instead of compact rows."
 }
 
 Write-Host "FNV character studio catalog contract PASS"

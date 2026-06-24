@@ -76,8 +76,19 @@ def main() -> int:
         search = catalog.search({"q": ["contract npc"], "limit": ["5"]})
         if search["count"] < 1 or not any(item["id"] == "actor:000001" for item in search["entries"]):
             raise AssertionError("catalog search did not return the actor entry")
-        if catalog.entry("actor:000001") is None:
+        if search["total"] < search["count"]:
+            raise AssertionError("catalog search did not preserve total match count")
+        if any("commands" in item for item in search["entries"]):
+            raise AssertionError("catalog search returned full command payloads instead of compact rows")
+        if any("searchText" in item for item in search["entries"]):
+            raise AssertionError("catalog search returned giant searchText payloads instead of compact rows")
+        if not search["entries"][0].get("runnable"):
+            raise AssertionError("catalog search compact row did not preserve runnable actor status")
+        full_entry = catalog.entry("actor:000001")
+        if full_entry is None:
             raise AssertionError("catalog entry lookup failed")
+        if "commands" not in full_entry:
+            raise AssertionError("catalog entry lookup did not preserve full row details")
         forced_catalog = live.CatalogStore(root / "missing-root", catalog_dir / "character-studio-catalog.json")
         if forced_catalog.entry("actor:000001") is None:
             raise AssertionError("forced catalog path lookup failed")

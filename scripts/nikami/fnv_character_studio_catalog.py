@@ -30,6 +30,30 @@ GAMEPLAY_RECORD_DOMAINS = {
     "AVIF": "actor-value",
 }
 
+HTML_ENTRY_FIELDS = (
+    "id",
+    "source",
+    "domain",
+    "kind",
+    "recordType",
+    "label",
+    "plugin",
+    "target",
+    "selectedTarget",
+    "runtimeTarget",
+    "placedTarget",
+    "baseActorTarget",
+    "assemblyTarget",
+    "classification",
+    "firstFailingGate",
+    "formId",
+    "actorFormId",
+    "placedRefFormId",
+    "model",
+    "phases",
+    "studioGates",
+)
+
 
 def read_json(path: Path) -> Any:
     return json.loads(path.read_text(encoding="utf-8-sig", errors="replace"))
@@ -366,6 +390,8 @@ def build_catalog(plan: dict[str, Any], gameplay_rows: list[dict[str, Any]], lim
             "three-camera-session-strip-v1",
             "component-selector-job-payload-v1",
             "component-review-rows-v1",
+            "compact-html-index-v1",
+            "live-api-catalog-search-v1",
             "placed-runtime-target-map-v1",
             "placement-bootstrap-job-args-v1",
             "neutral-stage-gate-pending-v1",
@@ -392,8 +418,36 @@ def build_catalog(plan: dict[str, Any], gameplay_rows: list[dict[str, Any]], lim
     }
 
 
+def compact_entry(entry: dict[str, Any]) -> dict[str, Any]:
+    compact = {key: entry.get(key) for key in HTML_ENTRY_FIELDS if key in entry}
+    commands = entry.get("commands") if isinstance(entry.get("commands"), dict) else {}
+    compact["runnable"] = bool(commands.get("runtimeThreeCamera")) and entry.get("domain") == "actor"
+    compact["hasFullDetails"] = False
+    return compact
+
+
+def html_catalog(catalog: dict[str, Any]) -> dict[str, Any]:
+    markers = [as_text(marker) for marker in as_list(catalog.get("schemaMarkers")) if as_text(marker)]
+    for marker in ("compact-html-index-v1", "live-api-catalog-search-v1"):
+        if marker not in markers:
+            markers.append(marker)
+    return {
+        "schema": catalog.get("schema", "nikami-fnv-character-studio-catalog-v1"),
+        "schemaMarkers": markers,
+        "createdAt": catalog.get("createdAt", ""),
+        "status": catalog.get("status", "FAIL"),
+        "payloadPolicy": catalog.get("payloadPolicy", ""),
+        "sourcePlan": catalog.get("sourcePlan", ""),
+        "sourceContentLedger": catalog.get("sourceContentLedger", ""),
+        "counts": catalog.get("counts", {}),
+        "commands": catalog.get("commands", {}),
+        "htmlEntryMode": "compact-index-full-row-on-select",
+        "entries": [compact_entry(entry) for entry in as_list(catalog.get("entries")) if isinstance(entry, dict)],
+    }
+
+
 def html_doc(catalog: dict[str, Any]) -> str:
-    data = json.dumps(catalog, ensure_ascii=False).replace("</", "<\\/")
+    data = json.dumps(html_catalog(catalog), ensure_ascii=False).replace("</", "<\\/")
     return f"""<!doctype html>
 <html lang="en">
 <head>
@@ -597,6 +651,11 @@ const state = {{
   jobs: [],
   events: [],
   reviews: [],
+  results: CATALOG.entries || [],
+  resultCount: null,
+  searchMode: "embedded-index",
+  searchSeq: 0,
+  entryDetails: {{}},
   latestManifest: null,
   latestJob: null,
   partEnabled: Object.fromEntries(PARTS.map(part => [part, true]))
@@ -612,6 +671,11 @@ function commandBlock(command) {{
 function liveAvailable() {{
   return location.protocol.startsWith("http") && (location.hostname === "127.0.0.1" || location.hostname === "localhost");
 }}
+function cacheEntry(entry) {{
+  if (entry?.id) state.entryDetails[entry.id] = entry;
+  return entry;
+}}
+for (const entry of (CATALOG.entries || [])) cacheEntry(entry);
 async function api(path, options = {{}}) {{
   const response = await fetch(path, {{
     cache: "no-store",
@@ -623,7 +687,56 @@ async function api(path, options = {{}}) {{
   return payload;
 }}
 function selectedEntry() {{
-  return (CATALOG.entries || []).find(entry => entry.id === state.selectedId) || null;
+  return state.entryDetails[state.selectedId]
+    || state.results.find(entry => entry.id === state.selectedId)
+    || (CATALOG.entries || []).find(entry => entry.id === state.selectedId)
+    || null;
+}}
+async function fetchEntryDetails(id) {{
+  if (!id) return null;
+  const cached = state.entryDetails[id];
+  if (cached?.hasFullDetails) return cached;
+  if (!liveAvailable()) return cached || null;
+  const entry = await api(`/nikami/catalog/entries/${{encodeURIComponent(id)}}`);
+  cacheEntry({{ ...entry, hasFullDetails: true }});
+  return state.entryDetails[id];
+}}
+function localFilteredEntries() {{
+  return (CATALOG.entries || []).filter(matches).slice(0, 250);
+}}
+async function refreshSearch() {{
+  const seq = ++state.searchSeq;
+  if (!liveAvailable()) {{
+    state.searchMode = "embedded-index";
+    state.results = localFilteredEntries();
+    state.resultCount = state.results.length;
+    render();
+    return;
+  }}
+  state.searchMode = "live-api-search";
+  state.results = [];
+  state.resultCount = null;
+  render();
+  const params = new URLSearchParams();
+  if (state.query.trim()) params.set("q", state.query.trim());
+  if (state.domain) params.set("domain", state.domain);
+  if (state.kind) params.set("kind", state.kind);
+  params.set("limit", "250");
+  try {{
+    const payload = await api(`/nikami/catalog/search?${{params.toString()}}`);
+    if (seq !== state.searchSeq) return;
+    state.results = Array.isArray(payload.entries) ? payload.entries : [];
+    state.resultCount = Number.isFinite(payload.total) ? payload.total : payload.count;
+    state.results.forEach(cacheEntry);
+    render();
+  }} catch (error) {{
+    if (seq !== state.searchSeq) return;
+    state.searchMode = "embedded-index";
+    state.results = localFilteredEntries();
+    state.resultCount = state.results.length;
+    addLocalEvent("catalog.search.failed", {{ message: error.message || String(error) }});
+    render();
+  }}
 }}
 function selectedParts() {{
   const focus = document.getElementById("partFocusSelect")?.value || "";
@@ -694,9 +807,10 @@ async function ensureSession() {{
   return state.session;
 }}
 async function launchJob(commandKey) {{
-  const entry = selectedEntry();
+  let entry = selectedEntry();
   if (!entry) return;
   try {{
+    entry = await fetchEntryDetails(entry.id) || entry;
     await ensureSession();
     const payload = studioPayload(commandKey);
     addLocalEvent("job.request", payload);
@@ -826,7 +940,22 @@ function matches(e) {{
   if (state.kind && e.kind !== state.kind) return false;
   const q = state.query.trim().toLowerCase();
   if (!q) return true;
-  const haystack = String(e.searchText || "");
+  const haystack = [
+    e.label,
+    e.target,
+    e.selectedTarget,
+    e.runtimeTarget,
+    e.placedTarget,
+    e.baseActorTarget,
+    e.assemblyTarget,
+    e.formId,
+    e.actorFormId,
+    e.placedRefFormId,
+    e.plugin,
+    e.recordType,
+    e.kind,
+    e.model
+  ].filter(Boolean).join(" ").toLowerCase();
   return q.split(/\\s+/).filter(Boolean).every(token => haystack.includes(token));
 }}
 function renderControls() {{
@@ -958,7 +1087,7 @@ function applyPreset(name) {{
   setSelectValue("animationSelect", preset.animation);
   setSelectValue("dialogueSelect", preset.dialogue);
   recordEvent("preset.easy-pete", {{ name, payload: studioPayload("runtimeThreeCamera") }});
-  render();
+  refreshSearch();
 }}
 async function saveReviewEvent() {{
   try {{
@@ -1006,11 +1135,13 @@ function renderWorkbench() {{
 function render() {{
   document.getElementById("status").textContent = CATALOG.status;
   document.getElementById("status").className = `pill ${{CATALOG.status}}`;
-  const filtered = (CATALOG.entries || []).filter(matches).slice(0, 250);
+  const filtered = state.searchMode === "live-api-search" ? state.results : localFilteredEntries();
+  const shownTotal = state.searchMode === "live-api-search" && state.resultCount !== null ? state.resultCount : filtered.length;
   document.getElementById("summary").innerHTML = [
-    `showing ${{filtered.length}} / ${{CATALOG.counts.total}}`,
+    `showing ${{filtered.length}} / ${{shownTotal}}`,
     `actors ${{CATALOG.counts.domains.actor || 0}}`,
     `gameplay ${{CATALOG.counts.domains.gameplay || 0}}`,
+    state.searchMode,
     `neutral stage pending`
   ].map(x => `<span class="pill">${{esc(x)}}</span>`).join("");
   document.getElementById("cards").innerHTML = filtered.map(e => `
@@ -1037,10 +1168,12 @@ function render() {{
     state.selectedId = button.dataset.select || "";
     recordEvent("entry.select", {{ entryId: state.selectedId }});
     render();
+    fetchEntryDetails(state.selectedId).then(() => render()).catch(error => addLocalEvent("entry.detail.failed", {{ entryId: state.selectedId, message: error.message || String(error) }}));
   }});
-  document.querySelectorAll("[data-run]").forEach(button => button.onclick = () => {{
+  document.querySelectorAll("[data-run]").forEach(button => button.onclick = async () => {{
     state.selectedId = button.dataset.run || "";
     render();
+    await fetchEntryDetails(state.selectedId).catch(error => addLocalEvent("entry.detail.failed", {{ entryId: state.selectedId, message: error.message || String(error) }}));
     launchJob("runtimeThreeCamera");
   }});
   renderWorkbench();
@@ -1060,10 +1193,10 @@ document.getElementById("runThree").addEventListener("click", () => launchJob("r
 document.getElementById("runFront").addEventListener("click", () => launchJob("runtimeFrontOnly"));
 document.getElementById("saveReview").addEventListener("click", saveReviewEvent);
 document.querySelectorAll("[data-preset]").forEach(button => button.addEventListener("click", () => applyPreset(button.dataset.preset || "")));
-document.getElementById("search").addEventListener("input", e => {{ state.query = e.target.value; render(); }});
-document.getElementById("domain").addEventListener("change", e => {{ state.domain = e.target.value; render(); }});
-document.getElementById("kind").addEventListener("change", e => {{ state.kind = e.target.value; render(); }});
-render();
+document.getElementById("search").addEventListener("input", e => {{ state.query = e.target.value; refreshSearch(); }});
+document.getElementById("domain").addEventListener("change", e => {{ state.domain = e.target.value; refreshSearch(); }});
+document.getElementById("kind").addEventListener("change", e => {{ state.kind = e.target.value; refreshSearch(); }});
+refreshSearch();
 </script>
 </body>
 </html>
