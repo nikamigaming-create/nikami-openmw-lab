@@ -74,6 +74,8 @@ param(
     [int]$FnvQuestTargetObjective = -1,
     [int]$FnvQuestTargetIndex = -1,
     [int]$FnvQuestTargetFrame = 0,
+    [switch]$FnvQuestConditionTrace,
+    [int]$FnvQuestConditionFrame = 0,
     [switch]$FnvNonzeroProjectileBindingTrace,
     [switch]$FnvPlayerPerkTrace,
     [switch]$FnvActorValueTrace,
@@ -1021,6 +1023,12 @@ try {
             Set-ProofEnv $previousEnv "OPENMW_FNV_PROOF_QUEST_TARGET_FRAME" $FnvQuestTargetFrame
         }
     }
+    if ($FnvQuestConditionTrace) {
+        Set-ProofEnv $previousEnv "OPENMW_FNV_PROOF_QUEST_CONDITIONS" "1"
+        if ($FnvQuestConditionFrame -gt 0) {
+            Set-ProofEnv $previousEnv "OPENMW_FNV_PROOF_QUEST_CONDITION_FRAME" $FnvQuestConditionFrame
+        }
+    }
     if ($FnvNonzeroProjectileBindingTrace) {
         Set-ProofEnv $previousEnv "OPENMW_FNV_PROOF_NONZERO_PROJECTILE" "1"
     }
@@ -1094,6 +1102,8 @@ try {
     Write-ProofLine "FnvQuestTargetObjective: $FnvQuestTargetObjective"
     Write-ProofLine "FnvQuestTargetIndex: $FnvQuestTargetIndex"
     Write-ProofLine "FnvQuestTargetFrame: $FnvQuestTargetFrame"
+    Write-ProofLine "FnvQuestConditionTrace: $FnvQuestConditionTrace"
+    Write-ProofLine "FnvQuestConditionFrame: $FnvQuestConditionFrame"
     Write-ProofLine "FnvNonzeroProjectileBindingTrace: $FnvNonzeroProjectileBindingTrace"
     Write-ProofLine "TraceRawPendingRecord: $TraceRawPendingRecord"
     Write-ProofLine "TerrainProbePoints: $probePoints"

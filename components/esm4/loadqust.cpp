@@ -35,6 +35,22 @@
 
 namespace
 {
+    bool questConditionParam1IsQuestFormId(std::uint32_t functionIndex)
+    {
+        switch (functionIndex)
+        {
+            case ESM4::FUN_GetQuestRunning:
+            case ESM4::FUN_GetStage:
+            case ESM4::FUN_GetStageDone:
+            case ESM4::FUN_GetObjectiveCompleted:
+            case ESM4::FUN_GetObjectiveDisplayed:
+            case ESM4::FUN_GetQuestCompleted:
+                return true;
+            default:
+                return false;
+        }
+    }
+
     bool readQuestCondition(ESM4::Reader& reader, std::uint16_t dataSize, ESM4::TargetCondition& cond)
     {
         if (dataSize == 20)
@@ -61,6 +77,12 @@ namespace
         }
 
         return false;
+    }
+
+    void adjustSelectedQuestConditionParams(ESM4::Reader& reader, ESM4::TargetCondition& cond)
+    {
+        if (questConditionParam1IsQuestFormId(cond.functionIndex))
+            reader.adjustFormId(cond.param1);
     }
 
     ESM4::ScriptDefinition& getActiveScript(ESM4::QuestStageEntry* currentEntry, ESM4::Quest& quest)
@@ -118,6 +140,7 @@ void ESM4::Quest::load(ESM4::Reader& reader)
                 TargetCondition cond;
                 if (readQuestCondition(reader, subHdr.dataSize, cond))
                 {
+                    adjustSelectedQuestConditionParams(reader, cond);
                     if (currentTarget != nullptr)
                         currentTarget->mConditions.push_back(cond);
                     else if (currentEntry != nullptr)

@@ -517,6 +517,392 @@ namespace
         return std::string(ESM::getRecNameString(recName).toStringView());
     }
 
+    std::string proofHex(std::uint32_t value)
+    {
+        std::ostringstream stream;
+        stream << "0x" << std::hex << value;
+        return stream.str();
+    }
+
+    std::string falloutConditionFunctionName(std::uint32_t function)
+    {
+        switch (function)
+        {
+            case ESM4::FUN_GetQuestRunning:
+                return "GetQuestRunning";
+            case ESM4::FUN_GetStage:
+                return "GetStage";
+            case ESM4::FUN_GetStageDone:
+                return "GetStageDone";
+            case ESM4::FUN_GetObjectiveCompleted:
+                return "GetObjectiveCompleted";
+            case ESM4::FUN_GetObjectiveDisplayed:
+                return "GetObjectiveDisplayed";
+            case ESM4::FUN_GetQuestCompleted:
+                return "GetQuestCompleted";
+            default:
+                return "Unsupported";
+        }
+    }
+
+    struct FalloutQuestConditionRef
+    {
+        const ESM4::Quest* mOwnerQuest = nullptr;
+        const ESM4::TargetCondition* mCondition = nullptr;
+        std::string mOwnerScope;
+        int mStageIndex = -1;
+        int mEntryIndex = -1;
+        int mObjectiveIndex = -1;
+        int mTargetIndex = -1;
+        int mConditionIndex = -1;
+    };
+
+    void considerFalloutQuestCondition(FalloutQuestConditionRef& found, const ESM4::Quest& ownerQuest,
+        const ESM4::TargetCondition& condition, std::string_view ownerScope, int stageIndex, int entryIndex,
+        int objectiveIndex, int targetIndex, int conditionIndex, std::uint32_t function)
+    {
+        if (found.mCondition != nullptr || condition.functionIndex != function)
+            return;
+
+        found.mOwnerQuest = &ownerQuest;
+        found.mCondition = &condition;
+        found.mOwnerScope = std::string(ownerScope);
+        found.mStageIndex = stageIndex;
+        found.mEntryIndex = entryIndex;
+        found.mObjectiveIndex = objectiveIndex;
+        found.mTargetIndex = targetIndex;
+        found.mConditionIndex = conditionIndex;
+    }
+
+    FalloutQuestConditionRef findFalloutQuestConditionByFunction(
+        const MWWorld::ESMStore& store, std::uint32_t function)
+    {
+        FalloutQuestConditionRef found;
+        const auto& quests = store.get<ESM4::Quest>();
+        for (auto it = quests.begin(); it != quests.end(); ++it)
+        {
+            const ESM4::Quest& quest = *it;
+            for (std::size_t index = 0; index < quest.mTargetConditions.size(); ++index)
+            {
+                considerFalloutQuestCondition(found, quest, quest.mTargetConditions[index], "QUST-top-level", -1, -1,
+                    -1, -1, static_cast<int>(index), function);
+                if (found.mCondition != nullptr)
+                    return found;
+            }
+            for (const ESM4::QuestStage& stage : quest.mStages)
+            {
+                for (std::size_t entryIndex = 0; entryIndex < stage.mEntries.size(); ++entryIndex)
+                {
+                    const ESM4::QuestStageEntry& entry = stage.mEntries[entryIndex];
+                    for (std::size_t conditionIndex = 0; conditionIndex < entry.mConditions.size(); ++conditionIndex)
+                    {
+                        considerFalloutQuestCondition(found, quest, entry.mConditions[conditionIndex],
+                            "QUST-stage-entry", stage.mIndex, static_cast<int>(entryIndex), -1, -1,
+                            static_cast<int>(conditionIndex), function);
+                        if (found.mCondition != nullptr)
+                            return found;
+                    }
+                }
+            }
+            for (const ESM4::QuestObjective& objective : quest.mObjectives)
+            {
+                for (std::size_t targetIndex = 0; targetIndex < objective.mTargets.size(); ++targetIndex)
+                {
+                    const ESM4::QuestObjectiveTarget& target = objective.mTargets[targetIndex];
+                    for (std::size_t conditionIndex = 0; conditionIndex < target.mConditions.size(); ++conditionIndex)
+                    {
+                        considerFalloutQuestCondition(found, quest, target.mConditions[conditionIndex],
+                            "QUST-objective-target", -1, -1, objective.mIndex, static_cast<int>(targetIndex),
+                            static_cast<int>(conditionIndex), function);
+                        if (found.mCondition != nullptr)
+                            return found;
+                    }
+                }
+            }
+        }
+        return found;
+    }
+
+    const ESM4::Quest* resolveFalloutConditionQuestParam(
+        const MWWorld::ESMStore& store, std::uint32_t rawFormId)
+    {
+        const ESM::FormId formId = ESM::FormId::fromUint32(rawFormId);
+        if (const ESM4::Quest* quest = store.get<ESM4::Quest>().searchStatic(formId))
+            return quest;
+
+        const ESM4::Quest* fallback = nullptr;
+        const auto& quests = store.get<ESM4::Quest>();
+        for (auto it = quests.begin(); it != quests.end(); ++it)
+        {
+            if (it->mId.mIndex != formId.mIndex)
+                continue;
+            if (fallback != nullptr)
+                return nullptr;
+            fallback = &*it;
+        }
+        return fallback;
+    }
+
+    ESM::RefId falloutQuestRuntimeId(const ESM4::Quest& quest)
+    {
+        if (!quest.mEditorId.empty())
+            return ESM::RefId::stringRefId(quest.mEditorId);
+        return ESM::RefId::formIdRefId(quest.mId);
+    }
+
+    bool compareFalloutConditionValue(float actual, const ESM4::TargetCondition& condition, bool& supported)
+    {
+        supported = (condition.condition & ESM4::CTF_UseGlobal) == 0;
+        if (!supported)
+            return false;
+
+        const float expected = condition.comparison;
+        constexpr float epsilon = 0.0001f;
+        switch (condition.condition & 0xE0)
+        {
+            case ESM4::CTF_EqualTo:
+                return std::abs(actual - expected) <= epsilon;
+            case ESM4::CTF_NotEqualTo:
+                return std::abs(actual - expected) > epsilon;
+            case ESM4::CTF_GreaterThan:
+                return actual > expected;
+            case ESM4::CTF_GrThOrEqTo:
+                return actual + epsilon >= expected;
+            case ESM4::CTF_LessThan:
+                return actual < expected;
+            case ESM4::CTF_LeThOrEqTo:
+                return actual <= expected + epsilon;
+            default:
+                supported = false;
+                return false;
+        }
+    }
+
+    struct FalloutConditionEvaluation
+    {
+        bool mFunctionSupported = false;
+        bool mParamQuestFound = false;
+        bool mComparisonSupported = false;
+        bool mResult = false;
+        float mValue = 0.f;
+        ESM::RefId mParamQuestId;
+        std::string mParamQuestEditorId;
+    };
+
+    FalloutConditionEvaluation evaluateFalloutQuestCondition(
+        const MWWorld::ESMStore& store, MWBase::Journal& journal, const ESM4::TargetCondition& condition)
+    {
+        FalloutConditionEvaluation result;
+        const ESM4::Quest* paramQuest = resolveFalloutConditionQuestParam(store, condition.param1);
+        result.mParamQuestFound = paramQuest != nullptr;
+        if (paramQuest == nullptr)
+            return result;
+
+        result.mParamQuestId = falloutQuestRuntimeId(*paramQuest);
+        result.mParamQuestEditorId = paramQuest->mEditorId;
+
+        switch (condition.functionIndex)
+        {
+            case ESM4::FUN_GetQuestRunning:
+                result.mFunctionSupported = true;
+                result.mValue = journal.isQuestStarted(result.mParamQuestId)
+                    && !journal.getQuestFinished(result.mParamQuestId) ? 1.f : 0.f;
+                break;
+            case ESM4::FUN_GetStage:
+                result.mFunctionSupported = true;
+                result.mValue = static_cast<float>(journal.getJournalIndex(result.mParamQuestId));
+                break;
+            case ESM4::FUN_GetStageDone:
+                result.mFunctionSupported = true;
+                result.mValue = journal.isQuestStageDone(
+                    result.mParamQuestId, static_cast<int>(condition.param2)) ? 1.f : 0.f;
+                break;
+            case ESM4::FUN_GetObjectiveCompleted:
+                result.mFunctionSupported = true;
+                result.mValue = journal.getQuestObjectiveCompleted(
+                    result.mParamQuestId, static_cast<int>(condition.param2)) ? 1.f : 0.f;
+                break;
+            case ESM4::FUN_GetObjectiveDisplayed:
+                result.mFunctionSupported = true;
+                result.mValue = journal.getQuestObjectiveDisplayed(
+                    result.mParamQuestId, static_cast<int>(condition.param2)) ? 1.f : 0.f;
+                break;
+            case ESM4::FUN_GetQuestCompleted:
+                result.mFunctionSupported = true;
+                result.mValue = journal.getQuestFinished(result.mParamQuestId) ? 1.f : 0.f;
+                break;
+            default:
+                return result;
+        }
+
+        result.mResult = compareFalloutConditionValue(result.mValue, condition, result.mComparisonSupported);
+        return result;
+    }
+
+    int falloutConditionStageValueForResult(const ESM4::TargetCondition& condition, bool expectedResult)
+    {
+        const int comparison = static_cast<int>(std::lround(condition.comparison));
+        int value = comparison;
+        switch (condition.condition & 0xE0)
+        {
+            case ESM4::CTF_EqualTo:
+                value = expectedResult ? comparison : comparison + 1;
+                break;
+            case ESM4::CTF_NotEqualTo:
+                value = expectedResult ? comparison + 1 : comparison;
+                break;
+            case ESM4::CTF_GreaterThan:
+                value = expectedResult ? comparison + 1 : comparison;
+                break;
+            case ESM4::CTF_GrThOrEqTo:
+                value = expectedResult ? comparison : comparison - 1;
+                break;
+            case ESM4::CTF_LessThan:
+                value = expectedResult ? comparison - 1 : comparison;
+                break;
+            case ESM4::CTF_LeThOrEqTo:
+                value = expectedResult ? comparison : comparison + 1;
+                break;
+            default:
+                break;
+        }
+        return std::max(0, value);
+    }
+
+    void setFalloutBooleanConditionState(
+        MWBase::Journal& journal, std::uint32_t function, const ESM::RefId& questId, int objectiveIndex, bool value)
+    {
+        switch (function)
+        {
+            case ESM4::FUN_GetQuestRunning:
+                journal.setQuestFinished(questId, !value);
+                break;
+            case ESM4::FUN_GetQuestCompleted:
+                journal.setQuestFinished(questId, value);
+                break;
+            case ESM4::FUN_GetObjectiveCompleted:
+                journal.setQuestObjectiveCompleted(questId, objectiveIndex, value);
+                break;
+            case ESM4::FUN_GetObjectiveDisplayed:
+                journal.setQuestObjectiveDisplayed(questId, objectiveIndex, value);
+                break;
+            case ESM4::FUN_GetStageDone:
+                if (!value)
+                    journal.setJournalIndex(questId, objectiveIndex);
+                break;
+            default:
+                break;
+        }
+    }
+
+    bool setFalloutConditionStateForResult(const MWWorld::ESMStore& store, MWBase::Journal& journal,
+        const ESM4::TargetCondition& condition, bool expectedResult, FalloutConditionEvaluation& evaluation)
+    {
+        const ESM4::Quest* paramQuest = resolveFalloutConditionQuestParam(store, condition.param1);
+        if (paramQuest == nullptr)
+            return false;
+        const ESM::RefId questId = falloutQuestRuntimeId(*paramQuest);
+        if (condition.functionIndex == ESM4::FUN_GetStage)
+        {
+            journal.setJournalIndex(questId, falloutConditionStageValueForResult(condition, expectedResult));
+            evaluation = evaluateFalloutQuestCondition(store, journal, condition);
+            return evaluation.mFunctionSupported && evaluation.mComparisonSupported
+                && evaluation.mResult == expectedResult;
+        }
+
+        for (bool value : { false, true })
+        {
+            setFalloutBooleanConditionState(journal, condition.functionIndex, questId,
+                static_cast<int>(condition.param2), value);
+            evaluation = evaluateFalloutQuestCondition(store, journal, condition);
+            if (evaluation.mFunctionSupported && evaluation.mComparisonSupported
+                && evaluation.mResult == expectedResult)
+                return true;
+        }
+
+        return false;
+    }
+
+    bool runFalloutQuestConditionCase(const MWWorld::ESMStore& store, MWBase::Journal& journal,
+        std::uint32_t function)
+    {
+        const FalloutQuestConditionRef conditionRef = findFalloutQuestConditionByFunction(store, function);
+        if (conditionRef.mCondition == nullptr || conditionRef.mOwnerQuest == nullptr)
+        {
+            Log(Debug::Info) << "FNV/ESM4 proof: quest condition evaluator FAIL function=" << function
+                             << " functionName=" << falloutConditionFunctionName(function)
+                             << " reason=missing-harvested-qust-condition";
+            return false;
+        }
+
+        FalloutConditionEvaluation passEvaluation;
+        FalloutConditionEvaluation failEvaluation;
+        const bool passStateApplied = setFalloutConditionStateForResult(
+            store, journal, *conditionRef.mCondition, true, passEvaluation);
+        const bool failStateApplied = setFalloutConditionStateForResult(
+            store, journal, *conditionRef.mCondition, false, failEvaluation);
+        const bool pass = passStateApplied && failStateApplied && passEvaluation.mResult && !failEvaluation.mResult;
+
+        Log(Debug::Info) << "FNV/ESM4 proof: quest condition evaluator " << (pass ? "PASS" : "FAIL")
+                         << " function=" << function
+                         << " functionName=" << falloutConditionFunctionName(function)
+                         << " ownerQuest=" << conditionRef.mOwnerQuest->mEditorId
+                         << " ownerQuestFormId=" << conditionRef.mOwnerQuest->mId.toString("FormId:")
+                         << " ownerScope=" << conditionRef.mOwnerScope
+                         << " stageIndex=" << conditionRef.mStageIndex
+                         << " entryIndex=" << conditionRef.mEntryIndex
+                         << " objectiveIndex=" << conditionRef.mObjectiveIndex
+                         << " targetIndex=" << conditionRef.mTargetIndex
+                         << " conditionIndex=" << conditionRef.mConditionIndex
+                         << " conditionFlags=" << proofHex(conditionRef.mCondition->condition)
+                         << " comparison=" << conditionRef.mCondition->comparison
+                         << " paramQuest=" << passEvaluation.mParamQuestEditorId
+                         << " param1=" << ESM::FormId::fromUint32(conditionRef.mCondition->param1).toString("FormId:")
+                         << " param2=" << conditionRef.mCondition->param2
+                         << " runOn=" << conditionRef.mCondition->runOn
+                         << " passStateApplied=" << (passStateApplied ? 1 : 0)
+                         << " passValue=" << passEvaluation.mValue
+                         << " passResult=" << (passEvaluation.mResult ? 1 : 0)
+                         << " failStateApplied=" << (failStateApplied ? 1 : 0)
+                         << " failValue=" << failEvaluation.mValue
+                         << " failResult=" << (failEvaluation.mResult ? 1 : 0)
+                         << " runtimeBoundary=selected-quest-condition-evaluator-runtime-supported"
+                         << " fullConditionRuntime=loaded-pending-runtime"
+                         << " unsupportedConditionFunctionsRuntime=loaded-pending-runtime";
+        return pass;
+    }
+
+    void runFalloutQuestConditionProof()
+    {
+        const MWWorld::ESMStore& store = *MWBase::Environment::get().getESMStore();
+        MWBase::Journal& journal = *MWBase::Environment::get().getJournal();
+        const std::array<std::uint32_t, 5> functions = { {
+            ESM4::FUN_GetQuestRunning,
+            ESM4::FUN_GetStage,
+            ESM4::FUN_GetObjectiveCompleted,
+            ESM4::FUN_GetObjectiveDisplayed,
+            ESM4::FUN_GetQuestCompleted,
+        } };
+
+        int passed = 0;
+        for (std::uint32_t function : functions)
+        {
+            if (runFalloutQuestConditionCase(store, journal, function))
+                ++passed;
+        }
+
+        const int missingStageDoneQuestConditions
+            = findFalloutQuestConditionByFunction(store, ESM4::FUN_GetStageDone).mCondition == nullptr ? 1 : 0;
+        const bool pass = passed == static_cast<int>(functions.size()) && missingStageDoneQuestConditions == 1;
+        Log(Debug::Info) << "FNV/ESM4 proof: quest condition evaluator summary " << (pass ? "PASS" : "FAIL")
+                         << " evaluated=" << passed
+                         << " expected=" << functions.size()
+                         << " missingObservedQuestGetStageDone=" << missingStageDoneQuestConditions
+                         << " runtimeBoundary=selected-quest-condition-evaluator-runtime-supported"
+                         << " fullConditionRuntime=loaded-pending-runtime"
+                         << " unsupportedConditionFunctionsRuntime=loaded-pending-runtime";
+    }
+
     int getRuntimeGameSettingInt(const MWWorld::ESMStore& store, std::string_view id, int fallback, bool& found)
     {
         const ESM::GameSetting* setting = store.get<ESM::GameSetting>().search(id);
@@ -1522,6 +1908,19 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
         {
             proofQuestTargetApplied = true;
             runFalloutQuestTargetProof();
+        }
+
+        static bool proofQuestConditionApplied = false;
+        const char* proofQuestCondition = std::getenv("OPENMW_FNV_PROOF_QUEST_CONDITIONS");
+        const bool proofQuestConditionEnabled = proofQuestCondition != nullptr && *proofQuestCondition != '\0';
+        const int proofQuestConditionFrame
+            = static_cast<int>(getProofFloat("OPENMW_FNV_PROOF_QUEST_CONDITION_FRAME", 150.f));
+        if (!proofQuestConditionApplied && proofQuestConditionEnabled
+            && frameNumber >= static_cast<unsigned>(proofQuestConditionFrame)
+            && mStateManager->getState() == MWBase::StateManager::State_Running)
+        {
+            proofQuestConditionApplied = true;
+            runFalloutQuestConditionProof();
         }
 
         // update mechanics
