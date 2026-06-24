@@ -22,11 +22,23 @@ ALLOWED_CLASSIFICATIONS = {
 }
 
 GAMEPLAY_RECORD_DOMAINS = {
+    "ACTI": "activator",
+    "ALCH": "consumable",
     "WEAP": "weapon",
     "AMMO": "ammo",
+    "ARMA": "armor-addon",
+    "ARMO": "armor",
+    "BOOK": "book",
+    "CLOT": "clothing",
+    "CONT": "container",
+    "DOOR": "door",
     "PROJ": "projectile",
     "EXPL": "explosion",
+    "KEYM": "key",
+    "MISC": "misc-item",
+    "MSTT": "movable-static",
     "PERK": "perk",
+    "STAT": "static",
     "AVIF": "actor-value",
 }
 

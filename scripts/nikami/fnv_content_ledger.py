@@ -985,6 +985,64 @@ def subrecord_type_counts(subrecords):
     return dict(sorted(counts.items()))
 
 
+GENERIC_PROP_ITEM_RECORD_DOMAINS = {
+    "ACTI": "activator",
+    "ALCH": "consumable",
+    "ARMA": "armor-addon",
+    "ARMO": "armor",
+    "BOOK": "book",
+    "CLOT": "clothing",
+    "CONT": "container",
+    "DOOR": "door",
+    "KEYM": "key",
+    "MISC": "misc-item",
+    "MSTT": "movable-static",
+    "STAT": "static",
+}
+
+
+def generic_prop_item_row(plugin, record, subrecords):
+    record_type = record["type"]
+    full_name = first_zstring(subrecords, "FULL")
+    model_fields = {
+        rec_type: first_zstring(subrecords, rec_type)
+        for rec_type in ("MODL", "MOD2", "MOD3", "MOD4", "MOD5")
+        if first_zstring(subrecords, rec_type)
+    }
+    primary_model = model_fields.get("MODL") or next(iter(model_fields.values()), "")
+    return {
+        "plugin": plugin,
+        "recordType": record_type,
+        "domain": GENERIC_PROP_ITEM_RECORD_DOMAINS.get(record_type, "prop-item"),
+        "formId": record["formId"],
+        "editorId": first_zstring(subrecords, "EDID"),
+        **text_summary("fullName", full_name),
+        "model": primary_model,
+        "models": model_fields,
+        "icon": first_zstring(subrecords, "ICON"),
+        "miniIcon": first_zstring(subrecords, "MICO"),
+        "script": (all_form_ids(subrecords, "SCRI") or [""])[0],
+        "pickupSound": (all_form_ids(subrecords, "YNAM") or [""])[0],
+        "dropSound": (all_form_ids(subrecords, "ZNAM") or [""])[0],
+        "objectBoundsSizes": subrecord_sizes(subrecords, "OBND"),
+        "modelDataSizes": subrecord_sizes(subrecords, "MODT"),
+        "subrecordTypeCounts": subrecord_type_counts(subrecords),
+        "classification": "loaded-pending-runtime",
+        "readiness": "loaded-pending-runtime",
+        "firstFailingGate": "item-studio-spawn-command",
+        "runtimeBoundary": (
+            "Record identifiers, display text hashes, model/icon paths, scripts, sounds, and bounds metadata are "
+            "harvested for the real-time authoring studio. Generic spawn/equip/manipulate runtime proof is pending."
+        ),
+        "unprovenGameplayGates": [
+            "item-studio-spawn-command",
+            "neutral-stage-prop-transform-proof",
+            "inventory-equip-or-activate-behavior",
+            "collision-and-pickup-runtime",
+        ],
+    }
+
+
 def actor_value_row(plugin, record, subrecords):
     full_name = first_zstring(subrecords, "FULL")
     description = first_zstring(subrecords, "DESC")
@@ -1145,7 +1203,7 @@ def parse_plugin(path, plugin):
                 "flagsHex": f"0x{flags:08x}",
             }
             condition_rows.extend(condition_rows_for_record(plugin, record, subrecords))
-            if rec_type in {"QUST", "DIAL", "INFO", "SCPT", "GLOB", "GMST", "WEAP", "AMMO", "AVIF", "PERK", "PROJ", "EXPL"}:
+            if rec_type in {"QUST", "DIAL", "INFO", "SCPT", "GLOB", "GMST", "WEAP", "AMMO", "AVIF", "PERK", "PROJ", "EXPL"} or rec_type in GENERIC_PROP_ITEM_RECORD_DOMAINS:
                 if rec_type == "QUST":
                     quests.append(quest_row(plugin, record, subrecords))
                     add_form_id_subrecord_refs(
@@ -1261,6 +1319,16 @@ def parse_plugin(path, plugin):
                         record["formId"],
                         subrecords,
                         [("EITM", "magicEffect"), ("MNAM", "impactDataSet")],
+                    )
+                elif rec_type in GENERIC_PROP_ITEM_RECORD_DOMAINS:
+                    gameplay_systems.append(generic_prop_item_row(plugin, record, subrecords))
+                    add_form_id_subrecord_refs(
+                        references,
+                        plugin,
+                        rec_type,
+                        record["formId"],
+                        subrecords,
+                        [("SCRI", "script"), ("YNAM", "pickupSound"), ("ZNAM", "dropSound")],
                     )
             offset = next_offset
         return offset

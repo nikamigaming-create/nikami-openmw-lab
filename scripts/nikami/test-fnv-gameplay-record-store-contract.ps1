@@ -264,6 +264,8 @@ Assert-Text "apps/openmw/mwworld/store.cpp" "TypedDynamicStore<ESM4::Explosion>"
 Assert-Text "scripts/nikami/fnv_content_ledger.py" '"gameplaySystems"' "content ledger writes gameplay system artifact"
 Assert-Text "scripts/nikami/fnv_content_ledger.py" "def weapon_row" "content ledger writes WEAP gameplay rows"
 Assert-Text "scripts/nikami/fnv_content_ledger.py" "def ammo_row" "content ledger writes AMMO gameplay rows"
+Assert-Text "scripts/nikami/fnv_content_ledger.py" "GENERIC_PROP_ITEM_RECORD_DOMAINS" "content ledger defines generic prop/item row domains"
+Assert-Text "scripts/nikami/fnv_content_ledger.py" "def generic_prop_item_row" "content ledger writes generic prop/item gameplay rows"
 Assert-Text "scripts/nikami/fnv_content_ledger.py" "unprovenGameplayGates" "content ledger bounds runtime-supported gameplay rows"
 
 $ContentLedger = Join-Path $PSScriptRoot "test-fnv-content-ledger.ps1"
@@ -301,6 +303,18 @@ Assert-RuntimeSupportedGameplayRows -Rows $gameplay -RecordType "AMMO" -Expected
 Assert-AmmoProjectileBindingRows -Rows $gameplay
 Assert-LoadedPendingGameplayRows -Rows $gameplay -RecordType "PROJ" -ExpectedCount 156 -ExpectedGate "runtime-projectile-definition-binding"
 Assert-LoadedPendingGameplayRows -Rows $gameplay -RecordType "EXPL" -ExpectedCount 225 -ExpectedGate "runtime-explosion-effect-binding"
+foreach ($recordType in @("ACTI", "ARMO", "ARMA", "MISC", "MSTT", "STAT")) {
+    $rows = @($gameplay | Where-Object { [string]$_.recordType -eq $recordType })
+    if ($rows.Count -le 0) {
+        throw "Expected generic prop/item gameplay rows for $recordType"
+    }
+    foreach ($row in $rows) {
+        if ([string]$row.classification -ne "loaded-pending-runtime" -or [string]$row.firstFailingGate -ne "item-studio-spawn-command") {
+            throw "Unexpected generic prop/item classification for $recordType $($row.editorId): classification=$($row.classification) gate=$($row.firstFailingGate)"
+        }
+    }
+    Write-ProofLine "OK generic prop/item ledger rows: $recordType=$($rows.Count) gate=item-studio-spawn-command"
+}
 $uniqueRuntimeExpected = @{}
 foreach ($recordType in @("WEAP", "AMMO", "PERK", "PROJ", "EXPL")) {
     $raw = Get-RecordCount $flatCounts $recordType

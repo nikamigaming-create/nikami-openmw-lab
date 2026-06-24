@@ -151,6 +151,17 @@ $gameplay = @(
         icon = ""
         classification = "loaded-pending-runtime"
         readiness = "loaded-pending-runtime"
+    },
+    [pscustomobject][ordered]@{
+        plugin = "Contract.esm"
+        recordType = "ARMO"
+        formId = "0x00001004"
+        editorId = "ContractArmor"
+        model = "Armor\Contract\ContractArmor.nif"
+        icon = "Interface\Icons\Contract\Armor.dds"
+        classification = "loaded-pending-runtime"
+        readiness = "loaded-pending-runtime"
+        firstFailingGate = "item-studio-spawn-command"
     }
 )
 $gameplay | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath (Join-Path $contentDir "gameplay-systems.json") -Encoding UTF8
@@ -207,10 +218,10 @@ if (!@($catalog.schemaMarkers).Contains("placed-runtime-target-map-v1")) {
 if (!@($catalog.schemaMarkers).Contains("placement-bootstrap-job-args-v1")) {
     throw "Studio catalog missing placement bootstrap args marker."
 }
-if ([int]$catalog.counts.total -ne 4) {
-    throw "Studio catalog expected 4 entries but got $($catalog.counts.total)."
+if ([int]$catalog.counts.total -ne 5) {
+    throw "Studio catalog expected 5 entries but got $($catalog.counts.total)."
 }
-if ([int]$catalog.counts.domains.actor -ne 2 -or [int]$catalog.counts.domains.gameplay -ne 2) {
+if ([int]$catalog.counts.domains.actor -ne 2 -or [int]$catalog.counts.domains.gameplay -ne 3) {
     throw "Studio catalog did not split actor/gameplay domains correctly."
 }
 if ([int]$catalog.counts.missingSearchText -ne 0 -or [int]$catalog.counts.invalidClassifications -ne 0) {
@@ -221,6 +232,7 @@ $entries = @($catalog.entries)
 $npc = $entries | Where-Object { $_.label -eq "ContractNpc" } | Select-Object -First 1
 $creature = $entries | Where-Object { $_.label -eq "ContractCreatureRef" } | Select-Object -First 1
 $weapon = $entries | Where-Object { $_.label -eq "ContractPistol" } | Select-Object -First 1
+$armor = $entries | Where-Object { $_.label -eq "ContractArmor" } | Select-Object -First 1
 if ($null -eq $npc -or $npc.commands.runtimeThreeCamera -notmatch "-Angles 'front,front-left,front-right'") {
     throw "Studio catalog NPC entry missing three-camera runtime command."
 }
@@ -251,8 +263,11 @@ if ($weapon.studioGates[0].gate -ne "item-studio-spawn-command") {
 if ($weapon.searchText -notmatch "contract pistol") {
     throw "Studio catalog search text did not split editor/model names into human-searchable tokens."
 }
+if ($null -eq $armor -or $armor.kind -ne "armor" -or $armor.studioGates[0].gate -ne "item-studio-spawn-command") {
+    throw "Studio catalog armor entry did not expose armor kind with explicit item studio gate."
+}
 $html = Get-Content -LiteralPath $htmlPath -Raw
-if (!$html.Contains("FNV Character Studio Catalog") -or !$html.Contains("neutral stage pending") -or !$html.Contains("ContractPistol")) {
+if (!$html.Contains("FNV Character Studio Catalog") -or !$html.Contains("neutral stage pending") -or !$html.Contains("ContractPistol") -or !$html.Contains("ContractArmor")) {
     throw "Studio catalog HTML does not expose expected search/stage/item text."
 }
 if (!$html.Contains("Studio Session") -or !$html.Contains("Run 3 Camera") -or !$html.Contains("/nikami/studio/sessions")) {
