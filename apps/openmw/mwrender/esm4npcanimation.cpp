@@ -515,7 +515,19 @@ namespace MWRender
 
         osg::Vec4f getFalloutRenderHairTint(const ESM4::Npc& traits) { return getHairTint(traits); }
 
-        float getFalloutHairEmissionStrength(const osg::Vec4f&) { return 0.f; }
+        float getFalloutHairEmissionStrength(const osg::Vec4f&)
+        {
+            const char* value = std::getenv("OPENMW_FNV_HAIR_EMISSION_STRENGTH");
+            if (value == nullptr || value[0] == '\0')
+                return 0.f;
+
+            char* end = nullptr;
+            const float parsed = std::strtof(value, &end);
+            if (end == value)
+                return 0.f;
+
+            return std::clamp(parsed, 0.f, 1.f);
+        }
 
         bool isFonvMiscHeadPart(const ESM4::HeadPart& part)
         {
@@ -5838,6 +5850,11 @@ namespace MWRender
             const float emissionStrength = hairTintModel ? getFalloutHairEmissionStrength(*tint) : 0.f;
             TintMaterialVisitor visitor(*tint, emissionStrength, hairTintModel, hairTintModel);
             attached->accept(visitor);
+            if (hairTintModel)
+                Log(Debug::Info) << "FNV/ESM4 diag: applied hair tint material " << correctedModel.value()
+                                 << " tint=(" << tint->x() << ", " << tint->y() << ", " << tint->z()
+                                 << ") emissionStrength=" << emissionStrength << " for "
+                                 << mPtr.getCellRef().getRefId();
         }
         if (attached != nullptr
             && (isFalloutHairTintModel(correctedModel.value()) || isFalloutScalpHairModel(correctedModel.value())
@@ -6338,6 +6355,10 @@ namespace MWRender
                 {
                     TintMaterialVisitor visitor(hairTint, getFalloutHairEmissionStrength(hairTint), true, true);
                     attached->accept(visitor);
+                    Log(Debug::Info) << "FNV/ESM4 diag: applied hair tint material " << hair->mModel
+                                     << " tint=(" << hairTint.x() << ", " << hairTint.y() << ", " << hairTint.z()
+                                     << ") emissionStrength=" << getFalloutHairEmissionStrength(hairTint)
+                                     << " for " << traits.mEditorId;
                     hideFonvNoHatHairVariant(attached.get(), hair->mModel, traits, coveredBodySlots);
                     logFalloutFaceDrawableAudit(attached.get(), hair->mModel, mPtr, "final-hat-hair");
                 }
@@ -6587,6 +6608,11 @@ namespace MWRender
                     const float emissionStrength = hairTintModel ? getFalloutHairEmissionStrength(*tint) : 0.f;
                     TintMaterialVisitor visitor(*tint, emissionStrength, hairTintModel, hairTintModel);
                     attached->accept(visitor);
+                    if (hairTintModel)
+                        Log(Debug::Info) << "FNV/ESM4 diag: applied hair tint material " << part->mModel
+                                         << " tint=(" << tint->x() << ", " << tint->y() << ", " << tint->z()
+                                         << ") emissionStrength=" << emissionStrength << " for "
+                                         << mPtr.getCellRef().getRefId();
                 }
                 if (useHatHairVariant)
                     hideFonvNoHatHairVariant(attached.get(), part->mModel, traits, coveredBodySlots);

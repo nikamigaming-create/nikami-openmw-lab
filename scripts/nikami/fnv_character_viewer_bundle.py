@@ -205,6 +205,7 @@ def viewer_command(
     allow_missing_actor_visible_hand_geometry: bool = False,
     actor_visible_hand_max_distance: str = "30",
     fnv_skinning_matrix_audit: str = "arms,rightHand,leftHand,HeadOld",
+    fnv_hair_emission_strength: str = "",
 ) -> str:
     command = (
         "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/nikami/run-fnv-character-viewer.ps1 "
@@ -230,6 +231,7 @@ def viewer_command(
         if allow_missing_actor_visible_hand_geometry:
             command += " -AllowMissingActorVisibleHandGeometry"
     command += selector_arg("FnvSkinningMatrixAudit", fnv_skinning_matrix_audit)
+    command += selector_arg("FnvHairEmissionStrength", fnv_hair_emission_strength)
     command += " -OpenViewer"
     return command
 
@@ -343,6 +345,7 @@ def gate_controls(cases: list[dict[str, Any]], actor: str, actor_kind: str) -> d
             "animationControls": phase_controls + animation_proofs,
             "dialogueControls": [],
             "captureAngles": [{"id": angle, "label": angle} for angle in ANGLE_ORDER],
+            "materialControls": [],
             "botCommands": [
                 {
                     "id": "creature-ladder",
@@ -529,6 +532,32 @@ def gate_controls(cases: list[dict[str, Any]], actor: str, actor_kind: str) -> d
             "command": viewer_command(actor, "npc", "talk", dialogue_mode="mouth-open-pose"),
         },
     ]
+    material_controls = [
+        {
+            "id": "hair-emission-0",
+            "label": "Hair Emission 0",
+            "phase": "hair",
+            "controlType": "proof-material",
+            "fnvHairEmissionStrength": "0",
+            "command": viewer_command(actor, "npc", "hair,headgear,face", fnv_hair_emission_strength="0"),
+        },
+        {
+            "id": "hair-emission-025",
+            "label": "Hair Emission 0.25",
+            "phase": "hair",
+            "controlType": "proof-material",
+            "fnvHairEmissionStrength": "0.25",
+            "command": viewer_command(actor, "npc", "hair,headgear,face", fnv_hair_emission_strength="0.25"),
+        },
+        {
+            "id": "hair-emission-05",
+            "label": "Hair Emission 0.5",
+            "phase": "hair",
+            "controlType": "proof-material",
+            "fnvHairEmissionStrength": "0.5",
+            "command": viewer_command(actor, "npc", "hair,headgear,face", fnv_hair_emission_strength="0.5"),
+        },
+    ]
 
     return {
         "partToggles": part_toggles,
@@ -544,6 +573,7 @@ def gate_controls(cases: list[dict[str, Any]], actor: str, actor_kind: str) -> d
         "cameraControls": camera_controls,
         "rotationControls": rotation_controls,
         "dialogueControls": dialogue_controls,
+        "materialControls": material_controls,
         "captureAngles": [{"id": angle, "label": angle} for angle in ANGLE_ORDER],
         "botCommands": [
             {
@@ -1484,7 +1514,7 @@ function renderControls() {{
     select.addEventListener("change", () => {{ state.slotFilters[select.dataset.slot] = select.value; render(); }});
   }});
 
-  const runtime = [...(MANIFEST.controls?.animationControls || []), ...(MANIFEST.controls?.cameraControls || []), ...(MANIFEST.controls?.rotationControls || []), ...(MANIFEST.controls?.dialogueControls || [])];
+  const runtime = [...(MANIFEST.controls?.animationControls || []), ...(MANIFEST.controls?.cameraControls || []), ...(MANIFEST.controls?.rotationControls || []), ...(MANIFEST.controls?.dialogueControls || []), ...(MANIFEST.controls?.materialControls || [])];
   document.getElementById("runtimeControlHost").innerHTML = runtime.map(control => `<button type="button" data-phase="${{esc(control.phase)}}">${{esc(control.label)}}</button>${{commandBlock(control.command, control.label)}}`).join("");
   document.getElementById("runtimeControlHost").querySelectorAll("button").forEach(button => button.addEventListener("click", () => {{
     state.phase = button.dataset.phase;
@@ -1520,6 +1550,7 @@ function renderRuntimeEvidence(c) {{
   const rows = [
     `<tr><td>visible hands</td><td>${{statusSpan(hand.status || "MISSING")}}</td><td>${{esc(hand.samples || "")}}</td></tr>`,
     `<tr><td>hand gate required</td><td>${{esc(e.requireActorVisibleHandGeometry ?? "")}}</td><td>max=${{esc(e.actorVisibleHandMaxDistance ?? "")}}</td></tr>`,
+    `<tr><td>hair emission</td><td>${{esc(e.fnvHairEmissionStrength || "")}}</td><td>proof material control</td></tr>`,
     `<tr><td>skinning audit</td><td>${{esc(e.fnvSkinningMatrixAudit || "")}}</td><td>${{esc((e.skinningModes || []).length)}} samples</td></tr>`
   ];
   for (const mode of (e.skinningModes || []).slice(0, 12)) {{

@@ -717,6 +717,7 @@ def structured_actor_job(entry: dict[str, Any], payload: dict[str, Any]) -> tupl
         "allowMissingActorVisibleHandGeometry": first_text(selector_value(payload, "allowMissingActorVisibleHandGeometry")),
         "actorVisibleHandMaxDistance": first_text(selector_value(payload, "actorVisibleHandMaxDistance"), "30"),
         "fnvSkinningMatrixAudit": first_text(selector_value(payload, "fnvSkinningMatrixAudit"), "arms,rightHand,leftHand,HeadOld"),
+        "fnvHairEmissionStrength": first_text(selector_value(payload, "fnvHairEmissionStrength")),
     }
     command = (
         "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/nikami/run-fnv-character-viewer.ps1 "
@@ -738,6 +739,7 @@ def structured_actor_job(entry: dict[str, Any], payload: dict[str, Any]) -> tupl
         if selectors["allowMissingActorVisibleHandGeometry"].lower() in {"1", "true", "yes"}:
             command += " -AllowMissingActorVisibleHandGeometry"
     command += selector_arg("FnvSkinningMatrixAudit", selectors["fnvSkinningMatrixAudit"])
+    command += selector_arg("FnvHairEmissionStrength", selectors["fnvHairEmissionStrength"])
     if actor_kind == "creature":
         command += " -CreatureDiagnostics"
     request = {

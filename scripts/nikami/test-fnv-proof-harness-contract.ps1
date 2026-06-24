@@ -114,6 +114,7 @@ foreach ($needle in @(
     "[switch]`$RequireActorVisibleHandGeometry",
     "[double]`$ActorVisibleHandMaxDistance",
     "[string]`$FnvSkinningMatrixAudit",
+    "[string]`$FnvHairEmissionStrength",
     "[string]`$ActorKind",
     "[switch]`$NeutralActorPreview",
     "[switch]`$NeutralActorPreviewStandingIdle",
@@ -148,6 +149,7 @@ Assert-Text $flat "Target standing arm pose BAD lines:" "flat proof reports targ
 Assert-Text $flat "Target visible hand geometry status:" "flat proof reports target visible skinned hand geometry"
 Assert-Text $flat "did not prove visible skinned hand geometry follows animated hand anchors" "flat proof fails when visible hand skin does not follow skeleton"
 Assert-Text $flat "OPENMW_FNV_SKINNING_MATRIX_AUDIT" "flat proof can request skinning matrix evidence without external environment setup"
+Assert-Text $flat "OPENMW_FNV_HAIR_EMISSION_STRENGTH" "flat proof can request hair material emission proof control without external environment setup"
 Assert-Text $flat "OPENMW_PROOF_ACTOR_VIEW_LOCAL_OFFSET" "flat proof can frame actor closeups in actor-local space"
 Assert-Text $flat "OPENMW_PROOF_NEUTRAL_ACTOR_PREVIEW" "flat proof can request neutral actor preview panes"
 Assert-Text $flat "OPENMW_FNV_DISABLE_PACKAGE_PROCEDURE_IDLES" "flat proof can force neutral actor preview onto standing-idle composition mode"
@@ -186,6 +188,7 @@ Assert-Text $flat "NeutralActorPreview:" "flat proof summary records neutral act
 Assert-Text $flat "NeutralActorPreviewStandingIdle:" "flat proof summary records neutral actor standing-idle composition mode"
 Assert-Text $flat "NeutralActorPreviewProfile:" "flat proof summary records neutral actor preview camera profile"
 Assert-Text $flat "FnvSkinningMatrixAudit:" "flat proof summary records selected FNV skinning matrix audit filter"
+Assert-Text $flat "FnvHairEmissionStrength:" "flat proof summary records selected hair material emission proof control"
 Assert-Text $flat "FnvProofTargetNpc:" "flat proof summary records FNV-specific NPC assembly target"
 Assert-Text $flat "ActorKind:" "flat proof summary records actor kind"
 Assert-Text $flat "CreatureDiagnostics:" "flat proof summary records creature diagnostic mode"
@@ -282,6 +285,8 @@ Assert-Text $npcAnimation "OPENMW_FNV_USE_RAW_BODY_TINT_SWATCH" "coarse raw body
 Assert-Text $npcAnimation "multiplier=none" "FONV body tint has no hidden brightness multiplier"
 Assert-Text $npcAnimation "loaded-pending-exact-facegen-texture-synthesis" "FaceGen EGT loading is not claimed as exact pixel synthesis"
 Assert-Text $npcAnimation "OPENMW_FNV_USE_EGT_MATERIAL_TINT" "coarse EGT material tint is explicit opt-in only"
+Assert-Text $npcAnimation "OPENMW_FNV_HAIR_EMISSION_STRENGTH" "FONV hair material emission is explicit proof-control only"
+Assert-Text $npcAnimation "emissionStrength=" "FONV hair material proof control logs the applied emission strength"
 Assert-Text $npcAnimation "forced opaque no-blend skin surface" "FONV visible skin surfaces are solid instead of alpha-blended"
 Assert-Text $creatureAnimation "OPENMW_FNV_CREATURE_BODY_DIAG" "creature body diagnostics are runtime-gated"
 Assert-Text $creatureAnimation "OPENMW_FNV_ACTOR_KIT_PARTS" "creature runtime honors actor-kit part selector"
@@ -341,6 +346,7 @@ Assert-Text $characterBuilder "[string]`$NeutralActorPreviewProfile" "character 
 Assert-Text $characterBuilder "[switch]`$AllowMissingActorVisibleHandGeometry" "character builder makes visible hand proof opt-out instead of silently optional"
 Assert-Text $characterBuilder "[double]`$ActorVisibleHandMaxDistance" "character builder accepts visible hand proof distance threshold"
 Assert-Text $characterBuilder "[string]`$FnvSkinningMatrixAudit" "character builder accepts selected FNV skinning matrix audit filter"
+Assert-Text $characterBuilder "[string]`$FnvHairEmissionStrength" "character builder accepts selected hair material emission proof control"
 Assert-Text $characterBuilder "[switch]`$FnvUseNativeAnimationCallbacks" "character builder makes native callback policy explicit"
 Assert-Text $characterBuilder "[string[]]`$Angles" "character builder accepts explicit camera angle selector"
 Assert-Text $characterBuilder "[string]`$BootstrapCell" "character builder accepts explicit bootstrap cell"
@@ -359,6 +365,7 @@ Assert-Text $characterBuilder "FnvPartMatrixAudit = `$true" "character builder a
 Assert-Text $characterBuilder "RequireActorVisibleHandGeometry = `$true" "character builder requires visible hand geometry by default for NPC actor proofs"
 Assert-Text $characterBuilder "ActorVisibleHandMaxDistance = `$ActorVisibleHandMaxDistance" "character builder passes visible hand distance threshold to flat proof"
 Assert-Text $characterBuilder "FnvSkinningMatrixAudit = `$FnvSkinningMatrixAudit" "character builder passes skinning matrix audit filter to flat proof"
+Assert-Text $characterBuilder "FnvHairEmissionStrength = `$FnvHairEmissionStrength" "character builder passes hair material emission proof control to flat proof"
 Assert-Text $characterBuilder "CharacterBuilderPhase = `$phase" "character builder passes selected phase to flat proof"
 Assert-Text $characterBuilder "ActorKitParts = `$ActorKitPartsCsv" "character builder passes actor-kit part selector to flat proof"
 Assert-Text $characterBuilder "ActorKitPartModels = `$ActorKitPartModelsCsv" "character builder passes actor-kit exact model selector to flat proof"
@@ -395,6 +402,7 @@ Assert-Text $characterViewer "[string]`$NeutralActorPreviewProfile" "character v
 Assert-Text $characterViewer "[switch]`$AllowMissingActorVisibleHandGeometry" "character viewer exposes visible hand proof opt-out"
 Assert-Text $characterViewer "[double]`$ActorVisibleHandMaxDistance" "character viewer exposes visible hand proof distance threshold"
 Assert-Text $characterViewer "[string]`$FnvSkinningMatrixAudit" "character viewer exposes skinning matrix audit filter"
+Assert-Text $characterViewer "[string]`$FnvHairEmissionStrength" "character viewer exposes hair material emission proof control"
 Assert-Text $characterViewer "[switch]`$FnvUseNativeAnimationCallbacks" "character viewer exposes native callback policy"
 Assert-Text $characterViewer "[string[]]`$Angles" "character viewer accepts explicit camera angle selector"
 Assert-Text $characterViewer "Resolve-FnvDataFromLatestHarvest" "character viewer can bootstrap FNV data from generated harvest proof"
@@ -414,6 +422,7 @@ Assert-Text $characterViewer "FnvRotationMode = `$FnvRotationMode" "character vi
 Assert-Text $characterViewer "NeutralActorPreviewProfile = `$NeutralActorPreviewProfile" "character viewer passes neutral actor preview profile to builder"
 Assert-Text $characterViewer "ActorVisibleHandMaxDistance = `$ActorVisibleHandMaxDistance" "character viewer passes visible hand proof threshold to builder"
 Assert-Text $characterViewer "FnvSkinningMatrixAudit = `$FnvSkinningMatrixAudit" "character viewer passes skinning matrix audit filter to builder"
+Assert-Text $characterViewer "FnvHairEmissionStrength = `$FnvHairEmissionStrength" "character viewer passes hair material emission proof control to builder"
 Assert-Text $characterViewer "AllowMissingActorVisibleHandGeometry = `$true" "character viewer can explicitly relax the visible hand proof gate"
 Assert-Text $characterViewer "Angles = `$Angles" "character viewer passes selected camera angles to builder"
 Assert-Text $characterViewer "ActorStageX = `$ActorStageX" "character viewer passes actor stage coordinates to builder"
@@ -489,6 +498,7 @@ Assert-Text $characterViewerLiveServer "ALLOWED_PREFIX" "live actor-kit server a
 Assert-Text $characterViewerLiveServer "NeutralActorPreviewProfile" "live actor-kit server preserves neutral preview profile selectors"
 Assert-Text $characterViewerLiveServer "ActorVisibleHandMaxDistance" "live actor-kit server preserves visible hand proof thresholds"
 Assert-Text $characterViewerLiveServer "FnvSkinningMatrixAudit" "live actor-kit server preserves skinning matrix audit selectors"
+Assert-Text $characterViewerLiveServer "FnvHairEmissionStrength" "live actor-kit server preserves hair material emission selectors"
 Assert-Text $characterViewerLiveServer "FORBIDDEN_CHARS" "live actor-kit server rejects shell metacharacters"
 Assert-Text $characterViewerLiveServer "subprocess.run" "live actor-kit server launches runner without a shell"
 Assert-Text $characterViewerLiveServer "noRetailAssetsCommitted" "live actor-kit server records no-retail policy"
@@ -552,6 +562,9 @@ Assert-Text $characterViewerBundle "FnvRotationMode" "standalone character viewe
 Assert-Text $characterViewerBundle "NeutralActorPreviewProfile" "standalone character viewer commands include neutral preview profiles"
 Assert-Text $characterViewerBundle "ActorVisibleHandMaxDistance" "standalone character viewer commands include visible hand proof thresholds"
 Assert-Text $characterViewerBundle "FnvSkinningMatrixAudit" "standalone character viewer commands include skinning matrix audit selectors"
+Assert-Text $characterViewerBundle "FnvHairEmissionStrength" "standalone character viewer commands include hair material emission selectors"
+Assert-Text $characterViewerBundle '"materialControls"' "standalone character viewer manifests proof material controls"
+Assert-Text $characterViewerBundle "proof-material" "standalone character viewer exposes proof material controls to humans and bots"
 Assert-Text $characterViewerBundle "runtime-evidence-v1" "standalone character viewer exposes runtime evidence schema marker"
 Assert-Text $characterViewerBundle "Runtime Evidence" "standalone character viewer renders runtime evidence panel"
 Assert-Text $characterViewerBundle "cameraControls" "standalone character viewer exposes camera profile controls"

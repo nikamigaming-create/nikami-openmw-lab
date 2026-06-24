@@ -45,6 +45,7 @@ param(
     [switch]$AllowMissingActorVisibleHandGeometry,
     [double]$ActorVisibleHandMaxDistance = 30.0,
     [string]$FnvSkinningMatrixAudit = "arms,rightHand,leftHand,HeadOld",
+    [string]$FnvHairEmissionStrength = "",
     [switch]$FnvUseNativeAnimationCallbacks,
     [string]$SuiteDir = "",
     [switch]$NoRun,
@@ -414,6 +415,7 @@ Write-Host "FnvRotationMode: $FnvRotationMode"
 Write-Host "AllowMissingActorVisibleHandGeometry: $AllowMissingActorVisibleHandGeometry"
 Write-Host "ActorVisibleHandMaxDistance: $ActorVisibleHandMaxDistance"
 Write-Host "FnvSkinningMatrixAudit: $FnvSkinningMatrixAudit"
+Write-Host "FnvHairEmissionStrength: $FnvHairEmissionStrength"
 Write-Host "FnvUseNativeAnimationCallbacks: $FnvUseNativeAnimationCallbacks"
 Write-Host "BootstrapCell: $BootstrapCell"
 Write-Host "BootstrapPosition: $BootstrapX,$BootstrapY,$BootstrapZ"
@@ -490,6 +492,7 @@ else {
             FnvRotationMode = $FnvRotationMode
             ActorVisibleHandMaxDistance = $ActorVisibleHandMaxDistance
             FnvSkinningMatrixAudit = $FnvSkinningMatrixAudit
+            FnvHairEmissionStrength = $FnvHairEmissionStrength
         }
         if ($AllowMissingActorVisibleHandGeometry) { $builderArgs.AllowMissingActorVisibleHandGeometry = $true }
         if (![string]::IsNullOrWhiteSpace($ActorKitPartsCsv)) { $builderArgs.ActorKitParts = $ActorKitPartsCsv }

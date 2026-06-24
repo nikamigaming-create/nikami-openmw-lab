@@ -45,6 +45,7 @@ param(
     [switch]$AllowMissingActorVisibleHandGeometry,
     [double]$ActorVisibleHandMaxDistance = 30.0,
     [string]$FnvSkinningMatrixAudit = "arms,rightHand,leftHand,HeadOld",
+    [string]$FnvHairEmissionStrength = "",
     [switch]$FnvUseNativeAnimationCallbacks,
     [switch]$CreatureDiagnostics,
     [switch]$NoSound,
@@ -229,6 +230,7 @@ function Get-FnvRuntimeEvidence([string]$ProofDir, [string]$FnvSkinningMatrixAud
 
     $requireActorVisibleHandGeometry = Get-RegexValue $summaryText "RequireActorVisibleHandGeometry:\s+([^\r\n]+)"
     $actorVisibleHandMaxDistance = Get-RegexValue $summaryText "ActorVisibleHandMaxDistance:\s+([^\r\n]+)"
+    $fnvHairEmissionStrength = Get-RegexValue $summaryText "FnvHairEmissionStrength:\s*([^\r\n]*)"
     $visibleHandGeometryStatus = Get-RegexValue $summaryText "Target visible hand geometry status:\s+([^\r\n]+)"
     $visibleHandGeometrySamples = Get-RegexValue $summaryText "Target visible hand geometry samples:\s+([^\r\n]+)"
     $visibleHandGeometryFailureLine = Get-RegexValue $summaryText "Target visible hand geometry failure line:\s+([^\r\n]+)"
@@ -242,6 +244,7 @@ function Get-FnvRuntimeEvidence([string]$ProofDir, [string]$FnvSkinningMatrixAud
             failureLine = $visibleHandGeometryFailureLine
         }
         fnvSkinningMatrixAudit = $FnvSkinningMatrixAudit
+        fnvHairEmissionStrength = $fnvHairEmissionStrength
         skinningModes = @($skinningModes.ToArray())
     }
 }
@@ -321,6 +324,7 @@ Write-SuiteLine "FnvRotationMode: $FnvRotationMode"
 Write-SuiteLine "AllowMissingActorVisibleHandGeometry: $AllowMissingActorVisibleHandGeometry"
 Write-SuiteLine "ActorVisibleHandMaxDistance: $ActorVisibleHandMaxDistance"
 Write-SuiteLine "FnvSkinningMatrixAudit: $FnvSkinningMatrixAudit"
+Write-SuiteLine "FnvHairEmissionStrength: $FnvHairEmissionStrength"
 Write-SuiteLine "FnvUseNativeAnimationCallbacks: $FnvUseNativeAnimationCallbacks"
 Write-SuiteLine "Angles: $(@($CameraAngles | ForEach-Object { $_.Name }) -join ',')"
 Write-SuiteLine "BootstrapCell: $BootstrapCell"
@@ -387,6 +391,7 @@ foreach ($phase in $Phases) {
             ActorViewLocalOffset = $true
             FnvPartMatrixAudit = $true
             FnvSkinningMatrixAudit = $FnvSkinningMatrixAudit
+            FnvHairEmissionStrength = $FnvHairEmissionStrength
             FnvRotationMode = $FnvRotationMode
             CharacterBuilderPhase = $phase
         }
@@ -494,6 +499,7 @@ foreach ($phase in $Phases) {
                 requireVisibleHandGeometry = [bool]$requireVisibleHandGeometry
                 actorVisibleHandMaxDistance = $ActorVisibleHandMaxDistance
                 fnvSkinningMatrixAudit = $FnvSkinningMatrixAudit
+                fnvHairEmissionStrength = $FnvHairEmissionStrength
                 fnvUseNativeAnimationCallbacks = [bool]$FnvUseNativeAnimationCallbacks
             }
             runtimeEvidence = $runtimeEvidence

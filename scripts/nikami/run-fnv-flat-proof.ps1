@@ -88,6 +88,7 @@ param(
     [double]$ActorVisibleHandMaxDistance = 30.0,
     [switch]$FnvPartMatrixAudit,
     [string]$FnvSkinningMatrixAudit = "",
+    [string]$FnvHairEmissionStrength = "",
     [string]$CharacterBuilderPhase = "",
     [string[]]$ActorKitParts = @(),
     [string[]]$ActorKitPartModels = @(),
@@ -1541,6 +1542,7 @@ try {
     if ($RequirePlayerTerrainSupport) { Set-ProofEnv $previousEnv "OPENMW_FNV_FLOOR_WATCHDOG" "1" }
     if ($FnvPartMatrixAudit) { Set-ProofEnv $previousEnv "OPENMW_FNV_PART_MATRIX_AUDIT" "1" }
     Set-ProofEnv $previousEnv "OPENMW_FNV_SKINNING_MATRIX_AUDIT" $FnvSkinningMatrixAudit
+    Set-ProofEnv $previousEnv "OPENMW_FNV_HAIR_EMISSION_STRENGTH" $FnvHairEmissionStrength
     Set-ProofEnv $previousEnv "OPENMW_FNV_ROTATION_MODE" $FnvRotationMode
     Set-ProofEnv $previousEnv "OPENMW_FNV_CHARACTER_BUILDER_PHASE" $CharacterBuilderPhase
     Set-ProofEnv $previousEnv "OPENMW_FNV_ACTOR_KIT_PARTS" $ActorKitPartsCsv
@@ -1658,6 +1660,7 @@ try {
     Write-ProofLine "RequireActorVisibleHandGeometry: $RequireActorVisibleHandGeometry"
     Write-ProofLine "ActorVisibleHandMaxDistance: $ActorVisibleHandMaxDistance"
     Write-ProofLine "FnvSkinningMatrixAudit: $FnvSkinningMatrixAudit"
+    Write-ProofLine "FnvHairEmissionStrength: $FnvHairEmissionStrength"
     Write-ProofLine "CharacterBuilderPhase: $CharacterBuilderPhase"
     Write-ProofLine "ActorKitParts: $ActorKitPartsCsv"
     Write-ProofLine "ActorKitPartModels: $ActorKitPartModelsCsv"
