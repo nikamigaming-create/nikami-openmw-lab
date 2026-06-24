@@ -411,6 +411,11 @@ Assert-Text $characterViewerBundle "Failure Summary" "standalone character viewe
 Assert-Text $characterViewerBundle "failure-summary-v1" "standalone character viewer advertises failure summary schema marker"
 Assert-Text $characterViewerBundle "maxAbsDeltaPartInAnchorTrans" "standalone character viewer summarizes maximum transform drift"
 Assert-Text $characterViewerBundle '"status": overall' "standalone character viewer writes top-level runtime status"
+Assert-Text $characterViewerBundle "build_assembly_inventory" "standalone character viewer builds part-by-part assembly inventory"
+Assert-Text $characterViewerBundle '"assemblyInventory"' "standalone character viewer writes assembly inventory JSON"
+Assert-Text $characterViewerBundle "Assembly Inventory" "standalone character viewer exposes assembly inventory table"
+Assert-Text $characterViewerBundle "assembly-inventory-v1" "standalone character viewer advertises assembly inventory schema marker"
+Assert-Text $characterViewerBundle "renderAssemblyInventory" "standalone character viewer renders assembly inventory rows"
 Assert-Text $characterViewerBundle "nikami-fnv-actor-kit-v1" "standalone character viewer writes actor kit schema"
 Assert-Text $characterViewerBundle "actor_kit_manifest" "standalone character viewer builds actor kit metadata"
 Assert-Text $characterViewerBundle "--out-kit-json" "standalone character viewer bundle accepts actor kit output path"
@@ -508,8 +513,19 @@ if ($fixtureActorKit.schema -ne "nikami-fnv-actor-kit-v1") { throw "Creature vie
 if ($fixtureManifest.actorProfile.kind -ne "creature") { throw "Creature viewer fixture did not preserve creature actor profile." }
 if ($fixtureActorKit.actorProfile.kind -ne "creature") { throw "Creature viewer actor kit did not preserve creature actor profile." }
 if (!@($fixtureManifest.schemaMarkers).Contains("creature-isolation-v1")) { throw "Creature viewer fixture missing creature schema marker." }
+if (!@($fixtureManifest.schemaMarkers).Contains("assembly-inventory-v1")) { throw "Creature viewer fixture missing assembly inventory schema marker." }
+if ($fixtureManifest.status -ne "PASS") { throw "Creature viewer fixture did not write PASS top-level status: $($fixtureManifest.status)" }
+if ($fixtureActorKit.status -ne "PASS") { throw "Creature viewer actor kit did not preserve PASS status: $($fixtureActorKit.status)" }
 if (!@($fixtureManifest.layers).Contains("creature-animation")) { throw "Creature viewer fixture missing creature animation layer." }
 if (!@($fixtureActorKit.layers).Contains("creature-animation")) { throw "Creature viewer actor kit missing creature animation layer." }
+if (@($fixtureManifest.assemblyInventory).Count -eq 0) { throw "Creature viewer fixture did not expose assembly inventory." }
+if (@($fixtureActorKit.assemblyInventory).Count -eq 0) { throw "Creature viewer actor kit did not preserve assembly inventory." }
+foreach ($row in @($fixtureManifest.assemblyInventory)) {
+    if (@($row.classifications).Count -eq 0) { throw "Creature viewer fixture emitted unclassified assembly inventory row." }
+}
+foreach ($row in @($fixtureActorKit.assemblyInventory)) {
+    if (@($row.classifications).Count -eq 0) { throw "Creature viewer actor kit emitted unclassified assembly inventory row." }
+}
 if (@($fixtureManifest.controls.dialogueControls).Count -ne 0) { throw "Creature viewer fixture should not emit NPC dialogue controls." }
 if (@($fixtureManifest.cases[0].creatureEvidence).Count -eq 0) { throw "Creature viewer fixture did not expose creature evidence." }
 if (@($fixtureManifest.cases[0].animationPlayback).Count -eq 0) { throw "Creature viewer fixture did not expose target animation playback." }

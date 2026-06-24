@@ -157,14 +157,14 @@ def category_from_part(part: str, part_class: str) -> str:
         return "headgear"
     if part_class == "weapon" or "weapon" in text:
         return "weapon"
+    if "armor" in text or "clothes" in text:
+        return "equipment-body"
     if part_class in {"leftHand", "rightHand", "body"} or "upperbody" in text or "hand" in text:
         return "body-skin"
     if part_class == "head" or "headold" in text or "headhuman" in text:
         return "head-skin"
     if part_class.startswith("creature") or "creature" in text:
         return "creature-body"
-    if "armor" in text or "clothes" in text:
-        return "equipment-body"
     return "all"
 
 
@@ -678,6 +678,162 @@ def build_failure_summary(cases: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [grouped[key] for key in order]
 
 
+def build_assembly_inventory(cases: list[dict[str, Any]], actor: str, actor_kind: str) -> list[dict[str, Any]]:
+    grouped: dict[tuple[str, str], dict[str, Any]] = {}
+    order: list[tuple[str, str]] = []
+
+    def ensure(category: str, model: str) -> dict[str, Any]:
+        key = (category or "all", model or "<none>")
+        if key not in grouped:
+            order.append(key)
+            grouped[key] = {
+                "category": key[0],
+                "model": key[1],
+                "actions": [],
+                "classifications": [],
+                "phases": [],
+                "angles": [],
+                "cases": [],
+                "parts": [],
+                "classes": [],
+                "gateCount": 0,
+                "runtimeSampleCount": 0,
+                "badSampleCount": 0,
+                "verdicts": [],
+                "firstBadSampleIndex": None,
+                "firstBadAnimationTime": None,
+                "firstBadDistance": None,
+                "maxDistance": 0.0,
+                "maxAbsDeltaPartInAnchorTrans": 0.0,
+                "firstPartInAnchorTrans": [],
+                "lastPartInAnchorTrans": [],
+                "deltaPartInAnchorTrans": [],
+                "command": viewer_command(
+                    actor,
+                    actor_kind,
+                    phase_for_category(key[0]),
+                    parts=key[0] if key[0] != "all" else "",
+                    part_models="" if key[1] == "<none>" else key[1],
+                    prop_slots=key[0] if key[0] in {"equipment-body", "weapon", "headgear"} else "",
+                    prop_models=key[1] if key[0] in {"equipment-body", "weapon", "headgear"} and key[1] != "<none>" else "",
+                ),
+            }
+        return grouped[key]
+
+    for case in cases:
+        case_name = str(case.get("case") or "")
+        angle = str(case.get("angle") or "")
+        phase = str(case.get("phase") or "")
+        gates = [gate for gate in as_list(case.get("gates")) if isinstance(gate, dict)]
+        for gate in gates:
+            category = str(gate.get("category") or "all")
+            model = str(gate.get("model") or "<none>")
+            item = ensure(category, model)
+            item["gateCount"] += 1
+            for field, value in (
+                ("actions", str(gate.get("action") or "")),
+                ("classifications", str(gate.get("classification") or "")),
+                ("phases", phase),
+                ("angles", angle),
+                ("cases", case_name),
+            ):
+                if value and value not in item[field]:
+                    item[field].append(value)
+
+        for timeline in as_list(case.get("runtimePartTimelines")):
+            if not isinstance(timeline, dict):
+                continue
+            part = str(timeline.get("part") or "")
+            part_class = str(timeline.get("class") or "")
+            category = category_from_part(part, part_class)
+            model = match_gate_model(part, category, gates) or part or "<none>"
+            item = ensure(category, model)
+            for field, value in (
+                ("phases", phase),
+                ("angles", angle),
+                ("cases", case_name),
+                ("parts", part),
+                ("classes", part_class),
+            ):
+                if value and value not in item[field]:
+                    item[field].append(value)
+            count = int(timeline.get("count") or 0)
+            bad_count = int(timeline.get("badCount") or 0)
+            item["runtimeSampleCount"] += count
+            item["badSampleCount"] += bad_count
+            if bad_count and item["firstBadSampleIndex"] is None:
+                item["firstBadSampleIndex"] = timeline.get("firstBadSampleIndex")
+                item["firstBadAnimationTime"] = timeline.get("firstBadAnimationTime")
+                first_bad = next(
+                    (
+                        sample
+                        for sample in as_list(timeline.get("samples"))
+                        if isinstance(sample, dict) and str(sample.get("verdict") or "") != "OK"
+                    ),
+                    {},
+                )
+                item["firstBadDistance"] = first_bad.get("distance")
+            for sample in as_list(timeline.get("samples")):
+                if not isinstance(sample, dict):
+                    continue
+                verdict = str(sample.get("verdict") or "")
+                if verdict and verdict not in item["verdicts"]:
+                    item["verdicts"].append(verdict)
+                distance = sample.get("distance")
+                if isinstance(distance, (int, float)):
+                    item["maxDistance"] = max(item["maxDistance"], float(distance))
+            for source, field in (
+                ("firstPartInAnchorTrans", "firstPartInAnchorTrans"),
+                ("lastPartInAnchorTrans", "lastPartInAnchorTrans"),
+                ("deltaPartInAnchorTrans", "deltaPartInAnchorTrans"),
+            ):
+                values = [value for value in as_list(timeline.get(source)) if isinstance(value, (int, float))]
+                if values:
+                    item[field] = values
+                    if source == "deltaPartInAnchorTrans":
+                        item["maxAbsDeltaPartInAnchorTrans"] = max(
+                            item["maxAbsDeltaPartInAnchorTrans"],
+                            max(abs(float(value)) for value in values),
+                        )
+
+        for evidence in as_list(case.get("creatureEvidence")):
+            if not isinstance(evidence, dict):
+                continue
+            kind = str(evidence.get("kind") or "creature-body")
+            model = str(evidence.get("model") or evidence.get("path") or "<none>")
+            item = ensure(kind if kind in CREATURE_LAYER_ORDER else "creature-body", model)
+            for field, value in (
+                ("actions", "evidence"),
+                ("classifications", "runtime-supported"),
+                ("phases", phase),
+                ("angles", angle),
+                ("cases", case_name),
+                ("parts", model),
+                ("classes", kind),
+            ):
+                if value and value not in item[field]:
+                    item[field].append(value)
+
+        for face in as_list(case.get("faceDrawables")):
+            if not isinstance(face, dict):
+                continue
+            model = str(face.get("model") or "<none>")
+            item = ensure(category_from_part(model, "faceDrawable"), model)
+            for field, value in (
+                ("actions", "drawable"),
+                ("classifications", "runtime-supported"),
+                ("phases", phase),
+                ("angles", angle),
+                ("cases", case_name),
+                ("parts", model),
+                ("classes", str(face.get("drawable") or "faceDrawable")),
+            ):
+                if value and value not in item[field]:
+                    item[field].append(value)
+
+    return [grouped[key] for key in order]
+
+
 def failure_bot_commands(cases: list[dict[str, Any]], limit: int = 12) -> list[dict[str, str]]:
     commands: list[dict[str, str]] = []
     seen: set[str] = set()
@@ -813,6 +969,7 @@ def load_suite(suite_dir: Path) -> dict[str, Any]:
     elif any(case["runtimeGateStatus"] != "PASS" or case["reportStatus"] != "PASS" for case in cases):
         overall = "FAIL"
     failure_summary = build_failure_summary(cases)
+    assembly_inventory = build_assembly_inventory(cases, actor, actor_kind)
 
     return {
         "schema": "nikami-fnv-character-viewer-v2",
@@ -822,6 +979,7 @@ def load_suite(suite_dir: Path) -> dict[str, Any]:
             "creature-isolation-v1",
             "part-timeline-v1",
             "failure-summary-v1",
+            "assembly-inventory-v1",
         ],
         "status": overall,
         "actorProfile": {
@@ -843,6 +1001,7 @@ def load_suite(suite_dir: Path) -> dict[str, Any]:
             if actor_kind == "creature"
             else ["Skin Evidence", "Hair Headgear Evidence", "Animation Talk Weapon Evidence", "Face Drawables"]
         ),
+        "assemblyInventory": assembly_inventory,
         "failureSummary": failure_summary,
         "controls": gate_controls(cases, actor, actor_kind),
         "cases": cases,
@@ -950,6 +1109,10 @@ a {{ color: #9fc2ff; }}
   <div class="section">
     <h2>Assembly Gates</h2>
     <div id="gateTable"></div>
+  </div>
+  <div class="section">
+    <h2>Assembly Inventory</h2>
+    <div id="assemblyInventoryTable"></div>
   </div>
   <div class="section">
     <h2>Coordinates</h2>
@@ -1116,6 +1279,10 @@ function renderGates(c) {{
   const rows = filteredGates(c).map(g => `<tr><td>${{esc(g.action)}}</td><td>${{esc(g.category)}}</td><td>${{esc(g.classification)}}</td><td><code>${{esc(g.model)}}</code></td></tr>`);
   document.getElementById("gateTable").innerHTML = table(["Action", "Category", "Classification", "Model"], rows);
 }}
+function renderAssemblyInventory() {{
+  const rows = filterPartRows(MANIFEST.assemblyInventory || [], i => `${{i.model || ""}} ${{(i.parts || []).join(" ")}}`, i => i.category).map(i => `<tr><td>${{esc(i.category)}}</td><td><code>${{esc(i.model)}}</code></td><td>${{esc((i.classifications || []).join(", "))}}</td><td>${{esc((i.phases || []).join(", "))}}</td><td>${{esc((i.angles || []).join(", "))}}</td><td>${{esc(i.gateCount)}}</td><td>${{esc(i.runtimeSampleCount)}}</td><td>${{esc(i.badSampleCount)}}</td><td>${{esc(i.maxDistance)}}</td><td>${{esc(i.maxAbsDeltaPartInAnchorTrans)}}</td><td><div class="command">${{esc(i.command || "")}}</div></td></tr>`);
+  document.getElementById("assemblyInventoryTable").innerHTML = table(["Category", "Model", "Classification", "Phases", "Angles", "Gates", "Samples", "Bad", "Max Distance", "Max Anchor Delta", "Rerun"], rows);
+}}
 function renderCoords(c) {{
   const bounds = filterPartRows(c?.attachmentBounds || [], b => b.model, b => b.parent);
   const audits = filterPartRows(c?.runtimePartAudits || [], a => a.part, a => a.class);
@@ -1181,6 +1348,7 @@ function render() {{
   renderStatus(c);
   renderLines("actorMatchLines", (c?.actorMatches || []).map(item => item.line || JSON.stringify(item)));
   renderGates(c);
+  renderAssemblyInventory();
   renderCoords(c);
   renderDrift(c);
   renderFailureSummary();
@@ -1229,9 +1397,12 @@ def actor_kit_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
         "payloadPolicy": "generated proof metadata and commands only; no retail asset payload bytes",
         "actor": manifest.get("actor", ""),
         "actorProfile": manifest.get("actorProfile", {}),
+        "status": manifest.get("overallStatus", manifest.get("status", "")),
+        "overallStatus": manifest.get("overallStatus", manifest.get("status", "")),
         "phases": manifest.get("phases", []),
         "angles": manifest.get("angles", []),
         "layers": manifest.get("layers", []),
+        "assemblyInventory": manifest.get("assemblyInventory", []),
         "failureSummary": manifest.get("failureSummary", []),
         "controls": manifest.get("controls", {}),
         "cases": cases,
