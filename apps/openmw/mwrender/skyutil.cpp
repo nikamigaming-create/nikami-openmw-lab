@@ -464,8 +464,9 @@ namespace MWRender
     }
 
     void AtmosphereUpdater::setFalloutAtmosphereGradientColors(
-        const osg::Vec4f& skyLowerColor, const osg::Vec4f& skyHorizonColor)
+        const osg::Vec4f& skyUpperColor, const osg::Vec4f& skyLowerColor, const osg::Vec4f& skyHorizonColor)
     {
+        mFalloutAtmosphereSkyUpperColor = skyUpperColor;
         mFalloutAtmosphereSkyLowerColor = skyLowerColor;
         mFalloutAtmosphereSkyHorizonColor = skyHorizonColor;
         mHasFalloutAtmosphereGradientColors = true;
@@ -479,6 +480,8 @@ namespace MWRender
         stateset->addUniform(new osg::Uniform("useFalloutAtmosphereZGradient", 0));
         stateset->addUniform(new osg::Uniform("falloutAtmosphereZRange", osg::Vec2f(0.f, 1.f)));
         stateset->addUniform(new osg::Uniform("useFalloutAtmosphereGradientColors", 0));
+        stateset->addUniform(
+            new osg::Uniform("falloutAtmosphereSkyUpperColor", osg::Vec4f(0.f, 0.f, 0.f, 1.f)));
         stateset->addUniform(
             new osg::Uniform("falloutAtmosphereSkyLowerColor", osg::Vec4f(0.f, 0.f, 0.f, 1.f)));
         stateset->addUniform(
@@ -498,6 +501,9 @@ namespace MWRender
         if (osg::Uniform* useFalloutAtmosphereGradientColorsUniform
             = stateset->getUniform("useFalloutAtmosphereGradientColors"))
             useFalloutAtmosphereGradientColorsUniform->set(useFalloutAtmosphereGradientColors ? 1 : 0);
+        if (osg::Uniform* falloutAtmosphereSkyUpperColor
+            = stateset->getUniform("falloutAtmosphereSkyUpperColor"))
+            falloutAtmosphereSkyUpperColor->set(mFalloutAtmosphereSkyUpperColor);
         if (osg::Uniform* falloutAtmosphereSkyLowerColor
             = stateset->getUniform("falloutAtmosphereSkyLowerColor"))
             falloutAtmosphereSkyLowerColor->set(mFalloutAtmosphereSkyLowerColor);
@@ -540,11 +546,6 @@ namespace MWRender
         mTexture = texture;
     }
 
-    void CloudUpdater::setFalloutSkyCloudVFlip(bool enabled)
-    {
-        mUseFalloutSkyCloudVFlip = enabled;
-    }
-
     void CloudUpdater::setEmissionColor(const osg::Vec4f& emissionColor)
     {
         mEmissionColor = emissionColor;
@@ -557,7 +558,7 @@ namespace MWRender
 
     void CloudUpdater::setTextureCoord(float timer)
     {
-        mTexMat = osg::Matrixf::translate(osg::Vec3f(0.f, timer, 0.f));
+        mTexMat = osg::Matrixf::translate(osg::Vec3f(0.f, -timer, 0.f));
     }
 
     void CloudUpdater::setDefaults(osg::StateSet* stateset)
@@ -572,7 +573,6 @@ namespace MWRender
 
         stateset->addUniform(new osg::Uniform("opacity", 1.f));
         stateset->addUniform(new osg::Uniform("pass", static_cast<int>(Pass::Clouds)));
-        stateset->addUniform(new osg::Uniform("useFalloutSkyCloudVFlip", 0));
     }
 
     void CloudUpdater::apply(osg::StateSet* stateset, osg::NodeVisitor* nv)
@@ -586,8 +586,6 @@ namespace MWRender
         texMat->setMatrix(mTexMat);
 
         stateset->getUniform("opacity")->set(mOpacity);
-        if (osg::Uniform* useFalloutSkyCloudVFlip = stateset->getUniform("useFalloutSkyCloudVFlip"))
-            useFalloutSkyCloudVFlip->set(mUseFalloutSkyCloudVFlip ? 1 : 0);
     }
 
     class SkyStereoStatesetUpdater : public SceneUtil::StateSetUpdater

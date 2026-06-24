@@ -117,10 +117,12 @@ Assert-FileContains $SkyCpp "SkyVertexZRangeVisitor" "FNV flat sky derives atmos
 Assert-FileContains $SkyCpp "vertex-z-gradient" "FNV flat sky proves vertex z gradient mode"
 Assert-FileContains $SkyUtilCpp "setFalloutAtmosphereZGradient" "FNV flat atmosphere updater exposes z-gradient uniform controls"
 Assert-FileContains $SkyUtilCpp "setFalloutAtmosphereGradientColors" "FNV flat atmosphere updater exposes vertical sky color uniforms"
+Assert-FileContains $SkyUtilCpp "falloutAtmosphereSkyUpperColor" "FNV flat atmosphere updater binds SkyUpper uniform"
 Assert-FileContains $SkyUtilCpp "falloutAtmosphereSkyLowerColor" "FNV flat atmosphere updater binds SkyLower uniform"
 Assert-FileContains $SkyUtilCpp "falloutAtmosphereSkyHorizonColor" "FNV flat atmosphere updater binds Horizon uniform"
-Assert-FileContains $SkyUtilCpp "setFalloutSkyCloudVFlip" "FNV flat cloud updater exposes Fallout DDS V flip"
-Assert-FileContains $SkyUtilCpp "useFalloutSkyCloudVFlip" "FNV flat cloud updater binds Fallout DDS V flip uniform"
+Assert-FileContains $SkyCpp "cloudTex->setWrap\(osg::Texture::WRAP_S, osg::Texture::REPEAT\)" "FNV flat clouds keep stock OpenMW repeat wrapping"
+Assert-FileContains $SkyUtilCpp "osg::Vec3f\(0\.f, -timer, 0\.f\)" "FNV flat clouds keep stock OpenMW negative UV scroll"
+Assert-FileContains $SkyCpp "!isFalloutSkyMesh\(Settings::models\(\)\.mSkyclouds\.get\(\)\)" "FNV flat clouds avoid Morrowind vertex-alpha visitor on Fallout cloud geometry"
 Assert-FileContains $WeatherHpp "mSkyLowerColor" "weather result stores FNV SkyLower runtime color"
 Assert-FileContains $WeatherHpp "mSkyHorizonColor" "weather result stores FNV Horizon runtime color"
 Assert-FileContains $WeatherCpp "getOptionalWeatherColourInterpolator" "weather runtime reads optional generated FNV sky band fallbacks"
@@ -134,9 +136,10 @@ Assert-FileContains $SkyVert "useFalloutAtmosphereZGradient" "FNV flat sky verte
 Assert-FileContains $SkyVert "falloutAtmosphereZRange" "FNV flat sky vertex shader consumes Fallout atmosphere z range"
 Assert-FileContains $SkyVert "passColor\.a = clamp" "FNV flat sky vertex shader generates alpha from z range"
 Assert-FileContains $SkyFrag "useFalloutAtmosphereGradientColors" "FNV flat sky fragment shader gates runtime vertical colors"
+Assert-FileContains $SkyFrag "falloutAtmosphereSkyUpperColor" "FNV flat sky fragment shader consumes SkyUpper color"
 Assert-FileContains $SkyFrag "falloutAtmosphereSkyLowerColor" "FNV flat sky fragment shader consumes SkyLower color"
 Assert-FileContains $SkyFrag "falloutAtmosphereSkyHorizonColor" "FNV flat sky fragment shader consumes Horizon color"
-Assert-FileContains $SkyFrag "useFalloutSkyCloudVFlip" "FNV flat sky fragment shader gates Fallout cloud V flip"
+Assert-FileNotContains $SkyFrag "useFalloutSkyCloudVFlip" "FNV flat clouds do not use custom Fallout V flip shader path"
 Assert-FileContains $SkyFrag "color\.rgb = clamp\(color\.rgb \* gl_FrontMaterial\.emission\.rgb" "sun shader applies weather sun-disc material tint"
 Assert-FileNotContains $SkyFrag "useVertexColorRgb" "unsupported FNV vertex RGB shader path"
 Assert-FileNotContains $SkyCpp "updatersSkipped=1" "stale FNV raw sky bypass"
@@ -241,9 +244,9 @@ $requiredLogPatterns = @(
     "FNV/ESM4: interpreted sky material day atmosphere \(meshes/sky/atmosphere\.nif\) nativeMaterial=0 skyProgram=sky skyPass=atmosphere updatersAttached=1 vertexAlpha=generated-z-gradient vertexColorRgb=not-used",
     "FNV/ESM4: interpreted sky material night atmosphere \(meshes/sky/stars\.nif\) nativeMaterial=0 skyProgram=sky skyPass=atmosphere-night updatersAttached=1 vertexAlpha=texture-alpha vertexColorRgb=not-used",
     "FNV/ESM4: interpreted sky material clouds \(meshes/sky/clouds\.nif\) nativeMaterial=0 skyProgram=sky skyPass=clouds updatersAttached=1 vertexAlpha=texture-alpha vertexColorRgb=not-used",
-    "FNV/ESM4: cloud texture coordinates clouds \(meshes/sky/clouds\.nif\).*vMode=fallout-dds-v-flip runtime-supported",
+    "FNV/ESM4: cloud texture coordinates clouds \(meshes/sky/clouds\.nif\).*mode=openmw-stock repeat-wrap uv-scroll=stock-negative runtime-supported",
     "FNV/ESM4: interpreted sky material next clouds \(meshes/sky/clouds\.nif\) nativeMaterial=0 skyProgram=sky skyPass=clouds updatersAttached=1 vertexAlpha=texture-alpha vertexColorRgb=not-used",
-    "FNV/ESM4: cloud texture coordinates next clouds \(meshes/sky/clouds\.nif\).*vMode=fallout-dds-v-flip runtime-supported",
+    "FNV/ESM4: cloud texture coordinates next clouds \(meshes/sky/clouds\.nif\).*mode=openmw-stock repeat-wrap uv-scroll=stock-negative runtime-supported",
     "FNV/ESM4: wrapped sky mesh day atmosphere \(meshes/sky/atmosphere\.nif\)",
     "FNV/ESM4: atmosphere vertical colors runtime-supported skyUpper=.*skyLower=.*horizon=.*",
     "FNV/ESM4 proof: weather render state .*sky=.*skyLower=.*skyHorizon=.*fog=.*",
@@ -264,7 +267,8 @@ $before = @()
 if (Test-Path -LiteralPath $flatProofRoot) {
     $before = @(Get-ChildItem -LiteralPath $flatProofRoot -Directory -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName })
 }
-$SkyRunSeconds = [Math]::Max($RunSeconds, 30)
+$SkyRunSeconds = [Math]::Max($RunSeconds, 45)
+$SettledScreenshotFrames = "600,900"
 
 & $FlatProofScript `
     -FnvData $FnvData `
@@ -272,7 +276,7 @@ $SkyRunSeconds = [Math]::Max($RunSeconds, 30)
     -ProofRoot $ProofRoot `
     -RunSeconds $SkyRunSeconds `
     -NoSound `
-    -ScreenshotFrames "180,300" `
+    -ScreenshotFrames $SettledScreenshotFrames `
     -RequireSkyColorSanity `
     -RequireSkyPaletteMatch `
     -RequireSunDirectionRuntime `
@@ -327,7 +331,7 @@ Assert-FileContains $flatSettings "^skynight02 = meshes/sky/stars\.nif$" "genera
 Assert-FileContains $flatSettings "^force shaders = false$" "generated flat force-shaders setting"
 Assert-FileNotContains $flatSettings "^force shaders = true$" "generated flat VR shader mode"
 Assert-FileContains $flatSettings "^sky blending = true$" "generated flat sky blending"
-Assert-FileContains $flatSummary "^ScreenshotFrames: 180,300$" "flat proof screenshot frames"
+Assert-FileContains $flatSummary "^ScreenshotFrames: 600,900$" "flat proof settled screenshot frames"
 Assert-FileContains $flatSummary "^RequireSkyColorSanity: True$" "flat proof required sky color sanity"
 Assert-FileContains $flatSummary "^RequireSkyPaletteMatch: True$" "flat proof required generated sky palette match"
 Assert-FileContains $flatSummary "^RequireSunDirectionRuntime: True$" "flat proof required runtime sun vector chain"
@@ -373,8 +377,8 @@ Assert-FileContains $flatOpenMwLog "FNV/ESM4: sky mesh vertex colors day atmosph
 Assert-FileContains $flatOpenMwLog "FNV/ESM4: generated atmosphere shader alpha day atmosphere \(meshes/sky/atmosphere\.nif\).*mode=vertex-z-gradient.*vertexSamples=[1-9][0-9]*.*applied=1" "runtime FNV atmosphere generated alpha"
 Assert-FileContains $flatOpenMwLog "FNV/ESM4: interpreted sky material day atmosphere \(meshes/sky/atmosphere\.nif\) nativeMaterial=0 skyProgram=sky skyPass=atmosphere updatersAttached=1 vertexAlpha=generated-z-gradient vertexColorRgb=not-used" "runtime interpreted FNV atmosphere material"
 Assert-FileContains $flatOpenMwLog "FNV/ESM4: atmosphere vertical colors runtime-supported skyUpper=.*skyLower=.*horizon=.*" "runtime FNV atmosphere vertical color uniforms"
-Assert-FileContains $flatOpenMwLog "FNV/ESM4: cloud texture coordinates clouds \(meshes/sky/clouds\.nif\).*vMode=fallout-dds-v-flip runtime-supported" "runtime FNV cloud DDS V flip"
-Assert-FileContains $flatOpenMwLog "FNV/ESM4: cloud texture coordinates next clouds \(meshes/sky/clouds\.nif\).*vMode=fallout-dds-v-flip runtime-supported" "runtime FNV next-cloud DDS V flip"
+Assert-FileContains $flatOpenMwLog "FNV/ESM4: cloud texture coordinates clouds \(meshes/sky/clouds\.nif\).*mode=openmw-stock repeat-wrap uv-scroll=stock-negative runtime-supported" "runtime FNV clouds use stock OpenMW UV/wrap path"
+Assert-FileContains $flatOpenMwLog "FNV/ESM4: cloud texture coordinates next clouds \(meshes/sky/clouds\.nif\).*mode=openmw-stock repeat-wrap uv-scroll=stock-negative runtime-supported" "runtime FNV next-clouds use stock OpenMW UV/wrap path"
 Assert-FileContains $flatOpenMwLog "FNV/ESM4 proof: weather render state .*sky=.*skyLower=.*skyHorizon=.*fog=.*" "runtime weather interpolation supplies vertical sky colors"
 Assert-FileContains $flatOpenMwLog "FNV/ESM4: interpreted sky material clouds \(meshes/sky/clouds\.nif\) nativeMaterial=0 skyProgram=sky skyPass=clouds updatersAttached=1 vertexAlpha=texture-alpha vertexColorRgb=not-used" "runtime interpreted FNV clouds material"
 Assert-FileContains $flatOpenMwLog "FNV/ESM4: interpreted sky material next clouds \(meshes/sky/clouds\.nif\) nativeMaterial=0 skyProgram=sky skyPass=clouds updatersAttached=1 vertexAlpha=texture-alpha vertexColorRgb=not-used" "runtime interpreted FNV next clouds material"
@@ -429,7 +433,7 @@ $sunLogPatterns = @(
     -ProofRoot $ProofRoot `
     -RunSeconds $SkyRunSeconds `
     -NoSound `
-    -ScreenshotFrames "180,300" `
+    -ScreenshotFrames $SettledScreenshotFrames `
     -FlatCameraYaw -1.16 `
     -FlatCameraPitch 0.35 `
     -RequireSunVisible `
@@ -455,7 +459,7 @@ Write-ProofLine "Sun-visible proof: $($sunProof.FullName)"
 Write-ProofLine "Sun-visible log: $sunOpenMwLog"
 Assert-FileContains $sunSummary "^RequireSunVisible: True$" "sun proof required visible sun"
 Assert-FileContains $sunSummary "^RequireSunDirectionRuntime: True$" "sun proof required runtime sun vector chain"
-Assert-FileContains $sunSummary "^ScreenshotFrames: 180,300$" "sun proof screenshot frames"
+Assert-FileContains $sunSummary "^ScreenshotFrames: 600,900$" "sun proof settled screenshot frames"
 Assert-FileContains $sunSummary "^FlatCameraYaw: -1\.16$" "sun proof camera yaw"
 Assert-FileContains $sunSummary "^FlatCameraPitch: 0\.35$" "sun proof camera pitch"
 Assert-FileContains $sunOpenMwLog "FNV/ESM4: enabled FNV sun billboard using texture textures/sky/sun\.dds" "sun proof FNV sun texture"

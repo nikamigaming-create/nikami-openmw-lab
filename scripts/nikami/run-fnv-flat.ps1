@@ -16,6 +16,8 @@ param(
     [switch]$WithMenu,
     [switch]$IncludeFnvrPlugin,
     [switch]$DisableTerrainTrace,
+    [switch]$EnableDiagnostics,
+    [switch]$GrabInput,
     [switch]$NoSound
 )
 
@@ -132,8 +134,10 @@ if (!$DisableTerrainTrace) {
 }
 $env:OPENMW_FNV_BOOTSTRAP_HOUR = [string]$BootstrapHour
 $env:OPENMW_FNV_PROCEDURE_HOUR = [string]$BootstrapHour
-$env:OPENMW_FNV_CREATURE_ANIM_GROUP_DIAG = "1"
-$env:OPENMW_FNV_SOUND_DIAG = "1"
+if ($EnableDiagnostics) {
+    $env:OPENMW_FNV_CREATURE_ANIM_GROUP_DIAG = "1"
+    $env:OPENMW_FNV_SOUND_DIAG = "1"
+}
 
 New-Item -ItemType Directory -Force -Path $ConfigDir | Out-Null
 New-Item -ItemType Directory -Force -Path $RuntimeDir | Out-Null
@@ -328,7 +332,10 @@ stats hidden = true
 Set-Content -LiteralPath $ConfigPath -Value $ConfigText -Encoding ASCII
 Set-Content -LiteralPath $SettingsPath -Value $SettingsText -Encoding ASCII
 
-$OpenMwArgs = @("--replace", "config", "--config", $ConfigDir, "--user-data", $RuntimeDir, "--no-grab")
+$OpenMwArgs = @("--replace", "config", "--config", $ConfigDir, "--user-data", $RuntimeDir)
+if (!$GrabInput) {
+    $OpenMwArgs += "--no-grab"
+}
 if (!$WithMenu) {
     $OpenMwArgs += "--skip-menu"
     if ([string]::IsNullOrWhiteSpace($LoadSavegame)) {
@@ -359,6 +366,8 @@ Write-Host "FNV bootstrap/package hour: $BootstrapHour"
 Write-Host "Startup script: $StartupScript"
 Write-Host "Load savegame: $LoadSavegame"
 Write-Host "Player terrain trace enabled: $(!$DisableTerrainTrace)"
+Write-Host "Heavy diagnostics enabled: $EnableDiagnostics"
+Write-Host "Input grab enabled: $GrabInput"
 Write-Host "MSTT collision surgery: removed; generic object collision path required"
 if ($Detached) {
     $Process = Start-Process -FilePath $Exe -ArgumentList $OpenMwArgs -WorkingDirectory (Split-Path $Exe -Parent) -RedirectStandardOutput $ProcessStdoutLog -RedirectStandardError $ProcessStderrLog -PassThru

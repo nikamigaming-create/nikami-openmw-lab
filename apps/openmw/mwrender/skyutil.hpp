@@ -138,7 +138,7 @@ namespace MWRender
         void setEmissionColor(const osg::Vec4f& emissionColor);
         void setFalloutAtmosphereZGradient(float minZ, float maxZ);
         void setFalloutAtmosphereGradientColors(
-            const osg::Vec4f& skyLowerColor, const osg::Vec4f& skyHorizonColor);
+            const osg::Vec4f& skyUpperColor, const osg::Vec4f& skyLowerColor, const osg::Vec4f& skyHorizonColor);
 
     protected:
         void setDefaults(osg::StateSet* stateset) override;
@@ -147,6 +147,7 @@ namespace MWRender
     private:
         osg::Vec4f mEmissionColor;
         osg::Vec2f mFalloutAtmosphereZRange = osg::Vec2f(0.f, 1.f);
+        osg::Vec4f mFalloutAtmosphereSkyUpperColor = osg::Vec4f(0.f, 0.f, 0.f, 1.f);
         osg::Vec4f mFalloutAtmosphereSkyLowerColor = osg::Vec4f(0.f, 0.f, 0.f, 1.f);
         osg::Vec4f mFalloutAtmosphereSkyHorizonColor = osg::Vec4f(0.f, 0.f, 0.f, 1.f);
         bool mUseFalloutAtmosphereZGradient = false;
@@ -176,8 +177,6 @@ namespace MWRender
         CloudUpdater();
 
         void setTexture(osg::ref_ptr<osg::Texture2D> texture);
-
-        void setFalloutSkyCloudVFlip(bool enabled);
         void setEmissionColor(const osg::Vec4f& emissionColor);
         void setOpacity(float opacity);
         void setTextureCoord(float timer);
@@ -190,7 +189,6 @@ namespace MWRender
         osg::ref_ptr<osg::Texture2D> mTexture;
         osg::Vec4f mEmissionColor;
         float mOpacity;
-        bool mUseFalloutSkyCloudVFlip = false;
         osg::Matrixf mTexMat;
     };
 

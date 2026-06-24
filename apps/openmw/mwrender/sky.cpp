@@ -98,7 +98,7 @@ namespace
     void logFalloutSkyCloudUvMode(std::string_view label, VFS::Path::NormalizedView model)
     {
         Log(Debug::Info) << "FNV/ESM4: cloud texture coordinates " << label << " (" << model.value()
-                         << ") vMode=fallout-dds-v-flip runtime-supported";
+                         << ") mode=openmw-stock repeat-wrap uv-scroll=stock-negative runtime-supported";
     }
 
     float falloutSkyMeshScaleMultiplier()
@@ -726,7 +726,6 @@ namespace MWRender
             mCloudUpdater = new CloudUpdater();
             mCloudUpdater->setOpacity(1.f);
             const bool falloutClouds = isFalloutSkyMesh(Settings::models().mSkyclouds.get());
-            mCloudUpdater->setFalloutSkyCloudVFlip(falloutClouds);
             cloudMeshChild->addUpdateCallback(mCloudUpdater);
             if (falloutClouds)
             {
@@ -745,7 +744,6 @@ namespace MWRender
             mNextCloudUpdater = new CloudUpdater();
             mNextCloudUpdater->setOpacity(0.f);
             const bool falloutClouds = isFalloutSkyMesh(Settings::models().mSkyclouds.get());
-            mNextCloudUpdater->setFalloutSkyCloudVFlip(falloutClouds);
             nextCloudMeshChild->addUpdateCallback(mNextCloudUpdater);
             if (falloutClouds)
             {
@@ -1279,7 +1277,7 @@ namespace MWRender
 
         if (mAtmosphereUpdater && mFalloutAtmosphereDay)
         {
-            mAtmosphereUpdater->setFalloutAtmosphereGradientColors(mSkyLowerColour, mSkyHorizonColour);
+            mAtmosphereUpdater->setFalloutAtmosphereGradientColors(mSkyColour, mSkyLowerColour, mSkyHorizonColour);
             if (!mLoggedFalloutAtmosphereGradient)
             {
                 Log(Debug::Info) << "FNV/ESM4: atmosphere vertical colors runtime-supported skyUpper=("
