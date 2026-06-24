@@ -18,7 +18,9 @@ param(
     [string]$SuiteDir = "",
     [switch]$NoRun,
     [switch]$NoSound,
-    [switch]$OpenViewer
+    [switch]$OpenViewer,
+    [switch]$Serve,
+    [int]$ServePort = 0
 )
 
 $ErrorActionPreference = "Stop"
@@ -107,6 +109,86 @@ function Write-ViewerIndex([string]$IndexPath, [object[]]$Runs) {
     $lines | Set-Content -LiteralPath $IndexPath -Encoding UTF8
 }
 
+function Get-FreeLoopbackPort {
+    $listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
+    try {
+        $listener.Start()
+        return [int]$listener.LocalEndpoint.Port
+    }
+    finally {
+        $listener.Stop()
+    }
+}
+
+function ConvertTo-HttpPath([string]$BaseDirectory, [string]$TargetPath) {
+    $relative = ConvertTo-RelativeHref $BaseDirectory $TargetPath
+    return ($relative -replace '\\', '/')
+}
+
+function Quote-ProcessArgument([string]$Value) {
+    if ($Value -notmatch '[\s"]') {
+        return $Value
+    }
+    return '"' + ($Value -replace '"', '\"') + '"'
+}
+
+function Start-ViewerServer([string]$RootDirectory, [string]$IndexPath, [string]$RunDirectory, [int]$RequestedPort) {
+    $root = (Resolve-Path -LiteralPath $RootDirectory).Path
+    $index = (Resolve-Path -LiteralPath $IndexPath).Path
+    $port = if ($RequestedPort -gt 0) { $RequestedPort } else { Get-FreeLoopbackPort }
+    $serverLog = Join-Path $RunDirectory "viewer-server.stdout.log"
+    $serverErr = Join-Path $RunDirectory "viewer-server.stderr.log"
+    $arguments = @("-m", "http.server", [string]$port, "--bind", "127.0.0.1", "--directory", $root) |
+        ForEach-Object { Quote-ProcessArgument $_ }
+    $process = Start-Process -FilePath "python" -ArgumentList $arguments -WindowStyle Hidden -PassThru `
+        -RedirectStandardOutput $serverLog -RedirectStandardError $serverErr
+
+    $relativeIndex = ConvertTo-HttpPath $root $index
+    $url = "http://127.0.0.1:$port/$relativeIndex"
+    $ready = $false
+    for ($attempt = 0; $attempt -lt 30; $attempt++) {
+        try {
+            Invoke-WebRequest -UseBasicParsing -Uri $url -TimeoutSec 1 | Out-Null
+            $ready = $true
+            break
+        }
+        catch {
+            Start-Sleep -Milliseconds 250
+        }
+    }
+    if (!$ready) {
+        throw "Viewer HTTP server did not become ready at $url. ProcessId=$($process.Id) stdout=$serverLog stderr=$serverErr"
+    }
+
+    $serverInfo = [pscustomobject][ordered]@{
+        url = $url
+        root = $root
+        index = $index
+        host = "127.0.0.1"
+        port = $port
+        processId = $process.Id
+        stdout = $serverLog
+        stderr = $serverErr
+        policy = [pscustomobject][ordered]@{
+            loopbackOnly = $true
+            generatedProofOutputsOnly = $true
+            noRetailAssetsCommitted = $true
+        }
+    }
+    $serverInfoPath = Join-Path $RunDirectory "viewer-server.json"
+    $serverInfo | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $serverInfoPath -Encoding UTF8
+    $serverUrlPath = Join-Path $RunDirectory "viewer-url.txt"
+    $url | Set-Content -LiteralPath $serverUrlPath -Encoding UTF8
+    return [pscustomobject][ordered]@{
+        Url = $url
+        InfoPath = $serverInfoPath
+        UrlPath = $serverUrlPath
+        ProcessId = $process.Id
+        Stdout = $serverLog
+        Stderr = $serverErr
+    }
+}
+
 $Targets = Normalize-List $Targets "targets"
 $Phases = Normalize-List $Phases "phases"
 $ViewerRoot = Join-Path $ProofRoot "fnv-character-viewer"
@@ -121,6 +203,9 @@ Write-Host "RunDir: $RunDir"
 Write-Host "Targets: $($Targets -join ',')"
 Write-Host "Phases: $($Phases -join ',')"
 Write-Host "Policy: generated proof/viewer output only; no retail assets are committed"
+if ($Serve) {
+    Write-Host "Serve: loopback HTTP enabled"
+}
 
 $Runs = New-Object "System.Collections.Generic.List[object]"
 
@@ -201,6 +286,21 @@ foreach ($run in $Runs) {
     Write-Host "Manifest for $($run.Target): $($run.ViewerJson)"
 }
 
+$ServedUrl = ""
+if ($Serve) {
+    $server = Start-ViewerServer -RootDirectory $ProofRoot -IndexPath $IndexHtml -RunDirectory $RunDir -RequestedPort $ServePort
+    $ServedUrl = $server.Url
+    Write-Host "Viewer URL: $($server.Url)"
+    Write-Host "Viewer server JSON: $($server.InfoPath)"
+    Write-Host "Viewer URL file: $($server.UrlPath)"
+    Write-Host "Viewer server PID: $($server.ProcessId)"
+}
+
 if ($OpenViewer) {
-    Invoke-Item -LiteralPath $IndexHtml
+    if (![string]::IsNullOrWhiteSpace($ServedUrl)) {
+        Start-Process $ServedUrl | Out-Null
+    }
+    else {
+        Invoke-Item -LiteralPath $IndexHtml
+    }
 }
