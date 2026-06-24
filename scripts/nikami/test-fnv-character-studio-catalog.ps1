@@ -192,6 +192,9 @@ if (!@($catalog.schemaMarkers).Contains("three-camera-session-strip-v1")) {
 if (!@($catalog.schemaMarkers).Contains("component-selector-job-payload-v1")) {
     throw "Studio catalog missing component selector payload marker."
 }
+if (!@($catalog.schemaMarkers).Contains("component-review-rows-v1")) {
+    throw "Studio catalog missing component review rows marker."
+}
 if (!@($catalog.schemaMarkers).Contains("placed-runtime-target-map-v1")) {
     throw "Studio catalog missing placed/runtime target map marker."
 }
@@ -251,6 +254,9 @@ if (!$html.Contains("Studio Session") -or !$html.Contains("Run 3 Camera") -or !$
 }
 if (!$html.Contains("cameraStrip") -or !$html.Contains("selectedParts") -or !$html.Contains("studioPayload")) {
     throw "Studio catalog HTML does not expose three-camera/component session payload controls."
+}
+if (!$html.Contains("componentReviews") -or !$html.Contains("componentReviewRows") -or !$html.Contains("Save Component Review Rows") -or !$html.Contains("/reviews")) {
+    throw "Studio catalog HTML does not expose per-component review row controls."
 }
 
 Write-Host "FNV character studio catalog contract PASS"

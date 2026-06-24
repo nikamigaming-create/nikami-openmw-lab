@@ -365,6 +365,7 @@ def build_catalog(plan: dict[str, Any], gameplay_rows: list[dict[str, Any]], lim
             "live-studio-workbench-v1",
             "three-camera-session-strip-v1",
             "component-selector-job-payload-v1",
+            "component-review-rows-v1",
             "placed-runtime-target-map-v1",
             "placement-bootstrap-job-args-v1",
             "neutral-stage-gate-pending-v1",
@@ -455,6 +456,10 @@ button:disabled {{ opacity: .45; cursor: not-allowed; }}
 .stateRow {{ display: flex; flex-wrap: wrap; gap: 7px; align-items: center; }}
 .focusPreset {{ border-color: #4d5a6a; }}
 .reviewControl {{ display: grid; grid-template-columns: minmax(150px, 1fr) auto; gap: 7px; }}
+.reviewRows {{ display: grid; gap: 5px; max-height: 260px; overflow: auto; }}
+.reviewRow {{ display: grid; grid-template-columns: minmax(92px, 1fr) 86px 92px; gap: 6px; align-items: center; background: #101216; border: 1px solid #2b3038; border-radius: 5px; padding: 6px; }}
+.reviewRow.active {{ border-color: #5c7ead; }}
+.reviewRow .proofLinks {{ grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 5px; color: var(--muted); }}
 .policyNote {{ color: var(--muted); font-size: 12px; }}
 .jobList, .eventList, .coordList {{ display: grid; gap: 6px; max-height: 240px; overflow: auto; }}
 .jobItem, .eventItem, .coordItem {{ background: #101216; border: 1px solid #2b3038; border-radius: 5px; padding: 7px; }}
@@ -515,8 +520,9 @@ button:disabled {{ opacity: .45; cursor: not-allowed; }}
       </div>
       <div class="reviewControl">
         <select id="reviewSelect"></select>
-        <button id="saveReview" type="button">Save Review Event</button>
+        <button id="saveReview" type="button">Save Component Review Rows</button>
       </div>
+      <div id="componentReviews" class="reviewRows"></div>
       <div class="policyNote">Generated session/review metadata only; no retail assets or payload bytes are written.</div>
       <h3>Session Events</h3>
       <div id="eventList" class="eventList"></div>
@@ -567,6 +573,21 @@ const PART_PHASES = {{
   "headgear": "headgear"
 }};
 const REVIEW_STATES = ["review-pending", "pass", "fail", "blocked", "needs-rerun"];
+const REVIEW_COMPONENTS = [
+  {{ id: "body-skin", label: "Body / Skin", parts: ["body-skin"], phases: ["body"], categories: ["body-skin"] }},
+  {{ id: "head-skin", label: "Head Skin", parts: ["head-skin"], phases: ["head"], categories: ["head-skin"] }},
+  {{ id: "face", label: "Face / Wrinkles", parts: ["face-organs", "head-skin"], phases: ["face"], categories: ["head-skin", "face-organs"] }},
+  {{ id: "eyes", label: "Eyes", parts: ["face-organs"], phases: ["face"], categories: ["face-organs"], classes: ["faceEye"] }},
+  {{ id: "mouth", label: "Mouth", parts: ["face-organs"], phases: ["face", "talk"], categories: ["face-organs"], classes: ["faceMouth"] }},
+  {{ id: "teeth", label: "Teeth", parts: ["face-organs"], phases: ["face", "talk"], categories: ["face-organs"], classes: ["faceTeeth"] }},
+  {{ id: "tongue", label: "Tongue", parts: ["face-organs"], phases: ["face", "talk"], categories: ["face-organs"], classes: ["faceTongue"] }},
+  {{ id: "hair-beard", label: "Hair / Beard", parts: ["hair-beard"], phases: ["hair"], categories: ["hair-beard"] }},
+  {{ id: "headgear", label: "Hat / Headgear", parts: ["headgear"], phases: ["headgear"], categories: ["headgear"] }},
+  {{ id: "equipment-body", label: "Outfit / Armor", parts: ["equipment-body"], phases: ["equipment"], categories: ["equipment-body"] }},
+  {{ id: "weapon", label: "Weapon / Gun", parts: ["weapon"], phases: ["weapon"], categories: ["weapon"] }},
+  {{ id: "animation", label: "Animation", parts: ["body-skin", "head-skin"], phases: ["body", "head"], categories: ["animation"] }},
+  {{ id: "dialogue", label: "Dialogue / Talk", parts: ["face-organs"], phases: ["talk"], categories: ["face-organs"] }}
+];
 const state = {{
   query: "",
   domain: "",
@@ -575,6 +596,7 @@ const state = {{
   session: null,
   jobs: [],
   events: [],
+  reviews: [],
   latestManifest: null,
   latestJob: null,
   partEnabled: Object.fromEntries(PARTS.map(part => [part, true]))
@@ -728,6 +750,77 @@ function caseImageUrl(job, item) {{
   try {{ return new URL(image, new URL(base, location.href)).href; }}
   catch {{ return image; }}
 }}
+function componentFailureItems(component, manifest) {{
+  const failures = Array.isArray(manifest?.failureSummary) ? manifest.failureSummary : [];
+  return failures.filter(item => {{
+    const category = String(item?.category || "");
+    const cls = String(item?.class || "");
+    const classes = Array.isArray(item?.classes) ? item.classes.map(String) : [];
+    return (component.categories || []).includes(category)
+      || (component.classes || []).includes(cls)
+      || classes.some(value => (component.classes || []).includes(value));
+  }});
+}}
+function componentCases(component, manifest) {{
+  const phases = new Set(component.phases || []);
+  return (manifest?.cases || []).filter(item => phases.has(item.phase));
+}}
+function componentMachineStatus(component) {{
+  const job = state.latestJob || {{}};
+  const manifest = state.latestManifest || job.manifest || null;
+  if (!manifest) return job.state === "running" ? "running" : "not-run";
+  const failures = componentFailureItems(component, manifest);
+  if (failures.length) return "fail";
+  const cases = componentCases(component, manifest);
+  if (cases.some(item => item.reportStatus === "FAIL" || item.runtimeGateStatus === "FAIL")) return "fail";
+  if (cases.some(item => item.reportStatus === "PASS" || item.runtimeGateStatus === "PASS")) return "pass";
+  return "no-proof";
+}}
+function componentProofUrls(component) {{
+  const job = state.latestJob || {{}};
+  const manifest = state.latestManifest || job.manifest || null;
+  if (!manifest) return [];
+  return componentCases(component, manifest)
+    .map(item => caseImageUrl(job, item))
+    .filter(Boolean)
+    .slice(0, 3);
+}}
+function componentReviewRows(activeOnly = false) {{
+  const entry = selectedEntry();
+  const activeParts = new Set(selectedParts());
+  const payload = studioPayload("runtimeThreeCamera");
+  const job = state.latestJob || {{}};
+  return REVIEW_COMPONENTS
+    .filter(component => !activeOnly || (component.parts || []).some(part => activeParts.has(part)))
+    .map(component => {{
+      const active = (component.parts || []).some(part => activeParts.has(part));
+      return {{
+        component: component.id,
+        label: component.label,
+        active,
+        entryId: entry?.id || "",
+        jobId: job.id || "",
+        reviewState: active ? (document.getElementById("reviewSelect")?.value || "review-pending") : "review-pending",
+        machineStatus: componentMachineStatus(component),
+        target: entry?.target || "",
+        runtimeTarget: entry?.runtimeTarget || entry?.target || "",
+        placedTarget: entry?.placedTarget || "",
+        phase: (component.phases || []).join(","),
+        selectors: {{
+          phases: payload.phases,
+          angles: payload.angles,
+          parts: payload.parts,
+          propSlots: payload.propSlots,
+          animationGroup: payload.animationGroup || "",
+          dialogueMode: payload.dialogueMode || ""
+        }},
+        manifestUrl: job.result?.viewerJsonUrl || "",
+        viewerUrl: job.result?.viewerUrl || "",
+        proofUrls: componentProofUrls(component),
+        failureCount: componentFailureItems(component, state.latestManifest || job.manifest || null).length
+      }};
+    }});
+}}
 function matches(e) {{
   if (state.domain && e.domain !== state.domain) return false;
   if (state.kind && e.kind !== state.kind) return false;
@@ -833,6 +926,18 @@ function renderSaveReview() {{
   document.getElementById("proofState").textContent = job ? `${{job.state || "job"}} / ${{job.result?.status || "no manifest"}}` : "No proof";
   document.getElementById("reviewState").textContent = review.replace(/-/g, " ");
 }}
+function renderComponentReviews() {{
+  const rows = componentReviewRows(false);
+  document.getElementById("componentReviews").innerHTML = rows.map(row => {{
+    const links = (row.proofUrls || []).map((url, index) => `<a href="${{esc(url)}}">shot ${{index + 1}}</a>`).join("");
+    return `<div class="reviewRow ${{row.active ? "active" : ""}}">
+      <b>${{esc(row.label)}}</b>
+      <span class="pill">${{esc(row.machineStatus)}}</span>
+      <span class="pill">${{esc(row.active ? row.reviewState : "inactive")}}</span>
+      <div class="proofLinks">${{links || "no proof image yet"}} <span>failures=${{esc(row.failureCount)}}</span></div>
+    </div>`;
+  }}).join("");
+}}
 function setSelectValue(id, value) {{
   const node = document.getElementById(id);
   if (node) node.value = value;
@@ -858,7 +963,20 @@ function applyPreset(name) {{
 async function saveReviewEvent() {{
   try {{
     if (!state.session && liveAvailable()) await ensureSession();
-    await recordEvent("review.mark", studioPayload("runtimeThreeCamera"));
+    const rows = componentReviewRows(true);
+    const payload = {{
+      entryId: state.selectedId,
+      jobId: state.latestJob?.id || "",
+      rows
+    }};
+    if (liveAvailable() && state.session) {{
+      const response = await api(`/nikami/studio/sessions/${{encodeURIComponent(state.session.id)}}/reviews`, {{
+        method: "POST",
+        body: JSON.stringify(payload)
+      }});
+      state.reviews = [...(response.rows || []), ...state.reviews].slice(0, 120);
+    }}
+    await recordEvent("review.mark", {{ ...studioPayload("runtimeThreeCamera"), componentReviewRows: rows }});
     renderWorkbench();
   }} catch (error) {{
     addLocalEvent("review.write.failed", {{ message: error.message || String(error) }});
@@ -882,6 +1000,7 @@ function renderWorkbench() {{
   renderCoords();
   renderStage();
   renderSaveReview();
+  renderComponentReviews();
   renderEvents();
 }}
 function render() {{

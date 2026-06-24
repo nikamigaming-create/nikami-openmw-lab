@@ -31,6 +31,8 @@ ALLOWED_PREFIX = [
 ]
 FORBIDDEN_CHARS = set("&;|<>`")
 STUDIO_SCHEMA = "nikami-fnv-character-studio-session-v1"
+STUDIO_REVIEW_SCHEMA = "nikami-fnv-character-studio-component-review-v1"
+REVIEW_STATES = {"review-pending", "pass", "fail", "blocked", "needs-rerun"}
 
 
 def utc_now() -> str:
@@ -255,6 +257,7 @@ class StudioSessionStore:
                 "selectedEntries": as_list(payload.get("selectedEntries") or payload.get("entryId")),
                 "jobs": [],
                 "eventsPath": str(session_dir / "recording" / "events.jsonl"),
+                "reviewsPath": str(session_dir / "recording" / "reviews.jsonl"),
                 "policy": {
                     "generatedMetadataOnly": True,
                     "noRetailPayloadBytes": True,
@@ -302,6 +305,77 @@ class StudioSessionStore:
         session["updatedAt"] = utc_now()
         self._write(session)
         return event
+
+    def append_reviews(self, session_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        session = self.get(session_id)
+        if session is None:
+            raise ValueError("unknown studio session")
+        rows = payload.get("rows")
+        if not isinstance(rows, list) or not rows:
+            raise ValueError("component review payload must include non-empty rows")
+        session_dir = self._session_dir(session_id)
+        reviews_path = session_dir / "recording" / "reviews.jsonl"
+        reviews_path.parent.mkdir(parents=True, exist_ok=True)
+        accepted: list[dict[str, Any]] = []
+        now = utc_now()
+        for index, row in enumerate(rows):
+            if not isinstance(row, dict):
+                raise ValueError(f"component review row {index} is not an object")
+            component = first_text(row.get("component"), row.get("id"))
+            if not re.fullmatch(r"[A-Za-z0-9_.:-]{1,80}", component):
+                raise ValueError(f"component review row {index} has invalid component id")
+            review_state = first_text(row.get("reviewState"), row.get("state"), "review-pending")
+            if review_state not in REVIEW_STATES:
+                raise ValueError(f"component review row {index} has invalid review state")
+            proof_urls = [first_text(item) for item in as_list(row.get("proofUrls")) if first_text(item)]
+            proof_urls = proof_urls[:12]
+            accepted.append(
+                {
+                    "schema": STUDIO_REVIEW_SCHEMA,
+                    "t": now,
+                    "sessionId": session_id,
+                    "entryId": first_text(payload.get("entryId"), row.get("entryId")),
+                    "jobId": first_text(payload.get("jobId"), row.get("jobId")),
+                    "component": component,
+                    "label": first_text(row.get("label"))[:120],
+                    "reviewState": review_state,
+                    "machineStatus": first_text(row.get("machineStatus"), "not-run")[:80],
+                    "target": first_text(row.get("target"))[:160],
+                    "runtimeTarget": first_text(row.get("runtimeTarget"))[:160],
+                    "placedTarget": first_text(row.get("placedTarget"))[:160],
+                    "phase": first_text(row.get("phase"))[:80],
+                    "selectors": row.get("selectors") if isinstance(row.get("selectors"), dict) else {},
+                    "manifestUrl": first_text(row.get("manifestUrl"))[:500],
+                    "viewerUrl": first_text(row.get("viewerUrl"))[:500],
+                    "proofUrls": proof_urls,
+                    "failureCount": int(row.get("failureCount") or 0),
+                    "payloadPolicy": "generated review metadata only; no retail asset payload bytes",
+                }
+            )
+        with reviews_path.open("a", encoding="utf-8") as stream:
+            for row in accepted:
+                stream.write(json.dumps(row, ensure_ascii=False) + "\n")
+        session["updatedAt"] = now
+        self._write(session)
+        self.append_event(session_id, "review.rows", {"count": len(accepted), "jobId": first_text(payload.get("jobId"))})
+        return {"schema": STUDIO_REVIEW_SCHEMA, "accepted": len(accepted), "rows": accepted}
+
+    def reviews(self, session_id: str) -> list[dict[str, Any]]:
+        session_dir = self._session_dir(session_id)
+        reviews_path = session_dir / "recording" / "reviews.jsonl"
+        if not reviews_path.is_file():
+            return []
+        reviews: list[dict[str, Any]] = []
+        for line in reviews_path.read_text(encoding="utf-8", errors="replace").splitlines():
+            if not line.strip():
+                continue
+            try:
+                row = json.loads(line)
+                if isinstance(row, dict):
+                    reviews.append(row)
+            except json.JSONDecodeError:
+                reviews.append({"schema": STUDIO_REVIEW_SCHEMA, "t": utc_now(), "component": "decode-error"})
+        return reviews
 
     def events(self, session_id: str) -> list[dict[str, Any]]:
         session_dir = self._session_dir(session_id)
@@ -699,6 +773,14 @@ class LiveHandler(SimpleHTTPRequestHandler):
                 session_id = unquote(parts[-2])
                 self.send_json(200, self.server.studio_store.events(session_id))  # type: ignore[attr-defined]
                 return
+            if len(parts) == 5 and parts[-1] == "reviews":
+                session_id = unquote(parts[-2])
+                session = self.server.studio_store.get(session_id)  # type: ignore[attr-defined]
+                if session is None:
+                    self.send_json(404, {"error": "unknown studio session"})
+                    return
+                self.send_json(200, self.server.studio_store.reviews(session_id))  # type: ignore[attr-defined]
+                return
             if len(parts) == 5 and parts[-1] == "jobs":
                 session_id = unquote(parts[-2])
                 session = self.server.studio_store.get(session_id)  # type: ignore[attr-defined]
@@ -748,6 +830,12 @@ class LiveHandler(SimpleHTTPRequestHandler):
                         session_id, str(payload.get("type") or "note"), payload.get("payload") if isinstance(payload.get("payload"), dict) else payload
                     )
                     self.send_json(201, event)
+                    return
+                if len(parts) == 5 and parts[-1] == "reviews":
+                    session_id = unquote(parts[-2])
+                    payload = self.read_payload()
+                    reviews = self.server.studio_store.append_reviews(session_id, payload)  # type: ignore[attr-defined]
+                    self.send_json(201, reviews)
                     return
                 if len(parts) == 5 and parts[-1] == "jobs":
                     session_id = unquote(parts[-2])

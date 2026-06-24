@@ -91,6 +91,44 @@ def main() -> int:
             raise AssertionError("studio session event append failed")
         if not Path(session["eventsPath"]).is_file():
             raise AssertionError("studio session did not write events.jsonl")
+        review_result = sessions.append_reviews(
+            session["id"],
+            {
+                "entryId": "actor:000001",
+                "jobId": "job-contract",
+                "rows": [
+                    {
+                        "component": "face",
+                        "label": "Face / Wrinkles",
+                        "reviewState": "fail",
+                        "machineStatus": "fail",
+                        "target": "ContractNpc",
+                        "runtimeTarget": "ContractNpc",
+                        "placedTarget": "",
+                        "phase": "face",
+                        "selectors": {"parts": ["face-organs"], "angles": ["front"]},
+                        "manifestUrl": "viewer/manifest.json",
+                        "viewerUrl": "viewer/character-viewer.html",
+                        "proofUrls": ["viewer/face_front/screenshot000.png"],
+                        "failureCount": 1,
+                    }
+                ],
+            },
+        )
+        if review_result["schema"] != live.STUDIO_REVIEW_SCHEMA or review_result["accepted"] != 1:
+            raise AssertionError("studio session component review append failed")
+        if not Path(session["reviewsPath"]).is_file():
+            raise AssertionError("studio session did not write reviews.jsonl")
+        reviews = sessions.reviews(session["id"])
+        if len(reviews) != 1 or reviews[0]["component"] != "face" or reviews[0]["reviewState"] != "fail":
+            raise AssertionError("studio session did not read back component review rows")
+        try:
+            sessions.append_reviews(session["id"], {"rows": [{"component": "face", "reviewState": "silent-skip"}]})
+        except ValueError as exc:
+            if "invalid review state" not in str(exc):
+                raise
+        else:
+            raise AssertionError("studio session accepted an invalid component review state")
 
         command = live.structured_actor_command(entry, {"entryId": "actor:000001", "commandKey": "runtimeFrontOnly"})
         args = live.command_to_args(command, Path("scripts/nikami/run-fnv-character-viewer.ps1"))
