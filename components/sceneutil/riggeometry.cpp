@@ -62,7 +62,7 @@ namespace SceneUtil
         {
             if (const char* env = std::getenv("OPENMW_FNV_SKINNING_MODE"))
                 return env;
-            return "source";
+            return "current";
         }
 
         bool isFalloutHandRig(std::string_view name, std::string_view rootBone)
@@ -93,7 +93,7 @@ namespace SceneUtil
                 if (const char* env = std::getenv("OPENMW_FNV_VR_HAND_SKINNING_MODE"))
                     return env;
 
-                return "auto";
+                return "current";
             }
 
             return getFalloutSkinningMode();
@@ -166,6 +166,8 @@ namespace SceneUtil
                 return skeleton * bind;
             if (mode == "identity" || mode == "source")
                 return osg::Matrixf();
+            if (mode == "current" || mode == "legacy")
+                return invBind * skeleton;
             if (mode == "invBindThenSkeleton")
                 return invBind * skeleton;
 

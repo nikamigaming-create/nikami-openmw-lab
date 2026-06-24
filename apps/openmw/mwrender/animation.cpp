@@ -497,6 +497,22 @@ namespace
         return osg::Vec3f(box.xMax() - box.xMin(), box.yMax() - box.yMin(), box.zMax() - box.zMin());
     }
 
+    osg::BoundingBox computeFalloutGeometryBounds(const osg::Geometry& geometry)
+    {
+        const osg::BoundingBox cached = geometry.getBoundingBox();
+        if (cached.valid())
+            return cached;
+
+        osg::BoundingBox computed;
+        const osg::Vec3Array* vertices = dynamic_cast<const osg::Vec3Array*>(geometry.getVertexArray());
+        if (vertices == nullptr)
+            return computed;
+
+        for (const osg::Vec3f& vertex : *vertices)
+            computed.expandBy(vertex);
+        return computed;
+    }
+
     class FalloutPartRigBoundsVisitor : public osg::NodeVisitor
     {
     public:
@@ -521,7 +537,7 @@ namespace
                     if (geometry == nullptr)
                         continue;
 
-                    const osg::BoundingBox box = geometry->getBoundingBox();
+                    const osg::BoundingBox box = computeFalloutGeometryBounds(*geometry);
                     FalloutRigBoundsSample sample;
                     sample.mName = geometry->getName();
                     sample.mKind = "osg::Geometry";
@@ -544,7 +560,7 @@ namespace
 
                 if (osg::Geometry* renderGeometry = rig->getRenderGeometry(0))
                 {
-                    const osg::BoundingBox box = renderGeometry->getBoundingBox();
+                    const osg::BoundingBox box = computeFalloutGeometryBounds(*renderGeometry);
                     sample.mRenderValid = box.valid();
                     if (sample.mRenderValid)
                     {
@@ -557,7 +573,7 @@ namespace
                 osg::ref_ptr<osg::Geometry> sourceGeometry = rig->getSourceGeometry();
                 if (sourceGeometry != nullptr)
                 {
-                    const osg::BoundingBox box = sourceGeometry->getBoundingBox();
+                    const osg::BoundingBox box = computeFalloutGeometryBounds(*sourceGeometry);
                     sample.mSourceValid = box.valid();
                     if (sample.mSourceValid)
                     {
@@ -590,7 +606,7 @@ namespace
 
             if (osg::Geometry* renderGeometry = rig->getRenderGeometry(0))
             {
-                const osg::BoundingBox box = renderGeometry->getBoundingBox();
+                const osg::BoundingBox box = computeFalloutGeometryBounds(*renderGeometry);
                 sample.mRenderValid = box.valid();
                 if (sample.mRenderValid)
                 {
@@ -603,7 +619,7 @@ namespace
             osg::ref_ptr<osg::Geometry> sourceGeometry = rig->getSourceGeometry();
             if (sourceGeometry != nullptr)
             {
-                const osg::BoundingBox box = sourceGeometry->getBoundingBox();
+                const osg::BoundingBox box = computeFalloutGeometryBounds(*sourceGeometry);
                 sample.mSourceValid = box.valid();
                 if (sample.mSourceValid)
                 {
@@ -668,7 +684,7 @@ namespace
 
                 if (osg::Geometry* renderGeometry = rig->getRenderGeometry(0))
                 {
-                    const osg::BoundingBox box = renderGeometry->getBoundingBox();
+                    const osg::BoundingBox box = computeFalloutGeometryBounds(*renderGeometry);
                     sample.mRenderValid = box.valid();
                     if (sample.mRenderValid)
                     {
@@ -680,7 +696,7 @@ namespace
                 osg::ref_ptr<osg::Geometry> sourceGeometry = rig->getSourceGeometry();
                 if (sourceGeometry != nullptr)
                 {
-                    const osg::BoundingBox box = sourceGeometry->getBoundingBox();
+                    const osg::BoundingBox box = computeFalloutGeometryBounds(*sourceGeometry);
                     sample.mSourceValid = box.valid();
                     if (sample.mSourceValid)
                     {
@@ -711,7 +727,7 @@ namespace
                 if (!handAncestor && !isFalloutHandGeometrySampleName(geometry->getName()))
                     continue;
 
-                const osg::BoundingBox box = geometry->getBoundingBox();
+                const osg::BoundingBox box = computeFalloutGeometryBounds(*geometry);
                 FalloutRigBoundsSample sample;
                 sample.mName = geometry->getName();
                 sample.mKind = "osg::Geometry";
@@ -765,7 +781,7 @@ namespace
 
             if (osg::Geometry* renderGeometry = rig->getRenderGeometry(0))
             {
-                const osg::BoundingBox box = renderGeometry->getBoundingBox();
+                const osg::BoundingBox box = computeFalloutGeometryBounds(*renderGeometry);
                 sample.mRenderValid = box.valid();
                 if (sample.mRenderValid)
                 {
@@ -777,7 +793,7 @@ namespace
             osg::ref_ptr<osg::Geometry> sourceGeometry = rig->getSourceGeometry();
             if (sourceGeometry != nullptr)
             {
-                const osg::BoundingBox box = sourceGeometry->getBoundingBox();
+                const osg::BoundingBox box = computeFalloutGeometryBounds(*sourceGeometry);
                 sample.mSourceValid = box.valid();
                 if (sample.mSourceValid)
                 {
@@ -1771,12 +1787,17 @@ namespace
             = ((leftUpperArmLocal.z() - pelvisLocal.z()) + (rightUpperArmLocal.z() - pelvisLocal.z())) * 0.5f;
         const float averageUpperToHandDrop
             = ((leftUpperArmLocal.z() - leftHandLocal.z()) + (rightUpperArmLocal.z() - rightHandLocal.z())) * 0.5f;
+        osg::MatrixTransform* weaponNode = findFalloutTarget(targets, "weapon");
+        const float rightHandWeaponDistance
+            = weaponNode != nullptr ? (rightHand - transformFalloutPoint(osg::Vec3f(), getFalloutNodeWorldMatrix(weaponNode))).length()
+                                    : std::numeric_limits<float>::infinity();
 
         const bool armsWide = handSpread > torsoHeight * 1.45f && handSpread > upperArmSpread * 1.8f;
         const bool forearmsWide = forearmSpread > upperArmSpread * 1.35f;
         const bool handsNotAtSides = averageUpperToHandDrop < std::max(18.f, torsoHeight * 0.95f);
-        const bool bad = armsWide && forearmsWide && handsNotAtSides;
-        const char* reason = bad ? "arms_out_bind_pose" : "ok";
+        const bool weaponPose = rightHandWeaponDistance <= std::max(16.f, torsoHeight * 0.4f);
+        const bool bad = armsWide && forearmsWide && handsNotAtSides && !weaponPose;
+        const char* reason = bad ? "arms_out_bind_pose" : weaponPose ? "weapon_pose" : "ok";
 
         Log(bad ? Debug::Warning : Debug::Info)
             << "FNV/ESM4 diag: standing arm pose " << ptr.getCellRef().getRefId()
@@ -1797,6 +1818,7 @@ namespace
             << " averageForearmAbovePelvis=" << averageForearmAbovePelvis
             << " averageUpperArmAbovePelvis=" << averageUpperArmAbovePelvis
             << " averageUpperToHandDrop=" << averageUpperToHandDrop
+            << " rightHandWeaponDistance=" << rightHandWeaponDistance
             << " verdict=" << (bad ? "BAD" : "OK") << " reason=" << reason;
         return !bad;
     }
@@ -2027,7 +2049,7 @@ namespace
                 {
                     if (!sample.mRenderValid)
                         continue;
-                    center = sample.mRenderCenterParentWorld;
+                    center = sample.mRenderCenterPathWorld;
                     break;
                 }
             }
