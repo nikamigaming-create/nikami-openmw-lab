@@ -205,6 +205,12 @@ CONTENT_ITEM_FILES = [
         "loaded-pending-runtime",
         "form references are harvested pending exhaustive cross-reference resolution gates",
     ),
+    (
+        "conditions.json",
+        "condition-row",
+        "loaded-pending-runtime",
+        "CTDA/CTDT condition rows are harvested explicitly; runtime condition evaluation remains gated separately",
+    ),
 ]
 
 
@@ -217,6 +223,8 @@ CONTENT_ARTIFACT_COUNTS = {
     "game-settings.json": "gameSettingCount",
     "gameplay-systems.json": "gameplaySystemCount",
     "references.json": "referenceCount",
+    "conditions.json": "conditionRowCount",
+    "condition-functions.json": "conditionFunctionCount",
 }
 
 
@@ -391,6 +399,81 @@ def classify_content_items(content_dir, content_jsonl, counters, failures):
                 stream.write(json.dumps(row, ensure_ascii=False) + "\n")
                 counters["contentRows"] += 1
                 counters[f"class:{classification}"] += 1
+
+
+def classify_condition_functions(content_dir, output_jsonl, counters, failures):
+    coverage = {
+        "rowCount": 0,
+        "uniqueFunctionCount": 0,
+        "uniqueFunctions": [],
+        "unclassifiedFunctions": [],
+    }
+    path = content_dir / "condition-functions.json"
+    if not path.is_file():
+        record_failure(
+            failures,
+            "missing-condition-function-artifact",
+            "Expected content ledger condition-functions.json artifact is missing.",
+            sourceFile="condition-functions.json",
+        )
+        output_jsonl.write_text("", encoding="utf-8")
+        return coverage
+
+    values = read_json(path)
+    if not isinstance(values, list):
+        record_failure(
+            failures,
+            "invalid-condition-function-artifact-shape",
+            "Expected condition-functions.json to be a JSON list.",
+            sourceFile="condition-functions.json",
+        )
+        values = []
+
+    unique_functions = []
+    with output_jsonl.open("w", encoding="utf-8") as stream:
+        for index, value in enumerate(values):
+            function = value.get("function")
+            function_name = value.get("functionName", "")
+            classification = value.get("classification", "")
+            proof = value.get("proof", "")
+            if function not in unique_functions:
+                unique_functions.append(function)
+            if classification not in ALLOWED_CLASSIFICATIONS:
+                coverage["unclassifiedFunctions"].append(function)
+                counters["conditionFunctionUnclassified"] += 1
+                record_failure(
+                    failures,
+                    "unclassified-condition-function",
+                    f"CTDA/CTDT condition function lacks an explicit five-state classification rule: {function}",
+                    function=function,
+                    functionName=function_name,
+                    sourceFile="condition-functions.json",
+                )
+                classification = "known-blocked"
+                proof = proof or "Condition function row used an invalid classification and must be explicitly fixed."
+
+            row = make_row(
+                "content-ledger",
+                "condition-function",
+                f"{function}:{function_name}" if function_name else f"condition-function:{index}",
+                classification,
+                proof,
+                sourceFile="condition-functions.json",
+                function=function,
+                functionName=function_name,
+                conditionCount=value.get("conditionCount", 0),
+                functionSemanticsClassification=value.get("functionSemanticsClassification", ""),
+                firstFailingGate=value.get("firstFailingGate", ""),
+                runtimeProofGate=value.get("runtimeProofGate", ""),
+            )
+            stream.write(json.dumps(row, ensure_ascii=False) + "\n")
+            counters["conditionFunctionRows"] += 1
+            counters[f"class:{classification}"] += 1
+
+    coverage["rowCount"] = len(values)
+    coverage["uniqueFunctions"] = sorted(unique_functions, key=lambda item: -1 if item is None else item)
+    coverage["uniqueFunctionCount"] = len(coverage["uniqueFunctions"])
+    return coverage
 
 
 def validate_content_artifacts(content_dir, content_result, content_records, failures):
@@ -938,6 +1021,10 @@ def main():
 
     content_jsonl = proof_dir / "content-item-classification.jsonl"
     classify_content_items(content_dir, content_jsonl, counters, failures)
+    condition_function_jsonl = proof_dir / "condition-function-classification.jsonl"
+    condition_function_coverage = classify_condition_functions(
+        content_dir, condition_function_jsonl, counters, failures
+    )
     classify_runtime_profiles(main_rows, repo_root, args.pcvr_reference_config_dir)
 
     for row in main_rows:
@@ -954,6 +1041,7 @@ def main():
         planned_files=[
             proof_dir / "classification-ledger.json",
             proof_dir / "result.json",
+            condition_function_jsonl,
             summary_file,
         ],
     )
@@ -969,6 +1057,8 @@ def main():
             "mainRows": counters["mainRows"],
             "archiveEntryRows": counters["archiveEntryRows"],
             "contentRows": counters["contentRows"],
+            "conditionFunctionRows": counters["conditionFunctionRows"],
+            "conditionFunctionUnclassified": counters["conditionFunctionUnclassified"],
             "generatedOutputRows": counters["generatedOutputRows"],
             "runtimeSupported": counters["class:runtime-supported"],
             "loadedPendingRuntime": counters["class:loaded-pending-runtime"],
@@ -982,6 +1072,7 @@ def main():
             "mainLedger": str(proof_dir / "classification-ledger.json"),
             "archiveEntryClassification": str(entry_jsonl),
             "contentItemClassification": str(content_jsonl),
+            "conditionFunctionClassification": str(condition_function_jsonl),
             "generatedOutputClassification": str(generated_output_jsonl),
             "summary": str(summary_file),
             "result": str(proof_dir / "result.json"),
@@ -989,6 +1080,7 @@ def main():
         "harvestManifestCounts": manifest.get("counts", {}),
         "archiveExtensionTotals": dict(sorted(archive_extension_totals.items())),
         "contentArtifactCoverage": content_artifact_coverage,
+        "conditionFunctionCoverage": condition_function_coverage,
         "contentPluginCoverage": content_plugin_coverage,
         "archiveEntryCoverage": archive_entry_coverage,
         "preflightFailures": failures,

@@ -3,6 +3,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import struct
 from collections import Counter
 from datetime import datetime
@@ -22,6 +23,49 @@ DEFAULT_CONTENT = [
     "TribalPack.esm",
     "FNVR.esp",
 ]
+
+
+ALLOWED_CONDITION_CLASSIFICATIONS = {
+    "runtime-supported",
+    "loaded-pending-runtime",
+    "known-blocked",
+    "non-runtime-support-file",
+    "intentionally-excluded-with-proof",
+}
+
+
+CONDITION_FUNCTION_SEMANTIC_PROOFS = {
+    56: {
+        "gate": "test-fnv-quest-status-runtime-contract.ps1",
+        "runtimeBoundary": "selected-quest-status-opcode-runtime-supported",
+        "proof": "GetQuestRunning reads selected real FNV quest status through the MWScript runtime proof.",
+    },
+    58: {
+        "gate": "test-fnv-quest-setstage-runtime-contract.ps1",
+        "runtimeBoundary": "selected-setstage-getstage-opcode-runtime-supported",
+        "proof": "GetStage reads a selected real FNV quest stage after SetStage drives the runtime journal.",
+    },
+    59: {
+        "gate": "test-fnv-quest-stage-done-runtime-contract.ps1",
+        "runtimeBoundary": "selected-stage-done-entry-state-runtime-supported",
+        "proof": "GetStageDone distinguishes SetJournalIndex from SetStage against selected real FNV quest entry state.",
+    },
+    420: {
+        "gate": "test-fnv-quest-objective-runtime-contract.ps1",
+        "runtimeBoundary": "selected-quest-objective-state-runtime-supported",
+        "proof": "GetObjectiveCompleted reads selected FNV objective completed state through journal-backed runtime state.",
+    },
+    421: {
+        "gate": "test-fnv-quest-objective-runtime-contract.ps1",
+        "runtimeBoundary": "selected-quest-objective-state-runtime-supported",
+        "proof": "GetObjectiveDisplayed reads selected FNV objective displayed state through journal-backed runtime state.",
+    },
+    546: {
+        "gate": "test-fnv-quest-status-runtime-contract.ps1",
+        "runtimeBoundary": "selected-quest-status-opcode-runtime-supported",
+        "proof": "GetQuestCompleted reads selected real FNV quest completed state through the MWScript runtime proof.",
+    },
+}
 
 
 def fourcc(raw):
@@ -78,6 +122,19 @@ def get_float(raw, offset):
     if len(raw) < offset + 4:
         return None
     return struct.unpack_from("<f", raw, offset)[0]
+
+
+def load_condition_function_names(repo_root):
+    path = repo_root / "components" / "esm4" / "script.hpp"
+    result = {}
+    if not path.is_file():
+        return result
+    pattern = re.compile(r"\b(FUN_[A-Za-z0-9_]+)\s*=\s*([0-9]+)")
+    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        match = pattern.search(line)
+        if match:
+            result[int(match.group(2))] = match.group(1)
+    return result
 
 
 def read_subrecords(data):
@@ -169,38 +226,198 @@ def add_form_id_subrecord_refs(references, plugin, owner_type, owner_form_id, su
                 index += 1
 
 
-def conditions(subrecords):
+def condition_schema(record_type):
+    if record_type == "PACK":
+        return "PACK-CTDA"
+    return "TargetCondition"
+
+
+def condition_from_payload(rec_type, payload, index, schema="TargetCondition"):
+    condition_value = get_u32(payload, 0)
+    function = get_u32(payload, 8)
+    param1 = get_u32(payload, 12)
+    param2 = get_u32(payload, 16)
+    tail_value = get_u32(payload, 20) if len(payload) >= 24 else None
+    reference = get_u32(payload, 24) if schema == "TargetCondition" and len(payload) >= 28 else None
+    row = {
+        "index": index,
+        "subrecord": rec_type,
+        "size": len(payload),
+        "conditionSchema": schema,
+        "conditionFlags": hex_form(condition_value) if condition_value is not None else "",
+        "comparisonValue": get_float(payload, 4),
+        "function": function,
+        "param1": hex_form(param1) if param1 is not None else "",
+        "param2": hex_form(param2) if param2 is not None else "",
+        "reference": hex_form(reference) if reference is not None else "",
+    }
+    if schema == "PACK-CTDA":
+        row["unknownTail"] = hex_form(tail_value) if tail_value is not None else ""
+    else:
+        row["runOn"] = tail_value
+    return row
+
+
+def conditions(subrecords, record_type=""):
     result = []
     index = 0
+    schema = condition_schema(record_type)
     for rec_type, payload in subrecords:
         if rec_type not in ("CTDA", "CTDT"):
             continue
-        function = None
-        param1 = None
-        param2 = None
-        reference = None
-        if len(payload) >= 28:
-            function = get_u16(payload, 8)
-            param1 = get_u32(payload, 12)
-            param2 = get_u32(payload, 16)
-            reference = get_u32(payload, 24)
-        elif len(payload) >= 20:
-            function = get_u16(payload, 8)
-            param1 = get_u32(payload, 12)
-            param2 = get_u32(payload, 16)
-        result.append(
-            {
-                "index": index,
-                "subrecord": rec_type,
-                "size": len(payload),
-                "comparisonValue": get_float(payload, 0),
-                "function": function,
-                "param1": hex_form(param1) if param1 is not None else "",
-                "param2": hex_form(param2) if param2 is not None else "",
-                "reference": hex_form(reference) if reference is not None else "",
-            }
-        )
+        result.append(condition_from_payload(rec_type, payload, index, schema))
         index += 1
+    return result
+
+
+def quest_top_level_conditions(subrecords):
+    result = []
+    current_entry = None
+    current_target = None
+    index = 0
+
+    for rec_type, payload in subrecords:
+        if rec_type == "INDX":
+            current_entry = None
+            current_target = None
+        elif rec_type == "QSDT":
+            current_entry = True
+            current_target = None
+        elif rec_type == "QOBJ":
+            current_entry = None
+            current_target = None
+        elif rec_type == "QSTA":
+            current_target = True
+        elif rec_type in ("CTDA", "CTDT") and current_entry is None and current_target is None:
+            result.append(condition_from_payload(rec_type, payload, index, "TargetCondition"))
+            index += 1
+    return result
+
+
+def make_condition_output_row(plugin, record, editor_id, owner_scope, condition, raw_index, **owner_fields):
+    row = {
+        "plugin": plugin,
+        "recordType": record["type"],
+        "formId": record["formId"],
+        "editorId": editor_id,
+        "ownerScope": owner_scope,
+        "rawConditionIndex": raw_index,
+    }
+    row.update(owner_fields)
+    row.update(condition)
+    row["conditionIndex"] = row.pop("index")
+    return row
+
+
+def quest_condition_rows_for_record(plugin, record, subrecords):
+    result = []
+    editor_id = first_zstring(subrecords, "EDID")
+    raw_index = 0
+    top_level_index = 0
+    current_stage_index = None
+    current_entry_index = None
+    current_entry_condition_index = 0
+    current_objective_index = None
+    current_target_index = None
+    current_target_form_id = ""
+    current_target_condition_index = 0
+
+    for rec_type, payload in subrecords:
+        if rec_type == "INDX":
+            current_stage_index = get_u16(payload, 0)
+            current_entry_index = None
+            current_entry_condition_index = 0
+            current_objective_index = None
+            current_target_index = None
+            current_target_form_id = ""
+            current_target_condition_index = 0
+        elif rec_type == "QSDT":
+            if current_stage_index is None:
+                current_stage_index = 0
+            current_entry_index = 0 if current_entry_index is None else current_entry_index + 1
+            current_entry_condition_index = 0
+            current_objective_index = None
+            current_target_index = None
+            current_target_form_id = ""
+            current_target_condition_index = 0
+        elif rec_type == "QOBJ":
+            current_stage_index = None
+            current_entry_index = None
+            current_entry_condition_index = 0
+            current_objective_index = get_u32(payload, 0)
+            current_target_index = None
+            current_target_form_id = ""
+            current_target_condition_index = 0
+        elif rec_type == "QSTA":
+            current_target_index = 0 if current_target_index is None else current_target_index + 1
+            target = get_u32(payload, 0)
+            current_target_form_id = hex_form(target) if target is not None else ""
+            current_target_condition_index = 0
+        elif rec_type in ("CTDA", "CTDT"):
+            if current_objective_index is not None and current_target_index is not None:
+                condition = condition_from_payload(rec_type, payload, current_target_condition_index, "TargetCondition")
+                result.append(
+                    make_condition_output_row(
+                        plugin,
+                        record,
+                        editor_id,
+                        "QUST-objective-target",
+                        condition,
+                        raw_index,
+                        objectiveIndex=current_objective_index,
+                        targetIndex=current_target_index,
+                        targetFormId=current_target_form_id,
+                    )
+                )
+                current_target_condition_index += 1
+            elif current_entry_index is not None:
+                condition = condition_from_payload(rec_type, payload, current_entry_condition_index, "TargetCondition")
+                result.append(
+                    make_condition_output_row(
+                        plugin,
+                        record,
+                        editor_id,
+                        "QUST-stage-entry",
+                        condition,
+                        raw_index,
+                        stageIndex=current_stage_index,
+                        entryIndex=current_entry_index,
+                    )
+                )
+                current_entry_condition_index += 1
+            else:
+                condition = condition_from_payload(rec_type, payload, top_level_index, "TargetCondition")
+                result.append(
+                    make_condition_output_row(
+                        plugin,
+                        record,
+                        editor_id,
+                        "QUST-top-level",
+                        condition,
+                        raw_index,
+                    )
+                )
+                top_level_index += 1
+            raw_index += 1
+    return result
+
+
+def condition_rows_for_record(plugin, record, subrecords):
+    if record["type"] == "QUST":
+        return quest_condition_rows_for_record(plugin, record, subrecords)
+    result = []
+    editor_id = first_zstring(subrecords, "EDID")
+    for condition in conditions(subrecords, record["type"]):
+        result.append(
+            make_condition_output_row(
+                plugin,
+                record,
+                editor_id,
+                record["type"] if record["type"] in ("INFO", "PERK", "PACK") else "record",
+                condition,
+                condition.get("index"),
+            )
+        )
     return result
 
 
@@ -257,6 +474,7 @@ def quest_stages(subrecords):
             current_entry = {
                 "flags": payload[0] if payload else None,
                 "conditionCount": 0,
+                "conditions": [],
                 "nextQuest": "",
                 **text_summary("log", ""),
                 "script": {
@@ -273,7 +491,8 @@ def quest_stages(subrecords):
         elif rec_type == "NAM0" and current_entry is not None and len(payload) >= 4:
             current_entry["nextQuest"] = hex_form(struct.unpack_from("<I", payload, 0)[0])
         elif rec_type in ("CTDA", "CTDT") and current_entry is not None and current_target is None:
-            current_entry["conditionCount"] += 1
+            current_entry["conditions"].append(condition_from_payload(rec_type, payload, current_entry["conditionCount"]))
+            current_entry["conditionCount"] = len(current_entry["conditions"])
         elif rec_type == "SCHR" and current_entry is not None:
             current_entry["script"]["headerSize"] = len(payload)
         elif rec_type == "SCTX" and current_entry is not None:
@@ -313,16 +532,19 @@ def quest_objectives(subrecords):
                 "targetFormId": hex_form(target) if target is not None else "",
                 "flags": payload[4] if len(payload) >= 5 else None,
                 "conditionCount": 0,
+                "conditions": [],
             }
             current_objective["targets"].append(current_target)
         elif rec_type in ("CTDA", "CTDT") and current_target is not None:
-            current_target["conditionCount"] += 1
+            current_target["conditions"].append(condition_from_payload(rec_type, payload, current_target["conditionCount"]))
+            current_target["conditionCount"] = len(current_target["conditions"])
     return objectives
 
 
 def quest_row(plugin, record, subrecords):
     data = first(subrecords, "DATA")
     quest_name = first_zstring(subrecords, "FULL")
+    top_level_conditions = quest_top_level_conditions(subrecords)
     stages = quest_stages(subrecords)
     objectives = quest_objectives(subrecords)
     stage_log_count = sum(len(stage["logEntries"]) for stage in stages)
@@ -343,7 +565,9 @@ def quest_row(plugin, record, subrecords):
         "priority": data[1] if data and len(data) >= 2 else None,
         "questDelay": get_float(data, 4) if data and len(data) >= 8 else None,
         "questScript": (all_form_ids(subrecords, "SCRI") or [None])[0],
-        "targetConditions": conditions(subrecords),
+        "conditions": top_level_conditions,
+        "conditionCount": len(top_level_conditions),
+        "targetConditions": top_level_conditions,
         "embeddedScript": script_block(subrecords),
         "stages": stages,
         "objectives": objectives,
@@ -430,6 +654,7 @@ def script_row(plugin, record, subrecords):
 
 def perk_row(plugin, record, subrecords):
     script = script_block(subrecords)
+    perk_conditions = conditions(subrecords)
     full_name = first_zstring(subrecords, "FULL")
     return {
         "plugin": plugin,
@@ -440,7 +665,8 @@ def perk_row(plugin, record, subrecords):
         "descriptionLength": len(first_zstring(subrecords, "DESC")),
         "icon": first_zstring(subrecords, "ICON"),
         "dataSizes": subrecord_sizes(subrecords, "DATA"),
-        "conditionCount": len(conditions(subrecords)),
+        "conditionCount": len(perk_conditions),
+        "conditions": perk_conditions,
         "effectTypeCount": len(subrecord_sizes(subrecords, "EPFT")),
         "effectDataSizes": subrecord_sizes(subrecords, "EPFD"),
         "effectRankCount": len(subrecord_sizes(subrecords, "PRKC")),
@@ -451,6 +677,121 @@ def perk_row(plugin, record, subrecords):
         "readiness": "loaded-pending-runtime",
         "firstFailingGate": "runtime-player-perk-trait-binding",
     }
+
+
+def condition_function_state(function):
+    if function is None:
+        return {
+            "classification": "known-blocked",
+            "readiness": "known-blocked",
+            "functionSemanticsClassification": "known-blocked",
+            "runtimeProofGate": "",
+            "runtimeBoundary": "condition-function-id-missing",
+            "firstFailingGate": "condition-function-id-missing",
+            "proof": "The condition row is present but too short to expose a function id; this row cannot be evaluated until the payload shape is decoded.",
+        }
+    semantic_proof = CONDITION_FUNCTION_SEMANTIC_PROOFS.get(function)
+    if semantic_proof:
+        return {
+            "classification": "loaded-pending-runtime",
+            "readiness": "loaded-pending-runtime",
+            "functionSemanticsClassification": "runtime-supported",
+            "runtimeProofGate": semantic_proof["gate"],
+            "runtimeBoundary": semantic_proof["runtimeBoundary"],
+            "firstFailingGate": "runtime-condition-evaluator",
+            "proof": semantic_proof["proof"]
+            + " CTDA/CTDT condition-row evaluation remains a separate runtime gate, so loaded condition rows are not claimed as working gameplay.",
+        }
+    return {
+        "classification": "loaded-pending-runtime",
+        "readiness": "loaded-pending-runtime",
+        "functionSemanticsClassification": "loaded-pending-runtime",
+        "runtimeProofGate": "",
+        "runtimeBoundary": "condition-function-semantics-pending",
+        "firstFailingGate": "runtime-condition-evaluator",
+        "proof": "Condition row bytes and function inventory are harvested explicitly; runtime condition evaluation and this function's gameplay semantics remain pending.",
+    }
+
+
+def build_condition_functions(condition_rows, function_names):
+    owner_rows = condition_rows
+    grouped = {}
+    for owner_row in owner_rows:
+        function = owner_row.get("function")
+        if function not in grouped:
+            grouped[function] = {
+                "function": function,
+                "conditionCount": 0,
+                "ownerCounts": Counter(),
+                "ownerRecordCounts": Counter(),
+                "subrecordCounts": Counter(),
+                "payloadSizeCounts": Counter(),
+                "conditionSchemaCounts": Counter(),
+                "runOnCounts": Counter(),
+                "sampleOwners": [],
+            }
+        bucket = grouped[function]
+        bucket["conditionCount"] += 1
+        bucket["ownerCounts"][owner_row["ownerScope"]] += 1
+        bucket["ownerRecordCounts"][owner_row["recordType"]] += 1
+        bucket["subrecordCounts"][owner_row["subrecord"]] += 1
+        bucket["payloadSizeCounts"][str(owner_row["size"])] += 1
+        bucket["conditionSchemaCounts"][owner_row.get("conditionSchema", "")] += 1
+        run_on = owner_row.get("runOn")
+        bucket["runOnCounts"]["<none>" if run_on is None else str(run_on)] += 1
+        if len(bucket["sampleOwners"]) < 8:
+            sample = {
+                key: value
+                for key, value in owner_row.items()
+                if key
+                in (
+                    "ownerScope",
+                    "plugin",
+                    "recordType",
+                    "formId",
+                    "editorId",
+                    "stageIndex",
+                    "entryIndex",
+                    "objectiveIndex",
+                    "targetIndex",
+                    "targetFormId",
+                    "conditionIndex",
+                    "subrecord",
+                    "size",
+                    "conditionSchema",
+                    "runOn",
+                    "unknownTail",
+                )
+            }
+            bucket["sampleOwners"].append(sample)
+
+    result = []
+    for function, bucket in sorted(grouped.items(), key=lambda item: (-1 if item[0] is None else item[0])):
+        state = condition_function_state(function)
+        classification = state["classification"]
+        if classification not in ALLOWED_CONDITION_CLASSIFICATIONS:
+            classification = "known-blocked"
+            state["readiness"] = "known-blocked"
+            state["firstFailingGate"] = "invalid-condition-classification"
+            state["proof"] = "Generated condition classification was outside the allowed vocabulary."
+        result.append(
+            {
+                "function": function,
+                "functionName": function_names.get(function, f"UNKNOWN_FUN_{function}" if function is not None else "UNKNOWN_FUN"),
+                "conditionCount": bucket["conditionCount"],
+                "ownerCounts": dict(sorted(bucket["ownerCounts"].items())),
+                "ownerScopeCounts": dict(sorted(bucket["ownerCounts"].items())),
+                "ownerRecordCounts": dict(sorted(bucket["ownerRecordCounts"].items())),
+                "subrecordCounts": dict(sorted(bucket["subrecordCounts"].items())),
+                "payloadSizeCounts": dict(sorted(bucket["payloadSizeCounts"].items())),
+                "conditionSchemaCounts": dict(sorted(bucket["conditionSchemaCounts"].items())),
+                "runOnCounts": dict(sorted(bucket["runOnCounts"].items())),
+                "sampleOwners": bucket["sampleOwners"],
+                **state,
+                "classification": classification,
+            }
+        )
+    return result
 
 
 def weapon_data(data):
@@ -769,6 +1110,7 @@ def parse_plugin(path, plugin):
     game_settings = []
     gameplay_systems = []
     references = []
+    condition_rows = []
 
     def read_range(offset, end):
         while offset + 24 <= end:
@@ -794,15 +1136,16 @@ def parse_plugin(path, plugin):
                 )
 
             counts[rec_type] += 1
+            payload = data[offset:next_offset]
+            subrecords = read_subrecords(payload)
+            record = {
+                "type": rec_type,
+                "formId": hex_form(form_id),
+                "flags": flags,
+                "flagsHex": f"0x{flags:08x}",
+            }
+            condition_rows.extend(condition_rows_for_record(plugin, record, subrecords))
             if rec_type in {"QUST", "DIAL", "INFO", "SCPT", "GLOB", "GMST", "WEAP", "AMMO", "AVIF", "PERK", "PROJ", "EXPL"}:
-                payload = data[offset:next_offset]
-                subrecords = read_subrecords(payload)
-                record = {
-                    "type": rec_type,
-                    "formId": hex_form(form_id),
-                    "flags": flags,
-                    "flagsHex": f"0x{flags:08x}",
-                }
                 if rec_type == "QUST":
                     quests.append(quest_row(plugin, record, subrecords))
                     add_form_id_subrecord_refs(
@@ -935,6 +1278,7 @@ def parse_plugin(path, plugin):
         "gameSettings": game_settings,
         "gameplaySystems": gameplay_systems,
         "references": references,
+        "conditionRows": condition_rows,
     }
 
 
@@ -999,6 +1343,9 @@ def main():
     game_settings = [item for row in plugin_ledgers for item in row["gameSettings"]]
     gameplay_systems = [item for row in plugin_ledgers for item in row["gameplaySystems"]]
     references = [item for row in plugin_ledgers for item in row["references"]]
+    condition_rows = [item for row in plugin_ledgers for item in row["conditionRows"]]
+    condition_function_names = load_condition_function_names(repo_root)
+    condition_functions = build_condition_functions(condition_rows, condition_function_names)
     total_records = sum(record["count"] for plugin in records for record in plugin["records"])
     gameplay_counts = Counter(item["recordType"] for item in gameplay_systems)
     quest_stage_count = sum(int(item.get("stageCount", 0)) for item in quests)
@@ -1006,6 +1353,37 @@ def main():
     quest_stage_text_entry_count = sum(int(item.get("stageTextEntryCount", 0)) for item in quests)
     quest_objective_count = sum(int(item.get("objectiveCount", 0)) for item in quests)
     quest_objective_target_count = sum(int(item.get("objectiveTargetCount", 0)) for item in quests)
+    condition_subrecord_counts = Counter(item.get("subrecord", "") for item in condition_rows)
+    condition_payload_size_counts = Counter(str(item.get("size", "")) for item in condition_rows)
+    condition_owner_record_counts = Counter(item.get("recordType", "") for item in condition_rows)
+    condition_owner_scope_counts = Counter(item.get("ownerScope", "") for item in condition_rows)
+    condition_schema_counts = Counter(item.get("conditionSchema", "") for item in condition_rows)
+    condition_function_counts = Counter(
+        str(item.get("function")) for item in condition_rows if item.get("function") is not None
+    )
+    condition_unknown_functions = sorted(
+        {
+            item.get("function")
+            for item in condition_rows
+            if item.get("function") is None or item.get("function") not in condition_function_names
+        },
+        key=lambda value: -1 if value is None else value,
+    )
+    condition_high_word_nonzero_count = sum(
+        1 for item in condition_rows if item.get("function") is not None and (int(item["function"]) & 0xFFFF0000) != 0
+    )
+    condition_malformed_count = sum(
+        1 for item in condition_rows if item.get("function") is None or int(item.get("size", 0)) < 20
+    )
+    condition_function_use_count = sum(int(item.get("conditionCount", 0)) for item in condition_functions)
+    condition_unaccounted_count = len(condition_rows) - condition_function_use_count
+    condition_function_class_counts = Counter(item.get("classification", "") for item in condition_functions)
+    condition_function_semantic_class_counts = Counter(
+        item.get("functionSemanticsClassification", "") for item in condition_functions
+    )
+    condition_function_unclassified = sum(
+        1 for item in condition_functions if item.get("classification") not in ALLOWED_CONDITION_CLASSIFICATIONS
+    )
 
     artifacts = {
         "records": proof_dir / "records.json",
@@ -1016,6 +1394,8 @@ def main():
         "gameSettings": proof_dir / "game-settings.json",
         "gameplaySystems": proof_dir / "gameplay-systems.json",
         "references": proof_dir / "references.json",
+        "conditions": proof_dir / "conditions.json",
+        "conditionFunctions": proof_dir / "condition-functions.json",
         "summary": summary_file,
         "result": proof_dir / "result.json",
     }
@@ -1027,6 +1407,8 @@ def main():
     write_json(artifacts["gameSettings"], game_settings)
     write_json(artifacts["gameplaySystems"], gameplay_systems)
     write_json(artifacts["references"], references)
+    write_json(artifacts["conditions"], condition_rows)
+    write_json(artifacts["conditionFunctions"], condition_functions)
 
     result = {
         "status": "PASS",
@@ -1050,6 +1432,23 @@ def main():
         "gameplaySystemCount": len(gameplay_systems),
         "gameplaySystemCounts": dict(sorted(gameplay_counts.items())),
         "referenceCount": len(references),
+        "conditionRowCount": len(condition_rows),
+        "conditionFunctionCount": len(condition_functions),
+        "conditionFunctionUseCount": condition_function_use_count,
+        "conditionFunctionCounts": dict(sorted(condition_function_counts.items(), key=lambda item: int(item[0]))),
+        "conditionFunctionClassCounts": dict(sorted(condition_function_class_counts.items())),
+        "conditionFunctionSemanticClassCounts": dict(sorted(condition_function_semantic_class_counts.items())),
+        "conditionFunctionUnclassified": condition_function_unclassified,
+        "conditionSubrecordCounts": dict(sorted(condition_subrecord_counts.items())),
+        "conditionPayloadSizeCounts": dict(sorted(condition_payload_size_counts.items(), key=lambda item: int(item[0]) if item[0].isdigit() else -1)),
+        "conditionOwnerRecordCounts": dict(sorted(condition_owner_record_counts.items())),
+        "conditionOwnerScopeCounts": dict(sorted(condition_owner_scope_counts.items())),
+        "conditionSchemaCounts": dict(sorted(condition_schema_counts.items())),
+        "conditionUnknownFunctionCount": len(condition_unknown_functions),
+        "conditionUnknownFunctions": condition_unknown_functions,
+        "conditionHighWordNonzeroCount": condition_high_word_nonzero_count,
+        "conditionMalformedCount": condition_malformed_count,
+        "conditionUnaccountedCount": condition_unaccounted_count,
         "artifacts": {key: str(value) for key, value in artifacts.items()},
     }
     write_json(artifacts["result"], result)
@@ -1065,6 +1464,8 @@ def main():
         "gameSettings",
         "gameplaySystems",
         "references",
+        "conditions",
+        "conditionFunctions",
         "result",
     ):
         proof_line(f"{key}: {artifacts[key]}")
@@ -1074,7 +1475,9 @@ def main():
         "plugins={plugins} records={records} quests={quests} questStages={questStages} "
         "questStageLogs={questStageLogs} questStageTexts={questStageTexts} questObjectives={questObjectives} "
         "questObjectiveTargets={questObjectiveTargets} dialogueRows={dialogue} scripts={scripts} "
-        "globals={globals} gameSettings={settings} gameplaySystems={gameplay} references={references}".format(
+        "globals={globals} gameSettings={settings} gameplaySystems={gameplay} references={references} "
+        "conditionRows={conditionRows} conditionFunctions={conditionFunctions} conditionUnknownFunctions={unknown} "
+        "conditionUnaccounted={unaccounted}".format(
             plugins=len(plugin_ledgers),
             records=total_records,
             quests=len(quests),
@@ -1089,9 +1492,15 @@ def main():
             settings=len(game_settings),
             gameplay=len(gameplay_systems),
             references=len(references),
+            conditionRows=len(condition_rows),
+            conditionFunctions=len(condition_functions),
+            unknown=len(condition_unknown_functions),
+            unaccounted=condition_unaccounted_count,
         )
     )
     proof_line("gameplaySystemCounts=" + json.dumps(dict(sorted(gameplay_counts.items())), sort_keys=True))
+    proof_line("conditionOwnerRecordCounts=" + json.dumps(dict(sorted(condition_owner_record_counts.items())), sort_keys=True))
+    proof_line("conditionOwnerScopeCounts=" + json.dumps(dict(sorted(condition_owner_scope_counts.items())), sort_keys=True))
 
 
 if __name__ == "__main__":
