@@ -122,6 +122,51 @@ def shell_quote(value: str) -> str:
     return "'" + value.replace("'", "''") + "'"
 
 
+def phase_for_category(category: str) -> str:
+    return {
+        "body-skin": "body",
+        "head-skin": "head",
+        "face-organs": "face",
+        "hair-beard": "hair",
+        "equipment-body": "equipment",
+        "weapon": "weapon",
+        "headgear": "headgear",
+        "creature-model": "creature-model",
+        "creature-body": "creature-body",
+        "creature-animation": "creature-animation",
+    }.get(category, category or "full")
+
+
+def selector_arg(name: str, value: str) -> str:
+    return f" -{name} {shell_quote(value)}" if value else ""
+
+
+def viewer_command(
+    actor: str,
+    actor_kind: str,
+    phases: str,
+    *,
+    parts: str = "",
+    part_models: str = "",
+    prop_slots: str = "",
+    prop_models: str = "",
+) -> str:
+    command = (
+        "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/nikami/run-fnv-character-viewer.ps1 "
+        f"-Targets {shell_quote(actor or ('Creature' if actor_kind == 'creature' else 'GSEasyPete'))} "
+        f"-ActorKind {actor_kind} "
+    )
+    if actor_kind == "creature":
+        command += "-CreatureDiagnostics "
+    command += f"-Phases {shell_quote(phases)}"
+    command += selector_arg("ActorKitParts", parts)
+    command += selector_arg("ActorKitPartModels", part_models)
+    command += selector_arg("ActorKitPropSlots", prop_slots)
+    command += selector_arg("ActorKitPropModels", prop_models)
+    command += " -OpenViewer"
+    return command
+
+
 def gate_controls(cases: list[dict[str, Any]], actor: str, actor_kind: str) -> dict[str, Any]:
     gates: list[dict[str, Any]] = []
     for case in cases:
@@ -152,6 +197,13 @@ def gate_controls(cases: list[dict[str, Any]], actor: str, actor_kind: str) -> d
                 "defaultEnabled": True,
                 "models": creature_models(layer),
                 "modelCount": len(creature_models(layer)),
+                "runtimeSelector": {
+                    "parts": layer,
+                    "phase": phase_for_category(layer),
+                    "command": viewer_command(
+                        actor, "creature", phase_for_category(layer), parts=layer
+                    ),
+                },
             }
             for layer in CREATURE_LAYER_ORDER
             if layer != "all"
@@ -163,8 +215,7 @@ def gate_controls(cases: list[dict[str, Any]], actor: str, actor_kind: str) -> d
                 "phase": phase,
                 "controlType": "assembly-phase",
                 "dialogueMouthProof": False,
-                "command": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/nikami/run-fnv-character-viewer.ps1 "
-                f"-Targets {shell_quote(actor or 'Creature')} -ActorKind creature -CreatureDiagnostics -Phases {shell_quote(phase)} -OpenViewer",
+                "command": viewer_command(actor, "creature", phase),
             }
             for phase in ["creature-model", "creature-body", "creature-animation", "creature-full"]
         ]
@@ -175,8 +226,7 @@ def gate_controls(cases: list[dict[str, Any]], actor: str, actor_kind: str) -> d
                 "phase": "creature-animation",
                 "controlType": "animation-proof",
                 "dialogueMouthProof": False,
-                "command": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/nikami/run-fnv-character-viewer.ps1 "
-                f"-Targets {shell_quote(actor or 'Creature')} -ActorKind creature -CreatureDiagnostics -Phases creature-animation -OpenViewer",
+                "command": viewer_command(actor, "creature", "creature-animation"),
             }
             for group in ["idle", "walk", "run", "attack", "hit", "death"]
         ]
@@ -188,6 +238,13 @@ def gate_controls(cases: list[dict[str, Any]], actor: str, actor_kind: str) -> d
                     "category": "creature-model",
                     "label": "Creature Model",
                     "allowAll": True,
+                    "runtimeSelector": {
+                        "parts": "creature-body",
+                        "phase": "creature-body",
+                        "command": viewer_command(
+                            actor, "creature", "creature-body", parts="creature-body"
+                        ),
+                    },
                     "options": unique_dicts(
                         [
                             {
@@ -195,6 +252,18 @@ def gate_controls(cases: list[dict[str, Any]], actor: str, actor_kind: str) -> d
                                 "model": str(item.get("model") or item.get("path") or ""),
                                 "classification": str(item.get("kind", "")),
                                 "sourcePhase": str(item.get("timestamp", "")),
+                                "runtimeSelector": {
+                                    "parts": "creature-body",
+                                    "partModels": str(item.get("model") or item.get("path") or ""),
+                                    "phase": "creature-body",
+                                    "command": viewer_command(
+                                        actor,
+                                        "creature",
+                                        "creature-body",
+                                        parts="creature-body",
+                                        part_models=str(item.get("model") or item.get("path") or ""),
+                                    ),
+                                },
                             }
                             for item in evidence
                             if str(item.get("model") or item.get("path") or "")
@@ -210,14 +279,12 @@ def gate_controls(cases: list[dict[str, Any]], actor: str, actor_kind: str) -> d
                 {
                     "id": "creature-ladder",
                     "label": "Creature Ladder",
-                    "command": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/nikami/run-fnv-character-viewer.ps1 "
-                    f"-Targets {shell_quote(actor or 'Creature')} -ActorKind creature -CreatureDiagnostics -Phases creature-model,creature-body,creature-animation,creature-full -OpenViewer",
+                    "command": viewer_command(actor, "creature", "creature-model,creature-body,creature-animation,creature-full"),
                 },
                 {
                     "id": "creature-animation",
                     "label": "Creature Animation",
-                    "command": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/nikami/run-fnv-character-viewer.ps1 "
-                    f"-Targets {shell_quote(actor or 'Creature')} -ActorKind creature -CreatureDiagnostics -Phases creature-animation -OpenViewer",
+                    "command": viewer_command(actor, "creature", "creature-animation"),
                 },
             ],
         }
@@ -241,6 +308,11 @@ def gate_controls(cases: list[dict[str, Any]], actor: str, actor_kind: str) -> d
                 "defaultEnabled": True,
                 "models": models,
                 "modelCount": len(models),
+                "runtimeSelector": {
+                    "parts": layer,
+                    "phase": phase_for_category(layer),
+                    "command": viewer_command(actor, "npc", phase_for_category(layer), parts=layer),
+                },
             }
         )
 
@@ -251,6 +323,20 @@ def gate_controls(cases: list[dict[str, Any]], actor: str, actor_kind: str) -> d
                 "model": str(gate.get("model", "")),
                 "classification": str(gate.get("classification", "")),
                 "sourcePhase": str(gate.get("phase", "")),
+                "runtimeSelector": {
+                    "parts": category,
+                    "propSlots": category,
+                    "propModels": str(gate.get("model", "")),
+                    "phase": phase_for_category(category),
+                    "command": viewer_command(
+                        actor,
+                        "npc",
+                        phase_for_category(category),
+                        parts=category,
+                        prop_slots=category,
+                        prop_models=str(gate.get("model", "")),
+                    ),
+                },
             }
             for gate in gates
             if gate.get("category") == category and str(gate.get("model", "")) not in {"", "<none>"}
@@ -261,6 +347,18 @@ def gate_controls(cases: list[dict[str, Any]], actor: str, actor_kind: str) -> d
             "label": layer_label(category),
             "allowAll": True,
             "options": unique_dicts(options, "model"),
+            "runtimeSelector": {
+                "parts": category,
+                "propSlots": category,
+                "phase": phase_for_category(category),
+                "command": viewer_command(
+                    actor,
+                    "npc",
+                    phase_for_category(category),
+                    parts=category,
+                    prop_slots=category,
+                ),
+            },
         }
 
     phase_controls = [
@@ -269,8 +367,7 @@ def gate_controls(cases: list[dict[str, Any]], actor: str, actor_kind: str) -> d
             "label": layer_label(phase) if phase in LAYER_ORDER else phase.title(),
             "phase": phase,
             "dialogueMouthProof": phase == "talk",
-            "command": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/nikami/run-fnv-character-viewer.ps1 "
-            f"-Targets {shell_quote(actor or 'GSEasyPete')} -ActorKind npc -Phases {shell_quote(phase)} -OpenViewer",
+            "command": viewer_command(actor, "npc", phase),
         }
         for phase in PHASE_ORDER
         if phase != "full"
@@ -292,20 +389,17 @@ def gate_controls(cases: list[dict[str, Any]], actor: str, actor_kind: str) -> d
             {
                 "id": "full-ladder",
                 "label": "Full Ladder",
-                "command": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/nikami/run-fnv-character-viewer.ps1 "
-                f"-Targets {shell_quote(actor or 'GSEasyPete')} -ActorKind npc -Phases body,head,face,hair,equipment,weapon,headgear,talk -OpenViewer",
+                "command": viewer_command(actor, "npc", "body,head,face,hair,equipment,weapon,headgear,talk"),
             },
             {
                 "id": "headgear-only",
                 "label": "Headgear Only",
-                "command": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/nikami/run-fnv-character-viewer.ps1 "
-                f"-Targets {shell_quote(actor or 'GSEasyPete')} -ActorKind npc -Phases headgear -OpenViewer",
+                "command": viewer_command(actor, "npc", "headgear", parts="headgear", prop_slots="headgear"),
             },
             {
                 "id": "talk-only",
                 "label": "Talk Only",
-                "command": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/nikami/run-fnv-character-viewer.ps1 "
-                f"-Targets {shell_quote(actor or 'GSEasyPete')} -ActorKind npc -Phases talk -OpenViewer",
+                "command": viewer_command(actor, "npc", "talk"),
             },
         ],
     }
@@ -402,6 +496,7 @@ def load_suite(suite_dir: Path) -> dict[str, Any]:
             "bootstrap": raw.get("bootstrap") or {},
             "actorStage": raw.get("actorStage") or {},
             "actorCamera": raw.get("actorCamera") or {},
+            "actorKitSelection": raw.get("actorKitSelection") or {},
             "openmwLog": rel_path(case_dir / "openmw.log", suite_dir),
             "reportJson": rel_path(case_dir / "character-builder-report.json", suite_dir),
             "reportMarkdown": rel_path(case_dir / "character-builder-report.md", suite_dir),
@@ -677,7 +772,7 @@ function filterPartRows(items, textGetter, classGetter) {{
 }}
 function renderControls() {{
   const partHost = document.getElementById("partToggleHost");
-  partHost.innerHTML = (MANIFEST.controls?.partToggles || []).map(t => `<label class="check"><input type="checkbox" data-category="${{esc(t.category)}}" ${{state.enabledLayers[t.category] !== false ? "checked" : ""}}> ${{esc(t.label)}} <span class="label">${{esc(t.modelCount)}} </span></label>`).join("");
+  partHost.innerHTML = (MANIFEST.controls?.partToggles || []).map(t => `<div><label class="check"><input type="checkbox" data-category="${{esc(t.category)}}" ${{state.enabledLayers[t.category] !== false ? "checked" : ""}}> ${{esc(t.label)}} <span class="label">${{esc(t.modelCount)}} </span></label>${{t.runtimeSelector?.command ? `<div class="command">${{esc(t.runtimeSelector.command)}}</div>` : ""}}</div>`).join("");
   partHost.querySelectorAll("input").forEach(input => input.addEventListener("change", () => {{
     state.enabledLayers[input.dataset.category] = input.checked;
     render();
@@ -686,7 +781,10 @@ function renderControls() {{
   const propHost = document.getElementById("propSlotHost");
   propHost.innerHTML = (MANIFEST.controls?.propSlots || []).map(slot => {{
     const options = [`<option value="all">all</option>`].concat((slot.options || []).map(o => `<option value="${{esc(o.model)}}">${{esc(o.model)}}</option>`)).join("");
-    return `<label><span class="label">${{esc(slot.label)}}</span><br><select data-slot="${{esc(slot.id)}}">${{options}}</select></label>`;
+    const selected = state.slotFilters[slot.id] || "all";
+    const selectedOption = (slot.options || []).find(o => String(o.model || "") === selected);
+    const command = selectedOption?.runtimeSelector?.command || slot.runtimeSelector?.command || "";
+    return `<label><span class="label">${{esc(slot.label)}}</span><br><select data-slot="${{esc(slot.id)}}">${{options}}</select></label>${{command ? `<div class="command">${{esc(command)}}</div>` : ""}}`;
   }}).join("");
   propHost.querySelectorAll("select").forEach(select => {{
     select.value = state.slotFilters[select.dataset.slot] || "all";
@@ -738,6 +836,9 @@ function renderCoords(c) {{
   }}
   if (c?.actorCamera && Object.keys(c.actorCamera).length) {{
     caseRows.push(`<tr><td>camera</td><td><code>${{esc(c.actorCamera.angle || c.angle)}}</code></td><td>actor-local</td><td>${{esc(JSON.stringify({{x:c.actorCamera.offsetX,y:c.actorCamera.offsetY,z:c.actorCamera.offsetZ}}))}}</td><td>${{esc(JSON.stringify({{targetZ:c.actorCamera.targetZ,local:c.actorCamera.localOffset}}))}}</td><td>capture</td></tr>`);
+  }}
+  if (c?.actorKitSelection && Object.keys(c.actorKitSelection).length) {{
+    caseRows.push(`<tr><td>actor-kit</td><td><code>runtime selector</code></td><td>parts/slots</td><td>${{esc(JSON.stringify({{parts:c.actorKitSelection.parts,partModels:c.actorKitSelection.partModels}}))}}</td><td>${{esc(JSON.stringify({{propSlots:c.actorKitSelection.propSlots,propModels:c.actorKitSelection.propModels}}))}}</td><td>proof-input</td></tr>`);
   }}
   const boundRows = bounds.map(b => `<tr><td>attachment</td><td><code>${{esc(b.model)}}</code></td><td>${{esc(b.parent)}}</td><td>${{esc(JSON.stringify(b.headRel))}}</td><td>${{esc(JSON.stringify(b.extent))}}</td><td>${{esc(b.verdict)}}</td></tr>`);
   const auditRows = audits.map(a => `<tr><td>runtime</td><td><code>${{esc(a.part)}}</code></td><td>${{esc(a.class)}}</td><td>${{esc(JSON.stringify(a.relLocal))}}</td><td>${{esc(a.distance)}} / ${{esc(a.limit)}}</td><td>${{esc(a.verdict)}}</td></tr>`);
@@ -802,6 +903,7 @@ def actor_kit_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
                 "bootstrap": case.get("bootstrap", {}),
                 "actorStage": case.get("actorStage", {}),
                 "actorCamera": case.get("actorCamera", {}),
+                "actorKitSelection": case.get("actorKitSelection", {}),
                 "openmwLog": case.get("openmwLog", ""),
                 "reportJson": case.get("reportJson", ""),
                 "screenshots": case.get("screenshots", []),

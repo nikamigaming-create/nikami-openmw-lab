@@ -11,6 +11,10 @@ param(
     [ValidateSet("npc", "creature", "auto")]
     [string]$ActorKind = "npc",
     [string[]]$Phases = @("body", "head", "face", "hair", "equipment", "weapon", "headgear", "talk"),
+    [string[]]$ActorKitParts = @(),
+    [string[]]$ActorKitPartModels = @(),
+    [string[]]$ActorKitPropSlots = @(),
+    [string[]]$ActorKitPropModels = @(),
     [int]$RunSeconds = 28,
     [int]$ActorFrame = 520,
     [string]$ScreenshotFrames = "760",
@@ -65,6 +69,19 @@ function Normalize-List([string[]]$Values, [string]$Name) {
     }
     if ($items.Count -eq 0) { throw "No $Name selected." }
     return @($items)
+}
+
+function Join-OptionalSelectorList([string[]]$Values) {
+    $items = New-Object "System.Collections.Generic.List[string]"
+    foreach ($value in $Values) {
+        foreach ($part in ($value -split ",")) {
+            $trimmed = $part.Trim()
+            if (![string]::IsNullOrWhiteSpace($trimmed)) {
+                $items.Add($trimmed)
+            }
+        }
+    }
+    return ($items -join ",")
 }
 
 function Get-SuiteDirectories {
@@ -210,6 +227,10 @@ function Start-ViewerServer([string]$RootDirectory, [string]$IndexPath, [string]
 
 $Targets = Normalize-List $Targets "targets"
 $Phases = Normalize-List $Phases "phases"
+$ActorKitPartsCsv = Join-OptionalSelectorList $ActorKitParts
+$ActorKitPartModelsCsv = Join-OptionalSelectorList $ActorKitPartModels
+$ActorKitPropSlotsCsv = Join-OptionalSelectorList $ActorKitPropSlots
+$ActorKitPropModelsCsv = Join-OptionalSelectorList $ActorKitPropModels
 $ViewerRoot = Join-Path $ProofRoot "fnv-character-viewer"
 New-Item -ItemType Directory -Force -Path $ViewerRoot | Out-Null
 $RunStamp = Get-Date -Format "yyyyMMdd_HHmmss"
@@ -223,6 +244,10 @@ Write-Host "Targets: $($Targets -join ',')"
 Write-Host "ActorKind: $ActorKind"
 Write-Host "CreatureDiagnostics: $($CreatureDiagnostics -or $ActorKind -ieq 'creature')"
 Write-Host "Phases: $($Phases -join ',')"
+Write-Host "ActorKitParts: $ActorKitPartsCsv"
+Write-Host "ActorKitPartModels: $ActorKitPartModelsCsv"
+Write-Host "ActorKitPropSlots: $ActorKitPropSlotsCsv"
+Write-Host "ActorKitPropModels: $ActorKitPropModelsCsv"
 Write-Host "BootstrapCell: $BootstrapCell"
 Write-Host "BootstrapPosition: $BootstrapX,$BootstrapY,$BootstrapZ"
 Write-Host "ActorStagePosition: $ActorStageX,$ActorStageY,$ActorStageZ"
@@ -291,6 +316,10 @@ else {
             ActorViewOffsetZ = $ActorViewOffsetZ
             ActorViewTargetZ = $ActorViewTargetZ
         }
+        if (![string]::IsNullOrWhiteSpace($ActorKitPartsCsv)) { $builderArgs.ActorKitParts = $ActorKitPartsCsv }
+        if (![string]::IsNullOrWhiteSpace($ActorKitPartModelsCsv)) { $builderArgs.ActorKitPartModels = $ActorKitPartModelsCsv }
+        if (![string]::IsNullOrWhiteSpace($ActorKitPropSlotsCsv)) { $builderArgs.ActorKitPropSlots = $ActorKitPropSlotsCsv }
+        if (![string]::IsNullOrWhiteSpace($ActorKitPropModelsCsv)) { $builderArgs.ActorKitPropModels = $ActorKitPropModelsCsv }
         if (![string]::IsNullOrWhiteSpace($FnvConfigData)) { $builderArgs.FnvConfigData = $FnvConfigData }
         if (![string]::IsNullOrWhiteSpace($ExtraOsgPluginDir)) { $builderArgs.ExtraOsgPluginDir = $ExtraOsgPluginDir }
         if ($CreatureDiagnostics -or $ActorKind -ieq "creature") { $builderArgs.CreatureDiagnostics = $true }

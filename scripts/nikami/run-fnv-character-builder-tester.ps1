@@ -11,6 +11,10 @@ param(
     [ValidateSet("npc", "creature", "auto")]
     [string]$ActorKind = "npc",
     [string[]]$Phases = @("body", "head", "face", "hair", "equipment", "weapon", "headgear", "talk"),
+    [string[]]$ActorKitParts = @(),
+    [string[]]$ActorKitPartModels = @(),
+    [string[]]$ActorKitPropSlots = @(),
+    [string[]]$ActorKitPropModels = @(),
     [int]$RunSeconds = 28,
     [int]$ActorFrame = 520,
     [string]$ScreenshotFrames = "760",
@@ -96,6 +100,19 @@ function ConvertTo-SafeName([string]$Text) {
     return $safe
 }
 
+function Join-OptionalSelectorList([string[]]$Values) {
+    $items = New-Object "System.Collections.Generic.List[string]"
+    foreach ($value in $Values) {
+        foreach ($part in ($value -split ",")) {
+            $trimmed = $part.Trim()
+            if (![string]::IsNullOrWhiteSpace($trimmed)) {
+                $items.Add($trimmed)
+            }
+        }
+    }
+    return ($items -join ",")
+}
+
 $diagonal = $ActorViewDistance * 0.7071067811865476
 $Angles = @(
     [pscustomobject]@{ Name = "front"; OffsetX = $ActorViewDistance; OffsetY = 0.0 },
@@ -120,6 +137,10 @@ if ($NormalizedPhases.Count -eq 0) {
     throw "No character builder phases selected."
 }
 $Phases = @($NormalizedPhases)
+$ActorKitPartsCsv = Join-OptionalSelectorList $ActorKitParts
+$ActorKitPartModelsCsv = Join-OptionalSelectorList $ActorKitPartModels
+$ActorKitPropSlotsCsv = Join-OptionalSelectorList $ActorKitPropSlots
+$ActorKitPropModelsCsv = Join-OptionalSelectorList $ActorKitPropModels
 
 Write-SuiteLine "FNV character builder tester $Stamp"
 Write-SuiteLine "RepoRoot: $RepoRoot"
@@ -128,6 +149,10 @@ Write-SuiteLine "ActorTarget: $ActorTarget"
 Write-SuiteLine "ActorKind: $ActorKind"
 Write-SuiteLine "CreatureDiagnostics: $($CreatureDiagnostics -or $ActorKind -ieq 'creature')"
 Write-SuiteLine "Phases: $($Phases -join ',')"
+Write-SuiteLine "ActorKitParts: $ActorKitPartsCsv"
+Write-SuiteLine "ActorKitPartModels: $ActorKitPartModelsCsv"
+Write-SuiteLine "ActorKitPropSlots: $ActorKitPropSlotsCsv"
+Write-SuiteLine "ActorKitPropModels: $ActorKitPropModelsCsv"
 Write-SuiteLine "Angles: $(@($Angles | ForEach-Object { $_.Name }) -join ',')"
 Write-SuiteLine "BootstrapCell: $BootstrapCell"
 Write-SuiteLine "BootstrapPosition: $BootstrapX,$BootstrapY,$BootstrapZ"
@@ -188,6 +213,10 @@ foreach ($phase in $Phases) {
             FnvPartMatrixAudit = $true
             CharacterBuilderPhase = $phase
         }
+        if (![string]::IsNullOrWhiteSpace($ActorKitPartsCsv)) { $proofArgs.ActorKitParts = $ActorKitPartsCsv }
+        if (![string]::IsNullOrWhiteSpace($ActorKitPartModelsCsv)) { $proofArgs.ActorKitPartModels = $ActorKitPartModelsCsv }
+        if (![string]::IsNullOrWhiteSpace($ActorKitPropSlotsCsv)) { $proofArgs.ActorKitPropSlots = $ActorKitPropSlotsCsv }
+        if (![string]::IsNullOrWhiteSpace($ActorKitPropModelsCsv)) { $proofArgs.ActorKitPropModels = $ActorKitPropModelsCsv }
         if (![string]::IsNullOrWhiteSpace($FnvConfigData)) { $proofArgs.FnvConfigData = $FnvConfigData }
         if (![string]::IsNullOrWhiteSpace($ExtraOsgPluginDir)) { $proofArgs.ExtraOsgPluginDir = $ExtraOsgPluginDir }
         if ($CreatureDiagnostics -or $ActorKind -ieq "creature") { $proofArgs.CreatureDiagnostics = $true }
@@ -261,6 +290,12 @@ foreach ($phase in $Phases) {
                 offsetZ = $ActorViewOffsetZ
                 targetZ = $ActorViewTargetZ
                 localOffset = $true
+            }
+            actorKitSelection = [pscustomobject][ordered]@{
+                parts = $ActorKitPartsCsv
+                partModels = $ActorKitPartModelsCsv
+                propSlots = $ActorKitPropSlotsCsv
+                propModels = $ActorKitPropModelsCsv
             }
             failures = if ($null -ne $reportData) { @($reportData.failures) } else { @("report parser did not produce JSON") }
             screenshots = if ($null -ne $reportData) { @($reportData.screenshots) } else { @() }

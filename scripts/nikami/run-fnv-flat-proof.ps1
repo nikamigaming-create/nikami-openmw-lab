@@ -65,6 +65,10 @@ param(
     [double]$ActorVisibleHandMaxDistance = 30.0,
     [switch]$FnvPartMatrixAudit,
     [string]$CharacterBuilderPhase = "",
+    [string[]]$ActorKitParts = @(),
+    [string[]]$ActorKitPartModels = @(),
+    [string[]]$ActorKitPropSlots = @(),
+    [string[]]$ActorKitPropModels = @(),
     [switch]$CharacterBuilderTalk,
     [switch]$CreatureDiagnostics,
     [switch]$FnvDisableNativeAnimationCallbacks,
@@ -131,6 +135,19 @@ function Clear-ProofEnv([hashtable]$Previous, [string]$Name) {
         $Previous[$Name] = [Environment]::GetEnvironmentVariable($Name, "Process")
     }
     [Environment]::SetEnvironmentVariable($Name, $null, "Process")
+}
+
+function Join-SelectorList([string[]]$Values) {
+    $items = New-Object "System.Collections.Generic.List[string]"
+    foreach ($value in $Values) {
+        foreach ($part in ($value -split ",")) {
+            $trimmed = $part.Trim()
+            if (![string]::IsNullOrWhiteSpace($trimmed)) {
+                $items.Add($trimmed)
+            }
+        }
+    }
+    return ($items -join ",")
 }
 
 function Restore-ProofEnv([hashtable]$Previous) {
@@ -1379,6 +1396,10 @@ if (Test-Path -LiteralPath $ScreenshotDir) {
 
 $previousEnv = @{}
 $probePoints = Get-ProbePointString $TerrainProbePoints $TerrainProbeGrid
+$ActorKitPartsCsv = Join-SelectorList $ActorKitParts
+$ActorKitPartModelsCsv = Join-SelectorList $ActorKitPartModels
+$ActorKitPropSlotsCsv = Join-SelectorList $ActorKitPropSlots
+$ActorKitPropModelsCsv = Join-SelectorList $ActorKitPropModels
 try {
     Set-ProofEnv $previousEnv "OPENMW_PROOF_SCREENSHOT_FRAME" $ScreenshotFrames
     Set-ProofEnv $previousEnv "OPENMW_FNV_TERRAIN_PROBE_POINTS" $probePoints
@@ -1426,6 +1447,10 @@ try {
     if ($RequirePlayerTerrainSupport) { Set-ProofEnv $previousEnv "OPENMW_FNV_FLOOR_WATCHDOG" "1" }
     if ($FnvPartMatrixAudit) { Set-ProofEnv $previousEnv "OPENMW_FNV_PART_MATRIX_AUDIT" "1" }
     Set-ProofEnv $previousEnv "OPENMW_FNV_CHARACTER_BUILDER_PHASE" $CharacterBuilderPhase
+    Set-ProofEnv $previousEnv "OPENMW_FNV_ACTOR_KIT_PARTS" $ActorKitPartsCsv
+    Set-ProofEnv $previousEnv "OPENMW_FNV_ACTOR_KIT_PART_MODELS" $ActorKitPartModelsCsv
+    Set-ProofEnv $previousEnv "OPENMW_FNV_ACTOR_KIT_PROP_SLOTS" $ActorKitPropSlotsCsv
+    Set-ProofEnv $previousEnv "OPENMW_FNV_ACTOR_KIT_PROP_MODELS" $ActorKitPropModelsCsv
     if ($CharacterBuilderTalk -or $CharacterBuilderPhase -ieq "talk" -or $CharacterBuilderPhase -ieq "dialogue") {
         Set-ProofEnv $previousEnv "OPENMW_FNV_PROOF_MOUTH_FORCE_OPEN" "1"
     }
@@ -1530,6 +1555,10 @@ try {
     Write-ProofLine "RequireActorVisibleHandGeometry: $RequireActorVisibleHandGeometry"
     Write-ProofLine "ActorVisibleHandMaxDistance: $ActorVisibleHandMaxDistance"
     Write-ProofLine "CharacterBuilderPhase: $CharacterBuilderPhase"
+    Write-ProofLine "ActorKitParts: $ActorKitPartsCsv"
+    Write-ProofLine "ActorKitPartModels: $ActorKitPartModelsCsv"
+    Write-ProofLine "ActorKitPropSlots: $ActorKitPropSlotsCsv"
+    Write-ProofLine "ActorKitPropModels: $ActorKitPropModelsCsv"
     Write-ProofLine "CharacterBuilderTalk: $CharacterBuilderTalk"
     Write-ProofLine "ActorTarget: $ActorTarget"
     Write-ProofLine "FnvProofTargetNpc: $ActorTarget"

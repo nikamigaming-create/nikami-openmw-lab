@@ -57,6 +57,168 @@ namespace MWRender
                 || lowered.find("\\skeleton") != std::string::npos;
         }
 
+        std::string trimActorKitToken(std::string token)
+        {
+            while (!token.empty()
+                && (token.front() == ' ' || token.front() == '\t' || token.front() == '\r'
+                    || token.front() == '\n' || token.front() == '"' || token.front() == '\''))
+                token.erase(token.begin());
+            while (!token.empty()
+                && (token.back() == ' ' || token.back() == '\t' || token.back() == '\r'
+                    || token.back() == '\n' || token.back() == '"' || token.back() == '\''))
+                token.pop_back();
+            return token;
+        }
+
+        std::string normalizeActorKitCategoryToken(std::string_view value)
+        {
+            std::string token = toLowerAscii(trimActorKitToken(std::string(value)));
+            std::replace(token.begin(), token.end(), '_', '-');
+            return token;
+        }
+
+        std::string normalizeActorKitModelToken(std::string_view value)
+        {
+            std::string token = toLowerAscii(trimActorKitToken(std::string(value)));
+            std::replace(token.begin(), token.end(), '/', '\\');
+            return token;
+        }
+
+        std::vector<std::string> getActorKitCategoryTokens(const char* envName)
+        {
+            std::vector<std::string> tokens;
+            const char* raw = std::getenv(envName);
+            if (raw == nullptr || raw[0] == '\0')
+                return tokens;
+
+            std::string current;
+            for (const char c : std::string_view(raw))
+            {
+                if (c == ',' || c == ';' || c == '|' || c == '\r' || c == '\n')
+                {
+                    const std::string token = normalizeActorKitCategoryToken(current);
+                    if (!token.empty())
+                        tokens.push_back(token);
+                    current.clear();
+                    continue;
+                }
+                current.push_back(c);
+            }
+            const std::string token = normalizeActorKitCategoryToken(current);
+            if (!token.empty())
+                tokens.push_back(token);
+            return tokens;
+        }
+
+        std::vector<std::string> getActorKitModelTokens(const char* envName)
+        {
+            std::vector<std::string> tokens;
+            const char* raw = std::getenv(envName);
+            if (raw == nullptr || raw[0] == '\0')
+                return tokens;
+
+            std::string current;
+            for (const char c : std::string_view(raw))
+            {
+                if (c == ',' || c == ';' || c == '|' || c == '\r' || c == '\n')
+                {
+                    const std::string token = normalizeActorKitModelToken(current);
+                    if (!token.empty())
+                        tokens.push_back(token);
+                    current.clear();
+                    continue;
+                }
+                current.push_back(c);
+            }
+            const std::string token = normalizeActorKitModelToken(current);
+            if (!token.empty())
+                tokens.push_back(token);
+            return tokens;
+        }
+
+        bool actorKitAllToken(std::string_view token)
+        {
+            return token == "all" || token == "*";
+        }
+
+        std::string getCreatureBuilderPhase()
+        {
+            const char* value = std::getenv("OPENMW_FNV_CHARACTER_BUILDER_PHASE");
+            if (value == nullptr || value[0] == '\0')
+                return "full";
+            return normalizeActorKitCategoryToken(value);
+        }
+
+        int getCreatureBuilderRank(std::string_view value)
+        {
+            const std::string token = normalizeActorKitCategoryToken(value);
+            if (token == "creature-model" || token == "model")
+                return 10;
+            if (token == "creature-body" || token == "body")
+                return 20;
+            if (token == "creature-animation" || token == "animation" || token == "animate")
+                return 30;
+            if (token == "creature-full" || token == "full")
+                return 100;
+            return 100;
+        }
+
+        bool actorKitCategoryTokenMatches(std::string_view token, std::string_view category)
+        {
+            if (actorKitAllToken(token))
+                return true;
+            const std::string normalizedCategory = normalizeActorKitCategoryToken(category);
+            if (token == normalizedCategory)
+                return true;
+            if (token == "creature" && normalizedCategory.starts_with("creature-"))
+                return true;
+            return getCreatureBuilderRank(token) == getCreatureBuilderRank(category)
+                && getCreatureBuilderRank(token) != 100;
+        }
+
+        bool actorKitCategoryAllows(std::string_view category)
+        {
+            if (getCreatureBuilderRank(getCreatureBuilderPhase()) < getCreatureBuilderRank(category))
+                return false;
+
+            const std::vector<std::string> partTokens = getActorKitCategoryTokens("OPENMW_FNV_ACTOR_KIT_PARTS");
+            if (partTokens.empty())
+                return true;
+
+            return std::any_of(partTokens.begin(), partTokens.end(),
+                [&](const std::string& token) { return actorKitCategoryTokenMatches(token, category); });
+        }
+
+        std::string actorKitModelBasename(std::string_view model)
+        {
+            const std::string normalized = normalizeActorKitModelToken(model);
+            const std::size_t slash = normalized.find_last_of('\\');
+            return slash == std::string::npos ? normalized : normalized.substr(slash + 1);
+        }
+
+        bool actorKitModelTokenMatches(std::string_view token, std::string_view model)
+        {
+            if (actorKitAllToken(token))
+                return true;
+            const std::string normalizedModel = normalizeActorKitModelToken(model);
+            return token == normalizedModel || token == actorKitModelBasename(normalizedModel);
+        }
+
+        bool actorKitModelAllows(std::string_view model)
+        {
+            const std::vector<std::string> modelTokens = getActorKitModelTokens("OPENMW_FNV_ACTOR_KIT_PART_MODELS");
+            if (modelTokens.empty())
+                return true;
+
+            return std::any_of(modelTokens.begin(), modelTokens.end(),
+                [&](const std::string& token) { return actorKitModelTokenMatches(token, model); });
+        }
+
+        bool creatureActorKitAllows(std::string_view category, std::string_view model)
+        {
+            return actorKitCategoryAllows(category) && actorKitModelAllows(model);
+        }
+
         bool findCreatureKf(const VFS::Manager& vfs, const std::string& path, std::string& normalizedPath)
         {
             VFS::Path::Normalized normalized(path);
@@ -421,6 +583,24 @@ namespace MWRender
                 {
                     if (bodyNif.empty())
                         continue;
+                    if (!creatureActorKitAllows("creature-body", bodyNif))
+                    {
+                        Log(Debug::Info) << "FNV/ESM4 CHARACTER BUILDER skip"
+                                         << " phase=" << getCreatureBuilderPhase()
+                                         << " category=creature-body"
+                                         << " actor=" << ref->mBase->mEditorId
+                                         << " ref=" << mPtr.getCellRef().getRefId()
+                                         << " model=" << bodyNif
+                                         << " classification=intentionally-excluded-with-proof";
+                        continue;
+                    }
+                    Log(Debug::Info) << "FNV/ESM4 CHARACTER BUILDER include"
+                                     << " phase=" << getCreatureBuilderPhase()
+                                     << " category=creature-body"
+                                     << " actor=" << ref->mBase->mEditorId
+                                     << " ref=" << mPtr.getCellRef().getRefId()
+                                     << " model=" << bodyNif
+                                     << " classification=runtime-supported";
                     const VFS::Path::Normalized bodyPath = correctCreatureBodyPath(bodyNif);
                     osg::ref_ptr<osg::Node> bodyNode
                         = resourceSystem->getSceneManager()->getInstance(bodyPath, mObjectRoot);

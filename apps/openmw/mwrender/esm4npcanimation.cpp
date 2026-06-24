@@ -3210,8 +3210,20 @@ namespace MWRender
 
         bool isFalloutCharacterBuilderActive()
         {
-            const char* value = std::getenv("OPENMW_FNV_CHARACTER_BUILDER_PHASE");
-            return value != nullptr && value[0] != '\0';
+            static constexpr const char* envNames[] = {
+                "OPENMW_FNV_CHARACTER_BUILDER_PHASE",
+                "OPENMW_FNV_ACTOR_KIT_PARTS",
+                "OPENMW_FNV_ACTOR_KIT_PART_MODELS",
+                "OPENMW_FNV_ACTOR_KIT_PROP_SLOTS",
+                "OPENMW_FNV_ACTOR_KIT_PROP_MODELS",
+            };
+            for (const char* envName : envNames)
+            {
+                const char* value = std::getenv(envName);
+                if (value != nullptr && value[0] != '\0')
+                    return true;
+            }
+            return false;
         }
 
         int getFalloutCharacterBuilderRank(std::string_view value)
@@ -3240,13 +3252,190 @@ namespace MWRender
             return 100;
         }
 
+        std::string trimFalloutActorKitToken(std::string token)
+        {
+            while (!token.empty()
+                && (token.front() == ' ' || token.front() == '\t' || token.front() == '\r'
+                    || token.front() == '\n' || token.front() == '"' || token.front() == '\''))
+                token.erase(token.begin());
+            while (!token.empty()
+                && (token.back() == ' ' || token.back() == '\t' || token.back() == '\r'
+                    || token.back() == '\n' || token.back() == '"' || token.back() == '\''))
+                token.pop_back();
+            return token;
+        }
+
+        std::string normalizeFalloutActorKitCategoryToken(std::string_view value)
+        {
+            std::string token = trimFalloutActorKitToken(std::string(value));
+            Misc::StringUtils::lowerCaseInPlace(token);
+            std::replace(token.begin(), token.end(), '_', '-');
+            return token;
+        }
+
+        std::string normalizeFalloutActorKitModelToken(std::string_view value)
+        {
+            std::string token = trimFalloutActorKitToken(std::string(value));
+            Misc::StringUtils::lowerCaseInPlace(token);
+            std::replace(token.begin(), token.end(), '/', '\\');
+            return token;
+        }
+
+        std::vector<std::string> getFalloutActorKitCategoryTokens(const char* envName)
+        {
+            std::vector<std::string> tokens;
+            const char* raw = std::getenv(envName);
+            if (raw == nullptr || raw[0] == '\0')
+                return tokens;
+
+            std::string current;
+            for (const char c : std::string_view(raw))
+            {
+                if (c == ',' || c == ';' || c == '|' || c == '\r' || c == '\n')
+                {
+                    const std::string token = normalizeFalloutActorKitCategoryToken(current);
+                    if (!token.empty())
+                        tokens.push_back(token);
+                    current.clear();
+                    continue;
+                }
+                current.push_back(c);
+            }
+            const std::string token = normalizeFalloutActorKitCategoryToken(current);
+            if (!token.empty())
+                tokens.push_back(token);
+            return tokens;
+        }
+
+        std::vector<std::string> getFalloutActorKitModelTokens(const char* envName)
+        {
+            std::vector<std::string> tokens;
+            const char* raw = std::getenv(envName);
+            if (raw == nullptr || raw[0] == '\0')
+                return tokens;
+
+            std::string current;
+            for (const char c : std::string_view(raw))
+            {
+                if (c == ',' || c == ';' || c == '|' || c == '\r' || c == '\n')
+                {
+                    const std::string token = normalizeFalloutActorKitModelToken(current);
+                    if (!token.empty())
+                        tokens.push_back(token);
+                    current.clear();
+                    continue;
+                }
+                current.push_back(c);
+            }
+            const std::string token = normalizeFalloutActorKitModelToken(current);
+            if (!token.empty())
+                tokens.push_back(token);
+            return tokens;
+        }
+
+        bool isFalloutActorKitAllToken(std::string_view token)
+        {
+            return token == "all" || token == "*";
+        }
+
+        bool isFalloutActorKitPropCategory(std::string_view category)
+        {
+            return Misc::StringUtils::ciEqual(category, "equipment-body")
+                || Misc::StringUtils::ciEqual(category, "weapon")
+                || Misc::StringUtils::ciEqual(category, "headgear");
+        }
+
+        bool falloutActorKitCategoryTokenMatches(std::string_view token, std::string_view category)
+        {
+            if (isFalloutActorKitAllToken(token))
+                return true;
+
+            const std::string normalizedCategory = normalizeFalloutActorKitCategoryToken(category);
+            if (token == normalizedCategory)
+                return true;
+
+            if (token == "body-equipment" && normalizedCategory == "equipment-body")
+                return true;
+
+            const int tokenRank = getFalloutCharacterBuilderRank(token);
+            return tokenRank != 100 && tokenRank == getFalloutCharacterBuilderRank(category);
+        }
+
+        bool falloutActorKitCategoryAllows(std::string_view category)
+        {
+            const std::vector<std::string> partTokens = getFalloutActorKitCategoryTokens("OPENMW_FNV_ACTOR_KIT_PARTS");
+            if (!partTokens.empty()
+                && std::none_of(partTokens.begin(), partTokens.end(),
+                    [&](const std::string& token) { return falloutActorKitCategoryTokenMatches(token, category); }))
+                return false;
+
+            if (isFalloutActorKitPropCategory(category))
+            {
+                const std::vector<std::string> slotTokens
+                    = getFalloutActorKitCategoryTokens("OPENMW_FNV_ACTOR_KIT_PROP_SLOTS");
+                if (!slotTokens.empty()
+                    && std::none_of(slotTokens.begin(), slotTokens.end(),
+                        [&](const std::string& token) { return falloutActorKitCategoryTokenMatches(token, category); }))
+                    return false;
+            }
+
+            return true;
+        }
+
+        std::string falloutActorKitModelBasename(std::string_view model)
+        {
+            const std::string normalized = normalizeFalloutActorKitModelToken(model);
+            const std::size_t slash = normalized.find_last_of('\\');
+            return slash == std::string::npos ? normalized : normalized.substr(slash + 1);
+        }
+
+        bool falloutActorKitModelTokenMatches(std::string_view token, std::string_view model)
+        {
+            if (isFalloutActorKitAllToken(token))
+                return true;
+
+            const std::string normalizedModel = normalizeFalloutActorKitModelToken(model);
+            if (token == normalizedModel)
+                return true;
+
+            return token == falloutActorKitModelBasename(normalizedModel);
+        }
+
+        bool falloutActorKitModelListAllows(const char* envName, std::string_view model)
+        {
+            const std::vector<std::string> modelTokens = getFalloutActorKitModelTokens(envName);
+            if (modelTokens.empty())
+                return true;
+
+            return std::any_of(modelTokens.begin(), modelTokens.end(),
+                [&](const std::string& token) { return falloutActorKitModelTokenMatches(token, model); });
+        }
+
+        bool falloutActorKitModelAllows(std::string_view category, std::string_view model)
+        {
+            if (!falloutActorKitModelListAllows("OPENMW_FNV_ACTOR_KIT_PART_MODELS", model))
+                return false;
+
+            if (isFalloutActorKitPropCategory(category)
+                && !falloutActorKitModelListAllows("OPENMW_FNV_ACTOR_KIT_PROP_MODELS", model))
+                return false;
+
+            return true;
+        }
+
         bool falloutCharacterBuilderAllows(std::string_view category)
         {
             if (!isFalloutCharacterBuilderActive())
                 return true;
 
             const std::string phase = getFalloutCharacterBuilderPhase();
-            return getFalloutCharacterBuilderRank(phase) >= getFalloutCharacterBuilderRank(category);
+            return getFalloutCharacterBuilderRank(phase) >= getFalloutCharacterBuilderRank(category)
+                && falloutActorKitCategoryAllows(category);
+        }
+
+        bool falloutCharacterBuilderAllows(std::string_view category, std::string_view model)
+        {
+            return falloutCharacterBuilderAllows(category) && falloutActorKitModelAllows(category, model);
         }
 
         void logFalloutCharacterBuilderGate(bool included, std::string_view category, std::string_view model,
@@ -5742,7 +5931,7 @@ namespace MWRender
 
         for (const ESM4::Race::BodyPart& bodyPart : (isFemale ? race->mBodyPartsFemale : race->mBodyPartsMale))
         {
-            if (!falloutCharacterBuilderAllows("body-skin"))
+            if (!falloutCharacterBuilderAllows("body-skin", bodyPart.mesh))
             {
                 logFalloutCharacterBuilderGate(false, "body-skin", bodyPart.mesh, mPtr, traits);
                 continue;
@@ -5830,7 +6019,7 @@ namespace MWRender
             const bool headSurface = isFonvHeadSurfacePart(i);
             const std::string_view builderCategory = headSurface ? std::string_view("head-skin")
                 : std::string_view("face-organs");
-            if (!falloutCharacterBuilderAllows(builderCategory))
+            if (!falloutCharacterBuilderAllows(builderCategory, headPart.mesh))
             {
                 if (i < 8)
                 {
@@ -5929,7 +6118,7 @@ namespace MWRender
             const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
             if (const ESM4::Hair* hair = store->get<ESM4::Hair>().search(traits.mHair))
             {
-                if (!falloutCharacterBuilderAllows("hair-beard"))
+                if (!falloutCharacterBuilderAllows("hair-beard", hair->mModel))
                 {
                     logFalloutCharacterBuilderGate(false, "hair-beard", hair->mModel, mPtr, traits);
                     Log(Debug::Info) << "FNV/ESM4 diag: skipped fallback FONV NPC hair "
@@ -6034,7 +6223,7 @@ namespace MWRender
                 Log(Debug::Info) << "FNV/ESM4 ASSET PROOF GSEasyPete: armor " << armor->mEditorId
                                  << " form=" << ESM::RefId(armor->mId) << " model=" << model << " flags=0x"
                                  << std::hex << armor->mArmorFlags << std::dec << " layer=" << layer;
-            if (!falloutCharacterBuilderAllows(builderCategory))
+            if (!falloutCharacterBuilderAllows(builderCategory, model))
             {
                 logFalloutCharacterBuilderGate(false, builderCategory, model, mPtr, traits);
                 Log(Debug::Info) << "FNV/ESM4 diag: skipped armor " << armor->mEditorId
@@ -6069,7 +6258,7 @@ namespace MWRender
                 Log(Debug::Info) << "FNV/ESM4 ASSET PROOF GSEasyPete: clothing " << clothing->mEditorId
                                  << " form=" << ESM::RefId(clothing->mId) << " model=" << model << " flags=0x"
                                  << std::hex << clothing->mClothingFlags << std::dec << " layer=" << layer;
-            if (!falloutCharacterBuilderAllows(builderCategory))
+            if (!falloutCharacterBuilderAllows(builderCategory, model))
             {
                 logFalloutCharacterBuilderGate(false, builderCategory, model, mPtr, traits);
                 Log(Debug::Info) << "FNV/ESM4 diag: skipped clothing " << clothing->mEditorId
@@ -6107,7 +6296,7 @@ namespace MWRender
         {
             const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
             osg::ref_ptr<osg::Node> attached;
-            if (!falloutCharacterBuilderAllows("weapon"))
+            if (!falloutCharacterBuilderAllows("weapon", weapon->mModel))
             {
                 logFalloutCharacterBuilderGate(false, "weapon", weapon->mModel, mPtr, traits);
                 Log(Debug::Info) << "FNV/ESM4 diag: skipped equipped NPC weapon " << weapon->mEditorId
@@ -6170,7 +6359,7 @@ namespace MWRender
             if (miscPart || !partTypeAlreadyUsed)
             {
                 const std::string_view builderCategory = "hair-beard";
-                if (!falloutCharacterBuilderAllows(builderCategory))
+                if (!falloutCharacterBuilderAllows(builderCategory, part->mModel))
                 {
                     logFalloutCharacterBuilderGate(false, builderCategory, part->mModel, mPtr, traits);
                     Log(Debug::Info) << "FNV/ESM4 diag: skipped NPC head part " << part->mEditorId
@@ -6224,7 +6413,7 @@ namespace MWRender
                     }
                     const bool useExtraHatHairVariant
                         = traits.mIsFONV && shouldUseFonvHatCompatibleHairVariant(*extraPart, coveredBodySlots);
-                    if (!falloutCharacterBuilderAllows(builderCategory))
+                    if (!falloutCharacterBuilderAllows(builderCategory, extraPart->mModel))
                     {
                         logFalloutCharacterBuilderGate(false, builderCategory, extraPart->mModel, mPtr, traits);
                         Log(Debug::Info) << "FNV/ESM4 diag: skipped extra NPC head part "
