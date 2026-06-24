@@ -26,6 +26,7 @@
 
 #include <vector>
 
+#include "../mwmechanics/character.hpp"
 #include "../mwmechanics/weapontype.hpp"
 
 #include "../mwbase/environment.hpp"
@@ -557,6 +558,50 @@ namespace MWRender
                              << " present=[" << present.str() << "]"
                              << " missing=[" << missing.str() << "]";
         }
+
+        std::string getActorKitAnimationGroup()
+        {
+            const char* value = std::getenv("OPENMW_FNV_ACTOR_KIT_ANIMATION_GROUP");
+            if (value == nullptr || value[0] == '\0')
+                return {};
+            return normalizeActorKitCategoryToken(value);
+        }
+
+        bool isActorKitCreatureAnimationTarget(const MWWorld::Ptr& ptr, const ESM4::Creature& creature)
+        {
+            const char* target = std::getenv("OPENMW_PROOF_ACTOR_TARGET");
+            if (target == nullptr || target[0] == '\0')
+                target = std::getenv("OPENMW_FNV_PROOF_TARGET_NPC");
+            if (target == nullptr || target[0] == '\0')
+                return true;
+
+            const std::string normalizedTarget = toLowerAscii(target);
+            std::string refId;
+            if (ptr.getCell() != nullptr)
+                refId = toLowerAscii(ptr.getCellRef().getRefNum().toString("FormId:"));
+
+            return toLowerAscii(creature.mEditorId) == normalizedTarget
+                || ESM::RefId(creature.mId).toDebugString() == target
+                || (!refId.empty() && refId == normalizedTarget);
+        }
+
+        void requestCreatureActorKitAnimation(
+            Animation& animation, const MWWorld::Ptr& ptr, const ESM4::Creature& creature)
+        {
+            const std::string group = getActorKitAnimationGroup();
+            if (group.empty() || !isActorKitCreatureAnimationTarget(ptr, creature))
+                return;
+
+            const bool available = animation.hasAnimation(group);
+            Log(Debug::Info) << "FNV/ESM4 proof: actor-kit animation request actor=" << creature.mEditorId
+                             << " ref=" << ptr.getCellRef().getRefId()
+                             << " group=" << group
+                             << " available=" << available
+                             << " runtime=" << (available ? "runtime-supported" : "known-blocked");
+
+            animation.play(group, MWMechanics::Priority_Scripted, BlendMask_All, false, 1.f, "start", "stop", 0.f, 0,
+                true);
+        }
     }
 
     CreatureAnimation::CreatureAnimation(
@@ -667,6 +712,7 @@ namespace MWRender
                                  << " attachedBodyNifs=" << attachedBodyNifs
                                  << " fallbackKfs=" << fallbackKfs
                                  << " discoveredKfs=" << discoveredKfPaths.size();
+                requestCreatureActorKitAnimation(*this, mPtr, effective);
             }
             else if (MWWorld::LiveCellRef<ESM::Creature>* ref
                 = dynamic_cast<MWWorld::LiveCellRef<ESM::Creature>*>(mPtr.getBase()))

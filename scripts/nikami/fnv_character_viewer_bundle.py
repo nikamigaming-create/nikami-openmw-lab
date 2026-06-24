@@ -150,6 +150,8 @@ def viewer_command(
     part_models: str = "",
     prop_slots: str = "",
     prop_models: str = "",
+    animation_group: str = "",
+    dialogue_mode: str = "",
 ) -> str:
     command = (
         "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/nikami/run-fnv-character-viewer.ps1 "
@@ -163,6 +165,8 @@ def viewer_command(
     command += selector_arg("ActorKitPartModels", part_models)
     command += selector_arg("ActorKitPropSlots", prop_slots)
     command += selector_arg("ActorKitPropModels", prop_models)
+    command += selector_arg("ActorKitAnimationGroup", animation_group)
+    command += selector_arg("ActorKitDialogueMode", dialogue_mode)
     command += " -OpenViewer"
     return command
 
@@ -225,10 +229,11 @@ def gate_controls(cases: list[dict[str, Any]], actor: str, actor_kind: str) -> d
                 "label": group.title(),
                 "phase": "creature-animation",
                 "controlType": "animation-proof",
+                "animationGroup": group,
                 "dialogueMouthProof": False,
-                "command": viewer_command(actor, "creature", "creature-animation"),
+                "command": viewer_command(actor, "creature", "creature-animation", animation_group=group),
             }
-            for group in ["idle", "walk", "run", "attack", "hit", "death"]
+            for group in ["idle", "walkforward", "runforward", "attackleft", "attackright", "death"]
         ]
         return {
             "partToggles": part_toggles,
@@ -372,6 +377,43 @@ def gate_controls(cases: list[dict[str, Any]], actor: str, actor_kind: str) -> d
         for phase in PHASE_ORDER
         if phase != "full"
     ]
+    animation_proofs = [
+        {
+            "id": f"anim-{group}",
+            "label": label,
+            "phase": phase,
+            "controlType": "animation-proof",
+            "animationGroup": group,
+            "dialogueMouthProof": False,
+            "command": viewer_command(actor, "npc", phase, animation_group=group),
+        }
+        for group, label, phase in [
+            ("idle", "Idle", "hair"),
+            ("walkforward", "Walk Forward", "hair"),
+            ("runforward", "Run Forward", "hair"),
+            ("mtidle", "mT Idle", "hair"),
+        ]
+    ]
+    dialogue_controls = [
+        {
+            "id": "talk-mouth-open",
+            "label": "Talk Mouth",
+            "phase": "talk",
+            "controlType": "dialogue-proof",
+            "dialogueMouthProof": True,
+            "dialogueMode": "mouth-open",
+            "command": viewer_command(actor, "npc", "talk", dialogue_mode="mouth-open"),
+        },
+        {
+            "id": "talk-mouth-pose",
+            "label": "Talk Pose",
+            "phase": "talk",
+            "controlType": "dialogue-proof",
+            "dialogueMouthProof": True,
+            "dialogueMode": "mouth-open-pose",
+            "command": viewer_command(actor, "npc", "talk", dialogue_mode="mouth-open-pose"),
+        },
+    ]
 
     return {
         "partToggles": part_toggles,
@@ -382,8 +424,9 @@ def gate_controls(cases: list[dict[str, Any]], actor: str, actor_kind: str) -> d
         ],
         "animationControls": [
             control for control in phase_controls if control["phase"] in {"body", "head", "face", "hair", "equipment", "weapon", "headgear"}
-        ],
-        "dialogueControls": [control for control in phase_controls if control["phase"] == "talk"],
+        ]
+        + animation_proofs,
+        "dialogueControls": dialogue_controls,
         "captureAngles": [{"id": angle, "label": angle} for angle in ANGLE_ORDER],
         "botCommands": [
             {
@@ -399,7 +442,12 @@ def gate_controls(cases: list[dict[str, Any]], actor: str, actor_kind: str) -> d
             {
                 "id": "talk-only",
                 "label": "Talk Only",
-                "command": viewer_command(actor, "npc", "talk"),
+                "command": viewer_command(actor, "npc", "talk", dialogue_mode="mouth-open"),
+            },
+            {
+                "id": "idle-proof",
+                "label": "Idle Proof",
+                "command": viewer_command(actor, "npc", "hair", animation_group="idle"),
             },
         ],
     }
@@ -512,6 +560,7 @@ def load_suite(suite_dir: Path) -> dict[str, Any]:
                 "weaponLines": len(as_list(report.get("weaponLines"))),
                 "actorMatches": len(as_list(report.get("actorMatches"))),
                 "animationSources": len(as_list(report.get("animationSources"))),
+                "animationRequests": len(as_list(report.get("animationRequests"))),
                 "animationPlayback": len(as_list(report.get("animationPlayback"))),
                 "creatureEvidence": len(as_list(report.get("creatureEvidence"))),
             },
@@ -526,6 +575,7 @@ def load_suite(suite_dir: Path) -> dict[str, Any]:
             "morphLines": as_list(report.get("morphLines")),
             "weaponLines": as_list(report.get("weaponLines")),
             "animationSources": as_list(report.get("animationSources")),
+            "animationRequests": as_list(report.get("animationRequests")),
             "animationPlayback": as_list(report.get("animationPlayback")),
             "animationBlockers": as_list(report.get("animationBlockers")),
             "creatureEvidence": as_list(report.get("creatureEvidence")),
@@ -878,7 +928,7 @@ function render() {{
   renderLines("hairLines", c?.hairLines);
   renderLines("animLines", [...(c?.animationLines || []), ...(c?.morphLines || []), ...(c?.weaponLines || [])]);
   renderLines("creatureLines", (c?.creatureLines || []).concat((c?.creatureEvidence || []).map(item => item.line || JSON.stringify(item))));
-  renderLines("playbackLines", (c?.animationPlayback || []).map(item => item.line || JSON.stringify(item)).concat(c?.animationBlockers || []));
+  renderLines("playbackLines", (c?.animationRequests || []).map(item => item.line || JSON.stringify(item)).concat((c?.animationPlayback || []).map(item => item.line || JSON.stringify(item))).concat(c?.animationBlockers || []));
   renderFace(c);
 }}
 render();
@@ -904,6 +954,7 @@ def actor_kit_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
                 "actorStage": case.get("actorStage", {}),
                 "actorCamera": case.get("actorCamera", {}),
                 "actorKitSelection": case.get("actorKitSelection", {}),
+                "animationRequests": case.get("animationRequests", []),
                 "openmwLog": case.get("openmwLog", ""),
                 "reportJson": case.get("reportJson", ""),
                 "screenshots": case.get("screenshots", []),

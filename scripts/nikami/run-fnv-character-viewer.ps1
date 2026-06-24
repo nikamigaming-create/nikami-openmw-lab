@@ -15,6 +15,8 @@ param(
     [string[]]$ActorKitPartModels = @(),
     [string[]]$ActorKitPropSlots = @(),
     [string[]]$ActorKitPropModels = @(),
+    [string]$ActorKitAnimationGroup = "",
+    [string]$ActorKitDialogueMode = "",
     [int]$RunSeconds = 28,
     [int]$ActorFrame = 520,
     [string]$ScreenshotFrames = "760",
@@ -248,6 +250,8 @@ Write-Host "ActorKitParts: $ActorKitPartsCsv"
 Write-Host "ActorKitPartModels: $ActorKitPartModelsCsv"
 Write-Host "ActorKitPropSlots: $ActorKitPropSlotsCsv"
 Write-Host "ActorKitPropModels: $ActorKitPropModelsCsv"
+Write-Host "ActorKitAnimationGroup: $ActorKitAnimationGroup"
+Write-Host "ActorKitDialogueMode: $ActorKitDialogueMode"
 Write-Host "BootstrapCell: $BootstrapCell"
 Write-Host "BootstrapPosition: $BootstrapX,$BootstrapY,$BootstrapZ"
 Write-Host "ActorStagePosition: $ActorStageX,$ActorStageY,$ActorStageZ"
@@ -320,6 +324,8 @@ else {
         if (![string]::IsNullOrWhiteSpace($ActorKitPartModelsCsv)) { $builderArgs.ActorKitPartModels = $ActorKitPartModelsCsv }
         if (![string]::IsNullOrWhiteSpace($ActorKitPropSlotsCsv)) { $builderArgs.ActorKitPropSlots = $ActorKitPropSlotsCsv }
         if (![string]::IsNullOrWhiteSpace($ActorKitPropModelsCsv)) { $builderArgs.ActorKitPropModels = $ActorKitPropModelsCsv }
+        if (![string]::IsNullOrWhiteSpace($ActorKitAnimationGroup)) { $builderArgs.ActorKitAnimationGroup = $ActorKitAnimationGroup }
+        if (![string]::IsNullOrWhiteSpace($ActorKitDialogueMode)) { $builderArgs.ActorKitDialogueMode = $ActorKitDialogueMode }
         if (![string]::IsNullOrWhiteSpace($FnvConfigData)) { $builderArgs.FnvConfigData = $FnvConfigData }
         if (![string]::IsNullOrWhiteSpace($ExtraOsgPluginDir)) { $builderArgs.ExtraOsgPluginDir = $ExtraOsgPluginDir }
         if ($CreatureDiagnostics -or $ActorKind -ieq "creature") { $builderArgs.CreatureDiagnostics = $true }

@@ -371,6 +371,32 @@ def parse_animation_playback(lines: list[str], patterns: list[str]) -> list[dict
     return playback
 
 
+def parse_animation_requests(lines: list[str], patterns: list[str]) -> list[dict[str, Any]]:
+    request_re = re.compile(
+        r"actor-kit animation request actor=(?P<actor>[^ ]+) ref=(?P<ref>[^ ]+) "
+        r"group=(?P<group>[^ ]+) available=(?P<available>[01]) runtime=(?P<runtime>[^ ]+)"
+    )
+    requests: list[dict[str, Any]] = []
+    for line in lines:
+        match = request_re.search(line)
+        if not match:
+            continue
+        data = match.groupdict()
+        if not line_matches_actor(f"{data['actor']} {data['ref']}", patterns):
+            continue
+        requests.append(
+            {
+                "actor": data["actor"],
+                "ref": data["ref"],
+                "group": data["group"],
+                "available": data["available"] == "1",
+                "runtime": data["runtime"],
+                "line": compact_line(line),
+            }
+        )
+    return requests
+
+
 def collect_animation_blockers(lines: list[str], patterns: list[str]) -> list[str]:
     blockers: list[str] = []
     needles = ("play request", "idle animation missing", "movement animation missing")
@@ -444,6 +470,7 @@ def evaluate(
     creature_evidence: list[dict[str, Any]],
     actor_matches: list[dict[str, Any]],
     animation_sources: list[dict[str, Any]],
+    animation_requests: list[dict[str, Any]],
     animation_playback: list[dict[str, Any]],
     animation_blockers: list[str],
 ) -> tuple[str, list[str]]:
@@ -457,6 +484,15 @@ def evaluate(
         failures.append("missing bound animation controller evidence")
     if not any(item["controllers"] > 0 and item["playing"] for item in animation_playback):
         failures.append("missing target animation playback evidence")
+    unavailable_requests = [item for item in animation_requests if not item["available"]]
+    if unavailable_requests:
+        failures.append(f"selected animation group unavailable: {len(unavailable_requests)}")
+    for request in animation_requests:
+        if not any(
+            item["group"].lower() == request["group"].lower() and item["controllers"] > 0 and item["playing"]
+            for item in animation_playback
+        ):
+            failures.append(f"missing selected animation playback evidence: {request['group']}")
     if animation_blockers:
         failures.append(f"target animation blocker lines: {len(animation_blockers)}")
     if actor_kind != "creature" and phase and not gates:
@@ -561,6 +597,7 @@ def write_markdown(path: Path, report: dict[str, Any]) -> None:
     lines.append(f"Weapon lines: {len(report['weaponLines'])}")
     lines.append(f"Creature evidence lines: {len(report['creatureEvidence'])}")
     lines.append(f"Animation sources: {len(report['animationSources'])}")
+    lines.append(f"Selected animation requests: {len(report['animationRequests'])}")
     lines.append(f"Target animation playback lines: {len(report['animationPlayback'])}")
     lines.append("")
     if report["failures"]:
@@ -594,9 +631,11 @@ def write_markdown(path: Path, report: dict[str, Any]) -> None:
         for item in report["creatureEvidence"][:48]:
             lines.append(f"- `{item['kind']}` {item['line']}")
         lines.append("")
-    if report["animationPlayback"]:
+    if report["animationRequests"] or report["animationPlayback"]:
         lines.append("## Animation Playback")
         lines.append("")
+        for item in report["animationRequests"][:48]:
+            lines.append(f"- `request` group={item['group']} available={item['available']} {item['line']}")
         for item in report["animationPlayback"][:48]:
             lines.append(f"- `{item['group']}` controllers={item['controllers']} playing={item['playing']} {item['line']}")
         lines.append("")
@@ -627,6 +666,7 @@ def main() -> int:
     creature_evidence = parse_creature_evidence(lines, patterns)
     actor_matches = parse_actor_matches(lines, args.actor)
     animation_sources = parse_animation_sources(lines)
+    animation_requests = parse_animation_requests(lines, patterns)
     animation_playback = parse_animation_playback(lines, patterns)
     animation_blockers = collect_animation_blockers(lines, patterns)
     actor_kind = args.actor_kind
@@ -664,6 +704,7 @@ def main() -> int:
         creature_evidence,
         actor_matches,
         animation_sources,
+        animation_requests,
         animation_playback,
         animation_blockers,
     )
@@ -689,6 +730,7 @@ def main() -> int:
         "creatureEvidence": creature_evidence,
         "creatureLines": [item["line"] for item in creature_evidence],
         "animationSources": animation_sources,
+        "animationRequests": animation_requests,
         "animationPlayback": animation_playback,
         "animationBlockers": animation_blockers,
     }

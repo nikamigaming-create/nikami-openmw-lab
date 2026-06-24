@@ -15,6 +15,8 @@ param(
     [string[]]$ActorKitPartModels = @(),
     [string[]]$ActorKitPropSlots = @(),
     [string[]]$ActorKitPropModels = @(),
+    [string]$ActorKitAnimationGroup = "",
+    [string]$ActorKitDialogueMode = "",
     [int]$RunSeconds = 28,
     [int]$ActorFrame = 520,
     [string]$ScreenshotFrames = "760",
@@ -153,6 +155,8 @@ Write-SuiteLine "ActorKitParts: $ActorKitPartsCsv"
 Write-SuiteLine "ActorKitPartModels: $ActorKitPartModelsCsv"
 Write-SuiteLine "ActorKitPropSlots: $ActorKitPropSlotsCsv"
 Write-SuiteLine "ActorKitPropModels: $ActorKitPropModelsCsv"
+Write-SuiteLine "ActorKitAnimationGroup: $ActorKitAnimationGroup"
+Write-SuiteLine "ActorKitDialogueMode: $ActorKitDialogueMode"
 Write-SuiteLine "Angles: $(@($Angles | ForEach-Object { $_.Name }) -join ',')"
 Write-SuiteLine "BootstrapCell: $BootstrapCell"
 Write-SuiteLine "BootstrapPosition: $BootstrapX,$BootstrapY,$BootstrapZ"
@@ -217,6 +221,8 @@ foreach ($phase in $Phases) {
         if (![string]::IsNullOrWhiteSpace($ActorKitPartModelsCsv)) { $proofArgs.ActorKitPartModels = $ActorKitPartModelsCsv }
         if (![string]::IsNullOrWhiteSpace($ActorKitPropSlotsCsv)) { $proofArgs.ActorKitPropSlots = $ActorKitPropSlotsCsv }
         if (![string]::IsNullOrWhiteSpace($ActorKitPropModelsCsv)) { $proofArgs.ActorKitPropModels = $ActorKitPropModelsCsv }
+        if (![string]::IsNullOrWhiteSpace($ActorKitAnimationGroup)) { $proofArgs.ActorKitAnimationGroup = $ActorKitAnimationGroup }
+        if (![string]::IsNullOrWhiteSpace($ActorKitDialogueMode)) { $proofArgs.ActorKitDialogueMode = $ActorKitDialogueMode }
         if (![string]::IsNullOrWhiteSpace($FnvConfigData)) { $proofArgs.FnvConfigData = $FnvConfigData }
         if (![string]::IsNullOrWhiteSpace($ExtraOsgPluginDir)) { $proofArgs.ExtraOsgPluginDir = $ExtraOsgPluginDir }
         if ($CreatureDiagnostics -or $ActorKind -ieq "creature") { $proofArgs.CreatureDiagnostics = $true }
@@ -296,6 +302,8 @@ foreach ($phase in $Phases) {
                 partModels = $ActorKitPartModelsCsv
                 propSlots = $ActorKitPropSlotsCsv
                 propModels = $ActorKitPropModelsCsv
+                animationGroup = $ActorKitAnimationGroup
+                dialogueMode = $ActorKitDialogueMode
             }
             failures = if ($null -ne $reportData) { @($reportData.failures) } else { @("report parser did not produce JSON") }
             screenshots = if ($null -ne $reportData) { @($reportData.screenshots) } else { @() }

@@ -69,6 +69,8 @@ param(
     [string[]]$ActorKitPartModels = @(),
     [string[]]$ActorKitPropSlots = @(),
     [string[]]$ActorKitPropModels = @(),
+    [string]$ActorKitAnimationGroup = "",
+    [string]$ActorKitDialogueMode = "",
     [switch]$CharacterBuilderTalk,
     [switch]$CreatureDiagnostics,
     [switch]$FnvDisableNativeAnimationCallbacks,
@@ -1451,8 +1453,13 @@ try {
     Set-ProofEnv $previousEnv "OPENMW_FNV_ACTOR_KIT_PART_MODELS" $ActorKitPartModelsCsv
     Set-ProofEnv $previousEnv "OPENMW_FNV_ACTOR_KIT_PROP_SLOTS" $ActorKitPropSlotsCsv
     Set-ProofEnv $previousEnv "OPENMW_FNV_ACTOR_KIT_PROP_MODELS" $ActorKitPropModelsCsv
-    if ($CharacterBuilderTalk -or $CharacterBuilderPhase -ieq "talk" -or $CharacterBuilderPhase -ieq "dialogue") {
+    Set-ProofEnv $previousEnv "OPENMW_FNV_ACTOR_KIT_ANIMATION_GROUP" $ActorKitAnimationGroup
+    Set-ProofEnv $previousEnv "OPENMW_FNV_ACTOR_KIT_DIALOGUE_MODE" $ActorKitDialogueMode
+    if ($CharacterBuilderTalk -or $CharacterBuilderPhase -ieq "talk" -or $CharacterBuilderPhase -ieq "dialogue" -or $ActorKitDialogueMode -ieq "mouth-open" -or $ActorKitDialogueMode -ieq "mouth-open-pose") {
         Set-ProofEnv $previousEnv "OPENMW_FNV_PROOF_MOUTH_FORCE_OPEN" "1"
+    }
+    if ($ActorKitDialogueMode -ieq "pose" -or $ActorKitDialogueMode -ieq "mouth-open-pose") {
+        Set-ProofEnv $previousEnv "OPENMW_FNV_PROOF_DIALOGUE_POSE" "1"
     }
     if ($CreatureDiagnostics -or $ActorKind -ieq "creature") {
         Set-ProofEnv $previousEnv "OPENMW_FNV_CREATURE_ANIM_GROUP_DIAG" "1"
@@ -1559,6 +1566,8 @@ try {
     Write-ProofLine "ActorKitPartModels: $ActorKitPartModelsCsv"
     Write-ProofLine "ActorKitPropSlots: $ActorKitPropSlotsCsv"
     Write-ProofLine "ActorKitPropModels: $ActorKitPropModelsCsv"
+    Write-ProofLine "ActorKitAnimationGroup: $ActorKitAnimationGroup"
+    Write-ProofLine "ActorKitDialogueMode: $ActorKitDialogueMode"
     Write-ProofLine "CharacterBuilderTalk: $CharacterBuilderTalk"
     Write-ProofLine "ActorTarget: $ActorTarget"
     Write-ProofLine "FnvProofTargetNpc: $ActorTarget"

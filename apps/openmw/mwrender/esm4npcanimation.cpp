@@ -590,6 +590,42 @@ namespace MWRender
                 || (!refId.empty() && Misc::StringUtils::ciEqual(refId, target));
         }
 
+        std::string getFalloutActorKitAnimationGroup()
+        {
+            const char* value = std::getenv("OPENMW_FNV_ACTOR_KIT_ANIMATION_GROUP");
+            if (value == nullptr || value[0] == '\0')
+                return {};
+
+            std::string group(value);
+            while (!group.empty()
+                && (group.front() == ' ' || group.front() == '\t' || group.front() == '\r'
+                    || group.front() == '\n' || group.front() == '"' || group.front() == '\''))
+                group.erase(group.begin());
+            while (!group.empty()
+                && (group.back() == ' ' || group.back() == '\t' || group.back() == '\r'
+                    || group.back() == '\n' || group.back() == '"' || group.back() == '\''))
+                group.pop_back();
+            Misc::StringUtils::lowerCaseInPlace(group);
+            return group;
+        }
+
+        void requestFalloutActorKitAnimation(Animation& animation, const MWWorld::Ptr& ptr, const ESM4::Npc& traits)
+        {
+            const std::string group = getFalloutActorKitAnimationGroup();
+            if (group.empty() || !isFonvProofTargetActor(ptr, traits))
+                return;
+
+            const bool available = animation.hasAnimation(group);
+            Log(Debug::Info) << "FNV/ESM4 proof: actor-kit animation request actor=" << traits.mEditorId
+                             << " ref=" << ptr.getCellRef().getRefId()
+                             << " group=" << group
+                             << " available=" << available
+                             << " runtime=" << (available ? "runtime-supported" : "known-blocked");
+
+            animation.play(group, MWMechanics::Priority_Scripted, BlendMask_All, false, 1.f, "start", "stop", 0.f, 0,
+                true);
+        }
+
         std::string formatFormIdList(const std::vector<ESM::FormId>& ids, std::size_t maxCount = 16)
         {
             std::ostringstream stream;
@@ -5305,6 +5341,8 @@ namespace MWRender
             // These are narrow candidates such as Easy Pete's chair/eat package and should beat neutral mTIdle.
             for (const std::string& kfPath : procedureIdleSources)
                 addFonvAnimationSource(kfPath, "scheduled package procedure", false, true);
+
+            requestFalloutActorKitAnimation(*this, mPtr, *traits);
         }
     }
 
