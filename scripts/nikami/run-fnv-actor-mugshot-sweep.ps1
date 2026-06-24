@@ -19,9 +19,9 @@ param(
         "GSPGCM",
         "GSPGCM2"
     ),
-    [int]$RunSeconds = 16,
-    [int]$ActorFrame = 420,
-    [string]$ScreenshotFrames = "500",
+    [int]$RunSeconds = 60,
+    [int]$ActorFrame = 600,
+    [string]$ScreenshotFrames = "900,1200",
     [double]$ActorViewOffsetX = 140,
     [double]$ActorViewOffsetY = 0,
     [double]$ActorViewOffsetZ = 82,
@@ -696,7 +696,8 @@ function Write-Report {
         [object[]]$Results,
         [string]$ReportPath,
         [string]$ContactSheetPath,
-        [string]$ResultsJsonPath
+        [string]$ResultsJsonPath,
+        [string]$HumanReviewCsvPath
     )
 
     $lines = New-Object "System.Collections.Generic.List[string]"
@@ -705,6 +706,7 @@ function Write-Report {
     $lines.Add("- Sweep directory: ``$SweepDir``")
     $lines.Add("- Contact sheet: ``$ContactSheetPath``")
     $lines.Add("- Machine-readable results: ``$ResultsJsonPath``")
+    $lines.Add("- Human review CSV: ``$HumanReviewCsvPath``")
     $lines.Add("- Targets: $($Results.Count)")
     $lines.Add("- Run seconds: $RunSeconds")
     $lines.Add("- Actor frame: $ActorFrame")
@@ -787,6 +789,33 @@ function Write-Report {
     Set-Content -LiteralPath $ReportPath -Value $lines -Encoding UTF8
 }
 
+function Write-HumanReviewCsv {
+    param(
+        [object[]]$Results,
+        [string]$OutputPath
+    )
+
+    $rows = foreach ($result in $Results) {
+        [pscustomobject]@{
+            Target = $result.Target
+            MachineOverall = $result.Overall
+            MachineFace = $result.LogProbe.Face
+            MachineAnimation = $result.LogProbe.Animation
+            MachineParts = $result.LogProbe.PartAssembly
+            MachineImage = $result.ImageQuality.Status
+            VisualReview = "REVIEW_REQUIRED"
+            HumanReview = ""
+            HumanNotes = ""
+            MugshotImage = $result.MugshotImage
+            SourceImage = $result.SourceImage
+            ProofDir = $result.ProofDir
+            OpenMwLog = $result.OpenMwLog
+        }
+    }
+
+    $rows | Export-Csv -LiteralPath $OutputPath -NoTypeInformation -Encoding UTF8
+}
+
 $results = New-Object "System.Collections.Generic.List[object]"
 foreach ($target in $Targets) {
     $results.Add((Invoke-MugshotTarget -Target $target))
@@ -796,10 +825,12 @@ $resultArray = $results.ToArray()
 $contactSheet = Join-Path $SweepDir "mugshot_contact_sheet.jpg"
 $report = Join-Path $SweepDir "mugshot_report.md"
 $resultsJson = Join-Path $SweepDir "mugshot_results.json"
+$humanReviewCsv = Join-Path $SweepDir "human-review.csv"
 
 New-ContactSheet -Results $resultArray -OutputPath $contactSheet
 $resultArray | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $resultsJson -Encoding UTF8
-Write-Report -Results $resultArray -ReportPath $report -ContactSheetPath $contactSheet -ResultsJsonPath $resultsJson
+Write-HumanReviewCsv -Results $resultArray -OutputPath $humanReviewCsv
+Write-Report -Results $resultArray -ReportPath $report -ContactSheetPath $contactSheet -ResultsJsonPath $resultsJson -HumanReviewCsvPath $humanReviewCsv
 
 Write-Host ""
 Write-Host "FNV actor mugshot sweep:"
@@ -807,6 +838,7 @@ Write-Host "  $SweepDir"
 Write-Host "  Report: $report"
 Write-Host "  Contact sheet: $contactSheet"
 Write-Host "  Results JSON: $resultsJson"
+Write-Host "  Human review CSV: $humanReviewCsv"
 Get-ChildItem -LiteralPath $SweepDir | Select-Object FullName, Length
 
 if ($RequirePass) {
