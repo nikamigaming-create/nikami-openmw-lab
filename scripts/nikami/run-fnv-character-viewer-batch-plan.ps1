@@ -175,6 +175,130 @@ function Invoke-ViewerEntry([object]$Entry, [string]$RunDir) {
     return [pscustomobject]$result
 }
 
+function ConvertTo-HtmlText([object]$Value) {
+    return [System.Net.WebUtility]::HtmlEncode([string]$Value)
+}
+
+function ConvertTo-RelativeHref([string]$BaseFile, [string]$TargetPath) {
+    if ([string]::IsNullOrWhiteSpace($TargetPath) -or !(Test-Path -LiteralPath $TargetPath)) {
+        return ""
+    }
+    $baseDirectory = Split-Path $BaseFile -Parent
+    if ([string]::IsNullOrWhiteSpace($baseDirectory)) {
+        $baseDirectory = (Get-Location).Path
+    }
+    if (Test-Path -LiteralPath $baseDirectory -PathType Container) {
+        $baseDirectory = (Resolve-Path -LiteralPath $baseDirectory).Path
+    }
+    if (!$baseDirectory.EndsWith([System.IO.Path]::DirectorySeparatorChar)) {
+        $baseDirectory += [System.IO.Path]::DirectorySeparatorChar
+    }
+    $targetResolved = (Resolve-Path -LiteralPath $TargetPath).Path
+    $relative = ([uri]$baseDirectory).MakeRelativeUri([uri]$targetResolved).ToString()
+    return [uri]::UnescapeDataString($relative)
+}
+
+function New-LinkHtml([string]$BaseFile, [string]$TargetPath, [string]$Label) {
+    $labelText = ConvertTo-HtmlText $Label
+    $href = ConvertTo-RelativeHref $BaseFile $TargetPath
+    if ([string]::IsNullOrWhiteSpace($href)) {
+        return $labelText
+    }
+    return "<a href=`"$(ConvertTo-HtmlText $href)`">$labelText</a>"
+}
+
+function Write-BatchRunMarkdown([string]$Path, [object]$Summary) {
+    $lines = [System.Collections.Generic.List[string]]::new()
+    $lines.Add("# FNV Character Viewer Batch Run")
+    $lines.Add("")
+    $lines.Add("Status: **$($Summary.status)**")
+    $lines.Add("Dry run: ``$($Summary.dryRun)``")
+    $lines.Add("Selected entries: $($Summary.selectedEntries)")
+    $lines.Add("Actor kind filter: ``$($Summary.actorKind)``")
+    $lines.Add("Target filter: ``$($Summary.target)``")
+    $lines.Add("Source filter: ``$($Summary.source)``")
+    $lines.Add("Plan: ``$($Summary.planJson)``")
+    $lines.Add("Policy: $($Summary.payloadPolicy)")
+    $lines.Add("")
+    $lines.Add("| Status | Kind | Source | Target | Command | Viewer | Entry JSON |")
+    $lines.Add("|---|---|---|---|---|---|---|")
+    foreach ($result in @($Summary.results)) {
+        $viewer = if (![string]::IsNullOrWhiteSpace($result.viewerIndex)) { $result.viewerIndex } elseif (![string]::IsNullOrWhiteSpace($result.viewerServer)) { $result.viewerServer } else { "" }
+        $command = ([string]$result.command).Replace("|", "\|")
+        $lines.Add("| $($result.status) | $($result.actorKind) | $($result.source) | ``$($result.target)`` | ``$command`` | ``$viewer`` | ``$($result.entryJson)`` |")
+    }
+    $lines.Add("")
+    $Path | Split-Path -Parent | ForEach-Object { New-Item -ItemType Directory -Force -Path $_ | Out-Null }
+    $lines | Set-Content -LiteralPath $Path -Encoding UTF8
+}
+
+function Write-BatchRunHtml([string]$Path, [object]$Summary) {
+    $rows = [System.Collections.Generic.List[string]]::new()
+    foreach ($result in @($Summary.results)) {
+        $viewerTarget = if (![string]::IsNullOrWhiteSpace($result.viewerIndex)) { $result.viewerIndex } elseif (![string]::IsNullOrWhiteSpace($result.viewerServer)) { $result.viewerServer } else { "" }
+        $viewerCell = New-LinkHtml $Path $viewerTarget "viewer"
+        $entryCell = New-LinkHtml $Path $result.entryJson "entry"
+        $rows.Add("<tr><td class=`"status $($result.status)`">$(ConvertTo-HtmlText $result.status)</td><td>$(ConvertTo-HtmlText $result.actorKind)</td><td>$(ConvertTo-HtmlText $result.source)</td><td><code>$(ConvertTo-HtmlText $result.target)</code></td><td><code>$(ConvertTo-HtmlText $result.command)</code></td><td>$viewerCell</td><td>$entryCell</td><td>$(ConvertTo-HtmlText $result.error)</td></tr>")
+    }
+
+    $planLink = New-LinkHtml $Path $Summary.planJson "plan"
+    $selectedLink = New-LinkHtml $Path $Summary.selectedEntriesJson "selected entries"
+    $body = @"
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FNV Character Viewer Batch Run</title>
+<style>
+body{margin:0;background:#111316;color:#eceff3;font:13px/1.4 Segoe UI,Arial,sans-serif}
+main{padding:16px;display:grid;gap:14px}
+h1{font-size:18px;margin:0}
+.panel{border:1px solid #363c45;border-radius:6px;background:#1a1d22;padding:12px}
+.meta{display:flex;gap:10px;flex-wrap:wrap}
+.pill{border:1px solid #363c45;border-radius:999px;padding:4px 8px;background:#20242a}
+table{border-collapse:collapse;width:100%}
+td,th{border-bottom:1px solid #363c45;padding:7px;text-align:left;vertical-align:top}
+th{color:#aeb6c2}
+code{color:#d8e6ff;overflow-wrap:anywhere}
+a{color:#9fc2ff}
+.status{font-weight:600}
+.PASS,.DRY-RUN{color:#64d488}
+.FAIL{color:#ff6f61}
+</style>
+</head>
+<body>
+<main>
+<h1>FNV Character Viewer Batch Run</h1>
+<section class="panel meta">
+  <span class="pill">Status: $(ConvertTo-HtmlText $Summary.status)</span>
+  <span class="pill">Dry run: $(ConvertTo-HtmlText $Summary.dryRun)</span>
+  <span class="pill">Selected: $(ConvertTo-HtmlText $Summary.selectedEntries)</span>
+  <span class="pill">Actor kind: $(ConvertTo-HtmlText $Summary.actorKind)</span>
+  <span class="pill">Source: $(ConvertTo-HtmlText $Summary.source)</span>
+  <span class="pill">Target: $(ConvertTo-HtmlText $Summary.target)</span>
+</section>
+<section class="panel">
+  <div>Plan: $planLink</div>
+  <div>Selected entries: $selectedLink</div>
+  <div>Policy: $(ConvertTo-HtmlText $Summary.payloadPolicy)</div>
+</section>
+<section class="panel">
+<table>
+<thead><tr><th>Status</th><th>Kind</th><th>Source</th><th>Target</th><th>Command</th><th>Viewer</th><th>Entry</th><th>Error</th></tr></thead>
+<tbody>
+$($rows -join "`n")
+</tbody>
+</table>
+</section>
+</main>
+</body>
+</html>
+"@
+    $Path | Split-Path -Parent | ForEach-Object { New-Item -ItemType Directory -Force -Path $_ | Out-Null }
+    $body | Set-Content -LiteralPath $Path -Encoding UTF8
+}
+
 Write-Host "FNV character viewer batch plan"
 Write-Host "RepoRoot: $RepoRoot"
 Write-Host "ProofRoot: $ProofRoot"
@@ -256,14 +380,20 @@ $summary = [pscustomobject][ordered]@{
     maxEntries = $MaxEntries
     payloadPolicy = "generated run summary only; no retail assets are committed"
     selectedEntriesJson = $selectedPath
+    html = (Join-Path $runDir "viewer-batch-run.html")
+    markdown = (Join-Path $runDir "viewer-batch-run.md")
     results = @($runResults)
 }
 $summaryPath = Join-Path $runDir "viewer-batch-run.json"
 $summary | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $summaryPath -Encoding UTF8
+Write-BatchRunMarkdown $summary.markdown $summary
+Write-BatchRunHtml $summary.html $summary
 
 Write-Host ""
 Write-Host "Batch run status: $($summary.status)"
 Write-Host "Batch run JSON: $summaryPath"
+Write-Host "Batch run HTML: $($summary.html)"
+Write-Host "Batch run Markdown: $($summary.markdown)"
 Write-Host "Selected entries JSON: $selectedPath"
 if ($RequirePass -and $summary.status -ne "PASS") {
     throw "FNV character viewer batch run failed. See $summaryPath"

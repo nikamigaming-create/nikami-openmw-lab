@@ -178,8 +178,25 @@ if ($runResult.actorKind -ne "creature" -or $runResult.status -ne "DRY-RUN") {
 if ($runResult.command -notmatch "-ActorKind creature" -or $runResult.command -notmatch "-CreatureDiagnostics") {
     throw "Batch dry-run result does not preserve runnable creature command."
 }
+$runHtml = Join-Path $runDir "viewer-batch-run.html"
+$runMarkdown = Join-Path $runDir "viewer-batch-run.md"
+if (!(Test-Path -LiteralPath $runHtml -PathType Leaf)) {
+    throw "Missing generated batch dry-run HTML: $runHtml"
+}
+if (!(Test-Path -LiteralPath $runMarkdown -PathType Leaf)) {
+    throw "Missing generated batch dry-run Markdown: $runMarkdown"
+}
+$runHtmlText = Get-Content -LiteralPath $runHtml -Raw
+$runMarkdownText = Get-Content -LiteralPath $runMarkdown -Raw
+if (!$runHtmlText.Contains("FNV Character Viewer Batch Run") -or !$runHtmlText.Contains("ContractCreature")) {
+    throw "Batch dry-run HTML does not expose selected creature entry."
+}
+if (!$runMarkdownText.Contains("DRY-RUN") -or !$runMarkdownText.Contains("ContractCreature")) {
+    throw "Batch dry-run Markdown does not expose selected creature entry."
+}
 
 Write-Host "FNV character viewer batch plan contract PASS"
 Write-Host "ProofDir: $ProofDir"
 Write-Host "Plan: $planPath"
 Write-Host "DryRun: $runPath"
+Write-Host "DryRunHtml: $runHtml"
