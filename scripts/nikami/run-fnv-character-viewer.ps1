@@ -43,6 +43,7 @@ param(
     [switch]$NoSound,
     [switch]$OpenViewer,
     [switch]$Serve,
+    [switch]$LiveServe,
     [int]$ServePort = 0
 )
 
@@ -56,8 +57,10 @@ if ([string]::IsNullOrWhiteSpace($ProofRoot)) {
 
 $BuilderRunner = Join-Path $PSScriptRoot "run-fnv-character-builder-tester.ps1"
 $BundleScript = Join-Path $PSScriptRoot "fnv_character_viewer_bundle.py"
+$LiveServerScript = Join-Path $PSScriptRoot "fnv_character_viewer_live_server.py"
 if (!(Test-Path -LiteralPath $BuilderRunner)) { throw "Missing character builder tester: $BuilderRunner" }
 if (!(Test-Path -LiteralPath $BundleScript)) { throw "Missing character viewer bundle generator: $BundleScript" }
+if ($LiveServe -and !(Test-Path -LiteralPath $LiveServerScript)) { throw "Missing live character viewer server: $LiveServerScript" }
 
 function Normalize-List([string[]]$Values, [string]$Name) {
     $items = New-Object "System.Collections.Generic.List[string]"
@@ -227,6 +230,76 @@ function Start-ViewerServer([string]$RootDirectory, [string]$IndexPath, [string]
     }
 }
 
+function Start-LiveViewerServer([string]$RootDirectory, [string]$IndexPath, [string]$RunDirectory, [int]$RequestedPort) {
+    $root = (Resolve-Path -LiteralPath $RootDirectory).Path
+    $index = (Resolve-Path -LiteralPath $IndexPath).Path
+    $repo = (Resolve-Path -LiteralPath $RepoRoot).Path
+    $runner = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "run-fnv-character-viewer.ps1")).Path
+    $server = (Resolve-Path -LiteralPath $LiveServerScript).Path
+    $port = if ($RequestedPort -gt 0) { $RequestedPort } else { Get-FreeLoopbackPort }
+    $serverLog = Join-Path $RunDirectory "viewer-live-server.stdout.log"
+    $serverErr = Join-Path $RunDirectory "viewer-live-server.stderr.log"
+    $arguments = @(
+        $server,
+        "--root", $root,
+        "--repo-root", $repo,
+        "--run-dir", (Resolve-Path -LiteralPath $RunDirectory).Path,
+        "--runner", $runner,
+        "--host", "127.0.0.1",
+        "--port", [string]$port
+    ) | ForEach-Object { Quote-ProcessArgument $_ }
+    $process = Start-Process -FilePath "python" -ArgumentList $arguments -WindowStyle Hidden -PassThru `
+        -RedirectStandardOutput $serverLog -RedirectStandardError $serverErr
+
+    $relativeIndex = ConvertTo-HttpPath $root $index
+    $url = "http://127.0.0.1:$port/$relativeIndex"
+    $ready = $false
+    for ($attempt = 0; $attempt -lt 30; $attempt++) {
+        try {
+            Invoke-WebRequest -UseBasicParsing -Uri $url -TimeoutSec 1 | Out-Null
+            $ready = $true
+            break
+        }
+        catch {
+            Start-Sleep -Milliseconds 250
+        }
+    }
+    if (!$ready) {
+        throw "Live viewer HTTP server did not become ready at $url. ProcessId=$($process.Id) stdout=$serverLog stderr=$serverErr"
+    }
+
+    $serverInfo = [pscustomobject][ordered]@{
+        url = $url
+        root = $root
+        index = $index
+        host = "127.0.0.1"
+        port = $port
+        processId = $process.Id
+        stdout = $serverLog
+        stderr = $serverErr
+        liveActorKitEndpoint = "http://127.0.0.1:$port/nikami/actor-kit/run"
+        liveActorKitJobs = "http://127.0.0.1:$port/nikami/actor-kit/jobs"
+        policy = [pscustomobject][ordered]@{
+            loopbackOnly = $true
+            generatedProofOutputsOnly = $true
+            noRetailAssetsCommitted = $true
+            allowedRunner = "scripts/nikami/run-fnv-character-viewer.ps1"
+        }
+    }
+    $serverInfoPath = Join-Path $RunDirectory "viewer-live-server.json"
+    $serverInfo | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $serverInfoPath -Encoding UTF8
+    $serverUrlPath = Join-Path $RunDirectory "viewer-url.txt"
+    $url | Set-Content -LiteralPath $serverUrlPath -Encoding UTF8
+    return [pscustomobject][ordered]@{
+        Url = $url
+        InfoPath = $serverInfoPath
+        UrlPath = $serverUrlPath
+        ProcessId = $process.Id
+        Stdout = $serverLog
+        Stderr = $serverErr
+    }
+}
+
 $Targets = Normalize-List $Targets "targets"
 $Phases = Normalize-List $Phases "phases"
 $ActorKitPartsCsv = Join-OptionalSelectorList $ActorKitParts
@@ -256,8 +329,11 @@ Write-Host "BootstrapCell: $BootstrapCell"
 Write-Host "BootstrapPosition: $BootstrapX,$BootstrapY,$BootstrapZ"
 Write-Host "ActorStagePosition: $ActorStageX,$ActorStageY,$ActorStageZ"
 Write-Host "Policy: generated proof/viewer output only; no retail assets are committed"
-if ($Serve) {
+if ($Serve -or $LiveServe) {
     Write-Host "Serve: loopback HTTP enabled"
+}
+if ($LiveServe) {
+    Write-Host "LiveServe: loopback actor-kit rerun endpoint enabled"
 }
 
 $Runs = New-Object "System.Collections.Generic.List[object]"
@@ -366,7 +442,15 @@ foreach ($run in $Runs) {
 }
 
 $ServedUrl = ""
-if ($Serve) {
+if ($LiveServe) {
+    $server = Start-LiveViewerServer -RootDirectory $ProofRoot -IndexPath $IndexHtml -RunDirectory $RunDir -RequestedPort $ServePort
+    $ServedUrl = $server.Url
+    Write-Host "Viewer URL: $($server.Url)"
+    Write-Host "Viewer server JSON: $($server.InfoPath)"
+    Write-Host "Viewer URL file: $($server.UrlPath)"
+    Write-Host "Viewer server PID: $($server.ProcessId)"
+}
+elseif ($Serve) {
     $server = Start-ViewerServer -RootDirectory $ProofRoot -IndexPath $IndexHtml -RunDirectory $RunDir -RequestedPort $ServePort
     $ServedUrl = $server.Url
     Write-Host "Viewer URL: $($server.Url)"

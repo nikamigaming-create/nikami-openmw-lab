@@ -1069,6 +1069,9 @@ code {{ color: #d8e6ff; }}
 .failures {{ color: var(--bad); white-space: pre-wrap; }}
 .lineList {{ display: grid; gap: 5px; max-height: 340px; overflow: auto; }}
 .line {{ font-family: Consolas, monospace; font-size: 12px; color: #dce6f7; background: #101216; border: 1px solid #2b3038; border-radius: 4px; padding: 5px 6px; }}
+.runButton {{ margin-top: 4px; border-color: var(--accent); }}
+.jobPanel {{ display: grid; gap: 6px; }}
+.jobItem {{ background: #101216; border: 1px solid #2b3038; border-radius: 5px; padding: 7px; }}
 a {{ color: #9fc2ff; }}
 @media (max-width: 980px) {{ .grid3 {{ grid-template-columns: 1fr; }} header {{ align-items: flex-start; flex-direction: column; }} }}
 @media (max-width: 980px) {{ .controlGrid {{ grid-template-columns: 1fr; }} }}
@@ -1096,6 +1099,11 @@ a {{ color: #9fc2ff; }}
   <div class="section">
     <h2>Bot Commands</h2>
     <div id="botCommandHost" class="commandList"></div>
+  </div>
+  <div class="section">
+    <h2>Live Actor Kit Runs</h2>
+    <div id="liveStatus" class="line">Live rerun endpoint is available only when launched with -LiveServe.</div>
+    <div id="liveJobs" class="jobPanel"></div>
   </div>
   <div id="cameraGrid" class="grid3"></div>
   <div class="section">
@@ -1166,7 +1174,8 @@ const state = {{
   angle: MANIFEST.angles[0] || "front",
   layer: "all",
   enabledLayers: Object.fromEntries((MANIFEST.controls?.partToggles || []).map(t => [t.category, t.defaultEnabled !== false])),
-  slotFilters: Object.fromEntries((MANIFEST.controls?.propSlots || []).map(s => [s.id, "all"]))
+  slotFilters: Object.fromEntries((MANIFEST.controls?.propSlots || []).map(s => [s.id, "all"])),
+  liveJobs: []
 }};
 function esc(value) {{
   return String(value ?? "").replace(/[&<>"']/g, c => ({{"&":"&amp;","<":"&lt;",">":"&gt;","\\"":"&quot;","'":"&#39;"}}[c]));
@@ -1189,6 +1198,61 @@ function buttonRow(id, values, current, setter) {{
 function table(headers, rows) {{
   if (!rows.length) return `<div class="empty">No data</div>`;
   return `<table><thead><tr>${{headers.map(h => `<th>${{esc(h)}}</th>`).join("")}}</tr></thead><tbody>${{rows.join("")}}</tbody></table>`;
+}}
+function liveAvailable() {{
+  return location.protocol.startsWith("http") && location.hostname === "127.0.0.1";
+}}
+async function startLiveRun(command, label) {{
+  const status = document.getElementById("liveStatus");
+  status.textContent = `Starting ${{label || "actor-kit run"}}...`;
+  try {{
+    const response = await fetch("/nikami/actor-kit/run", {{
+      method: "POST",
+      headers: {{"Content-Type": "application/json"}},
+      body: JSON.stringify({{ command }})
+    }});
+    const job = await response.json();
+    if (!response.ok) throw new Error(job.error || response.statusText);
+    state.liveJobs.unshift(job);
+    renderLiveJobs();
+    pollLiveJob(job.id);
+  }} catch (error) {{
+    status.textContent = `Live run failed to start: ${{error.message || error}}`;
+  }}
+}}
+async function pollLiveJob(id) {{
+  for (let attempt = 0; attempt < 720; attempt++) {{
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    try {{
+      const response = await fetch(`/nikami/actor-kit/jobs/${{encodeURIComponent(id)}}`, {{ cache: "no-store" }});
+      const job = await response.json();
+      const index = state.liveJobs.findIndex(item => item.id === id);
+      if (index >= 0) state.liveJobs[index] = job;
+      renderLiveJobs();
+      if (job.state !== "running") return;
+    }} catch (error) {{
+      document.getElementById("liveStatus").textContent = `Live job poll failed: ${{error.message || error}}`;
+      return;
+    }}
+  }}
+}}
+function commandBlock(command, label) {{
+  const button = liveAvailable() && command ? `<button type="button" class="runButton" data-command="${{esc(command)}}" data-label="${{esc(label || "Run")}}">Run</button>` : "";
+  return `<div class="command">${{esc(command || "")}}</div>${{button}}`;
+}}
+function renderLiveJobs() {{
+  const status = document.getElementById("liveStatus");
+  status.textContent = liveAvailable()
+    ? "Live reruns are enabled on loopback. Buttons run the selected actor-kit case and add the generated viewer link here."
+    : "Live rerun endpoint is available only over the loopback HTTP viewer.";
+  const rows = (state.liveJobs || []).map(job => {{
+    const result = job.result || {{}};
+    const link = result.viewerUrl ? `<a href="${{esc(result.viewerUrl)}}">open generated viewer</a>` : "";
+    const manifest = result.viewerJsonUrl ? `<a href="${{esc(result.viewerJsonUrl)}}">manifest</a>` : "";
+    return `<div class="jobItem"><div><b>${{esc(job.id)}}</b> ${{esc(job.state)}} return=${{esc(job.returnCode ?? "")}} status=${{esc(result.status || "")}}</div><div>${{link}} ${{manifest}}</div><div class="command">${{esc(job.command || "")}}</div></div>`;
+  }});
+  document.getElementById("liveJobs").innerHTML = rows.join("") || `<div class="empty">No live jobs yet</div>`;
+  document.querySelectorAll(".runButton").forEach(button => button.onclick = () => startLiveRun(button.dataset.command || "", button.dataset.label || "Run"));
 }}
 function partCategoryFromText(part, cls) {{
   const text = `${{part || ""}} ${{cls || ""}}`.toLowerCase();
@@ -1227,7 +1291,7 @@ function filterPartRows(items, textGetter, classGetter) {{
 }}
 function renderControls() {{
   const partHost = document.getElementById("partToggleHost");
-  partHost.innerHTML = (MANIFEST.controls?.partToggles || []).map(t => `<div><label class="check"><input type="checkbox" data-category="${{esc(t.category)}}" ${{state.enabledLayers[t.category] !== false ? "checked" : ""}}> ${{esc(t.label)}} <span class="label">${{esc(t.modelCount)}} </span></label>${{t.runtimeSelector?.command ? `<div class="command">${{esc(t.runtimeSelector.command)}}</div>` : ""}}</div>`).join("");
+  partHost.innerHTML = (MANIFEST.controls?.partToggles || []).map(t => `<div><label class="check"><input type="checkbox" data-category="${{esc(t.category)}}" ${{state.enabledLayers[t.category] !== false ? "checked" : ""}}> ${{esc(t.label)}} <span class="label">${{esc(t.modelCount)}} </span></label>${{t.runtimeSelector?.command ? commandBlock(t.runtimeSelector.command, t.label) : ""}}</div>`).join("");
   partHost.querySelectorAll("input").forEach(input => input.addEventListener("change", () => {{
     state.enabledLayers[input.dataset.category] = input.checked;
     render();
@@ -1239,7 +1303,7 @@ function renderControls() {{
     const selected = state.slotFilters[slot.id] || "all";
     const selectedOption = (slot.options || []).find(o => String(o.model || "") === selected);
     const command = selectedOption?.runtimeSelector?.command || slot.runtimeSelector?.command || "";
-    return `<label><span class="label">${{esc(slot.label)}}</span><br><select data-slot="${{esc(slot.id)}}">${{options}}</select></label>${{command ? `<div class="command">${{esc(command)}}</div>` : ""}}`;
+    return `<label><span class="label">${{esc(slot.label)}}</span><br><select data-slot="${{esc(slot.id)}}">${{options}}</select></label>${{command ? commandBlock(command, slot.label) : ""}}`;
   }}).join("");
   propHost.querySelectorAll("select").forEach(select => {{
     select.value = state.slotFilters[select.dataset.slot] || "all";
@@ -1247,12 +1311,13 @@ function renderControls() {{
   }});
 
   const runtime = [...(MANIFEST.controls?.animationControls || []), ...(MANIFEST.controls?.dialogueControls || [])];
-  document.getElementById("runtimeControlHost").innerHTML = runtime.map(control => `<button type="button" data-phase="${{esc(control.phase)}}">${{esc(control.label)}}</button><div class="command">${{esc(control.command)}}</div>`).join("");
+  document.getElementById("runtimeControlHost").innerHTML = runtime.map(control => `<button type="button" data-phase="${{esc(control.phase)}}">${{esc(control.label)}}</button>${{commandBlock(control.command, control.label)}}`).join("");
   document.getElementById("runtimeControlHost").querySelectorAll("button").forEach(button => button.addEventListener("click", () => {{
     state.phase = button.dataset.phase;
     render();
   }}));
-  document.getElementById("botCommandHost").innerHTML = (MANIFEST.controls?.botCommands || []).map(command => `<div><span class="label">${{esc(command.label)}}</span><div class="command">${{esc(command.command)}}</div></div>`).join("");
+  document.getElementById("botCommandHost").innerHTML = (MANIFEST.controls?.botCommands || []).map(command => `<div><span class="label">${{esc(command.label)}}</span>${{commandBlock(command.command, command.label)}}</div>`).join("");
+  renderLiveJobs();
 }}
 function renderImages() {{
   const host = document.getElementById("cameraGrid");
@@ -1280,7 +1345,7 @@ function renderGates(c) {{
   document.getElementById("gateTable").innerHTML = table(["Action", "Category", "Classification", "Model"], rows);
 }}
 function renderAssemblyInventory() {{
-  const rows = filterPartRows(MANIFEST.assemblyInventory || [], i => `${{i.model || ""}} ${{(i.parts || []).join(" ")}}`, i => i.category).map(i => `<tr><td>${{esc(i.category)}}</td><td><code>${{esc(i.model)}}</code></td><td>${{esc((i.classifications || []).join(", "))}}</td><td>${{esc((i.phases || []).join(", "))}}</td><td>${{esc((i.angles || []).join(", "))}}</td><td>${{esc(i.gateCount)}}</td><td>${{esc(i.runtimeSampleCount)}}</td><td>${{esc(i.badSampleCount)}}</td><td>${{esc(i.maxDistance)}}</td><td>${{esc(i.maxAbsDeltaPartInAnchorTrans)}}</td><td><div class="command">${{esc(i.command || "")}}</div></td></tr>`);
+  const rows = filterPartRows(MANIFEST.assemblyInventory || [], i => `${{i.model || ""}} ${{(i.parts || []).join(" ")}}`, i => i.category).map(i => `<tr><td>${{esc(i.category)}}</td><td><code>${{esc(i.model)}}</code></td><td>${{esc((i.classifications || []).join(", "))}}</td><td>${{esc((i.phases || []).join(", "))}}</td><td>${{esc((i.angles || []).join(", "))}}</td><td>${{esc(i.gateCount)}}</td><td>${{esc(i.runtimeSampleCount)}}</td><td>${{esc(i.badSampleCount)}}</td><td>${{esc(i.maxDistance)}}</td><td>${{esc(i.maxAbsDeltaPartInAnchorTrans)}}</td><td>${{commandBlock(i.command || "", i.model || i.category)}}</td></tr>`);
   document.getElementById("assemblyInventoryTable").innerHTML = table(["Category", "Model", "Classification", "Phases", "Angles", "Gates", "Samples", "Bad", "Max Distance", "Max Anchor Delta", "Rerun"], rows);
 }}
 function renderCoords(c) {{
@@ -1308,11 +1373,11 @@ function renderDrift(c) {{
   document.getElementById("driftTable").innerHTML = table(["Part", "Class", "Verdict", "Bad", "Samples", "Anim Time", "Max Distance", "Delta Rel", "Delta Anchor", "First Bad"], rows);
 }}
 function renderFailureSummary() {{
-  const rows = filterPartRows(MANIFEST.failureSummary || [], f => (f.parts || []).join(" "), f => f.category).map(f => `<tr><td>${{esc(f.category)}}</td><td><code>${{esc(f.matchedModel || "")}}</code></td><td>${{esc((f.angles || []).join(", "))}}</td><td>${{esc((f.cases || []).length)}}</td><td>${{esc(f.badCount)}} / ${{esc(f.sampleCount)}}</td><td>${{esc(f.firstBadSampleIndex || "")}}</td><td>${{esc(f.firstBadDistance ?? "")}}</td><td>${{esc(f.maxAbsDeltaPartInAnchorTrans)}}</td><td><div class="command">${{esc(f.command || "")}}</div></td></tr>`);
+  const rows = filterPartRows(MANIFEST.failureSummary || [], f => (f.parts || []).join(" "), f => f.category).map(f => `<tr><td>${{esc(f.category)}}</td><td><code>${{esc(f.matchedModel || "")}}</code></td><td>${{esc((f.angles || []).join(", "))}}</td><td>${{esc((f.cases || []).length)}}</td><td>${{esc(f.badCount)}} / ${{esc(f.sampleCount)}}</td><td>${{esc(f.firstBadSampleIndex || "")}}</td><td>${{esc(f.firstBadDistance ?? "")}}</td><td>${{esc(f.maxAbsDeltaPartInAnchorTrans)}}</td><td>${{commandBlock(f.command || "", f.matchedModel || f.category)}}</td></tr>`);
   document.getElementById("failureSummaryTable").innerHTML = table(["Category", "Matched Model", "Angles", "Cases", "Bad", "First Bad", "Distance", "Max Delta Anchor", "Rerun"], rows);
 }}
 function renderFailureFocus(c) {{
-  const rows = filterPartRows(c?.failureFocus || [], f => f.part, f => f.class).map(f => `<tr><td>${{esc(f.category)}}</td><td><code>${{esc(f.part)}}</code></td><td><code>${{esc(f.matchedModel || "")}}</code></td><td>${{esc(f.firstBadSampleIndex || "")}}</td><td>${{esc(f.firstBadAnimationTime ?? "")}}</td><td>${{esc(f.firstBadDistance ?? "")}}</td><td>${{esc(JSON.stringify(f.deltaPartInAnchorTrans || []))}}</td><td><div class="command">${{esc(f.command || "")}}</div></td></tr>`);
+  const rows = filterPartRows(c?.failureFocus || [], f => f.part, f => f.class).map(f => `<tr><td>${{esc(f.category)}}</td><td><code>${{esc(f.part)}}</code></td><td><code>${{esc(f.matchedModel || "")}}</code></td><td>${{esc(f.firstBadSampleIndex || "")}}</td><td>${{esc(f.firstBadAnimationTime ?? "")}}</td><td>${{esc(f.firstBadDistance ?? "")}}</td><td>${{esc(JSON.stringify(f.deltaPartInAnchorTrans || []))}}</td><td>${{commandBlock(f.command || "", f.matchedModel || f.part)}}</td></tr>`);
   document.getElementById("failureFocusTable").innerHTML = table(["Category", "Part", "Matched Model", "First Bad", "Anim Time", "Distance", "Delta Anchor", "Rerun"], rows);
 }}
 function renderTimeline(c) {{
@@ -1360,6 +1425,7 @@ function render() {{
   renderLines("creatureLines", (c?.creatureLines || []).concat((c?.creatureEvidence || []).map(item => item.line || JSON.stringify(item))));
   renderLines("playbackLines", (c?.animationRequests || []).map(item => item.line || JSON.stringify(item)).concat((c?.animationPlayback || []).map(item => item.line || JSON.stringify(item))).concat(c?.animationBlockers || []));
   renderFace(c);
+  renderLiveJobs();
 }}
 render();
 </script>
