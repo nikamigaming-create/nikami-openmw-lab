@@ -47,6 +47,17 @@ function Test-FnvOverlayDataPath([string]$Path) {
         (Test-Path -LiteralPath (Join-Path $Path "textures/tx_cursor.dds"))
 }
 
+function Assert-PublishOverlayPath([string]$Path) {
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+        return
+    }
+
+    $resolved = (Resolve-Path -LiteralPath $Path).Path
+    if ($resolved.StartsWith("D:\Modlists\", [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "FNV PCVR publish overlay data must be generated publish data, not legacy modlist data: $resolved"
+    }
+}
+
 $BuildPath = Join-Path $RepoRoot $BuildDir
 $Exe = Join-Path $BuildPath "$Configuration/openmw_vr.exe"
 $Resources = Join-Path $BuildPath "$Configuration/resources"
@@ -75,12 +86,6 @@ if (!(Test-Path -LiteralPath $FnvrPlugin -PathType Leaf)) {
     throw "Missing PCVR FNVR plugin in FNV data directory: $FnvrPlugin"
 }
 
-if ([string]::IsNullOrWhiteSpace($FnvConfigData)) {
-    $LegacyOverlayData = "D:\Modlists\fnv\openmw-config\data"
-    if (Test-FnvOverlayDataPath $LegacyOverlayData) {
-        $FnvConfigData = $LegacyOverlayData
-    }
-}
 if (![string]::IsNullOrWhiteSpace($FnvConfigData)) {
     if (!(Test-Path -LiteralPath $FnvConfigData)) {
         throw "Missing FNV config data directory: $FnvConfigData"
@@ -89,6 +94,7 @@ if (![string]::IsNullOrWhiteSpace($FnvConfigData)) {
     if ((Test-FnvOverlayDataPath $ChildData) -and !(Test-FnvOverlayDataPath $FnvConfigData)) {
         $FnvConfigData = $ChildData
     }
+    Assert-PublishOverlayPath $FnvConfigData
     $FnvConfigData = (Resolve-Path -LiteralPath $FnvConfigData).Path
 }
 

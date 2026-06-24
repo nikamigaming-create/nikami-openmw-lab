@@ -34,9 +34,8 @@ if (!(Test-Path -LiteralPath $AdbPath)) {
 }
 
 if ([string]::IsNullOrWhiteSpace($FnvData)) {
-    $FnvData = "D:\SteamLibrary\steamapps\common\Fallout New Vegas\Data"
+    throw "Set NIKAMI_FNV_DATA or pass -FnvData. Android deploy must not guess a retail data path."
 }
-
 if (!(Test-Path -LiteralPath $FnvData)) {
     throw "Missing FNV data directory: $FnvData"
 }
@@ -46,11 +45,12 @@ if ($ViewingDistance -le 0) {
     Write-Host "Using FNV viewing distance from harvested fBlockLoadDistance: $ViewingDistance"
 }
 
-if ([string]::IsNullOrWhiteSpace($FnvConfigData)) {
-    $Candidate = "D:\Modlists\fnv\openmw-config\data"
-    if (Test-Path -LiteralPath $Candidate) {
-        $FnvConfigData = $Candidate
+if (![string]::IsNullOrWhiteSpace($FnvConfigData)) {
+    $resolvedConfigData = (Resolve-Path -LiteralPath $FnvConfigData).Path
+    if ($resolvedConfigData.StartsWith("D:\Modlists\", [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "FNV Android publish overlay data must be generated publish data, not legacy modlist data: $resolvedConfigData"
     }
+    $FnvConfigData = $resolvedConfigData
 }
 
 New-Item -ItemType Directory -Force -Path $ConfigStage | Out-Null

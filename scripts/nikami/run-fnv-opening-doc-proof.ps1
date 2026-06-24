@@ -36,6 +36,8 @@ $args = @{
     ActorViewOffsetY = 0
     ActorViewOffsetZ = 96
     ActorViewTargetZ = 92
+    ActorViewLocalOffset = $true
+    FnvPartMatrixAudit = $true
     ScreenshotFrames = "170"
     RequireLogPattern = @(
         "FNV/ESM4 proof: moved player to proof cell.*request=`"GSDocMitchellHouse`".*type=interior",

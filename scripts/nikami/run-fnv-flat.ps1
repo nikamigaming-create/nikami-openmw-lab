@@ -80,11 +80,14 @@ function Test-FnvOverlayDataPath([string]$Path) {
     return (Test-Path -LiteralPath $HudMenu) -and (Test-Path -LiteralPath $CursorTexture)
 }
 
-if ([string]::IsNullOrWhiteSpace($FnvConfigData)) {
-    $LegacyOverlayData = "D:\Modlists\fnv\openmw-config\data"
-    if (Test-FnvOverlayDataPath $LegacyOverlayData) {
-        $FnvConfigData = $LegacyOverlayData
-        Write-Host "Auto-detected FNV overlay data: $FnvConfigData"
+function Assert-PublishOverlayPath([string]$Path) {
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+        return
+    }
+
+    $resolved = (Resolve-Path -LiteralPath $Path).Path
+    if ($resolved.StartsWith("D:\Modlists\", [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "FNV publish overlay data must be generated publish data, not legacy modlist data: $resolved"
     }
 }
 
@@ -103,6 +106,7 @@ if (![string]::IsNullOrWhiteSpace($FnvConfigData)) {
         Write-Warning "FNV config data path does not expose expected HUD/menu assets: $FnvConfigData"
     }
 
+    Assert-PublishOverlayPath $FnvConfigData
     $FnvConfigData = (Resolve-Path -LiteralPath $FnvConfigData).Path
 }
 

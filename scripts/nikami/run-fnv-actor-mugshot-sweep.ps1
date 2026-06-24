@@ -39,6 +39,7 @@ param(
     [double]$ActorStageY = 1500,
     [double]$ActorStageZ = 8425,
     [double]$ActorStageRotZ = 1.5708,
+    [switch]$WorldSpaceActorViewOffset,
     [switch]$DisableNativeAnimationCallbacks,
     [switch]$NoSound,
     [switch]$RequirePass
@@ -564,6 +565,7 @@ function Invoke-MugshotTarget {
         RequireActorVisibleHandGeometry = $true
         FnvPartMatrixAudit = $true
     }
+    if (!$WorldSpaceActorViewOffset) { $proofArgs.ActorViewLocalOffset = $true }
     if ($DisableNativeAnimationCallbacks) { $proofArgs.FnvDisableNativeAnimationCallbacks = $true }
     if ($StageActor) {
         $proofArgs.StageActor = $true

@@ -10,16 +10,18 @@ param(
     [int]$RunSeconds = 20,
     [int]$ActorFrame = 620,
     [string]$ScreenshotFrames = "640",
-    [double]$ActorViewOffsetX = 18,
+    [double]$ActorViewOffsetX = 86,
     [double]$ActorViewOffsetY = 0,
-    [double]$ActorViewOffsetZ = 70,
-    [double]$ActorViewTargetZ = 78,
-    [int]$CropX = 550,
-    [int]$CropY = 315,
-    [int]$CropWidth = 360,
-    [int]$CropHeight = 340,
+    [double]$ActorViewOffsetZ = 116,
+    [double]$ActorViewTargetZ = 116,
+    [int]$CropX = 720,
+    [int]$CropY = 130,
+    [int]$CropWidth = 480,
+    [int]$CropHeight = 520,
     [int]$ZoomWidth = 900,
     [int]$ZoomHeight = 850,
+    [switch]$WorldSpaceActorViewOffset,
+    [switch]$AllowRuntimeGateFailure,
     [switch]$NoSound
 )
 
@@ -76,10 +78,13 @@ function Copy-ZoomedCrop {
     }
 }
 
+$orbitDistance = [Math]::Abs($ActorViewOffsetX)
+if ($orbitDistance -le 0) { throw "ActorViewOffsetX must be non-zero for actor-local orbit framing." }
+$diagonalDistance = $orbitDistance * 0.7071067811865476
 $angles = @(
-    @{ Name = "back"; RotZ = 0.0 },
-    @{ Name = "front"; RotZ = 1.5708 },
-    @{ Name = "side"; RotZ = 3.1416 }
+    @{ Name = "front"; OffsetX = $ActorViewOffsetX; OffsetY = $ActorViewOffsetY },
+    @{ Name = "front-left"; OffsetX = $diagonalDistance; OffsetY = -$diagonalDistance },
+    @{ Name = "front-right"; OffsetX = $diagonalDistance; OffsetY = $diagonalDistance }
 )
 
 foreach ($angle in $angles) {
@@ -107,17 +112,31 @@ foreach ($angle in $angles) {
         ActorStageX = -67480
         ActorStageY = 1500
         ActorStageZ = 8425
-        ActorStageRotZ = [double]$angle.RotZ
-        ActorViewOffsetX = $ActorViewOffsetX
-        ActorViewOffsetY = $ActorViewOffsetY
+        ActorStageRotZ = 1.5708
+        ActorViewOffsetX = [double]$angle.OffsetX
+        ActorViewOffsetY = [double]$angle.OffsetY
         ActorViewOffsetZ = $ActorViewOffsetZ
         ActorViewTargetZ = $ActorViewTargetZ
+        FnvPartMatrixAudit = $true
     }
+    if (!$WorldSpaceActorViewOffset) { $proofArgs.ActorViewLocalOffset = $true }
     if (![string]::IsNullOrWhiteSpace($FnvConfigData)) { $proofArgs.FnvConfigData = $FnvConfigData }
     if (![string]::IsNullOrWhiteSpace($ExtraOsgPluginDir)) { $proofArgs.ExtraOsgPluginDir = $ExtraOsgPluginDir }
     if ($NoSound) { $proofArgs.NoSound = $true }
 
-    & $FlatProof @proofArgs | Out-Host
+    $runtimeGateStatus = "PASS"
+    $runtimeGateError = ""
+    try {
+        & $FlatProof @proofArgs | Out-Host
+    }
+    catch {
+        $runtimeGateStatus = "FAIL"
+        $runtimeGateError = $_.Exception.Message
+        Write-Warning "Easy Pete angle $($angle.Name) runtime gate failed: $runtimeGateError"
+        if (!$AllowRuntimeGateFailure) {
+            throw
+        }
+    }
 
     $latest = Get-ChildItem -LiteralPath (Join-Path $ProofRoot "fnv-flat-proof") -Directory |
         Where-Object { $before -notcontains $_.FullName } |
@@ -137,6 +156,17 @@ foreach ($angle in $angles) {
     Copy-Item -LiteralPath $shot.FullName -Destination (Join-Path $SweepDir "$($angle.Name)_source.png") -Force
     Copy-Item -LiteralPath (Join-Path $latest.FullName "summary.txt") -Destination (Join-Path $SweepDir "$($angle.Name)_summary.txt") -Force
     Copy-Item -LiteralPath (Join-Path $latest.FullName "openmw.log") -Destination (Join-Path $SweepDir "$($angle.Name)_openmw.log") -Force
+    if (Test-Path -LiteralPath (Join-Path $latest.FullName "fnv-data-provenance.json")) {
+        Copy-Item -LiteralPath (Join-Path $latest.FullName "fnv-data-provenance.json") -Destination (Join-Path $SweepDir "$($angle.Name)_fnv-data-provenance.json") -Force
+    }
+    [pscustomobject]@{
+        angle = $angle.Name
+        runtimeGateStatus = $runtimeGateStatus
+        runtimeGateError = $runtimeGateError
+        proofDir = $latest.FullName
+        source = (Join-Path $SweepDir "$($angle.Name)_source.png")
+        zoom = (Join-Path $SweepDir "$($angle.Name)_zoom.png")
+    } | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $SweepDir "$($angle.Name)_runtime-status.json") -Encoding UTF8
     Copy-ZoomedCrop -SourcePath $shot.FullName -OutputPath (Join-Path $SweepDir "$($angle.Name)_zoom.png")
 }
 

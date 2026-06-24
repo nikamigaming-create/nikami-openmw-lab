@@ -78,10 +78,14 @@ namespace MWRender
         class TintMaterialVisitor : public osg::NodeVisitor
         {
         public:
-            TintMaterialVisitor(const osg::Vec4f& tint, float emissionStrength = 0.f)
+            TintMaterialVisitor(
+                const osg::Vec4f& tint, float emissionStrength = 0.f, bool replaceVertexColorRgb = false,
+                bool neutralMaterialWhenReplacing = false)
                 : osg::NodeVisitor(TRAVERSE_ALL_CHILDREN)
                 , mTint(tint)
                 , mEmissionStrength(emissionStrength)
+                , mReplaceVertexColorRgb(replaceVertexColorRgb)
+                , mNeutralMaterialWhenReplacing(neutralMaterialWhenReplacing)
             {
             }
 
@@ -113,9 +117,18 @@ namespace MWRender
                 {
                     for (osg::Vec4f& color : *colors)
                     {
-                        color.x() *= mTint.x();
-                        color.y() *= mTint.y();
-                        color.z() *= mTint.z();
+                        if (mReplaceVertexColorRgb)
+                        {
+                            color.x() = mTint.x();
+                            color.y() = mTint.y();
+                            color.z() = mTint.z();
+                        }
+                        else
+                        {
+                            color.x() *= mTint.x();
+                            color.y() *= mTint.y();
+                            color.z() *= mTint.z();
+                        }
                     }
                     colors->dirty();
                     return true;
@@ -123,11 +136,23 @@ namespace MWRender
 
                 if (osg::Vec4ubArray* colors = dynamic_cast<osg::Vec4ubArray*>(existingColors))
                 {
+                    const auto tintByte = [](float value) {
+                        return static_cast<unsigned char>(std::clamp(value * 255.f + 0.5f, 0.f, 255.f));
+                    };
                     for (osg::Vec4ub& color : *colors)
                     {
-                        color.r() = static_cast<unsigned char>(std::clamp(color.r() * mTint.x(), 0.f, 255.f));
-                        color.g() = static_cast<unsigned char>(std::clamp(color.g() * mTint.y(), 0.f, 255.f));
-                        color.b() = static_cast<unsigned char>(std::clamp(color.b() * mTint.z(), 0.f, 255.f));
+                        if (mReplaceVertexColorRgb)
+                        {
+                            color.r() = tintByte(mTint.x());
+                            color.g() = tintByte(mTint.y());
+                            color.b() = tintByte(mTint.z());
+                        }
+                        else
+                        {
+                            color.r() = static_cast<unsigned char>(std::clamp(color.r() * mTint.x(), 0.f, 255.f));
+                            color.g() = static_cast<unsigned char>(std::clamp(color.g() * mTint.y(), 0.f, 255.f));
+                            color.b() = static_cast<unsigned char>(std::clamp(color.b() * mTint.z(), 0.f, 255.f));
+                        }
                     }
                     colors->dirty();
                     return true;
@@ -144,9 +169,11 @@ namespace MWRender
                     material = static_cast<osg::Material*>(existing->clone(osg::CopyOp::DEEP_COPY_ALL));
 
                 const bool neutralTint = mTint == osg::Vec4f(1.f, 1.f, 1.f, 1.f);
+                const osg::Vec4f materialTint
+                    = mNeutralMaterialWhenReplacing ? osg::Vec4f(1.f, 1.f, 1.f, 1.f) : mTint;
                 material->setColorMode(osg::Material::AMBIENT_AND_DIFFUSE);
-                material->setDiffuse(osg::Material::FRONT_AND_BACK, mTint);
-                material->setAmbient(osg::Material::FRONT_AND_BACK, mTint);
+                material->setDiffuse(osg::Material::FRONT_AND_BACK, materialTint);
+                material->setAmbient(osg::Material::FRONT_AND_BACK, materialTint);
                 if (neutralTint)
                 {
                     material->setSpecular(osg::Material::FRONT_AND_BACK, osg::Vec4f(0.f, 0.f, 0.f, 0.f));
@@ -196,6 +223,8 @@ namespace MWRender
 
             osg::Vec4f mTint;
             float mEmissionStrength = 0.f;
+            bool mReplaceVertexColorRgb = false;
+            bool mNeutralMaterialWhenReplacing = false;
 
         public:
             mutable unsigned int mNeutralizedVertexColorArrays = 0;
@@ -279,15 +308,70 @@ namespace MWRender
                 if (stateSet == nullptr)
                     return;
 
-                osg::ref_ptr<osg::AlphaFunc> alphaFunc = new osg::AlphaFunc(osg::AlphaFunc::GREATER, 0.18f);
-                osg::ref_ptr<osg::BlendFunc> blendFunc
-                    = new osg::BlendFunc(osg::BlendFunc::SRC_ALPHA, osg::BlendFunc::ONE_MINUS_SRC_ALPHA);
-                stateSet->setMode(GL_BLEND, osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
+                osg::ref_ptr<osg::AlphaFunc> alphaFunc = new osg::AlphaFunc(osg::AlphaFunc::GREATER, 0.5f);
+                stateSet->setMode(GL_BLEND, osg::StateAttribute::OFF | osg::StateAttribute::OVERRIDE);
                 stateSet->setMode(GL_ALPHA_TEST, osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
                 stateSet->setAttributeAndModes(alphaFunc, osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
-                stateSet->setAttributeAndModes(blendFunc, osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
-                stateSet->setRenderingHint(osg::StateSet::TRANSPARENT_BIN);
+                stateSet->setRenderingHint(osg::StateSet::OPAQUE_BIN);
+                // Hair/beard geometry uses vertex or texture alpha for strand cutouts.
+                // Keep blending disabled so it does not bleed through hats, but do not force final alpha to 1.
                 stateSet->setDefine("FORCE_OPAQUE", "0", osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
+                ++mApplied;
+            }
+
+            unsigned int mApplied = 0;
+        };
+
+        class ForceOpaqueNoBlendVisitor : public osg::NodeVisitor
+        {
+        public:
+            ForceOpaqueNoBlendVisitor()
+                : osg::NodeVisitor(TRAVERSE_ALL_CHILDREN)
+            {
+            }
+
+            void apply(osg::Node& node) override
+            {
+                applyOpaqueState(node.getOrCreateStateSet());
+                traverse(node);
+            }
+
+            void apply(osg::Geode& geode) override
+            {
+                applyOpaqueState(geode.getOrCreateStateSet());
+                for (unsigned int i = 0; i < geode.getNumDrawables(); ++i)
+                    if (osg::Drawable* drawable = geode.getDrawable(i))
+                        applyDrawable(*drawable);
+                traverse(geode);
+            }
+
+            void apply(osg::Drawable& drawable) override { applyDrawable(drawable); }
+
+            unsigned int getAppliedCount() const { return mApplied; }
+
+        private:
+            void applyDrawable(osg::Drawable& drawable)
+            {
+                applyOpaqueState(drawable.getOrCreateStateSet());
+                if (SceneUtil::RigGeometry* rig = dynamic_cast<SceneUtil::RigGeometry*>(&drawable))
+                {
+                    if (osg::Geometry* source = rig->getSourceGeometry())
+                        applyOpaqueState(source->getOrCreateStateSet());
+                    for (unsigned int i = 0; i < 2; ++i)
+                        if (osg::Geometry* geometry = rig->getRenderGeometry(i))
+                            applyOpaqueState(geometry->getOrCreateStateSet());
+                }
+            }
+
+            void applyOpaqueState(osg::StateSet* stateSet)
+            {
+                if (stateSet == nullptr)
+                    return;
+
+                stateSet->setMode(GL_BLEND, osg::StateAttribute::OFF | osg::StateAttribute::OVERRIDE);
+                stateSet->setMode(GL_ALPHA_TEST, osg::StateAttribute::OFF | osg::StateAttribute::OVERRIDE);
+                stateSet->setRenderingHint(osg::StateSet::OPAQUE_BIN);
+                stateSet->setDefine("FORCE_OPAQUE", "1", osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
                 ++mApplied;
             }
 
@@ -426,6 +510,10 @@ namespace MWRender
             return osg::Vec4f(traits.mHairColour.red / 255.f, traits.mHairColour.green / 255.f,
                 traits.mHairColour.blue / 255.f, 1.f);
         }
+
+        osg::Vec4f getFalloutRenderHairTint(const ESM4::Npc& traits) { return getHairTint(traits); }
+
+        float getFalloutHairEmissionStrength(const osg::Vec4f&) { return 0.f; }
 
         bool isFonvMiscHeadPart(const ESM4::HeadPart& part)
         {
@@ -706,6 +794,46 @@ namespace MWRender
             return image != nullptr && image->s() >= 64 && image->t() >= 64;
         }
 
+        std::string findTextureCompanion(
+            Resource::ResourceSystem* resourceSystem, std::string_view texture, std::string_view suffix)
+        {
+            if (texture.empty())
+                return {};
+
+            std::string candidate(texture);
+            const std::size_t dot = candidate.find_last_of('.');
+            if (dot == std::string::npos)
+                return {};
+
+            candidate.insert(dot, suffix);
+            return findExistingTexture(resourceSystem, { candidate });
+        }
+
+        std::string formatTextureImageSummary(Resource::ResourceSystem* resourceSystem, std::string_view texture)
+        {
+            if (texture.empty())
+                return "<none>";
+
+            osg::ref_ptr<osg::Image> image = getExistingTextureImage(resourceSystem, texture);
+            if (image == nullptr)
+                return std::string(texture) + " <missing>";
+
+            std::ostringstream stream;
+            stream << texture << " " << image->s() << "x" << image->t() << " pf=0x" << std::hex
+                   << image->getPixelFormat() << std::dec;
+            return stream.str();
+        }
+
+        std::string findFonvTextureNormalCompanion(Resource::ResourceSystem* resourceSystem, std::string_view texture)
+        {
+            return findTextureCompanion(resourceSystem, texture, "_n");
+        }
+
+        std::string findFonvTextureSkinCompanion(Resource::ResourceSystem* resourceSystem, std::string_view texture)
+        {
+            return findTextureCompanion(resourceSystem, texture, "_sk");
+        }
+
         std::string findFonvNpcFaceTexture(Resource::ResourceSystem* resourceSystem, const ESM4::Npc& traits)
         {
             const std::string formIndex = formatFalloutFormIndex(traits.mId);
@@ -719,10 +847,11 @@ namespace MWRender
             if (image == nullptr || image->s() < 64 || image->t() < 64)
                 return {};
 
-            Log(Debug::Info) << "FNV/ESM4 diag: using exported NPC FaceGen diffuse " << texture << " for "
+            Log(Debug::Info) << "FNV/ESM4 diag: loaded exported NPC FaceGen texture source " << texture << " for "
                              << traits.mEditorId << " "
                              << (image != nullptr ? std::to_string(image->s()) + "x" + std::to_string(image->t())
-                                                  : std::string("<unloaded>"));
+                                                  : std::string("<unloaded>"))
+                             << " runtime=loaded-pending-exact-facegen-texture-synthesis";
             return texture;
         }
 
@@ -818,8 +947,8 @@ namespace MWRender
 
             const float invSamples = 1.f / static_cast<float>(samples);
             const osg::Vec4f average = total * invSamples;
-            tint = osg::Vec4f(std::clamp(average.x() * 2.f, 0.f, 1.f),
-                std::clamp(average.y() * 2.f, 0.f, 1.f), std::clamp(average.z() * 2.f, 0.f, 1.f), 1.f);
+            tint = osg::Vec4f(std::clamp(average.x(), 0.f, 1.f),
+                std::clamp(average.y(), 0.f, 1.f), std::clamp(average.z(), 0.f, 1.f), 1.f);
             return true;
         }
 
@@ -1021,6 +1150,14 @@ namespace MWRender
             std::string_view texture, Resource::ResourceSystem* resourceSystem, osg::Node& node)
         {
             overrideFalloutPartTexture(texture, "normalMap", 1, resourceSystem, node);
+            resourceSystem->getSceneManager()->applyShaders(node);
+        }
+
+        void overrideFalloutPartSpecularTexture(
+            std::string_view texture, Resource::ResourceSystem* resourceSystem, osg::Node& node)
+        {
+            overrideFalloutPartTexture(texture, "specularMap", 2, resourceSystem, node);
+            resourceSystem->getSceneManager()->applyShaders(node);
         }
 
         void overrideFalloutPartDetailTexture(
@@ -2389,6 +2526,111 @@ namespace MWRender
             unsigned int mHidden = 0;
         };
 
+        unsigned int hideFalloutDrawableAndRigGeometry(osg::Drawable& drawable)
+        {
+            unsigned int hidden = 0;
+            const auto hideDrawable = [&](osg::Drawable* target) {
+                if (target == nullptr)
+                    return;
+                target->setNodeMask(0);
+                target->setCullingActive(true);
+                ++hidden;
+            };
+
+            hideDrawable(&drawable);
+            if (SceneUtil::RigGeometry* rig = dynamic_cast<SceneUtil::RigGeometry*>(&drawable))
+            {
+                hideDrawable(rig->getSourceGeometry());
+                for (unsigned int i = 0; i < 2; ++i)
+                    hideDrawable(rig->getRenderGeometry(i));
+            }
+            return hidden;
+        }
+
+        bool isFonvNoHatHairDrawable(const osg::Drawable& drawable)
+        {
+            if (Misc::StringUtils::ciEqual(drawable.getName(), "NoHat"))
+                return true;
+
+            const SceneUtil::RigGeometry* rig = dynamic_cast<const SceneUtil::RigGeometry*>(&drawable);
+            if (rig == nullptr)
+                return false;
+
+            if (const osg::Geometry* source = rig->getSourceGeometry())
+                if (Misc::StringUtils::ciEqual(source->getName(), "NoHat"))
+                    return true;
+
+            for (unsigned int i = 0; i < 2; ++i)
+                if (const osg::Geometry* geometry = rig->getRenderGeometry(i))
+                    if (Misc::StringUtils::ciEqual(geometry->getName(), "NoHat"))
+                        return true;
+
+            return false;
+        }
+
+        bool isFonvHatHairDrawable(const osg::Drawable& drawable)
+        {
+            if (Misc::StringUtils::ciEqual(drawable.getName(), "Hat"))
+                return true;
+
+            const SceneUtil::RigGeometry* rig = dynamic_cast<const SceneUtil::RigGeometry*>(&drawable);
+            if (rig == nullptr)
+                return false;
+
+            if (const osg::Geometry* source = rig->getSourceGeometry())
+                if (Misc::StringUtils::ciEqual(source->getName(), "Hat"))
+                    return true;
+
+            for (unsigned int i = 0; i < 2; ++i)
+                if (const osg::Geometry* geometry = rig->getRenderGeometry(i))
+                    if (Misc::StringUtils::ciEqual(geometry->getName(), "Hat"))
+                        return true;
+
+            return false;
+        }
+
+        class HideFonvNoHatHairVariantVisitor : public osg::NodeVisitor
+        {
+        public:
+            HideFonvNoHatHairVariantVisitor()
+                : osg::NodeVisitor(TRAVERSE_ALL_CHILDREN)
+            {
+            }
+
+            void apply(osg::Drawable& drawable) override
+            {
+                if (!isFonvNoHatHairDrawable(drawable))
+                    return;
+
+                mHiddenGeometry += hideFalloutDrawableAndRigGeometry(drawable);
+                ++mHidden;
+            }
+
+            unsigned int mHidden = 0;
+            unsigned int mHiddenGeometry = 0;
+        };
+
+        class HideFonvHatHairVariantVisitor : public osg::NodeVisitor
+        {
+        public:
+            HideFonvHatHairVariantVisitor()
+                : osg::NodeVisitor(TRAVERSE_ALL_CHILDREN)
+            {
+            }
+
+            void apply(osg::Drawable& drawable) override
+            {
+                if (!isFonvHatHairDrawable(drawable))
+                    return;
+
+                mHiddenGeometry += hideFalloutDrawableAndRigGeometry(drawable);
+                ++mHidden;
+            }
+
+            unsigned int mHidden = 0;
+            unsigned int mHiddenGeometry = 0;
+        };
+
         class ForceFalloutActorPartVisibleVisitor : public osg::NodeVisitor
         {
         public:
@@ -2428,11 +2670,42 @@ namespace MWRender
             unsigned int mRigGeometryCount = 0;
         };
 
+        bool isFalloutFaceGenMorphTargetModel(std::string_view model)
+        {
+            std::string lowered(model);
+            Misc::StringUtils::lowerCaseInPlace(lowered);
+            return containsAny(lowered,
+                { "characters/head/", "characters\\head\\", "characters/hair/", "characters\\hair\\",
+                    "characters/mouth/", "characters\\mouth\\" });
+        }
+
+        bool falloutFaceGenEgmExists(Resource::ResourceSystem* resourceSystem, std::string_view model)
+        {
+            std::string egmPath(model);
+            const std::size_t dot = egmPath.find_last_of('.');
+            if (dot == std::string::npos)
+                return false;
+
+            egmPath.replace(dot, std::string::npos, ".egm");
+            const VFS::Path::Normalized correctedPath
+                = Misc::ResourceHelpers::correctMeshPath(VFS::Path::Normalized(egmPath));
+            return resourceSystem->getVFS()->exists(correctedPath);
+        }
+
         bool applyFaceGenEgmMorph(Resource::ResourceSystem* resourceSystem, osg::Node* attached, std::string_view model,
             const ESM4::Npc& traits)
         {
             if (attached == nullptr)
                 return false;
+
+            if (!isFalloutFaceGenMorphTargetModel(model))
+            {
+                if (falloutFaceGenEgmExists(resourceSystem, model))
+                    Log(Debug::Info) << "FNV/ESM4 diag: not applying FaceGen EGM morph to non-face model "
+                                     << model << " for " << traits.mEditorId
+                                     << " runtime=loaded-pending-equipment-facegen-fit";
+                return false;
+            }
 
             const std::shared_ptr<const FaceGenEgm> egm = loadFaceGenEgm(resourceSystem, model);
             if (!egm)
@@ -2684,6 +2957,14 @@ namespace MWRender
             FalloutDialogueMorphDriver& mDriver;
         };
 
+        bool isFalloutDialogueHeadSkinSurface(std::string_view model)
+        {
+            std::string lowered(model);
+            Misc::StringUtils::lowerCaseInPlace(lowered);
+            return lowered.find("characters/head/head") != std::string::npos
+                || lowered.find("characters\\head\\head") != std::string::npos;
+        }
+
         bool applyFalloutDialogueMorph(
             Resource::ResourceSystem* resourceSystem, Animation* animation, osg::Node* attached,
             std::string_view model, const ESM4::Npc& traits)
@@ -2694,6 +2975,15 @@ namespace MWRender
             const std::shared_ptr<const FaceGenTri> tri = loadFaceGenTri(resourceSystem, model);
             if (!tri)
                 return false;
+
+            if (isFalloutDialogueHeadSkinSurface(model))
+            {
+                Log(Debug::Info) << "FNV/ESM4 diag: loaded head TRI dialogue morph source " << model
+                                 << " vertices=" << tri->mVertexCount << " diffMorphs=" << tri->mDiffMorphs.size()
+                                 << " staticMorphs=" << tri->mStaticMorphs.size() << " for " << traits.mEditorId
+                                 << " runtime=loaded-pending-runtime-head-dialogue-morph";
+                return false;
+            }
 
             osg::ref_ptr<FalloutDialogueMorphDriver> driver
                 = new FalloutDialogueMorphDriver(animation, *tri, std::string(model));
@@ -2881,6 +3171,144 @@ namespace MWRender
                 && !isFalloutFaceHairModel(lowered);
         }
 
+        bool fonvCoveredSlotsHideScalpHair(uint32_t coveredSlots)
+        {
+            constexpr uint32_t hairCoverSlots = ESM4::Armor::FO3_Head | ESM4::Armor::FO3_Hair
+                | ESM4::Armor::FO3_Headband | ESM4::Armor::FO3_Hat;
+            return (coveredSlots & hairCoverSlots) != 0;
+        }
+
+        bool shouldUseFonvHatCompatibleHairVariant(const ESM4::HeadPart& part, uint32_t coveredSlots)
+        {
+            if (!fonvCoveredSlotsHideScalpHair(coveredSlots))
+                return false;
+
+            if (part.mType == ESM4::HeadPart::Type_Hair)
+                return true;
+
+            return part.mType == ESM4::HeadPart::Type_Misc && isFalloutScalpHairModel(part.mModel)
+                && !isFonvFacialHairHeadPart(part);
+        }
+
+        bool isFonvUnsafeCoveredHairModel(std::string_view model)
+        {
+            std::string lowered(model);
+            Misc::StringUtils::lowerCaseInPlace(lowered);
+            return lowered.find("hairbaseold") != std::string::npos;
+        }
+
+        std::string getFalloutCharacterBuilderPhase()
+        {
+            const char* value = std::getenv("OPENMW_FNV_CHARACTER_BUILDER_PHASE");
+            if (value == nullptr || value[0] == '\0')
+                return "full";
+
+            std::string phase(value);
+            Misc::StringUtils::lowerCaseInPlace(phase);
+            return phase;
+        }
+
+        bool isFalloutCharacterBuilderActive()
+        {
+            const char* value = std::getenv("OPENMW_FNV_CHARACTER_BUILDER_PHASE");
+            return value != nullptr && value[0] != '\0';
+        }
+
+        int getFalloutCharacterBuilderRank(std::string_view value)
+        {
+            if (Misc::StringUtils::ciEqual(value, "body") || Misc::StringUtils::ciEqual(value, "body-skin"))
+                return 10;
+            if (Misc::StringUtils::ciEqual(value, "head") || Misc::StringUtils::ciEqual(value, "race-head")
+                || Misc::StringUtils::ciEqual(value, "head-skin"))
+                return 20;
+            if (Misc::StringUtils::ciEqual(value, "face") || Misc::StringUtils::ciEqual(value, "face-organs")
+                || Misc::StringUtils::ciEqual(value, "mouth") || Misc::StringUtils::ciEqual(value, "eyes"))
+                return 30;
+            if (Misc::StringUtils::ciEqual(value, "hair") || Misc::StringUtils::ciEqual(value, "hair-beard")
+                || Misc::StringUtils::ciEqual(value, "beard"))
+                return 40;
+            if (Misc::StringUtils::ciEqual(value, "equipment")
+                || Misc::StringUtils::ciEqual(value, "equipment-body"))
+                return 50;
+            if (Misc::StringUtils::ciEqual(value, "weapon") || Misc::StringUtils::ciEqual(value, "weapons"))
+                return 60;
+            if (Misc::StringUtils::ciEqual(value, "headgear") || Misc::StringUtils::ciEqual(value, "hat"))
+                return 70;
+            if (Misc::StringUtils::ciEqual(value, "talk") || Misc::StringUtils::ciEqual(value, "dialogue")
+                || Misc::StringUtils::ciEqual(value, "animate") || Misc::StringUtils::ciEqual(value, "animation"))
+                return 80;
+            return 100;
+        }
+
+        bool falloutCharacterBuilderAllows(std::string_view category)
+        {
+            if (!isFalloutCharacterBuilderActive())
+                return true;
+
+            const std::string phase = getFalloutCharacterBuilderPhase();
+            return getFalloutCharacterBuilderRank(phase) >= getFalloutCharacterBuilderRank(category);
+        }
+
+        void logFalloutCharacterBuilderGate(bool included, std::string_view category, std::string_view model,
+            const MWWorld::Ptr& ptr, const ESM4::Npc& traits)
+        {
+            if (!isFalloutCharacterBuilderActive())
+                return;
+
+            Log(Debug::Info) << "FNV/ESM4 CHARACTER BUILDER " << (included ? "include" : "skip")
+                             << " phase=" << getFalloutCharacterBuilderPhase()
+                             << " category=" << category
+                             << " actor=" << traits.mEditorId
+                             << " ref=" << ptr.getCellRef().getRefId()
+                             << " model=" << (model.empty() ? std::string("<none>") : std::string(model))
+                             << " classification="
+                             << (included ? "runtime-supported" : "intentionally-excluded-with-proof");
+        }
+
+        void hideFonvUnsafeCoveredHatHairVariant(
+            osg::Node* attached, std::string_view model, const ESM4::Npc& traits, uint32_t coveredSlots)
+        {
+            if (std::getenv("OPENMW_FNV_HIDE_UNSAFE_HAT_HAIR_VARIANT") == nullptr)
+            {
+                if (attached != nullptr && fonvCoveredSlotsHideScalpHair(coveredSlots) && isFonvUnsafeCoveredHairModel(model))
+                    Log(Debug::Info) << "FNV/ESM4 diag: keeping hat-compatible covered hair drawable on "
+                                     << model << " for " << traits.mEditorId
+                                     << " classification=runtime-supported reason=hair-under-headgear";
+                return;
+            }
+
+            if (attached == nullptr || !fonvCoveredSlotsHideScalpHair(coveredSlots) || !isFonvUnsafeCoveredHairModel(model))
+                return;
+
+            HideFonvHatHairVariantVisitor visitor;
+            attached->accept(visitor);
+            if (visitor.mHidden == 0)
+                return;
+
+            Log(Debug::Info) << "FNV/ESM4 diag: hid " << visitor.mHidden << " opaque-unsafe hat hair drawable(s) on "
+                             << model << " for " << traits.mEditorId
+                             << " because this covered hair variant draws over the face under opaque headgear slots=0x"
+                             << std::hex << coveredSlots << std::dec
+                             << " hiddenGeometry=" << visitor.mHiddenGeometry;
+        }
+
+        void hideFonvNoHatHairVariant(
+            osg::Node* attached, std::string_view model, const ESM4::Npc& traits, uint32_t coveredSlots)
+        {
+            if (attached == nullptr || !fonvCoveredSlotsHideScalpHair(coveredSlots))
+                return;
+
+            HideFonvNoHatHairVariantVisitor visitor;
+            attached->accept(visitor);
+            if (visitor.mHidden != 0)
+                Log(Debug::Info) << "FNV/ESM4 diag: hid " << visitor.mHidden << " no-hat hair drawable(s) on "
+                                 << model << " for " << traits.mEditorId
+                                 << " because equipped headgear uses hat-compatible hair slots=0x" << std::hex
+                                 << coveredSlots << std::dec << " hiddenGeometry=" << visitor.mHiddenGeometry;
+
+            hideFonvUnsafeCoveredHatHairVariant(attached, model, traits, coveredSlots);
+        }
+
         bool isFalloutMouthSurfaceModel(std::string_view model)
         {
             std::string lowered(model);
@@ -2910,11 +3338,11 @@ namespace MWRender
                     readFalloutProofFloat("OPENMW_FNV_HEADGEAR_OFFSET_Y", 0.f),
                     readFalloutProofFloat("OPENMW_FNV_HEADGEAR_OFFSET_Z", 0.f));
             if (lowered.find("brow") != std::string::npos)
-                return osg::Vec3f(readFalloutProofFloat("OPENMW_FNV_BROW_OFFSET_X", -0.12f),
+                return osg::Vec3f(readFalloutProofFloat("OPENMW_FNV_BROW_OFFSET_X", 0.f),
                     readFalloutProofFloat("OPENMW_FNV_BROW_OFFSET_Y", 0.f),
                     readFalloutProofFloat("OPENMW_FNV_BROW_OFFSET_Z", 0.f));
             if (lowered.find("eye") != std::string::npos)
-                return osg::Vec3f(readFalloutProofFloat("OPENMW_FNV_EYE_OFFSET_X", -0.18f),
+                return osg::Vec3f(readFalloutProofFloat("OPENMW_FNV_EYE_OFFSET_X", 0.f),
                     readFalloutProofFloat("OPENMW_FNV_EYE_OFFSET_Y", 0.f),
                     readFalloutProofFloat("OPENMW_FNV_EYE_OFFSET_Z", 0.f));
             if (lowered.find("beard") != std::string::npos)
@@ -2923,7 +3351,7 @@ namespace MWRender
                     readFalloutProofFloat("OPENMW_FNV_BEARD_OFFSET_Z", 0.f));
             if (lowered.find("mouth") != std::string::npos || lowered.find("teeth") != std::string::npos
                 || lowered.find("tongue") != std::string::npos)
-                return osg::Vec3f(readFalloutProofFloat("OPENMW_FNV_MOUTH_OFFSET_X", -0.35f),
+                return osg::Vec3f(readFalloutProofFloat("OPENMW_FNV_MOUTH_OFFSET_X", 0.f),
                     readFalloutProofFloat("OPENMW_FNV_MOUTH_OFFSET_Y", 0.f),
                     readFalloutProofFloat("OPENMW_FNV_MOUTH_OFFSET_Z", 0.f));
             return osg::Vec3f();
@@ -2983,7 +3411,7 @@ namespace MWRender
 
         osg::Vec3f getFalloutFaceSurfacePosition()
         {
-            return osg::Vec3f(readFalloutProofFloat("OPENMW_FNV_FACE_OFFSET_X", 0.9f),
+            return osg::Vec3f(readFalloutProofFloat("OPENMW_FNV_FACE_OFFSET_X", 0.f),
                 readFalloutProofFloat("OPENMW_FNV_FACE_OFFSET_Y", 0.f),
                 readFalloutProofFloat("OPENMW_FNV_FACE_OFFSET_Z", 0.f));
         }
@@ -3178,13 +3606,20 @@ namespace MWRender
             return mode;
         }
 
-        osg::Quat getFalloutHeadgearAttitude()
+        std::string_view getFalloutHeadgearAttitudeMode()
         {
             const char* mode = std::getenv("OPENMW_FNV_HEADGEAR_ROTATION_MODE");
             if (mode == nullptr || mode[0] == '\0')
-                return osg::Quat();
+                return "z90";
+            return mode;
+        }
 
+        osg::Quat getFalloutHeadgearAttitude()
+        {
+            const std::string_view mode = getFalloutHeadgearAttitudeMode();
             constexpr double halfPi = 1.57079632679489661923;
+            if (Misc::StringUtils::ciEqual(mode, "none") || Misc::StringUtils::ciEqual(mode, "identity"))
+                return osg::Quat();
             if (Misc::StringUtils::ciEqual(mode, "x90"))
                 return osg::Quat(halfPi, osg::Vec3d(1.0, 0.0, 0.0));
             if (Misc::StringUtils::ciEqual(mode, "x-90"))
@@ -3712,6 +4147,59 @@ namespace MWRender
             std::ostringstream stream;
             stream << "size=" << geometry->getColorArray()->getNumElements()
                    << ",binding=" << static_cast<int>(geometry->getColorBinding());
+
+            if (const osg::Vec4Array* colors = dynamic_cast<const osg::Vec4Array*>(geometry->getColorArray()))
+            {
+                if (!colors->empty())
+                {
+                    osg::Vec3f rgbMin((*colors)[0].r(), (*colors)[0].g(), (*colors)[0].b());
+                    osg::Vec3f rgbMax = rgbMin;
+                    float alphaMin = (*colors)[0].a();
+                    float alphaMax = (*colors)[0].a();
+                    for (const osg::Vec4f& color : *colors)
+                    {
+                        rgbMin.x() = std::min(rgbMin.x(), color.r());
+                        rgbMin.y() = std::min(rgbMin.y(), color.g());
+                        rgbMin.z() = std::min(rgbMin.z(), color.b());
+                        rgbMax.x() = std::max(rgbMax.x(), color.r());
+                        rgbMax.y() = std::max(rgbMax.y(), color.g());
+                        rgbMax.z() = std::max(rgbMax.z(), color.b());
+                        alphaMin = std::min(alphaMin, color.a());
+                        alphaMax = std::max(alphaMax, color.a());
+                    }
+                    stream << ",rgbMin=(" << rgbMin.x() << "," << rgbMin.y() << "," << rgbMin.z()
+                           << "),rgbMax=(" << rgbMax.x() << "," << rgbMax.y() << "," << rgbMax.z()
+                           << "),alpha=(" << alphaMin << "," << alphaMax << ")";
+                }
+            }
+            else if (const osg::Vec4ubArray* byteColors
+                = dynamic_cast<const osg::Vec4ubArray*>(geometry->getColorArray()))
+            {
+                if (!byteColors->empty())
+                {
+                    unsigned int rMin = (*byteColors)[0].r();
+                    unsigned int gMin = (*byteColors)[0].g();
+                    unsigned int bMin = (*byteColors)[0].b();
+                    unsigned int rMax = rMin;
+                    unsigned int gMax = gMin;
+                    unsigned int bMax = bMin;
+                    unsigned int alphaMin = (*byteColors)[0].a();
+                    unsigned int alphaMax = (*byteColors)[0].a();
+                    for (const osg::Vec4ub& color : *byteColors)
+                    {
+                        rMin = std::min<unsigned int>(rMin, color.r());
+                        gMin = std::min<unsigned int>(gMin, color.g());
+                        bMin = std::min<unsigned int>(bMin, color.b());
+                        rMax = std::max<unsigned int>(rMax, color.r());
+                        gMax = std::max<unsigned int>(gMax, color.g());
+                        bMax = std::max<unsigned int>(bMax, color.b());
+                        alphaMin = std::min<unsigned int>(alphaMin, color.a());
+                        alphaMax = std::max<unsigned int>(alphaMax, color.a());
+                    }
+                    stream << ",rgbMin=(" << rMin << "," << gMin << "," << bMin << "),rgbMax=(" << rMax
+                           << "," << gMax << "," << bMax << "),alpha=(" << alphaMin << "," << alphaMax << ")";
+                }
+            }
             return stream.str();
         }
 
@@ -3961,6 +4449,17 @@ namespace MWRender
                              << traits.mEditorId << " vertexColorArrays=" << visitor.mNeutralizedVertexColorArrays;
         }
 
+        void forceFalloutSkinOpaqueNoBlend(osg::Node* attached, std::string_view model, const ESM4::Npc& traits)
+        {
+            if (attached == nullptr)
+                return;
+
+            ForceOpaqueNoBlendVisitor opaque;
+            attached->accept(opaque);
+            Log(Debug::Info) << "FNV/ESM4 diag: forced opaque no-blend skin surface " << model << " states="
+                             << opaque.getAppliedCount() << " for " << traits.mEditorId;
+        }
+
         void tintFalloutSkinMaterial(
             osg::Node* attached, std::string_view model, const ESM4::Npc& traits, const osg::Vec4f& tint)
         {
@@ -3983,6 +4482,15 @@ namespace MWRender
             const std::shared_ptr<const FaceGenEgt> egt = loadFaceGenEgt(resourceSystem, model);
             if (!egt)
                 return false;
+
+            if (std::getenv("OPENMW_FNV_USE_EGT_MATERIAL_TINT") == nullptr)
+            {
+                Log(Debug::Info) << "FNV/ESM4 diag: loaded FaceGen EGT complexion " << model << " size="
+                                 << egt->mWidth << "x" << egt->mHeight << " modes=" << egt->mTextureModeCount
+                                 << " for " << traits.mEditorId
+                                 << " runtime=loaded-pending-exact-facegen-texture-synthesis";
+                return false;
+            }
 
             const osg::Vec4f tint = deriveFaceGenEgtMaterialTint(*egt, traits);
             tintFalloutSkinMaterial(attached, model, traits, tint);
@@ -4883,6 +5391,9 @@ namespace MWRender
             if (headgearStaticPart)
             {
                 headgearAttitude = getFalloutHeadgearAttitude();
+                Log(Debug::Info) << "FNV/ESM4 diag: applying FNV headgear coordinate basis "
+                                 << getFalloutHeadgearAttitudeMode() << " to " << correctedModel.value()
+                                 << " on " << mPtr.getCellRef().getRefId();
                 if (!headgearAttitude.zeroRotation())
                     attitude = &headgearAttitude;
             }
@@ -4960,8 +5471,9 @@ namespace MWRender
         }
         if (tint != nullptr && attached != nullptr)
         {
-            const float emissionStrength = isFalloutHairTintModel(correctedModel.value()) ? 0.65f : 0.f;
-            TintMaterialVisitor visitor(*tint, emissionStrength);
+            const bool hairTintModel = isFalloutHairTintModel(correctedModel.value());
+            const float emissionStrength = hairTintModel ? getFalloutHairEmissionStrength(*tint) : 0.f;
+            TintMaterialVisitor visitor(*tint, emissionStrength, hairTintModel, hairTintModel);
             attached->accept(visitor);
         }
         if (attached != nullptr
@@ -4970,7 +5482,7 @@ namespace MWRender
         {
             FalloutCutoutAlphaVisitor cutoutAlpha;
             attached->accept(cutoutAlpha);
-            Log(Debug::Info) << "FNV/ESM4 diag: enabled cutout alpha on " << cutoutAlpha.getAppliedCount()
+            Log(Debug::Info) << "FNV/ESM4 diag: enabled opaque cutout alpha on " << cutoutAlpha.getAppliedCount()
                              << " hair/brow state(s) for " << correctedModel.value() << " on "
                              << mPtr.getCellRef().getRefId();
         }
@@ -4992,6 +5504,13 @@ namespace MWRender
             DisableCullVisitor visitor;
             attached->accept(visitor);
             Log(Debug::Info) << "FNV/ESM4 diag: made mouth interior surface double-sided "
+                             << correctedModel.value() << " for " << mPtr.getCellRef().getRefId();
+        }
+        if (attached != nullptr && std::getenv("OPENMW_FNV_PROOF_MOUTH_FORCE_OPEN") != nullptr
+            && isFalloutMouthDriverPart(correctedModel.value()))
+        {
+            attached->addUpdateCallback(new FalloutProofMouthDriver(mPtr, std::string(correctedModel.value())));
+            Log(Debug::Info) << "FNV/ESM4 proof: installed mouth open driver on "
                              << correctedModel.value() << " for " << mPtr.getCellRef().getRefId();
         }
         if (attached != nullptr)
@@ -5145,8 +5664,9 @@ namespace MWRender
         validateFaceGenCtlBasis(faceGenCtl.get(), traits);
         const uint32_t coveredBodySlots = getFonvCoveredBodySlots(mPtr);
         const std::string npcFaceTexture = findFonvNpcFaceTexture(mResourceSystem, traits);
-        const std::string npcFaceDetailTexture
-            = npcFaceTexture.empty() ? findFonvNpcFaceDetailTexture(mResourceSystem, traits) : std::string();
+        const std::string npcFaceDetailTexture = std::getenv("OPENMW_FNV_PROOF_FACE_AS_DETAIL") != nullptr
+            ? findFonvNpcFaceDetailTexture(mResourceSystem, traits)
+            : std::string();
         const std::string npcFaceNormalTexture = findFonvNpcFaceNormalTexture(mResourceSystem, traits);
         const std::string npcBodyTexture = findFonvNpcBodyTexture(mResourceSystem, traits, isFemale);
         const std::string npcBodyDetailTexture = findFonvNpcBodyDetailTexture(mResourceSystem, traits, isFemale);
@@ -5159,11 +5679,12 @@ namespace MWRender
                 mResourceSystem, npcBodyDetailTexture, npcBodyMaterialTint, npcBodyTintWidth, npcBodyTintHeight)
             && npcBodyTintWidth <= 16 && npcBodyTintHeight <= 16;
         if (!npcFaceTexture.empty())
-            Log(Debug::Info) << "FNV/ESM4 diag: using baked NPC face texture " << npcFaceTexture << " for "
-                             << traits.mEditorId;
+            Log(Debug::Info) << "FNV/ESM4 diag: accounting baked NPC FaceGen texture " << npcFaceTexture
+                             << " as source data for " << traits.mEditorId
+                             << " runtime=loaded-pending-exact-facegen-texture-synthesis";
         if (!npcFaceDetailTexture.empty())
-            Log(Debug::Info) << "FNV/ESM4 diag: using baked NPC face detail overlay " << npcFaceDetailTexture
-                             << " for " << traits.mEditorId;
+            Log(Debug::Info) << "FNV/ESM4 proof: using baked NPC face texture as proof-only detail overlay "
+                             << npcFaceDetailTexture << " for " << traits.mEditorId;
         if (!npcFaceNormalTexture.empty())
             Log(Debug::Info) << "FNV/ESM4 diag: using baked NPC face normal texture " << npcFaceNormalTexture
                              << " for " << traits.mEditorId;
@@ -5175,9 +5696,9 @@ namespace MWRender
                              << " for " << traits.mEditorId;
         if (npcBodyDetailIsTinyTint)
             Log(Debug::Info) << "FNV/ESM4 diag: treating NPC body tint/detail " << npcBodyDetailTexture
-                             << " as tiny FaceGen detail-only size=" << npcBodyTintWidth << "x" << npcBodyTintHeight
+                             << " as tiny BSA body tint swatch size=" << npcBodyTintWidth << "x" << npcBodyTintHeight
                              << " average=(" << npcBodyMaterialTint.x() << ", " << npcBodyMaterialTint.y() << ", "
-                             << npcBodyMaterialTint.z() << "); preserving race body material for " << traits.mEditorId;
+                             << npcBodyMaterialTint.z() << ") multiplier=none for " << traits.mEditorId;
         if (!npcBodyNormalTexture.empty())
             Log(Debug::Info) << "FNV/ESM4 diag: using baked NPC body normal texture " << npcBodyNormalTexture
                              << " for " << traits.mEditorId;
@@ -5213,9 +5734,20 @@ namespace MWRender
                              << " headParts=[" << formatFormIdList(traits.mHeadParts) << "]"
                              << " tintLayers=" << traits.mTintLayers.size();
         }
+        if (isFalloutCharacterBuilderActive())
+            Log(Debug::Info) << "FNV/ESM4 CHARACTER BUILDER begin phase=" << getFalloutCharacterBuilderPhase()
+                             << " actor=" << traits.mEditorId
+                             << " ref=" << mPtr.getCellRef().getRefId()
+                             << " ladder=body,head,face,hair,equipment,weapon,headgear,talk,full";
 
         for (const ESM4::Race::BodyPart& bodyPart : (isFemale ? race->mBodyPartsFemale : race->mBodyPartsMale))
         {
+            if (!falloutCharacterBuilderAllows("body-skin"))
+            {
+                logFalloutCharacterBuilderGate(false, "body-skin", bodyPart.mesh, mPtr, traits);
+                continue;
+            }
+            logFalloutCharacterBuilderGate(true, "body-skin", bodyPart.mesh, mPtr, traits);
             if (fonvRaceBodyPartCovered(bodyPart.mesh, coveredBodySlots))
             {
                 Log(Debug::Verbose) << "FNV/ESM4 diag: skipped covered race body skin " << bodyPart.mesh << " for "
@@ -5224,6 +5756,9 @@ namespace MWRender
             }
             const std::string_view texture
                 = !npcBodyTexture.empty() && isFonvRaceSkinSurface(bodyPart.mesh) ? npcBodyTexture : bodyPart.texture;
+            const std::string bodyNormalTexture = !npcBodyNormalTexture.empty() ? npcBodyNormalTexture
+                : findFonvTextureNormalCompanion(mResourceSystem, texture);
+            const std::string bodySkinTexture = findFonvTextureSkinCompanion(mResourceSystem, texture);
             osg::ref_ptr<osg::Node> attached = insertPart(bodyPart.mesh, nullptr, texture);
             if (attached != nullptr && isFonvRaceSkinSurface(bodyPart.mesh))
             {
@@ -5231,19 +5766,45 @@ namespace MWRender
                 neutralizeFalloutSkinMaterial(attached.get(), bodyPart.mesh, traits);
                 const bool appliedEgtTint = applyFaceGenEgtTint(mResourceSystem, attached.get(), bodyPart.mesh, traits);
                 if (!appliedEgtTint && npcBodyDetailIsTinyTint)
-                    tintFalloutSkinMaterial(attached.get(), bodyPart.mesh, traits, npcBodyMaterialTint);
+                {
+                    if (std::getenv("OPENMW_FNV_USE_RAW_BODY_TINT_SWATCH") != nullptr)
+                    {
+                        tintFalloutSkinMaterial(attached.get(), bodyPart.mesh, traits, npcBodyMaterialTint);
+                        Log(Debug::Info) << "FNV/ESM4 diag: applied raw BSA body tint swatch " << npcBodyDetailTexture
+                                         << " size=" << npcBodyTintWidth << "x" << npcBodyTintHeight << " average=("
+                                         << npcBodyMaterialTint.x() << ", " << npcBodyMaterialTint.y() << ", "
+                                         << npcBodyMaterialTint.z() << ") on " << bodyPart.mesh << " for "
+                                         << traits.mEditorId << " multiplier=none";
+                    }
+                    else
+                    {
+                        Log(Debug::Info) << "FNV/ESM4 diag: loaded raw BSA body tint swatch " << npcBodyDetailTexture
+                                         << " size=" << npcBodyTintWidth << "x" << npcBodyTintHeight << " average=("
+                                         << npcBodyMaterialTint.x() << ", " << npcBodyMaterialTint.y() << ", "
+                                         << npcBodyMaterialTint.z() << ") on " << bodyPart.mesh << " for "
+                                         << traits.mEditorId
+                                         << " runtime=loaded-pending-exact-body-tint-synthesis multiplier=none"
+                                         << " optIn=OPENMW_FNV_USE_RAW_BODY_TINT_SWATCH";
+                    }
+                }
                 if (!npcBodyDetailTexture.empty() && !npcBodyDetailIsTinyTint)
                 {
                     Log(Debug::Info) << "FNV/ESM4 diag: applying NPC body tint/detail " << npcBodyDetailTexture
                                      << " on " << bodyPart.mesh << " for " << traits.mEditorId;
                     overrideFalloutPartDetailTexture(npcBodyDetailTexture, mResourceSystem, *attached);
                 }
-                if (!npcBodyNormalTexture.empty())
+                if (!bodyNormalTexture.empty())
                 {
-                    Log(Debug::Info) << "FNV/ESM4 diag: overriding NPC part normal texture " << npcBodyNormalTexture
+                    Log(Debug::Info) << "FNV/ESM4 diag: binding data-derived body normal map " << bodyNormalTexture
                                      << " on " << bodyPart.mesh << " for " << traits.mEditorId;
-                    overrideFalloutPartNormalTexture(npcBodyNormalTexture, mResourceSystem, *attached);
+                    overrideFalloutPartNormalTexture(bodyNormalTexture, mResourceSystem, *attached);
                 }
+                if (!bodySkinTexture.empty())
+                    Log(Debug::Info) << "FNV/ESM4 diag: accounted FNV body skin/subsurface companion "
+                                     << formatTextureImageSummary(mResourceSystem, bodySkinTexture) << " on "
+                                     << bodyPart.mesh << " for " << traits.mEditorId
+                                     << " runtime=loaded-pending-fnv-skin-shader";
+                forceFalloutSkinOpaqueNoBlend(attached.get(), bodyPart.mesh, traits);
             }
         }
         std::string_view eyeTexture;
@@ -5258,15 +5819,54 @@ namespace MWRender
 
         bool raceFacePartAttached[8] = {};
         bool raceFacePartHasMesh[8] = {};
+        bool resolvedFaceNormalTexture = false;
+        bool resolvedFaceSkinCompanion = false;
+        std::string resolvedFaceDiffuseTexture;
         const std::vector<ESM4::Race::BodyPart>& raceHeadParts = isFemale ? race->mHeadPartsFemale : race->mHeadParts;
         for (std::size_t i = 0; i < raceHeadParts.size(); ++i)
         {
             const ESM4::Race::BodyPart& headPart = raceHeadParts[i];
             const bool eyePart = isFonvEyePart(i);
             const bool headSurface = isFonvHeadSurfacePart(i);
-            const std::string_view texture = eyePart && !eyeTexture.empty() ? eyeTexture
-                                                                            : headPart.texture;
-            osg::ref_ptr<osg::Node> attached = insertPart(headPart.mesh, nullptr, texture);
+            const std::string_view builderCategory = headSurface ? std::string_view("head-skin")
+                : std::string_view("face-organs");
+            if (!falloutCharacterBuilderAllows(builderCategory))
+            {
+                if (i < 8)
+                {
+                    raceFacePartAttached[i] = false;
+                    raceFacePartHasMesh[i] = !headPart.mesh.empty();
+                }
+                logFalloutCharacterBuilderGate(false, builderCategory, headPart.mesh, mPtr, traits);
+                Log(Debug::Info) << "FNV/ESM4 diag: race face part " << getFonvRaceHeadPartRole(i)
+                                 << " index=" << i << " mesh=" << headPart.mesh
+                                 << " attached=0 status=intentionally-excluded-with-proof for "
+                                 << traits.mEditorId << " characterBuilderPhase="
+                                 << getFalloutCharacterBuilderPhase();
+                continue;
+            }
+            logFalloutCharacterBuilderGate(true, builderCategory, headPart.mesh, mPtr, traits);
+            const std::string_view baseTexture = eyePart && !eyeTexture.empty() ? eyeTexture : headPart.texture;
+            const std::string headDiffuseTexture = std::string(baseTexture);
+            if (headSurface)
+            {
+                resolvedFaceDiffuseTexture = headDiffuseTexture;
+                if (!npcFaceTexture.empty())
+                {
+                    Log(Debug::Info) << "FNV/ESM4 diag: preserving race head diffuse " << headDiffuseTexture
+                                     << " while accounting NPC FaceGen source " << npcFaceTexture << " for "
+                                     << traits.mEditorId
+                                     << " runtime=loaded-pending-exact-facegen-texture-synthesis";
+                }
+            }
+            const std::string headNormalTexture = headSurface
+                ? (!npcFaceNormalTexture.empty() ? npcFaceNormalTexture
+                                                 : findFonvTextureNormalCompanion(mResourceSystem, baseTexture))
+                : std::string();
+            const std::string headSkinTexture = headSurface
+                ? findFonvTextureSkinCompanion(mResourceSystem, baseTexture)
+                : std::string();
+            osg::ref_ptr<osg::Node> attached = insertPart(headPart.mesh, nullptr, headDiffuseTexture);
             if (i < 8)
             {
                 raceFacePartAttached[i] = attached != nullptr;
@@ -5274,7 +5874,7 @@ namespace MWRender
             }
             Log(Debug::Info) << "FNV/ESM4 diag: race face part " << getFonvRaceHeadPartRole(i)
                              << " index=" << i << " mesh=" << headPart.mesh << " texture="
-                             << (texture.empty() ? std::string("<none>") : std::string(texture))
+                             << (headDiffuseTexture.empty() ? std::string("<none>") : headDiffuseTexture)
                              << " attached=" << (attached != nullptr) << " status="
                              << getFonvFacePartStatus(attached != nullptr, !headPart.mesh.empty()) << " for "
                              << traits.mEditorId;
@@ -5282,26 +5882,38 @@ namespace MWRender
             {
                 forceFalloutActorPartVisible(attached.get(), headPart.mesh, traits);
                 applyFaceGenEgmMorph(mResourceSystem, attached.get(), headPart.mesh, traits);
-                if (!texture.empty())
-                    overrideFalloutPartDiffuseTexture(texture, mResourceSystem, *attached);
-                if (std::getenv("OPENMW_FNV_APPLY_FACEGEN_DETAIL") != nullptr && !npcFaceTexture.empty())
+                if (!headDiffuseTexture.empty())
+                    overrideFalloutPartDiffuseTexture(headDiffuseTexture, mResourceSystem, *attached);
+                if (!npcFaceDetailTexture.empty())
                 {
-                    Log(Debug::Info) << "FNV/ESM4 diag: applying NPC face detail overlay " << npcFaceTexture
+                    Log(Debug::Info) << "FNV/ESM4 proof: applying NPC face detail overlay " << npcFaceDetailTexture
                                      << " on " << headPart.mesh << " for " << traits.mEditorId;
-                    overrideFalloutPartDetailTexture(npcFaceTexture, mResourceSystem, *attached);
+                    overrideFalloutPartDetailTexture(npcFaceDetailTexture, mResourceSystem, *attached);
                 }
-                if (!npcFaceNormalTexture.empty())
+                if (!headNormalTexture.empty())
                 {
-                    Log(Debug::Info) << "FNV/ESM4 diag: overriding NPC part normal texture " << npcFaceNormalTexture
+                    resolvedFaceNormalTexture = true;
+                    Log(Debug::Info) << "FNV/ESM4 diag: binding data-derived face normal map " << headNormalTexture
                                      << " on " << headPart.mesh << " for " << traits.mEditorId;
-                    overrideFalloutPartNormalTexture(npcFaceNormalTexture, mResourceSystem, *attached);
+                    overrideFalloutPartNormalTexture(headNormalTexture, mResourceSystem, *attached);
+                }
+                if (!headSkinTexture.empty())
+                {
+                    resolvedFaceSkinCompanion = true;
+                    Log(Debug::Info) << "FNV/ESM4 diag: accounted FNV face skin/subsurface companion "
+                                     << formatTextureImageSummary(mResourceSystem, headSkinTexture) << " on "
+                                     << headPart.mesh << " for " << traits.mEditorId
+                                     << " runtime=loaded-pending-fnv-skin-shader";
                 }
                 neutralizeFalloutSkinMaterial(attached.get(), headPart.mesh, traits);
                 applyFaceGenEgtTint(mResourceSystem, attached.get(), headPart.mesh, traits);
+                forceFalloutSkinOpaqueNoBlend(attached.get(), headPart.mesh, traits);
                 DisableCullVisitor visitor;
                 attached->accept(visitor);
                 Log(Debug::Info) << "FNV/ESM4 diag: made head skin surface double-sided " << headPart.mesh
                                  << " for " << traits.mEditorId;
+                if (std::getenv("OPENMW_FNV_PROOF_MOUTH_FORCE_OPEN") != nullptr)
+                    applyFalloutProofTriOpenMorph(mResourceSystem, mPtr, attached.get(), headPart.mesh, traits);
             }
             if (attached != nullptr)
                 applyFalloutDialogueMorph(mResourceSystem, this, attached.get(), headPart.mesh, traits);
@@ -5309,18 +5921,32 @@ namespace MWRender
         }
 
         std::set<uint32_t> usedHeadPartTypes;
-        unsigned int insertedHeadParts = insertHeadParts(traits, traits.mHeadParts, usedHeadPartTypes);
+        unsigned int insertedHeadParts
+            = insertHeadParts(traits, traits.mHeadParts, usedHeadPartTypes, coveredBodySlots);
         bool fallbackHairAttached = false;
         if (!traits.mHair.isZeroOrUnset() && usedHeadPartTypes.count(ESM4::HeadPart::Type_Hair) == 0)
         {
             const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
             if (const ESM4::Hair* hair = store->get<ESM4::Hair>().search(traits.mHair))
             {
+                if (!falloutCharacterBuilderAllows("hair-beard"))
+                {
+                    logFalloutCharacterBuilderGate(false, "hair-beard", hair->mModel, mPtr, traits);
+                    Log(Debug::Info) << "FNV/ESM4 diag: skipped fallback FONV NPC hair "
+                                     << hair->mEditorId << " model=" << hair->mModel
+                                     << " for " << traits.mEditorId
+                                     << " status=intentionally-excluded-with-proof characterBuilderPhase="
+                                     << getFalloutCharacterBuilderPhase();
+                    goto afterFallbackHair;
+                }
+                logFalloutCharacterBuilderGate(true, "hair-beard", hair->mModel, mPtr, traits);
                 usedHeadPartTypes.insert(ESM4::HeadPart::Type_Hair);
-                const osg::Vec4f hairTint = getHairTint(traits);
+                const osg::Vec4f rawHairTint = getHairTint(traits);
+                const osg::Vec4f hairTint = getFalloutRenderHairTint(traits);
                 Log(Debug::Info) << "FNV/ESM4 diag: inserting FONV NPC hair " << hair->mEditorId << " model="
-                                 << hair->mModel << " tint=(" << hairTint.x() << ", " << hairTint.y() << ", "
-                                 << hairTint.z() << ") for " << traits.mEditorId;
+                                 << hair->mModel << " rawTint=(" << rawHairTint.x() << ", " << rawHairTint.y()
+                                 << ", " << rawHairTint.z() << ") renderTint=(" << hairTint.x() << ", "
+                                 << hairTint.y() << ", " << hairTint.z() << ") for " << traits.mEditorId;
                 osg::ref_ptr<osg::Node> attached = insertPart(hair->mModel, &hairTint);
                 fallbackHairAttached = attached != nullptr;
                 applyFaceGenEgmMorph(mResourceSystem, attached.get(), hair->mModel, traits);
@@ -5328,18 +5954,25 @@ namespace MWRender
                     applyFalloutDialogueMorph(mResourceSystem, this, attached.get(), hair->mModel, traits);
                 if (attached != nullptr)
                 {
-                    TintMaterialVisitor visitor(hairTint, 0.65f);
+                    TintMaterialVisitor visitor(hairTint, getFalloutHairEmissionStrength(hairTint), true, true);
                     attached->accept(visitor);
+                    hideFonvNoHatHairVariant(attached.get(), hair->mModel, traits, coveredBodySlots);
+                    logFalloutFaceDrawableAudit(attached.get(), hair->mModel, mPtr, "final-hat-hair");
                 }
                 ++insertedHeadParts;
             }
             else
                 Log(Debug::Error) << "Hair not found: " << ESM::RefId(traits.mHair);
         }
+    afterFallbackHair:
 
         if (insertedHeadParts > 0)
             Log(Debug::Info) << "FNV/ESM4 diag: using " << insertedHeadParts
                              << " NPC-specific head mesh part(s) for " << traits.mEditorId;
+
+        const char* hairAttachStatus = "MISSING";
+        if (usedHeadPartTypes.count(ESM4::HeadPart::Type_Hair) != 0 || fallbackHairAttached)
+            hairAttachStatus = "OK";
 
         Log(Debug::Info) << "FNV/ESM4 FACE CHECK " << traits.mEditorId
                          << ": head=" << getFonvFacePartStatus(raceFacePartAttached[0], raceFacePartHasMesh[0])
@@ -5353,15 +5986,16 @@ namespace MWRender
                          << " eyesRecord=" << (!traits.mEyes.isZeroOrUnset() ? "OK" : "MISSING")
                          << " eyeTexture=" << (!eyeTexture.empty() ? "OK" : "MISSING")
                          << " hairRecord=" << (!traits.mHair.isZeroOrUnset() ? "OK" : "MISSING")
-                         << " hairAttached="
-                         << (usedHeadPartTypes.count(ESM4::HeadPart::Type_Hair) != 0 || fallbackHairAttached ? "OK"
-                                                                                                              : "MISSING")
+                         << " hairAttached=" << hairAttachStatus
                          << " facialHairType="
                          << (usedHeadPartTypes.count(ESM4::HeadPart::Type_FacialHair) != 0 ? "OK" : "UNKNOWN")
                          << " npcSpecificHeadParts=" << insertedHeadParts
-                         << " faceTexture="
-                         << (!npcFaceTexture.empty() ? "OK" : "RACE")
-                         << " faceNormal=" << (!npcFaceNormalTexture.empty() ? "OK" : "RACE")
+                         << " faceDiffuse="
+                         << (!resolvedFaceDiffuseTexture.empty() ? "RACE" : "MISSING")
+                         << " faceGenTexture="
+                         << (!npcFaceTexture.empty() ? "LOADED" : "MISSING")
+                         << " faceNormal=" << (resolvedFaceNormalTexture ? "OK" : "RACE")
+                         << " faceSkinCompanion=" << (resolvedFaceSkinCompanion ? "LOADED" : "MISSING")
                          << " tintLayers=" << traits.mTintLayers.size();
 
         const auto [shapeNonZero, shapeTotal] = summarizeCoefficients(traits.mSymShapeModeCoefficients);
@@ -5389,39 +6023,103 @@ namespace MWRender
             ++tintLogCount;
         }
 
-        for (const ESM4::Armor* armor : MWClass::ESM4Npc::getEquippedArmor(mPtr))
-        {
+        const auto& equippedArmor = MWClass::ESM4Npc::getEquippedArmor(mPtr);
+        const auto& equippedClothing = MWClass::ESM4Npc::getEquippedClothing(mPtr);
+        const auto insertArmorEquipment = [&](const ESM4::Armor* armor, const char* layer) {
             const std::string_view model = MWClass::ESM4Npc::chooseEquipmentModel(armor, isFemale);
+            const std::string_view builderCategory
+                = std::string_view(layer) == "headgear-final" ? std::string_view("headgear")
+                                                               : std::string_view("equipment-body");
             if (proofActor)
                 Log(Debug::Info) << "FNV/ESM4 ASSET PROOF GSEasyPete: armor " << armor->mEditorId
-                                 << " form=" << ESM::RefId(armor->mId) << " model=" << model;
+                                 << " form=" << ESM::RefId(armor->mId) << " model=" << model << " flags=0x"
+                                 << std::hex << armor->mArmorFlags << std::dec << " layer=" << layer;
+            if (!falloutCharacterBuilderAllows(builderCategory))
+            {
+                logFalloutCharacterBuilderGate(false, builderCategory, model, mPtr, traits);
+                Log(Debug::Info) << "FNV/ESM4 diag: skipped armor " << armor->mEditorId
+                                 << " model=" << model << " layer=" << layer << " for "
+                                 << traits.mEditorId
+                                 << " status=intentionally-excluded-with-proof characterBuilderPhase="
+                                 << getFalloutCharacterBuilderPhase();
+                return;
+            }
+            logFalloutCharacterBuilderGate(true, builderCategory, model, mPtr, traits);
             osg::ref_ptr<osg::Node> attached = insertPart(model);
             forceFalloutActorPartVisible(attached.get(), model, traits);
             overrideFalloutEquipmentSkinTextures(
-                attached.get(), model, traits, mResourceSystem, npcBodyTexture, npcFaceTexture);
+                attached.get(), model, traits, mResourceSystem, npcBodyTexture, resolvedFaceDiffuseTexture);
             applyFaceGenEgmMorph(mResourceSystem, attached.get(), model, traits);
             overrideFalloutEquipmentSkinTextures(
-                attached.get(), model, traits, mResourceSystem, npcBodyTexture, npcFaceTexture);
-        }
-        for (const ESM4::Clothing* clothing : MWClass::ESM4Npc::getEquippedClothing(mPtr))
-        {
+                attached.get(), model, traits, mResourceSystem, npcBodyTexture, resolvedFaceDiffuseTexture);
+            if (std::string_view(layer) == "headgear-final" && attached != nullptr)
+            {
+                ForceOpaqueNoBlendVisitor opaque;
+                attached->accept(opaque);
+                Log(Debug::Info) << "FNV/ESM4 diag: forced opaque no-blend headgear " << armor->mEditorId
+                                 << " states=" << opaque.getAppliedCount() << " for " << traits.mEditorId;
+            }
+        };
+        const auto insertClothingEquipment = [&](const ESM4::Clothing* clothing, const char* layer) {
             const std::string_view model = MWClass::ESM4Npc::chooseEquipmentModel(clothing, isFemale);
+            const std::string_view builderCategory
+                = std::string_view(layer) == "headgear-final" ? std::string_view("headgear")
+                                                               : std::string_view("equipment-body");
             if (proofActor)
                 Log(Debug::Info) << "FNV/ESM4 ASSET PROOF GSEasyPete: clothing " << clothing->mEditorId
-                                 << " form=" << ESM::RefId(clothing->mId) << " model=" << model;
+                                 << " form=" << ESM::RefId(clothing->mId) << " model=" << model << " flags=0x"
+                                 << std::hex << clothing->mClothingFlags << std::dec << " layer=" << layer;
+            if (!falloutCharacterBuilderAllows(builderCategory))
+            {
+                logFalloutCharacterBuilderGate(false, builderCategory, model, mPtr, traits);
+                Log(Debug::Info) << "FNV/ESM4 diag: skipped clothing " << clothing->mEditorId
+                                 << " model=" << model << " layer=" << layer << " for "
+                                 << traits.mEditorId
+                                 << " status=intentionally-excluded-with-proof characterBuilderPhase="
+                                 << getFalloutCharacterBuilderPhase();
+                return;
+            }
+            logFalloutCharacterBuilderGate(true, builderCategory, model, mPtr, traits);
             osg::ref_ptr<osg::Node> attached = insertPart(model);
             forceFalloutActorPartVisible(attached.get(), model, traits);
             overrideFalloutEquipmentSkinTextures(
-                attached.get(), model, traits, mResourceSystem, npcBodyTexture, npcFaceTexture);
+                attached.get(), model, traits, mResourceSystem, npcBodyTexture, resolvedFaceDiffuseTexture);
             applyFaceGenEgmMorph(mResourceSystem, attached.get(), model, traits);
             overrideFalloutEquipmentSkinTextures(
-                attached.get(), model, traits, mResourceSystem, npcBodyTexture, npcFaceTexture);
-        }
+                attached.get(), model, traits, mResourceSystem, npcBodyTexture, resolvedFaceDiffuseTexture);
+            if (std::string_view(layer) == "headgear-final" && attached != nullptr)
+            {
+                ForceOpaqueNoBlendVisitor opaque;
+                attached->accept(opaque);
+                Log(Debug::Info) << "FNV/ESM4 diag: forced opaque no-blend headgear " << clothing->mEditorId
+                                 << " states=" << opaque.getAppliedCount() << " for " << traits.mEditorId;
+            }
+        };
+
+        for (const ESM4::Armor* armor : equippedArmor)
+            if (!fonvCoveredSlotsHideScalpHair(armor->mArmorFlags))
+                insertArmorEquipment(armor, "body");
+        for (const ESM4::Clothing* clothing : equippedClothing)
+            if (!fonvCoveredSlotsHideScalpHair(clothing->mClothingFlags))
+                insertClothingEquipment(clothing, "body");
 
         if (const ESM4::Weapon* weapon = MWClass::ESM4Npc::getEquippedWeapon(mPtr))
         {
             const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
-            osg::ref_ptr<osg::Node> attached = insertAttachedPart(weapon->mModel, "Weapon");
+            osg::ref_ptr<osg::Node> attached;
+            if (!falloutCharacterBuilderAllows("weapon"))
+            {
+                logFalloutCharacterBuilderGate(false, "weapon", weapon->mModel, mPtr, traits);
+                Log(Debug::Info) << "FNV/ESM4 diag: skipped equipped NPC weapon " << weapon->mEditorId
+                                 << " model=" << weapon->mModel << " for " << traits.mEditorId
+                                 << " status=intentionally-excluded-with-proof characterBuilderPhase="
+                                 << getFalloutCharacterBuilderPhase();
+            }
+            else
+            {
+                logFalloutCharacterBuilderGate(true, "weapon", weapon->mModel, mPtr, traits);
+                attached = insertAttachedPart(weapon->mModel, "Weapon");
+            }
             Log(Debug::Info) << "FNV/ESM4 diag: equipped NPC weapon " << weapon->mEditorId << " model="
                              << weapon->mModel << " damage=" << weapon->mData.damage << " for "
                              << traits.mEditorId << " attached=" << (attached != nullptr);
@@ -5439,12 +6137,19 @@ namespace MWRender
                              << formatFalloutWeaponSoundFiles(*weapon, *store) << "]";
         }
 
+        for (const ESM4::Armor* armor : equippedArmor)
+            if (fonvCoveredSlotsHideScalpHair(armor->mArmorFlags))
+                insertArmorEquipment(armor, "headgear-final");
+        for (const ESM4::Clothing* clothing : equippedClothing)
+            if (fonvCoveredSlotsHideScalpHair(clothing->mClothingFlags))
+                insertClothingEquipment(clothing, "headgear-final");
+
         if (proofActor)
             Log(Debug::Info) << "FNV/ESM4 ASSET PROOF GSEasyPete: END parts assembled";
     }
 
-    unsigned int ESM4NpcAnimation::insertHeadParts(
-        const ESM4::Npc& traits, const std::vector<ESM::FormId>& partIds, std::set<uint32_t>& usedHeadPartTypes)
+    unsigned int ESM4NpcAnimation::insertHeadParts(const ESM4::Npc& traits,
+        const std::vector<ESM::FormId>& partIds, std::set<uint32_t>& usedHeadPartTypes, uint32_t coveredBodySlots)
     {
         const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
         unsigned int inserted = 0;
@@ -5459,27 +6164,51 @@ namespace MWRender
                 continue;
             }
             const bool miscPart = traits.mIsFONV && isFonvMiscHeadPart(*part);
-            if (miscPart || usedHeadPartTypes.emplace(part->mType).second)
+            const bool useHatHairVariant
+                = traits.mIsFONV && shouldUseFonvHatCompatibleHairVariant(*part, coveredBodySlots);
+            const bool partTypeAlreadyUsed = usedHeadPartTypes.count(part->mType) != 0;
+            if (miscPart || !partTypeAlreadyUsed)
             {
-                const osg::Vec4f hairTint = getHairTint(traits);
+                const std::string_view builderCategory = "hair-beard";
+                if (!falloutCharacterBuilderAllows(builderCategory))
+                {
+                    logFalloutCharacterBuilderGate(false, builderCategory, part->mModel, mPtr, traits);
+                    Log(Debug::Info) << "FNV/ESM4 diag: skipped NPC head part " << part->mEditorId
+                                     << " type=" << part->mType << " model=" << part->mModel
+                                     << " for " << mPtr.getCellRef().getRefId()
+                                     << " status=intentionally-excluded-with-proof characterBuilderPhase="
+                                     << getFalloutCharacterBuilderPhase();
+                    continue;
+                }
+                logFalloutCharacterBuilderGate(true, builderCategory, part->mModel, mPtr, traits);
+                const osg::Vec4f rawHairTint = getHairTint(traits);
+                const osg::Vec4f hairTint = getFalloutRenderHairTint(traits);
                 const osg::Vec4f* tint = miscPart || part->mType == ESM4::HeadPart::Type_Hair
                     || part->mType == ESM4::HeadPart::Type_FacialHair
                     || part->mType == ESM4::HeadPart::Type_Eyebrows
                     ? &hairTint
                     : nullptr;
+                if (!miscPart)
+                    usedHeadPartTypes.insert(part->mType);
                 Log(Debug::Info) << "FNV/ESM4 diag: inserting NPC head part " << part->mEditorId << " type="
-                                 << part->mType << " model=" << part->mModel << " for "
-                                 << mPtr.getCellRef().getRefId();
-                osg::ref_ptr<osg::Node> attached = insertPart(part->mModel, tint);
+                                 << part->mType << " model=" << part->mModel << " rawHairTint=("
+                                 << rawHairTint.x() << ", " << rawHairTint.y() << ", " << rawHairTint.z()
+                                 << ") renderHairTint=(" << hairTint.x() << ", " << hairTint.y() << ", "
+                                 << hairTint.z() << ") for " << mPtr.getCellRef().getRefId();
+                osg::ref_ptr<osg::Node> attached = insertPart(part->mModel);
                 applyFaceGenEgmMorph(mResourceSystem, attached.get(), part->mModel, traits);
                 if (attached != nullptr)
                     applyFalloutDialogueMorph(mResourceSystem, this, attached.get(), part->mModel, traits);
                 if (attached != nullptr && tint != nullptr)
                 {
-                    const float emissionStrength = isFalloutHairTintModel(part->mModel) ? 0.65f : 0.f;
-                    TintMaterialVisitor visitor(*tint, emissionStrength);
+                    const bool hairTintModel = isFalloutHairTintModel(part->mModel);
+                    const float emissionStrength = hairTintModel ? getFalloutHairEmissionStrength(*tint) : 0.f;
+                    TintMaterialVisitor visitor(*tint, emissionStrength, hairTintModel, hairTintModel);
                     attached->accept(visitor);
                 }
+                if (useHatHairVariant)
+                    hideFonvNoHatHairVariant(attached.get(), part->mModel, traits, coveredBodySlots);
+                logFalloutFaceDrawableAudit(attached.get(), part->mModel, mPtr, "final-headpart");
                 if (isFonvFacialHairHeadPart(*part))
                     usedHeadPartTypes.insert(ESM4::HeadPart::Type_FacialHair);
                 ++inserted;
@@ -5493,16 +6222,34 @@ namespace MWRender
                         Log(Debug::Error) << "Extra head part not found: " << ESM::RefId(extraPartId);
                         continue;
                     }
-                    osg::ref_ptr<osg::Node> extraAttached = insertPart(extraPart->mModel, tint);
+                    const bool useExtraHatHairVariant
+                        = traits.mIsFONV && shouldUseFonvHatCompatibleHairVariant(*extraPart, coveredBodySlots);
+                    if (!falloutCharacterBuilderAllows(builderCategory))
+                    {
+                        logFalloutCharacterBuilderGate(false, builderCategory, extraPart->mModel, mPtr, traits);
+                        Log(Debug::Info) << "FNV/ESM4 diag: skipped extra NPC head part "
+                                         << extraPart->mEditorId << " type=" << extraPart->mType
+                                         << " model=" << extraPart->mModel << " for "
+                                         << mPtr.getCellRef().getRefId()
+                                         << " status=intentionally-excluded-with-proof characterBuilderPhase="
+                                         << getFalloutCharacterBuilderPhase();
+                        continue;
+                    }
+                    logFalloutCharacterBuilderGate(true, builderCategory, extraPart->mModel, mPtr, traits);
+                    osg::ref_ptr<osg::Node> extraAttached = insertPart(extraPart->mModel);
                     applyFaceGenEgmMorph(mResourceSystem, extraAttached.get(), extraPart->mModel, traits);
                     if (extraAttached != nullptr)
                         applyFalloutDialogueMorph(mResourceSystem, this, extraAttached.get(), extraPart->mModel, traits);
                     if (extraAttached != nullptr && tint != nullptr)
                     {
-                        const float emissionStrength = isFalloutHairTintModel(extraPart->mModel) ? 0.65f : 0.f;
-                        TintMaterialVisitor visitor(*tint, emissionStrength);
+                        const bool hairTintModel = isFalloutHairTintModel(extraPart->mModel);
+                        const float emissionStrength = hairTintModel ? getFalloutHairEmissionStrength(*tint) : 0.f;
+                        TintMaterialVisitor visitor(*tint, emissionStrength, hairTintModel, hairTintModel);
                         extraAttached->accept(visitor);
                     }
+                    if (useExtraHatHairVariant)
+                        hideFonvNoHatHairVariant(extraAttached.get(), extraPart->mModel, traits, coveredBodySlots);
+                    logFalloutFaceDrawableAudit(extraAttached.get(), extraPart->mModel, mPtr, "final-extra-headpart");
                     if (isFonvFacialHairHeadPart(*extraPart))
                         usedHeadPartTypes.insert(ESM4::HeadPart::Type_FacialHair);
                     ++inserted;

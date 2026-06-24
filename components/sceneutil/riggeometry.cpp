@@ -92,6 +92,8 @@ namespace SceneUtil
             {
                 if (const char* env = std::getenv("OPENMW_FNV_VR_HAND_SKINNING_MODE"))
                     return env;
+
+                return "auto";
             }
 
             return getFalloutSkinningMode();

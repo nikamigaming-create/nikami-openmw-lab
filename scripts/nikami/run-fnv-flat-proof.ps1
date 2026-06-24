@@ -40,6 +40,7 @@ param(
     [double]$ActorViewOffsetY = [double]::NaN,
     [double]$ActorViewOffsetZ = [double]::NaN,
     [double]$ActorViewTargetZ = [double]::NaN,
+    [switch]$ActorViewLocalOffset,
     [string]$ProofGuiMode = "",
     [int]$ProofGuiFrame = 240,
     [double]$WalkEndX = [double]::NaN,
@@ -61,6 +62,8 @@ param(
     [switch]$RequireActorVisibleHandGeometry,
     [double]$ActorVisibleHandMaxDistance = 30.0,
     [switch]$FnvPartMatrixAudit,
+    [string]$CharacterBuilderPhase = "",
+    [switch]$CharacterBuilderTalk,
     [switch]$FnvDisableNativeAnimationCallbacks,
     [switch]$FnvDlodSettingsDiag,
     [switch]$FnvPsaDeathPoseDiag,
@@ -120,6 +123,13 @@ function Set-ProofEnv([hashtable]$Previous, [string]$Name, [object]$Value) {
     [Environment]::SetEnvironmentVariable($Name, [string]$Value, "Process")
 }
 
+function Clear-ProofEnv([hashtable]$Previous, [string]$Name) {
+    if (!$Previous.ContainsKey($Name)) {
+        $Previous[$Name] = [Environment]::GetEnvironmentVariable($Name, "Process")
+    }
+    [Environment]::SetEnvironmentVariable($Name, $null, "Process")
+}
+
 function Restore-ProofEnv([hashtable]$Previous) {
     foreach ($name in $Previous.Keys) {
         [Environment]::SetEnvironmentVariable($name, $Previous[$name], "Process")
@@ -166,6 +176,36 @@ function Copy-IfPresent([string]$Source, [string]$Destination) {
         return $Destination
     }
     return $null
+}
+
+function Resolve-ProofPathValue([string]$Path) {
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+        return ""
+    }
+    if (Test-Path -LiteralPath $Path) {
+        return (Resolve-Path -LiteralPath $Path).Path
+    }
+    return $Path
+}
+
+function Get-OpenMwConfigValues([string]$Path, [string]$Key) {
+    if ([string]::IsNullOrWhiteSpace($Path) -or !(Test-Path -LiteralPath $Path)) {
+        return @()
+    }
+
+    $escapedKey = [regex]::Escape($Key)
+    return @(
+        Get-Content -LiteralPath $Path |
+            Where-Object { $_ -match "^\s*$escapedKey\s*=" } |
+            ForEach-Object { ($_ -replace "^\s*$escapedKey\s*=\s*", "").Trim() }
+    )
+}
+
+function Assert-NoLegacyModlistMount([string[]]$MountedData, [string]$ManifestPath) {
+    $legacy = @($MountedData | Where-Object { $_ -match "^[A-Za-z]:[/\\]Modlists[/\\]" })
+    if ($legacy.Count -gt 0) {
+        throw "FNV proof mounted legacy modlist data roots: $($legacy -join ', '). See $ManifestPath"
+    }
 }
 
 function Count-LogMatches([string]$Path, [string]$Pattern) {
@@ -1362,6 +1402,8 @@ try {
     Set-ProofEnv $previousEnv "OPENMW_PROOF_ACTOR_VIEW_OFFSET_Y" $ActorViewOffsetY
     Set-ProofEnv $previousEnv "OPENMW_PROOF_ACTOR_VIEW_OFFSET_Z" $ActorViewOffsetZ
     Set-ProofEnv $previousEnv "OPENMW_PROOF_ACTOR_VIEW_TARGET_Z" $ActorViewTargetZ
+    if ($ActorViewLocalOffset) { Set-ProofEnv $previousEnv "OPENMW_PROOF_ACTOR_VIEW_LOCAL_OFFSET" "1" }
+    else { Clear-ProofEnv $previousEnv "OPENMW_PROOF_ACTOR_VIEW_LOCAL_OFFSET" }
     if (![string]::IsNullOrWhiteSpace($ActorTarget)) {
         Set-ProofEnv $previousEnv "OPENMW_PROOF_POSTURE_TARGET" $ActorTarget
         Set-ProofEnv $previousEnv "OPENMW_PROOF_POSTURE_LABEL" "fnv-actor-proof"
@@ -1378,6 +1420,10 @@ try {
     Set-ProofEnv $previousEnv "OPENMW_PROOF_WALK_MIN_Z" $WalkMinZ
     if ($RequirePlayerTerrainSupport) { Set-ProofEnv $previousEnv "OPENMW_FNV_FLOOR_WATCHDOG" "1" }
     if ($FnvPartMatrixAudit) { Set-ProofEnv $previousEnv "OPENMW_FNV_PART_MATRIX_AUDIT" "1" }
+    Set-ProofEnv $previousEnv "OPENMW_FNV_CHARACTER_BUILDER_PHASE" $CharacterBuilderPhase
+    if ($CharacterBuilderTalk -or $CharacterBuilderPhase -ieq "talk" -or $CharacterBuilderPhase -ieq "dialogue") {
+        Set-ProofEnv $previousEnv "OPENMW_FNV_PROOF_MOUTH_FORCE_OPEN" "1"
+    }
     if ($FnvDisableNativeAnimationCallbacks) { Set-ProofEnv $previousEnv "OPENMW_FNV_DISABLE_NATIVE_ANIMATION_CALLBACKS" "1" }
     if ($FnvDlodSettingsDiag) { Set-ProofEnv $previousEnv "OPENMW_FNV_DLODSETTINGS_DIAG" "1" }
     if ($FnvPsaDeathPoseDiag) { Set-ProofEnv $previousEnv "OPENMW_FNV_PSA_DEATHPOSE_DIAG" "1" }
@@ -1473,6 +1519,14 @@ try {
     Write-ProofLine "ScreenshotTimingMaxActorCameraAgeFrames: $ScreenshotTimingMaxActorCameraAgeFrames"
     Write-ProofLine "RequireActorVisibleHandGeometry: $RequireActorVisibleHandGeometry"
     Write-ProofLine "ActorVisibleHandMaxDistance: $ActorVisibleHandMaxDistance"
+    Write-ProofLine "CharacterBuilderPhase: $CharacterBuilderPhase"
+    Write-ProofLine "CharacterBuilderTalk: $CharacterBuilderTalk"
+    Write-ProofLine "ActorTarget: $ActorTarget"
+    Write-ProofLine "ActorViewLocalOffset: $ActorViewLocalOffset"
+    Write-ProofLine "ActorViewOffsetX: $ActorViewOffsetX"
+    Write-ProofLine "ActorViewOffsetY: $ActorViewOffsetY"
+    Write-ProofLine "ActorViewOffsetZ: $ActorViewOffsetZ"
+    Write-ProofLine "ActorViewTargetZ: $ActorViewTargetZ"
     Write-ProofLine "BootstrapCell: $BootstrapCell"
     Write-ProofLine "FlatCameraPitch: $FlatCameraPitch"
     Write-ProofLine "FlatCameraYaw: $FlatCameraYaw"
@@ -1511,13 +1565,46 @@ $OpenMwLog = Copy-IfPresent (Join-Path $ConfigDir "openmw.log") (Join-Path $Proo
 $MyGuiLog = Copy-IfPresent (Join-Path $ConfigDir "MyGUI.log") (Join-Path $ProofDir "MyGUI.log")
 $StdoutLog = Copy-IfPresent (Join-Path $ConfigDir "openmw-process.stdout.log") (Join-Path $ProofDir "openmw-proof.stdout.log")
 $StderrLog = Copy-IfPresent (Join-Path $ConfigDir "openmw-process.stderr.log") (Join-Path $ProofDir "openmw-proof.stderr.log")
-Copy-IfPresent (Join-Path $ConfigDir "openmw.cfg") (Join-Path $ProofDir "openmw.cfg") | Out-Null
-Copy-IfPresent (Join-Path $ConfigDir "settings.cfg") (Join-Path $ProofDir "settings.cfg") | Out-Null
+$OpenMwCfg = Copy-IfPresent (Join-Path $ConfigDir "openmw.cfg") (Join-Path $ProofDir "openmw.cfg")
+$SettingsCfg = Copy-IfPresent (Join-Path $ConfigDir "settings.cfg") (Join-Path $ProofDir "settings.cfg")
 if (Test-Path -LiteralPath $ScreenshotDir) {
     Get-ChildItem -LiteralPath $ScreenshotDir -File -ErrorAction SilentlyContinue | ForEach-Object {
         Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $ProofDir $_.Name) -Force
     }
 }
+
+$mountedData = @(Get-OpenMwConfigValues $OpenMwCfg "data")
+$dataProvenancePath = Join-Path $ProofDir "fnv-data-provenance.json"
+$dataProvenance = [pscustomobject][ordered]@{
+    stamp = $Stamp
+    repoRoot = (Resolve-ProofPathValue $RepoRoot)
+    proofDir = (Resolve-ProofPathValue $ProofDir)
+    buildDir = $BuildDir
+    configuration = $Configuration
+    executable = (Resolve-ProofPathValue (Join-Path (Join-Path $RepoRoot $BuildDir) "$Configuration/openmw.exe"))
+    fnvDataArgument = (Resolve-ProofPathValue $FnvData)
+    fnvConfigDataArgument = (Resolve-ProofPathValue $FnvConfigData)
+    vcpkgRootArgument = (Resolve-ProofPathValue $VcpkgRoot)
+    configDir = (Resolve-ProofPathValue $ConfigDir)
+    runtimeDir = (Resolve-ProofPathValue $RuntimeDir)
+    openmwCfg = (Resolve-ProofPathValue $OpenMwCfg)
+    settingsCfg = (Resolve-ProofPathValue $SettingsCfg)
+    mounted = [pscustomobject][ordered]@{
+        resources = @(Get-OpenMwConfigValues $OpenMwCfg "resources")
+        data = $mountedData
+        dataLocal = @(Get-OpenMwConfigValues $OpenMwCfg "data-local")
+        userData = @(Get-OpenMwConfigValues $OpenMwCfg "user-data")
+        fallbackArchive = @(Get-OpenMwConfigValues $OpenMwCfg "fallback-archive")
+        content = @(Get-OpenMwConfigValues $OpenMwCfg "content")
+    }
+    policy = [pscustomobject][ordered]@{
+        noRetailAssetsCommitted = $true
+        generatedProofOutputsOutsideRepo = $true
+        noLegacyModlistDataMounts = $true
+    }
+}
+$dataProvenance | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $dataProvenancePath -Encoding UTF8
+Assert-NoLegacyModlistMount $mountedData $dataProvenancePath
 
 if ([string]::IsNullOrWhiteSpace($OpenMwLog)) {
     throw "OpenMW log was not produced. Harness log: $HarnessLog"
@@ -1568,6 +1655,8 @@ Write-ProofLine "Stderr log: $StderrLog"
 Write-ProofLine "Screenshots: $($screenshots.Count)"
 Write-ProofLine "Screenshot stability JSON: $screenshotStabilityPath"
 Write-ProofLine "Screenshot timing JSON: $screenshotTimingPath"
+Write-ProofLine "Data provenance JSON: $dataProvenancePath"
+Write-ProofLine "Mounted data roots: $($mountedData -join '; ')"
 Write-ProofLine ""
 Write-ProofLine "Runtime probes:"
 Write-ProofLine "Real fatal/blocker lines: $fatalCount"
