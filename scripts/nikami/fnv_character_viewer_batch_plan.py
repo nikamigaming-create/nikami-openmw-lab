@@ -46,6 +46,15 @@ def as_text(value: Any) -> str:
     return "" if value is None else str(value)
 
 
+def as_number(value: Any) -> float | None:
+    if value is None or value == "":
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def normalize_form_target(form_id: str) -> str:
     value = form_id.strip()
     if not value:
@@ -75,11 +84,66 @@ def phases_for_kind(actor_kind: str) -> list[str]:
     return NPC_PHASES
 
 
-def command_for_target(target: str, actor_kind: str, phases: list[str]) -> str:
+def placement_for_row(row: dict[str, Any]) -> dict[str, Any]:
+    position = {
+        "x": as_number(row.get("placedPosX")),
+        "y": as_number(row.get("placedPosY")),
+        "z": as_number(row.get("placedPosZ")),
+    }
+    rotation = {
+        "x": as_number(row.get("placedRotX")),
+        "y": as_number(row.get("placedRotY")),
+        "z": as_number(row.get("placedRotZ")),
+    }
+    cell = normalize_form_target(as_text(row.get("placedCellFormId")))
+    has_position = all(value is not None for value in position.values())
+    return {
+        "source": as_text(row.get("placedCoordinateSource")),
+        "cell": cell,
+        "cellEditorId": as_text(row.get("placedCellEditorId")),
+        "cellGroupType": as_text(row.get("placedCellGroupType")),
+        "cellGroupName": as_text(row.get("placedCellGroupName")),
+        "position": position,
+        "rotation": rotation,
+        "scale": as_number(row.get("placedScale")),
+        "hasPosition": has_position,
+        "hasCell": bool(cell),
+        "runtimeBootstrapReady": bool(cell and has_position),
+    }
+
+
+def placement_command_args(placement: dict[str, Any]) -> str:
+    if not placement.get("runtimeBootstrapReady"):
+        return ""
+    position = placement["position"]
+    rotation = placement["rotation"]
+    args = [
+        f"-BootstrapCell {shell_quote(as_text(placement.get('cell')))}",
+        f"-BootstrapX {position['x']}",
+        f"-BootstrapY {position['y']}",
+        f"-BootstrapZ {position['z']}",
+        f"-ActorStageX {position['x']}",
+        f"-ActorStageY {position['y']}",
+        f"-ActorStageZ {position['z']}",
+    ]
+    if rotation.get("x") is not None:
+        args.append(f"-BootstrapRotX {rotation['x']}")
+        args.append(f"-ActorStageRotX {rotation['x']}")
+    if rotation.get("y") is not None:
+        args.append(f"-BootstrapRotY {rotation['y']}")
+        args.append(f"-ActorStageRotY {rotation['y']}")
+    if rotation.get("z") is not None:
+        args.append(f"-BootstrapRotZ {rotation['z']}")
+        args.append(f"-ActorStageRotZ {rotation['z']}")
+    return " " + " ".join(args)
+
+
+def command_for_target(target: str, actor_kind: str, phases: list[str], placement: dict[str, Any]) -> str:
     flags = " -CreatureDiagnostics" if actor_kind == "creature" else ""
     return (
         "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/nikami/run-fnv-character-viewer.ps1 "
-        f"-Targets {shell_quote(target)} -ActorKind {actor_kind}{flags} -Phases {','.join(phases)} -Serve"
+        f"-Targets {shell_quote(target)} -ActorKind {actor_kind}{flags} -Phases {','.join(phases)}"
+        f"{placement_command_args(placement)} -Serve"
     )
 
 
@@ -135,8 +199,21 @@ def make_entry(
     else:
         target = actor_editor_id or normalize_form_target(actor_form_id)
     phases = phases_for_kind(actor_kind)
+    placement = placement_for_row(row) if source == "placed-reference" else {
+        "source": "base actor has no placed DATA",
+        "cell": "",
+        "cellEditorId": "",
+        "cellGroupType": "",
+        "cellGroupName": "",
+        "position": {"x": None, "y": None, "z": None},
+        "rotation": {"x": None, "y": None, "z": None},
+        "scale": None,
+        "hasPosition": False,
+        "hasCell": False,
+        "runtimeBootstrapReady": False,
+    }
     classification, first_failing_gate, notes = classify_target(source, record_type, target)
-    command = command_for_target(target, actor_kind, phases) if target and actor_kind != "unknown" else ""
+    command = command_for_target(target, actor_kind, phases, placement) if target and actor_kind != "unknown" else ""
     if classification not in ALLOWED_CLASSIFICATIONS:
         classification = "known-blocked"
         first_failing_gate = "batch-plan-classification"
@@ -161,6 +238,7 @@ def make_entry(
         "resolvedRecordType": as_text(row.get("resolvedRecordType")),
         "resolvedFormId": as_text(row.get("resolvedFormId")),
         "resolvedEditorId": as_text(row.get("resolvedEditorId")),
+        "placement": placement,
         "componentCounts": dict(sorted(component_counts.items())),
         "command": command,
         "payloadPolicy": "no retail asset paths or payload bytes are written by this batch plan",
@@ -215,13 +293,22 @@ def build_plan(rows: list[dict[str, Any]], result: dict[str, Any], limit: int) -
     invalid = [entry for entry in entries if entry["classification"] not in ALLOWED_CLASSIFICATIONS]
     missing_targets = [entry for entry in entries if not entry["target"]]
     missing_commands = [entry for entry in entries if entry["actorKind"] != "unknown" and not entry["command"]]
+    missing_placement = [
+        entry
+        for entry in entries
+        if entry["source"] == "placed-reference" and not entry.get("placement", {}).get("runtimeBootstrapReady")
+    ]
 
     expected_base = int(result.get("npcBaseRecords", 0)) + int(result.get("creatureBaseRecords", 0))
     expected_placed = int(result.get("placedNpcCreatureRefs", 0))
     complete_base = len(seen_base) == expected_base if expected_base else len(seen_base) > 0
     complete_placed = len(seen_placed) == expected_placed if expected_placed else len(seen_placed) > 0
     coverage_status = "complete" if complete_base and complete_placed else "partial"
-    status = "PASS" if not invalid and not missing_targets and not missing_commands and coverage_status == "complete" else "FAIL"
+    status = (
+        "PASS"
+        if not invalid and not missing_targets and not missing_commands and not missing_placement and coverage_status == "complete"
+        else "FAIL"
+    )
 
     return {
         "schema": "nikami-fnv-character-viewer-batch-plan-v1",
@@ -242,6 +329,7 @@ def build_plan(rows: list[dict[str, Any]], result: dict[str, Any], limit: int) -
             "total": len(entries),
             "baseActors": source_counts.get("actor-base-record", 0),
             "placedActorRefs": source_counts.get("placed-reference", 0),
+            "placedActorRefsWithRuntimeBootstrap": source_counts.get("placed-reference", 0) - len(missing_placement),
             "npc": actor_kind_counts.get("npc", 0),
             "creature": actor_kind_counts.get("creature", 0),
             "unknown": actor_kind_counts.get("unknown", 0),
@@ -251,6 +339,7 @@ def build_plan(rows: list[dict[str, Any]], result: dict[str, Any], limit: int) -
             "invalidClassification": len(invalid),
             "missingTarget": len(missing_targets),
             "missingCommand": len(missing_commands),
+            "missingPlacementContext": len(missing_placement),
         },
         "commands": {
             "regeneratePlan": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/nikami/run-fnv-character-viewer-batch-plan.ps1 -RequirePass",

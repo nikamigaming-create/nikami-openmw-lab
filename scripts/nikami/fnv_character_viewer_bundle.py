@@ -399,6 +399,9 @@ def load_suite(suite_dir: Path) -> dict[str, Any]:
             "proofDir": str(raw.get("proofDir") or report.get("proofDir") or ""),
             "caseDir": str(case_dir),
             "caseDirRelative": rel_path(case_dir, suite_dir),
+            "bootstrap": raw.get("bootstrap") or {},
+            "actorStage": raw.get("actorStage") or {},
+            "actorCamera": raw.get("actorCamera") or {},
             "openmwLog": rel_path(case_dir / "openmw.log", suite_dir),
             "reportJson": rel_path(case_dir / "character-builder-report.json", suite_dir),
             "reportMarkdown": rel_path(case_dir / "character-builder-report.md", suite_dir),
@@ -726,9 +729,19 @@ function renderGates(c) {{
 function renderCoords(c) {{
   const bounds = filterPartRows(c?.attachmentBounds || [], b => b.model, b => b.parent);
   const audits = filterPartRows(c?.runtimePartAudits || [], a => a.part, a => a.class);
+  const caseRows = [];
+  if (c?.bootstrap && Object.keys(c.bootstrap).length) {{
+    caseRows.push(`<tr><td>bootstrap</td><td><code>${{esc(c.bootstrap.cell || "")}}</code></td><td>player/cell</td><td>${{esc(JSON.stringify({{x:c.bootstrap.x,y:c.bootstrap.y,z:c.bootstrap.z}}))}}</td><td>${{esc(JSON.stringify({{x:c.bootstrap.rotX,y:c.bootstrap.rotY,z:c.bootstrap.rotZ,hour:c.bootstrap.hour}}))}}</td><td>source</td></tr>`);
+  }}
+  if (c?.actorStage && Object.keys(c.actorStage).length) {{
+    caseRows.push(`<tr><td>stage</td><td><code>${{esc(MANIFEST.actor)}}</code></td><td>actor</td><td>${{esc(JSON.stringify({{x:c.actorStage.x,y:c.actorStage.y,z:c.actorStage.z}}))}}</td><td>${{esc(JSON.stringify({{x:c.actorStage.rotX,y:c.actorStage.rotY,z:c.actorStage.rotZ}}))}}</td><td>source</td></tr>`);
+  }}
+  if (c?.actorCamera && Object.keys(c.actorCamera).length) {{
+    caseRows.push(`<tr><td>camera</td><td><code>${{esc(c.actorCamera.angle || c.angle)}}</code></td><td>actor-local</td><td>${{esc(JSON.stringify({{x:c.actorCamera.offsetX,y:c.actorCamera.offsetY,z:c.actorCamera.offsetZ}}))}}</td><td>${{esc(JSON.stringify({{targetZ:c.actorCamera.targetZ,local:c.actorCamera.localOffset}}))}}</td><td>capture</td></tr>`);
+  }}
   const boundRows = bounds.map(b => `<tr><td>attachment</td><td><code>${{esc(b.model)}}</code></td><td>${{esc(b.parent)}}</td><td>${{esc(JSON.stringify(b.headRel))}}</td><td>${{esc(JSON.stringify(b.extent))}}</td><td>${{esc(b.verdict)}}</td></tr>`);
   const auditRows = audits.map(a => `<tr><td>runtime</td><td><code>${{esc(a.part)}}</code></td><td>${{esc(a.class)}}</td><td>${{esc(JSON.stringify(a.relLocal))}}</td><td>${{esc(a.distance)}} / ${{esc(a.limit)}}</td><td>${{esc(a.verdict)}}</td></tr>`);
-  document.getElementById("coordTable").innerHTML = table(["Kind", "Part", "Parent/Class", "Head/Rel", "Extent/Distance", "Verdict"], boundRows.concat(auditRows));
+  document.getElementById("coordTable").innerHTML = table(["Kind", "Part", "Parent/Class", "Position/Rel", "Rotation/Extent", "Verdict"], caseRows.concat(boundRows).concat(auditRows));
 }}
 function renderDrift(c) {{
   const rows = filterPartRows(c?.runtimeAuditSummary || [], a => a.part, a => a.class).map(a => `<tr><td><code>${{esc(a.part)}}</code></td><td>${{esc(a.class)}}</td><td>${{esc(a.firstVerdict)}} -> ${{esc(a.lastVerdict)}}</td><td>${{esc(a.badCount)}} / ${{esc(a.count)}}</td><td>${{esc(a.firstTimestamp)}} -> ${{esc(a.lastTimestamp)}}</td><td>${{esc(a.maxDistance)}}</td><td>${{esc(JSON.stringify(a.firstRelLocal))}}</td><td>${{esc(JSON.stringify(a.lastRelLocal))}}</td></tr>`);
@@ -774,21 +787,58 @@ render();
 """
 
 
+def actor_kit_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
+    cases = []
+    for case in manifest.get("cases", []):
+        if not isinstance(case, dict):
+            continue
+        cases.append(
+            {
+                "case": case.get("case", ""),
+                "phase": case.get("phase", ""),
+                "angle": case.get("angle", ""),
+                "runtimeGateStatus": case.get("runtimeGateStatus", ""),
+                "reportStatus": case.get("reportStatus", ""),
+                "bootstrap": case.get("bootstrap", {}),
+                "actorStage": case.get("actorStage", {}),
+                "actorCamera": case.get("actorCamera", {}),
+                "openmwLog": case.get("openmwLog", ""),
+                "reportJson": case.get("reportJson", ""),
+                "screenshots": case.get("screenshots", []),
+            }
+        )
+    return {
+        "schema": "nikami-fnv-actor-kit-v1",
+        "payloadPolicy": "generated proof metadata and commands only; no retail asset payload bytes",
+        "actor": manifest.get("actor", ""),
+        "actorProfile": manifest.get("actorProfile", {}),
+        "phases": manifest.get("phases", []),
+        "angles": manifest.get("angles", []),
+        "layers": manifest.get("layers", []),
+        "controls": manifest.get("controls", {}),
+        "cases": cases,
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--suite-dir", required=True, type=Path)
     parser.add_argument("--out-json", type=Path)
     parser.add_argument("--out-html", type=Path)
+    parser.add_argument("--out-kit-json", type=Path)
     args = parser.parse_args()
 
     suite_dir = args.suite_dir.resolve()
     manifest = load_suite(suite_dir)
     out_json = args.out_json or (suite_dir / "character-viewer-manifest.json")
     out_html = args.out_html or (suite_dir / "character-viewer.html")
+    out_kit_json = args.out_kit_json or (suite_dir / "character-actor-kit.json")
     out_json.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    out_kit_json.write_text(json.dumps(actor_kit_manifest(manifest), indent=2), encoding="utf-8")
     out_html.write_text(html_doc(manifest), encoding="utf-8")
     print(f"viewer-html={out_html}")
     print(f"viewer-json={out_json}")
+    print(f"actor-kit-json={out_kit_json}")
     print(f"status={manifest['overallStatus']} cases={len(manifest['cases'])}")
     return 0
 

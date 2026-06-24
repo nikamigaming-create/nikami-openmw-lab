@@ -35,7 +35,15 @@ function New-Row(
     [string]$ResolvedRecordType = "",
     [string]$ResolvedFormId = "",
     [string]$ResolvedEditorId = "",
-    [string]$ProofAnchor = ""
+    [string]$ProofAnchor = "",
+    [string]$PlacedCellFormId = "",
+    [string]$PlacedCellEditorId = "",
+    [object]$PlacedPosX = $null,
+    [object]$PlacedPosY = $null,
+    [object]$PlacedPosZ = $null,
+    [object]$PlacedRotX = $null,
+    [object]$PlacedRotY = $null,
+    [object]$PlacedRotZ = $null
 ) {
     if ([string]::IsNullOrWhiteSpace($SourceRecordType)) { $SourceRecordType = $ActorKind }
     [pscustomobject][ordered]@{
@@ -45,6 +53,18 @@ function New-Row(
         actorEditorId = $ActorEditorId
         placedRefFormId = $PlacedRefFormId
         placedRefEditorId = $PlacedRefEditorId
+        placedCellFormId = $PlacedCellFormId
+        placedCellEditorId = $PlacedCellEditorId
+        placedCellGroupType = "9"
+        placedCellGroupName = if (![string]::IsNullOrWhiteSpace($PlacedCellFormId)) { "cell-temporary-child" } else { "" }
+        placedCoordinateSource = if (![string]::IsNullOrWhiteSpace($PlacedCellFormId)) { "ACHR/ACRE DATA + GRUP parent cell" } else { "" }
+        placedPosX = $PlacedPosX
+        placedPosY = $PlacedPosY
+        placedPosZ = $PlacedPosZ
+        placedRotX = $PlacedRotX
+        placedRotY = $PlacedRotY
+        placedRotZ = $PlacedRotZ
+        placedScale = $null
         component = $Component
         sourceRecordType = $SourceRecordType
         sourceFormId = if (![string]::IsNullOrWhiteSpace($PlacedRefFormId)) { $PlacedRefFormId } else { $ActorFormId }
@@ -64,8 +84,8 @@ $ledger = @(
     (New-Row "npc-race" "NPC_" "0x00000001" "ContractNpc" "" "" "NPC_" "" "" "" "npc-face-assembly"),
     (New-Row "actor-base-record" "CREA" "0x00000002" "ContractCreature" "" "" "CREA" "" "" "" "creature-body-assembly"),
     (New-Row "creature-model" "CREA" "0x00000002" "ContractCreature" "" "" "CREA" "" "" "" "creature-body-assembly"),
-    (New-Row "placed-reference" "NPC_" "0x00000001" "ContractNpc" "0x00000011" "ContractNpcRef" "ACHR" "NPC_" "0x00000001" "ContractNpc" "npc-face-assembly"),
-    (New-Row "placed-reference" "CREA" "0x00000002" "ContractCreature" "0x00000012" "ContractCreatureRef" "ACRE" "CREA" "0x00000002" "ContractCreature" "creature-body-assembly")
+    (New-Row "placed-reference" "NPC_" "0x00000001" "ContractNpc" "0x00000011" "ContractNpcRef" "ACHR" "NPC_" "0x00000001" "ContractNpc" "npc-face-assembly" "0x00000021" "ContractCell" 11 22 33 0 0 1.25),
+    (New-Row "placed-reference" "CREA" "0x00000002" "ContractCreature" "0x00000012" "ContractCreatureRef" "ACRE" "CREA" "0x00000002" "ContractCreature" "creature-body-assembly" "0x00000022" "ContractCell" 44 55 66 0 0 2.5)
 )
 $ledgerPath = Join-Path $FixtureDir "actor-presentation-ledger.json"
 $ledger | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $ledgerPath -Encoding UTF8
@@ -112,8 +132,11 @@ if ([int]$plan.plannedCounts.baseActors -ne 2 -or [int]$plan.plannedCounts.place
 if ([int]$plan.plannedCounts.npc -ne 2 -or [int]$plan.plannedCounts.creature -ne 2) {
     throw "Batch plan fixture actor-kind counts are wrong."
 }
-if ([int]$plan.failures.invalidClassification -ne 0 -or [int]$plan.failures.missingTarget -ne 0 -or [int]$plan.failures.missingCommand -ne 0) {
+if ([int]$plan.failures.invalidClassification -ne 0 -or [int]$plan.failures.missingTarget -ne 0 -or [int]$plan.failures.missingCommand -ne 0 -or [int]$plan.failures.missingPlacementContext -ne 0) {
     throw "Batch plan fixture reported target/classification failures."
+}
+if ([int]$plan.plannedCounts.placedActorRefsWithRuntimeBootstrap -ne 2) {
+    throw "Batch plan fixture did not preserve placed actor runtime bootstrap context."
 }
 
 $entries = @($plan.entries)
@@ -127,6 +150,10 @@ if (@($creatureEntries | Where-Object { $_.command -notmatch "-ActorKind creatur
 }
 if (@($npcEntries | Where-Object { $_.command -notmatch "-ActorKind npc" }).Count -gt 0) {
     throw "NPC batch commands do not set ActorKind npc."
+}
+$placedEntries = @($entries | Where-Object { $_.source -eq "placed-reference" })
+if (@($placedEntries | Where-Object { !$_.placement.runtimeBootstrapReady -or $_.command -notmatch "-BootstrapCell" -or $_.command -notmatch "-ActorStageX" }).Count -gt 0) {
+    throw "Placed-reference batch commands do not carry decoded bootstrap/stage placement."
 }
 $allowed = @(
     "runtime-supported",
@@ -145,7 +172,7 @@ $batchRunRoot = Join-Path $ProofRoot "fnv-character-viewer-batch-run"
 if (Test-Path -LiteralPath $batchRunRoot -PathType Container) {
     $beforeRunDirs = @(Get-ChildItem -LiteralPath $batchRunRoot -Directory | Select-Object -ExpandProperty FullName)
 }
-& $BatchRunner -PlanJson $planPath -DryRun -ActorKind creature -MaxEntries 1 -RequirePass | Out-Host
+& $BatchRunner -PlanJson $planPath -DryRun -ActorKind creature -Source placed-reference -MaxEntries 1 -RequirePass | Out-Host
 if ($LASTEXITCODE -ne 0) {
     throw "FNV character viewer batch dry-run failed with exit code $LASTEXITCODE."
 }
@@ -172,11 +199,14 @@ if ($run.status -ne "PASS" -or !$run.dryRun -or [int]$run.selectedEntries -ne 1)
     throw "Batch dry-run summary has wrong status/selection."
 }
 $runResult = @($run.results)[0]
-if ($runResult.actorKind -ne "creature" -or $runResult.status -ne "DRY-RUN") {
-    throw "Batch dry-run did not select a creature entry."
+if ($runResult.actorKind -ne "creature" -or $runResult.source -ne "placed-reference" -or $runResult.status -ne "DRY-RUN") {
+    throw "Batch dry-run did not select a placed creature entry."
 }
 if ($runResult.command -notmatch "-ActorKind creature" -or $runResult.command -notmatch "-CreatureDiagnostics") {
     throw "Batch dry-run result does not preserve runnable creature command."
+}
+if ($runResult.command -notmatch "-BootstrapCell" -or $runResult.command -notmatch "-ActorStageX" -or $runResult.placementSummary -notmatch "FormId:0x00000022") {
+    throw "Batch dry-run result does not expose placed creature bootstrap/stage placement."
 }
 $runHtml = Join-Path $runDir "viewer-batch-run.html"
 $runMarkdown = Join-Path $runDir "viewer-batch-run.md"

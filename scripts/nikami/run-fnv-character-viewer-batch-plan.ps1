@@ -75,6 +75,32 @@ function ConvertTo-PlainArray($Value) {
     return @($Value)
 }
 
+function Get-ObjectProperty([object]$Object, [string]$Name) {
+    if ($null -eq $Object) { return $null }
+    $property = $Object.PSObject.Properties[$Name]
+    if ($null -eq $property) { return $null }
+    return $property.Value
+}
+
+function Add-DoubleArgIfPresent([hashtable]$TargetArgs, [string]$Name, [object]$Value) {
+    if ($null -eq $Value) { return }
+    if ($Value -is [string] -and [string]::IsNullOrWhiteSpace($Value)) { return }
+    $TargetArgs[$Name] = [double]$Value
+}
+
+function Format-PlacementSummary([object]$Placement) {
+    if ($null -eq $Placement) { return "" }
+    $cell = [string](Get-ObjectProperty $Placement "cell")
+    $position = Get-ObjectProperty $Placement "position"
+    $x = Get-ObjectProperty $position "x"
+    $y = Get-ObjectProperty $position "y"
+    $z = Get-ObjectProperty $position "z"
+    if ([string]::IsNullOrWhiteSpace($cell) -or $null -eq $x -or $null -eq $y -or $null -eq $z) {
+        return "missing placement context"
+    }
+    return "$cell @ $x,$y,$z"
+}
+
 function Select-PlanEntries([object]$Plan) {
     $entries = @(ConvertTo-PlainArray $Plan.entries)
     if ($ActorKind -ne "all") {
@@ -102,6 +128,7 @@ function Invoke-ViewerEntry([object]$Entry, [string]$RunDir) {
     if ($phases.Count -eq 0) {
         throw "Planned entry has no phases: $($Entry.id)"
     }
+    $placement = Get-ObjectProperty $Entry "placement"
 
     $result = [ordered]@{
         id = $Entry.id
@@ -111,9 +138,12 @@ function Invoke-ViewerEntry([object]$Entry, [string]$RunDir) {
         status = "PENDING"
         dryRun = [bool]$DryRun
         command = $Entry.command
+        placement = $placement
+        placementSummary = Format-PlacementSummary $placement
         entryJson = $entryJson
         viewerIndex = ""
         viewerManifest = ""
+        actorKit = ""
         viewerServer = ""
         error = ""
     }
@@ -138,6 +168,26 @@ function Invoke-ViewerEntry([object]$Entry, [string]$RunDir) {
         ScreenshotFrames = $ScreenshotFrames
     }
     if ($Entry.actorKind -eq "creature") { $viewerArgs.CreatureDiagnostics = $true }
+    if ($null -ne $placement -and [bool](Get-ObjectProperty $placement "runtimeBootstrapReady")) {
+        $cell = [string](Get-ObjectProperty $placement "cell")
+        if (![string]::IsNullOrWhiteSpace($cell)) {
+            $viewerArgs.BootstrapCell = $cell
+        }
+        $position = Get-ObjectProperty $placement "position"
+        $rotation = Get-ObjectProperty $placement "rotation"
+        Add-DoubleArgIfPresent $viewerArgs "BootstrapX" (Get-ObjectProperty $position "x")
+        Add-DoubleArgIfPresent $viewerArgs "BootstrapY" (Get-ObjectProperty $position "y")
+        Add-DoubleArgIfPresent $viewerArgs "BootstrapZ" (Get-ObjectProperty $position "z")
+        Add-DoubleArgIfPresent $viewerArgs "ActorStageX" (Get-ObjectProperty $position "x")
+        Add-DoubleArgIfPresent $viewerArgs "ActorStageY" (Get-ObjectProperty $position "y")
+        Add-DoubleArgIfPresent $viewerArgs "ActorStageZ" (Get-ObjectProperty $position "z")
+        Add-DoubleArgIfPresent $viewerArgs "BootstrapRotX" (Get-ObjectProperty $rotation "x")
+        Add-DoubleArgIfPresent $viewerArgs "BootstrapRotY" (Get-ObjectProperty $rotation "y")
+        Add-DoubleArgIfPresent $viewerArgs "BootstrapRotZ" (Get-ObjectProperty $rotation "z")
+        Add-DoubleArgIfPresent $viewerArgs "ActorStageRotX" (Get-ObjectProperty $rotation "x")
+        Add-DoubleArgIfPresent $viewerArgs "ActorStageRotY" (Get-ObjectProperty $rotation "y")
+        Add-DoubleArgIfPresent $viewerArgs "ActorStageRotZ" (Get-ObjectProperty $rotation "z")
+    }
     if ($NoSound) { $viewerArgs.NoSound = $true }
     if ($Serve) { $viewerArgs.Serve = $true }
     if ($ServePort -gt 0) { $viewerArgs.ServePort = $ServePort }
@@ -160,6 +210,19 @@ function Invoke-ViewerEntry([object]$Entry, [string]$RunDir) {
         }
         $result.status = "PASS"
         $result.viewerIndex = if (![string]::IsNullOrWhiteSpace($newDir)) { Join-Path $newDir "index.html" } else { "" }
+        $manifestJson = if (![string]::IsNullOrWhiteSpace($newDir)) { Join-Path $newDir "viewer-runs.json" } else { "" }
+        if (![string]::IsNullOrWhiteSpace($manifestJson) -and (Test-Path -LiteralPath $manifestJson -PathType Leaf)) {
+            $result.viewerManifest = $manifestJson
+            try {
+                $viewerRuns = @(Get-Content -LiteralPath $manifestJson -Raw | ConvertFrom-Json)
+                $firstRun = $viewerRuns | Select-Object -First 1
+                if ($null -ne $firstRun -and $null -ne $firstRun.ActorKitJson) {
+                    $result.actorKit = [string]$firstRun.ActorKitJson
+                }
+            }
+            catch {
+            }
+        }
         $serverJson = if (![string]::IsNullOrWhiteSpace($newDir)) { Join-Path $newDir "viewer-server.json" } else { "" }
         if (![string]::IsNullOrWhiteSpace($serverJson) -and (Test-Path -LiteralPath $serverJson -PathType Leaf)) {
             $result.viewerServer = $serverJson
@@ -220,12 +283,13 @@ function Write-BatchRunMarkdown([string]$Path, [object]$Summary) {
     $lines.Add("Plan: ``$($Summary.planJson)``")
     $lines.Add("Policy: $($Summary.payloadPolicy)")
     $lines.Add("")
-    $lines.Add("| Status | Kind | Source | Target | Command | Viewer | Entry JSON |")
+    $lines.Add("| Status | Kind | Source | Target | Placement | Command | Viewer | Entry JSON |")
     $lines.Add("|---|---|---|---|---|---|---|")
     foreach ($result in @($Summary.results)) {
         $viewer = if (![string]::IsNullOrWhiteSpace($result.viewerIndex)) { $result.viewerIndex } elseif (![string]::IsNullOrWhiteSpace($result.viewerServer)) { $result.viewerServer } else { "" }
         $command = ([string]$result.command).Replace("|", "\|")
-        $lines.Add("| $($result.status) | $($result.actorKind) | $($result.source) | ``$($result.target)`` | ``$command`` | ``$viewer`` | ``$($result.entryJson)`` |")
+        $placement = ([string]$result.placementSummary).Replace("|", "\|")
+        $lines.Add("| $($result.status) | $($result.actorKind) | $($result.source) | ``$($result.target)`` | ``$placement`` | ``$command`` | ``$viewer`` | ``$($result.entryJson)`` |")
     }
     $lines.Add("")
     $Path | Split-Path -Parent | ForEach-Object { New-Item -ItemType Directory -Force -Path $_ | Out-Null }
@@ -238,7 +302,7 @@ function Write-BatchRunHtml([string]$Path, [object]$Summary) {
         $viewerTarget = if (![string]::IsNullOrWhiteSpace($result.viewerIndex)) { $result.viewerIndex } elseif (![string]::IsNullOrWhiteSpace($result.viewerServer)) { $result.viewerServer } else { "" }
         $viewerCell = New-LinkHtml $Path $viewerTarget "viewer"
         $entryCell = New-LinkHtml $Path $result.entryJson "entry"
-        $rows.Add("<tr><td class=`"status $($result.status)`">$(ConvertTo-HtmlText $result.status)</td><td>$(ConvertTo-HtmlText $result.actorKind)</td><td>$(ConvertTo-HtmlText $result.source)</td><td><code>$(ConvertTo-HtmlText $result.target)</code></td><td><code>$(ConvertTo-HtmlText $result.command)</code></td><td>$viewerCell</td><td>$entryCell</td><td>$(ConvertTo-HtmlText $result.error)</td></tr>")
+        $rows.Add("<tr><td class=`"status $($result.status)`">$(ConvertTo-HtmlText $result.status)</td><td>$(ConvertTo-HtmlText $result.actorKind)</td><td>$(ConvertTo-HtmlText $result.source)</td><td><code>$(ConvertTo-HtmlText $result.target)</code></td><td><code>$(ConvertTo-HtmlText $result.placementSummary)</code></td><td><code>$(ConvertTo-HtmlText $result.command)</code></td><td>$viewerCell</td><td>$entryCell</td><td>$(ConvertTo-HtmlText $result.error)</td></tr>")
     }
 
     $planLink = New-LinkHtml $Path $Summary.planJson "plan"
@@ -285,7 +349,7 @@ a{color:#9fc2ff}
 </section>
 <section class="panel">
 <table>
-<thead><tr><th>Status</th><th>Kind</th><th>Source</th><th>Target</th><th>Command</th><th>Viewer</th><th>Entry</th><th>Error</th></tr></thead>
+<thead><tr><th>Status</th><th>Kind</th><th>Source</th><th>Target</th><th>Placement</th><th>Command</th><th>Viewer</th><th>Entry</th><th>Error</th></tr></thead>
 <tbody>
 $($rows -join "`n")
 </tbody>

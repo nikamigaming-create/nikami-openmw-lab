@@ -120,12 +120,14 @@ Assert-Text $flat "did not prove visible skinned hand geometry follows animated 
 Assert-Text $flat "OPENMW_PROOF_ACTOR_VIEW_LOCAL_OFFSET" "flat proof can frame actor closeups in actor-local space"
 Assert-Text $flat "OPENMW_FNV_CHARACTER_BUILDER_PHASE" "flat proof can select standalone character-builder assembly phase"
 Assert-Text $flat "OPENMW_FNV_PROOF_MOUTH_FORCE_OPEN" "flat proof can force talk/mouth proof phase"
+Assert-Text $flat "OPENMW_FNV_PROOF_TARGET_NPC" "flat proof bridges generic actor target into FNV NPC assembly diagnostics"
 Assert-Text $flat "OPENMW_PROOF_ACTOR_KIND" "flat proof records actor-kind intent for proof artifacts"
 Assert-Text $flat "OPENMW_FNV_CREATURE_ANIM_GROUP_DIAG" "flat proof can enable creature animation group diagnostics"
 Assert-Text $flat "OPENMW_FNV_CREATURE_BODY_DIAG" "flat proof can enable creature body diagnostics"
 Assert-Text $flat "OPENMW_FNV_CREATURE_KF_DIAG" "flat proof can enable creature KF diagnostics"
 Assert-Text $flat "CharacterBuilderPhase:" "flat proof summary records character-builder phase"
 Assert-Text $flat "ActorViewLocalOffset:" "flat proof summary records actor-local closeup mode"
+Assert-Text $flat "FnvProofTargetNpc:" "flat proof summary records FNV-specific NPC assembly target"
 Assert-Text $flat "ActorKind:" "flat proof summary records actor kind"
 Assert-Text $flat "CreatureDiagnostics:" "flat proof summary records creature diagnostic mode"
 Assert-Text $flat "fnv-data-provenance.json" "flat proof writes data provenance manifest"
@@ -225,6 +227,11 @@ Assert-Text $easyPete "[switch]`$AllowRuntimeGateFailure" "Easy Pete visual swee
 Assert-Text $easyPete "_fnv-data-provenance.json" "Easy Pete visual sweep copies per-angle data provenance"
 Assert-Text $characterBuilder '"body", "head", "face", "hair", "equipment", "weapon", "headgear", "talk"' "character builder has explicit assembly ladder"
 Assert-Text $characterBuilder "[string]`$ActorKind" "character builder accepts actor-kind mode"
+Assert-Text $characterBuilder "[string]`$BootstrapCell" "character builder accepts explicit bootstrap cell"
+Assert-Text $characterBuilder "[double]`$ActorStageX" "character builder accepts explicit actor stage coordinates"
+Assert-Text $characterBuilder "bootstrap = [pscustomobject][ordered]@" "character builder writes per-case bootstrap coordinate dump"
+Assert-Text $characterBuilder "actorStage = [pscustomobject][ordered]@" "character builder writes per-case actor stage coordinate dump"
+Assert-Text $characterBuilder "actorCamera = [pscustomobject][ordered]@" "character builder writes per-case camera coordinate dump"
 Assert-Text $characterBuilder "[switch]`$CreatureDiagnostics" "character builder accepts creature diagnostic mode"
 Assert-Text $characterBuilder '"creature-model", "creature-body", "creature-animation", "creature-full"' "character builder has explicit creature isolation ladder"
 Assert-Text $characterBuilder '-split ","' "character builder splits comma-delimited phases instead of creating fake merged phases"
@@ -236,6 +243,16 @@ Assert-Text $characterBuilder "front-left" "character builder captures a left/fr
 Assert-Text $characterBuilder "front-right" "character builder captures a right/front camera"
 Assert-Text $characterBuilder "character-builder-suite.json" "character builder writes aggregate JSON"
 Assert-Text $characterBuilder "character-builder-suite.md" "character builder writes aggregate Markdown"
+Assert-Text $characterViewer "[string]`$BootstrapCell" "character viewer forwards explicit bootstrap cell"
+Assert-Text $characterViewer "BootstrapCell = `$BootstrapCell" "character viewer passes bootstrap cell to builder"
+Assert-Text $characterViewer "ActorStageX = `$ActorStageX" "character viewer passes actor stage coordinates to builder"
+Assert-Text $characterViewerBundle '"bootstrap": raw.get("bootstrap")' "character viewer manifest preserves per-case bootstrap coordinates"
+Assert-Text $characterViewerBundle "actorCamera" "character viewer manifest/UI preserves per-case camera coordinates"
+Assert-Text $characterViewerBatchPlanner "missingPlacementContext" "batch planner fails placed actors missing placement context"
+Assert-Text $characterViewerBatchPlanner "runtimeBootstrapReady" "batch planner marks placed actors ready for runtime bootstrap"
+Assert-Text $characterViewerBatchRunner "BootstrapCell = `$cell" "batch runner forwards planned bootstrap cell"
+Assert-Text $characterViewerBatchRunner "ActorStageX" "batch runner forwards planned actor stage coordinates"
+Assert-Text $characterViewerBatchTest "Placed-reference batch commands do not carry decoded bootstrap/stage placement." "batch plan contract proves placed actor placement commands"
 Assert-Text $characterBuilderReport "parse_attachment_bounds" "character builder report parses attachment coordinate bounds"
 Assert-Text $characterBuilderReport "parse_runtime_audits" "character builder report parses runtime part audit coordinates"
 Assert-Text $characterBuilderReport "parse_actor_matches" "character builder report parses active actor target matches"
@@ -260,6 +277,8 @@ Assert-Text $characterViewer "ActorKind = `$ActorKind" "standalone character vie
 Assert-Text $characterViewer "CreatureDiagnostics = `$true" "standalone character viewer passes creature diagnostics to builder"
 Assert-Text $characterViewer "character-viewer.html" "standalone character viewer writes human-openable HTML"
 Assert-Text $characterViewer "character-viewer-manifest.json" "standalone character viewer writes bot-readable manifest"
+Assert-Text $characterViewer "character-actor-kit.json" "standalone character viewer writes bot-readable actor kit"
+Assert-Text $characterViewer "ActorKitJson" "standalone character viewer records actor kit path"
 Assert-Text $characterViewer "generated proof/viewer output only; no retail assets are committed" "standalone character viewer keeps generated outputs outside repo"
 Assert-Text $characterViewer "[switch]`$Serve" "standalone character viewer can serve generated proof output over HTTP"
 Assert-Text $characterViewer "127.0.0.1" "standalone character viewer serves on loopback only"
@@ -298,6 +317,9 @@ Assert-Text $characterViewerBundle "runtimePartAudits" "standalone character vie
 Assert-Text $characterViewerBundle "Runtime Drift" "standalone character viewer exposes temporal part drift"
 Assert-Text $characterViewerBundle "runtimeAuditSummary" "standalone character viewer consumes runtime audit summary"
 Assert-Text $characterViewerBundle "renderDrift" "standalone character viewer renders runtime drift table"
+Assert-Text $characterViewerBundle "nikami-fnv-actor-kit-v1" "standalone character viewer writes actor kit schema"
+Assert-Text $characterViewerBundle "actor_kit_manifest" "standalone character viewer builds actor kit metadata"
+Assert-Text $characterViewerBundle "--out-kit-json" "standalone character viewer bundle accepts actor kit output path"
 Assert-Text $characterViewerBatchPlanner "nikami-fnv-character-viewer-batch-plan-v1" "character viewer batch planner has stable manifest schema"
 Assert-Text $characterViewerBatchPlanner "actor-base-record" "character viewer batch planner accounts for base actors"
 Assert-Text $characterViewerBatchPlanner "placed-reference" "character viewer batch planner accounts for placed actor refs"
@@ -320,6 +342,7 @@ Assert-Text $characterViewerBatchRunner "Write-BatchRunHtml" "character viewer b
 Assert-Text $characterViewerBatchRunner "Write-BatchRunMarkdown" "character viewer batch runner writes Markdown run index"
 Assert-Text $characterViewerBatchRunner "viewer-batch-run.html" "character viewer batch runner records HTML run artifact"
 Assert-Text $characterViewerBatchRunner "viewer-batch-run.md" "character viewer batch runner records Markdown run artifact"
+Assert-Text $characterViewerBatchRunner "actorKit" "character viewer batch runner records actor kit artifact"
 Assert-Text $characterViewerBatchTest "ContractCreature" "character viewer batch plan contract covers creature fixtures"
 Assert-Text $characterViewerBatchTest "-CreatureDiagnostics" "character viewer batch plan contract requires creature diagnostics in commands"
 Assert-Text $characterViewerBatchTest "nikami-fnv-character-viewer-batch-run-v1" "character viewer batch plan contract proves dry-run summary schema"
@@ -385,10 +408,14 @@ ConvertTo-Json -InputObject @($fixtureResult) -Depth 12 | Set-Content -LiteralPa
 & python $characterViewerBundle --suite-dir $fixtureSuite | Out-Host
 if ($LASTEXITCODE -ne 0) { throw "Creature viewer fixture generation failed." }
 $fixtureManifest = Get-Content -LiteralPath (Join-Path $fixtureSuite "character-viewer-manifest.json") -Raw | ConvertFrom-Json
+$fixtureActorKit = Get-Content -LiteralPath (Join-Path $fixtureSuite "character-actor-kit.json") -Raw | ConvertFrom-Json
 if ($fixtureManifest.schema -ne "nikami-fnv-character-viewer-v2") { throw "Creature viewer fixture wrote unexpected schema: $($fixtureManifest.schema)" }
+if ($fixtureActorKit.schema -ne "nikami-fnv-actor-kit-v1") { throw "Creature viewer fixture wrote unexpected actor kit schema: $($fixtureActorKit.schema)" }
 if ($fixtureManifest.actorProfile.kind -ne "creature") { throw "Creature viewer fixture did not preserve creature actor profile." }
+if ($fixtureActorKit.actorProfile.kind -ne "creature") { throw "Creature viewer actor kit did not preserve creature actor profile." }
 if (!@($fixtureManifest.schemaMarkers).Contains("creature-isolation-v1")) { throw "Creature viewer fixture missing creature schema marker." }
 if (!@($fixtureManifest.layers).Contains("creature-animation")) { throw "Creature viewer fixture missing creature animation layer." }
+if (!@($fixtureActorKit.layers).Contains("creature-animation")) { throw "Creature viewer actor kit missing creature animation layer." }
 if (@($fixtureManifest.controls.dialogueControls).Count -ne 0) { throw "Creature viewer fixture should not emit NPC dialogue controls." }
 if (@($fixtureManifest.cases[0].creatureEvidence).Count -eq 0) { throw "Creature viewer fixture did not expose creature evidence." }
 if (@($fixtureManifest.cases[0].animationPlayback).Count -eq 0) { throw "Creature viewer fixture did not expose target animation playback." }

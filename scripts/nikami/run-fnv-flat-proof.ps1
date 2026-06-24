@@ -1393,6 +1393,7 @@ try {
     Set-ProofEnv $previousEnv "OPENMW_FNV_FLAT_CAMERA_PITCH" $FlatCameraPitch
     Set-ProofEnv $previousEnv "OPENMW_FNV_FLAT_CAMERA_YAW" $FlatCameraYaw
     Set-ProofEnv $previousEnv "OPENMW_PROOF_ACTOR_TARGET" $ActorTarget
+    Set-ProofEnv $previousEnv "OPENMW_FNV_PROOF_TARGET_NPC" $ActorTarget
     Set-ProofEnv $previousEnv "OPENMW_PROOF_ACTOR_KIND" $ActorKind
     Set-ProofEnv $previousEnv "OPENMW_PROOF_ACTOR_FRAME" $ActorFrame
     if ($StageActor) { Set-ProofEnv $previousEnv "OPENMW_PROOF_STAGE_ACTOR" "1" }
@@ -1531,6 +1532,7 @@ try {
     Write-ProofLine "CharacterBuilderPhase: $CharacterBuilderPhase"
     Write-ProofLine "CharacterBuilderTalk: $CharacterBuilderTalk"
     Write-ProofLine "ActorTarget: $ActorTarget"
+    Write-ProofLine "FnvProofTargetNpc: $ActorTarget"
     Write-ProofLine "ActorKind: $ActorKind"
     Write-ProofLine "CreatureDiagnostics: $($CreatureDiagnostics -or $ActorKind -ieq 'creature')"
     Write-ProofLine "ActorViewLocalOffset: $ActorViewLocalOffset"

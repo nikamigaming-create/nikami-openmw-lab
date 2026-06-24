@@ -2,6 +2,7 @@
 import argparse
 import hashlib
 import json
+import math
 import os
 import struct
 from collections import Counter, defaultdict
@@ -23,6 +24,21 @@ ALLOWED_CLASSIFICATIONS = {
 
 ACTOR_RECORD_TYPES = {"NPC_", "CREA"}
 PLACED_ACTOR_TYPES = {"ACHR", "ACRE"}
+CELL_CHILD_GROUP_TYPES = {6, 8, 9, 10}
+FORM_ID_GROUP_TYPES = {1, 6, 7, 8, 9, 10}
+GROUP_TYPE_NAMES = {
+    0: "record-type",
+    1: "world-child",
+    2: "interior-cell-block",
+    3: "interior-cell-sub-block",
+    4: "exterior-cell-block",
+    5: "exterior-cell-sub-block",
+    6: "cell-child",
+    7: "topic-child",
+    8: "cell-persistent-child",
+    9: "cell-temporary-child",
+    10: "cell-visible-dist-child",
+}
 SUPPORT_RECORD_TYPES = {
     "RACE",
     "HDPT",
@@ -170,6 +186,47 @@ def form_id_or_empty(value):
     return f"0x{value:08x}"
 
 
+def finite_float(value):
+    try:
+        result = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(result):
+        return None
+    return result
+
+
+def first_payload(subrecords, rec_type):
+    for kind, payload in subrecords:
+        if kind == rec_type:
+            return payload
+    return b""
+
+
+def placed_position(subrecords):
+    payload = first_payload(subrecords, "DATA")
+    if len(payload) < 24:
+        return {}
+    values = [finite_float(value) for value in struct.unpack_from("<6f", payload, 0)]
+    if any(value is None for value in values):
+        return {}
+    return {
+        "x": values[0],
+        "y": values[1],
+        "z": values[2],
+        "rotX": values[3],
+        "rotY": values[4],
+        "rotZ": values[5],
+    }
+
+
+def placed_scale(subrecords):
+    payload = first_payload(subrecords, "XSCL")
+    if len(payload) < 4:
+        return None
+    return finite_float(struct.unpack_from("<f", payload, 0)[0])
+
+
 def adjusted_form_id(raw, masters, plugin, content_index):
     if raw is None or raw == 0:
         return 0
@@ -220,6 +277,18 @@ class RowBuilder:
         actor_editor_id="",
         placed_ref_form_id="",
         placed_ref_editor_id="",
+        placed_cell_form_id="",
+        placed_cell_editor_id="",
+        placed_cell_group_type="",
+        placed_cell_group_name="",
+        placed_coordinate_source="",
+        placed_pos_x=None,
+        placed_pos_y=None,
+        placed_pos_z=None,
+        placed_rot_x=None,
+        placed_rot_y=None,
+        placed_rot_z=None,
+        placed_scale=None,
         template_chain=None,
         component,
         source_record_type,
@@ -252,6 +321,18 @@ class RowBuilder:
                 "actorEditorId": actor_editor_id,
                 "placedRefFormId": placed_ref_form_id,
                 "placedRefEditorId": placed_ref_editor_id,
+                "placedCellFormId": placed_cell_form_id,
+                "placedCellEditorId": placed_cell_editor_id,
+                "placedCellGroupType": placed_cell_group_type,
+                "placedCellGroupName": placed_cell_group_name,
+                "placedCoordinateSource": placed_coordinate_source,
+                "placedPosX": placed_pos_x,
+                "placedPosY": placed_pos_y,
+                "placedPosZ": placed_pos_z,
+                "placedRotX": placed_rot_x,
+                "placedRotY": placed_rot_y,
+                "placedRotZ": placed_rot_z,
+                "placedScale": placed_scale,
                 "templateChain": template_chain or [],
                 "component": component,
                 "sourceRecordType": source_record_type,
@@ -311,13 +392,53 @@ class AssetIndex:
         return "missing-from-harvest", ""
 
 
+def group_context(group_label_raw, group_type, masters, plugin, content_index):
+    label_raw = struct.unpack_from("<I", group_label_raw, 0)[0]
+    grid_y, grid_x = struct.unpack_from("<hh", group_label_raw, 0)
+    label_text = ""
+    try:
+        label_text = base.fourcc(group_label_raw)
+    except Exception:
+        label_text = ""
+    label_form_id = ""
+    if group_type in FORM_ID_GROUP_TYPES:
+        adjusted = adjusted_form_id(label_raw, masters, plugin, content_index)
+        label_form_id = form_id_or_empty(adjusted) if adjusted else ""
+    return {
+        "type": group_type,
+        "typeName": GROUP_TYPE_NAMES.get(group_type, f"unknown-{group_type}"),
+        "labelRaw": form_id_or_empty(label_raw),
+        "labelFormId": label_form_id,
+        "labelText": label_text,
+        "labelGridX": grid_x,
+        "labelGridY": grid_y,
+    }
+
+
+def placed_cell_context(record, by_form):
+    for context in reversed(record.get("groupContext", [])):
+        if int(context.get("type", -1)) not in CELL_CHILD_GROUP_TYPES:
+            continue
+        form_id = context.get("labelFormId", "")
+        if not form_id:
+            continue
+        cell_record = resolve(by_form, form_id)
+        return {
+            "formId": form_id,
+            "editorId": cell_record.get("editorId", "") if cell_record else "",
+            "groupType": str(context.get("type", "")),
+            "groupName": str(context.get("typeName", "")),
+        }
+    return {"formId": "", "editorId": "", "groupType": "", "groupName": ""}
+
+
 def read_plugin_records(path, plugin, content_index):
     data = path.read_bytes()
     masters = []
     records = []
     counts = Counter()
 
-    def read_range(offset, end):
+    def read_range(offset, end, context):
         nonlocal masters
         while offset + 24 <= end:
             record_start = offset
@@ -330,7 +451,10 @@ def read_plugin_records(path, plugin, content_index):
                     raise ValueError(
                         f"Invalid GRUP range in {path}: start={record_start} size={size} end={group_end} limit={end}"
                     )
-                offset = read_range(offset, group_end)
+                group_label_raw = data[record_start + 8 : record_start + 12]
+                group_type = struct.unpack_from("<i", data, record_start + 12)[0]
+                child_context = context + [group_context(group_label_raw, group_type, masters, plugin, content_index)]
+                offset = read_range(offset, group_end, child_context)
                 continue
 
             next_offset = offset + size
@@ -356,13 +480,14 @@ def read_plugin_records(path, plugin, content_index):
                 "fullNameHash": text_hash(base.first_zstring(subrecords, "FULL")),
                 "subrecords": subrecords,
                 "masters": list(masters),
+                "groupContext": list(context),
             }
             records.append(record)
             counts[rec_type] += 1
             offset = next_offset
         return offset
 
-    read_range(0, len(data))
+    read_range(0, len(data), [])
     return {
         "plugin": plugin,
         "path": str(path),
@@ -738,6 +863,15 @@ def emit_placed_actor_rows(rows, by_form, content_index, record):
     ids = all_adjusted_form_ids(record["subrecords"], "NAME", record["masters"], record["plugin"], content_index)
     base_id = ids[0] if ids else 0
     base_record = resolve(by_form, base_id)
+    position = placed_position(record["subrecords"])
+    scale = placed_scale(record["subrecords"])
+    cell = placed_cell_context(record, by_form)
+    placement_ready = bool(position and cell["formId"])
+    placement_note = (
+        " Placement DATA and parent cell GRUP context are decoded for runtime bootstrap/stage planning."
+        if placement_ready
+        else " Placement DATA or parent cell context is missing; runtime bootstrap/stage planning must not silently assume it."
+    )
     rows.add(
         plugin=record["plugin"],
         actor_kind=base_record["type"] if base_record else record["type"],
@@ -745,6 +879,18 @@ def emit_placed_actor_rows(rows, by_form, content_index, record):
         actor_editor_id=base_record.get("editorId", "") if base_record else "",
         placed_ref_form_id=record["formId"],
         placed_ref_editor_id=record.get("editorId", ""),
+        placed_cell_form_id=cell["formId"],
+        placed_cell_editor_id=cell["editorId"],
+        placed_cell_group_type=cell["groupType"],
+        placed_cell_group_name=cell["groupName"],
+        placed_coordinate_source="ACHR/ACRE DATA + GRUP parent cell" if placement_ready else "incomplete",
+        placed_pos_x=position.get("x"),
+        placed_pos_y=position.get("y"),
+        placed_pos_z=position.get("z"),
+        placed_rot_x=position.get("rotX"),
+        placed_rot_y=position.get("rotY"),
+        placed_rot_z=position.get("rotZ"),
+        placed_scale=scale,
         component="placed-reference",
         source_record_type=record["type"],
         source_form_id=record["formId"],
@@ -756,7 +902,7 @@ def emit_placed_actor_rows(rows, by_form, content_index, record):
         classification="loaded-pending-runtime" if base_record else "known-blocked",
         first_failing_gate="placed-actor-runtime-sweep" if base_record else "fnv-formid-resolve",
         proof_anchor="npc-face-assembly" if base_record and base_record["type"] == "NPC_" else "creature-body-assembly",
-        notes="Placed actor must spawn, present correctly, and be movable/interactable in runtime.",
+        notes="Placed actor must spawn, present correctly, and be movable/interactable in runtime." + placement_note,
     )
 
 
@@ -1141,6 +1287,9 @@ def summarize_rows(rows):
     asset_status_counts = Counter(row["assetStatus"] for row in rows if row["assetPath"])
     unclassified = sum(1 for row in rows if row["classification"] not in ALLOWED_CLASSIFICATIONS)
     blocked = sum(1 for row in rows if row["classification"] == "known-blocked")
+    placed_rows = [row for row in rows if row["component"] == "placed-reference"]
+    placed_with_data = sum(1 for row in placed_rows if row.get("placedPosX") is not None and row.get("placedPosY") is not None and row.get("placedPosZ") is not None)
+    placed_with_cell = sum(1 for row in placed_rows if row.get("placedCellFormId"))
     return {
         "rowCount": len(rows),
         "classificationCounts": dict(sorted(classification_counts.items())),
@@ -1149,6 +1298,8 @@ def summarize_rows(rows):
         "assetStatusCounts": dict(sorted(asset_status_counts.items())),
         "unclassifiedCount": unclassified,
         "knownBlockedCount": blocked,
+        "placedActorRefsWithDataPosition": placed_with_data,
+        "placedActorRefsWithParentCell": placed_with_cell,
     }
 
 

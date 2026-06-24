@@ -216,6 +216,17 @@ $badPlacedRows = @($placedRows | Where-Object {
 if ($badPlacedRows.Count -gt 0) {
     throw "Actor presentation ledger placed-reference rows have mismatched actorKind/resolvedRecordType: $($badPlacedRows.Count). See $LedgerPath"
 }
+$placedRowsMissingRuntimeContext = @($placedRows | Where-Object {
+        [string]::IsNullOrWhiteSpace([string]$_.placedCellFormId) -or
+        $null -eq $_.placedPosX -or $null -eq $_.placedPosY -or $null -eq $_.placedPosZ -or
+        $null -eq $_.placedRotX -or $null -eq $_.placedRotY -or $null -eq $_.placedRotZ
+    })
+if ($placedRowsMissingRuntimeContext.Count -gt 0) {
+    throw "Actor presentation ledger placed-reference rows are missing decoded parent cell or DATA position: $($placedRowsMissingRuntimeContext.Count). See $LedgerPath"
+}
+if ([int]$Result.placedActorRefsWithDataPosition -ne $placedRows.Count -or [int]$Result.placedActorRefsWithParentCell -ne $placedRows.Count) {
+    throw "Actor presentation ledger summary placement context counts do not match placed-reference rows. See $ResultPath"
+}
 
 $requiredComponents = @(
     "actor-base-record",

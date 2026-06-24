@@ -14,6 +14,20 @@ param(
     [int]$RunSeconds = 28,
     [int]$ActorFrame = 520,
     [string]$ScreenshotFrames = "760",
+    [string]$BootstrapCell = "FormId:0x10daeb9",
+    [double]$BootstrapX = -67480,
+    [double]$BootstrapY = 1500,
+    [double]$BootstrapZ = 8425,
+    [double]$BootstrapRotX = 0,
+    [double]$BootstrapRotY = 0,
+    [double]$BootstrapRotZ = 1.5708,
+    [double]$BootstrapHour = 10,
+    [double]$ActorStageX = -67480,
+    [double]$ActorStageY = 1500,
+    [double]$ActorStageZ = 8425,
+    [double]$ActorStageRotX = 0,
+    [double]$ActorStageRotY = 0,
+    [double]$ActorStageRotZ = 1.5708,
     [double]$ActorViewDistance = 52,
     [double]$ActorViewOffsetZ = 108,
     [double]$ActorViewTargetZ = 108,
@@ -96,17 +110,19 @@ function Write-ViewerIndex([string]$IndexPath, [object[]]$Runs) {
     $lines.Add("<html lang=`"en`"><head><meta charset=`"utf-8`"><meta name=`"viewport`" content=`"width=device-width, initial-scale=1`">")
     $lines.Add("<title>FNV Character Viewer Runs</title>")
     $lines.Add("<style>body{margin:0;background:#111316;color:#eceff3;font:14px Segoe UI,Arial,sans-serif}main{padding:16px}a{color:#9fc2ff}table{border-collapse:collapse;width:100%}td,th{border-bottom:1px solid #363c45;padding:8px;text-align:left}.PASS{color:#64d488}.FAIL{color:#ff6f61}.MISSING{color:#e8c86a}</style>")
-    $lines.Add("</head><body><main><h1>FNV Character Viewer Runs</h1><table><thead><tr><th>Target</th><th>Status</th><th>Viewer</th><th>Manifest</th><th>Suite</th></tr></thead><tbody>")
+    $lines.Add("</head><body><main><h1>FNV Character Viewer Runs</h1><table><thead><tr><th>Target</th><th>Status</th><th>Viewer</th><th>Manifest</th><th>Actor Kit</th><th>Suite</th></tr></thead><tbody>")
     $baseDirectory = Split-Path $IndexPath -Parent
     foreach ($run in $Runs) {
         $viewer = ConvertTo-HtmlText $run.ViewerHtml
         $manifest = ConvertTo-HtmlText $run.ViewerJson
+        $actorKit = ConvertTo-HtmlText $run.ActorKitJson
         $suite = ConvertTo-HtmlText $run.SuiteDir
         $target = ConvertTo-HtmlText $run.Target
         $status = ConvertTo-HtmlText $run.Status
         $viewerRel = ConvertTo-HtmlText (ConvertTo-RelativeHref $baseDirectory $run.ViewerHtml)
         $manifestRel = ConvertTo-HtmlText (ConvertTo-RelativeHref $baseDirectory $run.ViewerJson)
-        $lines.Add("<tr><td>$target</td><td class=`"$status`">$status</td><td><a href=`"$viewerRel`">$viewer</a></td><td><a href=`"$manifestRel`">$manifest</a></td><td>$suite</td></tr>")
+        $actorKitRel = ConvertTo-HtmlText (ConvertTo-RelativeHref $baseDirectory $run.ActorKitJson)
+        $lines.Add("<tr><td>$target</td><td class=`"$status`">$status</td><td><a href=`"$viewerRel`">$viewer</a></td><td><a href=`"$manifestRel`">$manifest</a></td><td><a href=`"$actorKitRel`">$actorKit</a></td><td>$suite</td></tr>")
     }
     $lines.Add("</tbody></table></main></body></html>")
     $lines | Set-Content -LiteralPath $IndexPath -Encoding UTF8
@@ -207,6 +223,9 @@ Write-Host "Targets: $($Targets -join ',')"
 Write-Host "ActorKind: $ActorKind"
 Write-Host "CreatureDiagnostics: $($CreatureDiagnostics -or $ActorKind -ieq 'creature')"
 Write-Host "Phases: $($Phases -join ',')"
+Write-Host "BootstrapCell: $BootstrapCell"
+Write-Host "BootstrapPosition: $BootstrapX,$BootstrapY,$BootstrapZ"
+Write-Host "ActorStagePosition: $ActorStageX,$ActorStageY,$ActorStageZ"
 Write-Host "Policy: generated proof/viewer output only; no retail assets are committed"
 if ($Serve) {
     Write-Host "Serve: loopback HTTP enabled"
@@ -222,7 +241,8 @@ if ($NoRun -or ![string]::IsNullOrWhiteSpace($SuiteDir)) {
     $targetName = $Targets[0]
     $viewerHtml = Join-Path $resolvedSuite "character-viewer.html"
     $viewerJson = Join-Path $resolvedSuite "character-viewer-manifest.json"
-    & python $BundleScript --suite-dir $resolvedSuite --out-html $viewerHtml --out-json $viewerJson | Out-Host
+    $actorKitJson = Join-Path $resolvedSuite "character-actor-kit.json"
+    & python $BundleScript --suite-dir $resolvedSuite --out-html $viewerHtml --out-json $viewerJson --out-kit-json $actorKitJson | Out-Host
     $manifest = Get-Content -LiteralPath $viewerJson -Raw | ConvertFrom-Json
     $Runs.Add([pscustomobject][ordered]@{
         Target = $targetName
@@ -230,6 +250,7 @@ if ($NoRun -or ![string]::IsNullOrWhiteSpace($SuiteDir)) {
         SuiteDir = $resolvedSuite
         ViewerHtml = $viewerHtml
         ViewerJson = $viewerJson
+        ActorKitJson = $actorKitJson
     })
 }
 else {
@@ -252,6 +273,20 @@ else {
             RunSeconds = $RunSeconds
             ActorFrame = $ActorFrame
             ScreenshotFrames = $ScreenshotFrames
+            BootstrapCell = $BootstrapCell
+            BootstrapX = $BootstrapX
+            BootstrapY = $BootstrapY
+            BootstrapZ = $BootstrapZ
+            BootstrapRotX = $BootstrapRotX
+            BootstrapRotY = $BootstrapRotY
+            BootstrapRotZ = $BootstrapRotZ
+            BootstrapHour = $BootstrapHour
+            ActorStageX = $ActorStageX
+            ActorStageY = $ActorStageY
+            ActorStageZ = $ActorStageZ
+            ActorStageRotX = $ActorStageRotX
+            ActorStageRotY = $ActorStageRotY
+            ActorStageRotZ = $ActorStageRotZ
             ActorViewDistance = $ActorViewDistance
             ActorViewOffsetZ = $ActorViewOffsetZ
             ActorViewTargetZ = $ActorViewTargetZ
@@ -269,7 +304,8 @@ else {
 
         $viewerHtml = Join-Path $newSuite "character-viewer.html"
         $viewerJson = Join-Path $newSuite "character-viewer-manifest.json"
-        & python $BundleScript --suite-dir $newSuite --out-html $viewerHtml --out-json $viewerJson | Out-Host
+        $actorKitJson = Join-Path $newSuite "character-actor-kit.json"
+        & python $BundleScript --suite-dir $newSuite --out-html $viewerHtml --out-json $viewerJson --out-kit-json $actorKitJson | Out-Host
         $manifest = Get-Content -LiteralPath $viewerJson -Raw | ConvertFrom-Json
         $Runs.Add([pscustomobject][ordered]@{
             Target = $target
@@ -277,6 +313,7 @@ else {
             SuiteDir = $newSuite
             ViewerHtml = $viewerHtml
             ViewerJson = $viewerJson
+            ActorKitJson = $actorKitJson
         })
     }
 }

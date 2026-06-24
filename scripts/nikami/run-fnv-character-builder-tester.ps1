@@ -14,6 +14,20 @@ param(
     [int]$RunSeconds = 28,
     [int]$ActorFrame = 520,
     [string]$ScreenshotFrames = "760",
+    [string]$BootstrapCell = "FormId:0x10daeb9",
+    [double]$BootstrapX = -67480,
+    [double]$BootstrapY = 1500,
+    [double]$BootstrapZ = 8425,
+    [double]$BootstrapRotX = 0,
+    [double]$BootstrapRotY = 0,
+    [double]$BootstrapRotZ = 1.5708,
+    [double]$BootstrapHour = 10,
+    [double]$ActorStageX = -67480,
+    [double]$ActorStageY = 1500,
+    [double]$ActorStageZ = 8425,
+    [double]$ActorStageRotX = 0,
+    [double]$ActorStageRotY = 0,
+    [double]$ActorStageRotZ = 1.5708,
     [double]$ActorViewDistance = 52,
     [double]$ActorViewOffsetZ = 108,
     [double]$ActorViewTargetZ = 108,
@@ -115,6 +129,11 @@ Write-SuiteLine "ActorKind: $ActorKind"
 Write-SuiteLine "CreatureDiagnostics: $($CreatureDiagnostics -or $ActorKind -ieq 'creature')"
 Write-SuiteLine "Phases: $($Phases -join ',')"
 Write-SuiteLine "Angles: $(@($Angles | ForEach-Object { $_.Name }) -join ',')"
+Write-SuiteLine "BootstrapCell: $BootstrapCell"
+Write-SuiteLine "BootstrapPosition: $BootstrapX,$BootstrapY,$BootstrapZ"
+Write-SuiteLine "BootstrapRotation: $BootstrapRotX,$BootstrapRotY,$BootstrapRotZ"
+Write-SuiteLine "ActorStagePosition: $ActorStageX,$ActorStageY,$ActorStageZ"
+Write-SuiteLine "ActorStageRotation: $ActorStageRotX,$ActorStageRotY,$ActorStageRotZ"
 Write-SuiteLine "Policy: no retail assets copied into repo; generated proof output only"
 Write-SuiteLine ""
 
@@ -143,21 +162,24 @@ foreach ($phase in $Phases) {
             ProofRoot = $ProofRoot
             RunSeconds = $RunSeconds
             ScreenshotFrames = $ScreenshotFrames
-            BootstrapCell = "FormId:0x10daeb9"
-            BootstrapX = -67480
-            BootstrapY = 1500
-            BootstrapZ = 8425
-            BootstrapRotX = 0
-            BootstrapRotZ = 1.5708
-            BootstrapHour = 10
+            BootstrapCell = $BootstrapCell
+            BootstrapX = $BootstrapX
+            BootstrapY = $BootstrapY
+            BootstrapZ = $BootstrapZ
+            BootstrapRotX = $BootstrapRotX
+            BootstrapRotY = $BootstrapRotY
+            BootstrapRotZ = $BootstrapRotZ
+            BootstrapHour = $BootstrapHour
             ActorTarget = $ActorTarget
             ActorKind = $ActorKind
             StageActor = $true
             ActorFrame = $ActorFrame
-            ActorStageX = -67480
-            ActorStageY = 1500
-            ActorStageZ = 8425
-            ActorStageRotZ = 1.5708
+            ActorStageX = $ActorStageX
+            ActorStageY = $ActorStageY
+            ActorStageZ = $ActorStageZ
+            ActorStageRotX = $ActorStageRotX
+            ActorStageRotY = $ActorStageRotY
+            ActorStageRotZ = $ActorStageRotZ
             ActorViewOffsetX = [double]$angle.OffsetX
             ActorViewOffsetY = [double]$angle.OffsetY
             ActorViewOffsetZ = $ActorViewOffsetZ
@@ -214,6 +236,32 @@ foreach ($phase in $Phases) {
             reportStatus = $reportStatus
             proofDir = $ProofDir
             caseDir = $CaseDir
+            bootstrap = [pscustomobject][ordered]@{
+                cell = $BootstrapCell
+                x = $BootstrapX
+                y = $BootstrapY
+                z = $BootstrapZ
+                rotX = $BootstrapRotX
+                rotY = $BootstrapRotY
+                rotZ = $BootstrapRotZ
+                hour = $BootstrapHour
+            }
+            actorStage = [pscustomobject][ordered]@{
+                x = $ActorStageX
+                y = $ActorStageY
+                z = $ActorStageZ
+                rotX = $ActorStageRotX
+                rotY = $ActorStageRotY
+                rotZ = $ActorStageRotZ
+            }
+            actorCamera = [pscustomobject][ordered]@{
+                angle = $angle.Name
+                offsetX = [double]$angle.OffsetX
+                offsetY = [double]$angle.OffsetY
+                offsetZ = $ActorViewOffsetZ
+                targetZ = $ActorViewTargetZ
+                localOffset = $true
+            }
             failures = if ($null -ne $reportData) { @($reportData.failures) } else { @("report parser did not produce JSON") }
             screenshots = if ($null -ne $reportData) { @($reportData.screenshots) } else { @() }
         }
