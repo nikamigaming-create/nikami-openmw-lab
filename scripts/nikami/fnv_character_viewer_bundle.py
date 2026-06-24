@@ -495,6 +495,23 @@ def first_image(case_dir: Path, names: list[str]) -> str:
     return pngs[0] if pngs else ""
 
 
+def screenshot_names(value: Any) -> list[str]:
+    names: list[str] = []
+    for item in as_list(value):
+        name = ""
+        if isinstance(item, str):
+            name = item
+        elif isinstance(item, dict):
+            name = str(item.get("name") or item.get("path") or "")
+        else:
+            continue
+        name = name.replace("\\", "/").split("/")[-1].strip()
+        if not name or name == "{}":
+            continue
+        names.append(name)
+    return names
+
+
 def load_suite(suite_dir: Path) -> dict[str, Any]:
     suite_json = suite_dir / "character-builder-suite.json"
     raw_results = as_list(read_json(suite_json, []))
@@ -522,9 +539,7 @@ def load_suite(suite_dir: Path) -> dict[str, Any]:
         phases.append(phase)
         angles.append(angle)
         log_lines = read_lines(case_dir / "openmw.log")
-        screenshots = sorted(
-            unique_ordered([str(item) for item in as_list(raw.get("screenshots"))] + [p.name for p in case_dir.glob("*.png")])
-        )
+        screenshots = sorted(unique_ordered(screenshot_names(raw.get("screenshots")) + [p.name for p in case_dir.glob("*.png")]))
         image = first_image(case_dir, screenshots)
         merged_failures = unique_ordered(
             [str(item) for item in as_list(raw.get("failures"))]
@@ -555,6 +570,7 @@ def load_suite(suite_dir: Path) -> dict[str, Any]:
                 "attachmentBounds": len(as_list(report.get("attachmentBounds"))),
                 "runtimePartAudits": len(as_list(report.get("runtimePartAudits"))),
                 "runtimeAuditSummary": len(as_list(report.get("runtimeAuditSummary"))),
+                "runtimePartTimelines": len(as_list(report.get("runtimePartTimelines"))),
                 "faceDrawables": len(as_list(report.get("faceDrawables"))),
                 "morphLines": len(as_list(report.get("morphLines"))),
                 "weaponLines": len(as_list(report.get("weaponLines"))),
@@ -571,6 +587,7 @@ def load_suite(suite_dir: Path) -> dict[str, Any]:
             "attachmentBounds": as_list(report.get("attachmentBounds")),
             "runtimePartAudits": as_list(report.get("runtimePartAudits")),
             "runtimeAuditSummary": as_list(report.get("runtimeAuditSummary")),
+            "runtimePartTimelines": as_list(report.get("runtimePartTimelines")),
             "faceDrawables": as_list(report.get("faceDrawables")),
             "morphLines": as_list(report.get("morphLines")),
             "weaponLines": as_list(report.get("weaponLines")),
@@ -594,7 +611,7 @@ def load_suite(suite_dir: Path) -> dict[str, Any]:
 
     return {
         "schema": "nikami-fnv-character-viewer-v2",
-        "schemaMarkers": ["viewer-controls-v2", "actor-profile-v1", "creature-isolation-v1"],
+        "schemaMarkers": ["viewer-controls-v2", "actor-profile-v1", "creature-isolation-v1", "part-timeline-v1"],
         "actorProfile": {
             "kind": actor_kind,
             "recordType": "CREA" if actor_kind == "creature" else "NPC_",
@@ -728,6 +745,10 @@ a {{ color: #9fc2ff; }}
   <div class="section">
     <h2>Runtime Drift</h2>
     <div id="driftTable"></div>
+  </div>
+  <div class="section">
+    <h2>Part Timeline</h2>
+    <div id="timelineTable"></div>
   </div>
   <div class="section">
     <h2>Skin Evidence</h2>
@@ -895,8 +916,17 @@ function renderCoords(c) {{
   document.getElementById("coordTable").innerHTML = table(["Kind", "Part", "Parent/Class", "Position/Rel", "Rotation/Extent", "Verdict"], caseRows.concat(boundRows).concat(auditRows));
 }}
 function renderDrift(c) {{
-  const rows = filterPartRows(c?.runtimeAuditSummary || [], a => a.part, a => a.class).map(a => `<tr><td><code>${{esc(a.part)}}</code></td><td>${{esc(a.class)}}</td><td>${{esc(a.firstVerdict)}} -> ${{esc(a.lastVerdict)}}</td><td>${{esc(a.badCount)}} / ${{esc(a.count)}}</td><td>${{esc(a.firstTimestamp)}} -> ${{esc(a.lastTimestamp)}}</td><td>${{esc(a.maxDistance)}}</td><td>${{esc(JSON.stringify(a.firstRelLocal))}}</td><td>${{esc(JSON.stringify(a.lastRelLocal))}}</td></tr>`);
-  document.getElementById("driftTable").innerHTML = table(["Part", "Class", "Verdict", "Bad", "Time", "Max Distance", "First Rel", "Last Rel"], rows);
+  const rows = filterPartRows(c?.runtimeAuditSummary || [], a => a.part, a => a.class).map(a => `<tr><td><code>${{esc(a.part)}}</code></td><td>${{esc(a.class)}}</td><td>${{esc(a.firstVerdict)}} -> ${{esc(a.lastVerdict)}}</td><td>${{esc(a.badCount)}} / ${{esc(a.count)}}</td><td>${{esc(a.firstSampleIndex)}} -> ${{esc(a.lastSampleIndex)}}</td><td>${{esc(a.firstAnimationTime)}} -> ${{esc(a.lastAnimationTime)}}</td><td>${{esc(a.maxDistance)}}</td><td>${{esc(JSON.stringify(a.deltaRelLocal || []))}}</td><td>${{esc(JSON.stringify(a.deltaPartInAnchorTrans || []))}}</td><td>${{esc(a.firstBadSampleIndex || "")}}</td></tr>`);
+  document.getElementById("driftTable").innerHTML = table(["Part", "Class", "Verdict", "Bad", "Samples", "Anim Time", "Max Distance", "Delta Rel", "Delta Anchor", "First Bad"], rows);
+}}
+function renderTimeline(c) {{
+  const rows = [];
+  for (const timeline of filterPartRows(c?.runtimePartTimelines || [], t => t.part, t => t.class)) {{
+    for (const sample of (timeline.samples || []).slice(0, 12)) {{
+      rows.push(`<tr><td><code>${{esc(timeline.part)}}</code></td><td>${{esc(timeline.class)}}</td><td>${{esc(sample.sampleIndex)}}</td><td>${{esc(sample.animationGroup)}}@${{esc(sample.animationTime)}}</td><td>${{esc(sample.distance)}} / ${{esc(sample.limit)}}</td><td>${{esc(sample.verdict)}}</td><td>${{esc(JSON.stringify(sample.relLocal || []))}}</td><td>${{esc(JSON.stringify(sample.partInAnchorTrans || []))}}</td><td>${{esc(sample.anchorAngleDeg ?? "")}}</td></tr>`);
+    }}
+  }}
+  document.getElementById("timelineTable").innerHTML = table(["Part", "Class", "Sample", "Animation", "Distance", "Verdict", "Rel Local", "Part In Anchor", "Anchor Deg"], rows);
 }}
 function renderLines(id, lines) {{
   document.getElementById(id).innerHTML = (lines || []).length
@@ -924,6 +954,7 @@ function render() {{
   renderGates(c);
   renderCoords(c);
   renderDrift(c);
+  renderTimeline(c);
   renderLines("skinLines", c?.skinLines);
   renderLines("hairLines", c?.hairLines);
   renderLines("animLines", [...(c?.animationLines || []), ...(c?.morphLines || []), ...(c?.weaponLines || [])]);
@@ -955,6 +986,7 @@ def actor_kit_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
                 "actorCamera": case.get("actorCamera", {}),
                 "actorKitSelection": case.get("actorKitSelection", {}),
                 "animationRequests": case.get("animationRequests", []),
+                "runtimePartTimelines": case.get("runtimePartTimelines", []),
                 "openmwLog": case.get("openmwLog", ""),
                 "reportJson": case.get("reportJson", ""),
                 "screenshots": case.get("screenshots", []),

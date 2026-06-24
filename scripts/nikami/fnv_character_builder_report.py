@@ -11,6 +11,7 @@ from typing import Any
 
 
 FLOAT3_RE = r"\(([^)]*)\)"
+FLOAT_RE = r"[-+0-9.eE]+"
 CREATURE_RUNTIME_NEEDLES = (
     "inserted creature animation for",
     "creature animation groups",
@@ -33,6 +34,18 @@ def parse_vec3(text: str) -> list[float]:
         except ValueError:
             values.append(float("nan"))
     return values
+
+
+def vec_delta(first: list[float] | None, last: list[float] | None) -> list[float]:
+    if not first or not last or len(first) != len(last):
+        return []
+    return [b - a for a, b in zip(first, last)]
+
+
+def max_abs_vec_delta(delta: list[float]) -> float:
+    if not delta:
+        return 0.0
+    return max(abs(value) for value in delta)
 
 
 def compact_line(line: str) -> str:
@@ -145,8 +158,70 @@ def parse_runtime_audits(lines: list[str], patterns: list[str]) -> list[dict[str
         rf"center={FLOAT3_RE} anchor={FLOAT3_RE} .*? relLocal={FLOAT3_RE} "
         r"distance=(?P<distance>[-+0-9.eE]+) limit=(?P<limit>[-+0-9.eE]+).*? verdict=(?P<verdict>[^ ]+)"
     )
+    matrix_re = re.compile(
+        r"PART MATRIX AUDIT (?P<ref>[^ ]+) part='(?P<part>[^']*)' class=(?P<class>[^ ]+) "
+        rf"center={FLOAT3_RE} anchor={FLOAT3_RE} "
+        rf"partWorldTrans={FLOAT3_RE} parentWorldTrans={FLOAT3_RE} "
+        rf"partInParentTrans={FLOAT3_RE} partInAnchorTrans={FLOAT3_RE} "
+        rf"partWorldQuat={FLOAT3_RE} anchorWorldQuat={FLOAT3_RE} partInAnchorQuat={FLOAT3_RE} "
+        rf"anchorAngleDeg=(?P<anchorAngleDeg>{FLOAT_RE}) "
+        r"partHandedness=(?P<partHandedness>[-+0-9.eE]+) anchorHandedness=(?P<anchorHandedness>[-+0-9.eE]+)"
+    )
+    active_re = re.compile(
+        r"manually applied (?P<applied>[0-9]+) active keyframe controller\(s\) for (?P<ref>[^ ]+) "
+        r".*?activeGroups=\[(?P<activeGroups>[^\]]*)\]"
+    )
+    group_re = re.compile(
+        rf"(?P<blendMask>[0-9]+):(?P<group>[^@|]+)@t=(?P<time>{FLOAT_RE})(?: src=(?P<source>[^|]+))?"
+    )
     items: list[dict[str, Any]] = []
+    pending_matrices: dict[tuple[str, str, str], dict[str, Any]] = {}
+    sample_counts: dict[tuple[str, str, str], int] = {}
+    active_state_by_ref: dict[str, dict[str, Any]] = {}
     for line in lines:
+        active_match = active_re.search(line)
+        if active_match:
+            ref = active_match.group("ref")
+            groups = []
+            for group_match in group_re.finditer(active_match.group("activeGroups")):
+                groups.append(
+                    {
+                        "blendMask": int(group_match.group("blendMask")),
+                        "group": group_match.group("group").strip(),
+                        "time": float(group_match.group("time")),
+                        "source": (group_match.group("source") or "").strip(),
+                    }
+                )
+            active_state_by_ref[ref] = {
+                "timestamp": timestamp_from_line(line),
+                "appliedControllers": int(active_match.group("applied")),
+                "groups": groups,
+                "line": compact_line(line),
+            }
+
+        matrix_match = matrix_re.search(line)
+        if matrix_match:
+            data = matrix_match.groupdict()
+            if line_matches_actor(data["ref"], patterns):
+                groups = matrix_match.groups()
+                key = (data["ref"], data["part"], data["class"])
+                pending_matrices[key] = {
+                    "timestamp": timestamp_from_line(line),
+                    "center": parse_vec3(groups[3]),
+                    "anchor": parse_vec3(groups[4]),
+                    "partWorldTrans": parse_vec3(groups[5]),
+                    "parentWorldTrans": parse_vec3(groups[6]),
+                    "partInParentTrans": parse_vec3(groups[7]),
+                    "partInAnchorTrans": parse_vec3(groups[8]),
+                    "partWorldQuat": parse_vec3(groups[9]),
+                    "anchorWorldQuat": parse_vec3(groups[10]),
+                    "partInAnchorQuat": parse_vec3(groups[11]),
+                    "anchorAngleDeg": float(data["anchorAngleDeg"]),
+                    "partHandedness": float(data["partHandedness"]),
+                    "anchorHandedness": float(data["anchorHandedness"]),
+                    "line": compact_line(line),
+                }
+
         match = audit_re.search(line)
         if not match:
             continue
@@ -154,21 +229,46 @@ def parse_runtime_audits(lines: list[str], patterns: list[str]) -> list[dict[str
         if not line_matches_actor(data["ref"], patterns):
             continue
         groups = match.groups()
-        items.append(
-            {
-                "ref": data["ref"],
-                "part": data["part"],
-                "class": data["class"],
-                "timestamp": timestamp_from_line(line),
-                "center": parse_vec3(groups[3]),
-                "anchor": parse_vec3(groups[4]),
-                "relLocal": parse_vec3(groups[5]),
-                "distance": float(data["distance"]),
-                "limit": float(data["limit"]),
-                "verdict": data["verdict"],
-                "line": compact_line(line),
-            }
-        )
+        key = (data["ref"], data["part"], data["class"])
+        sample_counts[key] = sample_counts.get(key, 0) + 1
+        active_state = active_state_by_ref.get(data["ref"], {})
+        active_groups = active_state.get("groups", [])
+        primary_group = active_groups[0] if active_groups else {}
+        item = {
+            "ref": data["ref"],
+            "part": data["part"],
+            "class": data["class"],
+            "sampleIndex": sample_counts[key],
+            "timestamp": timestamp_from_line(line),
+            "activeAnimationTimestamp": active_state.get("timestamp", ""),
+            "activeControllers": active_state.get("appliedControllers", 0),
+            "activeGroups": active_groups,
+            "animationGroup": primary_group.get("group", ""),
+            "animationTime": primary_group.get("time"),
+            "animationSource": primary_group.get("source", ""),
+            "center": parse_vec3(groups[3]),
+            "anchor": parse_vec3(groups[4]),
+            "relLocal": parse_vec3(groups[5]),
+            "distance": float(data["distance"]),
+            "limit": float(data["limit"]),
+            "verdict": data["verdict"],
+            "line": compact_line(line),
+        }
+        matrix = pending_matrices.get(key)
+        if matrix:
+            item["matrix"] = matrix
+            item["partWorldTrans"] = matrix["partWorldTrans"]
+            item["parentWorldTrans"] = matrix["parentWorldTrans"]
+            item["partInParentTrans"] = matrix["partInParentTrans"]
+            item["partInAnchorTrans"] = matrix["partInAnchorTrans"]
+            item["partWorldQuat"] = matrix["partWorldQuat"]
+            item["anchorWorldQuat"] = matrix["anchorWorldQuat"]
+            item["partInAnchorQuat"] = matrix["partInAnchorQuat"]
+            item["anchorAngleDeg"] = matrix["anchorAngleDeg"]
+            item["partHandedness"] = matrix["partHandedness"]
+            item["anchorHandedness"] = matrix["anchorHandedness"]
+            item["matrixLine"] = matrix["line"]
+        items.append(item)
     return items
 
 
@@ -223,13 +323,36 @@ def summarize_runtime_audits(audits: list[dict[str, Any]]) -> list[dict[str, Any
                 "lastVerdict": item["verdict"],
                 "firstDistance": item["distance"],
                 "lastDistance": item["distance"],
+                "deltaDistance": 0.0,
                 "maxDistance": item["distance"],
                 "firstRelLocal": item["relLocal"],
                 "lastRelLocal": item["relLocal"],
+                "deltaRelLocal": [],
+                "maxAbsDeltaRelLocal": 0.0,
+                "firstPartInAnchorTrans": item.get("partInAnchorTrans", []),
+                "lastPartInAnchorTrans": item.get("partInAnchorTrans", []),
+                "deltaPartInAnchorTrans": [],
+                "maxAbsDeltaPartInAnchorTrans": 0.0,
+                "firstAnchorAngleDeg": item.get("anchorAngleDeg"),
+                "lastAnchorAngleDeg": item.get("anchorAngleDeg"),
+                "deltaAnchorAngleDeg": 0.0,
+                "firstSampleIndex": item.get("sampleIndex", 0),
+                "lastSampleIndex": item.get("sampleIndex", 0),
                 "firstTimestamp": item.get("timestamp", ""),
                 "lastTimestamp": item.get("timestamp", ""),
+                "firstAnimationGroup": item.get("animationGroup", ""),
+                "lastAnimationGroup": item.get("animationGroup", ""),
+                "firstAnimationTime": item.get("animationTime"),
+                "lastAnimationTime": item.get("animationTime"),
+                "firstBadSampleIndex": 0,
+                "firstBadTimestamp": "",
+                "firstBadAnimationTime": None,
+                "firstBadDistance": None,
+                "firstBadRelLocal": [],
+                "firstBadPartInAnchorTrans": [],
                 "firstLine": item["line"],
                 "lastLine": item["line"],
+                "firstBadLine": "",
                 "badLines": [],
                 "transitions": [],
             }
@@ -238,13 +361,35 @@ def summarize_runtime_audits(audits: list[dict[str, Any]]) -> list[dict[str, Any
         summary["count"] += 1
         summary["lastVerdict"] = item["verdict"]
         summary["lastDistance"] = item["distance"]
+        summary["deltaDistance"] = summary["lastDistance"] - summary["firstDistance"]
         summary["lastRelLocal"] = item["relLocal"]
+        summary["deltaRelLocal"] = vec_delta(summary["firstRelLocal"], summary["lastRelLocal"])
+        summary["maxAbsDeltaRelLocal"] = max_abs_vec_delta(summary["deltaRelLocal"])
+        summary["lastPartInAnchorTrans"] = item.get("partInAnchorTrans", [])
+        summary["deltaPartInAnchorTrans"] = vec_delta(
+            summary["firstPartInAnchorTrans"], summary["lastPartInAnchorTrans"]
+        )
+        summary["maxAbsDeltaPartInAnchorTrans"] = max_abs_vec_delta(summary["deltaPartInAnchorTrans"])
+        summary["lastAnchorAngleDeg"] = item.get("anchorAngleDeg")
+        if summary["firstAnchorAngleDeg"] is not None and summary["lastAnchorAngleDeg"] is not None:
+            summary["deltaAnchorAngleDeg"] = summary["lastAnchorAngleDeg"] - summary["firstAnchorAngleDeg"]
+        summary["lastSampleIndex"] = item.get("sampleIndex", 0)
         summary["lastTimestamp"] = item.get("timestamp", "")
+        summary["lastAnimationGroup"] = item.get("animationGroup", "")
+        summary["lastAnimationTime"] = item.get("animationTime")
         summary["lastLine"] = item["line"]
         if item["distance"] > summary["maxDistance"]:
             summary["maxDistance"] = item["distance"]
         if item["verdict"] != "OK":
             summary["badCount"] += 1
+            if summary["firstBadSampleIndex"] == 0:
+                summary["firstBadSampleIndex"] = item.get("sampleIndex", 0)
+                summary["firstBadTimestamp"] = item.get("timestamp", "")
+                summary["firstBadAnimationTime"] = item.get("animationTime")
+                summary["firstBadDistance"] = item["distance"]
+                summary["firstBadRelLocal"] = item["relLocal"]
+                summary["firstBadPartInAnchorTrans"] = item.get("partInAnchorTrans", [])
+                summary["firstBadLine"] = item["line"]
             if len(summary["badLines"]) < 4:
                 summary["badLines"].append(item["line"])
         if item["verdict"] != previous_verdict:
@@ -264,6 +409,79 @@ def summarize_runtime_audits(audits: list[dict[str, Any]]) -> list[dict[str, Any
         summary["regressed"] = summary["firstVerdict"] == "OK" and summary["badCount"] > 0
         result.append(summary)
     return result
+
+
+def build_runtime_part_timelines(audits: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    grouped: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
+    order: list[tuple[str, str, str]] = []
+    for item in audits:
+        key = (item["ref"], item["part"], item["class"])
+        if key not in grouped:
+            order.append(key)
+            grouped[key] = []
+        grouped[key].append(item)
+
+    timelines: list[dict[str, Any]] = []
+    for key in order:
+        samples = grouped[key]
+        first = samples[0]
+        last = samples[-1]
+        bad_samples = [sample for sample in samples if sample["verdict"] != "OK"]
+        first_bad = bad_samples[0] if bad_samples else None
+        sample_rows = []
+        for sample in samples:
+            sample_rows.append(
+                {
+                    "sampleIndex": sample.get("sampleIndex", 0),
+                    "timestamp": sample.get("timestamp", ""),
+                    "animationGroup": sample.get("animationGroup", ""),
+                    "animationTime": sample.get("animationTime"),
+                    "activeControllers": sample.get("activeControllers", 0),
+                    "distance": sample.get("distance"),
+                    "limit": sample.get("limit"),
+                    "verdict": sample.get("verdict", ""),
+                    "center": sample.get("center", []),
+                    "anchor": sample.get("anchor", []),
+                    "relLocal": sample.get("relLocal", []),
+                    "partInAnchorTrans": sample.get("partInAnchorTrans", []),
+                    "partInParentTrans": sample.get("partInParentTrans", []),
+                    "anchorAngleDeg": sample.get("anchorAngleDeg"),
+                    "line": sample.get("line", ""),
+                    "matrixLine": sample.get("matrixLine", ""),
+                }
+            )
+        timelines.append(
+            {
+                "ref": key[0],
+                "part": key[1],
+                "class": key[2],
+                "count": len(samples),
+                "badCount": len(bad_samples),
+                "regressed": first.get("verdict") == "OK" and bool(bad_samples),
+                "firstSampleIndex": first.get("sampleIndex", 0),
+                "lastSampleIndex": last.get("sampleIndex", 0),
+                "firstTimestamp": first.get("timestamp", ""),
+                "lastTimestamp": last.get("timestamp", ""),
+                "firstAnimationTime": first.get("animationTime"),
+                "lastAnimationTime": last.get("animationTime"),
+                "firstBadSampleIndex": first_bad.get("sampleIndex", 0) if first_bad else 0,
+                "firstBadTimestamp": first_bad.get("timestamp", "") if first_bad else "",
+                "firstBadAnimationTime": first_bad.get("animationTime") if first_bad else None,
+                "firstDistance": first.get("distance"),
+                "lastDistance": last.get("distance"),
+                "deltaDistance": (last.get("distance") or 0.0) - (first.get("distance") or 0.0),
+                "firstRelLocal": first.get("relLocal", []),
+                "lastRelLocal": last.get("relLocal", []),
+                "deltaRelLocal": vec_delta(first.get("relLocal"), last.get("relLocal")),
+                "firstPartInAnchorTrans": first.get("partInAnchorTrans", []),
+                "lastPartInAnchorTrans": last.get("partInAnchorTrans", []),
+                "deltaPartInAnchorTrans": vec_delta(
+                    first.get("partInAnchorTrans"), last.get("partInAnchorTrans")
+                ),
+                "samples": sample_rows,
+            }
+        )
+    return timelines
 
 
 def summarize_categories(gates: list[dict[str, Any]]) -> dict[str, dict[str, int]]:
@@ -617,14 +835,30 @@ def write_markdown(path: Path, report: dict[str, Any]) -> None:
     lines.append("")
     lines.append("## Runtime Drift")
     lines.append("")
-    lines.append("| Part | First | Last | Bad | Max Distance | First Rel | Last Rel |")
-    lines.append("|---|---|---|---:|---:|---|---|")
+    lines.append("| Part | First | Last | Bad | Time | Max Distance | Delta Rel | Delta Anchor |")
+    lines.append("|---|---|---|---:|---|---:|---|---|")
     for item in report["runtimeAuditSummary"][:32]:
         lines.append(
             f"| {item['part']} | {item['firstVerdict']} | {item['lastVerdict']} | {item['badCount']} | "
-            f"{item['maxDistance']:.4g} | {item['firstRelLocal']} | {item['lastRelLocal']} |"
+            f"{item.get('firstAnimationTime')} -> {item.get('lastAnimationTime')} | "
+            f"{item['maxDistance']:.4g} | {item.get('deltaRelLocal', [])} | "
+            f"{item.get('deltaPartInAnchorTrans', [])} |"
         )
     lines.append("")
+    if report["runtimePartTimelines"]:
+        lines.append("## Runtime Part Timeline")
+        lines.append("")
+        lines.append("| Part | Sample | Anim | Distance | Verdict | Rel Local | Part In Anchor |")
+        lines.append("|---|---:|---|---:|---|---|---|")
+        for timeline in report["runtimePartTimelines"][:24]:
+            for sample in timeline["samples"][:8]:
+                lines.append(
+                    f"| {timeline['part']} | {sample['sampleIndex']} | "
+                    f"{sample.get('animationGroup')}@{sample.get('animationTime')} | "
+                    f"{sample.get('distance')} | {sample.get('verdict')} | "
+                    f"{sample.get('relLocal', [])} | {sample.get('partInAnchorTrans', [])} |"
+                )
+        lines.append("")
     if report["creatureEvidence"]:
         lines.append("## Creature Evidence")
         lines.append("")
@@ -669,6 +903,8 @@ def main() -> int:
     animation_requests = parse_animation_requests(lines, patterns)
     animation_playback = parse_animation_playback(lines, patterns)
     animation_blockers = collect_animation_blockers(lines, patterns)
+    runtime_audit_summary = summarize_runtime_audits(audits)
+    runtime_part_timelines = build_runtime_part_timelines(audits)
     actor_kind = args.actor_kind
     if actor_kind == "auto":
         actor_kind = "creature" if creature_evidence else "npc"
@@ -723,7 +959,8 @@ def main() -> int:
         "gates": gates,
         "attachmentBounds": bounds,
         "runtimePartAudits": audits,
-        "runtimeAuditSummary": summarize_runtime_audits(audits),
+        "runtimeAuditSummary": runtime_audit_summary,
+        "runtimePartTimelines": runtime_part_timelines,
         "faceDrawables": drawables,
         "morphLines": morph_lines,
         "weaponLines": weapon_lines,
