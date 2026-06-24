@@ -176,6 +176,47 @@ if ([int]$Result.placedNpcCreatureRefs -le 0) {
     throw "Actor presentation ledger did not account for any ACHR/ACRE placed actor references."
 }
 
+$npcBaseRows = @($Ledger | Where-Object { $_.component -eq "actor-base-record" -and $_.actorKind -eq "NPC_" })
+$creatureBaseRows = @($Ledger | Where-Object { $_.component -eq "actor-base-record" -and $_.actorKind -eq "CREA" })
+if ($npcBaseRows.Count -ne [int]$Result.npcBaseRecords) {
+    throw "Actor presentation ledger NPC_ base rows ($($npcBaseRows.Count)) do not match summary ($($Result.npcBaseRecords)). See $LedgerPath"
+}
+if ($creatureBaseRows.Count -ne [int]$Result.creatureBaseRecords) {
+    throw "Actor presentation ledger CREA base rows ($($creatureBaseRows.Count)) do not match summary ($($Result.creatureBaseRecords)). See $LedgerPath"
+}
+
+$npcOnlyComponents = @(
+    "npc-race",
+    "hair",
+    "eyes",
+    "npc-headpart",
+    "facegen-symmetric-shape",
+    "facegen-asymmetric-shape",
+    "facegen-symmetric-texture",
+    "npc-model"
+)
+$creatureOnlyComponents = @(
+    "creature-model",
+    "creature-body-nif",
+    "bodypart-data"
+)
+$creatureRowsWithNpcComponents = @($Ledger | Where-Object { $_.actorKind -eq "CREA" -and $npcOnlyComponents -contains $_.component })
+if ($creatureRowsWithNpcComponents.Count -gt 0) {
+    throw "Actor presentation ledger put NPC-only components on CREA rows: $($creatureRowsWithNpcComponents.Count). See $LedgerPath"
+}
+$npcRowsWithCreatureComponents = @($Ledger | Where-Object { $_.actorKind -eq "NPC_" -and $creatureOnlyComponents -contains $_.component })
+if ($npcRowsWithCreatureComponents.Count -gt 0) {
+    throw "Actor presentation ledger put creature-only components on NPC_ rows: $($npcRowsWithCreatureComponents.Count). See $LedgerPath"
+}
+
+$placedRows = @($Ledger | Where-Object { $_.component -eq "placed-reference" })
+$badPlacedRows = @($placedRows | Where-Object {
+        @("NPC_", "CREA") -notcontains $_.resolvedRecordType -or $_.actorKind -ne $_.resolvedRecordType
+    })
+if ($badPlacedRows.Count -gt 0) {
+    throw "Actor presentation ledger placed-reference rows have mismatched actorKind/resolvedRecordType: $($badPlacedRows.Count). See $LedgerPath"
+}
+
 $requiredComponents = @(
     "actor-base-record",
     "placed-reference",
