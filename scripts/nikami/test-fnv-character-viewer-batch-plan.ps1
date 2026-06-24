@@ -11,8 +11,12 @@ if ([string]::IsNullOrWhiteSpace($ProofRoot)) {
 }
 
 $Planner = Join-Path $PSScriptRoot "fnv_character_viewer_batch_plan.py"
+$BatchRunner = Join-Path $PSScriptRoot "run-fnv-character-viewer-batch-plan.ps1"
 if (!(Test-Path -LiteralPath $Planner -PathType Leaf)) {
     throw "Missing FNV character viewer batch planner: $Planner"
+}
+if (!(Test-Path -LiteralPath $BatchRunner -PathType Leaf)) {
+    throw "Missing FNV character viewer batch runner: $BatchRunner"
 }
 
 $Stamp = Get-Date -Format "yyyyMMdd_HHmmss"
@@ -136,6 +140,46 @@ if ($badClassifications.Count -gt 0) {
     throw "Batch plan has invalid classifications: $($badClassifications.Count)"
 }
 
+$beforeRunDirs = @()
+$batchRunRoot = Join-Path $ProofRoot "fnv-character-viewer-batch-run"
+if (Test-Path -LiteralPath $batchRunRoot -PathType Container) {
+    $beforeRunDirs = @(Get-ChildItem -LiteralPath $batchRunRoot -Directory | Select-Object -ExpandProperty FullName)
+}
+& $BatchRunner -PlanJson $planPath -DryRun -ActorKind creature -MaxEntries 1 -RequirePass | Out-Host
+if ($LASTEXITCODE -ne 0) {
+    throw "FNV character viewer batch dry-run failed with exit code $LASTEXITCODE."
+}
+$afterRunDirs = @(Get-ChildItem -LiteralPath $batchRunRoot -Directory | Sort-Object LastWriteTime -Descending)
+$runDir = $null
+foreach ($dir in $afterRunDirs) {
+    if ($beforeRunDirs -notcontains $dir.FullName) {
+        $runDir = $dir.FullName
+        break
+    }
+}
+if ([string]::IsNullOrWhiteSpace($runDir)) {
+    $runDir = ($afterRunDirs | Select-Object -First 1).FullName
+}
+$runPath = Join-Path $runDir "viewer-batch-run.json"
+if (!(Test-Path -LiteralPath $runPath -PathType Leaf)) {
+    throw "Missing generated batch dry-run summary: $runPath"
+}
+$run = Get-Content -LiteralPath $runPath -Raw | ConvertFrom-Json
+if ($run.schema -ne "nikami-fnv-character-viewer-batch-run-v1") {
+    throw "Unexpected batch dry-run schema: $($run.schema)"
+}
+if ($run.status -ne "PASS" -or !$run.dryRun -or [int]$run.selectedEntries -ne 1) {
+    throw "Batch dry-run summary has wrong status/selection."
+}
+$runResult = @($run.results)[0]
+if ($runResult.actorKind -ne "creature" -or $runResult.status -ne "DRY-RUN") {
+    throw "Batch dry-run did not select a creature entry."
+}
+if ($runResult.command -notmatch "-ActorKind creature" -or $runResult.command -notmatch "-CreatureDiagnostics") {
+    throw "Batch dry-run result does not preserve runnable creature command."
+}
+
 Write-Host "FNV character viewer batch plan contract PASS"
 Write-Host "ProofDir: $ProofDir"
 Write-Host "Plan: $planPath"
+Write-Host "DryRun: $runPath"
