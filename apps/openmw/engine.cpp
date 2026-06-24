@@ -20,9 +20,13 @@
 #include <system_error>
 #include <vector>
 
+#include <osg/BlendFunc>
+#include <osg/Camera>
 #include <osgDB/ReaderWriter>
 #include <osgDB/Registry>
 #include <osg/ComputeBoundsVisitor>
+#include <osg/Geometry>
+#include <osg/Texture2D>
 #include <osgViewer/ViewerEventHandlers>
 
 #include <SDL.h>
@@ -127,6 +131,7 @@
 
 #include "mwrender/vismask.hpp"
 #include "mwrender/camera.hpp"
+#include "mwrender/characterpreview.hpp"
 #include "mwrender/renderingmanager.hpp"
 
 #include "mwclass/classes.hpp"
@@ -380,6 +385,47 @@ namespace
             return fallback;
 
         return static_cast<int>(value);
+    }
+
+    osg::Camera* createFalloutNeutralActorPreviewComposite(
+        const std::vector<std::unique_ptr<MWRender::FalloutActorPreview>>& previews)
+    {
+        osg::ref_ptr<osg::Camera> camera = new osg::Camera;
+        camera->setName("FNV Neutral Actor Preview Composite");
+        camera->setProjectionMatrix(osg::Matrix::identity());
+        camera->setReferenceFrame(osg::Transform::ABSOLUTE_RF);
+        camera->setViewMatrix(osg::Matrix::identity());
+        camera->setClearMask(0);
+        camera->setRenderOrder(osg::Camera::POST_RENDER, 20);
+        camera->setAllowEventFocus(false);
+        camera->setNodeMask(MWRender::Mask_RenderToTexture);
+
+        constexpr float width = 0.58f;
+        constexpr float height = 1.03f;
+        constexpr std::array<float, 3> centers = { -0.64f, 0.f, 0.64f };
+        const std::size_t count = std::min<std::size_t>(previews.size(), centers.size());
+        for (std::size_t i = 0; i < count; ++i)
+        {
+            osg::ref_ptr<osg::Texture2D> texture = previews[i]->getTexture();
+            if (texture == nullptr)
+                continue;
+            texture->setWrap(osg::Texture::WRAP_S, osg::Texture::CLAMP_TO_EDGE);
+            texture->setWrap(osg::Texture::WRAP_T, osg::Texture::CLAMP_TO_EDGE);
+
+            const float left = centers[i] - width * 0.5f;
+            const float bottom = -height * 0.5f;
+            osg::ref_ptr<osg::Geometry> geom = osg::createTexturedQuadGeometry(
+                osg::Vec3f(left, bottom, 0.f), osg::Vec3f(width, 0.f, 0.f), osg::Vec3f(0.f, height, 0.f));
+            osg::StateSet* stateset = geom->getOrCreateStateSet();
+            stateset->setTextureAttributeAndModes(0, texture.get(), osg::StateAttribute::ON);
+            stateset->setMode(GL_DEPTH_TEST, osg::StateAttribute::OFF);
+            stateset->setMode(GL_LIGHTING, osg::StateAttribute::OFF);
+            stateset->setAttributeAndModes(
+                new osg::BlendFunc(osg::BlendFunc::ONE, osg::BlendFunc::ONE_MINUS_SRC_ALPHA));
+            camera->addChild(geom);
+        }
+
+        return camera.release();
     }
 
     std::string falloutProofFormToken(std::string_view value)
@@ -2391,6 +2437,13 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
     const int proofActorFrame = static_cast<int>(getProofFloat("OPENMW_PROOF_ACTOR_FRAME", 240.f));
     static unsigned int proofActorCameraFirstAppliedFrame = 0;
     static unsigned int proofActorCameraLastAppliedFrame = 0;
+    const bool proofNeutralActorPreviewRequested = std::getenv("OPENMW_PROOF_NEUTRAL_ACTOR_PREVIEW") != nullptr;
+    static bool proofNeutralActorPreviewAttempted = false;
+    static bool proofNeutralActorPreviewReady = false;
+    static bool proofNeutralActorPreviewIsolationApplied = false;
+    static osg::ref_ptr<osg::Group> proofNeutralActorPreviewRoot;
+    static osg::ref_ptr<osg::Camera> proofNeutralActorPreviewComposite;
+    static std::vector<std::unique_ptr<MWRender::FalloutActorPreview>> proofNeutralActorPreviews;
     const char* proofItemModel = std::getenv("OPENMW_PROOF_ITEM_MODEL");
     const char* proofItemTarget = std::getenv("OPENMW_PROOF_ITEM_TARGET");
     const bool proofItemRequested = proofItemModel != nullptr && *proofItemModel != '\0';
@@ -2681,6 +2734,90 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
 
         if (!proofActor.isEmpty())
         {
+            if (proofNeutralActorPreviewRequested && !proofNeutralActorPreviewAttempted)
+            {
+                proofNeutralActorPreviewAttempted = true;
+                try
+                {
+                    osg::Group* sceneRoot = mViewer != nullptr && mViewer->getSceneData() != nullptr
+                        ? mViewer->getSceneData()->asGroup()
+                        : nullptr;
+                    if (sceneRoot == nullptr)
+                        throw std::runtime_error("missing viewer scene root");
+
+                    proofNeutralActorPreviewRoot = new osg::Group;
+                    proofNeutralActorPreviewRoot->setName("FNV Neutral Actor Preview Root");
+                    proofNeutralActorPreviewRoot->setNodeMask(MWRender::Mask_RenderToTexture);
+                    sceneRoot->addChild(proofNeutralActorPreviewRoot);
+
+                    proofNeutralActorPreviews.clear();
+                    proofNeutralActorPreviews.emplace_back(std::make_unique<MWRender::FalloutActorPreview>(
+                        proofNeutralActorPreviewRoot, mResourceSystem.get(), proofActor,
+                        MWRender::FalloutActorPreview::ViewMode::Front));
+                    proofNeutralActorPreviews.emplace_back(std::make_unique<MWRender::FalloutActorPreview>(
+                        proofNeutralActorPreviewRoot, mResourceSystem.get(), proofActor,
+                        MWRender::FalloutActorPreview::ViewMode::FrontLeft));
+                    proofNeutralActorPreviews.emplace_back(std::make_unique<MWRender::FalloutActorPreview>(
+                        proofNeutralActorPreviewRoot, mResourceSystem.get(), proofActor,
+                        MWRender::FalloutActorPreview::ViewMode::FrontRight));
+                    for (const std::unique_ptr<MWRender::FalloutActorPreview>& preview : proofNeutralActorPreviews)
+                    {
+                        preview->rebuild();
+                        preview->redraw();
+                    }
+                    proofNeutralActorPreviewComposite
+                        = createFalloutNeutralActorPreviewComposite(proofNeutralActorPreviews);
+                    sceneRoot->addChild(proofNeutralActorPreviewComposite);
+
+                    proofNeutralActorPreviewReady = true;
+                    Log(Debug::Info) << "FNV/ESM4 proof: neutral actor preview assembled target=\"" << target
+                                     << "\" panes=" << proofNeutralActorPreviews.size()
+                                     << " compositeQuads="
+                                     << (proofNeutralActorPreviewComposite != nullptr
+                                             ? proofNeutralActorPreviewComposite->getNumChildren()
+                                             : 0)
+                                     << " runtime=runtime-supported gate=runtime-neutral-actor-preview";
+                }
+                catch (const std::exception& e)
+                {
+                    Log(Debug::Warning) << "FNV/ESM4 proof: neutral actor preview failed target=\"" << target
+                                        << "\" error=\"" << e.what()
+                                        << "\" runtime=known-blocked gate=runtime-neutral-actor-preview";
+                }
+            }
+
+            if (proofNeutralActorPreviewRequested && proofNeutralActorPreviewReady
+                && !proofNeutralActorPreviewIsolationApplied)
+            {
+                if (mWindowManager)
+                    mWindowManager->setHudVisibility(false);
+                if (MWRender::RenderingManager* rendering = mWorld->getRenderingManager())
+                {
+                    rendering->setWaterEnabled(false);
+                    rendering->setSkyEnabled(false);
+                    const MWWorld::Ptr player = mWorld->getPlayerPtr();
+                    if (!player.isEmpty() && player.isInCell() && player.getCell() != nullptr
+                        && player.getCell()->getCell() != nullptr)
+                        rendering->enableTerrain(false, player.getCell()->getCell()->getWorldSpace());
+                }
+                if (mViewer && mViewer->getCamera())
+                {
+                    mViewer->getCamera()->setClearColor(osg::Vec4(0.22f, 0.23f, 0.24f, 1.f));
+                    mViewer->getCamera()->setCullMask(MWRender::Mask_RenderToTexture);
+                }
+                proofActorCameraApplied = true;
+                if (proofActorCameraFirstAppliedFrame == 0)
+                    proofActorCameraFirstAppliedFrame = frameNumber;
+                proofActorCameraLastAppliedFrame = frameNumber;
+                proofNeutralActorPreviewIsolationApplied = true;
+                Log(Debug::Info) << "FNV/ESM4 proof: neutral actor preview isolation target=\"" << target
+                                 << "\" cullMask=Mask_RenderToTexture hud=hidden sky=hidden water=hidden"
+                                 << " terrain=hidden runtime=runtime-supported gate=runtime-neutral-actor-preview";
+            }
+
+            if (proofNeutralActorPreviewRequested)
+                proofActorCameraLastAppliedFrame = frameNumber;
+
             if (proofStageActor)
             {
                 const ESM::Position& current = proofActor.getRefData().getPosition();

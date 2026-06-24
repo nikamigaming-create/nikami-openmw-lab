@@ -708,6 +708,8 @@ def structured_actor_job(entry: dict[str, Any], payload: dict[str, Any]) -> tupl
         "partModels": csv_values(selector_value(payload, "partModels")),
         "propSlots": csv_values(selector_value(payload, "propSlots")),
         "propModels": csv_values(selector_value(payload, "propModels")),
+        "animationSource": first_text(selector_value(payload, "animationSource")),
+        "animationStartPoint": first_text(selector_value(payload, "animationStartPoint")),
         "animationGroup": first_text(selector_value(payload, "animationGroup")),
         "dialogueMode": first_text(selector_value(payload, "dialogueMode")),
     }
@@ -720,6 +722,8 @@ def structured_actor_job(entry: dict[str, Any], payload: dict[str, Any]) -> tupl
     command += selector_arg("ActorKitPartModels", ",".join(selectors["partModels"]))
     command += selector_arg("ActorKitPropSlots", ",".join(selectors["propSlots"]))
     command += selector_arg("ActorKitPropModels", ",".join(selectors["propModels"]))
+    command += selector_arg("ActorKitAnimationSource", selectors["animationSource"])
+    command += selector_arg("ActorKitAnimationStartPoint", selectors["animationStartPoint"])
     command += selector_arg("ActorKitAnimationGroup", selectors["animationGroup"])
     command += selector_arg("ActorKitDialogueMode", selectors["dialogueMode"])
     if actor_kind == "creature":
@@ -786,6 +790,8 @@ def structured_item_job(entry: dict[str, Any], payload: dict[str, Any]) -> tuple
             "partModels": [],
             "propSlots": [],
             "propModels": [model],
+            "animationSource": "",
+            "animationStartPoint": "",
             "animationGroup": "",
             "dialogueMode": "",
         },

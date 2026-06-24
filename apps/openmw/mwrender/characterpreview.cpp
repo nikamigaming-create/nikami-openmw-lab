@@ -1,5 +1,6 @@
 #include "characterpreview.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdlib>
 #include <string_view>
@@ -128,6 +129,38 @@ namespace MWRender
                              << MWClass::ESM4Npc::chooseEquipmentModel(
                                     armor, MWClass::ESM4Npc::isFemale(visualPtr))
                              << " added=" << added;
+        }
+
+        std::string getFalloutPreviewAnimationGroup()
+        {
+            const char* value = std::getenv("OPENMW_FNV_ACTOR_KIT_ANIMATION_GROUP");
+            if (value == nullptr || value[0] == '\0')
+                return "idle";
+
+            std::string group(value);
+            while (!group.empty()
+                && (group.front() == ' ' || group.front() == '\t' || group.front() == '\r'
+                    || group.front() == '\n' || group.front() == '"' || group.front() == '\''))
+                group.erase(group.begin());
+            while (!group.empty()
+                && (group.back() == ' ' || group.back() == '\t' || group.back() == '\r'
+                    || group.back() == '\n' || group.back() == '"' || group.back() == '\''))
+                group.pop_back();
+            Misc::StringUtils::lowerCaseInPlace(group);
+            return group.empty() ? std::string("idle") : group;
+        }
+
+        float getFalloutPreviewAnimationStartPoint()
+        {
+            const char* value = std::getenv("OPENMW_FNV_ACTOR_KIT_ANIMATION_STARTPOINT");
+            if (value == nullptr || value[0] == '\0')
+                return 0.35f;
+
+            char* end = nullptr;
+            const float parsed = std::strtof(value, &end);
+            if (end == value || !std::isfinite(parsed))
+                return 0.35f;
+            return std::clamp(parsed, 0.f, 0.999f);
         }
     }
 
@@ -429,6 +462,11 @@ namespace MWRender
     {
         SetUpBlendVisitor visitor;
         mNode->accept(visitor);
+    }
+
+    void CharacterPreview::setRedrawSimulationTime(double simulationTime)
+    {
+        mDrawOnceCallback->setSimulationTime(simulationTime);
     }
 
     void CharacterPreview::onSetup()
@@ -782,6 +820,77 @@ namespace MWRender
         }
         else
             Log(Debug::Error) << "Error: Bip01 Head node not found";
+    }
+
+    // --------------------------------------------------------------------------------------------------
+
+    FalloutActorPreview::FalloutActorPreview(
+        osg::Group* parent, Resource::ResourceSystem* resourceSystem, const MWWorld::Ptr& character, ViewMode viewMode)
+        : CharacterPreview(parent, resourceSystem, MWWorld::Ptr(character.getBase(), nullptr), 720, 720,
+            osg::Vec3f(0, 420, 112), osg::Vec3f(0, 0, 112))
+        , mViewMode(viewMode)
+    {
+        mNode->setName("FNV Neutral Actor Preview");
+    }
+
+    osg::ref_ptr<Animation> FalloutActorPreview::createAnimation()
+    {
+        if (mCharacter.getType() == ESM::REC_NPC_4)
+        {
+            Log(Debug::Info) << "FNV/ESM4 proof: neutral actor preview using ESM4NpcAnimation for "
+                             << mCharacter.toString();
+            return new ESM4NpcAnimation(mCharacter, mNode, mResourceSystem);
+        }
+
+        Log(Debug::Info) << "FNV/ESM4 proof: neutral actor preview using base CharacterPreview animation for "
+                         << mCharacter.toString();
+        return CharacterPreview::createAnimation();
+    }
+
+    void FalloutActorPreview::onSetup()
+    {
+        CharacterPreview::onSetup();
+
+        osg::Vec3f scale(1.f, 1.f, 1.f);
+        mCharacter.getClass().adjustScale(mCharacter, scale, true);
+        mNode->setScale(scale);
+
+        osg::Vec3f position(0.f, 420.f, 112.f);
+        osg::Vec3f lookAt(0.f, 0.f, 112.f);
+        const char* viewName = "front";
+        switch (mViewMode)
+        {
+            case ViewMode::Front:
+                break;
+            case ViewMode::FrontLeft:
+                position = osg::Vec3f(-300.f, 300.f, 112.f);
+                viewName = "front-left";
+                break;
+            case ViewMode::FrontRight:
+                position = osg::Vec3f(300.f, 300.f, 112.f);
+                viewName = "front-right";
+                break;
+        }
+
+        mRTTNode->setViewMatrix(osg::Matrixf::lookAt(position * scale.z(), lookAt * scale.z(), osg::Vec3f(0, 0, 1)));
+
+        const std::string animationGroup = getFalloutPreviewAnimationGroup();
+        const float previewStart = getFalloutPreviewAnimationStartPoint();
+        if (mAnimation)
+        {
+            if (mAnimation->hasAnimation(animationGroup))
+                mAnimation->play(animationGroup, 1, BlendMask::BlendMask_All, false, 1.0f, "start", "stop", previewStart,
+                    std::numeric_limits<uint32_t>::max(), true);
+            mAnimation->runAnimation(0.0f);
+        }
+        setRedrawSimulationTime(previewStart);
+
+        Log(Debug::Info) << "FNV/ESM4 proof: neutral actor preview camera view=" << viewName << " position=("
+                         << position.x() << "," << position.y() << "," << position.z() << ") lookAt=("
+                         << lookAt.x() << "," << lookAt.y() << "," << lookAt.z()
+                         << ") animationGroup=" << animationGroup << " startPoint=" << previewStart
+                         << " simulationTime=" << previewStart
+                         << " runtime=runtime-supported gate=runtime-neutral-actor-preview";
     }
 
 }

@@ -15,6 +15,8 @@ param(
     [string[]]$ActorKitPartModels = @(),
     [string[]]$ActorKitPropSlots = @(),
     [string[]]$ActorKitPropModels = @(),
+    [string]$ActorKitAnimationSource = "",
+    [double]$ActorKitAnimationStartPoint = [double]::NaN,
     [string]$ActorKitAnimationGroup = "",
     [string]$ActorKitDialogueMode = "",
     [string[]]$Angles = @("front", "front-left", "front-right"),
@@ -146,6 +148,11 @@ function Join-OptionalSelectorList([string[]]$Values) {
         }
     }
     return ($items -join ",")
+}
+
+function Format-Double([double]$Value) {
+    if ([double]::IsNaN($Value)) { return "" }
+    return $Value.ToString("0.######", [Globalization.CultureInfo]::InvariantCulture)
 }
 
 function Get-SuiteDirectories {
@@ -392,6 +399,8 @@ Write-Host "ActorKitParts: $ActorKitPartsCsv"
 Write-Host "ActorKitPartModels: $ActorKitPartModelsCsv"
 Write-Host "ActorKitPropSlots: $ActorKitPropSlotsCsv"
 Write-Host "ActorKitPropModels: $ActorKitPropModelsCsv"
+Write-Host "ActorKitAnimationSource: $ActorKitAnimationSource"
+Write-Host "ActorKitAnimationStartPoint: $(Format-Double $ActorKitAnimationStartPoint)"
 Write-Host "ActorKitAnimationGroup: $ActorKitAnimationGroup"
 Write-Host "ActorKitDialogueMode: $ActorKitDialogueMode"
 Write-Host "BootstrapCell: $BootstrapCell"
@@ -470,6 +479,8 @@ else {
         if (![string]::IsNullOrWhiteSpace($ActorKitPartModelsCsv)) { $builderArgs.ActorKitPartModels = $ActorKitPartModelsCsv }
         if (![string]::IsNullOrWhiteSpace($ActorKitPropSlotsCsv)) { $builderArgs.ActorKitPropSlots = $ActorKitPropSlotsCsv }
         if (![string]::IsNullOrWhiteSpace($ActorKitPropModelsCsv)) { $builderArgs.ActorKitPropModels = $ActorKitPropModelsCsv }
+        if (![string]::IsNullOrWhiteSpace($ActorKitAnimationSource)) { $builderArgs.ActorKitAnimationSource = $ActorKitAnimationSource }
+        if (![double]::IsNaN($ActorKitAnimationStartPoint)) { $builderArgs.ActorKitAnimationStartPoint = $ActorKitAnimationStartPoint }
         if (![string]::IsNullOrWhiteSpace($ActorKitAnimationGroup)) { $builderArgs.ActorKitAnimationGroup = $ActorKitAnimationGroup }
         if (![string]::IsNullOrWhiteSpace($ActorKitDialogueMode)) { $builderArgs.ActorKitDialogueMode = $ActorKitDialogueMode }
         if (![string]::IsNullOrWhiteSpace($FnvConfigData)) { $builderArgs.FnvConfigData = $FnvConfigData }

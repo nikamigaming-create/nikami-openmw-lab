@@ -31,6 +31,8 @@ param(
     [ValidateSet("npc", "creature", "auto")]
     [string]$ActorKind = "npc",
     [int]$ActorFrame = 240,
+    [switch]$NeutralActorPreview,
+    [switch]$NeutralActorPreviewStandingIdle,
     [string]$ProofItemTarget = "",
     [string]$ProofItemKind = "",
     [string]$ProofItemRecordType = "",
@@ -89,6 +91,8 @@ param(
     [string[]]$ActorKitPartModels = @(),
     [string[]]$ActorKitPropSlots = @(),
     [string[]]$ActorKitPropModels = @(),
+    [string]$ActorKitAnimationSource = "",
+    [double]$ActorKitAnimationStartPoint = [double]::NaN,
     [string]$ActorKitAnimationGroup = "",
     [string]$ActorKitDialogueMode = "",
     [switch]$CharacterBuilderTalk,
@@ -170,6 +174,11 @@ function Join-SelectorList([string[]]$Values) {
         }
     }
     return ($items -join ",")
+}
+
+function Format-Double([double]$Value) {
+    if ([double]::IsNaN($Value)) { return "" }
+    return $Value.ToString("0.######", [Globalization.CultureInfo]::InvariantCulture)
 }
 
 function Restore-ProofEnv([hashtable]$Previous) {
@@ -1439,6 +1448,10 @@ try {
     Set-ProofEnv $previousEnv "OPENMW_FNV_PROOF_TARGET_NPC" $ActorTarget
     Set-ProofEnv $previousEnv "OPENMW_PROOF_ACTOR_KIND" $ActorKind
     Set-ProofEnv $previousEnv "OPENMW_PROOF_ACTOR_FRAME" $ActorFrame
+    if ($NeutralActorPreview) { Set-ProofEnv $previousEnv "OPENMW_PROOF_NEUTRAL_ACTOR_PREVIEW" "1" }
+    else { Clear-ProofEnv $previousEnv "OPENMW_PROOF_NEUTRAL_ACTOR_PREVIEW" }
+    if ($NeutralActorPreviewStandingIdle) { Set-ProofEnv $previousEnv "OPENMW_FNV_DISABLE_PACKAGE_PROCEDURE_IDLES" "1" }
+    else { Clear-ProofEnv $previousEnv "OPENMW_FNV_DISABLE_PACKAGE_PROCEDURE_IDLES" }
     Set-ProofEnv $previousEnv "OPENMW_PROOF_ITEM_TARGET" $ProofItemTarget
     Set-ProofEnv $previousEnv "OPENMW_PROOF_ITEM_KIND" $ProofItemKind
     Set-ProofEnv $previousEnv "OPENMW_PROOF_ITEM_RECORD_TYPE" $ProofItemRecordType
@@ -1494,6 +1507,8 @@ try {
     Set-ProofEnv $previousEnv "OPENMW_FNV_ACTOR_KIT_PART_MODELS" $ActorKitPartModelsCsv
     Set-ProofEnv $previousEnv "OPENMW_FNV_ACTOR_KIT_PROP_SLOTS" $ActorKitPropSlotsCsv
     Set-ProofEnv $previousEnv "OPENMW_FNV_ACTOR_KIT_PROP_MODELS" $ActorKitPropModelsCsv
+    Set-ProofEnv $previousEnv "OPENMW_FNV_ACTOR_KIT_ANIMATION_SOURCE" $ActorKitAnimationSource
+    Set-ProofEnv $previousEnv "OPENMW_FNV_ACTOR_KIT_ANIMATION_STARTPOINT" $ActorKitAnimationStartPoint
     Set-ProofEnv $previousEnv "OPENMW_FNV_ACTOR_KIT_ANIMATION_GROUP" $ActorKitAnimationGroup
     Set-ProofEnv $previousEnv "OPENMW_FNV_ACTOR_KIT_DIALOGUE_MODE" $ActorKitDialogueMode
     if ($CharacterBuilderTalk -or $CharacterBuilderPhase -ieq "talk" -or $CharacterBuilderPhase -ieq "dialogue" -or $ActorKitDialogueMode -ieq "mouth-open" -or $ActorKitDialogueMode -ieq "mouth-open-pose") {
@@ -1607,12 +1622,16 @@ try {
     Write-ProofLine "ActorKitPartModels: $ActorKitPartModelsCsv"
     Write-ProofLine "ActorKitPropSlots: $ActorKitPropSlotsCsv"
     Write-ProofLine "ActorKitPropModels: $ActorKitPropModelsCsv"
+    Write-ProofLine "ActorKitAnimationSource: $ActorKitAnimationSource"
+    Write-ProofLine "ActorKitAnimationStartPoint: $(Format-Double $ActorKitAnimationStartPoint)"
     Write-ProofLine "ActorKitAnimationGroup: $ActorKitAnimationGroup"
     Write-ProofLine "ActorKitDialogueMode: $ActorKitDialogueMode"
     Write-ProofLine "CharacterBuilderTalk: $CharacterBuilderTalk"
     Write-ProofLine "ActorTarget: $ActorTarget"
     Write-ProofLine "FnvProofTargetNpc: $ActorTarget"
     Write-ProofLine "ActorKind: $ActorKind"
+    Write-ProofLine "NeutralActorPreview: $NeutralActorPreview"
+    Write-ProofLine "NeutralActorPreviewStandingIdle: $NeutralActorPreviewStandingIdle"
     Write-ProofLine "ProofItemTarget: $ProofItemTarget"
     Write-ProofLine "ProofItemKind: $ProofItemKind"
     Write-ProofLine "ProofItemRecordType: $ProofItemRecordType"

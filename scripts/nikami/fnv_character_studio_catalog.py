@@ -603,6 +603,8 @@ button:disabled {{ opacity: .45; cursor: not-allowed; }}
         <label>Phase<select id="phaseSelect"></select></label>
         <label>Part Focus<select id="partFocusSelect"></select></label>
         <label>Job<select id="jobTypeSelect"></select></label>
+        <label>Animation Source<input id="animationSourceInput" placeholder="meshes/characters/_male/idleanims/example.kf"></label>
+        <label>Animation Start<input id="animationStartPointInput" type="number" min="0" max="0.999" step="0.001" placeholder="0.35"></label>
         <label>Animation<select id="animationSelect"></select></label>
         <label>Dialogue<select id="dialogueSelect"></select></label>
         <label>Angles<select id="angleSelect"></select></label>
@@ -814,7 +816,11 @@ function studioPayload(commandKey) {{
     propSlots: selectedPropSlots()
   }};
   const animation = document.getElementById("animationSelect")?.value || "";
+  const animationSource = document.getElementById("animationSourceInput")?.value || "";
+  const animationStartPoint = document.getElementById("animationStartPointInput")?.value || "";
   const dialogue = document.getElementById("dialogueSelect")?.value || "";
+  if (animationSource) payload.animationSource = animationSource;
+  if (animationStartPoint) payload.animationStartPoint = animationStartPoint;
   if (animation) payload.animationGroup = animation;
   if (dialogue) payload.dialogueMode = dialogue;
   return payload;
@@ -967,6 +973,8 @@ function componentReviewRows(activeOnly = false) {{
           angles: payload.angles,
           parts: payload.parts,
           propSlots: payload.propSlots,
+          animationSource: payload.animationSource || "",
+          animationStartPoint: payload.animationStartPoint || "",
           animationGroup: payload.animationGroup || "",
           dialogueMode: payload.dialogueMode || ""
         }},
@@ -1028,7 +1036,7 @@ function renderControls() {{
     state.partEnabled[input.dataset.part] = input.checked;
     recordEvent("selector.parts", {{ parts: selectedParts() }});
   }});
-  ["phaseSelect", "partFocusSelect", "jobTypeSelect", "animationSelect", "dialogueSelect", "angleSelect", "reviewSelect"].forEach(id => {{
+  ["phaseSelect", "partFocusSelect", "jobTypeSelect", "animationSourceInput", "animationStartPointInput", "animationSelect", "dialogueSelect", "angleSelect", "reviewSelect"].forEach(id => {{
     document.getElementById(id).onchange = () => recordEvent("selector.change", studioPayload("runtimeThreeCamera"));
   }});
 }}

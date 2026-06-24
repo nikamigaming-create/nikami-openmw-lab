@@ -56,6 +56,7 @@ namespace MWRender
     protected:
         virtual bool renderHeadOnly() { return false; }
         void setBlendMode();
+        void setRedrawSimulationTime(double simulationTime);
         virtual void onSetup();
         virtual osg::ref_ptr<Animation> createAnimation();
 
@@ -132,6 +133,27 @@ namespace MWRender
         osg::ref_ptr<UpdateCameraCallback> mUpdateCameraCallback;
 
         float mPitchRadians;
+    };
+
+    class FalloutActorPreview : public CharacterPreview
+    {
+    public:
+        enum class ViewMode
+        {
+            Front,
+            FrontLeft,
+            FrontRight,
+        };
+
+        FalloutActorPreview(osg::Group* parent, Resource::ResourceSystem* resourceSystem, const MWWorld::Ptr& character,
+            ViewMode viewMode);
+
+    protected:
+        void onSetup() override;
+        osg::ref_ptr<Animation> createAnimation() override;
+
+    private:
+        ViewMode mViewMode;
     };
 
 }

@@ -57,6 +57,8 @@ $creatureAnimation = Assert-File "apps/openmw/mwrender/creatureanimation.cpp"
 $esm4Creature = Assert-File "apps/openmw/mwclass/esm4creature.cpp"
 $classes = Assert-File "apps/openmw/mwclass/classes.cpp"
 $objects = Assert-File "apps/openmw/mwrender/objects.cpp"
+$characterPreview = Assert-File "apps/openmw/mwrender/characterpreview.cpp"
+$characterPreviewHeader = Assert-File "apps/openmw/mwrender/characterpreview.hpp"
 $standaloneModelPreview = Assert-File "apps/openmw/mwrender/standalonemodelpreview.cpp"
 $standaloneModelPreviewHeader = Assert-File "apps/openmw/mwrender/standalonemodelpreview.hpp"
 $openmwCmake = Assert-File "apps/openmw/CMakeLists.txt"
@@ -112,6 +114,8 @@ foreach ($needle in @(
     "[switch]`$RequireActorVisibleHandGeometry",
     "[double]`$ActorVisibleHandMaxDistance",
     "[string]`$ActorKind",
+    "[switch]`$NeutralActorPreview",
+    "[switch]`$NeutralActorPreviewStandingIdle",
     "[string]`$ProofItemTarget",
     "[string]`$ProofItemModel",
     "[double]`$ProofItemStageX",
@@ -121,6 +125,8 @@ foreach ($needle in @(
     "[string[]]`$ActorKitPartModels",
     "[string[]]`$ActorKitPropSlots",
     "[string[]]`$ActorKitPropModels",
+    "[string]`$ActorKitAnimationSource",
+    "[double]`$ActorKitAnimationStartPoint",
     "[string]`$ActorKitAnimationGroup",
     "[string]`$ActorKitDialogueMode",
     "[switch]`$CharacterBuilderTalk",
@@ -139,6 +145,8 @@ Assert-Text $flat "Target standing arm pose BAD lines:" "flat proof reports targ
 Assert-Text $flat "Target visible hand geometry status:" "flat proof reports target visible skinned hand geometry"
 Assert-Text $flat "did not prove visible skinned hand geometry follows animated hand anchors" "flat proof fails when visible hand skin does not follow skeleton"
 Assert-Text $flat "OPENMW_PROOF_ACTOR_VIEW_LOCAL_OFFSET" "flat proof can frame actor closeups in actor-local space"
+Assert-Text $flat "OPENMW_PROOF_NEUTRAL_ACTOR_PREVIEW" "flat proof can request neutral actor preview panes"
+Assert-Text $flat "OPENMW_FNV_DISABLE_PACKAGE_PROCEDURE_IDLES" "flat proof can force neutral actor preview onto standing-idle composition mode"
 Assert-Text $flat "OPENMW_PROOF_ITEM_MODEL" "flat proof can request standalone item model visual spawn"
 Assert-Text $flat "OPENMW_PROOF_ITEM_STAGE_X" "flat proof can stage standalone item proof coordinates"
 Assert-Text $flat "OPENMW_PROOF_ITEM_VIEW_OFFSET_X" "flat proof can frame standalone item proof cameras"
@@ -147,6 +155,8 @@ Assert-Text $flat "OPENMW_FNV_ACTOR_KIT_PARTS" "flat proof can select actor-kit 
 Assert-Text $flat "OPENMW_FNV_ACTOR_KIT_PART_MODELS" "flat proof can select exact actor-kit part models at runtime"
 Assert-Text $flat "OPENMW_FNV_ACTOR_KIT_PROP_SLOTS" "flat proof can select actor-kit prop slots at runtime"
 Assert-Text $flat "OPENMW_FNV_ACTOR_KIT_PROP_MODELS" "flat proof can select exact actor-kit prop models at runtime"
+Assert-Text $flat "OPENMW_FNV_ACTOR_KIT_ANIMATION_SOURCE" "flat proof can select exact actor-kit animation sources at runtime"
+Assert-Text $flat "OPENMW_FNV_ACTOR_KIT_ANIMATION_STARTPOINT" "flat proof can scrub actor-kit animation time at runtime"
 Assert-Text $flat "OPENMW_FNV_ACTOR_KIT_ANIMATION_GROUP" "flat proof can select exact actor-kit animation groups at runtime"
 Assert-Text $flat "OPENMW_FNV_ACTOR_KIT_DIALOGUE_MODE" "flat proof can select actor-kit dialogue proof mode at runtime"
 Assert-Text $flat "OPENMW_FNV_PROOF_MOUTH_FORCE_OPEN" "flat proof can force talk/mouth proof phase"
@@ -160,14 +170,29 @@ Assert-Text $flat "ActorKitParts:" "flat proof summary records actor-kit part se
 Assert-Text $flat "ActorKitPartModels:" "flat proof summary records actor-kit model selector"
 Assert-Text $flat "ActorKitPropSlots:" "flat proof summary records actor-kit prop slot selector"
 Assert-Text $flat "ActorKitPropModels:" "flat proof summary records actor-kit prop model selector"
+Assert-Text $flat "ActorKitAnimationSource:" "flat proof summary records selected actor-kit animation source"
+Assert-Text $flat "ActorKitAnimationStartPoint:" "flat proof summary records selected actor-kit animation start point"
 Assert-Text $flat "ActorKitAnimationGroup:" "flat proof summary records selected actor-kit animation group"
 Assert-Text $flat "ActorKitDialogueMode:" "flat proof summary records selected actor-kit dialogue mode"
 Assert-Text $flat "ActorViewLocalOffset:" "flat proof summary records actor-local closeup mode"
+Assert-Text $flat "NeutralActorPreview:" "flat proof summary records neutral actor preview mode"
+Assert-Text $flat "NeutralActorPreviewStandingIdle:" "flat proof summary records neutral actor standing-idle composition mode"
 Assert-Text $flat "FnvProofTargetNpc:" "flat proof summary records FNV-specific NPC assembly target"
 Assert-Text $flat "ActorKind:" "flat proof summary records actor kind"
 Assert-Text $flat "CreatureDiagnostics:" "flat proof summary records creature diagnostic mode"
 Assert-Text $flat "fnv-data-provenance.json" "flat proof writes data provenance manifest"
 Assert-Text $engine "falloutProofFormTargetMatches" "runtime proof camera target matching normalizes Fallout form IDs"
+Assert-Text $engine "createFalloutNeutralActorPreviewComposite" "runtime composites neutral actor preview panes for screenshots"
+Assert-Text $engine "OPENMW_PROOF_NEUTRAL_ACTOR_PREVIEW" "runtime exposes neutral actor preview gate"
+Assert-Text $engine "runtime-neutral-actor-preview" "runtime logs neutral actor preview gate marker"
+Assert-Text $characterPreviewHeader "class FalloutActorPreview" "neutral actor preview is a first-class preview type"
+Assert-Text $characterPreview "new ESM4NpcAnimation" "neutral actor preview uses FNV NPC animation assembly"
+Assert-Text $characterPreview "OPENMW_FNV_ACTOR_KIT_ANIMATION_STARTPOINT" "neutral actor preview obeys actor-kit animation scrub time"
+Assert-Text $npcAnimation "OPENMW_FNV_DISABLE_PACKAGE_PROCEDURE_IDLES" "FNV NPC animation can suppress package procedure idles for neutral composition harness"
+Assert-Text $npcAnimation "OPENMW_FNV_ACTOR_KIT_ANIMATION_SOURCE" "FNV NPC animation can append an exact actor-kit animation source"
+Assert-Text $npcAnimation "OPENMW_FNV_ACTOR_KIT_ANIMATION_STARTPOINT" "FNV NPC animation can scrub exact actor-kit animation playback"
+Assert-Text $characterBuilder "NeutralActorPreview" "character builder requests neutral actor preview for NPC harness cases"
+Assert-Text $characterBuilder "NeutralActorPreviewStandingIdle" "character builder requests neutral standing-idle composition mode for NPC harness cases"
 Assert-Text $engine "OPENMW_PROOF_ITEM_MODEL" "runtime can load a standalone proof item model"
 Assert-Text $engine "FNV/ESM4 proof item model spawn" "runtime logs standalone item visual spawn proof"
 Assert-Text $engine "runtime-visual-model-spawn" "runtime classifies standalone item visual spawn separately"
@@ -296,6 +321,8 @@ Assert-Text $characterBuilder "[string[]]`$ActorKitParts" "character builder acc
 Assert-Text $characterBuilder "[string[]]`$ActorKitPartModels" "character builder accepts actor-kit exact part model selector"
 Assert-Text $characterBuilder "[string[]]`$ActorKitPropSlots" "character builder accepts actor-kit prop slot selector"
 Assert-Text $characterBuilder "[string[]]`$ActorKitPropModels" "character builder accepts actor-kit exact prop model selector"
+Assert-Text $characterBuilder "[string]`$ActorKitAnimationSource" "character builder accepts selected actor-kit animation source"
+Assert-Text $characterBuilder "[double]`$ActorKitAnimationStartPoint" "character builder accepts selected actor-kit animation start point"
 Assert-Text $characterBuilder "[string]`$ActorKitAnimationGroup" "character builder accepts selected actor-kit animation group"
 Assert-Text $characterBuilder "[string]`$ActorKitDialogueMode" "character builder accepts selected actor-kit dialogue proof mode"
 Assert-Text $characterBuilder "[string[]]`$Angles" "character builder accepts explicit camera angle selector"
@@ -317,6 +344,8 @@ Assert-Text $characterBuilder "ActorKitParts = `$ActorKitPartsCsv" "character bu
 Assert-Text $characterBuilder "ActorKitPartModels = `$ActorKitPartModelsCsv" "character builder passes actor-kit exact model selector to flat proof"
 Assert-Text $characterBuilder "ActorKitPropSlots = `$ActorKitPropSlotsCsv" "character builder passes actor-kit prop selector to flat proof"
 Assert-Text $characterBuilder "ActorKitPropModels = `$ActorKitPropModelsCsv" "character builder passes actor-kit exact prop model selector to flat proof"
+Assert-Text $characterBuilder "ActorKitAnimationSource = `$ActorKitAnimationSource" "character builder passes selected animation source to flat proof"
+Assert-Text $characterBuilder "ActorKitAnimationStartPoint = `$ActorKitAnimationStartPoint" "character builder passes selected animation start point to flat proof"
 Assert-Text $characterBuilder "ActorKitAnimationGroup = `$ActorKitAnimationGroup" "character builder passes selected animation group to flat proof"
 Assert-Text $characterBuilder "ActorKitDialogueMode = `$ActorKitDialogueMode" "character builder passes selected dialogue mode to flat proof"
 Assert-Text $characterBuilder "actorKitSelection = [pscustomobject][ordered]@" "character builder writes selector state per case"
@@ -333,6 +362,8 @@ Assert-Text $characterViewer "[string[]]`$ActorKitParts" "character viewer accep
 Assert-Text $characterViewer "[string[]]`$ActorKitPartModels" "character viewer accepts actor-kit exact part model selector"
 Assert-Text $characterViewer "[string[]]`$ActorKitPropSlots" "character viewer accepts actor-kit prop slot selector"
 Assert-Text $characterViewer "[string[]]`$ActorKitPropModels" "character viewer accepts actor-kit exact prop model selector"
+Assert-Text $characterViewer "[string]`$ActorKitAnimationSource" "character viewer accepts selected actor-kit animation source"
+Assert-Text $characterViewer "[double]`$ActorKitAnimationStartPoint" "character viewer accepts selected actor-kit animation start point"
 Assert-Text $characterViewer "[string]`$ActorKitAnimationGroup" "character viewer accepts selected actor-kit animation group"
 Assert-Text $characterViewer "[string]`$ActorKitDialogueMode" "character viewer accepts selected actor-kit dialogue mode"
 Assert-Text $characterViewer "[string[]]`$Angles" "character viewer accepts explicit camera angle selector"
@@ -345,6 +376,8 @@ Assert-Text $characterViewer "ActorKitParts = `$ActorKitPartsCsv" "character vie
 Assert-Text $characterViewer "ActorKitPartModels = `$ActorKitPartModelsCsv" "character viewer passes actor-kit exact part model selector to builder"
 Assert-Text $characterViewer "ActorKitPropSlots = `$ActorKitPropSlotsCsv" "character viewer passes actor-kit prop selector to builder"
 Assert-Text $characterViewer "ActorKitPropModels = `$ActorKitPropModelsCsv" "character viewer passes actor-kit exact prop model selector to builder"
+Assert-Text $characterViewer "ActorKitAnimationSource = `$ActorKitAnimationSource" "character viewer passes selected animation source to builder"
+Assert-Text $characterViewer "ActorKitAnimationStartPoint = `$ActorKitAnimationStartPoint" "character viewer passes selected animation start point to builder"
 Assert-Text $characterViewer "ActorKitAnimationGroup = `$ActorKitAnimationGroup" "character viewer passes selected animation group to builder"
 Assert-Text $characterViewer "ActorKitDialogueMode = `$ActorKitDialogueMode" "character viewer passes selected dialogue mode to builder"
 Assert-Text $characterViewer "Angles = `$Angles" "character viewer passes selected camera angles to builder"
@@ -438,6 +471,8 @@ Assert-Text $characterViewerLiveServer '"placedTarget"' "live studio server requ
 Assert-Text $characterViewerLiveServer '"selectedTarget"' "live studio server request records selected catalog target"
 Assert-Text $characterViewerLiveServer "placement_command_args" "live studio server forwards placement bootstrap and stage args"
 Assert-Text $characterViewerLiveServer "ActorKitParts" "live studio server preserves structured component selector overrides"
+Assert-Text $characterViewerLiveServer "ActorKitAnimationSource" "live studio server preserves structured animation source selector overrides"
+Assert-Text $characterViewerLiveServer "ActorKitAnimationStartPoint" "live studio server preserves structured animation start-point selector overrides"
 Assert-Text $characterViewerLiveServer "nikami-fnv-character-studio-session-v1" "live studio server writes stable studio session schema"
 Assert-Text $characterStudioLiveServerTest "FNV character studio live server contract PASS" "live studio server contract has focused helper test"
 Assert-Text $characterStudioLiveServerTest "model-backed item command did not route to the generated item viewer runner" "live studio server contract proves model-backed item visual runner"
@@ -469,9 +504,13 @@ Assert-Text $characterViewerBundle "ActorKitParts" "standalone character viewer 
 Assert-Text $characterViewerBundle "ActorKitPartModels" "standalone character viewer commands include exact model selectors"
 Assert-Text $characterViewerBundle "ActorKitPropSlots" "standalone character viewer commands include prop slot selectors"
 Assert-Text $characterViewerBundle "ActorKitPropModels" "standalone character viewer commands include exact prop model selectors"
+Assert-Text $characterViewerBundle "ActorKitAnimationSource" "standalone character viewer commands include selected animation source"
+Assert-Text $characterViewerBundle "ActorKitAnimationStartPoint" "standalone character viewer commands include selected animation start point"
 Assert-Text $characterViewerBundle "ActorKitAnimationGroup" "standalone character viewer commands include selected animation group"
 Assert-Text $characterViewerBundle "ActorKitDialogueMode" "standalone character viewer commands include selected dialogue mode"
 Assert-Text $characterViewerBundle 'selector_arg("Angles"' "standalone character viewer commands include camera angle selectors"
+Assert-Text $characterViewerBundle '"animationSource"' "standalone character viewer manifests exact animation source controls"
+Assert-Text $characterViewerBundle '"animationStartPoint"' "standalone character viewer manifests exact animation start-point controls"
 Assert-Text $characterViewerBundle '"animationGroup"' "standalone character viewer manifests exact animation group controls"
 Assert-Text $characterViewerBundle '"dialogueMode"' "standalone character viewer manifests exact dialogue mode controls"
 Assert-Text $characterViewerBundle "animationRequests" "standalone character viewer exposes selected animation request evidence"
@@ -568,6 +607,8 @@ Assert-Text $characterStudioCatalog "Studio Session" "character studio catalog H
 Assert-Text $characterStudioCatalog "cameraStrip" "character studio catalog HTML includes top camera strip"
 Assert-Text $characterStudioCatalog "runtimeGateError" "character studio catalog camera strip shows runtime gate failures"
 Assert-Text $characterStudioCatalog "studioPayload" "character studio catalog HTML builds structured component job payloads"
+Assert-Text $characterStudioCatalog "animationSourceInput" "character studio catalog exposes human animation source selector"
+Assert-Text $characterStudioCatalog "animationStartPointInput" "character studio catalog exposes human animation start-point scrubber"
 Assert-Text $characterStudioCatalog "targetMapping" "character studio catalog emits target mapping data"
 Assert-Text $characterStudioCatalog "actor_runtime_target" "character studio catalog derives runtime/base actor target"
 Assert-Text $characterStudioCatalog "actor_placed_target" "character studio catalog preserves placed ref target"

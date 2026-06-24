@@ -196,6 +196,8 @@ def viewer_command(
     part_models: str = "",
     prop_slots: str = "",
     prop_models: str = "",
+    animation_source: str = "",
+    animation_start_point: str = "",
     animation_group: str = "",
     dialogue_mode: str = "",
 ) -> str:
@@ -212,6 +214,8 @@ def viewer_command(
     command += selector_arg("ActorKitPartModels", part_models)
     command += selector_arg("ActorKitPropSlots", prop_slots)
     command += selector_arg("ActorKitPropModels", prop_models)
+    command += selector_arg("ActorKitAnimationSource", animation_source)
+    command += selector_arg("ActorKitAnimationStartPoint", animation_start_point)
     command += selector_arg("ActorKitAnimationGroup", animation_group)
     command += selector_arg("ActorKitDialogueMode", dialogue_mode)
     command += " -OpenViewer"
@@ -590,11 +594,15 @@ def build_failure_focus(
         category = category_from_part(part, part_class)
         matched_model = match_gate_model(part, category, gates)
         command_phase = phase or phase_for_category(category)
+        animation_source = str(actor_kit_selection.get("animationSource") or "")
+        animation_start_point = str(actor_kit_selection.get("animationStartPoint") or "")
         animation_group = str(actor_kit_selection.get("animationGroup") or "")
         dialogue_mode = str(actor_kit_selection.get("dialogueMode") or "")
         command_kwargs: dict[str, str] = {
             "parts": category if category != "all" else "",
             "part_models": matched_model,
+            "animation_source": animation_source,
+            "animation_start_point": animation_start_point,
             "animation_group": animation_group,
             "dialogue_mode": dialogue_mode,
         }

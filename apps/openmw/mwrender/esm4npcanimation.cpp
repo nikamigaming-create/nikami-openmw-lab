@@ -18,6 +18,7 @@
 #include <components/esm4/loadstat.hpp>
 #include <components/esm4/loadweap.hpp>
 
+#include <algorithm>
 #include <cmath>
 #include <cctype>
 #include <cstdlib>
@@ -675,21 +676,68 @@ namespace MWRender
             return group;
         }
 
+        std::string getFalloutActorKitAnimationSource()
+        {
+            const char* value = std::getenv("OPENMW_FNV_ACTOR_KIT_ANIMATION_SOURCE");
+            if (value == nullptr || value[0] == '\0')
+                return {};
+
+            std::string source(value);
+            while (!source.empty()
+                && (source.front() == ' ' || source.front() == '\t' || source.front() == '\r'
+                    || source.front() == '\n' || source.front() == '"' || source.front() == '\''))
+                source.erase(source.begin());
+            while (!source.empty()
+                && (source.back() == ' ' || source.back() == '\t' || source.back() == '\r'
+                    || source.back() == '\n' || source.back() == '"' || source.back() == '\''))
+                source.pop_back();
+            Misc::StringUtils::lowerCaseInPlace(source);
+            if (source == "mtidle" || source == "neutral" || source == "standing")
+                return "meshes/characters/_male/locomotion/mtidle.kf";
+            if (source == "hands-at-side" || source == "handsatside" || source == "talk-hands-at-side")
+                return "meshes/characters/_male/idleanims/talk_handsatside_still2.kf";
+            if (source == "pistol-pose" || source == "pistol" || source == "1hpistol")
+                return "meshes/characters/_male/idleanims/dlcanch1hpistolpose.kf";
+            if (source == "rifle-loiter" || source == "rifle" || source == "2hrloiter")
+                return "meshes/characters/_male/idleanims/2hrloiter.kf";
+            VFS::Path::normalizeFilenameInPlace(source);
+            if (source.rfind("meshes/", 0) != 0)
+                source = "meshes/" + source;
+            if (!Misc::StringUtils::ciEndsWith(source, ".kf"))
+                return {};
+            return source;
+        }
+
+        float getFalloutActorKitAnimationStartPoint()
+        {
+            const char* value = std::getenv("OPENMW_FNV_ACTOR_KIT_ANIMATION_STARTPOINT");
+            if (value == nullptr || value[0] == '\0')
+                return 0.f;
+
+            char* end = nullptr;
+            const float parsed = std::strtof(value, &end);
+            if (end == value || !std::isfinite(parsed))
+                return 0.f;
+            return std::clamp(parsed, 0.f, 0.999f);
+        }
+
         void requestFalloutActorKitAnimation(Animation& animation, const MWWorld::Ptr& ptr, const ESM4::Npc& traits)
         {
             const std::string group = getFalloutActorKitAnimationGroup();
             if (group.empty() || !isFonvProofTargetActor(ptr, traits))
                 return;
 
+            const float startPoint = getFalloutActorKitAnimationStartPoint();
             const bool available = animation.hasAnimation(group);
             Log(Debug::Info) << "FNV/ESM4 proof: actor-kit animation request actor=" << traits.mEditorId
                              << " ref=" << ptr.getCellRef().getRefId()
                              << " group=" << group
+                             << " startPoint=" << startPoint
                              << " available=" << available
                              << " runtime=" << (available ? "runtime-supported" : "known-blocked");
 
-            animation.play(group, MWMechanics::Priority_Scripted, BlendMask_All, false, 1.f, "start", "stop", 0.f, 0,
-                true);
+            animation.play(group, MWMechanics::Priority_Scripted, BlendMask_All, false, 1.f, "start", "stop",
+                startPoint, 0, true);
         }
 
         std::string formatFormIdList(const std::vector<ESM::FormId>& ids, std::size_t maxCount = 16)
@@ -5045,6 +5093,11 @@ namespace MWRender
             return result;
         }
 
+        bool shouldDisableFalloutPackageProcedureAnimationSources()
+        {
+            return std::getenv("OPENMW_FNV_DISABLE_PACKAGE_PROCEDURE_IDLES") != nullptr;
+        }
+
         bool fonvPackageHasExplicitTime(const ESM4::AIPackage& package)
         {
             return package.mSchedule.time != 0xff;
@@ -5348,8 +5401,17 @@ namespace MWRender
                         Log(Debug::Info) << "FNV/ESM4 ASSET PROOF GSEasyPete: authored idle source=" << kfPath;
                     addFonvAnimationSource(kfPath, "authored IDLE", false);
                 }
-                procedureIdleSources
-                    = collectFonvPackageProcedureAnimationSources(mPtr, *store, mResourceSystem, *traits, packageIds);
+                if (shouldDisableFalloutPackageProcedureAnimationSources())
+                {
+                    Log(Debug::Info) << "FNV/ESM4 diag: package procedure animation sources disabled for "
+                                     << traits->mEditorId
+                                     << " by OPENMW_FNV_DISABLE_PACKAGE_PROCEDURE_IDLES";
+                }
+                else
+                {
+                    procedureIdleSources
+                        = collectFonvPackageProcedureAnimationSources(mPtr, *store, mResourceSystem, *traits, packageIds);
+                }
             }
 
             if (!animationRecord->mKf.empty())
@@ -5407,6 +5469,14 @@ namespace MWRender
             // These are narrow candidates such as Easy Pete's chair/eat package and should beat neutral mTIdle.
             for (const std::string& kfPath : procedureIdleSources)
                 addFonvAnimationSource(kfPath, "scheduled package procedure", false, true);
+
+            if (const std::string actorKitSource = getFalloutActorKitAnimationSource(); !actorKitSource.empty())
+            {
+                Log(Debug::Info) << "FNV/ESM4 proof: actor-kit animation source request actor=" << traits->mEditorId
+                                 << " ref=" << mPtr.getCellRef().getRefId()
+                                 << " source=" << actorKitSource;
+                addFonvAnimationSource(actorKitSource, "actor-kit requested", false);
+            }
 
             requestFalloutActorKitAnimation(*this, mPtr, *traits);
         }

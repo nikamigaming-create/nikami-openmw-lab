@@ -15,6 +15,8 @@ param(
     [string[]]$ActorKitPartModels = @(),
     [string[]]$ActorKitPropSlots = @(),
     [string[]]$ActorKitPropModels = @(),
+    [string]$ActorKitAnimationSource = "",
+    [double]$ActorKitAnimationStartPoint = [double]::NaN,
     [string]$ActorKitAnimationGroup = "",
     [string]$ActorKitDialogueMode = "",
     [string[]]$Angles = @("front", "front-left", "front-right"),
@@ -122,6 +124,11 @@ New-Item -ItemType Directory -Force -Path $SuiteDir | Out-Null
 function Write-SuiteLine([string]$Text = "") {
     Write-Host $Text
     Add-Content -LiteralPath $SummaryFile -Value $Text
+}
+
+function Format-Double([double]$Value) {
+    if ([double]::IsNaN($Value)) { return "" }
+    return $Value.ToString("0.######", [Globalization.CultureInfo]::InvariantCulture)
 }
 
 function Get-ProofDirectories {
@@ -241,6 +248,8 @@ Write-SuiteLine "ActorKitParts: $ActorKitPartsCsv"
 Write-SuiteLine "ActorKitPartModels: $ActorKitPartModelsCsv"
 Write-SuiteLine "ActorKitPropSlots: $ActorKitPropSlotsCsv"
 Write-SuiteLine "ActorKitPropModels: $ActorKitPropModelsCsv"
+Write-SuiteLine "ActorKitAnimationSource: $ActorKitAnimationSource"
+Write-SuiteLine "ActorKitAnimationStartPoint: $(Format-Double $ActorKitAnimationStartPoint)"
 Write-SuiteLine "ActorKitAnimationGroup: $ActorKitAnimationGroup"
 Write-SuiteLine "ActorKitDialogueMode: $ActorKitDialogueMode"
 Write-SuiteLine "Angles: $(@($CameraAngles | ForEach-Object { $_.Name }) -join ',')"
@@ -251,6 +260,8 @@ Write-SuiteLine "ActorStagePosition: $ActorStageX,$ActorStageY,$ActorStageZ"
 Write-SuiteLine "ActorStageRotation: $ActorStageRotX,$ActorStageRotY,$ActorStageRotZ"
 Write-SuiteLine "Policy: no retail assets copied into repo; generated proof output only"
 Write-SuiteLine ""
+
+$ActorKitAnimationStartPointValue = if (![double]::IsNaN($ActorKitAnimationStartPoint)) { $ActorKitAnimationStartPoint } else { $null }
 
 $Results = New-Object "System.Collections.Generic.List[object]"
 
@@ -289,6 +300,8 @@ foreach ($phase in $Phases) {
             ActorKind = $ActorKind
             StageActor = $true
             ActorFrame = $ActorFrame
+            NeutralActorPreview = $($ActorKind -ine "creature")
+            NeutralActorPreviewStandingIdle = $($ActorKind -ine "creature")
             ActorStageX = $ActorStageX
             ActorStageY = $ActorStageY
             ActorStageZ = $ActorStageZ
@@ -307,6 +320,8 @@ foreach ($phase in $Phases) {
         if (![string]::IsNullOrWhiteSpace($ActorKitPartModelsCsv)) { $proofArgs.ActorKitPartModels = $ActorKitPartModelsCsv }
         if (![string]::IsNullOrWhiteSpace($ActorKitPropSlotsCsv)) { $proofArgs.ActorKitPropSlots = $ActorKitPropSlotsCsv }
         if (![string]::IsNullOrWhiteSpace($ActorKitPropModelsCsv)) { $proofArgs.ActorKitPropModels = $ActorKitPropModelsCsv }
+        if (![string]::IsNullOrWhiteSpace($ActorKitAnimationSource)) { $proofArgs.ActorKitAnimationSource = $ActorKitAnimationSource }
+        if (![double]::IsNaN($ActorKitAnimationStartPoint)) { $proofArgs.ActorKitAnimationStartPoint = $ActorKitAnimationStartPoint }
         if (![string]::IsNullOrWhiteSpace($ActorKitAnimationGroup)) { $proofArgs.ActorKitAnimationGroup = $ActorKitAnimationGroup }
         if (![string]::IsNullOrWhiteSpace($ActorKitDialogueMode)) { $proofArgs.ActorKitDialogueMode = $ActorKitDialogueMode }
         if (![string]::IsNullOrWhiteSpace($FnvConfigData)) { $proofArgs.FnvConfigData = $FnvConfigData }
@@ -388,6 +403,8 @@ foreach ($phase in $Phases) {
                 partModels = $ActorKitPartModelsCsv
                 propSlots = $ActorKitPropSlotsCsv
                 propModels = $ActorKitPropModelsCsv
+                animationSource = $ActorKitAnimationSource
+                animationStartPoint = $ActorKitAnimationStartPointValue
                 animationGroup = $ActorKitAnimationGroup
                 dialogueMode = $ActorKitDialogueMode
             }
