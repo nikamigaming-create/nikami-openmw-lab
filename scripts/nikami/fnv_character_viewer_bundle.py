@@ -202,6 +202,9 @@ def viewer_command(
     dialogue_mode: str = "",
     neutral_preview_profile: str = "",
     fnv_rotation_mode: str = "",
+    allow_missing_actor_visible_hand_geometry: bool = False,
+    actor_visible_hand_max_distance: str = "30",
+    fnv_skinning_matrix_audit: str = "arms,rightHand,leftHand,HeadOld",
 ) -> str:
     command = (
         "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/nikami/run-fnv-character-viewer.ps1 "
@@ -222,6 +225,11 @@ def viewer_command(
     command += selector_arg("ActorKitDialogueMode", dialogue_mode)
     command += selector_arg("NeutralActorPreviewProfile", neutral_preview_profile)
     command += selector_arg("FnvRotationMode", fnv_rotation_mode)
+    if actor_kind != "creature":
+        command += selector_arg("ActorVisibleHandMaxDistance", actor_visible_hand_max_distance)
+        if allow_missing_actor_visible_hand_geometry:
+            command += " -AllowMissingActorVisibleHandGeometry"
+    command += selector_arg("FnvSkinningMatrixAudit", fnv_skinning_matrix_audit)
     command += " -OpenViewer"
     return command
 
@@ -1057,6 +1065,7 @@ def load_suite(suite_dir: Path) -> dict[str, Any]:
             "actorStage": raw.get("actorStage") or {},
             "actorCamera": raw.get("actorCamera") or {},
             "actorKitSelection": actor_kit_selection,
+            "runtimeEvidence": raw.get("runtimeEvidence") or {},
             "openmwLog": rel_path(case_dir / "openmw.log", suite_dir),
             "reportJson": rel_path(case_dir / "character-builder-report.json", suite_dir),
             "reportMarkdown": rel_path(case_dir / "character-builder-report.md", suite_dir),
@@ -1121,6 +1130,7 @@ def load_suite(suite_dir: Path) -> dict[str, Any]:
             "failure-summary-v1",
             "assembly-inventory-v1",
             "capture-failures-v1",
+            "runtime-evidence-v1",
         ],
         "status": overall,
         "actorProfile": {
@@ -1269,6 +1279,10 @@ a {{ color: #9fc2ff; }}
   <div class="section">
     <h2>Case Status</h2>
     <div id="caseStatus"></div>
+  </div>
+  <div class="section">
+    <h2>Runtime Evidence</h2>
+    <div id="runtimeEvidenceTable"></div>
   </div>
   <div class="section">
     <h2>Actor Matches</h2>
@@ -1500,6 +1514,19 @@ function renderStatus(c) {{
   }});
   document.getElementById("caseStatus").innerHTML = table(["Case", "Runtime", "Report", "Log", "JSON"], rows);
 }}
+function renderRuntimeEvidence(c) {{
+  const e = c?.runtimeEvidence || {{}};
+  const hand = e.visibleHandGeometry || {{}};
+  const rows = [
+    `<tr><td>visible hands</td><td>${{statusSpan(hand.status || "MISSING")}}</td><td>${{esc(hand.samples || "")}}</td></tr>`,
+    `<tr><td>hand gate required</td><td>${{esc(e.requireActorVisibleHandGeometry ?? "")}}</td><td>max=${{esc(e.actorVisibleHandMaxDistance ?? "")}}</td></tr>`,
+    `<tr><td>skinning audit</td><td>${{esc(e.fnvSkinningMatrixAudit || "")}}</td><td>${{esc((e.skinningModes || []).length)}} samples</td></tr>`
+  ];
+  for (const mode of (e.skinningModes || []).slice(0, 12)) {{
+    rows.push(`<tr><td><code>${{esc(mode.drawable || "")}}</code></td><td>${{esc(mode.selected || "")}}</td><td>inventory=${{esc(mode.inventoryPaperDoll || "")}} sourceFallback=${{esc(mode.sourceFallback || "")}}</td></tr>`);
+  }}
+  document.getElementById("runtimeEvidenceTable").innerHTML = table(["Probe", "Status/Mode", "Evidence"], rows);
+}}
 function renderCaptureFailures() {{
   const rows = (MANIFEST.captureFailures || []).map(f => `<tr><td>${{esc(f.case)}}</td><td>${{esc(f.phase)}}</td><td>${{esc(f.angle)}}</td><td>${{statusSpan(f.runtimeGateStatus)}}</td><td>${{statusSpan(f.reportStatus)}}</td><td>${{esc(f.screenshotCount)}}</td><td>${{commandBlock(f.command || "", `capture ${{f.angle || ""}}`)}}</td></tr>`);
   document.getElementById("captureFailureTable").innerHTML = table(["Case", "Phase", "Angle", "Runtime", "Report", "Screenshots", "Rerun"], rows, "captureTable");
@@ -1576,6 +1603,7 @@ function render() {{
   renderImages();
   renderCaptureFailures();
   renderStatus(c);
+  renderRuntimeEvidence(c);
   renderLines("actorMatchLines", (c?.actorMatches || []).map(item => item.line || JSON.stringify(item)));
   renderGates(c);
   renderAssemblyInventory();

@@ -42,6 +42,9 @@ param(
     [double]$ActorViewTargetZ = 108,
     [string]$NeutralActorPreviewProfile = "audit",
     [string]$FnvRotationMode = "bindCoreBindLowerSplitUpper",
+    [switch]$AllowMissingActorVisibleHandGeometry,
+    [double]$ActorVisibleHandMaxDistance = 30.0,
+    [string]$FnvSkinningMatrixAudit = "arms,rightHand,leftHand,HeadOld",
     [switch]$FnvUseNativeAnimationCallbacks,
     [string]$SuiteDir = "",
     [switch]$NoRun,
@@ -408,6 +411,9 @@ Write-Host "ActorKitAnimationGroup: $ActorKitAnimationGroup"
 Write-Host "ActorKitDialogueMode: $ActorKitDialogueMode"
 Write-Host "NeutralActorPreviewProfile: $NeutralActorPreviewProfile"
 Write-Host "FnvRotationMode: $FnvRotationMode"
+Write-Host "AllowMissingActorVisibleHandGeometry: $AllowMissingActorVisibleHandGeometry"
+Write-Host "ActorVisibleHandMaxDistance: $ActorVisibleHandMaxDistance"
+Write-Host "FnvSkinningMatrixAudit: $FnvSkinningMatrixAudit"
 Write-Host "FnvUseNativeAnimationCallbacks: $FnvUseNativeAnimationCallbacks"
 Write-Host "BootstrapCell: $BootstrapCell"
 Write-Host "BootstrapPosition: $BootstrapX,$BootstrapY,$BootstrapZ"
@@ -482,7 +488,10 @@ else {
             ActorViewTargetZ = $ActorViewTargetZ
             NeutralActorPreviewProfile = $NeutralActorPreviewProfile
             FnvRotationMode = $FnvRotationMode
+            ActorVisibleHandMaxDistance = $ActorVisibleHandMaxDistance
+            FnvSkinningMatrixAudit = $FnvSkinningMatrixAudit
         }
+        if ($AllowMissingActorVisibleHandGeometry) { $builderArgs.AllowMissingActorVisibleHandGeometry = $true }
         if (![string]::IsNullOrWhiteSpace($ActorKitPartsCsv)) { $builderArgs.ActorKitParts = $ActorKitPartsCsv }
         if (![string]::IsNullOrWhiteSpace($ActorKitPartModelsCsv)) { $builderArgs.ActorKitPartModels = $ActorKitPartModelsCsv }
         if (![string]::IsNullOrWhiteSpace($ActorKitPropSlotsCsv)) { $builderArgs.ActorKitPropSlots = $ActorKitPropSlotsCsv }

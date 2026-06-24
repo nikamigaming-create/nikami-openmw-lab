@@ -87,6 +87,7 @@ param(
     [switch]$RequireActorVisibleHandGeometry,
     [double]$ActorVisibleHandMaxDistance = 30.0,
     [switch]$FnvPartMatrixAudit,
+    [string]$FnvSkinningMatrixAudit = "",
     [string]$CharacterBuilderPhase = "",
     [string[]]$ActorKitParts = @(),
     [string[]]$ActorKitPartModels = @(),
@@ -277,12 +278,46 @@ function Get-ActorProofPatterns([string]$Path, [string]$Target) {
     $patterns = [System.Collections.Generic.List[string]]::new()
     if ([string]::IsNullOrWhiteSpace($Target)) { return @() }
 
-    $patterns.Add([regex]::Escape($Target))
+    $addPattern = {
+        param([string]$Value)
+        if ([string]::IsNullOrWhiteSpace($Value) -or $Value -eq "<none>") { return }
+        $patterns.Add([regex]::Escape($Value.Trim('"')))
+    }
+
+    & $addPattern $Target
     $targetPattern = [regex]::Escape($Target)
     $matchLine = Get-FirstLogLine $Path "active-cell actor match target=`"$targetPattern`""
     if ($matchLine) {
-        if ($matchLine -match "ref=([^ ]+)") { $patterns.Add([regex]::Escape($Matches[1])) }
-        if ($matchLine -match "base=([^ ]+)") { $patterns.Add([regex]::Escape($Matches[1])) }
+        if ($matchLine -match "ref=([^ ]+)") { & $addPattern $Matches[1] }
+        if ($matchLine -match "base=([^ ]+)") { & $addPattern $Matches[1] }
+    }
+
+    $assemblyMatches = @(
+        Select-String -LiteralPath $Path `
+            -Pattern "FNV/ESM4 proof: actor part assembly target match target=`"$targetPattern`"" `
+            -ErrorAction SilentlyContinue
+    )
+    foreach ($assemblyMatch in $assemblyMatches) {
+        $fields = @{}
+        foreach ($name in @("actor", "refAlias", "ref", "baseEditor", "baseForm", "traitsForm")) {
+            $fieldPattern = "$name=(`"[^`"]+`"|[^ ]+)"
+            if ($assemblyMatch.Line -match $fieldPattern) {
+                $fields[$name] = $Matches[1].Trim('"')
+            }
+        }
+
+        $isTargetActor = $false
+        foreach ($value in $fields.Values) {
+            if ($value -ieq $Target) {
+                $isTargetActor = $true
+                break
+            }
+        }
+        if (!$isTargetActor) { continue }
+
+        foreach ($value in $fields.Values) {
+            & $addPattern $value
+        }
     }
 
     $seen = [System.Collections.Generic.HashSet[string]]::new()
@@ -1505,6 +1540,7 @@ try {
     Set-ProofEnv $previousEnv "OPENMW_PROOF_WALK_MIN_Z" $WalkMinZ
     if ($RequirePlayerTerrainSupport) { Set-ProofEnv $previousEnv "OPENMW_FNV_FLOOR_WATCHDOG" "1" }
     if ($FnvPartMatrixAudit) { Set-ProofEnv $previousEnv "OPENMW_FNV_PART_MATRIX_AUDIT" "1" }
+    Set-ProofEnv $previousEnv "OPENMW_FNV_SKINNING_MATRIX_AUDIT" $FnvSkinningMatrixAudit
     Set-ProofEnv $previousEnv "OPENMW_FNV_ROTATION_MODE" $FnvRotationMode
     Set-ProofEnv $previousEnv "OPENMW_FNV_CHARACTER_BUILDER_PHASE" $CharacterBuilderPhase
     Set-ProofEnv $previousEnv "OPENMW_FNV_ACTOR_KIT_PARTS" $ActorKitPartsCsv
@@ -1621,6 +1657,7 @@ try {
     Write-ProofLine "ScreenshotTimingMaxActorCameraAgeFrames: $ScreenshotTimingMaxActorCameraAgeFrames"
     Write-ProofLine "RequireActorVisibleHandGeometry: $RequireActorVisibleHandGeometry"
     Write-ProofLine "ActorVisibleHandMaxDistance: $ActorVisibleHandMaxDistance"
+    Write-ProofLine "FnvSkinningMatrixAudit: $FnvSkinningMatrixAudit"
     Write-ProofLine "CharacterBuilderPhase: $CharacterBuilderPhase"
     Write-ProofLine "ActorKitParts: $ActorKitPartsCsv"
     Write-ProofLine "ActorKitPartModels: $ActorKitPartModelsCsv"

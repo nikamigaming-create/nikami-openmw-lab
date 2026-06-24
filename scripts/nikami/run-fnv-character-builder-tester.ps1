@@ -42,6 +42,9 @@ param(
     [double]$ActorViewTargetZ = 108,
     [string]$NeutralActorPreviewProfile = "audit",
     [string]$FnvRotationMode = "bindCoreBindLowerSplitUpper",
+    [switch]$AllowMissingActorVisibleHandGeometry,
+    [double]$ActorVisibleHandMaxDistance = 30.0,
+    [string]$FnvSkinningMatrixAudit = "arms,rightHand,leftHand,HeadOld",
     [switch]$FnvUseNativeAnimationCallbacks,
     [switch]$CreatureDiagnostics,
     [switch]$NoSound,
@@ -184,6 +187,65 @@ function Join-OptionalSelectorList([string[]]$Values) {
     return ($items -join ",")
 }
 
+function Get-RegexValue([string]$Text, [string]$Pattern) {
+    if ([string]::IsNullOrWhiteSpace($Text)) { return $null }
+    $match = [regex]::Match($Text, $Pattern)
+    if (!$match.Success -or $match.Groups.Count -lt 2) { return $null }
+    return $match.Groups[1].Value
+}
+
+function Get-FnvRuntimeEvidence([string]$ProofDir, [string]$FnvSkinningMatrixAudit) {
+    $summaryPath = Join-Path $ProofDir "summary.txt"
+    $openMwLog = Join-Path $ProofDir "openmw.log"
+    $summaryText = if (Test-Path -LiteralPath $summaryPath -PathType Leaf) {
+        Get-Content -LiteralPath $summaryPath -Raw
+    } else {
+        ""
+    }
+
+    $skinningModes = New-Object "System.Collections.Generic.List[object]"
+    $seenSkinning = New-Object "System.Collections.Generic.HashSet[string]"
+    if (Test-Path -LiteralPath $openMwLog -PathType Leaf) {
+        Select-String -LiteralPath $openMwLog -Pattern "FNV/ESM4 diag: Fallout RigGeometry '.*' skinning mode delta" -ErrorAction SilentlyContinue |
+            Select-Object -First 80 |
+            ForEach-Object {
+                $line = $_.Line
+                if ($line -match "Fallout RigGeometry '([^']+)'.* selected=([^ ]+) inventoryPaperDoll=([^ ]+) sourceFallback=([^ ]+) hasSkinToSkel=([^ ]+) useSkinToSkel=([^ ]+)") {
+                    $key = "$($Matches[1])|$($Matches[2])|$($Matches[3])"
+                    if ($seenSkinning.Add($key)) {
+                        $null = $skinningModes.Add([pscustomobject][ordered]@{
+                            drawable = $Matches[1]
+                            selected = $Matches[2]
+                            inventoryPaperDoll = $Matches[3]
+                            sourceFallback = $Matches[4]
+                            hasSkinToSkel = $Matches[5]
+                            useSkinToSkel = $Matches[6]
+                            line = $line
+                        })
+                    }
+                }
+            }
+    }
+
+    $requireActorVisibleHandGeometry = Get-RegexValue $summaryText "RequireActorVisibleHandGeometry:\s+([^\r\n]+)"
+    $actorVisibleHandMaxDistance = Get-RegexValue $summaryText "ActorVisibleHandMaxDistance:\s+([^\r\n]+)"
+    $visibleHandGeometryStatus = Get-RegexValue $summaryText "Target visible hand geometry status:\s+([^\r\n]+)"
+    $visibleHandGeometrySamples = Get-RegexValue $summaryText "Target visible hand geometry samples:\s+([^\r\n]+)"
+    $visibleHandGeometryFailureLine = Get-RegexValue $summaryText "Target visible hand geometry failure line:\s+([^\r\n]+)"
+
+    return [pscustomobject][ordered]@{
+        requireActorVisibleHandGeometry = $requireActorVisibleHandGeometry
+        actorVisibleHandMaxDistance = $actorVisibleHandMaxDistance
+        visibleHandGeometry = [pscustomobject][ordered]@{
+            status = $visibleHandGeometryStatus
+            samples = $visibleHandGeometrySamples
+            failureLine = $visibleHandGeometryFailureLine
+        }
+        fnvSkinningMatrixAudit = $FnvSkinningMatrixAudit
+        skinningModes = @($skinningModes.ToArray())
+    }
+}
+
 $diagonal = $ActorViewDistance * 0.7071067811865476
 $AllAngles = @(
     [pscustomobject]@{ Name = "front"; OffsetX = $ActorViewDistance; OffsetY = 0.0 },
@@ -256,6 +318,9 @@ Write-SuiteLine "ActorKitAnimationStartPoint: $(Format-Double $ActorKitAnimation
 Write-SuiteLine "ActorKitAnimationGroup: $ActorKitAnimationGroup"
 Write-SuiteLine "ActorKitDialogueMode: $ActorKitDialogueMode"
 Write-SuiteLine "FnvRotationMode: $FnvRotationMode"
+Write-SuiteLine "AllowMissingActorVisibleHandGeometry: $AllowMissingActorVisibleHandGeometry"
+Write-SuiteLine "ActorVisibleHandMaxDistance: $ActorVisibleHandMaxDistance"
+Write-SuiteLine "FnvSkinningMatrixAudit: $FnvSkinningMatrixAudit"
 Write-SuiteLine "FnvUseNativeAnimationCallbacks: $FnvUseNativeAnimationCallbacks"
 Write-SuiteLine "Angles: $(@($CameraAngles | ForEach-Object { $_.Name }) -join ',')"
 Write-SuiteLine "BootstrapCell: $BootstrapCell"
@@ -321,8 +386,14 @@ foreach ($phase in $Phases) {
             ActorViewTargetZ = $ActorViewTargetZ
             ActorViewLocalOffset = $true
             FnvPartMatrixAudit = $true
+            FnvSkinningMatrixAudit = $FnvSkinningMatrixAudit
             FnvRotationMode = $FnvRotationMode
             CharacterBuilderPhase = $phase
+        }
+        $requireVisibleHandGeometry = !$AllowMissingActorVisibleHandGeometry -and $ActorKind -ine "creature"
+        if ($requireVisibleHandGeometry) {
+            $proofArgs.RequireActorVisibleHandGeometry = $true
+            $proofArgs.ActorVisibleHandMaxDistance = $ActorVisibleHandMaxDistance
         }
         if (![string]::IsNullOrWhiteSpace($ActorKitPartsCsv)) { $proofArgs.ActorKitParts = $ActorKitPartsCsv }
         if (![string]::IsNullOrWhiteSpace($ActorKitPartModelsCsv)) { $proofArgs.ActorKitPartModels = $ActorKitPartModelsCsv }
@@ -371,6 +442,7 @@ foreach ($phase in $Phases) {
         if (Test-Path -LiteralPath $reportJson) {
             $reportData = Get-Content -LiteralPath $reportJson -Raw | ConvertFrom-Json
         }
+        $runtimeEvidence = Get-FnvRuntimeEvidence $ProofDir $FnvSkinningMatrixAudit
 
         $result = [pscustomobject][ordered]@{
             case = $caseName
@@ -419,8 +491,12 @@ foreach ($phase in $Phases) {
                 dialogueMode = $ActorKitDialogueMode
                 neutralPreviewProfile = $NeutralActorPreviewProfile
                 fnvRotationMode = $FnvRotationMode
+                requireVisibleHandGeometry = [bool]$requireVisibleHandGeometry
+                actorVisibleHandMaxDistance = $ActorVisibleHandMaxDistance
+                fnvSkinningMatrixAudit = $FnvSkinningMatrixAudit
                 fnvUseNativeAnimationCallbacks = [bool]$FnvUseNativeAnimationCallbacks
             }
+            runtimeEvidence = $runtimeEvidence
             failures = if ($null -ne $reportData) { @($reportData.failures) } else { @("report parser did not produce JSON") }
             screenshots = if ($null -ne $reportData) { @($reportData.screenshots) } else { @() }
         }

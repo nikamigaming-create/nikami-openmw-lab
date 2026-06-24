@@ -714,6 +714,9 @@ def structured_actor_job(entry: dict[str, Any], payload: dict[str, Any]) -> tupl
         "dialogueMode": first_text(selector_value(payload, "dialogueMode")),
         "neutralPreviewProfile": first_text(selector_value(payload, "neutralPreviewProfile")),
         "fnvRotationMode": first_text(selector_value(payload, "fnvRotationMode")),
+        "allowMissingActorVisibleHandGeometry": first_text(selector_value(payload, "allowMissingActorVisibleHandGeometry")),
+        "actorVisibleHandMaxDistance": first_text(selector_value(payload, "actorVisibleHandMaxDistance"), "30"),
+        "fnvSkinningMatrixAudit": first_text(selector_value(payload, "fnvSkinningMatrixAudit"), "arms,rightHand,leftHand,HeadOld"),
     }
     command = (
         "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/nikami/run-fnv-character-viewer.ps1 "
@@ -730,6 +733,11 @@ def structured_actor_job(entry: dict[str, Any], payload: dict[str, Any]) -> tupl
     command += selector_arg("ActorKitDialogueMode", selectors["dialogueMode"])
     command += selector_arg("NeutralActorPreviewProfile", selectors["neutralPreviewProfile"])
     command += selector_arg("FnvRotationMode", selectors["fnvRotationMode"])
+    if actor_kind != "creature":
+        command += selector_arg("ActorVisibleHandMaxDistance", selectors["actorVisibleHandMaxDistance"])
+        if selectors["allowMissingActorVisibleHandGeometry"].lower() in {"1", "true", "yes"}:
+            command += " -AllowMissingActorVisibleHandGeometry"
+    command += selector_arg("FnvSkinningMatrixAudit", selectors["fnvSkinningMatrixAudit"])
     if actor_kind == "creature":
         command += " -CreatureDiagnostics"
     request = {
