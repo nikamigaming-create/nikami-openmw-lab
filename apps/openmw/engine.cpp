@@ -1607,7 +1607,8 @@ namespace
             && cameraPos.z() < playerPos.z() + 2048.0;
     }
 
-    bool settleFNVFlatStartupCamera(MWBase::World& world, osg::Camera* viewerCamera, int attempt)
+    bool settleFNVFlatStartupCamera(
+        MWBase::World& world, osg::Camera* viewerCamera, int attempt, unsigned int frameNumber)
     {
         MWWorld::Ptr player = world.getPlayerPtr();
         if (player.isEmpty())
@@ -1646,24 +1647,26 @@ namespace
         const bool attached = fnvFlatCameraIsAttached(player, *camera);
         if (!attached && (attempt <= 5 || attempt % 30 == 0))
         {
-            Log(Debug::Warning) << "FNV/ESM4 diag: flat startup camera not attached yet attempt=" << attempt
-                                << " mode=" << static_cast<int>(camera->getMode()) << " playerPos=(" << pos.pos[0]
-                                << "," << pos.pos[1] << "," << pos.pos[2] << ") trackedPos=(" << trackedPos.x()
-                                << "," << trackedPos.y() << "," << trackedPos.z() << ") cameraPos=("
-                                << cameraPos.x() << "," << cameraPos.y() << "," << cameraPos.z()
-                                << ") cameraPitch=" << camera->getPitch() << " cameraYaw=" << camera->getYaw();
+            Log(Debug::Warning) << "FNV/ESM4 diag: flat startup camera not attached yet frame=" << frameNumber
+                                << " attempt=" << attempt << " mode=" << static_cast<int>(camera->getMode())
+                                << " playerPos=(" << pos.pos[0] << "," << pos.pos[1] << "," << pos.pos[2]
+                                << ") trackedPos=(" << trackedPos.x() << "," << trackedPos.y() << ","
+                                << trackedPos.z() << ") cameraPos=(" << cameraPos.x() << "," << cameraPos.y()
+                                << "," << cameraPos.z() << ") cameraPitch=" << camera->getPitch()
+                                << " cameraYaw=" << camera->getYaw();
             return false;
         }
 
         if (!attached)
             return false;
 
-        Log(Debug::Info) << "FNV/ESM4 diag: settled flat startup camera via zoom-cycle equivalent attempt=" << attempt
-                         << " mode=" << static_cast<int>(camera->getMode()) << " playerPos=(" << pos.pos[0] << ","
-                         << pos.pos[1] << "," << pos.pos[2] << ") playerRotZ=" << pos.rot[2] << " trackedPos=("
-                         << trackedPos.x() << "," << trackedPos.y() << "," << trackedPos.z() << ") cameraPos=("
-                         << cameraPos.x() << "," << cameraPos.y() << "," << cameraPos.z()
-                         << ") cameraPitch=" << camera->getPitch() << " cameraYaw=" << camera->getYaw();
+        Log(Debug::Info) << "FNV/ESM4 diag: settled flat startup camera via zoom-cycle equivalent frame="
+                         << frameNumber << " attempt=" << attempt << " mode=" << static_cast<int>(camera->getMode())
+                         << " playerPos=(" << pos.pos[0] << "," << pos.pos[1] << "," << pos.pos[2]
+                         << ") playerRotZ=" << pos.rot[2] << " trackedPos=(" << trackedPos.x() << ","
+                         << trackedPos.y() << "," << trackedPos.z() << ") cameraPos=(" << cameraPos.x() << ","
+                         << cameraPos.y() << "," << cameraPos.z() << ") cameraPitch=" << camera->getPitch()
+                         << " cameraYaw=" << camera->getYaw();
         return true;
     }
 }
@@ -2048,6 +2051,7 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
 
     static bool fnvFlatStartupCameraSettled = false;
     static int fnvFlatStartupCameraAttempts = 0;
+    static unsigned int fnvFlatStartupCameraSettledFrame = 0;
     static int fnvWorldReadyFrames = 0;
     const bool fnvLoadingGui = mWindowManager->containsMode(MWGui::GM_Loading)
         || mWindowManager->containsMode(MWGui::GM_LoadingWallpaper)
@@ -2063,12 +2067,16 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
     {
         ++fnvFlatStartupCameraAttempts;
         fnvFlatStartupCameraSettled
-            = settleFNVFlatStartupCamera(*mWorld, mViewer->getCamera(), fnvFlatStartupCameraAttempts);
+            = settleFNVFlatStartupCamera(*mWorld, mViewer->getCamera(), fnvFlatStartupCameraAttempts, frameNumber);
+        if (fnvFlatStartupCameraSettled && fnvFlatStartupCameraSettledFrame == 0)
+            fnvFlatStartupCameraSettledFrame = frameNumber;
         if (!fnvFlatStartupCameraSettled && fnvFlatStartupCameraAttempts >= 180)
         {
             fnvFlatStartupCameraSettled = true;
+            fnvFlatStartupCameraSettledFrame = frameNumber;
             Log(Debug::Error) << "FNV/ESM4 diag: flat startup camera did not attach after "
-                              << fnvFlatStartupCameraAttempts << " attempts; leaving current camera state for input";
+                              << fnvFlatStartupCameraAttempts << " attempts at frame " << frameNumber
+                              << "; leaving current camera state for input";
         }
     }
     if (!proofPlacementApplied && proofBaselinePlacementEnabled
@@ -2323,6 +2331,8 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
     const bool proofStageActor = std::getenv("OPENMW_PROOF_STAGE_ACTOR") != nullptr;
     const bool proofStageActorLock = proofStageActor && std::getenv("OPENMW_PROOF_STAGE_ACTOR_UNLOCK") == nullptr;
     const int proofActorFrame = static_cast<int>(getProofFloat("OPENMW_PROOF_ACTOR_FRAME", 240.f));
+    static unsigned int proofActorCameraFirstAppliedFrame = 0;
+    static unsigned int proofActorCameraLastAppliedFrame = 0;
     if ((!proofActorCameraApplied || proofStageActorLock) && proofActorTarget != nullptr && *proofActorTarget != '\0'
         && frameNumber >= static_cast<unsigned>(proofActorFrame)
         && mStateManager->getState() == MWBase::StateManager::State_Running)
@@ -2388,12 +2398,12 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                     {
                         const ESM::Position& actorPos = ptr.getRefData().getPosition();
                         Log(Debug::Info) << "FNV/ESM4 proof: active-cell actor match target=\"" << target
-                                         << "\" ref=" << refId << " base=" << baseId << " name=\"" << actorName
-                                         << "\" baseEditor=\"" << baseEditorId << "\" baseFull=\"" << baseFullName
-                                         << "\" pos=(" << actorPos.pos[0] << "," << actorPos.pos[1] << ","
-                                         << actorPos.pos[2] << ") rot=(" << actorPos.rot[0] << ","
-                                         << actorPos.rot[1] << "," << actorPos.rot[2] << ") scanned=" << scanned
-                                         << " actors=" << actors;
+                                         << "\" frame=" << frameNumber << " ref=" << refId << " base=" << baseId
+                                         << " name=\"" << actorName << "\" baseEditor=\"" << baseEditorId
+                                         << "\" baseFull=\"" << baseFullName << "\" pos=(" << actorPos.pos[0]
+                                         << "," << actorPos.pos[1] << "," << actorPos.pos[2] << ") rot=("
+                                         << actorPos.rot[0] << "," << actorPos.rot[1] << "," << actorPos.rot[2]
+                                         << ") scanned=" << scanned << " actors=" << actors;
                     }
                     return false;
                 }
@@ -2419,10 +2429,11 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                 proofActor = mWorld->moveObject(proofActor, stagePos, true, true);
                 mWorld->rotateObject(proofActor, stageRot);
                 if (proofActorLogThisFrame)
-                    Log(Debug::Info) << "FNV/ESM4 proof: staged actor target=\"" << target << "\" pos=("
-                                     << stagePos.x() << "," << stagePos.y() << "," << stagePos.z() << ") rot=("
-                                     << stageRot.x() << "," << stageRot.y() << "," << stageRot.z()
-                                     << ") lock=" << proofStageActorLock << " ptr=" << proofActor.toString();
+                    Log(Debug::Info) << "FNV/ESM4 proof: staged actor target=\"" << target << "\" frame="
+                                     << frameNumber << " pos=(" << stagePos.x() << "," << stagePos.y() << ","
+                                     << stagePos.z() << ") rot=(" << stageRot.x() << "," << stageRot.y() << ","
+                                     << stageRot.z() << ") lock=" << proofStageActorLock
+                                     << " ptr=" << proofActor.toString();
             }
 
             const ESM::Position& actorPos = proofActor.getRefData().getPosition();
@@ -2459,7 +2470,7 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                 {
                     if (proofActorLogThisFrame)
                         Log(Debug::Info) << "FNV/ESM4 proof: clamped actor camera player support target=\""
-                                         << target << "\" fromZ=" << playerTargetPos.z()
+                                         << target << "\" frame=" << frameNumber << " fromZ=" << playerTargetPos.z()
                                          << " toZ=" << minPlayerZ << " hit=" << support.mHit << " hitPos=("
                                          << support.mHitPos.x() << "," << support.mHitPos.y() << ","
                                          << support.mHitPos.z() << ")";
@@ -2490,10 +2501,14 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                 camera->updateCamera(mViewer->getCamera());
 
                 const osg::Vec3d finalCameraPos = camera->getPosition();
+                if (proofActorCameraFirstAppliedFrame == 0)
+                    proofActorCameraFirstAppliedFrame = frameNumber;
+                proofActorCameraLastAppliedFrame = frameNumber;
                 if (proofActorLogThisFrame)
                     Log(Debug::Info) << "FNV/ESM4 proof: aligned player camera to actor target=\"" << target
-                                     << "\" playerPos=(" << playerTargetPos.x() << "," << playerTargetPos.y()
-                                      << "," << playerTargetPos.z() << ") actorPos=(" << actorPos.pos[0] << ","
+                                     << "\" frame=" << frameNumber << " playerPos=(" << playerTargetPos.x() << ","
+                                     << playerTargetPos.y() << "," << playerTargetPos.z() << ") actorPos=("
+                                     << actorPos.pos[0] << ","
                                       << actorPos.pos[1] << "," << actorPos.pos[2] << ") actorAim=("
                                       << actorAim.x() << "," << actorAim.y() << "," << actorAim.z()
                                       << ") viewOffset=(" << viewOffset.x() << "," << viewOffset.y()
@@ -2511,7 +2526,7 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
             if (lastProofActorLookupFailureLogFrame == 0 || frameNumber - lastProofActorLookupFailureLogFrame >= 60)
             {
                 Log(Debug::Warning) << "FNV/ESM4 proof: active-cell actor lookup failed target=\"" << target
-                                    << "\" scanned=" << scanned << " actors=" << actors;
+                                    << "\" frame=" << frameNumber << " scanned=" << scanned << " actors=" << actors;
                 lastProofActorLookupFailureLogFrame = frameNumber;
             }
         }
@@ -2556,7 +2571,15 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
         && frameNumber >= static_cast<unsigned>(proofScreenshotFrames[proofScreenshotFrameIndex])
         && mStateManager->getState() == MWBase::StateManager::State_Running && mScreenCaptureHandler != nullptr)
     {
-        Log(Debug::Info) << "FNV/ESM4 proof: queuing native screenshot at frame " << frameNumber;
+        Log(Debug::Info) << "FNV/ESM4 proof: queuing native screenshot at frame " << frameNumber
+                         << " index=" << proofScreenshotFrameIndex
+                         << " flatCameraSettled=" << fnvFlatStartupCameraSettled
+                         << " flatCameraSettledFrame=" << fnvFlatStartupCameraSettledFrame
+                         << " actorTarget=\"" << (proofActorTarget != nullptr ? proofActorTarget : "") << "\""
+                         << " actorCameraApplied=" << proofActorCameraApplied
+                         << " actorCameraFirstFrame=" << proofActorCameraFirstAppliedFrame
+                         << " actorCameraLastFrame=" << proofActorCameraLastAppliedFrame
+                         << " actorStageLock=" << proofStageActorLock;
         mScreenCaptureHandler->setFramesToCapture(1);
         mScreenCaptureHandler->captureNextFrame(*mViewer);
         ++proofScreenshotFrameIndex;

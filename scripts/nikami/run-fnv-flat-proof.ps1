@@ -56,6 +56,8 @@ param(
     [double]$ScreenshotStabilityMaxMeanAbsDelta = 18.0,
     [double]$ScreenshotStabilityMaxHighDeltaRatio = 0.35,
     [double]$ScreenshotStabilityCropFraction = 0.65,
+    [int]$ScreenshotTimingMinPostCameraFrames = 30,
+    [int]$ScreenshotTimingMaxActorCameraAgeFrames = 90,
     [switch]$FnvPartMatrixAudit,
     [switch]$FnvDisableNativeAnimationCallbacks,
     [switch]$FnvDlodSettingsDiag,
@@ -292,6 +294,163 @@ function Get-ScreenshotStabilityResult(
         maxHighDeltaRatio = $MaxHighDeltaRatio
         cropFraction = $CropFraction
         pairs = $pairs
+    }
+}
+
+function ConvertTo-ProofBool([string]$Value) {
+    if ([string]::IsNullOrWhiteSpace($Value)) { return $false }
+    return $Value -eq "1" -or $Value -ieq "true"
+}
+
+function Get-ScreenshotCaptureEvents([string]$Path) {
+    if ([string]::IsNullOrWhiteSpace($Path) -or !(Test-Path -LiteralPath $Path)) { return @() }
+
+    $events = New-Object "System.Collections.Generic.List[object]"
+    $lines = @(Select-String -LiteralPath $Path -Pattern "FNV/ESM4 proof: queuing native screenshot at frame" -ErrorAction SilentlyContinue)
+    $order = 0
+    foreach ($line in $lines) {
+        $text = $line.Line
+        if ($text -notmatch "queuing native screenshot at frame ([0-9]+)") { continue }
+        $frame = [int]$Matches[1]
+        $index = $order
+        if ($text -match "index=([0-9]+)") { $index = [int]$Matches[1] }
+        $flatCameraSettled = $false
+        if ($text -match "flatCameraSettled=([^ ]+)") { $flatCameraSettled = ConvertTo-ProofBool $Matches[1] }
+        $flatCameraSettledFrame = 0
+        if ($text -match "flatCameraSettledFrame=([0-9]+)") { $flatCameraSettledFrame = [int]$Matches[1] }
+        $actorTarget = ""
+        if ($text -match "actorTarget=`"([^`"]*)`"") { $actorTarget = $Matches[1] }
+        $actorCameraApplied = $false
+        if ($text -match "actorCameraApplied=([^ ]+)") { $actorCameraApplied = ConvertTo-ProofBool $Matches[1] }
+        $actorCameraFirstFrame = 0
+        if ($text -match "actorCameraFirstFrame=([0-9]+)") { $actorCameraFirstFrame = [int]$Matches[1] }
+        $actorCameraLastFrame = 0
+        if ($text -match "actorCameraLastFrame=([0-9]+)") { $actorCameraLastFrame = [int]$Matches[1] }
+        $actorStageLock = $false
+        if ($text -match "actorStageLock=([^ ]+)") { $actorStageLock = ConvertTo-ProofBool $Matches[1] }
+
+        $events.Add([pscustomobject][ordered]@{
+            order = $order
+            index = $index
+            frame = $frame
+            flatCameraSettled = $flatCameraSettled
+            flatCameraSettledFrame = $flatCameraSettledFrame
+            actorTarget = $actorTarget
+            actorCameraApplied = $actorCameraApplied
+            actorCameraFirstFrame = $actorCameraFirstFrame
+            actorCameraLastFrame = $actorCameraLastFrame
+            actorStageLock = $actorStageLock
+            line = $text
+        })
+        ++$order
+    }
+
+    return @($events | Sort-Object order)
+}
+
+function Get-ScreenshotTimingResult(
+    [object[]]$Screenshots,
+    [string]$OpenMwLog,
+    [string]$ActorTarget,
+    [int]$MinPostCameraFrames,
+    [int]$MaxActorCameraAgeFrames) {
+    $ordered = @($Screenshots | Sort-Object Name)
+    $events = @(Get-ScreenshotCaptureEvents $OpenMwLog)
+    $items = @()
+
+    if ($ordered.Count -eq 0) {
+        return [ordered]@{
+            status = "MISSING"
+            screenshotCount = 0
+            captureEventCount = $events.Count
+            actorTarget = $ActorTarget
+            minPostCameraFrames = $MinPostCameraFrames
+            maxActorCameraAgeFrames = $MaxActorCameraAgeFrames
+            screenshots = $items
+        }
+    }
+
+    $allPass = $true
+    for ($i = 0; $i -lt $ordered.Count; ++$i) {
+        $screenshot = $ordered[$i]
+        $event = if ($i -lt $events.Count) { $events[$i] } else { $null }
+        $reason = "ok"
+        $pass = $true
+        $frame = 0
+        $cameraSettleAge = $null
+        $actorCameraFirstAge = $null
+        $actorCameraLastAge = $null
+
+        if ($null -eq $event) {
+            $pass = $false
+            $reason = "missing_capture_event"
+        }
+        else {
+            $frame = $event.frame
+            $cameraSettleAge = $event.frame - $event.flatCameraSettledFrame
+            if (!$event.flatCameraSettled) {
+                $pass = $false
+                $reason = "flat_camera_not_settled_at_capture"
+            }
+            elseif ($event.flatCameraSettledFrame -le 0) {
+                $pass = $false
+                $reason = "missing_flat_camera_settle_frame"
+            }
+            elseif ($cameraSettleAge -lt $MinPostCameraFrames) {
+                $pass = $false
+                $reason = "capture_too_close_to_flat_camera_settle"
+            }
+            elseif (![string]::IsNullOrWhiteSpace($ActorTarget)) {
+                $actorCameraFirstAge = $event.frame - $event.actorCameraFirstFrame
+                $actorCameraLastAge = $event.frame - $event.actorCameraLastFrame
+                if (!$event.actorCameraApplied) {
+                    $pass = $false
+                    $reason = "actor_camera_not_applied_at_capture"
+                }
+                elseif ($event.actorTarget -ine $ActorTarget) {
+                    $pass = $false
+                    $reason = "actor_target_mismatch"
+                }
+                elseif ($event.actorCameraFirstFrame -le 0) {
+                    $pass = $false
+                    $reason = "missing_actor_camera_first_frame"
+                }
+                elseif ($actorCameraFirstAge -lt $MinPostCameraFrames) {
+                    $pass = $false
+                    $reason = "capture_too_close_to_actor_camera_first_align"
+                }
+                elseif ($event.actorCameraLastFrame -le 0) {
+                    $pass = $false
+                    $reason = "missing_actor_camera_last_frame"
+                }
+                elseif ($actorCameraLastAge -lt 0 -or $actorCameraLastAge -gt $MaxActorCameraAgeFrames) {
+                    $pass = $false
+                    $reason = "actor_camera_alignment_stale_at_capture"
+                }
+            }
+        }
+
+        if (!$pass) { $allPass = $false }
+        $items += [pscustomobject][ordered]@{
+            screenshot = $screenshot.Name
+            frame = $frame
+            pass = $pass
+            reason = $reason
+            cameraSettleAgeFrames = $cameraSettleAge
+            actorCameraFirstAgeFrames = $actorCameraFirstAge
+            actorCameraLastAgeFrames = $actorCameraLastAge
+            event = $event
+        }
+    }
+
+    return [ordered]@{
+        status = if ($allPass) { "PASS" } else { "FAIL" }
+        screenshotCount = $ordered.Count
+        captureEventCount = $events.Count
+        actorTarget = $ActorTarget
+        minPostCameraFrames = $MinPostCameraFrames
+        maxActorCameraAgeFrames = $MaxActorCameraAgeFrames
+        screenshots = $items
     }
 }
 
@@ -1220,6 +1379,8 @@ try {
     Write-ProofLine "ScreenshotStabilityMaxMeanAbsDelta: $ScreenshotStabilityMaxMeanAbsDelta"
     Write-ProofLine "ScreenshotStabilityMaxHighDeltaRatio: $ScreenshotStabilityMaxHighDeltaRatio"
     Write-ProofLine "ScreenshotStabilityCropFraction: $ScreenshotStabilityCropFraction"
+    Write-ProofLine "ScreenshotTimingMinPostCameraFrames: $ScreenshotTimingMinPostCameraFrames"
+    Write-ProofLine "ScreenshotTimingMaxActorCameraAgeFrames: $ScreenshotTimingMaxActorCameraAgeFrames"
     Write-ProofLine "BootstrapCell: $BootstrapCell"
     Write-ProofLine "FlatCameraPitch: $FlatCameraPitch"
     Write-ProofLine "FlatCameraYaw: $FlatCameraYaw"
@@ -1296,6 +1457,14 @@ $screenshotStability = [pscustomobject](Get-ScreenshotStabilityResult `
     $ScreenshotStabilityCropFraction)
 $screenshotStabilityPath = Join-Path $ProofDir "screenshot-stability.json"
 $screenshotStability | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $screenshotStabilityPath -Encoding UTF8
+$screenshotTiming = [pscustomobject](Get-ScreenshotTimingResult `
+    $screenshots `
+    $OpenMwLog `
+    $ActorTarget `
+    $ScreenshotTimingMinPostCameraFrames `
+    $ScreenshotTimingMaxActorCameraAgeFrames)
+$screenshotTimingPath = Join-Path $ProofDir "screenshot-timing.json"
+$screenshotTiming | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $screenshotTimingPath -Encoding UTF8
 
 Write-ProofLine ""
 Write-ProofLine "Artifacts:"
@@ -1305,6 +1474,7 @@ Write-ProofLine "Stdout log: $StdoutLog"
 Write-ProofLine "Stderr log: $StderrLog"
 Write-ProofLine "Screenshots: $($screenshots.Count)"
 Write-ProofLine "Screenshot stability JSON: $screenshotStabilityPath"
+Write-ProofLine "Screenshot timing JSON: $screenshotTimingPath"
 Write-ProofLine ""
 Write-ProofLine "Runtime probes:"
 Write-ProofLine "Real fatal/blocker lines: $fatalCount"
@@ -1325,9 +1495,15 @@ Write-ProofLine "Target world posture BAD lines: $targetWorldPostureBadLines"
 Write-ProofLine "Target standing arm pose OK lines: $targetStandingArmPoseOkLines"
 Write-ProofLine "Target standing arm pose BAD lines: $targetStandingArmPoseBadLines"
 Write-ProofLine "Screenshot stability status: $($screenshotStability.status)"
+Write-ProofLine "Screenshot timing status: $($screenshotTiming.status)"
 foreach ($pair in $screenshotStability.pairs) {
     Write-ProofLine ("Screenshot stability pair {0}->{1}: meanAbsDelta={2} highDeltaRatio={3} pass={4}" -f `
         $pair.previous, $pair.current, $pair.meanAbsDelta, $pair.highDeltaRatio, $pair.pass)
+}
+foreach ($timed in $screenshotTiming.screenshots) {
+    Write-ProofLine ("Screenshot timing {0}: frame={1} cameraSettleAgeFrames={2} actorCameraFirstAgeFrames={3} actorCameraLastAgeFrames={4} pass={5} reason={6}" -f `
+        $timed.screenshot, $timed.frame, $timed.cameraSettleAgeFrames, $timed.actorCameraFirstAgeFrames, `
+        $timed.actorCameraLastAgeFrames, $timed.pass, $timed.reason)
 }
 Write-ProofLine "Unsupported ESM4 skip lines: $($unsupportedEsm4Skips.Count)"
 
@@ -1341,6 +1517,7 @@ Assert-UnsupportedEsm4SkipsClassified $unsupportedEsm4Skips $ClassificationDir
 if ($RequireFlatCameraSettled -and $flatCameraSettledLines -eq 0) { throw "FNV flat proof did not prove flat camera settlement. See $OpenMwLog" }
 if ($flatCameraFailureLines -gt 0) { throw "FNV flat proof saw flat camera failure lines. See $OpenMwLog" }
 if ($RequireScreenshotStability -and $screenshotStability.status -ne "PASS") { throw "FNV flat proof did not prove screenshot stability. See $screenshotStabilityPath" }
+if ($RequireScreenshotStability -and $screenshotTiming.status -ne "PASS") { throw "FNV flat proof did not prove post-settle screenshot timing. See $screenshotTimingPath" }
 if (![string]::IsNullOrWhiteSpace($ActorTarget) -and $actorProofPatterns.Count -eq 0) { throw "FNV actor proof did not resolve target actor patterns for $ActorTarget. See $OpenMwLog" }
 if (![string]::IsNullOrWhiteSpace($ActorTarget) -and $targetWorldPostureBadLines -gt 0) { throw "FNV actor proof saw target bad world posture lines. See $OpenMwLog" }
 if (![string]::IsNullOrWhiteSpace($ActorTarget) -and $targetStandingArmPoseBadLines -gt 0) { throw "FNV actor proof saw target standing arm bind/T-pose lines. See $OpenMwLog" }

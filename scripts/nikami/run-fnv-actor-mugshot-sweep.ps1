@@ -20,6 +20,7 @@ param(
         "GSPGCM2"
     ),
     [int]$RunSeconds = 60,
+    [double]$BootstrapHour = 3,
     [int]$ActorFrame = 600,
     [string]$ScreenshotFrames = "900,1200",
     [double]$ActorViewOffsetX = 140,
@@ -461,12 +462,14 @@ function Get-SummaryProbe {
             Camera = "MISSING"
             CameraFailure = "MISSING"
             ScreenshotStability = "MISSING"
+            ScreenshotTiming = "MISSING"
             Blocker = "MISSING"
             TerrainSupportMissLine = $null
             AirborneLine = $null
             CameraSettledLine = $null
             CameraFailureLine = $null
             ScreenshotStabilityLine = $null
+            ScreenshotTimingLine = $null
             BlockerLine = $null
         }
     }
@@ -477,6 +480,8 @@ function Get-SummaryProbe {
     $cameraFailureLine = Select-String -LiteralPath $SummaryPath -Pattern "Flat camera failure lines: [1-9]" -ErrorAction SilentlyContinue | Select-Object -First 1
     $screenshotStabilityPassLine = Select-String -LiteralPath $SummaryPath -Pattern "Screenshot stability status: PASS" -ErrorAction SilentlyContinue | Select-Object -First 1
     $screenshotStabilityFailLine = Select-String -LiteralPath $SummaryPath -Pattern "Screenshot stability status: (FAIL|MISSING)" -ErrorAction SilentlyContinue | Select-Object -First 1
+    $screenshotTimingPassLine = Select-String -LiteralPath $SummaryPath -Pattern "Screenshot timing status: PASS" -ErrorAction SilentlyContinue | Select-Object -First 1
+    $screenshotTimingFailLine = Select-String -LiteralPath $SummaryPath -Pattern "Screenshot timing status: (FAIL|MISSING)" -ErrorAction SilentlyContinue | Select-Object -First 1
     $blockerLine = Select-String -LiteralPath $SummaryPath -Pattern "Real fatal/blocker lines: [1-9]" -ErrorAction SilentlyContinue | Select-Object -First 1
 
     return [pscustomobject]@{
@@ -485,12 +490,14 @@ function Get-SummaryProbe {
         Camera = if ($cameraSettledLine) { "PASS" } else { "FAIL" }
         CameraFailure = if ($cameraFailureLine) { "FAIL" } else { "PASS" }
         ScreenshotStability = if ($screenshotStabilityPassLine) { "PASS" } elseif ($screenshotStabilityFailLine) { "FAIL" } else { "MISSING" }
+        ScreenshotTiming = if ($screenshotTimingPassLine) { "PASS" } elseif ($screenshotTimingFailLine) { "FAIL" } else { "MISSING" }
         Blocker = if ($blockerLine) { "FAIL" } else { "PASS" }
         TerrainSupportMissLine = if ($terrainSupportMissLine) { $terrainSupportMissLine.Line } else { $null }
         AirborneLine = if ($airborneLine) { $airborneLine.Line } else { $null }
         CameraSettledLine = if ($cameraSettledLine) { $cameraSettledLine.Line } else { $null }
         CameraFailureLine = if ($cameraFailureLine) { $cameraFailureLine.Line } else { $null }
         ScreenshotStabilityLine = if ($screenshotStabilityPassLine) { $screenshotStabilityPassLine.Line } elseif ($screenshotStabilityFailLine) { $screenshotStabilityFailLine.Line } else { $null }
+        ScreenshotTimingLine = if ($screenshotTimingPassLine) { $screenshotTimingPassLine.Line } elseif ($screenshotTimingFailLine) { $screenshotTimingFailLine.Line } else { $null }
         BlockerLine = if ($blockerLine) { $blockerLine.Line } else { $null }
     }
 }
@@ -507,6 +514,7 @@ function Get-OverallStatus {
     if ($Result.SummaryProbe.Camera -ne "PASS") { return "FAIL" }
     if ($Result.SummaryProbe.CameraFailure -ne "PASS") { return "FAIL" }
     if ($Result.SummaryProbe.ScreenshotStability -ne "PASS") { return "FAIL" }
+    if ($Result.SummaryProbe.ScreenshotTiming -ne "PASS") { return "FAIL" }
     if ($Result.SummaryProbe.Blocker -ne "PASS") { return "FAIL" }
     if ($Result.LogProbe.ActorMatch -ne "PASS") { return "FAIL" }
     if ($Result.LogProbe.PartAssembly -eq "FAIL") { return "FAIL" }
@@ -536,6 +544,7 @@ function Invoke-MugshotTarget {
         Triplet = $Triplet
         ProofRoot = $ProofRoot
         RunSeconds = $RunSeconds
+        BootstrapHour = $BootstrapHour
         ScreenshotFrames = $ScreenshotFrames
         BootstrapCell = "FormId:0x10daeb9"
         BootstrapX = -67735
@@ -745,6 +754,7 @@ function Write-Report {
     $lines.Add("- Human review CSV: ``$HumanReviewCsvPath``")
     $lines.Add("- Targets: $($Results.Count)")
     $lines.Add("- Run seconds: $RunSeconds")
+    $lines.Add("- Bootstrap hour: $BootstrapHour")
     $lines.Add("- Actor frame: $ActorFrame")
     $lines.Add("- Screenshot frames: $ScreenshotFrames")
     $lines.Add("- Crop: center ${CropWidth}x${CropHeight} offset=(${CropCenterOffsetX},${CropCenterOffsetY}) -> ${ZoomWidth}x${ZoomHeight}")
@@ -759,7 +769,7 @@ function Write-Report {
 
     foreach ($result in $Results) {
         $imageStatus = "$($result.ImageQuality.Status) $($result.ImageQuality.Width)x$($result.ImageQuality.Height)"
-        $stabilityStatus = "terrain=$($result.SummaryProbe.TerrainSupport) airborne=$($result.SummaryProbe.Airborne) camera=$($result.SummaryProbe.Camera) screenshot=$($result.SummaryProbe.ScreenshotStability)"
+        $stabilityStatus = "terrain=$($result.SummaryProbe.TerrainSupport) airborne=$($result.SummaryProbe.Airborne) camera=$($result.SummaryProbe.Camera) screenshot=$($result.SummaryProbe.ScreenshotStability) timing=$($result.SummaryProbe.ScreenshotTiming)"
         $lines.Add("| $(ConvertTo-MarkdownCell $result.Target) | $($result.Overall) | $($result.VisualReview) | $($result.LogProbe.ActorMatch) | $($result.LogProbe.Face) | $($result.LogProbe.Animation) | $($result.LogProbe.PartAssembly) | $(ConvertTo-MarkdownCell $stabilityStatus) | $(ConvertTo-MarkdownCell $imageStatus) | ``$(ConvertTo-MarkdownCell $result.MugshotImage)`` | ``$(ConvertTo-MarkdownCell $result.OpenMwLog)`` |")
     }
 
@@ -775,7 +785,7 @@ function Write-Report {
         $lines.Add("- Face check: $($result.LogProbe.Face)")
         $lines.Add("- Animation audit: $($result.LogProbe.Animation)")
         $lines.Add("- Part assembly audit: $($result.LogProbe.PartAssembly) suspect=$($result.LogProbe.PartAssemblySuspectCount)")
-        $lines.Add("- Stability: terrain=$($result.SummaryProbe.TerrainSupport) airborne=$($result.SummaryProbe.Airborne) camera=$($result.SummaryProbe.Camera) cameraFailure=$($result.SummaryProbe.CameraFailure) screenshot=$($result.SummaryProbe.ScreenshotStability) blockers=$($result.SummaryProbe.Blocker)")
+        $lines.Add("- Stability: terrain=$($result.SummaryProbe.TerrainSupport) airborne=$($result.SummaryProbe.Airborne) camera=$($result.SummaryProbe.Camera) cameraFailure=$($result.SummaryProbe.CameraFailure) screenshot=$($result.SummaryProbe.ScreenshotStability) timing=$($result.SummaryProbe.ScreenshotTiming) blockers=$($result.SummaryProbe.Blocker)")
         $lines.Add("- Known tolerated missing mesh lines: $($result.LogProbe.KnownNoiseCount)")
         $lines.Add("- Screenshot auto-check: $($result.ImageQuality.Status) $($result.ImageQuality.Width)x$($result.ImageQuality.Height) stddev=$($result.ImageQuality.StdDev) buckets=$($result.ImageQuality.Buckets) dark=$($result.ImageQuality.DarkPercent)% markerPink=$($result.ImageQuality.MarkerPinkPercent)%")
         $lines.Add("- Proof dir: ``$($result.ProofDir)``")
@@ -807,6 +817,9 @@ function Write-Report {
         }
         if (![string]::IsNullOrWhiteSpace($result.SummaryProbe.ScreenshotStabilityLine)) {
             $lines.Add("- Screenshot stability line: ``$(ConvertTo-MarkdownCell $result.SummaryProbe.ScreenshotStabilityLine)``")
+        }
+        if (![string]::IsNullOrWhiteSpace($result.SummaryProbe.ScreenshotTimingLine)) {
+            $lines.Add("- Screenshot timing line: ``$(ConvertTo-MarkdownCell $result.SummaryProbe.ScreenshotTimingLine)``")
         }
         if (![string]::IsNullOrWhiteSpace($result.SummaryProbe.BlockerLine)) {
             $lines.Add("- Summary blocker line: ``$(ConvertTo-MarkdownCell $result.SummaryProbe.BlockerLine)``")
@@ -857,6 +870,7 @@ function Write-HumanReviewCsv {
             MachineParts = $result.LogProbe.PartAssembly
             MachineImage = $result.ImageQuality.Status
             MachineScreenshotStability = $result.SummaryProbe.ScreenshotStability
+            MachineScreenshotTiming = $result.SummaryProbe.ScreenshotTiming
             VisualReview = "REVIEW_REQUIRED"
             HumanReview = ""
             HumanNotes = ""

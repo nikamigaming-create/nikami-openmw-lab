@@ -43,6 +43,7 @@ Write-ProofLine "ProofDir: $ProofDir"
 Write-ProofLine ""
 
 $flat = Assert-File "scripts/nikami/run-fnv-flat-proof.ps1"
+$engine = Assert-File "apps/openmw/engine.cpp"
 $doc = Assert-File "scripts/nikami/run-fnv-opening-doc-proof.ps1"
 $walk = Assert-File "scripts/nikami/run-fnv-goodsprings-walk-replay-proof.ps1"
 $ui = Assert-File "scripts/nikami/run-fnv-ui-baseline-proof.ps1"
@@ -72,6 +73,8 @@ foreach ($needle in @(
     "[switch]`$RequirePlayerTerrainSupport",
     "[switch]`$RequireFlatCameraSettled",
     "[switch]`$RequireScreenshotStability",
+    "[int]`$ScreenshotTimingMinPostCameraFrames",
+    "[int]`$ScreenshotTimingMaxActorCameraAgeFrames",
     "[switch]`$RequireSkyColorSanity"
 )) {
     Assert-Text $flat $needle "flat proof parameter $needle"
@@ -84,16 +87,26 @@ Assert-Text $flat "Target world posture BAD lines:" "flat proof reports target b
 Assert-Text $flat "Target standing arm pose BAD lines:" "flat proof reports target standing arm bind/T-pose lines"
 Assert-Text $flat "Screenshot stability status:" "flat proof reports screenshot stability"
 Assert-Text $flat "screenshot-stability.json" "flat proof writes screenshot stability JSON"
+Assert-Text $flat "Screenshot timing status:" "flat proof reports post-settle screenshot timing"
+Assert-Text $flat "screenshot-timing.json" "flat proof writes screenshot timing JSON"
 Assert-Text $flat "bad world posture" "flat proof fails targeted actor bad world posture"
 Assert-Text $flat "standing arm bind/T-pose" "flat proof fails targeted actor bind/T-pose posture"
 Assert-Text $flat "did not prove screenshot stability" "flat proof fails unstable screenshot capture"
+Assert-Text $flat "did not prove post-settle screenshot timing" "flat proof fails early or stale screenshot capture"
+Assert-Text $engine "flatCameraSettled=" "runtime screenshot log includes flat camera settled state"
+Assert-Text $engine "flatCameraSettledFrame=" "runtime screenshot log includes flat camera settled frame"
+Assert-Text $engine "actorCameraApplied=" "runtime screenshot log includes actor camera state"
+Assert-Text $engine "actorCameraFirstFrame=" "runtime screenshot log includes first actor camera frame"
 Assert-Text $mugshot "[switch]`$DisableNativeAnimationCallbacks" "mugshot native callback disable is explicit opt-in"
+Assert-Text $mugshot "[double]`$BootstrapHour = 3" "mugshot defaults to neutral standing package hour"
+Assert-Text $mugshot "BootstrapHour = `$BootstrapHour" "mugshot passes explicit package hour to flat proof"
 Assert-Text $mugshot "RequireScreenshotStability = `$true" "mugshot requires screenshot stability"
 Assert-Text $mugshot "world posture .* verdict=BAD" "mugshot parses bad world posture failures"
 Assert-Text $mugshot "standing arm pose .* verdict=BAD" "mugshot parses standing arm bind/T-pose failures"
 Assert-Text $mugshot "MachineWorldPostureBad" "mugshot human review includes machine world posture failure column"
 Assert-Text $mugshot "MachineArmPoseBad" "mugshot human review includes machine arm pose failure column"
 Assert-Text $mugshot "MachineScreenshotStability" "mugshot human review includes screenshot stability column"
+Assert-Text $mugshot "MachineScreenshotTiming" "mugshot human review includes post-settle screenshot timing column"
 Assert-Text $doc "ActorTarget = `"DocMitchell`"" "Doc Mitchell actor target"
 Assert-Text $doc "FNV/ESM4 FACE CHECK DocMitchell:" "Doc Mitchell face asset assertion"
 Assert-Text $doc "FNV/ESM4 diag: play matched FormId:0x1104c0c group 'idle'" "Doc Mitchell animation assertion"
