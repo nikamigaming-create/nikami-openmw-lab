@@ -17,6 +17,7 @@ param(
     [string[]]$ActorKitPropModels = @(),
     [string]$ActorKitAnimationGroup = "",
     [string]$ActorKitDialogueMode = "",
+    [string[]]$Angles = @("front", "front-left", "front-right"),
     [int]$RunSeconds = 28,
     [int]$ActorFrame = 520,
     [string]$ScreenshotFrames = "760",
@@ -302,6 +303,7 @@ function Start-LiveViewerServer([string]$RootDirectory, [string]$IndexPath, [str
 
 $Targets = Normalize-List $Targets "targets"
 $Phases = Normalize-List $Phases "phases"
+$Angles = Normalize-List $Angles "angles"
 $ActorKitPartsCsv = Join-OptionalSelectorList $ActorKitParts
 $ActorKitPartModelsCsv = Join-OptionalSelectorList $ActorKitPartModels
 $ActorKitPropSlotsCsv = Join-OptionalSelectorList $ActorKitPropSlots
@@ -319,6 +321,7 @@ Write-Host "Targets: $($Targets -join ',')"
 Write-Host "ActorKind: $ActorKind"
 Write-Host "CreatureDiagnostics: $($CreatureDiagnostics -or $ActorKind -ieq 'creature')"
 Write-Host "Phases: $($Phases -join ',')"
+Write-Host "Angles: $($Angles -join ',')"
 Write-Host "ActorKitParts: $ActorKitPartsCsv"
 Write-Host "ActorKitPartModels: $ActorKitPartModelsCsv"
 Write-Host "ActorKitPropSlots: $ActorKitPropSlotsCsv"
@@ -375,6 +378,7 @@ else {
             ActorTarget = $target
             ActorKind = $ActorKind
             Phases = $Phases
+            Angles = $Angles
             RunSeconds = $RunSeconds
             ActorFrame = $ActorFrame
             ScreenshotFrames = $ScreenshotFrames

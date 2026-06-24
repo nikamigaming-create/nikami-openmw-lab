@@ -17,6 +17,7 @@ param(
     [string[]]$ActorKitPropModels = @(),
     [string]$ActorKitAnimationGroup = "",
     [string]$ActorKitDialogueMode = "",
+    [string[]]$Angles = @("front", "front-left", "front-right"),
     [int]$RunSeconds = 28,
     [int]$ActorFrame = 520,
     [string]$ScreenshotFrames = "760",
@@ -116,11 +117,30 @@ function Join-OptionalSelectorList([string[]]$Values) {
 }
 
 $diagonal = $ActorViewDistance * 0.7071067811865476
-$Angles = @(
+$AllAngles = @(
     [pscustomobject]@{ Name = "front"; OffsetX = $ActorViewDistance; OffsetY = 0.0 },
     [pscustomobject]@{ Name = "front-left"; OffsetX = $diagonal; OffsetY = -$diagonal },
     [pscustomobject]@{ Name = "front-right"; OffsetX = $diagonal; OffsetY = $diagonal }
 )
+
+$RequestedAngles = New-Object "System.Collections.Generic.List[string]"
+foreach ($angleValue in $Angles) {
+    foreach ($anglePart in ($angleValue -split ",")) {
+        $trimmed = $anglePart.Trim()
+        if (![string]::IsNullOrWhiteSpace($trimmed)) {
+            $RequestedAngles.Add($trimmed)
+        }
+    }
+}
+if ($RequestedAngles.Count -eq 0) {
+    throw "No character builder camera angles selected."
+}
+$KnownAngleNames = @($AllAngles | ForEach-Object { $_.Name })
+$unknownAngles = @($RequestedAngles | Where-Object { $KnownAngleNames -notcontains $_ })
+if ($unknownAngles.Count -gt 0) {
+    throw "Unknown character builder camera angle(s): $($unknownAngles -join ','). Valid angles: $($KnownAngleNames -join ',')"
+}
+$CameraAngles = @($AllAngles | Where-Object { $RequestedAngles -contains $_.Name })
 
 if ($ActorKind -ieq "creature" -and !$PSBoundParameters.ContainsKey("Phases")) {
     $Phases = @("creature-model", "creature-body", "creature-animation", "creature-full")
@@ -157,7 +177,7 @@ Write-SuiteLine "ActorKitPropSlots: $ActorKitPropSlotsCsv"
 Write-SuiteLine "ActorKitPropModels: $ActorKitPropModelsCsv"
 Write-SuiteLine "ActorKitAnimationGroup: $ActorKitAnimationGroup"
 Write-SuiteLine "ActorKitDialogueMode: $ActorKitDialogueMode"
-Write-SuiteLine "Angles: $(@($Angles | ForEach-Object { $_.Name }) -join ',')"
+Write-SuiteLine "Angles: $(@($CameraAngles | ForEach-Object { $_.Name }) -join ',')"
 Write-SuiteLine "BootstrapCell: $BootstrapCell"
 Write-SuiteLine "BootstrapPosition: $BootstrapX,$BootstrapY,$BootstrapZ"
 Write-SuiteLine "BootstrapRotation: $BootstrapRotX,$BootstrapRotY,$BootstrapRotZ"
@@ -169,7 +189,7 @@ Write-SuiteLine ""
 $Results = New-Object "System.Collections.Generic.List[object]"
 
 foreach ($phase in $Phases) {
-    foreach ($angle in $Angles) {
+    foreach ($angle in $CameraAngles) {
         $safePhase = ConvertTo-SafeName $phase
         $safeAngle = ConvertTo-SafeName $angle.Name
         $caseName = "${safePhase}_${safeAngle}"

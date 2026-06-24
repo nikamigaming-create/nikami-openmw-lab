@@ -191,6 +191,7 @@ def viewer_command(
     actor_kind: str,
     phases: str,
     *,
+    angles: str = "",
     parts: str = "",
     part_models: str = "",
     prop_slots: str = "",
@@ -206,6 +207,7 @@ def viewer_command(
     if actor_kind == "creature":
         command += "-CreatureDiagnostics "
     command += f"-Phases {shell_quote(phases)}"
+    command += selector_arg("Angles", angles)
     command += selector_arg("ActorKitParts", parts)
     command += selector_arg("ActorKitPartModels", part_models)
     command += selector_arg("ActorKitPropSlots", prop_slots)
@@ -678,6 +680,45 @@ def build_failure_summary(cases: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [grouped[key] for key in order]
 
 
+def build_capture_failures(cases: list[dict[str, Any]], actor: str, actor_kind: str) -> list[dict[str, Any]]:
+    failures: list[dict[str, Any]] = []
+    for case in cases:
+        if not isinstance(case, dict):
+            continue
+        screenshots = as_list(case.get("screenshots"))
+        missing = not case.get("mainImage") or len(screenshots) == 0
+        if not missing and "missing screenshots" not in as_list(case.get("failures")):
+            continue
+        phase = str(case.get("phase") or "")
+        angle = str(case.get("angle") or "")
+        selection = case.get("actorKitSelection") if isinstance(case.get("actorKitSelection"), dict) else {}
+        failures.append(
+            {
+                "case": str(case.get("case") or ""),
+                "phase": phase,
+                "angle": angle,
+                "runtimeGateStatus": str(case.get("runtimeGateStatus") or ""),
+                "reportStatus": str(case.get("reportStatus") or ""),
+                "screenshotCount": len(screenshots),
+                "proofDir": str(case.get("proofDir") or ""),
+                "caseDir": str(case.get("caseDir") or ""),
+                "command": viewer_command(
+                    actor,
+                    actor_kind,
+                    phase,
+                    angles=angle,
+                    parts=str(selection.get("parts") or ""),
+                    part_models=str(selection.get("partModels") or ""),
+                    prop_slots=str(selection.get("propSlots") or ""),
+                    prop_models=str(selection.get("propModels") or ""),
+                    animation_group=str(selection.get("animationGroup") or ""),
+                    dialogue_mode=str(selection.get("dialogueMode") or ""),
+                ),
+            }
+        )
+    return failures
+
+
 def build_assembly_inventory(cases: list[dict[str, Any]], actor: str, actor_kind: str) -> list[dict[str, Any]]:
     grouped: dict[tuple[str, str], dict[str, Any]] = {}
     order: list[tuple[str, str]] = []
@@ -969,6 +1010,7 @@ def load_suite(suite_dir: Path) -> dict[str, Any]:
     elif any(case["runtimeGateStatus"] != "PASS" or case["reportStatus"] != "PASS" for case in cases):
         overall = "FAIL"
     failure_summary = build_failure_summary(cases)
+    capture_failures = build_capture_failures(cases, actor, actor_kind)
     assembly_inventory = build_assembly_inventory(cases, actor, actor_kind)
 
     return {
@@ -980,6 +1022,7 @@ def load_suite(suite_dir: Path) -> dict[str, Any]:
             "part-timeline-v1",
             "failure-summary-v1",
             "assembly-inventory-v1",
+            "capture-failures-v1",
         ],
         "status": overall,
         "actorProfile": {
@@ -1002,6 +1045,7 @@ def load_suite(suite_dir: Path) -> dict[str, Any]:
             else ["Skin Evidence", "Hair Headgear Evidence", "Animation Talk Weapon Evidence", "Face Drawables"]
         ),
         "assemblyInventory": assembly_inventory,
+        "captureFailures": capture_failures,
         "failureSummary": failure_summary,
         "controls": gate_controls(cases, actor, actor_kind),
         "cases": cases,
@@ -1055,16 +1099,28 @@ button.active {{ border-color: var(--accent); background: #26354d; }}
 .PASS {{ color: #07120b; background: var(--ok); }}
 .FAIL {{ color: #190502; background: var(--bad); }}
 .MISSING {{ color: #181102; background: var(--warn); }}
+.captureStage {{ display: grid; gap: 10px; }}
 .grid3 {{ display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }}
 .pane {{ background: var(--panel); border: 1px solid var(--line); border-radius: 6px; overflow: hidden; min-width: 0; }}
 .paneHead {{ display: flex; justify-content: space-between; gap: 8px; padding: 8px 10px; border-bottom: 1px solid var(--line); color: var(--muted); }}
 .pane img {{ display: block; width: 100%; height: auto; background: #050607; }}
-.empty {{ min-height: 240px; display: grid; place-items: center; color: var(--muted); background: #0b0d10; }}
+.empty {{ min-height: 180px; display: grid; place-items: center; color: var(--muted); background: #0b0d10; }}
+.pane .empty {{ min-height: 260px; }}
 .section {{ padding: 10px; overflow: auto; }}
 .section h2 {{ margin: 0 0 8px; font-size: 14px; }}
 table {{ width: 100%; border-collapse: collapse; }}
 th, td {{ padding: 6px 7px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }}
 th {{ color: var(--muted); font-weight: 600; position: sticky; top: 49px; background: var(--panel); }}
+.captureTable {{ table-layout: fixed; min-width: 980px; }}
+.captureTable th:nth-child(1), .captureTable td:nth-child(1) {{ width: 130px; }}
+.captureTable th:nth-child(2), .captureTable td:nth-child(2) {{ width: 80px; }}
+.captureTable th:nth-child(3), .captureTable td:nth-child(3) {{ width: 90px; }}
+.captureTable th:nth-child(4), .captureTable td:nth-child(4),
+.captureTable th:nth-child(5), .captureTable td:nth-child(5) {{ width: 78px; }}
+.captureTable th:nth-child(6), .captureTable td:nth-child(6) {{ width: 96px; }}
+.captureTable th {{ position: static; }}
+.captureTable td {{ overflow-wrap: anywhere; }}
+.captureTable .command {{ max-height: 76px; overflow: auto; }}
 code {{ color: #d8e6ff; }}
 .failures {{ color: var(--bad); white-space: pre-wrap; }}
 .lineList {{ display: grid; gap: 5px; max-height: 340px; overflow: auto; }}
@@ -1083,6 +1139,13 @@ a {{ color: #9fc2ff; }}
   <div><span id="overall" class="status"></span></div>
 </header>
 <main>
+  <div class="captureStage">
+    <div id="cameraGrid" class="grid3"></div>
+    <div class="section">
+      <h2>Capture Failures</h2>
+      <div id="captureFailureTable"></div>
+    </div>
+  </div>
   <div class="toolbar">
     <div class="group"><span class="label">Phase</span><span id="phaseButtons"></span></div>
     <div class="group"><span class="label">Math Angle</span><span id="angleButtons"></span></div>
@@ -1105,7 +1168,6 @@ a {{ color: #9fc2ff; }}
     <div id="liveStatus" class="line">Live rerun endpoint is available only when launched with -LiveServe.</div>
     <div id="liveJobs" class="jobPanel"></div>
   </div>
-  <div id="cameraGrid" class="grid3"></div>
   <div class="section">
     <h2>Case Status</h2>
     <div id="caseStatus"></div>
@@ -1195,9 +1257,9 @@ function buttonRow(id, values, current, setter) {{
   host.innerHTML = values.map(v => `<button type="button" class="${{v === current ? "active" : ""}}" data-value="${{esc(v)}}">${{esc(v)}}</button>`).join("");
   host.querySelectorAll("button").forEach(btn => btn.addEventListener("click", () => {{ setter(btn.dataset.value); render(); }}));
 }}
-function table(headers, rows) {{
+function table(headers, rows, className = "") {{
   if (!rows.length) return `<div class="empty">No data</div>`;
-  return `<table><thead><tr>${{headers.map(h => `<th>${{esc(h)}}</th>`).join("")}}</tr></thead><tbody>${{rows.join("")}}</tbody></table>`;
+  return `<table class="${{esc(className)}}"><thead><tr>${{headers.map(h => `<th>${{esc(h)}}</th>`).join("")}}</tr></thead><tbody>${{rows.join("")}}</tbody></table>`;
 }}
 function liveAvailable() {{
   return location.protocol.startsWith("http") && location.hostname === "127.0.0.1";
@@ -1340,6 +1402,10 @@ function renderStatus(c) {{
   }});
   document.getElementById("caseStatus").innerHTML = table(["Case", "Runtime", "Report", "Log", "JSON"], rows);
 }}
+function renderCaptureFailures() {{
+  const rows = (MANIFEST.captureFailures || []).map(f => `<tr><td>${{esc(f.case)}}</td><td>${{esc(f.phase)}}</td><td>${{esc(f.angle)}}</td><td>${{statusSpan(f.runtimeGateStatus)}}</td><td>${{statusSpan(f.reportStatus)}}</td><td>${{esc(f.screenshotCount)}}</td><td>${{commandBlock(f.command || "", `capture ${{f.angle || ""}}`)}}</td></tr>`);
+  document.getElementById("captureFailureTable").innerHTML = table(["Case", "Phase", "Angle", "Runtime", "Report", "Screenshots", "Rerun"], rows, "captureTable");
+}}
 function renderGates(c) {{
   const rows = filteredGates(c).map(g => `<tr><td>${{esc(g.action)}}</td><td>${{esc(g.category)}}</td><td>${{esc(g.classification)}}</td><td><code>${{esc(g.model)}}</code></td></tr>`);
   document.getElementById("gateTable").innerHTML = table(["Action", "Category", "Classification", "Model"], rows);
@@ -1410,6 +1476,7 @@ function render() {{
   const c = selectedCase();
   renderControls();
   renderImages();
+  renderCaptureFailures();
   renderStatus(c);
   renderLines("actorMatchLines", (c?.actorMatches || []).map(item => item.line || JSON.stringify(item)));
   renderGates(c);
@@ -1469,6 +1536,7 @@ def actor_kit_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
         "angles": manifest.get("angles", []),
         "layers": manifest.get("layers", []),
         "assemblyInventory": manifest.get("assemblyInventory", []),
+        "captureFailures": manifest.get("captureFailures", []),
         "failureSummary": manifest.get("failureSummary", []),
         "controls": manifest.get("controls", {}),
         "cases": cases,
