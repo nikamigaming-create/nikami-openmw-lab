@@ -575,6 +575,14 @@ def build_failure_focus(
         bad_count = int(timeline.get("badCount") or 0)
         if bad_count <= 0 and not timeline.get("regressed"):
             continue
+        first_bad = next(
+            (
+                sample
+                for sample in as_list(timeline.get("samples"))
+                if isinstance(sample, dict) and str(sample.get("verdict") or "") != "OK"
+            ),
+            {},
+        )
         part = str(timeline.get("part") or "")
         part_class = str(timeline.get("class") or "")
         category = category_from_part(part, part_class)
@@ -600,9 +608,9 @@ def build_failure_focus(
                 "class": part_class,
                 "matchedModel": matched_model,
                 "phase": command_phase,
-                "firstBadSampleIndex": timeline.get("firstBadSampleIndex", 0),
-                "firstBadAnimationTime": timeline.get("firstBadAnimationTime"),
-                "firstBadDistance": timeline.get("firstBadDistance"),
+                "firstBadSampleIndex": timeline.get("firstBadSampleIndex", 0) or first_bad.get("sampleIndex", 0),
+                "firstBadAnimationTime": timeline.get("firstBadAnimationTime") or first_bad.get("animationTime"),
+                "firstBadDistance": timeline.get("firstBadDistance") or first_bad.get("distance"),
                 "badCount": bad_count,
                 "count": timeline.get("count", 0),
                 "regressed": bool(timeline.get("regressed")),
@@ -612,6 +620,62 @@ def build_failure_focus(
             }
         )
     return focus
+
+
+def build_failure_summary(cases: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    grouped: dict[tuple[str, str, str], dict[str, Any]] = {}
+    order: list[tuple[str, str, str]] = []
+    for case in cases:
+        case_name = str(case.get("case") or "")
+        angle = str(case.get("angle") or "")
+        phase = str(case.get("phase") or "")
+        for item in as_list(case.get("failureFocus")):
+            if not isinstance(item, dict):
+                continue
+            category = str(item.get("category") or "")
+            matched_model = str(item.get("matchedModel") or "")
+            part = str(item.get("part") or "")
+            command = str(item.get("command") or "")
+            key = (category, matched_model or part, command)
+            if key not in grouped:
+                order.append(key)
+                grouped[key] = {
+                    "category": category,
+                    "matchedModel": matched_model,
+                    "command": command,
+                    "cases": [],
+                    "angles": [],
+                    "phases": [],
+                    "parts": [],
+                    "classes": [],
+                    "badCount": 0,
+                    "sampleCount": 0,
+                    "firstBadSampleIndex": item.get("firstBadSampleIndex", 0),
+                    "firstBadAnimationTime": item.get("firstBadAnimationTime"),
+                    "firstBadDistance": item.get("firstBadDistance"),
+                    "maxAbsDeltaPartInAnchorTrans": 0.0,
+                    "deltaPartInAnchorTransSamples": [],
+                }
+            summary = grouped[key]
+            for field, value in (("cases", case_name), ("angles", angle), ("phases", phase)):
+                if value and value not in summary[field]:
+                    summary[field].append(value)
+            for field, value in (("parts", part), ("classes", str(item.get("class") or ""))):
+                if value and value not in summary[field]:
+                    summary[field].append(value)
+            summary["badCount"] += int(item.get("badCount") or 0)
+            summary["sampleCount"] += int(item.get("count") or 0)
+            delta = [value for value in as_list(item.get("deltaPartInAnchorTrans")) if isinstance(value, (int, float))]
+            if delta:
+                max_abs = max(abs(float(value)) for value in delta)
+                summary["maxAbsDeltaPartInAnchorTrans"] = max(summary["maxAbsDeltaPartInAnchorTrans"], max_abs)
+                if len(summary["deltaPartInAnchorTransSamples"]) < 4:
+                    summary["deltaPartInAnchorTransSamples"].append(delta)
+            if summary.get("firstBadDistance") is None and item.get("firstBadDistance") is not None:
+                summary["firstBadDistance"] = item.get("firstBadDistance")
+            if summary.get("firstBadAnimationTime") is None and item.get("firstBadAnimationTime") is not None:
+                summary["firstBadAnimationTime"] = item.get("firstBadAnimationTime")
+    return [grouped[key] for key in order]
 
 
 def failure_bot_commands(cases: list[dict[str, Any]], limit: int = 12) -> list[dict[str, str]]:
@@ -748,10 +812,18 @@ def load_suite(suite_dir: Path) -> dict[str, Any]:
         overall = "MISSING"
     elif any(case["runtimeGateStatus"] != "PASS" or case["reportStatus"] != "PASS" for case in cases):
         overall = "FAIL"
+    failure_summary = build_failure_summary(cases)
 
     return {
         "schema": "nikami-fnv-character-viewer-v2",
-        "schemaMarkers": ["viewer-controls-v2", "actor-profile-v1", "creature-isolation-v1", "part-timeline-v1"],
+        "schemaMarkers": [
+            "viewer-controls-v2",
+            "actor-profile-v1",
+            "creature-isolation-v1",
+            "part-timeline-v1",
+            "failure-summary-v1",
+        ],
+        "status": overall,
         "actorProfile": {
             "kind": actor_kind,
             "recordType": "CREA" if actor_kind == "creature" else "NPC_",
@@ -771,6 +843,7 @@ def load_suite(suite_dir: Path) -> dict[str, Any]:
             if actor_kind == "creature"
             else ["Skin Evidence", "Hair Headgear Evidence", "Animation Talk Weapon Evidence", "Face Drawables"]
         ),
+        "failureSummary": failure_summary,
         "controls": gate_controls(cases, actor, actor_kind),
         "cases": cases,
     }
@@ -885,6 +958,10 @@ a {{ color: #9fc2ff; }}
   <div class="section">
     <h2>Runtime Drift</h2>
     <div id="driftTable"></div>
+  </div>
+  <div class="section">
+    <h2>Failure Summary</h2>
+    <div id="failureSummaryTable"></div>
   </div>
   <div class="section">
     <h2>Failure Focus</h2>
@@ -1063,6 +1140,10 @@ function renderDrift(c) {{
   const rows = filterPartRows(c?.runtimeAuditSummary || [], a => a.part, a => a.class).map(a => `<tr><td><code>${{esc(a.part)}}</code></td><td>${{esc(a.class)}}</td><td>${{esc(a.firstVerdict)}} -> ${{esc(a.lastVerdict)}}</td><td>${{esc(a.badCount)}} / ${{esc(a.count)}}</td><td>${{esc(a.firstSampleIndex)}} -> ${{esc(a.lastSampleIndex)}}</td><td>${{esc(a.firstAnimationTime)}} -> ${{esc(a.lastAnimationTime)}}</td><td>${{esc(a.maxDistance)}}</td><td>${{esc(JSON.stringify(a.deltaRelLocal || []))}}</td><td>${{esc(JSON.stringify(a.deltaPartInAnchorTrans || []))}}</td><td>${{esc(a.firstBadSampleIndex || "")}}</td></tr>`);
   document.getElementById("driftTable").innerHTML = table(["Part", "Class", "Verdict", "Bad", "Samples", "Anim Time", "Max Distance", "Delta Rel", "Delta Anchor", "First Bad"], rows);
 }}
+function renderFailureSummary() {{
+  const rows = filterPartRows(MANIFEST.failureSummary || [], f => (f.parts || []).join(" "), f => f.category).map(f => `<tr><td>${{esc(f.category)}}</td><td><code>${{esc(f.matchedModel || "")}}</code></td><td>${{esc((f.angles || []).join(", "))}}</td><td>${{esc((f.cases || []).length)}}</td><td>${{esc(f.badCount)}} / ${{esc(f.sampleCount)}}</td><td>${{esc(f.firstBadSampleIndex || "")}}</td><td>${{esc(f.firstBadDistance ?? "")}}</td><td>${{esc(f.maxAbsDeltaPartInAnchorTrans)}}</td><td><div class="command">${{esc(f.command || "")}}</div></td></tr>`);
+  document.getElementById("failureSummaryTable").innerHTML = table(["Category", "Matched Model", "Angles", "Cases", "Bad", "First Bad", "Distance", "Max Delta Anchor", "Rerun"], rows);
+}}
 function renderFailureFocus(c) {{
   const rows = filterPartRows(c?.failureFocus || [], f => f.part, f => f.class).map(f => `<tr><td>${{esc(f.category)}}</td><td><code>${{esc(f.part)}}</code></td><td><code>${{esc(f.matchedModel || "")}}</code></td><td>${{esc(f.firstBadSampleIndex || "")}}</td><td>${{esc(f.firstBadAnimationTime ?? "")}}</td><td>${{esc(f.firstBadDistance ?? "")}}</td><td>${{esc(JSON.stringify(f.deltaPartInAnchorTrans || []))}}</td><td><div class="command">${{esc(f.command || "")}}</div></td></tr>`);
   document.getElementById("failureFocusTable").innerHTML = table(["Category", "Part", "Matched Model", "First Bad", "Anim Time", "Distance", "Delta Anchor", "Rerun"], rows);
@@ -1102,6 +1183,7 @@ function render() {{
   renderGates(c);
   renderCoords(c);
   renderDrift(c);
+  renderFailureSummary();
   renderFailureFocus(c);
   renderTimeline(c);
   renderLines("skinLines", c?.skinLines);
@@ -1150,6 +1232,7 @@ def actor_kit_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
         "phases": manifest.get("phases", []),
         "angles": manifest.get("angles", []),
         "layers": manifest.get("layers", []),
+        "failureSummary": manifest.get("failureSummary", []),
         "controls": manifest.get("controls", {}),
         "cases": cases,
     }
