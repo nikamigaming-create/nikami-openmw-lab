@@ -110,7 +110,16 @@ function Select-PlanEntries([object]$Plan) {
         $entries = @($entries | Where-Object { $_.source -eq $Source })
     }
     if (![string]::IsNullOrWhiteSpace($Target)) {
-        $entries = @($entries | Where-Object { $_.target -eq $Target -or $_.actorEditorId -eq $Target -or $_.placedRefEditorId -eq $Target -or $_.actorFormId -eq $Target -or $_.placedRefFormId -eq $Target })
+        $entries = @($entries | Where-Object {
+            $_.target -eq $Target `
+                -or $_.runtimeTarget -eq $Target `
+                -or $_.placedTarget -eq $Target `
+                -or $_.baseActorTarget -eq $Target `
+                -or $_.actorEditorId -eq $Target `
+                -or $_.placedRefEditorId -eq $Target `
+                -or $_.actorFormId -eq $Target `
+                -or $_.placedRefFormId -eq $Target
+        })
     }
     if ($MaxEntries -gt 0) {
         $entries = @($entries | Select-Object -First $MaxEntries)
@@ -130,9 +139,17 @@ function Invoke-ViewerEntry([object]$Entry, [string]$RunDir) {
     }
     $placement = Get-ObjectProperty $Entry "placement"
 
+    $runtimeTarget = [string](Get-ObjectProperty $Entry "runtimeTarget")
+    if ([string]::IsNullOrWhiteSpace($runtimeTarget)) {
+        $runtimeTarget = [string]$Entry.target
+    }
+    $placedTarget = [string](Get-ObjectProperty $Entry "placedTarget")
+
     $result = [ordered]@{
         id = $Entry.id
         target = $Entry.target
+        runtimeTarget = $runtimeTarget
+        placedTarget = $placedTarget
         actorKind = $Entry.actorKind
         source = $Entry.source
         status = "PENDING"
@@ -160,7 +177,7 @@ function Invoke-ViewerEntry([object]$Entry, [string]$RunDir) {
     }
     $viewerArgs = @{
         ProofRoot = $ProofRoot
-        Targets = @([string]$Entry.target)
+        Targets = @($runtimeTarget)
         ActorKind = [string]$Entry.actorKind
         Phases = @($phases)
         RunSeconds = $RunSeconds

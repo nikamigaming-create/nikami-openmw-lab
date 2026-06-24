@@ -51,6 +51,64 @@ if ([string]::IsNullOrWhiteSpace($ProofRoot)) {
     $ProofRoot = Join-Path (Split-Path $RepoRoot -Parent) "proof"
 }
 
+function Resolve-FnvDataFromLatestHarvest([string]$ProofRoot) {
+    $harvestRoot = Join-Path $ProofRoot "fnv-retail-harvest"
+    if (!(Test-Path -LiteralPath $harvestRoot -PathType Container)) { return $null }
+    $manifests = Get-ChildItem -LiteralPath $harvestRoot -Directory -ErrorAction SilentlyContinue |
+        Sort-Object Name -Descending |
+        ForEach-Object { Join-Path $_.FullName "manifest.json" } |
+        Where-Object { Test-Path -LiteralPath $_ -PathType Leaf }
+    foreach ($manifestPath in $manifests) {
+        try {
+            $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+            $candidate = [string]$manifest.fnvData
+            if (![string]::IsNullOrWhiteSpace($candidate) -and (Test-Path -LiteralPath $candidate -PathType Container)) {
+                return [pscustomobject][ordered]@{
+                    FnvData = (Resolve-Path -LiteralPath $candidate).Path
+                    Manifest = $manifestPath
+                }
+            }
+        }
+        catch {
+        }
+    }
+    return $null
+}
+
+function Resolve-VcpkgRootFromKnownPaths([string]$RepoRoot) {
+    $candidates = @(
+        $env:NIKAMI_VCPKG_ROOT,
+        "D:\code\c\FMODS\vcpkg",
+        (Join-Path $RepoRoot "vcpkg"),
+        (Join-Path (Split-Path $RepoRoot -Parent) "vcpkg")
+    )
+    foreach ($candidate in $candidates) {
+        if ([string]::IsNullOrWhiteSpace($candidate)) { continue }
+        $toolchain = Join-Path $candidate "scripts/buildsystems/vcpkg.cmake"
+        if (Test-Path -LiteralPath $toolchain -PathType Leaf) {
+            return (Resolve-Path -LiteralPath $candidate).Path
+        }
+    }
+    return ""
+}
+
+$FnvDataProvenance = ""
+if ([string]::IsNullOrWhiteSpace($FnvData)) {
+    $harvestData = Resolve-FnvDataFromLatestHarvest $ProofRoot
+    if ($null -ne $harvestData) {
+        $FnvData = $harvestData.FnvData
+        $FnvDataProvenance = $harvestData.Manifest
+    }
+}
+$VcpkgRootProvenance = ""
+if ([string]::IsNullOrWhiteSpace($VcpkgRoot)) {
+    $detectedVcpkg = Resolve-VcpkgRootFromKnownPaths $RepoRoot
+    if (![string]::IsNullOrWhiteSpace($detectedVcpkg)) {
+        $VcpkgRoot = $detectedVcpkg
+        $VcpkgRootProvenance = "verified local vcpkg toolchain"
+    }
+}
+
 $FlatProof = Join-Path $PSScriptRoot "run-fnv-flat-proof.ps1"
 $ReportScript = Join-Path $PSScriptRoot "fnv_character_builder_report.py"
 if (!(Test-Path -LiteralPath $FlatProof)) { throw "Missing flat proof runner: $FlatProof" }
@@ -168,6 +226,14 @@ Write-SuiteLine "FNV character builder tester $Stamp"
 Write-SuiteLine "RepoRoot: $RepoRoot"
 Write-SuiteLine "SuiteDir: $SuiteDir"
 Write-SuiteLine "ActorTarget: $ActorTarget"
+Write-SuiteLine "FnvData: $FnvData"
+if (![string]::IsNullOrWhiteSpace($FnvDataProvenance)) {
+    Write-SuiteLine "FnvDataProvenance: latest generated harvest manifest $FnvDataProvenance"
+}
+Write-SuiteLine "VcpkgRoot: $VcpkgRoot"
+if (![string]::IsNullOrWhiteSpace($VcpkgRootProvenance)) {
+    Write-SuiteLine "VcpkgRootProvenance: $VcpkgRootProvenance"
+}
 Write-SuiteLine "ActorKind: $ActorKind"
 Write-SuiteLine "CreatureDiagnostics: $($CreatureDiagnostics -or $ActorKind -ieq 'creature')"
 Write-SuiteLine "Phases: $($Phases -join ',')"

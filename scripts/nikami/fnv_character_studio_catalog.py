@@ -68,6 +68,67 @@ def csv(values: list[Any]) -> str:
     return ",".join(as_text(value) for value in values if as_text(value))
 
 
+def normalize_form_target(value: Any) -> str:
+    text = as_text(value).strip()
+    if not text or text.lower().startswith("formid:"):
+        return text
+    if re.fullmatch(r"0x[0-9A-Fa-f]+", text):
+        return f"FormId:{text}"
+    return text
+
+
+def actor_runtime_target(row: dict[str, Any]) -> str:
+    runtime_target = as_text(row.get("runtimeTarget"))
+    placed_target = as_text(row.get("placedTarget")) or (as_text(row.get("target")) if as_text(row.get("source")) == "placed-reference" else "")
+    if as_text(row.get("source")) == "placed-reference" and runtime_target == placed_target:
+        runtime_target = ""
+    return (
+        runtime_target
+        or as_text(row.get("assemblyTarget"))
+        or as_text(row.get("baseActorTarget"))
+        or as_text(row.get("actorEditorId"))
+        or normalize_form_target(row.get("actorFormId"))
+        or as_text(row.get("target"))
+    )
+
+
+def actor_placed_target(row: dict[str, Any]) -> str:
+    if as_text(row.get("source")) != "placed-reference":
+        return as_text(row.get("placedTarget"))
+    return (
+        as_text(row.get("placedTarget"))
+        or as_text(row.get("target"))
+        or as_text(row.get("placedRefEditorId"))
+        or normalize_form_target(row.get("placedRefFormId"))
+    )
+
+
+def placement_command_args(placement: dict[str, Any]) -> str:
+    if not isinstance(placement, dict) or not placement.get("runtimeBootstrapReady"):
+        return ""
+    position = placement.get("position") if isinstance(placement.get("position"), dict) else {}
+    rotation = placement.get("rotation") if isinstance(placement.get("rotation"), dict) else {}
+    cell = as_text(placement.get("cell"))
+    if not cell:
+        return ""
+    args = [
+        f"-BootstrapCell {shell_quote(cell)}",
+        f"-BootstrapX {position.get('x')}",
+        f"-BootstrapY {position.get('y')}",
+        f"-BootstrapZ {position.get('z')}",
+        f"-ActorStageX {position.get('x')}",
+        f"-ActorStageY {position.get('y')}",
+        f"-ActorStageZ {position.get('z')}",
+    ]
+    for axis in ("x", "y", "z"):
+        value = rotation.get(axis)
+        if value is not None:
+            suffix = axis.upper()
+            args.append(f"-BootstrapRot{suffix} {value}")
+            args.append(f"-ActorStageRot{suffix} {value}")
+    return " ".join(args)
+
+
 def search_text(*values: Any) -> str:
     flattened: list[str] = []
     for value in values:
@@ -95,27 +156,38 @@ def normalize_classification(value: str) -> str:
 
 
 def actor_studio_command(entry: dict[str, Any], angles: str) -> str:
-    target = as_text(entry.get("target"))
+    target = actor_runtime_target(entry)
     actor_kind = as_text(entry.get("actorKind"))
     phases = csv(as_list(entry.get("phases")))
     if not target or actor_kind not in {"npc", "creature"} or not phases:
         return ""
+    bootstrap_args = as_text(entry.get("placementCommandArgs")) or placement_command_args(entry.get("placement", {}))
     command = (
         "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/nikami/run-fnv-character-viewer.ps1 "
         f"-Targets {shell_quote(target)} -ActorKind {actor_kind} -Phases {shell_quote(phases)} "
-        f"-Angles {shell_quote(angles)} -OpenViewer -LiveServe"
     )
+    if bootstrap_args:
+        command += f"{bootstrap_args} "
+    command += f"-Angles {shell_quote(angles)} -OpenViewer -LiveServe"
     if actor_kind == "creature":
         command += " -CreatureDiagnostics"
     return command
 
 
 def actor_entry(row: dict[str, Any], index: int) -> dict[str, Any]:
+    selected_target = as_text(row.get("selectedTarget") or row.get("target"))
+    runtime_target = actor_runtime_target(row)
+    placed_target = actor_placed_target(row)
+    actor_form_target = normalize_form_target(row.get("actorFormId"))
+    placed_ref_form_target = normalize_form_target(row.get("placedRefFormId"))
+    placement_args = as_text(row.get("placementCommandArgs")) or placement_command_args(row.get("placement", {}))
+    if not selected_target:
+        selected_target = placed_target or runtime_target
     label = (
         as_text(row.get("placedRefEditorId"))
         or as_text(row.get("actorEditorId"))
-        or as_text(row.get("target"))
-        or as_text(row.get("actorFormId"))
+        or selected_target
+        or actor_form_target
         or f"actor-{index:06d}"
     )
     classification = normalize_classification(as_text(row.get("classification")))
@@ -125,10 +197,30 @@ def actor_entry(row: dict[str, Any], index: int) -> dict[str, Any]:
         "kind": as_text(row.get("actorKind")) or "unknown",
         "recordType": as_text(row.get("recordType")),
         "label": label,
-        "target": as_text(row.get("target")),
+        "target": selected_target,
+        "selectedTarget": selected_target,
+        "runtimeTarget": runtime_target,
+        "placedTarget": placed_target,
+        "baseActorTarget": as_text(row.get("baseActorTarget")) or runtime_target,
+        "assemblyTarget": as_text(row.get("assemblyTarget") or row.get("baseActorTarget")) or runtime_target,
+        "actorFormTarget": actor_form_target,
+        "placedRefFormTarget": placed_ref_form_target,
+        "targetMapping": {
+            "selectedTarget": selected_target,
+            "placedTarget": placed_target,
+            "runtimeTarget": runtime_target,
+            "actorFormTarget": actor_form_target,
+            "placedRefFormTarget": placed_ref_form_target,
+            "source": as_text(row.get("source")),
+        },
+        "phases": as_list(row.get("phases")),
         "plugin": as_text(row.get("plugin")),
         "formId": as_text(row.get("actorFormId")),
         "editorId": as_text(row.get("actorEditorId")),
+        "actorFormId": as_text(row.get("actorFormId")),
+        "actorEditorId": as_text(row.get("actorEditorId")),
+        "placedRefFormId": as_text(row.get("placedRefFormId")),
+        "placedRefEditorId": as_text(row.get("placedRefEditorId")),
         "source": as_text(row.get("source")),
         "classification": classification,
         "readiness": classification,
@@ -136,7 +228,10 @@ def actor_entry(row: dict[str, Any], index: int) -> dict[str, Any]:
         "model": "",
         "icon": "",
         "componentCounts": row.get("componentCounts", {}),
+        "componentPhases": row.get("componentPhases", {}),
+        "componentEvidence": as_list(row.get("componentEvidence")),
         "placement": row.get("placement", {}),
+        "placementCommandArgs": placement_args,
         "studioGates": [
             {
                 "gate": "runtime-world-session",
@@ -155,7 +250,10 @@ def actor_entry(row: dict[str, Any], index: int) -> dict[str, Any]:
             "neutralStage": "",
         },
         "sourceEntry": row.get("id", ""),
-        "payloadPolicy": "generated identifiers and commands only; no retail payload bytes",
+        "sourceProvenance": row.get("sourceProvenance", {}),
+        "proofAnchor": as_text(row.get("proofAnchor")),
+        "notes": as_text(row.get("notes")),
+        "payloadPolicy": "generated identifiers, commands, and asset path provenance only; no retail payload bytes",
     }
     entry["searchText"] = search_text(
         entry["domain"],
@@ -163,11 +261,20 @@ def actor_entry(row: dict[str, Any], index: int) -> dict[str, Any]:
         entry["recordType"],
         entry["label"],
         entry["target"],
+        entry["runtimeTarget"],
+        entry["placedTarget"],
+        entry["baseActorTarget"],
+        entry["assemblyTarget"],
         entry["formId"],
         entry["editorId"],
         entry["plugin"],
         entry["source"],
         entry["componentCounts"],
+        entry["componentPhases"],
+        entry["componentEvidence"],
+        entry["placement"],
+        entry["placementCommandArgs"],
+        entry["proofAnchor"],
     )
     return entry
 
@@ -255,6 +362,11 @@ def build_catalog(plan: dict[str, Any], gameplay_rows: list[dict[str, Any]], lim
         "schemaMarkers": [
             "searchable-studio-catalog-v1",
             "runtime-session-commands-v1",
+            "live-studio-workbench-v1",
+            "three-camera-session-strip-v1",
+            "component-selector-job-payload-v1",
+            "placed-runtime-target-map-v1",
+            "placement-bootstrap-job-args-v1",
             "neutral-stage-gate-pending-v1",
             "no-retail-payload-v1",
         ],
@@ -305,9 +417,10 @@ def html_doc(catalog: dict[str, Any]) -> str:
 body {{ margin: 0; background: var(--bg); color: var(--text); font: 13px/1.4 Segoe UI, Arial, sans-serif; }}
 header {{ position: sticky; top: 0; z-index: 4; background: #15181c; border-bottom: 1px solid var(--line); padding: 12px 16px; display: grid; gap: 10px; }}
 h1 {{ margin: 0; font-size: 17px; }}
-main {{ padding: 14px 16px 28px; display: grid; gap: 10px; }}
+main {{ padding: 14px 16px 28px; display: grid; gap: 12px; }}
 .bar {{ display: grid; grid-template-columns: minmax(240px, 1fr) 170px 170px; gap: 8px; }}
 input, select, button {{ border: 1px solid var(--line); border-radius: 5px; background: var(--panel2); color: var(--text); padding: 7px 9px; font: inherit; }}
+button:disabled {{ opacity: .45; cursor: not-allowed; }}
 .summary {{ display: flex; flex-wrap: wrap; gap: 8px; color: var(--muted); }}
 .pill {{ border-radius: 99px; padding: 3px 8px; background: var(--panel2); border: 1px solid var(--line); }}
 .PASS {{ color: #07120b; background: var(--ok); }}
@@ -315,6 +428,36 @@ input, select, button {{ border: 1px solid var(--line); border-radius: 5px; back
 .loaded-pending-runtime {{ color: #181102; background: var(--warn); }}
 .runtime-supported {{ color: #07120b; background: var(--ok); }}
 .known-blocked {{ color: #190502; background: var(--bad); }}
+.workbench {{ display: grid; grid-template-columns: minmax(300px, 380px) minmax(0, 1fr); gap: 10px; align-items: start; }}
+.panel {{ background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 10px; display: grid; gap: 9px; min-width: 0; }}
+.panel h2 {{ margin: 0; font-size: 14px; }}
+.panel h3 {{ margin: 0; font-size: 12px; color: var(--muted); text-transform: uppercase; }}
+.actions {{ display: flex; flex-wrap: wrap; gap: 7px; }}
+.fieldGrid {{ display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; }}
+.checkGrid {{ display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }}
+.check {{ display: inline-flex; gap: 6px; align-items: center; border: 1px solid var(--line); border-radius: 5px; padding: 6px 7px; background: var(--panel2); }}
+.check input {{ margin: 0; }}
+.cameraStrip {{ display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }}
+.cameraPane {{ background: #090b0e; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; min-width: 0; }}
+.cameraHead {{ display: flex; justify-content: space-between; gap: 8px; padding: 8px 9px; border-bottom: 1px solid var(--line); color: var(--muted); }}
+.cameraBody {{ min-height: 220px; display: grid; place-items: center; color: var(--muted); }}
+.cameraPane img {{ display: block; width: 100%; height: auto; background: #050607; }}
+.studioStage {{ min-height: 280px; border: 1px solid var(--line); border-radius: 6px; background: #0b0d10; overflow: hidden; position: relative; display: grid; grid-template-rows: auto 1fr auto; }}
+.stageHead, .stageFoot {{ display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 10px; background: #12151a; border-bottom: 1px solid var(--line); color: var(--muted); }}
+.stageFoot {{ border-top: 1px solid var(--line); border-bottom: 0; }}
+.stageViewport {{ min-height: 220px; position: relative; display: grid; place-items: center; background:
+  linear-gradient(transparent 95%, rgba(116,168,255,.18) 96%),
+  linear-gradient(90deg, transparent 95%, rgba(116,168,255,.18) 96%),
+  radial-gradient(circle at 50% 40%, rgba(116,168,255,.12), transparent 34%),
+  #080a0d; background-size: 32px 32px, 32px 32px, auto, auto; }}
+.stageActor {{ width: min(24vw, 110px); min-width: 72px; aspect-ratio: .42 / 1; border: 1px solid #667181; border-radius: 42% 42% 10px 10px; background: linear-gradient(#303844, #171b22); box-shadow: 0 0 0 1px #0f1217, 0 20px 70px rgba(116,168,255,.24); }}
+.stageOverlay {{ position: absolute; left: 10px; bottom: 10px; display: grid; gap: 4px; max-width: min(460px, calc(100% - 20px)); }}
+.stateRow {{ display: flex; flex-wrap: wrap; gap: 7px; align-items: center; }}
+.focusPreset {{ border-color: #4d5a6a; }}
+.reviewControl {{ display: grid; grid-template-columns: minmax(150px, 1fr) auto; gap: 7px; }}
+.policyNote {{ color: var(--muted); font-size: 12px; }}
+.jobList, .eventList, .coordList {{ display: grid; gap: 6px; max-height: 240px; overflow: auto; }}
+.jobItem, .eventItem, .coordItem {{ background: #101216; border: 1px solid #2b3038; border-radius: 5px; padding: 7px; }}
 .grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(360px, 1fr)); gap: 10px; }}
 .card {{ background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 10px; display: grid; gap: 7px; min-width: 0; }}
 .head {{ display: flex; justify-content: space-between; gap: 8px; }}
@@ -323,25 +466,119 @@ input, select, button {{ border: 1px solid var(--line); border-radius: 5px; back
 .meta {{ display: flex; flex-wrap: wrap; gap: 6px; }}
 .command {{ font-family: Consolas, monospace; font-size: 12px; background: #0d0f12; border: 1px solid #2b3038; border-radius: 4px; padding: 6px; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 96px; overflow: auto; }}
 .gate {{ color: var(--warn); }}
-@media (max-width: 760px) {{ .bar {{ grid-template-columns: 1fr; }} }}
+@media (max-width: 980px) {{ .workbench, .cameraStrip {{ grid-template-columns: 1fr; }} }}
+@media (max-width: 760px) {{ .bar, .fieldGrid, .checkGrid {{ grid-template-columns: 1fr; }} }}
 </style>
 </head>
 <body>
 <header>
   <h1>FNV Character Studio Catalog <span id="status" class="pill"></span></h1>
   <div class="bar">
-    <input id="search" placeholder="Search actors, creatures, weapons, ammo, projectiles, IDs, models">
+    <input id="search" placeholder="Search NPCs, creatures, items, weapons, outfits, hair, hats, IDs, models">
     <select id="domain"><option value="">all domains</option></select>
     <select id="kind"><option value="">all kinds</option></select>
   </div>
   <div id="summary" class="summary"></div>
 </header>
 <main>
+  <section class="workbench">
+    <div class="panel">
+      <h2>Studio Session</h2>
+      <div id="liveState" class="muted"></div>
+      <div id="selectedEntry" class="jobItem"></div>
+      <div class="actions">
+        <button id="newSession" type="button">New Session</button>
+        <button id="runThree" type="button">Run 3 Camera</button>
+        <button id="runFront" type="button">Run Front</button>
+      </div>
+      <h3>Easy Pete Debug</h3>
+      <div class="actions">
+        <button class="focusPreset" type="button" data-preset="easy-pete-face">Face</button>
+        <button class="focusPreset" type="button" data-preset="easy-pete-hat">Hat</button>
+        <button class="focusPreset" type="button" data-preset="easy-pete-skin">Skin</button>
+      </div>
+      <h3>Component Payload</h3>
+      <div class="fieldGrid">
+        <label>Phase<select id="phaseSelect"></select></label>
+        <label>Part Focus<select id="partFocusSelect"></select></label>
+        <label>Job<select id="jobTypeSelect"></select></label>
+        <label>Animation<select id="animationSelect"></select></label>
+        <label>Dialogue<select id="dialogueSelect"></select></label>
+        <label>Angles<select id="angleSelect"></select></label>
+      </div>
+      <div id="partChecks" class="checkGrid"></div>
+      <h3>Save / Review</h3>
+      <div class="stateRow">
+        <span id="saveState" class="pill">Unsaved</span>
+        <span id="proofState" class="pill">No proof</span>
+        <span id="reviewState" class="pill">Review pending</span>
+      </div>
+      <div class="reviewControl">
+        <select id="reviewSelect"></select>
+        <button id="saveReview" type="button">Save Review Event</button>
+      </div>
+      <div class="policyNote">Generated session/review metadata only; no retail assets or payload bytes are written.</div>
+      <h3>Session Events</h3>
+      <div id="eventList" class="eventList"></div>
+    </div>
+    <div class="panel">
+      <div class="cameraStrip" id="cameraStrip"></div>
+      <div class="studioStage" id="studioStage">
+        <div class="stageHead"><b>Neutral 3D Workbench</b><span id="stageStatus">runtime stage pending</span></div>
+        <div class="stageViewport">
+          <div class="stageActor" aria-label="neutral actor silhouette"></div>
+          <div class="stageOverlay" id="stageOverlay"></div>
+        </div>
+        <div class="stageFoot"><span id="stageTarget">no target selected</span><span id="stageFocus">all parts</span></div>
+      </div>
+      <div class="fieldGrid">
+        <div>
+          <h3>Jobs</h3>
+          <div id="jobList" class="jobList"></div>
+        </div>
+        <div>
+          <h3>Coordinates</h3>
+          <div id="coordList" class="coordList"></div>
+        </div>
+      </div>
+    </div>
+  </section>
   <div id="cards" class="grid"></div>
 </main>
 <script>
 const CATALOG = {data};
-const state = {{ query: "", domain: "", kind: "" }};
+const PARTS = ["body-skin", "head-skin", "face-organs", "hair-beard", "equipment-body", "weapon", "headgear"];
+const PART_LABELS = {{
+  "body-skin": "Body / Skin",
+  "head-skin": "Head Skin",
+  "face-organs": "Face / Eyes / Mouth",
+  "hair-beard": "Hair / Beard",
+  "equipment-body": "Outfit / Armor",
+  "weapon": "Weapon",
+  "headgear": "Hat / Headgear"
+}};
+const PART_PHASES = {{
+  "body-skin": "body",
+  "head-skin": "head",
+  "face-organs": "face",
+  "hair-beard": "hair",
+  "equipment-body": "equipment",
+  "weapon": "weapon",
+  "headgear": "headgear"
+}};
+const REVIEW_STATES = ["review-pending", "pass", "fail", "blocked", "needs-rerun"];
+const state = {{
+  query: "",
+  domain: "",
+  kind: "",
+  selectedId: "",
+  session: null,
+  jobs: [],
+  events: [],
+  latestManifest: null,
+  latestJob: null,
+  partEnabled: Object.fromEntries(PARTS.map(part => [part, true]))
+}};
 function esc(v) {{ return String(v ?? "").replace(/[&<>"']/g, c => ({{"&":"&amp;","<":"&lt;",">":"&gt;","\\"":"&quot;","'":"&#39;"}}[c])); }}
 function fillSelect(id, values) {{
   const node = document.getElementById(id);
@@ -350,6 +587,147 @@ function fillSelect(id, values) {{
 function commandBlock(command) {{
   return command ? `<div class="command">${{esc(command)}}</div>` : `<div class="gate">pending generic studio command</div>`;
 }}
+function liveAvailable() {{
+  return location.protocol.startsWith("http") && (location.hostname === "127.0.0.1" || location.hostname === "localhost");
+}}
+async function api(path, options = {{}}) {{
+  const response = await fetch(path, {{
+    cache: "no-store",
+    ...options,
+    headers: {{ "Content-Type": "application/json", ...(options.headers || {{}}) }}
+  }});
+  const payload = await response.json();
+  if (!response.ok) throw new Error(payload.error || response.statusText);
+  return payload;
+}}
+function selectedEntry() {{
+  return (CATALOG.entries || []).find(entry => entry.id === state.selectedId) || null;
+}}
+function selectedParts() {{
+  const focus = document.getElementById("partFocusSelect")?.value || "";
+  if (focus) return [focus];
+  return PARTS.filter(part => state.partEnabled[part] !== false);
+}}
+function selectedPropSlots() {{
+  return selectedParts().filter(part => ["equipment-body", "weapon", "headgear"].includes(part));
+}}
+function selectedPhases() {{
+  const value = document.getElementById("phaseSelect")?.value || "";
+  if (value) return [value];
+  const focus = document.getElementById("partFocusSelect")?.value || "";
+  if (focus && PART_PHASES[focus]) return [PART_PHASES[focus]];
+  const entry = selectedEntry();
+  return (entry?.phases || []).length ? entry.phases : ["body", "head", "face", "hair", "equipment", "weapon", "headgear", "talk"];
+}}
+function selectedAngles(commandKey) {{
+  const value = document.getElementById("angleSelect")?.value || "";
+  if (value) return value.split(",");
+  return commandKey === "runtimeFrontOnly" ? ["front"] : ["front", "front-left", "front-right"];
+}}
+function studioPayload(commandKey) {{
+  const payload = {{
+    entryId: state.selectedId,
+    commandKey,
+    jobType: document.getElementById("jobTypeSelect")?.value || "appearance",
+    partFocus: document.getElementById("partFocusSelect")?.value || "",
+    reviewState: document.getElementById("reviewSelect")?.value || "review-pending",
+    phases: selectedPhases(),
+    angles: selectedAngles(commandKey),
+    parts: selectedParts(),
+    propSlots: selectedPropSlots()
+  }};
+  const animation = document.getElementById("animationSelect")?.value || "";
+  const dialogue = document.getElementById("dialogueSelect")?.value || "";
+  if (animation) payload.animationGroup = animation;
+  if (dialogue) payload.dialogueMode = dialogue;
+  return payload;
+}}
+function addLocalEvent(type, payload) {{
+  state.events.unshift({{ t: new Date().toISOString(), type, payload }});
+  state.events = state.events.slice(0, 80);
+  renderEvents();
+}}
+async function recordEvent(type, payload) {{
+  addLocalEvent(type, payload);
+  if (!liveAvailable() || !state.session) return;
+  try {{
+    await api(`/nikami/studio/sessions/${{encodeURIComponent(state.session.id)}}/events`, {{
+      method: "POST",
+      body: JSON.stringify({{ type, payload }})
+    }});
+  }} catch (error) {{
+    addLocalEvent("event.write.failed", {{ message: error.message || String(error) }});
+  }}
+}}
+async function ensureSession() {{
+  if (state.session) return state.session;
+  if (!liveAvailable()) throw new Error("live loopback server is not available");
+  const entry = selectedEntry();
+  state.session = await api("/nikami/studio/sessions", {{
+    method: "POST",
+    body: JSON.stringify({{ entryId: entry?.id || "" }})
+  }});
+  addLocalEvent("session.create", {{ id: state.session.id, selectedEntry: entry?.id || "" }});
+  renderWorkbench();
+  return state.session;
+}}
+async function launchJob(commandKey) {{
+  const entry = selectedEntry();
+  if (!entry) return;
+  try {{
+    await ensureSession();
+    const payload = studioPayload(commandKey);
+    addLocalEvent("job.request", payload);
+    const job = await api(`/nikami/studio/sessions/${{encodeURIComponent(state.session.id)}}/jobs`, {{
+      method: "POST",
+      body: JSON.stringify(payload)
+    }});
+    state.jobs.unshift(job);
+    state.latestJob = job;
+    renderWorkbench();
+    pollJob(job.id);
+  }} catch (error) {{
+    addLocalEvent("job.failed-to-start", {{ message: error.message || String(error), entryId: entry.id }});
+  }}
+}}
+async function pollJob(id) {{
+  for (let attempt = 0; attempt < 720; attempt++) {{
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    try {{
+      const job = await api(`/nikami/actor-kit/jobs/${{encodeURIComponent(id)}}`);
+      const index = state.jobs.findIndex(item => item.id === id);
+      if (index >= 0) state.jobs[index] = job;
+      if (!state.latestJob || state.latestJob.id === id) state.latestJob = job;
+      if (job.result?.viewerJsonUrl && !job.manifest) await loadJobManifest(job);
+      renderWorkbench();
+      if (job.state !== "running") return;
+    }} catch (error) {{
+      addLocalEvent("job.poll.failed", {{ id, message: error.message || String(error) }});
+      return;
+    }}
+  }}
+}}
+async function loadJobManifest(job) {{
+  const url = job.result?.viewerJsonUrl || "";
+  if (!url) return;
+  try {{
+    const response = await fetch(url, {{ cache: "no-store" }});
+    const manifest = await response.json();
+    job.manifest = manifest;
+    state.latestManifest = manifest;
+    state.latestJob = job;
+    addLocalEvent("manifest.loaded", {{ jobId: job.id, url }});
+  }} catch (error) {{
+    addLocalEvent("manifest.load.failed", {{ jobId: job.id, message: error.message || String(error) }});
+  }}
+}}
+function caseImageUrl(job, item) {{
+  const image = item?.mainImage || (item?.screenshots || [])[0]?.name || (item?.screenshots || [])[0] || "";
+  const base = job?.result?.viewerJsonUrl || location.href;
+  if (!image) return "";
+  try {{ return new URL(image, new URL(base, location.href)).href; }}
+  catch {{ return image; }}
+}}
 function matches(e) {{
   if (state.domain && e.domain !== state.domain) return false;
   if (state.kind && e.kind !== state.kind) return false;
@@ -357,6 +735,154 @@ function matches(e) {{
   if (!q) return true;
   const haystack = String(e.searchText || "");
   return q.split(/\\s+/).filter(Boolean).every(token => haystack.includes(token));
+}}
+function renderControls() {{
+  const phases = ["", "body", "head", "face", "hair", "equipment", "weapon", "headgear", "talk", "creature-model", "creature-body", "creature-animation", "creature-full"];
+  document.getElementById("phaseSelect").innerHTML = phases.map(value => `<option value="${{esc(value)}}">${{esc(value || "entry default")}}</option>`).join("");
+  document.getElementById("partFocusSelect").innerHTML = [["", "all enabled parts"], ...PARTS.map(part => [part, PART_LABELS[part] || part])]
+    .map(([value, label]) => `<option value="${{esc(value)}}">${{esc(label)}}</option>`).join("");
+  document.getElementById("jobTypeSelect").innerHTML = [
+    ["appearance", "appearance"],
+    ["part-isolation", "part isolation"],
+    ["weapon", "weapon job"],
+    ["animation", "animation job"],
+    ["dialogue", "dialogue job"],
+    ["easy-pete-face", "Easy Pete face"],
+    ["easy-pete-hat", "Easy Pete hat"],
+    ["easy-pete-skin", "Easy Pete skin"]
+  ].map(([value, label]) => `<option value="${{esc(value)}}">${{esc(label)}}</option>`).join("");
+  document.getElementById("animationSelect").innerHTML = ["", "idle", "walkforward", "runforward", "mtidle", "attackleft", "attackright"].map(value => `<option value="${{esc(value)}}">${{esc(value || "none")}}</option>`).join("");
+  document.getElementById("dialogueSelect").innerHTML = ["", "mouth-open", "mouth-open-pose"].map(value => `<option value="${{esc(value)}}">${{esc(value || "none")}}</option>`).join("");
+  document.getElementById("angleSelect").innerHTML = [
+    ["", "default"],
+    ["front,front-left,front-right", "front + left + right"],
+    ["front", "front only"]
+  ].map(([value, label]) => `<option value="${{esc(value)}}">${{esc(label)}}</option>`).join("");
+  document.getElementById("reviewSelect").innerHTML = REVIEW_STATES.map(value => `<option value="${{esc(value)}}">${{esc(value.replace(/-/g, " "))}}</option>`).join("");
+  document.getElementById("partChecks").innerHTML = PARTS.map(part => `<label class="check"><input type="checkbox" data-part="${{esc(part)}}" ${{state.partEnabled[part] !== false ? "checked" : ""}}> ${{esc(PART_LABELS[part] || part)}}</label>`).join("");
+  document.querySelectorAll("#partChecks input").forEach(input => input.onchange = () => {{
+    state.partEnabled[input.dataset.part] = input.checked;
+    recordEvent("selector.parts", {{ parts: selectedParts() }});
+  }});
+  ["phaseSelect", "partFocusSelect", "jobTypeSelect", "animationSelect", "dialogueSelect", "angleSelect", "reviewSelect"].forEach(id => {{
+    document.getElementById(id).onchange = () => recordEvent("selector.change", studioPayload("runtimeThreeCamera"));
+  }});
+}}
+function renderEvents() {{
+  document.getElementById("eventList").innerHTML = state.events.length
+    ? state.events.map(event => `<div class="eventItem"><b>${{esc(event.type)}}</b> <span class="muted">${{esc(event.t)}}</span><div class="command">${{esc(JSON.stringify(event.payload || {{}}))}}</div></div>`).join("")
+    : `<div class="muted">No session events yet</div>`;
+}}
+function renderCameras() {{
+  const job = state.latestJob;
+  const manifest = state.latestManifest || job?.manifest;
+  const angles = ["front", "front-left", "front-right"];
+  document.getElementById("cameraStrip").innerHTML = angles.map(angle => {{
+    const item = (manifest?.cases || []).find(c => c.angle === angle) || null;
+    const image = caseImageUrl(job, item);
+    const status = item ? (item.reportStatus || item.runtimeGateStatus || "case") : (job ? "not requested" : "idle");
+    const message = item
+      ? (item.runtimeGateError || (item.failures || []).join("; ") || job?.state || "no screenshot")
+      : (job ? "No capture for this angle" : "No capture yet");
+    const body = image ? `<a href="${{esc(image)}}"><img src="${{esc(image)}}" alt="${{esc(angle)}}"></a>` : `<div class="cameraBody">${{esc(message)}}</div>`;
+    return `<div class="cameraPane"><div class="cameraHead"><span>${{esc(angle)}}</span><span>${{esc(status)}}</span></div>${{body}}</div>`;
+  }}).join("");
+}}
+function renderJobs() {{
+  document.getElementById("jobList").innerHTML = state.jobs.length
+    ? state.jobs.map(job => {{
+      const viewer = job.result?.viewerUrl ? `<a href="${{esc(job.result.viewerUrl)}}">viewer</a>` : "";
+      const manifest = job.result?.viewerJsonUrl ? `<a href="${{esc(job.result.viewerJsonUrl)}}">manifest</a>` : "";
+      return `<div class="jobItem"><b>${{esc(job.id)}}</b> ${{esc(job.state)}} return=${{esc(job.returnCode ?? "")}} ${{viewer}} ${{manifest}}<div class="command">${{esc(JSON.stringify(job.request || {{}}))}}</div></div>`;
+    }}).join("")
+    : `<div class="muted">No jobs yet</div>`;
+}}
+function renderCoords() {{
+  const manifest = state.latestManifest || state.latestJob?.manifest;
+  const rows = [];
+  for (const c of (manifest?.cases || []).slice(0, 12)) {{
+    if (c.actorStage) rows.push(`<div class="coordItem"><b>${{esc(c.angle || c.phase)}}</b> stage <code>${{esc(JSON.stringify(c.actorStage))}}</code></div>`);
+    if (c.actorCamera) rows.push(`<div class="coordItem"><b>${{esc(c.angle || c.phase)}}</b> camera <code>${{esc(JSON.stringify(c.actorCamera))}}</code></div>`);
+    if (c.actorKitSelection) rows.push(`<div class="coordItem"><b>${{esc(c.angle || c.phase)}}</b> selector <code>${{esc(JSON.stringify(c.actorKitSelection))}}</code></div>`);
+  }}
+  document.getElementById("coordList").innerHTML = rows.join("") || `<div class="muted">No coordinate dump yet</div>`;
+}}
+function renderStage() {{
+  const entry = selectedEntry();
+  const manifest = state.latestManifest || state.latestJob?.manifest;
+  const firstCase = (manifest?.cases || [])[0] || null;
+  const focus = document.getElementById("partFocusSelect")?.value || "";
+  const focusLabel = focus ? (PART_LABELS[focus] || focus) : "all enabled parts";
+  const jobType = document.getElementById("jobTypeSelect")?.value || "appearance";
+  document.getElementById("stageStatus").textContent = manifest ? "latest generated proof loaded" : (entry ? "runtime stage pending" : "select target");
+  document.getElementById("stageTarget").innerHTML = entry
+    ? `target <code>${{esc(entry.target || entry.label)}}</code> / ${{esc(entry.kind)}}`
+    : "no target selected";
+  document.getElementById("stageFocus").textContent = `${{focusLabel}} / ${{jobType}}`;
+  document.getElementById("stageOverlay").innerHTML = [
+    `<span class="pill">${{esc(entry?.label || "no actor")}}</span>`,
+    `<span class="pill">${{esc(focusLabel)}}</span>`,
+    `<span class="pill">${{esc((firstCase?.phase || selectedPhases()[0] || "phase"))}}</span>`,
+    `<span class="pill">${{esc((firstCase?.angle || selectedAngles("runtimeThreeCamera").join("+")))}}</span>`
+  ].join("");
+}}
+function renderSaveReview() {{
+  const job = state.latestJob;
+  const review = document.getElementById("reviewSelect")?.value || "review-pending";
+  document.getElementById("saveState").textContent = state.session ? "Saved session" : "Unsaved";
+  document.getElementById("proofState").textContent = job ? `${{job.state || "job"}} / ${{job.result?.status || "no manifest"}}` : "No proof";
+  document.getElementById("reviewState").textContent = review.replace(/-/g, " ");
+}}
+function setSelectValue(id, value) {{
+  const node = document.getElementById(id);
+  if (node) node.value = value;
+}}
+function applyPreset(name) {{
+  const presets = {{
+    "easy-pete-face": {{ query: "easy pete face", phase: "face", part: "face-organs", job: "easy-pete-face", animation: "idle", dialogue: "mouth-open-pose" }},
+    "easy-pete-hat": {{ query: "easy pete hat headgear", phase: "headgear", part: "headgear", job: "easy-pete-hat", animation: "idle", dialogue: "" }},
+    "easy-pete-skin": {{ query: "easy pete skin body head", phase: "body", part: "body-skin", job: "easy-pete-skin", animation: "idle", dialogue: "" }}
+  }};
+  const preset = presets[name];
+  if (!preset) return;
+  document.getElementById("search").value = preset.query;
+  state.query = preset.query;
+  setSelectValue("phaseSelect", preset.phase);
+  setSelectValue("partFocusSelect", preset.part);
+  setSelectValue("jobTypeSelect", preset.job);
+  setSelectValue("animationSelect", preset.animation);
+  setSelectValue("dialogueSelect", preset.dialogue);
+  recordEvent("preset.easy-pete", {{ name, payload: studioPayload("runtimeThreeCamera") }});
+  render();
+}}
+async function saveReviewEvent() {{
+  try {{
+    if (!state.session && liveAvailable()) await ensureSession();
+    await recordEvent("review.mark", studioPayload("runtimeThreeCamera"));
+    renderWorkbench();
+  }} catch (error) {{
+    addLocalEvent("review.write.failed", {{ message: error.message || String(error) }});
+  }}
+}}
+function renderWorkbench() {{
+  const entry = selectedEntry();
+  const live = liveAvailable();
+  document.getElementById("liveState").innerHTML = live
+    ? `loopback API ready${{state.session ? ` / session <code>${{esc(state.session.id)}}</code>` : ""}}`
+    : `open through the live loopback server to run sessions`;
+  document.getElementById("selectedEntry").innerHTML = entry
+    ? `<b>${{esc(entry.label)}}</b><div class="muted">${{esc(entry.id)}} / ${{esc(entry.kind)}} / ${{esc(entry.classification)}}</div><div class="muted">runtime: <code>${{esc(entry.runtimeTarget || entry.target)}}</code></div><div class="muted">assembly: <code>${{esc(entry.assemblyTarget || "")}}</code> placed: <code>${{esc(entry.placedTarget || "")}}</code></div>`
+    : `<span class="muted">Select an actor or creature entry</span>`;
+  const runnable = live && entry && entry.domain === "actor";
+  document.getElementById("newSession").disabled = !live;
+  document.getElementById("runThree").disabled = !runnable;
+  document.getElementById("runFront").disabled = !runnable;
+  renderCameras();
+  renderJobs();
+  renderCoords();
+  renderStage();
+  renderSaveReview();
+  renderEvents();
 }}
 function render() {{
   document.getElementById("status").textContent = CATALOG.status;
@@ -377,15 +903,44 @@ function render() {{
         <span class="pill">${{esc(e.recordType)}}</span>
         <span class="pill">${{esc(e.plugin)}}</span>
       </div>
-      <div class="muted">target: <code>${{esc(e.target)}}</code> form: <code>${{esc(e.formId)}}</code></div>
+      <div class="muted">runtime: <code>${{esc(e.runtimeTarget || e.target)}}</code> form: <code>${{esc(e.formId)}}</code></div>
+      ${{e.placedTarget || e.assemblyTarget ? `<div class="muted">placed: <code>${{esc(e.placedTarget || "")}}</code> assembly: <code>${{esc(e.assemblyTarget || "")}}</code></div>` : ""}}
       ${{e.model ? `<div class="muted">model: <code>${{esc(e.model)}}</code></div>` : ""}}
+      <div class="actions">
+        <button type="button" data-select="${{esc(e.id)}}">Select</button>
+        <button type="button" data-run="${{esc(e.id)}}" ${{e.domain === "actor" ? "" : "disabled"}}>Run 3 Camera</button>
+      </div>
       <div><b>Three Camera Runtime</b>${{commandBlock(e.commands?.runtimeThreeCamera || "")}}</div>
       <div><b>Front Runtime</b>${{commandBlock(e.commands?.runtimeFrontOnly || "")}}</div>
       <div class="muted">gate: ${{esc((e.studioGates || [{{gate:""}}])[0].gate)}} / ${{esc(e.firstFailingGate || "")}}</div>
     </article>`).join("") || `<div class="card">No matching generated catalog entries</div>`;
+  document.querySelectorAll("[data-select]").forEach(button => button.onclick = () => {{
+    state.selectedId = button.dataset.select || "";
+    recordEvent("entry.select", {{ entryId: state.selectedId }});
+    render();
+  }});
+  document.querySelectorAll("[data-run]").forEach(button => button.onclick = () => {{
+    state.selectedId = button.dataset.run || "";
+    render();
+    launchJob("runtimeThreeCamera");
+  }});
+  renderWorkbench();
 }}
 fillSelect("domain", [...new Set((CATALOG.entries || []).map(e => e.domain).filter(Boolean))].sort());
 fillSelect("kind", [...new Set((CATALOG.entries || []).map(e => e.kind).filter(Boolean))].sort());
+renderControls();
+document.getElementById("newSession").addEventListener("click", async () => {{
+  try {{
+    state.session = null;
+    await ensureSession();
+  }} catch (error) {{
+    addLocalEvent("session.create.failed", {{ message: error.message || String(error) }});
+  }}
+}});
+document.getElementById("runThree").addEventListener("click", () => launchJob("runtimeThreeCamera"));
+document.getElementById("runFront").addEventListener("click", () => launchJob("runtimeFrontOnly"));
+document.getElementById("saveReview").addEventListener("click", saveReviewEvent);
+document.querySelectorAll("[data-preset]").forEach(button => button.addEventListener("click", () => applyPreset(button.dataset.preset || "")));
 document.getElementById("search").addEventListener("input", e => {{ state.query = e.target.value; render(); }});
 document.getElementById("domain").addEventListener("change", e => {{ state.domain = e.target.value; render(); }});
 document.getElementById("kind").addEventListener("change", e => {{ state.kind = e.target.value; render(); }});

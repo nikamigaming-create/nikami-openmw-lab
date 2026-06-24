@@ -218,14 +218,30 @@ if ($badPlacedRows.Count -gt 0) {
 }
 $placedRowsMissingRuntimeContext = @($placedRows | Where-Object {
         [string]::IsNullOrWhiteSpace([string]$_.placedCellFormId) -or
+        [string]::IsNullOrWhiteSpace([string]$_.placedRuntimeCellFormId) -or
         $null -eq $_.placedPosX -or $null -eq $_.placedPosY -or $null -eq $_.placedPosZ -or
         $null -eq $_.placedRotX -or $null -eq $_.placedRotY -or $null -eq $_.placedRotZ
     })
 if ($placedRowsMissingRuntimeContext.Count -gt 0) {
-    throw "Actor presentation ledger placed-reference rows are missing decoded parent cell or DATA position: $($placedRowsMissingRuntimeContext.Count). See $LedgerPath"
+    throw "Actor presentation ledger placed-reference rows are missing decoded parent/runtime cell or DATA position: $($placedRowsMissingRuntimeContext.Count). See $LedgerPath"
 }
-if ([int]$Result.placedActorRefsWithDataPosition -ne $placedRows.Count -or [int]$Result.placedActorRefsWithParentCell -ne $placedRows.Count) {
+if ([int]$Result.placedActorRefsWithDataPosition -ne $placedRows.Count -or [int]$Result.placedActorRefsWithParentCell -ne $placedRows.Count -or [int]$Result.placedActorRefsWithRuntimeParentCell -ne $placedRows.Count) {
     throw "Actor presentation ledger summary placement context counts do not match placed-reference rows. See $ResultPath"
+}
+$placedRowsWithChildSubgroupCell = @($placedRows | Where-Object { @("8", "9", "10") -contains [string]$_.placedCellGroupType })
+if ($placedRowsWithChildSubgroupCell.Count -gt 0) {
+    throw "Actor presentation ledger used persistent/temp/visible child subgroup as placed actor bootstrap cell instead of parent cell-child GRUP: $($placedRowsWithChildSubgroupCell.Count). See $LedgerPath"
+}
+$easyPeteRows = @($placedRows | Where-Object { [string]$_.placedRefEditorId -eq "EasyPeteRef" })
+if ($easyPeteRows.Count -ne 1) {
+    throw "Actor presentation ledger did not produce exactly one EasyPeteRef placed-reference row. Count=$($easyPeteRows.Count). See $LedgerPath"
+}
+$easyPete = $easyPeteRows[0]
+if ([string]$easyPete.placedCellFormId -ne "0x000daeb9" -or [string]$easyPete.placedRuntimeCellFormId -ne "0x010daeb9" -or [string]$easyPete.placedCellSource -ne "worldspace-xclc-from-position") {
+    throw "EasyPeteRef bootstrap cell was not resolved from WRLD/XCLC grid to canonical 0x000daeb9 / runtime 0x010daeb9. Actual canonical=$($easyPete.placedCellFormId) runtime=$($easyPete.placedRuntimeCellFormId) source=$($easyPete.placedCellSource). See $LedgerPath"
+}
+if ([int]$easyPete.placedCellGridX -ne -17 -or [int]$easyPete.placedCellGridY -ne 0 -or [string]$easyPete.placedCellFallbackFormId -ne "0x000846ea") {
+    throw "EasyPeteRef grid/fallback proof is wrong. Expected grid=(-17,0) fallback=0x000846ea; actual grid=($($easyPete.placedCellGridX),$($easyPete.placedCellGridY)) fallback=$($easyPete.placedCellFallbackFormId). See $LedgerPath"
 }
 
 $requiredComponents = @(

@@ -186,6 +186,19 @@ def form_id_or_empty(value):
     return f"0x{value:08x}"
 
 
+def runtime_form_id_or_empty(value):
+    if not value:
+        return ""
+    if isinstance(value, str):
+        try:
+            value = int(value, 16)
+        except ValueError:
+            return ""
+    local_file = (int(value) >> 24) & 0xFF
+    object_id = int(value) & 0x00FFFFFF
+    return form_id_or_empty((((local_file + 1) & 0xFF) << 24) | object_id)
+
+
 def finite_float(value):
     try:
         result = float(value)
@@ -225,6 +238,14 @@ def placed_scale(subrecords):
     if len(payload) < 4:
         return None
     return finite_float(struct.unpack_from("<f", payload, 0)[0])
+
+
+def cell_grid(subrecords):
+    payload = first_payload(subrecords, "XCLC")
+    if len(payload) < 8:
+        return None
+    grid_x, grid_y = struct.unpack_from("<ii", payload, 0)
+    return {"x": grid_x, "y": grid_y}
 
 
 def adjusted_form_id(raw, masters, plugin, content_index):
@@ -278,9 +299,14 @@ class RowBuilder:
         placed_ref_form_id="",
         placed_ref_editor_id="",
         placed_cell_form_id="",
+        placed_runtime_cell_form_id="",
         placed_cell_editor_id="",
         placed_cell_group_type="",
         placed_cell_group_name="",
+        placed_cell_source="",
+        placed_cell_grid_x=None,
+        placed_cell_grid_y=None,
+        placed_cell_fallback_form_id="",
         placed_coordinate_source="",
         placed_pos_x=None,
         placed_pos_y=None,
@@ -322,9 +348,14 @@ class RowBuilder:
                 "placedRefFormId": placed_ref_form_id,
                 "placedRefEditorId": placed_ref_editor_id,
                 "placedCellFormId": placed_cell_form_id,
+                "placedRuntimeCellFormId": placed_runtime_cell_form_id,
                 "placedCellEditorId": placed_cell_editor_id,
                 "placedCellGroupType": placed_cell_group_type,
                 "placedCellGroupName": placed_cell_group_name,
+                "placedCellSource": placed_cell_source,
+                "placedCellGridX": placed_cell_grid_x,
+                "placedCellGridY": placed_cell_grid_y,
+                "placedCellFallbackFormId": placed_cell_fallback_form_id,
                 "placedCoordinateSource": placed_coordinate_source,
                 "placedPosX": placed_pos_x,
                 "placedPosY": placed_pos_y,
@@ -415,21 +446,108 @@ def group_context(group_label_raw, group_type, masters, plugin, content_index):
     }
 
 
-def placed_cell_context(record, by_form):
+def context_worldspace_form_id(record):
+    for context in reversed(record.get("groupContext", [])):
+        if int(context.get("type", -1)) == 1 and context.get("labelFormId"):
+            return context.get("labelFormId", "")
+    return ""
+
+
+def exterior_grid_from_position(position):
+    if not position:
+        return None
+    x = finite_float(position.get("x"))
+    y = finite_float(position.get("y"))
+    if x is None or y is None:
+        return None
+    return {
+        "x": math.floor(x / 4096.0),
+        "y": math.floor(y / 4096.0),
+    }
+
+
+def build_exterior_cell_index(by_type):
+    result = {}
+    for record in by_type.get("CELL", []):
+        worldspace = context_worldspace_form_id(record)
+        grid = cell_grid(record.get("subrecords", []))
+        if not worldspace or grid is None:
+            continue
+        result[(worldspace, grid["x"], grid["y"])] = record
+    return result
+
+
+def group_placed_cell_context(record, by_form):
+    fallback = None
     for context in reversed(record.get("groupContext", [])):
         if int(context.get("type", -1)) not in CELL_CHILD_GROUP_TYPES:
             continue
         form_id = context.get("labelFormId", "")
         if not form_id:
             continue
+        if int(context.get("type", -1)) != 6:
+            if fallback is None:
+                fallback = context
+            continue
         cell_record = resolve(by_form, form_id)
         return {
             "formId": form_id,
+            "runtimeFormId": runtime_form_id_or_empty(form_id),
             "editorId": cell_record.get("editorId", "") if cell_record else "",
             "groupType": str(context.get("type", "")),
             "groupName": str(context.get("typeName", "")),
+            "source": "cell-child-grup",
+            "gridX": None,
+            "gridY": None,
+            "fallbackFormId": "",
         }
-    return {"formId": "", "editorId": "", "groupType": "", "groupName": ""}
+    if fallback is not None:
+        form_id = fallback.get("labelFormId", "")
+        cell_record = resolve(by_form, form_id)
+        return {
+            "formId": form_id,
+            "runtimeFormId": runtime_form_id_or_empty(form_id),
+            "editorId": cell_record.get("editorId", "") if cell_record else "",
+            "groupType": str(fallback.get("type", "")),
+            "groupName": str(fallback.get("typeName", "")),
+            "source": "child-subgroup-fallback",
+            "gridX": None,
+            "gridY": None,
+            "fallbackFormId": "",
+        }
+    return {
+        "formId": "",
+        "runtimeFormId": "",
+        "editorId": "",
+        "groupType": "",
+        "groupName": "",
+        "source": "",
+        "gridX": None,
+        "gridY": None,
+        "fallbackFormId": "",
+    }
+
+
+def placed_cell_context(record, by_form, exterior_cell_index=None, position=None):
+    group_cell = group_placed_cell_context(record, by_form)
+    grid = exterior_grid_from_position(position)
+    worldspace = context_worldspace_form_id(record)
+    if exterior_cell_index is not None and grid is not None and worldspace:
+        cell_record = exterior_cell_index.get((worldspace, grid["x"], grid["y"]))
+        if cell_record is not None:
+            form_id = cell_record.get("formId", "")
+            return {
+                "formId": form_id,
+                "runtimeFormId": runtime_form_id_or_empty(form_id),
+                "editorId": cell_record.get("editorId", ""),
+                "groupType": "xclc-grid",
+                "groupName": "exterior-grid-cell",
+                "source": "worldspace-xclc-from-position",
+                "gridX": grid["x"],
+                "gridY": grid["y"],
+                "fallbackFormId": group_cell.get("formId", ""),
+            }
+    return group_cell
 
 
 def read_plugin_records(path, plugin, content_index):
@@ -859,16 +977,21 @@ def emit_actor_rows(rows, by_form, content_index, record):
         )
 
 
-def emit_placed_actor_rows(rows, by_form, content_index, record):
+def emit_placed_actor_rows(rows, by_form, content_index, exterior_cell_index, record):
     ids = all_adjusted_form_ids(record["subrecords"], "NAME", record["masters"], record["plugin"], content_index)
     base_id = ids[0] if ids else 0
     base_record = resolve(by_form, base_id)
     position = placed_position(record["subrecords"])
     scale = placed_scale(record["subrecords"])
-    cell = placed_cell_context(record, by_form)
-    placement_ready = bool(position and cell["formId"])
+    cell = placed_cell_context(record, by_form, exterior_cell_index, position)
+    placement_ready = bool(position and cell["runtimeFormId"])
+    coordinate_source = "incomplete"
+    if placement_ready and cell["source"] == "worldspace-xclc-from-position":
+        coordinate_source = "ACHR/ACRE DATA + WRLD/XCLC exterior parent cell"
+    elif placement_ready:
+        coordinate_source = "ACHR/ACRE DATA + GRUP parent cell"
     placement_note = (
-        " Placement DATA and parent cell GRUP context are decoded for runtime bootstrap/stage planning."
+        " Placement DATA and parent cell context are decoded for runtime bootstrap/stage planning."
         if placement_ready
         else " Placement DATA or parent cell context is missing; runtime bootstrap/stage planning must not silently assume it."
     )
@@ -880,10 +1003,15 @@ def emit_placed_actor_rows(rows, by_form, content_index, record):
         placed_ref_form_id=record["formId"],
         placed_ref_editor_id=record.get("editorId", ""),
         placed_cell_form_id=cell["formId"],
+        placed_runtime_cell_form_id=cell["runtimeFormId"],
         placed_cell_editor_id=cell["editorId"],
         placed_cell_group_type=cell["groupType"],
         placed_cell_group_name=cell["groupName"],
-        placed_coordinate_source="ACHR/ACRE DATA + GRUP parent cell" if placement_ready else "incomplete",
+        placed_cell_source=cell["source"],
+        placed_cell_grid_x=cell["gridX"],
+        placed_cell_grid_y=cell["gridY"],
+        placed_cell_fallback_form_id=cell["fallbackFormId"],
+        placed_coordinate_source=coordinate_source,
         placed_pos_x=position.get("x"),
         placed_pos_y=position.get("y"),
         placed_pos_z=position.get("z"),
@@ -1290,6 +1418,8 @@ def summarize_rows(rows):
     placed_rows = [row for row in rows if row["component"] == "placed-reference"]
     placed_with_data = sum(1 for row in placed_rows if row.get("placedPosX") is not None and row.get("placedPosY") is not None and row.get("placedPosZ") is not None)
     placed_with_cell = sum(1 for row in placed_rows if row.get("placedCellFormId"))
+    placed_with_runtime_cell = sum(1 for row in placed_rows if row.get("placedRuntimeCellFormId"))
+    placed_with_grid_cell = sum(1 for row in placed_rows if row.get("placedCellSource") == "worldspace-xclc-from-position")
     return {
         "rowCount": len(rows),
         "classificationCounts": dict(sorted(classification_counts.items())),
@@ -1300,6 +1430,8 @@ def summarize_rows(rows):
         "knownBlockedCount": blocked,
         "placedActorRefsWithDataPosition": placed_with_data,
         "placedActorRefsWithParentCell": placed_with_cell,
+        "placedActorRefsWithRuntimeParentCell": placed_with_runtime_cell,
+        "placedActorRefsWithExteriorGridParentCell": placed_with_grid_cell,
     }
 
 
@@ -1362,6 +1494,7 @@ def main():
         raise SystemExit(f"Missing active content files: {', '.join(missing)}")
 
     by_form, by_type = index_records(plugin_ledgers)
+    exterior_cell_index = build_exterior_cell_index(by_type)
     asset_index = AssetIndex(fnv_data, harvest_dir)
     builder = RowBuilder(asset_index)
 
@@ -1371,7 +1504,7 @@ def main():
         emit_actor_rows(builder, by_form, content_index, record)
     for rec_type in sorted(PLACED_ACTOR_TYPES):
         for record in by_type[rec_type]:
-            emit_placed_actor_rows(builder, by_form, content_index, record)
+            emit_placed_actor_rows(builder, by_form, content_index, exterior_cell_index, record)
     for rec_type in sorted(SUPPORT_RECORD_TYPES):
         for record in by_type[rec_type]:
             emit_support_rows(builder, by_form, content_index, record)

@@ -155,6 +155,19 @@ $placedEntries = @($entries | Where-Object { $_.source -eq "placed-reference" })
 if (@($placedEntries | Where-Object { !$_.placement.runtimeBootstrapReady -or $_.command -notmatch "-BootstrapCell" -or $_.command -notmatch "-ActorStageX" }).Count -gt 0) {
     throw "Placed-reference batch commands do not carry decoded bootstrap/stage placement."
 }
+if (@($placedEntries | Where-Object { [string]::IsNullOrWhiteSpace($_.placedTarget) -or $_.target -ne $_.placedTarget -or $_.runtimeTarget -ne $_.baseActorTarget -or $_.assemblyTarget -ne $_.baseActorTarget }).Count -gt 0) {
+    throw "Placed-reference batch entries do not preserve placed/runtime/base actor target roles."
+}
+if (@($placedEntries | Where-Object { [string]::IsNullOrWhiteSpace($_.placementCommandArgs) -or $_.placementCommandArgs -notmatch "-BootstrapCell" -or $_.placementCommandArgs -notmatch "-ActorStageX" }).Count -gt 0) {
+    throw "Placed-reference batch entries do not expose reusable placement bootstrap args."
+}
+if (@($entries | Where-Object { $null -eq $_.componentPhases -or $null -eq $_.componentEvidence -or @($_.componentEvidence).Count -eq 0 }).Count -gt 0) {
+    throw "Batch plan entries do not expose component phase/provenance evidence."
+}
+$contractNpcRef = $placedEntries | Where-Object { $_.placedRefEditorId -eq "ContractNpcRef" } | Select-Object -First 1
+if ($null -eq $contractNpcRef -or $contractNpcRef.placedTarget -ne "ContractNpcRef" -or $contractNpcRef.runtimeTarget -ne "ContractNpc" -or $contractNpcRef.baseActorTarget -ne "ContractNpc") {
+    throw "Placed NPC ref did not keep ContractNpcRef runtime target distinct from ContractNpc base actor target."
+}
 $allowed = @(
     "runtime-supported",
     "loaded-pending-runtime",

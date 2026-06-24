@@ -43,6 +43,9 @@ $plan = [pscustomobject][ordered]@{
             actorKind = "npc"
             recordType = "NPC_"
             target = "ContractNpc"
+            runtimeTarget = "ContractNpc"
+            baseActorTarget = "ContractNpc"
+            assemblyTarget = "ContractNpc"
             phases = @("body", "head", "face", "hair", "equipment", "weapon", "headgear", "talk")
             classification = "loaded-pending-runtime"
             firstFailingGate = "base-actor-spawn-or-placement-runtime"
@@ -56,6 +59,23 @@ $plan = [pscustomobject][ordered]@{
                 "npc-race" = 1
                 "hair" = 1
             }
+            componentPhases = [pscustomobject][ordered]@{
+                "actor-base-record" = @("body")
+                "npc-race" = @("body", "head", "face")
+                "hair" = @("hair")
+            }
+            componentEvidence = @(
+                [pscustomobject][ordered]@{
+                    component = "hair"
+                    phases = @("hair")
+                    sourceRecordType = "HAIR"
+                    sourceFormId = "0x00000003"
+                    assetPath = "meshes\characters\hair\contract.nif"
+                    assetStatus = "archive-entry-resolved"
+                    assetArchive = "Fallout - Meshes.bsa"
+                    proofAnchor = "npc-face-assembly"
+                }
+            )
         },
         [pscustomobject][ordered]@{
             id = "placed-reference:000002"
@@ -64,6 +84,10 @@ $plan = [pscustomobject][ordered]@{
             actorKind = "creature"
             recordType = "CREA"
             target = "ContractCreatureRef"
+            runtimeTarget = "ContractCreature"
+            placedTarget = "ContractCreatureRef"
+            baseActorTarget = "ContractCreature"
+            assemblyTarget = "ContractCreature"
             phases = @("creature-model", "creature-body", "creature-animation", "creature-full")
             classification = "loaded-pending-runtime"
             firstFailingGate = "placed-actor-runtime-viewer-proof"
@@ -80,6 +104,22 @@ $plan = [pscustomobject][ordered]@{
                 "actor-base-record" = 1
                 "creature-model" = 1
             }
+            componentPhases = [pscustomobject][ordered]@{
+                "actor-base-record" = @("body")
+                "creature-model" = @("creature-model")
+            }
+            componentEvidence = @(
+                [pscustomobject][ordered]@{
+                    component = "creature-model"
+                    phases = @("creature-model")
+                    sourceRecordType = "CREA"
+                    sourceFormId = "0x00000002"
+                    assetPath = "meshes\creatures\contract\contract.nif"
+                    assetStatus = "archive-entry-resolved"
+                    assetArchive = "Fallout - Meshes.bsa"
+                    proofAnchor = "creature-body-assembly"
+                }
+            )
         }
     )
 }
@@ -143,6 +183,21 @@ if (!@($catalog.schemaMarkers).Contains("searchable-studio-catalog-v1")) {
 if (!@($catalog.schemaMarkers).Contains("neutral-stage-gate-pending-v1")) {
     throw "Studio catalog missing neutral-stage pending gate marker."
 }
+if (!@($catalog.schemaMarkers).Contains("live-studio-workbench-v1")) {
+    throw "Studio catalog missing live workbench marker."
+}
+if (!@($catalog.schemaMarkers).Contains("three-camera-session-strip-v1")) {
+    throw "Studio catalog missing three-camera session marker."
+}
+if (!@($catalog.schemaMarkers).Contains("component-selector-job-payload-v1")) {
+    throw "Studio catalog missing component selector payload marker."
+}
+if (!@($catalog.schemaMarkers).Contains("placed-runtime-target-map-v1")) {
+    throw "Studio catalog missing placed/runtime target map marker."
+}
+if (!@($catalog.schemaMarkers).Contains("placement-bootstrap-job-args-v1")) {
+    throw "Studio catalog missing placement bootstrap args marker."
+}
 if ([int]$catalog.counts.total -ne 4) {
     throw "Studio catalog expected 4 entries but got $($catalog.counts.total)."
 }
@@ -163,6 +218,21 @@ if ($null -eq $npc -or $npc.commands.runtimeThreeCamera -notmatch "-Angles 'fron
 if ($null -eq $creature -or $creature.commands.runtimeThreeCamera -notmatch "-CreatureDiagnostics") {
     throw "Studio catalog creature entry missing creature diagnostics command."
 }
+if ($creature.runtimeTarget -ne "ContractCreature" -or $creature.placedTarget -ne "ContractCreatureRef" -or $creature.assemblyTarget -ne "ContractCreature") {
+    throw "Studio catalog creature entry lost placed/runtime/base actor target roles."
+}
+if ($creature.commands.runtimeThreeCamera -notmatch "-Targets 'ContractCreature'") {
+    throw "Studio catalog creature command did not use base runtime target."
+}
+if ($creature.commands.runtimeThreeCamera -notmatch "-BootstrapCell" -or $creature.commands.runtimeThreeCamera -notmatch "-ActorStageX 1") {
+    throw "Studio catalog creature command lost placed-reference bootstrap/stage args."
+}
+if ($creature.placementCommandArgs -notmatch "-BootstrapCell" -or $creature.searchText -notmatch "contractcreatureref" -or $creature.searchText -notmatch "contractcreature") {
+    throw "Studio catalog creature entry does not expose placement/target data in searchable fields."
+}
+if ($null -eq $creature.componentPhases -or $null -eq $creature.componentEvidence -or @($creature.componentEvidence).Count -eq 0) {
+    throw "Studio catalog creature entry missing component phase/provenance evidence."
+}
 if ($null -eq $weapon -or $weapon.commands.runtimeThreeCamera -ne "") {
     throw "Studio catalog weapon entry should be cataloged pending generic item runtime command."
 }
@@ -175,6 +245,12 @@ if ($weapon.searchText -notmatch "contract pistol") {
 $html = Get-Content -LiteralPath $htmlPath -Raw
 if (!$html.Contains("FNV Character Studio Catalog") -or !$html.Contains("neutral stage pending") -or !$html.Contains("ContractPistol")) {
     throw "Studio catalog HTML does not expose expected search/stage/item text."
+}
+if (!$html.Contains("Studio Session") -or !$html.Contains("Run 3 Camera") -or !$html.Contains("/nikami/studio/sessions")) {
+    throw "Studio catalog HTML does not expose live workbench controls."
+}
+if (!$html.Contains("cameraStrip") -or !$html.Contains("selectedParts") -or !$html.Contains("studioPayload")) {
+    throw "Studio catalog HTML does not expose three-camera/component session payload controls."
 }
 
 Write-Host "FNV character studio catalog contract PASS"

@@ -42,12 +42,30 @@ def main() -> int:
                 ),
             },
         }
+        placed_entry = {
+            **entry,
+            "id": "actor:000002",
+            "source": "placed-reference",
+            "label": "ContractNpcRef",
+            "target": "ContractNpcRef",
+            "selectedTarget": "ContractNpcRef",
+            "runtimeTarget": "ContractNpc",
+            "placedTarget": "ContractNpcRef",
+            "baseActorTarget": "ContractNpc",
+            "assemblyTarget": "ContractNpc",
+            "actorFormTarget": "FormId:0x00000001",
+            "placedRefFormTarget": "FormId:0x00000011",
+            "placementCommandArgs": (
+                "-BootstrapCell 'FormId:0x00000021' -BootstrapX 11 -BootstrapY 22 -BootstrapZ 33 "
+                "-ActorStageX 11 -ActorStageY 22 -ActorStageZ 33"
+            ),
+        }
         write_json(
             catalog_dir / "character-studio-catalog.json",
             {
                 "schema": "nikami-fnv-character-studio-catalog-v1",
                 "status": "PASS",
-                "entries": [entry],
+                "entries": [entry, placed_entry],
             },
         )
 
@@ -56,10 +74,13 @@ def main() -> int:
         if loaded.get("schema") != "nikami-fnv-character-studio-catalog-v1":
             raise AssertionError("catalog store did not load generated studio catalog")
         search = catalog.search({"q": ["contract npc"], "limit": ["5"]})
-        if search["count"] != 1 or search["entries"][0]["id"] != "actor:000001":
+        if search["count"] < 1 or not any(item["id"] == "actor:000001" for item in search["entries"]):
             raise AssertionError("catalog search did not return the actor entry")
         if catalog.entry("actor:000001") is None:
             raise AssertionError("catalog entry lookup failed")
+        forced_catalog = live.CatalogStore(root / "missing-root", catalog_dir / "character-studio-catalog.json")
+        if forced_catalog.entry("actor:000001") is None:
+            raise AssertionError("forced catalog path lookup failed")
 
         sessions = live.StudioSessionStore(run_dir)
         session = sessions.create({"entryId": "actor:000001"})
@@ -77,6 +98,34 @@ def main() -> int:
             raise AssertionError("structured command was not sanitized through actor-kit allowlist")
         if "-Angles" not in args or "front" not in args:
             raise AssertionError("structured command did not preserve front angle")
+
+        selector_command, selector_request = live.structured_actor_job(
+            placed_entry,
+            {
+                "entryId": "actor:000002",
+                "selectors": {
+                    "phases": ["headgear"],
+                    "angles": ["front", "front-left", "front-right"],
+                    "parts": ["headgear"],
+                    "propSlots": ["headgear"],
+                    "animationGroup": "idle",
+                    "dialogueMode": "mouth-open",
+                },
+            },
+        )
+        selector_args = live.command_to_args(selector_command, Path("scripts/nikami/run-fnv-character-viewer.ps1"))
+        if selector_args[selector_args.index("-Targets") + 1] != "ContractNpc":
+            raise AssertionError("structured command did not use runtime/base actor target")
+        if selector_request["placedTarget"] != "ContractNpcRef" or selector_request["runtimeTarget"] != "ContractNpc":
+            raise AssertionError("structured request did not expose placed/runtime target mapping")
+        if "-ActorKitParts" not in selector_args or "headgear" not in selector_args:
+            raise AssertionError("structured command ignored part selector overrides")
+        if "-ActorKitPropSlots" not in selector_args or "-ActorKitAnimationGroup" not in selector_args or "-ActorKitDialogueMode" not in selector_args:
+            raise AssertionError("structured command ignored prop/animation selector overrides")
+        if "-BootstrapCell" not in selector_args or "FormId:0x00000021" not in selector_args:
+            raise AssertionError("structured command lost placed-ref runtime target or bootstrap args")
+        if selector_request["selectors"]["dialogueMode"] != "mouth-open":
+            raise AssertionError("structured request did not normalize nested dialogue selector")
 
         item_entry = {
             "id": "gameplay:000001",

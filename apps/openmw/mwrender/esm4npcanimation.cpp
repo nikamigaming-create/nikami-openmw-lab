@@ -19,6 +19,7 @@
 #include <components/esm4/loadweap.hpp>
 
 #include <cmath>
+#include <cctype>
 #include <cstdlib>
 #include <iomanip>
 #include <components/misc/resourcehelpers.hpp>
@@ -565,10 +566,67 @@ namespace MWRender
             return stream.str();
         }
 
+        std::string falloutProofFormToken(std::string_view value)
+        {
+            while (!value.empty()
+                && (std::isspace(static_cast<unsigned char>(value.front())) || value.front() == '"' || value.front() == '\''))
+                value.remove_prefix(1);
+            while (!value.empty()
+                && (std::isspace(static_cast<unsigned char>(value.back())) || value.back() == '"' || value.back() == '\''))
+                value.remove_suffix(1);
+
+            std::string text(value);
+            Misc::StringUtils::lowerCaseInPlace(text);
+            constexpr std::string_view prefix = "formid:";
+            if (text.rfind(prefix, 0) == 0)
+                text.erase(0, prefix.size());
+            if (text.rfind("0x", 0) == 0)
+                text.erase(0, 2);
+            if (text.empty())
+                return {};
+            if (!std::all_of(text.begin(), text.end(), [](unsigned char ch) { return std::isxdigit(ch) != 0; }))
+                return {};
+            if (text.size() > 6)
+                text.erase(0, text.size() - 6);
+            while (text.size() < 6)
+                text.insert(text.begin(), '0');
+            return text;
+        }
+
+        bool falloutProofFormTargetMatches(std::string_view candidate, const char* target)
+        {
+            if (target == nullptr || target[0] == '\0')
+                return false;
+            const std::string candidateToken = falloutProofFormToken(candidate);
+            return !candidateToken.empty() && candidateToken == falloutProofFormToken(target);
+        }
+
         bool isEasyPeteProofActor(const ESM4::Npc& traits)
         {
             return Misc::StringUtils::ciEqual(traits.mEditorId, "GSEasyPete")
                 || traits.mId.mIndex == 0x00104c7f;
+        }
+
+        const char* getFonvProofActorTarget()
+        {
+            const char* target = std::getenv("OPENMW_PROOF_ACTOR_TARGET");
+            if (target == nullptr || target[0] == '\0')
+                target = std::getenv("OPENMW_FNV_PROOF_TARGET_NPC");
+            return target;
+        }
+
+        bool falloutTargetMatches(std::string_view candidate, const char* target)
+        {
+            return target != nullptr && target[0] != '\0' && !candidate.empty()
+                && Misc::StringUtils::ciEqual(candidate, target);
+        }
+
+        bool falloutTargetMatchesFormId(const ESM::FormId& id, const char* target)
+        {
+            return falloutTargetMatches(ESM::RefId(id).toDebugString(), target)
+                || falloutTargetMatches(formatFalloutFormIndex(id), target)
+                || falloutProofFormTargetMatches(ESM::RefId(id).toDebugString(), target)
+                || falloutProofFormTargetMatches(formatFalloutFormIndex(id), target);
         }
 
         bool isFonvProofTargetActor(const MWWorld::Ptr& ptr, const ESM4::Npc& traits)
@@ -576,18 +634,26 @@ namespace MWRender
             if (std::getenv("OPENMW_FNV_PROOF_ONLY_EASY_PETE") != nullptr)
                 return isEasyPeteProofActor(traits);
 
-            const char* target = std::getenv("OPENMW_FNV_PROOF_TARGET_NPC");
+            const char* target = getFonvProofActorTarget();
             if (target == nullptr || target[0] == '\0')
                 return true;
 
-            std::string refId;
-            if (ptr.getCell() != nullptr)
-                refId = ptr.getCellRef().getRefNum().toString("FormId:");
+            const ESM4::Npc* base = nullptr;
+            if (const MWWorld::LiveCellRef<ESM4::Npc>* ref = ptr.get<ESM4::Npc>())
+                base = ref->mBase;
 
-            return Misc::StringUtils::ciEqual(traits.mEditorId, target)
-                || Misc::StringUtils::ciEqual(ESM::RefId(traits.mId).toDebugString(), target)
-                || Misc::StringUtils::ciEqual(formatFalloutFormIndex(traits.mId), target)
-                || (!refId.empty() && Misc::StringUtils::ciEqual(refId, target));
+            const std::string refAlias = ptr.getCellRef().getRefId().toDebugString();
+            std::string refNum;
+            if (ptr.getCell() != nullptr)
+                refNum = ptr.getCellRef().getRefNum().toString("FormId:");
+
+            return falloutTargetMatches(refAlias, target)
+                || falloutTargetMatches(refNum, target)
+                || falloutTargetMatches(traits.mEditorId, target)
+                || falloutTargetMatchesFormId(traits.mId, target)
+                || (base != nullptr
+                    && (falloutTargetMatches(base->mEditorId, target)
+                        || falloutTargetMatchesFormId(base->mId, target)));
         }
 
         std::string getFalloutActorKitAnimationGroup()
@@ -5876,6 +5942,25 @@ namespace MWRender
             Log(Debug::Info) << "FNV/ESM4 proof: skipped non-target actor part assembly for "
                              << traits.mEditorId << " ref=" << mPtr.getCellRef().getRefId();
             return;
+        }
+
+        if (const char* proofTarget = getFonvProofActorTarget(); proofTarget != nullptr && proofTarget[0] != '\0')
+        {
+            const ESM4::Npc* baseRecord = nullptr;
+            if (const MWWorld::LiveCellRef<ESM4::Npc>* ref = mPtr.get<ESM4::Npc>())
+                baseRecord = ref->mBase;
+
+            Log(Debug::Info) << "FNV/ESM4 proof: actor part assembly target match target=\""
+                             << proofTarget
+                             << "\" actor=" << traits.mEditorId
+                             << " refAlias=" << mPtr.getCellRef().getRefId()
+                             << " ref=" << mPtr.getCellRef().getRefNum().toString("FormId:")
+                             << " baseEditor=" << (baseRecord != nullptr ? baseRecord->mEditorId : "<none>")
+                             << " baseForm="
+                             << (baseRecord != nullptr ? ESM::RefId(baseRecord->mId).toDebugString()
+                                                       : std::string("<none>"))
+                             << " traitsForm=" << ESM::RefId(traits.mId)
+                             << " runtime=runtime-supported";
         }
 
         const ESM4::Race* race = MWClass::ESM4Npc::getRace(mPtr);

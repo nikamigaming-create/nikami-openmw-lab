@@ -505,8 +505,8 @@ def parse_actor_matches(lines: list[str], actor: str) -> list[dict[str, Any]]:
     match_re = re.compile(
         rf'active-cell actor match target="{re.escape(actor)}".*?\bframe=(?P<frame>[0-9]+) '
         r"ref=(?P<ref>[^ ]+) base=(?P<base>[^ ]+) name=\"(?P<name>[^\"]*)\" "
-        r"baseEditor=\"(?P<baseEditor>[^\"]*)\" baseFull=\"(?P<baseFull>[^\"]*)\" "
-        rf"pos={FLOAT3_RE} rot={FLOAT3_RE}"
+        r"baseEditor=\"(?P<baseEditor>[^\"]*)\" (?:baseForm=(?P<baseForm>[^ ]+) )?baseFull=\"(?P<baseFull>[^\"]*)\" "
+        r"pos=\((?P<pos>[^)]*)\) rot=\((?P<rot>[^)]*)\)"
     )
     matches: list[dict[str, Any]] = []
     for line in lines:
@@ -514,7 +514,6 @@ def parse_actor_matches(lines: list[str], actor: str) -> list[dict[str, Any]]:
         if not match:
             continue
         data = match.groupdict()
-        groups = match.groups()
         matches.append(
             {
                 "frame": int(data["frame"]),
@@ -522,9 +521,10 @@ def parse_actor_matches(lines: list[str], actor: str) -> list[dict[str, Any]]:
                 "base": data["base"],
                 "name": data["name"],
                 "baseEditor": data["baseEditor"],
+                "baseForm": data.get("baseForm") or "",
                 "baseFull": data["baseFull"],
-                "pos": parse_vec3(groups[6]),
-                "rot": parse_vec3(groups[7]),
+                "pos": parse_vec3(data["pos"]),
+                "rot": parse_vec3(data["rot"]),
                 "line": compact_line(line),
             }
         )

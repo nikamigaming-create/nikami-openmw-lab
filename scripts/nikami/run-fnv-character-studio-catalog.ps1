@@ -5,6 +5,8 @@ param(
     [string]$OutDir = "",
     [int]$Limit = 0,
     [switch]$OpenStudio,
+    [switch]$LiveServe,
+    [int]$ServePort = 0,
     [switch]$RequirePass
 )
 
@@ -17,8 +19,16 @@ if ([string]::IsNullOrWhiteSpace($ProofRoot)) {
 }
 
 $Builder = Join-Path $PSScriptRoot "fnv_character_studio_catalog.py"
+$LiveServer = Join-Path $PSScriptRoot "fnv_character_viewer_live_server.py"
+$ViewerRunner = Join-Path $PSScriptRoot "run-fnv-character-viewer.ps1"
 if (!(Test-Path -LiteralPath $Builder -PathType Leaf)) {
     throw "Missing FNV character studio catalog builder: $Builder"
+}
+if ($LiveServe -and !(Test-Path -LiteralPath $LiveServer -PathType Leaf)) {
+    throw "Missing FNV live studio server: $LiveServer"
+}
+if ($LiveServe -and !(Test-Path -LiteralPath $ViewerRunner -PathType Leaf)) {
+    throw "Missing FNV character viewer runner: $ViewerRunner"
 }
 
 function Find-Python {
@@ -38,6 +48,110 @@ function Find-Python {
         }
     }
     throw "Python 3 is required to build the FNV character studio catalog."
+}
+
+function Get-FreeLoopbackPort {
+    $listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
+    try {
+        $listener.Start()
+        return [int]$listener.LocalEndpoint.Port
+    }
+    finally {
+        $listener.Stop()
+    }
+}
+
+function Quote-ProcessArgument([string]$Value) {
+    if ($Value -notmatch '[\s"]') {
+        return $Value
+    }
+    return '"' + ($Value -replace '"', '\"') + '"'
+}
+
+function ConvertTo-RelativeHref([string]$BaseDirectory, [string]$TargetPath) {
+    $basePath = (Resolve-Path -LiteralPath $BaseDirectory).Path
+    if (!$basePath.EndsWith([System.IO.Path]::DirectorySeparatorChar)) {
+        $basePath += [System.IO.Path]::DirectorySeparatorChar
+    }
+    $targetResolved = (Resolve-Path -LiteralPath $TargetPath).Path
+    $relative = ([uri]$basePath).MakeRelativeUri([uri]$targetResolved).ToString()
+    return [uri]::UnescapeDataString($relative)
+}
+
+function ConvertTo-HttpPath([string]$BaseDirectory, [string]$TargetPath) {
+    $relative = ConvertTo-RelativeHref $BaseDirectory $TargetPath
+    return ($relative -replace '\\', '/')
+}
+
+function Start-LiveStudioServer([string]$RootDirectory, [string]$HtmlPath, [string]$CatalogPath, [string]$RunDirectory, [int]$RequestedPort) {
+    $root = (Resolve-Path -LiteralPath $RootDirectory).Path
+    $htmlResolved = (Resolve-Path -LiteralPath $HtmlPath).Path
+    $catalogResolved = (Resolve-Path -LiteralPath $CatalogPath).Path
+    $repo = (Resolve-Path -LiteralPath $RepoRoot).Path
+    $runner = (Resolve-Path -LiteralPath $ViewerRunner).Path
+    $server = (Resolve-Path -LiteralPath $LiveServer).Path
+    $port = if ($RequestedPort -gt 0) { $RequestedPort } else { Get-FreeLoopbackPort }
+    $serverLog = Join-Path $RunDirectory "studio-live-server.stdout.log"
+    $serverErr = Join-Path $RunDirectory "studio-live-server.stderr.log"
+    $arguments = @(
+        $server,
+        "--root", $root,
+        "--repo-root", $repo,
+        "--run-dir", (Resolve-Path -LiteralPath $RunDirectory).Path,
+        "--runner", $runner,
+        "--catalog-path", $catalogResolved,
+        "--host", "127.0.0.1",
+        "--port", [string]$port
+    ) | ForEach-Object { Quote-ProcessArgument $_ }
+    $process = Start-Process -FilePath "python" -ArgumentList $arguments -WindowStyle Hidden -PassThru `
+        -RedirectStandardOutput $serverLog -RedirectStandardError $serverErr
+
+    $relativeIndex = ConvertTo-HttpPath $root $htmlResolved
+    $url = "http://127.0.0.1:$port/$relativeIndex"
+    $health = "http://127.0.0.1:$port/nikami/health"
+    $ready = $false
+    for ($attempt = 0; $attempt -lt 30; $attempt++) {
+        try {
+            Invoke-WebRequest -UseBasicParsing -Uri $health -TimeoutSec 1 | Out-Null
+            Invoke-WebRequest -UseBasicParsing -Uri $url -TimeoutSec 1 | Out-Null
+            $ready = $true
+            break
+        }
+        catch {
+            Start-Sleep -Milliseconds 250
+        }
+    }
+    if (!$ready) {
+        throw "Live studio server did not become ready at $url. ProcessId=$($process.Id) stdout=$serverLog stderr=$serverErr"
+    }
+
+    $serverInfo = [pscustomobject][ordered]@{
+        url = $url
+        health = $health
+        root = $root
+        html = $htmlResolved
+        catalog = $catalogResolved
+        host = "127.0.0.1"
+        port = $port
+        processId = $process.Id
+        stdout = $serverLog
+        stderr = $serverErr
+        endpoints = [pscustomobject][ordered]@{
+            catalogSearch = "http://127.0.0.1:$port/nikami/catalog/search"
+            sessions = "http://127.0.0.1:$port/nikami/studio/sessions"
+            jobs = "http://127.0.0.1:$port/nikami/actor-kit/jobs"
+        }
+        policy = [pscustomobject][ordered]@{
+            loopbackOnly = $true
+            generatedProofOutputsOnly = $true
+            noRetailAssetsCommitted = $true
+        }
+    }
+    $serverInfoPath = Join-Path $RunDirectory "studio-live-server.json"
+    $serverInfo | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $serverInfoPath -Encoding UTF8
+    $serverUrlPath = Join-Path $RunDirectory "studio-url.txt"
+    $url | Set-Content -LiteralPath $serverUrlPath -Encoding UTF8
+    return $serverInfo
 }
 
 $python = Find-Python
@@ -91,6 +205,19 @@ Write-Host "Studio Catalog: $json"
 Write-Host "Studio HTML: $html"
 Write-Host "generated proof/viewer output only; no retail assets are committed"
 
+if ($LiveServe) {
+    $serverInfo = Start-LiveStudioServer -RootDirectory $ProofRoot -HtmlPath $html -CatalogPath $json -RunDirectory $latest.FullName -RequestedPort $ServePort
+    Write-Host "Studio URL: $($serverInfo.url)"
+    Write-Host "Studio server JSON: $(Join-Path $latest.FullName "studio-live-server.json")"
+    Write-Host "Studio URL file: $(Join-Path $latest.FullName "studio-url.txt")"
+    Write-Host "Studio server PID: $($serverInfo.processId)"
+}
+
 if ($OpenStudio) {
-    Start-Process -FilePath $html | Out-Null
+    if ($LiveServe) {
+        Start-Process -FilePath $serverInfo.url | Out-Null
+    }
+    else {
+        Start-Process -FilePath $html | Out-Null
+    }
 }

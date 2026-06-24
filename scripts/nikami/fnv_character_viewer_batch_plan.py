@@ -21,6 +21,33 @@ ALLOWED_CLASSIFICATIONS = {
 }
 NPC_PHASES = ["body", "head", "face", "hair", "equipment", "weapon", "headgear", "talk"]
 CREATURE_PHASES = ["creature-model", "creature-body", "creature-animation", "creature-full"]
+COMPONENT_PHASES = {
+    "actor-base-record": ["body"],
+    "npc-race": ["body", "head", "face"],
+    "npc-template": ["body", "head", "face", "equipment"],
+    "npc-headpart": ["head", "face"],
+    "hair": ["hair"],
+    "eyes": ["face"],
+    "facegen-symmetric-shape": ["face"],
+    "facegen-asymmetric-shape": ["face"],
+    "facegen-symmetric-texture": ["face"],
+    "npc-model": ["body"],
+    "default-outfit": ["equipment"],
+    "sleep-outfit": ["equipment"],
+    "equipment-armor": ["equipment", "headgear"],
+    "equipment-armor-addon": ["equipment", "headgear"],
+    "equipment-clothing": ["equipment"],
+    "equipment-weapon": ["weapon"],
+    "inventory-item": ["equipment"],
+    "animation-kffz": ["body"],
+    "animation-locomotion-fallback": ["body"],
+    "voice-type": ["talk"],
+    "creature-model": ["creature-model"],
+    "creature-body-nif": ["creature-body"],
+    "bodypart-data": ["creature-body"],
+    "creature-template": ["creature-model", "creature-body"],
+    "placed-reference": [],
+}
 
 
 def read_json(path: Path) -> Any:
@@ -84,6 +111,15 @@ def phases_for_kind(actor_kind: str) -> list[str]:
     return NPC_PHASES
 
 
+def phases_for_component(component: str, actor_kind: str) -> list[str]:
+    phases = COMPONENT_PHASES.get(component)
+    if phases is not None:
+        return phases
+    if actor_kind == "creature":
+        return ["creature-full"]
+    return ["body"]
+
+
 def placement_for_row(row: dict[str, Any]) -> dict[str, Any]:
     position = {
         "x": as_number(row.get("placedPosX")),
@@ -95,20 +131,27 @@ def placement_for_row(row: dict[str, Any]) -> dict[str, Any]:
         "y": as_number(row.get("placedRotY")),
         "z": as_number(row.get("placedRotZ")),
     }
-    cell = normalize_form_target(as_text(row.get("placedCellFormId")))
+    source_cell = normalize_form_target(as_text(row.get("placedCellFormId")))
+    runtime_cell = normalize_form_target(as_text(row.get("placedRuntimeCellFormId"))) or source_cell
     has_position = all(value is not None for value in position.values())
     return {
         "source": as_text(row.get("placedCoordinateSource")),
-        "cell": cell,
+        "cell": runtime_cell,
+        "sourceCell": source_cell,
+        "runtimeCell": runtime_cell,
         "cellEditorId": as_text(row.get("placedCellEditorId")),
         "cellGroupType": as_text(row.get("placedCellGroupType")),
         "cellGroupName": as_text(row.get("placedCellGroupName")),
+        "cellSource": as_text(row.get("placedCellSource")),
+        "cellGridX": as_number(row.get("placedCellGridX")),
+        "cellGridY": as_number(row.get("placedCellGridY")),
+        "cellFallbackFormId": normalize_form_target(as_text(row.get("placedCellFallbackFormId"))),
         "position": position,
         "rotation": rotation,
         "scale": as_number(row.get("placedScale")),
         "hasPosition": has_position,
-        "hasCell": bool(cell),
-        "runtimeBootstrapReady": bool(cell and has_position),
+        "hasCell": bool(runtime_cell),
+        "runtimeBootstrapReady": bool(runtime_cell and has_position),
     }
 
 
@@ -181,6 +224,47 @@ def build_component_index(rows: list[dict[str, Any]]) -> dict[tuple[str, str], C
     return components
 
 
+def component_evidence(row: dict[str, Any]) -> dict[str, Any]:
+    component = as_text(row.get("component"))
+    actor_kind = actor_kind_from_record(as_text(row.get("actorKind")))
+    return {
+        "component": component,
+        "phases": phases_for_component(component, actor_kind),
+        "sourceRecordType": as_text(row.get("sourceRecordType")),
+        "sourceFormId": as_text(row.get("sourceFormId")),
+        "sourceEditorId": as_text(row.get("sourceEditorId")),
+        "subrecord": as_text(row.get("subrecord")),
+        "resolvedRecordType": as_text(row.get("resolvedRecordType")),
+        "resolvedFormId": as_text(row.get("resolvedFormId")),
+        "resolvedEditorId": as_text(row.get("resolvedEditorId")),
+        "assetPath": as_text(row.get("assetPath")),
+        "assetStatus": as_text(row.get("assetStatus")),
+        "assetArchive": as_text(row.get("assetArchive")),
+        "classification": as_text(row.get("classification")),
+        "firstFailingGate": as_text(row.get("firstFailingGate")),
+        "proofAnchor": as_text(row.get("proofAnchor")),
+        "notes": as_text(row.get("notes")),
+    }
+
+
+def build_component_evidence(rows: list[dict[str, Any]]) -> dict[tuple[str, str], list[dict[str, Any]]]:
+    evidence: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
+    for row in rows:
+        actor_kind = as_text(row.get("actorKind"))
+        actor_form_id = as_text(row.get("actorFormId"))
+        component = as_text(row.get("component"))
+        if actor_kind and actor_form_id and component:
+            evidence[(actor_kind, actor_form_id)].append(component_evidence(row))
+    return evidence
+
+
+def component_phase_index(component_counts: Counter[str], actor_kind: str) -> dict[str, list[str]]:
+    return {
+        component: phases_for_component(component, actor_kind)
+        for component in sorted(component_counts)
+    }
+
+
 def make_entry(
     *,
     source: str,
@@ -194,10 +278,14 @@ def make_entry(
     actor_form_id = as_text(row.get("actorFormId") or row.get("resolvedFormId"))
     placed_ref_editor_id = as_text(row.get("placedRefEditorId"))
     placed_ref_form_id = as_text(row.get("placedRefFormId"))
+    base_actor_target = actor_editor_id or normalize_form_target(actor_form_id)
+    placed_target = ""
     if source == "placed-reference":
-        target = placed_ref_editor_id or normalize_form_target(placed_ref_form_id) or actor_editor_id or normalize_form_target(actor_form_id)
+        placed_target = placed_ref_editor_id or normalize_form_target(placed_ref_form_id)
+        target = placed_target or base_actor_target
     else:
-        target = actor_editor_id or normalize_form_target(actor_form_id)
+        target = base_actor_target
+    runtime_target = base_actor_target or target
     phases = phases_for_kind(actor_kind)
     placement = placement_for_row(row) if source == "placed-reference" else {
         "source": "base actor has no placed DATA",
@@ -212,8 +300,9 @@ def make_entry(
         "hasCell": False,
         "runtimeBootstrapReady": False,
     }
-    classification, first_failing_gate, notes = classify_target(source, record_type, target)
-    command = command_for_target(target, actor_kind, phases, placement) if target and actor_kind != "unknown" else ""
+    placement_args = placement_command_args(placement).strip()
+    classification, first_failing_gate, notes = classify_target(source, record_type, runtime_target)
+    command = command_for_target(runtime_target, actor_kind, phases, placement) if runtime_target and actor_kind != "unknown" else ""
     if classification not in ALLOWED_CLASSIFICATIONS:
         classification = "known-blocked"
         first_failing_gate = "batch-plan-classification"
@@ -226,7 +315,13 @@ def make_entry(
         "actorKind": actor_kind,
         "recordType": record_type,
         "target": target,
+        "selectedTarget": target,
+        "runtimeTarget": runtime_target,
+        "placedTarget": placed_target,
+        "baseActorTarget": base_actor_target,
+        "assemblyTarget": base_actor_target,
         "phases": phases,
+        "componentPhases": component_phase_index(component_counts, actor_kind),
         "classification": classification,
         "firstFailingGate": first_failing_gate,
         "proofAnchor": as_text(row.get("proofAnchor")),
@@ -239,14 +334,18 @@ def make_entry(
         "resolvedFormId": as_text(row.get("resolvedFormId")),
         "resolvedEditorId": as_text(row.get("resolvedEditorId")),
         "placement": placement,
+        "placementCommandArgs": placement_args,
         "componentCounts": dict(sorted(component_counts.items())),
+        "componentEvidence": [],
+        "sourceProvenance": component_evidence(row),
         "command": command,
-        "payloadPolicy": "no retail asset paths or payload bytes are written by this batch plan",
+        "payloadPolicy": "generated commands, identifiers, and asset path provenance only; no retail payload bytes are written by this batch plan",
     }
 
 
 def build_plan(rows: list[dict[str, Any]], result: dict[str, Any], limit: int) -> dict[str, Any]:
     component_index = build_component_index(rows)
+    evidence_index = build_component_evidence(rows)
     entries: list[dict[str, Any]] = []
 
     base_rows = [
@@ -260,14 +359,14 @@ def build_plan(rows: list[dict[str, Any]], result: dict[str, Any], limit: int) -
         if key in seen_base:
             continue
         seen_base.add(key)
-        entries.append(
-            make_entry(
-                source="actor-base-record",
-                row=row,
-                component_counts=component_index[(as_text(row.get("actorKind")), as_text(row.get("actorFormId")))],
-                sequence=len(entries) + 1,
-            )
+        entry = make_entry(
+            source="actor-base-record",
+            row=row,
+            component_counts=component_index[(as_text(row.get("actorKind")), as_text(row.get("actorFormId")))],
+            sequence=len(entries) + 1,
         )
+        entry["componentEvidence"] = evidence_index[(as_text(row.get("actorKind")), as_text(row.get("actorFormId")))]
+        entries.append(entry)
 
     seen_placed: set[tuple[str, ...]] = set()
     for row in placed_rows:
@@ -275,14 +374,14 @@ def build_plan(rows: list[dict[str, Any]], result: dict[str, Any], limit: int) -
         if key in seen_placed:
             continue
         seen_placed.add(key)
-        entries.append(
-            make_entry(
-                source="placed-reference",
-                row=row,
-                component_counts=component_index[(as_text(row.get("actorKind")), as_text(row.get("actorFormId")))],
-                sequence=len(entries) + 1,
-            )
+        entry = make_entry(
+            source="placed-reference",
+            row=row,
+            component_counts=component_index[(as_text(row.get("actorKind")), as_text(row.get("actorFormId")))],
+            sequence=len(entries) + 1,
         )
+        entry["componentEvidence"] = evidence_index[(as_text(row.get("actorKind")), as_text(row.get("actorFormId")))]
+        entries.append(entry)
 
     if limit > 0:
         entries = entries[:limit]
@@ -318,7 +417,7 @@ def build_plan(rows: list[dict[str, Any]], result: dict[str, Any], limit: int) -
         "sourceLedger": result.get("artifacts", {}).get("ledger", ""),
         "sourceResult": result.get("artifacts", {}).get("result", ""),
         "content": result.get("content", []),
-        "payloadPolicy": "generated commands and identifiers only; no retail asset paths or payload bytes",
+        "payloadPolicy": "generated commands, identifiers, and asset path provenance only; no retail payload bytes",
         "expectedCounts": {
             "baseActors": expected_base,
             "npcBaseRecords": int(result.get("npcBaseRecords", 0)),

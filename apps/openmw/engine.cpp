@@ -380,6 +380,39 @@ namespace
         return static_cast<int>(value);
     }
 
+    std::string falloutProofFormToken(std::string_view value)
+    {
+        while (!value.empty()
+            && (std::isspace(static_cast<unsigned char>(value.front())) || value.front() == '"' || value.front() == '\''))
+            value.remove_prefix(1);
+        while (!value.empty()
+            && (std::isspace(static_cast<unsigned char>(value.back())) || value.back() == '"' || value.back() == '\''))
+            value.remove_suffix(1);
+
+        std::string text(value);
+        Misc::StringUtils::lowerCaseInPlace(text);
+        constexpr std::string_view prefix = "formid:";
+        if (text.rfind(prefix, 0) == 0)
+            text.erase(0, prefix.size());
+        if (text.rfind("0x", 0) == 0)
+            text.erase(0, 2);
+        if (text.empty())
+            return {};
+        if (!std::all_of(text.begin(), text.end(), [](unsigned char ch) { return std::isxdigit(ch) != 0; }))
+            return {};
+        if (text.size() > 6)
+            text.erase(0, text.size() - 6);
+        while (text.size() < 6)
+            text.insert(text.begin(), '0');
+        return text;
+    }
+
+    bool falloutProofFormTargetMatches(std::string_view candidate, std::string_view target)
+    {
+        const std::string candidateToken = falloutProofFormToken(candidate);
+        return !candidateToken.empty() && candidateToken == falloutProofFormToken(target);
+    }
+
     ESM::RefId getProofRefId(const char* name, const char* fallback)
     {
         const char* env = std::getenv(name);
@@ -2121,6 +2154,15 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
         }
         if (cellId.empty())
             cellId = mWorld->findExteriorPosition("Goodsprings", cellProbe);
+        else if (resolvedInteriorCell.empty()
+            && MWBase::Environment::get().getWorldModel()->findCell(cellId, false) == nullptr)
+        {
+            Log(Debug::Warning) << "FNV/ESM4 proof: requested bootstrap cell \"" << requestedProofCell
+                                << "\" resolved to missing cell " << cellId
+                                << "; falling back to Goodsprings";
+            cellProbe = position;
+            cellId = mWorld->findExteriorPosition("Goodsprings", cellProbe);
+        }
         if (!cellId.empty())
         {
             MWWorld::Ptr player = mWorld->getPlayerPtr();
@@ -2302,6 +2344,7 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                 const std::string refId = ptr.getCellRef().getRefNum().toString("FormId:");
                 std::string baseEditorId;
                 std::string baseFullName;
+                std::string baseFormId;
                 if (ptr.getType() == ESM::REC_NPC_4)
                 {
                     if (const MWWorld::LiveCellRef<ESM4::Npc>* ref = ptr.get<ESM4::Npc>())
@@ -2310,6 +2353,7 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                         {
                             baseEditorId = ref->mBase->mEditorId;
                             baseFullName = ref->mBase->mFullName;
+                            baseFormId = ESM::RefId(ref->mBase->mId).toDebugString();
                         }
                     }
                 }
@@ -2381,6 +2425,7 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                 const std::string refId = ptr.getCellRef().getRefNum().toString("FormId:");
                 std::string baseEditorId;
                 std::string baseFullName;
+                std::string baseFormId;
                 if (ptr.getType() == ESM::REC_NPC_4)
                 {
                     if (const MWWorld::LiveCellRef<ESM4::Npc>* ref = ptr.get<ESM4::Npc>())
@@ -2389,6 +2434,7 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                         {
                             baseEditorId = ref->mBase->mEditorId;
                             baseFullName = ref->mBase->mFullName;
+                            baseFormId = ESM::RefId(ref->mBase->mId).toDebugString();
                         }
                     }
                 }
@@ -2400,6 +2446,7 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                         {
                             baseEditorId = ref->mBase->mEditorId;
                             baseFullName = ref->mBase->mFullName;
+                            baseFormId = ESM::RefId(ref->mBase->mId).toDebugString();
                         }
                     }
                 }
@@ -2408,9 +2455,13 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                 const std::string refIdLower = Misc::StringUtils::lowerCase(refId);
                 const std::string baseEditorLower = Misc::StringUtils::lowerCase(baseEditorId);
                 const std::string baseFullLower = Misc::StringUtils::lowerCase(baseFullName);
+                const std::string baseFormLower = Misc::StringUtils::lowerCase(baseFormId);
 
                 if (baseIdLower == targetLower || refIdLower == targetLower || actorNameLower == targetLower
-                    || baseEditorLower == targetLower || baseFullLower == targetLower
+                    || baseEditorLower == targetLower || baseFullLower == targetLower || baseFormLower == targetLower
+                    || falloutProofFormTargetMatches(baseId, target)
+                    || falloutProofFormTargetMatches(refId, target)
+                    || falloutProofFormTargetMatches(baseFormId, target)
                     || (!actorNameLower.empty() && actorNameLower.find(targetLower) != std::string::npos)
                     || (!baseEditorLower.empty() && baseEditorLower.find(targetLower) != std::string::npos)
                     || (!baseFullLower.empty() && baseFullLower.find(targetLower) != std::string::npos)
@@ -2421,12 +2472,13 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                     {
                         const ESM::Position& actorPos = ptr.getRefData().getPosition();
                         Log(Debug::Info) << "FNV/ESM4 proof: active-cell actor match target=\"" << target
-                                         << "\" frame=" << frameNumber << " ref=" << refId << " base=" << baseId
-                                         << " name=\"" << actorName << "\" baseEditor=\"" << baseEditorId
-                                         << "\" baseFull=\"" << baseFullName << "\" pos=(" << actorPos.pos[0]
-                                         << "," << actorPos.pos[1] << "," << actorPos.pos[2] << ") rot=("
-                                         << actorPos.rot[0] << "," << actorPos.rot[1] << "," << actorPos.rot[2]
-                                         << ") scanned=" << scanned << " actors=" << actors;
+                                          << "\" frame=" << frameNumber << " ref=" << refId << " base=" << baseId
+                                          << " name=\"" << actorName << "\" baseEditor=\"" << baseEditorId
+                                          << "\" baseForm=" << baseFormId << " baseFull=\"" << baseFullName
+                                          << "\" pos=(" << actorPos.pos[0] << "," << actorPos.pos[1] << ","
+                                          << actorPos.pos[2] << ") rot=(" << actorPos.rot[0] << ","
+                                          << actorPos.rot[1] << "," << actorPos.rot[2] << ") scanned=" << scanned
+                                          << " actors=" << actors;
                     }
                     return false;
                 }

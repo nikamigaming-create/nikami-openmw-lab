@@ -152,13 +152,18 @@ def parse_run_output(stdout: str, root: Path) -> dict[str, str]:
 
 
 class CatalogStore:
-    def __init__(self, root: Path) -> None:
+    def __init__(self, root: Path, catalog_path: Path | None = None) -> None:
         self.root = root
+        self.catalog_path = catalog_path
         self.lock = threading.Lock()
         self.path: Path | None = None
         self.catalog: dict[str, Any] = {}
 
     def _latest_catalog_path(self) -> Path:
+        if self.catalog_path is not None:
+            if self.catalog_path.is_file():
+                return self.catalog_path
+            raise FileNotFoundError(f"Configured character studio catalog does not exist: {self.catalog_path}")
         catalog_root = self.root / "fnv-character-studio-catalog"
         candidates = sorted((path for path in catalog_root.glob("*") if path.is_dir()), reverse=True)
         for candidate in candidates:
@@ -298,6 +303,23 @@ class StudioSessionStore:
         self._write(session)
         return event
 
+    def events(self, session_id: str) -> list[dict[str, Any]]:
+        session_dir = self._session_dir(session_id)
+        events_path = session_dir / "recording" / "events.jsonl"
+        if not events_path.is_file():
+            return []
+        events: list[dict[str, Any]] = []
+        for line in events_path.read_text(encoding="utf-8", errors="replace").splitlines():
+            if not line.strip():
+                continue
+            try:
+                event = json.loads(line)
+                if isinstance(event, dict):
+                    events.append(event)
+            except json.JSONDecodeError:
+                events.append({"t": utc_now(), "type": "recording.decode-error", "payload": {"line": line[:200]}})
+        return events
+
     def add_job(self, session_id: str, job_id: str) -> None:
         session = self.get(session_id)
         if session is None:
@@ -340,6 +362,8 @@ class JobStore:
             "stdout": "",
             "stderr": "",
             "result": {},
+            "error": "",
+            "failure": {},
             "policy": {
                 "loopbackOnly": True,
                 "generatedProofOutputsOnly": True,
@@ -375,6 +399,19 @@ class JobStore:
                 job["stdout"] = completed.stdout[-20000:]
                 job["stderr"] = completed.stderr[-20000:]
                 job["result"] = result
+                if completed.returncode != 0:
+                    job["error"] = f"viewer runner exited with code {completed.returncode}"
+                    job["failure"] = {
+                        "code": "runner-exit",
+                        "stage": "runner",
+                        "message": job["error"],
+                        "returnCode": completed.returncode,
+                        "stdoutTail": job["stdout"][-4000:],
+                        "stderrTail": job["stderr"][-4000:],
+                    }
+                else:
+                    job["error"] = ""
+                    job["failure"] = {}
                 self.write_job(job)
         except Exception as exc:  # pragma: no cover - defensive runtime guard
             with self.lock:
@@ -382,6 +419,12 @@ class JobStore:
                 job["state"] = "failed"
                 job["finishedAt"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
                 job["stderr"] = str(exc)
+                job["error"] = str(exc)
+                job["failure"] = {
+                    "code": "runner-exception",
+                    "stage": "runner",
+                    "message": str(exc),
+                }
                 self.write_job(job)
 
     def get(self, job_id: str) -> dict[str, Any] | None:
@@ -393,32 +436,189 @@ class JobStore:
             return list(self.jobs.values())[-50:]
 
 
-def structured_actor_command(entry: dict[str, Any], payload: dict[str, Any]) -> str:
-    commands = entry.get("commands") if isinstance(entry.get("commands"), dict) else {}
+def first_text(*values: Any) -> str:
+    for value in values:
+        if value is None:
+            continue
+        text = str(value).strip()
+        if text:
+            return text
+    return ""
+
+
+def form_target(value: Any) -> str:
+    text = first_text(value)
+    if not text or text.lower().startswith("formid:"):
+        return text
+    if re.fullmatch(r"0x[0-9A-Fa-f]+", text):
+        return f"FormId:{text}"
+    return text
+
+
+def selector_value(payload: dict[str, Any], key: str) -> Any:
+    selectors = payload.get("selectors") if isinstance(payload.get("selectors"), dict) else {}
+    if key in payload:
+        return payload.get(key)
+    return selectors.get(key)
+
+
+def csv_values(value: Any) -> list[str]:
+    values: list[str] = []
+    for item in as_list(value):
+        for part in str(item).split(","):
+            text = part.strip()
+            if text:
+                values.append(text)
+    return values
+
+
+def selector_csv(payload: dict[str, Any], key: str) -> str:
+    return ",".join(csv_values(selector_value(payload, key)))
+
+
+def selector_arg(name: str, value: str) -> str:
+    return f" -{name} {shell_quote(value)}" if value else ""
+
+
+def numeric_arg(name: str, value: Any, required: bool = False) -> str:
+    text = first_text(value)
+    if not text:
+        if required:
+            raise ValueError(f"placement bootstrap is missing {name}")
+        return ""
+    if not re.fullmatch(r"-?[0-9]+(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?", text):
+        raise ValueError(f"placement bootstrap has invalid numeric value for {name}")
+    return f" -{name} {text}"
+
+
+def placement_command_args(placement: Any) -> str:
+    if not isinstance(placement, dict):
+        return ""
+    existing = first_text(placement.get("commandArgs"), placement.get("placementCommandArgs"))
+    if existing:
+        return " " + existing.strip()
+    if not placement.get("runtimeBootstrapReady"):
+        return ""
+    position = placement.get("position") if isinstance(placement.get("position"), dict) else {}
+    rotation = placement.get("rotation") if isinstance(placement.get("rotation"), dict) else {}
+    args = ""
+    cell = first_text(placement.get("cell"))
+    if cell:
+        args += f" -BootstrapCell {shell_quote(cell)}"
+    args += numeric_arg("BootstrapX", position.get("x"), required=True)
+    args += numeric_arg("BootstrapY", position.get("y"), required=True)
+    args += numeric_arg("BootstrapZ", position.get("z"), required=True)
+    args += numeric_arg("ActorStageX", position.get("x"), required=True)
+    args += numeric_arg("ActorStageY", position.get("y"), required=True)
+    args += numeric_arg("ActorStageZ", position.get("z"), required=True)
+    args += numeric_arg("BootstrapRotX", rotation.get("x"))
+    args += numeric_arg("ActorStageRotX", rotation.get("x"))
+    args += numeric_arg("BootstrapRotY", rotation.get("y"))
+    args += numeric_arg("ActorStageRotY", rotation.get("y"))
+    args += numeric_arg("BootstrapRotZ", rotation.get("z"))
+    args += numeric_arg("ActorStageRotZ", rotation.get("z"))
+    return args
+
+
+def target_mapping(entry: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
+    source = first_text(payload.get("source"), entry.get("source"))
+    catalog_target = first_text(entry.get("target"))
+    actor_form_target = form_target(first_text(payload.get("actorFormId"), entry.get("actorFormId"), entry.get("actorFormTarget"), entry.get("formId")))
+    placed_ref_form_target = form_target(first_text(payload.get("placedRefFormId"), entry.get("placedRefFormId"), entry.get("placedRefFormTarget")))
+    placed_target = first_text(payload.get("placedTarget"), entry.get("placedTarget"))
+    if not placed_target and source == "placed-reference":
+        placed_target = first_text(catalog_target, entry.get("placedRefEditorId"), placed_ref_form_target)
+    entry_runtime_target = first_text(entry.get("runtimeTarget"))
+    if source == "placed-reference" and entry_runtime_target == placed_target:
+        entry_runtime_target = ""
+    runtime_target = first_text(
+        payload.get("runtimeTarget"),
+        entry_runtime_target,
+        entry.get("assemblyTarget"),
+        entry.get("baseActorTarget"),
+        entry.get("actorEditorId"),
+        entry.get("editorId"),
+        actor_form_target,
+    )
+    if not runtime_target and source != "placed-reference":
+        runtime_target = first_text(payload.get("target"), catalog_target)
+    if not runtime_target:
+        runtime_target = first_text(payload.get("target"), catalog_target)
+    placement = payload.get("placement") if isinstance(payload.get("placement"), dict) else entry.get("placement")
+    if not isinstance(placement, dict):
+        placement = {}
+    placement_args = first_text(payload.get("placementCommandArgs"), entry.get("placementCommandArgs"))
+    if placement_args:
+        placement = dict(placement)
+        placement["commandArgs"] = placement_args
+    return {
+        "source": source,
+        "selectedTarget": first_text(payload.get("selectedTarget"), entry.get("selectedTarget"), catalog_target, placed_target, runtime_target),
+        "placedTarget": placed_target,
+        "runtimeTarget": runtime_target,
+        "actorFormTarget": actor_form_target,
+        "placedRefFormTarget": placed_ref_form_target,
+        "placement": placement,
+        "placementCommandArgs": placement_args,
+    }
+
+
+def structured_actor_job(entry: dict[str, Any], payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
     command_key = str(payload.get("command") or payload.get("commandKey") or "runtimeThreeCamera")
     if command_key not in {"runtimeThreeCamera", "runtimeFrontOnly"}:
         raise ValueError("unsupported structured studio command")
-    command = str(commands.get(command_key) or "")
-    if command:
-        return command
-
-    target = str(payload.get("target") or entry.get("target") or "")
-    actor_kind = str(payload.get("actorKind") or entry.get("kind") or "")
+    actor_kind = first_text(payload.get("actorKind"), entry.get("kind"))
     if actor_kind not in {"npc", "creature"}:
         raise ValueError("structured studio job requires an actor or creature entry")
-    phases = payload.get("phases") or entry.get("phases") or ["body", "head", "face", "hair", "equipment", "weapon", "headgear", "talk"]
-    angles = payload.get("angles") or ("front" if command_key == "runtimeFrontOnly" else "front,front-left,front-right")
-    phases_csv = ",".join(str(value) for value in as_list(phases) if str(value))
-    angles_csv = ",".join(str(value) for value in as_list(angles) if str(value))
-    if not target or not phases_csv or not angles_csv:
-        raise ValueError("structured studio job is missing target, phases, or angles")
+    targets = target_mapping(entry, payload)
+    phases = csv_values(selector_value(payload, "phases") or entry.get("phases") or ["body", "head", "face", "hair", "equipment", "weapon", "headgear", "talk"])
+    angles = csv_values(selector_value(payload, "angles") or ("front" if command_key == "runtimeFrontOnly" else "front,front-left,front-right"))
+    if not targets["runtimeTarget"] or not phases or not angles:
+        raise ValueError("structured studio job is missing runtimeTarget, phases, or angles")
+    selectors = {
+        "phases": phases,
+        "angles": angles,
+        "parts": csv_values(selector_value(payload, "parts")),
+        "partModels": csv_values(selector_value(payload, "partModels")),
+        "propSlots": csv_values(selector_value(payload, "propSlots")),
+        "propModels": csv_values(selector_value(payload, "propModels")),
+        "animationGroup": first_text(selector_value(payload, "animationGroup")),
+        "dialogueMode": first_text(selector_value(payload, "dialogueMode")),
+    }
     command = (
         "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/nikami/run-fnv-character-viewer.ps1 "
-        f"-Targets {shell_quote(target)} -ActorKind {actor_kind} -Phases {shell_quote(phases_csv)} "
-        f"-Angles {shell_quote(angles_csv)}"
+        f"-Targets {shell_quote(targets['runtimeTarget'])} -ActorKind {actor_kind} -Phases {shell_quote(','.join(phases))}"
+        f"{placement_command_args(targets['placement'])} -Angles {shell_quote(','.join(angles))}"
     )
+    command += selector_arg("ActorKitParts", ",".join(selectors["parts"]))
+    command += selector_arg("ActorKitPartModels", ",".join(selectors["partModels"]))
+    command += selector_arg("ActorKitPropSlots", ",".join(selectors["propSlots"]))
+    command += selector_arg("ActorKitPropModels", ",".join(selectors["propModels"]))
+    command += selector_arg("ActorKitAnimationGroup", selectors["animationGroup"])
+    command += selector_arg("ActorKitDialogueMode", selectors["dialogueMode"])
     if actor_kind == "creature":
         command += " -CreatureDiagnostics"
+    request = {
+        "schema": "nikami-fnv-character-studio-job-request-v1",
+        "kind": first_text(payload.get("kind"), "actor-runtime-capture"),
+        "entryId": first_text(payload.get("entryId"), entry.get("id")),
+        "commandKey": command_key,
+        "actorKind": actor_kind,
+        "target": targets["runtimeTarget"],
+        "selectedTarget": targets["selectedTarget"],
+        "placedTarget": targets["placedTarget"],
+        "runtimeTarget": targets["runtimeTarget"],
+        "actorFormTarget": targets["actorFormTarget"],
+        "placedRefFormTarget": targets["placedRefFormTarget"],
+        "placement": targets["placement"],
+        "placementCommandArgs": targets["placementCommandArgs"],
+        "selectors": selectors,
+    }
+    return command, request
+
+
+def structured_actor_command(entry: dict[str, Any], payload: dict[str, Any]) -> str:
+    command, _request = structured_actor_job(entry, payload)
     return command
 
 
@@ -495,6 +695,30 @@ class LiveHandler(SimpleHTTPRequestHandler):
                     return
                 self.send_json(200, session)
                 return
+            if len(parts) == 5 and parts[-1] == "events":
+                session_id = unquote(parts[-2])
+                self.send_json(200, self.server.studio_store.events(session_id))  # type: ignore[attr-defined]
+                return
+            if len(parts) == 5 and parts[-1] == "jobs":
+                session_id = unquote(parts[-2])
+                session = self.server.studio_store.get(session_id)  # type: ignore[attr-defined]
+                if session is None:
+                    self.send_json(404, {"error": "unknown studio session"})
+                    return
+                jobs = []
+                for job_id in as_list(session.get("jobs")):
+                    job = self.server.job_store.get(str(job_id))  # type: ignore[attr-defined]
+                    jobs.append(job if job is not None else {"id": str(job_id), "state": "missing"})
+                self.send_json(200, jobs)
+                return
+        if parsed.path.startswith("/nikami/studio/jobs/"):
+            job_id = unquote(parsed.path.rsplit("/", 1)[-1])
+            job = self.server.job_store.get(job_id)  # type: ignore[attr-defined]
+            if job is None:
+                self.send_json(404, {"error": "unknown job"})
+                return
+            self.send_json(200, job)
+            return
         if parsed.path == "/nikami/actor-kit/jobs":
             self.send_json(200, self.server.job_store.list())  # type: ignore[attr-defined]
             return
@@ -532,10 +756,20 @@ class LiveHandler(SimpleHTTPRequestHandler):
                     entry = self.server.catalog_store.entry(entry_id)  # type: ignore[attr-defined]
                     if entry is None:
                         raise ValueError("unknown catalog entry")
-                    command = structured_actor_command(entry, payload)
-                    job = self.server.job_store.start(command, payload, session_id)  # type: ignore[attr-defined]
+                    command, request = structured_actor_job(entry, payload)
+                    job = self.server.job_store.start(command, request, session_id)  # type: ignore[attr-defined]
                     self.server.studio_store.add_job(session_id, job["id"])  # type: ignore[attr-defined]
-                    self.server.studio_store.append_event(session_id, "job.create", {"jobId": job["id"], "entryId": entry_id})  # type: ignore[attr-defined]
+                    self.server.studio_store.append_event(
+                        session_id,
+                        "job.create",
+                        {
+                            "jobId": job["id"],
+                            "entryId": entry_id,
+                            "placedTarget": request.get("placedTarget", ""),
+                            "runtimeTarget": request.get("runtimeTarget", ""),
+                            "selectors": request.get("selectors", {}),
+                        },
+                    )  # type: ignore[attr-defined]
                     self.send_json(202, job)
                     return
             if parsed.path != "/nikami/actor-kit/run":
@@ -546,7 +780,17 @@ class LiveHandler(SimpleHTTPRequestHandler):
             job = self.server.job_store.start(command)  # type: ignore[attr-defined]
             self.send_json(202, job)
         except Exception as exc:
-            self.send_json(400, {"error": str(exc)})
+            self.send_json(
+                400,
+                {
+                    "error": str(exc),
+                    "failure": {
+                        "code": "studio-request-invalid",
+                        "stage": "request",
+                        "message": str(exc),
+                    },
+                },
+            )
 
 
 def main() -> int:
@@ -555,6 +799,7 @@ def main() -> int:
     parser.add_argument("--repo-root", required=True, type=Path)
     parser.add_argument("--run-dir", required=True, type=Path)
     parser.add_argument("--runner", required=True, type=Path)
+    parser.add_argument("--catalog-path", type=Path)
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", required=True, type=int)
     args = parser.parse_args()
@@ -569,7 +814,7 @@ def main() -> int:
     )
     httpd = ThreadingHTTPServer((args.host, args.port), handler)
     httpd.job_store = JobStore(run_dir, root, repo_root, runner)  # type: ignore[attr-defined]
-    httpd.catalog_store = CatalogStore(root)  # type: ignore[attr-defined]
+    httpd.catalog_store = CatalogStore(root, args.catalog_path.resolve() if args.catalog_path else None)  # type: ignore[attr-defined]
     httpd.studio_store = StudioSessionStore(run_dir)  # type: ignore[attr-defined]
     print(f"live-viewer-server=http://{args.host}:{args.port}", flush=True)
     httpd.serve_forever()
