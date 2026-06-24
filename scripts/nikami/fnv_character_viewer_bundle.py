@@ -137,6 +137,51 @@ def phase_for_category(category: str) -> str:
     }.get(category, category or "full")
 
 
+def normalize_model_key(value: str) -> str:
+    text = value.replace("\\", "/").lower().strip()
+    for prefix in ("fnv part ", "meshes/"):
+        if text.startswith(prefix):
+            text = text[len(prefix) :]
+    if text.startswith("meshes/"):
+        text = text[len("meshes/") :]
+    return text
+
+
+def category_from_part(part: str, part_class: str) -> str:
+    text = f"{part} {part_class}".replace("\\", "/").lower()
+    if part_class in {"faceEye", "faceMouth", "faceTeeth", "faceTongue"}:
+        return "face-organs"
+    if part_class in {"faceHair", "faceBeard", "faceBrow"}:
+        return "hair-beard"
+    if part_class == "headgear" or "headgear" in text or "hat" in text:
+        return "headgear"
+    if part_class == "weapon" or "weapon" in text:
+        return "weapon"
+    if part_class in {"leftHand", "rightHand", "body"} or "upperbody" in text or "hand" in text:
+        return "body-skin"
+    if part_class == "head" or "headold" in text or "headhuman" in text:
+        return "head-skin"
+    if part_class.startswith("creature") or "creature" in text:
+        return "creature-body"
+    if "armor" in text or "clothes" in text:
+        return "equipment-body"
+    return "all"
+
+
+def match_gate_model(part: str, category: str, gates: list[dict[str, Any]]) -> str:
+    part_key = normalize_model_key(part)
+    candidates = [
+        str(gate.get("model", ""))
+        for gate in gates
+        if gate.get("category") == category and str(gate.get("model", "")) not in {"", "<none>"}
+    ]
+    for model in candidates:
+        model_key = normalize_model_key(model)
+        if model_key and (part_key == model_key or part_key.endswith(model_key) or model_key.endswith(part_key)):
+            return model
+    return candidates[0] if len(candidates) == 1 else ""
+
+
 def selector_arg(name: str, value: str) -> str:
     return f" -{name} {shell_quote(value)}" if value else ""
 
@@ -291,7 +336,8 @@ def gate_controls(cases: list[dict[str, Any]], actor: str, actor_kind: str) -> d
                     "label": "Creature Animation",
                     "command": viewer_command(actor, "creature", "creature-animation"),
                 },
-            ],
+            ]
+            + failure_bot_commands(cases),
         }
 
     part_toggles: list[dict[str, Any]] = []
@@ -449,7 +495,8 @@ def gate_controls(cases: list[dict[str, Any]], actor: str, actor_kind: str) -> d
                 "label": "Idle Proof",
                 "command": viewer_command(actor, "npc", "hair", animation_group="idle"),
             },
-        ],
+        ]
+        + failure_bot_commands(cases),
     }
 
 
@@ -512,6 +559,84 @@ def screenshot_names(value: Any) -> list[str]:
     return names
 
 
+def build_failure_focus(
+    *,
+    actor: str,
+    actor_kind: str,
+    phase: str,
+    gates: list[dict[str, Any]],
+    timelines: list[dict[str, Any]],
+    actor_kit_selection: dict[str, Any],
+) -> list[dict[str, Any]]:
+    focus: list[dict[str, Any]] = []
+    for timeline in timelines:
+        if not isinstance(timeline, dict):
+            continue
+        bad_count = int(timeline.get("badCount") or 0)
+        if bad_count <= 0 and not timeline.get("regressed"):
+            continue
+        part = str(timeline.get("part") or "")
+        part_class = str(timeline.get("class") or "")
+        category = category_from_part(part, part_class)
+        matched_model = match_gate_model(part, category, gates)
+        command_phase = phase or phase_for_category(category)
+        animation_group = str(actor_kit_selection.get("animationGroup") or "")
+        dialogue_mode = str(actor_kit_selection.get("dialogueMode") or "")
+        command_kwargs: dict[str, str] = {
+            "parts": category if category != "all" else "",
+            "part_models": matched_model,
+            "animation_group": animation_group,
+            "dialogue_mode": dialogue_mode,
+        }
+        if category in {"equipment-body", "weapon", "headgear"}:
+            command_kwargs["prop_slots"] = category
+            command_kwargs["prop_models"] = matched_model
+        command = viewer_command(actor, actor_kind, command_phase, **command_kwargs)
+        focus.append(
+            {
+                "id": f"{category}:{normalize_model_key(part) or part_class}",
+                "category": category,
+                "part": part,
+                "class": part_class,
+                "matchedModel": matched_model,
+                "phase": command_phase,
+                "firstBadSampleIndex": timeline.get("firstBadSampleIndex", 0),
+                "firstBadAnimationTime": timeline.get("firstBadAnimationTime"),
+                "firstBadDistance": timeline.get("firstBadDistance"),
+                "badCount": bad_count,
+                "count": timeline.get("count", 0),
+                "regressed": bool(timeline.get("regressed")),
+                "deltaRelLocal": timeline.get("deltaRelLocal", []),
+                "deltaPartInAnchorTrans": timeline.get("deltaPartInAnchorTrans", []),
+                "command": command,
+            }
+        )
+    return focus
+
+
+def failure_bot_commands(cases: list[dict[str, Any]], limit: int = 12) -> list[dict[str, str]]:
+    commands: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for case in cases:
+        for item in as_list(case.get("failureFocus")):
+            if not isinstance(item, dict):
+                continue
+            command = str(item.get("command") or "")
+            if not command or command in seen:
+                continue
+            seen.add(command)
+            commands.append(
+                {
+                    "id": f"isolate-{len(commands) + 1}",
+                    "label": f"Isolate {item.get('category', 'part')} {len(commands) + 1}",
+                    "command": command,
+                }
+            )
+            if len(commands) >= limit:
+                return commands
+    return commands
+
+
 def load_suite(suite_dir: Path) -> dict[str, Any]:
     suite_json = suite_dir / "character-builder-suite.json"
     raw_results = as_list(read_json(suite_json, []))
@@ -545,6 +670,19 @@ def load_suite(suite_dir: Path) -> dict[str, Any]:
             [str(item) for item in as_list(raw.get("failures"))]
             + [str(item) for item in as_list(report.get("failures"))]
         )
+        actor_kit_selection = raw.get("actorKitSelection") or {}
+        if not isinstance(actor_kit_selection, dict):
+            actor_kit_selection = {}
+        case_gates = as_list(report.get("gates"))
+        runtime_part_timelines = as_list(report.get("runtimePartTimelines"))
+        failure_focus = build_failure_focus(
+            actor=actor,
+            actor_kind=actor_kind,
+            phase=phase,
+            gates=[gate for gate in case_gates if isinstance(gate, dict)],
+            timelines=[timeline for timeline in runtime_part_timelines if isinstance(timeline, dict)],
+            actor_kit_selection=actor_kit_selection,
+        )
         case_data: dict[str, Any] = {
             "case": str(raw.get("case") or f"{phase}_{angle}"),
             "phase": phase,
@@ -559,7 +697,7 @@ def load_suite(suite_dir: Path) -> dict[str, Any]:
             "bootstrap": raw.get("bootstrap") or {},
             "actorStage": raw.get("actorStage") or {},
             "actorCamera": raw.get("actorCamera") or {},
-            "actorKitSelection": raw.get("actorKitSelection") or {},
+            "actorKitSelection": actor_kit_selection,
             "openmwLog": rel_path(case_dir / "openmw.log", suite_dir),
             "reportJson": rel_path(case_dir / "character-builder-report.json", suite_dir),
             "reportMarkdown": rel_path(case_dir / "character-builder-report.md", suite_dir),
@@ -571,6 +709,7 @@ def load_suite(suite_dir: Path) -> dict[str, Any]:
                 "runtimePartAudits": len(as_list(report.get("runtimePartAudits"))),
                 "runtimeAuditSummary": len(as_list(report.get("runtimeAuditSummary"))),
                 "runtimePartTimelines": len(as_list(report.get("runtimePartTimelines"))),
+                "failureFocus": len(failure_focus),
                 "faceDrawables": len(as_list(report.get("faceDrawables"))),
                 "morphLines": len(as_list(report.get("morphLines"))),
                 "weaponLines": len(as_list(report.get("weaponLines"))),
@@ -583,11 +722,12 @@ def load_suite(suite_dir: Path) -> dict[str, Any]:
             "actorKind": str(report.get("actorKind") or actor_kind),
             "actorPatterns": patterns,
             "actorMatches": as_list(report.get("actorMatches")),
-            "gates": as_list(report.get("gates")),
+            "gates": case_gates,
             "attachmentBounds": as_list(report.get("attachmentBounds")),
             "runtimePartAudits": as_list(report.get("runtimePartAudits")),
             "runtimeAuditSummary": as_list(report.get("runtimeAuditSummary")),
             "runtimePartTimelines": as_list(report.get("runtimePartTimelines")),
+            "failureFocus": failure_focus,
             "faceDrawables": as_list(report.get("faceDrawables")),
             "morphLines": as_list(report.get("morphLines")),
             "weaponLines": as_list(report.get("weaponLines")),
@@ -745,6 +885,10 @@ a {{ color: #9fc2ff; }}
   <div class="section">
     <h2>Runtime Drift</h2>
     <div id="driftTable"></div>
+  </div>
+  <div class="section">
+    <h2>Failure Focus</h2>
+    <div id="failureFocusTable"></div>
   </div>
   <div class="section">
     <h2>Part Timeline</h2>
@@ -919,6 +1063,10 @@ function renderDrift(c) {{
   const rows = filterPartRows(c?.runtimeAuditSummary || [], a => a.part, a => a.class).map(a => `<tr><td><code>${{esc(a.part)}}</code></td><td>${{esc(a.class)}}</td><td>${{esc(a.firstVerdict)}} -> ${{esc(a.lastVerdict)}}</td><td>${{esc(a.badCount)}} / ${{esc(a.count)}}</td><td>${{esc(a.firstSampleIndex)}} -> ${{esc(a.lastSampleIndex)}}</td><td>${{esc(a.firstAnimationTime)}} -> ${{esc(a.lastAnimationTime)}}</td><td>${{esc(a.maxDistance)}}</td><td>${{esc(JSON.stringify(a.deltaRelLocal || []))}}</td><td>${{esc(JSON.stringify(a.deltaPartInAnchorTrans || []))}}</td><td>${{esc(a.firstBadSampleIndex || "")}}</td></tr>`);
   document.getElementById("driftTable").innerHTML = table(["Part", "Class", "Verdict", "Bad", "Samples", "Anim Time", "Max Distance", "Delta Rel", "Delta Anchor", "First Bad"], rows);
 }}
+function renderFailureFocus(c) {{
+  const rows = filterPartRows(c?.failureFocus || [], f => f.part, f => f.class).map(f => `<tr><td>${{esc(f.category)}}</td><td><code>${{esc(f.part)}}</code></td><td><code>${{esc(f.matchedModel || "")}}</code></td><td>${{esc(f.firstBadSampleIndex || "")}}</td><td>${{esc(f.firstBadAnimationTime ?? "")}}</td><td>${{esc(f.firstBadDistance ?? "")}}</td><td>${{esc(JSON.stringify(f.deltaPartInAnchorTrans || []))}}</td><td><div class="command">${{esc(f.command || "")}}</div></td></tr>`);
+  document.getElementById("failureFocusTable").innerHTML = table(["Category", "Part", "Matched Model", "First Bad", "Anim Time", "Distance", "Delta Anchor", "Rerun"], rows);
+}}
 function renderTimeline(c) {{
   const rows = [];
   for (const timeline of filterPartRows(c?.runtimePartTimelines || [], t => t.part, t => t.class)) {{
@@ -954,6 +1102,7 @@ function render() {{
   renderGates(c);
   renderCoords(c);
   renderDrift(c);
+  renderFailureFocus(c);
   renderTimeline(c);
   renderLines("skinLines", c?.skinLines);
   renderLines("hairLines", c?.hairLines);
@@ -987,6 +1136,7 @@ def actor_kit_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
                 "actorKitSelection": case.get("actorKitSelection", {}),
                 "animationRequests": case.get("animationRequests", []),
                 "runtimePartTimelines": case.get("runtimePartTimelines", []),
+                "failureFocus": case.get("failureFocus", []),
                 "openmwLog": case.get("openmwLog", ""),
                 "reportJson": case.get("reportJson", ""),
                 "screenshots": case.get("screenshots", []),
