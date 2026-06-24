@@ -28,6 +28,8 @@ param(
     [double]$FlatCameraPitch = [double]::NaN,
     [double]$FlatCameraYaw = [double]::NaN,
     [string]$ActorTarget = "",
+    [ValidateSet("npc", "creature", "auto")]
+    [string]$ActorKind = "npc",
     [int]$ActorFrame = 240,
     [switch]$StageActor,
     [double]$ActorStageX = [double]::NaN,
@@ -64,6 +66,7 @@ param(
     [switch]$FnvPartMatrixAudit,
     [string]$CharacterBuilderPhase = "",
     [switch]$CharacterBuilderTalk,
+    [switch]$CreatureDiagnostics,
     [switch]$FnvDisableNativeAnimationCallbacks,
     [switch]$FnvDlodSettingsDiag,
     [switch]$FnvPsaDeathPoseDiag,
@@ -1390,6 +1393,7 @@ try {
     Set-ProofEnv $previousEnv "OPENMW_FNV_FLAT_CAMERA_PITCH" $FlatCameraPitch
     Set-ProofEnv $previousEnv "OPENMW_FNV_FLAT_CAMERA_YAW" $FlatCameraYaw
     Set-ProofEnv $previousEnv "OPENMW_PROOF_ACTOR_TARGET" $ActorTarget
+    Set-ProofEnv $previousEnv "OPENMW_PROOF_ACTOR_KIND" $ActorKind
     Set-ProofEnv $previousEnv "OPENMW_PROOF_ACTOR_FRAME" $ActorFrame
     if ($StageActor) { Set-ProofEnv $previousEnv "OPENMW_PROOF_STAGE_ACTOR" "1" }
     Set-ProofEnv $previousEnv "OPENMW_PROOF_ACTOR_STAGE_X" $ActorStageX
@@ -1423,6 +1427,11 @@ try {
     Set-ProofEnv $previousEnv "OPENMW_FNV_CHARACTER_BUILDER_PHASE" $CharacterBuilderPhase
     if ($CharacterBuilderTalk -or $CharacterBuilderPhase -ieq "talk" -or $CharacterBuilderPhase -ieq "dialogue") {
         Set-ProofEnv $previousEnv "OPENMW_FNV_PROOF_MOUTH_FORCE_OPEN" "1"
+    }
+    if ($CreatureDiagnostics -or $ActorKind -ieq "creature") {
+        Set-ProofEnv $previousEnv "OPENMW_FNV_CREATURE_ANIM_GROUP_DIAG" "1"
+        Set-ProofEnv $previousEnv "OPENMW_FNV_CREATURE_BODY_DIAG" "1"
+        Set-ProofEnv $previousEnv "OPENMW_FNV_CREATURE_KF_DIAG" "1"
     }
     if ($FnvDisableNativeAnimationCallbacks) { Set-ProofEnv $previousEnv "OPENMW_FNV_DISABLE_NATIVE_ANIMATION_CALLBACKS" "1" }
     if ($FnvDlodSettingsDiag) { Set-ProofEnv $previousEnv "OPENMW_FNV_DLODSETTINGS_DIAG" "1" }
@@ -1522,6 +1531,8 @@ try {
     Write-ProofLine "CharacterBuilderPhase: $CharacterBuilderPhase"
     Write-ProofLine "CharacterBuilderTalk: $CharacterBuilderTalk"
     Write-ProofLine "ActorTarget: $ActorTarget"
+    Write-ProofLine "ActorKind: $ActorKind"
+    Write-ProofLine "CreatureDiagnostics: $($CreatureDiagnostics -or $ActorKind -ieq 'creature')"
     Write-ProofLine "ActorViewLocalOffset: $ActorViewLocalOffset"
     Write-ProofLine "ActorViewOffsetX: $ActorViewOffsetX"
     Write-ProofLine "ActorViewOffsetY: $ActorViewOffsetY"

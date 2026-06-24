@@ -12,9 +12,24 @@ from pathlib import Path
 from typing import Any
 
 
-PHASE_ORDER = ["body", "head", "face", "hair", "equipment", "weapon", "headgear", "talk", "full"]
+PHASE_ORDER = [
+    "body",
+    "head",
+    "face",
+    "hair",
+    "equipment",
+    "weapon",
+    "headgear",
+    "talk",
+    "creature-model",
+    "creature-body",
+    "creature-animation",
+    "creature-full",
+    "full",
+]
 ANGLE_ORDER = ["front", "front-left", "front-right"]
 LAYER_ORDER = ["all", "body-skin", "head-skin", "face-organs", "hair-beard", "equipment-body", "weapon", "headgear"]
+CREATURE_LAYER_ORDER = ["all", "creature-model", "creature-body", "creature-animation", "creature-bounds", "creature-kf"]
 SKIN_NEEDLES = (
     "skin",
     "FaceGen",
@@ -41,6 +56,11 @@ def layer_label(layer: str) -> str:
         "equipment-body": "Body Equipment",
         "weapon": "Weapon",
         "headgear": "Headgear",
+        "creature-model": "Creature Model",
+        "creature-body": "Creature Body",
+        "creature-animation": "Creature Animation",
+        "creature-bounds": "Creature Bounds",
+        "creature-kf": "Creature KF",
     }.get(layer, layer)
 
 
@@ -102,10 +122,105 @@ def shell_quote(value: str) -> str:
     return "'" + value.replace("'", "''") + "'"
 
 
-def gate_controls(cases: list[dict[str, Any]], actor: str) -> dict[str, Any]:
+def gate_controls(cases: list[dict[str, Any]], actor: str, actor_kind: str) -> dict[str, Any]:
     gates: list[dict[str, Any]] = []
     for case in cases:
         gates.extend([gate for gate in as_list(case.get("gates")) if isinstance(gate, dict)])
+
+    if actor_kind == "creature":
+        evidence = [
+            item
+            for case in cases
+            for item in as_list(case.get("creatureEvidence"))
+            if isinstance(item, dict)
+        ]
+
+        def creature_models(kind: str) -> list[str]:
+            return unique_ordered(
+                [
+                    str(item.get("model") or item.get("path") or "")
+                    for item in evidence
+                    if str(item.get("kind", "")).startswith(kind) and str(item.get("model") or item.get("path") or "")
+                ]
+            )
+
+        part_toggles = [
+            {
+                "id": layer,
+                "label": layer_label(layer),
+                "category": layer,
+                "defaultEnabled": True,
+                "models": creature_models(layer),
+                "modelCount": len(creature_models(layer)),
+            }
+            for layer in CREATURE_LAYER_ORDER
+            if layer != "all"
+        ]
+        phase_controls = [
+            {
+                "id": phase,
+                "label": layer_label(phase),
+                "phase": phase,
+                "controlType": "assembly-phase",
+                "dialogueMouthProof": False,
+                "command": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/nikami/run-fnv-character-viewer.ps1 "
+                f"-Targets {shell_quote(actor or 'Creature')} -ActorKind creature -CreatureDiagnostics -Phases {shell_quote(phase)} -OpenViewer",
+            }
+            for phase in ["creature-model", "creature-body", "creature-animation", "creature-full"]
+        ]
+        animation_proofs = [
+            {
+                "id": group,
+                "label": group.title(),
+                "phase": "creature-animation",
+                "controlType": "animation-proof",
+                "dialogueMouthProof": False,
+                "command": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/nikami/run-fnv-character-viewer.ps1 "
+                f"-Targets {shell_quote(actor or 'Creature')} -ActorKind creature -CreatureDiagnostics -Phases creature-animation -OpenViewer",
+            }
+            for group in ["idle", "walk", "run", "attack", "hit", "death"]
+        ]
+        return {
+            "partToggles": part_toggles,
+            "propSlots": [
+                {
+                    "id": "variant-model",
+                    "category": "creature-model",
+                    "label": "Creature Model",
+                    "allowAll": True,
+                    "options": unique_dicts(
+                        [
+                            {
+                                "id": f"creature-model:{str(item.get('model') or item.get('path') or '')}",
+                                "model": str(item.get("model") or item.get("path") or ""),
+                                "classification": str(item.get("kind", "")),
+                                "sourcePhase": str(item.get("timestamp", "")),
+                            }
+                            for item in evidence
+                            if str(item.get("model") or item.get("path") or "")
+                        ],
+                        "model",
+                    ),
+                }
+            ],
+            "animationControls": phase_controls + animation_proofs,
+            "dialogueControls": [],
+            "captureAngles": [{"id": angle, "label": angle} for angle in ANGLE_ORDER],
+            "botCommands": [
+                {
+                    "id": "creature-ladder",
+                    "label": "Creature Ladder",
+                    "command": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/nikami/run-fnv-character-viewer.ps1 "
+                    f"-Targets {shell_quote(actor or 'Creature')} -ActorKind creature -CreatureDiagnostics -Phases creature-model,creature-body,creature-animation,creature-full -OpenViewer",
+                },
+                {
+                    "id": "creature-animation",
+                    "label": "Creature Animation",
+                    "command": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/nikami/run-fnv-character-viewer.ps1 "
+                    f"-Targets {shell_quote(actor or 'Creature')} -ActorKind creature -CreatureDiagnostics -Phases creature-animation -OpenViewer",
+                },
+            ],
+        }
 
     part_toggles: list[dict[str, Any]] = []
     for layer in LAYER_ORDER:
@@ -155,7 +270,7 @@ def gate_controls(cases: list[dict[str, Any]], actor: str) -> dict[str, Any]:
             "phase": phase,
             "dialogueMouthProof": phase == "talk",
             "command": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/nikami/run-fnv-character-viewer.ps1 "
-            f"-Targets {shell_quote(actor or 'GSEasyPete')} -Phases {shell_quote(phase)} -OpenViewer",
+            f"-Targets {shell_quote(actor or 'GSEasyPete')} -ActorKind npc -Phases {shell_quote(phase)} -OpenViewer",
         }
         for phase in PHASE_ORDER
         if phase != "full"
@@ -178,19 +293,19 @@ def gate_controls(cases: list[dict[str, Any]], actor: str) -> dict[str, Any]:
                 "id": "full-ladder",
                 "label": "Full Ladder",
                 "command": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/nikami/run-fnv-character-viewer.ps1 "
-                f"-Targets {shell_quote(actor or 'GSEasyPete')} -Phases body,head,face,hair,equipment,weapon,headgear,talk -OpenViewer",
+                f"-Targets {shell_quote(actor or 'GSEasyPete')} -ActorKind npc -Phases body,head,face,hair,equipment,weapon,headgear,talk -OpenViewer",
             },
             {
                 "id": "headgear-only",
                 "label": "Headgear Only",
                 "command": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/nikami/run-fnv-character-viewer.ps1 "
-                f"-Targets {shell_quote(actor or 'GSEasyPete')} -Phases headgear -OpenViewer",
+                f"-Targets {shell_quote(actor or 'GSEasyPete')} -ActorKind npc -Phases headgear -OpenViewer",
             },
             {
                 "id": "talk-only",
                 "label": "Talk Only",
                 "command": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/nikami/run-fnv-character-viewer.ps1 "
-                f"-Targets {shell_quote(actor or 'GSEasyPete')} -Phases talk -OpenViewer",
+                f"-Targets {shell_quote(actor or 'GSEasyPete')} -ActorKind npc -Phases talk -OpenViewer",
             },
         ],
     }
@@ -243,6 +358,7 @@ def load_suite(suite_dir: Path) -> dict[str, Any]:
     raw_results = as_list(read_json(suite_json, []))
     cases: list[dict[str, Any]] = []
     actor = ""
+    actor_kind = "npc"
     phases: list[str] = []
     angles: list[str] = []
 
@@ -256,6 +372,9 @@ def load_suite(suite_dir: Path) -> dict[str, Any]:
         patterns = as_list(report.get("actorPatterns"))
         if not actor:
             actor = str(report.get("actor") or "")
+        report_actor_kind = str(report.get("actorKind") or "").lower()
+        if report_actor_kind in {"npc", "creature"}:
+            actor_kind = report_actor_kind
         phase = normalize_phase(str(raw.get("phase") or report.get("phase") or "full"))
         angle = str(raw.get("angle") or "")
         phases.append(phase)
@@ -293,7 +412,14 @@ def load_suite(suite_dir: Path) -> dict[str, Any]:
                 "faceDrawables": len(as_list(report.get("faceDrawables"))),
                 "morphLines": len(as_list(report.get("morphLines"))),
                 "weaponLines": len(as_list(report.get("weaponLines"))),
+                "actorMatches": len(as_list(report.get("actorMatches"))),
+                "animationSources": len(as_list(report.get("animationSources"))),
+                "animationPlayback": len(as_list(report.get("animationPlayback"))),
+                "creatureEvidence": len(as_list(report.get("creatureEvidence"))),
             },
+            "actorKind": str(report.get("actorKind") or actor_kind),
+            "actorPatterns": patterns,
+            "actorMatches": as_list(report.get("actorMatches")),
             "gates": as_list(report.get("gates")),
             "attachmentBounds": as_list(report.get("attachmentBounds")),
             "runtimePartAudits": as_list(report.get("runtimePartAudits")),
@@ -301,6 +427,11 @@ def load_suite(suite_dir: Path) -> dict[str, Any]:
             "faceDrawables": as_list(report.get("faceDrawables")),
             "morphLines": as_list(report.get("morphLines")),
             "weaponLines": as_list(report.get("weaponLines")),
+            "animationSources": as_list(report.get("animationSources")),
+            "animationPlayback": as_list(report.get("animationPlayback")),
+            "animationBlockers": as_list(report.get("animationBlockers")),
+            "creatureEvidence": as_list(report.get("creatureEvidence")),
+            "creatureLines": as_list(report.get("creatureLines")),
             "skinLines": evidence_lines(log_lines, patterns, SKIN_NEEDLES),
             "hairLines": evidence_lines(log_lines, patterns, HAIR_NEEDLES),
             "animationLines": evidence_lines(log_lines, patterns, ANIMATION_NEEDLES),
@@ -315,13 +446,27 @@ def load_suite(suite_dir: Path) -> dict[str, Any]:
 
     return {
         "schema": "nikami-fnv-character-viewer-v2",
+        "schemaMarkers": ["viewer-controls-v2", "actor-profile-v1", "creature-isolation-v1"],
+        "actorProfile": {
+            "kind": actor_kind,
+            "recordType": "CREA" if actor_kind == "creature" else "NPC_",
+            "supportsEquipmentSlots": actor_kind == "npc",
+            "supportsDialogueMouthProof": actor_kind == "npc",
+            "supportsNpcFaceDrawables": actor_kind == "npc",
+            "supportsCreatureDiagnostics": actor_kind == "creature",
+        },
         "actor": actor,
         "suiteDir": str(suite_dir),
         "overallStatus": overall,
         "phases": sort_phases(phases),
         "angles": sort_angles(angles),
-        "layers": LAYER_ORDER,
-        "controls": gate_controls(cases, actor),
+        "layers": CREATURE_LAYER_ORDER if actor_kind == "creature" else LAYER_ORDER,
+        "evidenceSections": (
+            ["Actor Matches", "Creature Evidence", "Animation Playback", "Runtime Drift"]
+            if actor_kind == "creature"
+            else ["Skin Evidence", "Hair Headgear Evidence", "Animation Talk Weapon Evidence", "Face Drawables"]
+        ),
+        "controls": gate_controls(cases, actor, actor_kind),
         "cases": cases,
     }
 
@@ -421,6 +566,10 @@ a {{ color: #9fc2ff; }}
     <div id="caseStatus"></div>
   </div>
   <div class="section">
+    <h2>Actor Matches</h2>
+    <div id="actorMatchLines" class="lineList"></div>
+  </div>
+  <div class="section">
     <h2>Assembly Gates</h2>
     <div id="gateTable"></div>
   </div>
@@ -443,6 +592,14 @@ a {{ color: #9fc2ff; }}
   <div class="section">
     <h2>Animation Talk Weapon Evidence</h2>
     <div id="animLines" class="lineList"></div>
+  </div>
+  <div class="section">
+    <h2>Creature Evidence</h2>
+    <div id="creatureLines" class="lineList"></div>
+  </div>
+  <div class="section">
+    <h2>Animation Playback</h2>
+    <div id="playbackLines" class="lineList"></div>
   </div>
   <div class="section">
     <h2>Face Drawables</h2>
@@ -482,6 +639,11 @@ function table(headers, rows) {{
 }}
 function partCategoryFromText(part, cls) {{
   const text = `${{part || ""}} ${{cls || ""}}`.toLowerCase();
+  if (text.includes("creature-animation") || text.includes(".kf")) return "creature-animation";
+  if (text.includes("creature-bounds") || text.includes("bounds")) return "creature-bounds";
+  if (text.includes("creature-kf")) return "creature-kf";
+  if (text.includes("creature-body") || text.includes("body nif")) return "creature-body";
+  if (text.includes("creature-model") || text.includes("creature")) return "creature-model";
   if (text.includes("weapon")) return "weapon";
   if (text.includes("headgear") || text.includes("hat") || text.includes("cowboyhat")) return "headgear";
   if (text.includes("upperbody") || text.includes("lefthand") || text.includes("righthand") || text.includes("left hand") || text.includes("right hand")) return "body-skin";
@@ -506,7 +668,7 @@ function filteredGates(c) {{
 }}
 function filterPartRows(items, textGetter, classGetter) {{
   return (items || []).filter(item => {{
-    const category = partCategoryFromText(textGetter(item), classGetter(item));
+    const category = item.category || partCategoryFromText(textGetter(item), classGetter(item));
     return (state.layer === "all" || category === state.layer || category === "all") && categoryEnabled(category);
   }});
 }}
@@ -594,12 +756,15 @@ function render() {{
   renderControls();
   renderImages();
   renderStatus(c);
+  renderLines("actorMatchLines", (c?.actorMatches || []).map(item => item.line || JSON.stringify(item)));
   renderGates(c);
   renderCoords(c);
   renderDrift(c);
   renderLines("skinLines", c?.skinLines);
   renderLines("hairLines", c?.hairLines);
   renderLines("animLines", [...(c?.animationLines || []), ...(c?.morphLines || []), ...(c?.weaponLines || [])]);
+  renderLines("creatureLines", (c?.creatureLines || []).concat((c?.creatureEvidence || []).map(item => item.line || JSON.stringify(item))));
+  renderLines("playbackLines", (c?.animationPlayback || []).map(item => item.line || JSON.stringify(item)).concat(c?.animationBlockers || []));
   renderFace(c);
 }}
 render();

@@ -67,6 +67,7 @@
 #include <components/esm4/loadammo.hpp>
 #include <components/esm4/loadachr.hpp>
 #include <components/esm4/loadavif.hpp>
+#include <components/esm4/loadcrea.hpp>
 #include <components/esm4/loadnpc.hpp>
 #include <components/esm4/loadperk.hpp>
 #include <components/esm4/loadproj.hpp>
@@ -2312,6 +2313,17 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                         }
                     }
                 }
+                else if (ptr.getType() == ESM::REC_CREA4)
+                {
+                    if (const MWWorld::LiveCellRef<ESM4::Creature>* ref = ptr.get<ESM4::Creature>())
+                    {
+                        if (ref->mBase != nullptr)
+                        {
+                            baseEditorId = ref->mBase->mEditorId;
+                            baseFullName = ref->mBase->mFullName;
+                        }
+                    }
+                }
 
                 const ESM::Position& actorPos = ptr.getRefData().getPosition();
                 Log(Debug::Info) << "FNV/ESM4 proof actor dump: ref=" << refId << " base=" << baseId
@@ -2372,6 +2384,17 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                 if (ptr.getType() == ESM::REC_NPC_4)
                 {
                     if (const MWWorld::LiveCellRef<ESM4::Npc>* ref = ptr.get<ESM4::Npc>())
+                    {
+                        if (ref->mBase != nullptr)
+                        {
+                            baseEditorId = ref->mBase->mEditorId;
+                            baseFullName = ref->mBase->mFullName;
+                        }
+                    }
+                }
+                else if (ptr.getType() == ESM::REC_CREA4)
+                {
+                    if (const MWWorld::LiveCellRef<ESM4::Creature>* ref = ptr.get<ESM4::Creature>())
                     {
                         if (ref->mBase != nullptr)
                         {

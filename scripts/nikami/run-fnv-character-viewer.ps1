@@ -8,6 +8,8 @@ param(
     [string]$Triplet = "x64-windows",
     [string]$ProofRoot = "",
     [string[]]$Targets = @("GSEasyPete"),
+    [ValidateSet("npc", "creature", "auto")]
+    [string]$ActorKind = "npc",
     [string[]]$Phases = @("body", "head", "face", "hair", "equipment", "weapon", "headgear", "talk"),
     [int]$RunSeconds = 28,
     [int]$ActorFrame = 520,
@@ -17,6 +19,7 @@ param(
     [double]$ActorViewTargetZ = 108,
     [string]$SuiteDir = "",
     [switch]$NoRun,
+    [switch]$CreatureDiagnostics,
     [switch]$NoSound,
     [switch]$OpenViewer,
     [switch]$Serve,
@@ -201,6 +204,8 @@ Write-Host "FNV standalone character viewer run $RunStamp"
 Write-Host "RepoRoot: $RepoRoot"
 Write-Host "RunDir: $RunDir"
 Write-Host "Targets: $($Targets -join ',')"
+Write-Host "ActorKind: $ActorKind"
+Write-Host "CreatureDiagnostics: $($CreatureDiagnostics -or $ActorKind -ieq 'creature')"
 Write-Host "Phases: $($Phases -join ',')"
 Write-Host "Policy: generated proof/viewer output only; no retail assets are committed"
 if ($Serve) {
@@ -242,6 +247,7 @@ else {
             Triplet = $Triplet
             ProofRoot = $ProofRoot
             ActorTarget = $target
+            ActorKind = $ActorKind
             Phases = $Phases
             RunSeconds = $RunSeconds
             ActorFrame = $ActorFrame
@@ -252,6 +258,7 @@ else {
         }
         if (![string]::IsNullOrWhiteSpace($FnvConfigData)) { $builderArgs.FnvConfigData = $FnvConfigData }
         if (![string]::IsNullOrWhiteSpace($ExtraOsgPluginDir)) { $builderArgs.ExtraOsgPluginDir = $ExtraOsgPluginDir }
+        if ($CreatureDiagnostics -or $ActorKind -ieq "creature") { $builderArgs.CreatureDiagnostics = $true }
         if ($NoSound) { $builderArgs.NoSound = $true }
 
         & $BuilderRunner @builderArgs | Out-Host

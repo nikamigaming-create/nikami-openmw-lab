@@ -11,6 +11,15 @@ from typing import Any
 
 
 FLOAT3_RE = r"\(([^)]*)\)"
+CREATURE_RUNTIME_NEEDLES = (
+    "inserted creature animation for",
+    "creature animation groups",
+    "attached creature body nif",
+    "forced creature body render mask",
+    "creature bounds",
+    "creature KF candidate",
+    "creature KF global candidate",
+)
 
 
 def parse_vec3(text: str) -> list[float]:
@@ -44,12 +53,17 @@ def actor_patterns(lines: list[str], actor: str) -> list[str]:
     active_re = re.compile(
         rf'active-cell actor match target="{re.escape(actor)}".*?\bref=([^ ]+)\s+base=([^ ]+)'
     )
+    quoted_re = re.compile(r'\b(baseEditor|baseFull)="([^"]*)"')
     for line in lines:
         match = active_re.search(line)
         if not match:
             continue
         for value in match.groups():
-            if value not in patterns:
+            if value and value not in patterns:
+                patterns.append(value)
+        for quoted in quoted_re.finditer(line):
+            value = quoted.group(2)
+            if value and value not in patterns:
                 patterns.append(value)
     return patterns
 
@@ -269,9 +283,157 @@ def collect_matching(lines: list[str], patterns: list[str], needle: str) -> list
     return result
 
 
+def parse_actor_matches(lines: list[str], actor: str) -> list[dict[str, Any]]:
+    match_re = re.compile(
+        rf'active-cell actor match target="{re.escape(actor)}".*?\bframe=(?P<frame>[0-9]+) '
+        r"ref=(?P<ref>[^ ]+) base=(?P<base>[^ ]+) name=\"(?P<name>[^\"]*)\" "
+        r"baseEditor=\"(?P<baseEditor>[^\"]*)\" baseFull=\"(?P<baseFull>[^\"]*)\" "
+        rf"pos={FLOAT3_RE} rot={FLOAT3_RE}"
+    )
+    matches: list[dict[str, Any]] = []
+    for line in lines:
+        match = match_re.search(line)
+        if not match:
+            continue
+        data = match.groupdict()
+        groups = match.groups()
+        matches.append(
+            {
+                "frame": int(data["frame"]),
+                "ref": data["ref"],
+                "base": data["base"],
+                "name": data["name"],
+                "baseEditor": data["baseEditor"],
+                "baseFull": data["baseFull"],
+                "pos": parse_vec3(groups[6]),
+                "rot": parse_vec3(groups[7]),
+                "line": compact_line(line),
+            }
+        )
+    return matches
+
+
+def parse_animation_sources(lines: list[str]) -> list[dict[str, Any]]:
+    source_re = re.compile(
+        r"animation source (?P<source>.*?) bound (?P<matched>[0-9]+)/(?P<total>[0-9]+) "
+        r"controller\(s\) to (?P<model>.*?), missing (?P<missing>[0-9]+)"
+    )
+    sources: list[dict[str, Any]] = []
+    for line in lines:
+        match = source_re.search(line)
+        if not match:
+            continue
+        data = match.groupdict()
+        sources.append(
+            {
+                "source": data["source"],
+                "model": data["model"],
+                "matchedControllers": int(data["matched"]),
+                "totalControllers": int(data["total"]),
+                "missingControllers": int(data["missing"]),
+                "line": compact_line(line),
+            }
+        )
+    return sources
+
+
+def parse_animation_playback(lines: list[str], patterns: list[str]) -> list[dict[str, Any]]:
+    play_re = re.compile(
+        r"play matched (?P<ref>[^ ]+) group '(?P<group>[^']*)' source=(?P<source>.*?) "
+        r"checkedSources=(?P<checkedSources>[0-9]+) controllers=(?P<controllers>[0-9]+) "
+        r"startTime=(?P<startTime>[-+0-9.eE]+) loopStart=(?P<loopStart>[-+0-9.eE]+) "
+        r"loopStop=(?P<loopStop>[-+0-9.eE]+) stopTime=(?P<stopTime>[-+0-9.eE]+) "
+        r"playing=(?P<playing>[01])"
+    )
+    playback: list[dict[str, Any]] = []
+    for line in lines:
+        match = play_re.search(line)
+        if not match:
+            continue
+        data = match.groupdict()
+        if not line_matches_actor(data["ref"], patterns):
+            continue
+        playback.append(
+            {
+                "ref": data["ref"],
+                "group": data["group"],
+                "source": data["source"],
+                "checkedSources": int(data["checkedSources"]),
+                "controllers": int(data["controllers"]),
+                "startTime": float(data["startTime"]),
+                "loopStart": float(data["loopStart"]),
+                "loopStop": float(data["loopStop"]),
+                "stopTime": float(data["stopTime"]),
+                "playing": data["playing"] == "1",
+                "line": compact_line(line),
+            }
+        )
+    return playback
+
+
+def collect_animation_blockers(lines: list[str], patterns: list[str]) -> list[str]:
+    blockers: list[str] = []
+    needles = ("play request", "idle animation missing", "movement animation missing")
+    for line in lines:
+        lowered = line.lower()
+        if not any(needle in lowered for needle in needles):
+            continue
+        if (" ignored " not in lowered and " missing" not in lowered) or not line_matches_actor(line, patterns):
+            continue
+        blockers.append(compact_line(line))
+    return blockers
+
+
+def parse_creature_evidence(lines: list[str], patterns: list[str]) -> list[dict[str, Any]]:
+    model_re = re.compile(r"\b(?:model|path)=([^ ]+)")
+    mask_re = re.compile(r"rigged=(?P<rigged>[0-9]+) static=(?P<static>[0-9]+) other=(?P<other>[0-9]+)")
+    bounds_re = re.compile(rf"creature (?P<label>[^ ]+) bounds .*? path=(?P<path>[^ ]+) center={FLOAT3_RE} extent={FLOAT3_RE}")
+    evidence: list[dict[str, Any]] = []
+    for line in lines:
+        lowered = line.lower()
+        if not any(needle.lower() in lowered for needle in CREATURE_RUNTIME_NEEDLES):
+            continue
+        if not line_matches_actor(line, patterns):
+            continue
+
+        if "inserted creature animation for" in line:
+            kind = "creature-animation"
+        elif "creature animation groups" in line:
+            kind = "creature-animation-groups"
+        elif "attached creature body nif" in line or "forced creature body render mask" in line:
+            kind = "creature-body"
+        elif "creature bounds" in line:
+            kind = "creature-bounds"
+        elif "creature KF" in line:
+            kind = "creature-kf"
+        else:
+            kind = "creature-runtime"
+
+        model_match = model_re.search(line)
+        item: dict[str, Any] = {
+            "kind": kind,
+            "model": model_match.group(1) if model_match else "",
+            "timestamp": timestamp_from_line(line),
+            "line": compact_line(line),
+        }
+        mask_match = mask_re.search(line)
+        if mask_match:
+            item["visibleGeometryCount"] = sum(int(mask_match.group(name)) for name in ("rigged", "static", "other"))
+        bounds_match = bounds_re.search(line)
+        if bounds_match:
+            groups = bounds_match.groups()
+            item["label"] = bounds_match.group("label")
+            item["path"] = bounds_match.group("path")
+            item["center"] = parse_vec3(groups[2])
+            item["extent"] = parse_vec3(groups[3])
+        evidence.append(item)
+    return evidence
+
+
 def evaluate(
     proof_dir: Path,
     actor: str,
+    actor_kind: str,
     phase: str,
     lines: list[str],
     patterns: list[str],
@@ -279,12 +441,25 @@ def evaluate(
     bounds: list[dict[str, Any]],
     audits: list[dict[str, Any]],
     drawables: list[dict[str, Any]],
+    creature_evidence: list[dict[str, Any]],
+    actor_matches: list[dict[str, Any]],
+    animation_sources: list[dict[str, Any]],
+    animation_playback: list[dict[str, Any]],
+    animation_blockers: list[str],
 ) -> tuple[str, list[str]]:
     failures: list[str] = []
     screenshots = sorted(p.name for p in proof_dir.glob("*.png"))
     if not screenshots:
         failures.append("missing screenshots")
-    if phase and not gates:
+    if not actor_matches:
+        failures.append("missing active-cell actor match")
+    if not any(item["matchedControllers"] > 0 for item in animation_sources):
+        failures.append("missing bound animation controller evidence")
+    if not any(item["controllers"] > 0 and item["playing"] for item in animation_playback):
+        failures.append("missing target animation playback evidence")
+    if animation_blockers:
+        failures.append(f"target animation blocker lines: {len(animation_blockers)}")
+    if actor_kind != "creature" and phase and not gates:
         failures.append("missing character builder phase gate lines")
     bad_class = [
         gate
@@ -330,7 +505,25 @@ def evaluate(
         ]
         if not talk_lines:
             failures.append("missing talk/mouth runtime evidence")
-    if not collect_matching(lines, patterns, "FACE CHECK"):
+
+    if actor_kind == "creature":
+        creature_lines = [item["line"] for item in creature_evidence]
+        if not creature_lines:
+            failures.append("missing creature runtime evidence")
+        if not any(item["kind"] == "creature-animation" for item in creature_evidence):
+            failures.append("missing inserted creature animation runtime evidence")
+        if not any(item["kind"] == "creature-animation-groups" for item in creature_evidence):
+            failures.append("missing creature animation group runtime evidence")
+        if any("bounds invalid" in item["line"] for item in creature_evidence):
+            failures.append("creature geometry bounds invalid")
+        mask_lines = [item for item in creature_evidence if item["kind"] == "creature-body" and "visibleGeometryCount" in item]
+        if mask_lines and not any(int(item.get("visibleGeometryCount", 0)) > 0 for item in mask_lines):
+            failures.append("creature body render mask has no visible geometry")
+        if phase in {"creature-body", "creature-model", "creature-full", "full"} and not any(
+            item["kind"] in {"creature-body", "creature-bounds"} for item in creature_evidence
+        ):
+            failures.append("missing creature body/model runtime evidence")
+    elif not collect_matching(lines, patterns, "FACE CHECK"):
         failures.append("missing FACE CHECK for actor")
 
     return ("PASS" if not failures else "FAIL", failures)
@@ -341,12 +534,14 @@ def write_markdown(path: Path, report: dict[str, Any]) -> None:
     lines.append(f"# FNV Character Builder Report - {report['actor']}")
     lines.append("")
     lines.append(f"Status: **{report['status']}**")
+    lines.append(f"Actor Kind: `{report['actorKind']}`")
     lines.append(f"Phase: `{report['phase']}`")
     lines.append(f"Proof: `{report['proofDir']}`")
     lines.append("")
     lines.append("## Actor")
     lines.append("")
     lines.append(f"Patterns: `{', '.join(report['actorPatterns'])}`")
+    lines.append(f"Actor matches: {len(report['actorMatches'])}")
     lines.append(f"Screenshots: {len(report['screenshots'])}")
     lines.append("")
     lines.append("## Gates")
@@ -364,6 +559,9 @@ def write_markdown(path: Path, report: dict[str, Any]) -> None:
     lines.append(f"Face drawable audits: {len(report['faceDrawables'])}")
     lines.append(f"TRI/EGM/talk lines: {len(report['morphLines'])}")
     lines.append(f"Weapon lines: {len(report['weaponLines'])}")
+    lines.append(f"Creature evidence lines: {len(report['creatureEvidence'])}")
+    lines.append(f"Animation sources: {len(report['animationSources'])}")
+    lines.append(f"Target animation playback lines: {len(report['animationPlayback'])}")
     lines.append("")
     if report["failures"]:
         lines.append("## Failures")
@@ -390,6 +588,18 @@ def write_markdown(path: Path, report: dict[str, Any]) -> None:
             f"{item['maxDistance']:.4g} | {item['firstRelLocal']} | {item['lastRelLocal']} |"
         )
     lines.append("")
+    if report["creatureEvidence"]:
+        lines.append("## Creature Evidence")
+        lines.append("")
+        for item in report["creatureEvidence"][:48]:
+            lines.append(f"- `{item['kind']}` {item['line']}")
+        lines.append("")
+    if report["animationPlayback"]:
+        lines.append("## Animation Playback")
+        lines.append("")
+        for item in report["animationPlayback"][:48]:
+            lines.append(f"- `{item['group']}` controllers={item['controllers']} playing={item['playing']} {item['line']}")
+        lines.append("")
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
@@ -397,6 +607,7 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--proof-dir", required=True, type=Path)
     parser.add_argument("--actor", default="GSEasyPete")
+    parser.add_argument("--actor-kind", choices=("npc", "creature", "auto"), default="npc")
     parser.add_argument("--phase", default="")
     parser.add_argument("--out-json", type=Path)
     parser.add_argument("--out-md", type=Path)
@@ -413,6 +624,14 @@ def main() -> int:
     bounds = parse_attachment_bounds(lines, patterns)
     audits = parse_runtime_audits(lines, patterns)
     drawables = parse_face_drawables(lines, patterns)
+    creature_evidence = parse_creature_evidence(lines, patterns)
+    actor_matches = parse_actor_matches(lines, args.actor)
+    animation_sources = parse_animation_sources(lines)
+    animation_playback = parse_animation_playback(lines, patterns)
+    animation_blockers = collect_animation_blockers(lines, patterns)
+    actor_kind = args.actor_kind
+    if actor_kind == "auto":
+        actor_kind = "creature" if creature_evidence else "npc"
     morph_lines = [
         compact_line(line)
         for line in lines
@@ -434,6 +653,7 @@ def main() -> int:
     status, failures = evaluate(
         proof_dir,
         args.actor,
+        actor_kind,
         args.phase.lower(),
         lines,
         patterns,
@@ -441,6 +661,11 @@ def main() -> int:
         bounds,
         audits,
         drawables,
+        creature_evidence,
+        actor_matches,
+        animation_sources,
+        animation_playback,
+        animation_blockers,
     )
 
     report: dict[str, Any] = {
@@ -448,8 +673,10 @@ def main() -> int:
         "failures": failures,
         "proofDir": str(proof_dir),
         "actor": args.actor,
+        "actorKind": actor_kind,
         "phase": args.phase,
         "actorPatterns": patterns,
+        "actorMatches": actor_matches,
         "screenshots": sorted(p.name for p in proof_dir.glob("*.png")),
         "categorySummary": summarize_categories(gates),
         "gates": gates,
@@ -459,6 +686,11 @@ def main() -> int:
         "faceDrawables": drawables,
         "morphLines": morph_lines,
         "weaponLines": weapon_lines,
+        "creatureEvidence": creature_evidence,
+        "creatureLines": [item["line"] for item in creature_evidence],
+        "animationSources": animation_sources,
+        "animationPlayback": animation_playback,
+        "animationBlockers": animation_blockers,
     }
 
     out_json = args.out_json or (proof_dir / "character-builder-report.json")

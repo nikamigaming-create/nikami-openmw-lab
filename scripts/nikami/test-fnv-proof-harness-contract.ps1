@@ -53,6 +53,10 @@ Write-ProofLine ""
 $flat = Assert-File "scripts/nikami/run-fnv-flat-proof.ps1"
 $engine = Assert-File "apps/openmw/engine.cpp"
 $npcAnimation = Assert-File "apps/openmw/mwrender/esm4npcanimation.cpp"
+$creatureAnimation = Assert-File "apps/openmw/mwrender/creatureanimation.cpp"
+$esm4Creature = Assert-File "apps/openmw/mwclass/esm4creature.cpp"
+$classes = Assert-File "apps/openmw/mwclass/classes.cpp"
+$objects = Assert-File "apps/openmw/mwrender/objects.cpp"
 $doc = Assert-File "scripts/nikami/run-fnv-opening-doc-proof.ps1"
 $walk = Assert-File "scripts/nikami/run-fnv-goodsprings-walk-replay-proof.ps1"
 $ui = Assert-File "scripts/nikami/run-fnv-ui-baseline-proof.ps1"
@@ -64,6 +68,8 @@ $characterBuilder = Assert-File "scripts/nikami/run-fnv-character-builder-tester
 $characterBuilderReport = Assert-File "scripts/nikami/fnv_character_builder_report.py"
 $characterViewer = Assert-File "scripts/nikami/run-fnv-character-viewer.ps1"
 $characterViewerBundle = Assert-File "scripts/nikami/fnv_character_viewer_bundle.py"
+$noRetailArtifacts = Assert-File "scripts/nikami/test-no-retail-fnv-artifacts.ps1"
+$proofNoRetailArtifacts = Assert-File "scripts/nikami/test-proof-artifacts-no-retail-payloads.ps1"
 
 foreach ($needle in @(
     "[string]`$BuildDir",
@@ -90,8 +96,10 @@ foreach ($needle in @(
     "[int]`$ScreenshotTimingMaxActorCameraAgeFrames",
     "[switch]`$RequireActorVisibleHandGeometry",
     "[double]`$ActorVisibleHandMaxDistance",
+    "[string]`$ActorKind",
     "[string]`$CharacterBuilderPhase",
     "[switch]`$CharacterBuilderTalk",
+    "[switch]`$CreatureDiagnostics",
     "[switch]`$ActorViewLocalOffset",
     "[switch]`$RequireSkyColorSanity"
 )) {
@@ -108,9 +116,22 @@ Assert-Text $flat "did not prove visible skinned hand geometry follows animated 
 Assert-Text $flat "OPENMW_PROOF_ACTOR_VIEW_LOCAL_OFFSET" "flat proof can frame actor closeups in actor-local space"
 Assert-Text $flat "OPENMW_FNV_CHARACTER_BUILDER_PHASE" "flat proof can select standalone character-builder assembly phase"
 Assert-Text $flat "OPENMW_FNV_PROOF_MOUTH_FORCE_OPEN" "flat proof can force talk/mouth proof phase"
+Assert-Text $flat "OPENMW_PROOF_ACTOR_KIND" "flat proof records actor-kind intent for proof artifacts"
+Assert-Text $flat "OPENMW_FNV_CREATURE_ANIM_GROUP_DIAG" "flat proof can enable creature animation group diagnostics"
+Assert-Text $flat "OPENMW_FNV_CREATURE_BODY_DIAG" "flat proof can enable creature body diagnostics"
+Assert-Text $flat "OPENMW_FNV_CREATURE_KF_DIAG" "flat proof can enable creature KF diagnostics"
 Assert-Text $flat "CharacterBuilderPhase:" "flat proof summary records character-builder phase"
 Assert-Text $flat "ActorViewLocalOffset:" "flat proof summary records actor-local closeup mode"
+Assert-Text $flat "ActorKind:" "flat proof summary records actor kind"
+Assert-Text $flat "CreatureDiagnostics:" "flat proof summary records creature diagnostic mode"
 Assert-Text $flat "fnv-data-provenance.json" "flat proof writes data provenance manifest"
+Assert-Text $engine "#include <components/esm4/loadcrea.hpp>" "runtime proof target matching can read ESM4 creature metadata"
+Assert-Text $engine "ptr.getType() == ESM::REC_CREA4" "runtime actor proof target matching handles ESM4 creatures"
+Assert-Text $engine "MWWorld::LiveCellRef<ESM4::Creature>" "runtime actor proof target matching reads creature base records"
+Assert-Text $classes "ESM4Creature::registerSelf()" "ESM4 creature runtime class is registered separately from NPC"
+Assert-Text $classes "ESM4Npc::registerSelf()" "ESM4 NPC runtime class is registered separately from creature"
+Assert-Text $objects "insertCreature" "renderer has creature insertion path"
+Assert-Text $objects "insertNPC" "renderer has NPC insertion path"
 Assert-Text $npcAnimation "replaceVertexColorRgb" "NPC tint visitor has explicit vertex RGB replacement mode"
 Assert-Text $npcAnimation "TintMaterialVisitor visitor(*tint, emissionStrength, hairTintModel, hairTintModel)" "hair/beard/brow maps FNV dye-control vertex colors to record tint with neutral material"
 Assert-Text $npcAnimation "mNeutralMaterialWhenReplacing" "hair tint avoids double-darkening vertex-colored dye-control hair"
@@ -161,6 +182,22 @@ Assert-Text $npcAnimation "multiplier=none" "FONV body tint has no hidden bright
 Assert-Text $npcAnimation "loaded-pending-exact-facegen-texture-synthesis" "FaceGen EGT loading is not claimed as exact pixel synthesis"
 Assert-Text $npcAnimation "OPENMW_FNV_USE_EGT_MATERIAL_TINT" "coarse EGT material tint is explicit opt-in only"
 Assert-Text $npcAnimation "forced opaque no-blend skin surface" "FONV visible skin surfaces are solid instead of alpha-blended"
+Assert-Text $creatureAnimation "OPENMW_FNV_CREATURE_BODY_DIAG" "creature body diagnostics are runtime-gated"
+Assert-Text $creatureAnimation "OPENMW_FNV_CREATURE_KF_DIAG" "creature KF diagnostics are runtime-gated"
+Assert-Text $creatureAnimation "OPENMW_FNV_CREATURE_ANIM_GROUP_DIAG" "creature animation group diagnostics are runtime-gated"
+Assert-Text $creatureAnimation "FNV/ESM4 diag: attached creature body nif" "creature proof logs attached body NIFs"
+Assert-Text $creatureAnimation "FNV/ESM4 diag: forced creature body render mask" "creature proof logs visible body render masks"
+Assert-Text $creatureAnimation "FNV/ESM4 diag: creature animation groups" "creature proof logs animation group availability"
+Assert-Text $creatureAnimation "FNV/ESM4 diag: inserted creature animation for" "creature proof logs runtime animation insertion"
+Assert-Text $creatureAnimation "attachedBodyNifs=" "creature proof logs attached body count"
+Assert-Text $creatureAnimation "fallbackKfs=" "creature proof logs fallback KF count"
+Assert-Text $creatureAnimation "discoveredKfs=" "creature proof logs discovered KF count"
+Assert-Text $esm4Creature "FNV/ESM4 diag: initialized creature actor shell" "creature class logs initialized actor shell"
+Assert-Text $esm4Creature "canWalk=" "creature shell proof logs movement capabilities"
+Assert-Text $esm4Creature "canSwim=" "creature shell proof logs swim capability"
+Assert-Text $esm4Creature "canFly=" "creature shell proof logs fly capability"
+Assert-Text $esm4Creature "effective=" "creature shell proof logs effective template record"
+Assert-Text $esm4Creature "template=" "creature shell proof logs template record"
 Assert-Text $flat "Screenshot stability status:" "flat proof reports screenshot stability"
 Assert-Text $flat "screenshot-stability.json" "flat proof writes screenshot stability JSON"
 Assert-Text $flat "Screenshot timing status:" "flat proof reports post-settle screenshot timing"
@@ -183,22 +220,40 @@ Assert-Text $easyPete "FnvPartMatrixAudit = `$true" "Easy Pete angle sweep inclu
 Assert-Text $easyPete "[switch]`$AllowRuntimeGateFailure" "Easy Pete visual sweep can keep collecting screenshots after expected runtime gate failures"
 Assert-Text $easyPete "_fnv-data-provenance.json" "Easy Pete visual sweep copies per-angle data provenance"
 Assert-Text $characterBuilder '"body", "head", "face", "hair", "equipment", "weapon", "headgear", "talk"' "character builder has explicit assembly ladder"
+Assert-Text $characterBuilder "[string]`$ActorKind" "character builder accepts actor-kind mode"
+Assert-Text $characterBuilder "[switch]`$CreatureDiagnostics" "character builder accepts creature diagnostic mode"
+Assert-Text $characterBuilder '"creature-model", "creature-body", "creature-animation", "creature-full"' "character builder has explicit creature isolation ladder"
 Assert-Text $characterBuilder '-split ","' "character builder splits comma-delimited phases instead of creating fake merged phases"
 Assert-Text $characterBuilder "FnvPartMatrixAudit = `$true" "character builder always requests runtime part matrix audit"
 Assert-Text $characterBuilder "CharacterBuilderPhase = `$phase" "character builder passes selected phase to flat proof"
+Assert-Text $characterBuilder "ActorKind = `$ActorKind" "character builder passes actor kind to flat proof"
+Assert-Text $characterBuilder "CreatureDiagnostics = `$true" "character builder passes creature diagnostics to flat proof"
 Assert-Text $characterBuilder "front-left" "character builder captures a left/front camera"
 Assert-Text $characterBuilder "front-right" "character builder captures a right/front camera"
 Assert-Text $characterBuilder "character-builder-suite.json" "character builder writes aggregate JSON"
 Assert-Text $characterBuilder "character-builder-suite.md" "character builder writes aggregate Markdown"
 Assert-Text $characterBuilderReport "parse_attachment_bounds" "character builder report parses attachment coordinate bounds"
 Assert-Text $characterBuilderReport "parse_runtime_audits" "character builder report parses runtime part audit coordinates"
+Assert-Text $characterBuilderReport "parse_actor_matches" "character builder report parses active actor target matches"
+Assert-Text $characterBuilderReport "parse_animation_sources" "character builder report parses bound animation controller evidence"
+Assert-Text $characterBuilderReport "parse_animation_playback" "character builder report parses target animation playback evidence"
+Assert-Text $characterBuilderReport "parse_creature_evidence" "character builder report parses creature runtime evidence"
 Assert-Text $characterBuilderReport "summarize_runtime_audits" "character builder report summarizes runtime part drift over time"
 Assert-Text $characterBuilderReport "runtime audit regressions after initial OK" "character builder report fails parts that attach then regress during runtime"
 Assert-Text $characterBuilderReport '"runtimeAuditSummary"' "character builder report writes runtime audit summary JSON"
 Assert-Text $characterBuilderReport "collapsed or empty head source geometry" "character builder report fails collapsed head source geometry"
 Assert-Text $characterBuilderReport "missing talk/mouth runtime evidence" "character builder report fails missing talk runtime proof"
 Assert-Text $characterBuilderReport "missing equipped weapon evidence" "character builder report fails missing weapon runtime proof"
+Assert-Text $characterBuilderReport "missing target animation playback evidence" "character builder report fails missing target animation playback proof"
+Assert-Text $characterBuilderReport "missing creature body/model runtime evidence" "character builder report fails missing creature body/model proof"
+Assert-Text $characterBuilderReport '"actorKind"' "character builder report writes actor-kind JSON"
+Assert-Text $characterBuilderReport '"creatureEvidence"' "character builder report writes creature evidence JSON"
+Assert-Text $characterBuilderReport '"animationPlayback"' "character builder report writes animation playback JSON"
 Assert-Text $characterViewer "fnv_character_viewer_bundle.py" "standalone character viewer launcher builds human/bot viewer bundle"
+Assert-Text $characterViewer "[string]`$ActorKind" "standalone character viewer accepts actor-kind mode"
+Assert-Text $characterViewer "[switch]`$CreatureDiagnostics" "standalone character viewer accepts creature diagnostic mode"
+Assert-Text $characterViewer "ActorKind = `$ActorKind" "standalone character viewer passes actor kind to builder"
+Assert-Text $characterViewer "CreatureDiagnostics = `$true" "standalone character viewer passes creature diagnostics to builder"
 Assert-Text $characterViewer "character-viewer.html" "standalone character viewer writes human-openable HTML"
 Assert-Text $characterViewer "character-viewer-manifest.json" "standalone character viewer writes bot-readable manifest"
 Assert-Text $characterViewer "generated proof/viewer output only; no retail assets are committed" "standalone character viewer keeps generated outputs outside repo"
@@ -209,11 +264,19 @@ Assert-Text $characterViewer "viewer-server.json" "standalone character viewer w
 Assert-Text $characterViewer "viewer-url.txt" "standalone character viewer writes human-readable URL file"
 Assert-Text $characterViewer "Viewer URL:" "standalone character viewer prints a human-openable URL"
 Assert-Text $characterViewer "loopbackOnly" "standalone character viewer server manifest records loopback-only policy"
+Assert-Text $characterViewer "generatedProofOutputsOnly" "standalone character viewer server manifest records generated-output-only policy"
+Assert-Text $characterViewer "noRetailAssetsCommitted" "standalone character viewer server manifest records no-retail-asset policy"
 Assert-Text $characterViewerBundle "nikami-fnv-character-viewer-v2" "standalone character viewer has control-capable manifest schema"
+Assert-Text $characterViewerBundle "schemaMarkers" "standalone character viewer writes schema markers"
+Assert-Text $characterViewerBundle "actorProfile" "standalone character viewer writes actor profile"
+Assert-Text $characterViewerBundle "CREATURE_LAYER_ORDER" "standalone character viewer has creature-specific layers"
 Assert-Text $characterViewerBundle "grid3" "standalone character viewer shows three camera panes together"
+Assert-Text $characterViewerBundle "Actor Matches" "standalone character viewer exposes actor target match evidence"
 Assert-Text $characterViewerBundle "Skin Evidence" "standalone character viewer exposes skin data-flow evidence"
 Assert-Text $characterViewerBundle "Hair Headgear Evidence" "standalone character viewer exposes hair/headgear evidence"
 Assert-Text $characterViewerBundle "Animation Talk Weapon Evidence" "standalone character viewer exposes animation/talk/weapon evidence"
+Assert-Text $characterViewerBundle "Creature Evidence" "standalone character viewer exposes creature evidence"
+Assert-Text $characterViewerBundle "Animation Playback" "standalone character viewer exposes target animation playback evidence"
 Assert-Text $characterViewerBundle "Runtime Controls" "standalone character viewer exposes human runtime controls"
 Assert-Text $characterViewerBundle "Part Toggles" "standalone character viewer exposes part toggles"
 Assert-Text $characterViewerBundle "Prop Slots" "standalone character viewer exposes prop and weapon slots"
@@ -231,6 +294,78 @@ Assert-Text $characterViewerBundle "runtimePartAudits" "standalone character vie
 Assert-Text $characterViewerBundle "Runtime Drift" "standalone character viewer exposes temporal part drift"
 Assert-Text $characterViewerBundle "runtimeAuditSummary" "standalone character viewer consumes runtime audit summary"
 Assert-Text $characterViewerBundle "renderDrift" "standalone character viewer renders runtime drift table"
+
+$fixtureSuite = Join-Path $ProofDir "viewer-creature-fixture"
+$fixtureCase = Join-Path $fixtureSuite "creature-animation_front"
+New-Item -ItemType Directory -Force -Path $fixtureCase | Out-Null
+$fixtureLog = Join-Path $fixtureCase "openmw.log"
+@(
+    'FNV/ESM4 proof: active-cell actor match target="ContractCreature" frame=10 ref=FormId:0x1 base=ContractCreature name="Contract Creature" baseEditor="ContractCreature" baseFull="Contract Creature" pos=(1,2,3) rot=(0,0,1)',
+    'FNV/ESM4 diag: inserted creature animation for ContractCreature model=generated/contract-creature-root.mesh animated=1 effective=ContractCreature kfCount=1 bodyPartCount=1 attachedBodyNifs=1 fallbackKfs=1 discoveredKfs=1',
+    'FNV/ESM4 diag: creature animation groups ContractCreature present=[idle,walkforward] missing=[]',
+    'FNV/ESM4 diag: play matched ContractCreature group ''idle'' source=generated/contract-idle.anim checkedSources=1 controllers=4 startTime=0 loopStart=0 loopStop=1 stopTime=1 playing=1'
+) | Set-Content -LiteralPath $fixtureLog -Encoding UTF8
+$fixtureReport = [pscustomobject][ordered]@{
+    status = "PASS"
+    failures = @()
+    proofDir = "generated-proof-only"
+    actor = "ContractCreature"
+    actorKind = "creature"
+    phase = "creature-animation"
+    actorPatterns = @("ContractCreature")
+    actorMatches = @([pscustomobject][ordered]@{ frame = 10; ref = "FormId:0x1"; base = "ContractCreature"; name = "Contract Creature"; baseEditor = "ContractCreature"; baseFull = "Contract Creature"; line = "active-cell actor match target" })
+    screenshots = @()
+    categorySummary = [pscustomobject]@{}
+    gates = @()
+    attachmentBounds = @()
+    runtimePartAudits = @()
+    runtimeAuditSummary = @()
+    faceDrawables = @()
+    morphLines = @()
+    weaponLines = @()
+    animationSources = @([pscustomobject][ordered]@{ source = "generated/contract-idle.anim"; model = "generated/contract-creature-root.mesh"; matchedControllers = 4; totalControllers = 4; missingControllers = 0; line = "animation source bound" })
+    animationPlayback = @([pscustomobject][ordered]@{ ref = "ContractCreature"; group = "idle"; source = "generated/contract-idle.anim"; controllers = 4; playing = $true; line = "play matched ContractCreature" })
+    animationBlockers = @()
+    creatureEvidence = @(
+        [pscustomobject][ordered]@{ kind = "creature-animation"; model = "generated/contract-creature-root.mesh"; line = "inserted creature animation for ContractCreature" },
+        [pscustomobject][ordered]@{ kind = "creature-body"; model = "generated/contract-creature-body.mesh"; visibleGeometryCount = 1; line = "forced creature body render mask for ContractCreature rigged=1 static=0 other=0" }
+    )
+    creatureLines = @("inserted creature animation for ContractCreature", "forced creature body render mask for ContractCreature")
+}
+$fixtureReport | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath (Join-Path $fixtureCase "character-builder-report.json") -Encoding UTF8
+$fixtureResult = [pscustomobject][ordered]@{
+    case = "creature-animation_front"
+    phase = "creature-animation"
+    angle = "front"
+    runtimeGateStatus = "PASS"
+    runtimeGateError = ""
+    reportStatus = "PASS"
+    proofDir = "generated-proof-only"
+    caseDir = $fixtureCase
+    failures = @()
+    screenshots = @()
+}
+ConvertTo-Json -InputObject @($fixtureResult) -Depth 12 | Set-Content -LiteralPath (Join-Path $fixtureSuite "character-builder-suite.json") -Encoding UTF8
+& python $characterViewerBundle --suite-dir $fixtureSuite | Out-Host
+if ($LASTEXITCODE -ne 0) { throw "Creature viewer fixture generation failed." }
+$fixtureManifest = Get-Content -LiteralPath (Join-Path $fixtureSuite "character-viewer-manifest.json") -Raw | ConvertFrom-Json
+if ($fixtureManifest.schema -ne "nikami-fnv-character-viewer-v2") { throw "Creature viewer fixture wrote unexpected schema: $($fixtureManifest.schema)" }
+if ($fixtureManifest.actorProfile.kind -ne "creature") { throw "Creature viewer fixture did not preserve creature actor profile." }
+if (!@($fixtureManifest.schemaMarkers).Contains("creature-isolation-v1")) { throw "Creature viewer fixture missing creature schema marker." }
+if (!@($fixtureManifest.layers).Contains("creature-animation")) { throw "Creature viewer fixture missing creature animation layer." }
+if (@($fixtureManifest.controls.dialogueControls).Count -ne 0) { throw "Creature viewer fixture should not emit NPC dialogue controls." }
+if (@($fixtureManifest.cases[0].creatureEvidence).Count -eq 0) { throw "Creature viewer fixture did not expose creature evidence." }
+if (@($fixtureManifest.cases[0].animationPlayback).Count -eq 0) { throw "Creature viewer fixture did not expose target animation playback." }
+Write-ProofLine "OK contract: generated creature viewer manifest fixture"
+
+Assert-Text $noRetailArtifacts "Get-TrackedRetailPayloadViolations" "no-retail tracked artifact gate scans tracked payloads"
+Assert-Text $noRetailArtifacts "tracked-generated-proof-root" "no-retail gate classifies generated proof roots"
+Assert-Text $noRetailArtifacts "tracked-retail-payload-extension" "no-retail gate classifies retail payload extensions"
+Assert-Text $proofNoRetailArtifacts "temp-extract" "proof artifact no-retail gate scans temporary extraction roots"
+Assert-Text $proofNoRetailArtifacts "base64" "proof artifact no-retail gate scans encoded payload fields"
+Assert-Text $proofNoRetailArtifacts ".bsa" "proof artifact no-retail gate rejects BSA proof payloads"
+Assert-Text $proofNoRetailArtifacts ".esm" "proof artifact no-retail gate rejects ESM proof payloads"
+Assert-Text $proofNoRetailArtifacts ".nif" "proof artifact no-retail gate rejects NIF proof payloads"
 Assert-Text $doc "FnvPartMatrixAudit = `$true" "Doc Mitchell actor proof includes runtime part audit"
 Assert-Text "scripts/nikami/run-fnv-flat.ps1" "must be generated publish data, not legacy modlist data" "flat proof rejects legacy modlist overlay data"
 Assert-NoText "scripts/nikami/run-fnv-flat.ps1" "Auto-detected FNV overlay data" "flat proof legacy overlay autodetect removed"

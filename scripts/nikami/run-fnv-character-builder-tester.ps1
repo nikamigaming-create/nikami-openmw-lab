@@ -8,6 +8,8 @@ param(
     [string]$Triplet = "x64-windows",
     [string]$ProofRoot = "",
     [string]$ActorTarget = "GSEasyPete",
+    [ValidateSet("npc", "creature", "auto")]
+    [string]$ActorKind = "npc",
     [string[]]$Phases = @("body", "head", "face", "hair", "equipment", "weapon", "headgear", "talk"),
     [int]$RunSeconds = 28,
     [int]$ActorFrame = 520,
@@ -15,6 +17,7 @@ param(
     [double]$ActorViewDistance = 52,
     [double]$ActorViewOffsetZ = 108,
     [double]$ActorViewTargetZ = 108,
+    [switch]$CreatureDiagnostics,
     [switch]$NoSound,
     [switch]$RequirePass
 )
@@ -86,6 +89,10 @@ $Angles = @(
     [pscustomobject]@{ Name = "front-right"; OffsetX = $diagonal; OffsetY = $diagonal }
 )
 
+if ($ActorKind -ieq "creature" -and !$PSBoundParameters.ContainsKey("Phases")) {
+    $Phases = @("creature-model", "creature-body", "creature-animation", "creature-full")
+}
+
 $NormalizedPhases = New-Object "System.Collections.Generic.List[string]"
 foreach ($phaseValue in $Phases) {
     foreach ($phasePart in ($phaseValue -split ",")) {
@@ -104,6 +111,8 @@ Write-SuiteLine "FNV character builder tester $Stamp"
 Write-SuiteLine "RepoRoot: $RepoRoot"
 Write-SuiteLine "SuiteDir: $SuiteDir"
 Write-SuiteLine "ActorTarget: $ActorTarget"
+Write-SuiteLine "ActorKind: $ActorKind"
+Write-SuiteLine "CreatureDiagnostics: $($CreatureDiagnostics -or $ActorKind -ieq 'creature')"
 Write-SuiteLine "Phases: $($Phases -join ',')"
 Write-SuiteLine "Angles: $(@($Angles | ForEach-Object { $_.Name }) -join ',')"
 Write-SuiteLine "Policy: no retail assets copied into repo; generated proof output only"
@@ -142,6 +151,7 @@ foreach ($phase in $Phases) {
             BootstrapRotZ = 1.5708
             BootstrapHour = 10
             ActorTarget = $ActorTarget
+            ActorKind = $ActorKind
             StageActor = $true
             ActorFrame = $ActorFrame
             ActorStageX = -67480
@@ -158,6 +168,7 @@ foreach ($phase in $Phases) {
         }
         if (![string]::IsNullOrWhiteSpace($FnvConfigData)) { $proofArgs.FnvConfigData = $FnvConfigData }
         if (![string]::IsNullOrWhiteSpace($ExtraOsgPluginDir)) { $proofArgs.ExtraOsgPluginDir = $ExtraOsgPluginDir }
+        if ($CreatureDiagnostics -or $ActorKind -ieq "creature") { $proofArgs.CreatureDiagnostics = $true }
         if ($phase -ieq "talk" -or $phase -ieq "dialogue") { $proofArgs.CharacterBuilderTalk = $true }
         if ($NoSound) { $proofArgs.NoSound = $true }
 
@@ -186,7 +197,7 @@ foreach ($phase in $Phases) {
 
         $reportJson = Join-Path $CaseDir "character-builder-report.json"
         $reportMd = Join-Path $CaseDir "character-builder-report.md"
-        & python $ReportScript --proof-dir $ProofDir --actor $ActorTarget --phase $phase --out-json $reportJson --out-md $reportMd | Out-Host
+        & python $ReportScript --proof-dir $ProofDir --actor $ActorTarget --actor-kind $ActorKind --phase $phase --out-json $reportJson --out-md $reportMd | Out-Host
         $reportExit = $LASTEXITCODE
         $reportStatus = if ($reportExit -eq 0) { "PASS" } else { "FAIL" }
         $reportData = $null
