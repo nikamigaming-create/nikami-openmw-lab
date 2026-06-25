@@ -577,6 +577,7 @@ Assert-Text $characterBuilderReport "parse_runtime_audits" "character builder re
 Assert-Text $characterBuilderReport "parse_face_checks" "character builder report parses face checks as structured runtime evidence"
 Assert-Text $characterBuilderReport "hair attached without visible geometry" "character builder report fails hair records that attach with no visible geometry"
 Assert-Text $characterBuilderReport "FaceGen texture loaded but not applied to a face surface" "character builder report fails FaceGen sources that never hit a face surface"
+Assert-Text $characterBuilderReport "facegen_phase_required" "character builder report only enforces FaceGen application on face-capable phases"
 Assert-Text $characterBuilderReport '"faceChecks"' "character builder report writes structured face check JSON"
 Assert-Text $characterBuilderReport "parse_actor_weapon_states" "character builder report parses explicit weapon/no-weapon actor state"
 Assert-Text $characterBuilderReport "parse_actor_matches" "character builder report parses active actor target matches"
