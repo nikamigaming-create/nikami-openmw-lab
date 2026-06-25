@@ -616,6 +616,8 @@ def build_catalog(plan: dict[str, Any], gameplay_rows: list[dict[str, Any]], lim
             "placement-bootstrap-job-args-v1",
             "authoring-snapshot-saveback-v1",
             "snapshot-replay-job-v1",
+            "snapshot-standalone-replay-artifact-v1",
+            "authoring-saveback-replay-v1",
             "neutral-stage-gate-pending-v1",
             "no-retail-payload-v1",
         ],
@@ -1556,6 +1558,7 @@ function renderSnapshots() {{
         <span class="pill">${{esc(row.commandKey || "runtimeThreeCamera")}}</span>
         <span class="pill">${{esc(row.classification || "pending")}}</span>
         <div class="muted">entry <code>${{esc(row.entryId || "")}}</code> review rows=${{esc(row.reviewRows || 0)}} coords=${{esc(row.coordinateRows || 0)}}</div>
+        <div class="liveFile">replay ${{esc(row.replayArtifact?.state || "pending-structured-command")}}: ${{esc(row.replayArtifact?.path || "generated replay artifact pending")}}</div>
         <div class="actions"><button type="button" data-replay-snapshot="${{esc(row.id)}}">Replay</button></div>
       </div>`).join("")
     : `<div class="muted">No saved snapshots yet</div>`;
