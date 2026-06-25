@@ -7,6 +7,7 @@ param(
     [string]$ExtraOsgPluginDir = $env:NIKAMI_EXTRA_OSG_PLUGIN_DIR,
     [string]$Triplet = "x64-windows",
     [string]$ProofRoot = "",
+    [string]$RuntimeTag = "",
     [string]$ActorTarget = "GSEasyPete",
     [ValidateSet("npc", "creature", "auto")]
     [string]$ActorKind = "npc",
@@ -44,6 +45,9 @@ if ([string]::IsNullOrWhiteSpace($ProofRoot)) {
 }
 
 $Stamp = Get-Date -Format "yyyyMMdd_HHmmss"
+if ([string]::IsNullOrWhiteSpace($RuntimeTag)) {
+    $RuntimeTag = "fnv-live-authoring-$Stamp"
+}
 $RunDir = Join-Path $ProofRoot "fnv-live-character-authoring/$Stamp"
 $StudioDir = Join-Path $RunDir "studio"
 $LiveAuthoringFile = Join-Path $RunDir "live-authoring.json"
@@ -189,6 +193,7 @@ Add-Arg $runtimeArgs "-VcpkgRoot" $VcpkgRoot
 Add-Arg $runtimeArgs "-ExtraOsgPluginDir" $ExtraOsgPluginDir
 Add-Arg $runtimeArgs "-Triplet" $Triplet
 Add-Arg $runtimeArgs "-ProofRoot" $ProofRoot
+Add-Arg $runtimeArgs "-RuntimeTag" $RuntimeTag
 Add-Arg $runtimeArgs "-RunSeconds" $RunSeconds
 Add-Arg $runtimeArgs "-BootstrapCell" $BootstrapCell
 Add-Arg $runtimeArgs "-BootstrapX" $BootstrapX
@@ -245,6 +250,7 @@ $manifest = [pscustomobject][ordered]@{
     runtimeStdout = $RuntimeStdout
     runtimeStderr = $RuntimeStderr
     runtimeCommand = $RuntimeCommand
+    runtimeTag = $RuntimeTag
     actorKitAnimationSource = $InitialActorKitAnimationSource
     target = [pscustomobject][ordered]@{
         actorTarget = $ActorTarget
@@ -253,6 +259,7 @@ $manifest = [pscustomobject][ordered]@{
     policy = [pscustomobject][ordered]@{
         generatedProofOutputsOnly = $true
         noRetailAssetsCommitted = $true
+        isolatedRuntimeConfig = $true
         liveNumericControlsOnly = $true
         activeCellActorSwitchOnly = $true
         baseNpcPreviewWhenInactive = $true

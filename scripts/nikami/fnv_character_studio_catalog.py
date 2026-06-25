@@ -617,7 +617,9 @@ def build_catalog(plan: dict[str, Any], gameplay_rows: list[dict[str, Any]], lim
             "authoring-snapshot-saveback-v1",
             "snapshot-replay-job-v1",
             "snapshot-standalone-replay-artifact-v1",
+            "snapshot-live-apply-v1",
             "authoring-saveback-replay-v1",
+            "authoring-saveback-live-apply-v1",
             "neutral-stage-gate-pending-v1",
             "no-retail-payload-v1",
         ],
@@ -847,6 +849,7 @@ button:disabled {{ opacity: .45; cursor: not-allowed; }}
       </div>
       <div class="actions">
         <button id="saveSnapshot" type="button">Save Snapshot</button>
+        <button id="applySnapshotLive" type="button">Apply Snapshot Live</button>
         <button id="replaySnapshot" type="button">Replay Snapshot</button>
       </div>
       <div id="snapshotList" class="snapshotList"></div>
@@ -1591,9 +1594,14 @@ function renderSnapshots() {{
         <span class="pill">${{esc(row.classification || "pending")}}</span>
         <div class="muted">entry <code>${{esc(row.entryId || "")}}</code> review rows=${{esc(row.reviewRows || 0)}} coords=${{esc(row.coordinateRows || 0)}}</div>
         <div class="liveFile">replay ${{esc(row.replayArtifact?.state || "pending-structured-command")}}: ${{esc(row.replayArtifact?.path || "generated replay artifact pending")}}</div>
-        <div class="actions"><button type="button" data-replay-snapshot="${{esc(row.id)}}">Replay</button></div>
+        <div class="liveFile">live apply ${{esc(row.liveApplyArtifact?.state || "pending-live-apply")}}: ${{esc(row.liveApplyArtifact?.path || "generated live-apply artifact pending")}}</div>
+        <div class="actions">
+          <button type="button" data-apply-live-snapshot="${{esc(row.id)}}">Apply Live</button>
+          <button type="button" data-replay-snapshot="${{esc(row.id)}}">Replay</button>
+        </div>
       </div>`).join("")
     : `<div class="muted">No saved snapshots yet</div>`;
+  node.querySelectorAll("[data-apply-live-snapshot]").forEach(button => button.onclick = () => applySnapshotLive(button.dataset.applyLiveSnapshot || ""));
   node.querySelectorAll("[data-replay-snapshot]").forEach(button => button.onclick = () => replaySnapshot(button.dataset.replaySnapshot || ""));
 }}
 async function refreshSnapshots() {{
@@ -1623,6 +1631,31 @@ async function saveSnapshotEvent() {{
     renderWorkbench();
   }} catch (error) {{
     addLocalEvent("snapshot.save.failed", {{ message: error.message || String(error) }});
+  }}
+}}
+async function applySnapshotLive(snapshotId = "") {{
+  try {{
+    if (!liveAvailable() || !state.session) return;
+    const id = snapshotId || state.latestSnapshot?.id || state.snapshots?.[0]?.id || "";
+    if (!id) return;
+    const result = await api(`/nikami/studio/sessions/${{encodeURIComponent(state.session.id)}}/snapshots/${{encodeURIComponent(id)}}/apply-live`, {{
+      method: "POST",
+      body: JSON.stringify({{}})
+    }});
+    state.liveAuthoring = result.liveAuthoring || state.liveAuthoring;
+    state.liveRuntime = result.liveRuntime || state.liveRuntime;
+    state.runtimeStatus = result.runtimeStatus || state.runtimeStatus;
+    state.runtimeAudit = result.runtimeAudit || state.runtimeAudit;
+    addLocalEvent("snapshot.apply-live", {{
+      snapshotId: id,
+      classification: result.runtimeAudit?.classification || "",
+      firstFailingGate: result.runtimeAudit?.firstFailingGate || "",
+      liveApplyArtifactPath: result.liveApplyArtifact?.artifactPath || ""
+    }});
+    await refreshSnapshots();
+    renderWorkbench();
+  }} catch (error) {{
+    addLocalEvent("snapshot.apply-live.failed", {{ message: error.message || String(error) }});
   }}
 }}
 async function replaySnapshot(snapshotId = "") {{
@@ -1806,6 +1839,7 @@ function renderSaveReview() {{
   const canSnapshot = liveAvailable() && !!entry;
   const canReplay = canSnapshot && !!state.session && !!(state.latestSnapshot?.id || state.snapshots?.[0]?.id);
   document.getElementById("saveSnapshot").disabled = !canSnapshot;
+  document.getElementById("applySnapshotLive").disabled = !canReplay;
   document.getElementById("replaySnapshot").disabled = !canReplay;
 }}
 function renderComponentReviews() {{
@@ -2023,6 +2057,7 @@ document.getElementById("runThree").addEventListener("click", () => launchJob("r
 document.getElementById("runFront").addEventListener("click", () => launchJob("runtimeFrontOnly"));
 document.getElementById("sendLiveRuntime").addEventListener("click", () => sendSelectedLiveRuntime({{ reason: "button" }}));
 document.getElementById("saveSnapshot").addEventListener("click", saveSnapshotEvent);
+document.getElementById("applySnapshotLive").addEventListener("click", () => applySnapshotLive());
 document.getElementById("replaySnapshot").addEventListener("click", () => replaySnapshot());
 document.getElementById("saveReview").addEventListener("click", saveReviewEvent);
 document.querySelectorAll("[data-preset]").forEach(button => button.addEventListener("click", () => applyPreset(button.dataset.preset || "")));

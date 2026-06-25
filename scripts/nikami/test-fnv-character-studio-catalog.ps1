@@ -391,8 +391,14 @@ if (!$html.Contains("componentReviews") -or !$html.Contains("componentReviewRows
 if (!$html.Contains("Save Snapshot") -or !$html.Contains("Replay Snapshot") -or !$html.Contains("snapshotPayload") -or !$html.Contains("saveSnapshotEvent") -or !$html.Contains("replaySnapshot")) {
     throw "Studio catalog HTML does not expose snapshot saveback/replay controls."
 }
+if (!$html.Contains("Apply Snapshot Live") -or !$html.Contains("applySnapshotLive") -or !$html.Contains("apply-live") -or !$html.Contains("snapshot.apply-live")) {
+    throw "Studio catalog HTML does not expose no-restart snapshot live apply controls."
+}
 if (!$html.Contains("/snapshots") -or !$html.Contains("coordinateRows") -or !$html.Contains("authoring-snapshot-saveback-v1")) {
     throw "Studio catalog HTML does not expose generated snapshot metadata round trip."
+}
+if (!$html.Contains("snapshot-live-apply-v1") -or !$html.Contains("row.liveApplyArtifact?.path")) {
+    throw "Studio catalog HTML does not expose generated snapshot live apply metadata round trip."
 }
 if (!$html.Contains("Critical Queue") -or !$html.Contains("criticalQueue") -or !$html.Contains("data-critical-run") -or !$html.Contains("critical-face-skin-headgear")) {
     throw "Studio catalog HTML does not expose critical character queue controls."

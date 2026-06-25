@@ -121,6 +121,20 @@ def main() -> int:
             ),
             encoding="utf-8",
         )
+        isolated_openmw_log = root / "configs" / "fnv-flat-clean-contract_tag" / "openmw.log"
+        isolated_openmw_log.parent.mkdir(parents=True, exist_ok=True)
+        isolated_openmw_log.write_text("isolated live runtime log\n", encoding="utf-8")
+        isolated_stdout = run_dir / "isolated-runtime-proof.stdout.log"
+        isolated_stdout.write_text(f"ConfigDir: {isolated_openmw_log.parent}\n", encoding="utf-8")
+        found_isolated_log = live.find_runtime_openmw_log(
+            root,
+            isolated_stdout,
+            'powershell -File scripts/nikami/run-fnv-flat-proof.ps1 -RuntimeTag "contract tag"',
+        )
+        if found_isolated_log != isolated_openmw_log.resolve():
+            raise AssertionError("runtime audit log discovery did not prefer the isolated runtime ConfigDir over stale fallback")
+        if live.safe_runtime_tag("contract tag") != "contract_tag":
+            raise AssertionError("runtime audit safe tag normalization diverged from flat proof runtime naming")
         write_json(
             run_dir / "live-authoring-run.json",
             {
@@ -410,6 +424,36 @@ def main() -> int:
         live_runtime_replay = live.snapshot_to_live_runtime_payload(loaded_snapshot, session["id"])
         if live_runtime_replay["selectors"]["parts"] != ["headgear"]:
             raise AssertionError("snapshot replay did not preserve live runtime selector metadata")
+        live_apply_artifact = sessions.write_snapshot_live_apply(
+            session["id"],
+            loaded_snapshot,
+            authoring_doc,
+            runtime_doc,
+            status,
+            audit,
+        )
+        live_apply_path = Path(live_apply_artifact["artifactPath"])
+        if live_apply_artifact["schema"] != live.STUDIO_SNAPSHOT_LIVE_APPLY_SCHEMA:
+            raise AssertionError("snapshot live apply artifact schema mismatch")
+        if "snapshot-live-apply-v1" not in live_apply_artifact["schemaMarkers"]:
+            raise AssertionError("snapshot live apply artifact did not advertise no-restart live apply marker")
+        if not live_apply_artifact["policy"]["noRuntimeRelaunch"]:
+            raise AssertionError("snapshot live apply artifact did not block proof relaunch")
+        if live_apply_artifact["liveRuntimePayload"]["selectors"]["parts"] != ["headgear"]:
+            raise AssertionError("snapshot live apply artifact did not preserve live runtime selector payload")
+        if live_apply_artifact["liveAuthoringControls"]["OPENMW_FNV_HEADGEAR_OFFSET_X"] != 1.25:
+            raise AssertionError("snapshot live apply artifact did not preserve live authoring controls")
+        if not live_apply_path.is_file():
+            raise AssertionError("snapshot live apply artifact was not written to generated proof outputs")
+        live_apply_text = json.dumps(live_apply_artifact)
+        if "should-not-be-saved" in live_apply_text or "Remove-Item" in live_apply_text or "retail payload bytes" in live_apply_text:
+            raise AssertionError("live apply artifact copied raw saved job metadata")
+        snapshots_after_live_apply = sessions.snapshots(session["id"])
+        if snapshots_after_live_apply[0]["liveApplyArtifact"]["path"] != str(live_apply_path):
+            raise AssertionError("studio snapshot list did not expose the live apply artifact path")
+        loaded_after_live_apply = sessions.snapshot(session["id"], snapshot["id"])
+        if not loaded_after_live_apply or loaded_after_live_apply["lastLiveApply"]["classification"] != audit["classification"]:
+            raise AssertionError("studio snapshot did not persist last live apply audit metadata")
         try:
             sessions.create_snapshot(session["id"], {"entryId": "actor:000001", "rawRetailPayload": "nope"}, authoring_doc, runtime_doc, status, audit)
         except ValueError as exc:

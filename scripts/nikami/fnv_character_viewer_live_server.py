@@ -43,6 +43,7 @@ STUDIO_SCHEMA = "nikami-fnv-character-studio-session-v1"
 STUDIO_REVIEW_SCHEMA = "nikami-fnv-character-studio-component-review-v1"
 STUDIO_SNAPSHOT_SCHEMA = "nikami-fnv-character-studio-snapshot-v1"
 STUDIO_SNAPSHOT_REPLAY_SCHEMA = "nikami-fnv-character-studio-snapshot-replay-v1"
+STUDIO_SNAPSHOT_LIVE_APPLY_SCHEMA = "nikami-fnv-character-studio-snapshot-live-apply-v1"
 LIVE_AUTHORING_SCHEMA = "nikami-fnv-live-authoring-v1"
 LIVE_RUNTIME_SCHEMA = "nikami-fnv-live-runtime-command-v1"
 LIVE_RUNTIME_STATUS_SCHEMA = "nikami-fnv-live-runtime-status-v1"
@@ -263,14 +264,31 @@ def recent_matching_lines(text: str, patterns: tuple[str, ...], limit: int = 20)
     return matched[-limit:]
 
 
-def find_runtime_openmw_log(root: Path, runtime_stdout_path: Path | None) -> Path | None:
+def safe_runtime_tag(text: str) -> str:
+    value = first_text(text)
+    if not value:
+        return ""
+    safe = re.sub(r"[^A-Za-z0-9_.-]", "_", value)
+    return safe.strip()
+
+
+def find_runtime_openmw_log(root: Path, runtime_stdout_path: Path | None, runtime_command: str = "") -> Path | None:
     stdout_text = read_tail_text(runtime_stdout_path, 300_000)
     candidates: list[Path] = []
+    for match in re.finditer(r"ConfigDir:\s+([^\r\n]+)", stdout_text, re.IGNORECASE):
+        candidates.append(Path(match.group(1).strip()) / "openmw.log")
     for match in re.finditer(r"OpenMW log:?\s+([^\r\n]+openmw\.log)", stdout_text, re.IGNORECASE):
         candidates.append(Path(match.group(1).strip()))
+    runtime_tag = ""
+    command_match = re.search(r"(?:^|\s)-RuntimeTag\s+(\"[^\"]+\"|'[^']+'|[^\s]+)", first_text(runtime_command))
+    if command_match:
+        runtime_tag = command_match.group(1).strip("\"'")
+    safe_tag = safe_runtime_tag(runtime_tag)
+    if safe_tag:
+        candidates.append(root / "configs" / f"fnv-flat-clean-{safe_tag}" / "openmw.log")
     fallback = root / "configs" / "fnv-flat-clean" / "openmw.log"
     candidates.append(fallback)
-    for candidate in reversed(candidates):
+    for candidate in candidates:
         try:
             resolved = candidate.resolve()
         except OSError:
@@ -350,7 +368,7 @@ def runtime_audit(
 ) -> dict[str, Any]:
     status = runtime_status(run_dir, root, live_authoring_path, live_runtime_path)
     stdout_path = Path(first_text(status.get("runtimeStdout"))) if first_text(status.get("runtimeStdout")) else None
-    openmw_log = find_runtime_openmw_log(root, stdout_path)
+    openmw_log = find_runtime_openmw_log(root, stdout_path, first_text(status.get("runtimeCommand")))
     openmw_text = read_tail_text(openmw_log)
     live_runtime_doc: dict[str, Any] = {}
     if live_runtime_path is not None and live_runtime_path.is_file():
@@ -1241,6 +1259,15 @@ class StudioSessionStore:
             raise ValueError("studio snapshot replay path escaped generated proof root")
         return path
 
+    def _snapshot_live_apply_path(self, session_id: str, snapshot_id: str) -> Path:
+        if not re.fullmatch(r"snapshot_[0-9]{8}_[0-9]{6}_[0-9]{4}", snapshot_id):
+            raise ValueError("invalid studio snapshot id")
+        path = (self._snapshot_dir(session_id) / "live-apply" / f"{snapshot_id}-live-apply.json").resolve()
+        snapshot_root = self._snapshot_dir(session_id).resolve()
+        if snapshot_root not in path.parents:
+            raise ValueError("studio snapshot live-apply path escaped generated proof root")
+        return path
+
     def write_snapshot_replay(
         self,
         session_id: str,
@@ -1253,6 +1280,39 @@ class StudioSessionStore:
         replay = snapshot_replay_artifact(snapshot, session_id, str(path), command, request)
         write_generated_json(path, replay)
         return replay
+
+    def write_snapshot_live_apply(
+        self,
+        session_id: str,
+        snapshot: dict[str, Any],
+        live_authoring_result: dict[str, Any],
+        live_runtime_result: dict[str, Any],
+        runtime_status_doc: dict[str, Any],
+        runtime_audit_doc: dict[str, Any],
+    ) -> dict[str, Any]:
+        snapshot_id = first_text(snapshot.get("id"))
+        path = self._snapshot_live_apply_path(session_id, snapshot_id)
+        artifact = snapshot_live_apply_artifact(
+            snapshot,
+            session_id,
+            str(path),
+            live_authoring_result,
+            live_runtime_result,
+            runtime_status_doc,
+            runtime_audit_doc,
+        )
+        write_generated_json(path, artifact)
+        with self.lock:
+            loaded = self.snapshot(session_id, snapshot_id) or snapshot
+            loaded["liveApplyArtifactPath"] = str(path)
+            loaded["liveApplyArtifactState"] = artifact.get("state", "")
+            loaded["lastLiveApply"] = {
+                "createdAt": artifact.get("createdAt", ""),
+                "classification": artifact.get("runtimeAudit", {}).get("classification", ""),
+                "firstFailingGate": artifact.get("runtimeAudit", {}).get("firstFailingGate", ""),
+            }
+            write_generated_json(self._snapshot_path(session_id, snapshot_id), loaded)
+        return artifact
 
     def create_snapshot(
         self,
@@ -1817,6 +1877,12 @@ def snapshot_summary(snapshot: dict[str, Any]) -> dict[str, Any]:
             "path": first_text(snapshot.get("replayArtifactPath")),
             "state": first_text(snapshot.get("replayArtifactState"), "pending-structured-command"),
         },
+        "liveApplyArtifact": {
+            "schema": STUDIO_SNAPSHOT_LIVE_APPLY_SCHEMA,
+            "path": first_text(snapshot.get("liveApplyArtifactPath")),
+            "state": first_text(snapshot.get("liveApplyArtifactState"), "pending-live-apply"),
+        },
+        "lastLiveApply": metadata_value(snapshot.get("lastLiveApply") if isinstance(snapshot.get("lastLiveApply"), dict) else {}),
         "policy": {
             "generatedMetadataOnly": True,
             "noRetailPayloadBytes": True,
@@ -1891,6 +1957,52 @@ def snapshot_replay_artifact(
             "noRawSavedJobCommand": True,
             "noRawSavedJobStdoutStderr": True,
             "replayUsesStructuredJobPathOnly": True,
+        },
+    }
+
+
+def snapshot_live_apply_artifact(
+    snapshot: dict[str, Any],
+    session_id: str,
+    artifact_path: str,
+    live_authoring_result: dict[str, Any],
+    live_runtime_result: dict[str, Any],
+    runtime_status_doc: dict[str, Any],
+    runtime_audit_doc: dict[str, Any],
+) -> dict[str, Any]:
+    studio_payload = snapshot_to_studio_payload(snapshot)
+    live_runtime_payload = snapshot_to_live_runtime_payload(snapshot, session_id)
+    return {
+        "schema": STUDIO_SNAPSHOT_LIVE_APPLY_SCHEMA,
+        "schemaMarkers": [
+            "snapshot-live-apply-v1",
+            "authoring-saveback-live-apply-v1",
+            "live-runtime-command-saveback-v1",
+            "runtime-audit-after-live-apply-v1",
+            "generated-metadata-only-v1",
+            "no-retail-payload-v1",
+        ],
+        "id": first_text(snapshot.get("id")),
+        "sessionId": session_id,
+        "entryId": first_text(snapshot.get("entryId"), studio_payload.get("entryId")),
+        "createdAt": utc_now(),
+        "artifactPath": artifact_path,
+        "state": "live-command-written",
+        "studioPayload": metadata_value(studio_payload),
+        "liveAuthoringControls": metadata_value(snapshot.get("liveControls") if isinstance(snapshot.get("liveControls"), dict) else {}),
+        "liveRuntimePayload": metadata_value(live_runtime_payload),
+        "liveAuthoringResult": metadata_value(live_authoring_result),
+        "liveRuntimeResult": metadata_value(live_runtime_result),
+        "runtimeStatus": metadata_value(runtime_status_doc),
+        "runtimeAudit": metadata_value(runtime_audit_doc),
+        "policy": {
+            "generatedMetadataOnly": True,
+            "generatedProofOutputsOnly": True,
+            "noRetailPayloadBytes": True,
+            "noRuntimeRelaunch": True,
+            "writesLiveAuthoringFile": True,
+            "writesLiveRuntimeCommandFile": True,
+            "requiresRuntimeAuditForProof": True,
         },
     }
 
@@ -2479,6 +2591,85 @@ class LiveHandler(SimpleHTTPRequestHandler):
                         },
                     )  # type: ignore[attr-defined]
                     self.send_json(202, job)
+                    return
+                if len(parts) == 7 and parts[-3] == "snapshots" and parts[-1] == "apply-live":
+                    session_id = unquote(parts[-4])
+                    snapshot_id = unquote(parts[-2])
+                    snapshot = self.server.studio_store.snapshot(session_id, snapshot_id)  # type: ignore[attr-defined]
+                    if snapshot is None:
+                        raise ValueError("unknown studio snapshot")
+                    live_controls = snapshot.get("liveControls") if isinstance(snapshot.get("liveControls"), dict) else {}
+                    if live_controls:
+                        live_authoring_result = self.server.live_authoring_store.update(  # type: ignore[attr-defined]
+                            {"sessionId": session_id, "controls": live_controls}
+                        )
+                    else:
+                        live_authoring_result = self.server.live_authoring_store.load()  # type: ignore[attr-defined]
+                    live_runtime_payload = snapshot_to_live_runtime_payload(snapshot, session_id)
+                    if live_runtime_payload.get("actorTarget"):
+                        live_runtime_result = self.server.live_runtime_store.update(live_runtime_payload)  # type: ignore[attr-defined]
+                    else:
+                        live_runtime_result = self.server.live_runtime_store.load()  # type: ignore[attr-defined]
+                    runtime_status_doc = runtime_status(
+                        self.server.run_dir,  # type: ignore[attr-defined]
+                        self.server.root_dir,  # type: ignore[attr-defined]
+                        self.server.live_authoring_store.path,  # type: ignore[attr-defined]
+                        self.server.live_runtime_store.path,  # type: ignore[attr-defined]
+                    )
+                    runtime_audit_doc = runtime_audit(
+                        self.server.run_dir,  # type: ignore[attr-defined]
+                        self.server.root_dir,  # type: ignore[attr-defined]
+                        self.server.live_authoring_store.path,  # type: ignore[attr-defined]
+                        self.server.live_runtime_store.path,  # type: ignore[attr-defined]
+                    )
+                    live_apply_artifact = self.server.studio_store.write_snapshot_live_apply(  # type: ignore[attr-defined]
+                        session_id,
+                        snapshot,
+                        live_authoring_result,
+                        live_runtime_result,
+                        runtime_status_doc,
+                        runtime_audit_doc,
+                    )
+                    self.server.studio_store.append_event(
+                        session_id,
+                        "snapshot.apply-live",
+                        {
+                            "snapshotId": snapshot_id,
+                            "entryId": snapshot.get("entryId", ""),
+                            "actorTarget": live_runtime_result.get("actorTarget", ""),
+                            "selectors": live_runtime_result.get("selectors", {}),
+                            "classification": runtime_audit_doc.get("classification", ""),
+                            "firstFailingGate": runtime_audit_doc.get("firstFailingGate", ""),
+                            "liveApplyArtifactPath": live_apply_artifact.get("artifactPath", ""),
+                            "schema": STUDIO_SNAPSHOT_LIVE_APPLY_SCHEMA,
+                        },
+                    )  # type: ignore[attr-defined]
+                    self.send_json(
+                        200,
+                        {
+                            "schema": STUDIO_SNAPSHOT_LIVE_APPLY_SCHEMA,
+                            "schemaMarkers": [
+                                "snapshot-live-apply-v1",
+                                "authoring-saveback-live-apply-v1",
+                                "live-runtime-command-saveback-v1",
+                                "runtime-audit-after-live-apply-v1",
+                                "generated-metadata-only-v1",
+                                "no-retail-payload-v1",
+                            ],
+                            "snapshotId": snapshot_id,
+                            "entryId": snapshot.get("entryId", ""),
+                            "liveAuthoring": live_authoring_result,
+                            "liveRuntime": live_runtime_result,
+                            "runtimeStatus": runtime_status_doc,
+                            "runtimeAudit": runtime_audit_doc,
+                            "liveApplyArtifact": live_apply_artifact,
+                            "policy": {
+                                "generatedProofOutputsOnly": True,
+                                "noRetailPayloadBytes": True,
+                                "noRuntimeRelaunch": True,
+                            },
+                        },
+                    )
                     return
                 if len(parts) == 5 and parts[-1] == "jobs":
                     session_id = unquote(parts[-2])
