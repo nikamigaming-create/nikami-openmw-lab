@@ -306,6 +306,9 @@ if ($null -eq $easyPeteQueue -or $easyPeteQueue.entryId -ne $easyPete.id -or $ea
 if ($easyPeteQueue.defaultJobType -ne "critical-face-skin-headgear" -or !@($easyPeteQueue.reviewFocus).Contains("headgear")) {
     throw "Studio catalog critical Easy Pete queue row lost face/skin/headgear review focus."
 }
+if (!@($easyPeteQueue.criticalPhases).Contains("face") -or !@($easyPeteQueue.criticalPhases).Contains("talk") -or !@($easyPeteQueue.criticalPhases).Contains("headgear")) {
+    throw "Studio catalog critical Easy Pete queue row lost full critical phase coverage."
+}
 if ($null -eq $firstCreatureQueue -or $firstCreatureQueue.actorKind -ne "creature" -or $firstCreatureQueue.queueStatus -ne "queued") {
     throw "Studio catalog critical queue did not match a generated creature row."
 }

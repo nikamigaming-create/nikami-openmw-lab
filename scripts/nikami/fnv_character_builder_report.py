@@ -51,6 +51,21 @@ NEUTRAL_PREVIEW_PANES = (
     },
 )
 
+NEUTRAL_PREVIEW_PHASE_PANES = {
+    "body": {"full-body"},
+    "equipment": {"full-body"},
+    "face": {"face-hat"},
+    "head": {"face-hat"},
+    "hair": {"face-hat"},
+    "headgear": {"face-hat"},
+    "talk": {"face-hat"},
+    "dialogue": {"face-hat"},
+    "weapon": {"right-hand-weapon"},
+    "weapons": {"right-hand-weapon"},
+    "full": {"full-body", "face-hat", "right-hand-weapon"},
+    "": {"full-body", "face-hat", "right-hand-weapon"},
+}
+
 
 def parse_vec3(text: str) -> list[float]:
     values: list[float] = []
@@ -747,7 +762,11 @@ def foreground_components(mask: list[bool], width: int, height: int, min_pixels:
     return components
 
 
-def analyze_neutral_preview_image(path: Path, weapon_present: bool = False) -> dict[str, Any]:
+def neutral_preview_active_panes(phase: str) -> set[str]:
+    return set(NEUTRAL_PREVIEW_PHASE_PANES.get(phase.strip().lower(), NEUTRAL_PREVIEW_PHASE_PANES["full"]))
+
+
+def analyze_neutral_preview_image(path: Path, weapon_present: bool = False, phase: str = "") -> dict[str, Any]:
     from collections import Counter
 
     from PIL import Image
@@ -783,6 +802,7 @@ def analyze_neutral_preview_image(path: Path, weapon_present: bool = False) -> d
     pane_results: list[dict[str, Any]] = []
     findings: list[str] = []
     pane_boxes = [pane_box(width, height, pane) for pane in NEUTRAL_PREVIEW_PANES]
+    active_panes = neutral_preview_active_panes(phase)
     edge_tolerance = 2
 
     for pane, box in zip(NEUTRAL_PREVIEW_PANES, pane_boxes):
@@ -812,21 +832,23 @@ def analyze_neutral_preview_image(path: Path, weapon_present: bool = False) -> d
                 touch_edges.append("bottom")
 
         pane_findings: list[str] = []
-        if foreground_fraction < pane["minForegroundFraction"]:
-            pane_findings.append(
-                f"foreground fraction {foreground_fraction:.4f} below {pane['minForegroundFraction']:.4f}"
-            )
-        if foreground_fraction > pane["maxForegroundFraction"]:
-            pane_findings.append(
-                f"foreground fraction {foreground_fraction:.4f} above {pane['maxForegroundFraction']:.4f}"
-            )
         allowed_edges = set(pane["allowedTouchEdges"])
         if pane["name"] == "right-hand-weapon" and weapon_present:
             # A long gun or other held prop may intentionally extend upward or rightward in the isolated weapon pane.
             allowed_edges.update({"right", "top"})
-        disallowed_edges = [edge for edge in touch_edges if edge not in allowed_edges]
-        if disallowed_edges:
-            pane_findings.append(f"foreground touches disallowed pane edge(s): {','.join(disallowed_edges)}")
+        active_for_phase = pane["name"] in active_panes
+        if active_for_phase:
+            if foreground_fraction < pane["minForegroundFraction"]:
+                pane_findings.append(
+                    f"foreground fraction {foreground_fraction:.4f} below {pane['minForegroundFraction']:.4f}"
+                )
+            if foreground_fraction > pane["maxForegroundFraction"]:
+                pane_findings.append(
+                    f"foreground fraction {foreground_fraction:.4f} above {pane['maxForegroundFraction']:.4f}"
+                )
+            disallowed_edges = [edge for edge in touch_edges if edge not in allowed_edges]
+            if disallowed_edges:
+                pane_findings.append(f"foreground touches disallowed pane edge(s): {','.join(disallowed_edges)}")
         if pane_findings:
             findings.extend([f"{pane['name']}: {finding}" for finding in pane_findings])
 
@@ -842,6 +864,8 @@ def analyze_neutral_preview_image(path: Path, weapon_present: bool = False) -> d
                 "touchEdges": touch_edges,
                 "allowedTouchEdges": sorted(allowed_edges),
                 "weaponPresent": weapon_present if pane["name"] == "right-hand-weapon" else None,
+                "activeForPhase": active_for_phase,
+                "phase": phase,
                 "findings": pane_findings,
                 "status": "PASS" if not pane_findings else "FAIL",
             }
@@ -862,6 +886,8 @@ def analyze_neutral_preview_image(path: Path, weapon_present: bool = False) -> d
         "analysisSize": [width, height],
         "backgroundRgb": background,
         "backgroundDominantFraction": background_fraction,
+        "phase": phase,
+        "activePanes": sorted(active_panes),
         "foregroundComponentCount": len(components),
         "outsideComponentCount": len(outside_components),
         "outsideComponents": outside_components[:12],
@@ -872,7 +898,7 @@ def analyze_neutral_preview_image(path: Path, weapon_present: bool = False) -> d
 
 
 def analyze_neutral_preview_composition(
-    proof_dir: Path, lines: list[str], actor: str, weapon_present: bool = False
+    proof_dir: Path, lines: list[str], actor: str, weapon_present: bool = False, phase: str = ""
 ) -> list[dict[str, Any]]:
     if not has_neutral_preview_runtime(lines, actor):
         return []
@@ -880,7 +906,7 @@ def analyze_neutral_preview_composition(
     if not screenshots:
         return []
     try:
-        return [analyze_neutral_preview_image(screenshots[-1], weapon_present=weapon_present)]
+        return [analyze_neutral_preview_image(screenshots[-1], weapon_present=weapon_present, phase=phase)]
     except Exception as exc:
         return [
             {
@@ -1416,7 +1442,7 @@ def main() -> int:
     runtime_part_timelines = build_runtime_part_timelines(audits)
     face_occlusion_findings = find_face_occlusion_findings(bounds, audits)
     neutral_preview_composition = analyze_neutral_preview_composition(
-        proof_dir, lines, args.actor, weapon_present=weapon_present
+        proof_dir, lines, args.actor, weapon_present=weapon_present, phase=args.phase.lower()
     )
     actor_kind = args.actor_kind
     if actor_kind == "auto":
