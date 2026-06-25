@@ -42,6 +42,69 @@ GAMEPLAY_RECORD_DOMAINS = {
     "AVIF": "actor-value",
 }
 
+CRITICAL_CHARACTER_PRESETS = [
+    {
+        "id": "easy-pete",
+        "label": "Easy Pete",
+        "targetHints": ["EasyPeteRef", "GSEasyPete", "Easy Pete"],
+        "defaultPhase": "face",
+        "defaultPartFocus": "face-organs",
+        "defaultJobType": "critical-face-skin-headgear",
+        "reviewFocus": ["head-skin", "face", "eyes", "mouth", "teeth", "hair-beard", "headgear", "weapon"],
+        "reason": "Primary old-human face, skin, beard, hair, headgear, talk, and weapon alignment fixture.",
+    },
+    {
+        "id": "sunny-smiles",
+        "label": "Sunny Smiles",
+        "targetHints": ["SunnyRef", "SunnySmiles", "Sunny Smiles"],
+        "defaultPhase": "face",
+        "defaultPartFocus": "face-organs",
+        "defaultJobType": "critical-face-hair-skin",
+        "reviewFocus": ["head-skin", "face", "eyes", "mouth", "hair-beard", "equipment-body", "weapon"],
+        "reason": "Primary female-human face, hair, skin tone, outfit, weapon, and talk comparison fixture.",
+    },
+    {
+        "id": "doc-mitchell",
+        "label": "Doc Mitchell",
+        "targetHints": ["DocMitchellREF", "DocMitchell", "Doc Mitchell"],
+        "defaultPhase": "face",
+        "defaultPartFocus": "face-organs",
+        "defaultJobType": "critical-face-talk",
+        "reviewFocus": ["head-skin", "face", "eyes", "mouth", "teeth", "hair-beard", "equipment-body"],
+        "reason": "Opening-scene human face, talk, eyes, teeth, skin, and indoor lighting fixture.",
+    },
+    {
+        "id": "trudy",
+        "label": "Trudy",
+        "targetHints": ["TrudyRef", "Trudy"],
+        "defaultPhase": "face",
+        "defaultPartFocus": "face-organs",
+        "defaultJobType": "critical-face-hair-skin",
+        "reviewFocus": ["head-skin", "face", "eyes", "mouth", "hair-beard", "equipment-body"],
+        "reason": "Female Goodsprings NPC fixture for face, hair, outfit, and no-weapon hand composition.",
+    },
+    {
+        "id": "victor-robot",
+        "label": "Victor Robot",
+        "targetHints": ["GSVictorRef", "VictorREF", "Victor", "RobotVictor"],
+        "defaultPhase": "creature-full",
+        "defaultPartFocus": "",
+        "defaultJobType": "critical-creature-robot",
+        "reviewFocus": ["animation", "equipment-body"],
+        "reason": "Robot/creature path fixture for non-human body, animation, and placed-reference switching.",
+    },
+    {
+        "id": "first-creature",
+        "label": "First Creature",
+        "targetHints": ["Gecko", "Bloatfly", "Radscorpion", "creature"],
+        "defaultPhase": "creature-full",
+        "defaultPartFocus": "",
+        "defaultJobType": "critical-creature-body-animation",
+        "reviewFocus": ["animation", "equipment-body"],
+        "reason": "Non-human creature sanity fixture selected from harvested actor rows.",
+    },
+]
+
 HTML_ENTRY_FIELDS = (
     "id",
     "source",
@@ -185,6 +248,14 @@ def search_text(*values: Any) -> str:
                 if compact and compact != text:
                     flattened.append(compact)
     return " ".join(flattened).lower()
+
+
+def normalized_contains(haystack: str, needle: str) -> bool:
+    hay = haystack.lower()
+    raw = needle.lower().strip()
+    compact_hay = re.sub(r"[^a-z0-9]+", "", hay)
+    compact_needle = re.sub(r"[^a-z0-9]+", "", raw)
+    return bool(raw and raw in hay) or bool(compact_needle and compact_needle in compact_hay)
 
 
 def normalize_classification(value: str) -> str:
@@ -406,6 +477,102 @@ def gameplay_entry(row: dict[str, Any], index: int) -> dict[str, Any]:
     return entry
 
 
+def critical_actor_score(entry: dict[str, Any], preset: dict[str, Any]) -> tuple[int, int, str]:
+    fields = [
+        as_text(entry.get("label")),
+        as_text(entry.get("target")),
+        as_text(entry.get("runtimeTarget")),
+        as_text(entry.get("placedTarget")),
+        as_text(entry.get("baseActorTarget")),
+        as_text(entry.get("assemblyTarget")),
+        as_text(entry.get("editorId")),
+        as_text(entry.get("actorEditorId")),
+        as_text(entry.get("placedRefEditorId")),
+        as_text(entry.get("formId")),
+    ]
+    haystack = search_text(*fields, entry.get("componentEvidence"), entry.get("searchText"))
+    hints = [as_text(hint) for hint in as_list(preset.get("targetHints")) if as_text(hint)]
+    if not any(normalized_contains(haystack, hint) for hint in hints):
+        return (999, 999, as_text(entry.get("id")))
+    targetish = {field.lower() for field in fields if field}
+    exact = any(hint.lower() in targetish for hint in hints)
+    placement = entry.get("placement") if isinstance(entry.get("placement"), dict) else {}
+    placed_ready = bool(entry.get("placedTarget") and placement.get("runtimeBootstrapReady"))
+    placed = bool(entry.get("placedTarget"))
+    actor_kind = as_text(entry.get("kind"))
+    preferred_kind = "creature" if as_text(preset.get("defaultPhase")).startswith("creature") else "npc"
+    return (
+        0 if exact and placed_ready else 1 if exact and placed else 2 if placed_ready else 3 if placed else 4,
+        0 if actor_kind == preferred_kind else 1,
+        as_text(entry.get("id")),
+    )
+
+
+def build_critical_queue(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    actor_entries = [entry for entry in entries if entry.get("domain") == "actor" and entry.get("kind") in {"npc", "creature"}]
+    queue: list[dict[str, Any]] = []
+    for index, preset in enumerate(CRITICAL_CHARACTER_PRESETS, start=1):
+        candidates = [
+            entry for entry in actor_entries if critical_actor_score(entry, preset)[0] < 999
+        ]
+        candidates.sort(key=lambda entry: critical_actor_score(entry, preset))
+        selected = candidates[0] if candidates else None
+        if selected:
+            placement = selected.get("placement") if isinstance(selected.get("placement"), dict) else {}
+            queue.append(
+                {
+                    "id": preset["id"],
+                    "label": preset["label"],
+                    "priority": index,
+                    "entryId": selected.get("id", ""),
+                    "entryLabel": selected.get("label", ""),
+                    "actorKind": selected.get("kind", ""),
+                    "runtimeTarget": selected.get("runtimeTarget") or selected.get("target") or "",
+                    "placedTarget": selected.get("placedTarget", ""),
+                    "baseActorTarget": selected.get("baseActorTarget", ""),
+                    "classification": selected.get("classification", "loaded-pending-runtime"),
+                    "firstFailingGate": selected.get("firstFailingGate", ""),
+                    "queueStatus": "queued",
+                    "runtimeBootstrapReady": bool(placement.get("runtimeBootstrapReady")),
+                    "defaultPhase": preset.get("defaultPhase", ""),
+                    "defaultPartFocus": preset.get("defaultPartFocus", ""),
+                    "defaultJobType": preset.get("defaultJobType", ""),
+                    "defaultAngles": "front,front-left,front-right",
+                    "reviewFocus": as_list(preset.get("reviewFocus")),
+                    "targetHints": as_list(preset.get("targetHints")),
+                    "reason": preset.get("reason", ""),
+                    "proof": "Matched to a generated actor catalog row; run the linked three-camera job and save component review rows before promoting C++.",
+                }
+            )
+        else:
+            queue.append(
+                {
+                    "id": preset["id"],
+                    "label": preset["label"],
+                    "priority": index,
+                    "entryId": "",
+                    "entryLabel": "",
+                    "actorKind": "unknown",
+                    "runtimeTarget": "",
+                    "placedTarget": "",
+                    "baseActorTarget": "",
+                    "classification": "known-blocked",
+                    "firstFailingGate": "critical-queue-target-resolution",
+                    "queueStatus": "missing-generated-catalog-row",
+                    "runtimeBootstrapReady": False,
+                    "defaultPhase": preset.get("defaultPhase", ""),
+                    "defaultPartFocus": preset.get("defaultPartFocus", ""),
+                    "defaultJobType": preset.get("defaultJobType", ""),
+                    "defaultAngles": "front,front-left,front-right",
+                    "reviewFocus": as_list(preset.get("reviewFocus")),
+                    "targetHints": as_list(preset.get("targetHints")),
+                    "reason": preset.get("reason", ""),
+                    "proof": "No generated actor row matched the configured target hints; this is an explicit queue gate, not a silent skip.",
+                }
+            )
+    return queue
+
+
 def build_catalog(plan: dict[str, Any], gameplay_rows: list[dict[str, Any]], limit: int) -> dict[str, Any]:
     entries: list[dict[str, Any]] = []
     for row in as_list(plan.get("entries")):
@@ -420,6 +587,8 @@ def build_catalog(plan: dict[str, Any], gameplay_rows: list[dict[str, Any]], lim
     classifications = Counter(entry["classification"] for entry in entries)
     domains = Counter(entry["domain"] for entry in entries)
     kinds = Counter(entry["kind"] for entry in entries)
+    critical_queue = build_critical_queue(entries)
+    critical_statuses = Counter(row["queueStatus"] for row in critical_queue)
     missing_search = [entry for entry in entries if not entry["searchText"]]
     invalid = [entry for entry in entries if entry["classification"] not in ALLOWED_CLASSIFICATIONS]
     status = "PASS" if entries and not missing_search and not invalid else "FAIL"
@@ -432,6 +601,7 @@ def build_catalog(plan: dict[str, Any], gameplay_rows: list[dict[str, Any]], lim
             "three-camera-session-strip-v1",
             "component-selector-job-payload-v1",
             "component-review-rows-v1",
+            "critical-character-queue-v1",
             "compact-html-index-v1",
             "live-api-catalog-search-v1",
             "placed-runtime-target-map-v1",
@@ -451,11 +621,14 @@ def build_catalog(plan: dict[str, Any], gameplay_rows: list[dict[str, Any]], lim
             "classifications": dict(sorted(classifications.items())),
             "missingSearchText": len(missing_search),
             "invalidClassifications": len(invalid),
+            "criticalQueue": len(critical_queue),
+            "criticalQueueStatuses": dict(sorted(critical_statuses.items())),
         },
         "commands": {
             "buildCatalog": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/nikami/run-fnv-character-studio-catalog.ps1 -OpenStudio",
             "liveRuntimeNote": "Actor rows expose runtimeThreeCamera/runtimeFrontOnly commands; model-backed item rows expose runtime visual model spawn, while equip/activate/collision remain pending.",
         },
+        "criticalQueue": critical_queue,
         "entries": entries,
     }
 
@@ -484,6 +657,7 @@ def html_catalog(catalog: dict[str, Any]) -> dict[str, Any]:
         "counts": catalog.get("counts", {}),
         "commands": catalog.get("commands", {}),
         "htmlEntryMode": "compact-index-full-row-on-select",
+        "criticalQueue": catalog.get("criticalQueue", []),
         "entries": [compact_entry(entry) for entry in as_list(catalog.get("entries")) if isinstance(entry, dict)],
     }
 
@@ -551,6 +725,10 @@ button:disabled {{ opacity: .45; cursor: not-allowed; }}
 .stageOverlay {{ position: absolute; left: 10px; bottom: 10px; display: grid; gap: 4px; max-width: min(460px, calc(100% - 20px)); }}
 .stateRow {{ display: flex; flex-wrap: wrap; gap: 7px; align-items: center; }}
 .focusPreset {{ border-color: #4d5a6a; }}
+.criticalQueue {{ display: grid; gap: 6px; max-height: 260px; overflow: auto; }}
+.queueItem {{ display: grid; gap: 5px; background: #101216; border: 1px solid #2b3038; border-radius: 5px; padding: 7px; }}
+.queueHead {{ display: flex; justify-content: space-between; gap: 6px; align-items: center; }}
+.queueMeta {{ display: flex; flex-wrap: wrap; gap: 5px; color: var(--muted); }}
 .reviewControl {{ display: grid; grid-template-columns: minmax(150px, 1fr) auto; gap: 7px; }}
 .reviewRows {{ display: grid; gap: 5px; max-height: 260px; overflow: auto; }}
 .reviewRow {{ display: grid; grid-template-columns: minmax(92px, 1fr) 86px 92px; gap: 6px; align-items: center; background: #101216; border: 1px solid #2b3038; border-radius: 5px; padding: 6px; }}
@@ -607,6 +785,8 @@ button:disabled {{ opacity: .45; cursor: not-allowed; }}
         <button id="runFront" type="button">Run Front</button>
       </div>
       <div id="liveRuntimeState" class="liveFile">live runtime target pending</div>
+      <h3>Critical Queue</h3>
+      <div id="criticalQueue" class="criticalQueue"></div>
       <h3>Easy Pete Debug</h3>
       <div class="actions">
         <button class="focusPreset" type="button" data-preset="easy-pete-face">Face</button>
@@ -686,6 +866,7 @@ button:disabled {{ opacity: .45; cursor: not-allowed; }}
 </main>
 <script>
 const CATALOG = {data};
+const CRITICAL_QUEUE = CATALOG.criticalQueue || [];
 const PARTS = ["body-skin", "head-skin", "face-organs", "hair-beard", "equipment-body", "weapon", "headgear"];
 const PART_LABELS = {{
   "body-skin": "Body / Skin",
@@ -1293,6 +1474,11 @@ function renderControls() {{
     ["weapon", "weapon job"],
     ["animation", "animation job"],
     ["dialogue", "dialogue job"],
+    ["critical-face-skin-headgear", "critical face/skin/hat"],
+    ["critical-face-hair-skin", "critical face/hair/skin"],
+    ["critical-face-talk", "critical face/talk"],
+    ["critical-creature-robot", "critical robot"],
+    ["critical-creature-body-animation", "critical creature"],
     ["easy-pete-face", "Easy Pete face"],
     ["easy-pete-hat", "Easy Pete hat"],
     ["easy-pete-skin", "Easy Pete skin"]
@@ -1409,6 +1595,69 @@ function setSelectValue(id, value) {{
   const node = document.getElementById(id);
   if (node) node.value = value;
 }}
+function criticalQueueItem(id) {{
+  return CRITICAL_QUEUE.find(item => item.id === id) || null;
+}}
+function applyCriticalDefaults(item) {{
+  if (!item) return;
+  setSelectValue("phaseSelect", item.defaultPhase || "");
+  setSelectValue("partFocusSelect", item.defaultPartFocus || "");
+  setSelectValue("jobTypeSelect", item.defaultJobType || "appearance");
+  setSelectValue("angleSelect", item.defaultAngles || "front,front-left,front-right");
+  setSelectValue("animationSelect", item.defaultPhase && String(item.defaultPhase).startsWith("creature") ? "" : "idle");
+  setSelectValue("dialogueSelect", item.id === "easy-pete" ? "mouth-open-pose" : "");
+}}
+async function selectCriticalItem(id) {{
+  const item = criticalQueueItem(id);
+  if (!item || !item.entryId) return null;
+  state.selectedId = item.entryId;
+  applyCriticalDefaults(item);
+  await recordEvent("critical-queue.select", {{
+    queueId: item.id,
+    entryId: item.entryId,
+    runtimeTarget: item.runtimeTarget || "",
+    placedTarget: item.placedTarget || "",
+    reviewFocus: item.reviewFocus || []
+  }});
+  render();
+  try {{
+    await fetchEntryDetails(item.entryId);
+  }} catch (error) {{
+    addLocalEvent("critical-queue.detail.failed", {{ queueId: item.id, entryId: item.entryId, message: error.message || String(error) }});
+  }}
+  return selectedEntry();
+}}
+function renderCriticalQueue() {{
+  const node = document.getElementById("criticalQueue");
+  if (!node) return;
+  node.innerHTML = CRITICAL_QUEUE.length
+    ? CRITICAL_QUEUE.map(item => {{
+      const ready = item.entryId ? "" : "disabled";
+      const selected = state.selectedId && state.selectedId === item.entryId ? " selected" : "";
+      const focus = (item.reviewFocus || []).slice(0, 5).join(", ");
+      return `<div class="queueItem${{selected}}">
+        <div class="queueHead"><b>${{esc(item.priority)}}. ${{esc(item.label)}}</b><span class="pill ${{esc(item.classification)}}">${{esc(item.queueStatus || item.classification)}}</span></div>
+        <div class="queueMeta"><span>entry <code>${{esc(item.entryLabel || item.entryId || "missing")}}</code></span><span>runtime <code>${{esc(item.runtimeTarget || "missing")}}</code></span><span>${{item.runtimeBootstrapReady ? "placed bootstrap" : "base/neutral fallback"}}</span></div>
+        <div class="muted">${{esc(item.reason || "")}}</div>
+        <div class="muted">focus: ${{esc(focus || "all parts")}}</div>
+        <div class="actions">
+          <button type="button" data-critical-select="${{esc(item.id)}}" ${{ready}}>Select</button>
+          <button type="button" data-critical-live="${{esc(item.id)}}" ${{ready}}>Send Live</button>
+          <button type="button" data-critical-run="${{esc(item.id)}}" ${{ready}}>Run 3 Camera</button>
+        </div>
+      </div>`;
+    }}).join("")
+    : `<div class="muted">No critical queue generated</div>`;
+  node.querySelectorAll("[data-critical-select]").forEach(button => button.onclick = () => selectCriticalItem(button.dataset.criticalSelect || ""));
+  node.querySelectorAll("[data-critical-live]").forEach(button => button.onclick = async () => {{
+    await selectCriticalItem(button.dataset.criticalLive || "");
+    await sendSelectedLiveRuntime();
+  }});
+  node.querySelectorAll("[data-critical-run]").forEach(button => button.onclick = async () => {{
+    await selectCriticalItem(button.dataset.criticalRun || "");
+    await launchJob("runtimeThreeCamera");
+  }});
+}}
 function applyPreset(name) {{
   const presets = {{
     "easy-pete-face": {{ query: "easy pete face", phase: "face", part: "face-organs", job: "easy-pete-face", animation: "idle", dialogue: "mouth-open-pose" }},
@@ -1474,6 +1723,7 @@ function renderWorkbench() {{
   renderLiveRuntimeState();
   renderRuntimeStatus();
   renderRuntimeAudit();
+  renderCriticalQueue();
   renderEvents();
 }}
 function render() {{
@@ -1485,6 +1735,7 @@ function render() {{
     `showing ${{filtered.length}} / ${{shownTotal}}`,
     `actors ${{CATALOG.counts.domains.actor || 0}}`,
     `gameplay ${{CATALOG.counts.domains.gameplay || 0}}`,
+    `critical ${{(CATALOG.criticalQueue || []).length}}`,
     state.searchMode,
     `neutral stage pending`
   ].map(x => `<span class="pill">${{esc(x)}}</span>`).join("");

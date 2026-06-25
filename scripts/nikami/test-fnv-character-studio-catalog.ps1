@@ -78,6 +78,54 @@ $plan = [pscustomobject][ordered]@{
             )
         },
         [pscustomobject][ordered]@{
+            id = "placed-reference:000003"
+            source = "placed-reference"
+            plugin = "Contract.esm"
+            actorKind = "npc"
+            recordType = "NPC_"
+            target = "EasyPeteRef"
+            runtimeTarget = "GSEasyPete"
+            placedTarget = "EasyPeteRef"
+            baseActorTarget = "GSEasyPete"
+            assemblyTarget = "GSEasyPete"
+            phases = @("body", "head", "face", "hair", "equipment", "weapon", "headgear", "talk")
+            classification = "loaded-pending-runtime"
+            firstFailingGate = "placed-actor-runtime-viewer-proof"
+            actorFormId = "0x00000013"
+            actorEditorId = "GSEasyPete"
+            placedRefFormId = "0x00000023"
+            placedRefEditorId = "EasyPeteRef"
+            placement = [pscustomobject][ordered]@{
+                runtimeBootstrapReady = $true
+                cell = "FormId:0x00000033"
+                position = [pscustomobject][ordered]@{ x = 4; y = 5; z = 6 }
+            }
+            componentCounts = [pscustomobject][ordered]@{
+                "actor-base-record" = 1
+                "npc-race" = 1
+                "hair" = 1
+                "equipment-armor" = 1
+            }
+            componentPhases = [pscustomobject][ordered]@{
+                "actor-base-record" = @("body")
+                "npc-race" = @("body", "head", "face")
+                "hair" = @("hair")
+                "equipment-armor" = @("equipment", "headgear")
+            }
+            componentEvidence = @(
+                [pscustomobject][ordered]@{
+                    component = "equipment-armor"
+                    phases = @("equipment", "headgear")
+                    sourceRecordType = "ARMO"
+                    sourceFormId = "0x00000024"
+                    assetPath = "meshes\characters\headgear\contract_hat.nif"
+                    assetStatus = "archive-entry-resolved"
+                    assetArchive = "Fallout - Meshes.bsa"
+                    proofAnchor = "npc-headgear-assembly"
+                }
+            )
+        },
+        [pscustomobject][ordered]@{
             id = "placed-reference:000002"
             source = "placed-reference"
             plugin = "Contract.esm"
@@ -206,6 +254,9 @@ if (!@($catalog.schemaMarkers).Contains("component-selector-job-payload-v1")) {
 if (!@($catalog.schemaMarkers).Contains("component-review-rows-v1")) {
     throw "Studio catalog missing component review rows marker."
 }
+if (!@($catalog.schemaMarkers).Contains("critical-character-queue-v1")) {
+    throw "Studio catalog missing critical character queue marker."
+}
 if (!@($catalog.schemaMarkers).Contains("compact-html-index-v1")) {
     throw "Studio catalog missing compact HTML index marker."
 }
@@ -218,19 +269,23 @@ if (!@($catalog.schemaMarkers).Contains("placed-runtime-target-map-v1")) {
 if (!@($catalog.schemaMarkers).Contains("placement-bootstrap-job-args-v1")) {
     throw "Studio catalog missing placement bootstrap args marker."
 }
-if ([int]$catalog.counts.total -ne 5) {
-    throw "Studio catalog expected 5 entries but got $($catalog.counts.total)."
+if ([int]$catalog.counts.total -ne 6) {
+    throw "Studio catalog expected 6 entries but got $($catalog.counts.total)."
 }
-if ([int]$catalog.counts.domains.actor -ne 2 -or [int]$catalog.counts.domains.gameplay -ne 3) {
+if ([int]$catalog.counts.domains.actor -ne 3 -or [int]$catalog.counts.domains.gameplay -ne 3) {
     throw "Studio catalog did not split actor/gameplay domains correctly."
 }
 if ([int]$catalog.counts.missingSearchText -ne 0 -or [int]$catalog.counts.invalidClassifications -ne 0) {
     throw "Studio catalog emitted invalid entries."
 }
+if ([int]$catalog.counts.criticalQueue -lt 6) {
+    throw "Studio catalog did not build the full critical character queue."
+}
 
 $entries = @($catalog.entries)
 $npc = $entries | Where-Object { $_.label -eq "ContractNpc" } | Select-Object -First 1
 $creature = $entries | Where-Object { $_.label -eq "ContractCreatureRef" } | Select-Object -First 1
+$easyPete = $entries | Where-Object { $_.label -eq "EasyPeteRef" } | Select-Object -First 1
 $weapon = $entries | Where-Object { $_.label -eq "ContractPistol" } | Select-Object -First 1
 $armor = $entries | Where-Object { $_.label -eq "ContractArmor" } | Select-Object -First 1
 if ($null -eq $npc -or $npc.commands.runtimeThreeCamera -notmatch "-Angles 'front,front-left,front-right'") {
@@ -238,6 +293,21 @@ if ($null -eq $npc -or $npc.commands.runtimeThreeCamera -notmatch "-Angles 'fron
 }
 if ($null -eq $creature -or $creature.commands.runtimeThreeCamera -notmatch "-CreatureDiagnostics") {
     throw "Studio catalog creature entry missing creature diagnostics command."
+}
+if ($null -eq $easyPete -or $easyPete.commands.runtimeThreeCamera -notmatch "-Targets 'GSEasyPete'") {
+    throw "Studio catalog EasyPeteRef fixture missing base-runtime three-camera command."
+}
+$criticalQueue = @($catalog.criticalQueue)
+$easyPeteQueue = $criticalQueue | Where-Object { $_.id -eq "easy-pete" } | Select-Object -First 1
+$firstCreatureQueue = $criticalQueue | Where-Object { $_.id -eq "first-creature" } | Select-Object -First 1
+if ($null -eq $easyPeteQueue -or $easyPeteQueue.entryId -ne $easyPete.id -or $easyPeteQueue.runtimeTarget -ne "GSEasyPete") {
+    throw "Studio catalog critical queue did not match Easy Pete to the generated placed actor row."
+}
+if ($easyPeteQueue.defaultJobType -ne "critical-face-skin-headgear" -or !@($easyPeteQueue.reviewFocus).Contains("headgear")) {
+    throw "Studio catalog critical Easy Pete queue row lost face/skin/headgear review focus."
+}
+if ($null -eq $firstCreatureQueue -or $firstCreatureQueue.actorKind -ne "creature" -or $firstCreatureQueue.queueStatus -ne "queued") {
+    throw "Studio catalog critical queue did not match a generated creature row."
 }
 if ($creature.runtimeTarget -ne "ContractCreature" -or $creature.placedTarget -ne "ContractCreatureRef" -or $creature.assemblyTarget -ne "ContractCreature") {
     throw "Studio catalog creature entry lost placed/runtime/base actor target roles."
@@ -290,6 +360,9 @@ if (!$html.Contains("cameraStrip") -or !$html.Contains("selectedParts") -or !$ht
 }
 if (!$html.Contains("componentReviews") -or !$html.Contains("componentReviewRows") -or !$html.Contains("Save Component Review Rows") -or !$html.Contains("/reviews")) {
     throw "Studio catalog HTML does not expose per-component review row controls."
+}
+if (!$html.Contains("Critical Queue") -or !$html.Contains("criticalQueue") -or !$html.Contains("data-critical-run") -or !$html.Contains("critical-face-skin-headgear")) {
+    throw "Studio catalog HTML does not expose critical character queue controls."
 }
 if (!$html.Contains("compact-index-full-row-on-select") -or !$html.Contains("/nikami/catalog/search") -or !$html.Contains("/nikami/catalog/entries/")) {
     throw "Studio catalog HTML does not use compact live catalog search/detail loading."
