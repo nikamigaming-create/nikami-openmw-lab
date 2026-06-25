@@ -2176,6 +2176,7 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
         ESM::RefId cellId;
         std::string resolvedInteriorCell;
         std::string requestedProofCell;
+        bool proofCellResolutionBlocked = false;
         if (const char* proofCell = std::getenv("OPENMW_FNV_BOOTSTRAP_CELL");
             proofCell != nullptr && *proofCell != '\0')
         {
@@ -2201,17 +2202,31 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
             }
         }
         if (cellId.empty())
-            cellId = mWorld->findExteriorPosition("Goodsprings", cellProbe);
+        {
+            if (!requestedProofCell.empty())
+                proofCellResolutionBlocked = true;
+            else
+                cellId = mWorld->findExteriorPosition("Goodsprings", cellProbe);
+        }
         else if (resolvedInteriorCell.empty()
             && MWBase::Environment::get().getWorldModel()->findCell(cellId, false) == nullptr)
         {
-            Log(Debug::Warning) << "FNV/ESM4 proof: requested bootstrap cell \"" << requestedProofCell
-                                << "\" resolved to missing cell " << cellId
-                                << "; falling back to Goodsprings";
-            cellProbe = position;
-            cellId = mWorld->findExteriorPosition("Goodsprings", cellProbe);
+            proofCellResolutionBlocked = !requestedProofCell.empty();
+            if (!proofCellResolutionBlocked)
+            {
+                cellProbe = position;
+                cellId = mWorld->findExteriorPosition("Goodsprings", cellProbe);
+            }
         }
-        if (!cellId.empty())
+        if (proofCellResolutionBlocked)
+        {
+            proofPlacementApplied = true;
+            Log(Debug::Warning) << "FNV/ESM4 proof marker_error: requested bootstrap cell \"" << requestedProofCell
+                                << "\" resolved to "
+                                << (cellId.empty() ? std::string("empty cell") : ("missing cell " + cellId.toDebugString()))
+                                << "; refusing fallback placement";
+        }
+        else if (!cellId.empty())
         {
             MWWorld::Ptr player = mWorld->getPlayerPtr();
             const bool alreadyInTargetCell = player.isInCell()
