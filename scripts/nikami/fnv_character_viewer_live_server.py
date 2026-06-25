@@ -1220,7 +1220,7 @@ def structured_actor_job(entry: dict[str, Any], payload: dict[str, Any]) -> tupl
         "fnvRotationMode": first_text(selector_value(payload, "fnvRotationMode")),
         "allowMissingActorVisibleHandGeometry": first_text(selector_value(payload, "allowMissingActorVisibleHandGeometry")),
         "actorVisibleHandMaxDistance": first_text(selector_value(payload, "actorVisibleHandMaxDistance"), "30"),
-        "fnvSkinningMatrixAudit": first_text(selector_value(payload, "fnvSkinningMatrixAudit"), "arms,rightHand,leftHand,HeadOld"),
+        "fnvSkinningMatrixAudit": first_text(selector_value(payload, "fnvSkinningMatrixAudit"), "arms,rightHand,leftHand,HeadOld,HeadHuman"),
         "fnvHairEmissionStrength": first_text(selector_value(payload, "fnvHairEmissionStrength")),
     }
     command = (

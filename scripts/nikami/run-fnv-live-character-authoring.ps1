@@ -29,7 +29,7 @@ param(
     [double]$ActorViewTargetZ = 108,
     [string]$NeutralActorPreviewProfile = "audit",
     [string]$FnvRotationMode = "bindCoreBindLowerRawUpper",
-    [string]$FnvSkinningMatrixAudit = "arms,rightHand,leftHand,HeadOld",
+    [string]$FnvSkinningMatrixAudit = "arms,rightHand,leftHand,HeadOld,HeadHuman",
     [switch]$NoSound,
     [switch]$OpenStudio,
     [int]$ServePort = 0

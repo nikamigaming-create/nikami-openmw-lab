@@ -204,7 +204,7 @@ def viewer_command(
     fnv_rotation_mode: str = "",
     allow_missing_actor_visible_hand_geometry: bool = False,
     actor_visible_hand_max_distance: str = "30",
-    fnv_skinning_matrix_audit: str = "arms,rightHand,leftHand,HeadOld",
+    fnv_skinning_matrix_audit: str = "arms,rightHand,leftHand,HeadOld,HeadHuman",
     fnv_hair_emission_strength: str = "",
 ) -> str:
     command = (

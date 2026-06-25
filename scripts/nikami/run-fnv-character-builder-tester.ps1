@@ -44,7 +44,7 @@ param(
     [string]$FnvRotationMode = "bindCoreBindLowerRawUpper",
     [switch]$AllowMissingActorVisibleHandGeometry,
     [double]$ActorVisibleHandMaxDistance = 30.0,
-    [string]$FnvSkinningMatrixAudit = "arms,rightHand,leftHand,HeadOld",
+    [string]$FnvSkinningMatrixAudit = "arms,rightHand,leftHand,HeadOld,HeadHuman",
     [string]$FnvHairEmissionStrength = "",
     [string]$LiveAuthoringFile = $env:OPENMW_FNV_LIVE_AUTHORING_FILE,
     [switch]$FnvUseNativeAnimationCallbacks,
