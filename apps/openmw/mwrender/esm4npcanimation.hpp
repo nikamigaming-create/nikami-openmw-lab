@@ -17,6 +17,23 @@ namespace MWRender
             const MWWorld::Ptr& ptr, osg::ref_ptr<osg::Group> parentNode, Resource::ResourceSystem* resourceSystem);
 
     private:
+        struct LiveHeadSurfaceAuthoringTarget
+        {
+            osg::ref_ptr<osg::MatrixTransform> node;
+            std::string prefix;
+            std::string model;
+            osg::Vec3f defaultOffset;
+            osg::Vec3f defaultRotationDegrees;
+            osg::Vec3f pivot;
+            bool defaultPivotMode = false;
+        };
+
+        std::vector<LiveHeadSurfaceAuthoringTarget> mLiveHeadSurfaceAuthoringTargets;
+        std::string mLiveHeadSurfaceAuthoringContent;
+        unsigned int mLiveHeadSurfaceAuthoringTick = 0;
+
+        void applyLiveHeadSurfaceAuthoring();
+
         osg::ref_ptr<osg::Node> insertPart(
             std::string_view model, const osg::Vec4f* tint = nullptr, std::string_view diffuseTexture = {});
         osg::ref_ptr<osg::Node> insertAttachedPart(std::string_view model, std::string_view preferredBone);
@@ -29,6 +46,8 @@ namespace MWRender
         void updatePartsTES4(const ESM4::Npc& traits);
         void updatePartsFONV(const ESM4::Npc& traits);
         void updatePartsTES5(const ESM4::Npc& traits);
+
+        osg::Vec3f runAnimation(float duration) override;
     };
 }
 

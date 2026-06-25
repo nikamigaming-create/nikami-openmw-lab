@@ -64,6 +64,7 @@
 #include <map>
 #include <memory>
 #include <sstream>
+#include <utility>
 #include <vector>
 
 #include "../mwbase/environment.hpp"
@@ -3735,24 +3736,201 @@ namespace MWRender
             return {};
         }
 
+        osg::Quat makeFalloutEulerAttitude(const osg::Vec3f& degrees)
+        {
+            constexpr float degreesToRadians = 0.017453292519943295f;
+            const osg::Quat x(degrees.x() * degreesToRadians, osg::Vec3f(1.f, 0.f, 0.f));
+            const osg::Quat y(degrees.y() * degreesToRadians, osg::Vec3f(0.f, 1.f, 0.f));
+            const osg::Quat z(degrees.z() * degreesToRadians, osg::Vec3f(0.f, 0.f, 1.f));
+            return z * y * x;
+        }
+
+        float getFalloutHeadFrameSurfaceZFallback(std::string_view prefix)
+        {
+            const bool faceInternal = prefix == "OPENMW_FNV_EYE" || prefix == "OPENMW_FNV_MOUTH"
+                || prefix == "OPENMW_FNV_BEARD" || prefix == "OPENMW_FNV_BROW";
+            return (faceInternal || prefix == "OPENMW_FNV_HAIR") ? -90.f : 0.f;
+        }
+
+        osg::Vec3f getFalloutHeadFrameSurfaceRotationDegrees(std::string_view prefix)
+        {
+            if (prefix.empty())
+                return osg::Vec3f();
+
+            const std::string keyPrefix(prefix);
+            return osg::Vec3f(readFalloutProofFloat((keyPrefix + "_ROTATION_X").c_str(), 0.f),
+                readFalloutProofFloat((keyPrefix + "_ROTATION_Y").c_str(), 0.f),
+                readFalloutProofFloat((keyPrefix + "_ROTATION_Z").c_str(), getFalloutHeadFrameSurfaceZFallback(prefix)));
+        }
+
         osg::Quat getFalloutHeadFrameSurfaceAttitude(std::string_view model, bool headgearStaticPart)
         {
             const std::string prefix = getFalloutHeadFrameSurfacePrefix(model, headgearStaticPart);
             if (prefix.empty())
                 return osg::Quat();
 
-            constexpr float degreesToRadians = 0.017453292519943295f;
-            const float xDegrees = readFalloutProofFloat((prefix + "_ROTATION_X").c_str(), 0.f);
-            const float yDegrees = readFalloutProofFloat((prefix + "_ROTATION_Y").c_str(), 0.f);
-            const bool faceInternal = prefix == "OPENMW_FNV_EYE" || prefix == "OPENMW_FNV_MOUTH"
-                || prefix == "OPENMW_FNV_BEARD" || prefix == "OPENMW_FNV_BROW";
-            const float zFallback = (faceInternal || prefix == "OPENMW_FNV_HAIR") ? -90.f : 0.f;
-            const float zDegrees = readFalloutProofFloat((prefix + "_ROTATION_Z").c_str(), zFallback);
-            const osg::Quat x(xDegrees * degreesToRadians, osg::Vec3f(1.f, 0.f, 0.f));
-            const osg::Quat y(yDegrees * degreesToRadians, osg::Vec3f(0.f, 1.f, 0.f));
-            const osg::Quat z(zDegrees * degreesToRadians, osg::Vec3f(0.f, 0.f, 1.f));
-            return z * y * x;
+            return makeFalloutEulerAttitude(getFalloutHeadFrameSurfaceRotationDegrees(prefix));
         }
+
+        std::string escapeFalloutLiveAuthoringRegex(std::string_view value)
+        {
+            std::string escaped;
+            escaped.reserve(value.size() * 2);
+            for (char c : value)
+            {
+                switch (c)
+                {
+                    case '\\':
+                    case '.':
+                    case '^':
+                    case '$':
+                    case '|':
+                    case '(':
+                    case ')':
+                    case '[':
+                    case ']':
+                    case '{':
+                    case '}':
+                    case '*':
+                    case '+':
+                    case '?':
+                        escaped.push_back('\\');
+                        break;
+                    default:
+                        break;
+                }
+                escaped.push_back(c);
+            }
+            return escaped;
+        }
+
+        bool readFalloutLiveAuthoringFloat(const std::string& content, const std::string& key, float& value)
+        {
+            try
+            {
+                const std::regex pattern("\"" + escapeFalloutLiveAuthoringRegex(key)
+                    + "\"\\s*:\\s*(-?(?:\\d+(?:\\.\\d*)?|\\.\\d+)(?:[eE][+-]?\\d+)?)");
+                std::smatch match;
+                if (!std::regex_search(content, match, pattern))
+                    return false;
+                value = std::stof(match[1].str());
+                return true;
+            }
+            catch (...)
+            {
+                return false;
+            }
+        }
+
+        bool readFalloutLiveAuthoringBool(const std::string& content, const std::string& key, bool& value)
+        {
+            try
+            {
+                const std::regex pattern(
+                    "\"" + escapeFalloutLiveAuthoringRegex(key) + "\"\\s*:\\s*(true|false|0|1)",
+                    std::regex_constants::icase);
+                std::smatch match;
+                if (!std::regex_search(content, match, pattern))
+                    return false;
+                std::string parsed = match[1].str();
+                Misc::StringUtils::lowerCaseInPlace(parsed);
+                value = parsed == "true" || parsed == "1";
+                return true;
+            }
+            catch (...)
+            {
+                return false;
+            }
+        }
+
+        const char* getFalloutLiveAuthoringFile()
+        {
+            const char* path = std::getenv("OPENMW_FNV_LIVE_AUTHORING_FILE");
+            return path != nullptr && path[0] != '\0' ? path : nullptr;
+        }
+
+        bool readFalloutLiveAuthoringFile(const char* path, std::string& content)
+        {
+            if (path == nullptr || path[0] == '\0')
+                return false;
+            std::ifstream input(path, std::ios::binary);
+            if (!input)
+                return false;
+            std::ostringstream stream;
+            stream << input.rdbuf();
+            content = stream.str();
+            return true;
+        }
+
+        osg::Matrix makeFalloutHeadSurfaceMatrix(
+            const osg::Vec3f& offset, const osg::Quat& attitude, const osg::Vec3f& pivot, bool pivotMode)
+        {
+            if (pivotMode && !attitude.zeroRotation())
+                return osg::Matrix::translate(-pivot) * osg::Matrix::rotate(attitude)
+                    * osg::Matrix::translate(pivot + offset);
+            return osg::Matrix::rotate(attitude) * osg::Matrix::translate(offset);
+        }
+
+        class FalloutLiveHeadSurfaceAuthoringCallback : public osg::NodeCallback
+        {
+        public:
+            FalloutLiveHeadSurfaceAuthoringCallback(std::string prefix, std::string model, const osg::Vec3f& offset,
+                const osg::Vec3f& rotationDegrees, const osg::Vec3f& pivot, bool pivotMode)
+                : mPrefix(std::move(prefix))
+                , mModel(std::move(model))
+                , mDefaultOffset(offset)
+                , mDefaultRotationDegrees(rotationDegrees)
+                , mPivot(pivot)
+                , mDefaultPivotMode(pivotMode)
+            {
+            }
+
+            void operator()(osg::Node* node, osg::NodeVisitor* visitor) override
+            {
+                const char* livePath = getFalloutLiveAuthoringFile();
+                if (livePath != nullptr && mTick++ % 6 == 0)
+                {
+                    std::string content;
+                    if (readFalloutLiveAuthoringFile(livePath, content) && content != mLastContent)
+                    {
+                        mLastContent = content;
+                        osg::Vec3f offset = mDefaultOffset;
+                        osg::Vec3f rotation = mDefaultRotationDegrees;
+                        bool pivotMode = mDefaultPivotMode;
+                        readFalloutLiveAuthoringFloat(content, mPrefix + "_OFFSET_X", offset.x());
+                        readFalloutLiveAuthoringFloat(content, mPrefix + "_OFFSET_Y", offset.y());
+                        readFalloutLiveAuthoringFloat(content, mPrefix + "_OFFSET_Z", offset.z());
+                        readFalloutLiveAuthoringFloat(content, mPrefix + "_ROTATION_X", rotation.x());
+                        readFalloutLiveAuthoringFloat(content, mPrefix + "_ROTATION_Y", rotation.y());
+                        readFalloutLiveAuthoringFloat(content, mPrefix + "_ROTATION_Z", rotation.z());
+                        readFalloutLiveAuthoringBool(content, mPrefix + "_PIVOT_MODE", pivotMode);
+                        if (osg::MatrixTransform* matrixNode = dynamic_cast<osg::MatrixTransform*>(node))
+                        {
+                            matrixNode->setMatrix(
+                                makeFalloutHeadSurfaceMatrix(offset, makeFalloutEulerAttitude(rotation), mPivot, pivotMode));
+                            matrixNode->dirtyBound();
+                            Log(Debug::Info)
+                                << "FNV/ESM4 live authoring: applied head surface authoring model=" << mModel
+                                << " prefix=" << mPrefix << " file=" << livePath << " offset=(" << offset.x() << ","
+                                << offset.y() << "," << offset.z() << ") rotation=(" << rotation.x() << ","
+                                << rotation.y() << "," << rotation.z() << ") pivot=(" << mPivot.x() << ","
+                                << mPivot.y() << "," << mPivot.z() << ") pivotMode=" << pivotMode;
+                        }
+                    }
+                }
+                traverse(node, visitor);
+            }
+
+        private:
+            std::string mPrefix;
+            std::string mModel;
+            osg::Vec3f mDefaultOffset;
+            osg::Vec3f mDefaultRotationDegrees;
+            osg::Vec3f mPivot;
+            bool mDefaultPivotMode = false;
+            unsigned int mTick = 0;
+            std::string mLastContent;
+        };
 
         osg::Quat getFalloutFaceSurfaceAttitude()
         {
@@ -5500,6 +5678,55 @@ namespace MWRender
         }
     }
 
+    void ESM4NpcAnimation::applyLiveHeadSurfaceAuthoring()
+    {
+        const char* livePath = getFalloutLiveAuthoringFile();
+        if (livePath == nullptr || mLiveHeadSurfaceAuthoringTargets.empty())
+            return;
+        if (++mLiveHeadSurfaceAuthoringTick % 6 != 0)
+            return;
+
+        std::string content;
+        if (!readFalloutLiveAuthoringFile(livePath, content) || content == mLiveHeadSurfaceAuthoringContent)
+            return;
+
+        mLiveHeadSurfaceAuthoringContent = content;
+        for (const LiveHeadSurfaceAuthoringTarget& target : mLiveHeadSurfaceAuthoringTargets)
+        {
+            osg::MatrixTransform* matrixNode = target.node.get();
+            if (matrixNode == nullptr || target.prefix.empty())
+                continue;
+
+            osg::Vec3f offset = target.defaultOffset;
+            osg::Vec3f rotation = target.defaultRotationDegrees;
+            bool pivotMode = target.defaultPivotMode;
+            readFalloutLiveAuthoringFloat(content, target.prefix + "_OFFSET_X", offset.x());
+            readFalloutLiveAuthoringFloat(content, target.prefix + "_OFFSET_Y", offset.y());
+            readFalloutLiveAuthoringFloat(content, target.prefix + "_OFFSET_Z", offset.z());
+            readFalloutLiveAuthoringFloat(content, target.prefix + "_ROTATION_X", rotation.x());
+            readFalloutLiveAuthoringFloat(content, target.prefix + "_ROTATION_Y", rotation.y());
+            readFalloutLiveAuthoringFloat(content, target.prefix + "_ROTATION_Z", rotation.z());
+            readFalloutLiveAuthoringBool(content, target.prefix + "_PIVOT_MODE", pivotMode);
+
+            matrixNode->setMatrix(
+                makeFalloutHeadSurfaceMatrix(offset, makeFalloutEulerAttitude(rotation), target.pivot, pivotMode));
+            matrixNode->dirtyBound();
+            Log(Debug::Info) << "FNV/ESM4 live authoring: frame-applied head surface authoring model="
+                             << target.model << " prefix=" << target.prefix << " file=" << livePath << " offset=("
+                             << offset.x() << "," << offset.y() << "," << offset.z() << ") rotation=("
+                             << rotation.x() << "," << rotation.y() << "," << rotation.z() << ") pivot=("
+                             << target.pivot.x() << "," << target.pivot.y() << "," << target.pivot.z()
+                             << ") pivotMode=" << pivotMode << " for " << mPtr.getCellRef().getRefId();
+        }
+    }
+
+    osg::Vec3f ESM4NpcAnimation::runAnimation(float duration)
+    {
+        osg::Vec3f movement = Animation::runAnimation(duration);
+        applyLiveHeadSurfaceAuthoring();
+        return movement;
+    }
+
     void ESM4NpcAnimation::updateParts()
     {
         if (mObjectRoot == nullptr)
@@ -5507,6 +5734,9 @@ namespace MWRender
         const ESM4::Npc* traits = MWClass::ESM4Npc::getTraitsRecord(mPtr);
         if (traits == nullptr)
             return;
+        mLiveHeadSurfaceAuthoringTargets.clear();
+        mLiveHeadSurfaceAuthoringContent.clear();
+        mLiveHeadSurfaceAuthoringTick = 0;
         if (traits->mIsTES4)
             updatePartsTES4(*traits);
         else if (traits->mIsFONV)
@@ -5796,16 +6026,39 @@ namespace MWRender
         if (attached != nullptr && headAttachedStaticPart)
         {
             const osg::Vec3f surfaceOffset = getFalloutHeadFrameSurfaceOffset(model, headgearStaticPart);
-            const osg::Quat surfaceAttitude = getFalloutHeadFrameSurfaceAttitude(model, headgearStaticPart);
-            if (surfaceOffset.length2() > 0.f || !surfaceAttitude.zeroRotation())
+            const std::string surfacePrefix = getFalloutHeadFrameSurfacePrefix(model, headgearStaticPart);
+            const osg::Vec3f surfaceRotationDegrees = getFalloutHeadFrameSurfaceRotationDegrees(surfacePrefix);
+            const osg::Quat surfaceAttitude = makeFalloutEulerAttitude(surfaceRotationDegrees);
+            const char* liveAuthoringFile = getFalloutLiveAuthoringFile();
+            if (surfaceOffset.length2() > 0.f || !surfaceAttitude.zeroRotation()
+                || (liveAuthoringFile != nullptr && !surfacePrefix.empty()))
             {
                 osg::ref_ptr<osg::Transform> offsetNode;
                 const osg::Vec3f pivot = localBoundsCenter(*attached);
-                if (!surfaceAttitude.zeroRotation() && std::getenv("OPENMW_FNV_HEAD_SURFACE_PIVOT_ROTATION") != nullptr)
+                const bool pivotMode = std::getenv("OPENMW_FNV_HEAD_SURFACE_PIVOT_ROTATION") != nullptr;
+                if (liveAuthoringFile != nullptr)
                 {
                     osg::ref_ptr<osg::MatrixTransform> matrixNode = new osg::MatrixTransform;
-                    matrixNode->setMatrix(osg::Matrix::translate(-pivot) * osg::Matrix::rotate(surfaceAttitude)
-                        * osg::Matrix::translate(pivot + surfaceOffset));
+                    matrixNode->setDataVariance(osg::Object::DYNAMIC);
+                    matrixNode->setMatrix(makeFalloutHeadSurfaceMatrix(surfaceOffset, surfaceAttitude, pivot, pivotMode));
+                    matrixNode->setUpdateCallback(new FalloutLiveHeadSurfaceAuthoringCallback(surfacePrefix,
+                        correctedModel.value(), surfaceOffset, surfaceRotationDegrees, pivot, pivotMode));
+                    mLiveHeadSurfaceAuthoringTargets.push_back(
+                        { matrixNode, surfacePrefix, std::string(correctedModel.value()), surfaceOffset,
+                            surfaceRotationDegrees, pivot, pivotMode });
+                    offsetNode = matrixNode;
+                    Log(Debug::Info) << "FNV/ESM4 live authoring: installed head surface authoring model="
+                                     << correctedModel.value() << " prefix=" << surfacePrefix << " file="
+                                     << liveAuthoringFile << " offset=(" << surfaceOffset.x() << ","
+                                     << surfaceOffset.y() << "," << surfaceOffset.z() << ") rotation=("
+                                     << surfaceRotationDegrees.x() << "," << surfaceRotationDegrees.y() << ","
+                                     << surfaceRotationDegrees.z() << ") pivot=(" << pivot.x() << "," << pivot.y()
+                                     << "," << pivot.z() << ") pivotMode=" << pivotMode;
+                }
+                else if (!surfaceAttitude.zeroRotation() && pivotMode)
+                {
+                    osg::ref_ptr<osg::MatrixTransform> matrixNode = new osg::MatrixTransform;
+                    matrixNode->setMatrix(makeFalloutHeadSurfaceMatrix(surfaceOffset, surfaceAttitude, pivot, true));
                     offsetNode = matrixNode;
                 }
                 else
@@ -5828,10 +6081,10 @@ namespace MWRender
                 Log(Debug::Info) << "FNV/ESM4 diag: applied head frame surface offset model="
                                  << correctedModel.value() << " offset=(" << surfaceOffset.x() << ","
                                  << surfaceOffset.y() << "," << surfaceOffset.z() << ") rotationPrefix="
-                                 << getFalloutHeadFrameSurfacePrefix(model, headgearStaticPart) << " pivot=("
+                                 << surfacePrefix << " pivot=("
                                  << pivot.x() << "," << pivot.y() << "," << pivot.z() << ") pivotMode="
-                                 << (std::getenv("OPENMW_FNV_HEAD_SURFACE_PIVOT_ROTATION") != nullptr) << " for "
-                                 << mPtr.getCellRef().getRefId();
+                                 << pivotMode << " liveFile=" << (liveAuthoringFile != nullptr ? liveAuthoringFile : "")
+                                 << " for " << mPtr.getCellRef().getRefId();
             }
         }
         if (!diffuseTexture.empty() && attached != nullptr)

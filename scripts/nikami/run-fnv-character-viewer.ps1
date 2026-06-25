@@ -46,6 +46,7 @@ param(
     [double]$ActorVisibleHandMaxDistance = 30.0,
     [string]$FnvSkinningMatrixAudit = "arms,rightHand,leftHand,HeadOld",
     [string]$FnvHairEmissionStrength = "",
+    [string]$LiveAuthoringFile = $env:OPENMW_FNV_LIVE_AUTHORING_FILE,
     [switch]$FnvUseNativeAnimationCallbacks,
     [string]$SuiteDir = "",
     [switch]$NoRun,
@@ -310,6 +311,7 @@ function Start-LiveViewerServer([string]$RootDirectory, [string]$IndexPath, [str
     $runner = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "run-fnv-character-viewer.ps1")).Path
     $server = (Resolve-Path -LiteralPath $LiveServerScript).Path
     $port = if ($RequestedPort -gt 0) { $RequestedPort } else { Get-FreeLoopbackPort }
+    $liveAuthoringFile = Join-Path $RunDirectory "live-authoring.json"
     $serverLog = Join-Path $RunDirectory "viewer-live-server.stdout.log"
     $serverErr = Join-Path $RunDirectory "viewer-live-server.stderr.log"
     $arguments = @(
@@ -318,6 +320,7 @@ function Start-LiveViewerServer([string]$RootDirectory, [string]$IndexPath, [str
         "--repo-root", $repo,
         "--run-dir", (Resolve-Path -LiteralPath $RunDirectory).Path,
         "--runner", $runner,
+        "--live-authoring-path", $liveAuthoringFile,
         "--host", "127.0.0.1",
         "--port", [string]$port
     ) | ForEach-Object { Quote-ProcessArgument $_ }
@@ -352,6 +355,8 @@ function Start-LiveViewerServer([string]$RootDirectory, [string]$IndexPath, [str
         stderr = $serverErr
         liveActorKitEndpoint = "http://127.0.0.1:$port/nikami/actor-kit/run"
         liveActorKitJobs = "http://127.0.0.1:$port/nikami/actor-kit/jobs"
+        liveAuthoringFile = $liveAuthoringFile
+        liveAuthoringEndpoint = "http://127.0.0.1:$port/nikami/live-authoring"
         policy = [pscustomobject][ordered]@{
             loopbackOnly = $true
             generatedProofOutputsOnly = $true
@@ -416,6 +421,7 @@ Write-Host "AllowMissingActorVisibleHandGeometry: $AllowMissingActorVisibleHandG
 Write-Host "ActorVisibleHandMaxDistance: $ActorVisibleHandMaxDistance"
 Write-Host "FnvSkinningMatrixAudit: $FnvSkinningMatrixAudit"
 Write-Host "FnvHairEmissionStrength: $FnvHairEmissionStrength"
+Write-Host "LiveAuthoringFile: $LiveAuthoringFile"
 Write-Host "FnvUseNativeAnimationCallbacks: $FnvUseNativeAnimationCallbacks"
 Write-Host "BootstrapCell: $BootstrapCell"
 Write-Host "BootstrapPosition: $BootstrapX,$BootstrapY,$BootstrapZ"
@@ -493,6 +499,7 @@ else {
             ActorVisibleHandMaxDistance = $ActorVisibleHandMaxDistance
             FnvSkinningMatrixAudit = $FnvSkinningMatrixAudit
             FnvHairEmissionStrength = $FnvHairEmissionStrength
+            LiveAuthoringFile = $LiveAuthoringFile
         }
         if ($AllowMissingActorVisibleHandGeometry) { $builderArgs.AllowMissingActorVisibleHandGeometry = $true }
         if (![string]::IsNullOrWhiteSpace($ActorKitPartsCsv)) { $builderArgs.ActorKitParts = $ActorKitPartsCsv }

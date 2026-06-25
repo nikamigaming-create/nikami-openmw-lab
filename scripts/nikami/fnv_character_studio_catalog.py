@@ -556,6 +556,11 @@ button:disabled {{ opacity: .45; cursor: not-allowed; }}
 .reviewRow {{ display: grid; grid-template-columns: minmax(92px, 1fr) 86px 92px; gap: 6px; align-items: center; background: #101216; border: 1px solid #2b3038; border-radius: 5px; padding: 6px; }}
 .reviewRow.active {{ border-color: #5c7ead; }}
 .reviewRow .proofLinks {{ grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 5px; color: var(--muted); }}
+.liveAuthoringPanel {{ border: 1px solid #334154; border-radius: 6px; padding: 8px; display: grid; gap: 7px; background: #0e1218; }}
+.knobGrid {{ display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }}
+.knobGrid label {{ display: grid; gap: 3px; color: var(--muted); font-size: 12px; }}
+.knobGrid input {{ width: 100%; box-sizing: border-box; }}
+.liveFile {{ font-family: Consolas, monospace; font-size: 11px; color: var(--muted); overflow-wrap: anywhere; }}
 .policyNote {{ color: var(--muted); font-size: 12px; }}
 .jobList, .eventList, .coordList {{ display: grid; gap: 6px; max-height: 240px; overflow: auto; }}
 .jobItem, .eventItem, .coordItem {{ background: #101216; border: 1px solid #2b3038; border-radius: 5px; padding: 7px; }}
@@ -597,6 +602,26 @@ button:disabled {{ opacity: .45; cursor: not-allowed; }}
         <button class="focusPreset" type="button" data-preset="easy-pete-face">Face</button>
         <button class="focusPreset" type="button" data-preset="easy-pete-hat">Hat</button>
         <button class="focusPreset" type="button" data-preset="easy-pete-skin">Skin</button>
+      </div>
+      <h3>Live Runtime Authoring</h3>
+      <div class="liveAuthoringPanel">
+        <div class="stateRow">
+          <select id="liveSurfacePrefix"></select>
+          <label class="check"><input id="livePivotMode" type="checkbox"> Pivot</label>
+        </div>
+        <div class="knobGrid">
+          <label>Off X<input id="liveOffsetX" type="number" step="0.05" value="0"></label>
+          <label>Off Y<input id="liveOffsetY" type="number" step="0.05" value="0"></label>
+          <label>Off Z<input id="liveOffsetZ" type="number" step="0.05" value="0"></label>
+          <label>Rot X<input id="liveRotationX" type="number" step="1" value="0"></label>
+          <label>Rot Y<input id="liveRotationY" type="number" step="1" value="0"></label>
+          <label>Rot Z<input id="liveRotationZ" type="number" step="1" value="0"></label>
+        </div>
+        <div class="actions">
+          <button id="applyLiveAuthoring" type="button">Apply Live</button>
+          <button id="resetLiveAuthoring" type="button">Reset</button>
+        </div>
+        <div id="liveAuthoringState" class="liveFile">live control file pending</div>
       </div>
       <h3>Component Payload</h3>
       <div class="fieldGrid">
@@ -686,6 +711,14 @@ const REVIEW_COMPONENTS = [
   {{ id: "animation", label: "Animation", parts: ["body-skin", "head-skin"], phases: ["body", "head"], categories: ["animation"] }},
   {{ id: "dialogue", label: "Dialogue / Talk", parts: ["face-organs"], phases: ["talk"], categories: ["face-organs"] }}
 ];
+const LIVE_SURFACE_PREFIXES = [
+  ["OPENMW_FNV_HEADGEAR", "Hat / Headgear"],
+  ["OPENMW_FNV_HAIR", "Hair"],
+  ["OPENMW_FNV_BROW", "Brow"],
+  ["OPENMW_FNV_EYE", "Eyes"],
+  ["OPENMW_FNV_BEARD", "Beard"],
+  ["OPENMW_FNV_MOUTH", "Mouth / Teeth / Tongue"]
+];
 const state = {{
   query: "",
   domain: "",
@@ -702,6 +735,8 @@ const state = {{
   entryDetails: {{}},
   latestManifest: null,
   latestJob: null,
+  liveAuthoring: null,
+  liveAuthoringDirty: false,
   partEnabled: Object.fromEntries(PARTS.map(part => [part, true]))
 }};
 function esc(v) {{ return String(v ?? "").replace(/[&<>"']/g, c => ({{"&":"&amp;","<":"&lt;",">":"&gt;","\\"":"&quot;","'":"&#39;"}}[c])); }}
@@ -729,6 +764,97 @@ async function api(path, options = {{}}) {{
   const payload = await response.json();
   if (!response.ok) throw new Error(payload.error || response.statusText);
   return payload;
+}}
+function liveDefaultRotationZ(prefix) {{
+  return ["OPENMW_FNV_HAIR", "OPENMW_FNV_BROW", "OPENMW_FNV_EYE", "OPENMW_FNV_BEARD", "OPENMW_FNV_MOUTH"].includes(prefix) ? -90 : 0;
+}}
+function livePrefix() {{
+  return document.getElementById("liveSurfacePrefix")?.value || "OPENMW_FNV_HEADGEAR";
+}}
+function liveNumber(id, fallback = 0) {{
+  const value = Number(document.getElementById(id)?.value ?? fallback);
+  return Number.isFinite(value) ? value : fallback;
+}}
+function liveControlsFromInputs() {{
+  const prefix = livePrefix();
+  const controls = {{}};
+  controls[`${{prefix}}_OFFSET_X`] = liveNumber("liveOffsetX");
+  controls[`${{prefix}}_OFFSET_Y`] = liveNumber("liveOffsetY");
+  controls[`${{prefix}}_OFFSET_Z`] = liveNumber("liveOffsetZ");
+  controls[`${{prefix}}_ROTATION_X`] = liveNumber("liveRotationX");
+  controls[`${{prefix}}_ROTATION_Y`] = liveNumber("liveRotationY");
+  controls[`${{prefix}}_ROTATION_Z`] = liveNumber("liveRotationZ", liveDefaultRotationZ(prefix));
+  controls[`${{prefix}}_PIVOT_MODE`] = !!document.getElementById("livePivotMode")?.checked;
+  return controls;
+}}
+function hydrateLiveInputs() {{
+  const prefix = livePrefix();
+  const controls = state.liveAuthoring?.controls || {{}};
+  const setValue = (id, key, fallback) => {{
+    const node = document.getElementById(id);
+    if (node) node.value = controls[`${{prefix}}_${{key}}`] ?? fallback;
+  }};
+  setValue("liveOffsetX", "OFFSET_X", 0);
+  setValue("liveOffsetY", "OFFSET_Y", 0);
+  setValue("liveOffsetZ", "OFFSET_Z", 0);
+  setValue("liveRotationX", "ROTATION_X", 0);
+  setValue("liveRotationY", "ROTATION_Y", 0);
+  setValue("liveRotationZ", "ROTATION_Z", liveDefaultRotationZ(prefix));
+  const pivot = document.getElementById("livePivotMode");
+  if (pivot) pivot.checked = !!controls[`${{prefix}}_PIVOT_MODE`];
+}}
+function renderLiveAuthoringState() {{
+  const node = document.getElementById("liveAuthoringState");
+  if (!node) return;
+  if (!liveAvailable()) {{
+    node.textContent = "open through the live loopback server for real-time controls";
+    return;
+  }}
+  const path = state.liveAuthoring?.path || "generated live-authoring.json pending";
+  const dirty = state.liveAuthoringDirty ? " / pending write" : "";
+  node.textContent = `${{path}}${{dirty}}`;
+}}
+async function refreshLiveAuthoring() {{
+  if (!liveAvailable()) {{
+    renderLiveAuthoringState();
+    return;
+  }}
+  try {{
+    state.liveAuthoring = await api("/nikami/live-authoring");
+    state.liveAuthoringDirty = false;
+    hydrateLiveInputs();
+    renderLiveAuthoringState();
+  }} catch (error) {{
+    addLocalEvent("live-authoring.load.failed", {{ message: error.message || String(error) }});
+  }}
+}}
+async function writeLiveAuthoring(reset = false) {{
+  if (!liveAvailable()) return;
+  try {{
+    const payload = reset
+      ? {{ reset: true, sessionId: state.session?.id || "" }}
+      : {{ sessionId: state.session?.id || "", controls: liveControlsFromInputs() }};
+    state.liveAuthoring = await api("/nikami/live-authoring", {{
+      method: "POST",
+      body: JSON.stringify(payload)
+    }});
+    state.liveAuthoringDirty = false;
+    hydrateLiveInputs();
+    renderLiveAuthoringState();
+    addLocalEvent(reset ? "live-authoring.reset" : "live-authoring.update", {{
+      path: state.liveAuthoring.path,
+      controls: state.liveAuthoring.lastApplied || {{}}
+    }});
+  }} catch (error) {{
+    addLocalEvent("live-authoring.write.failed", {{ message: error.message || String(error) }});
+  }}
+}}
+let liveAuthoringTimer = 0;
+function queueLiveAuthoringWrite() {{
+  state.liveAuthoringDirty = true;
+  renderLiveAuthoringState();
+  if (liveAuthoringTimer) window.clearTimeout(liveAuthoringTimer);
+  liveAuthoringTimer = window.setTimeout(() => writeLiveAuthoring(false), 120);
 }}
 function selectedEntry() {{
   return state.entryDetails[state.selectedId]
@@ -1031,11 +1157,25 @@ function renderControls() {{
     ["front", "front only"]
   ].map(([value, label]) => `<option value="${{esc(value)}}">${{esc(label)}}</option>`).join("");
   document.getElementById("reviewSelect").innerHTML = REVIEW_STATES.map(value => `<option value="${{esc(value)}}">${{esc(value.replace(/-/g, " "))}}</option>`).join("");
+  document.getElementById("liveSurfacePrefix").innerHTML = LIVE_SURFACE_PREFIXES
+    .map(([value, label]) => `<option value="${{esc(value)}}">${{esc(label)}}</option>`).join("");
   document.getElementById("partChecks").innerHTML = PARTS.map(part => `<label class="check"><input type="checkbox" data-part="${{esc(part)}}" ${{state.partEnabled[part] !== false ? "checked" : ""}}> ${{esc(PART_LABELS[part] || part)}}</label>`).join("");
   document.querySelectorAll("#partChecks input").forEach(input => input.onchange = () => {{
     state.partEnabled[input.dataset.part] = input.checked;
     recordEvent("selector.parts", {{ parts: selectedParts() }});
   }});
+  document.getElementById("liveSurfacePrefix").onchange = () => {{
+    hydrateLiveInputs();
+    recordEvent("live-authoring.surface", {{ prefix: livePrefix() }});
+    renderLiveAuthoringState();
+  }};
+  ["liveOffsetX", "liveOffsetY", "liveOffsetZ", "liveRotationX", "liveRotationY", "liveRotationZ"].forEach(id => {{
+    document.getElementById(id).addEventListener("input", queueLiveAuthoringWrite);
+    document.getElementById(id).addEventListener("change", queueLiveAuthoringWrite);
+  }});
+  document.getElementById("livePivotMode").addEventListener("change", queueLiveAuthoringWrite);
+  document.getElementById("applyLiveAuthoring").addEventListener("click", () => writeLiveAuthoring(false));
+  document.getElementById("resetLiveAuthoring").addEventListener("click", () => writeLiveAuthoring(true));
   ["phaseSelect", "partFocusSelect", "jobTypeSelect", "animationSourceInput", "animationStartPointInput", "animationSelect", "dialogueSelect", "angleSelect", "reviewSelect"].forEach(id => {{
     document.getElementById(id).onchange = () => recordEvent("selector.change", studioPayload("runtimeThreeCamera"));
   }});
@@ -1180,6 +1320,7 @@ function renderWorkbench() {{
   renderStage();
   renderSaveReview();
   renderComponentReviews();
+  renderLiveAuthoringState();
   renderEvents();
 }}
 function render() {{
@@ -1247,6 +1388,7 @@ document.getElementById("search").addEventListener("input", e => {{ state.query 
 document.getElementById("domain").addEventListener("change", e => {{ state.domain = e.target.value; refreshSearch(); }});
 document.getElementById("kind").addEventListener("change", e => {{ state.kind = e.target.value; refreshSearch(); }});
 refreshSearch();
+refreshLiveAuthoring();
 </script>
 </body>
 </html>

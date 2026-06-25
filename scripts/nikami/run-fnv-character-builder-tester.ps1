@@ -46,6 +46,7 @@ param(
     [double]$ActorVisibleHandMaxDistance = 30.0,
     [string]$FnvSkinningMatrixAudit = "arms,rightHand,leftHand,HeadOld",
     [string]$FnvHairEmissionStrength = "",
+    [string]$LiveAuthoringFile = $env:OPENMW_FNV_LIVE_AUTHORING_FILE,
     [switch]$FnvUseNativeAnimationCallbacks,
     [switch]$CreatureDiagnostics,
     [switch]$NoSound,
@@ -325,6 +326,7 @@ Write-SuiteLine "AllowMissingActorVisibleHandGeometry: $AllowMissingActorVisible
 Write-SuiteLine "ActorVisibleHandMaxDistance: $ActorVisibleHandMaxDistance"
 Write-SuiteLine "FnvSkinningMatrixAudit: $FnvSkinningMatrixAudit"
 Write-SuiteLine "FnvHairEmissionStrength: $FnvHairEmissionStrength"
+Write-SuiteLine "LiveAuthoringFile: $LiveAuthoringFile"
 Write-SuiteLine "FnvUseNativeAnimationCallbacks: $FnvUseNativeAnimationCallbacks"
 Write-SuiteLine "Angles: $(@($CameraAngles | ForEach-Object { $_.Name }) -join ',')"
 Write-SuiteLine "BootstrapCell: $BootstrapCell"
@@ -392,6 +394,7 @@ foreach ($phase in $Phases) {
             FnvPartMatrixAudit = $true
             FnvSkinningMatrixAudit = $FnvSkinningMatrixAudit
             FnvHairEmissionStrength = $FnvHairEmissionStrength
+            LiveAuthoringFile = $LiveAuthoringFile
             FnvRotationMode = $FnvRotationMode
             CharacterBuilderPhase = $phase
         }

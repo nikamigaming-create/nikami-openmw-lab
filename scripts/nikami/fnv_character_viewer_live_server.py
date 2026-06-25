@@ -40,7 +40,30 @@ ALLOWED_ITEM_PREFIX = [
 FORBIDDEN_CHARS = set("&;|<>`")
 STUDIO_SCHEMA = "nikami-fnv-character-studio-session-v1"
 STUDIO_REVIEW_SCHEMA = "nikami-fnv-character-studio-component-review-v1"
+LIVE_AUTHORING_SCHEMA = "nikami-fnv-live-authoring-v1"
 REVIEW_STATES = {"review-pending", "pass", "fail", "blocked", "needs-rerun"}
+HEAD_SURFACE_PREFIXES = (
+    "OPENMW_FNV_HEADGEAR",
+    "OPENMW_FNV_HAIR",
+    "OPENMW_FNV_BROW",
+    "OPENMW_FNV_EYE",
+    "OPENMW_FNV_BEARD",
+    "OPENMW_FNV_MOUTH",
+)
+HEAD_SURFACE_FLOAT_SUFFIXES = (
+    "OFFSET_X",
+    "OFFSET_Y",
+    "OFFSET_Z",
+    "ROTATION_X",
+    "ROTATION_Y",
+    "ROTATION_Z",
+)
+HEAD_SURFACE_BOOL_SUFFIXES = ("PIVOT_MODE",)
+HEAD_SURFACE_CONTROL_KEYS = {
+    f"{prefix}_{suffix}"
+    for prefix in HEAD_SURFACE_PREFIXES
+    for suffix in (*HEAD_SURFACE_FLOAT_SUFFIXES, *HEAD_SURFACE_BOOL_SUFFIXES)
+}
 CATALOG_SEARCH_ENTRY_FIELDS = (
     "id",
     "source",
@@ -277,6 +300,136 @@ class CatalogStore:
                 "noRetailAssetsCommitted": True,
             },
         }
+
+
+class LiveAuthoringStore:
+    def __init__(self, run_dir: Path, root: Path, path: Path | None = None) -> None:
+        self.run_dir = run_dir.resolve()
+        self.root = root.resolve()
+        self.path = (path.resolve() if path is not None else self.run_dir / "live-authoring.json")
+        self.lock = threading.Lock()
+        if self.path.suffix.lower() != ".json":
+            raise ValueError("live authoring path must be a generated JSON file")
+        if not self._under_allowed_root(self.path):
+            raise ValueError("live authoring path escaped generated proof outputs")
+
+    def _under_allowed_root(self, path: Path) -> bool:
+        resolved = path.resolve()
+        allowed_roots = (self.run_dir, self.root)
+        return any(resolved == root or root in resolved.parents for root in allowed_roots)
+
+    def _default_controls(self) -> dict[str, Any]:
+        controls: dict[str, Any] = {}
+        for prefix in HEAD_SURFACE_PREFIXES:
+            for suffix in HEAD_SURFACE_FLOAT_SUFFIXES:
+                controls[f"{prefix}_{suffix}"] = -90.0 if suffix == "ROTATION_Z" and prefix in {
+                    "OPENMW_FNV_HAIR",
+                    "OPENMW_FNV_BROW",
+                    "OPENMW_FNV_EYE",
+                    "OPENMW_FNV_BEARD",
+                    "OPENMW_FNV_MOUTH",
+                } else 0.0
+            for suffix in HEAD_SURFACE_BOOL_SUFFIXES:
+                controls[f"{prefix}_{suffix}"] = False
+        return controls
+
+    def _default_doc(self) -> dict[str, Any]:
+        return {
+            "schema": LIVE_AUTHORING_SCHEMA,
+            "schemaMarkers": [
+                "runtime-live-authoring-v1",
+                "head-surface-transform-controls-v1",
+                "generated-control-file-only-v1",
+            ],
+            "path": str(self.path),
+            "updatedAt": utc_now(),
+            "controls": self._default_controls(),
+            "policy": {
+                "generatedProofOutputsOnly": True,
+                "noRetailPayloadBytes": True,
+                "numericRuntimeControlsOnly": True,
+            },
+        }
+
+    def _write(self, doc: dict[str, Any]) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = self.path.with_suffix(self.path.suffix + ".tmp")
+        tmp.write_text(json.dumps(doc, indent=2), encoding="utf-8")
+        tmp.replace(self.path)
+
+    def load(self) -> dict[str, Any]:
+        with self.lock:
+            if not self.path.is_file():
+                doc = self._default_doc()
+                self._write(doc)
+                return doc
+            doc = read_json(self.path)
+            if not isinstance(doc, dict):
+                raise ValueError("live authoring JSON must be an object")
+            controls = doc.get("controls")
+            if not isinstance(controls, dict):
+                doc["controls"] = self._default_controls()
+            doc["schema"] = LIVE_AUTHORING_SCHEMA
+            doc["path"] = str(self.path)
+            markers = doc.get("schemaMarkers") if isinstance(doc.get("schemaMarkers"), list) else []
+            for marker in ["runtime-live-authoring-v1", "head-surface-transform-controls-v1"]:
+                if marker not in markers:
+                    markers.append(marker)
+            doc["schemaMarkers"] = markers
+            policy = doc.get("policy") if isinstance(doc.get("policy"), dict) else {}
+            policy["noRetailPayloadBytes"] = True
+            doc["policy"] = policy
+            self._write(doc)
+            return doc
+
+    def update(self, payload: dict[str, Any]) -> dict[str, Any]:
+        incoming = payload.get("controls") if isinstance(payload.get("controls"), dict) else payload
+        if not isinstance(incoming, dict):
+            raise ValueError("live authoring update must be an object")
+        with self.lock:
+            doc = self._default_doc() if payload.get("reset") is True or not self.path.is_file() else read_json(self.path)
+            if not isinstance(doc, dict):
+                doc = self._default_doc()
+            controls = doc.get("controls")
+            if not isinstance(controls, dict):
+                controls = self._default_controls()
+            applied: dict[str, Any] = {}
+            for key, value in incoming.items():
+                if key in {"schema", "schemaMarkers", "updatedAt", "path", "policy", "reset", "sessionId", "controls"}:
+                    continue
+                if key not in HEAD_SURFACE_CONTROL_KEYS:
+                    raise ValueError(f"unsupported live authoring control: {key}")
+                if key.endswith("_PIVOT_MODE"):
+                    if not isinstance(value, bool):
+                        raise ValueError(f"{key} must be boolean")
+                    controls[key] = value
+                else:
+                    try:
+                        controls[key] = float(value)
+                    except (TypeError, ValueError) as exc:
+                        raise ValueError(f"{key} must be numeric") from exc
+                applied[key] = controls[key]
+            doc.update(
+                {
+                    "schema": LIVE_AUTHORING_SCHEMA,
+                    "path": str(self.path),
+                    "updatedAt": utc_now(),
+                    "controls": controls,
+                    "lastApplied": applied,
+                    "policy": {
+                        "generatedProofOutputsOnly": True,
+                        "noRetailPayloadBytes": True,
+                        "numericRuntimeControlsOnly": True,
+                    },
+                }
+            )
+            doc["schemaMarkers"] = [
+                "runtime-live-authoring-v1",
+                "head-surface-transform-controls-v1",
+                "generated-control-file-only-v1",
+            ]
+            self._write(doc)
+            return doc
 
 
 class StudioSessionStore:
@@ -870,8 +1023,16 @@ class LiveHandler(SimpleHTTPRequestHandler):
                         "generatedProofOutputsOnly": True,
                         "noRetailAssetsCommitted": True,
                     },
+                    "liveAuthoring": {
+                        "schema": LIVE_AUTHORING_SCHEMA,
+                        "endpoint": "/nikami/live-authoring",
+                        "path": str(self.server.live_authoring_store.path),  # type: ignore[attr-defined]
+                    },
                 },
             )
+            return
+        if parsed.path == "/nikami/live-authoring":
+            self.send_json(200, self.server.live_authoring_store.load())  # type: ignore[attr-defined]
             return
         if parsed.path == "/nikami/catalog":
             try:
@@ -957,6 +1118,22 @@ class LiveHandler(SimpleHTTPRequestHandler):
     def do_POST(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
         try:
+            if parsed.path == "/nikami/live-authoring":
+                payload = self.read_payload()
+                doc = self.server.live_authoring_store.update(payload)  # type: ignore[attr-defined]
+                session_id = str(payload.get("sessionId") or "")
+                if session_id:
+                    self.server.studio_store.append_event(  # type: ignore[attr-defined]
+                        session_id,
+                        "live-authoring.update",
+                        {
+                            "path": doc.get("path", ""),
+                            "controls": doc.get("lastApplied", {}),
+                            "schema": LIVE_AUTHORING_SCHEMA,
+                        },
+                    )
+                self.send_json(200, doc)
+                return
             if parsed.path == "/nikami/studio/sessions":
                 session = self.server.studio_store.create(self.read_payload())  # type: ignore[attr-defined]
                 self.send_json(201, session)
@@ -985,6 +1162,10 @@ class LiveHandler(SimpleHTTPRequestHandler):
                     if entry is None:
                         raise ValueError("unknown catalog entry")
                     command, request = structured_studio_job(entry, payload)
+                    if "run-fnv-character-viewer.ps1" in command:
+                        live_path = str(self.server.live_authoring_store.path)  # type: ignore[attr-defined]
+                        command += " -LiveAuthoringFile " + shell_quote(live_path)
+                        request["liveAuthoringFile"] = live_path
                     job = self.server.job_store.start(command, request, session_id)  # type: ignore[attr-defined]
                     self.server.studio_store.add_job(session_id, job["id"])  # type: ignore[attr-defined]
                     self.server.studio_store.append_event(
@@ -1028,6 +1209,7 @@ def main() -> int:
     parser.add_argument("--run-dir", required=True, type=Path)
     parser.add_argument("--runner", required=True, type=Path)
     parser.add_argument("--catalog-path", type=Path)
+    parser.add_argument("--live-authoring-path", type=Path)
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", required=True, type=int)
     args = parser.parse_args()
@@ -1044,6 +1226,10 @@ def main() -> int:
     httpd.job_store = JobStore(run_dir, root, repo_root, runner)  # type: ignore[attr-defined]
     httpd.catalog_store = CatalogStore(root, args.catalog_path.resolve() if args.catalog_path else None)  # type: ignore[attr-defined]
     httpd.studio_store = StudioSessionStore(run_dir)  # type: ignore[attr-defined]
+    httpd.live_authoring_store = LiveAuthoringStore(  # type: ignore[attr-defined]
+        run_dir, root, args.live_authoring_path.resolve() if args.live_authoring_path else None
+    )
+    httpd.live_authoring_store.load()  # type: ignore[attr-defined]
     print(f"live-viewer-server=http://{args.host}:{args.port}", flush=True)
     httpd.serve_forever()
     return 0

@@ -128,6 +128,7 @@ param(
     [switch]$FnvActorValueTrace,
     [switch]$FnvProgressionTrace,
     [string]$FnvRotationMode = $env:OPENMW_FNV_ROTATION_MODE,
+    [string]$LiveAuthoringFile = $env:OPENMW_FNV_LIVE_AUTHORING_FILE,
     [switch]$NoSound
 )
 
@@ -1544,6 +1545,7 @@ try {
     Set-ProofEnv $previousEnv "OPENMW_FNV_SKINNING_MATRIX_AUDIT" $FnvSkinningMatrixAudit
     Set-ProofEnv $previousEnv "OPENMW_FNV_HAIR_EMISSION_STRENGTH" $FnvHairEmissionStrength
     Set-ProofEnv $previousEnv "OPENMW_FNV_ROTATION_MODE" $FnvRotationMode
+    Set-ProofEnv $previousEnv "OPENMW_FNV_LIVE_AUTHORING_FILE" $LiveAuthoringFile
     Set-ProofEnv $previousEnv "OPENMW_FNV_CHARACTER_BUILDER_PHASE" $CharacterBuilderPhase
     Set-ProofEnv $previousEnv "OPENMW_FNV_ACTOR_KIT_PARTS" $ActorKitPartsCsv
     Set-ProofEnv $previousEnv "OPENMW_FNV_ACTOR_KIT_PART_MODELS" $ActorKitPartModelsCsv
@@ -1661,6 +1663,7 @@ try {
     Write-ProofLine "ActorVisibleHandMaxDistance: $ActorVisibleHandMaxDistance"
     Write-ProofLine "FnvSkinningMatrixAudit: $FnvSkinningMatrixAudit"
     Write-ProofLine "FnvHairEmissionStrength: $FnvHairEmissionStrength"
+    Write-ProofLine "LiveAuthoringFile: $LiveAuthoringFile"
     Write-ProofLine "CharacterBuilderPhase: $CharacterBuilderPhase"
     Write-ProofLine "ActorKitParts: $ActorKitPartsCsv"
     Write-ProofLine "ActorKitPartModels: $ActorKitPartModelsCsv"
