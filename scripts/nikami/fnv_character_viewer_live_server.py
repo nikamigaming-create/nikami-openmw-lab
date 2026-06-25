@@ -115,6 +115,22 @@ LIVE_RUNTIME_SELECTOR_LIST_FIELDS = {
     "actorKitPropSlots",
     "actorKitPropModels",
 }
+ACTOR_KIT_PART_DEPENDENCIES = {
+    "face": ["body-skin", "head-skin", "face-organs", "hair-beard"],
+    "face-organs": ["body-skin", "head-skin", "face-organs", "hair-beard"],
+    "eyes": ["body-skin", "head-skin", "face-organs", "hair-beard"],
+    "mouth": ["body-skin", "head-skin", "face-organs", "hair-beard"],
+    "teeth": ["body-skin", "head-skin", "face-organs", "hair-beard"],
+    "tongue": ["body-skin", "head-skin", "face-organs", "hair-beard"],
+    "hair": ["body-skin", "head-skin", "hair-beard"],
+    "hair-beard": ["body-skin", "head-skin", "hair-beard"],
+    "beard": ["body-skin", "head-skin", "hair-beard"],
+    "head": ["body-skin", "head-skin"],
+    "head-skin": ["body-skin", "head-skin"],
+    "headgear": ["body-skin", "head-skin", "hair-beard", "headgear"],
+    "hat": ["body-skin", "head-skin", "hair-beard", "headgear"],
+    "weapon": ["body-skin", "equipment-body", "weapon"],
+}
 CATALOG_SEARCH_ENTRY_FIELDS = (
     "id",
     "source",
@@ -1390,6 +1406,24 @@ def csv_values(value: Any) -> list[str]:
     return values
 
 
+def actor_kit_part_key(value: str) -> str:
+    return value.strip().lower().replace("_", "-")
+
+
+def expand_actor_kit_parts(parts: list[str]) -> list[str]:
+    expanded: list[str] = []
+    seen: set[str] = set()
+    for part in parts:
+        key = actor_kit_part_key(part)
+        dependencies = ACTOR_KIT_PART_DEPENDENCIES.get(key, [part])
+        for dependency in dependencies:
+            dependency_key = actor_kit_part_key(dependency)
+            if dependency_key and dependency_key not in seen:
+                expanded.append(dependency)
+                seen.add(dependency_key)
+    return expanded
+
+
 def metadata_value(value: Any, depth: int = 0) -> Any:
     if depth > 5:
         return "<truncated>"
@@ -1869,7 +1903,7 @@ def structured_actor_job(entry: dict[str, Any], payload: dict[str, Any]) -> tupl
     selectors = {
         "phases": phases,
         "angles": angles,
-        "parts": csv_values(selector_value(payload, "parts")),
+        "parts": expand_actor_kit_parts(csv_values(selector_value(payload, "parts"))),
         "partModels": csv_values(selector_value(payload, "partModels")),
         "propSlots": csv_values(selector_value(payload, "propSlots")),
         "propModels": csv_values(selector_value(payload, "propModels")),

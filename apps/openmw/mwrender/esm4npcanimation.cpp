@@ -4105,6 +4105,32 @@ namespace MWRender
                 || Misc::StringUtils::ciEqual(category, "headgear");
         }
 
+        bool falloutActorKitContextDependencyMatches(std::string_view token, std::string_view normalizedCategory)
+        {
+            if (token == "face" || token == "face-organs" || token == "mouth" || token == "eyes"
+                || token == "teeth" || token == "tongue" || token == "brow")
+                return normalizedCategory == "body-skin" || normalizedCategory == "head-skin"
+                    || normalizedCategory == "hair-beard";
+
+            if (token == "hair" || token == "hair-beard" || token == "beard")
+                return normalizedCategory == "body-skin" || normalizedCategory == "head-skin";
+
+            if (token == "head" || token == "head-skin" || token == "race-head")
+                return normalizedCategory == "body-skin";
+
+            if (token == "headgear" || token == "hat")
+                return normalizedCategory == "body-skin" || normalizedCategory == "head-skin"
+                    || normalizedCategory == "hair-beard";
+
+            if (token == "weapon" || token == "weapons")
+                return normalizedCategory == "body-skin" || normalizedCategory == "equipment-body";
+
+            if (token == "talk" || token == "dialogue" || token == "animate" || token == "animation")
+                return getFalloutCharacterBuilderRank(normalizedCategory) <= getFalloutCharacterBuilderRank("talk");
+
+            return false;
+        }
+
         bool falloutActorKitCategoryTokenMatches(std::string_view token, std::string_view category)
         {
             if (isFalloutActorKitAllToken(token))
@@ -4117,8 +4143,32 @@ namespace MWRender
             if (token == "body-equipment" && normalizedCategory == "equipment-body")
                 return true;
 
+            if (falloutActorKitContextDependencyMatches(token, normalizedCategory))
+                return true;
+
             const int tokenRank = getFalloutCharacterBuilderRank(token);
             return tokenRank != 100 && tokenRank == getFalloutCharacterBuilderRank(category);
+        }
+
+        bool falloutActorKitCategoryExplicitlySelected(std::string_view category)
+        {
+            const std::vector<std::string> partTokens = getFalloutActorKitCategoryTokens("OPENMW_FNV_ACTOR_KIT_PARTS");
+            if (!partTokens.empty()
+                && std::any_of(partTokens.begin(), partTokens.end(),
+                    [&](const std::string& token) { return falloutActorKitCategoryTokenMatches(token, category); }))
+                return true;
+
+            if (isFalloutActorKitPropCategory(category))
+            {
+                const std::vector<std::string> slotTokens
+                    = getFalloutActorKitCategoryTokens("OPENMW_FNV_ACTOR_KIT_PROP_SLOTS");
+                if (!slotTokens.empty()
+                    && std::any_of(slotTokens.begin(), slotTokens.end(),
+                        [&](const std::string& token) { return falloutActorKitCategoryTokenMatches(token, category); }))
+                    return true;
+            }
+
+            return false;
         }
 
         bool falloutActorKitCategoryAllows(std::string_view category)
@@ -4189,7 +4239,9 @@ namespace MWRender
                 return true;
 
             const std::string phase = getFalloutCharacterBuilderPhase();
-            return getFalloutCharacterBuilderRank(phase) >= getFalloutCharacterBuilderRank(category)
+            const bool phaseAllows = getFalloutCharacterBuilderRank(phase) >= getFalloutCharacterBuilderRank(category);
+            const bool selectorExplicitlyAllows = falloutActorKitCategoryExplicitlySelected(category);
+            return (phaseAllows || selectorExplicitlyAllows)
                 && falloutActorKitCategoryAllows(category);
         }
 

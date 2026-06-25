@@ -312,6 +312,9 @@ if ($null -eq $easyPeteQueue -or $easyPeteQueue.entryId -ne $easyPete.id -or $ea
 if ($easyPeteQueue.defaultJobType -ne "critical-face-skin-headgear" -or !@($easyPeteQueue.reviewFocus).Contains("headgear")) {
     throw "Studio catalog critical Easy Pete queue row lost face/skin/headgear review focus."
 }
+if ($easyPeteQueue.defaultPartFocus -ne "") {
+    throw "Studio catalog critical Easy Pete queue must default to full-character context, not naked face organs."
+}
 if (!@($easyPeteQueue.criticalPhases).Contains("face") -or !@($easyPeteQueue.criticalPhases).Contains("talk") -or !@($easyPeteQueue.criticalPhases).Contains("headgear")) {
     throw "Studio catalog critical Easy Pete queue row lost full critical phase coverage."
 }
@@ -378,6 +381,9 @@ if (!$html.Contains("liveActorKitPartRebuilds") -or !$html.Contains('rebuilds ${
 }
 if (!$html.Contains("cameraStrip") -or !$html.Contains("selectedParts") -or !$html.Contains("studioPayload")) {
     throw "Studio catalog HTML does not expose three-camera/component session payload controls."
+}
+if (!$html.Contains("PART_DEPENDENCIES") -or !$html.Contains("expandPartSelection") -or !$html.Contains('"face-organs": ["body-skin", "head-skin", "face-organs", "hair-beard"]')) {
+    throw "Studio catalog HTML does not expand face/headgear selectors into required character context."
 }
 if (!$html.Contains("componentReviews") -or !$html.Contains("componentReviewRows") -or !$html.Contains("Save Component Review Rows") -or !$html.Contains("/reviews")) {
     throw "Studio catalog HTML does not expose per-component review row controls."

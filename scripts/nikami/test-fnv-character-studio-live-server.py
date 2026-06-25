@@ -413,6 +413,8 @@ def main() -> int:
             raise AssertionError("structured request did not expose placed/runtime target mapping")
         if "-ActorKitParts" not in selector_args or "headgear" not in selector_args:
             raise AssertionError("structured command ignored part selector overrides")
+        if selector_request["selectors"]["parts"] != ["body-skin", "head-skin", "hair-beard", "headgear"]:
+            raise AssertionError("structured command did not expand headgear selector dependencies")
         if "-RunSeconds" not in selector_args or "-ScreenshotFrames" not in selector_args:
             raise AssertionError("structured command did not include capture-safe runtime window")
         if "-ActorKitPropSlots" not in selector_args or "-ActorKitAnimationGroup" not in selector_args or "-ActorKitDialogueMode" not in selector_args:
@@ -421,6 +423,23 @@ def main() -> int:
             raise AssertionError("structured command lost placed-ref runtime target or bootstrap args")
         if selector_request["selectors"]["dialogueMode"] != "mouth-open":
             raise AssertionError("structured request did not normalize nested dialogue selector")
+        face_command, face_request = live.structured_actor_job(
+            placed_entry,
+            {
+                "entryId": "actor:000002",
+                "selectors": {
+                    "phases": ["face"],
+                    "angles": ["front"],
+                    "parts": ["face-organs"],
+                    "dialogueMode": "mouth-open-pose",
+                },
+            },
+        )
+        face_args = live.command_to_args(face_command, Path("scripts/nikami/run-fnv-character-viewer.ps1"))
+        if face_request["selectors"]["parts"] != ["body-skin", "head-skin", "face-organs", "hair-beard"]:
+            raise AssertionError("structured face selector did not keep the required head/skin/hair context")
+        if "-ActorKitParts" not in face_args or "body-skin,head-skin,face-organs,hair-beard" not in face_args:
+            raise AssertionError("structured face command can still produce floating face organs")
 
         item_entry = {
             "id": "gameplay:000002",

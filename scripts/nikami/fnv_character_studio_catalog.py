@@ -48,7 +48,7 @@ CRITICAL_CHARACTER_PRESETS = [
         "label": "Easy Pete",
         "targetHints": ["EasyPeteRef", "GSEasyPete", "Easy Pete"],
         "defaultPhase": "face",
-        "defaultPartFocus": "face-organs",
+        "defaultPartFocus": "",
         "defaultJobType": "critical-face-skin-headgear",
         "criticalPhases": ["body", "head", "face", "hair", "equipment", "weapon", "headgear", "talk"],
         "reviewFocus": ["head-skin", "face", "eyes", "mouth", "teeth", "hair-beard", "headgear", "weapon"],
@@ -59,7 +59,7 @@ CRITICAL_CHARACTER_PRESETS = [
         "label": "Sunny Smiles",
         "targetHints": ["SunnyRef", "SunnySmiles", "Sunny Smiles"],
         "defaultPhase": "face",
-        "defaultPartFocus": "face-organs",
+        "defaultPartFocus": "",
         "defaultJobType": "critical-face-hair-skin",
         "criticalPhases": ["body", "head", "face", "hair", "equipment", "weapon", "headgear", "talk"],
         "reviewFocus": ["head-skin", "face", "eyes", "mouth", "hair-beard", "equipment-body", "weapon"],
@@ -70,7 +70,7 @@ CRITICAL_CHARACTER_PRESETS = [
         "label": "Doc Mitchell",
         "targetHints": ["DocMitchellREF", "DocMitchell", "Doc Mitchell"],
         "defaultPhase": "face",
-        "defaultPartFocus": "face-organs",
+        "defaultPartFocus": "",
         "defaultJobType": "critical-face-talk",
         "criticalPhases": ["body", "head", "face", "hair", "equipment", "weapon", "headgear", "talk"],
         "reviewFocus": ["head-skin", "face", "eyes", "mouth", "teeth", "hair-beard", "equipment-body"],
@@ -81,7 +81,7 @@ CRITICAL_CHARACTER_PRESETS = [
         "label": "Trudy",
         "targetHints": ["TrudyRef", "Trudy"],
         "defaultPhase": "face",
-        "defaultPartFocus": "face-organs",
+        "defaultPartFocus": "",
         "defaultJobType": "critical-face-hair-skin",
         "criticalPhases": ["body", "head", "face", "hair", "equipment", "weapon", "headgear", "talk"],
         "reviewFocus": ["head-skin", "face", "eyes", "mouth", "hair-beard", "equipment-body"],
@@ -904,6 +904,13 @@ const PART_PHASES = {{
   "weapon": "weapon",
   "headgear": "headgear"
 }};
+const PART_DEPENDENCIES = {{
+  "face-organs": ["body-skin", "head-skin", "face-organs", "hair-beard"],
+  "hair-beard": ["body-skin", "head-skin", "hair-beard"],
+  "head-skin": ["body-skin", "head-skin"],
+  "headgear": ["body-skin", "head-skin", "hair-beard", "headgear"],
+  "weapon": ["body-skin", "equipment-body", "weapon"]
+}};
 const REVIEW_STATES = ["review-pending", "pass", "fail", "blocked", "needs-rerun"];
 const REVIEW_COMPONENTS = [
   {{ id: "body-skin", label: "Body / Skin", parts: ["body-skin"], phases: ["body"], categories: ["body-skin"] }},
@@ -1311,8 +1318,22 @@ async function refreshSearch() {{
 }}
 function selectedParts() {{
   const focus = document.getElementById("partFocusSelect")?.value || "";
-  if (focus) return [focus];
-  return PARTS.filter(part => state.partEnabled[part] !== false);
+  const parts = focus ? [focus] : PARTS.filter(part => state.partEnabled[part] !== false);
+  return expandPartSelection(parts);
+}}
+function expandPartSelection(parts) {{
+  const expanded = [];
+  const seen = new Set();
+  (parts || []).forEach(part => {{
+    const dependencies = PART_DEPENDENCIES[part] || [part];
+    dependencies.forEach(dependency => {{
+      if (!seen.has(dependency)) {{
+        seen.add(dependency);
+        expanded.push(dependency);
+      }}
+    }});
+  }});
+  return expanded;
 }}
 function selectedPropSlots() {{
   return selectedParts().filter(part => ["equipment-body", "weapon", "headgear"].includes(part));
@@ -1857,7 +1878,7 @@ function renderCriticalQueue() {{
 }}
 function applyPreset(name) {{
   const presets = {{
-    "easy-pete-face": {{ query: "easy pete face", phase: "face", part: "face-organs", job: "easy-pete-face", animation: "idle", dialogue: "mouth-open-pose" }},
+    "easy-pete-face": {{ query: "easy pete face hat beard skin", phase: "face", part: "", job: "easy-pete-face", animation: "idle", dialogue: "mouth-open-pose" }},
     "easy-pete-hat": {{ query: "easy pete hat headgear", phase: "headgear", part: "headgear", job: "easy-pete-hat", animation: "idle", dialogue: "" }},
     "easy-pete-skin": {{ query: "easy pete skin body head", phase: "body", part: "body-skin", job: "easy-pete-skin", animation: "idle", dialogue: "" }}
   }};
