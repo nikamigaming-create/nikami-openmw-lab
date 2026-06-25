@@ -181,6 +181,11 @@ vec2 screenCoords = gl_FragCoord.xy / screenRes;
     gl_FragData[0].xyz *= texture2D(detailMap, detailMapUV).xyz * 2.0;
 #endif
 
+#if @skinMap
+    vec3 skinTex = texture2D(skinMap, skinMapUV).xyz;
+    gl_FragData[0].xyz *= mix(vec3(1.0), skinTex * 2.0, 0.35);
+#endif
+
 #if @decalMap
     vec4 decalTex = texture2D(decalMap, decalMapUV);
     gl_FragData[0].xyz = mix(gl_FragData[0].xyz, decalTex.xyz, decalTex.a * diffuseColor.a);

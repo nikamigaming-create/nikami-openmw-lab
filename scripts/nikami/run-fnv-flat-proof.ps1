@@ -89,6 +89,9 @@ param(
     [switch]$FnvPartMatrixAudit,
     [string]$FnvSkinningMatrixAudit = "",
     [string]$FnvHairEmissionStrength = "",
+    [string]$FnvFaceGenTextureMode = $env:OPENMW_FNV_FACEGEN_TEXTURE_MODE,
+    [string]$FnvUseEgtMaterialTint = $env:OPENMW_FNV_USE_EGT_MATERIAL_TINT,
+    [string]$FnvUseRawBodyTintSwatch = $env:OPENMW_FNV_USE_RAW_BODY_TINT_SWATCH,
     [string]$CharacterBuilderPhase = "",
     [string[]]$ActorKitParts = @(),
     [string[]]$ActorKitPartModels = @(),
@@ -142,8 +145,24 @@ if ([string]::IsNullOrWhiteSpace($ProofRoot)) {
     $ProofRoot = Join-Path (Split-Path $RepoRoot -Parent) "proof"
 }
 
-$Stamp = Get-Date -Format "yyyyMMdd_HHmmss"
-$ProofDir = Join-Path $ProofRoot "fnv-flat-proof/$Stamp"
+function New-ProofRunStamp {
+    $now = Get-Date
+    $processId = [System.Diagnostics.Process]::GetCurrentProcess().Id
+    $suffix = [System.Guid]::NewGuid().ToString("N").Substring(0, 8)
+    return "{0}_{1}_{2}" -f $now.ToString("yyyyMMdd_HHmmss_fff"), $processId, $suffix
+}
+
+function ConvertTo-SafeProofName([string]$Text) {
+    $safe = $Text -replace '[^A-Za-z0-9_.-]', '_'
+    if ([string]::IsNullOrWhiteSpace($safe)) { return "" }
+    if ($safe.Length -gt 120) { return $safe.Substring(0, 120) }
+    return $safe
+}
+
+$Stamp = New-ProofRunStamp
+$RuntimeTagSuffix = ConvertTo-SafeProofName $RuntimeTag
+$ProofDirName = if ([string]::IsNullOrWhiteSpace($RuntimeTagSuffix)) { $Stamp } else { "$Stamp-$RuntimeTagSuffix" }
+$ProofDir = Join-Path $ProofRoot "fnv-flat-proof/$ProofDirName"
 $SummaryFile = Join-Path $ProofDir "summary.txt"
 $HarnessLog = Join-Path $ProofDir "harness.log"
 New-Item -ItemType Directory -Force -Path $ProofDir | Out-Null
@@ -1747,6 +1766,9 @@ try {
     if ($FnvPartMatrixAudit) { Set-ProofEnv $previousEnv "OPENMW_FNV_PART_MATRIX_AUDIT" "1" }
     Set-ProofEnv $previousEnv "OPENMW_FNV_SKINNING_MATRIX_AUDIT" $FnvSkinningMatrixAudit
     Set-ProofEnv $previousEnv "OPENMW_FNV_HAIR_EMISSION_STRENGTH" $FnvHairEmissionStrength
+    Set-ProofEnv $previousEnv "OPENMW_FNV_FACEGEN_TEXTURE_MODE" $FnvFaceGenTextureMode
+    Set-ProofEnv $previousEnv "OPENMW_FNV_USE_EGT_MATERIAL_TINT" $FnvUseEgtMaterialTint
+    Set-ProofEnv $previousEnv "OPENMW_FNV_USE_RAW_BODY_TINT_SWATCH" $FnvUseRawBodyTintSwatch
     Set-ProofEnv $previousEnv "OPENMW_FNV_ROTATION_MODE" $FnvRotationMode
     Set-ProofEnv $previousEnv "OPENMW_FNV_LIVE_AUTHORING_FILE" $LiveAuthoringFile
     Set-ProofEnv $previousEnv "OPENMW_FNV_LIVE_RUNTIME_COMMAND_FILE" $LiveRuntimeCommandFile
@@ -1872,6 +1894,9 @@ try {
     Write-ProofLine "ActorVisibleHandMaxDistance: $ActorVisibleHandMaxDistance"
     Write-ProofLine "FnvSkinningMatrixAudit: $FnvSkinningMatrixAudit"
     Write-ProofLine "FnvHairEmissionStrength: $FnvHairEmissionStrength"
+    Write-ProofLine "FnvFaceGenTextureMode: $FnvFaceGenTextureMode"
+    Write-ProofLine "FnvUseEgtMaterialTint: $FnvUseEgtMaterialTint"
+    Write-ProofLine "FnvUseRawBodyTintSwatch: $FnvUseRawBodyTintSwatch"
     Write-ProofLine "LiveAuthoringFile: $LiveAuthoringFile"
     Write-ProofLine "LiveRuntimeCommandFile: $LiveRuntimeCommandFile"
     Write-ProofLine "CharacterBuilderPhase: $CharacterBuilderPhase"

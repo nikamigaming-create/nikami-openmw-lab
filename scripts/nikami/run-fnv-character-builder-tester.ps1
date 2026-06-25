@@ -46,6 +46,9 @@ param(
     [double]$ActorVisibleHandMaxDistance = 30.0,
     [string]$FnvSkinningMatrixAudit = "arms,rightHand,leftHand,HeadOld,HeadHuman",
     [string]$FnvHairEmissionStrength = "",
+    [string]$FnvFaceGenTextureMode = $env:OPENMW_FNV_FACEGEN_TEXTURE_MODE,
+    [string]$FnvUseEgtMaterialTint = $env:OPENMW_FNV_USE_EGT_MATERIAL_TINT,
+    [string]$FnvUseRawBodyTintSwatch = $env:OPENMW_FNV_USE_RAW_BODY_TINT_SWATCH,
     [string]$LiveAuthoringFile = $env:OPENMW_FNV_LIVE_AUTHORING_FILE,
     [switch]$FnvUseNativeAnimationCallbacks,
     [switch]$CreatureDiagnostics,
@@ -59,6 +62,13 @@ Set-StrictMode -Version Latest
 $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "../..")).Path
 if ([string]::IsNullOrWhiteSpace($ProofRoot)) {
     $ProofRoot = Join-Path (Split-Path $RepoRoot -Parent) "proof"
+}
+
+function New-ProofRunStamp {
+    $now = Get-Date
+    $processId = [System.Diagnostics.Process]::GetCurrentProcess().Id
+    $suffix = [System.Guid]::NewGuid().ToString("N").Substring(0, 8)
+    return "{0}_{1}_{2}" -f $now.ToString("yyyyMMdd_HHmmss_fff"), $processId, $suffix
 }
 
 function Resolve-FnvDataFromLatestHarvest([string]$ProofRoot) {
@@ -124,7 +134,7 @@ $ReportScript = Join-Path $PSScriptRoot "fnv_character_builder_report.py"
 if (!(Test-Path -LiteralPath $FlatProof)) { throw "Missing flat proof runner: $FlatProof" }
 if (!(Test-Path -LiteralPath $ReportScript)) { throw "Missing character builder report parser: $ReportScript" }
 
-$Stamp = Get-Date -Format "yyyyMMdd_HHmmss"
+$Stamp = New-ProofRunStamp
 $SuiteDir = Join-Path $ProofRoot "fnv-character-builder/$Stamp"
 $SummaryFile = Join-Path $SuiteDir "summary.txt"
 New-Item -ItemType Directory -Force -Path $SuiteDir | Out-Null
@@ -145,7 +155,7 @@ function Get-ProofDirectories {
     return @(Get-ChildItem -LiteralPath $base -Directory -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName)
 }
 
-function Get-NewProofDirectory([string[]]$Before, [datetime]$StartedAt) {
+function Get-NewProofDirectory([string[]]$Before, [datetime]$StartedAt, [string]$RuntimeTag = "") {
     $base = Join-Path $ProofRoot "fnv-flat-proof"
     if (!(Test-Path -LiteralPath $base)) { return $null }
 
@@ -154,8 +164,17 @@ function Get-NewProofDirectory([string[]]$Before, [datetime]$StartedAt) {
         if (![string]::IsNullOrWhiteSpace($path)) { $null = $beforeSet.Add($path) }
     }
 
-    $candidate = Get-ChildItem -LiteralPath $base -Directory -ErrorAction SilentlyContinue |
-        Where-Object { !$beforeSet.Contains($_.FullName) -and $_.LastWriteTime -ge $StartedAt.AddSeconds(-5) } |
+    $candidates = @(Get-ChildItem -LiteralPath $base -Directory -ErrorAction SilentlyContinue |
+        Where-Object { !$beforeSet.Contains($_.FullName) -and $_.LastWriteTime -ge $StartedAt.AddSeconds(-5) })
+    if (![string]::IsNullOrWhiteSpace($RuntimeTag)) {
+        $safeRuntimeTag = $RuntimeTag -replace '[^A-Za-z0-9_.-]', '_'
+        $tagged = @($candidates | Where-Object { $_.Name -like "*$safeRuntimeTag*" })
+        if ($tagged.Count -gt 0) {
+            $candidates = $tagged
+        }
+    }
+
+    $candidate = $candidates |
         Sort-Object LastWriteTime -Descending |
         Select-Object -First 1
     if ($null -eq $candidate) { return $null }
@@ -330,6 +349,9 @@ Write-SuiteLine "AllowMissingActorVisibleHandGeometry: $AllowMissingActorVisible
 Write-SuiteLine "ActorVisibleHandMaxDistance: $ActorVisibleHandMaxDistance"
 Write-SuiteLine "FnvSkinningMatrixAudit: $FnvSkinningMatrixAudit"
 Write-SuiteLine "FnvHairEmissionStrength: $FnvHairEmissionStrength"
+Write-SuiteLine "FnvFaceGenTextureMode: $FnvFaceGenTextureMode"
+Write-SuiteLine "FnvUseEgtMaterialTint: $FnvUseEgtMaterialTint"
+Write-SuiteLine "FnvUseRawBodyTintSwatch: $FnvUseRawBodyTintSwatch"
 Write-SuiteLine "LiveAuthoringFile: $LiveAuthoringFile"
 Write-SuiteLine "FnvUseNativeAnimationCallbacks: $FnvUseNativeAnimationCallbacks"
 Write-SuiteLine "Angles: $(@($CameraAngles | ForEach-Object { $_.Name }) -join ',')"
@@ -400,6 +422,9 @@ foreach ($phase in $Phases) {
             FnvPartMatrixAudit = $true
             FnvSkinningMatrixAudit = $FnvSkinningMatrixAudit
             FnvHairEmissionStrength = $FnvHairEmissionStrength
+            FnvFaceGenTextureMode = $FnvFaceGenTextureMode
+            FnvUseEgtMaterialTint = $FnvUseEgtMaterialTint
+            FnvUseRawBodyTintSwatch = $FnvUseRawBodyTintSwatch
             LiveAuthoringFile = $LiveAuthoringFile
             FnvRotationMode = $FnvRotationMode
             CharacterBuilderPhase = $phase
@@ -433,7 +458,7 @@ foreach ($phase in $Phases) {
             Write-Warning "Character builder runtime gate failed for ${caseName}: $runtimeGateError"
         }
 
-        $ProofDir = Get-NewProofDirectory $before $startedAt
+        $ProofDir = Get-NewProofDirectory $before $startedAt $runtimeTag
         if ([string]::IsNullOrWhiteSpace($ProofDir)) {
             throw "Unable to find generated flat proof directory for $caseName"
         }
@@ -451,10 +476,20 @@ foreach ($phase in $Phases) {
         $reportMd = Join-Path $CaseDir "character-builder-report.md"
         & python $ReportScript --proof-dir $ProofDir --actor $ActorTarget --actor-kind $ActorKind --phase $phase --out-json $reportJson --out-md $reportMd | Out-Host
         $reportExit = $LASTEXITCODE
-        $reportStatus = if ($reportExit -eq 0) { "PASS" } else { "FAIL" }
         $reportData = $null
         if (Test-Path -LiteralPath $reportJson) {
             $reportData = Get-Content -LiteralPath $reportJson -Raw | ConvertFrom-Json
+        }
+        $reportStatus = if ($null -ne $reportData -and ![string]::IsNullOrWhiteSpace([string]$reportData.status)) {
+            [string]$reportData.status
+        } elseif ($reportExit -eq 0) {
+            "PASS"
+        } else {
+            "FAIL"
+        }
+        if (($reportExit -eq 0 -and $reportStatus -ne "PASS") -or ($reportExit -ne 0 -and $reportStatus -eq "PASS")) {
+            $runtimeGateStatus = "FAIL"
+            $runtimeGateError = "report exit/status mismatch: exit=$reportExit json=$reportStatus"
         }
         $runtimeEvidence = Get-FnvRuntimeEvidence $ProofDir $FnvSkinningMatrixAudit
 

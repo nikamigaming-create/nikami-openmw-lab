@@ -1253,10 +1253,10 @@ def emit_support_rows(rows, by_form, content_index, record):
                         component="armor-addon-fnv-modl",
                         subrecord="MODL",
                         asset_path=model_archive_path(base.zstring(payload)),
-                        classification="known-blocked",
-                        first_failing_gate="loadarma-fnv-modl-skipped",
+                        classification="loaded-pending-runtime",
+                        first_failing_gate="armor-addon-runtime-sweep",
                         proof_anchor="npc-equipment-assembly",
-                        notes="FO3/FNV ARMA MODL is still skipped by loadarma.cpp FIXME and cannot be claimed runtime-correct.",
+                        notes="FO3/FNV ARMA MODL is parsed; exact race/sex equipment fitting still needs runtime sweep proof.",
                     )
     elif rec_type == "CLOT":
         rows.add(

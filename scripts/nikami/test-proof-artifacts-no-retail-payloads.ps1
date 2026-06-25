@@ -97,44 +97,85 @@ function Find-FirstPatternMatch([string]$Path, [string[]]$Patterns) {
     }
 }
 
+function Invoke-RipgrepPatternScan([string]$Root, [string[]]$Patterns, [string[]]$Globs) {
+    $rg = Get-Command "rg" -ErrorAction SilentlyContinue
+    if ($null -eq $rg) {
+        return $null
+    }
+
+    $args = @(
+        "--no-heading",
+        "--line-number",
+        "--hidden",
+        "--no-ignore",
+        "--color", "never"
+    )
+    foreach ($glob in $Globs) {
+        $args += "--glob"
+        $args += $glob
+    }
+    $args += ($Patterns -join "|")
+    $args += $Root
+
+    $output = & $rg.Source @args 2>&1
+    $exit = $LASTEXITCODE
+    if ($exit -eq 0) {
+        return @($output | ForEach-Object { $_.ToString() })
+    }
+    if ($exit -eq 1) {
+        return @()
+    }
+
+    throw "rg proof artifact scan failed with exit code $exit`: $($output -join [Environment]::NewLine)"
+}
+
 Write-ProofLine "Proof artifact payload safety $Stamp"
 Write-ProofLine "RepoRoot: $RepoRoot"
 Write-ProofLine "ProofRoot: $ProofRoot"
 Write-ProofLine "ProofDir: $ProofDir"
 Write-ProofLine ""
 
+$allFiles = @(Get-ChildItem -LiteralPath $ProofRoot -Recurse -File -Force)
+$allDirectories = @(Get-ChildItem -LiteralPath $ProofRoot -Recurse -Directory -Force)
+
 $payloadFiles = @()
-foreach ($file in Get-ChildItem -LiteralPath $ProofRoot -Recurse -File -Force) {
+foreach ($file in $allFiles) {
     if ($PayloadExtensions -contains $file.Extension.ToLowerInvariant()) {
         $payloadFiles += $file.FullName
     }
 }
 
-$tempExtractDirs = @(
-    Get-ChildItem -LiteralPath $ProofRoot -Recurse -Directory -Force |
-        Where-Object { $_.Name -ieq "temp-extract" } |
-        Select-Object -ExpandProperty FullName
-)
+$tempExtractDirs = @($allDirectories |
+    Where-Object { $_.Name -ieq "temp-extract" } |
+    Select-Object -ExpandProperty FullName)
 
-$rawByteMatches = @()
-$textFiles = Get-ChildItem -LiteralPath $ProofRoot -Recurse -File -Force |
-    Where-Object { @(".json", ".jsonl", ".txt", ".log", ".csv", ".md") -contains $_.Extension.ToLowerInvariant() }
-foreach ($file in $textFiles) {
-    $match = Find-FirstPatternMatch $file.FullName $RawByteTextPatterns
-    if ($null -ne $match) {
-        $rawByteMatches += "$($file.FullName) $match"
+$TextGlobs = @("*.json", "*.jsonl", "*.txt", "*.log", "*.csv", "*.md")
+$rawByteMatches = Invoke-RipgrepPatternScan $ProofRoot $RawByteTextPatterns $TextGlobs
+if ($null -eq $rawByteMatches) {
+    $rawByteMatches = @()
+    $textFiles = $allFiles |
+        Where-Object { @(".json", ".jsonl", ".txt", ".log", ".csv", ".md") -contains $_.Extension.ToLowerInvariant() }
+    foreach ($file in $textFiles) {
+        $match = Find-FirstPatternMatch $file.FullName $RawByteTextPatterns
+        if ($null -ne $match) {
+            $rawByteMatches += "$($file.FullName) $match"
+        }
     }
 }
 
 $contentLedgerTextMatches = @()
 $contentLedgerRoot = Join-Path $ProofRoot "fnv-content-ledger"
 if (Test-Path -LiteralPath $contentLedgerRoot -PathType Container) {
-    $contentLedgerFiles = Get-ChildItem -LiteralPath $contentLedgerRoot -Recurse -File -Force |
-        Where-Object { $_.Extension.ToLowerInvariant() -eq ".json" }
-    foreach ($file in $contentLedgerFiles) {
-        $match = Find-FirstPatternMatch $file.FullName $ContentLedgerTextPayloadPatterns
-        if ($null -ne $match) {
-            $contentLedgerTextMatches += "$($file.FullName) $match"
+    $contentLedgerTextMatches = Invoke-RipgrepPatternScan $contentLedgerRoot $ContentLedgerTextPayloadPatterns @("*.json")
+    if ($null -eq $contentLedgerTextMatches) {
+        $contentLedgerTextMatches = @()
+        $contentLedgerFiles = $allFiles |
+            Where-Object { $_.FullName.StartsWith($contentLedgerRoot, [System.StringComparison]::OrdinalIgnoreCase) -and $_.Extension.ToLowerInvariant() -eq ".json" }
+        foreach ($file in $contentLedgerFiles) {
+            $match = Find-FirstPatternMatch $file.FullName $ContentLedgerTextPayloadPatterns
+            if ($null -ne $match) {
+                $contentLedgerTextMatches += "$($file.FullName) $match"
+            }
         }
     }
 }

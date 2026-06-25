@@ -716,6 +716,23 @@ def collect_matching(lines: list[str], patterns: list[str], needle: str) -> list
     return result
 
 
+def summary_value(lines: list[str], key: str) -> str:
+    prefix = f"{key}:"
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith(prefix):
+            return stripped[len(prefix) :].strip()
+    return ""
+
+
+def summary_csv_has(lines: list[str], key: str, value: str) -> bool:
+    wanted = value.strip().lower()
+    for item in re.split(r"[,;\s]+", summary_value(lines, key).lower()):
+        if item.strip() == wanted:
+            return True
+    return False
+
+
 def parse_actor_weapon_states(lines: list[str], patterns: list[str]) -> list[dict[str, Any]]:
     state_re = re.compile(r'initialized actor shell for NPC "(?P<editor>[^"]+)".*? weapon=(?P<weapon>[^ ]*)')
     states: list[dict[str, Any]] = []
@@ -1376,12 +1393,19 @@ def evaluate(
             collapsed_heads.append(item)
     if collapsed_heads:
         failures.append(f"collapsed or empty head source geometry: {len(collapsed_heads)}")
-    if phase in {"weapon", "weapons", "headgear", "talk", "dialogue", "full"}:
+    weapon_requested = (
+        phase in {"weapon", "weapons", "headgear", "talk", "dialogue", "full"}
+        or summary_csv_has(lines, "ActorKitParts", "weapon")
+        or summary_csv_has(lines, "ActorKitPropSlots", "weapon")
+    )
+    if weapon_requested:
         weapon_lines = collect_matching(lines, patterns, "equipped NPC weapon")
         weapon_expected = not actor_weapon_states or any(item["weapon"] for item in actor_weapon_states)
         if weapon_expected and not weapon_lines:
             failures.append("missing equipped weapon evidence")
-    if phase in {"talk", "dialogue"}:
+    dialogue_mode = summary_value(lines, "ActorKitDialogueMode").lower()
+    dialogue_requested = phase in {"talk", "dialogue"} or dialogue_mode in {"mouth-open", "mouth-open-pose", "pose"}
+    if dialogue_requested:
         talk_lines = [
             line
             for line in lines
@@ -1439,6 +1463,37 @@ def evaluate(
             if empty_hair_checks:
                 failures.append(f"hair attached without visible geometry: {len(empty_hair_checks)}")
 
+        face_organs_required = phase_lower in {
+            "",
+            "all",
+            "full",
+            "head",
+            "face",
+            "hair",
+            "hair-beard",
+            "headgear",
+            "talk",
+            "dialogue",
+            "animation",
+        } or summary_csv_has(lines, "ActorKitParts", "face-organs")
+        if face_organs_required:
+            required_face_organs = ("mouth", "lowerTeeth", "upperTeeth", "tongue", "leftEye", "rightEye")
+            bad_face_organs = [
+                (item, organ)
+                for item in face_checks
+                for organ in required_face_organs
+                if item["values"].get(organ) != "OK"
+            ]
+            bad_eye_records = [
+                item
+                for item in face_checks
+                if item["values"].get("eyesRecord") != "OK" or item["values"].get("eyeTexture") != "OK"
+            ]
+            if bad_face_organs:
+                failures.append(f"face organ FACE CHECK failures: {len(bad_face_organs)}")
+            if bad_eye_records:
+                failures.append(f"eye record/texture FACE CHECK failures: {len(bad_eye_records)}")
+
         facegen_phase_required = phase_lower in {
             "",
             "all",
@@ -1464,6 +1519,16 @@ def evaluate(
             ]
             if facegen_pending_checks:
                 failures.append(f"FaceGen texture loaded but not applied to a face surface: {len(facegen_pending_checks)}")
+            facegen_exact_pending_checks = [
+                item
+                for item in face_checks
+                if item["values"].get("faceGenTexture") in {"DETAIL_APPLIED_PENDING_EXACT", "DIFFUSE_APPLIED"}
+            ]
+            if facegen_exact_pending_checks:
+                failures.append(
+                    "FaceGen texture applied but exact FNV face/skin synthesis remains pending: "
+                    f"{len(facegen_exact_pending_checks)}"
+                )
 
     return ("PASS" if not failures else "FAIL", failures)
 
@@ -1651,6 +1716,9 @@ def main() -> int:
         raise SystemExit(f"Missing OpenMW log: {log_path}")
 
     lines = read_lines(log_path)
+    summary_path = proof_dir / "summary.txt"
+    if summary_path.is_file():
+        lines.extend(read_lines(summary_path))
     patterns = actor_patterns(lines, args.actor)
     gates = parse_builder_gates(lines, patterns)
     bounds = parse_attachment_bounds(lines, patterns)

@@ -87,6 +87,11 @@ void main()
     vec3 viewNormal = normalize(gl_NormalMatrix * passNormal);
 #endif
 
+#if @skinMap
+    vec3 skinTex = texture2D(skinMap, skinMapUV).xyz;
+    gl_FragData[0].xyz *= mix(vec3(1.0), skinTex * 2.0, 0.35);
+#endif
+
     float shadowing = unshadowedLightRatio(linearDepth);
     vec3 diffuseLight, ambientLight, specularLight;
     doLighting(gl_FragCoord.xy, passViewPos, viewNormal, gl_FrontMaterial.shininess, shadowing, diffuseLight, ambientLight, specularLight);

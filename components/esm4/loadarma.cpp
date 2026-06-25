@@ -72,7 +72,7 @@ void ESM4::ArmorAddon::load(ESM4::Reader& reader)
                 if ((esmVer == ESM::VER_094 || esmVer == ESM::VER_170) && subHdr.dataSize == 4) // TES5
                     reader.getFormId(mRaces.emplace_back());
                 else
-                    reader.skipSubRecordData(); // FIXME: this should be mModelMale for FO3/FONV
+                    reader.getZString(mModelMale);
 
                 break;
             case ESM::fourCC("BODT"): // body template

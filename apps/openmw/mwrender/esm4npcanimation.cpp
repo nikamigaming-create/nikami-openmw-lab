@@ -34,6 +34,7 @@
 #include <components/sceneutil/attach.hpp>
 #include <components/sceneutil/skeleton.hpp>
 #include <components/sceneutil/positionattitudetransform.hpp>
+#include <components/sceneutil/depth.hpp>
 #include <components/sceneutil/riggeometry.hpp>
 #include <components/sceneutil/riggeometryosgaextension.hpp>
 #include <components/sceneutil/texturetype.hpp>
@@ -377,6 +378,10 @@ namespace MWRender
 
                 stateSet->setMode(GL_BLEND, osg::StateAttribute::OFF | osg::StateAttribute::OVERRIDE);
                 stateSet->setMode(GL_ALPHA_TEST, osg::StateAttribute::OFF | osg::StateAttribute::OVERRIDE);
+                stateSet->setMode(GL_DEPTH_TEST, osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
+                osg::ref_ptr<osg::Depth> depth = new SceneUtil::AutoDepth(osg::Depth::LEQUAL);
+                depth->setWriteMask(true);
+                stateSet->setAttributeAndModes(depth, osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
                 stateSet->setRenderingHint(osg::StateSet::OPAQUE_BIN);
                 stateSet->setDefine("FORCE_OPAQUE", "1", osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
                 ++mApplied;
@@ -1477,7 +1482,7 @@ namespace MWRender
 
             std::string mode(value);
             Misc::StringUtils::lowerCaseInPlace(mode);
-            if (mode == "direct" || mode == "diffuse")
+            if (mode == "direct" || mode == "diffuse" || mode == "direct-diffuse" || mode == "direct_diffuse")
                 return "direct-diffuse";
             if (mode == "none" || mode == "source-only" || mode == "disabled")
                 return "source-only";
@@ -7493,6 +7498,11 @@ namespace MWRender
                 attached.get(), model, traits, mResourceSystem, npcBodyTexture, resolvedFaceDiffuseTexture);
             if (std::string_view(layer) == "headgear-final" && attached != nullptr)
             {
+                DisableCullVisitor disableCull;
+                attached->accept(disableCull);
+                Log(Debug::Info) << "FNV/ESM4 diag: made headgear surface double-sided " << armor->mEditorId
+                                 << " for " << traits.mEditorId
+                                 << " gate=runtime-fnv-headgear-double-sided";
                 ForceOpaqueNoBlendVisitor opaque;
                 attached->accept(opaque);
                 Log(Debug::Info) << "FNV/ESM4 diag: forced opaque no-blend headgear " << armor->mEditorId
@@ -7528,6 +7538,11 @@ namespace MWRender
                 attached.get(), model, traits, mResourceSystem, npcBodyTexture, resolvedFaceDiffuseTexture);
             if (std::string_view(layer) == "headgear-final" && attached != nullptr)
             {
+                DisableCullVisitor disableCull;
+                attached->accept(disableCull);
+                Log(Debug::Info) << "FNV/ESM4 diag: made headgear surface double-sided " << clothing->mEditorId
+                                 << " for " << traits.mEditorId
+                                 << " gate=runtime-fnv-headgear-double-sided";
                 ForceOpaqueNoBlendVisitor opaque;
                 attached->accept(opaque);
                 Log(Debug::Info) << "FNV/ESM4 diag: forced opaque no-blend headgear " << clothing->mEditorId

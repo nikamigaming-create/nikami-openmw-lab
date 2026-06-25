@@ -277,13 +277,20 @@ $knownBlocked = @($Ledger | Where-Object { $_.classification -eq "known-blocked"
 if ($knownBlocked.Count -le 0) {
     throw "Actor presentation ledger should explicitly report known-blocked rows for current FNV parity gaps."
 }
-$armaBlocked = @($Ledger | Where-Object {
+$armaPending = @($Ledger | Where-Object {
         $_.component -eq "armor-addon-fnv-modl" -and
-        $_.classification -eq "known-blocked" -and
+        $_.classification -eq "loaded-pending-runtime" -and
+        $_.firstFailingGate -eq "armor-addon-runtime-sweep"
+    })
+if ($armaPending.Count -le 0) {
+    throw "Actor presentation ledger did not account FO3/FNV ARMA MODL as parsed pending runtime armor-addon sweep proof."
+}
+$staleArmaBlocked = @($Ledger | Where-Object {
+        $_.component -eq "armor-addon-fnv-modl" -and
         $_.firstFailingGate -eq "loadarma-fnv-modl-skipped"
     })
-if ($armaBlocked.Count -le 0) {
-    throw "Actor presentation ledger did not prove the FO3/FNV ARMA MODL skip as an explicit known-blocked row."
+if ($staleArmaBlocked.Count -gt 0) {
+    throw "Actor presentation ledger still reports stale loadarma-fnv-modl-skipped rows after ARMA MODL parsing was enabled."
 }
 
 Write-Host "FNV actor presentation ledger gate PASS"

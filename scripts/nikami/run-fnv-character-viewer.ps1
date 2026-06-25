@@ -46,6 +46,9 @@ param(
     [double]$ActorVisibleHandMaxDistance = 30.0,
     [string]$FnvSkinningMatrixAudit = "arms,rightHand,leftHand,HeadOld,HeadHuman",
     [string]$FnvHairEmissionStrength = "",
+    [string]$FnvFaceGenTextureMode = $env:OPENMW_FNV_FACEGEN_TEXTURE_MODE,
+    [string]$FnvUseEgtMaterialTint = $env:OPENMW_FNV_USE_EGT_MATERIAL_TINT,
+    [string]$FnvUseRawBodyTintSwatch = $env:OPENMW_FNV_USE_RAW_BODY_TINT_SWATCH,
     [string]$LiveAuthoringFile = $env:OPENMW_FNV_LIVE_AUTHORING_FILE,
     [switch]$FnvUseNativeAnimationCallbacks,
     [string]$SuiteDir = "",
@@ -387,7 +390,14 @@ $ActorKitPropSlotsCsv = Join-OptionalSelectorList $ActorKitPropSlots
 $ActorKitPropModelsCsv = Join-OptionalSelectorList $ActorKitPropModels
 $ViewerRoot = Join-Path $ProofRoot "fnv-character-viewer"
 New-Item -ItemType Directory -Force -Path $ViewerRoot | Out-Null
-$RunStamp = Get-Date -Format "yyyyMMdd_HHmmss"
+function New-ProofRunStamp {
+    $now = Get-Date
+    $processId = [System.Diagnostics.Process]::GetCurrentProcess().Id
+    $suffix = [System.Guid]::NewGuid().ToString("N").Substring(0, 8)
+    return "{0}_{1}_{2}" -f $now.ToString("yyyyMMdd_HHmmss_fff"), $processId, $suffix
+}
+
+$RunStamp = New-ProofRunStamp
 $RunDir = Join-Path $ViewerRoot $RunStamp
 New-Item -ItemType Directory -Force -Path $RunDir | Out-Null
 
@@ -421,6 +431,9 @@ Write-Host "AllowMissingActorVisibleHandGeometry: $AllowMissingActorVisibleHandG
 Write-Host "ActorVisibleHandMaxDistance: $ActorVisibleHandMaxDistance"
 Write-Host "FnvSkinningMatrixAudit: $FnvSkinningMatrixAudit"
 Write-Host "FnvHairEmissionStrength: $FnvHairEmissionStrength"
+Write-Host "FnvFaceGenTextureMode: $FnvFaceGenTextureMode"
+Write-Host "FnvUseEgtMaterialTint: $FnvUseEgtMaterialTint"
+Write-Host "FnvUseRawBodyTintSwatch: $FnvUseRawBodyTintSwatch"
 Write-Host "LiveAuthoringFile: $LiveAuthoringFile"
 Write-Host "FnvUseNativeAnimationCallbacks: $FnvUseNativeAnimationCallbacks"
 Write-Host "BootstrapCell: $BootstrapCell"
@@ -499,6 +512,9 @@ else {
             ActorVisibleHandMaxDistance = $ActorVisibleHandMaxDistance
             FnvSkinningMatrixAudit = $FnvSkinningMatrixAudit
             FnvHairEmissionStrength = $FnvHairEmissionStrength
+            FnvFaceGenTextureMode = $FnvFaceGenTextureMode
+            FnvUseEgtMaterialTint = $FnvUseEgtMaterialTint
+            FnvUseRawBodyTintSwatch = $FnvUseRawBodyTintSwatch
             LiveAuthoringFile = $LiveAuthoringFile
         }
         if ($AllowMissingActorVisibleHandGeometry) { $builderArgs.AllowMissingActorVisibleHandGeometry = $true }
