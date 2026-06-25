@@ -21,6 +21,11 @@ uniform sampler2D detailMap;
 varying vec2 detailMapUV;
 #endif
 
+#if @skinMap
+uniform sampler2D skinMap;
+varying vec2 skinMapUV;
+#endif
+
 #if @decalMap
 uniform sampler2D decalMap;
 varying vec2 decalMapUV;

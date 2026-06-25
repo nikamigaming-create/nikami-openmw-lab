@@ -3408,6 +3408,10 @@ namespace NifOsg
                         attachExternalTexture(
                             "glossMap", textureSet->mTextures[i], wrapS, wrapT, uvSet, stateset, boundTextures);
                         break;
+                    case Nif::BSShaderTextureSet::TextureType::Subsurface:
+                        attachExternalTexture(
+                            "skinMap", textureSet->mTextures[i], wrapS, wrapT, uvSet, stateset, boundTextures);
+                        break;
                     default:
                     {
                         Log(Debug::Info) << "Unhandled texture stage " << i << " on shape \"" << nodeName << "\" in "

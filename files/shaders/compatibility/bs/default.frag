@@ -22,6 +22,11 @@ uniform sampler2D normalMap;
 varying vec2 normalMapUV;
 #endif
 
+#if @skinMap
+uniform sampler2D skinMap;
+varying vec2 skinMapUV;
+#endif
+
 varying float euclideanDepth;
 varying float linearDepth;
 

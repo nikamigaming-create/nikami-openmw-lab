@@ -16,6 +16,10 @@ varying vec2 darkMapUV;
 varying vec2 detailMapUV;
 #endif
 
+#if @skinMap
+varying vec2 skinMapUV;
+#endif
+
 #if @decalMap
 varying vec2 decalMapUV;
 #endif
@@ -119,6 +123,10 @@ void main(void)
 
 #if @detailMap
     detailMapUV = (gl_TextureMatrix[@detailMapUV] * gl_MultiTexCoord@detailMapUV).xy;
+#endif
+
+#if @skinMap
+    skinMapUV = (gl_TextureMatrix[@skinMapUV] * gl_MultiTexCoord@skinMapUV).xy;
 #endif
 
 #if @decalMap

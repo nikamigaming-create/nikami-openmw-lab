@@ -1773,6 +1773,13 @@ namespace MWRender
             resourceSystem->getSceneManager()->applyShaders(node);
         }
 
+        void overrideFalloutPartSkinTexture(
+            std::string_view texture, Resource::ResourceSystem* resourceSystem, osg::Node& node)
+        {
+            overrideFalloutPartTexture(texture, "skinMap", 5, resourceSystem, node);
+            resourceSystem->getSceneManager()->applyShaders(node);
+        }
+
         bool isFonvHeadSurfacePart(std::size_t index)
         {
             return index == ESM4::Race::Head;
@@ -7143,10 +7150,13 @@ namespace MWRender
                     overrideFalloutPartNormalTexture(bodyNormalTexture, mResourceSystem, *attached);
                 }
                 if (!bodySkinTexture.empty())
-                    Log(Debug::Info) << "FNV/ESM4 diag: accounted FNV body skin/subsurface companion "
-                                     << formatTextureImageSummary(mResourceSystem, bodySkinTexture) << " on "
+                {
+                    Log(Debug::Info) << "FNV/ESM4 diag: binding FNV body skin/subsurface companion "
+                                     << formatTextureImageSummary(mResourceSystem, bodySkinTexture) << " as skinMap on "
                                      << bodyPart.mesh << " for " << traits.mEditorId
-                                     << " runtime=loaded-pending-fnv-skin-shader";
+                                     << " runtime=runtime-supported gate=runtime-fnv-skin-map-bound";
+                    overrideFalloutPartSkinTexture(bodySkinTexture, mResourceSystem, *attached);
+                }
                 forceFalloutSkinOpaqueNoBlend(attached.get(), bodyPart.mesh, traits);
             }
         }
@@ -7163,7 +7173,7 @@ namespace MWRender
         bool raceFacePartAttached[8] = {};
         bool raceFacePartHasMesh[8] = {};
         bool resolvedFaceNormalTexture = false;
-        bool resolvedFaceSkinCompanion = false;
+        std::string resolvedFaceSkinCompanionStatus = "MISSING";
         std::string resolvedFaceGenTextureStatus = npcFaceTexture.empty() ? "MISSING" : "LOADED_PENDING";
         std::string resolvedFaceDiffuseTexture;
         std::string resolvedFaceDiffuseSource = "MISSING";
@@ -7261,11 +7271,12 @@ namespace MWRender
                 }
                 if (!headSkinTexture.empty())
                 {
-                    resolvedFaceSkinCompanion = true;
-                    Log(Debug::Info) << "FNV/ESM4 diag: accounted FNV face skin/subsurface companion "
-                                     << formatTextureImageSummary(mResourceSystem, headSkinTexture) << " on "
+                    resolvedFaceSkinCompanionStatus = "BOUND";
+                    Log(Debug::Info) << "FNV/ESM4 diag: binding FNV face skin/subsurface companion "
+                                     << formatTextureImageSummary(mResourceSystem, headSkinTexture) << " as skinMap on "
                                      << headPart.mesh << " for " << traits.mEditorId
-                                     << " runtime=loaded-pending-fnv-skin-shader";
+                                     << " runtime=runtime-supported gate=runtime-fnv-skin-map-bound";
+                    overrideFalloutPartSkinTexture(headSkinTexture, mResourceSystem, *attached);
                 }
                 neutralizeFalloutSkinMaterial(attached.get(), headPart.mesh, traits);
                 applyFaceGenEgtTint(mResourceSystem, attached.get(), headPart.mesh, traits);
@@ -7371,7 +7382,7 @@ namespace MWRender
                          << " faceDiffuse=" << resolvedFaceDiffuseSource
                          << " faceGenTexture=" << resolvedFaceGenTextureStatus
                          << " faceNormal=" << (resolvedFaceNormalTexture ? "OK" : "RACE")
-                         << " faceSkinCompanion=" << (resolvedFaceSkinCompanion ? "LOADED" : "MISSING")
+                         << " faceSkinCompanion=" << resolvedFaceSkinCompanionStatus
                          << " tintLayers=" << traits.mTintLayers.size();
 
         const auto [shapeNonZero, shapeTotal] = summarizeCoefficients(traits.mSymShapeModeCoefficients);

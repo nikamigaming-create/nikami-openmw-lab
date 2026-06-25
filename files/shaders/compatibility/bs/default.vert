@@ -21,6 +21,10 @@ varying vec2 normalMapUV;
 varying vec4 passTangent;
 #endif
 
+#if @skinMap
+varying vec2 skinMapUV;
+#endif
+
 varying float euclideanDepth;
 varying float linearDepth;
 
@@ -60,6 +64,10 @@ void main(void)
 
 #if @normalMap
     normalMapUV = (gl_TextureMatrix[@normalMapUV] * gl_MultiTexCoord@normalMapUV).xy;
+#endif
+
+#if @skinMap
+    skinMapUV = (gl_TextureMatrix[@skinMapUV] * gl_MultiTexCoord@skinMapUV).xy;
 #endif
 
 
