@@ -788,6 +788,7 @@ button:disabled {{ opacity: .45; cursor: not-allowed; }}
       <div id="selectedEntry" class="jobItem"></div>
       <div class="actions">
         <button id="newSession" type="button">New Session</button>
+        <label class="check"><input id="autoLiveRuntime" type="checkbox" checked> Auto Live</label>
         <button id="sendLiveRuntime" type="button">Send Live</button>
         <button id="runThree" type="button">Run 3 Camera</button>
         <button id="runFront" type="button">Run Front</button>
@@ -937,6 +938,11 @@ const state = {{
   liveAuthoring: null,
   liveAuthoringDirty: false,
   liveRuntime: null,
+  liveRuntimeAuto: true,
+  liveRuntimeDirty: false,
+  liveRuntimeSending: false,
+  liveRuntimeLastError: "",
+  liveRuntimePendingTimer: null,
   runtimeStatus: null,
   runtimeAudit: null,
   partEnabled: Object.fromEntries(PARTS.map(part => [part, true]))
@@ -1028,7 +1034,10 @@ function renderLiveRuntimeState() {{
   const selectors = state.liveRuntime?.selectors || {{}};
   const phase = selectors.phase || "default phase";
   const parts = Array.isArray(selectors.parts) && selectors.parts.length ? selectors.parts.join(",") : "all parts";
-  node.textContent = `${{target}} / ${{phase}} / ${{parts}} / ${{path}}`;
+  const mode = state.liveRuntimeAuto ? "auto-live" : "manual-live";
+  const pending = state.liveRuntimeSending ? "sending" : (state.liveRuntimeDirty ? "dirty" : "applied");
+  const error = state.liveRuntimeLastError ? ` / failed: ${{state.liveRuntimeLastError}}` : "";
+  node.textContent = `${{target}} / ${{phase}} / ${{parts}} / ${{mode}} / ${{pending}} / ${{path}}${{error}}`;
 }}
 function renderRuntimeStatus() {{
   const node = document.getElementById("runtimeStatus");
@@ -1070,6 +1079,7 @@ function renderRuntimeAudit() {{
   const recent = audit.recent || {{}};
   const latest = [
     ...(recent.targetSwitches || []).slice(-2),
+    ...(recent.liveActorKitControls || []).slice(-3),
     ...(recent.actorAssemblyMatches || []).slice(-2),
     ...(recent.liveAuthoringApplies || []).slice(-3)
   ].slice(-7);
@@ -1078,6 +1088,7 @@ function renderRuntimeAudit() {{
     <div class="runtimeLine">
       <span class="pill ${{esc(statusClass)}}">${{esc(audit.classification || "pending")}}</span>
       <span class="pill">target ${{esc(counts.targetSwitches || 0)}}</span>
+      <span class="pill">selectors ${{esc(counts.liveActorKitControls || 0)}}</span>
       <span class="pill">assembly ${{esc(counts.actorAssemblyMatches || 0)}}</span>
       <span class="pill">knobs ${{esc(counts.liveAuthoringApplies || 0)}}</span>
     </div>
@@ -1157,13 +1168,16 @@ async function writeLiveAuthoring(reset = false) {{
     addLocalEvent("live-authoring.write.failed", {{ message: error.message || String(error) }});
   }}
 }}
-async function sendSelectedLiveRuntime() {{
+async function sendSelectedLiveRuntime(options = {{}}) {{
   if (!liveAvailable()) return;
   const entry = selectedEntry();
   if (!entry || !["npc", "creature"].includes(entry.kind)) return;
   const target = entry.runtimeTarget || entry.baseActorTarget || entry.target || "";
   if (!target) return;
   const selectorPayload = studioPayload("runtimeFrontOnly");
+  state.liveRuntimeSending = true;
+  state.liveRuntimeLastError = "";
+  renderLiveRuntimeState();
   try {{
     state.liveRuntime = await api("/nikami/live-runtime", {{
       method: "POST",
@@ -1187,8 +1201,11 @@ async function sendSelectedLiveRuntime() {{
         }}
       }})
     }});
+    state.liveRuntimeDirty = false;
+    state.liveRuntimeLastError = "";
     renderLiveRuntimeState();
-    addLocalEvent("live-runtime.update", {{
+    addLocalEvent(options.silent ? "live-runtime.auto-update" : "live-runtime.update", {{
+      reason: options.reason || "button",
       actorTarget: state.liveRuntime.actorTarget,
       actorKind: state.liveRuntime.actorKind,
       path: state.liveRuntime.path,
@@ -1197,8 +1214,26 @@ async function sendSelectedLiveRuntime() {{
     }});
     window.setTimeout(refreshRuntimeAudit, 500);
   }} catch (error) {{
+    state.liveRuntimeDirty = true;
+    state.liveRuntimeLastError = error.message || String(error);
     addLocalEvent("live-runtime.write.failed", {{ message: error.message || String(error), entryId: entry.id }});
+  }} finally {{
+    state.liveRuntimeSending = false;
+    renderLiveRuntimeState();
   }}
+}}
+function queueLiveRuntimeUpdate(reason = "selector.change") {{
+  state.liveRuntimeDirty = true;
+  state.liveRuntimeLastError = "";
+  renderLiveRuntimeState();
+  if (!state.liveRuntimeAuto || !liveAvailable()) return;
+  const entry = selectedEntry();
+  if (!entry || !["npc", "creature"].includes(entry.kind)) return;
+  if (state.liveRuntimePendingTimer) window.clearTimeout(state.liveRuntimePendingTimer);
+  state.liveRuntimePendingTimer = window.setTimeout(() => {{
+    state.liveRuntimePendingTimer = null;
+    sendSelectedLiveRuntime({{ silent: true, reason }});
+  }}, 250);
 }}
 let liveAuthoringTimer = 0;
 function queueLiveAuthoringWrite() {{
@@ -1519,6 +1554,14 @@ function renderControls() {{
   document.querySelectorAll("#partChecks input").forEach(input => input.onchange = () => {{
     state.partEnabled[input.dataset.part] = input.checked;
     recordEvent("selector.parts", {{ parts: selectedParts() }});
+    queueLiveRuntimeUpdate("parts.toggle");
+    renderWorkbench();
+  }});
+  document.getElementById("autoLiveRuntime").addEventListener("change", event => {{
+    state.liveRuntimeAuto = event.target.checked;
+    recordEvent("live-runtime.auto", {{ enabled: state.liveRuntimeAuto }});
+    if (state.liveRuntimeAuto) queueLiveRuntimeUpdate("auto.enabled");
+    renderLiveRuntimeState();
   }});
   document.getElementById("liveSurfacePrefix").onchange = () => {{
     hydrateLiveInputs();
@@ -1532,8 +1575,21 @@ function renderControls() {{
   document.getElementById("livePivotMode").addEventListener("change", queueLiveAuthoringWrite);
   document.getElementById("applyLiveAuthoring").addEventListener("click", () => writeLiveAuthoring(false));
   document.getElementById("resetLiveAuthoring").addEventListener("click", () => writeLiveAuthoring(true));
-  ["phaseSelect", "partFocusSelect", "jobTypeSelect", "animationSourceInput", "animationStartPointInput", "animationSelect", "dialogueSelect", "angleSelect", "reviewSelect"].forEach(id => {{
-    document.getElementById(id).onchange = () => recordEvent("selector.change", studioPayload("runtimeThreeCamera"));
+  ["phaseSelect", "partFocusSelect", "animationSourceInput", "animationStartPointInput", "animationSelect", "dialogueSelect"].forEach(id => {{
+    const node = document.getElementById(id);
+    const handler = () => {{
+      recordEvent("selector.change", studioPayload("runtimeThreeCamera"));
+      queueLiveRuntimeUpdate(`selector.${{id}}`);
+      renderWorkbench();
+    }};
+    node.addEventListener("change", handler);
+    if (node.tagName === "INPUT") node.addEventListener("input", handler);
+  }});
+  ["jobTypeSelect", "angleSelect", "reviewSelect"].forEach(id => {{
+    document.getElementById(id).onchange = () => {{
+      recordEvent("selector.change", studioPayload("runtimeThreeCamera"));
+      renderWorkbench();
+    }};
   }});
 }}
 function renderEvents() {{
@@ -1733,6 +1789,8 @@ function renderWorkbench() {{
   const liveSwitchable = live && entry && ["npc", "creature"].includes(entry.kind);
   document.getElementById("newSession").disabled = !live;
   document.getElementById("sendLiveRuntime").disabled = !liveSwitchable;
+  document.getElementById("autoLiveRuntime").disabled = !liveSwitchable;
+  document.getElementById("autoLiveRuntime").checked = state.liveRuntimeAuto;
   document.getElementById("runThree").disabled = !runnable;
   document.getElementById("runFront").disabled = !runnable;
   renderCameras();
@@ -1785,6 +1843,7 @@ function render() {{
     state.selectedId = button.dataset.select || "";
     recordEvent("entry.select", {{ entryId: state.selectedId }});
     render();
+    queueLiveRuntimeUpdate("entry.select");
     fetchEntryDetails(state.selectedId).then(() => render()).catch(error => addLocalEvent("entry.detail.failed", {{ entryId: state.selectedId, message: error.message || String(error) }}));
   }});
   document.querySelectorAll("[data-run]").forEach(button => button.onclick = async () => {{
@@ -1808,7 +1867,7 @@ document.getElementById("newSession").addEventListener("click", async () => {{
 }});
 document.getElementById("runThree").addEventListener("click", () => launchJob("runtimeThreeCamera"));
 document.getElementById("runFront").addEventListener("click", () => launchJob("runtimeFrontOnly"));
-document.getElementById("sendLiveRuntime").addEventListener("click", sendSelectedLiveRuntime);
+document.getElementById("sendLiveRuntime").addEventListener("click", () => sendSelectedLiveRuntime({{ reason: "button" }}));
 document.getElementById("saveReview").addEventListener("click", saveReviewEvent);
 document.querySelectorAll("[data-preset]").forEach(button => button.addEventListener("click", () => applyPreset(button.dataset.preset || "")));
 document.getElementById("search").addEventListener("input", e => {{ state.query = e.target.value; refreshSearch(); }});
