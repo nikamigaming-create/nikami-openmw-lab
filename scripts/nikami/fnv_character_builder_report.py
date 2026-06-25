@@ -955,6 +955,129 @@ def analyze_neutral_preview_composition(
         ]
 
 
+def safe_artifact_name(text: str) -> str:
+    safe = re.sub(r"[^A-Za-z0-9_.-]+", "-", text.strip())
+    return safe.strip("-") or "artifact"
+
+
+def create_neutral_preview_crops(
+    proof_dir: Path, output_dir: Path, composition: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    if not composition:
+        return []
+
+    from PIL import Image
+
+    resampling = getattr(getattr(Image, "Resampling", Image), "LANCZOS", Image.LANCZOS)
+    crop_dir = output_dir / "review-crops"
+    crop_dir.mkdir(parents=True, exist_ok=True)
+    crops: list[dict[str, Any]] = []
+
+    for item in composition:
+        source_path = proof_dir / str(item.get("image", ""))
+        if not source_path.is_file():
+            continue
+        with Image.open(source_path) as raw_image:
+            image = raw_image.convert("RGB")
+            original_width, original_height = image.size
+            analysis_size = item.get("analysisSize") or item.get("originalSize") or [original_width, original_height]
+            analysis_width = max(1, int(analysis_size[0]))
+            analysis_height = max(1, int(analysis_size[1]))
+            scale_x = original_width / analysis_width
+            scale_y = original_height / analysis_height
+
+            for pane in item.get("panes", []):
+                pane_name = str(pane.get("name", "pane"))
+                component_box = pane.get("largestComponentBox") or []
+                if len(component_box) == 4 and int(pane.get("largestComponentPixels", 0)) > 0:
+                    left = int(float(component_box[0]) * scale_x)
+                    top = int(float(component_box[1]) * scale_y)
+                    right = int(float(component_box[2]) * scale_x)
+                    bottom = int(float(component_box[3]) * scale_y)
+                    margin = int(max(24, (right - left) * 0.28, (bottom - top) * 0.22))
+                    left = max(0, left - margin)
+                    top = max(0, top - margin)
+                    right = min(original_width, right + margin)
+                    bottom = min(original_height, bottom + margin)
+                    crop_source = "largest-foreground-component"
+                else:
+                    pane_index = next(
+                        (index for index, known in enumerate(NEUTRAL_PREVIEW_PANES) if known["name"] == pane_name), -1
+                    )
+                    if pane_index < 0:
+                        continue
+                    left, top, right, bottom = pane_box(original_width, original_height, NEUTRAL_PREVIEW_PANES[pane_index])
+                    crop_source = "pane"
+                if right <= left or bottom <= top:
+                    continue
+
+                cropped = image.crop((left, top, right, bottom))
+                long_edge = max(cropped.size)
+                scale = 1.0
+                if long_edge < 640:
+                    scale = min(4.0, 640.0 / max(1, long_edge))
+                if long_edge * scale > 960:
+                    scale = 960.0 / max(1, long_edge)
+                if scale > 1.01:
+                    cropped = cropped.resize(
+                        (max(1, int(round(cropped.width * scale))), max(1, int(round(cropped.height * scale)))),
+                        resampling,
+                    )
+
+                output_name = f"{source_path.stem}-{safe_artifact_name(pane_name)}-review.png"
+                output_path = crop_dir / output_name
+                cropped.save(output_path)
+                crops.append(
+                    {
+                        "sourceImage": source_path.name,
+                        "pane": pane_name,
+                        "activeForPhase": bool(pane.get("activeForPhase", False)),
+                        "status": pane.get("status", "UNKNOWN"),
+                        "cropImage": output_path.relative_to(output_dir).as_posix(),
+                        "cropSource": crop_source,
+                        "cropBox": [left, top, right, bottom],
+                        "componentBoxAnalysis": component_box,
+                        "sourceSize": [original_width, original_height],
+                        "analysisSize": [analysis_width, analysis_height],
+                        "outputSize": [cropped.width, cropped.height],
+                    }
+                )
+
+    return crops
+
+
+def parse_material_evidence(lines: list[str], patterns: list[str]) -> list[dict[str, Any]]:
+    evidence_needles = (
+        ("facegen-source", "loaded exported NPC FaceGen texture source"),
+        ("facegen-detail", "applying NPC FaceGen detail component"),
+        ("face-normal", "binding data-derived face normal map"),
+        ("skin-map", "binding FNV face skin/subsurface companion"),
+        ("skin-map", "binding FNV body skin/subsurface companion"),
+        ("egt-material-tint", "applied FaceGen EGT complexion"),
+        ("body-tint", "applied raw BSA body tint swatch"),
+        ("hair-emission", "emissionStrength="),
+    )
+    rows: list[dict[str, Any]] = []
+    for line in lines:
+        if not line_matches_actor(line, patterns):
+            continue
+        for kind, needle in evidence_needles:
+            if needle not in line:
+                continue
+            runtime_match = re.search(r"\bruntime=([^ ]+)", line)
+            gate_match = re.search(r"\bgate=([^ ]+)", line)
+            rows.append(
+                {
+                    "kind": kind,
+                    "runtime": runtime_match.group(1) if runtime_match else "",
+                    "gate": gate_match.group(1) if gate_match else "",
+                    "line": compact_line(line),
+                }
+            )
+            break
+    return rows
+
+
 def parse_actor_matches(lines: list[str], actor: str) -> list[dict[str, Any]]:
     match_re = re.compile(
         rf'active-cell actor match target="{re.escape(actor)}".*?\bframe=(?P<frame>[0-9]+) '
@@ -1359,6 +1482,7 @@ def write_markdown(path: Path, report: dict[str, Any]) -> None:
     lines.append(f"Patterns: `{', '.join(report['actorPatterns'])}`")
     lines.append(f"Actor matches: {len(report['actorMatches'])}")
     lines.append(f"Screenshots: {len(report['screenshots'])}")
+    lines.append(f"Review crops: {len(report['reviewCrops'])}")
     lines.append("")
     lines.append("## Gates")
     lines.append("")
@@ -1375,6 +1499,7 @@ def write_markdown(path: Path, report: dict[str, Any]) -> None:
     lines.append(f"Runtime audit summaries: {len(report['runtimeAuditSummary'])}")
     lines.append(f"Neutral preview composition samples: {len(report['neutralPreviewComposition'])}")
     lines.append(f"Face drawable audits: {len(report['faceDrawables'])}")
+    lines.append(f"Material evidence rows: {len(report['materialEvidence'])}")
     lines.append(f"TRI/EGM/talk lines: {len(report['morphLines'])}")
     lines.append(f"Actor weapon states: {len(report['actorWeaponStates'])} expected={report['weaponExpected']}")
     lines.append(f"Weapon lines: {len(report['weaponLines'])}")
@@ -1406,6 +1531,27 @@ def write_markdown(path: Path, report: dict[str, Any]) -> None:
                     f"{pane.get('touchEdges', [])} |"
                 )
             lines.append("")
+    if report["reviewCrops"]:
+        lines.append("## Review Crops")
+        lines.append("")
+        for item in report["reviewCrops"]:
+            active = "active" if item.get("activeForPhase") else "inactive"
+            lines.append(f"### {item['pane']} ({active}, {item['cropSource']})")
+            lines.append("")
+            lines.append(f"![{item['pane']}]({item['cropImage']})")
+            lines.append("")
+            lines.append(
+                f"- source=`{item['sourceImage']}` cropBox={item['cropBox']} outputSize={item['outputSize']} status={item['status']}"
+            )
+            lines.append("")
+    if report["materialEvidence"]:
+        lines.append("## Material Evidence")
+        lines.append("")
+        lines.append("| Kind | Runtime | Gate | Evidence |")
+        lines.append("|---|---|---|---|")
+        for item in report["materialEvidence"][:64]:
+            lines.append(f"| {item['kind']} | {item['runtime']} | {item['gate']} | `{item['line']}` |")
+        lines.append("")
     if report["faceOcclusionFindings"]:
         lines.append("## Face Occlusion Findings")
         lines.append("")
@@ -1532,6 +1678,7 @@ def main() -> int:
     neutral_preview_composition = analyze_neutral_preview_composition(
         proof_dir, lines, args.actor, weapon_present=weapon_present, phase=args.phase.lower()
     )
+    material_evidence = parse_material_evidence(lines, patterns)
     actor_kind = args.actor_kind
     if actor_kind == "auto":
         actor_kind = "creature" if creature_evidence else "npc"
@@ -1570,6 +1717,10 @@ def main() -> int:
         face_checks,
     )
 
+    out_json = args.out_json or (proof_dir / "character-builder-report.json")
+    out_md = args.out_md or (proof_dir / "character-builder-report.md")
+    review_crops = create_neutral_preview_crops(proof_dir, out_json.parent, neutral_preview_composition)
+
     report: dict[str, Any] = {
         "status": status,
         "failures": failures,
@@ -1580,6 +1731,7 @@ def main() -> int:
         "actorPatterns": patterns,
         "actorMatches": actor_matches,
         "screenshots": sorted(p.name for p in proof_dir.glob("*.png")),
+        "reviewCrops": review_crops,
         "categorySummary": summarize_categories(gates),
         "gates": gates,
         "attachmentBounds": bounds,
@@ -1591,6 +1743,7 @@ def main() -> int:
         "neutralPreviewComposition": neutral_preview_composition,
         "faceChecks": face_checks,
         "faceDrawables": drawables,
+        "materialEvidence": material_evidence,
         "morphLines": morph_lines,
         "actorWeaponStates": actor_weapon_states,
         "weaponExpected": (None if not actor_weapon_states else any(item["weapon"] for item in actor_weapon_states)),
@@ -1603,8 +1756,6 @@ def main() -> int:
         "animationBlockers": animation_blockers,
     }
 
-    out_json = args.out_json or (proof_dir / "character-builder-report.json")
-    out_md = args.out_md or (proof_dir / "character-builder-report.md")
     out_json.write_text(json.dumps(report, indent=2), encoding="utf-8")
     write_markdown(out_md, report)
     print(f"{status} {out_json}")

@@ -671,6 +671,30 @@ def first_image(case_dir: Path, names: list[str]) -> str:
     return pngs[0] if pngs else ""
 
 
+def normalize_review_crops(case_dir: Path, suite_dir: Path, report: dict[str, Any]) -> list[dict[str, Any]]:
+    crops: list[dict[str, Any]] = []
+    for item in as_list(report.get("reviewCrops")):
+        if not isinstance(item, dict):
+            continue
+        crop_image = str(item.get("cropImage") or "").replace("\\", "/").strip()
+        if not crop_image:
+            continue
+        crop_path = case_dir / crop_image
+        normalized = dict(item)
+        normalized["path"] = rel_path(crop_path, suite_dir)
+        normalized["exists"] = crop_path.is_file()
+        crops.append(normalized)
+    return crops
+
+
+def first_review_crop_path(review_crops: list[dict[str, Any]]) -> str:
+    active = [item for item in review_crops if item.get("activeForPhase") and item.get("exists")]
+    candidates = active or [item for item in review_crops if item.get("exists")]
+    if not candidates:
+        return ""
+    return str(candidates[0].get("path") or "")
+
+
 def screenshot_names(value: Any) -> list[str]:
     names: list[str] = []
     for item in as_list(value):
@@ -1063,7 +1087,9 @@ def load_suite(suite_dir: Path) -> dict[str, Any]:
         angles.append(angle)
         log_lines = read_lines(case_dir / "openmw.log")
         screenshots = sorted(unique_ordered(screenshot_names(raw.get("screenshots")) + [p.name for p in case_dir.glob("*.png")]))
+        review_crops = normalize_review_crops(case_dir, suite_dir, report)
         image = first_image(case_dir, screenshots)
+        review_image = first_review_crop_path(review_crops)
         merged_failures = unique_ordered(
             [str(item) for item in as_list(raw.get("failures"))]
             + [str(item) for item in as_list(report.get("failures"))]
@@ -1101,7 +1127,8 @@ def load_suite(suite_dir: Path) -> dict[str, Any]:
             "reportJson": rel_path(case_dir / "character-builder-report.json", suite_dir),
             "reportMarkdown": rel_path(case_dir / "character-builder-report.md", suite_dir),
             "screenshots": [{"name": name, "path": rel_path(case_dir / name, suite_dir)} for name in screenshots],
-            "mainImage": rel_path(case_dir / image, suite_dir) if image else "",
+            "reviewCrops": review_crops,
+            "mainImage": review_image or (rel_path(case_dir / image, suite_dir) if image else ""),
             "counts": {
                 "gates": len(as_list(report.get("gates"))),
                 "attachmentBounds": len(as_list(report.get("attachmentBounds"))),
@@ -1109,8 +1136,10 @@ def load_suite(suite_dir: Path) -> dict[str, Any]:
                 "runtimeAuditSummary": len(as_list(report.get("runtimeAuditSummary"))),
                 "runtimePartTimelines": len(as_list(report.get("runtimePartTimelines"))),
                 "neutralPreviewComposition": len(as_list(report.get("neutralPreviewComposition"))),
+                "reviewCrops": len(review_crops),
                 "failureFocus": len(failure_focus),
                 "faceDrawables": len(as_list(report.get("faceDrawables"))),
+                "materialEvidence": len(as_list(report.get("materialEvidence"))),
                 "morphLines": len(as_list(report.get("morphLines"))),
                 "weaponLines": len(as_list(report.get("weaponLines"))),
                 "actorMatches": len(as_list(report.get("actorMatches"))),
@@ -1128,6 +1157,7 @@ def load_suite(suite_dir: Path) -> dict[str, Any]:
             "runtimeAuditSummary": as_list(report.get("runtimeAuditSummary")),
             "runtimePartTimelines": as_list(report.get("runtimePartTimelines")),
             "neutralPreviewComposition": as_list(report.get("neutralPreviewComposition")),
+            "materialEvidence": as_list(report.get("materialEvidence")),
             "failureFocus": failure_focus,
             "faceDrawables": as_list(report.get("faceDrawables")),
             "morphLines": as_list(report.get("morphLines")),
@@ -1245,6 +1275,10 @@ button.active {{ border-color: var(--accent); background: #26354d; }}
 .pane {{ background: var(--panel); border: 1px solid var(--line); border-radius: 6px; overflow: hidden; min-width: 0; }}
 .paneHead {{ display: flex; justify-content: space-between; gap: 8px; padding: 8px 10px; border-bottom: 1px solid var(--line); color: var(--muted); }}
 .pane img {{ display: block; width: 100%; height: auto; background: #050607; }}
+.reviewGrid {{ display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1px; background: #050607; }}
+.reviewThumb {{ position: relative; background: #050607; min-height: 120px; }}
+.reviewThumb img {{ width: 100%; height: 100%; object-fit: contain; }}
+.reviewLabel {{ position: absolute; left: 6px; top: 6px; padding: 2px 5px; border-radius: 4px; background: rgba(0,0,0,.68); color: #e7edf7; font-size: 11px; }}
 .empty {{ min-height: 180px; display: grid; place-items: center; color: var(--muted); background: #0b0d10; }}
 .pane .empty {{ min-height: 260px; }}
 .section {{ padding: 10px; overflow: auto; }}
@@ -1535,10 +1569,13 @@ function renderImages() {{
   host.innerHTML = (MANIFEST.angles || []).map(angle => {{
     const c = caseFor(state.phase, angle);
     const image = c?.mainImage || "";
-    const body = image ? `<a href="${{esc(image)}}"><img src="${{esc(image)}}" alt="${{esc(c.case)}}"></a>` : `<div class="empty">No screenshot</div>`;
+    const crops = c?.reviewCrops || [];
+    const body = crops.length
+      ? `<div class="reviewGrid">${{crops.map(crop => `<a class="reviewThumb" href="${{esc(crop.path || crop.cropImage || "#")}}"><img src="${{esc(crop.path || crop.cropImage || "")}}" alt="${{esc(crop.pane || c.case)}}"><span class="reviewLabel">${{esc(crop.pane || "")}}</span></a>`).join("")}}</div>`
+      : (image ? `<a href="${{esc(image)}}"><img src="${{esc(image)}}" alt="${{esc(c.case)}}"></a>` : `<div class="empty">No screenshot</div>`);
     const failures = (c?.failures || []).join("\\n");
     return `<div class="pane">
-      <div class="paneHead"><span>${{esc(angle)}}</span><span>${{statusSpan(c?.reportStatus || "MISSING")}}</span></div>
+      <div class="paneHead"><span>${{esc(angle)}} · crops ${{esc(crops.length)}}</span><span>${{statusSpan(c?.reportStatus || "MISSING")}}</span></div>
       ${{body}}
       ${{failures ? `<div class="section failures">${{esc(failures)}}</div>` : ""}}
     </div>`;
@@ -1562,6 +1599,9 @@ function renderRuntimeEvidence(c) {{
   ];
   for (const mode of (e.skinningModes || []).slice(0, 12)) {{
     rows.push(`<tr><td><code>${{esc(mode.drawable || "")}}</code></td><td>${{esc(mode.selected || "")}}</td><td>inventory=${{esc(mode.inventoryPaperDoll || "")}} sourceFallback=${{esc(mode.sourceFallback || "")}}</td></tr>`);
+  }}
+  for (const item of (c?.materialEvidence || []).slice(0, 24)) {{
+    rows.push(`<tr><td>${{esc(item.kind || "material")}}</td><td>${{esc(item.runtime || "")}}</td><td><code>${{esc(item.line || "")}}</code></td></tr>`);
   }}
   document.getElementById("runtimeEvidenceTable").innerHTML = table(["Probe", "Status/Mode", "Evidence"], rows);
 }}
@@ -1702,6 +1742,8 @@ def actor_kit_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
                 "openmwLog": case.get("openmwLog", ""),
                 "reportJson": case.get("reportJson", ""),
                 "screenshots": case.get("screenshots", []),
+                "reviewCrops": case.get("reviewCrops", []),
+                "materialEvidence": case.get("materialEvidence", []),
             }
         )
     return {

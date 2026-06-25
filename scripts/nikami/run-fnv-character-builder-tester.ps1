@@ -514,6 +514,7 @@ foreach ($phase in $Phases) {
             runtimeEvidence = $runtimeEvidence
             failures = if ($null -ne $reportData) { @($reportData.failures) } else { @("report parser did not produce JSON") }
             screenshots = if ($null -ne $reportData) { @($reportData.screenshots) } else { @() }
+            reviewCrops = if ($null -ne $reportData) { @($reportData.reviewCrops) } else { @() }
         }
         $Results.Add($result)
 
@@ -533,11 +534,11 @@ $md.Add("# FNV Character Builder Suite")
 $md.Add("")
 $md.Add("Actor: ``$ActorTarget``")
 $md.Add("")
-$md.Add("| Case | Runtime | Report | Failures |")
-$md.Add("|---|---|---|---|")
+$md.Add("| Case | Runtime | Report | Review Crops | Failures |")
+$md.Add("|---|---|---|---:|---|")
 foreach ($result in $Results) {
     $failureText = (@($result.failures) -join "<br>")
-    $md.Add("| $($result.case) | $($result.runtimeGateStatus) | $($result.reportStatus) | $failureText |")
+    $md.Add("| $($result.case) | $($result.runtimeGateStatus) | $($result.reportStatus) | $(@($result.reviewCrops).Count) | $failureText |")
 }
 $md.Add("")
 $md.Add("Suite: ``$SuiteDir``")
