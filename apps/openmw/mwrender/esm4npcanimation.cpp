@@ -4572,8 +4572,9 @@ namespace MWRender
             if (!isFalloutCharacterBuilderActive())
                 return;
 
+            const std::string phase = getFalloutCharacterBuilderPhase();
             Log(Debug::Info) << "FNV/ESM4 CHARACTER BUILDER " << (included ? "include" : "skip")
-                             << " phase=" << getFalloutCharacterBuilderPhase()
+                             << " phase=" << phase
                              << " category=" << category
                              << " actor=" << traits.mEditorId
                              << " ref=" << ptr.getCellRef().getRefId()
@@ -6638,7 +6639,11 @@ namespace MWRender
             }
 
             requestFalloutActorKitAnimation(*this, mPtr, *traits);
-            mLiveRuntimeActorKitFingerprint = readFalloutLiveRuntimeActorKitFingerprint();
+            // Initial construction may already read the generated live command through updateParts(),
+            // but the live authoring gate must be proven by the frame path so the selected target
+            // logs runtime selector consumption and a target part rebuild instead of silently
+            // accepting constructor-time state as proof.
+            mLiveRuntimeActorKitFingerprint.clear();
         }
     }
 
@@ -6699,7 +6704,6 @@ namespace MWRender
         if (fingerprint.empty() || fingerprint == mLiveRuntimeActorKitFingerprint)
             return;
 
-        mLiveRuntimeActorKitFingerprint = fingerprint;
         ++mLiveRuntimeActorKitGeneration;
 
         const bool targetMatches = mPtr.getCell() == nullptr || isFonvProofTargetActor(mPtr, *traits);
@@ -6719,6 +6723,8 @@ namespace MWRender
                          << " partRebuild=" << (partRebuilt ? "runtime-supported" : "loaded-pending-runtime")
                          << " runtime=" << (partRebuilt ? "runtime-supported" : "loaded-pending-runtime")
                          << " gate=runtime-live-actor-kit-post-construction-selector";
+        // Only mark the live actor-kit command consumed after target rebuild/post-construction proof logging completes.
+        mLiveRuntimeActorKitFingerprint = fingerprint;
     }
 
     bool ESM4NpcAnimation::rebuildLiveRuntimeActorKitParts(
@@ -7455,8 +7461,11 @@ namespace MWRender
                              << " headParts=[" << formatFormIdList(traits.mHeadParts) << "]"
                              << " tintLayers=" << traits.mTintLayers.size();
         }
-        if (isFalloutCharacterBuilderActive())
-            Log(Debug::Info) << "FNV/ESM4 CHARACTER BUILDER begin phase=" << getFalloutCharacterBuilderPhase()
+        const bool characterBuilderActive = isFalloutCharacterBuilderActive();
+        const std::string characterBuilderPhase
+            = characterBuilderActive ? getFalloutCharacterBuilderPhase() : std::string();
+        if (characterBuilderActive)
+            Log(Debug::Info) << "FNV/ESM4 CHARACTER BUILDER begin phase=" << characterBuilderPhase
                              << " actor=" << traits.mEditorId
                              << " ref=" << mPtr.getCellRef().getRefId()
                              << " ladder=body,head,face,hair,equipment,weapon,headgear,talk,full";
@@ -7568,7 +7577,7 @@ namespace MWRender
                                  << " index=" << i << " mesh=" << headPart.mesh
                                  << " attached=0 status=intentionally-excluded-with-proof for "
                                  << traits.mEditorId << " characterBuilderPhase="
-                                 << getFalloutCharacterBuilderPhase();
+                                 << characterBuilderPhase;
                 continue;
             }
             logFalloutCharacterBuilderGate(true, builderCategory, headPart.mesh, mPtr, traits);
@@ -7710,7 +7719,7 @@ namespace MWRender
                                      << hair->mEditorId << " model=" << hair->mModel
                                      << " for " << traits.mEditorId
                                      << " status=intentionally-excluded-with-proof characterBuilderPhase="
-                                     << getFalloutCharacterBuilderPhase();
+                                     << characterBuilderPhase;
                     goto afterFallbackHair;
                 }
                 logFalloutCharacterBuilderGate(true, "hair-beard", hair->mModel, mPtr, traits);
@@ -7831,7 +7840,7 @@ namespace MWRender
                                  << " model=" << model << " layer=" << layer << " for "
                                  << traits.mEditorId
                                  << " status=intentionally-excluded-with-proof characterBuilderPhase="
-                                 << getFalloutCharacterBuilderPhase();
+                                 << characterBuilderPhase;
                 return;
             }
             logFalloutCharacterBuilderGate(true, builderCategory, model, mPtr, traits);
@@ -7871,7 +7880,7 @@ namespace MWRender
                                  << " model=" << model << " layer=" << layer << " for "
                                  << traits.mEditorId
                                  << " status=intentionally-excluded-with-proof characterBuilderPhase="
-                                 << getFalloutCharacterBuilderPhase();
+                                 << characterBuilderPhase;
                 return;
             }
             logFalloutCharacterBuilderGate(true, builderCategory, model, mPtr, traits);
@@ -7913,7 +7922,7 @@ namespace MWRender
                 Log(Debug::Info) << "FNV/ESM4 diag: skipped equipped NPC weapon " << weapon->mEditorId
                                  << " model=" << weapon->mModel << " for " << traits.mEditorId
                                  << " status=intentionally-excluded-with-proof characterBuilderPhase="
-                                 << getFalloutCharacterBuilderPhase();
+                                 << characterBuilderPhase;
             }
             else
             {
@@ -7954,6 +7963,9 @@ namespace MWRender
     {
         const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
         unsigned int inserted = 0;
+        const bool characterBuilderActive = isFalloutCharacterBuilderActive();
+        const std::string characterBuilderPhase
+            = characterBuilderActive ? getFalloutCharacterBuilderPhase() : std::string();
         for (ESM::FormId partId : partIds)
         {
             if (partId.isZeroOrUnset())
@@ -7978,7 +7990,7 @@ namespace MWRender
                                      << " type=" << part->mType << " model=" << part->mModel
                                      << " for " << mPtr.getCellRef().getRefId()
                                      << " status=intentionally-excluded-with-proof characterBuilderPhase="
-                                     << getFalloutCharacterBuilderPhase();
+                                     << characterBuilderPhase;
                     continue;
                 }
                 logFalloutCharacterBuilderGate(true, builderCategory, part->mModel, mPtr, traits);
@@ -8054,7 +8066,7 @@ namespace MWRender
                                          << " model=" << extraPart->mModel << " for "
                                          << mPtr.getCellRef().getRefId()
                                          << " status=intentionally-excluded-with-proof characterBuilderPhase="
-                                         << getFalloutCharacterBuilderPhase();
+                                         << characterBuilderPhase;
                         continue;
                     }
                     logFalloutCharacterBuilderGate(true, builderCategory, extraPart->mModel, mPtr, traits);

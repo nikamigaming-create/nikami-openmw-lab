@@ -1016,7 +1016,18 @@ class LiveRuntimeCommandStore:
         actor_kind = first_text(payload.get("actorKind"))
         if actor_kind and actor_kind not in {"npc", "creature", "auto"}:
             raise ValueError("live runtime actorKind must be npc, creature, or auto")
-        command = first_text(payload.get("command"), "set-actor-target")
+        selector_payload = payload.get("selectors") if isinstance(payload.get("selectors"), dict) else {}
+        has_selector_payload = False
+        for field in LIVE_RUNTIME_SELECTOR_FIELDS:
+            for alias in LIVE_RUNTIME_SELECTOR_ALIASES[field]:
+                if alias in payload and csv_values(payload.get(alias)):
+                    has_selector_payload = True
+                if alias in selector_payload and csv_values(selector_payload.get(alias)):
+                    has_selector_payload = True
+        command = first_text(
+            payload.get("command"),
+            "update-actor-kit" if has_selector_payload else "set-actor-target",
+        )
         if command not in {"set-actor-target", "update-actor-kit"}:
             raise ValueError("unsupported live runtime command")
         with self.lock:
@@ -1033,7 +1044,6 @@ class LiveRuntimeCommandStore:
             if not re.fullmatch(r"[-A-Za-z0-9_:.\\ ]{1,160}", target):
                 raise ValueError("live runtime actorTarget contains unsupported characters")
             selectors = dict(doc.get("selectors") if isinstance(doc.get("selectors"), dict) else {})
-            selector_payload = payload.get("selectors") if isinstance(payload.get("selectors"), dict) else {}
             applied: dict[str, str] = {}
             for field in LIVE_RUNTIME_SELECTOR_FIELDS:
                 values = []

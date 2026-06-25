@@ -171,7 +171,6 @@ def main() -> int:
         runtime_store = live.LiveRuntimeCommandStore(run_dir, root, live_runtime_path)
         runtime_doc = runtime_store.update(
             {
-                "command": "update-actor-kit",
                 "actorTarget": "ContractNpc",
                 "actorKind": "npc",
                 "selectors": {
@@ -184,6 +183,8 @@ def main() -> int:
                 },
             }
         )
+        if runtime_doc["command"] != "update-actor-kit":
+            raise AssertionError("live runtime command did not infer update-actor-kit for selector payloads")
         if "runtime-live-actor-kit-controls-v1" not in runtime_doc["schemaMarkers"]:
             raise AssertionError("live runtime command did not advertise actor-kit controls")
         if runtime_doc["actorKitParts"] != "headgear" or runtime_doc["selectors"]["parts"] != ["headgear"]:
