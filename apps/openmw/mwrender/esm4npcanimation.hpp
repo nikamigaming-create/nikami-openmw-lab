@@ -45,7 +45,8 @@ namespace MWRender
 
         // Works for FO3/FONV/TES5
         unsigned int insertHeadParts(const ESM4::Npc& traits, const std::vector<ESM::FormId>& partIds,
-            std::set<uint32_t>& usedHeadPartTypes, uint32_t coveredBodySlots = 0);
+            std::set<uint32_t>& usedHeadPartTypes, uint32_t coveredBodySlots = 0,
+            unsigned int* visibleHairGeometry = nullptr);
 
         void updateParts();
         void updatePartsTES4(const ESM4::Npc& traits);

@@ -407,6 +407,29 @@ def parse_face_drawables(lines: list[str], patterns: list[str]) -> list[dict[str
     return items
 
 
+def parse_face_checks(lines: list[str], patterns: list[str]) -> list[dict[str, Any]]:
+    check_re = re.compile(r"FNV/ESM4 FACE CHECK (?P<actor>[^:]+): (?P<body>.*)")
+    token_re = re.compile(r"(?P<key>[A-Za-z][A-Za-z0-9]*)=(?P<value>[^ ]+)")
+    checks: list[dict[str, Any]] = []
+    for line in lines:
+        match = check_re.search(line)
+        if not match:
+            continue
+        actor = match.group("actor")
+        if not line_matches_actor(actor, patterns):
+            continue
+        values = {token.group("key"): token.group("value") for token in token_re.finditer(match.group("body"))}
+        checks.append(
+            {
+                "actor": actor,
+                "values": values,
+                "hairVisibleGeometry": int(values.get("hairVisibleGeometry", "-1")),
+                "line": compact_line(line),
+            }
+        )
+    return checks
+
+
 def summarize_runtime_audits(audits: list[dict[str, Any]]) -> list[dict[str, Any]]:
     grouped: dict[tuple[str, str, str], dict[str, Any]] = {}
     order: list[tuple[str, str, str]] = []
@@ -1160,6 +1183,7 @@ def evaluate(
     actor_weapon_states: list[dict[str, Any]],
     face_occlusion_findings: list[dict[str, Any]],
     neutral_preview_composition: list[dict[str, Any]],
+    face_checks: list[dict[str, Any]],
 ) -> tuple[str, list[str]]:
     failures: list[str] = []
     phase_lower = phase.lower()
@@ -1266,8 +1290,31 @@ def evaluate(
             item["kind"] in {"creature-body", "creature-bounds"} for item in creature_evidence
         ):
             failures.append("missing creature body/model runtime evidence")
-    elif not collect_matching(lines, patterns, "FACE CHECK"):
+    elif not face_checks:
         failures.append("missing FACE CHECK for actor")
+    else:
+        hair_phase_required = phase_lower in {
+            "",
+            "all",
+            "full",
+            "hair",
+            "hair-beard",
+            "beard",
+            "headgear",
+            "talk",
+            "dialogue",
+            "animation",
+        }
+        if hair_phase_required:
+            empty_hair_checks = [
+                item
+                for item in face_checks
+                if item["values"].get("hairRecord") == "OK"
+                and item["values"].get("hairAttached") != "MISSING"
+                and item.get("hairVisibleGeometry", -1) <= 0
+            ]
+            if empty_hair_checks:
+                failures.append(f"hair attached without visible geometry: {len(empty_hair_checks)}")
 
     return ("PASS" if not failures else "FAIL", failures)
 
@@ -1438,6 +1485,7 @@ def main() -> int:
     head_surface_offsets = parse_head_surface_offsets(lines, patterns)
     audits = parse_runtime_audits(lines, patterns)
     drawables = parse_face_drawables(lines, patterns)
+    face_checks = parse_face_checks(lines, patterns)
     creature_evidence = parse_creature_evidence(lines, patterns)
     actor_matches = parse_actor_matches(lines, args.actor)
     animation_sources = parse_animation_sources(lines)
@@ -1493,6 +1541,7 @@ def main() -> int:
         actor_weapon_states,
         face_occlusion_findings,
         neutral_preview_composition,
+        face_checks,
     )
 
     report: dict[str, Any] = {
@@ -1514,6 +1563,7 @@ def main() -> int:
         "runtimePartTimelines": runtime_part_timelines,
         "faceOcclusionFindings": face_occlusion_findings,
         "neutralPreviewComposition": neutral_preview_composition,
+        "faceChecks": face_checks,
         "faceDrawables": drawables,
         "morphLines": morph_lines,
         "actorWeaponStates": actor_weapon_states,

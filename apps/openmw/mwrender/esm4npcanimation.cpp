@@ -2913,6 +2913,69 @@ namespace MWRender
             std::ostringstream mFirstRigBoneSample;
         };
 
+        class FalloutVisibleGeometryVisitor : public osg::NodeVisitor
+        {
+        public:
+            FalloutVisibleGeometryVisitor()
+                : osg::NodeVisitor(TRAVERSE_ALL_CHILDREN)
+            {
+            }
+
+            void apply(osg::Geode& geode) override
+            {
+                for (unsigned int i = 0; i < geode.getNumDrawables(); ++i)
+                    if (osg::Drawable* drawable = geode.getDrawable(i))
+                        summarizeDrawable(*drawable);
+                traverse(geode);
+            }
+
+            void apply(osg::Drawable& drawable) override { summarizeDrawable(drawable); }
+
+            void summarizeDrawable(osg::Drawable& drawable)
+            {
+                if (drawable.getNodeMask() == 0)
+                    return;
+
+                const auto vertexCount = [](const osg::Geometry* geometry) -> unsigned int {
+                    if (geometry == nullptr || geometry->getVertexArray() == nullptr)
+                        return 0;
+                    return geometry->getVertexArray()->getNumElements();
+                };
+
+                if (SceneUtil::RigGeometry* rig = dynamic_cast<SceneUtil::RigGeometry*>(&drawable))
+                {
+                    const unsigned int sourceVertices = vertexCount(rig->getSourceGeometry());
+                    unsigned int renderVertices = 0;
+                    for (unsigned int i = 0; i < 2; ++i)
+                        renderVertices = std::max(renderVertices, vertexCount(rig->getRenderGeometry(i)));
+                    const unsigned int vertices = std::max(sourceVertices, renderVertices);
+                    if (vertices == 0)
+                        return;
+                    ++mVisibleGeometryCount;
+                    mVisibleVertexCount += vertices;
+                }
+                else if (const osg::Geometry* geometry = dynamic_cast<const osg::Geometry*>(&drawable))
+                {
+                    const unsigned int vertices = vertexCount(geometry);
+                    if (vertices == 0)
+                        return;
+                    ++mVisibleGeometryCount;
+                    mVisibleVertexCount += vertices;
+                }
+            }
+
+            unsigned int mVisibleGeometryCount = 0;
+            unsigned int mVisibleVertexCount = 0;
+        };
+
+        FalloutVisibleGeometryVisitor countFalloutVisibleGeometry(osg::Node* node)
+        {
+            FalloutVisibleGeometryVisitor visitor;
+            if (node != nullptr)
+                node->accept(visitor);
+            return visitor;
+        }
+
         class MarkFalloutRigGeometryVisitor : public osg::NodeVisitor
         {
         public:
@@ -3870,13 +3933,6 @@ namespace MWRender
                 && !isFonvFacialHairHeadPart(part);
         }
 
-        bool isFonvUnsafeCoveredHairModel(std::string_view model)
-        {
-            std::string lowered(model);
-            Misc::StringUtils::lowerCaseInPlace(lowered);
-            return lowered.find("hairbaseold") != std::string::npos;
-        }
-
         std::string getFalloutCharacterBuilderPhase()
         {
             std::string phase = readFalloutLiveRuntimeOrEnvString("OPENMW_FNV_CHARACTER_BUILDER_PHASE",
@@ -4139,17 +4195,17 @@ namespace MWRender
         void hideFonvUnsafeCoveredHatHairVariant(
             osg::Node* attached, std::string_view model, const ESM4::Npc& traits, uint32_t coveredSlots)
         {
-            if (std::getenv("OPENMW_FNV_KEEP_UNSAFE_HAT_HAIR_VARIANT") != nullptr)
+            if (attached == nullptr || !fonvCoveredSlotsHideScalpHair(coveredSlots))
+                return;
+
+            if (std::getenv("OPENMW_FNV_HIDE_UNSAFE_HAT_HAIR_VARIANT") == nullptr)
             {
-                if (attached != nullptr && fonvCoveredSlotsHideScalpHair(coveredSlots) && isFonvUnsafeCoveredHairModel(model))
-                    Log(Debug::Info) << "FNV/ESM4 diag: keeping hat-compatible covered hair drawable on "
-                                     << model << " for " << traits.mEditorId
-                                     << " classification=loaded-pending-runtime reason=hair-under-headgear optOut=OPENMW_FNV_KEEP_UNSAFE_HAT_HAIR_VARIANT";
+                Log(Debug::Info) << "FNV/ESM4 diag: preserved hat-compatible covered hair drawable(s) on "
+                                 << model << " for " << traits.mEditorId
+                                 << " classification=runtime-supported reason=hair-under-headgear"
+                                 << " optIn=OPENMW_FNV_HIDE_UNSAFE_HAT_HAIR_VARIANT";
                 return;
             }
-
-            if (attached == nullptr || !fonvCoveredSlotsHideScalpHair(coveredSlots) || !isFonvUnsafeCoveredHairModel(model))
-                return;
 
             HideFonvHatHairVariantVisitor visitor;
             attached->accept(visitor);
@@ -7189,8 +7245,9 @@ namespace MWRender
         }
 
         std::set<uint32_t> usedHeadPartTypes;
+        unsigned int visibleHairGeometry = 0;
         unsigned int insertedHeadParts
-            = insertHeadParts(traits, traits.mHeadParts, usedHeadPartTypes, coveredBodySlots);
+            = insertHeadParts(traits, traits.mHeadParts, usedHeadPartTypes, coveredBodySlots, &visibleHairGeometry);
         bool fallbackHairAttached = false;
         if (!traits.mHair.isZeroOrUnset() && usedHeadPartTypes.count(ESM4::HeadPart::Type_Hair) == 0)
         {
@@ -7230,6 +7287,16 @@ namespace MWRender
                                      << " for " << traits.mEditorId;
                     hideFonvNoHatHairVariant(attached.get(), hair->mModel, traits, coveredBodySlots);
                     logFalloutFaceDrawableAudit(attached.get(), hair->mModel, mPtr, "final-hat-hair");
+                    const FalloutVisibleGeometryVisitor hairVisibility = countFalloutVisibleGeometry(attached.get());
+                    visibleHairGeometry += hairVisibility.mVisibleGeometryCount;
+                    Log(Debug::Info) << "FNV/ESM4 diag: hair visibility proof " << hair->mModel
+                                     << " for " << traits.mEditorId
+                                     << " visibleGeometry=" << hairVisibility.mVisibleGeometryCount
+                                     << " visibleVertices=" << hairVisibility.mVisibleVertexCount
+                                     << " runtime="
+                                     << (hairVisibility.mVisibleGeometryCount > 0 ? "runtime-supported"
+                                                                                  : "loaded-pending-runtime")
+                                     << " gate=runtime-fnv-visible-hair-geometry";
                 }
                 ++insertedHeadParts;
             }
@@ -7244,7 +7311,7 @@ namespace MWRender
 
         const char* hairAttachStatus = "MISSING";
         if (usedHeadPartTypes.count(ESM4::HeadPart::Type_Hair) != 0 || fallbackHairAttached)
-            hairAttachStatus = "OK";
+            hairAttachStatus = visibleHairGeometry > 0 ? "OK" : "EMPTY";
 
         Log(Debug::Info) << "FNV/ESM4 FACE CHECK " << traits.mEditorId
                          << ": head=" << getFonvFacePartStatus(raceFacePartAttached[0], raceFacePartHasMesh[0])
@@ -7262,6 +7329,7 @@ namespace MWRender
                          << " facialHairType="
                          << (usedHeadPartTypes.count(ESM4::HeadPart::Type_FacialHair) != 0 ? "OK" : "UNKNOWN")
                          << " npcSpecificHeadParts=" << insertedHeadParts
+                         << " hairVisibleGeometry=" << visibleHairGeometry
                          << " faceDiffuse=" << resolvedFaceDiffuseSource
                          << " faceGenTexture="
                          << (!npcFaceTexture.empty() ? "LOADED" : "MISSING")
@@ -7420,7 +7488,8 @@ namespace MWRender
     }
 
     unsigned int ESM4NpcAnimation::insertHeadParts(const ESM4::Npc& traits,
-        const std::vector<ESM::FormId>& partIds, std::set<uint32_t>& usedHeadPartTypes, uint32_t coveredBodySlots)
+        const std::vector<ESM::FormId>& partIds, std::set<uint32_t>& usedHeadPartTypes, uint32_t coveredBodySlots,
+        unsigned int* visibleHairGeometry)
     {
         const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
         unsigned int inserted = 0;
@@ -7485,6 +7554,20 @@ namespace MWRender
                 if (useHatHairVariant)
                     hideFonvNoHatHairVariant(attached.get(), part->mModel, traits, coveredBodySlots);
                 logFalloutFaceDrawableAudit(attached.get(), part->mModel, mPtr, "final-headpart");
+                if (part->mType == ESM4::HeadPart::Type_Hair)
+                {
+                    const FalloutVisibleGeometryVisitor hairVisibility = countFalloutVisibleGeometry(attached.get());
+                    if (visibleHairGeometry != nullptr)
+                        *visibleHairGeometry += hairVisibility.mVisibleGeometryCount;
+                    Log(Debug::Info) << "FNV/ESM4 diag: hair visibility proof " << part->mModel
+                                     << " for " << mPtr.getCellRef().getRefId()
+                                     << " visibleGeometry=" << hairVisibility.mVisibleGeometryCount
+                                     << " visibleVertices=" << hairVisibility.mVisibleVertexCount
+                                     << " runtime="
+                                     << (hairVisibility.mVisibleGeometryCount > 0 ? "runtime-supported"
+                                                                                  : "loaded-pending-runtime")
+                                     << " gate=runtime-fnv-visible-hair-geometry";
+                }
                 if (isFonvFacialHairHeadPart(*part))
                     usedHeadPartTypes.insert(ESM4::HeadPart::Type_FacialHair);
                 ++inserted;
@@ -7526,6 +7609,21 @@ namespace MWRender
                     if (useExtraHatHairVariant)
                         hideFonvNoHatHairVariant(extraAttached.get(), extraPart->mModel, traits, coveredBodySlots);
                     logFalloutFaceDrawableAudit(extraAttached.get(), extraPart->mModel, mPtr, "final-extra-headpart");
+                    if (extraPart->mType == ESM4::HeadPart::Type_Hair)
+                    {
+                        const FalloutVisibleGeometryVisitor hairVisibility
+                            = countFalloutVisibleGeometry(extraAttached.get());
+                        if (visibleHairGeometry != nullptr)
+                            *visibleHairGeometry += hairVisibility.mVisibleGeometryCount;
+                        Log(Debug::Info) << "FNV/ESM4 diag: hair visibility proof " << extraPart->mModel
+                                         << " for " << mPtr.getCellRef().getRefId()
+                                         << " visibleGeometry=" << hairVisibility.mVisibleGeometryCount
+                                         << " visibleVertices=" << hairVisibility.mVisibleVertexCount
+                                         << " runtime="
+                                         << (hairVisibility.mVisibleGeometryCount > 0 ? "runtime-supported"
+                                                                                      : "loaded-pending-runtime")
+                                         << " gate=runtime-fnv-visible-hair-geometry";
+                    }
                     if (isFonvFacialHairHeadPart(*extraPart))
                         usedHeadPartTypes.insert(ESM4::HeadPart::Type_FacialHair);
                     ++inserted;
