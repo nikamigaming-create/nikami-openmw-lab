@@ -111,6 +111,7 @@ param(
     [switch]$RequireSunDirectionRuntime,
     [string]$StartupScript = "",
     [string]$LoadSavegame = "",
+    [string]$RuntimeTag = "",
     [string]$FnvQuestSaveLoadMode = "",
     [int]$FnvQuestSaveLoadFrame = 0,
     [switch]$FnvQuestObjectiveScriptTrace,
@@ -1487,8 +1488,21 @@ if (!(Test-Path -LiteralPath $FlatScript)) {
     throw "Missing base flat runner: $FlatScript"
 }
 
-$ConfigDir = Join-Path $ProofRoot "configs/fnv-flat-clean"
-$RuntimeDir = Join-Path $ProofRoot "runtime/fnv-flat-clean"
+function ConvertTo-SafeRuntimeTag([string]$Text) {
+    if ([string]::IsNullOrWhiteSpace($Text)) { return "" }
+    $safe = $Text -replace '[^A-Za-z0-9_.-]', '_'
+    if ([string]::IsNullOrWhiteSpace($safe)) { return "" }
+    return $safe
+}
+
+$RuntimeName = "fnv-flat-clean"
+$SafeRuntimeTag = ConvertTo-SafeRuntimeTag $RuntimeTag
+if (![string]::IsNullOrWhiteSpace($SafeRuntimeTag)) {
+    $RuntimeName = "fnv-flat-clean-$SafeRuntimeTag"
+}
+
+$ConfigDir = Join-Path $ProofRoot "configs/$RuntimeName"
+$RuntimeDir = Join-Path $ProofRoot "runtime/$RuntimeName"
 $ScreenshotDir = Join-Path $RuntimeDir "screenshots"
 if (Test-Path -LiteralPath $ScreenshotDir) {
     Get-ChildItem -LiteralPath $ScreenshotDir -File -ErrorAction SilentlyContinue | Remove-Item -Force
@@ -1662,6 +1676,7 @@ try {
         StartCell = $StartCell
         MaxRunSeconds = $RunSeconds
     }
+    if (![string]::IsNullOrWhiteSpace($RuntimeTag)) { $flatArgs.RuntimeTag = $RuntimeTag }
     if (![double]::IsNaN($BootstrapHour)) { $flatArgs.BootstrapHour = $BootstrapHour }
     if (![string]::IsNullOrWhiteSpace($FnvConfigData)) { $flatArgs.FnvConfigData = $FnvConfigData }
     if (![string]::IsNullOrWhiteSpace($ExtraOsgPluginDir)) { $flatArgs.ExtraOsgPluginDir = $ExtraOsgPluginDir }
@@ -1677,6 +1692,10 @@ try {
     Write-ProofLine "IncludeFnvrPlugin: $IncludeFnvrPlugin"
     Write-ProofLine "RepoRoot: $RepoRoot"
     Write-ProofLine "ProofDir: $ProofDir"
+    Write-ProofLine "RuntimeTag: $RuntimeTag"
+    Write-ProofLine "RuntimeName: $RuntimeName"
+    Write-ProofLine "ConfigDir: $ConfigDir"
+    Write-ProofLine "RuntimeDir: $RuntimeDir"
     Write-ProofLine "RunSeconds: $RunSeconds"
     Write-ProofLine "ScreenshotFrames: $ScreenshotFrames"
     Write-ProofLine "WithMenu: $WithMenu"

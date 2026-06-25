@@ -12,6 +12,7 @@ param(
     [int]$MaxRunSeconds = 0,
     [string]$StartupScript = "",
     [string]$LoadSavegame = "",
+    [string]$RuntimeTag = "",
     [switch]$Detached,
     [switch]$WithMenu,
     [switch]$IncludeFnvrPlugin,
@@ -43,8 +44,22 @@ if ([string]::IsNullOrWhiteSpace($ProofRoot)) {
 $Exe = Join-Path $BuildPath "$Configuration/openmw.exe"
 $Resources = Join-Path $BuildPath "$Configuration/resources"
 $BuildConfig = Join-Path $BuildPath "$Configuration/openmw.cfg"
-$ConfigDir = Join-Path $ProofRoot "configs/fnv-flat-clean"
-$RuntimeDir = Join-Path $ProofRoot "runtime/fnv-flat-clean"
+
+function ConvertTo-SafeRuntimeTag([string]$Text) {
+    if ([string]::IsNullOrWhiteSpace($Text)) { return "" }
+    $safe = $Text -replace '[^A-Za-z0-9_.-]', '_'
+    if ([string]::IsNullOrWhiteSpace($safe)) { return "" }
+    return $safe
+}
+
+$RuntimeName = "fnv-flat-clean"
+$SafeRuntimeTag = ConvertTo-SafeRuntimeTag $RuntimeTag
+if (![string]::IsNullOrWhiteSpace($SafeRuntimeTag)) {
+    $RuntimeName = "fnv-flat-clean-$SafeRuntimeTag"
+}
+
+$ConfigDir = Join-Path $ProofRoot "configs/$RuntimeName"
+$RuntimeDir = Join-Path $ProofRoot "runtime/$RuntimeName"
 $DataLocalDir = Join-Path $RuntimeDir "data-local"
 $ConfigPath = Join-Path $ConfigDir "openmw.cfg"
 $SettingsPath = Join-Path $ConfigDir "settings.cfg"

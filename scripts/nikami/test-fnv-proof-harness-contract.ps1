@@ -51,6 +51,7 @@ Write-ProofLine "ProofDir: $ProofDir"
 Write-ProofLine ""
 
 $flat = Assert-File "scripts/nikami/run-fnv-flat-proof.ps1"
+$flatBase = Assert-File "scripts/nikami/run-fnv-flat.ps1"
 $engine = Assert-File "apps/openmw/engine.cpp"
 $npcAnimation = Assert-File "apps/openmw/mwrender/esm4npcanimation.cpp"
 $npcAnimationHeader = Assert-File "apps/openmw/mwrender/esm4npcanimation.hpp"
@@ -102,6 +103,7 @@ foreach ($needle in @(
     "[string]`$ExtraOsgPluginDir",
     "[string]`$Triplet",
     "[string]`$ProofRoot",
+    "[string]`$RuntimeTag",
     "[int]`$RunSeconds",
     "[string]`$ScreenshotFrames",
     "[string[]]`$RequireLogPattern",
@@ -149,6 +151,12 @@ foreach ($needle in @(
 }
 
 Assert-Text $flat "OPENMW_PROOF_POSTURE_TARGET" "flat proof asks runtime to audit targeted actor posture"
+Assert-Text $flat "RuntimeTag:" "flat proof summary records isolated runtime tag"
+Assert-Text $flat "RuntimeName:" "flat proof summary records isolated runtime name"
+Assert-Text $flat "ConfigDir:" "flat proof summary records isolated config dir"
+Assert-Text $flat "RuntimeDir:" "flat proof summary records isolated runtime dir"
+Assert-Text $flatBase "[string]`$RuntimeTag" "base flat runner accepts isolated runtime tag"
+Assert-Text $flatBase "fnv-flat-clean-`$SafeRuntimeTag" "base flat runner maps runtime tag to isolated config/runtime directories"
 Assert-Text $flat "World posture BAD lines:" "flat proof reports bad world posture lines"
 Assert-Text $flat "Standing arm pose BAD lines:" "flat proof reports standing arm bind/T-pose lines"
 Assert-Text $flat "Target world posture BAD lines:" "flat proof reports target bad world posture lines"
@@ -244,6 +252,8 @@ Assert-Text $npcAnimation "OPENMW_FNV_ACTOR_KIT_ANIMATION_STARTPOINT" "FNV NPC a
 Assert-Text $characterBuilder "NeutralActorPreview" "character builder requests neutral actor preview for NPC harness cases"
 Assert-Text $characterBuilder "NeutralActorPreviewStandingIdle" "character builder requests neutral standing-idle composition mode for NPC harness cases"
 Assert-Text $characterBuilder "LiveAuthoringFile" "character builder forwards generated live authoring control file"
+Assert-Text $characterBuilder "runtimeTag = `"character-builder-`$Stamp-`$caseName`"" "character builder isolates each case from the live OpenMW config path"
+Assert-Text $characterBuilder "RuntimeTag = `$runtimeTag" "character builder forwards isolated runtime tag to flat proof"
 Assert-Text $characterViewer "LiveAuthoringFile" "character viewer forwards generated live authoring control file"
 Assert-Text $engine "OPENMW_PROOF_ITEM_MODEL" "runtime can load a standalone proof item model"
 Assert-Text $engine "FNV/ESM4 proof item model spawn" "runtime logs standalone item visual spawn proof"

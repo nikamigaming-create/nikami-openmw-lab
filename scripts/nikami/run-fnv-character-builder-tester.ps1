@@ -347,10 +347,11 @@ foreach ($phase in $Phases) {
         $safePhase = ConvertTo-SafeName $phase
         $safeAngle = ConvertTo-SafeName $angle.Name
         $caseName = "${safePhase}_${safeAngle}"
+        $runtimeTag = "character-builder-$Stamp-$caseName"
         $CaseDir = Join-Path $SuiteDir $caseName
         New-Item -ItemType Directory -Force -Path $CaseDir | Out-Null
 
-        Write-SuiteLine "CASE $caseName"
+        Write-SuiteLine "CASE $caseName runtimeTag=$runtimeTag"
         $before = @(Get-ProofDirectories)
         $startedAt = Get-Date
         $runtimeGateStatus = "PASS"
@@ -363,6 +364,7 @@ foreach ($phase in $Phases) {
             VcpkgRoot = $VcpkgRoot
             Triplet = $Triplet
             ProofRoot = $ProofRoot
+            RuntimeTag = $runtimeTag
             RunSeconds = $RunSeconds
             ScreenshotFrames = $ScreenshotFrames
             BootstrapCell = $BootstrapCell
