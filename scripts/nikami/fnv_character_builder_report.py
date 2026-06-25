@@ -747,7 +747,7 @@ def foreground_components(mask: list[bool], width: int, height: int, min_pixels:
     return components
 
 
-def analyze_neutral_preview_image(path: Path) -> dict[str, Any]:
+def analyze_neutral_preview_image(path: Path, weapon_present: bool = False) -> dict[str, Any]:
     from collections import Counter
 
     from PIL import Image
@@ -820,7 +820,11 @@ def analyze_neutral_preview_image(path: Path) -> dict[str, Any]:
             pane_findings.append(
                 f"foreground fraction {foreground_fraction:.4f} above {pane['maxForegroundFraction']:.4f}"
             )
-        disallowed_edges = [edge for edge in touch_edges if edge not in pane["allowedTouchEdges"]]
+        allowed_edges = set(pane["allowedTouchEdges"])
+        if pane["name"] == "right-hand-weapon" and weapon_present:
+            # A long gun or other held prop may intentionally extend upward or rightward in the isolated weapon pane.
+            allowed_edges.update({"right", "top"})
+        disallowed_edges = [edge for edge in touch_edges if edge not in allowed_edges]
         if disallowed_edges:
             pane_findings.append(f"foreground touches disallowed pane edge(s): {','.join(disallowed_edges)}")
         if pane_findings:
@@ -836,6 +840,8 @@ def analyze_neutral_preview_image(path: Path) -> dict[str, Any]:
                 "largestComponentPixels": int(largest.get("pixels", 0)),
                 "largestComponentBox": bbox,
                 "touchEdges": touch_edges,
+                "allowedTouchEdges": sorted(allowed_edges),
+                "weaponPresent": weapon_present if pane["name"] == "right-hand-weapon" else None,
                 "findings": pane_findings,
                 "status": "PASS" if not pane_findings else "FAIL",
             }
@@ -865,14 +871,16 @@ def analyze_neutral_preview_image(path: Path) -> dict[str, Any]:
     }
 
 
-def analyze_neutral_preview_composition(proof_dir: Path, lines: list[str], actor: str) -> list[dict[str, Any]]:
+def analyze_neutral_preview_composition(
+    proof_dir: Path, lines: list[str], actor: str, weapon_present: bool = False
+) -> list[dict[str, Any]]:
     if not has_neutral_preview_runtime(lines, actor):
         return []
     screenshots = sorted(proof_dir.glob("*.png"))
     if not screenshots:
         return []
     try:
-        return [analyze_neutral_preview_image(screenshots[-1])]
+        return [analyze_neutral_preview_image(screenshots[-1], weapon_present=weapon_present)]
     except Exception as exc:
         return [
             {
@@ -1397,10 +1405,19 @@ def main() -> int:
     animation_playback = parse_animation_playback(lines, patterns)
     animation_blockers = collect_animation_blockers(lines, patterns)
     actor_weapon_states = parse_actor_weapon_states(lines, patterns)
+    weapon_lines = [
+        compact_line(line)
+        for line in lines
+        if ("equipped NPC weapon" in line or "weapon metadata" in line or "weapon sound files" in line)
+        and line_matches_actor(line, patterns)
+    ]
+    weapon_present = any(item["weapon"] for item in actor_weapon_states) or bool(weapon_lines)
     runtime_audit_summary = summarize_runtime_audits(audits)
     runtime_part_timelines = build_runtime_part_timelines(audits)
     face_occlusion_findings = find_face_occlusion_findings(bounds, audits)
-    neutral_preview_composition = analyze_neutral_preview_composition(proof_dir, lines, args.actor)
+    neutral_preview_composition = analyze_neutral_preview_composition(
+        proof_dir, lines, args.actor, weapon_present=weapon_present
+    )
     actor_kind = args.actor_kind
     if actor_kind == "auto":
         actor_kind = "creature" if creature_evidence else "npc"
@@ -1414,12 +1431,6 @@ def main() -> int:
             or "mouth driver" in line
             or "dialogue pose" in line
         )
-        and line_matches_actor(line, patterns)
-    ]
-    weapon_lines = [
-        compact_line(line)
-        for line in lines
-        if ("equipped NPC weapon" in line or "weapon metadata" in line or "weapon sound files" in line)
         and line_matches_actor(line, patterns)
     ]
     status, failures = evaluate(

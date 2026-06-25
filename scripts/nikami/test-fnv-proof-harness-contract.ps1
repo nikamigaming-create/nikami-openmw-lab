@@ -537,6 +537,8 @@ Assert-Text $characterBuilderReport '"animationRequests"' "character builder rep
 Assert-Text $characterBuilderReport "parse_creature_evidence" "character builder report parses creature runtime evidence"
 Assert-Text $characterBuilderReport "analyze_neutral_preview_composition" "character builder report analyzes neutral preview screenshot composition"
 Assert-Text $characterBuilderReport "NEUTRAL_PREVIEW_PANES" "character builder report uses compositor pane math for neutral preview composition"
+Assert-Text $characterBuilderReport 'allowed_edges.update({"right", "top"})' "character builder report allows top/right edge contact only for weapon-backed right-hand pane evidence"
+Assert-Text $characterBuilderReport '"weaponPresent"' "character builder report records weapon-backed hand-pane edge allowance evidence"
 Assert-Text $characterBuilderReport "neutral preview composition findings" "character builder report fails bad neutral preview composition"
 Assert-Text $characterBuilderReport '"neutralPreviewComposition"' "character builder report writes neutral preview composition JSON"
 Assert-Text $characterBuilderReport "summarize_runtime_audits" "character builder report summarizes runtime part drift over time"
