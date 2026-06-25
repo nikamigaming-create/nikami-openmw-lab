@@ -22,7 +22,9 @@
 #include <cmath>
 #include <cctype>
 #include <cstdlib>
+#include <fstream>
 #include <iomanip>
+#include <regex>
 #include <components/misc/resourcehelpers.hpp>
 #include <components/misc/strings/algorithm.hpp>
 #include <components/misc/strings/lower.hpp>
@@ -3705,6 +3707,10 @@ namespace MWRender
                 return osg::Vec3f(readFalloutProofFloat("OPENMW_FNV_MOUTH_OFFSET_X", 0.f),
                     readFalloutProofFloat("OPENMW_FNV_MOUTH_OFFSET_Y", 0.f),
                     readFalloutProofFloat("OPENMW_FNV_MOUTH_OFFSET_Z", 0.f));
+            if (lowered.find("hair") != std::string::npos)
+                return osg::Vec3f(readFalloutProofFloat("OPENMW_FNV_HAIR_OFFSET_X", 0.f),
+                    readFalloutProofFloat("OPENMW_FNV_HAIR_OFFSET_Y", 0.f),
+                    readFalloutProofFloat("OPENMW_FNV_HAIR_OFFSET_Z", 0.f));
             return osg::Vec3f();
         }
 

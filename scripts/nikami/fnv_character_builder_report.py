@@ -152,6 +152,35 @@ def parse_attachment_bounds(lines: list[str], patterns: list[str]) -> list[dict[
     return items
 
 
+def parse_head_surface_offsets(lines: list[str], patterns: list[str]) -> list[dict[str, Any]]:
+    offset_re = re.compile(
+        r"applied head frame surface offset model=(?P<model>.*?) "
+        rf"offset={FLOAT3_RE} rotationPrefix=(?P<rotationPrefix>[^ ]+) "
+        rf"pivot={FLOAT3_RE} pivotMode=(?P<pivotMode>[^ ]+) for (?P<ref>.+)$"
+    )
+    items: list[dict[str, Any]] = []
+    for line in lines:
+        match = offset_re.search(line)
+        if not match:
+            continue
+        data = match.groupdict()
+        if not line_matches_actor(data["ref"], patterns):
+            continue
+        groups = match.groups()
+        items.append(
+            {
+                "model": data["model"],
+                "ref": data["ref"],
+                "offset": parse_vec3(groups[1]),
+                "rotationPrefix": data["rotationPrefix"],
+                "pivot": parse_vec3(groups[3]),
+                "pivotMode": data["pivotMode"],
+                "line": compact_line(line),
+            }
+        )
+    return items
+
+
 def parse_runtime_audits(lines: list[str], patterns: list[str]) -> list[dict[str, Any]]:
     audit_re = re.compile(
         r"runtime part audit (?P<ref>[^ ]+) part='(?P<part>[^']*)' class=(?P<class>[^ ]+) "
@@ -896,6 +925,7 @@ def write_markdown(path: Path, report: dict[str, Any]) -> None:
     lines.append("## Math")
     lines.append("")
     lines.append(f"Attachment bounds: {len(report['attachmentBounds'])}")
+    lines.append(f"Head surface offsets: {len(report['headSurfaceOffsets'])}")
     lines.append(f"Runtime part audits: {len(report['runtimePartAudits'])}")
     lines.append(f"Runtime audit summaries: {len(report['runtimeAuditSummary'])}")
     lines.append(f"Face drawable audits: {len(report['faceDrawables'])}")
@@ -921,6 +951,17 @@ def write_markdown(path: Path, report: dict[str, Any]) -> None:
             lines.append(
                 f"| {item['model']} | {item['reason']} | {item['headRel']} | {item['extent']} | "
                 f"{item['yRange']} | {item['zRange']} |"
+            )
+        lines.append("")
+    if report["headSurfaceOffsets"]:
+        lines.append("## Head Surface Offsets")
+        lines.append("")
+        lines.append("| Model | Offset XYZ | Rotation Prefix | Pivot XYZ | Pivot Mode |")
+        lines.append("|---|---|---|---|---|")
+        for item in report["headSurfaceOffsets"][:48]:
+            lines.append(
+                f"| {item['model']} | {item['offset']} | {item['rotationPrefix']} | "
+                f"{item['pivot']} | {item['pivotMode']} |"
             )
         lines.append("")
     lines.append("## First Attachments")
@@ -994,6 +1035,7 @@ def main() -> int:
     patterns = actor_patterns(lines, args.actor)
     gates = parse_builder_gates(lines, patterns)
     bounds = parse_attachment_bounds(lines, patterns)
+    head_surface_offsets = parse_head_surface_offsets(lines, patterns)
     audits = parse_runtime_audits(lines, patterns)
     drawables = parse_face_drawables(lines, patterns)
     creature_evidence = parse_creature_evidence(lines, patterns)
@@ -1059,6 +1101,7 @@ def main() -> int:
         "categorySummary": summarize_categories(gates),
         "gates": gates,
         "attachmentBounds": bounds,
+        "headSurfaceOffsets": head_surface_offsets,
         "runtimePartAudits": audits,
         "runtimeAuditSummary": runtime_audit_summary,
         "runtimePartTimelines": runtime_part_timelines,
