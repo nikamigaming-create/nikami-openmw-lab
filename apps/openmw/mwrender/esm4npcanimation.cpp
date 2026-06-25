@@ -609,6 +609,111 @@ namespace MWRender
             return text;
         }
 
+        std::string escapeFalloutProofTargetRegex(std::string_view value)
+        {
+            std::string escaped;
+            escaped.reserve(value.size() * 2);
+            for (char c : value)
+            {
+                switch (c)
+                {
+                    case '\\':
+                    case '.':
+                    case '^':
+                    case '$':
+                    case '|':
+                    case '(':
+                    case ')':
+                    case '[':
+                    case ']':
+                    case '{':
+                    case '}':
+                    case '*':
+                    case '+':
+                    case '?':
+                        escaped.push_back('\\');
+                        break;
+                    default:
+                        break;
+                }
+                escaped.push_back(c);
+            }
+            return escaped;
+        }
+
+        std::string unescapeFalloutProofTargetJsonString(std::string_view value)
+        {
+            std::string result;
+            result.reserve(value.size());
+            bool escaped = false;
+            for (char c : value)
+            {
+                if (escaped)
+                {
+                    switch (c)
+                    {
+                        case '"':
+                        case '\\':
+                        case '/':
+                            result.push_back(c);
+                            break;
+                        case 'n':
+                            result.push_back('\n');
+                            break;
+                        case 'r':
+                            result.push_back('\r');
+                            break;
+                        case 't':
+                            result.push_back('\t');
+                            break;
+                        default:
+                            result.push_back(c);
+                            break;
+                    }
+                    escaped = false;
+                    continue;
+                }
+                if (c == '\\')
+                {
+                    escaped = true;
+                    continue;
+                }
+                result.push_back(c);
+            }
+            return result;
+        }
+
+        bool readFalloutProofTargetRuntimeString(const std::string& content, std::string_view key, std::string& value)
+        {
+            try
+            {
+                const std::regex pattern("\"" + escapeFalloutProofTargetRegex(key)
+                    + "\"\\s*:\\s*\"((?:\\\\.|[^\"])*)\"");
+                std::smatch match;
+                if (!std::regex_search(content, match, pattern))
+                    return false;
+                value = unescapeFalloutProofTargetJsonString(match[1].str());
+                return !value.empty();
+            }
+            catch (...)
+            {
+                return false;
+            }
+        }
+
+        bool readFalloutProofTargetRuntimeFile(const char* path, std::string& content)
+        {
+            if (path == nullptr || path[0] == '\0')
+                return false;
+            std::ifstream input(path, std::ios::binary);
+            if (!input)
+                return false;
+            std::ostringstream stream;
+            stream << input.rdbuf();
+            content = stream.str();
+            return true;
+        }
+
         bool falloutProofFormTargetMatches(std::string_view candidate, const char* target)
         {
             if (target == nullptr || target[0] == '\0')
@@ -625,6 +730,22 @@ namespace MWRender
 
         const char* getFonvProofActorTarget()
         {
+            static std::string liveTarget;
+            liveTarget.clear();
+            if (const char* livePath = std::getenv("OPENMW_FNV_LIVE_RUNTIME_COMMAND_FILE"))
+            {
+                std::string content;
+                if (readFalloutProofTargetRuntimeFile(livePath, content))
+                {
+                    for (std::string_view key : { std::string_view("actorTarget"),
+                             std::string_view("runtimeTarget"), std::string_view("target") })
+                    {
+                        if (readFalloutProofTargetRuntimeString(content, key, liveTarget))
+                            return liveTarget.c_str();
+                    }
+                }
+            }
+
             const char* target = std::getenv("OPENMW_PROOF_ACTOR_TARGET");
             if (target == nullptr || target[0] == '\0')
                 target = std::getenv("OPENMW_FNV_PROOF_TARGET_NPC");

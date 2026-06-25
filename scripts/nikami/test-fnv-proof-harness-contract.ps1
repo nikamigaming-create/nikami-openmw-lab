@@ -260,6 +260,8 @@ Assert-Text $standaloneModelPreview "ShadowManager::instance().disableShadowsFor
 Assert-Text $standaloneModelPreview "fog->setStart(10000000)" "neutral preview disables world fog leakage"
 Assert-Text $standaloneModelPreview "runtime-neutral-rtt-preview" "neutral preview logs its runtime gate marker"
 Assert-Text $npcAnimation "falloutProofFormTargetMatches" "runtime NPC part assembly target matching normalizes Fallout form IDs"
+Assert-Text $npcAnimation "OPENMW_FNV_LIVE_RUNTIME_COMMAND_FILE" "runtime NPC part assembly target matching follows live runtime command target switches"
+Assert-Text $npcAnimation "readFalloutProofTargetRuntimeString" "runtime NPC part assembly parses generated live runtime command files"
 Assert-Text $engine "#include <components/esm4/loadcrea.hpp>" "runtime proof target matching can read ESM4 creature metadata"
 Assert-Text $engine "ptr.getType() == ESM::REC_CREA4" "runtime actor proof target matching handles ESM4 creatures"
 Assert-Text $engine "MWWorld::LiveCellRef<ESM4::Creature>" "runtime actor proof target matching reads creature base records"
