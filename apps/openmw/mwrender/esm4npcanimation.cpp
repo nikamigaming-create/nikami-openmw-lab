@@ -1469,6 +1469,21 @@ namespace MWRender
                     "textures/characters/facemods/falloutnv.esm/" + formIndex + "_n.dds" });
         }
 
+        std::string getFonvFaceGenTextureMode()
+        {
+            const char* value = std::getenv("OPENMW_FNV_FACEGEN_TEXTURE_MODE");
+            if (value == nullptr || value[0] == '\0')
+                return "detail";
+
+            std::string mode(value);
+            Misc::StringUtils::lowerCaseInPlace(mode);
+            if (mode == "direct" || mode == "diffuse")
+                return "direct-diffuse";
+            if (mode == "none" || mode == "source-only" || mode == "disabled")
+                return "source-only";
+            return "detail";
+        }
+
         std::string findFonvNpcBodyTexture(Resource::ResourceSystem* resourceSystem, const ESM4::Npc& traits, bool isFemale)
         {
             const std::string formIndex = formatFalloutFormIndex(traits.mId);
@@ -6985,7 +7000,11 @@ namespace MWRender
         validateFaceGenCtlBasis(faceGenCtl.get(), traits);
         const uint32_t coveredBodySlots = getFonvCoveredBodySlots(mPtr);
         const std::string npcFaceTexture = findFonvNpcFaceTexture(mResourceSystem, traits);
-        const std::string npcFaceDetailTexture = std::getenv("OPENMW_FNV_PROOF_FACE_AS_DETAIL") != nullptr
+        const std::string faceGenTextureMode = getFonvFaceGenTextureMode();
+        const bool useNpcFaceAsDirectDiffuse = faceGenTextureMode == "direct-diffuse";
+        const bool useNpcFaceAsDetail = faceGenTextureMode == "detail"
+            || std::getenv("OPENMW_FNV_PROOF_FACE_AS_DETAIL") != nullptr;
+        const std::string npcFaceDetailTexture = useNpcFaceAsDetail
             ? findFonvNpcFaceDetailTexture(mResourceSystem, traits)
             : std::string();
         const std::string npcFaceNormalTexture = findFonvNpcFaceNormalTexture(mResourceSystem, traits);
@@ -7004,8 +7023,11 @@ namespace MWRender
                              << " as source data for " << traits.mEditorId
                              << " runtime=loaded-pending-exact-facegen-texture-synthesis";
         if (!npcFaceDetailTexture.empty())
-            Log(Debug::Info) << "FNV/ESM4 proof: using baked NPC face texture as proof-only detail overlay "
-                             << npcFaceDetailTexture << " for " << traits.mEditorId;
+            Log(Debug::Info) << "FNV/ESM4 diag: using baked NPC face texture as face detail component "
+                             << npcFaceDetailTexture << " for " << traits.mEditorId
+                             << " mode=" << faceGenTextureMode
+                             << " runtime=loaded-pending-exact-facegen-texture-synthesis"
+                             << " gate=runtime-fnv-facegen-detail-source";
         if (!npcFaceNormalTexture.empty())
             Log(Debug::Info) << "FNV/ESM4 diag: using baked NPC face normal texture " << npcFaceNormalTexture
                              << " for " << traits.mEditorId;
@@ -7142,6 +7164,7 @@ namespace MWRender
         bool raceFacePartHasMesh[8] = {};
         bool resolvedFaceNormalTexture = false;
         bool resolvedFaceSkinCompanion = false;
+        std::string resolvedFaceGenTextureStatus = npcFaceTexture.empty() ? "MISSING" : "LOADED_PENDING";
         std::string resolvedFaceDiffuseTexture;
         std::string resolvedFaceDiffuseSource = "MISSING";
         const std::vector<ESM4::Race::BodyPart>& raceHeadParts = isFemale ? race->mHeadPartsFemale : race->mHeadParts;
@@ -7170,17 +7193,23 @@ namespace MWRender
             logFalloutCharacterBuilderGate(true, builderCategory, headPart.mesh, mPtr, traits);
             const std::string_view baseTexture = eyePart && !eyeTexture.empty() ? eyeTexture : headPart.texture;
             const std::string headDiffuseTexture = std::string(baseTexture);
+            const std::string appliedHeadDiffuseTexture = headSurface && useNpcFaceAsDirectDiffuse && !npcFaceTexture.empty()
+                ? npcFaceTexture
+                : headDiffuseTexture;
             if (headSurface)
             {
-                resolvedFaceDiffuseTexture = headDiffuseTexture;
-                resolvedFaceDiffuseSource = !headDiffuseTexture.empty() ? "RACE" : "MISSING";
-                if (!npcFaceTexture.empty())
+                resolvedFaceDiffuseTexture = appliedHeadDiffuseTexture;
+                resolvedFaceDiffuseSource = !appliedHeadDiffuseTexture.empty()
+                    ? (!npcFaceTexture.empty() && useNpcFaceAsDirectDiffuse
+                            ? "NPC_FACEGEN_DIRECT_DIFFUSE"
+                            : (!npcFaceDetailTexture.empty() ? "RACE_FACEGEN_DETAIL" : "RACE"))
+                    : "MISSING";
+                if (!npcFaceTexture.empty() && !headDiffuseTexture.empty() && useNpcFaceAsDirectDiffuse)
                 {
-                    Log(Debug::Info) << "FNV/ESM4 diag: accounting NPC FaceGen source " << npcFaceTexture
-                                     << " while preserving race head diffuse "
-                                     << (baseTexture.empty() ? std::string("<none>") : std::string(baseTexture))
+                    Log(Debug::Info) << "FNV/ESM4 diag: applying NPC FaceGen diffuse " << npcFaceTexture
+                                     << " over race head diffuse " << headDiffuseTexture
                                      << " for " << traits.mEditorId
-                                     << " runtime=loaded-pending-exact-facegen-texture-synthesis gate=runtime-fnv-facegen-source";
+                                     << " runtime=runtime-supported gate=runtime-fnv-facegen-diffuse-applied";
                 }
             }
             const std::string headNormalTexture = headSurface
@@ -7190,7 +7219,7 @@ namespace MWRender
             const std::string headSkinTexture = headSurface
                 ? findFonvTextureSkinCompanion(mResourceSystem, headDiffuseTexture)
                 : std::string();
-            osg::ref_ptr<osg::Node> attached = insertPart(headPart.mesh, nullptr, headDiffuseTexture);
+            osg::ref_ptr<osg::Node> attached = insertPart(headPart.mesh, nullptr, appliedHeadDiffuseTexture);
             if (i < 8)
             {
                 raceFacePartAttached[i] = attached != nullptr;
@@ -7198,7 +7227,7 @@ namespace MWRender
             }
             Log(Debug::Info) << "FNV/ESM4 diag: race face part " << getFonvRaceHeadPartRole(i)
                              << " index=" << i << " mesh=" << headPart.mesh << " texture="
-                             << (headDiffuseTexture.empty() ? std::string("<none>") : headDiffuseTexture)
+                             << (appliedHeadDiffuseTexture.empty() ? std::string("<none>") : appliedHeadDiffuseTexture)
                              << " attached=" << (attached != nullptr) << " status="
                              << getFonvFacePartStatus(attached != nullptr, !headPart.mesh.empty()) << " for "
                              << traits.mEditorId;
@@ -7206,13 +7235,22 @@ namespace MWRender
             {
                 forceFalloutActorPartVisible(attached.get(), headPart.mesh, traits);
                 applyFaceGenEgmMorph(mResourceSystem, attached.get(), headPart.mesh, traits);
-                if (!headDiffuseTexture.empty())
-                    overrideFalloutPartDiffuseTexture(headDiffuseTexture, mResourceSystem, *attached);
+                if (!appliedHeadDiffuseTexture.empty())
+                {
+                    overrideFalloutPartDiffuseTexture(appliedHeadDiffuseTexture, mResourceSystem, *attached);
+                    if (!npcFaceTexture.empty() && useNpcFaceAsDirectDiffuse)
+                        resolvedFaceGenTextureStatus = "DIFFUSE_APPLIED";
+                }
                 if (!npcFaceDetailTexture.empty())
                 {
-                    Log(Debug::Info) << "FNV/ESM4 proof: applying NPC face detail overlay " << npcFaceDetailTexture
-                                     << " on " << headPart.mesh << " for " << traits.mEditorId;
+                    Log(Debug::Info) << "FNV/ESM4 diag: applying NPC FaceGen detail component " << npcFaceDetailTexture
+                                     << " over race head diffuse "
+                                     << (headDiffuseTexture.empty() ? std::string("<none>") : headDiffuseTexture)
+                                     << " on " << headPart.mesh << " for " << traits.mEditorId
+                                     << " runtime=loaded-pending-exact-facegen-texture-synthesis"
+                                     << " gate=runtime-fnv-facegen-detail-applied";
                     overrideFalloutPartDetailTexture(npcFaceDetailTexture, mResourceSystem, *attached);
+                    resolvedFaceGenTextureStatus = "DETAIL_APPLIED_PENDING_EXACT";
                 }
                 if (!headNormalTexture.empty())
                 {
@@ -7331,8 +7369,7 @@ namespace MWRender
                          << " npcSpecificHeadParts=" << insertedHeadParts
                          << " hairVisibleGeometry=" << visibleHairGeometry
                          << " faceDiffuse=" << resolvedFaceDiffuseSource
-                         << " faceGenTexture="
-                         << (!npcFaceTexture.empty() ? "LOADED" : "MISSING")
+                         << " faceGenTexture=" << resolvedFaceGenTextureStatus
                          << " faceNormal=" << (resolvedFaceNormalTexture ? "OK" : "RACE")
                          << " faceSkinCompanion=" << (resolvedFaceSkinCompanion ? "LOADED" : "MISSING")
                          << " tintLayers=" << traits.mTintLayers.size();

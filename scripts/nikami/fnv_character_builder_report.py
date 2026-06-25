@@ -1316,6 +1316,14 @@ def evaluate(
             if empty_hair_checks:
                 failures.append(f"hair attached without visible geometry: {len(empty_hair_checks)}")
 
+        facegen_pending_checks = [
+            item
+            for item in face_checks
+            if item["values"].get("faceGenTexture") in {"LOADED", "LOADED_PENDING"}
+        ]
+        if facegen_pending_checks:
+            failures.append(f"FaceGen texture loaded but not applied to a face surface: {len(facegen_pending_checks)}")
+
     return ("PASS" if not failures else "FAIL", failures)
 
 
