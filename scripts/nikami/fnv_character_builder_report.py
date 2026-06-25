@@ -53,6 +53,7 @@ NEUTRAL_PREVIEW_PANES = (
 
 NEUTRAL_PREVIEW_PHASE_PANES = {
     "body": {"full-body"},
+    "body-skin": {"full-body"},
     "equipment": {"full-body"},
     "face": {"face-hat"},
     "head": {"face-hat"},
@@ -64,6 +65,11 @@ NEUTRAL_PREVIEW_PHASE_PANES = {
     "weapons": {"right-hand-weapon"},
     "full": {"full-body", "face-hat", "right-hand-weapon"},
     "": {"full-body", "face-hat", "right-hand-weapon"},
+}
+
+NEUTRAL_PREVIEW_PHASE_MIN_FOREGROUND_FRACTION = {
+    ("body", "full-body"): 0.004,
+    ("body-skin", "full-body"): 0.004,
 }
 
 
@@ -766,6 +772,11 @@ def neutral_preview_active_panes(phase: str) -> set[str]:
     return set(NEUTRAL_PREVIEW_PHASE_PANES.get(phase.strip().lower(), NEUTRAL_PREVIEW_PHASE_PANES["full"]))
 
 
+def neutral_preview_min_foreground_fraction(pane: dict[str, Any], phase: str) -> float:
+    key = (phase.strip().lower(), str(pane["name"]))
+    return float(NEUTRAL_PREVIEW_PHASE_MIN_FOREGROUND_FRACTION.get(key, pane["minForegroundFraction"]))
+
+
 def analyze_neutral_preview_image(path: Path, weapon_present: bool = False, phase: str = "") -> dict[str, Any]:
     from collections import Counter
 
@@ -837,10 +848,11 @@ def analyze_neutral_preview_image(path: Path, weapon_present: bool = False, phas
             # A long gun or other held prop may intentionally extend upward or rightward in the isolated weapon pane.
             allowed_edges.update({"right", "top"})
         active_for_phase = pane["name"] in active_panes
+        min_foreground_fraction = neutral_preview_min_foreground_fraction(pane, phase)
         if active_for_phase:
-            if foreground_fraction < pane["minForegroundFraction"]:
+            if foreground_fraction < min_foreground_fraction:
                 pane_findings.append(
-                    f"foreground fraction {foreground_fraction:.4f} below {pane['minForegroundFraction']:.4f}"
+                    f"foreground fraction {foreground_fraction:.4f} below {min_foreground_fraction:.4f}"
                 )
             if foreground_fraction > pane["maxForegroundFraction"]:
                 pane_findings.append(
@@ -858,6 +870,8 @@ def analyze_neutral_preview_image(path: Path, weapon_present: bool = False, phas
                 "box": [left, top, right, bottom],
                 "foregroundPixels": foreground_pixels,
                 "foregroundFraction": foreground_fraction,
+                "minForegroundFraction": min_foreground_fraction,
+                "defaultMinForegroundFraction": pane["minForegroundFraction"],
                 "componentCount": len(pane_components),
                 "largestComponentPixels": int(largest.get("pixels", 0)),
                 "largestComponentBox": bbox,
