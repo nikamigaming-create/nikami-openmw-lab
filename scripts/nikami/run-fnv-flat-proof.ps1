@@ -370,6 +370,64 @@ function Count-ActorPostureMatches([string]$Path, [string[]]$ActorPatterns, [str
     return $count
 }
 
+function Count-ActorBareHandIncludeMatches([string]$Path, [string[]]$ActorPatterns) {
+    if (!(Test-Path -LiteralPath $Path) -or $ActorPatterns.Count -eq 0) { return 0 }
+
+    $seen = [System.Collections.Generic.HashSet[string]]::new()
+    foreach ($pattern in $ActorPatterns) {
+        $actorPattern = "(?:`"$pattern`"|$pattern)"
+        $matches = @(Select-String -LiteralPath $Path -Pattern "FNV/ESM4 CHARACTER BUILDER include .* category=body-skin actor=$actorPattern .*model=.*[\\/]?(?:left|right)hand\.nif " -ErrorAction SilentlyContinue)
+        foreach ($match in $matches) {
+            [void]$seen.Add($match.Line)
+        }
+    }
+    return $seen.Count
+}
+
+function Get-ActorStaticHandNoTwistProbe([string]$Path, [string[]]$ActorPatterns) {
+    if (!(Test-Path -LiteralPath $Path) -or $ActorPatterns.Count -eq 0) {
+        return [pscustomobject]@{
+            Count = 0
+            LeftCount = 0
+            RightCount = 0
+            FingerWeightLoadedCount = 0
+            PendingArticulationCount = 0
+            FailureLine = $null
+        }
+    }
+
+    $seen = [System.Collections.Generic.HashSet[string]]::new()
+    $left = 0
+    $right = 0
+    $weightsLoaded = 0
+    $pendingArticulation = 0
+    $failureLine = $null
+    foreach ($pattern in $ActorPatterns) {
+        $actorPattern = "(?:`"$pattern`"|$pattern)"
+        $matches = @(Select-String -LiteralPath $Path -Pattern "FNV/ESM4 diag: actor static hand no-twist proof .* actor=$actorPattern .* gate=runtime-fnv-static-hand-no-twist" -ErrorAction SilentlyContinue)
+        foreach ($match in $matches) {
+            if (!$seen.Add($match.Line)) { continue }
+
+            if ($match.Line -match " side=left ") { ++$left }
+            if ($match.Line -match " side=right ") { ++$right }
+            if ($match.Line -match " fingerWeights=LOADED ") { ++$weightsLoaded }
+            if ($match.Line -match " fingerArticulation=loaded-pending-runtime ") { ++$pendingArticulation }
+            if ($null -eq $failureLine -and $match.Line -notmatch " fingerWeights=LOADED ") {
+                $failureLine = $match.Line
+            }
+        }
+    }
+
+    return [pscustomobject]@{
+        Count = $seen.Count
+        LeftCount = $left
+        RightCount = $right
+        FingerWeightLoadedCount = $weightsLoaded
+        PendingArticulationCount = $pendingArticulation
+        FailureLine = $failureLine
+    }
+}
+
 function Convert-LogFloat([string]$Text) {
     return [double]::Parse($Text, [System.Globalization.CultureInfo]::InvariantCulture)
 }
@@ -412,12 +470,16 @@ function Get-ActorVisibleHandGeometryProbe([string]$Path, [string[]]$ActorPatter
             RightBestDistance = $null
             MaxDistance = $MaxDistance
             FailureLine = $null
+            PoseSanityBadCount = 0
+            PoseSanityFailureLine = $null
         }
     }
 
     $seen = [System.Collections.Generic.HashSet[string]]::new()
     $samples = [System.Collections.Generic.List[object]]::new()
     $auditSamples = [System.Collections.Generic.List[object]]::new()
+    $poseSanityBadSeen = [System.Collections.Generic.HashSet[string]]::new()
+    $poseSanityBadLines = [System.Collections.Generic.List[string]]::new()
     foreach ($pattern in $ActorPatterns) {
         $actorPattern = "(?:`"$pattern`"|$pattern)"
         $matches = @(Select-String -LiteralPath $Path -Pattern "FNV/ESM4 ACTOR HAND GEOMETRY AUDIT $actorPattern " -ErrorAction SilentlyContinue)
@@ -493,6 +555,11 @@ function Get-ActorVisibleHandGeometryProbe([string]$Path, [string[]]$ActorPatter
                     -and $null -ne $_.SourceCenter `
                     -and (Test-Vec3Near $_.SourceCenter $sourceCenter 0.25)
             })
+            if ($matchingAudits.Count -gt 0 -and $poseMatch.Line -match " verdict=BAD") {
+                if ($poseSanityBadSeen.Add($poseMatch.Line)) {
+                    $poseSanityBadLines.Add($poseMatch.Line)
+                }
+            }
 
             foreach ($audit in $matchingAudits) {
                 $postSkinDistance = Get-Vec3Distance $skinnedCenter $audit.Anchor
@@ -521,10 +588,13 @@ function Get-ActorVisibleHandGeometryProbe([string]$Path, [string[]]$ActorPatter
     $rightDistance = if ($null -ne $bestRight) { [double]$bestRight.RenderDistance } else { $null }
     $leftOk = $null -ne $leftDistance -and $leftDistance -le $MaxDistance
     $rightOk = $null -ne $rightDistance -and $rightDistance -le $MaxDistance
-    $status = if ($leftOk -and $rightOk) { "PASS" } elseif ($samples.Count -gt 0) { "FAIL" } else { "MISSING" }
+    $status = if ($poseSanityBadLines.Count -gt 0) { "FAIL" } elseif ($leftOk -and $rightOk) { "PASS" } elseif ($samples.Count -gt 0) { "FAIL" } else { "MISSING" }
 
     $failureLine = $null
     if ($status -ne "PASS") {
+        if ($poseSanityBadLines.Count -gt 0) {
+            $failureLine = $poseSanityBadLines[0]
+        }
         if ($null -ne $bestLeft -and ($null -eq $failureLine -or [double]$bestLeft.RenderDistance -gt $MaxDistance)) {
             $failureLine = $bestLeft.Line
         }
@@ -543,6 +613,8 @@ function Get-ActorVisibleHandGeometryProbe([string]$Path, [string[]]$ActorPatter
         RightBestDistance = $rightDistance
         MaxDistance = $MaxDistance
         FailureLine = $failureLine
+        PoseSanityBadCount = $poseSanityBadLines.Count
+        PoseSanityFailureLine = if ($poseSanityBadLines.Count -gt 0) { $poseSanityBadLines[0] } else { $null }
     }
 }
 
@@ -1941,6 +2013,8 @@ $targetWorldPostureOkLines = Count-ActorPostureMatches $OpenMwLog $actorProofPat
 $targetStandingArmPoseBadLines = Count-ActorPostureMatches $OpenMwLog $actorProofPatterns "standing arm pose" "BAD"
 $targetStandingArmPoseOkLines = Count-ActorPostureMatches $OpenMwLog $actorProofPatterns "standing arm pose" "OK"
 $targetVisibleHandGeometry = Get-ActorVisibleHandGeometryProbe $OpenMwLog $actorProofPatterns $ActorVisibleHandMaxDistance
+$targetBareHandIncludes = Count-ActorBareHandIncludeMatches $OpenMwLog $actorProofPatterns
+$targetStaticHandNoTwist = Get-ActorStaticHandNoTwistProbe $OpenMwLog $actorProofPatterns
 $unsupportedEsm4Skips = @(Get-UnsupportedEsm4Skips $OpenMwLog)
 $screenshots = @(Get-ChildItem -LiteralPath $ProofDir -Filter "*.png" -File -ErrorAction SilentlyContinue)
 $screenshotStability = [pscustomobject](Get-ScreenshotStabilityResult `
@@ -1989,12 +2063,26 @@ Write-ProofLine "Target world posture OK lines: $targetWorldPostureOkLines"
 Write-ProofLine "Target world posture BAD lines: $targetWorldPostureBadLines"
 Write-ProofLine "Target standing arm pose OK lines: $targetStandingArmPoseOkLines"
 Write-ProofLine "Target standing arm pose BAD lines: $targetStandingArmPoseBadLines"
+Write-ProofLine "Target bare hand skin include lines: $targetBareHandIncludes"
+Write-ProofLine ("Target static hand no-twist proof lines: {0} left={1} right={2} fingerWeightsLoaded={3} pendingFingerArticulation={4}" -f `
+    $targetStaticHandNoTwist.Count, `
+    $targetStaticHandNoTwist.LeftCount, `
+    $targetStaticHandNoTwist.RightCount, `
+    $targetStaticHandNoTwist.FingerWeightLoadedCount, `
+    $targetStaticHandNoTwist.PendingArticulationCount)
+if (![string]::IsNullOrWhiteSpace($targetStaticHandNoTwist.FailureLine)) {
+    Write-ProofLine "Target static hand no-twist failure line: $($targetStaticHandNoTwist.FailureLine)"
+}
 Write-ProofLine "Target visible hand geometry status: $($targetVisibleHandGeometry.Status)"
 Write-ProofLine ("Target visible hand geometry samples: {0} leftBest={1} rightBest={2} maxDistance={3}" -f `
     $targetVisibleHandGeometry.SampleCount, `
     (Format-ProofNumber $targetVisibleHandGeometry.LeftBestDistance), `
     (Format-ProofNumber $targetVisibleHandGeometry.RightBestDistance), `
     (Format-ProofNumber $targetVisibleHandGeometry.MaxDistance))
+Write-ProofLine "Target visible hand geometry pose sanity BAD lines: $($targetVisibleHandGeometry.PoseSanityBadCount)"
+if (![string]::IsNullOrWhiteSpace($targetVisibleHandGeometry.PoseSanityFailureLine)) {
+    Write-ProofLine "Target visible hand geometry pose sanity failure line: $($targetVisibleHandGeometry.PoseSanityFailureLine)"
+}
 if (![string]::IsNullOrWhiteSpace($targetVisibleHandGeometry.FailureLine)) {
     Write-ProofLine "Target visible hand geometry failure line: $($targetVisibleHandGeometry.FailureLine)"
 }
@@ -2027,6 +2115,9 @@ if (![string]::IsNullOrWhiteSpace($ActorTarget) -and $targetWorldPostureBadLines
 if (![string]::IsNullOrWhiteSpace($ActorTarget) -and $targetStandingArmPoseBadLines -gt 0) { throw "FNV actor proof saw target standing arm bind/T-pose lines. See $OpenMwLog" }
 if (![string]::IsNullOrWhiteSpace($ActorTarget) -and $targetWorldPostureOkLines -eq 0) { throw "FNV actor proof did not log target world posture lines. See $OpenMwLog" }
 if (![string]::IsNullOrWhiteSpace($ActorTarget) -and $targetStandingArmPoseOkLines -eq 0) { throw "FNV actor proof did not log target standing arm pose lines. See $OpenMwLog" }
+if (![string]::IsNullOrWhiteSpace($ActorTarget) -and $targetVisibleHandGeometry.PoseSanityBadCount -gt 0) { throw "FNV actor proof saw target hand mesh pose sanity BAD lines. See $OpenMwLog" }
+if (![string]::IsNullOrWhiteSpace($ActorTarget) -and $targetBareHandIncludes -gt 0 -and $targetStaticHandNoTwist.Count -eq 0) { throw "FNV actor proof did not prove target bare hands use the static no-twist path. See $OpenMwLog" }
+if (![string]::IsNullOrWhiteSpace($ActorTarget) -and $targetStaticHandNoTwist.Count -gt 0 -and $targetStaticHandNoTwist.FingerWeightLoadedCount -eq 0) { throw "FNV actor proof staticized target hands without loading finger-weight evidence. See $OpenMwLog" }
 if ($RequireActorVisibleHandGeometry -and [string]::IsNullOrWhiteSpace($ActorTarget)) { throw "FNV actor visible hand geometry proof requires ActorTarget." }
 if ($RequireActorVisibleHandGeometry -and !$FnvPartMatrixAudit) { throw "FNV actor visible hand geometry proof requires FnvPartMatrixAudit." }
 if ($RequireActorVisibleHandGeometry -and $targetVisibleHandGeometry.Status -ne "PASS") { throw "FNV actor proof did not prove visible skinned hand geometry follows animated hand anchors. See $OpenMwLog" }

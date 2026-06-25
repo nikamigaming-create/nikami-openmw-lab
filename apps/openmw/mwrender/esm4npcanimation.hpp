@@ -37,6 +37,7 @@ namespace MWRender
 
         void applyLiveHeadSurfaceAuthoring();
         void applyLiveRuntimeActorKitSelectors();
+        bool rebuildLiveRuntimeActorKitParts(const ESM4::Npc& traits, unsigned int generation, std::string_view fingerprint);
 
         osg::ref_ptr<osg::Node> insertPart(
             std::string_view model, const osg::Vec4f* tint = nullptr, std::string_view diffuseTexture = {});

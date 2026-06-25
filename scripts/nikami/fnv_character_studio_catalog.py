@@ -614,6 +614,8 @@ def build_catalog(plan: dict[str, Any], gameplay_rows: list[dict[str, Any]], lim
             "live-api-catalog-search-v1",
             "placed-runtime-target-map-v1",
             "placement-bootstrap-job-args-v1",
+            "authoring-snapshot-saveback-v1",
+            "snapshot-replay-job-v1",
             "neutral-stage-gate-pending-v1",
             "no-retail-payload-v1",
         ],
@@ -754,8 +756,8 @@ button:disabled {{ opacity: .45; cursor: not-allowed; }}
 .runtimeAudit {{ display: grid; gap: 5px; max-height: 160px; overflow: auto; padding: 8px; border: 1px solid var(--line); border-radius: 6px; background: #0c0f14; }}
 .auditLine {{ font-family: Consolas, monospace; font-size: 11px; color: var(--muted); overflow-wrap: anywhere; }}
 .policyNote {{ color: var(--muted); font-size: 12px; }}
-.jobList, .eventList, .coordList {{ display: grid; gap: 6px; max-height: 240px; overflow: auto; }}
-.jobItem, .eventItem, .coordItem {{ background: #101216; border: 1px solid #2b3038; border-radius: 5px; padding: 7px; }}
+.jobList, .eventList, .coordList, .snapshotList {{ display: grid; gap: 6px; max-height: 240px; overflow: auto; }}
+.jobItem, .eventItem, .coordItem, .snapshotItem {{ background: #101216; border: 1px solid #2b3038; border-radius: 5px; padding: 7px; }}
 .grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(360px, 1fr)); gap: 10px; }}
 .card {{ background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 10px; display: grid; gap: 7px; min-width: 0; }}
 .head {{ display: flex; justify-content: space-between; gap: 8px; }}
@@ -840,6 +842,11 @@ button:disabled {{ opacity: .45; cursor: not-allowed; }}
         <span id="proofState" class="pill">No proof</span>
         <span id="reviewState" class="pill">Review pending</span>
       </div>
+      <div class="actions">
+        <button id="saveSnapshot" type="button">Save Snapshot</button>
+        <button id="replaySnapshot" type="button">Replay Snapshot</button>
+      </div>
+      <div id="snapshotList" class="snapshotList"></div>
       <div class="reviewControl">
         <select id="reviewSelect"></select>
         <button id="saveReview" type="button">Save Component Review Rows</button>
@@ -935,6 +942,8 @@ const state = {{
   entryDetails: {{}},
   latestManifest: null,
   latestJob: null,
+  latestSnapshot: null,
+  snapshots: [],
   liveAuthoring: null,
   liveAuthoringDirty: false,
   liveRuntime: null,
@@ -1081,6 +1090,7 @@ function renderRuntimeAudit() {{
     ...(recent.targetSwitches || []).slice(-2),
     ...(recent.liveActorKitControls || []).slice(-3),
     ...(recent.liveActorKitPostConstruction || []).slice(-2),
+    ...(recent.liveActorKitPartRebuilds || []).slice(-2),
     ...(recent.actorAssemblyMatches || []).slice(-2),
     ...(recent.liveAuthoringApplies || []).slice(-3)
   ].slice(-7);
@@ -1091,6 +1101,7 @@ function renderRuntimeAudit() {{
       <span class="pill">target ${{esc(counts.targetSwitches || 0)}}</span>
       <span class="pill">selectors ${{esc(counts.liveActorKitControls || 0)}}</span>
       <span class="pill">post ${{esc(counts.liveActorKitPostConstruction || 0)}}</span>
+      <span class="pill">rebuilds ${{esc(counts.liveActorKitPartRebuilds || 0)}}</span>
       <span class="pill">assembly ${{esc(counts.actorAssemblyMatches || 0)}}</span>
       <span class="pill">knobs ${{esc(counts.liveAuthoringApplies || 0)}}</span>
     </div>
@@ -1364,8 +1375,11 @@ async function ensureSession() {{
     method: "POST",
     body: JSON.stringify({{ entryId: entry?.id || "" }})
   }});
+  state.snapshots = [];
+  state.latestSnapshot = null;
   addLocalEvent("session.create", {{ id: state.session.id, selectedEntry: entry?.id || "" }});
   renderWorkbench();
+  refreshSnapshots();
   return state.session;
 }}
 async function launchJob(commandKey) {{
@@ -1499,6 +1513,101 @@ function componentReviewRows(activeOnly = false) {{
       }};
     }});
 }}
+function coordinateRows() {{
+  const manifest = state.latestManifest || state.latestJob?.manifest;
+  const rows = [];
+  for (const c of (manifest?.cases || []).slice(0, 24)) {{
+    const row = {{
+      phase: c.phase || "",
+      angle: c.angle || "",
+      actorStage: c.actorStage || null,
+      actorCamera: c.actorCamera || null,
+      actorKitSelection: c.actorKitSelection || null
+    }};
+    if (row.actorStage || row.actorCamera || row.actorKitSelection) rows.push(row);
+  }}
+  return rows;
+}}
+function snapshotPayload() {{
+  return {{
+    entryId: state.selectedId,
+    studioPayload: studioPayload("runtimeThreeCamera"),
+    liveControls: liveControlsFromInputs(),
+    liveRuntime: state.liveRuntime || {{}},
+    runtimeStatus: state.runtimeStatus || {{}},
+    runtimeAudit: state.runtimeAudit || {{}},
+    latestJob: state.latestJob || {{}},
+    latestManifest: state.latestManifest || state.latestJob?.manifest || {{}},
+    componentReviewRows: componentReviewRows(false),
+    coordinateRows: coordinateRows()
+  }};
+}}
+function renderSnapshots() {{
+  const node = document.getElementById("snapshotList");
+  if (!node) return;
+  if (!state.session) {{
+    node.innerHTML = `<div class="muted">No saved snapshots yet</div>`;
+    return;
+  }}
+  const rows = state.snapshots || [];
+  node.innerHTML = rows.length
+    ? rows.map(row => `<div class="snapshotItem">
+        <b>${{esc(row.id || "snapshot")}}</b>
+        <span class="pill">${{esc(row.commandKey || "runtimeThreeCamera")}}</span>
+        <span class="pill">${{esc(row.classification || "pending")}}</span>
+        <div class="muted">entry <code>${{esc(row.entryId || "")}}</code> review rows=${{esc(row.reviewRows || 0)}} coords=${{esc(row.coordinateRows || 0)}}</div>
+        <div class="actions"><button type="button" data-replay-snapshot="${{esc(row.id)}}">Replay</button></div>
+      </div>`).join("")
+    : `<div class="muted">No saved snapshots yet</div>`;
+  node.querySelectorAll("[data-replay-snapshot]").forEach(button => button.onclick = () => replaySnapshot(button.dataset.replaySnapshot || ""));
+}}
+async function refreshSnapshots() {{
+  if (!liveAvailable() || !state.session) {{
+    renderSnapshots();
+    return;
+  }}
+  try {{
+    state.snapshots = await api(`/nikami/studio/sessions/${{encodeURIComponent(state.session.id)}}/snapshots`);
+    state.latestSnapshot = state.snapshots[0] || state.latestSnapshot;
+    renderSnapshots();
+  }} catch (error) {{
+    addLocalEvent("snapshot.list.failed", {{ message: error.message || String(error) }});
+  }}
+}}
+async function saveSnapshotEvent() {{
+  try {{
+    if (!state.session && liveAvailable()) await ensureSession();
+    if (!liveAvailable() || !state.session) return;
+    const snapshot = await api(`/nikami/studio/sessions/${{encodeURIComponent(state.session.id)}}/snapshots`, {{
+      method: "POST",
+      body: JSON.stringify(snapshotPayload())
+    }});
+    state.latestSnapshot = snapshot;
+    await refreshSnapshots();
+    addLocalEvent("snapshot.save", {{ snapshotId: snapshot.id, entryId: snapshot.entryId, schema: snapshot.schema }});
+    renderWorkbench();
+  }} catch (error) {{
+    addLocalEvent("snapshot.save.failed", {{ message: error.message || String(error) }});
+  }}
+}}
+async function replaySnapshot(snapshotId = "") {{
+  try {{
+    if (!liveAvailable() || !state.session) return;
+    const id = snapshotId || state.latestSnapshot?.id || state.snapshots?.[0]?.id || "";
+    if (!id) return;
+    const job = await api(`/nikami/studio/sessions/${{encodeURIComponent(state.session.id)}}/snapshots/${{encodeURIComponent(id)}}/replay`, {{
+      method: "POST",
+      body: JSON.stringify({{}})
+    }});
+    state.jobs.unshift(job);
+    state.latestJob = job;
+    addLocalEvent("snapshot.replay", {{ snapshotId: id, jobId: job.id }});
+    renderWorkbench();
+    pollJob(job.id);
+  }} catch (error) {{
+    addLocalEvent("snapshot.replay.failed", {{ message: error.message || String(error) }});
+  }}
+}}
 function matches(e) {{
   if (state.domain && e.domain !== state.domain) return false;
   if (state.kind && e.kind !== state.kind) return false;
@@ -1624,12 +1733,12 @@ function renderJobs() {{
     : `<div class="muted">No jobs yet</div>`;
 }}
 function renderCoords() {{
-  const manifest = state.latestManifest || state.latestJob?.manifest;
   const rows = [];
-  for (const c of (manifest?.cases || []).slice(0, 12)) {{
-    if (c.actorStage) rows.push(`<div class="coordItem"><b>${{esc(c.angle || c.phase)}}</b> stage <code>${{esc(JSON.stringify(c.actorStage))}}</code></div>`);
-    if (c.actorCamera) rows.push(`<div class="coordItem"><b>${{esc(c.angle || c.phase)}}</b> camera <code>${{esc(JSON.stringify(c.actorCamera))}}</code></div>`);
-    if (c.actorKitSelection) rows.push(`<div class="coordItem"><b>${{esc(c.angle || c.phase)}}</b> selector <code>${{esc(JSON.stringify(c.actorKitSelection))}}</code></div>`);
+  for (const c of coordinateRows().slice(0, 12)) {{
+    const label = c.angle || c.phase || "case";
+    if (c.actorStage) rows.push(`<div class="coordItem"><b>${{esc(label)}}</b> stage <code>${{esc(JSON.stringify(c.actorStage))}}</code></div>`);
+    if (c.actorCamera) rows.push(`<div class="coordItem"><b>${{esc(label)}}</b> camera <code>${{esc(JSON.stringify(c.actorCamera))}}</code></div>`);
+    if (c.actorKitSelection) rows.push(`<div class="coordItem"><b>${{esc(label)}}</b> selector <code>${{esc(JSON.stringify(c.actorKitSelection))}}</code></div>`);
   }}
   document.getElementById("coordList").innerHTML = rows.join("") || `<div class="muted">No coordinate dump yet</div>`;
 }}
@@ -1658,6 +1767,11 @@ function renderSaveReview() {{
   document.getElementById("saveState").textContent = state.session ? "Saved session" : "Unsaved";
   document.getElementById("proofState").textContent = job ? `${{job.state || "job"}} / ${{job.result?.status || "no manifest"}}` : "No proof";
   document.getElementById("reviewState").textContent = review.replace(/-/g, " ");
+  const entry = selectedEntry();
+  const canSnapshot = liveAvailable() && !!entry;
+  const canReplay = canSnapshot && !!state.session && !!(state.latestSnapshot?.id || state.snapshots?.[0]?.id);
+  document.getElementById("saveSnapshot").disabled = !canSnapshot;
+  document.getElementById("replaySnapshot").disabled = !canReplay;
 }}
 function renderComponentReviews() {{
   const rows = componentReviewRows(false);
@@ -1798,6 +1912,7 @@ function renderWorkbench() {{
   renderCameras();
   renderJobs();
   renderCoords();
+  renderSnapshots();
   renderStage();
   renderSaveReview();
   renderComponentReviews();
@@ -1862,6 +1977,8 @@ renderControls();
 document.getElementById("newSession").addEventListener("click", async () => {{
   try {{
     state.session = null;
+    state.snapshots = [];
+    state.latestSnapshot = null;
     await ensureSession();
   }} catch (error) {{
     addLocalEvent("session.create.failed", {{ message: error.message || String(error) }});
@@ -1870,6 +1987,8 @@ document.getElementById("newSession").addEventListener("click", async () => {{
 document.getElementById("runThree").addEventListener("click", () => launchJob("runtimeThreeCamera"));
 document.getElementById("runFront").addEventListener("click", () => launchJob("runtimeFrontOnly"));
 document.getElementById("sendLiveRuntime").addEventListener("click", () => sendSelectedLiveRuntime({{ reason: "button" }}));
+document.getElementById("saveSnapshot").addEventListener("click", saveSnapshotEvent);
+document.getElementById("replaySnapshot").addEventListener("click", () => replaySnapshot());
 document.getElementById("saveReview").addEventListener("click", saveReviewEvent);
 document.querySelectorAll("[data-preset]").forEach(button => button.addEventListener("click", () => applyPreset(button.dataset.preset || "")));
 document.getElementById("search").addEventListener("input", e => {{ state.query = e.target.value; refreshSearch(); }});

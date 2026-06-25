@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
+#include <set>
 
 #include <components/esm/attr.hpp>
 #include <components/esm4/loadarmo.hpp>
@@ -446,6 +447,17 @@ namespace MWClass
             data.mEquippedWeapon = weapon;
     }
 
+    static uint32_t getFalloutEquipmentSlotMask()
+    {
+        return ESM4::Armor::FO3_Head | ESM4::Armor::FO3_Hair | ESM4::Armor::FO3_UpperBody
+            | ESM4::Armor::FO3_LeftHand | ESM4::Armor::FO3_RightHand | ESM4::Armor::FO3_Weapon
+            | ESM4::Armor::FO3_PipBoy | ESM4::Armor::FO3_Backpack | ESM4::Armor::FO3_Necklace
+            | ESM4::Armor::FO3_Headband | ESM4::Armor::FO3_Hat | ESM4::Armor::FO3_EyeGlasses
+            | ESM4::Armor::FO3_NoseRing | ESM4::Armor::FO3_Earrings | ESM4::Armor::FO3_Mask
+            | ESM4::Armor::FO3_Choker | ESM4::Armor::FO3_MouthObject | ESM4::Armor::FO3_BodyAddOn1
+            | ESM4::Armor::FO3_BodyAddOn2 | ESM4::Armor::FO3_BodyAddOn3;
+    }
+
     static bool isPersistentRecord(const ESM4::Npc& npc)
     {
         return (npc.mFlags & ESM::FLAG_Persistent) != 0;
@@ -574,35 +586,107 @@ namespace MWClass
 
         if (auto inv = chooseTemplate(npcRecs, ESM4::Npc::Template_UseInventory))
         {
-            for (const ESM4::InventoryItem& item : inv->mInventory)
-            {
-                if (auto* armor
-                    = ESM4Impl::resolveLevelled<ESM4::LevelledItem, ESM4::Armor>(ESM::FormId::fromUint32(item.item)))
-                    data->mEquippedArmor.push_back(armor);
-                else if (const ESM4::Weapon* weapon = ESM4Impl::resolveLevelled<ESM4::LevelledItem, ESM4::Weapon>(
-                             ESM::FormId::fromUint32(item.item)))
-                    considerEquippedWeapon(*data, weapon);
-                else if (data->mTraits != nullptr && data->mTraits->mIsTES4)
+            std::set<ESM::FormId> equippedArmorIds;
+            std::set<ESM::FormId> equippedClothingIds;
+            uint32_t occupiedEquipmentSlots = 0;
+            const uint32_t falloutEquipmentSlotMask = getFalloutEquipmentSlotMask();
+            const auto addEquippedArmor = [&](const ESM4::Armor* armor, const char* source) {
+                if (armor == nullptr)
+                    return;
+
+                if (!equippedArmorIds.insert(armor->mId).second)
                 {
-                    const auto* clothing = ESM4Impl::resolveLevelled<ESM4::LevelledItem, ESM4::Clothing>(
-                        ESM::FormId::fromUint32(item.item));
-                    if (clothing)
-                        data->mEquippedClothing.push_back(clothing);
+                    Log(Debug::Info) << "FNV/ESM4 diag: skipped duplicate equipped armor " << armor->mEditorId
+                                     << " form=" << ESM::RefId(armor->mId) << " source=" << source
+                                     << " status=intentionally-excluded-with-proof reason=duplicate-equipped-record";
+                    return;
                 }
-            }
+
+                if (data->mTraits != nullptr && data->mTraits->mIsFONV)
+                {
+                    const uint32_t slots = armor->mArmorFlags & falloutEquipmentSlotMask;
+                    if (slots != 0 && (occupiedEquipmentSlots & slots) != 0)
+                    {
+                        Log(Debug::Info) << "FNV/ESM4 diag: skipped slot-conflicting equipped armor "
+                                         << armor->mEditorId << " form=" << ESM::RefId(armor->mId) << " flags=0x"
+                                         << std::hex << armor->mArmorFlags << " occupied=0x" << occupiedEquipmentSlots
+                                         << std::dec << " source=" << source
+                                         << " status=intentionally-excluded-with-proof reason=equipment-slot-conflict";
+                        return;
+                    }
+                    occupiedEquipmentSlots |= slots;
+                }
+
+                data->mEquippedArmor.push_back(armor);
+            };
+            const auto addEquippedClothing = [&](const ESM4::Clothing* clothing, const char* source) {
+                if (clothing == nullptr)
+                    return;
+
+                if (!equippedClothingIds.insert(clothing->mId).second)
+                {
+                    Log(Debug::Info) << "FNV/ESM4 diag: skipped duplicate equipped clothing "
+                                     << clothing->mEditorId << " form=" << ESM::RefId(clothing->mId)
+                                     << " source=" << source
+                                     << " status=intentionally-excluded-with-proof reason=duplicate-equipped-record";
+                    return;
+                }
+
+                if (data->mTraits != nullptr && data->mTraits->mIsFONV)
+                {
+                    const uint32_t slots = clothing->mClothingFlags & falloutEquipmentSlotMask;
+                    if (slots != 0 && (occupiedEquipmentSlots & slots) != 0)
+                    {
+                        Log(Debug::Info) << "FNV/ESM4 diag: skipped slot-conflicting equipped clothing "
+                                         << clothing->mEditorId << " form=" << ESM::RefId(clothing->mId)
+                                         << " flags=0x" << std::hex << clothing->mClothingFlags
+                                         << " occupied=0x" << occupiedEquipmentSlots << std::dec << " source="
+                                         << source
+                                         << " status=intentionally-excluded-with-proof reason=equipment-slot-conflict";
+                        return;
+                    }
+                    occupiedEquipmentSlots |= slots;
+                }
+
+                data->mEquippedClothing.push_back(clothing);
+            };
+
             if (!inv->mDefaultOutfit.isZeroOrUnset())
             {
                 if (const ESM4::Outfit* outfit = store->get<ESM4::Outfit>().search(inv->mDefaultOutfit))
                 {
                     for (ESM::FormId itemId : outfit->mInventory)
                         if (auto* armor = ESM4Impl::resolveLevelled<ESM4::LevelledItem, ESM4::Armor>(itemId))
-                            data->mEquippedArmor.push_back(armor);
+                            addEquippedArmor(armor, "default-outfit");
                         else if (const ESM4::Weapon* weapon
                             = ESM4Impl::resolveLevelled<ESM4::LevelledItem, ESM4::Weapon>(itemId))
                             considerEquippedWeapon(*data, weapon);
+                        else if (data->mTraits != nullptr && (data->mTraits->mIsTES4 || data->mTraits->mIsFONV))
+                        {
+                            const auto* clothing
+                                = ESM4Impl::resolveLevelled<ESM4::LevelledItem, ESM4::Clothing>(itemId);
+                            if (clothing)
+                                addEquippedClothing(clothing, "default-outfit");
+                        }
                 }
                 else
                     Log(Debug::Error) << "Outfit not found: " << ESM::RefId(inv->mDefaultOutfit);
+            }
+            for (const ESM4::InventoryItem& item : inv->mInventory)
+            {
+                if (auto* armor
+                    = ESM4Impl::resolveLevelled<ESM4::LevelledItem, ESM4::Armor>(ESM::FormId::fromUint32(item.item)))
+                    addEquippedArmor(armor, "inventory");
+                else if (const ESM4::Weapon* weapon = ESM4Impl::resolveLevelled<ESM4::LevelledItem, ESM4::Weapon>(
+                             ESM::FormId::fromUint32(item.item)))
+                    considerEquippedWeapon(*data, weapon);
+                else if (data->mTraits != nullptr && (data->mTraits->mIsTES4 || data->mTraits->mIsFONV))
+                {
+                    const auto* clothing = ESM4Impl::resolveLevelled<ESM4::LevelledItem, ESM4::Clothing>(
+                        ESM::FormId::fromUint32(item.item));
+                    if (clothing)
+                        addEquippedClothing(clothing, "inventory");
+                }
             }
         }
 
@@ -619,9 +703,12 @@ namespace MWClass
                          << " modelKfCount=" << (data->mModel != nullptr ? data->mModel->mKf.size() : 0)
                          << " aiPackageRecord="
                          << (data->mAIPackage != nullptr ? data->mAIPackage->mEditorId : std::string_view{})
-                         << " packageCount=" << (data->mAIPackage != nullptr ? data->mAIPackage->mAIPackages.size() : 0)
+                         << " packageCount="
+                         << (data->mAIPackage != nullptr ? data->mAIPackage->mAIPackages.size() : 0)
                          << " weapon="
-                         << (data->mEquippedWeapon != nullptr ? data->mEquippedWeapon->mEditorId : std::string_view{});
+                         << (data->mEquippedWeapon != nullptr ? data->mEquippedWeapon->mEditorId : std::string_view{})
+                         << " armorCount=" << data->mEquippedArmor.size()
+                         << " clothingCount=" << data->mEquippedClothing.size();
 
         ESM4NpcCustomData& res = *data;
         refData.setCustomData(std::move(data));

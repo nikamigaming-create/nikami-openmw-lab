@@ -64,7 +64,7 @@ function Write-LiveCommand {
             generatedProofOutputsOnly = $true
             noRetailPayloadBytes = $true
             actorKitSelectorControls = $true
-            partRebuild = "loaded-pending-runtime"
+            partRebuild = "runtime-supported"
         }
     } | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $LiveRuntimeCommandFile -Encoding UTF8
 }
@@ -134,8 +134,29 @@ if ($LogText -notmatch "actor=$([regex]::Escape($ActorTarget)).*targetMatches=1"
 if ($LogText -notmatch "generation=2 actor=$([regex]::Escape($ActorTarget))") {
     throw "Missing second post-construction selector generation for $ActorTarget."
 }
-if ($LogText -notmatch "partRebuild=loaded-pending-runtime") {
-    throw "Post-construction proof must preserve pending part-rebuild classification."
+$ActorPattern = [regex]::Escape($ActorTarget)
+$RebuildLines = @($LogText -split "\r?\n" | Where-Object {
+    $_ -match "runtime-live-actor-kit-part-rebuild" -and
+    $_ -match "\bactor=$ActorPattern\b" -and
+    $_ -match "\btargetMatches=1\b"
+})
+
+$SecondRebuildLine = $RebuildLines | Where-Object {
+    $_ -match "\bgeneration=2\b" -and
+    $_ -match "\brequestedParts=([1-9]\d*)\b" -and
+    $_ -match "\brebuiltParts=([1-9]\d*)\b" -and
+    $_ -match "\battachedParts=([1-9]\d*)\b" -and
+    $_ -match "\bstaleAfterRemoval=0\b" -and
+    $_ -match "\bfailedParts=0\b" -and
+    $_ -match "\bruntime=runtime-supported\b"
+} | Select-Object -First 1
+
+if ($null -eq $SecondRebuildLine) {
+    throw "Missing successful target actor runtime part rebuild evidence for $ActorTarget."
+}
+$PendingPartRebuild = "partRebuild=" + "loaded-pending-runtime"
+if ($LogText -match "actor=$ActorPattern.*$([regex]::Escape($PendingPartRebuild))") {
+    throw "Target actor post-construction proof still contains pending part-rebuild classification."
 }
 if ($LogText -notmatch "actor-kit animation request actor=$([regex]::Escape($ActorTarget)).*startPoint=0.65") {
     throw "Missing post-construction actor-kit animation request for final live selector."
@@ -151,7 +172,8 @@ $Result = [pscustomobject][ordered]@{
     secondWriteDelaySeconds = $SecondWriteDelaySeconds
     generatedProofOutputsOnly = $true
     noRetailAssetsCommitted = $true
-    partRebuild = "loaded-pending-runtime"
+    partRebuild = "runtime-supported"
+    rebuildEvidence = $SecondRebuildLine
 }
 $ResultPath = Join-Path $RunDir "result.json"
 $Result | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $ResultPath -Encoding UTF8

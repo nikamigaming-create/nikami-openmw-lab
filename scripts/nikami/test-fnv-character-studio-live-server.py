@@ -112,7 +112,8 @@ def main() -> int:
                 [
                     '[00:00:01.000 I] FNV/ESM4 live runtime: actor target changed from="" to="ContractNpc" file="live-runtime-command.json" runtime=runtime-supported gate=runtime-live-actor-target',
                     '[00:00:01.050 I] FNV/ESM4 live runtime: actor-kit selector key=actorKitParts value="headgear" file="live-runtime-command.json" runtime=runtime-supported gate=runtime-live-actor-kit-controls',
-                    '[00:00:01.075 I] FNV/ESM4 live runtime: actor-kit post-construction selector generation=1 actor=ContractNpc ref=FormId:0x1 file="live-runtime-command.json" targetMatches=1 fingerprint="actorTarget=ContractNpc;parts=headgear;" animationRequest=issued partRebuild=loaded-pending-runtime runtime=loaded-pending-runtime gate=runtime-live-actor-kit-post-construction-selector',
+                    '[00:00:01.075 I] FNV/ESM4 live runtime: actor-kit post-construction selector generation=1 actor=ContractNpc ref=FormId:0x1 file="live-runtime-command.json" targetMatches=1 fingerprint="actorTarget=ContractNpc;parts=headgear;" animationRequest=issued partRebuild=runtime-supported runtime=runtime-supported gate=runtime-live-actor-kit-post-construction-selector',
+                    '[00:00:01.085 I] FNV/ESM4 live runtime: actor-kit part rebuild generation=1 actor=ContractNpc ref=FormId:0x1 targetMatches=1 requestedParts=1 requestedSelectorParts=1 requestedPropSlots=0 requestedPartModels=0 requestedPropModels=0 beforeParts=5 removedParents=5 staleAfterRemoval=0 rebuiltParts=5 attachedParts=5 duplicateParts=0 failedParts=0 beforeDuplicateParts=0 fingerprint="actorTarget=ContractNpc;parts=headgear;" firstParts="FNV Part meshes/example.nif" runtime=runtime-supported gate=runtime-live-actor-kit-part-rebuild',
                     '[00:00:01.100 I] FNV/ESM4 proof: actor part assembly target match target="ContractNpc" actor=ContractNpc refAlias=FormId:0x1 ref=FormId:0x11 runtime=runtime-supported',
                     "[00:00:01.200 I] FNV/ESM4 live authoring: frame-applied head surface authoring model=meshes/characters/head/eyelefthuman.nif prefix=OPENMW_FNV_EYE file=live-authoring.json offset=(0,0,0) rotation=(0,0,-90) pivot=(0,0,0) pivotMode=0 for FormId:0x1",
                 ]
@@ -147,10 +148,11 @@ def main() -> int:
             audit["counts"]["targetSwitches"] != 1
             or audit["counts"]["liveActorKitControls"] != 1
             or audit["counts"]["liveActorKitPostConstruction"] != 1
+            or audit["counts"]["liveActorKitPartRebuilds"] != 1
             or audit["counts"]["actorAssemblyMatches"] != 1
             or audit["counts"]["liveAuthoringApplies"] != 1
         ):
-            raise AssertionError("runtime audit did not count target, actor-kit, assembly, and knob consumption lines")
+            raise AssertionError("runtime audit did not count target, actor-kit, rebuild, assembly, and knob lines")
         runtime_store = live.LiveRuntimeCommandStore(run_dir, root, live_runtime_path)
         runtime_doc = runtime_store.update(
             {
@@ -251,6 +253,102 @@ def main() -> int:
                 raise
         else:
             raise AssertionError("studio session accepted an invalid component review state")
+
+        authoring_store = live.LiveAuthoringStore(run_dir, root, live_authoring_path)
+        authoring_doc = authoring_store.update(
+            {
+                "controls": {
+                    "OPENMW_FNV_HEADGEAR_OFFSET_X": 1.25,
+                    "OPENMW_FNV_HEADGEAR_ROTATION_Z": -90,
+                    "OPENMW_FNV_HEADGEAR_PIVOT_MODE": True,
+                }
+            }
+        )
+        snapshot = sessions.create_snapshot(
+            session["id"],
+            {
+                "entryId": "actor:000001",
+                "studioPayload": {
+                    "entryId": "actor:000001",
+                    "commandKey": "runtimeThreeCamera",
+                    "phases": ["headgear"],
+                    "angles": ["front", "front-left", "front-right"],
+                    "parts": ["headgear"],
+                    "propSlots": ["headgear"],
+                    "animationGroup": "idle",
+                    "dialogueMode": "mouth-open",
+                },
+                "liveControls": authoring_doc["lastApplied"],
+                "liveRuntime": runtime_doc,
+                "runtimeStatus": status,
+                "runtimeAudit": audit,
+                "latestJob": {
+                    "id": "job-contract",
+                    "state": "finished",
+                    "command": "powershell -File should-not-be-saved; Remove-Item x",
+                    "stdout": "retail payload bytes must not be copied",
+                    "stderr": "retail payload bytes must not be copied",
+                    "result": {"viewerJsonUrl": "viewer/manifest.json", "viewerUrl": "viewer/character-viewer.html"},
+                    "request": {"selectors": {"parts": ["headgear"]}},
+                },
+                "latestManifest": {
+                    "schema": "nikami-fnv-character-builder-v1",
+                    "status": "FAIL",
+                    "cases": [
+                        {
+                            "phase": "headgear",
+                            "angle": "front",
+                            "reportStatus": "FAIL",
+                            "mainImage": "headgear/front.png",
+                            "actorStage": {"x": 1, "y": 2, "z": 3},
+                            "actorCamera": {"distance": 4},
+                            "actorKitSelection": {"parts": ["headgear"]},
+                            "failures": ["hat offset"],
+                        }
+                    ],
+                },
+                "componentReviewRows": review_result["rows"],
+                "coordinateRows": [
+                    {"angle": "front", "actorStage": {"x": 1, "y": 2, "z": 3}, "actorCamera": {"distance": 4}}
+                ],
+            },
+            authoring_doc,
+            runtime_doc,
+            status,
+            audit,
+        )
+        if snapshot["schema"] != live.STUDIO_SNAPSHOT_SCHEMA:
+            raise AssertionError("studio snapshot schema mismatch")
+        if "authoring-snapshot-saveback-v1" not in snapshot["schemaMarkers"]:
+            raise AssertionError("studio snapshot did not advertise saveback schema marker")
+        if snapshot["studioPayload"]["parts"] != ["headgear"] or snapshot["liveControls"]["OPENMW_FNV_HEADGEAR_OFFSET_X"] != 1.25:
+            raise AssertionError("studio snapshot did not preserve selectors and live controls")
+        if "command" in snapshot["latestJob"] or "stdout" in snapshot["latestJob"] or "stderr" in snapshot["latestJob"]:
+            raise AssertionError("studio snapshot copied raw job command/output fields")
+        snapshots = sessions.snapshots(session["id"])
+        if len(snapshots) != 1 or snapshots[0]["id"] != snapshot["id"] or snapshots[0]["coordinateRows"] != 1:
+            raise AssertionError("studio snapshot list did not return generated metadata summary")
+        loaded_snapshot = sessions.snapshot(session["id"], snapshot["id"])
+        if loaded_snapshot is None or loaded_snapshot["entryId"] != "actor:000001":
+            raise AssertionError("studio snapshot get failed")
+        replay_command, replay_request = live.structured_snapshot_replay_job(entry, loaded_snapshot)
+        replay_args = live.command_to_args(replay_command, Path("scripts/nikami/run-fnv-character-viewer.ps1"))
+        if replay_request["snapshotId"] != snapshot["id"] or "snapshot-replay-job-v1" not in replay_request["schemaMarkers"]:
+            raise AssertionError("snapshot replay request did not preserve snapshot provenance")
+        if "-ActorKitParts" not in replay_args or "headgear" not in replay_args:
+            raise AssertionError("snapshot replay did not rebuild selector command from metadata")
+        if any("should-not-be-saved" in str(arg) or "Remove-Item" in str(arg) for arg in replay_args):
+            raise AssertionError("snapshot replay used raw saved command metadata")
+        live_runtime_replay = live.snapshot_to_live_runtime_payload(loaded_snapshot, session["id"])
+        if live_runtime_replay["selectors"]["parts"] != ["headgear"]:
+            raise AssertionError("snapshot replay did not preserve live runtime selector metadata")
+        try:
+            sessions.create_snapshot(session["id"], {"entryId": "actor:000001", "rawRetailPayload": "nope"}, authoring_doc, runtime_doc, status, audit)
+        except ValueError as exc:
+            if "unsupported studio snapshot field" not in str(exc):
+                raise
+        else:
+            raise AssertionError("studio snapshot accepted an unsupported top-level field")
 
         command = live.structured_actor_command(entry, {"entryId": "actor:000001", "commandKey": "runtimeFrontOnly"})
         args = live.command_to_args(command, Path("scripts/nikami/run-fnv-character-viewer.ps1"))

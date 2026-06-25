@@ -41,11 +41,25 @@ ALLOWED_ITEM_PREFIX = [
 FORBIDDEN_CHARS = set("&;|<>`")
 STUDIO_SCHEMA = "nikami-fnv-character-studio-session-v1"
 STUDIO_REVIEW_SCHEMA = "nikami-fnv-character-studio-component-review-v1"
+STUDIO_SNAPSHOT_SCHEMA = "nikami-fnv-character-studio-snapshot-v1"
 LIVE_AUTHORING_SCHEMA = "nikami-fnv-live-authoring-v1"
 LIVE_RUNTIME_SCHEMA = "nikami-fnv-live-runtime-command-v1"
 LIVE_RUNTIME_STATUS_SCHEMA = "nikami-fnv-live-runtime-status-v1"
 LIVE_RUNTIME_AUDIT_SCHEMA = "nikami-fnv-live-runtime-audit-v1"
 REVIEW_STATES = {"review-pending", "pass", "fail", "blocked", "needs-rerun"}
+SNAPSHOT_ALLOWED_TOP_LEVEL = {
+    "entryId",
+    "studioPayload",
+    "liveControls",
+    "liveRuntime",
+    "runtimeStatus",
+    "runtimeAudit",
+    "latestJob",
+    "latestManifest",
+    "componentReviewRows",
+    "coordinateRows",
+    "notes",
+}
 HEAD_SURFACE_PREFIXES = (
     "OPENMW_FNV_HEADGEAR",
     "OPENMW_FNV_HAIR",
@@ -330,6 +344,11 @@ def runtime_audit(
         ("runtime-live-actor-kit-post-construction-selector",),
         12,
     )
+    actor_kit_part_rebuilds = recent_matching_lines(
+        openmw_text,
+        ("runtime-live-actor-kit-part-rebuild",),
+        12,
+    )
     assembly_matches = recent_matching_lines(openmw_text, ("FNV/ESM4 proof: actor part assembly target match",), 12)
     authoring_applies = recent_matching_lines(
         openmw_text,
@@ -342,7 +361,7 @@ def runtime_audit(
     face_checks = recent_matching_lines(openmw_text, ("FNV/ESM4 FACE CHECK",), 6)
     consumption_status = (
         "runtime-supported"
-        if target_switches or actor_kit_controls or authoring_applies or assembly_matches
+        if target_switches or actor_kit_controls or actor_kit_part_rebuilds or authoring_applies or assembly_matches
         else ("loaded-pending-runtime" if status.get("runtimeRunning") else "known-blocked")
     )
     first_failing_gate = "" if consumption_status == "runtime-supported" else (
@@ -355,6 +374,7 @@ def runtime_audit(
             "live-target-switch-audit-v1",
             "live-actor-kit-selector-audit-v1",
             "live-actor-kit-post-construction-audit-v1",
+            "live-actor-kit-part-rebuild-audit-v1",
             "live-head-surface-authoring-audit-v1",
             "generated-proof-output-only-v1",
         ],
@@ -368,6 +388,7 @@ def runtime_audit(
             "targetSwitches": target_switches,
             "liveActorKitControls": actor_kit_controls,
             "liveActorKitPostConstruction": actor_kit_post_construction,
+            "liveActorKitPartRebuilds": actor_kit_part_rebuilds,
             "actorAssemblyMatches": assembly_matches,
             "liveAuthoringApplies": authoring_applies,
             "faceChecks": face_checks,
@@ -376,6 +397,7 @@ def runtime_audit(
             "targetSwitches": len(target_switches),
             "liveActorKitControls": len(actor_kit_controls),
             "liveActorKitPostConstruction": len(actor_kit_post_construction),
+            "liveActorKitPartRebuilds": len(actor_kit_part_rebuilds),
             "actorAssemblyMatches": len(assembly_matches),
             "liveAuthoringApplies": len(authoring_applies),
             "faceChecks": len(face_checks),
@@ -951,8 +973,10 @@ class StudioSessionStore:
                 "updatedAt": utc_now(),
                 "selectedEntries": as_list(payload.get("selectedEntries") or payload.get("entryId")),
                 "jobs": [],
+                "snapshots": [],
                 "eventsPath": str(session_dir / "recording" / "events.jsonl"),
                 "reviewsPath": str(session_dir / "recording" / "reviews.jsonl"),
+                "snapshotsPath": str(session_dir / "snapshots"),
                 "policy": {
                     "generatedMetadataOnly": True,
                     "noRetailPayloadBytes": True,
@@ -1099,6 +1123,85 @@ class StudioSessionStore:
         session["updatedAt"] = utc_now()
         self._write(session)
 
+    def _snapshot_dir(self, session_id: str) -> Path:
+        path = self._session_dir(session_id) / "snapshots"
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    def _snapshot_path(self, session_id: str, snapshot_id: str) -> Path:
+        if not re.fullmatch(r"snapshot_[0-9]{8}_[0-9]{6}_[0-9]{4}", snapshot_id):
+            raise ValueError("invalid studio snapshot id")
+        path = (self._snapshot_dir(session_id) / f"{snapshot_id}.json").resolve()
+        snapshot_root = self._snapshot_dir(session_id).resolve()
+        if snapshot_root not in path.parents:
+            raise ValueError("studio snapshot path escaped generated proof root")
+        return path
+
+    def create_snapshot(
+        self,
+        session_id: str,
+        payload: dict[str, Any],
+        live_authoring: dict[str, Any],
+        live_runtime: dict[str, Any],
+        runtime_status_doc: dict[str, Any],
+        runtime_audit_doc: dict[str, Any],
+    ) -> dict[str, Any]:
+        session = self.get(session_id)
+        if session is None:
+            raise ValueError("unknown studio session")
+        with self.lock:
+            snapshot_id = time.strftime("snapshot_%Y%m%d_%H%M%S") + f"_{len(list(self._snapshot_dir(session_id).glob('snapshot_*.json'))) + 1:04d}"
+            snapshot = snapshot_from_session(
+                session_id,
+                snapshot_id,
+                payload,
+                live_authoring,
+                live_runtime,
+                runtime_status_doc,
+                runtime_audit_doc,
+                self.reviews(session_id),
+            )
+            write_generated_json(self._snapshot_path(session_id, snapshot_id), snapshot)
+            session = self.get(session_id) or session
+            snapshots = [str(item) for item in as_list(session.get("snapshots")) if str(item)]
+            snapshots.append(snapshot_id)
+            session["snapshots"] = snapshots[-200:]
+            session["updatedAt"] = utc_now()
+            self._write(session)
+        self.append_event(
+            session_id,
+            "snapshot.create",
+            {
+                "snapshotId": snapshot_id,
+                "entryId": snapshot.get("entryId", ""),
+                "commandKey": snapshot.get("studioPayload", {}).get("commandKey", ""),
+                "schema": STUDIO_SNAPSHOT_SCHEMA,
+            },
+        )
+        return snapshot
+
+    def snapshot(self, session_id: str, snapshot_id: str) -> dict[str, Any] | None:
+        path = self._snapshot_path(session_id, snapshot_id)
+        if not path.is_file():
+            return None
+        loaded = read_json(path)
+        if not isinstance(loaded, dict):
+            raise ValueError("studio snapshot JSON must be an object")
+        return loaded
+
+    def snapshots(self, session_id: str) -> list[dict[str, Any]]:
+        if self.get(session_id) is None:
+            raise ValueError("unknown studio session")
+        rows: list[dict[str, Any]] = []
+        for path in sorted(self._snapshot_dir(session_id).glob("snapshot_*.json"), reverse=True)[:200]:
+            try:
+                loaded = read_json(path)
+                if isinstance(loaded, dict):
+                    rows.append(snapshot_summary(loaded))
+            except Exception:
+                continue
+        return rows
+
 
 class JobStore:
     def __init__(self, run_dir: Path, root: Path, repo_root: Path, runner: Path) -> None:
@@ -1240,6 +1343,313 @@ def csv_values(value: Any) -> list[str]:
             if text:
                 values.append(text)
     return values
+
+
+def metadata_value(value: Any, depth: int = 0) -> Any:
+    if depth > 5:
+        return "<truncated>"
+    if value is None or isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value
+    if isinstance(value, str):
+        return value.replace("\x00", "")[:1000]
+    if isinstance(value, list):
+        return [metadata_value(item, depth + 1) for item in value[:80]]
+    if isinstance(value, dict):
+        result: dict[str, Any] = {}
+        for key, item in list(value.items())[:100]:
+            text_key = str(key).replace("\x00", "")[:120]
+            if text_key:
+                result[text_key] = metadata_value(item, depth + 1)
+        return result
+    return str(value)[:1000]
+
+
+def snapshot_studio_payload(payload: dict[str, Any], entry_id: str) -> dict[str, Any]:
+    source = payload.get("studioPayload") if isinstance(payload.get("studioPayload"), dict) else payload
+    allowed = {
+        "entryId",
+        "command",
+        "commandKey",
+        "jobType",
+        "partFocus",
+        "reviewState",
+        "phases",
+        "angles",
+        "parts",
+        "partModels",
+        "propSlots",
+        "propModels",
+        "animationSource",
+        "animationStartPoint",
+        "animationGroup",
+        "dialogueMode",
+        "neutralPreviewProfile",
+        "fnvRotationMode",
+        "allowMissingActorVisibleHandGeometry",
+        "actorVisibleHandMaxDistance",
+        "fnvSkinningMatrixAudit",
+        "fnvHairEmissionStrength",
+        "itemKind",
+        "recordType",
+        "formId",
+        "plugin",
+        "model",
+        "target",
+        "runtimeTarget",
+        "selectedTarget",
+        "placedTarget",
+        "placement",
+        "placementCommandArgs",
+        "selectors",
+    }
+    result: dict[str, Any] = {}
+    for key in allowed:
+        if key in source:
+            result[key] = metadata_value(source[key])
+    result["entryId"] = first_text(result.get("entryId"), entry_id)
+    if not result["entryId"]:
+        raise ValueError("snapshot requires entryId")
+    result["commandKey"] = first_text(result.get("commandKey"), result.get("command"), "runtimeThreeCamera")
+    if result["commandKey"] not in {"runtimeThreeCamera", "runtimeFrontOnly"}:
+        raise ValueError("snapshot commandKey must be runtimeThreeCamera or runtimeFrontOnly")
+    return result
+
+
+def snapshot_live_controls(payload: dict[str, Any], live_authoring: dict[str, Any]) -> dict[str, Any]:
+    controls = payload.get("liveControls")
+    if not isinstance(controls, dict):
+        controls = live_authoring.get("controls") if isinstance(live_authoring.get("controls"), dict) else {}
+    result: dict[str, Any] = {}
+    for key, value in controls.items():
+        key_text = str(key)
+        if key_text not in HEAD_SURFACE_CONTROL_KEYS:
+            continue
+        if key_text.endswith("_PIVOT_MODE"):
+            result[key_text] = bool(value)
+        else:
+            try:
+                result[key_text] = float(value)
+            except (TypeError, ValueError):
+                continue
+    return result
+
+
+def snapshot_live_runtime(payload: dict[str, Any], live_runtime: dict[str, Any]) -> dict[str, Any]:
+    source = payload.get("liveRuntime") if isinstance(payload.get("liveRuntime"), dict) else live_runtime
+    selectors = source.get("selectors") if isinstance(source.get("selectors"), dict) else {}
+    result = {
+        "schema": LIVE_RUNTIME_SCHEMA,
+        "entryId": first_text(source.get("entryId")),
+        "actorTarget": first_text(source.get("actorTarget"), source.get("runtimeTarget"), source.get("target")),
+        "runtimeTarget": first_text(source.get("runtimeTarget"), source.get("actorTarget"), source.get("target")),
+        "selectedTarget": first_text(source.get("selectedTarget")),
+        "placedTarget": first_text(source.get("placedTarget")),
+        "actorKind": first_text(source.get("actorKind")),
+        "command": first_text(source.get("command"), "update-actor-kit"),
+        "selectors": {
+            "phase": first_text(selectors.get("phase"), source.get("characterBuilderPhase")),
+            "parts": csv_values(selectors.get("parts") or source.get("actorKitParts")),
+            "partModels": csv_values(selectors.get("partModels") or source.get("actorKitPartModels")),
+            "propSlots": csv_values(selectors.get("propSlots") or source.get("actorKitPropSlots")),
+            "propModels": csv_values(selectors.get("propModels") or source.get("actorKitPropModels")),
+            "animationSource": first_text(selectors.get("animationSource"), source.get("actorKitAnimationSource")),
+            "animationStartPoint": first_text(selectors.get("animationStartPoint"), source.get("actorKitAnimationStartPoint")),
+            "animationGroup": first_text(selectors.get("animationGroup"), source.get("actorKitAnimationGroup")),
+            "dialogueMode": first_text(selectors.get("dialogueMode"), source.get("actorKitDialogueMode")),
+            "fnvRotationMode": first_text(selectors.get("fnvRotationMode"), source.get("fnvRotationMode")),
+            "neutralPreviewProfile": first_text(selectors.get("neutralPreviewProfile"), source.get("neutralPreviewProfile")),
+        },
+    }
+    return result
+
+
+def snapshot_review_rows(payload: dict[str, Any], current_reviews: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    rows = payload.get("componentReviewRows")
+    if not isinstance(rows, list):
+        rows = current_reviews
+    accepted: list[dict[str, Any]] = []
+    for row in rows[:80]:
+        if not isinstance(row, dict):
+            continue
+        component = first_text(row.get("component"), row.get("id"))
+        if not re.fullmatch(r"[A-Za-z0-9_.:-]{1,80}", component):
+            continue
+        review_state = first_text(row.get("reviewState"), row.get("state"), "review-pending")
+        if review_state not in REVIEW_STATES:
+            review_state = "review-pending"
+        accepted.append(
+            {
+                "component": component,
+                "label": first_text(row.get("label"))[:120],
+                "reviewState": review_state,
+                "machineStatus": first_text(row.get("machineStatus"), "not-run")[:80],
+                "entryId": first_text(row.get("entryId"))[:160],
+                "jobId": first_text(row.get("jobId"))[:80],
+                "target": first_text(row.get("target"))[:160],
+                "runtimeTarget": first_text(row.get("runtimeTarget"))[:160],
+                "placedTarget": first_text(row.get("placedTarget"))[:160],
+                "phase": first_text(row.get("phase"))[:80],
+                "selectors": metadata_value(row.get("selectors") if isinstance(row.get("selectors"), dict) else {}),
+                "manifestUrl": first_text(row.get("manifestUrl"))[:500],
+                "viewerUrl": first_text(row.get("viewerUrl"))[:500],
+                "proofUrls": [first_text(item)[:500] for item in as_list(row.get("proofUrls")) if first_text(item)][:12],
+                "failureCount": int(row.get("failureCount") or 0),
+            }
+        )
+    return accepted
+
+
+def snapshot_coordinate_rows(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    rows = payload.get("coordinateRows")
+    if not isinstance(rows, list):
+        return []
+    accepted: list[dict[str, Any]] = []
+    for row in rows[:80]:
+        if isinstance(row, dict):
+            accepted.append(metadata_value(row))
+    return accepted
+
+
+def snapshot_latest_job(payload: dict[str, Any]) -> dict[str, Any]:
+    job = payload.get("latestJob") if isinstance(payload.get("latestJob"), dict) else {}
+    result = job.get("result") if isinstance(job.get("result"), dict) else {}
+    request = job.get("request") if isinstance(job.get("request"), dict) else {}
+    failure = job.get("failure") if isinstance(job.get("failure"), dict) else {}
+    return {
+        "id": first_text(job.get("id"))[:80],
+        "state": first_text(job.get("state"))[:80],
+        "returnCode": job.get("returnCode") if isinstance(job.get("returnCode"), int) or job.get("returnCode") is None else first_text(job.get("returnCode"))[:40],
+        "result": metadata_value(result),
+        "request": metadata_value(request),
+        "failure": metadata_value(failure),
+    }
+
+
+def snapshot_latest_manifest(payload: dict[str, Any]) -> dict[str, Any]:
+    manifest = payload.get("latestManifest") if isinstance(payload.get("latestManifest"), dict) else {}
+    cases: list[dict[str, Any]] = []
+    for item in as_list(manifest.get("cases"))[:80]:
+        if not isinstance(item, dict):
+            continue
+        cases.append(
+            {
+                "phase": first_text(item.get("phase"))[:80],
+                "angle": first_text(item.get("angle"))[:80],
+                "reportStatus": first_text(item.get("reportStatus"))[:80],
+                "runtimeGateStatus": first_text(item.get("runtimeGateStatus"))[:80],
+                "runtimeGateError": first_text(item.get("runtimeGateError"))[:500],
+                "mainImage": first_text(item.get("mainImage"))[:500],
+                "actorStage": metadata_value(item.get("actorStage") if isinstance(item.get("actorStage"), dict) else {}),
+                "actorCamera": metadata_value(item.get("actorCamera") if isinstance(item.get("actorCamera"), dict) else {}),
+                "actorKitSelection": metadata_value(item.get("actorKitSelection") if isinstance(item.get("actorKitSelection"), dict) else {}),
+                "failures": [first_text(failure)[:500] for failure in as_list(item.get("failures")) if first_text(failure)][:20],
+            }
+        )
+    return {
+        "schema": first_text(manifest.get("schema"))[:120],
+        "status": first_text(manifest.get("status"))[:80],
+        "viewerUrl": first_text(manifest.get("viewerUrl"))[:500],
+        "cases": cases,
+        "failureSummary": metadata_value(manifest.get("failureSummary") if isinstance(manifest.get("failureSummary"), list) else []),
+    }
+
+
+def snapshot_from_session(
+    session_id: str,
+    snapshot_id: str,
+    payload: dict[str, Any],
+    live_authoring: dict[str, Any],
+    live_runtime: dict[str, Any],
+    runtime_status_doc: dict[str, Any],
+    runtime_audit_doc: dict[str, Any],
+    current_reviews: list[dict[str, Any]],
+) -> dict[str, Any]:
+    unknown = sorted(str(key) for key in payload if key not in SNAPSHOT_ALLOWED_TOP_LEVEL)
+    if unknown:
+        raise ValueError(f"unsupported studio snapshot field: {unknown[0]}")
+    entry_id = first_text(
+        payload.get("entryId"),
+        (payload.get("studioPayload") or {}).get("entryId") if isinstance(payload.get("studioPayload"), dict) else "",
+        live_runtime.get("entryId"),
+    )
+    studio_payload = snapshot_studio_payload(payload, entry_id)
+    entry_id = first_text(studio_payload.get("entryId"), entry_id)
+    return {
+        "schema": STUDIO_SNAPSHOT_SCHEMA,
+        "schemaMarkers": [
+            "authoring-snapshot-saveback-v1",
+            "snapshot-replay-job-v1",
+            "generated-metadata-only-v1",
+            "no-retail-payload-v1",
+        ],
+        "id": snapshot_id,
+        "sessionId": session_id,
+        "entryId": entry_id,
+        "createdAt": utc_now(),
+        "studioPayload": studio_payload,
+        "liveControls": snapshot_live_controls(payload, live_authoring),
+        "liveRuntime": snapshot_live_runtime(payload, live_runtime),
+        "runtimeStatus": metadata_value(payload.get("runtimeStatus") if isinstance(payload.get("runtimeStatus"), dict) else runtime_status_doc),
+        "runtimeAudit": metadata_value(payload.get("runtimeAudit") if isinstance(payload.get("runtimeAudit"), dict) else runtime_audit_doc),
+        "latestJob": snapshot_latest_job(payload),
+        "latestManifest": snapshot_latest_manifest(payload),
+        "componentReviewRows": snapshot_review_rows(payload, current_reviews),
+        "coordinateRows": snapshot_coordinate_rows(payload),
+        "notes": first_text(payload.get("notes"))[:1000],
+        "policy": {
+            "generatedMetadataOnly": True,
+            "generatedProofOutputsOnly": True,
+            "noRetailPayloadBytes": True,
+            "replayUsesStructuredJobPathOnly": True,
+        },
+    }
+
+
+def snapshot_summary(snapshot: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "schema": STUDIO_SNAPSHOT_SCHEMA,
+        "id": first_text(snapshot.get("id")),
+        "sessionId": first_text(snapshot.get("sessionId")),
+        "entryId": first_text(snapshot.get("entryId")),
+        "createdAt": first_text(snapshot.get("createdAt")),
+        "commandKey": first_text((snapshot.get("studioPayload") or {}).get("commandKey") if isinstance(snapshot.get("studioPayload"), dict) else ""),
+        "reviewRows": len(snapshot.get("componentReviewRows") if isinstance(snapshot.get("componentReviewRows"), list) else []),
+        "coordinateRows": len(snapshot.get("coordinateRows") if isinstance(snapshot.get("coordinateRows"), list) else []),
+        "classification": first_text((snapshot.get("runtimeAudit") or {}).get("classification") if isinstance(snapshot.get("runtimeAudit"), dict) else ""),
+        "policy": {
+            "generatedMetadataOnly": True,
+            "noRetailPayloadBytes": True,
+        },
+    }
+
+
+def snapshot_to_studio_payload(snapshot: dict[str, Any]) -> dict[str, Any]:
+    payload = snapshot.get("studioPayload")
+    if not isinstance(payload, dict):
+        raise ValueError("snapshot is missing studioPayload")
+    result = dict(payload)
+    result["entryId"] = first_text(result.get("entryId"), snapshot.get("entryId"))
+    result["commandKey"] = first_text(result.get("commandKey"), "runtimeThreeCamera")
+    return result
+
+
+def snapshot_to_live_runtime_payload(snapshot: dict[str, Any], session_id: str) -> dict[str, Any]:
+    live_runtime = snapshot.get("liveRuntime") if isinstance(snapshot.get("liveRuntime"), dict) else {}
+    selectors = live_runtime.get("selectors") if isinstance(live_runtime.get("selectors"), dict) else {}
+    payload = {
+        "sessionId": session_id,
+        "entryId": first_text(live_runtime.get("entryId"), snapshot.get("entryId")),
+        "command": first_text(live_runtime.get("command"), "update-actor-kit"),
+        "actorTarget": first_text(live_runtime.get("actorTarget"), live_runtime.get("runtimeTarget")),
+        "runtimeTarget": first_text(live_runtime.get("runtimeTarget"), live_runtime.get("actorTarget")),
+        "selectedTarget": first_text(live_runtime.get("selectedTarget")),
+        "placedTarget": first_text(live_runtime.get("placedTarget")),
+        "actorKind": first_text(live_runtime.get("actorKind")),
+        "selectors": selectors,
+    }
+    return {key: value for key, value in payload.items() if value not in ("", [], {})}
 
 
 def selector_csv(payload: dict[str, Any], key: str) -> str:
@@ -1475,6 +1885,25 @@ def structured_studio_job(entry: dict[str, Any], payload: dict[str, Any]) -> tup
     return structured_actor_job(entry, payload)
 
 
+def structured_snapshot_replay_job(entry: dict[str, Any], snapshot: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    payload = snapshot_to_studio_payload(snapshot)
+    command, request = structured_studio_job(entry, payload)
+    request["schemaMarkers"] = [
+        "snapshot-replay-job-v1",
+        "structured-studio-job-replay-v1",
+        "generated-metadata-only-v1",
+    ]
+    request["snapshotId"] = first_text(snapshot.get("id"))
+    request["snapshotCreatedAt"] = first_text(snapshot.get("createdAt"))
+    request["replayPolicy"] = {
+        "usesStructuredJobPathOnly": True,
+        "noRawSavedCommandExecution": True,
+        "generatedProofOutputsOnly": True,
+        "noRetailPayloadBytes": True,
+    }
+    return command, request
+
+
 def structured_actor_command(entry: dict[str, Any], payload: dict[str, Any]) -> str:
     command, _request = structured_actor_job(entry, payload)
     return command
@@ -1611,6 +2040,23 @@ class LiveHandler(SimpleHTTPRequestHandler):
                     return
                 self.send_json(200, self.server.studio_store.reviews(session_id))  # type: ignore[attr-defined]
                 return
+            if len(parts) == 5 and parts[-1] == "snapshots":
+                session_id = unquote(parts[-2])
+                session = self.server.studio_store.get(session_id)  # type: ignore[attr-defined]
+                if session is None:
+                    self.send_json(404, {"error": "unknown studio session"})
+                    return
+                self.send_json(200, self.server.studio_store.snapshots(session_id))  # type: ignore[attr-defined]
+                return
+            if len(parts) == 6 and parts[-2] == "snapshots":
+                session_id = unquote(parts[-3])
+                snapshot_id = unquote(parts[-1])
+                snapshot = self.server.studio_store.snapshot(session_id, snapshot_id)  # type: ignore[attr-defined]
+                if snapshot is None:
+                    self.send_json(404, {"error": "unknown studio snapshot"})
+                    return
+                self.send_json(200, snapshot)
+                return
             if len(parts) == 5 and parts[-1] == "jobs":
                 session_id = unquote(parts[-2])
                 session = self.server.studio_store.get(session_id)  # type: ignore[attr-defined]
@@ -1701,6 +2147,71 @@ class LiveHandler(SimpleHTTPRequestHandler):
                     payload = self.read_payload()
                     reviews = self.server.studio_store.append_reviews(session_id, payload)  # type: ignore[attr-defined]
                     self.send_json(201, reviews)
+                    return
+                if len(parts) == 5 and parts[-1] == "snapshots":
+                    session_id = unquote(parts[-2])
+                    payload = self.read_payload()
+                    runtime_status_doc = runtime_status(
+                        self.server.run_dir,  # type: ignore[attr-defined]
+                        self.server.root_dir,  # type: ignore[attr-defined]
+                        self.server.live_authoring_store.path,  # type: ignore[attr-defined]
+                        self.server.live_runtime_store.path,  # type: ignore[attr-defined]
+                    )
+                    runtime_audit_doc = runtime_audit(
+                        self.server.run_dir,  # type: ignore[attr-defined]
+                        self.server.root_dir,  # type: ignore[attr-defined]
+                        self.server.live_authoring_store.path,  # type: ignore[attr-defined]
+                        self.server.live_runtime_store.path,  # type: ignore[attr-defined]
+                    )
+                    snapshot = self.server.studio_store.create_snapshot(  # type: ignore[attr-defined]
+                        session_id,
+                        payload,
+                        self.server.live_authoring_store.load(),  # type: ignore[attr-defined]
+                        self.server.live_runtime_store.load(),  # type: ignore[attr-defined]
+                        runtime_status_doc,
+                        runtime_audit_doc,
+                    )
+                    self.send_json(201, snapshot)
+                    return
+                if len(parts) == 7 and parts[-3] == "snapshots" and parts[-1] == "replay":
+                    session_id = unquote(parts[-4])
+                    snapshot_id = unquote(parts[-2])
+                    snapshot = self.server.studio_store.snapshot(session_id, snapshot_id)  # type: ignore[attr-defined]
+                    if snapshot is None:
+                        raise ValueError("unknown studio snapshot")
+                    studio_payload = snapshot_to_studio_payload(snapshot)
+                    entry_id = first_text(studio_payload.get("entryId"), snapshot.get("entryId"))
+                    entry = self.server.catalog_store.entry(entry_id)  # type: ignore[attr-defined]
+                    if entry is None:
+                        raise ValueError("unknown catalog entry")
+                    live_controls = snapshot.get("liveControls") if isinstance(snapshot.get("liveControls"), dict) else {}
+                    if live_controls:
+                        self.server.live_authoring_store.update(  # type: ignore[attr-defined]
+                            {"sessionId": session_id, "controls": live_controls}
+                        )
+                    live_runtime_payload = snapshot_to_live_runtime_payload(snapshot, session_id)
+                    if live_runtime_payload.get("actorTarget"):
+                        self.server.live_runtime_store.update(live_runtime_payload)  # type: ignore[attr-defined]
+                    command, request = structured_snapshot_replay_job(entry, snapshot)
+                    if "run-fnv-character-viewer.ps1" in command:
+                        live_path = str(self.server.live_authoring_store.path)  # type: ignore[attr-defined]
+                        command += " -LiveAuthoringFile " + shell_quote(live_path)
+                        request["liveAuthoringFile"] = live_path
+                    job = self.server.job_store.start(command, request, session_id)  # type: ignore[attr-defined]
+                    self.server.studio_store.add_job(session_id, job["id"])  # type: ignore[attr-defined]
+                    self.server.studio_store.append_event(
+                        session_id,
+                        "snapshot.replay",
+                        {
+                            "snapshotId": snapshot_id,
+                            "jobId": job["id"],
+                            "entryId": entry_id,
+                            "runtimeTarget": request.get("runtimeTarget", ""),
+                            "selectors": request.get("selectors", {}),
+                            "schema": STUDIO_SNAPSHOT_SCHEMA,
+                        },
+                    )  # type: ignore[attr-defined]
+                    self.send_json(202, job)
                     return
                 if len(parts) == 5 and parts[-1] == "jobs":
                     session_id = unquote(parts[-2])

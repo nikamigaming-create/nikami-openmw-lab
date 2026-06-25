@@ -13,6 +13,9 @@ param(
     [ValidateSet("all", "actor-base-record", "placed-reference")]
     [string]$Source = "all",
     [int]$MaxEntries = 1,
+    [int]$EntryOffset = 0,
+    [int]$ShardIndex = 0,
+    [int]$ShardCount = 0,
     [int]$RunSeconds = 28,
     [int]$ActorFrame = 520,
     [string]$ScreenshotFrames = "600,660,720,780,840",
@@ -122,10 +125,45 @@ function Select-PlanEntries([object]$Plan) {
                 -or $_.placedRefFormId -eq $Target
         })
     }
+    $filteredCount = $entries.Count
+
+    if ($ShardCount -gt 0) {
+        if ($ShardIndex -lt 1 -or $ShardIndex -gt $ShardCount) {
+            throw "ShardIndex must be between 1 and ShardCount when sharding is enabled."
+        }
+        $slot = $ShardIndex - 1
+        $sharded = [System.Collections.Generic.List[object]]::new()
+        for ($index = 0; $index -lt $entries.Count; $index++) {
+            if (($index % $ShardCount) -eq $slot) {
+                $sharded.Add($entries[$index])
+            }
+        }
+        $entries = @($sharded.ToArray())
+    }
+    elseif ($ShardIndex -gt 0) {
+        throw "ShardIndex requires ShardCount."
+    }
+    $shardedCount = $entries.Count
+
+    if ($EntryOffset -lt 0) {
+        throw "EntryOffset must be zero or greater."
+    }
+    if ($EntryOffset -gt 0) {
+        $entries = @($entries | Select-Object -Skip $EntryOffset)
+    }
+    $afterOffsetCount = $entries.Count
+
     if ($MaxEntries -gt 0) {
         $entries = @($entries | Select-Object -First $MaxEntries)
     }
-    return $entries
+    return [pscustomobject][ordered]@{
+        Entries = @($entries)
+        FilteredCount = $filteredCount
+        ShardedCount = $shardedCount
+        EntryOffset = $EntryOffset
+        AfterOffsetCount = $afterOffsetCount
+        SelectedCount = $entries.Count
+    }
 }
 
 function Invoke-ViewerEntry([object]$Entry, [string]$RunDir) {
@@ -314,6 +352,11 @@ function Write-BatchRunMarkdown([string]$Path, [object]$Summary) {
     $lines.Add("Actor kind filter: ``$($Summary.actorKind)``")
     $lines.Add("Target filter: ``$($Summary.target)``")
     $lines.Add("Source filter: ``$($Summary.source)``")
+    $lines.Add("Shard: ``$($Summary.shardIndex) / $($Summary.shardCount)``")
+    $lines.Add("Entry offset: ``$($Summary.entryOffset)``")
+    $lines.Add("Filtered entries: $($Summary.filteredEntries)")
+    $lines.Add("Entries after shard: $($Summary.shardedEntries)")
+    $lines.Add("Entries after offset: $($Summary.afterOffsetEntries)")
     $lines.Add("Angles: ``$(@($Summary.angles) -join ',')``")
     $lines.Add("Plan: ``$($Summary.planJson)``")
     $lines.Add("Policy: $($Summary.payloadPolicy)")
@@ -376,6 +419,11 @@ a{color:#9fc2ff}
   <span class="pill">Actor kind: $(ConvertTo-HtmlText $Summary.actorKind)</span>
   <span class="pill">Source: $(ConvertTo-HtmlText $Summary.source)</span>
   <span class="pill">Target: $(ConvertTo-HtmlText $Summary.target)</span>
+  <span class="pill">Shard: $(ConvertTo-HtmlText "$($Summary.shardIndex)/$($Summary.shardCount)")</span>
+  <span class="pill">Offset: $(ConvertTo-HtmlText $Summary.entryOffset)</span>
+  <span class="pill">Filtered: $(ConvertTo-HtmlText $Summary.filteredEntries)</span>
+  <span class="pill">After shard: $(ConvertTo-HtmlText $Summary.shardedEntries)</span>
+  <span class="pill">After offset: $(ConvertTo-HtmlText $Summary.afterOffsetEntries)</span>
   <span class="pill">Angles: $(ConvertTo-HtmlText (@($Summary.angles) -join ','))</span>
 </section>
 <section class="panel">
@@ -413,6 +461,9 @@ Write-Host "ActorKind: $ActorKind"
 Write-Host "Target: $Target"
 Write-Host "Source: $Source"
 Write-Host "MaxEntries: $MaxEntries"
+Write-Host "EntryOffset: $EntryOffset"
+Write-Host "ShardIndex: $ShardIndex"
+Write-Host "ShardCount: $ShardCount"
 Write-Host "Angles: $($Angles -join ',')"
 Write-Host "Policy: generated command/identifier plan only; no retail assets are committed"
 Write-Host ""
@@ -458,7 +509,8 @@ if ([string]::IsNullOrWhiteSpace($generatedPlan) -or !(Test-Path -LiteralPath $g
 }
 
 $plan = Get-Content -LiteralPath $generatedPlan -Raw | ConvertFrom-Json
-$selected = @(Select-PlanEntries $plan)
+$selection = Select-PlanEntries $plan
+$selected = @($selection.Entries)
 $runDir = New-RunDirectory
 $selectedPath = Join-Path $runDir "selected-entries.json"
 $selected | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $selectedPath -Encoding UTF8
@@ -479,6 +531,12 @@ $summary = [pscustomobject][ordered]@{
     target = $Target
     source = $Source
     maxEntries = $MaxEntries
+    entryOffset = $EntryOffset
+    shardIndex = $ShardIndex
+    shardCount = $ShardCount
+    filteredEntries = [int]$selection.FilteredCount
+    shardedEntries = [int]$selection.ShardedCount
+    afterOffsetEntries = [int]$selection.AfterOffsetCount
     angles = @($Angles)
     payloadPolicy = "generated run summary only; no retail assets are committed"
     selectedEntriesJson = $selectedPath

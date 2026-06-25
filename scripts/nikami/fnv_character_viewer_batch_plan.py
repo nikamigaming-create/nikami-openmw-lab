@@ -213,6 +213,21 @@ def row_key(row: dict[str, Any], fields: tuple[str, ...]) -> tuple[str, ...]:
     return tuple(as_text(row.get(field)) for field in fields)
 
 
+def duplicate_key_summary(rows: list[dict[str, Any]], fields: tuple[str, ...]) -> dict[str, Any]:
+    counts = Counter(row_key(row, fields) for row in rows)
+    duplicate_groups = [(key, count) for key, count in counts.items() if count > 1]
+    duplicate_groups.sort(key=lambda item: (item[0], item[1]))
+    return {
+        "keyFields": list(fields),
+        "groups": len(duplicate_groups),
+        "extraRows": sum(count - 1 for _, count in duplicate_groups),
+        "samples": [
+            {"key": list(key), "count": count}
+            for key, count in duplicate_groups[:16]
+        ],
+    }
+
+
 def build_component_index(rows: list[dict[str, Any]]) -> dict[tuple[str, str], Counter[str]]:
     components: dict[tuple[str, str], Counter[str]] = defaultdict(Counter)
     for row in rows:
@@ -271,6 +286,7 @@ def make_entry(
     row: dict[str, Any],
     component_counts: Counter[str],
     sequence: int,
+    ledger_row_index: int,
 ) -> dict[str, Any]:
     record_type = as_text(row.get("actorKind") or row.get("resolvedRecordType"))
     actor_kind = actor_kind_from_record(record_type)
@@ -311,6 +327,7 @@ def make_entry(
     return {
         "id": f"{source}:{sequence:06d}",
         "source": source,
+        "ledgerRowIndex": ledger_row_index,
         "plugin": as_text(row.get("plugin")),
         "actorKind": actor_kind,
         "recordType": record_type,
@@ -338,6 +355,17 @@ def make_entry(
         "componentCounts": dict(sorted(component_counts.items())),
         "componentEvidence": [],
         "sourceProvenance": component_evidence(row),
+        "sourceRecordKey": {
+            "plugin": as_text(row.get("plugin")),
+            "sourceRecordType": as_text(row.get("sourceRecordType")),
+            "sourceFormId": as_text(row.get("sourceFormId")),
+            "sourceEditorId": as_text(row.get("sourceEditorId")),
+            "actorKind": as_text(row.get("actorKind")),
+            "actorFormId": actor_form_id,
+            "actorEditorId": actor_editor_id,
+            "placedRefFormId": placed_ref_form_id,
+            "placedRefEditorId": placed_ref_editor_id,
+        },
         "command": command,
         "payloadPolicy": "generated commands, identifiers, and asset path provenance only; no retail payload bytes are written by this batch plan",
     }
@@ -349,36 +377,34 @@ def build_plan(rows: list[dict[str, Any]], result: dict[str, Any], limit: int) -
     entries: list[dict[str, Any]] = []
 
     base_rows = [
-        row for row in rows if as_text(row.get("component")) == "actor-base-record" and as_text(row.get("actorKind")) in {"NPC_", "CREA"}
+        (index, row)
+        for index, row in enumerate(rows, start=1)
+        if as_text(row.get("component")) == "actor-base-record" and as_text(row.get("actorKind")) in {"NPC_", "CREA"}
     ]
-    placed_rows = [row for row in rows if as_text(row.get("component")) == "placed-reference"]
+    placed_rows = [
+        (index, row)
+        for index, row in enumerate(rows, start=1)
+        if as_text(row.get("component")) == "placed-reference"
+    ]
 
-    seen_base: set[tuple[str, ...]] = set()
-    for row in base_rows:
-        key = row_key(row, ("actorKind", "actorFormId"))
-        if key in seen_base:
-            continue
-        seen_base.add(key)
+    for ledger_row_index, row in base_rows:
         entry = make_entry(
             source="actor-base-record",
             row=row,
             component_counts=component_index[(as_text(row.get("actorKind")), as_text(row.get("actorFormId")))],
             sequence=len(entries) + 1,
+            ledger_row_index=ledger_row_index,
         )
         entry["componentEvidence"] = evidence_index[(as_text(row.get("actorKind")), as_text(row.get("actorFormId")))]
         entries.append(entry)
 
-    seen_placed: set[tuple[str, ...]] = set()
-    for row in placed_rows:
-        key = row_key(row, ("sourceRecordType", "placedRefFormId", "actorKind", "actorFormId"))
-        if key in seen_placed:
-            continue
-        seen_placed.add(key)
+    for ledger_row_index, row in placed_rows:
         entry = make_entry(
             source="placed-reference",
             row=row,
             component_counts=component_index[(as_text(row.get("actorKind")), as_text(row.get("actorFormId")))],
             sequence=len(entries) + 1,
+            ledger_row_index=ledger_row_index,
         )
         entry["componentEvidence"] = evidence_index[(as_text(row.get("actorKind")), as_text(row.get("actorFormId")))]
         entries.append(entry)
@@ -400,8 +426,10 @@ def build_plan(rows: list[dict[str, Any]], result: dict[str, Any], limit: int) -
 
     expected_base = int(result.get("npcBaseRecords", 0)) + int(result.get("creatureBaseRecords", 0))
     expected_placed = int(result.get("placedNpcCreatureRefs", 0))
-    complete_base = len(seen_base) == expected_base if expected_base else len(seen_base) > 0
-    complete_placed = len(seen_placed) == expected_placed if expected_placed else len(seen_placed) > 0
+    planned_base = source_counts.get("actor-base-record", 0)
+    planned_placed = source_counts.get("placed-reference", 0)
+    complete_base = planned_base == expected_base if expected_base else planned_base > 0
+    complete_placed = planned_placed == expected_placed if expected_placed else planned_placed > 0
     coverage_status = "complete" if complete_base and complete_placed else "partial"
     status = (
         "PASS"
@@ -426,12 +454,22 @@ def build_plan(rows: list[dict[str, Any]], result: dict[str, Any], limit: int) -
         },
         "plannedCounts": {
             "total": len(entries),
-            "baseActors": source_counts.get("actor-base-record", 0),
-            "placedActorRefs": source_counts.get("placed-reference", 0),
-            "placedActorRefsWithRuntimeBootstrap": source_counts.get("placed-reference", 0) - len(missing_placement),
+            "baseActors": planned_base,
+            "placedActorRefs": planned_placed,
+            "placedActorRefsWithRuntimeBootstrap": planned_placed - len(missing_placement),
             "npc": actor_kind_counts.get("npc", 0),
             "creature": actor_kind_counts.get("creature", 0),
             "unknown": actor_kind_counts.get("unknown", 0),
+        },
+        "duplicateLedgerKeys": {
+            "baseActor": duplicate_key_summary(
+                [row for _, row in base_rows],
+                ("actorKind", "actorFormId"),
+            ),
+            "placedActorRef": duplicate_key_summary(
+                [row for _, row in placed_rows],
+                ("sourceRecordType", "placedRefFormId", "actorKind", "actorFormId"),
+            ),
         },
         "classificationCounts": dict(sorted(classification_counts.items())),
         "failures": {
@@ -463,6 +501,8 @@ def write_markdown(path: Path, plan: dict[str, Any]) -> None:
         f"Planned total: {plan['plannedCounts']['total']}",
         f"Planned NPC: {plan['plannedCounts']['npc']}",
         f"Planned creature: {plan['plannedCounts']['creature']}",
+        f"Preserved duplicate base rows: {plan['duplicateLedgerKeys']['baseActor']['extraRows']}",
+        f"Preserved duplicate placed rows: {plan['duplicateLedgerKeys']['placedActorRef']['extraRows']}",
         "",
         "## Classifications",
         "",

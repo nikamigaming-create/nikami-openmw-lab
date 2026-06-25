@@ -269,6 +269,12 @@ if (!@($catalog.schemaMarkers).Contains("placed-runtime-target-map-v1")) {
 if (!@($catalog.schemaMarkers).Contains("placement-bootstrap-job-args-v1")) {
     throw "Studio catalog missing placement bootstrap args marker."
 }
+if (!@($catalog.schemaMarkers).Contains("authoring-snapshot-saveback-v1")) {
+    throw "Studio catalog missing authoring snapshot saveback marker."
+}
+if (!@($catalog.schemaMarkers).Contains("snapshot-replay-job-v1")) {
+    throw "Studio catalog missing snapshot replay job marker."
+}
 if ([int]$catalog.counts.total -ne 6) {
     throw "Studio catalog expected 6 entries but got $($catalog.counts.total)."
 }
@@ -367,11 +373,20 @@ if (!$html.Contains("liveActorKitControls") -or !$html.Contains('selectors ${esc
 if (!$html.Contains("liveActorKitPostConstruction") -or !$html.Contains('post ${esc(counts.liveActorKitPostConstruction || 0)}')) {
     throw "Studio catalog HTML does not expose post-construction actor-kit selector evidence."
 }
+if (!$html.Contains("liveActorKitPartRebuilds") -or !$html.Contains('rebuilds ${esc(counts.liveActorKitPartRebuilds || 0)}')) {
+    throw "Studio catalog HTML does not expose actor-kit part rebuild evidence."
+}
 if (!$html.Contains("cameraStrip") -or !$html.Contains("selectedParts") -or !$html.Contains("studioPayload")) {
     throw "Studio catalog HTML does not expose three-camera/component session payload controls."
 }
 if (!$html.Contains("componentReviews") -or !$html.Contains("componentReviewRows") -or !$html.Contains("Save Component Review Rows") -or !$html.Contains("/reviews")) {
     throw "Studio catalog HTML does not expose per-component review row controls."
+}
+if (!$html.Contains("Save Snapshot") -or !$html.Contains("Replay Snapshot") -or !$html.Contains("snapshotPayload") -or !$html.Contains("saveSnapshotEvent") -or !$html.Contains("replaySnapshot")) {
+    throw "Studio catalog HTML does not expose snapshot saveback/replay controls."
+}
+if (!$html.Contains("/snapshots") -or !$html.Contains("coordinateRows") -or !$html.Contains("authoring-snapshot-saveback-v1")) {
+    throw "Studio catalog HTML does not expose generated snapshot metadata round trip."
 }
 if (!$html.Contains("Critical Queue") -or !$html.Contains("criticalQueue") -or !$html.Contains("data-critical-run") -or !$html.Contains("critical-face-skin-headgear")) {
     throw "Studio catalog HTML does not expose critical character queue controls."

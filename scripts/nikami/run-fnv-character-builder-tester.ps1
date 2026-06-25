@@ -234,6 +234,8 @@ function Get-FnvRuntimeEvidence([string]$ProofDir, [string]$FnvSkinningMatrixAud
     $fnvHairEmissionStrength = Get-RegexValue $summaryText "FnvHairEmissionStrength:\s*([^\r\n]*)"
     $visibleHandGeometryStatus = Get-RegexValue $summaryText "Target visible hand geometry status:\s+([^\r\n]+)"
     $visibleHandGeometrySamples = Get-RegexValue $summaryText "Target visible hand geometry samples:\s+([^\r\n]+)"
+    $visibleHandGeometryPoseSanityBadLines = Get-RegexValue $summaryText "Target visible hand geometry pose sanity BAD lines:\s+([^\r\n]+)"
+    $visibleHandGeometryPoseSanityFailureLine = Get-RegexValue $summaryText "Target visible hand geometry pose sanity failure line:\s+([^\r\n]+)"
     $visibleHandGeometryFailureLine = Get-RegexValue $summaryText "Target visible hand geometry failure line:\s+([^\r\n]+)"
 
     return [pscustomobject][ordered]@{
@@ -242,6 +244,8 @@ function Get-FnvRuntimeEvidence([string]$ProofDir, [string]$FnvSkinningMatrixAud
         visibleHandGeometry = [pscustomobject][ordered]@{
             status = $visibleHandGeometryStatus
             samples = $visibleHandGeometrySamples
+            poseSanityBadLines = $visibleHandGeometryPoseSanityBadLines
+            poseSanityFailureLine = $visibleHandGeometryPoseSanityFailureLine
             failureLine = $visibleHandGeometryFailureLine
         }
         fnvSkinningMatrixAudit = $FnvSkinningMatrixAudit
