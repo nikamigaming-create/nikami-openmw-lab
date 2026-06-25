@@ -209,6 +209,20 @@ namespace MWRender
                     break;
             }
         }
+
+        void applyFalloutNeutralActorPreviewYawOffset(osg::Vec3f& position, const osg::Vec3f& lookAt, float degrees)
+        {
+            if (!std::isfinite(degrees) || std::abs(degrees) < 0.001f)
+                return;
+
+            const float radians = degrees * 0.017453292519943295f;
+            const float sinYaw = std::sin(radians);
+            const float cosYaw = std::cos(radians);
+            const osg::Vec3f delta = position - lookAt;
+            position = lookAt
+                + osg::Vec3f(delta.x() * cosYaw - delta.y() * sinYaw,
+                    delta.x() * sinYaw + delta.y() * cosYaw, delta.z());
+        }
     }
 
     class DrawOnceCallback : public SceneUtil::NodeCallback<DrawOnceCallback>
@@ -1075,6 +1089,10 @@ namespace MWRender
                 viewName);
         }
 
+        const float yawOffsetDeg
+            = getFalloutNeutralActorPreviewFloat("OPENMW_FNV_NEUTRAL_ACTOR_PREVIEW_YAW_OFFSET_DEG", 0.f);
+        applyFalloutNeutralActorPreviewYawOffset(position, lookAt, yawOffsetDeg);
+
         mRTTNode->setViewMatrix(osg::Matrixf::lookAt(position * scale.z(), lookAt * scale.z(), osg::Vec3f(0, 0, 1)));
 
         const std::string animationGroup = getFalloutPreviewAnimationGroup();
@@ -1110,7 +1128,7 @@ namespace MWRender
         Log(Debug::Info) << "FNV/ESM4 proof: neutral actor preview camera view=" << viewName << " position=("
                          << position.x() << "," << position.y() << "," << position.z() << ") lookAt=("
                          << lookAt.x() << "," << lookAt.y() << "," << lookAt.z() << ") profile=" << profile
-                         << " animationGroup=" << animationGroup << " startPoint=" << previewStart
+                         << " yawOffsetDeg=" << yawOffsetDeg << " animationGroup=" << animationGroup << " startPoint=" << previewStart
                          << " simulationTime=" << previewStart
                          << " runtime=runtime-supported gate=runtime-neutral-actor-preview";
     }

@@ -34,6 +34,7 @@ param(
     [switch]$NeutralActorPreview,
     [switch]$NeutralActorPreviewStandingIdle,
     [string]$NeutralActorPreviewProfile = "",
+    [double]$NeutralActorPreviewYawOffsetDeg = [double]::NaN,
     [string]$ProofItemTarget = "",
     [string]$ProofItemKind = "",
     [string]$ProofItemRecordType = "",
@@ -1692,6 +1693,12 @@ $ActorKitPartsCsv = Join-SelectorList $ActorKitParts
 $ActorKitPartModelsCsv = Join-SelectorList $ActorKitPartModels
 $ActorKitPropSlotsCsv = Join-SelectorList $ActorKitPropSlots
 $ActorKitPropModelsCsv = Join-SelectorList $ActorKitPropModels
+$ResolvedActorKitAnimationSource = $ActorKitAnimationSource
+$ActorKitAnimationSourceDefaulted = $false
+if ($NeutralActorPreviewStandingIdle -and $ActorKind -ine "creature" -and [string]::IsNullOrWhiteSpace($ResolvedActorKitAnimationSource)) {
+    $ResolvedActorKitAnimationSource = "hands-at-side"
+    $ActorKitAnimationSourceDefaulted = $true
+}
 try {
     Set-ProofEnv $previousEnv "OPENMW_PROOF_SCREENSHOT_FRAME" $ScreenshotFrames
     Set-ProofEnv $previousEnv "OPENMW_FNV_TERRAIN_PROBE_POINTS" $probePoints
@@ -1714,6 +1721,7 @@ try {
     if ($NeutralActorPreviewStandingIdle) { Set-ProofEnv $previousEnv "OPENMW_FNV_DISABLE_PACKAGE_PROCEDURE_IDLES" "1" }
     else { Clear-ProofEnv $previousEnv "OPENMW_FNV_DISABLE_PACKAGE_PROCEDURE_IDLES" }
     Set-ProofEnv $previousEnv "OPENMW_FNV_NEUTRAL_ACTOR_PREVIEW_PROFILE" $NeutralActorPreviewProfile
+    Set-ProofEnv $previousEnv "OPENMW_FNV_NEUTRAL_ACTOR_PREVIEW_YAW_OFFSET_DEG" $NeutralActorPreviewYawOffsetDeg
     Set-ProofEnv $previousEnv "OPENMW_PROOF_ITEM_TARGET" $ProofItemTarget
     Set-ProofEnv $previousEnv "OPENMW_PROOF_ITEM_KIND" $ProofItemKind
     Set-ProofEnv $previousEnv "OPENMW_PROOF_ITEM_RECORD_TYPE" $ProofItemRecordType
@@ -1777,7 +1785,7 @@ try {
     Set-ProofEnv $previousEnv "OPENMW_FNV_ACTOR_KIT_PART_MODELS" $ActorKitPartModelsCsv
     Set-ProofEnv $previousEnv "OPENMW_FNV_ACTOR_KIT_PROP_SLOTS" $ActorKitPropSlotsCsv
     Set-ProofEnv $previousEnv "OPENMW_FNV_ACTOR_KIT_PROP_MODELS" $ActorKitPropModelsCsv
-    Set-ProofEnv $previousEnv "OPENMW_FNV_ACTOR_KIT_ANIMATION_SOURCE" $ActorKitAnimationSource
+    Set-ProofEnv $previousEnv "OPENMW_FNV_ACTOR_KIT_ANIMATION_SOURCE" $ResolvedActorKitAnimationSource
     Set-ProofEnv $previousEnv "OPENMW_FNV_ACTOR_KIT_ANIMATION_STARTPOINT" $ActorKitAnimationStartPoint
     Set-ProofEnv $previousEnv "OPENMW_FNV_ACTOR_KIT_ANIMATION_GROUP" $ActorKitAnimationGroup
     Set-ProofEnv $previousEnv "OPENMW_FNV_ACTOR_KIT_DIALOGUE_MODE" $ActorKitDialogueMode
@@ -1904,7 +1912,9 @@ try {
     Write-ProofLine "ActorKitPartModels: $ActorKitPartModelsCsv"
     Write-ProofLine "ActorKitPropSlots: $ActorKitPropSlotsCsv"
     Write-ProofLine "ActorKitPropModels: $ActorKitPropModelsCsv"
-    Write-ProofLine "ActorKitAnimationSource: $ActorKitAnimationSource"
+    Write-ProofLine "ActorKitAnimationSource: $ResolvedActorKitAnimationSource"
+    Write-ProofLine "ActorKitAnimationSourceRequested: $ActorKitAnimationSource"
+    Write-ProofLine "ActorKitAnimationSourceDefaulted: $ActorKitAnimationSourceDefaulted"
     Write-ProofLine "ActorKitAnimationStartPoint: $(Format-Double $ActorKitAnimationStartPoint)"
     Write-ProofLine "ActorKitAnimationGroup: $ActorKitAnimationGroup"
     Write-ProofLine "ActorKitDialogueMode: $ActorKitDialogueMode"
@@ -1915,6 +1925,7 @@ try {
     Write-ProofLine "NeutralActorPreview: $NeutralActorPreview"
     Write-ProofLine "NeutralActorPreviewStandingIdle: $NeutralActorPreviewStandingIdle"
     Write-ProofLine "NeutralActorPreviewProfile: $NeutralActorPreviewProfile"
+    Write-ProofLine "NeutralActorPreviewYawOffsetDeg: $(Format-Double $NeutralActorPreviewYawOffsetDeg)"
     Write-ProofLine "ProofItemTarget: $ProofItemTarget"
     Write-ProofLine "ProofItemKind: $ProofItemKind"
     Write-ProofLine "ProofItemRecordType: $ProofItemRecordType"
@@ -2143,6 +2154,7 @@ if (![string]::IsNullOrWhiteSpace($ActorTarget) -and $targetStandingArmPoseOkLin
 if (![string]::IsNullOrWhiteSpace($ActorTarget) -and $targetVisibleHandGeometry.PoseSanityBadCount -gt 0) { throw "FNV actor proof saw target hand mesh pose sanity BAD lines. See $OpenMwLog" }
 if (![string]::IsNullOrWhiteSpace($ActorTarget) -and $targetBareHandIncludes -gt 0 -and $targetStaticHandNoTwist.Count -eq 0) { throw "FNV actor proof did not prove target bare hands use the static no-twist path. See $OpenMwLog" }
 if (![string]::IsNullOrWhiteSpace($ActorTarget) -and $targetStaticHandNoTwist.Count -gt 0 -and $targetStaticHandNoTwist.FingerWeightLoadedCount -eq 0) { throw "FNV actor proof staticized target hands without loading finger-weight evidence. See $OpenMwLog" }
+if (![string]::IsNullOrWhiteSpace($ActorTarget) -and $targetStaticHandNoTwist.PendingArticulationCount -gt 0) { throw "FNV actor proof loaded target hand finger weights but still has pending hand finger articulation runtime support. See $OpenMwLog" }
 if ($RequireActorVisibleHandGeometry -and [string]::IsNullOrWhiteSpace($ActorTarget)) { throw "FNV actor visible hand geometry proof requires ActorTarget." }
 if ($RequireActorVisibleHandGeometry -and !$FnvPartMatrixAudit) { throw "FNV actor visible hand geometry proof requires FnvPartMatrixAudit." }
 if ($RequireActorVisibleHandGeometry -and $targetVisibleHandGeometry.Status -ne "PASS") { throw "FNV actor proof did not prove visible skinned hand geometry follows animated hand anchors. See $OpenMwLog" }

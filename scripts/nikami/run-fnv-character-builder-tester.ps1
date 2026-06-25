@@ -41,6 +41,7 @@ param(
     [double]$ActorViewOffsetZ = 108,
     [double]$ActorViewTargetZ = 108,
     [string]$NeutralActorPreviewProfile = "audit",
+    [double]$NeutralActorPreviewYawOffsetDeg = [double]::NaN,
     [string]$FnvRotationMode = "bindCoreBindLowerRawUpper",
     [switch]$AllowMissingActorVisibleHandGeometry,
     [double]$ActorVisibleHandMaxDistance = 30.0,
@@ -275,9 +276,9 @@ function Get-FnvRuntimeEvidence([string]$ProofDir, [string]$FnvSkinningMatrixAud
 
 $diagonal = $ActorViewDistance * 0.7071067811865476
 $AllAngles = @(
-    [pscustomobject]@{ Name = "front"; OffsetX = $ActorViewDistance; OffsetY = 0.0 },
-    [pscustomobject]@{ Name = "front-left"; OffsetX = $diagonal; OffsetY = -$diagonal },
-    [pscustomobject]@{ Name = "front-right"; OffsetX = $diagonal; OffsetY = $diagonal }
+    [pscustomobject]@{ Name = "front"; OffsetX = $ActorViewDistance; OffsetY = 0.0; NeutralYawDeg = 0.0 },
+    [pscustomobject]@{ Name = "front-left"; OffsetX = $diagonal; OffsetY = -$diagonal; NeutralYawDeg = -45.0 },
+    [pscustomobject]@{ Name = "front-right"; OffsetX = $diagonal; OffsetY = $diagonal; NeutralYawDeg = 45.0 }
 )
 
 $RequestedAngles = New-Object "System.Collections.Generic.List[string]"
@@ -320,6 +321,12 @@ $ActorKitPartsCsv = Join-OptionalSelectorList $ActorKitParts
 $ActorKitPartModelsCsv = Join-OptionalSelectorList $ActorKitPartModels
 $ActorKitPropSlotsCsv = Join-OptionalSelectorList $ActorKitPropSlots
 $ActorKitPropModelsCsv = Join-OptionalSelectorList $ActorKitPropModels
+$ResolvedActorKitAnimationSource = $ActorKitAnimationSource
+$ActorKitAnimationSourceDefaulted = $false
+if ($ActorKind -ine "creature" -and [string]::IsNullOrWhiteSpace($ResolvedActorKitAnimationSource)) {
+    $ResolvedActorKitAnimationSource = "hands-at-side"
+    $ActorKitAnimationSourceDefaulted = $true
+}
 
 Write-SuiteLine "FNV character builder tester $Stamp"
 Write-SuiteLine "RepoRoot: $RepoRoot"
@@ -340,7 +347,9 @@ Write-SuiteLine "ActorKitParts: $ActorKitPartsCsv"
 Write-SuiteLine "ActorKitPartModels: $ActorKitPartModelsCsv"
 Write-SuiteLine "ActorKitPropSlots: $ActorKitPropSlotsCsv"
 Write-SuiteLine "ActorKitPropModels: $ActorKitPropModelsCsv"
-Write-SuiteLine "ActorKitAnimationSource: $ActorKitAnimationSource"
+Write-SuiteLine "ActorKitAnimationSource: $ResolvedActorKitAnimationSource"
+Write-SuiteLine "ActorKitAnimationSourceRequested: $ActorKitAnimationSource"
+Write-SuiteLine "ActorKitAnimationSourceDefaulted: $ActorKitAnimationSourceDefaulted"
 Write-SuiteLine "ActorKitAnimationStartPoint: $(Format-Double $ActorKitAnimationStartPoint)"
 Write-SuiteLine "ActorKitAnimationGroup: $ActorKitAnimationGroup"
 Write-SuiteLine "ActorKitDialogueMode: $ActorKitDialogueMode"
@@ -361,6 +370,7 @@ Write-SuiteLine "BootstrapRotation: $BootstrapRotX,$BootstrapRotY,$BootstrapRotZ
 Write-SuiteLine "ActorStagePosition: $ActorStageX,$ActorStageY,$ActorStageZ"
 Write-SuiteLine "ActorStageRotation: $ActorStageRotX,$ActorStageRotY,$ActorStageRotZ"
 Write-SuiteLine "NeutralActorPreviewProfile: $NeutralActorPreviewProfile"
+Write-SuiteLine "NeutralActorPreviewYawOffsetDeg: $(Format-Double $NeutralActorPreviewYawOffsetDeg)"
 Write-SuiteLine "Policy: no retail assets copied into repo; generated proof output only"
 Write-SuiteLine ""
 
@@ -370,6 +380,7 @@ $Results = New-Object "System.Collections.Generic.List[object]"
 
 foreach ($phase in $Phases) {
     foreach ($angle in $CameraAngles) {
+        $neutralYawDeg = if (![double]::IsNaN($NeutralActorPreviewYawOffsetDeg)) { $NeutralActorPreviewYawOffsetDeg } else { [double]$angle.NeutralYawDeg }
         $safePhase = ConvertTo-SafeName $phase
         $safeAngle = ConvertTo-SafeName $angle.Name
         $caseName = "${safePhase}_${safeAngle}"
@@ -408,6 +419,7 @@ foreach ($phase in $Phases) {
             NeutralActorPreview = $($ActorKind -ine "creature")
             NeutralActorPreviewStandingIdle = $($ActorKind -ine "creature")
             NeutralActorPreviewProfile = $NeutralActorPreviewProfile
+            NeutralActorPreviewYawOffsetDeg = $neutralYawDeg
             ActorStageX = $ActorStageX
             ActorStageY = $ActorStageY
             ActorStageZ = $ActorStageZ
@@ -438,7 +450,7 @@ foreach ($phase in $Phases) {
         if (![string]::IsNullOrWhiteSpace($ActorKitPartModelsCsv)) { $proofArgs.ActorKitPartModels = $ActorKitPartModelsCsv }
         if (![string]::IsNullOrWhiteSpace($ActorKitPropSlotsCsv)) { $proofArgs.ActorKitPropSlots = $ActorKitPropSlotsCsv }
         if (![string]::IsNullOrWhiteSpace($ActorKitPropModelsCsv)) { $proofArgs.ActorKitPropModels = $ActorKitPropModelsCsv }
-        if (![string]::IsNullOrWhiteSpace($ActorKitAnimationSource)) { $proofArgs.ActorKitAnimationSource = $ActorKitAnimationSource }
+        if (![string]::IsNullOrWhiteSpace($ResolvedActorKitAnimationSource)) { $proofArgs.ActorKitAnimationSource = $ResolvedActorKitAnimationSource }
         if (![double]::IsNaN($ActorKitAnimationStartPoint)) { $proofArgs.ActorKitAnimationStartPoint = $ActorKitAnimationStartPoint }
         if (![string]::IsNullOrWhiteSpace($ActorKitAnimationGroup)) { $proofArgs.ActorKitAnimationGroup = $ActorKitAnimationGroup }
         if (![string]::IsNullOrWhiteSpace($ActorKitDialogueMode)) { $proofArgs.ActorKitDialogueMode = $ActorKitDialogueMode }
@@ -527,6 +539,7 @@ foreach ($phase in $Phases) {
                 offsetY = [double]$angle.OffsetY
                 offsetZ = $ActorViewOffsetZ
                 targetZ = $ActorViewTargetZ
+                neutralPreviewYawOffsetDeg = $neutralYawDeg
                 localOffset = $true
             }
             actorKitSelection = [pscustomobject][ordered]@{
@@ -534,7 +547,9 @@ foreach ($phase in $Phases) {
                 partModels = $ActorKitPartModelsCsv
                 propSlots = $ActorKitPropSlotsCsv
                 propModels = $ActorKitPropModelsCsv
-                animationSource = $ActorKitAnimationSource
+                animationSource = $ResolvedActorKitAnimationSource
+                animationSourceRequested = $ActorKitAnimationSource
+                animationSourceDefaulted = [bool]$ActorKitAnimationSourceDefaulted
                 animationStartPoint = $ActorKitAnimationStartPointValue
                 animationGroup = $ActorKitAnimationGroup
                 dialogueMode = $ActorKitDialogueMode

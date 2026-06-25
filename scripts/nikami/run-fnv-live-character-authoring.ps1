@@ -50,6 +50,7 @@ $LiveAuthoringFile = Join-Path $RunDir "live-authoring.json"
 $LiveRuntimeCommandFile = Join-Path $RunDir "live-runtime-command.json"
 $ManifestPath = Join-Path $RunDir "live-authoring-run.json"
 New-Item -ItemType Directory -Force -Path $RunDir, $StudioDir | Out-Null
+$InitialActorKitAnimationSource = if ($ActorKind -ine "creature") { "hands-at-side" } else { "" }
 
 function Quote-ProcessArgument([string]$Value) {
     if ($Value -notmatch '[\s"]') {
@@ -146,6 +147,10 @@ foreach ($prefix in @("OPENMW_FNV_HEADGEAR", "OPENMW_FNV_HAIR", "OPENMW_FNV_BROW
     actorKind = $ActorKind
     entryId = ""
     command = "set-actor-target"
+    actorKitAnimationSource = $InitialActorKitAnimationSource
+    selectors = [pscustomobject][ordered]@{
+        animationSource = $InitialActorKitAnimationSource
+    }
     policy = [pscustomobject][ordered]@{
         generatedProofOutputsOnly = $true
         noRetailPayloadBytes = $true
@@ -199,6 +204,7 @@ $runtimeArgs.Add("-StageActor")
 $runtimeArgs.Add("-NeutralActorPreview")
 if ($ActorKind -ine "creature") {
     $runtimeArgs.Add("-NeutralActorPreviewStandingIdle")
+    Add-Arg $runtimeArgs "-ActorKitAnimationSource" $InitialActorKitAnimationSource
 }
 Add-Arg $runtimeArgs "-NeutralActorPreviewProfile" $NeutralActorPreviewProfile
 Add-Arg $runtimeArgs "-ActorStageX" $ActorStageX
@@ -239,6 +245,7 @@ $manifest = [pscustomobject][ordered]@{
     runtimeStdout = $RuntimeStdout
     runtimeStderr = $RuntimeStderr
     runtimeCommand = $RuntimeCommand
+    actorKitAnimationSource = $InitialActorKitAnimationSource
     target = [pscustomobject][ordered]@{
         actorTarget = $ActorTarget
         actorKind = $ActorKind

@@ -48,7 +48,7 @@ function Read-UInt32LE([byte[]]$Bytes, [int]$Offset) {
 
 function Read-EgtHeader([string]$Path) {
     $item = Get-Item -LiteralPath $Path
-    [byte[]]$header = New-Object byte[] 264
+    [byte[]]$header = New-Object byte[] 64
     $stream = [IO.File]::OpenRead($item.FullName)
     try {
         $read = $stream.Read($header, 0, $header.Length)
@@ -63,11 +63,11 @@ function Read-EgtHeader([string]$Path) {
     $magic = [Text.Encoding]::ASCII.GetString($header, 0, 8)
     $width = Read-UInt32LE $header 8
     $height = Read-UInt32LE $header 12
-    $modeCount = Read-UInt32LE $header 16
-    $unknownA = Read-UInt32LE $header 20
+    $symmetricModeCount = Read-UInt32LE $header 16
+    $asymmetricModeCount = Read-UInt32LE $header 20
     $basisVersion = Read-UInt32LE $header 24
-    $unknownB = Read-UInt32LE $header 28
-    $expectedLength = 264L + ([int64]$width * [int64]$height * 3L * [int64]$modeCount)
+    $modeCount = $symmetricModeCount + $asymmetricModeCount
+    $expectedLength = 64L + ((4L + ([int64]$width * [int64]$height * 3L)) * [int64]$modeCount)
 
     if ($magic -ne "FREGT003" -or $width -le 0 -or $height -le 0 -or $modeCount -le 0) {
         throw "Unexpected EGT header for ${Path}: magic=$magic width=$width height=$height modes=$modeCount"
@@ -82,12 +82,13 @@ function Read-EgtHeader([string]$Path) {
         magic = $magic
         width = $width
         height = $height
+        symmetricModeCount = $symmetricModeCount
+        asymmetricModeCount = $asymmetricModeCount
         modeCount = $modeCount
-        unknownA = $unknownA
         basisVersion = $basisVersion
-        unknownB = $unknownB
-        headerBytes = 264
-        payloadBytes = $item.Length - 264
+        headerBytes = 64
+        perModeBytes = 4 + ($width * $height * 3)
+        payloadBytes = $item.Length - 64
     }
 }
 
@@ -112,7 +113,10 @@ Write-ProofLine ""
 
 Assert-Text "apps/openmw/mwrender/esm4npcanimation.cpp" "loadFaceGenEgt" "FaceGen EGT VFS loader exists"
 Assert-Text "apps/openmw/mwrender/esm4npcanimation.cpp" '"FREGT003"' "EGT magic validation"
-Assert-Text "apps/openmw/mwrender/esm4npcanimation.cpp" "headerSize = 264" "EGT fixed header size contract"
+Assert-Text "apps/openmw/mwrender/esm4npcanimation.cpp" "headerSize = 64" "EGT documented fixed header size contract"
+Assert-Text "apps/openmw/mwrender/esm4npcanimation.cpp" "symmetricTextureModeCount" "EGT parser reads symmetric texture mode count"
+Assert-Text "apps/openmw/mwrender/esm4npcanimation.cpp" "asymmetricTextureModeCount" "EGT parser reads asymmetric texture mode count"
+Assert-Text "apps/openmw/mwrender/esm4npcanimation.cpp" "std::int8_t" "EGT parser treats mode planes as signed bytes"
 Assert-Text "apps/openmw/mwrender/esm4npcanimation.cpp" "deriveFaceGenEgtMaterialTint" "EGT texture coefficients produce a material tint"
 Assert-Text "apps/openmw/mwrender/esm4npcanimation.cpp" "mSymTextureModeCoefficients" "NPC FGTS coefficients drive EGT complexion"
 Assert-Text "apps/openmw/mwrender/esm4npcanimation.cpp" "applyFaceGenEgtTint" "EGT tint is applied to actor skin parts"
@@ -153,9 +157,12 @@ if (![string]::IsNullOrWhiteSpace($FnvRoot) -or ![string]::IsNullOrWhiteSpace($B
                 magic = $header.magic
                 width = $header.width
                 height = $header.height
+                symmetricModeCount = $header.symmetricModeCount
+                asymmetricModeCount = $header.asymmetricModeCount
                 modeCount = $header.modeCount
                 basisVersion = $header.basisVersion
                 headerBytes = $header.headerBytes
+                perModeBytes = $header.perModeBytes
                 payloadBytes = $header.payloadBytes
             }
             Write-ProofLine "OK retail EGT header: path=$sample size=$($header.width)x$($header.height) modes=$($header.modeCount) basis=$($header.basisVersion) length=$($header.length)"

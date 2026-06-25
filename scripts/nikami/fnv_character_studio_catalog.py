@@ -833,6 +833,7 @@ button:disabled {{ opacity: .45; cursor: not-allowed; }}
         <label>Job<select id="jobTypeSelect"></select></label>
         <label>Animation Source<input id="animationSourceInput" placeholder="meshes/characters/_male/idleanims/example.kf"></label>
         <label>Animation Start<input id="animationStartPointInput" type="number" min="0" max="0.999" step="0.001" placeholder="0.35"></label>
+        <label>Preview Yaw<input id="neutralPreviewYawInput" type="number" min="-180" max="180" step="1" placeholder="angle default"></label>
         <label>Animation<select id="animationSelect"></select></label>
         <label>Dialogue<select id="dialogueSelect"></select></label>
         <label>Angles<select id="angleSelect"></select></label>
@@ -1219,7 +1220,8 @@ async function sendSelectedLiveRuntime(options = {{}}) {{
           animationSource: selectorPayload.animationSource || "",
           animationStartPoint: selectorPayload.animationStartPoint || "",
           animationGroup: selectorPayload.animationGroup || "",
-          dialogueMode: selectorPayload.dialogueMode || ""
+          dialogueMode: selectorPayload.dialogueMode || "",
+          neutralPreviewYawOffsetDeg: selectorPayload.neutralPreviewYawOffsetDeg || ""
         }}
       }})
     }});
@@ -1366,9 +1368,11 @@ function studioPayload(commandKey) {{
   const animation = document.getElementById("animationSelect")?.value || "";
   const animationSource = document.getElementById("animationSourceInput")?.value || "";
   const animationStartPoint = document.getElementById("animationStartPointInput")?.value || "";
+  const neutralPreviewYawOffsetDeg = document.getElementById("neutralPreviewYawInput")?.value || "";
   const dialogue = document.getElementById("dialogueSelect")?.value || "";
   if (animationSource) payload.animationSource = animationSource;
   if (animationStartPoint) payload.animationStartPoint = animationStartPoint;
+  if (neutralPreviewYawOffsetDeg) payload.neutralPreviewYawOffsetDeg = neutralPreviewYawOffsetDeg;
   if (animation) payload.animationGroup = animation;
   if (dialogue) payload.dialogueMode = dialogue;
   return payload;
@@ -1527,7 +1531,8 @@ function componentReviewRows(activeOnly = false) {{
           animationSource: payload.animationSource || "",
           animationStartPoint: payload.animationStartPoint || "",
           animationGroup: payload.animationGroup || "",
-          dialogueMode: payload.dialogueMode || ""
+          dialogueMode: payload.dialogueMode || "",
+          neutralPreviewYawOffsetDeg: payload.neutralPreviewYawOffsetDeg || ""
         }},
         manifestUrl: job.result?.viewerJsonUrl || "",
         viewerUrl: job.result?.viewerUrl || "",
@@ -1710,7 +1715,7 @@ function renderControls() {{
   document.getElementById("livePivotMode").addEventListener("change", queueLiveAuthoringWrite);
   document.getElementById("applyLiveAuthoring").addEventListener("click", () => writeLiveAuthoring(false));
   document.getElementById("resetLiveAuthoring").addEventListener("click", () => writeLiveAuthoring(true));
-  ["phaseSelect", "partFocusSelect", "animationSourceInput", "animationStartPointInput", "animationSelect", "dialogueSelect"].forEach(id => {{
+  ["phaseSelect", "partFocusSelect", "animationSourceInput", "animationStartPointInput", "neutralPreviewYawInput", "animationSelect", "dialogueSelect"].forEach(id => {{
     const node = document.getElementById(id);
     const handler = () => {{
       recordEvent("selector.change", studioPayload("runtimeThreeCamera"));

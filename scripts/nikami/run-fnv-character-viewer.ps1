@@ -41,6 +41,7 @@ param(
     [double]$ActorViewOffsetZ = 108,
     [double]$ActorViewTargetZ = 108,
     [string]$NeutralActorPreviewProfile = "audit",
+    [double]$NeutralActorPreviewYawOffsetDeg = [double]::NaN,
     [string]$FnvRotationMode = "bindCoreBindLowerRawUpper",
     [switch]$AllowMissingActorVisibleHandGeometry,
     [double]$ActorVisibleHandMaxDistance = 30.0,
@@ -508,6 +509,7 @@ else {
             ActorViewOffsetZ = $ActorViewOffsetZ
             ActorViewTargetZ = $ActorViewTargetZ
             NeutralActorPreviewProfile = $NeutralActorPreviewProfile
+            NeutralActorPreviewYawOffsetDeg = $NeutralActorPreviewYawOffsetDeg
             FnvRotationMode = $FnvRotationMode
             ActorVisibleHandMaxDistance = $ActorVisibleHandMaxDistance
             FnvSkinningMatrixAudit = $FnvSkinningMatrixAudit

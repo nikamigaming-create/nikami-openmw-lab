@@ -95,6 +95,7 @@ LIVE_RUNTIME_SELECTOR_FIELDS = (
     "actorKitDialogueMode",
     "fnvRotationMode",
     "neutralPreviewProfile",
+    "neutralPreviewYawOffsetDeg",
 )
 LIVE_RUNTIME_SELECTOR_ALIASES = {
     "characterBuilderPhase": ("characterBuilderPhase", "phase", "phases"),
@@ -108,6 +109,7 @@ LIVE_RUNTIME_SELECTOR_ALIASES = {
     "actorKitDialogueMode": ("actorKitDialogueMode", "dialogueMode"),
     "fnvRotationMode": ("fnvRotationMode",),
     "neutralPreviewProfile": ("neutralPreviewProfile",),
+    "neutralPreviewYawOffsetDeg": ("neutralPreviewYawOffsetDeg", "yawOffsetDeg", "yaw"),
 }
 LIVE_RUNTIME_SELECTOR_LIST_FIELDS = {
     "actorKitParts",
@@ -785,6 +787,7 @@ class LiveRuntimeCommandStore:
                 "dialogueMode": "",
                 "fnvRotationMode": "",
                 "neutralPreviewProfile": "",
+                "neutralPreviewYawOffsetDeg": "",
             },
             "policy": {
                 "generatedProofOutputsOnly": True,
@@ -865,6 +868,9 @@ class LiveRuntimeCommandStore:
             "animationStartPoint",
             "animationGroup",
             "dialogueMode",
+            "neutralPreviewYawOffsetDeg",
+            "yawOffsetDeg",
+            "yaw",
         }
         unknown = sorted(str(key) for key in payload if key not in allowed)
         if unknown:
@@ -913,6 +919,9 @@ class LiveRuntimeCommandStore:
                         raise ValueError(f"live runtime selector {field} contains unsupported characters")
                     doc[field] = value
                     applied[field] = value
+            if actor_kind != "creature" and not first_text(doc.get("actorKitAnimationSource")):
+                doc["actorKitAnimationSource"] = "hands-at-side"
+                applied["actorKitAnimationSource"] = "hands-at-side"
             selectors.update(
                 {
                     "phase": doc.get("characterBuilderPhase", ""),
@@ -926,6 +935,7 @@ class LiveRuntimeCommandStore:
                     "dialogueMode": doc.get("actorKitDialogueMode", ""),
                     "fnvRotationMode": doc.get("fnvRotationMode", ""),
                     "neutralPreviewProfile": doc.get("neutralPreviewProfile", ""),
+                    "neutralPreviewYawOffsetDeg": doc.get("neutralPreviewYawOffsetDeg", ""),
                 }
             )
             doc.update(
@@ -1541,6 +1551,9 @@ def snapshot_live_runtime(payload: dict[str, Any], live_runtime: dict[str, Any])
             "dialogueMode": first_text(selectors.get("dialogueMode"), source.get("actorKitDialogueMode")),
             "fnvRotationMode": first_text(selectors.get("fnvRotationMode"), source.get("fnvRotationMode")),
             "neutralPreviewProfile": first_text(selectors.get("neutralPreviewProfile"), source.get("neutralPreviewProfile")),
+            "neutralPreviewYawOffsetDeg": first_text(
+                selectors.get("neutralPreviewYawOffsetDeg"), source.get("neutralPreviewYawOffsetDeg")
+            ),
         },
     }
     return result
@@ -1907,11 +1920,12 @@ def structured_actor_job(entry: dict[str, Any], payload: dict[str, Any]) -> tupl
         "partModels": csv_values(selector_value(payload, "partModels")),
         "propSlots": csv_values(selector_value(payload, "propSlots")),
         "propModels": csv_values(selector_value(payload, "propModels")),
-        "animationSource": first_text(selector_value(payload, "animationSource")),
+        "animationSource": first_text(selector_value(payload, "animationSource"), "" if actor_kind == "creature" else "hands-at-side"),
         "animationStartPoint": first_text(selector_value(payload, "animationStartPoint")),
         "animationGroup": first_text(selector_value(payload, "animationGroup")),
         "dialogueMode": first_text(selector_value(payload, "dialogueMode")),
         "neutralPreviewProfile": first_text(selector_value(payload, "neutralPreviewProfile")),
+        "neutralPreviewYawOffsetDeg": first_text(selector_value(payload, "neutralPreviewYawOffsetDeg")),
         "fnvRotationMode": first_text(selector_value(payload, "fnvRotationMode")),
         "allowMissingActorVisibleHandGeometry": first_text(selector_value(payload, "allowMissingActorVisibleHandGeometry")),
         "actorVisibleHandMaxDistance": first_text(selector_value(payload, "actorVisibleHandMaxDistance"), "30"),
@@ -1935,6 +1949,7 @@ def structured_actor_job(entry: dict[str, Any], payload: dict[str, Any]) -> tupl
     command += selector_arg("ActorKitAnimationGroup", selectors["animationGroup"])
     command += selector_arg("ActorKitDialogueMode", selectors["dialogueMode"])
     command += selector_arg("NeutralActorPreviewProfile", selectors["neutralPreviewProfile"])
+    command += selector_arg("NeutralActorPreviewYawOffsetDeg", selectors["neutralPreviewYawOffsetDeg"])
     command += selector_arg("FnvRotationMode", selectors["fnvRotationMode"])
     if actor_kind != "creature":
         command += selector_arg("ActorVisibleHandMaxDistance", selectors["actorVisibleHandMaxDistance"])

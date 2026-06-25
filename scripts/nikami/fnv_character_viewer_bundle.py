@@ -201,6 +201,7 @@ def viewer_command(
     animation_group: str = "",
     dialogue_mode: str = "",
     neutral_preview_profile: str = "",
+    neutral_preview_yaw_offset_deg: str = "",
     fnv_rotation_mode: str = "",
     allow_missing_actor_visible_hand_geometry: bool = False,
     actor_visible_hand_max_distance: str = "30",
@@ -225,6 +226,7 @@ def viewer_command(
     command += selector_arg("ActorKitAnimationGroup", animation_group)
     command += selector_arg("ActorKitDialogueMode", dialogue_mode)
     command += selector_arg("NeutralActorPreviewProfile", neutral_preview_profile)
+    command += selector_arg("NeutralActorPreviewYawOffsetDeg", neutral_preview_yaw_offset_deg)
     command += selector_arg("FnvRotationMode", fnv_rotation_mode)
     if actor_kind != "creature":
         command += selector_arg("ActorVisibleHandMaxDistance", actor_visible_hand_max_distance)
@@ -746,6 +748,7 @@ def build_failure_focus(
         animation_group = str(actor_kit_selection.get("animationGroup") or "")
         dialogue_mode = str(actor_kit_selection.get("dialogueMode") or "")
         neutral_preview_profile = str(actor_kit_selection.get("neutralPreviewProfile") or "")
+        neutral_preview_yaw_offset_deg = str(actor_kit_selection.get("neutralPreviewYawOffsetDeg") or "")
         fnv_rotation_mode = str(actor_kit_selection.get("fnvRotationMode") or "")
         command_kwargs: dict[str, str] = {
             "parts": category if category != "all" else "",
@@ -755,6 +758,7 @@ def build_failure_focus(
             "animation_group": animation_group,
             "dialogue_mode": dialogue_mode,
             "neutral_preview_profile": neutral_preview_profile,
+            "neutral_preview_yaw_offset_deg": neutral_preview_yaw_offset_deg,
             "fnv_rotation_mode": fnv_rotation_mode,
         }
         if category in {"equipment-body", "weapon", "headgear"}:
@@ -873,6 +877,7 @@ def build_capture_failures(cases: list[dict[str, Any]], actor: str, actor_kind: 
                     animation_group=str(selection.get("animationGroup") or ""),
                     dialogue_mode=str(selection.get("dialogueMode") or ""),
                     neutral_preview_profile=str(selection.get("neutralPreviewProfile") or ""),
+                    neutral_preview_yaw_offset_deg=str(selection.get("neutralPreviewYawOffsetDeg") or ""),
                     fnv_rotation_mode=str(selection.get("fnvRotationMode") or ""),
                 ),
             }

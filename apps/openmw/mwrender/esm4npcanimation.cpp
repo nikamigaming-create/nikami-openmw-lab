@@ -54,6 +54,7 @@
 #include <osg/NodeCallback>
 #include <osg/NodeVisitor>
 #include <osg/PositionAttitudeTransform>
+#include <osg/PrimitiveSet>
 #include <osg/Texture2D>
 #include <osgAnimation/Bone>
 #include <osgAnimation/UpdateBone>
@@ -88,12 +89,13 @@ namespace MWRender
         public:
             TintMaterialVisitor(
                 const osg::Vec4f& tint, float emissionStrength = 0.f, bool replaceVertexColorRgb = false,
-                bool neutralMaterialWhenReplacing = false)
+                bool neutralMaterialWhenReplacing = false, bool preserveVertexColorIntensity = false)
                 : osg::NodeVisitor(TRAVERSE_ALL_CHILDREN)
                 , mTint(tint)
                 , mEmissionStrength(emissionStrength)
                 , mReplaceVertexColorRgb(replaceVertexColorRgb)
                 , mNeutralMaterialWhenReplacing(neutralMaterialWhenReplacing)
+                , mPreserveVertexColorIntensity(preserveVertexColorIntensity)
             {
             }
 
@@ -123,13 +125,22 @@ namespace MWRender
 
                 if (osg::Vec4Array* colors = dynamic_cast<osg::Vec4Array*>(existingColors))
                 {
+                    float maxRed = 0.f;
+                    if (mReplaceVertexColorRgb && mPreserveVertexColorIntensity)
+                    {
+                        for (const osg::Vec4f& color : *colors)
+                            maxRed = std::max(maxRed, color.x());
+                    }
                     for (osg::Vec4f& color : *colors)
                     {
                         if (mReplaceVertexColorRgb)
                         {
-                            color.x() = mTint.x();
-                            color.y() = mTint.y();
-                            color.z() = mTint.z();
+                            const float intensity = mPreserveVertexColorIntensity && maxRed > 0.001f
+                                ? std::clamp(color.x() / maxRed, 0.f, 1.f)
+                                : 1.f;
+                            color.x() = mTint.x() * intensity;
+                            color.y() = mTint.y() * intensity;
+                            color.z() = mTint.z() * intensity;
                         }
                         else
                         {
@@ -139,6 +150,8 @@ namespace MWRender
                         }
                     }
                     colors->dirty();
+                    if (mReplaceVertexColorRgb && mPreserveVertexColorIntensity)
+                        ++mPreservedVertexColorIntensityArrays;
                     return true;
                 }
 
@@ -147,13 +160,22 @@ namespace MWRender
                     const auto tintByte = [](float value) {
                         return static_cast<unsigned char>(std::clamp(value * 255.f + 0.5f, 0.f, 255.f));
                     };
+                    unsigned char maxRed = 0;
+                    if (mReplaceVertexColorRgb && mPreserveVertexColorIntensity)
+                    {
+                        for (const osg::Vec4ub& color : *colors)
+                            maxRed = std::max(maxRed, color.r());
+                    }
                     for (osg::Vec4ub& color : *colors)
                     {
                         if (mReplaceVertexColorRgb)
                         {
-                            color.r() = tintByte(mTint.x());
-                            color.g() = tintByte(mTint.y());
-                            color.b() = tintByte(mTint.z());
+                            const float intensity = mPreserveVertexColorIntensity && maxRed > 0
+                                ? std::clamp(static_cast<float>(color.r()) / static_cast<float>(maxRed), 0.f, 1.f)
+                                : 1.f;
+                            color.r() = tintByte(mTint.x() * intensity);
+                            color.g() = tintByte(mTint.y() * intensity);
+                            color.b() = tintByte(mTint.z() * intensity);
                         }
                         else
                         {
@@ -163,6 +185,8 @@ namespace MWRender
                         }
                     }
                     colors->dirty();
+                    if (mReplaceVertexColorRgb && mPreserveVertexColorIntensity)
+                        ++mPreservedVertexColorIntensityArrays;
                     return true;
                 }
 
@@ -233,9 +257,11 @@ namespace MWRender
             float mEmissionStrength = 0.f;
             bool mReplaceVertexColorRgb = false;
             bool mNeutralMaterialWhenReplacing = false;
+            bool mPreserveVertexColorIntensity = false;
 
         public:
             mutable unsigned int mNeutralizedVertexColorArrays = 0;
+            mutable unsigned int mPreservedVertexColorIntensityArrays = 0;
         };
 
         class DisableCullVisitor : public osg::NodeVisitor
@@ -1482,6 +1508,9 @@ namespace MWRender
 
             std::string mode(value);
             Misc::StringUtils::lowerCaseInPlace(mode);
+            if (mode == "generated" || mode == "generated-diffuse" || mode == "generated_diffuse"
+                || mode == "composite" || mode == "composite-diffuse")
+                return "generated-diffuse";
             if (mode == "direct" || mode == "diffuse" || mode == "direct-diffuse" || mode == "direct_diffuse")
                 return "direct-diffuse";
             if (mode == "none" || mode == "source-only" || mode == "disabled")
@@ -1561,6 +1590,61 @@ namespace MWRender
             tint = osg::Vec4f(std::clamp(average.x(), 0.f, 1.f),
                 std::clamp(average.y(), 0.f, 1.f), std::clamp(average.z(), 0.f, 1.f), 1.f);
             return true;
+        }
+
+        osg::Vec4f sampleImageColorClamped(const osg::Image& image, int x, int y)
+        {
+            if (image.s() <= 0 || image.t() <= 0)
+                return osg::Vec4f(1.f, 1.f, 1.f, 1.f);
+
+            const int clampedX = std::clamp(x, 0, image.s() - 1);
+            const int clampedY = std::clamp(y, 0, image.t() - 1);
+            osg::Vec4f color = image.getColor(clampedX, clampedY);
+            color.x() = std::isfinite(color.x()) ? std::clamp(color.x(), 0.f, 1.f) : 1.f;
+            color.y() = std::isfinite(color.y()) ? std::clamp(color.y(), 0.f, 1.f) : 1.f;
+            color.z() = std::isfinite(color.z()) ? std::clamp(color.z(), 0.f, 1.f) : 1.f;
+            color.w() = std::isfinite(color.w()) ? std::clamp(color.w(), 0.f, 1.f) : 1.f;
+            return color;
+        }
+
+        osg::ref_ptr<osg::Image> generateFonvFaceGenDiffuse(Resource::ResourceSystem* resourceSystem,
+            std::string_view baseDiffuseTexture, std::string_view npcFaceTexture, const ESM4::Npc& traits)
+        {
+            osg::ref_ptr<osg::Image> base = getExistingTextureImage(resourceSystem, baseDiffuseTexture);
+            osg::ref_ptr<osg::Image> face = getExistingTextureImage(resourceSystem, npcFaceTexture);
+            if (base == nullptr || face == nullptr || base->s() <= 0 || base->t() <= 0 || face->s() <= 0
+                || face->t() <= 0)
+                return nullptr;
+
+            osg::ref_ptr<osg::Image> generated = new osg::Image;
+            generated->setFileName("generated/fnv-facegen/" + formatFalloutFormIndex(traits.mId) + "-head-diffuse");
+            generated->setOrigin(osg::Image::TOP_LEFT);
+            generated->allocateImage(base->s(), base->t(), 1, GL_RGBA, GL_UNSIGNED_BYTE);
+
+            for (int y = 0; y < base->t(); ++y)
+            {
+                const int faceY = static_cast<int>(
+                    (static_cast<float>(y) + 0.5f) * static_cast<float>(face->t()) / static_cast<float>(base->t()));
+                for (int x = 0; x < base->s(); ++x)
+                {
+                    const int faceX = static_cast<int>((static_cast<float>(x) + 0.5f) * static_cast<float>(face->s())
+                        / static_cast<float>(base->s()));
+                    const osg::Vec4f baseColor = sampleImageColorClamped(*base, x, y);
+                    const osg::Vec4f faceColor = sampleImageColorClamped(*face, faceX, faceY);
+                    osg::Vec4f composed(std::clamp(baseColor.x() * faceColor.x() * 2.f, 0.f, 1.f),
+                        std::clamp(baseColor.y() * faceColor.y() * 2.f, 0.f, 1.f),
+                        std::clamp(baseColor.z() * faceColor.z() * 2.f, 0.f, 1.f), baseColor.w());
+                    generated->setColor(composed, x, y);
+                }
+            }
+
+            Log(Debug::Info) << "FNV/ESM4 diag: generated NPC FaceGen diffuse " << generated->getFileName()
+                             << " base=" << baseDiffuseTexture << " " << base->s() << "x" << base->t()
+                             << " face=" << npcFaceTexture << " " << face->s() << "x" << face->t()
+                             << " for " << traits.mEditorId
+                             << " runtime=loaded-pending-exact-facegen-texture-synthesis"
+                             << " gate=runtime-fnv-facegen-generated-diffuse-applied";
+            return generated;
         }
 
         std::string findFonvNpcBodyNormalTexture(
@@ -1872,6 +1956,8 @@ namespace MWRender
         {
             std::uint32_t mWidth = 0;
             std::uint32_t mHeight = 0;
+            std::uint32_t mSymmetricTextureModeCount = 0;
+            std::uint32_t mAsymmetricTextureModeCount = 0;
             std::uint32_t mTextureModeCount = 0;
             std::uint32_t mBasisVersion = 0;
             std::vector<osg::Vec3f> mModeAverages;
@@ -2219,24 +2305,24 @@ namespace MWRender
                 return nullptr;
             }
 
-            constexpr std::uint32_t headerSize = 264;
+            constexpr std::uint32_t headerSize = 64;
             std::uint32_t width = 0;
             std::uint32_t height = 0;
-            std::uint32_t textureModeCount = 0;
-            std::uint32_t unknownZeroA = 0;
+            std::uint32_t symmetricTextureModeCount = 0;
+            std::uint32_t asymmetricTextureModeCount = 0;
             std::uint32_t basisVersion = 0;
-            std::uint32_t unknownZeroB = 0;
-            if (!readBinary(*stream, width) || !readBinary(*stream, height) || !readBinary(*stream, textureModeCount)
-                || !readBinary(*stream, unknownZeroA) || !readBinary(*stream, basisVersion)
-                || !readBinary(*stream, unknownZeroB) || width == 0 || height == 0 || width > 4096
-                || height > 4096 || textureModeCount == 0 || textureModeCount > 256)
+            if (!readBinary(*stream, width) || !readBinary(*stream, height)
+                || !readBinary(*stream, symmetricTextureModeCount) || !readBinary(*stream, asymmetricTextureModeCount)
+                || !readBinary(*stream, basisVersion) || width == 0 || height == 0 || width > 4096
+                || height > 4096 || symmetricTextureModeCount + asymmetricTextureModeCount == 0
+                || symmetricTextureModeCount + asymmetricTextureModeCount > 256)
             {
                 Log(Debug::Warning) << "FNV/ESM4 diag: failed to read FaceGen EGT header " << cacheKey;
                 sCache.emplace(cacheKey, nullptr);
                 return nullptr;
             }
 
-            stream->ignore(headerSize - 32);
+            stream->ignore(headerSize - 28);
             if (!*stream)
             {
                 Log(Debug::Warning) << "FNV/ESM4 diag: truncated FaceGen EGT header " << cacheKey;
@@ -2244,8 +2330,9 @@ namespace MWRender
                 return nullptr;
             }
 
+            const std::uint32_t textureModeCount = symmetricTextureModeCount + asymmetricTextureModeCount;
             const std::uint64_t pixelCount64 = static_cast<std::uint64_t>(width) * static_cast<std::uint64_t>(height);
-            const std::uint64_t modeByteCount64 = pixelCount64 * 3u;
+            const std::uint64_t modeByteCount64 = sizeof(float) + pixelCount64 * 3u;
             const std::uint64_t payloadByteCount64 = modeByteCount64 * textureModeCount;
             if (pixelCount64 == 0 || modeByteCount64 > 64u * 1024u * 1024u
                 || payloadByteCount64 > 512u * 1024u * 1024u)
@@ -2257,18 +2344,21 @@ namespace MWRender
             }
 
             const std::size_t modeByteCount = static_cast<std::size_t>(modeByteCount64);
-            std::vector<unsigned char> pixels(modeByteCount);
+            const std::size_t pixelCount = static_cast<std::size_t>(pixelCount64);
+            std::vector<std::int8_t> pixels(pixelCount);
             auto egt = std::make_shared<FaceGenEgt>();
             egt->mWidth = width;
             egt->mHeight = height;
+            egt->mSymmetricTextureModeCount = symmetricTextureModeCount;
+            egt->mAsymmetricTextureModeCount = asymmetricTextureModeCount;
             egt->mTextureModeCount = textureModeCount;
             egt->mBasisVersion = basisVersion;
             egt->mModeAverages.reserve(textureModeCount);
 
             for (std::uint32_t mode = 0; mode < textureModeCount; ++mode)
             {
-                stream->read(reinterpret_cast<char*>(pixels.data()), static_cast<std::streamsize>(pixels.size()));
-                if (!*stream)
+                float modeScale = 0.f;
+                if (!readBinary(*stream, modeScale))
                 {
                     Log(Debug::Warning) << "FNV/ESM4 diag: truncated FaceGen EGT payload " << cacheKey
                                         << " mode=" << mode << "/" << textureModeCount;
@@ -2276,19 +2366,26 @@ namespace MWRender
                     return nullptr;
                 }
 
-                double red = 0.0;
-                double green = 0.0;
-                double blue = 0.0;
-                for (std::size_t i = 0; i + 2 < pixels.size(); i += 3)
+                double channelAverage[3] = {};
+                for (std::size_t channel = 0; channel < 3; ++channel)
                 {
-                    red += pixels[i];
-                    green += pixels[i + 1];
-                    blue += pixels[i + 2];
+                    stream->read(reinterpret_cast<char*>(pixels.data()), static_cast<std::streamsize>(pixels.size()));
+                    if (!*stream)
+                    {
+                        Log(Debug::Warning) << "FNV/ESM4 diag: truncated FaceGen EGT payload " << cacheKey
+                                            << " mode=" << mode << "/" << textureModeCount << " channel=" << channel;
+                        sCache.emplace(cacheKey, nullptr);
+                        return nullptr;
+                    }
+
+                    double total = 0.0;
+                    for (const std::int8_t pixel : pixels)
+                        total += static_cast<double>(pixel) * static_cast<double>(modeScale);
+                    channelAverage[channel] = total / (static_cast<double>(pixelCount64) * 255.0);
                 }
 
-                const float inv = 1.f / (static_cast<float>(pixelCount64) * 255.f);
-                const osg::Vec3f average(static_cast<float>(red) * inv, static_cast<float>(green) * inv,
-                    static_cast<float>(blue) * inv);
+                const osg::Vec3f average(static_cast<float>(channelAverage[0]), static_cast<float>(channelAverage[1]),
+                    static_cast<float>(channelAverage[2]));
                 egt->mModeAverages.push_back(average);
                 egt->mMeanAverage += average;
             }
@@ -2296,8 +2393,10 @@ namespace MWRender
             egt->mMeanAverage /= static_cast<float>(egt->mModeAverages.size());
 
             Log(Debug::Info) << "FNV/ESM4 diag: loaded FaceGen EGT " << cacheKey << " size=" << width << "x"
-                             << height << " modes=" << textureModeCount << " basis=" << basisVersion
-                             << " headerBytes=" << headerSize << " payloadBytes=" << payloadByteCount64
+                             << height << " modes=" << textureModeCount << " sym=" << symmetricTextureModeCount
+                             << " asym=" << asymmetricTextureModeCount << " basis=" << basisVersion
+                             << " headerBytes=" << headerSize << " perModeBytes=" << modeByteCount
+                             << " payloadBytes=" << payloadByteCount64
                              << " mean=(" << egt->mMeanAverage.x() << ", " << egt->mMeanAverage.y() << ", "
                              << egt->mMeanAverage.z() << ")";
             sCache.emplace(cacheKey, egt);
@@ -2316,12 +2415,12 @@ namespace MWRender
                 if (std::abs(coefficient) <= 0.0001f)
                     continue;
 
-                textureDelta += (egt.mModeAverages[mode] - egt.mMeanAverage) * coefficient;
+                textureDelta += egt.mModeAverages[mode] * coefficient;
                 totalWeight += std::abs(coefficient);
             }
 
             if (totalWeight > 0.0001f)
-                tint += textureDelta * (0.85f / std::max(totalWeight, 1.f));
+                tint += textureDelta;
 
             for (const ESM4::Npc::TintLayer& layer : traits.mTintLayers)
             {
@@ -3379,6 +3478,218 @@ namespace MWRender
             unsigned int mHidden = 0;
             unsigned int mHiddenGeometry = 0;
         };
+
+        bool isFalloutDialogueHeadSkinSurface(std::string_view model);
+        bool fonvCoveredSlotsHideScalpHair(uint32_t coveredSlots);
+
+        float getFonvCoveredHeadSkinScalpMaskZFraction()
+        {
+            const char* value = std::getenv("OPENMW_FNV_COVERED_HEAD_SKIN_SCALP_Z_FRACTION");
+            if (value == nullptr || value[0] == '\0')
+                return 0.76f;
+
+            char* end = nullptr;
+            const float parsed = std::strtof(value, &end);
+            if (end == value || !std::isfinite(parsed))
+                return 0.76f;
+
+            return std::clamp(parsed, 0.60f, 0.92f);
+        }
+
+        struct FonvCoveredHeadSkinCapMaskStats
+        {
+            unsigned int mRemovedPrimitiveSets = 0;
+            unsigned int mRewrittenPrimitiveSets = 0;
+            unsigned int mSkippedPrimitiveSets = 0;
+            unsigned int mRemovedTriangles = 0;
+            unsigned int mKeptTriangles = 0;
+            float mLowestRemovedZ = std::numeric_limits<float>::max();
+            float mHighestKeptZ = -std::numeric_limits<float>::max();
+            float mCutoffZ = 0.f;
+        };
+
+        unsigned int removeFonvCoveredHeadSkinCapPrimitiveSets(osg::Geometry& geometry)
+        {
+            const unsigned int primitiveSets = geometry.getNumPrimitiveSets();
+            if (primitiveSets <= 1)
+                return 0;
+
+            geometry.removePrimitiveSet(1, primitiveSets - 1);
+            geometry.dirtyDisplayList();
+            geometry.dirtyBound();
+            return primitiveSets - 1;
+        }
+
+        void removeFonvCoveredHeadSkinScalpTriangles(osg::Geometry& geometry, FonvCoveredHeadSkinCapMaskStats& stats)
+        {
+            const osg::Vec3Array* vertices = dynamic_cast<const osg::Vec3Array*>(geometry.getVertexArray());
+            if (vertices == nullptr || vertices->empty() || geometry.getNumPrimitiveSets() == 0)
+                return;
+
+            osg::BoundingBox bounds;
+            for (const osg::Vec3f& vertex : *vertices)
+                bounds.expandBy(vertex);
+            if (!bounds.valid())
+                return;
+
+            const osg::Vec3f extent(bounds.xMax() - bounds.xMin(), bounds.yMax() - bounds.yMin(),
+                bounds.zMax() - bounds.zMin());
+            if (extent.z() <= 0.001f)
+                return;
+
+            const float cutoffZ = bounds.zMin() + extent.z() * getFonvCoveredHeadSkinScalpMaskZFraction();
+            stats.mCutoffZ = cutoffZ;
+
+            std::vector<osg::ref_ptr<osg::PrimitiveSet>> primitiveSets;
+            primitiveSets.reserve(geometry.getNumPrimitiveSets());
+            bool changed = false;
+
+            for (unsigned int primitiveIndex = 0; primitiveIndex < geometry.getNumPrimitiveSets(); ++primitiveIndex)
+            {
+                osg::PrimitiveSet* primitive = geometry.getPrimitiveSet(primitiveIndex);
+                if (primitive == nullptr || primitive->getMode() != osg::PrimitiveSet::TRIANGLES
+                    || primitive->getNumIndices() < 3 || primitive->getNumIndices() % 3 != 0)
+                {
+                    primitiveSets.emplace_back(primitive);
+                    ++stats.mSkippedPrimitiveSets;
+                    continue;
+                }
+
+                osg::ref_ptr<osg::DrawElementsUInt> kept
+                    = new osg::DrawElementsUInt(osg::PrimitiveSet::TRIANGLES);
+                unsigned int removedTriangles = 0;
+                for (unsigned int index = 0; index + 2 < primitive->getNumIndices(); index += 3)
+                {
+                    const unsigned int a = primitive->index(index);
+                    const unsigned int b = primitive->index(index + 1);
+                    const unsigned int c = primitive->index(index + 2);
+                    if (a >= vertices->size() || b >= vertices->size() || c >= vertices->size())
+                    {
+                        kept->push_back(a);
+                        kept->push_back(b);
+                        kept->push_back(c);
+                        ++stats.mKeptTriangles;
+                        continue;
+                    }
+
+                    const osg::Vec3f& av = (*vertices)[a];
+                    const osg::Vec3f& bv = (*vertices)[b];
+                    const osg::Vec3f& cv = (*vertices)[c];
+                    const float minZ = std::min({ av.z(), bv.z(), cv.z() });
+                    const float maxZ = std::max({ av.z(), bv.z(), cv.z() });
+                    if (minZ > cutoffZ)
+                    {
+                        ++removedTriangles;
+                        ++stats.mRemovedTriangles;
+                        stats.mLowestRemovedZ = std::min(stats.mLowestRemovedZ, minZ);
+                        continue;
+                    }
+
+                    stats.mHighestKeptZ = std::max(stats.mHighestKeptZ, maxZ);
+                    kept->push_back(a);
+                    kept->push_back(b);
+                    kept->push_back(c);
+                    ++stats.mKeptTriangles;
+                }
+
+                if (removedTriangles == 0)
+                    primitiveSets.emplace_back(primitive);
+                else
+                {
+                    primitiveSets.emplace_back(kept);
+                    ++stats.mRewrittenPrimitiveSets;
+                    changed = true;
+                }
+            }
+
+            if (!changed)
+                return;
+
+            geometry.removePrimitiveSet(0, geometry.getNumPrimitiveSets());
+            for (const osg::ref_ptr<osg::PrimitiveSet>& primitive : primitiveSets)
+                geometry.addPrimitiveSet(primitive.get());
+            geometry.dirtyDisplayList();
+            geometry.dirtyBound();
+        }
+
+        class HideFonvCoveredHeadSkinCapVisitor : public osg::NodeVisitor
+        {
+        public:
+            HideFonvCoveredHeadSkinCapVisitor()
+                : osg::NodeVisitor(TRAVERSE_ALL_CHILDREN)
+            {
+            }
+
+            void apply(osg::Geode& geode) override
+            {
+                for (unsigned int i = 0; i < geode.getNumDrawables(); ++i)
+                    if (osg::Drawable* drawable = geode.getDrawable(i))
+                        applyDrawable(*drawable);
+                traverse(geode);
+            }
+
+            void apply(osg::Drawable& drawable) override { applyDrawable(drawable); }
+
+            unsigned int mVisitedGeometry = 0;
+            FonvCoveredHeadSkinCapMaskStats mStats;
+
+        private:
+            void applyGeometry(osg::Geometry& geometry)
+            {
+                ++mVisitedGeometry;
+                mStats.mRemovedPrimitiveSets += removeFonvCoveredHeadSkinCapPrimitiveSets(geometry);
+                removeFonvCoveredHeadSkinScalpTriangles(geometry, mStats);
+            }
+
+            void applyDrawable(osg::Drawable& drawable)
+            {
+                if (SceneUtil::RigGeometry* rig = dynamic_cast<SceneUtil::RigGeometry*>(&drawable))
+                {
+                    if (osg::Geometry* source = rig->getSourceGeometry())
+                        applyGeometry(*source);
+                    for (unsigned int i = 0; i < 2; ++i)
+                        if (osg::Geometry* render = rig->getRenderGeometry(i))
+                            applyGeometry(*render);
+                    return;
+                }
+
+                if (osg::Geometry* geometry = drawable.asGeometry())
+                    applyGeometry(*geometry);
+            }
+        };
+
+        void hideFonvCoveredHeadSkinCap(osg::Node* attached, std::string_view model, const ESM4::Npc& traits,
+            uint32_t coveredSlots)
+        {
+            if (attached == nullptr || !traits.mIsFONV || !fonvCoveredSlotsHideScalpHair(coveredSlots)
+                || !isFalloutDialogueHeadSkinSurface(model))
+                return;
+
+            HideFonvCoveredHeadSkinCapVisitor visitor;
+            attached->accept(visitor);
+            if (visitor.mStats.mRemovedPrimitiveSets == 0 && visitor.mStats.mRemovedTriangles == 0)
+                return;
+
+            Log(Debug::Info) << "FNV/ESM4 diag: hid covered head-skin cap primitiveSet(s)="
+                             << visitor.mStats.mRemovedPrimitiveSets
+                             << " scalpTriangles=" << visitor.mStats.mRemovedTriangles
+                             << " keptTriangles=" << visitor.mStats.mKeptTriangles
+                             << " rewrittenPrimitiveSets=" << visitor.mStats.mRewrittenPrimitiveSets
+                             << " skippedPrimitiveSets=" << visitor.mStats.mSkippedPrimitiveSets
+                             << " cutoffZ=" << visitor.mStats.mCutoffZ
+                             << " lowestRemovedZ="
+                             << (visitor.mStats.mLowestRemovedZ == std::numeric_limits<float>::max()
+                                     ? 0.f
+                                     : visitor.mStats.mLowestRemovedZ)
+                             << " highestKeptZ="
+                             << (visitor.mStats.mHighestKeptZ == -std::numeric_limits<float>::max()
+                                     ? 0.f
+                                     : visitor.mStats.mHighestKeptZ)
+                             << " geometry=" << visitor.mVisitedGeometry
+                             << " on " << model << " for " << traits.mEditorId << " slots=0x" << std::hex
+                             << coveredSlots << std::dec
+                             << " runtime=runtime-supported gate=runtime-fnv-covered-head-skin-cap-mask";
+        }
 
         class ForceFalloutActorPartVisibleVisitor : public osg::NodeVisitor
         {
@@ -6849,12 +7160,14 @@ namespace MWRender
         {
             const bool hairTintModel = isFalloutHairTintModel(correctedModel.value());
             const float emissionStrength = hairTintModel ? getFalloutHairEmissionStrength(*tint) : 0.f;
-            TintMaterialVisitor visitor(*tint, emissionStrength, hairTintModel, hairTintModel);
+            TintMaterialVisitor visitor(*tint, emissionStrength, hairTintModel, hairTintModel, hairTintModel);
             attached->accept(visitor);
             if (hairTintModel)
                 Log(Debug::Info) << "FNV/ESM4 diag: applied hair tint material " << correctedModel.value()
                                  << " tint=(" << tint->x() << ", " << tint->y() << ", " << tint->z()
-                                 << ") emissionStrength=" << emissionStrength << " for "
+                                 << ") emissionStrength=" << emissionStrength
+                                 << " preservedVertexIntensityArrays="
+                                 << visitor.mPreservedVertexColorIntensityArrays << " for "
                                  << mPtr.getCellRef().getRefId();
         }
         if (attached != nullptr
@@ -7065,6 +7378,7 @@ namespace MWRender
         const uint32_t coveredBodySlots = getFonvCoveredBodySlots(mPtr);
         const std::string npcFaceTexture = findFonvNpcFaceTexture(mResourceSystem, traits);
         const std::string faceGenTextureMode = getFonvFaceGenTextureMode();
+        const bool useNpcFaceAsGeneratedDiffuse = faceGenTextureMode == "generated-diffuse";
         const bool useNpcFaceAsDirectDiffuse = faceGenTextureMode == "direct-diffuse";
         const bool useNpcFaceAsDetail = faceGenTextureMode == "detail"
             || std::getenv("OPENMW_FNV_PROOF_FACE_AS_DETAIL") != nullptr;
@@ -7260,6 +7574,17 @@ namespace MWRender
             logFalloutCharacterBuilderGate(true, builderCategory, headPart.mesh, mPtr, traits);
             const std::string_view baseTexture = eyePart && !eyeTexture.empty() ? eyeTexture : headPart.texture;
             const std::string headDiffuseTexture = std::string(baseTexture);
+            osg::ref_ptr<osg::Image> generatedHeadDiffuse;
+            if (headSurface && useNpcFaceAsGeneratedDiffuse && !npcFaceTexture.empty() && !headDiffuseTexture.empty())
+            {
+                generatedHeadDiffuse
+                    = generateFonvFaceGenDiffuse(mResourceSystem, headDiffuseTexture, npcFaceTexture, traits);
+                if (generatedHeadDiffuse == nullptr)
+                    Log(Debug::Warning) << "FNV/ESM4 diag: failed to generate NPC FaceGen diffuse base="
+                                        << headDiffuseTexture << " face=" << npcFaceTexture << " for "
+                                        << traits.mEditorId
+                                        << " runtime=loaded-pending-exact-facegen-texture-synthesis";
+            }
             const std::string appliedHeadDiffuseTexture = headSurface && useNpcFaceAsDirectDiffuse && !npcFaceTexture.empty()
                 ? npcFaceTexture
                 : headDiffuseTexture;
@@ -7267,7 +7592,9 @@ namespace MWRender
             {
                 resolvedFaceDiffuseTexture = appliedHeadDiffuseTexture;
                 resolvedFaceDiffuseSource = !appliedHeadDiffuseTexture.empty()
-                    ? (!npcFaceTexture.empty() && useNpcFaceAsDirectDiffuse
+                    ? (generatedHeadDiffuse != nullptr
+                            ? "NPC_FACEGEN_GENERATED_DIFFUSE"
+                        : !npcFaceTexture.empty() && useNpcFaceAsDirectDiffuse
                             ? "NPC_FACEGEN_DIRECT_DIFFUSE"
                             : (!npcFaceDetailTexture.empty() ? "RACE_FACEGEN_DETAIL" : "RACE"))
                     : "MISSING";
@@ -7302,7 +7629,23 @@ namespace MWRender
             {
                 forceFalloutActorPartVisible(attached.get(), headPart.mesh, traits);
                 applyFaceGenEgmMorph(mResourceSystem, attached.get(), headPart.mesh, traits);
-                if (!appliedHeadDiffuseTexture.empty())
+                if (falloutCharacterBuilderAllows("headgear"))
+                    hideFonvCoveredHeadSkinCap(attached.get(), headPart.mesh, traits, coveredBodySlots);
+                else if (traits.mIsFONV && fonvCoveredSlotsHideScalpHair(coveredBodySlots)
+                    && isFalloutDialogueHeadSkinSurface(headPart.mesh))
+                {
+                    Log(Debug::Info)
+                        << "FNV/ESM4 diag: skipped covered head-skin cap mask on " << headPart.mesh << " for "
+                        << traits.mEditorId
+                        << " because headgear is excluded by the current character builder phase"
+                        << " status=intentionally-excluded-with-proof gate=runtime-fnv-covered-head-skin-cap-mask";
+                }
+                if (generatedHeadDiffuse != nullptr)
+                {
+                    overrideFalloutPartDiffuseTexture(generatedHeadDiffuse.get(), mResourceSystem, *attached);
+                    resolvedFaceGenTextureStatus = "GENERATED_DIFFUSE_APPLIED_PENDING_EXACT";
+                }
+                else if (!appliedHeadDiffuseTexture.empty())
                 {
                     overrideFalloutPartDiffuseTexture(appliedHeadDiffuseTexture, mResourceSystem, *attached);
                     if (!npcFaceTexture.empty() && useNpcFaceAsDirectDiffuse)
@@ -7385,11 +7728,14 @@ namespace MWRender
                     applyFalloutDialogueMorph(mResourceSystem, this, attached.get(), hair->mModel, traits);
                 if (attached != nullptr)
                 {
-                    TintMaterialVisitor visitor(hairTint, getFalloutHairEmissionStrength(hairTint), true, true);
+                    TintMaterialVisitor visitor(
+                        hairTint, getFalloutHairEmissionStrength(hairTint), true, true, true);
                     attached->accept(visitor);
                     Log(Debug::Info) << "FNV/ESM4 diag: applied hair tint material " << hair->mModel
                                      << " tint=(" << hairTint.x() << ", " << hairTint.y() << ", " << hairTint.z()
                                      << ") emissionStrength=" << getFalloutHairEmissionStrength(hairTint)
+                                     << " preservedVertexIntensityArrays="
+                                     << visitor.mPreservedVertexColorIntensityArrays
                                      << " for " << traits.mEditorId;
                     hideFonvNoHatHairVariant(attached.get(), hair->mModel, traits, coveredBodySlots);
                     logFalloutFaceDrawableAudit(attached.get(), hair->mModel, mPtr, "final-hat-hair");
@@ -7658,12 +8004,14 @@ namespace MWRender
                 {
                     const bool hairTintModel = isFalloutHairTintModel(part->mModel);
                     const float emissionStrength = hairTintModel ? getFalloutHairEmissionStrength(*tint) : 0.f;
-                    TintMaterialVisitor visitor(*tint, emissionStrength, hairTintModel, hairTintModel);
+                    TintMaterialVisitor visitor(*tint, emissionStrength, hairTintModel, hairTintModel, hairTintModel);
                     attached->accept(visitor);
                     if (hairTintModel)
                         Log(Debug::Info) << "FNV/ESM4 diag: applied hair tint material " << part->mModel
                                          << " tint=(" << tint->x() << ", " << tint->y() << ", " << tint->z()
-                                         << ") emissionStrength=" << emissionStrength << " for "
+                                         << ") emissionStrength=" << emissionStrength
+                                         << " preservedVertexIntensityArrays="
+                                         << visitor.mPreservedVertexColorIntensityArrays << " for "
                                          << mPtr.getCellRef().getRefId();
                 }
                 if (useHatHairVariant)
@@ -7718,8 +8066,16 @@ namespace MWRender
                     {
                         const bool hairTintModel = isFalloutHairTintModel(extraPart->mModel);
                         const float emissionStrength = hairTintModel ? getFalloutHairEmissionStrength(*tint) : 0.f;
-                        TintMaterialVisitor visitor(*tint, emissionStrength, hairTintModel, hairTintModel);
+                        TintMaterialVisitor visitor(
+                            *tint, emissionStrength, hairTintModel, hairTintModel, hairTintModel);
                         extraAttached->accept(visitor);
+                        if (hairTintModel)
+                            Log(Debug::Info) << "FNV/ESM4 diag: applied hair tint material " << extraPart->mModel
+                                             << " tint=(" << tint->x() << ", " << tint->y() << ", " << tint->z()
+                                             << ") emissionStrength=" << emissionStrength
+                                             << " preservedVertexIntensityArrays="
+                                             << visitor.mPreservedVertexColorIntensityArrays << " for "
+                                             << mPtr.getCellRef().getRefId();
                     }
                     if (useExtraHatHairVariant)
                         hideFonvNoHatHairVariant(extraAttached.get(), extraPart->mModel, traits, coveredBodySlots);

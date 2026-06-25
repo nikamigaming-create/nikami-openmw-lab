@@ -733,6 +733,32 @@ def summary_csv_has(lines: list[str], key: str, value: str) -> bool:
     return False
 
 
+def parse_summary_int(text: str, key: str) -> int:
+    match = re.search(rf"{re.escape(key)}=([0-9]+)", text)
+    return int(match.group(1)) if match else 0
+
+
+def parse_hand_runtime_summary(lines: list[str]) -> dict[str, Any]:
+    static_text = summary_value(lines, "Target static hand no-twist proof lines")
+    visible_text = summary_value(lines, "Target visible hand geometry samples")
+    return {
+        "staticProofLines": int(static_text.split()[0]) if static_text and static_text.split()[0].isdigit() else 0,
+        "leftStaticProofLines": parse_summary_int(static_text, "left"),
+        "rightStaticProofLines": parse_summary_int(static_text, "right"),
+        "fingerWeightsLoaded": parse_summary_int(static_text, "fingerWeightsLoaded"),
+        "pendingFingerArticulation": parse_summary_int(static_text, "pendingFingerArticulation"),
+        "visibleHandGeometryStatus": summary_value(lines, "Target visible hand geometry status"),
+        "visibleHandGeometrySamples": int(visible_text.split()[0]) if visible_text and visible_text.split()[0].isdigit() else 0,
+        "visibleHandGeometryLeftBest": parse_summary_int(visible_text, "leftBest"),
+        "visibleHandGeometryRightBest": parse_summary_int(visible_text, "rightBest"),
+        "visibleHandGeometryPoseSanityBadLines": int(
+            summary_value(lines, "Target visible hand geometry pose sanity BAD lines") or "0"
+        ),
+        "targetStandingArmPoseOkLines": int(summary_value(lines, "Target standing arm pose OK lines") or "0"),
+        "targetStandingArmPoseBadLines": int(summary_value(lines, "Target standing arm pose BAD lines") or "0"),
+    }
+
+
 def parse_actor_weapon_states(lines: list[str], patterns: list[str]) -> list[dict[str, Any]]:
     state_re = re.compile(r'initialized actor shell for NPC "(?P<editor>[^"]+)".*? weapon=(?P<weapon>[^ ]*)')
     states: list[dict[str, Any]] = []
@@ -1324,6 +1350,7 @@ def evaluate(
     face_occlusion_findings: list[dict[str, Any]],
     neutral_preview_composition: list[dict[str, Any]],
     face_checks: list[dict[str, Any]],
+    hand_runtime_summary: dict[str, Any],
 ) -> tuple[str, list[str]]:
     failures: list[str] = []
     phase_lower = phase.lower()
@@ -1383,6 +1410,25 @@ def evaluate(
         failures.append(f"neutral preview composition findings: {len(neutral_preview_findings)}")
     if face_occlusion_findings:
         failures.append(f"face occlusion/headgear orientation findings: {len(face_occlusion_findings)}")
+    if actor_kind != "creature":
+        if int(hand_runtime_summary.get("pendingFingerArticulation", 0)) > 0:
+            failures.append(
+                "pending hand finger articulation runtime support: "
+                f"{hand_runtime_summary['pendingFingerArticulation']}"
+            )
+        if int(hand_runtime_summary.get("visibleHandGeometryPoseSanityBadLines", 0)) > 0:
+            failures.append(
+                "target visible hand geometry pose sanity failures: "
+                f"{hand_runtime_summary['visibleHandGeometryPoseSanityBadLines']}"
+            )
+        if int(hand_runtime_summary.get("targetStandingArmPoseBadLines", 0)) > 0:
+            failures.append(f"target standing arm pose failures: {hand_runtime_summary['targetStandingArmPoseBadLines']}")
+        if (
+            summary_value(lines, "NeutralActorPreview").lower() == "true"
+            and summary_value(lines, "NeutralActorPreviewStandingIdle").lower() == "true"
+            and not summary_value(lines, "ActorKitAnimationSource")
+        ):
+            failures.append("missing explicit neutral authoring animation source")
     collapsed_heads = []
     for item in drawables:
         model = item["model"].replace("\\", "/").lower()
@@ -1522,7 +1568,8 @@ def evaluate(
             facegen_exact_pending_checks = [
                 item
                 for item in face_checks
-                if item["values"].get("faceGenTexture") in {"DETAIL_APPLIED_PENDING_EXACT", "DIFFUSE_APPLIED"}
+                if item["values"].get("faceGenTexture")
+                in {"DETAIL_APPLIED_PENDING_EXACT", "DIFFUSE_APPLIED", "GENERATED_DIFFUSE_APPLIED_PENDING_EXACT"}
             ]
             if facegen_exact_pending_checks:
                 failures.append(
@@ -1568,6 +1615,18 @@ def write_markdown(path: Path, report: dict[str, Any]) -> None:
     lines.append(f"TRI/EGM/talk lines: {len(report['morphLines'])}")
     lines.append(f"Actor weapon states: {len(report['actorWeaponStates'])} expected={report['weaponExpected']}")
     lines.append(f"Weapon lines: {len(report['weaponLines'])}")
+    hand_summary = report.get("handRuntimeSummary", {})
+    lines.append(
+        "Hand runtime: "
+        f"static={hand_summary.get('staticProofLines', 0)} "
+        f"left={hand_summary.get('leftStaticProofLines', 0)} "
+        f"right={hand_summary.get('rightStaticProofLines', 0)} "
+        f"fingerWeights={hand_summary.get('fingerWeightsLoaded', 0)} "
+        f"pendingFingerArticulation={hand_summary.get('pendingFingerArticulation', 0)} "
+        f"visible={hand_summary.get('visibleHandGeometryStatus', '')} "
+        f"poseBad={hand_summary.get('visibleHandGeometryPoseSanityBadLines', 0)} "
+        f"armPoseBad={hand_summary.get('targetStandingArmPoseBadLines', 0)}"
+    )
     lines.append(f"Creature evidence lines: {len(report['creatureEvidence'])}")
     lines.append(f"Animation sources: {len(report['animationSources'])}")
     lines.append(f"Selected animation requests: {len(report['animationRequests'])}")
@@ -1747,6 +1806,7 @@ def main() -> int:
         proof_dir, lines, args.actor, weapon_present=weapon_present, phase=args.phase.lower()
     )
     material_evidence = parse_material_evidence(lines, patterns)
+    hand_runtime_summary = parse_hand_runtime_summary(lines)
     actor_kind = args.actor_kind
     if actor_kind == "auto":
         actor_kind = "creature" if creature_evidence else "npc"
@@ -1783,6 +1843,7 @@ def main() -> int:
         face_occlusion_findings,
         neutral_preview_composition,
         face_checks,
+        hand_runtime_summary,
     )
 
     out_json = args.out_json or (proof_dir / "character-builder-report.json")
@@ -1816,6 +1877,7 @@ def main() -> int:
         "actorWeaponStates": actor_weapon_states,
         "weaponExpected": (None if not actor_weapon_states else any(item["weapon"] for item in actor_weapon_states)),
         "weaponLines": weapon_lines,
+        "handRuntimeSummary": hand_runtime_summary,
         "creatureEvidence": creature_evidence,
         "creatureLines": [item["line"] for item in creature_evidence],
         "animationSources": animation_sources,
