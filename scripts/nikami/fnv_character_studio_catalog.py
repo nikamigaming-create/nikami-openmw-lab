@@ -565,6 +565,8 @@ button:disabled {{ opacity: .45; cursor: not-allowed; }}
 .runtimeStatus .runtimeLine {{ display: flex; flex-wrap: wrap; gap: 6px; align-items: center; color: var(--muted); }}
 .runtime-running {{ color: #07120b; background: var(--ok); }}
 .runtime-exited {{ color: #190502; background: var(--bad); }}
+.runtimeAudit {{ display: grid; gap: 5px; max-height: 160px; overflow: auto; padding: 8px; border: 1px solid var(--line); border-radius: 6px; background: #0c0f14; }}
+.auditLine {{ font-family: Consolas, monospace; font-size: 11px; color: var(--muted); overflow-wrap: anywhere; }}
 .policyNote {{ color: var(--muted); font-size: 12px; }}
 .jobList, .eventList, .coordList {{ display: grid; gap: 6px; max-height: 240px; overflow: auto; }}
 .jobItem, .eventItem, .coordItem {{ background: #101216; border: 1px solid #2b3038; border-radius: 5px; padding: 7px; }}
@@ -596,6 +598,7 @@ button:disabled {{ opacity: .45; cursor: not-allowed; }}
       <h2>Studio Session</h2>
       <div id="liveState" class="muted"></div>
       <div id="runtimeStatus" class="runtimeStatus">runtime status pending</div>
+      <div id="runtimeAudit" class="runtimeAudit">runtime consumption audit pending</div>
       <div id="selectedEntry" class="jobItem"></div>
       <div class="actions">
         <button id="newSession" type="button">New Session</button>
@@ -746,6 +749,7 @@ const state = {{
   liveAuthoringDirty: false,
   liveRuntime: null,
   runtimeStatus: null,
+  runtimeAudit: null,
   partEnabled: Object.fromEntries(PARTS.map(part => [part, true]))
 }};
 function esc(v) {{ return String(v ?? "").replace(/[&<>"']/g, c => ({{"&":"&amp;","<":"&lt;",">":"&gt;","\\"":"&quot;","'":"&#39;"}}[c])); }}
@@ -858,6 +862,37 @@ function renderRuntimeStatus() {{
     <div class="liveFile">${{esc(manifest)}}</div>
   `;
 }}
+function renderRuntimeAudit() {{
+  const node = document.getElementById("runtimeAudit");
+  if (!node) return;
+  if (!liveAvailable()) {{
+    node.textContent = "open through the live loopback server for runtime consumption audit";
+    return;
+  }}
+  const audit = state.runtimeAudit;
+  if (!audit) {{
+    node.textContent = "runtime consumption audit pending";
+    return;
+  }}
+  const counts = audit.counts || {{}};
+  const recent = audit.recent || {{}};
+  const latest = [
+    ...(recent.targetSwitches || []).slice(-2),
+    ...(recent.actorAssemblyMatches || []).slice(-2),
+    ...(recent.liveAuthoringApplies || []).slice(-3)
+  ].slice(-7);
+  const statusClass = audit.classification === "runtime-supported" ? "runtime-supported" : audit.classification === "known-blocked" ? "known-blocked" : "loaded-pending-runtime";
+  node.innerHTML = `
+    <div class="runtimeLine">
+      <span class="pill ${{esc(statusClass)}}">${{esc(audit.classification || "pending")}}</span>
+      <span class="pill">target ${{esc(counts.targetSwitches || 0)}}</span>
+      <span class="pill">assembly ${{esc(counts.actorAssemblyMatches || 0)}}</span>
+      <span class="pill">knobs ${{esc(counts.liveAuthoringApplies || 0)}}</span>
+    </div>
+    <div class="liveFile">${{esc(audit.openMwLog || "no OpenMW log resolved")}}</div>
+    ${{latest.length ? latest.map(line => `<div class="auditLine">${{esc(line)}}</div>`).join("") : `<div class="auditLine">${{esc(audit.firstFailingGate || "waiting for runtime log consumption")}}</div>`}}
+  `;
+}}
 async function refreshLiveAuthoring() {{
   if (!liveAvailable()) {{
     renderLiveAuthoringState();
@@ -896,6 +931,18 @@ async function refreshRuntimeStatus() {{
     addLocalEvent("runtime-status.load.failed", {{ message: error.message || String(error) }});
   }}
 }}
+async function refreshRuntimeAudit() {{
+  if (!liveAvailable()) {{
+    renderRuntimeAudit();
+    return;
+  }}
+  try {{
+    state.runtimeAudit = await api("/nikami/runtime-audit");
+    renderRuntimeAudit();
+  }} catch (error) {{
+    addLocalEvent("runtime-audit.load.failed", {{ message: error.message || String(error) }});
+  }}
+}}
 async function writeLiveAuthoring(reset = false) {{
   if (!liveAvailable()) return;
   try {{
@@ -913,6 +960,7 @@ async function writeLiveAuthoring(reset = false) {{
       path: state.liveAuthoring.path,
       controls: state.liveAuthoring.lastApplied || {{}}
     }});
+    window.setTimeout(refreshRuntimeAudit, 500);
   }} catch (error) {{
     addLocalEvent("live-authoring.write.failed", {{ message: error.message || String(error) }});
   }}
@@ -944,6 +992,7 @@ async function sendSelectedLiveRuntime() {{
       path: state.liveRuntime.path,
       limitation: "active-cell world switch; base actor neutral preview fallback"
     }});
+    window.setTimeout(refreshRuntimeAudit, 500);
   }} catch (error) {{
     addLocalEvent("live-runtime.write.failed", {{ message: error.message || String(error), entryId: entry.id }});
   }}
@@ -1424,6 +1473,7 @@ function renderWorkbench() {{
   renderLiveAuthoringState();
   renderLiveRuntimeState();
   renderRuntimeStatus();
+  renderRuntimeAudit();
   renderEvents();
 }}
 function render() {{
@@ -1495,7 +1545,9 @@ refreshSearch();
 refreshLiveAuthoring();
 refreshLiveRuntime();
 refreshRuntimeStatus();
+refreshRuntimeAudit();
 window.setInterval(refreshRuntimeStatus, 2500);
+window.setInterval(refreshRuntimeAudit, 2500);
 </script>
 </body>
 </html>

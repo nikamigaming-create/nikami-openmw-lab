@@ -102,9 +102,21 @@ def main() -> int:
         live_runtime_path = run_dir / "live-runtime-command.json"
         runtime_stdout = run_dir / "runtime-proof.stdout.log"
         runtime_stderr = run_dir / "runtime-proof.stderr.log"
+        openmw_log = root / "configs" / "fnv-flat-clean" / "openmw.log"
         run_dir.mkdir(parents=True, exist_ok=True)
-        runtime_stdout.write_text("runtime stdout", encoding="utf-8")
+        openmw_log.parent.mkdir(parents=True, exist_ok=True)
+        runtime_stdout.write_text(f"OpenMW log {openmw_log}\n", encoding="utf-8")
         runtime_stderr.write_text("runtime stderr", encoding="utf-8")
+        openmw_log.write_text(
+            "\n".join(
+                [
+                    '[00:00:01.000 I] FNV/ESM4 live runtime: actor target changed from="" to="ContractNpc" file="live-runtime-command.json" runtime=runtime-supported gate=runtime-live-actor-target',
+                    '[00:00:01.100 I] FNV/ESM4 proof: actor part assembly target match target="ContractNpc" actor=ContractNpc refAlias=FormId:0x1 ref=FormId:0x11 runtime=runtime-supported',
+                    "[00:00:01.200 I] FNV/ESM4 live authoring: frame-applied head surface authoring model=meshes/characters/head/eyelefthuman.nif prefix=OPENMW_FNV_EYE file=live-authoring.json offset=(0,0,0) rotation=(0,0,-90) pivot=(0,0,0) pivotMode=0 for FormId:0x1",
+                ]
+            ),
+            encoding="utf-8",
+        )
         write_json(
             run_dir / "live-authoring-run.json",
             {
@@ -124,6 +136,13 @@ def main() -> int:
             raise AssertionError("runtime status did not detect the active runtime process")
         if not status["liveAuthoringUpdatedAt"] or not status["liveRuntimeCommandUpdatedAt"]:
             raise AssertionError("runtime status did not expose generated control file mtimes")
+        audit = live.runtime_audit(run_dir, root, live_authoring_path, live_runtime_path)
+        if audit["schema"] != live.LIVE_RUNTIME_AUDIT_SCHEMA or audit["classification"] != "runtime-supported":
+            raise AssertionError("runtime audit did not classify consumed runtime log evidence")
+        if audit["openMwLog"] != str(openmw_log.resolve()):
+            raise AssertionError("runtime audit did not resolve OpenMW log path from runtime stdout")
+        if audit["counts"]["targetSwitches"] != 1 or audit["counts"]["actorAssemblyMatches"] != 1 or audit["counts"]["liveAuthoringApplies"] != 1:
+            raise AssertionError("runtime audit did not count target, assembly, and knob consumption lines")
 
         catalog = live.CatalogStore(root)
         loaded = catalog.load()

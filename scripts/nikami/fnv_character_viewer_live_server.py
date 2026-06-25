@@ -44,6 +44,7 @@ STUDIO_REVIEW_SCHEMA = "nikami-fnv-character-studio-component-review-v1"
 LIVE_AUTHORING_SCHEMA = "nikami-fnv-live-authoring-v1"
 LIVE_RUNTIME_SCHEMA = "nikami-fnv-live-runtime-command-v1"
 LIVE_RUNTIME_STATUS_SCHEMA = "nikami-fnv-live-runtime-status-v1"
+LIVE_RUNTIME_AUDIT_SCHEMA = "nikami-fnv-live-runtime-audit-v1"
 REVIEW_STATES = {"review-pending", "pass", "fail", "blocked", "needs-rerun"}
 HEAD_SURFACE_PREFIXES = (
     "OPENMW_FNV_HEADGEAR",
@@ -177,6 +178,43 @@ def file_mtime_utc(path: Path | None) -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(path.stat().st_mtime))
 
 
+def read_tail_text(path: Path | None, max_bytes: int = 1_500_000) -> str:
+    if path is None or not path.is_file():
+        return ""
+    size = path.stat().st_size
+    with path.open("rb") as stream:
+        if size > max_bytes:
+            stream.seek(size - max_bytes)
+        return stream.read().decode("utf-8", errors="replace")
+
+
+def recent_matching_lines(text: str, patterns: tuple[str, ...], limit: int = 20) -> list[str]:
+    if not text:
+        return []
+    matched: list[str] = []
+    for line in text.splitlines():
+        if any(pattern in line for pattern in patterns):
+            matched.append(line.strip())
+    return matched[-limit:]
+
+
+def find_runtime_openmw_log(root: Path, runtime_stdout_path: Path | None) -> Path | None:
+    stdout_text = read_tail_text(runtime_stdout_path, 300_000)
+    candidates: list[Path] = []
+    for match in re.finditer(r"OpenMW log:?\s+([^\r\n]+openmw\.log)", stdout_text, re.IGNORECASE):
+        candidates.append(Path(match.group(1).strip()))
+    fallback = root / "configs" / "fnv-flat-clean" / "openmw.log"
+    candidates.append(fallback)
+    for candidate in reversed(candidates):
+        try:
+            resolved = candidate.resolve()
+        except OSError:
+            continue
+        if resolved.is_file():
+            return resolved
+    return None
+
+
 def latest_runtime_manifest(run_dir: Path, live_authoring_path: Path | None) -> Path | None:
     candidates: list[Path] = []
     if live_authoring_path is not None:
@@ -238,6 +276,66 @@ def runtime_status(
             "generatedProofOutputsOnly": True,
             "noRetailPayloadBytes": True,
             "statusOnlyNoProcessControl": True,
+        },
+    }
+
+
+def runtime_audit(
+    run_dir: Path, root: Path, live_authoring_path: Path | None, live_runtime_path: Path | None
+) -> dict[str, Any]:
+    status = runtime_status(run_dir, root, live_authoring_path, live_runtime_path)
+    stdout_path = Path(first_text(status.get("runtimeStdout"))) if first_text(status.get("runtimeStdout")) else None
+    openmw_log = find_runtime_openmw_log(root, stdout_path)
+    openmw_text = read_tail_text(openmw_log)
+    target_switches = recent_matching_lines(openmw_text, ("FNV/ESM4 live runtime: actor target changed",), 12)
+    assembly_matches = recent_matching_lines(openmw_text, ("FNV/ESM4 proof: actor part assembly target match",), 12)
+    authoring_applies = recent_matching_lines(
+        openmw_text,
+        (
+            "FNV/ESM4 live authoring: frame-applied head surface authoring",
+            "FNV/ESM4 live authoring: applied head surface authoring",
+        ),
+        24,
+    )
+    face_checks = recent_matching_lines(openmw_text, ("FNV/ESM4 FACE CHECK",), 6)
+    consumption_status = (
+        "runtime-supported"
+        if target_switches or authoring_applies or assembly_matches
+        else ("loaded-pending-runtime" if status.get("runtimeRunning") else "known-blocked")
+    )
+    first_failing_gate = "" if consumption_status == "runtime-supported" else (
+        "runtime-log-consumption" if status.get("runtimeRunning") else "runtime-process-not-running"
+    )
+    return {
+        "schema": LIVE_RUNTIME_AUDIT_SCHEMA,
+        "schemaMarkers": [
+            "runtime-log-consumption-audit-v1",
+            "live-target-switch-audit-v1",
+            "live-head-surface-authoring-audit-v1",
+            "generated-proof-output-only-v1",
+        ],
+        "updatedAt": utc_now(),
+        "classification": consumption_status,
+        "firstFailingGate": first_failing_gate,
+        "runtimeStatus": status,
+        "openMwLog": str(openmw_log or ""),
+        "openMwLogUpdatedAt": file_mtime_utc(openmw_log),
+        "recent": {
+            "targetSwitches": target_switches,
+            "actorAssemblyMatches": assembly_matches,
+            "liveAuthoringApplies": authoring_applies,
+            "faceChecks": face_checks,
+        },
+        "counts": {
+            "targetSwitches": len(target_switches),
+            "actorAssemblyMatches": len(assembly_matches),
+            "liveAuthoringApplies": len(authoring_applies),
+            "faceChecks": len(face_checks),
+        },
+        "policy": {
+            "generatedProofOutputsOnly": True,
+            "noRetailPayloadBytes": True,
+            "auditReadsRuntimeLogsOnly": True,
         },
     }
 
@@ -1290,6 +1388,10 @@ class LiveHandler(SimpleHTTPRequestHandler):
                         "schema": LIVE_RUNTIME_STATUS_SCHEMA,
                         "endpoint": "/nikami/runtime-status",
                     },
+                    "runtimeAudit": {
+                        "schema": LIVE_RUNTIME_AUDIT_SCHEMA,
+                        "endpoint": "/nikami/runtime-audit",
+                    },
                 },
             )
             return
@@ -1303,6 +1405,17 @@ class LiveHandler(SimpleHTTPRequestHandler):
             self.send_json(
                 200,
                 runtime_status(
+                    self.server.run_dir,  # type: ignore[attr-defined]
+                    self.server.root_dir,  # type: ignore[attr-defined]
+                    self.server.live_authoring_store.path,  # type: ignore[attr-defined]
+                    self.server.live_runtime_store.path,  # type: ignore[attr-defined]
+                ),
+            )
+            return
+        if parsed.path == "/nikami/runtime-audit":
+            self.send_json(
+                200,
+                runtime_audit(
                     self.server.run_dir,  # type: ignore[attr-defined]
                     self.server.root_dir,  # type: ignore[attr-defined]
                     self.server.live_authoring_store.path,  # type: ignore[attr-defined]

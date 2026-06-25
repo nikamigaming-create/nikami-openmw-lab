@@ -282,6 +282,9 @@ if (!$html.Contains("Studio Session") -or !$html.Contains("Run 3 Camera") -or !$
 if (!$html.Contains("runtimeStatus") -or !$html.Contains("/nikami/runtime-status") -or !$html.Contains("engine running")) {
     throw "Studio catalog HTML does not expose live OpenMW runtime status."
 }
+if (!$html.Contains("runtimeAudit") -or !$html.Contains("/nikami/runtime-audit") -or !$html.Contains("runtime consumption audit")) {
+    throw "Studio catalog HTML does not expose live OpenMW runtime consumption audit."
+}
 if (!$html.Contains("cameraStrip") -or !$html.Contains("selectedParts") -or !$html.Contains("studioPayload")) {
     throw "Studio catalog HTML does not expose three-camera/component session payload controls."
 }
