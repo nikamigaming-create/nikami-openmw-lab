@@ -2671,6 +2671,8 @@ namespace MWRender
         , mAlpha(1.f)
         , mPlayScriptedOnly(false)
         , mRequiresBoneMap(false)
+        , mProofPreviewAnimation(false)
+        , mProofPreviewGameplayAudit(false)
     {
         for (size_t i = 0; i < sNumBlendMasks; i++)
             mAnimationTimePtr[i] = std::make_shared<AnimationTime>();
@@ -2681,6 +2683,16 @@ namespace MWRender
     Animation::~Animation()
     {
         removeFromSceneImpl();
+    }
+
+    void Animation::setProofPreviewAnimation(bool enabled)
+    {
+        mProofPreviewAnimation = enabled;
+    }
+
+    void Animation::setProofPreviewGameplayAudit(bool enabled)
+    {
+        mProofPreviewGameplayAudit = enabled;
     }
 
     void Animation::setActive(int active)
@@ -2895,7 +2907,7 @@ namespace MWRender
         static const std::string sMode = [] {
             if (const char* env = std::getenv("OPENMW_FNV_ROTATION_MODE"))
                 return std::string(env);
-            return std::string("bindCoreBindLowerBindUpper");
+            return std::string("bindCoreBindLowerRawUpper");
         }();
         return sMode;
     }
@@ -5692,13 +5704,16 @@ namespace MWRender
                     auditFalloutSeatedLegChain(duplicateTransformTargets, mPtr);
                     auditFalloutSeatedUpperBody(duplicateTransformTargets, mPtr);
                 }
-                auditFalloutWorldPosture(duplicateTransformTargets, mPtr);
-                auditFalloutStandingArmPose(duplicateTransformTargets, mPtr);
-                auditFalloutRuntimeParts(mObjectRoot.get(), duplicateTransformTargets, mPtr);
+                if (shouldAuditProofPreviewGameplay())
+                {
+                    auditFalloutWorldPosture(duplicateTransformTargets, mPtr);
+                    auditFalloutStandingArmPose(duplicateTransformTargets, mPtr);
+                    auditFalloutRuntimeParts(mObjectRoot.get(), duplicateTransformTargets, mPtr);
+                }
             }
         }
 
-        if (falloutNpc && shouldUseNativeFalloutAnimationCallbacks()
+        if (shouldAuditProofPreviewGameplay() && falloutNpc && shouldUseNativeFalloutAnimationCallbacks()
             && (std::getenv("OPENMW_FNV_SEATED_POSTURE_AUDIT") != nullptr
                 || std::getenv("OPENMW_FNV_PART_MATRIX_AUDIT") != nullptr))
         {
@@ -5769,7 +5784,8 @@ namespace MWRender
                     osg::Quat(mHeadPitchRadians, osg::Vec3f(1, 0, 0)) * osg::Quat(yaw, osg::Vec3f(0, 0, 1)));
         }
 
-        auditGenericProofPosture(mObjectRoot.get(), mPtr);
+        if (shouldAuditProofPreviewGameplay())
+            auditGenericProofPosture(mObjectRoot.get(), mPtr);
 
         return movement;
     }

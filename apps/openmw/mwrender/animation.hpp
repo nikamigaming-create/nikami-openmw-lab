@@ -258,6 +258,8 @@ namespace MWRender
 
         bool mPlayScriptedOnly;
         bool mRequiresBoneMap;
+        bool mProofPreviewAnimation;
+        bool mProofPreviewGameplayAudit;
 
         const NodeMap& getNodeMap() const;
 
@@ -339,6 +341,11 @@ namespace MWRender
         MWWorld::ConstPtr getPtr() const { return mPtr; }
 
         MWWorld::Ptr getPtr() { return mPtr; }
+
+        void setProofPreviewAnimation(bool enabled);
+        void setProofPreviewGameplayAudit(bool enabled);
+        bool isProofPreviewAnimation() const { return mProofPreviewAnimation; }
+        bool shouldAuditProofPreviewGameplay() const { return !mProofPreviewAnimation || mProofPreviewGameplayAudit; }
 
         /// Set active flag on the object skeleton, if one exists.
         /// @see SceneUtil::Skeleton::setActive

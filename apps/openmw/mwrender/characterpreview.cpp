@@ -377,7 +377,8 @@ namespace MWRender
         static bool keepRightHandWeaponPart(std::string_view name)
         {
             return hasAny(name,
-                { "righthand", "right hand", "weapon", "weap", "1hand", "pistol", "revolver", "rifle", "gun" });
+                { "righthand", "right hand", "forearm", "foretwist", "finger", "thumb", "arms", "weapon",
+                    "weap", "1hand", "pistol", "revolver", "rifle", "gun" });
         }
 
         Mode mMode;
@@ -952,7 +953,10 @@ namespace MWRender
         {
             Log(Debug::Info) << "FNV/ESM4 proof: neutral actor preview using ESM4NpcAnimation for "
                              << mCharacter.toString();
-            return new ESM4NpcAnimation(mCharacter, mNode, mResourceSystem);
+            osg::ref_ptr<Animation> animation = new ESM4NpcAnimation(mCharacter, mNode, mResourceSystem);
+            animation->setProofPreviewAnimation(true);
+            animation->setProofPreviewGameplayAudit(mViewMode == ViewMode::Front);
+            return animation;
         }
         if (mCharacter.getType() == ESM::REC_CREA4)
         {
@@ -968,12 +972,22 @@ namespace MWRender
                              << mCharacter.toString() << " model=\"" << rawModel << "\" correctedModel=\""
                              << animationModel << "\" animated=" << animated
                              << " classification=visual-preview-supported source=neutral-preview";
-            return new CreatureAnimation(mCharacter, animationModel, mResourceSystem, animated, mNode);
+            osg::ref_ptr<Animation> animation
+                = new CreatureAnimation(mCharacter, animationModel, mResourceSystem, animated, mNode);
+            animation->setProofPreviewAnimation(true);
+            animation->setProofPreviewGameplayAudit(mViewMode == ViewMode::Front);
+            return animation;
         }
 
         Log(Debug::Info) << "FNV/ESM4 proof: neutral actor preview using base CharacterPreview animation for "
                          << mCharacter.toString();
-        return CharacterPreview::createAnimation();
+        osg::ref_ptr<Animation> animation = CharacterPreview::createAnimation();
+        if (animation != nullptr)
+        {
+            animation->setProofPreviewAnimation(true);
+            animation->setProofPreviewGameplayAudit(mViewMode == ViewMode::Front);
+        }
+        return animation;
     }
 
     void FalloutActorPreview::onSetup()
@@ -1040,8 +1054,14 @@ namespace MWRender
                     viewName = "face-hat";
                     break;
                 case ViewMode::FrontRight:
-                    position = osg::Vec3f(28.f, 340.f, 128.f);
-                    lookAt = osg::Vec3f(28.f, 24.f, 120.f);
+                    position = osg::Vec3f(
+                        getFalloutNeutralActorPreviewFloat("OPENMW_FNV_NEUTRAL_ACTOR_PREVIEW_HAND_CAMERA_X", 20.f),
+                        getFalloutNeutralActorPreviewFloat("OPENMW_FNV_NEUTRAL_ACTOR_PREVIEW_HAND_CAMERA_Y", 190.f),
+                        getFalloutNeutralActorPreviewFloat("OPENMW_FNV_NEUTRAL_ACTOR_PREVIEW_HAND_CAMERA_Z", 70.f));
+                    lookAt = osg::Vec3f(
+                        getFalloutNeutralActorPreviewFloat("OPENMW_FNV_NEUTRAL_ACTOR_PREVIEW_HAND_LOOK_X", 20.f),
+                        getFalloutNeutralActorPreviewFloat("OPENMW_FNV_NEUTRAL_ACTOR_PREVIEW_HAND_LOOK_Y", 0.f),
+                        getFalloutNeutralActorPreviewFloat("OPENMW_FNV_NEUTRAL_ACTOR_PREVIEW_HAND_LOOK_Z", 70.f));
                     viewName = "right-hand-weapon";
                     break;
             }

@@ -45,7 +45,7 @@ NEUTRAL_PREVIEW_PANES = (
         "centerNdcX": 0.64,
         "widthNdc": 0.58,
         "heightNdc": 1.03,
-        "minForegroundFraction": 0.015,
+        "minForegroundFraction": 0.010,
         "maxForegroundFraction": 0.25,
         "allowedTouchEdges": (),
     },

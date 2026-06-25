@@ -41,7 +41,7 @@ param(
     [double]$ActorViewOffsetZ = 108,
     [double]$ActorViewTargetZ = 108,
     [string]$NeutralActorPreviewProfile = "audit",
-    [string]$FnvRotationMode = "bindCoreBindLowerSplitUpper",
+    [string]$FnvRotationMode = "bindCoreBindLowerRawUpper",
     [switch]$AllowMissingActorVisibleHandGeometry,
     [double]$ActorVisibleHandMaxDistance = 30.0,
     [string]$FnvSkinningMatrixAudit = "arms,rightHand,leftHand,HeadOld",

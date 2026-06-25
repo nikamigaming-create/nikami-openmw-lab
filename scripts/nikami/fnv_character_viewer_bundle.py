@@ -480,7 +480,8 @@ def gate_controls(cases: list[dict[str, Any]], actor: str, actor_kind: str) -> d
             ),
         }
         for mode, label in [
-            ("bindCoreBindLowerSplitUpper", "Pose Math Authoring"),
+            ("bindCoreBindLowerRawUpper", "Pose Math Authoring"),
+            ("bindCoreBindLowerSplitUpper", "Pose Math Split Upper"),
             ("bindCoreBindLowerBindUpper", "Pose Math Bind A/B"),
             ("rawCoreSplitLimbs", "Pose Math Raw Core"),
             ("standingUpperBody", "Pose Math Standing"),
@@ -502,7 +503,7 @@ def gate_controls(cases: list[dict[str, Any]], actor: str, actor_kind: str) -> d
                 animation_start_point="0.35",
                 animation_group="idle",
                 neutral_preview_profile=profile,
-                fnv_rotation_mode="bindCoreBindLowerSplitUpper",
+                fnv_rotation_mode="bindCoreBindLowerRawUpper",
             ),
         }
         for profile, label in [
@@ -587,7 +588,7 @@ def gate_controls(cases: list[dict[str, Any]], actor: str, actor_kind: str) -> d
                     animation_start_point="0.35",
                     animation_group="idle",
                     neutral_preview_profile="audit",
-                    fnv_rotation_mode="bindCoreBindLowerSplitUpper",
+                    fnv_rotation_mode="bindCoreBindLowerRawUpper",
                 ),
             },
             {
@@ -620,7 +621,7 @@ def gate_controls(cases: list[dict[str, Any]], actor: str, actor_kind: str) -> d
                     animation_source="pistol-pose",
                     animation_start_point="0.35",
                     animation_group="idle",
-                    fnv_rotation_mode="bindCoreBindLowerSplitUpper",
+                    fnv_rotation_mode="bindCoreBindLowerRawUpper",
                 ),
             },
         ]

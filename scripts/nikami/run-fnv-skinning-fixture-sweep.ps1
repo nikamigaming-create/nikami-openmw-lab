@@ -18,7 +18,7 @@ param(
     [int]$RunSeconds = 45,
     [int]$MaxFixtures = 0,
     [string]$NeutralActorPreviewProfile = "audit",
-    [string]$FnvRotationMode = "bindCoreBindLowerSplitUpper",
+    [string]$FnvRotationMode = "bindCoreBindLowerRawUpper",
     [string]$FnvSkinningMatrixAudit = "arms,rightHand,leftHand,HeadOld",
     [switch]$NoSound,
     [switch]$DryRun
