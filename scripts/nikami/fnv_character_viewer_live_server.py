@@ -42,6 +42,7 @@ FORBIDDEN_CHARS = set("&;|<>`")
 STUDIO_SCHEMA = "nikami-fnv-character-studio-session-v1"
 STUDIO_REVIEW_SCHEMA = "nikami-fnv-character-studio-component-review-v1"
 STUDIO_SNAPSHOT_SCHEMA = "nikami-fnv-character-studio-snapshot-v1"
+STUDIO_SNAPSHOT_REPLAY_SCHEMA = "nikami-fnv-character-studio-snapshot-replay-v1"
 LIVE_AUTHORING_SCHEMA = "nikami-fnv-live-authoring-v1"
 LIVE_RUNTIME_SCHEMA = "nikami-fnv-live-runtime-command-v1"
 LIVE_RUNTIME_STATUS_SCHEMA = "nikami-fnv-live-runtime-status-v1"
@@ -1137,6 +1138,28 @@ class StudioSessionStore:
             raise ValueError("studio snapshot path escaped generated proof root")
         return path
 
+    def _snapshot_replay_path(self, session_id: str, snapshot_id: str) -> Path:
+        if not re.fullmatch(r"snapshot_[0-9]{8}_[0-9]{6}_[0-9]{4}", snapshot_id):
+            raise ValueError("invalid studio snapshot id")
+        path = (self._snapshot_dir(session_id) / "replay" / f"{snapshot_id}-replay.json").resolve()
+        snapshot_root = self._snapshot_dir(session_id).resolve()
+        if snapshot_root not in path.parents:
+            raise ValueError("studio snapshot replay path escaped generated proof root")
+        return path
+
+    def write_snapshot_replay(
+        self,
+        session_id: str,
+        snapshot: dict[str, Any],
+        command: str = "",
+        request: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        snapshot_id = first_text(snapshot.get("id"))
+        path = self._snapshot_replay_path(session_id, snapshot_id)
+        replay = snapshot_replay_artifact(snapshot, session_id, str(path), command, request)
+        write_generated_json(path, replay)
+        return replay
+
     def create_snapshot(
         self,
         session_id: str,
@@ -1161,7 +1184,10 @@ class StudioSessionStore:
                 runtime_audit_doc,
                 self.reviews(session_id),
             )
+            snapshot["replayArtifactPath"] = str(self._snapshot_replay_path(session_id, snapshot_id))
+            snapshot["replayArtifactState"] = "pending-structured-command"
             write_generated_json(self._snapshot_path(session_id, snapshot_id), snapshot)
+            self.write_snapshot_replay(session_id, snapshot)
             session = self.get(session_id) or session
             snapshots = [str(item) for item in as_list(session.get("snapshots")) if str(item)]
             snapshots.append(snapshot_id)
@@ -1618,6 +1644,11 @@ def snapshot_summary(snapshot: dict[str, Any]) -> dict[str, Any]:
         "reviewRows": len(snapshot.get("componentReviewRows") if isinstance(snapshot.get("componentReviewRows"), list) else []),
         "coordinateRows": len(snapshot.get("coordinateRows") if isinstance(snapshot.get("coordinateRows"), list) else []),
         "classification": first_text((snapshot.get("runtimeAudit") or {}).get("classification") if isinstance(snapshot.get("runtimeAudit"), dict) else ""),
+        "replayArtifact": {
+            "schema": STUDIO_SNAPSHOT_REPLAY_SCHEMA,
+            "path": first_text(snapshot.get("replayArtifactPath")),
+            "state": first_text(snapshot.get("replayArtifactState"), "pending-structured-command"),
+        },
         "policy": {
             "generatedMetadataOnly": True,
             "noRetailPayloadBytes": True,
@@ -1650,6 +1681,50 @@ def snapshot_to_live_runtime_payload(snapshot: dict[str, Any], session_id: str) 
         "selectors": selectors,
     }
     return {key: value for key, value in payload.items() if value not in ("", [], {})}
+
+
+def snapshot_replay_artifact(
+    snapshot: dict[str, Any],
+    session_id: str,
+    artifact_path: str,
+    command: str = "",
+    request: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    studio_payload = snapshot_to_studio_payload(snapshot)
+    live_runtime_payload = snapshot_to_live_runtime_payload(snapshot, session_id)
+    state = "structured-command-ready" if first_text(command) else "pending-structured-command"
+    return {
+        "schema": STUDIO_SNAPSHOT_REPLAY_SCHEMA,
+        "schemaMarkers": [
+            "snapshot-standalone-replay-artifact-v1",
+            "authoring-saveback-replay-v1",
+            "snapshot-replay-job-v1",
+            "generated-metadata-only-v1",
+            "no-retail-payload-v1",
+        ],
+        "id": first_text(snapshot.get("id")),
+        "sessionId": session_id,
+        "entryId": first_text(snapshot.get("entryId"), studio_payload.get("entryId")),
+        "createdAt": utc_now(),
+        "artifactPath": artifact_path,
+        "state": state,
+        "studioPayload": metadata_value(studio_payload),
+        "liveAuthoringControls": metadata_value(snapshot.get("liveControls") if isinstance(snapshot.get("liveControls"), dict) else {}),
+        "liveRuntimePayload": metadata_value(live_runtime_payload),
+        "componentReviewRows": metadata_value(snapshot.get("componentReviewRows") if isinstance(snapshot.get("componentReviewRows"), list) else []),
+        "coordinateRows": metadata_value(snapshot.get("coordinateRows") if isinstance(snapshot.get("coordinateRows"), list) else []),
+        "latestManifest": metadata_value(snapshot.get("latestManifest") if isinstance(snapshot.get("latestManifest"), dict) else {}),
+        "structuredReplayCommand": first_text(command),
+        "structuredReplayRequest": metadata_value(request if isinstance(request, dict) else {}),
+        "policy": {
+            "generatedMetadataOnly": True,
+            "generatedProofOutputsOnly": True,
+            "noRetailPayloadBytes": True,
+            "noRawSavedJobCommand": True,
+            "noRawSavedJobStdoutStderr": True,
+            "replayUsesStructuredJobPathOnly": True,
+        },
+    }
 
 
 def selector_csv(payload: dict[str, Any], key: str) -> str:
@@ -2197,6 +2272,9 @@ class LiveHandler(SimpleHTTPRequestHandler):
                         live_path = str(self.server.live_authoring_store.path)  # type: ignore[attr-defined]
                         command += " -LiveAuthoringFile " + shell_quote(live_path)
                         request["liveAuthoringFile"] = live_path
+                    replay_artifact = self.server.studio_store.write_snapshot_replay(  # type: ignore[attr-defined]
+                        session_id, snapshot, command, request
+                    )
                     job = self.server.job_store.start(command, request, session_id)  # type: ignore[attr-defined]
                     self.server.studio_store.add_job(session_id, job["id"])  # type: ignore[attr-defined]
                     self.server.studio_store.append_event(
@@ -2208,6 +2286,7 @@ class LiveHandler(SimpleHTTPRequestHandler):
                             "entryId": entry_id,
                             "runtimeTarget": request.get("runtimeTarget", ""),
                             "selectors": request.get("selectors", {}),
+                            "replayArtifactPath": replay_artifact.get("artifactPath", ""),
                             "schema": STUDIO_SNAPSHOT_SCHEMA,
                         },
                     )  # type: ignore[attr-defined]

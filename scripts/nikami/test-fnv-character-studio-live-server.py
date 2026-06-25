@@ -325,9 +325,26 @@ def main() -> int:
             raise AssertionError("studio snapshot did not preserve selectors and live controls")
         if "command" in snapshot["latestJob"] or "stdout" in snapshot["latestJob"] or "stderr" in snapshot["latestJob"]:
             raise AssertionError("studio snapshot copied raw job command/output fields")
+        replay_artifact_path = Path(snapshot["replayArtifactPath"])
+        if not replay_artifact_path.is_file():
+            raise AssertionError("studio snapshot did not write a standalone replay artifact")
+        replay_artifact = json.loads(replay_artifact_path.read_text(encoding="utf-8"))
+        replay_artifact_text = json.dumps(replay_artifact)
+        if replay_artifact["schema"] != live.STUDIO_SNAPSHOT_REPLAY_SCHEMA:
+            raise AssertionError("studio snapshot replay artifact schema mismatch")
+        if "snapshot-standalone-replay-artifact-v1" not in replay_artifact["schemaMarkers"]:
+            raise AssertionError("studio snapshot replay artifact did not advertise standalone replay marker")
+        if replay_artifact["liveRuntimePayload"]["selectors"]["parts"] != ["headgear"]:
+            raise AssertionError("studio snapshot replay artifact did not preserve runtime selector payload")
+        if replay_artifact["liveAuthoringControls"]["OPENMW_FNV_HEADGEAR_OFFSET_X"] != 1.25:
+            raise AssertionError("studio snapshot replay artifact did not preserve live authoring controls")
+        if "should-not-be-saved" in replay_artifact_text or "Remove-Item" in replay_artifact_text or "retail payload bytes" in replay_artifact_text:
+            raise AssertionError("studio snapshot replay artifact copied raw job command/output fields")
         snapshots = sessions.snapshots(session["id"])
         if len(snapshots) != 1 or snapshots[0]["id"] != snapshot["id"] or snapshots[0]["coordinateRows"] != 1:
             raise AssertionError("studio snapshot list did not return generated metadata summary")
+        if snapshots[0]["replayArtifact"]["path"] != str(replay_artifact_path):
+            raise AssertionError("studio snapshot list did not expose the standalone replay artifact path")
         loaded_snapshot = sessions.snapshot(session["id"], snapshot["id"])
         if loaded_snapshot is None or loaded_snapshot["entryId"] != "actor:000001":
             raise AssertionError("studio snapshot get failed")
@@ -339,6 +356,12 @@ def main() -> int:
             raise AssertionError("snapshot replay did not rebuild selector command from metadata")
         if any("should-not-be-saved" in str(arg) or "Remove-Item" in str(arg) for arg in replay_args):
             raise AssertionError("snapshot replay used raw saved command metadata")
+        ready_replay = sessions.write_snapshot_replay(session["id"], loaded_snapshot, replay_command, replay_request)
+        if ready_replay["state"] != "structured-command-ready" or "-ActorKitParts" not in ready_replay["structuredReplayCommand"]:
+            raise AssertionError("snapshot replay artifact did not save the structured replay command")
+        ready_replay_text = json.dumps(ready_replay)
+        if "should-not-be-saved" in ready_replay_text or "Remove-Item" in ready_replay_text or "retail payload bytes" in ready_replay_text:
+            raise AssertionError("structured replay artifact copied raw saved job metadata")
         live_runtime_replay = live.snapshot_to_live_runtime_payload(loaded_snapshot, session["id"])
         if live_runtime_replay["selectors"]["parts"] != ["headgear"]:
             raise AssertionError("snapshot replay did not preserve live runtime selector metadata")
