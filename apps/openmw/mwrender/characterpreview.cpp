@@ -319,6 +319,72 @@ namespace MWRender
         }
     };
 
+    class FalloutActorPreviewPartMaskVisitor : public osg::NodeVisitor
+    {
+    public:
+        enum class Mode
+        {
+            FaceHeadgear,
+            RightHandWeapon,
+        };
+
+        FalloutActorPreviewPartMaskVisitor(Mode mode)
+            : osg::NodeVisitor(TRAVERSE_ALL_CHILDREN)
+            , mMode(mode)
+        {
+        }
+
+        void apply(osg::Node& node) override
+        {
+            const std::string name = Misc::StringUtils::lowerCase(node.getName());
+            if (name.rfind("fnv part ", 0) == 0)
+            {
+                const bool keep = mMode == Mode::FaceHeadgear ? keepFaceHeadgearPart(name) : keepRightHandWeaponPart(name);
+                if (!keep)
+                {
+                    node.setNodeMask(0);
+                    ++mMasked;
+                    return;
+                }
+                ++mKept;
+            }
+
+            traverse(node);
+        }
+
+        unsigned int getKept() const { return mKept; }
+        unsigned int getMasked() const { return mMasked; }
+
+    private:
+        static bool hasAny(std::string_view value, std::initializer_list<std::string_view> needles)
+        {
+            for (std::string_view needle : needles)
+            {
+                if (value.find(needle) != std::string_view::npos)
+                    return true;
+            }
+            return false;
+        }
+
+        static bool keepFaceHeadgearPart(std::string_view name)
+        {
+            return hasAny(name,
+                { "characters/head/", "characters\\head\\", "characters/hair/", "characters\\hair\\", "headhuman",
+                    "headold", "mouth", "teeth", "tongue", "eye", "eyebrow", "beard", "hair", "headgear", "hat",
+                    "cowboy", "bandana" });
+        }
+
+        static bool keepRightHandWeaponPart(std::string_view name)
+        {
+            return hasAny(name,
+                { "righthand", "right hand", "weapon", "weap", "1hand", "pistol", "revolver", "rifle", "gun" });
+        }
+
+        Mode mMode;
+        unsigned int mKept = 0;
+        unsigned int mMasked = 0;
+    };
+
     class CharacterPreviewRTTNode : public SceneUtil::RTTNode
     {
         static constexpr float fovYDegrees = 12.3f;
@@ -969,13 +1035,13 @@ namespace MWRender
                     viewName = "full-body";
                     break;
                 case ViewMode::FrontLeft:
-                    position = osg::Vec3f(-135.f, 135.f, 116.f);
-                    lookAt = osg::Vec3f(0.f, 0.f, 116.f);
+                    position = osg::Vec3f(0.f, 260.f, 118.f);
+                    lookAt = osg::Vec3f(0.f, 0.f, 118.f);
                     viewName = "face-hat";
                     break;
                 case ViewMode::FrontRight:
-                    position = osg::Vec3f(54.f, 190.f, 91.f);
-                    lookAt = osg::Vec3f(42.f, 0.f, 91.f);
+                    position = osg::Vec3f(28.f, 205.f, 126.f);
+                    lookAt = osg::Vec3f(28.f, 24.f, 122.f);
                     viewName = "right-hand-weapon";
                     break;
             }
@@ -1001,6 +1067,25 @@ namespace MWRender
             mAnimation->runAnimation(0.0f);
         }
         setRedrawSimulationTime(previewStart);
+
+        if (Misc::StringUtils::ciEqual(profile, "audit") || Misc::StringUtils::ciEqual(profile, "bot-audit"))
+        {
+            std::unique_ptr<FalloutActorPreviewPartMaskVisitor> partMask;
+            if (mViewMode == ViewMode::FrontLeft)
+                partMask = std::make_unique<FalloutActorPreviewPartMaskVisitor>(
+                    FalloutActorPreviewPartMaskVisitor::Mode::FaceHeadgear);
+            else if (mViewMode == ViewMode::FrontRight)
+                partMask = std::make_unique<FalloutActorPreviewPartMaskVisitor>(
+                    FalloutActorPreviewPartMaskVisitor::Mode::RightHandWeapon);
+
+            if (partMask != nullptr)
+            {
+                mNode->accept(*partMask);
+                Log(Debug::Info) << "FNV/ESM4 proof: neutral actor preview part mask view=" << viewName
+                                 << " kept=" << partMask->getKept() << " masked=" << partMask->getMasked()
+                                 << " runtime=runtime-supported gate=runtime-neutral-actor-preview";
+            }
+        }
 
         Log(Debug::Info) << "FNV/ESM4 proof: neutral actor preview camera view=" << viewName << " position=("
                          << position.x() << "," << position.y() << "," << position.z() << ") lookAt=("
