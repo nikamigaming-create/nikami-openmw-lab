@@ -17,8 +17,10 @@
 
 #include <components/debug/debuglog.hpp>
 #include <components/esm4/loadarmo.hpp>
+#include <components/esm4/loadcrea.hpp>
 #include <components/fallback/fallback.hpp>
 #include <components/misc/strings/algorithm.hpp>
+#include <components/misc/resourcehelpers.hpp>
 #include <components/resource/resourcesystem.hpp>
 #include <components/resource/scenemanager.hpp>
 #include <components/sceneutil/depth.hpp>
@@ -28,6 +30,7 @@
 #include <components/sceneutil/shadow.hpp>
 #include <components/settings/values.hpp>
 #include <components/stereo/multiview.hpp>
+#include <components/vfs/pathutil.hpp>
 
 #include "../mwbase/environment.hpp"
 #include "../mwbase/world.hpp"
@@ -41,6 +44,7 @@
 #include "../mwmechanics/weapontype.hpp"
 
 #include "animation.hpp"
+#include "creatureanimation.hpp"
 #include "esm4npcanimation.hpp"
 #include "npcanimation.hpp"
 #include "util.hpp"
@@ -883,6 +887,22 @@ namespace MWRender
             Log(Debug::Info) << "FNV/ESM4 proof: neutral actor preview using ESM4NpcAnimation for "
                              << mCharacter.toString();
             return new ESM4NpcAnimation(mCharacter, mNode, mResourceSystem);
+        }
+        if (mCharacter.getType() == ESM::REC_CREA4)
+        {
+            const std::string rawModel(mCharacter.getClass().getModel(mCharacter));
+            std::string animationModel;
+            if (!rawModel.empty())
+                animationModel = Misc::ResourceHelpers::correctActorModelPath(
+                    VFS::Path::toNormalized(rawModel), mResourceSystem->getVFS());
+            const bool animated = !animationModel.empty()
+                && !(animationModel == rawModel && Misc::StringUtils::ciEndsWith(animationModel, ".nif"));
+
+            Log(Debug::Info) << "FNV/ESM4 proof: neutral actor preview using CreatureAnimation for "
+                             << mCharacter.toString() << " model=\"" << rawModel << "\" correctedModel=\""
+                             << animationModel << "\" animated=" << animated
+                             << " classification=visual-preview-supported source=neutral-preview";
+            return new CreatureAnimation(mCharacter, animationModel, mResourceSystem, animated, mNode);
         }
 
         Log(Debug::Info) << "FNV/ESM4 proof: neutral actor preview using base CharacterPreview animation for "

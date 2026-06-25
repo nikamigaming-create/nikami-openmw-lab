@@ -605,8 +605,12 @@ namespace MWRender
     }
 
     CreatureAnimation::CreatureAnimation(
-        const MWWorld::Ptr& ptr, const std::string& model, Resource::ResourceSystem* resourceSystem, bool animated)
-        : ActorAnimation(ptr, osg::ref_ptr<osg::Group>(ptr.getRefData().getBaseNode()), resourceSystem)
+        const MWWorld::Ptr& ptr, const std::string& model, Resource::ResourceSystem* resourceSystem, bool animated,
+        osg::ref_ptr<osg::Group> parentNode)
+        : ActorAnimation(
+            ptr,
+            parentNode != nullptr ? std::move(parentNode) : osg::ref_ptr<osg::Group>(ptr.getRefData().getBaseNode()),
+            resourceSystem)
     {
         if (!model.empty())
         {

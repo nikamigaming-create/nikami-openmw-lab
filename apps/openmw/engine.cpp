@@ -630,6 +630,39 @@ namespace
         return nullptr;
     }
 
+    const ESM4::Creature* findFalloutProofCreatureBaseByTarget(
+        const MWWorld::ESMStore& store, std::string_view target, int& scanned)
+    {
+        scanned = 0;
+        if (target.empty())
+            return nullptr;
+
+        const std::string targetText(target);
+        const std::string targetLower = Misc::StringUtils::lowerCase(targetText);
+        const auto& creatures = store.get<ESM4::Creature>();
+        for (auto it = creatures.begin(); it != creatures.end(); ++it)
+        {
+            ++scanned;
+            const ESM4::Creature& creature = *it;
+
+            const std::string editorLower = Misc::StringUtils::lowerCase(creature.mEditorId);
+            const std::string fullLower = Misc::StringUtils::lowerCase(creature.mFullName);
+            const std::string form = ESM::RefId(creature.mId).toDebugString();
+            const std::string formLower = Misc::StringUtils::lowerCase(form);
+
+            if (editorLower == targetLower || fullLower == targetLower || formLower == targetLower
+                || falloutProofFormTargetMatches(form, targetText)
+                || (!editorLower.empty() && editorLower.find(targetLower) != std::string::npos)
+                || (!fullLower.empty() && fullLower.find(targetLower) != std::string::npos)
+                || (!editorLower.empty() && !targetLower.empty()
+                    && targetLower.find(editorLower) != std::string::npos)
+                || (!fullLower.empty() && !targetLower.empty() && targetLower.find(fullLower) != std::string::npos))
+                return &creature;
+        }
+
+        return nullptr;
+    }
+
     ESM::RefId getProofRefId(const char* name, const char* fallback)
     {
         const char* env = std::getenv(name);
@@ -2632,6 +2665,7 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
     static osg::ref_ptr<osg::Camera> proofNeutralActorPreviewComposite;
     static std::vector<std::unique_ptr<MWRender::FalloutActorPreview>> proofNeutralActorPreviews;
     static std::unique_ptr<MWWorld::LiveCellRef<ESM4::Npc>> proofNeutralActorPreviewNpcProxy;
+    static std::unique_ptr<MWWorld::LiveCellRef<ESM4::Creature>> proofNeutralActorPreviewCreatureProxy;
     static std::string proofActorEffectiveTarget;
     if (proofActorTarget != nullptr && proofActorEffectiveTarget != proofActorTarget)
     {
@@ -2651,6 +2685,7 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
         proofNeutralActorPreviewIsolationApplied = false;
         proofNeutralActorPreviews.clear();
         proofNeutralActorPreviewNpcProxy.reset();
+        proofNeutralActorPreviewCreatureProxy.reset();
         if (proofNeutralActorPreviewComposite != nullptr && proofNeutralActorPreviewComposite->getNumParents() > 0)
             proofNeutralActorPreviewComposite->getParent(0)->removeChild(proofNeutralActorPreviewComposite);
         proofNeutralActorPreviewComposite = nullptr;
@@ -3148,8 +3183,10 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
         }
         else
         {
-            bool basePreviewHandled = false;
+            bool baseNpcPreviewHandled = false;
+            bool baseCreaturePreviewHandled = false;
             int npcBaseRecordsScanned = 0;
+            int creatureBaseRecordsScanned = 0;
             if (proofNeutralActorPreviewRequested && !proofNeutralActorPreviewAttempted)
             {
                 const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
@@ -3171,8 +3208,36 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                                      << "\" scannedActive=" << scanned << " activeActors=" << actors
                                      << " scannedNpcBases=" << npcBaseRecordsScanned
                                      << " runtime=loaded-pending-runtime gate=runtime-neutral-actor-preview";
-                    basePreviewHandled = assembleNeutralActorPreview(basePreviewActor, "base-npc-record");
+                    baseNpcPreviewHandled = assembleNeutralActorPreview(basePreviewActor, "base-npc-record");
                     isolateNeutralActorPreview();
+                }
+                else
+                {
+                    const ESM4::Creature* creatureBase = store != nullptr
+                        ? findFalloutProofCreatureBaseByTarget(*store, target, creatureBaseRecordsScanned)
+                        : nullptr;
+                    if (creatureBase != nullptr)
+                    {
+                        ESM::CellRef proxyRef;
+                        proxyRef.blank();
+                        proxyRef.mRefID = creatureBase->mEditorId.empty()
+                            ? ESM::RefId(creatureBase->mId)
+                            : ESM::RefId::stringRefId(creatureBase->mEditorId);
+                        proofNeutralActorPreviewCreatureProxy
+                            = std::make_unique<MWWorld::LiveCellRef<ESM4::Creature>>(proxyRef, creatureBase);
+                        MWWorld::Ptr basePreviewActor(proofNeutralActorPreviewCreatureProxy.get(), nullptr);
+                        Log(Debug::Info) << "FNV/ESM4 proof: base creature preview match target=\"" << target
+                                         << "\" actor=" << creatureBase->mEditorId << " form="
+                                         << ESM::RefId(creatureBase->mId).toDebugString() << " full=\""
+                                         << creatureBase->mFullName << "\" scannedActive=" << scanned
+                                         << " activeActors=" << actors
+                                         << " scannedCreatureBases=" << creatureBaseRecordsScanned
+                                         << " runtime=loaded-pending-runtime gate=runtime-neutral-actor-preview"
+                                         << " classification=base-record-visual-preview-only";
+                        baseCreaturePreviewHandled
+                            = assembleNeutralActorPreview(basePreviewActor, "base-creature-record");
+                        isolateNeutralActorPreview();
+                    }
                 }
             }
 
@@ -3181,8 +3246,11 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                 Log(Debug::Warning) << "FNV/ESM4 proof: active-cell actor lookup failed target=\"" << target
                                     << "\" frame=" << frameNumber << " scanned=" << scanned << " actors=" << actors
                                     << " baseNpcPreview="
-                                    << (basePreviewHandled ? "runtime-supported" : "not-applied")
-                                    << " scannedNpcBases=" << npcBaseRecordsScanned;
+                                    << (baseNpcPreviewHandled ? "runtime-supported" : "not-applied")
+                                    << " scannedNpcBases=" << npcBaseRecordsScanned
+                                    << " baseCreaturePreview="
+                                    << (baseCreaturePreviewHandled ? "visual-preview-supported" : "not-applied")
+                                    << " scannedCreatureBases=" << creatureBaseRecordsScanned;
                 lastProofActorLookupFailureLogFrame = frameNumber;
             }
         }

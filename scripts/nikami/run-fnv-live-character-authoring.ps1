@@ -151,6 +151,8 @@ foreach ($prefix in @("OPENMW_FNV_HEADGEAR", "OPENMW_FNV_HAIR", "OPENMW_FNV_BROW
         noRetailPayloadBytes = $true
         activeCellActorSwitchOnly = $true
         baseNpcPreviewWhenInactive = $true
+        baseCreaturePreviewWhenInactive = $true
+        baseActorPreviewWhenInactive = $true
     }
 } | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $LiveRuntimeCommandFile -Encoding UTF8
 
@@ -194,8 +196,8 @@ Add-Arg $runtimeArgs "-BootstrapHour" $BootstrapHour
 Add-Arg $runtimeArgs "-ActorTarget" $ActorTarget
 Add-Arg $runtimeArgs "-ActorKind" $ActorKind
 $runtimeArgs.Add("-StageActor")
+$runtimeArgs.Add("-NeutralActorPreview")
 if ($ActorKind -ine "creature") {
-    $runtimeArgs.Add("-NeutralActorPreview")
     $runtimeArgs.Add("-NeutralActorPreviewStandingIdle")
 }
 Add-Arg $runtimeArgs "-NeutralActorPreviewProfile" $NeutralActorPreviewProfile
@@ -247,6 +249,8 @@ $manifest = [pscustomobject][ordered]@{
         liveNumericControlsOnly = $true
         activeCellActorSwitchOnly = $true
         baseNpcPreviewWhenInactive = $true
+        baseCreaturePreviewWhenInactive = $true
+        baseActorPreviewWhenInactive = $true
         pcFlatFirst = $true
     }
 }

@@ -492,6 +492,8 @@ class LiveRuntimeCommandStore:
                 "noRetailPayloadBytes": True,
                 "activeCellActorSwitchOnly": True,
                 "baseNpcPreviewWhenInactive": True,
+                "baseCreaturePreviewWhenInactive": True,
+                "baseActorPreviewWhenInactive": True,
             },
         }
 
@@ -520,6 +522,8 @@ class LiveRuntimeCommandStore:
                     "noRetailPayloadBytes": True,
                     "activeCellActorSwitchOnly": True,
                     "baseNpcPreviewWhenInactive": True,
+                    "baseCreaturePreviewWhenInactive": True,
+                    "baseActorPreviewWhenInactive": True,
                 }
             )
             doc["policy"] = policy
@@ -577,6 +581,8 @@ class LiveRuntimeCommandStore:
                         "noRetailPayloadBytes": True,
                         "activeCellActorSwitchOnly": True,
                         "baseNpcPreviewWhenInactive": True,
+                        "baseCreaturePreviewWhenInactive": True,
+                        "baseActorPreviewWhenInactive": True,
                     },
                 }
             )

@@ -1,9 +1,16 @@
 #ifndef GAME_RENDER_CREATUREANIMATION_H
 #define GAME_RENDER_CREATUREANIMATION_H
 
+#include <osg/ref_ptr>
+
 #include "../mwworld/inventorystore.hpp"
 #include "actoranimation.hpp"
 #include "weaponanimation.hpp"
+
+namespace osg
+{
+    class Group;
+}
 
 namespace MWWorld
 {
@@ -16,7 +23,8 @@ namespace MWRender
     {
     public:
         CreatureAnimation(
-            const MWWorld::Ptr& ptr, const std::string& model, Resource::ResourceSystem* resourceSystem, bool animated);
+            const MWWorld::Ptr& ptr, const std::string& model, Resource::ResourceSystem* resourceSystem, bool animated,
+            osg::ref_ptr<osg::Group> parentNode = nullptr);
         virtual ~CreatureAnimation() {}
     };
 
