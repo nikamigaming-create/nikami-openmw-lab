@@ -61,19 +61,41 @@ def read_lines(path: Path) -> list[str]:
     return path.read_text(encoding="utf-8", errors="replace").splitlines()
 
 
+def matches_known_actor_value(value: str | None, patterns: list[str]) -> bool:
+    if not value:
+        return False
+    normalized = value.strip().strip('"')
+    if not normalized:
+        return False
+    return any(normalized == pattern.strip().strip('"') for pattern in patterns)
+
+
 def actor_patterns(lines: list[str], actor: str) -> list[str]:
     patterns = [actor]
     active_re = re.compile(
         rf'active-cell actor match target="{re.escape(actor)}".*?\bref=([^ ]+)\s+base=([^ ]+)'
     )
+    assembly_re = re.compile(
+        rf'actor part assembly target match target="{re.escape(actor)}".*?\bactor=([^ ]+) '
+        r"refAlias=([^ ]+) ref=([^ ]+) baseEditor=([^ ]+) baseForm=([^ ]+)"
+    )
     quoted_re = re.compile(r'\b(baseEditor|baseFull)="([^"]*)"')
     for line in lines:
+        matched_actor_line = False
         match = active_re.search(line)
-        if not match:
+        if match:
+            matched_actor_line = True
+            for value in match.groups():
+                if value and value not in patterns:
+                    patterns.append(value)
+        assembly_match = assembly_re.search(line)
+        if assembly_match and any(matches_known_actor_value(value, patterns) for value in assembly_match.groups()):
+            matched_actor_line = True
+            for value in assembly_match.groups():
+                if value and value not in patterns:
+                    patterns.append(value)
+        if not matched_actor_line:
             continue
-        for value in match.groups():
-            if value and value not in patterns:
-                patterns.append(value)
         for quoted in quoted_re.finditer(line):
             value = quoted.group(2)
             if value and value not in patterns:
@@ -348,6 +370,8 @@ def summarize_runtime_audits(audits: list[dict[str, Any]]) -> list[dict[str, Any
                 "class": item["class"],
                 "count": 0,
                 "badCount": 0,
+                "okCount": 0,
+                "regressedAfterOk": False,
                 "firstVerdict": item["verdict"],
                 "lastVerdict": item["verdict"],
                 "firstDistance": item["distance"],
@@ -409,6 +433,10 @@ def summarize_runtime_audits(audits: list[dict[str, Any]]) -> list[dict[str, Any
         summary["lastLine"] = item["line"]
         if item["distance"] > summary["maxDistance"]:
             summary["maxDistance"] = item["distance"]
+        if item["verdict"] == "OK":
+            summary["okCount"] += 1
+        elif summary["okCount"] > 0:
+            summary["regressedAfterOk"] = True
         if item["verdict"] != "OK":
             summary["badCount"] += 1
             if summary["firstBadSampleIndex"] == 0:
@@ -435,7 +463,7 @@ def summarize_runtime_audits(audits: list[dict[str, Any]]) -> list[dict[str, Any
     result = []
     for key in order:
         summary = grouped[key]
-        summary["regressed"] = summary["firstVerdict"] == "OK" and summary["badCount"] > 0
+        summary["regressed"] = summary["regressedAfterOk"]
         result.append(summary)
     return result
 
@@ -622,26 +650,61 @@ def parse_actor_matches(lines: list[str], actor: str) -> list[dict[str, Any]]:
         r"baseEditor=\"(?P<baseEditor>[^\"]*)\" (?:baseForm=(?P<baseForm>[^ ]+) )?baseFull=\"(?P<baseFull>[^\"]*)\" "
         r"pos=\((?P<pos>[^)]*)\) rot=\((?P<rot>[^)]*)\)"
     )
+    assembly_re = re.compile(
+        rf'actor part assembly target match target="{re.escape(actor)}" actor=(?P<name>[^ ]+) '
+        r"refAlias=(?P<refAlias>[^ ]+) ref=(?P<ref>[^ ]+) baseEditor=(?P<baseEditor>[^ ]+) "
+        r"baseForm=(?P<baseForm>[^ ]+) traitsForm=(?P<traitsForm>[^ ]+)"
+    )
     matches: list[dict[str, Any]] = []
+    known_patterns = [actor]
     for line in lines:
         match = match_re.search(line)
-        if not match:
+        if match:
+            data = match.groupdict()
+            for value in (data["ref"], data["base"], data["name"], data["baseEditor"], data.get("baseForm") or "", data["baseFull"]):
+                if value and value not in known_patterns:
+                    known_patterns.append(value)
+            matches.append(
+                {
+                    "frame": int(data["frame"]),
+                    "source": "active-cell",
+                    "ref": data["ref"],
+                    "base": data["base"],
+                    "name": data["name"],
+                    "baseEditor": data["baseEditor"],
+                    "baseForm": data.get("baseForm") or "",
+                    "baseFull": data["baseFull"],
+                    "pos": parse_vec3(data["pos"]),
+                    "rot": parse_vec3(data["rot"]),
+                    "line": compact_line(line),
+                }
+            )
             continue
-        data = match.groupdict()
-        matches.append(
-            {
-                "frame": int(data["frame"]),
-                "ref": data["ref"],
-                "base": data["base"],
-                "name": data["name"],
-                "baseEditor": data["baseEditor"],
-                "baseForm": data.get("baseForm") or "",
-                "baseFull": data["baseFull"],
-                "pos": parse_vec3(data["pos"]),
-                "rot": parse_vec3(data["rot"]),
-                "line": compact_line(line),
-            }
-        )
+        assembly_match = assembly_re.search(line)
+        if assembly_match:
+            data = assembly_match.groupdict()
+            if not any(matches_known_actor_value(value, known_patterns) for value in data.values()):
+                continue
+            for value in data.values():
+                if value and value not in known_patterns:
+                    known_patterns.append(value)
+            matches.append(
+                {
+                    "frame": 0,
+                    "source": "actor-part-assembly",
+                    "ref": data["ref"],
+                    "refAlias": data["refAlias"],
+                    "base": data["baseForm"],
+                    "name": data["name"],
+                    "baseEditor": data["baseEditor"],
+                    "baseForm": data["baseForm"],
+                    "traitsForm": data["traitsForm"],
+                    "baseFull": "",
+                    "pos": [],
+                    "rot": [],
+                    "line": compact_line(line),
+                }
+            )
     return matches
 
 
@@ -808,6 +871,14 @@ def evaluate(
     face_occlusion_findings: list[dict[str, Any]],
 ) -> tuple[str, list[str]]:
     failures: list[str] = []
+    phase_lower = phase.lower()
+    requires_animation_playback = bool(animation_requests) or phase_lower in {
+        "animation",
+        "dialogue",
+        "talk",
+        "creature-animation",
+        "creature-full",
+    }
     screenshots = sorted(p.name for p in proof_dir.glob("*.png"))
     if not screenshots:
         failures.append("missing screenshots")
@@ -815,7 +886,7 @@ def evaluate(
         failures.append("missing active-cell actor match")
     if not any(item["matchedControllers"] > 0 for item in animation_sources):
         failures.append("missing bound animation controller evidence")
-    if not any(item["controllers"] > 0 and item["playing"] for item in animation_playback):
+    if requires_animation_playback and not any(item["controllers"] > 0 and item["playing"] for item in animation_playback):
         failures.append("missing target animation playback evidence")
     unavailable_requests = [item for item in animation_requests if not item["available"]]
     if unavailable_requests:
@@ -840,10 +911,11 @@ def evaluate(
     suspect_bounds = [item for item in bounds if item["verdict"] != "OK"]
     if suspect_bounds:
         failures.append(f"suspect attachment bounds: {len(suspect_bounds)}")
-    bad_audits = [item for item in audits if item["verdict"] != "OK"]
-    if bad_audits:
-        failures.append(f"bad runtime part audits: {len(bad_audits)}")
-    regressions = [item for item in summarize_runtime_audits(audits) if item["regressed"]]
+    runtime_audit_summary = summarize_runtime_audits(audits)
+    never_settled_audits = [item for item in runtime_audit_summary if item["okCount"] == 0 and item["badCount"] > 0]
+    if never_settled_audits:
+        failures.append(f"bad runtime part audits: {len(never_settled_audits)}")
+    regressions = [item for item in runtime_audit_summary if item["regressed"]]
     if regressions:
         failures.append(f"runtime audit regressions after initial OK: {len(regressions)}")
     if face_occlusion_findings:

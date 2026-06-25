@@ -22,7 +22,7 @@ param(
     [string[]]$Angles = @("front", "front-left", "front-right"),
     [int]$RunSeconds = 28,
     [int]$ActorFrame = 520,
-    [string]$ScreenshotFrames = "760",
+    [string]$ScreenshotFrames = "600,660,720,780,840",
     [string]$BootstrapCell = "FormId:0x10daeb9",
     [double]$BootstrapX = -67480,
     [double]$BootstrapY = 1500,
