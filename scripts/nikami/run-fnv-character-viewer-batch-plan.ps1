@@ -497,6 +497,6 @@ Write-Host "Batch run JSON: $summaryPath"
 Write-Host "Batch run HTML: $($summary.html)"
 Write-Host "Batch run Markdown: $($summary.markdown)"
 Write-Host "Selected entries JSON: $selectedPath"
-if ($RequirePass -and $summary.status -ne "PASS") {
+if (!$DryRun -and $summary.status -ne "PASS") {
     throw "FNV character viewer batch run failed. See $summaryPath"
 }

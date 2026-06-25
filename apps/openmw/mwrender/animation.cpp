@@ -73,6 +73,8 @@
 #include "../mwworld/containerstore.hpp"
 #include "../mwworld/esmstore.hpp"
 
+#include "../mwclass/esm4npc.hpp"
+
 #include "../mwmechanics/character.hpp" // FIXME: for MWMechanics::Priority
 #include "../mwmechanics/weapontype.hpp"
 
@@ -1787,6 +1789,8 @@ namespace
             = ((leftUpperArmLocal.z() - pelvisLocal.z()) + (rightUpperArmLocal.z() - pelvisLocal.z())) * 0.5f;
         const float averageUpperToHandDrop
             = ((leftUpperArmLocal.z() - leftHandLocal.z()) + (rightUpperArmLocal.z() - rightHandLocal.z())) * 0.5f;
+        const bool weaponEquipped = ptr.getType() == ESM4::Npc::sRecordId
+            && MWClass::ESM4Npc::getEquippedWeapon(ptr) != nullptr;
         osg::MatrixTransform* weaponNode = findFalloutTarget(targets, "weapon");
         const float rightHandWeaponDistance
             = weaponNode != nullptr ? (rightHand - transformFalloutPoint(osg::Vec3f(), getFalloutNodeWorldMatrix(weaponNode))).length()
@@ -1795,7 +1799,7 @@ namespace
         const bool armsWide = handSpread > torsoHeight * 1.45f && handSpread > upperArmSpread * 1.8f;
         const bool forearmsWide = forearmSpread > upperArmSpread * 1.35f;
         const bool handsNotAtSides = averageUpperToHandDrop < std::max(18.f, torsoHeight * 0.95f);
-        const bool weaponPose = rightHandWeaponDistance <= std::max(16.f, torsoHeight * 0.4f);
+        const bool weaponPose = weaponEquipped && rightHandWeaponDistance <= std::max(16.f, torsoHeight * 0.4f);
         const bool bad = armsWide && forearmsWide && handsNotAtSides && !weaponPose;
         const char* reason = bad ? "arms_out_bind_pose" : weaponPose ? "weapon_pose" : "ok";
 
@@ -1818,6 +1822,7 @@ namespace
             << " averageForearmAbovePelvis=" << averageForearmAbovePelvis
             << " averageUpperArmAbovePelvis=" << averageUpperArmAbovePelvis
             << " averageUpperToHandDrop=" << averageUpperToHandDrop
+            << " weaponEquipped=" << weaponEquipped
             << " rightHandWeaponDistance=" << rightHandWeaponDistance
             << " verdict=" << (bad ? "BAD" : "OK") << " reason=" << reason;
         return !bad;
