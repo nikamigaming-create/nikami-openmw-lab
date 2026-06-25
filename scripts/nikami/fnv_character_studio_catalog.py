@@ -1096,25 +1096,31 @@ function renderRuntimeAudit() {{
   }}
   const counts = audit.counts || {{}};
   const recent = audit.recent || {{}};
+  const liveCommand = audit.liveRuntimeCommand || {{}};
   const latest = [
     ...(recent.targetSwitches || []).slice(-2),
     ...(recent.liveActorKitControls || []).slice(-3),
     ...(recent.liveActorKitPostConstruction || []).slice(-2),
     ...(recent.liveActorKitPartRebuilds || []).slice(-2),
+    ...(recent.latestLiveRuntimeCommandFingerprint || []).slice(-2),
     ...(recent.actorAssemblyMatches || []).slice(-2),
     ...(recent.liveAuthoringApplies || []).slice(-3)
   ].slice(-7);
   const statusClass = audit.classification === "runtime-supported" ? "runtime-supported" : audit.classification === "known-blocked" ? "known-blocked" : "loaded-pending-runtime";
+  const exactClass = liveCommand.exactFingerprintConsumed ? "runtime-supported" : "loaded-pending-runtime";
   node.innerHTML = `
     <div class="runtimeLine">
       <span class="pill ${{esc(statusClass)}}">${{esc(audit.classification || "pending")}}</span>
+      <span class="pill ${{esc(exactClass)}}">latest ${{liveCommand.exactFingerprintConsumed ? "consumed" : "stale"}}</span>
       <span class="pill">target ${{esc(counts.targetSwitches || 0)}}</span>
       <span class="pill">selectors ${{esc(counts.liveActorKitControls || 0)}}</span>
       <span class="pill">post ${{esc(counts.liveActorKitPostConstruction || 0)}}</span>
       <span class="pill">rebuilds ${{esc(counts.liveActorKitPartRebuilds || 0)}}</span>
+      <span class="pill">fingerprint ${{esc(counts.latestLiveRuntimeCommandFingerprint || 0)}}</span>
       <span class="pill">assembly ${{esc(counts.actorAssemblyMatches || 0)}}</span>
       <span class="pill">knobs ${{esc(counts.liveAuthoringApplies || 0)}}</span>
     </div>
+    <div class="liveFile">${{esc(liveCommand.fingerprint || "no actor-kit command fingerprint")}}</div>
     <div class="liveFile">${{esc(audit.openMwLog || "no OpenMW log resolved")}}</div>
     ${{latest.length ? latest.map(line => `<div class="auditLine">${{esc(line)}}</div>`).join("") : `<div class="auditLine">${{esc(audit.firstFailingGate || "waiting for runtime log consumption")}}</div>`}}
   `;

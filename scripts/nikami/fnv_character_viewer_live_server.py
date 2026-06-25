@@ -352,6 +352,20 @@ def runtime_audit(
     stdout_path = Path(first_text(status.get("runtimeStdout"))) if first_text(status.get("runtimeStdout")) else None
     openmw_log = find_runtime_openmw_log(root, stdout_path)
     openmw_text = read_tail_text(openmw_log)
+    live_runtime_doc: dict[str, Any] = {}
+    if live_runtime_path is not None and live_runtime_path.is_file():
+        try:
+            loaded_live_runtime = read_json(live_runtime_path)
+            if isinstance(loaded_live_runtime, dict):
+                live_runtime_doc = loaded_live_runtime
+        except Exception:
+            live_runtime_doc = {}
+    current_fingerprint = live_runtime_actor_kit_fingerprint(live_runtime_doc)
+    live_runtime_mtime = live_runtime_path.stat().st_mtime if live_runtime_path is not None and live_runtime_path.is_file() else 0.0
+    openmw_log_mtime = openmw_log.stat().st_mtime if openmw_log is not None and openmw_log.is_file() else 0.0
+    openmw_log_new_enough_for_command = not live_runtime_mtime or (
+        openmw_log_mtime + 0.100 >= live_runtime_mtime
+    )
     target_switches = recent_matching_lines(openmw_text, ("FNV/ESM4 live runtime: actor target changed",), 12)
     actor_kit_controls = recent_matching_lines(
         openmw_text,
@@ -378,14 +392,47 @@ def runtime_audit(
         24,
     )
     face_checks = recent_matching_lines(openmw_text, ("FNV/ESM4 FACE CHECK",), 6)
-    consumption_status = (
-        "runtime-supported"
-        if target_switches or actor_kit_controls or actor_kit_part_rebuilds or authoring_applies or assembly_matches
-        else ("loaded-pending-runtime" if status.get("runtimeRunning") else "known-blocked")
+    all_fingerprint_lines = [
+        line.strip()
+        for line in openmw_text.splitlines()
+        if "runtime-live-actor-kit-post-construction-selector" in line
+        or "runtime-live-actor-kit-part-rebuild" in line
+    ]
+    exact_fingerprint_lines = (
+        [
+            line
+            for line in all_fingerprint_lines
+            if f'fingerprint="{current_fingerprint}"' in line
+        ]
+        if current_fingerprint
+        else []
     )
-    first_failing_gate = "" if consumption_status == "runtime-supported" else (
-        "runtime-log-consumption" if status.get("runtimeRunning") else "runtime-process-not-running"
+    latest_live_runtime_command_consumed = bool(
+        current_fingerprint and openmw_log_new_enough_for_command and exact_fingerprint_lines
     )
+    any_consumption_evidence = bool(
+        target_switches or actor_kit_controls or actor_kit_part_rebuilds or authoring_applies or assembly_matches
+    )
+    if current_fingerprint:
+        consumption_status = (
+            "runtime-supported"
+            if latest_live_runtime_command_consumed
+            else ("loaded-pending-runtime" if status.get("runtimeRunning") else "known-blocked")
+        )
+        first_failing_gate = "" if latest_live_runtime_command_consumed else (
+            "latest-live-runtime-command-not-consumed"
+            if status.get("runtimeRunning")
+            else "runtime-process-not-running"
+        )
+    else:
+        consumption_status = (
+            "runtime-supported"
+            if any_consumption_evidence
+            else ("loaded-pending-runtime" if status.get("runtimeRunning") else "known-blocked")
+        )
+        first_failing_gate = "" if consumption_status == "runtime-supported" else (
+            "runtime-log-consumption" if status.get("runtimeRunning") else "runtime-process-not-running"
+        )
     return {
         "schema": LIVE_RUNTIME_AUDIT_SCHEMA,
         "schemaMarkers": [
@@ -394,6 +441,7 @@ def runtime_audit(
             "live-actor-kit-selector-audit-v1",
             "live-actor-kit-post-construction-audit-v1",
             "live-actor-kit-part-rebuild-audit-v1",
+            "latest-live-runtime-command-fingerprint-audit-v1",
             "live-head-surface-authoring-audit-v1",
             "generated-proof-output-only-v1",
         ],
@@ -408,6 +456,7 @@ def runtime_audit(
             "liveActorKitControls": actor_kit_controls,
             "liveActorKitPostConstruction": actor_kit_post_construction,
             "liveActorKitPartRebuilds": actor_kit_part_rebuilds,
+            "latestLiveRuntimeCommandFingerprint": exact_fingerprint_lines[-6:],
             "actorAssemblyMatches": assembly_matches,
             "liveAuthoringApplies": authoring_applies,
             "faceChecks": face_checks,
@@ -417,9 +466,25 @@ def runtime_audit(
             "liveActorKitControls": len(actor_kit_controls),
             "liveActorKitPostConstruction": len(actor_kit_post_construction),
             "liveActorKitPartRebuilds": len(actor_kit_part_rebuilds),
+            "latestLiveRuntimeCommandFingerprint": len(exact_fingerprint_lines),
             "actorAssemblyMatches": len(assembly_matches),
             "liveAuthoringApplies": len(authoring_applies),
             "faceChecks": len(face_checks),
+        },
+        "liveRuntimeCommand": {
+            "path": str(live_runtime_path or ""),
+            "updatedAt": first_text(live_runtime_doc.get("updatedAt")),
+            "fingerprint": current_fingerprint,
+            "openMwLogMtimeAtOrAfterCommand": openmw_log_new_enough_for_command,
+            "exactFingerprintConsumed": latest_live_runtime_command_consumed,
+            "classification": (
+                "runtime-supported"
+                if latest_live_runtime_command_consumed
+                else ("loaded-pending-runtime" if current_fingerprint else "non-runtime-support-file")
+            ),
+            "firstFailingGate": "" if latest_live_runtime_command_consumed or not current_fingerprint else (
+                "latest-live-runtime-command-not-consumed"
+            ),
         },
         "policy": {
             "generatedProofOutputsOnly": True,
@@ -812,6 +877,7 @@ class LiveRuntimeCommandStore:
             doc = read_json(self.path)
             if not isinstance(doc, dict):
                 raise ValueError("live runtime command JSON must be an object")
+            before = json.dumps(doc, sort_keys=True, separators=(",", ":"))
             default = self._default_doc()
             for key, value in default.items():
                 if key not in doc:
@@ -842,7 +908,9 @@ class LiveRuntimeCommandStore:
                 if marker not in markers:
                     markers.append(marker)
             doc["schemaMarkers"] = markers
-            self._write(doc)
+            after = json.dumps(doc, sort_keys=True, separators=(",", ":"))
+            if after != before:
+                self._write(doc)
             return doc
 
     def update(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -1414,6 +1482,38 @@ def csv_values(value: Any) -> list[str]:
             if text:
                 values.append(text)
     return values
+
+
+def live_runtime_selector_text(doc: dict[str, Any], top_level_key: str, selector_key: str, *, list_value: bool = False) -> str:
+    selectors = doc.get("selectors") if isinstance(doc.get("selectors"), dict) else {}
+    value = doc.get(top_level_key)
+    if not first_text(value) and selector_key in selectors:
+        value = selectors.get(selector_key)
+    if list_value:
+        return ",".join(csv_values(value))
+    return first_text(value)
+
+
+def live_runtime_actor_kit_fingerprint(doc: dict[str, Any]) -> str:
+    if not doc:
+        return ""
+    parts: list[str] = []
+
+    def append(key: str, value: str) -> None:
+        if value:
+            parts.append(f"{key}={value};")
+
+    append("actorTarget", first_text(doc.get("actorTarget"), doc.get("runtimeTarget"), doc.get("target")))
+    append("phase", live_runtime_selector_text(doc, "characterBuilderPhase", "phase"))
+    append("parts", live_runtime_selector_text(doc, "actorKitParts", "parts", list_value=True))
+    append("partModels", live_runtime_selector_text(doc, "actorKitPartModels", "partModels", list_value=True))
+    append("propSlots", live_runtime_selector_text(doc, "actorKitPropSlots", "propSlots", list_value=True))
+    append("propModels", live_runtime_selector_text(doc, "actorKitPropModels", "propModels", list_value=True))
+    append("animationSource", live_runtime_selector_text(doc, "actorKitAnimationSource", "animationSource"))
+    append("animationStartPoint", live_runtime_selector_text(doc, "actorKitAnimationStartPoint", "animationStartPoint"))
+    append("animationGroup", live_runtime_selector_text(doc, "actorKitAnimationGroup", "animationGroup"))
+    append("dialogueMode", live_runtime_selector_text(doc, "actorKitDialogueMode", "dialogueMode"))
+    return "".join(parts)
 
 
 def actor_kit_part_key(value: str) -> str:

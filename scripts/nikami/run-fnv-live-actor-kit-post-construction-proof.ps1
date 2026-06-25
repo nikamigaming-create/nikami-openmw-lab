@@ -5,6 +5,13 @@ param(
     [string]$VcpkgRoot = $env:VCPKG_ROOT,
     [string]$ProofRoot = "",
     [string]$ActorTarget = "GSEasyPete",
+    [string]$RuntimeTag = "",
+    [string]$BootstrapCell = "FormId:0x10daeb9",
+    [double]$BootstrapX = -67480,
+    [double]$BootstrapY = 1500,
+    [double]$BootstrapZ = 8425,
+    [double]$BootstrapRotZ = 1.5708,
+    [double]$BootstrapHour = 6,
     [int]$RunSeconds = 44,
     [int]$FirstWriteDelaySeconds = 28,
     [int]$SecondWriteDelaySeconds = 5,
@@ -26,6 +33,9 @@ if ([string]::IsNullOrWhiteSpace($VcpkgRoot)) {
 }
 
 $Stamp = Get-Date -Format "yyyyMMdd_HHmmss"
+if ([string]::IsNullOrWhiteSpace($RuntimeTag)) {
+    $RuntimeTag = "fnv-live-post-construction-$Stamp"
+}
 $RunDir = Join-Path $ProofRoot "fnv-live-post-construction-selector-proof/$Stamp"
 New-Item -ItemType Directory -Force -Path $RunDir | Out-Null
 $LiveRuntimeCommandFile = Join-Path $RunDir "live-runtime-command.json"
@@ -69,7 +79,7 @@ function Write-LiveCommand {
     } | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $LiveRuntimeCommandFile -Encoding UTF8
 }
 
-Write-LiveCommand -Phase "face" -Parts "face-organs" -AnimationStartPoint "0.10"
+Write-LiveCommand -Phase "full" -Parts "all" -AnimationStartPoint "0.10"
 $StartedAt = Get-Date
 
 $RuntimeJob = Start-Job -ScriptBlock {
@@ -80,19 +90,44 @@ $RuntimeJob = Start-Job -ScriptBlock {
         [string]$VcpkgRoot,
         [string]$FnvData,
         [string]$ProofRoot,
+        [string]$ActorTarget,
+        [string]$BootstrapCell,
+        [double]$BootstrapX,
+        [double]$BootstrapY,
+        [double]$BootstrapZ,
+        [double]$BootstrapRotZ,
+        [double]$BootstrapHour,
         [string]$LiveRuntimeCommandFile,
+        [string]$RuntimeTag,
         [int]$RunSeconds
     )
     Set-Location $RepoRoot
     powershell -NoProfile -ExecutionPolicy Bypass -File scripts\nikami\run-fnv-flat-proof.ps1 `
         -BuildDir $BuildDir `
         -Configuration $Configuration `
+        -RuntimeTag $RuntimeTag `
         -VcpkgRoot $VcpkgRoot `
         -FnvData $FnvData `
         -ProofRoot $ProofRoot `
         -NeutralActorPreview `
         -NeutralActorPreviewStandingIdle `
         -NeutralActorPreviewProfile audit `
+        -ActorTarget $ActorTarget `
+        -ActorKind npc `
+        -StageActor `
+        -BootstrapCell $BootstrapCell `
+        -BootstrapX $BootstrapX `
+        -BootstrapY $BootstrapY `
+        -BootstrapZ $BootstrapZ `
+        -BootstrapRotZ $BootstrapRotZ `
+        -BootstrapHour $BootstrapHour `
+        -ActorStageX $BootstrapX `
+        -ActorStageY $BootstrapY `
+        -ActorStageZ $BootstrapZ `
+        -ActorStageRotZ $BootstrapRotZ `
+        -ActorViewLocalOffset `
+        -ActorViewOffsetZ 108 `
+        -ActorViewTargetZ 108 `
         -LiveRuntimeCommandFile $LiveRuntimeCommandFile `
         -RunSeconds $RunSeconds `
         -ScreenshotFrames "540,720,900" `
@@ -101,12 +136,12 @@ $RuntimeJob = Start-Job -ScriptBlock {
     if ($LASTEXITCODE -ne 0) {
         throw "FNV flat proof failed with exit code $LASTEXITCODE."
     }
-} -ArgumentList $RepoRoot, $BuildDir, $Configuration, $VcpkgRoot, $FnvData, $ProofRoot, $LiveRuntimeCommandFile, $RunSeconds
+} -ArgumentList $RepoRoot, $BuildDir, $Configuration, $VcpkgRoot, $FnvData, $ProofRoot, $ActorTarget, $BootstrapCell, $BootstrapX, $BootstrapY, $BootstrapZ, $BootstrapRotZ, $BootstrapHour, $LiveRuntimeCommandFile, $RuntimeTag, $RunSeconds
 
 Start-Sleep -Seconds $FirstWriteDelaySeconds
-Write-LiveCommand -Phase "headgear" -Parts "headgear" -AnimationStartPoint "0.35"
+Write-LiveCommand -Phase "full" -Parts "all" -AnimationStartPoint "0.35"
 Start-Sleep -Seconds $SecondWriteDelaySeconds
-Write-LiveCommand -Phase "talk" -Parts "face-organs" -AnimationStartPoint "0.65"
+Write-LiveCommand -Phase "full" -Parts "all" -AnimationStartPoint "0.65"
 
 $Output = Receive-Job -Job $RuntimeJob -Wait -AutoRemoveJob
 $Output | Out-Host
@@ -168,6 +203,9 @@ $Result = [pscustomobject][ordered]@{
     proofDir = $ProofDir.FullName
     liveRuntimeCommandFile = $LiveRuntimeCommandFile
     actorTarget = $ActorTarget
+    runtimeTag = $RuntimeTag
+    bootstrapCell = $BootstrapCell
+    bootstrapHour = $BootstrapHour
     firstWriteDelaySeconds = $FirstWriteDelaySeconds
     secondWriteDelaySeconds = $SecondWriteDelaySeconds
     generatedProofOutputsOnly = $true

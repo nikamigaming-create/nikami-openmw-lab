@@ -40,6 +40,7 @@
 #include <components/esm3/loadrace.hpp>
 #include <components/esm4/loadcrea.hpp>
 #include <components/esm4/loadligh.hpp>
+#include <components/esm4/loadnpc.hpp>
 
 #include <components/misc/constants.hpp>
 #include <components/misc/pathhelpers.hpp>
@@ -1835,6 +1836,14 @@ namespace
             return false;
 
         const std::string targetLower = Misc::StringUtils::lowerCase(target);
+        const auto matchesTarget = [&](std::string_view value) {
+            if (value.empty())
+                return false;
+            const std::string valueLower = Misc::StringUtils::lowerCase(std::string(value));
+            return valueLower == targetLower || valueLower.find(targetLower) != std::string::npos
+                || targetLower.find(valueLower) != std::string::npos;
+        };
+
         const std::string idLower = Misc::StringUtils::lowerCase(ptr.getCellRef().getRefId().toDebugString());
         if (targetLower == idLower)
             return true;
@@ -1842,6 +1851,22 @@ namespace
         const std::string ptrLower = Misc::StringUtils::lowerCase(ptr.toString());
         if (ptrLower.find(targetLower) != std::string::npos)
             return true;
+
+        if (ptr.getType() == ESM4::Npc::sRecordId)
+        {
+            if (const ESM4::Npc* traits = MWClass::ESM4Npc::getTraitsRecord(ptr))
+            {
+                if (matchesTarget(traits->mEditorId) || matchesTarget(ESM::RefId(traits->mId).toDebugString()))
+                    return true;
+            }
+            if (const MWWorld::LiveCellRef<ESM4::Npc>* ref = ptr.get<ESM4::Npc>())
+            {
+                if (ref->mBase != nullptr
+                    && (matchesTarget(ref->mBase->mEditorId)
+                        || matchesTarget(ESM::RefId(ref->mBase->mId).toDebugString())))
+                    return true;
+            }
+        }
 
         try
         {

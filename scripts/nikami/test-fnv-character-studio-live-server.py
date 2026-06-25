@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+import time
 from pathlib import Path
 
 import fnv_character_viewer_live_server as live
@@ -177,6 +178,38 @@ def main() -> int:
             raise AssertionError("live runtime command did not persist phase or animation scrub selector")
         if runtime_doc["lastApplied"].get("actorKitDialogueMode") != "mouth-open":
             raise AssertionError("live runtime command did not record last applied actor-kit controls")
+        expected_fingerprint = live.live_runtime_actor_kit_fingerprint(runtime_doc)
+        if expected_fingerprint != (
+            "actorTarget=ContractNpc;phase=headgear;parts=headgear;propSlots=headgear;"
+            "animationSource=hands-at-side;animationStartPoint=0.25;animationGroup=idle;dialogueMode=mouth-open;"
+        ):
+            raise AssertionError(f"live runtime command fingerprint mismatch: {expected_fingerprint}")
+        stale_audit = live.runtime_audit(run_dir, root, live_authoring_path, live_runtime_path)
+        if stale_audit["classification"] != "loaded-pending-runtime":
+            raise AssertionError("runtime audit treated stale actor-kit fingerprint evidence as current")
+        if stale_audit["firstFailingGate"] != "latest-live-runtime-command-not-consumed":
+            raise AssertionError("runtime audit did not expose latest-command consumption failure gate")
+        if stale_audit["liveRuntimeCommand"]["exactFingerprintConsumed"]:
+            raise AssertionError("runtime audit reported stale fingerprint as consumed")
+        time.sleep(0.02)
+        with openmw_log.open("a", encoding="utf-8") as stream:
+            stream.write(
+                "\n[00:00:02.085 I] FNV/ESM4 live runtime: actor-kit part rebuild generation=2 "
+                'actor=ContractNpc ref=FormId:0x1 targetMatches=1 requestedParts=2 requestedSelectorParts=1 '
+                'requestedPropSlots=1 requestedPartModels=0 requestedPropModels=0 beforeParts=5 removedParents=5 '
+                'staleAfterRemoval=0 rebuiltParts=5 attachedParts=5 duplicateParts=0 failedParts=0 beforeDuplicateParts=0 '
+                f'fingerprint="{expected_fingerprint}" firstParts="FNV Part meshes/example.nif" '
+                "runtime=runtime-supported gate=runtime-live-actor-kit-part-rebuild"
+            )
+        future = time.time() + 1
+        os.utime(openmw_log, (future, future))
+        fresh_audit = live.runtime_audit(run_dir, root, live_authoring_path, live_runtime_path)
+        if fresh_audit["classification"] != "runtime-supported":
+            raise AssertionError("runtime audit did not accept exact current actor-kit fingerprint evidence")
+        if not fresh_audit["liveRuntimeCommand"]["exactFingerprintConsumed"]:
+            raise AssertionError("runtime audit did not mark exact current actor-kit fingerprint as consumed")
+        if fresh_audit["counts"]["latestLiveRuntimeCommandFingerprint"] < 1:
+            raise AssertionError("runtime audit did not count exact current actor-kit fingerprint evidence")
 
         catalog = live.CatalogStore(root)
         loaded = catalog.load()
