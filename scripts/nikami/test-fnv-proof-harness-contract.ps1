@@ -164,6 +164,8 @@ Assert-Text $flat "Target world posture BAD lines:" "flat proof reports target b
 Assert-Text $flat "Target standing arm pose BAD lines:" "flat proof reports target standing arm bind/T-pose lines"
 Assert-Text $flat "Target visible hand geometry status:" "flat proof reports target visible skinned hand geometry"
 Assert-Text $flat "did not prove visible skinned hand geometry follows animated hand anchors" "flat proof fails when visible hand skin does not follow skeleton"
+Assert-Text $flat "post-skin-pose-sanity" "flat proof can score post-skin RigGeometry centers against animated hand anchors"
+Assert-Text $flat "skinnedCenter=" "flat proof parses post-skin geometry centers instead of only pre-skin audit centers"
 Assert-Text $flat "Get-NormalizedFnvFormSuffix" "flat proof resolves target actor aliases across FNV plugin-index form variants"
 Assert-Text $flat "OPENMW_FNV_SKINNING_MATRIX_AUDIT" "flat proof can request skinning matrix evidence without external environment setup"
 Assert-Text $flat "OPENMW_FNV_HAIR_EMISSION_STRENGTH" "flat proof can request hair material emission proof control without external environment setup"

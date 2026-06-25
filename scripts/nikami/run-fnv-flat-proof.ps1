@@ -379,6 +379,30 @@ function Format-ProofNumber([object]$Value) {
     return ([double]$Value).ToString("0.###", [System.Globalization.CultureInfo]::InvariantCulture)
 }
 
+function Convert-LogVec3([string]$Text) {
+    if ([string]::IsNullOrWhiteSpace($Text)) { return $null }
+    $parts = @($Text.Split(","))
+    if ($parts.Count -ne 3) { return $null }
+    return ,@(
+        (Convert-LogFloat $parts[0]),
+        (Convert-LogFloat $parts[1]),
+        (Convert-LogFloat $parts[2])
+    )
+}
+
+function Get-Vec3Distance([object[]]$A, [object[]]$B) {
+    if ($null -eq $A -or $null -eq $B -or $A.Count -ne 3 -or $B.Count -ne 3) { return $null }
+    $dx = [double]$A[0] - [double]$B[0]
+    $dy = [double]$A[1] - [double]$B[1]
+    $dz = [double]$A[2] - [double]$B[2]
+    return [Math]::Sqrt(($dx * $dx) + ($dy * $dy) + ($dz * $dz))
+}
+
+function Test-Vec3Near([object[]]$A, [object[]]$B, [double]$Tolerance) {
+    $distance = Get-Vec3Distance $A $B
+    return $null -ne $distance -and $distance -le $Tolerance
+}
+
 function Get-ActorVisibleHandGeometryProbe([string]$Path, [string[]]$ActorPatterns, [double]$MaxDistance) {
     if (!(Test-Path -LiteralPath $Path) -or $ActorPatterns.Count -eq 0) {
         return [pscustomobject]@{
@@ -393,6 +417,7 @@ function Get-ActorVisibleHandGeometryProbe([string]$Path, [string[]]$ActorPatter
 
     $seen = [System.Collections.Generic.HashSet[string]]::new()
     $samples = [System.Collections.Generic.List[object]]::new()
+    $auditSamples = [System.Collections.Generic.List[object]]::new()
     foreach ($pattern in $ActorPatterns) {
         $actorPattern = "(?:`"$pattern`"|$pattern)"
         $matches = @(Select-String -LiteralPath $Path -Pattern "FNV/ESM4 ACTOR HAND GEOMETRY AUDIT $actorPattern " -ErrorAction SilentlyContinue)
@@ -412,12 +437,74 @@ function Get-ActorVisibleHandGeometryProbe([string]$Path, [string[]]$ActorPatter
                 $renderDistance = Convert-LogFloat $Matches[1]
             }
 
+            $drawable = ""
+            if ($match.Line -match " drawable='([^']+)'") { $drawable = $Matches[1] }
+
+            $anchor = $null
+            if ($match.Line -match " anchor=\(([-+0-9.eE]+,[-+0-9.eE]+,[-+0-9.eE]+)\)") {
+                $anchor = Convert-LogVec3 $Matches[1]
+            }
+
+            $sourceCenter = $null
+            if ($match.Line -match " sourceCenterWorld=\(([-+0-9.eE]+,[-+0-9.eE]+,[-+0-9.eE]+)\)") {
+                $sourceCenter = Convert-LogVec3 $Matches[1]
+            }
+
             $samples.Add([pscustomobject]@{
                 Side = $side
                 RenderValid = $renderValid
                 RenderDistance = $renderDistance
+                Evidence = "pre-skin-audit"
                 Line = $match.Line
             })
+            $auditSamples.Add([pscustomobject]@{
+                Side = $side
+                Drawable = $drawable
+                Anchor = $anchor
+                SourceCenter = $sourceCenter
+                Line = $match.Line
+            })
+        }
+    }
+
+    if ($auditSamples.Count -gt 0) {
+        $poseMatches = @(Select-String -LiteralPath $Path -Pattern "FNV/ESM4 diag: Fallout RigGeometry '.*' pose sanity .* skinnedCenter=" -ErrorAction SilentlyContinue)
+        foreach ($poseMatch in $poseMatches) {
+            $drawable = ""
+            if ($poseMatch.Line -match "Fallout RigGeometry '([^']+)' pose sanity") { $drawable = $Matches[1] }
+            if ([string]::IsNullOrWhiteSpace($drawable)) { continue }
+
+            $sourceCenter = $null
+            if ($poseMatch.Line -match " sourceCenter=\(([-+0-9.eE]+,[-+0-9.eE]+,[-+0-9.eE]+)\)") {
+                $sourceCenter = Convert-LogVec3 $Matches[1]
+            }
+
+            $skinnedCenter = $null
+            if ($poseMatch.Line -match " skinnedCenter=\(([-+0-9.eE]+,[-+0-9.eE]+,[-+0-9.eE]+)\)") {
+                $skinnedCenter = Convert-LogVec3 $Matches[1]
+            }
+
+            if ($null -eq $sourceCenter -or $null -eq $skinnedCenter) { continue }
+
+            $matchingAudits = @($auditSamples | Where-Object {
+                $_.Drawable -eq $drawable `
+                    -and ($_.Side -eq "left" -or $_.Side -eq "right") `
+                    -and $null -ne $_.Anchor `
+                    -and $null -ne $_.SourceCenter `
+                    -and (Test-Vec3Near $_.SourceCenter $sourceCenter 0.25)
+            })
+
+            foreach ($audit in $matchingAudits) {
+                $postSkinDistance = Get-Vec3Distance $skinnedCenter $audit.Anchor
+                if ($null -eq $postSkinDistance) { continue }
+                $samples.Add([pscustomobject]@{
+                    Side = $audit.Side
+                    RenderValid = $true
+                    RenderDistance = $postSkinDistance
+                    Evidence = "post-skin-pose-sanity"
+                    Line = $poseMatch.Line
+                })
+            }
         }
     }
 
