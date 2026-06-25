@@ -1025,7 +1025,10 @@ function renderLiveRuntimeState() {{
   }}
   const target = state.liveRuntime?.actorTarget || "no live runtime target selected";
   const path = state.liveRuntime?.path || "generated live-runtime-command.json pending";
-  node.textContent = `${{target}} / ${{path}}`;
+  const selectors = state.liveRuntime?.selectors || {{}};
+  const phase = selectors.phase || "default phase";
+  const parts = Array.isArray(selectors.parts) && selectors.parts.length ? selectors.parts.join(",") : "all parts";
+  node.textContent = `${{target}} / ${{phase}} / ${{parts}} / ${{path}}`;
 }}
 function renderRuntimeStatus() {{
   const node = document.getElementById("runtimeStatus");
@@ -1160,6 +1163,7 @@ async function sendSelectedLiveRuntime() {{
   if (!entry || !["npc", "creature"].includes(entry.kind)) return;
   const target = entry.runtimeTarget || entry.baseActorTarget || entry.target || "";
   if (!target) return;
+  const selectorPayload = studioPayload("runtimeFrontOnly");
   try {{
     state.liveRuntime = await api("/nikami/live-runtime", {{
       method: "POST",
@@ -1171,7 +1175,16 @@ async function sendSelectedLiveRuntime() {{
         selectedTarget: entry.selectedTarget || entry.target || "",
         placedTarget: entry.placedTarget || "",
         actorKind: entry.kind,
-        command: "set-actor-target"
+        command: "update-actor-kit",
+        selectors: {{
+          phases: selectorPayload.phases,
+          parts: selectorPayload.parts,
+          propSlots: selectorPayload.propSlots,
+          animationSource: selectorPayload.animationSource || "",
+          animationStartPoint: selectorPayload.animationStartPoint || "",
+          animationGroup: selectorPayload.animationGroup || "",
+          dialogueMode: selectorPayload.dialogueMode || ""
+        }}
       }})
     }});
     renderLiveRuntimeState();
@@ -1179,6 +1192,7 @@ async function sendSelectedLiveRuntime() {{
       actorTarget: state.liveRuntime.actorTarget,
       actorKind: state.liveRuntime.actorKind,
       path: state.liveRuntime.path,
+      selectors: state.liveRuntime.selectors || {{}},
       limitation: "active-cell world switch; base actor neutral preview fallback"
     }});
     window.setTimeout(refreshRuntimeAudit, 500);

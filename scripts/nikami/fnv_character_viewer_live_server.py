@@ -68,6 +68,38 @@ HEAD_SURFACE_CONTROL_KEYS = {
     for prefix in HEAD_SURFACE_PREFIXES
     for suffix in (*HEAD_SURFACE_FLOAT_SUFFIXES, *HEAD_SURFACE_BOOL_SUFFIXES)
 }
+LIVE_RUNTIME_SELECTOR_FIELDS = (
+    "characterBuilderPhase",
+    "actorKitParts",
+    "actorKitPartModels",
+    "actorKitPropSlots",
+    "actorKitPropModels",
+    "actorKitAnimationSource",
+    "actorKitAnimationStartPoint",
+    "actorKitAnimationGroup",
+    "actorKitDialogueMode",
+    "fnvRotationMode",
+    "neutralPreviewProfile",
+)
+LIVE_RUNTIME_SELECTOR_ALIASES = {
+    "characterBuilderPhase": ("characterBuilderPhase", "phase", "phases"),
+    "actorKitParts": ("actorKitParts", "parts"),
+    "actorKitPartModels": ("actorKitPartModels", "partModels"),
+    "actorKitPropSlots": ("actorKitPropSlots", "propSlots"),
+    "actorKitPropModels": ("actorKitPropModels", "propModels"),
+    "actorKitAnimationSource": ("actorKitAnimationSource", "animationSource"),
+    "actorKitAnimationStartPoint": ("actorKitAnimationStartPoint", "animationStartPoint"),
+    "actorKitAnimationGroup": ("actorKitAnimationGroup", "animationGroup"),
+    "actorKitDialogueMode": ("actorKitDialogueMode", "dialogueMode"),
+    "fnvRotationMode": ("fnvRotationMode",),
+    "neutralPreviewProfile": ("neutralPreviewProfile",),
+}
+LIVE_RUNTIME_SELECTOR_LIST_FIELDS = {
+    "actorKitParts",
+    "actorKitPartModels",
+    "actorKitPropSlots",
+    "actorKitPropModels",
+}
 CATALOG_SEARCH_ENTRY_FIELDS = (
     "id",
     "source",
@@ -288,6 +320,11 @@ def runtime_audit(
     openmw_log = find_runtime_openmw_log(root, stdout_path)
     openmw_text = read_tail_text(openmw_log)
     target_switches = recent_matching_lines(openmw_text, ("FNV/ESM4 live runtime: actor target changed",), 12)
+    actor_kit_controls = recent_matching_lines(
+        openmw_text,
+        ("FNV/ESM4 live runtime: actor-kit selector",),
+        24,
+    )
     assembly_matches = recent_matching_lines(openmw_text, ("FNV/ESM4 proof: actor part assembly target match",), 12)
     authoring_applies = recent_matching_lines(
         openmw_text,
@@ -300,7 +337,7 @@ def runtime_audit(
     face_checks = recent_matching_lines(openmw_text, ("FNV/ESM4 FACE CHECK",), 6)
     consumption_status = (
         "runtime-supported"
-        if target_switches or authoring_applies or assembly_matches
+        if target_switches or actor_kit_controls or authoring_applies or assembly_matches
         else ("loaded-pending-runtime" if status.get("runtimeRunning") else "known-blocked")
     )
     first_failing_gate = "" if consumption_status == "runtime-supported" else (
@@ -311,6 +348,7 @@ def runtime_audit(
         "schemaMarkers": [
             "runtime-log-consumption-audit-v1",
             "live-target-switch-audit-v1",
+            "live-actor-kit-selector-audit-v1",
             "live-head-surface-authoring-audit-v1",
             "generated-proof-output-only-v1",
         ],
@@ -322,12 +360,14 @@ def runtime_audit(
         "openMwLogUpdatedAt": file_mtime_utc(openmw_log),
         "recent": {
             "targetSwitches": target_switches,
+            "liveActorKitControls": actor_kit_controls,
             "actorAssemblyMatches": assembly_matches,
             "liveAuthoringApplies": authoring_applies,
             "faceChecks": face_checks,
         },
         "counts": {
             "targetSwitches": len(target_switches),
+            "liveActorKitControls": len(actor_kit_controls),
             "actorAssemblyMatches": len(assembly_matches),
             "liveAuthoringApplies": len(authoring_applies),
             "faceChecks": len(face_checks),
@@ -671,7 +711,11 @@ class LiveRuntimeCommandStore:
     def _default_doc(self) -> dict[str, Any]:
         return {
             "schema": LIVE_RUNTIME_SCHEMA,
-            "schemaMarkers": ["runtime-live-target-switch-v1", "generated-command-file-only-v1"],
+            "schemaMarkers": [
+                "runtime-live-target-switch-v1",
+                "runtime-live-actor-kit-controls-v1",
+                "generated-command-file-only-v1",
+            ],
             "path": str(self.path),
             "updatedAt": utc_now(),
             "command": "set-actor-target",
@@ -680,10 +724,26 @@ class LiveRuntimeCommandStore:
             "actorKind": "",
             "entryId": "",
             "selectedTarget": "",
+            "placedTarget": "",
+            **{field: "" for field in LIVE_RUNTIME_SELECTOR_FIELDS},
+            "selectors": {
+                "phase": "",
+                "parts": [],
+                "partModels": [],
+                "propSlots": [],
+                "propModels": [],
+                "animationSource": "",
+                "animationStartPoint": "",
+                "animationGroup": "",
+                "dialogueMode": "",
+                "fnvRotationMode": "",
+                "neutralPreviewProfile": "",
+            },
             "policy": {
                 "generatedProofOutputsOnly": True,
                 "noRetailPayloadBytes": True,
                 "activeCellActorSwitchOnly": True,
+                "actorKitSelectorControls": True,
                 "baseNpcPreviewWhenInactive": True,
                 "baseCreaturePreviewWhenInactive": True,
                 "baseActorPreviewWhenInactive": True,
@@ -714,14 +774,21 @@ class LiveRuntimeCommandStore:
                     "generatedProofOutputsOnly": True,
                     "noRetailPayloadBytes": True,
                     "activeCellActorSwitchOnly": True,
+                    "actorKitSelectorControls": True,
                     "baseNpcPreviewWhenInactive": True,
                     "baseCreaturePreviewWhenInactive": True,
                     "baseActorPreviewWhenInactive": True,
                 }
             )
             doc["policy"] = policy
+            if not isinstance(doc.get("selectors"), dict):
+                doc["selectors"] = default["selectors"]
             markers = doc.get("schemaMarkers") if isinstance(doc.get("schemaMarkers"), list) else []
-            for marker in ["runtime-live-target-switch-v1", "generated-command-file-only-v1"]:
+            for marker in [
+                "runtime-live-target-switch-v1",
+                "runtime-live-actor-kit-controls-v1",
+                "generated-command-file-only-v1",
+            ]:
                 if marker not in markers:
                     markers.append(marker)
             doc["schemaMarkers"] = markers
@@ -739,27 +806,89 @@ class LiveRuntimeCommandStore:
             "placedTarget",
             "command",
             "sessionId",
+            "selectors",
+            *LIVE_RUNTIME_SELECTOR_FIELDS,
+            "phase",
+            "phases",
+            "parts",
+            "partModels",
+            "propSlots",
+            "propModels",
+            "animationSource",
+            "animationStartPoint",
+            "animationGroup",
+            "dialogueMode",
         }
         unknown = sorted(str(key) for key in payload if key not in allowed)
         if unknown:
             raise ValueError(f"unsupported live runtime command field: {unknown[0]}")
-        target = first_text(payload.get("actorTarget"), payload.get("runtimeTarget"), payload.get("target"))
-        if not target:
-            raise ValueError("live runtime command requires actorTarget")
-        if not re.fullmatch(r"[-A-Za-z0-9_:.\\ ]{1,160}", target):
-            raise ValueError("live runtime actorTarget contains unsupported characters")
         actor_kind = first_text(payload.get("actorKind"))
         if actor_kind and actor_kind not in {"npc", "creature", "auto"}:
             raise ValueError("live runtime actorKind must be npc, creature, or auto")
         command = first_text(payload.get("command"), "set-actor-target")
-        if command != "set-actor-target":
+        if command not in {"set-actor-target", "update-actor-kit"}:
             raise ValueError("unsupported live runtime command")
         with self.lock:
             doc = self.load()
+            target = first_text(
+                payload.get("actorTarget"),
+                payload.get("runtimeTarget"),
+                payload.get("target"),
+                doc.get("runtimeTarget"),
+                doc.get("actorTarget"),
+            )
+            if not target:
+                raise ValueError("live runtime command requires actorTarget")
+            if not re.fullmatch(r"[-A-Za-z0-9_:.\\ ]{1,160}", target):
+                raise ValueError("live runtime actorTarget contains unsupported characters")
+            selectors = dict(doc.get("selectors") if isinstance(doc.get("selectors"), dict) else {})
+            selector_payload = payload.get("selectors") if isinstance(payload.get("selectors"), dict) else {}
+            applied: dict[str, str] = {}
+            for field in LIVE_RUNTIME_SELECTOR_FIELDS:
+                values = []
+                for alias in LIVE_RUNTIME_SELECTOR_ALIASES[field]:
+                    if alias in payload:
+                        values.append(payload.get(alias))
+                    if alias in selector_payload:
+                        values.append(selector_payload.get(alias))
+                if field in LIVE_RUNTIME_SELECTOR_LIST_FIELDS:
+                    tokens: list[str] = []
+                    for candidate in values:
+                        tokens.extend(csv_values(candidate))
+                    value = ",".join(tokens)
+                else:
+                    value = first_text(*values)
+                if value:
+                    if field == "characterBuilderPhase":
+                        phase_values = csv_values(value)
+                        value = phase_values[0] if phase_values else value
+                    if not re.fullmatch(r"[-A-Za-z0-9_:.\\ /,]{0,300}", value):
+                        raise ValueError(f"live runtime selector {field} contains unsupported characters")
+                    doc[field] = value
+                    applied[field] = value
+            selectors.update(
+                {
+                    "phase": doc.get("characterBuilderPhase", ""),
+                    "parts": csv_values(doc.get("actorKitParts")),
+                    "partModels": csv_values(doc.get("actorKitPartModels")),
+                    "propSlots": csv_values(doc.get("actorKitPropSlots")),
+                    "propModels": csv_values(doc.get("actorKitPropModels")),
+                    "animationSource": doc.get("actorKitAnimationSource", ""),
+                    "animationStartPoint": doc.get("actorKitAnimationStartPoint", ""),
+                    "animationGroup": doc.get("actorKitAnimationGroup", ""),
+                    "dialogueMode": doc.get("actorKitDialogueMode", ""),
+                    "fnvRotationMode": doc.get("fnvRotationMode", ""),
+                    "neutralPreviewProfile": doc.get("neutralPreviewProfile", ""),
+                }
+            )
             doc.update(
                 {
                     "schema": LIVE_RUNTIME_SCHEMA,
-                    "schemaMarkers": ["runtime-live-target-switch-v1", "generated-command-file-only-v1"],
+                    "schemaMarkers": [
+                        "runtime-live-target-switch-v1",
+                        "runtime-live-actor-kit-controls-v1",
+                        "generated-command-file-only-v1",
+                    ],
                     "path": str(self.path),
                     "updatedAt": utc_now(),
                     "command": command,
@@ -769,10 +898,13 @@ class LiveRuntimeCommandStore:
                     "entryId": first_text(payload.get("entryId")),
                     "selectedTarget": first_text(payload.get("selectedTarget"), target),
                     "placedTarget": first_text(payload.get("placedTarget")),
+                    "selectors": selectors,
+                    "lastApplied": applied,
                     "policy": {
                         "generatedProofOutputsOnly": True,
                         "noRetailPayloadBytes": True,
                         "activeCellActorSwitchOnly": True,
+                        "actorKitSelectorControls": True,
                         "baseNpcPreviewWhenInactive": True,
                         "baseCreaturePreviewWhenInactive": True,
                         "baseActorPreviewWhenInactive": True,
@@ -1535,6 +1667,8 @@ class LiveHandler(SimpleHTTPRequestHandler):
                             "path": doc.get("path", ""),
                             "actorTarget": doc.get("actorTarget", ""),
                             "actorKind": doc.get("actorKind", ""),
+                            "selectors": doc.get("selectors", {}),
+                            "lastApplied": doc.get("lastApplied", {}),
                             "schema": LIVE_RUNTIME_SCHEMA,
                         },
                     )

@@ -59,6 +59,7 @@
 #include <algorithm>
 #include <cstdlib>
 #include <cstdint>
+#include <initializer_list>
 #include <istream>
 #include <limits>
 #include <map>
@@ -714,6 +715,99 @@ namespace MWRender
             return true;
         }
 
+        void logFalloutLiveRuntimeActorKitSelector(std::string_view key, const std::string& value)
+        {
+            if (value.empty())
+                return;
+
+            static std::map<std::string, std::string> loggedValues;
+            const std::string keyString(key);
+            const std::string fingerprint = keyString + "=" + value;
+            if (loggedValues[keyString] == fingerprint)
+                return;
+
+            loggedValues[keyString] = fingerprint;
+            Log(Debug::Info) << "FNV/ESM4 live runtime: actor-kit selector key=" << key
+                             << " value=\"" << value << "\" file=\""
+                             << (std::getenv("OPENMW_FNV_LIVE_RUNTIME_COMMAND_FILE") != nullptr
+                                     ? std::getenv("OPENMW_FNV_LIVE_RUNTIME_COMMAND_FILE")
+                                     : "")
+                             << "\" runtime=runtime-supported gate=runtime-live-actor-kit-controls";
+        }
+
+        std::string readFalloutLiveRuntimeCommandString(std::initializer_list<std::string_view> keys)
+        {
+            const char* livePath = std::getenv("OPENMW_FNV_LIVE_RUNTIME_COMMAND_FILE");
+            if (livePath == nullptr || livePath[0] == '\0')
+                return {};
+
+            std::string content;
+            if (!readFalloutProofTargetRuntimeFile(livePath, content))
+                return {};
+
+            std::string value;
+            for (std::string_view key : keys)
+            {
+                if (readFalloutProofTargetRuntimeString(content, key, value))
+                {
+                    logFalloutLiveRuntimeActorKitSelector(key, value);
+                    return value;
+                }
+            }
+            return {};
+        }
+
+        std::string readFalloutLiveRuntimeOrEnvString(
+            const char* envName, std::initializer_list<std::string_view> liveKeys)
+        {
+            if (const std::string liveValue = readFalloutLiveRuntimeCommandString(liveKeys); !liveValue.empty())
+                return liveValue;
+
+            const char* value = std::getenv(envName);
+            return value != nullptr && value[0] != '\0' ? std::string(value) : std::string();
+        }
+
+        std::string readFalloutActorKitRuntimeSelectorForEnv(const char* envName)
+        {
+            if (std::string_view(envName) == "OPENMW_FNV_CHARACTER_BUILDER_PHASE")
+                return readFalloutLiveRuntimeCommandString({ "characterBuilderPhase", "phase" });
+            if (std::string_view(envName) == "OPENMW_FNV_ACTOR_KIT_PARTS")
+                return readFalloutLiveRuntimeCommandString({ "actorKitParts", "parts" });
+            if (std::string_view(envName) == "OPENMW_FNV_ACTOR_KIT_PART_MODELS")
+                return readFalloutLiveRuntimeCommandString({ "actorKitPartModels", "partModels" });
+            if (std::string_view(envName) == "OPENMW_FNV_ACTOR_KIT_PROP_SLOTS")
+                return readFalloutLiveRuntimeCommandString({ "actorKitPropSlots", "propSlots" });
+            if (std::string_view(envName) == "OPENMW_FNV_ACTOR_KIT_PROP_MODELS")
+                return readFalloutLiveRuntimeCommandString({ "actorKitPropModels", "propModels" });
+            if (std::string_view(envName) == "OPENMW_FNV_ACTOR_KIT_ANIMATION_GROUP")
+                return readFalloutLiveRuntimeCommandString({ "actorKitAnimationGroup", "animationGroup" });
+            if (std::string_view(envName) == "OPENMW_FNV_ACTOR_KIT_ANIMATION_SOURCE")
+                return readFalloutLiveRuntimeCommandString({ "actorKitAnimationSource", "animationSource" });
+            if (std::string_view(envName) == "OPENMW_FNV_ACTOR_KIT_ANIMATION_STARTPOINT")
+                return readFalloutLiveRuntimeCommandString({ "actorKitAnimationStartPoint", "animationStartPoint" });
+            return {};
+        }
+
+        bool isFalloutLiveRuntimeActorKitActive()
+        {
+            static constexpr const char* envNames[] = {
+                "OPENMW_FNV_CHARACTER_BUILDER_PHASE",
+                "OPENMW_FNV_ACTOR_KIT_PARTS",
+                "OPENMW_FNV_ACTOR_KIT_PART_MODELS",
+                "OPENMW_FNV_ACTOR_KIT_PROP_SLOTS",
+                "OPENMW_FNV_ACTOR_KIT_PROP_MODELS",
+                "OPENMW_FNV_ACTOR_KIT_ANIMATION_GROUP",
+                "OPENMW_FNV_ACTOR_KIT_ANIMATION_SOURCE",
+                "OPENMW_FNV_ACTOR_KIT_ANIMATION_STARTPOINT",
+            };
+            for (const char* envName : envNames)
+            {
+                if (!readFalloutActorKitRuntimeSelectorForEnv(envName).empty())
+                    return true;
+            }
+            return false;
+        }
+
         bool falloutProofFormTargetMatches(std::string_view candidate, const char* target)
         {
             if (target == nullptr || target[0] == '\0')
@@ -795,11 +889,11 @@ namespace MWRender
 
         std::string getFalloutActorKitAnimationGroup()
         {
-            const char* value = std::getenv("OPENMW_FNV_ACTOR_KIT_ANIMATION_GROUP");
-            if (value == nullptr || value[0] == '\0')
+            std::string group = readFalloutLiveRuntimeOrEnvString("OPENMW_FNV_ACTOR_KIT_ANIMATION_GROUP",
+                { "actorKitAnimationGroup", "animationGroup" });
+            if (group.empty())
                 return {};
 
-            std::string group(value);
             while (!group.empty()
                 && (group.front() == ' ' || group.front() == '\t' || group.front() == '\r'
                     || group.front() == '\n' || group.front() == '"' || group.front() == '\''))
@@ -814,11 +908,11 @@ namespace MWRender
 
         std::string getFalloutActorKitAnimationSource()
         {
-            const char* value = std::getenv("OPENMW_FNV_ACTOR_KIT_ANIMATION_SOURCE");
-            if (value == nullptr || value[0] == '\0')
+            std::string source = readFalloutLiveRuntimeOrEnvString("OPENMW_FNV_ACTOR_KIT_ANIMATION_SOURCE",
+                { "actorKitAnimationSource", "animationSource" });
+            if (source.empty())
                 return {};
 
-            std::string source(value);
             while (!source.empty()
                 && (source.front() == ' ' || source.front() == '\t' || source.front() == '\r'
                     || source.front() == '\n' || source.front() == '"' || source.front() == '\''))
@@ -846,13 +940,14 @@ namespace MWRender
 
         float getFalloutActorKitAnimationStartPoint()
         {
-            const char* value = std::getenv("OPENMW_FNV_ACTOR_KIT_ANIMATION_STARTPOINT");
-            if (value == nullptr || value[0] == '\0')
+            const std::string value = readFalloutLiveRuntimeOrEnvString("OPENMW_FNV_ACTOR_KIT_ANIMATION_STARTPOINT",
+                { "actorKitAnimationStartPoint", "animationStartPoint" });
+            if (value.empty())
                 return 0.f;
 
             char* end = nullptr;
-            const float parsed = std::strtof(value, &end);
-            if (end == value || !std::isfinite(parsed))
+            const float parsed = std::strtof(value.c_str(), &end);
+            if (end == value.c_str() || !std::isfinite(parsed))
                 return 0.f;
             return std::clamp(parsed, 0.f, 0.999f);
         }
@@ -3485,11 +3580,11 @@ namespace MWRender
 
         std::string getFalloutCharacterBuilderPhase()
         {
-            const char* value = std::getenv("OPENMW_FNV_CHARACTER_BUILDER_PHASE");
-            if (value == nullptr || value[0] == '\0')
+            std::string phase = readFalloutLiveRuntimeOrEnvString("OPENMW_FNV_CHARACTER_BUILDER_PHASE",
+                { "characterBuilderPhase", "phase" });
+            if (phase.empty())
                 return "full";
 
-            std::string phase(value);
             Misc::StringUtils::lowerCaseInPlace(phase);
             return phase;
         }
@@ -3509,7 +3604,7 @@ namespace MWRender
                 if (value != nullptr && value[0] != '\0')
                     return true;
             }
-            return false;
+            return isFalloutLiveRuntimeActorKitActive();
         }
 
         int getFalloutCharacterBuilderRank(std::string_view value)
@@ -3570,7 +3665,8 @@ namespace MWRender
         std::vector<std::string> getFalloutActorKitCategoryTokens(const char* envName)
         {
             std::vector<std::string> tokens;
-            const char* raw = std::getenv(envName);
+            const std::string liveRaw = readFalloutActorKitRuntimeSelectorForEnv(envName);
+            const char* raw = liveRaw.empty() ? std::getenv(envName) : liveRaw.c_str();
             if (raw == nullptr || raw[0] == '\0')
                 return tokens;
 
@@ -3596,7 +3692,8 @@ namespace MWRender
         std::vector<std::string> getFalloutActorKitModelTokens(const char* envName)
         {
             std::vector<std::string> tokens;
-            const char* raw = std::getenv(envName);
+            const std::string liveRaw = readFalloutActorKitRuntimeSelectorForEnv(envName);
+            const char* raw = liveRaw.empty() ? std::getenv(envName) : liveRaw.c_str();
             if (raw == nullptr || raw[0] == '\0')
                 return tokens;
 

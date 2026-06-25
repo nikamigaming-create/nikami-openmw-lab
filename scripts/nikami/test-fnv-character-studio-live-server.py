@@ -111,6 +111,7 @@ def main() -> int:
             "\n".join(
                 [
                     '[00:00:01.000 I] FNV/ESM4 live runtime: actor target changed from="" to="ContractNpc" file="live-runtime-command.json" runtime=runtime-supported gate=runtime-live-actor-target',
+                    '[00:00:01.050 I] FNV/ESM4 live runtime: actor-kit selector key=actorKitParts value="headgear" file="live-runtime-command.json" runtime=runtime-supported gate=runtime-live-actor-kit-controls',
                     '[00:00:01.100 I] FNV/ESM4 proof: actor part assembly target match target="ContractNpc" actor=ContractNpc refAlias=FormId:0x1 ref=FormId:0x11 runtime=runtime-supported',
                     "[00:00:01.200 I] FNV/ESM4 live authoring: frame-applied head surface authoring model=meshes/characters/head/eyelefthuman.nif prefix=OPENMW_FNV_EYE file=live-authoring.json offset=(0,0,0) rotation=(0,0,-90) pivot=(0,0,0) pivotMode=0 for FormId:0x1",
                 ]
@@ -141,8 +142,37 @@ def main() -> int:
             raise AssertionError("runtime audit did not classify consumed runtime log evidence")
         if audit["openMwLog"] != str(openmw_log.resolve()):
             raise AssertionError("runtime audit did not resolve OpenMW log path from runtime stdout")
-        if audit["counts"]["targetSwitches"] != 1 or audit["counts"]["actorAssemblyMatches"] != 1 or audit["counts"]["liveAuthoringApplies"] != 1:
-            raise AssertionError("runtime audit did not count target, assembly, and knob consumption lines")
+        if (
+            audit["counts"]["targetSwitches"] != 1
+            or audit["counts"]["liveActorKitControls"] != 1
+            or audit["counts"]["actorAssemblyMatches"] != 1
+            or audit["counts"]["liveAuthoringApplies"] != 1
+        ):
+            raise AssertionError("runtime audit did not count target, actor-kit, assembly, and knob consumption lines")
+        runtime_store = live.LiveRuntimeCommandStore(run_dir, root, live_runtime_path)
+        runtime_doc = runtime_store.update(
+            {
+                "command": "update-actor-kit",
+                "actorTarget": "ContractNpc",
+                "actorKind": "npc",
+                "selectors": {
+                    "phase": "headgear",
+                    "parts": ["headgear"],
+                    "propSlots": ["headgear"],
+                    "animationGroup": "idle",
+                    "animationStartPoint": "0.25",
+                    "dialogueMode": "mouth-open",
+                },
+            }
+        )
+        if "runtime-live-actor-kit-controls-v1" not in runtime_doc["schemaMarkers"]:
+            raise AssertionError("live runtime command did not advertise actor-kit controls")
+        if runtime_doc["actorKitParts"] != "headgear" or runtime_doc["selectors"]["parts"] != ["headgear"]:
+            raise AssertionError("live runtime command did not persist actor-kit part selector")
+        if runtime_doc["characterBuilderPhase"] != "headgear" or runtime_doc["actorKitAnimationStartPoint"] != "0.25":
+            raise AssertionError("live runtime command did not persist phase or animation scrub selector")
+        if runtime_doc["lastApplied"].get("actorKitDialogueMode") != "mouth-open":
+            raise AssertionError("live runtime command did not record last applied actor-kit controls")
 
         catalog = live.CatalogStore(root)
         loaded = catalog.load()
