@@ -281,6 +281,33 @@ function Get-ActorProofPatterns([string]$Path, [string]$Target) {
     $patterns = [System.Collections.Generic.List[string]]::new()
     if ([string]::IsNullOrWhiteSpace($Target)) { return @() }
 
+    function Get-NormalizedFnvFormSuffix([string]$Value) {
+        if ([string]::IsNullOrWhiteSpace($Value)) { return "" }
+        $match = [regex]::Match($Value, "(?i)(?:FormId:)?0x([0-9a-f]+)")
+        if (!$match.Success) { return "" }
+        $hex = $match.Groups[1].Value.ToLowerInvariant().TrimStart("0")
+        if ([string]::IsNullOrWhiteSpace($hex)) { $hex = "0" }
+        if ($hex.Length -gt 6) {
+            $hex = $hex.Substring($hex.Length - 6)
+        }
+        return $hex.PadLeft(6, "0")
+    }
+
+    function Test-FnvTargetValueMatch([string]$Value, [string]$RequestedTarget) {
+        if ([string]::IsNullOrWhiteSpace($Value) -or [string]::IsNullOrWhiteSpace($RequestedTarget)) {
+            return $false
+        }
+        $cleanValue = $Value.Trim('"')
+        $cleanTarget = $RequestedTarget.Trim('"')
+        if ($cleanValue -ieq $cleanTarget) { return $true }
+
+        $valueForm = Get-NormalizedFnvFormSuffix $cleanValue
+        $targetForm = Get-NormalizedFnvFormSuffix $cleanTarget
+        return ![string]::IsNullOrWhiteSpace($valueForm) `
+            -and ![string]::IsNullOrWhiteSpace($targetForm) `
+            -and $valueForm -eq $targetForm
+    }
+
     $addPattern = {
         param([string]$Value)
         if ([string]::IsNullOrWhiteSpace($Value) -or $Value -eq "<none>") { return }
@@ -311,7 +338,7 @@ function Get-ActorProofPatterns([string]$Path, [string]$Target) {
 
         $isTargetActor = $false
         foreach ($value in $fields.Values) {
-            if ($value -ieq $Target) {
+            if (Test-FnvTargetValueMatch $value $Target) {
                 $isTargetActor = $true
                 break
             }
@@ -336,7 +363,8 @@ function Count-ActorPostureMatches([string]$Path, [string[]]$ActorPatterns, [str
 
     $count = 0
     foreach ($pattern in $ActorPatterns) {
-        $count += @((Select-String -LiteralPath $Path -Pattern "FNV/ESM4 diag: $Kind $pattern .* verdict=$Verdict" -ErrorAction SilentlyContinue)).Count
+        $actorPattern = "(?:`"$pattern`"|$pattern)"
+        $count += @((Select-String -LiteralPath $Path -Pattern "FNV/ESM4 diag: $Kind $actorPattern .* verdict=$Verdict" -ErrorAction SilentlyContinue)).Count
     }
     return $count
 }
@@ -365,7 +393,8 @@ function Get-ActorVisibleHandGeometryProbe([string]$Path, [string[]]$ActorPatter
     $seen = [System.Collections.Generic.HashSet[string]]::new()
     $samples = [System.Collections.Generic.List[object]]::new()
     foreach ($pattern in $ActorPatterns) {
-        $matches = @(Select-String -LiteralPath $Path -Pattern "FNV/ESM4 ACTOR HAND GEOMETRY AUDIT $pattern " -ErrorAction SilentlyContinue)
+        $actorPattern = "(?:`"$pattern`"|$pattern)"
+        $matches = @(Select-String -LiteralPath $Path -Pattern "FNV/ESM4 ACTOR HAND GEOMETRY AUDIT $actorPattern " -ErrorAction SilentlyContinue)
         foreach ($match in $matches) {
             if (!$seen.Add($match.Line)) { continue }
 

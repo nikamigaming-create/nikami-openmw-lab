@@ -149,9 +149,20 @@ function Get-RegexValue([string]$Text, [string]$Pattern, [string]$Default = "") 
     return $Default
 }
 
-function Get-ResultScore([object]$Result) {
+function Test-HandGeometryRequired([object]$Fixture, [object]$Result) {
+    if ($null -ne $Result -and $null -ne $Result.PSObject.Properties["targetVisibleHandGeometryRequired"]) {
+        return [bool]$Result.targetVisibleHandGeometryRequired
+    }
+    return $Fixture.kind -ine "creature"
+}
+
+function Get-ResultScore([object]$Fixture, [object]$Result) {
     if ($null -eq $Result) { return [int]::MaxValue }
-    $handPenalty = if ($Result.targetVisibleHandGeometryStatus -eq "PASS") { 0 } else { 10000 }
+    $handPenalty = if (!(Test-HandGeometryRequired $Fixture $Result) -or $Result.targetVisibleHandGeometryStatus -eq "PASS") {
+        0
+    } else {
+        10000
+    }
     $armPenalty = [Math]::Max(0, [int]$Result.targetStandingArmPoseBad) * 1000
     $worldPenalty = [Math]::Max(0, [int]$Result.targetWorldPostureBad) * 100
     $exitPenalty = if ([int]$Result.exitCode -eq 0) { 0 } else { 10 }
@@ -173,6 +184,7 @@ function New-DryRunResult([object]$Fixture) {
         bestCandidateMode = ""
         bestCandidateScore = [int]::MaxValue
         improvesCurrent = $false
+        handGeometryRequired = $Fixture.kind -ine "creature"
         results = @()
         payloadPolicy = "generated proof metadata/log references only; no retail payload bytes"
     }
@@ -261,6 +273,7 @@ foreach ($fixture in $fixtureObjects) {
             bestCandidateMode = ""
             bestCandidateScore = [int]::MaxValue
             improvesCurrent = $false
+            handGeometryRequired = $fixture.kind -ine "creature"
             results = @()
             payloadPolicy = "generated proof metadata/log references only; no retail payload bytes"
         }
@@ -272,10 +285,10 @@ foreach ($fixture in $fixtureObjects) {
     $current = $results | Where-Object { $_.mode -eq "current" } | Select-Object -First 1
     $candidate = $results |
         Where-Object { $_.mode -ne "current" } |
-        Sort-Object @{ Expression = { Get-ResultScore $_ } }, mode |
+        Sort-Object @{ Expression = { Get-ResultScore $fixture $_ } }, mode |
         Select-Object -First 1
-    $currentScore = Get-ResultScore $current
-    $candidateScore = Get-ResultScore $candidate
+    $currentScore = Get-ResultScore $fixture $current
+    $candidateScore = Get-ResultScore $fixture $candidate
     $improvesCurrent = $null -ne $candidate -and $candidateScore -lt $currentScore
     $firstFailingGate = if ($null -ne $current -and ![string]::IsNullOrWhiteSpace($current.firstFailingGate)) {
         $current.firstFailingGate
@@ -300,6 +313,7 @@ foreach ($fixture in $fixtureObjects) {
         bestCandidateMode = if ($null -ne $candidate) { $candidate.mode } else { "" }
         bestCandidateScore = $candidateScore
         improvesCurrent = $improvesCurrent
+        handGeometryRequired = Test-HandGeometryRequired $fixture $current
         results = $results
         payloadPolicy = "generated proof metadata/log references only; no retail payload bytes"
     }
@@ -351,10 +365,10 @@ $summary += "Promotion eligible: $promotionEligible"
 $summary += "Promotion candidate mode: $promotionCandidateMode"
 $summary += "Promotion: false"
 $summary += ""
-$summary += "| Fixture | Target | Kind | Class | First failing gate | Best mode | Candidate | Improves current | Current score | Candidate score |"
-$summary += "| --- | --- | --- | --- | --- | --- | --- | --- | ---: | ---: |"
+$summary += "| Fixture | Target | Kind | Class | First failing gate | Hand required | Best mode | Candidate | Improves current | Current score | Candidate score |"
+$summary += "| --- | --- | --- | --- | --- | --- | --- | --- | --- | ---: | ---: |"
 foreach ($result in $fixtureResults) {
-    $summary += "| $($result.label) | $($result.target) | $($result.actorKind) | $($result.classification) | $($result.firstFailingGate) | $($result.selectedBestMode) | $($result.bestCandidateMode) | $($result.improvesCurrent) | $($result.currentScore) | $($result.bestCandidateScore) |"
+    $summary += "| $($result.label) | $($result.target) | $($result.actorKind) | $($result.classification) | $($result.firstFailingGate) | $($result.handGeometryRequired) | $($result.selectedBestMode) | $($result.bestCandidateMode) | $($result.improvesCurrent) | $($result.currentScore) | $($result.bestCandidateScore) |"
 }
 $summary += ""
 $summary += "No retail payload bytes are written; fixture rows reference generated proof logs and JSON only."

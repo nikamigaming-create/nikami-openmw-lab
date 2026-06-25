@@ -93,6 +93,7 @@ if (!(Test-Path -LiteralPath $FlatProof -PathType Leaf)) {
 }
 
 $previousMode = [Environment]::GetEnvironmentVariable("OPENMW_FNV_SKINNING_MODE", "Process")
+$requiresVisibleHandGeometry = $ActorKind -ine "creature"
 $results = @()
 try {
     foreach ($mode in $RequestedModes) {
@@ -187,8 +188,16 @@ try {
             $firstFailingGate = "target-world-posture"
         } elseif ($armBad -gt 0) {
             $firstFailingGate = "target-standing-arm-pose"
-        } elseif ($visibleHandStatus -ne "PASS") {
+        } elseif ($requiresVisibleHandGeometry -and $visibleHandStatus -ne "PASS") {
             $firstFailingGate = "target-visible-hand-geometry"
+        } elseif ($exitCode -ne 0) {
+            if ($text -match "fatal/blocker log lines") {
+                $firstFailingGate = "runtime-fatal-blocker-log"
+            } elseif ($text -match "did not log target world posture") {
+                $firstFailingGate = "target-world-posture-missing"
+            } else {
+                $firstFailingGate = "runtime-proof-exit"
+            }
         }
 
         $classification = if ($exitCode -eq 0 -and [string]::IsNullOrWhiteSpace($firstFailingGate)) {
@@ -208,6 +217,7 @@ try {
             selectedModeLogLines = $selectedModeLines
             targetWorldPostureBad = $worldBad
             targetStandingArmPoseBad = $armBad
+            targetVisibleHandGeometryRequired = $requiresVisibleHandGeometry
             targetVisibleHandGeometryStatus = $visibleHandStatus
             targetVisibleHandGeometrySamples = $visibleHandSamples
             payloadPolicy = "generated proof metadata/log references only; no retail payload bytes"
@@ -249,13 +259,14 @@ $summary = @()
 $summary += "# FNV Skinning Mode Sweep"
 $summary += ""
 $summary += "Actor: $ActorTarget"
+$summary += "Visible hand geometry required: $requiresVisibleHandGeometry"
 $summary += "Best observed mode: $($doc.selectedBestMode)"
 $summary += "Promotion: false"
 $summary += ""
-$summary += "| Mode | Class | First failing gate | Exit | World BAD | Arm BAD | Hand | Selected log lines |"
-$summary += "| --- | --- | --- | ---: | ---: | ---: | --- | ---: |"
+$summary += "| Mode | Class | First failing gate | Exit | World BAD | Arm BAD | Hand required | Hand | Selected log lines |"
+$summary += "| --- | --- | --- | ---: | ---: | ---: | --- | --- | ---: |"
 foreach ($result in $results) {
-    $summary += "| $($result.mode) | $($result.classification) | $($result.firstFailingGate) | $($result.exitCode) | $($result.targetWorldPostureBad) | $($result.targetStandingArmPoseBad) | $($result.targetVisibleHandGeometryStatus) | $($result.selectedModeLogLines) |"
+    $summary += "| $($result.mode) | $($result.classification) | $($result.firstFailingGate) | $($result.exitCode) | $($result.targetWorldPostureBad) | $($result.targetStandingArmPoseBad) | $($result.targetVisibleHandGeometryRequired) | $($result.targetVisibleHandGeometryStatus) | $($result.selectedModeLogLines) |"
 }
 $summary += ""
 $summary += "No retail payload bytes are written; proof rows reference generated logs only."
