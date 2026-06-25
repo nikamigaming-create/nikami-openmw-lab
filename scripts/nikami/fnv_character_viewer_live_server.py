@@ -425,8 +425,42 @@ def runtime_audit(
         if current_fingerprint
         else []
     )
+    current_actor_target = first_text(live_runtime_doc.get("actorTarget"))
+    target_match_pattern = re.compile(r"\btargetMatches=1\b")
+    target_actor_pattern = (
+        re.compile(rf"\bactor={re.escape(current_actor_target)}(?:\s|$)")
+        if current_actor_target
+        else None
+    )
+    target_exact_fingerprint_lines = [
+        line
+        for line in exact_fingerprint_lines
+        if target_match_pattern.search(line)
+        and (target_actor_pattern is None or target_actor_pattern.search(line))
+    ]
+    non_target_exact_fingerprint_lines = [
+        line for line in exact_fingerprint_lines if line not in target_exact_fingerprint_lines
+    ]
+    target_exact_part_rebuild_lines = [
+        line
+        for line in target_exact_fingerprint_lines
+        if "runtime-live-actor-kit-part-rebuild" in line
+        and "runtime=runtime-supported" in line
+        and "failedParts=0" in line
+    ]
+    target_exact_post_construction_lines = [
+        line
+        for line in target_exact_fingerprint_lines
+        if "runtime-live-actor-kit-post-construction-selector" in line
+    ]
+    command_requires_part_rebuild = first_text(live_runtime_doc.get("command")) == "update-actor-kit"
+    latest_live_runtime_command_target_consumed = bool(
+        current_fingerprint and openmw_log_new_enough_for_command and target_exact_fingerprint_lines
+    )
+    latest_live_runtime_command_rebuilt_target = bool(target_exact_part_rebuild_lines)
     latest_live_runtime_command_consumed = bool(
-        current_fingerprint and openmw_log_new_enough_for_command and exact_fingerprint_lines
+        latest_live_runtime_command_target_consumed
+        and (not command_requires_part_rebuild or latest_live_runtime_command_rebuilt_target)
     )
     any_consumption_evidence = bool(
         target_switches or actor_kit_controls or actor_kit_part_rebuilds or authoring_applies or assembly_matches
@@ -437,11 +471,14 @@ def runtime_audit(
             if latest_live_runtime_command_consumed
             else ("loaded-pending-runtime" if status.get("runtimeRunning") else "known-blocked")
         )
-        first_failing_gate = "" if latest_live_runtime_command_consumed else (
-            "latest-live-runtime-command-not-consumed"
-            if status.get("runtimeRunning")
-            else "runtime-process-not-running"
-        )
+        if latest_live_runtime_command_consumed:
+            first_failing_gate = ""
+        elif not status.get("runtimeRunning"):
+            first_failing_gate = "runtime-process-not-running"
+        elif not latest_live_runtime_command_target_consumed:
+            first_failing_gate = "latest-live-runtime-command-not-consumed-by-target"
+        else:
+            first_failing_gate = "latest-live-runtime-target-part-rebuild-not-supported"
     else:
         consumption_status = (
             "runtime-supported"
@@ -474,7 +511,11 @@ def runtime_audit(
             "liveActorKitControls": actor_kit_controls,
             "liveActorKitPostConstruction": actor_kit_post_construction,
             "liveActorKitPartRebuilds": actor_kit_part_rebuilds,
-            "latestLiveRuntimeCommandFingerprint": exact_fingerprint_lines[-6:],
+            "latestLiveRuntimeCommandFingerprint": target_exact_fingerprint_lines[-6:],
+            "latestLiveRuntimeCommandFingerprintAny": exact_fingerprint_lines[-6:],
+            "latestLiveRuntimeCommandFingerprintNonTarget": non_target_exact_fingerprint_lines[-6:],
+            "latestLiveRuntimeCommandTargetPostConstruction": target_exact_post_construction_lines[-6:],
+            "latestLiveRuntimeCommandTargetPartRebuilds": target_exact_part_rebuild_lines[-6:],
             "actorAssemblyMatches": assembly_matches,
             "liveAuthoringApplies": authoring_applies,
             "faceChecks": face_checks,
@@ -484,7 +525,11 @@ def runtime_audit(
             "liveActorKitControls": len(actor_kit_controls),
             "liveActorKitPostConstruction": len(actor_kit_post_construction),
             "liveActorKitPartRebuilds": len(actor_kit_part_rebuilds),
-            "latestLiveRuntimeCommandFingerprint": len(exact_fingerprint_lines),
+            "latestLiveRuntimeCommandFingerprint": len(target_exact_fingerprint_lines),
+            "latestLiveRuntimeCommandFingerprintAny": len(exact_fingerprint_lines),
+            "latestLiveRuntimeCommandFingerprintNonTarget": len(non_target_exact_fingerprint_lines),
+            "latestLiveRuntimeCommandTargetPostConstruction": len(target_exact_post_construction_lines),
+            "latestLiveRuntimeCommandTargetPartRebuilds": len(target_exact_part_rebuild_lines),
             "actorAssemblyMatches": len(assembly_matches),
             "liveAuthoringApplies": len(authoring_applies),
             "faceChecks": len(face_checks),
@@ -492,16 +537,23 @@ def runtime_audit(
         "liveRuntimeCommand": {
             "path": str(live_runtime_path or ""),
             "updatedAt": first_text(live_runtime_doc.get("updatedAt")),
+            "actorTarget": current_actor_target,
             "fingerprint": current_fingerprint,
             "openMwLogMtimeAtOrAfterCommand": openmw_log_new_enough_for_command,
             "exactFingerprintConsumed": latest_live_runtime_command_consumed,
+            "exactFingerprintConsumedAnyActor": bool(exact_fingerprint_lines),
+            "exactFingerprintConsumedByTarget": latest_live_runtime_command_target_consumed,
+            "targetPartRebuildRuntimeSupported": latest_live_runtime_command_rebuilt_target,
+            "nonTargetExactFingerprintEvidence": bool(non_target_exact_fingerprint_lines),
             "classification": (
                 "runtime-supported"
                 if latest_live_runtime_command_consumed
                 else ("loaded-pending-runtime" if current_fingerprint else "non-runtime-support-file")
             ),
             "firstFailingGate": "" if latest_live_runtime_command_consumed or not current_fingerprint else (
-                "latest-live-runtime-command-not-consumed"
+                "latest-live-runtime-command-not-consumed-by-target"
+                if not latest_live_runtime_command_target_consumed
+                else "latest-live-runtime-target-part-rebuild-not-supported"
             ),
         },
         "policy": {

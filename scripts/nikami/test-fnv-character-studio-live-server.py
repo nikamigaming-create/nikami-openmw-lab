@@ -201,11 +201,39 @@ def main() -> int:
         stale_audit = live.runtime_audit(run_dir, root, live_authoring_path, live_runtime_path)
         if stale_audit["classification"] != "loaded-pending-runtime":
             raise AssertionError("runtime audit treated stale actor-kit fingerprint evidence as current")
-        if stale_audit["firstFailingGate"] != "latest-live-runtime-command-not-consumed":
+        if stale_audit["firstFailingGate"] != "latest-live-runtime-command-not-consumed-by-target":
             raise AssertionError("runtime audit did not expose latest-command consumption failure gate")
         if stale_audit["liveRuntimeCommand"]["exactFingerprintConsumed"]:
             raise AssertionError("runtime audit reported stale fingerprint as consumed")
         time.sleep(0.02)
+        with openmw_log.open("a", encoding="utf-8") as stream:
+            stream.write(
+                "\n[00:00:02.075 I] FNV/ESM4 live runtime: actor-kit part rebuild generation=2 "
+                'actor=OtherNpc ref=FormId:0x2 targetMatches=0 requestedParts=2 requestedSelectorParts=1 '
+                'requestedPropSlots=1 requestedPartModels=0 requestedPropModels=0 beforeParts=5 removedParents=0 '
+                'staleAfterRemoval=0 rebuiltParts=0 attachedParts=0 duplicateParts=0 failedParts=0 beforeDuplicateParts=0 '
+                f'fingerprint="{expected_fingerprint}" firstParts="<none>" '
+                "runtime=loaded-pending-runtime gate=runtime-live-actor-kit-part-rebuild"
+            )
+        future = time.time() + 1
+        os.utime(openmw_log, (future, future))
+        non_target_audit = live.runtime_audit(run_dir, root, live_authoring_path, live_runtime_path)
+        if non_target_audit["classification"] != "loaded-pending-runtime":
+            raise AssertionError("runtime audit treated non-target actor-kit fingerprint evidence as current target")
+        if non_target_audit["firstFailingGate"] != "latest-live-runtime-command-not-consumed-by-target":
+            raise AssertionError("runtime audit did not keep non-target fingerprint evidence behind target gate")
+        if non_target_audit["liveRuntimeCommand"]["exactFingerprintConsumed"]:
+            raise AssertionError("runtime audit consumed exact fingerprint from non-target actor")
+        if not non_target_audit["liveRuntimeCommand"]["exactFingerprintConsumedAnyActor"]:
+            raise AssertionError("runtime audit did not record non-target exact fingerprint as any-actor evidence")
+        if non_target_audit["liveRuntimeCommand"]["exactFingerprintConsumedByTarget"]:
+            raise AssertionError("runtime audit reported non-target exact fingerprint as target evidence")
+        if not non_target_audit["liveRuntimeCommand"]["nonTargetExactFingerprintEvidence"]:
+            raise AssertionError("runtime audit did not expose non-target exact fingerprint evidence")
+        if non_target_audit["counts"]["latestLiveRuntimeCommandFingerprint"] != 0:
+            raise AssertionError("runtime audit counted non-target exact fingerprint as target evidence")
+        if non_target_audit["counts"]["latestLiveRuntimeCommandFingerprintNonTarget"] < 1:
+            raise AssertionError("runtime audit did not count non-target exact fingerprint evidence separately")
         with openmw_log.open("a", encoding="utf-8") as stream:
             stream.write(
                 "\n[00:00:02.085 I] FNV/ESM4 live runtime: actor-kit part rebuild generation=2 "
@@ -222,8 +250,14 @@ def main() -> int:
             raise AssertionError("runtime audit did not accept exact current actor-kit fingerprint evidence")
         if not fresh_audit["liveRuntimeCommand"]["exactFingerprintConsumed"]:
             raise AssertionError("runtime audit did not mark exact current actor-kit fingerprint as consumed")
+        if not fresh_audit["liveRuntimeCommand"]["exactFingerprintConsumedByTarget"]:
+            raise AssertionError("runtime audit did not mark exact current actor-kit fingerprint as target evidence")
+        if not fresh_audit["liveRuntimeCommand"]["targetPartRebuildRuntimeSupported"]:
+            raise AssertionError("runtime audit did not require target runtime-supported part rebuild evidence")
         if fresh_audit["counts"]["latestLiveRuntimeCommandFingerprint"] < 1:
             raise AssertionError("runtime audit did not count exact current actor-kit fingerprint evidence")
+        if fresh_audit["counts"]["latestLiveRuntimeCommandTargetPartRebuilds"] < 1:
+            raise AssertionError("runtime audit did not count exact target part rebuild evidence")
 
         catalog = live.CatalogStore(root)
         loaded = catalog.load()
