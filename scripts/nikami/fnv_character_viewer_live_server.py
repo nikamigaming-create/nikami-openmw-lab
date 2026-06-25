@@ -1448,6 +1448,8 @@ def snapshot_studio_payload(payload: dict[str, Any], entry_id: str) -> dict[str,
         "placement",
         "placementCommandArgs",
         "selectors",
+        "runSeconds",
+        "screenshotFrames",
     }
     result: dict[str, Any] = {}
     for key in allowed:
@@ -1765,6 +1767,21 @@ def numeric_arg(name: str, value: Any, required: bool = False) -> str:
     return f" -{name} {text}"
 
 
+def positive_int_selector(value: Any, fallback: str, name: str) -> str:
+    text = first_text(value, fallback)
+    if not re.fullmatch(r"[1-9][0-9]{0,4}", text):
+        raise ValueError(f"structured studio selector has invalid {name}")
+    return text
+
+
+def screenshot_frame_selector(value: Any, fallback: str) -> str:
+    text = first_text(value, fallback)
+    frames = [item.strip() for item in text.split(",") if item.strip()]
+    if not frames or any(not re.fullmatch(r"[1-9][0-9]{0,5}", frame) for frame in frames):
+        raise ValueError("structured studio selector has invalid screenshotFrames")
+    return ",".join(frames)
+
+
 def placement_command_args(placement: Any) -> str:
     if not isinstance(placement, dict):
         return ""
@@ -1866,11 +1883,14 @@ def structured_actor_job(entry: dict[str, Any], payload: dict[str, Any]) -> tupl
         "actorVisibleHandMaxDistance": first_text(selector_value(payload, "actorVisibleHandMaxDistance"), "30"),
         "fnvSkinningMatrixAudit": first_text(selector_value(payload, "fnvSkinningMatrixAudit"), "arms,rightHand,leftHand,HeadOld,HeadHuman"),
         "fnvHairEmissionStrength": first_text(selector_value(payload, "fnvHairEmissionStrength")),
+        "runSeconds": positive_int_selector(selector_value(payload, "runSeconds"), "90" if command_key == "runtimeThreeCamera" else "70", "runSeconds"),
+        "screenshotFrames": screenshot_frame_selector(selector_value(payload, "screenshotFrames"), "300,360,420,480,540"),
     }
     command = (
         "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/nikami/run-fnv-character-viewer.ps1 "
         f"-Targets {shell_quote(targets['runtimeTarget'])} -ActorKind {actor_kind} -Phases {shell_quote(','.join(phases))}"
         f"{placement_command_args(targets['placement'])} -Angles {shell_quote(','.join(angles))}"
+        f" -RunSeconds {selectors['runSeconds']} -ScreenshotFrames {shell_quote(selectors['screenshotFrames'])}"
     )
     command += selector_arg("ActorKitParts", ",".join(selectors["parts"]))
     command += selector_arg("ActorKitPartModels", ",".join(selectors["partModels"]))

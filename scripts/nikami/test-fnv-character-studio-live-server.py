@@ -362,6 +362,10 @@ def main() -> int:
             raise AssertionError("snapshot replay request did not preserve snapshot provenance")
         if "-ActorKitParts" not in replay_args or "headgear" not in replay_args:
             raise AssertionError("snapshot replay did not rebuild selector command from metadata")
+        if "-RunSeconds" not in replay_args or replay_args[replay_args.index("-RunSeconds") + 1] != "90":
+            raise AssertionError("snapshot replay did not add capture-safe runtime seconds")
+        if "-ScreenshotFrames" not in replay_args or replay_args[replay_args.index("-ScreenshotFrames") + 1] != "300,360,420,480,540":
+            raise AssertionError("snapshot replay did not add capture-safe screenshot frames")
         if any("should-not-be-saved" in str(arg) or "Remove-Item" in str(arg) for arg in replay_args):
             raise AssertionError("snapshot replay used raw saved command metadata")
         ready_replay = sessions.write_snapshot_replay(session["id"], loaded_snapshot, replay_command, replay_request)
@@ -409,6 +413,8 @@ def main() -> int:
             raise AssertionError("structured request did not expose placed/runtime target mapping")
         if "-ActorKitParts" not in selector_args or "headgear" not in selector_args:
             raise AssertionError("structured command ignored part selector overrides")
+        if "-RunSeconds" not in selector_args or "-ScreenshotFrames" not in selector_args:
+            raise AssertionError("structured command did not include capture-safe runtime window")
         if "-ActorKitPropSlots" not in selector_args or "-ActorKitAnimationGroup" not in selector_args or "-ActorKitDialogueMode" not in selector_args:
             raise AssertionError("structured command ignored prop/animation selector overrides")
         if "-BootstrapCell" not in selector_args or "FormId:0x00000021" not in selector_args:
