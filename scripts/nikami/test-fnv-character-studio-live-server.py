@@ -206,6 +206,14 @@ def main() -> int:
         if forced_catalog.entry("actor:000001") is None:
             raise AssertionError("forced catalog path lookup failed")
 
+        status_failure = live.job_completion_failure(0, {"status": "FAIL", "viewerJson": "viewer/manifest.json"}, "", "")
+        if status_failure.get("code") != "viewer-status-fail" or status_failure.get("resultStatus") != "FAIL":
+            raise AssertionError("live job completion did not fail viewer status=FAIL results")
+        if live.job_completion_failure(0, {"status": "PASS"}, "", ""):
+            raise AssertionError("live job completion incorrectly failed viewer status=PASS results")
+        if live.job_completion_failure(7, {"status": "PASS"}, "stdout tail", "stderr tail").get("code") != "runner-exit":
+            raise AssertionError("live job completion did not preserve nonzero runner exit failures")
+
         sessions = live.StudioSessionStore(run_dir)
         session = sessions.create({"entryId": "actor:000001"})
         if session["schema"] != live.STUDIO_SCHEMA:

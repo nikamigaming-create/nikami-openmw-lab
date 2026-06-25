@@ -1292,23 +1292,18 @@ class JobStore:
             result = parse_run_output(completed.stdout, self.root)
             with self.lock:
                 job = self.jobs[job_id]
-                job["state"] = "complete" if completed.returncode == 0 else "failed"
                 job["finishedAt"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
                 job["returnCode"] = completed.returncode
                 job["stdout"] = completed.stdout[-20000:]
                 job["stderr"] = completed.stderr[-20000:]
                 job["result"] = result
-                if completed.returncode != 0:
-                    job["error"] = f"viewer runner exited with code {completed.returncode}"
-                    job["failure"] = {
-                        "code": "runner-exit",
-                        "stage": "runner",
-                        "message": job["error"],
-                        "returnCode": completed.returncode,
-                        "stdoutTail": job["stdout"][-4000:],
-                        "stderrTail": job["stderr"][-4000:],
-                    }
+                failure = job_completion_failure(completed.returncode, result, job["stdout"], job["stderr"])
+                if failure:
+                    job["state"] = "failed"
+                    job["error"] = first_text(failure.get("message"))
+                    job["failure"] = failure
                 else:
+                    job["state"] = "complete"
                     job["error"] = ""
                     job["failure"] = {}
                 self.write_job(job)
@@ -1343,6 +1338,30 @@ def first_text(*values: Any) -> str:
         if text:
             return text
     return ""
+
+
+def job_completion_failure(return_code: int, result: dict[str, Any], stdout_tail: str, stderr_tail: str) -> dict[str, Any]:
+    if return_code != 0:
+        return {
+            "code": "runner-exit",
+            "stage": "runner",
+            "message": f"viewer runner exited with code {return_code}",
+            "returnCode": return_code,
+            "stdoutTail": stdout_tail[-4000:],
+            "stderrTail": stderr_tail[-4000:],
+        }
+    result_status = first_text(result.get("status")).upper() if isinstance(result, dict) else ""
+    if result_status and result_status != "PASS":
+        return {
+            "code": "viewer-status-fail",
+            "stage": "viewer",
+            "message": f"viewer runner produced status={result_status}",
+            "returnCode": return_code,
+            "resultStatus": result_status,
+            "viewerJson": first_text(result.get("viewerJson") if isinstance(result, dict) else ""),
+            "viewerHtml": first_text(result.get("viewerHtml") if isinstance(result, dict) else ""),
+        }
+    return {}
 
 
 def form_target(value: Any) -> str:
