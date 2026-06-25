@@ -148,6 +148,7 @@ function Start-LiveStudioServer([string]$RootDirectory, [string]$HtmlPath, [stri
             jobs = "http://127.0.0.1:$port/nikami/actor-kit/jobs"
             liveAuthoring = "http://127.0.0.1:$port/nikami/live-authoring"
             liveRuntime = "http://127.0.0.1:$port/nikami/live-runtime"
+            runtimeStatus = "http://127.0.0.1:$port/nikami/runtime-status"
         }
         liveAuthoringFile = $liveAuthoringFile
         liveRuntimeCommandFile = $liveRuntimeCommandFile

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 from pathlib import Path
 
@@ -97,6 +98,32 @@ def main() -> int:
                 "entries": [entry, placed_entry, model_item_entry],
             },
         )
+        live_authoring_path = run_dir / "live-authoring.json"
+        live_runtime_path = run_dir / "live-runtime-command.json"
+        runtime_stdout = run_dir / "runtime-proof.stdout.log"
+        runtime_stderr = run_dir / "runtime-proof.stderr.log"
+        run_dir.mkdir(parents=True, exist_ok=True)
+        runtime_stdout.write_text("runtime stdout", encoding="utf-8")
+        runtime_stderr.write_text("runtime stderr", encoding="utf-8")
+        write_json(
+            run_dir / "live-authoring-run.json",
+            {
+                "schema": "nikami-fnv-live-character-authoring-run-v1",
+                "runtimeProcessId": os.getpid(),
+                "runtimeStdout": str(runtime_stdout),
+                "runtimeStderr": str(runtime_stderr),
+                "runtimeCommand": "powershell -File scripts/nikami/run-fnv-flat-proof.ps1",
+            },
+        )
+        live_authoring_path.write_text("{}", encoding="utf-8")
+        live_runtime_path.write_text("{}", encoding="utf-8")
+        status = live.runtime_status(run_dir, root, live_authoring_path, live_runtime_path)
+        if status["schema"] != live.LIVE_RUNTIME_STATUS_SCHEMA or "runtime-process-status-v1" not in status["schemaMarkers"]:
+            raise AssertionError("runtime status schema/markers mismatch")
+        if not status["runtimeRunning"] or status["runtimeProcessId"] != os.getpid():
+            raise AssertionError("runtime status did not detect the active runtime process")
+        if not status["liveAuthoringUpdatedAt"] or not status["liveRuntimeCommandUpdatedAt"]:
+            raise AssertionError("runtime status did not expose generated control file mtimes")
 
         catalog = live.CatalogStore(root)
         loaded = catalog.load()

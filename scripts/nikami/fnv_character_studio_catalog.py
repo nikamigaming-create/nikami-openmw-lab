@@ -561,6 +561,10 @@ button:disabled {{ opacity: .45; cursor: not-allowed; }}
 .knobGrid label {{ display: grid; gap: 3px; color: var(--muted); font-size: 12px; }}
 .knobGrid input {{ width: 100%; box-sizing: border-box; }}
 .liveFile {{ font-family: Consolas, monospace; font-size: 11px; color: var(--muted); overflow-wrap: anywhere; }}
+.runtimeStatus {{ display: grid; gap: 4px; padding: 8px; border: 1px solid var(--line); border-radius: 6px; background: #0d1117; }}
+.runtimeStatus .runtimeLine {{ display: flex; flex-wrap: wrap; gap: 6px; align-items: center; color: var(--muted); }}
+.runtime-running {{ color: #07120b; background: var(--ok); }}
+.runtime-exited {{ color: #190502; background: var(--bad); }}
 .policyNote {{ color: var(--muted); font-size: 12px; }}
 .jobList, .eventList, .coordList {{ display: grid; gap: 6px; max-height: 240px; overflow: auto; }}
 .jobItem, .eventItem, .coordItem {{ background: #101216; border: 1px solid #2b3038; border-radius: 5px; padding: 7px; }}
@@ -591,6 +595,7 @@ button:disabled {{ opacity: .45; cursor: not-allowed; }}
     <div class="panel">
       <h2>Studio Session</h2>
       <div id="liveState" class="muted"></div>
+      <div id="runtimeStatus" class="runtimeStatus">runtime status pending</div>
       <div id="selectedEntry" class="jobItem"></div>
       <div class="actions">
         <button id="newSession" type="button">New Session</button>
@@ -740,6 +745,7 @@ const state = {{
   liveAuthoring: null,
   liveAuthoringDirty: false,
   liveRuntime: null,
+  runtimeStatus: null,
   partEnabled: Object.fromEntries(PARTS.map(part => [part, true]))
 }};
 function esc(v) {{ return String(v ?? "").replace(/[&<>"']/g, c => ({{"&":"&amp;","<":"&lt;",">":"&gt;","\\"":"&quot;","'":"&#39;"}}[c])); }}
@@ -828,6 +834,30 @@ function renderLiveRuntimeState() {{
   const path = state.liveRuntime?.path || "generated live-runtime-command.json pending";
   node.textContent = `${{target}} / ${{path}}`;
 }}
+function renderRuntimeStatus() {{
+  const node = document.getElementById("runtimeStatus");
+  if (!node) return;
+  if (!liveAvailable()) {{
+    node.textContent = "open through the live loopback server for engine runtime status";
+    return;
+  }}
+  const status = state.runtimeStatus;
+  if (!status) {{
+    node.textContent = "runtime status pending";
+    return;
+  }}
+  const running = !!status.runtimeRunning;
+  const badge = running
+    ? `<span class="pill runtime-running">engine running</span>`
+    : `<span class="pill runtime-exited">engine not running</span>`;
+  const pid = status.runtimeProcessId ? `pid ${{status.runtimeProcessId}}` : "no runtime pid";
+  const manifest = status.manifestPath || "no live-authoring-run.json";
+  node.innerHTML = `
+    <div class="runtimeLine">${{badge}}<span class="pill">${{esc(pid)}}</span><span class="pill">${{esc(status.schema || "")}}</span></div>
+    <div class="runtimeLine">authoring <code>${{esc(status.liveAuthoringUpdatedAt || "not written")}}</code> command <code>${{esc(status.liveRuntimeCommandUpdatedAt || "not written")}}</code></div>
+    <div class="liveFile">${{esc(manifest)}}</div>
+  `;
+}}
 async function refreshLiveAuthoring() {{
   if (!liveAvailable()) {{
     renderLiveAuthoringState();
@@ -852,6 +882,18 @@ async function refreshLiveRuntime() {{
     renderLiveRuntimeState();
   }} catch (error) {{
     addLocalEvent("live-runtime.load.failed", {{ message: error.message || String(error) }});
+  }}
+}}
+async function refreshRuntimeStatus() {{
+  if (!liveAvailable()) {{
+    renderRuntimeStatus();
+    return;
+  }}
+  try {{
+    state.runtimeStatus = await api("/nikami/runtime-status");
+    renderRuntimeStatus();
+  }} catch (error) {{
+    addLocalEvent("runtime-status.load.failed", {{ message: error.message || String(error) }});
   }}
 }}
 async function writeLiveAuthoring(reset = false) {{
@@ -1381,6 +1423,7 @@ function renderWorkbench() {{
   renderComponentReviews();
   renderLiveAuthoringState();
   renderLiveRuntimeState();
+  renderRuntimeStatus();
   renderEvents();
 }}
 function render() {{
@@ -1451,6 +1494,8 @@ document.getElementById("kind").addEventListener("change", e => {{ state.kind = 
 refreshSearch();
 refreshLiveAuthoring();
 refreshLiveRuntime();
+refreshRuntimeStatus();
+window.setInterval(refreshRuntimeStatus, 2500);
 </script>
 </body>
 </html>

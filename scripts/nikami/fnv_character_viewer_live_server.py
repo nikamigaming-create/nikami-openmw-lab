@@ -9,6 +9,7 @@ job metadata under --run-dir and never serves or writes retail asset payloads.
 from __future__ import annotations
 
 import argparse
+import ctypes
 import json
 import os
 import re
@@ -42,6 +43,7 @@ STUDIO_SCHEMA = "nikami-fnv-character-studio-session-v1"
 STUDIO_REVIEW_SCHEMA = "nikami-fnv-character-studio-component-review-v1"
 LIVE_AUTHORING_SCHEMA = "nikami-fnv-live-authoring-v1"
 LIVE_RUNTIME_SCHEMA = "nikami-fnv-live-runtime-command-v1"
+LIVE_RUNTIME_STATUS_SCHEMA = "nikami-fnv-live-runtime-status-v1"
 REVIEW_STATES = {"review-pending", "pass", "fail", "blocked", "needs-rerun"}
 HEAD_SURFACE_PREFIXES = (
     "OPENMW_FNV_HEADGEAR",
@@ -145,6 +147,99 @@ def write_generated_json(path: Path, doc: dict[str, Any]) -> None:
     if last_error is not None:
         raise last_error
     raise PermissionError(f"could not write generated JSON: {path}")
+
+
+def process_is_running(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    if os.name == "nt":
+        process_query_limited_information = 0x1000
+        handle = ctypes.windll.kernel32.OpenProcess(process_query_limited_information, False, pid)
+        if not handle:
+            return False
+        try:
+            exit_code = ctypes.c_ulong()
+            if not ctypes.windll.kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code)):
+                return False
+            return exit_code.value == 259
+        finally:
+            ctypes.windll.kernel32.CloseHandle(handle)
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        return False
+
+
+def file_mtime_utc(path: Path | None) -> str:
+    if path is None or not path.is_file():
+        return ""
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(path.stat().st_mtime))
+
+
+def latest_runtime_manifest(run_dir: Path, live_authoring_path: Path | None) -> Path | None:
+    candidates: list[Path] = []
+    if live_authoring_path is not None:
+        candidates.append(live_authoring_path.resolve().parent / "live-authoring-run.json")
+    candidates.append(run_dir.resolve() / "live-authoring-run.json")
+    candidates.append(run_dir.resolve().parent / "live-authoring-run.json")
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def runtime_status(
+    run_dir: Path, root: Path, live_authoring_path: Path | None, live_runtime_path: Path | None
+) -> dict[str, Any]:
+    manifest_path = latest_runtime_manifest(run_dir, live_authoring_path)
+    manifest: dict[str, Any] = {}
+    if manifest_path is not None:
+        try:
+            loaded = read_json(manifest_path)
+            if isinstance(loaded, dict):
+                manifest = loaded
+        except Exception:
+            manifest = {}
+    try:
+        pid = int(manifest.get("runtimeProcessId") or 0)
+    except (TypeError, ValueError):
+        pid = 0
+    stdout = first_text(manifest.get("runtimeStdout"))
+    stderr = first_text(manifest.get("runtimeStderr"))
+    stdout_path = Path(stdout) if stdout else None
+    stderr_path = Path(stderr) if stderr else None
+    live_authoring_path = live_authoring_path.resolve() if live_authoring_path is not None else None
+    live_runtime_path = live_runtime_path.resolve() if live_runtime_path is not None else None
+    return {
+        "schema": LIVE_RUNTIME_STATUS_SCHEMA,
+        "schemaMarkers": [
+            "runtime-process-status-v1",
+            "live-authoring-file-status-v1",
+            "live-runtime-command-file-status-v1",
+            "generated-proof-output-only-v1",
+        ],
+        "updatedAt": utc_now(),
+        "runDir": str(run_dir),
+        "proofRoot": str(root),
+        "manifestPath": str(manifest_path or ""),
+        "runtimeProcessId": pid,
+        "runtimeRunning": process_is_running(pid),
+        "runtimeStdout": stdout,
+        "runtimeStderr": stderr,
+        "runtimeStdoutUpdatedAt": file_mtime_utc(stdout_path),
+        "runtimeStderrUpdatedAt": file_mtime_utc(stderr_path),
+        "runtimeCommand": first_text(manifest.get("runtimeCommand")),
+        "liveAuthoringFile": str(live_authoring_path or ""),
+        "liveAuthoringUpdatedAt": file_mtime_utc(live_authoring_path),
+        "liveRuntimeCommandFile": str(live_runtime_path or ""),
+        "liveRuntimeCommandUpdatedAt": file_mtime_utc(live_runtime_path),
+        "policy": {
+            "generatedProofOutputsOnly": True,
+            "noRetailPayloadBytes": True,
+            "statusOnlyNoProcessControl": True,
+        },
+    }
 
 
 def split_powershell_command(command: str) -> list[str]:
@@ -1191,6 +1286,10 @@ class LiveHandler(SimpleHTTPRequestHandler):
                         "endpoint": "/nikami/live-runtime",
                         "path": str(self.server.live_runtime_store.path),  # type: ignore[attr-defined]
                     },
+                    "runtimeStatus": {
+                        "schema": LIVE_RUNTIME_STATUS_SCHEMA,
+                        "endpoint": "/nikami/runtime-status",
+                    },
                 },
             )
             return
@@ -1199,6 +1298,17 @@ class LiveHandler(SimpleHTTPRequestHandler):
             return
         if parsed.path == "/nikami/live-runtime":
             self.send_json(200, self.server.live_runtime_store.load())  # type: ignore[attr-defined]
+            return
+        if parsed.path == "/nikami/runtime-status":
+            self.send_json(
+                200,
+                runtime_status(
+                    self.server.run_dir,  # type: ignore[attr-defined]
+                    self.server.root_dir,  # type: ignore[attr-defined]
+                    self.server.live_authoring_store.path,  # type: ignore[attr-defined]
+                    self.server.live_runtime_store.path,  # type: ignore[attr-defined]
+                ),
+            )
             return
         if parsed.path == "/nikami/catalog":
             try:
@@ -1407,6 +1517,8 @@ def main() -> int:
         *handler_args, directory=str(root), **handler_kwargs
     )
     httpd = ThreadingHTTPServer((args.host, args.port), handler)
+    httpd.run_dir = run_dir  # type: ignore[attr-defined]
+    httpd.root_dir = root  # type: ignore[attr-defined]
     httpd.job_store = JobStore(run_dir, root, repo_root, runner)  # type: ignore[attr-defined]
     httpd.catalog_store = CatalogStore(root, args.catalog_path.resolve() if args.catalog_path else None)  # type: ignore[attr-defined]
     httpd.studio_store = StudioSessionStore(run_dir)  # type: ignore[attr-defined]
