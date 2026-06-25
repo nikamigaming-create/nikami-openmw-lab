@@ -9,12 +9,14 @@
 #include <cctype>
 #include <future>
 #include <filesystem>
+#include <fstream>
 #include <istream>
 #include <limits>
 #include <array>
 #include <map>
 #include <memory>
 #include <optional>
+#include <regex>
 #include <sstream>
 #include <string_view>
 #include <system_error>
@@ -385,6 +387,137 @@ namespace
             return fallback;
 
         return static_cast<int>(value);
+    }
+
+    std::string escapeProofRuntimeJsonRegex(std::string_view value)
+    {
+        std::string escaped;
+        escaped.reserve(value.size() * 2);
+        for (char c : value)
+        {
+            switch (c)
+            {
+                case '\\':
+                case '.':
+                case '^':
+                case '$':
+                case '|':
+                case '(':
+                case ')':
+                case '[':
+                case ']':
+                case '{':
+                case '}':
+                case '*':
+                case '+':
+                case '?':
+                    escaped.push_back('\\');
+                    break;
+                default:
+                    break;
+            }
+            escaped.push_back(c);
+        }
+        return escaped;
+    }
+
+    std::string unescapeProofRuntimeJsonString(std::string value)
+    {
+        std::string result;
+        result.reserve(value.size());
+        bool escaped = false;
+        for (char c : value)
+        {
+            if (escaped)
+            {
+                switch (c)
+                {
+                    case '"':
+                    case '\\':
+                    case '/':
+                        result.push_back(c);
+                        break;
+                    case 'b':
+                        result.push_back('\b');
+                        break;
+                    case 'f':
+                        result.push_back('\f');
+                        break;
+                    case 'n':
+                        result.push_back('\n');
+                        break;
+                    case 'r':
+                        result.push_back('\r');
+                        break;
+                    case 't':
+                        result.push_back('\t');
+                        break;
+                    default:
+                        result.push_back(c);
+                        break;
+                }
+                escaped = false;
+                continue;
+            }
+            if (c == '\\')
+            {
+                escaped = true;
+                continue;
+            }
+            result.push_back(c);
+        }
+        return result;
+    }
+
+    bool readProofRuntimeCommandString(const std::string& content, std::string_view key, std::string& value)
+    {
+        try
+        {
+            const std::regex pattern("\"" + escapeProofRuntimeJsonRegex(key)
+                + "\"\\s*:\\s*\"((?:\\\\.|[^\"])*)\"");
+            std::smatch match;
+            if (!std::regex_search(content, match, pattern))
+                return false;
+            value = unescapeProofRuntimeJsonString(match[1].str());
+            return true;
+        }
+        catch (...)
+        {
+            return false;
+        }
+    }
+
+    bool readProofRuntimeCommandFile(const char* path, std::string& content)
+    {
+        if (path == nullptr || path[0] == '\0')
+            return false;
+        std::ifstream input(path, std::ios::binary);
+        if (!input)
+            return false;
+        std::ostringstream stream;
+        stream << input.rdbuf();
+        content = stream.str();
+        return true;
+    }
+
+    std::string getProofRuntimeActorTarget(std::string fallback)
+    {
+        const char* path = std::getenv("OPENMW_FNV_LIVE_RUNTIME_COMMAND_FILE");
+        if (path == nullptr || path[0] == '\0')
+            return fallback;
+
+        std::string content;
+        if (!readProofRuntimeCommandFile(path, content))
+            return fallback;
+
+        std::string target;
+        for (std::string_view key : { std::string_view("actorTarget"), std::string_view("runtimeTarget"),
+                 std::string_view("target") })
+        {
+            if (readProofRuntimeCommandString(content, key, target) && !target.empty())
+                return target;
+        }
+        return fallback;
     }
 
     osg::Camera* createFalloutNeutralActorPreviewComposite(
@@ -2446,7 +2579,10 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
         proofActorDumpApplied = true;
     }
 
-    const char* proofActorTarget = std::getenv("OPENMW_PROOF_ACTOR_TARGET");
+    const char* proofActorTargetEnv = std::getenv("OPENMW_PROOF_ACTOR_TARGET");
+    std::string proofActorTargetValue = getProofRuntimeActorTarget(
+        proofActorTargetEnv != nullptr && *proofActorTargetEnv != '\0' ? std::string(proofActorTargetEnv) : std::string());
+    const char* proofActorTarget = proofActorTargetValue.empty() ? nullptr : proofActorTargetValue.c_str();
     const bool proofStageActor = std::getenv("OPENMW_PROOF_STAGE_ACTOR") != nullptr;
     const bool proofStageActorLock = proofStageActor && std::getenv("OPENMW_PROOF_STAGE_ACTOR_UNLOCK") == nullptr;
     const int proofActorFrame = static_cast<int>(getProofFloat("OPENMW_PROOF_ACTOR_FRAME", 240.f));
@@ -2459,6 +2595,31 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
     static osg::ref_ptr<osg::Group> proofNeutralActorPreviewRoot;
     static osg::ref_ptr<osg::Camera> proofNeutralActorPreviewComposite;
     static std::vector<std::unique_ptr<MWRender::FalloutActorPreview>> proofNeutralActorPreviews;
+    static std::string proofActorEffectiveTarget;
+    if (proofActorTarget != nullptr && proofActorEffectiveTarget != proofActorTarget)
+    {
+        Log(Debug::Info) << "FNV/ESM4 live runtime: actor target changed from=\""
+                         << proofActorEffectiveTarget << "\" to=\"" << proofActorTarget
+                         << "\" file=\""
+                         << (std::getenv("OPENMW_FNV_LIVE_RUNTIME_COMMAND_FILE") != nullptr
+                                 ? std::getenv("OPENMW_FNV_LIVE_RUNTIME_COMMAND_FILE")
+                                 : "")
+                         << "\" runtime=runtime-supported gate=runtime-live-actor-target";
+        proofActorEffectiveTarget = proofActorTarget;
+        proofActorCameraApplied = false;
+        proofActorCameraFirstAppliedFrame = 0;
+        proofActorCameraLastAppliedFrame = 0;
+        proofNeutralActorPreviewAttempted = false;
+        proofNeutralActorPreviewReady = false;
+        proofNeutralActorPreviewIsolationApplied = false;
+        proofNeutralActorPreviews.clear();
+        if (proofNeutralActorPreviewComposite != nullptr && proofNeutralActorPreviewComposite->getNumParents() > 0)
+            proofNeutralActorPreviewComposite->getParent(0)->removeChild(proofNeutralActorPreviewComposite);
+        proofNeutralActorPreviewComposite = nullptr;
+        if (proofNeutralActorPreviewRoot != nullptr && proofNeutralActorPreviewRoot->getNumParents() > 0)
+            proofNeutralActorPreviewRoot->getParent(0)->removeChild(proofNeutralActorPreviewRoot);
+        proofNeutralActorPreviewRoot = nullptr;
+    }
     const char* proofItemModel = std::getenv("OPENMW_PROOF_ITEM_MODEL");
     const char* proofItemTarget = std::getenv("OPENMW_PROOF_ITEM_TARGET");
     const bool proofItemRequested = proofItemModel != nullptr && *proofItemModel != '\0';

@@ -5,6 +5,7 @@ param(
     [string]$OutDir = "",
     [int]$Limit = 0,
     [string]$LiveAuthoringFile = "",
+    [string]$LiveRuntimeCommandFile = "",
     [switch]$OpenStudio,
     [switch]$LiveServe,
     [int]$ServePort = 0,
@@ -84,7 +85,7 @@ function ConvertTo-HttpPath([string]$BaseDirectory, [string]$TargetPath) {
     return ($relative -replace '\\', '/')
 }
 
-function Start-LiveStudioServer([string]$RootDirectory, [string]$HtmlPath, [string]$CatalogPath, [string]$RunDirectory, [int]$RequestedPort, [string]$RequestedLiveAuthoringFile) {
+function Start-LiveStudioServer([string]$RootDirectory, [string]$HtmlPath, [string]$CatalogPath, [string]$RunDirectory, [int]$RequestedPort, [string]$RequestedLiveAuthoringFile, [string]$RequestedLiveRuntimeCommandFile) {
     $root = (Resolve-Path -LiteralPath $RootDirectory).Path
     $htmlResolved = (Resolve-Path -LiteralPath $HtmlPath).Path
     $catalogResolved = (Resolve-Path -LiteralPath $CatalogPath).Path
@@ -93,6 +94,7 @@ function Start-LiveStudioServer([string]$RootDirectory, [string]$HtmlPath, [stri
     $server = (Resolve-Path -LiteralPath $LiveServer).Path
     $port = if ($RequestedPort -gt 0) { $RequestedPort } else { Get-FreeLoopbackPort }
     $liveAuthoringFile = if (![string]::IsNullOrWhiteSpace($RequestedLiveAuthoringFile)) { $RequestedLiveAuthoringFile } else { Join-Path $RunDirectory "live-authoring.json" }
+    $liveRuntimeCommandFile = if (![string]::IsNullOrWhiteSpace($RequestedLiveRuntimeCommandFile)) { $RequestedLiveRuntimeCommandFile } else { Join-Path $RunDirectory "live-runtime-command.json" }
     $serverLog = Join-Path $RunDirectory "studio-live-server.stdout.log"
     $serverErr = Join-Path $RunDirectory "studio-live-server.stderr.log"
     $arguments = @(
@@ -103,6 +105,7 @@ function Start-LiveStudioServer([string]$RootDirectory, [string]$HtmlPath, [stri
         "--runner", $runner,
         "--catalog-path", $catalogResolved,
         "--live-authoring-path", $liveAuthoringFile,
+        "--live-runtime-path", $liveRuntimeCommandFile,
         "--host", "127.0.0.1",
         "--port", [string]$port
     ) | ForEach-Object { Quote-ProcessArgument $_ }
@@ -144,12 +147,15 @@ function Start-LiveStudioServer([string]$RootDirectory, [string]$HtmlPath, [stri
             sessions = "http://127.0.0.1:$port/nikami/studio/sessions"
             jobs = "http://127.0.0.1:$port/nikami/actor-kit/jobs"
             liveAuthoring = "http://127.0.0.1:$port/nikami/live-authoring"
+            liveRuntime = "http://127.0.0.1:$port/nikami/live-runtime"
         }
         liveAuthoringFile = $liveAuthoringFile
+        liveRuntimeCommandFile = $liveRuntimeCommandFile
         policy = [pscustomobject][ordered]@{
             loopbackOnly = $true
             generatedProofOutputsOnly = $true
             noRetailAssetsCommitted = $true
+            activeCellActorSwitchOnly = $true
         }
     }
     $serverInfoPath = Join-Path $RunDirectory "studio-live-server.json"
@@ -211,7 +217,7 @@ Write-Host "Studio HTML: $html"
 Write-Host "generated proof/viewer output only; no retail assets are committed"
 
 if ($LiveServe) {
-    $serverInfo = Start-LiveStudioServer -RootDirectory $ProofRoot -HtmlPath $html -CatalogPath $json -RunDirectory $latest.FullName -RequestedPort $ServePort -RequestedLiveAuthoringFile $LiveAuthoringFile
+    $serverInfo = Start-LiveStudioServer -RootDirectory $ProofRoot -HtmlPath $html -CatalogPath $json -RunDirectory $latest.FullName -RequestedPort $ServePort -RequestedLiveAuthoringFile $LiveAuthoringFile -RequestedLiveRuntimeCommandFile $LiveRuntimeCommandFile
     Write-Host "Studio URL: $($serverInfo.url)"
     Write-Host "Studio server JSON: $(Join-Path $latest.FullName "studio-live-server.json")"
     Write-Host "Studio URL file: $(Join-Path $latest.FullName "studio-url.txt")"

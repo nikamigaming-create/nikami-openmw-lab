@@ -41,6 +41,7 @@ FORBIDDEN_CHARS = set("&;|<>`")
 STUDIO_SCHEMA = "nikami-fnv-character-studio-session-v1"
 STUDIO_REVIEW_SCHEMA = "nikami-fnv-character-studio-component-review-v1"
 LIVE_AUTHORING_SCHEMA = "nikami-fnv-live-authoring-v1"
+LIVE_RUNTIME_SCHEMA = "nikami-fnv-live-runtime-command-v1"
 REVIEW_STATES = {"review-pending", "pass", "fail", "blocked", "needs-rerun"}
 HEAD_SURFACE_PREFIXES = (
     "OPENMW_FNV_HEADGEAR",
@@ -115,6 +116,35 @@ def catalog_search_entry(entry: dict[str, Any]) -> dict[str, Any]:
 
 def read_json(path: Path) -> Any:
     return json.loads(path.read_text(encoding="utf-8-sig", errors="replace"))
+
+
+def write_generated_json(path: Path, doc: dict[str, Any]) -> None:
+    payload = json.dumps(doc, indent=2)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    last_error: PermissionError | None = None
+    for _ in range(60):
+        try:
+            tmp.write_text(payload, encoding="utf-8")
+            tmp.replace(path)
+            return
+        except PermissionError as error:
+            last_error = error
+            time.sleep(0.025)
+
+    # OpenMW polls generated control files on Windows; if a rename is blocked
+    # by a read handle, fall back to a direct write and retry the next frame.
+    for _ in range(20):
+        try:
+            path.write_text(payload, encoding="utf-8")
+            return
+        except PermissionError as error:
+            last_error = error
+            time.sleep(0.025)
+
+    if last_error is not None:
+        raise last_error
+    raise PermissionError(f"could not write generated JSON: {path}")
 
 
 def split_powershell_command(command: str) -> list[str]:
@@ -352,10 +382,7 @@ class LiveAuthoringStore:
         }
 
     def _write(self, doc: dict[str, Any]) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = self.path.with_suffix(self.path.suffix + ".tmp")
-        tmp.write_text(json.dumps(doc, indent=2), encoding="utf-8")
-        tmp.replace(self.path)
+        write_generated_json(self.path, doc)
 
     def load(self) -> dict[str, Any]:
         with self.lock:
@@ -428,6 +455,128 @@ class LiveAuthoringStore:
                 "head-surface-transform-controls-v1",
                 "generated-control-file-only-v1",
             ]
+            self._write(doc)
+            return doc
+
+
+class LiveRuntimeCommandStore:
+    def __init__(self, run_dir: Path, root: Path, path: Path | None = None) -> None:
+        self.run_dir = run_dir.resolve()
+        self.root = root.resolve()
+        self.path = (path.resolve() if path is not None else self.run_dir / "live-runtime-command.json")
+        self.lock = threading.RLock()
+        if self.path.suffix.lower() != ".json":
+            raise ValueError("live runtime command path must be a generated JSON file")
+        if not self._under_allowed_root(self.path):
+            raise ValueError("live runtime command path escaped generated proof outputs")
+
+    def _under_allowed_root(self, path: Path) -> bool:
+        resolved = path.resolve()
+        allowed_roots = (self.run_dir, self.root)
+        return any(resolved == root or root in resolved.parents for root in allowed_roots)
+
+    def _default_doc(self) -> dict[str, Any]:
+        return {
+            "schema": LIVE_RUNTIME_SCHEMA,
+            "schemaMarkers": ["runtime-live-target-switch-v1", "generated-command-file-only-v1"],
+            "path": str(self.path),
+            "updatedAt": utc_now(),
+            "command": "set-actor-target",
+            "actorTarget": "",
+            "runtimeTarget": "",
+            "actorKind": "",
+            "entryId": "",
+            "selectedTarget": "",
+            "policy": {
+                "generatedProofOutputsOnly": True,
+                "noRetailPayloadBytes": True,
+                "activeCellActorSwitchOnly": True,
+            },
+        }
+
+    def _write(self, doc: dict[str, Any]) -> None:
+        write_generated_json(self.path, doc)
+
+    def load(self) -> dict[str, Any]:
+        with self.lock:
+            if not self.path.is_file():
+                doc = self._default_doc()
+                self._write(doc)
+                return doc
+            doc = read_json(self.path)
+            if not isinstance(doc, dict):
+                raise ValueError("live runtime command JSON must be an object")
+            default = self._default_doc()
+            for key, value in default.items():
+                if key not in doc:
+                    doc[key] = value
+            doc["schema"] = LIVE_RUNTIME_SCHEMA
+            doc["path"] = str(self.path)
+            policy = doc.get("policy") if isinstance(doc.get("policy"), dict) else {}
+            policy.update(
+                {
+                    "generatedProofOutputsOnly": True,
+                    "noRetailPayloadBytes": True,
+                    "activeCellActorSwitchOnly": True,
+                }
+            )
+            doc["policy"] = policy
+            markers = doc.get("schemaMarkers") if isinstance(doc.get("schemaMarkers"), list) else []
+            for marker in ["runtime-live-target-switch-v1", "generated-command-file-only-v1"]:
+                if marker not in markers:
+                    markers.append(marker)
+            doc["schemaMarkers"] = markers
+            self._write(doc)
+            return doc
+
+    def update(self, payload: dict[str, Any]) -> dict[str, Any]:
+        allowed = {
+            "actorTarget",
+            "runtimeTarget",
+            "target",
+            "actorKind",
+            "entryId",
+            "selectedTarget",
+            "placedTarget",
+            "command",
+            "sessionId",
+        }
+        unknown = sorted(str(key) for key in payload if key not in allowed)
+        if unknown:
+            raise ValueError(f"unsupported live runtime command field: {unknown[0]}")
+        target = first_text(payload.get("actorTarget"), payload.get("runtimeTarget"), payload.get("target"))
+        if not target:
+            raise ValueError("live runtime command requires actorTarget")
+        if not re.fullmatch(r"[-A-Za-z0-9_:.\\ ]{1,160}", target):
+            raise ValueError("live runtime actorTarget contains unsupported characters")
+        actor_kind = first_text(payload.get("actorKind"))
+        if actor_kind and actor_kind not in {"npc", "creature", "auto"}:
+            raise ValueError("live runtime actorKind must be npc, creature, or auto")
+        command = first_text(payload.get("command"), "set-actor-target")
+        if command != "set-actor-target":
+            raise ValueError("unsupported live runtime command")
+        with self.lock:
+            doc = self.load()
+            doc.update(
+                {
+                    "schema": LIVE_RUNTIME_SCHEMA,
+                    "schemaMarkers": ["runtime-live-target-switch-v1", "generated-command-file-only-v1"],
+                    "path": str(self.path),
+                    "updatedAt": utc_now(),
+                    "command": command,
+                    "actorTarget": target,
+                    "runtimeTarget": target,
+                    "actorKind": actor_kind,
+                    "entryId": first_text(payload.get("entryId")),
+                    "selectedTarget": first_text(payload.get("selectedTarget"), target),
+                    "placedTarget": first_text(payload.get("placedTarget")),
+                    "policy": {
+                        "generatedProofOutputsOnly": True,
+                        "noRetailPayloadBytes": True,
+                        "activeCellActorSwitchOnly": True,
+                    },
+                }
+            )
             self._write(doc)
             return doc
 
@@ -1028,11 +1177,19 @@ class LiveHandler(SimpleHTTPRequestHandler):
                         "endpoint": "/nikami/live-authoring",
                         "path": str(self.server.live_authoring_store.path),  # type: ignore[attr-defined]
                     },
+                    "liveRuntime": {
+                        "schema": LIVE_RUNTIME_SCHEMA,
+                        "endpoint": "/nikami/live-runtime",
+                        "path": str(self.server.live_runtime_store.path),  # type: ignore[attr-defined]
+                    },
                 },
             )
             return
         if parsed.path == "/nikami/live-authoring":
             self.send_json(200, self.server.live_authoring_store.load())  # type: ignore[attr-defined]
+            return
+        if parsed.path == "/nikami/live-runtime":
+            self.send_json(200, self.server.live_runtime_store.load())  # type: ignore[attr-defined]
             return
         if parsed.path == "/nikami/catalog":
             try:
@@ -1134,6 +1291,23 @@ class LiveHandler(SimpleHTTPRequestHandler):
                     )
                 self.send_json(200, doc)
                 return
+            if parsed.path == "/nikami/live-runtime":
+                payload = self.read_payload()
+                doc = self.server.live_runtime_store.update(payload)  # type: ignore[attr-defined]
+                session_id = str(payload.get("sessionId") or "")
+                if session_id:
+                    self.server.studio_store.append_event(  # type: ignore[attr-defined]
+                        session_id,
+                        "live-runtime.update",
+                        {
+                            "path": doc.get("path", ""),
+                            "actorTarget": doc.get("actorTarget", ""),
+                            "actorKind": doc.get("actorKind", ""),
+                            "schema": LIVE_RUNTIME_SCHEMA,
+                        },
+                    )
+                self.send_json(200, doc)
+                return
             if parsed.path == "/nikami/studio/sessions":
                 session = self.server.studio_store.create(self.read_payload())  # type: ignore[attr-defined]
                 self.send_json(201, session)
@@ -1210,6 +1384,7 @@ def main() -> int:
     parser.add_argument("--runner", required=True, type=Path)
     parser.add_argument("--catalog-path", type=Path)
     parser.add_argument("--live-authoring-path", type=Path)
+    parser.add_argument("--live-runtime-path", type=Path)
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", required=True, type=int)
     args = parser.parse_args()
@@ -1230,6 +1405,10 @@ def main() -> int:
         run_dir, root, args.live_authoring_path.resolve() if args.live_authoring_path else None
     )
     httpd.live_authoring_store.load()  # type: ignore[attr-defined]
+    httpd.live_runtime_store = LiveRuntimeCommandStore(  # type: ignore[attr-defined]
+        run_dir, root, args.live_runtime_path.resolve() if args.live_runtime_path else None
+    )
+    httpd.live_runtime_store.load()  # type: ignore[attr-defined]
     print(f"live-viewer-server=http://{args.host}:{args.port}", flush=True)
     httpd.serve_forever()
     return 0

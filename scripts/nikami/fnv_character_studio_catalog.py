@@ -594,9 +594,11 @@ button:disabled {{ opacity: .45; cursor: not-allowed; }}
       <div id="selectedEntry" class="jobItem"></div>
       <div class="actions">
         <button id="newSession" type="button">New Session</button>
+        <button id="sendLiveRuntime" type="button">Send Live</button>
         <button id="runThree" type="button">Run 3 Camera</button>
         <button id="runFront" type="button">Run Front</button>
       </div>
+      <div id="liveRuntimeState" class="liveFile">live runtime target pending</div>
       <h3>Easy Pete Debug</h3>
       <div class="actions">
         <button class="focusPreset" type="button" data-preset="easy-pete-face">Face</button>
@@ -737,6 +739,7 @@ const state = {{
   latestJob: null,
   liveAuthoring: null,
   liveAuthoringDirty: false,
+  liveRuntime: null,
   partEnabled: Object.fromEntries(PARTS.map(part => [part, true]))
 }};
 function esc(v) {{ return String(v ?? "").replace(/[&<>"']/g, c => ({{"&":"&amp;","<":"&lt;",">":"&gt;","\\"":"&quot;","'":"&#39;"}}[c])); }}
@@ -814,6 +817,17 @@ function renderLiveAuthoringState() {{
   const dirty = state.liveAuthoringDirty ? " / pending write" : "";
   node.textContent = `${{path}}${{dirty}}`;
 }}
+function renderLiveRuntimeState() {{
+  const node = document.getElementById("liveRuntimeState");
+  if (!node) return;
+  if (!liveAvailable()) {{
+    node.textContent = "open through the live loopback server for active-cell target switching";
+    return;
+  }}
+  const target = state.liveRuntime?.actorTarget || "no live runtime target selected";
+  const path = state.liveRuntime?.path || "generated live-runtime-command.json pending";
+  node.textContent = `${{target}} / ${{path}}`;
+}}
 async function refreshLiveAuthoring() {{
   if (!liveAvailable()) {{
     renderLiveAuthoringState();
@@ -826,6 +840,18 @@ async function refreshLiveAuthoring() {{
     renderLiveAuthoringState();
   }} catch (error) {{
     addLocalEvent("live-authoring.load.failed", {{ message: error.message || String(error) }});
+  }}
+}}
+async function refreshLiveRuntime() {{
+  if (!liveAvailable()) {{
+    renderLiveRuntimeState();
+    return;
+  }}
+  try {{
+    state.liveRuntime = await api("/nikami/live-runtime");
+    renderLiveRuntimeState();
+  }} catch (error) {{
+    addLocalEvent("live-runtime.load.failed", {{ message: error.message || String(error) }});
   }}
 }}
 async function writeLiveAuthoring(reset = false) {{
@@ -847,6 +873,37 @@ async function writeLiveAuthoring(reset = false) {{
     }});
   }} catch (error) {{
     addLocalEvent("live-authoring.write.failed", {{ message: error.message || String(error) }});
+  }}
+}}
+async function sendSelectedLiveRuntime() {{
+  if (!liveAvailable()) return;
+  const entry = selectedEntry();
+  if (!entry || !["npc", "creature"].includes(entry.kind)) return;
+  const target = entry.runtimeTarget || entry.baseActorTarget || entry.target || "";
+  if (!target) return;
+  try {{
+    state.liveRuntime = await api("/nikami/live-runtime", {{
+      method: "POST",
+      body: JSON.stringify({{
+        sessionId: state.session?.id || "",
+        entryId: entry.id,
+        actorTarget: target,
+        runtimeTarget: target,
+        selectedTarget: entry.selectedTarget || entry.target || "",
+        placedTarget: entry.placedTarget || "",
+        actorKind: entry.kind,
+        command: "set-actor-target"
+      }})
+    }});
+    renderLiveRuntimeState();
+    addLocalEvent("live-runtime.update", {{
+      actorTarget: state.liveRuntime.actorTarget,
+      actorKind: state.liveRuntime.actorKind,
+      path: state.liveRuntime.path,
+      limitation: "active-cell actor switch only"
+    }});
+  }} catch (error) {{
+    addLocalEvent("live-runtime.write.failed", {{ message: error.message || String(error), entryId: entry.id }});
   }}
 }}
 let liveAuthoringTimer = 0;
@@ -1311,7 +1368,9 @@ function renderWorkbench() {{
     ? `<b>${{esc(entry.label)}}</b><div class="muted">${{esc(entry.id)}} / ${{esc(entry.kind)}} / ${{esc(entry.classification)}}</div><div class="muted">runtime: <code>${{esc(entry.runtimeTarget || entry.target)}}</code></div><div class="muted">assembly: <code>${{esc(entry.assemblyTarget || "")}}</code> placed: <code>${{esc(entry.placedTarget || "")}}</code></div>`
     : `<span class="muted">Select an actor or creature entry</span>`;
   const runnable = live && entry && (entry.commands?.runtimeThreeCamera || entry.runnable);
+  const liveSwitchable = live && entry && ["npc", "creature"].includes(entry.kind);
   document.getElementById("newSession").disabled = !live;
+  document.getElementById("sendLiveRuntime").disabled = !liveSwitchable;
   document.getElementById("runThree").disabled = !runnable;
   document.getElementById("runFront").disabled = !runnable;
   renderCameras();
@@ -1321,6 +1380,7 @@ function renderWorkbench() {{
   renderSaveReview();
   renderComponentReviews();
   renderLiveAuthoringState();
+  renderLiveRuntimeState();
   renderEvents();
 }}
 function render() {{
@@ -1382,6 +1442,7 @@ document.getElementById("newSession").addEventListener("click", async () => {{
 }});
 document.getElementById("runThree").addEventListener("click", () => launchJob("runtimeThreeCamera"));
 document.getElementById("runFront").addEventListener("click", () => launchJob("runtimeFrontOnly"));
+document.getElementById("sendLiveRuntime").addEventListener("click", sendSelectedLiveRuntime);
 document.getElementById("saveReview").addEventListener("click", saveReviewEvent);
 document.querySelectorAll("[data-preset]").forEach(button => button.addEventListener("click", () => applyPreset(button.dataset.preset || "")));
 document.getElementById("search").addEventListener("input", e => {{ state.query = e.target.value; refreshSearch(); }});
@@ -1389,6 +1450,7 @@ document.getElementById("domain").addEventListener("change", e => {{ state.domai
 document.getElementById("kind").addEventListener("change", e => {{ state.kind = e.target.value; refreshSearch(); }});
 refreshSearch();
 refreshLiveAuthoring();
+refreshLiveRuntime();
 </script>
 </body>
 </html>

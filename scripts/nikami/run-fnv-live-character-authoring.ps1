@@ -47,6 +47,7 @@ $Stamp = Get-Date -Format "yyyyMMdd_HHmmss"
 $RunDir = Join-Path $ProofRoot "fnv-live-character-authoring/$Stamp"
 $StudioDir = Join-Path $RunDir "studio"
 $LiveAuthoringFile = Join-Path $RunDir "live-authoring.json"
+$LiveRuntimeCommandFile = Join-Path $RunDir "live-runtime-command.json"
 $ManifestPath = Join-Path $RunDir "live-authoring-run.json"
 New-Item -ItemType Directory -Force -Path $RunDir, $StudioDir | Out-Null
 
@@ -135,12 +136,29 @@ foreach ($prefix in @("OPENMW_FNV_HEADGEAR", "OPENMW_FNV_HAIR", "OPENMW_FNV_BROW
     }
 } | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $LiveAuthoringFile -Encoding UTF8
 
+[pscustomobject][ordered]@{
+    schema = "nikami-fnv-live-runtime-command-v1"
+    schemaMarkers = @("runtime-live-target-switch-v1", "generated-command-file-only-v1")
+    path = $LiveRuntimeCommandFile
+    updatedAt = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+    actorTarget = $ActorTarget
+    runtimeTarget = $ActorTarget
+    actorKind = $ActorKind
+    entryId = ""
+    command = "set-actor-target"
+    policy = [pscustomobject][ordered]@{
+        generatedProofOutputsOnly = $true
+        noRetailPayloadBytes = $true
+        activeCellActorSwitchOnly = $true
+    }
+} | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $LiveRuntimeCommandFile -Encoding UTF8
+
 $StudioRunner = Join-Path $PSScriptRoot "run-fnv-character-studio-catalog.ps1"
 $FlatProof = Join-Path $PSScriptRoot "run-fnv-flat-proof.ps1"
 if (!(Test-Path -LiteralPath $StudioRunner -PathType Leaf)) { throw "Missing studio catalog runner: $StudioRunner" }
 if (!(Test-Path -LiteralPath $FlatProof -PathType Leaf)) { throw "Missing flat proof runner: $FlatProof" }
 
-& $StudioRunner -ProofRoot $ProofRoot -OutDir $StudioDir -LiveServe -LiveAuthoringFile $LiveAuthoringFile -ServePort $ServePort
+& $StudioRunner -ProofRoot $ProofRoot -OutDir $StudioDir -LiveServe -LiveAuthoringFile $LiveAuthoringFile -LiveRuntimeCommandFile $LiveRuntimeCommandFile -ServePort $ServePort
 if ($LASTEXITCODE -ne 0) {
     throw "Live studio startup failed with exit code $LASTEXITCODE"
 }
@@ -194,6 +212,7 @@ Add-Arg $runtimeArgs "-FnvSkinningMatrixAudit" $FnvSkinningMatrixAudit
 Add-Arg $runtimeArgs "-FnvRotationMode" $FnvRotationMode
 Add-Arg $runtimeArgs "-CharacterBuilderPhase" "full"
 Add-Arg $runtimeArgs "-LiveAuthoringFile" $LiveAuthoringFile
+Add-Arg $runtimeArgs "-LiveRuntimeCommandFile" $LiveRuntimeCommandFile
 if ($NoSound) { $runtimeArgs.Add("-NoSound") }
 
 $RuntimeStdout = Join-Path $RunDir "runtime-proof.stdout.log"
@@ -212,6 +231,7 @@ $manifest = [pscustomobject][ordered]@{
     studioUrl = $StudioUrl
     studioServerJson = $StudioServerJson
     liveAuthoringFile = $LiveAuthoringFile
+    liveRuntimeCommandFile = $LiveRuntimeCommandFile
     runtimeProcessId = $runtimeProcess.Id
     runtimeStdout = $RuntimeStdout
     runtimeStderr = $RuntimeStderr
@@ -224,6 +244,7 @@ $manifest = [pscustomobject][ordered]@{
         generatedProofOutputsOnly = $true
         noRetailAssetsCommitted = $true
         liveNumericControlsOnly = $true
+        activeCellActorSwitchOnly = $true
         pcFlatFirst = $true
     }
 }
@@ -232,6 +253,7 @@ $manifest | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $ManifestPath -En
 Write-Host "Live character authoring run: $RunDir"
 Write-Host "Studio URL: $StudioUrl"
 Write-Host "Live authoring file: $LiveAuthoringFile"
+Write-Host "Live runtime command file: $LiveRuntimeCommandFile"
 Write-Host "Runtime proof PID: $($runtimeProcess.Id)"
 Write-Host "Run manifest: $ManifestPath"
 Write-Host "Policy: generated proof/control output only; no retail assets are committed"
