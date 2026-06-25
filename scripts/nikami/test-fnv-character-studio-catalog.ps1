@@ -364,6 +364,9 @@ if (!$html.Contains("runtimeAudit") -or !$html.Contains("/nikami/runtime-audit")
 if (!$html.Contains("liveActorKitControls") -or !$html.Contains('selectors ${esc(counts.liveActorKitControls || 0)}')) {
     throw "Studio catalog HTML does not expose live actor-kit selector consumption evidence."
 }
+if (!$html.Contains("liveActorKitPostConstruction") -or !$html.Contains('post ${esc(counts.liveActorKitPostConstruction || 0)}')) {
+    throw "Studio catalog HTML does not expose post-construction actor-kit selector evidence."
+}
 if (!$html.Contains("cameraStrip") -or !$html.Contains("selectedParts") -or !$html.Contains("studioPayload")) {
     throw "Studio catalog HTML does not expose three-camera/component session payload controls."
 }

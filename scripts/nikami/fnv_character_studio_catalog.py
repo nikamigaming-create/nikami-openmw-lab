@@ -1080,6 +1080,7 @@ function renderRuntimeAudit() {{
   const latest = [
     ...(recent.targetSwitches || []).slice(-2),
     ...(recent.liveActorKitControls || []).slice(-3),
+    ...(recent.liveActorKitPostConstruction || []).slice(-2),
     ...(recent.actorAssemblyMatches || []).slice(-2),
     ...(recent.liveAuthoringApplies || []).slice(-3)
   ].slice(-7);
@@ -1089,6 +1090,7 @@ function renderRuntimeAudit() {{
       <span class="pill ${{esc(statusClass)}}">${{esc(audit.classification || "pending")}}</span>
       <span class="pill">target ${{esc(counts.targetSwitches || 0)}}</span>
       <span class="pill">selectors ${{esc(counts.liveActorKitControls || 0)}}</span>
+      <span class="pill">post ${{esc(counts.liveActorKitPostConstruction || 0)}}</span>
       <span class="pill">assembly ${{esc(counts.actorAssemblyMatches || 0)}}</span>
       <span class="pill">knobs ${{esc(counts.liveAuthoringApplies || 0)}}</span>
     </div>

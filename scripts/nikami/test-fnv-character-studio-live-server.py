@@ -112,6 +112,7 @@ def main() -> int:
                 [
                     '[00:00:01.000 I] FNV/ESM4 live runtime: actor target changed from="" to="ContractNpc" file="live-runtime-command.json" runtime=runtime-supported gate=runtime-live-actor-target',
                     '[00:00:01.050 I] FNV/ESM4 live runtime: actor-kit selector key=actorKitParts value="headgear" file="live-runtime-command.json" runtime=runtime-supported gate=runtime-live-actor-kit-controls',
+                    '[00:00:01.075 I] FNV/ESM4 live runtime: actor-kit post-construction selector generation=1 actor=ContractNpc ref=FormId:0x1 file="live-runtime-command.json" targetMatches=1 fingerprint="actorTarget=ContractNpc;parts=headgear;" animationRequest=issued partRebuild=loaded-pending-runtime runtime=loaded-pending-runtime gate=runtime-live-actor-kit-post-construction-selector',
                     '[00:00:01.100 I] FNV/ESM4 proof: actor part assembly target match target="ContractNpc" actor=ContractNpc refAlias=FormId:0x1 ref=FormId:0x11 runtime=runtime-supported',
                     "[00:00:01.200 I] FNV/ESM4 live authoring: frame-applied head surface authoring model=meshes/characters/head/eyelefthuman.nif prefix=OPENMW_FNV_EYE file=live-authoring.json offset=(0,0,0) rotation=(0,0,-90) pivot=(0,0,0) pivotMode=0 for FormId:0x1",
                 ]
@@ -145,6 +146,7 @@ def main() -> int:
         if (
             audit["counts"]["targetSwitches"] != 1
             or audit["counts"]["liveActorKitControls"] != 1
+            or audit["counts"]["liveActorKitPostConstruction"] != 1
             or audit["counts"]["actorAssemblyMatches"] != 1
             or audit["counts"]["liveAuthoringApplies"] != 1
         ):

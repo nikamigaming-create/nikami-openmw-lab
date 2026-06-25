@@ -325,6 +325,11 @@ def runtime_audit(
         ("FNV/ESM4 live runtime: actor-kit selector",),
         24,
     )
+    actor_kit_post_construction = recent_matching_lines(
+        openmw_text,
+        ("runtime-live-actor-kit-post-construction-selector",),
+        12,
+    )
     assembly_matches = recent_matching_lines(openmw_text, ("FNV/ESM4 proof: actor part assembly target match",), 12)
     authoring_applies = recent_matching_lines(
         openmw_text,
@@ -349,6 +354,7 @@ def runtime_audit(
             "runtime-log-consumption-audit-v1",
             "live-target-switch-audit-v1",
             "live-actor-kit-selector-audit-v1",
+            "live-actor-kit-post-construction-audit-v1",
             "live-head-surface-authoring-audit-v1",
             "generated-proof-output-only-v1",
         ],
@@ -361,6 +367,7 @@ def runtime_audit(
         "recent": {
             "targetSwitches": target_switches,
             "liveActorKitControls": actor_kit_controls,
+            "liveActorKitPostConstruction": actor_kit_post_construction,
             "actorAssemblyMatches": assembly_matches,
             "liveAuthoringApplies": authoring_applies,
             "faceChecks": face_checks,
@@ -368,6 +375,7 @@ def runtime_audit(
         "counts": {
             "targetSwitches": len(target_switches),
             "liveActorKitControls": len(actor_kit_controls),
+            "liveActorKitPostConstruction": len(actor_kit_post_construction),
             "actorAssemblyMatches": len(assembly_matches),
             "liveAuthoringApplies": len(authoring_applies),
             "faceChecks": len(face_checks),

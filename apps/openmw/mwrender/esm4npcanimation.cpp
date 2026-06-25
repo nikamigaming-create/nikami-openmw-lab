@@ -757,6 +757,44 @@ namespace MWRender
             return {};
         }
 
+        std::string readFalloutLiveRuntimeActorKitFingerprint()
+        {
+            const char* livePath = std::getenv("OPENMW_FNV_LIVE_RUNTIME_COMMAND_FILE");
+            if (livePath == nullptr || livePath[0] == '\0')
+                return {};
+
+            std::string content;
+            if (!readFalloutProofTargetRuntimeFile(livePath, content))
+                return {};
+
+            const auto readValue = [&](std::initializer_list<std::string_view> keys) {
+                std::string value;
+                for (std::string_view key : keys)
+                {
+                    if (readFalloutProofTargetRuntimeString(content, key, value))
+                        return value;
+                }
+                return std::string();
+            };
+
+            std::ostringstream stream;
+            const auto append = [&](std::string_view key, const std::string& value) {
+                if (!value.empty())
+                    stream << key << '=' << value << ';';
+            };
+            append("actorTarget", readValue({ "actorTarget", "runtimeTarget", "target" }));
+            append("phase", readValue({ "characterBuilderPhase", "phase" }));
+            append("parts", readValue({ "actorKitParts", "parts" }));
+            append("partModels", readValue({ "actorKitPartModels", "partModels" }));
+            append("propSlots", readValue({ "actorKitPropSlots", "propSlots" }));
+            append("propModels", readValue({ "actorKitPropModels", "propModels" }));
+            append("animationSource", readValue({ "actorKitAnimationSource", "animationSource" }));
+            append("animationStartPoint", readValue({ "actorKitAnimationStartPoint", "animationStartPoint" }));
+            append("animationGroup", readValue({ "actorKitAnimationGroup", "animationGroup" }));
+            append("dialogueMode", readValue({ "actorKitDialogueMode", "dialogueMode" }));
+            return stream.str();
+        }
+
         std::string readFalloutLiveRuntimeOrEnvString(
             const char* envName, std::initializer_list<std::string_view> liveKeys)
         {
@@ -5893,6 +5931,7 @@ namespace MWRender
             }
 
             requestFalloutActorKitAnimation(*this, mPtr, *traits);
+            mLiveRuntimeActorKitFingerprint = readFalloutLiveRuntimeActorKitFingerprint();
         }
     }
 
@@ -5938,9 +5977,45 @@ namespace MWRender
         }
     }
 
+    void ESM4NpcAnimation::applyLiveRuntimeActorKitSelectors()
+    {
+        const char* livePath = std::getenv("OPENMW_FNV_LIVE_RUNTIME_COMMAND_FILE");
+        if (livePath == nullptr || livePath[0] == '\0')
+            return;
+        const ESM4::Npc* traits = MWClass::ESM4Npc::getTraitsRecord(mPtr);
+        if (traits == nullptr || !traits->mIsFONV)
+            return;
+        if (++mLiveRuntimeActorKitTick % 6 != 0)
+            return;
+
+        const std::string fingerprint = readFalloutLiveRuntimeActorKitFingerprint();
+        if (fingerprint.empty() || fingerprint == mLiveRuntimeActorKitFingerprint)
+            return;
+
+        mLiveRuntimeActorKitFingerprint = fingerprint;
+        ++mLiveRuntimeActorKitGeneration;
+
+        const bool targetMatches = mPtr.getCell() == nullptr || isFonvProofTargetActor(mPtr, *traits);
+        if (targetMatches)
+            requestFalloutActorKitAnimation(*this, mPtr, *traits);
+
+        Log(Debug::Info) << "FNV/ESM4 live runtime: actor-kit post-construction selector generation="
+                         << mLiveRuntimeActorKitGeneration
+                         << " actor=" << traits->mEditorId
+                         << " ref=" << mPtr.getCellRef().getRefId()
+                         << " file=\"" << livePath << "\""
+                         << " targetMatches=" << targetMatches
+                         << " fingerprint=\"" << fingerprint << "\""
+                         << " animationRequest=" << (targetMatches ? "issued" : "skipped-non-target")
+                         << " partRebuild=loaded-pending-runtime"
+                         << " runtime=loaded-pending-runtime"
+                         << " gate=runtime-live-actor-kit-post-construction-selector";
+    }
+
     osg::Vec3f ESM4NpcAnimation::runAnimation(float duration)
     {
         osg::Vec3f movement = Animation::runAnimation(duration);
+        applyLiveRuntimeActorKitSelectors();
         applyLiveHeadSurfaceAuthoring();
         return movement;
     }

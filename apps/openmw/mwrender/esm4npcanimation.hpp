@@ -31,8 +31,12 @@ namespace MWRender
         std::vector<LiveHeadSurfaceAuthoringTarget> mLiveHeadSurfaceAuthoringTargets;
         std::string mLiveHeadSurfaceAuthoringContent;
         unsigned int mLiveHeadSurfaceAuthoringTick = 0;
+        std::string mLiveRuntimeActorKitFingerprint;
+        unsigned int mLiveRuntimeActorKitTick = 0;
+        unsigned int mLiveRuntimeActorKitGeneration = 0;
 
         void applyLiveHeadSurfaceAuthoring();
+        void applyLiveRuntimeActorKitSelectors();
 
         osg::ref_ptr<osg::Node> insertPart(
             std::string_view model, const osg::Vec4f* tint = nullptr, std::string_view diffuseTexture = {});
