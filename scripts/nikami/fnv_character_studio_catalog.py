@@ -900,7 +900,7 @@ async function sendSelectedLiveRuntime() {{
       actorTarget: state.liveRuntime.actorTarget,
       actorKind: state.liveRuntime.actorKind,
       path: state.liveRuntime.path,
-      limitation: "active-cell actor switch only"
+      limitation: "active-cell world switch; base NPC neutral preview fallback"
     }});
   }} catch (error) {{
     addLocalEvent("live-runtime.write.failed", {{ message: error.message || String(error), entryId: entry.id }});

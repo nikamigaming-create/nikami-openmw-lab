@@ -491,6 +491,7 @@ class LiveRuntimeCommandStore:
                 "generatedProofOutputsOnly": True,
                 "noRetailPayloadBytes": True,
                 "activeCellActorSwitchOnly": True,
+                "baseNpcPreviewWhenInactive": True,
             },
         }
 
@@ -518,6 +519,7 @@ class LiveRuntimeCommandStore:
                     "generatedProofOutputsOnly": True,
                     "noRetailPayloadBytes": True,
                     "activeCellActorSwitchOnly": True,
+                    "baseNpcPreviewWhenInactive": True,
                 }
             )
             doc["policy"] = policy
@@ -574,6 +576,7 @@ class LiveRuntimeCommandStore:
                         "generatedProofOutputsOnly": True,
                         "noRetailPayloadBytes": True,
                         "activeCellActorSwitchOnly": True,
+                        "baseNpcPreviewWhenInactive": True,
                     },
                 }
             )

@@ -156,6 +156,7 @@ function Start-LiveStudioServer([string]$RootDirectory, [string]$HtmlPath, [stri
             generatedProofOutputsOnly = $true
             noRetailAssetsCommitted = $true
             activeCellActorSwitchOnly = $true
+            baseNpcPreviewWhenInactive = $true
         }
     }
     $serverInfoPath = Join-Path $RunDirectory "studio-live-server.json"

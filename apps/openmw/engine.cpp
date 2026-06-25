@@ -125,6 +125,7 @@
 #include "mwworld/datetimemanager.hpp"
 #include "mwworld/globals.hpp"
 #include "mwworld/inventorystore.hpp"
+#include "mwworld/livecellref.hpp"
 #include "mwworld/manualref.hpp"
 #include "mwworld/scene.hpp"
 #include "mwworld/worldimp.hpp"
@@ -592,6 +593,41 @@ namespace
     {
         const std::string candidateToken = falloutProofFormToken(candidate);
         return !candidateToken.empty() && candidateToken == falloutProofFormToken(target);
+    }
+
+    const ESM4::Npc* findFalloutProofNpcBaseByTarget(
+        const MWWorld::ESMStore& store, std::string_view target, int& scanned)
+    {
+        scanned = 0;
+        if (target.empty())
+            return nullptr;
+
+        const std::string targetText(target);
+        const std::string targetLower = Misc::StringUtils::lowerCase(targetText);
+        const auto& npcs = store.get<ESM4::Npc>();
+        for (auto it = npcs.begin(); it != npcs.end(); ++it)
+        {
+            ++scanned;
+            const ESM4::Npc& npc = *it;
+            if (!npc.mIsFONV)
+                continue;
+
+            const std::string editorLower = Misc::StringUtils::lowerCase(npc.mEditorId);
+            const std::string fullLower = Misc::StringUtils::lowerCase(npc.mFullName);
+            const std::string form = ESM::RefId(npc.mId).toDebugString();
+            const std::string formLower = Misc::StringUtils::lowerCase(form);
+
+            if (editorLower == targetLower || fullLower == targetLower || formLower == targetLower
+                || falloutProofFormTargetMatches(form, targetText)
+                || (!editorLower.empty() && editorLower.find(targetLower) != std::string::npos)
+                || (!fullLower.empty() && fullLower.find(targetLower) != std::string::npos)
+                || (!editorLower.empty() && !targetLower.empty()
+                    && targetLower.find(editorLower) != std::string::npos)
+                || (!fullLower.empty() && !targetLower.empty() && targetLower.find(fullLower) != std::string::npos))
+                return &npc;
+        }
+
+        return nullptr;
     }
 
     ESM::RefId getProofRefId(const char* name, const char* fallback)
@@ -2595,6 +2631,7 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
     static osg::ref_ptr<osg::Group> proofNeutralActorPreviewRoot;
     static osg::ref_ptr<osg::Camera> proofNeutralActorPreviewComposite;
     static std::vector<std::unique_ptr<MWRender::FalloutActorPreview>> proofNeutralActorPreviews;
+    static std::unique_ptr<MWWorld::LiveCellRef<ESM4::Npc>> proofNeutralActorPreviewNpcProxy;
     static std::string proofActorEffectiveTarget;
     if (proofActorTarget != nullptr && proofActorEffectiveTarget != proofActorTarget)
     {
@@ -2613,6 +2650,7 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
         proofNeutralActorPreviewReady = false;
         proofNeutralActorPreviewIsolationApplied = false;
         proofNeutralActorPreviews.clear();
+        proofNeutralActorPreviewNpcProxy.reset();
         if (proofNeutralActorPreviewComposite != nullptr && proofNeutralActorPreviewComposite->getNumParents() > 0)
             proofNeutralActorPreviewComposite->getParent(0)->removeChild(proofNeutralActorPreviewComposite);
         proofNeutralActorPreviewComposite = nullptr;
@@ -2883,7 +2921,8 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                     || (!actorNameLower.empty() && actorNameLower.find(targetLower) != std::string::npos)
                     || (!baseEditorLower.empty() && baseEditorLower.find(targetLower) != std::string::npos)
                     || (!baseFullLower.empty() && baseFullLower.find(targetLower) != std::string::npos)
-                    || (!targetLower.empty() && targetLower.find(actorNameLower) != std::string::npos))
+                    || (!actorNameLower.empty() && !targetLower.empty()
+                        && targetLower.find(actorNameLower) != std::string::npos))
                 {
                     proofActor = ptr;
                     if (proofActorLogThisFrame)
@@ -2908,88 +2947,97 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                 break;
         }
 
+        auto assembleNeutralActorPreview = [&](const MWWorld::Ptr& previewActor, std::string_view source) {
+            if (!proofNeutralActorPreviewRequested || proofNeutralActorPreviewAttempted)
+                return false;
+
+            proofNeutralActorPreviewAttempted = true;
+            try
+            {
+                osg::Group* sceneRoot = mViewer != nullptr && mViewer->getSceneData() != nullptr
+                    ? mViewer->getSceneData()->asGroup()
+                    : nullptr;
+                if (sceneRoot == nullptr)
+                    throw std::runtime_error("missing viewer scene root");
+
+                proofNeutralActorPreviewRoot = new osg::Group;
+                proofNeutralActorPreviewRoot->setName("FNV Neutral Actor Preview Root");
+                proofNeutralActorPreviewRoot->setNodeMask(MWRender::Mask_RenderToTexture);
+                sceneRoot->addChild(proofNeutralActorPreviewRoot);
+
+                proofNeutralActorPreviews.clear();
+                proofNeutralActorPreviews.emplace_back(std::make_unique<MWRender::FalloutActorPreview>(
+                    proofNeutralActorPreviewRoot, mResourceSystem.get(), previewActor,
+                    MWRender::FalloutActorPreview::ViewMode::Front));
+                proofNeutralActorPreviews.emplace_back(std::make_unique<MWRender::FalloutActorPreview>(
+                    proofNeutralActorPreviewRoot, mResourceSystem.get(), previewActor,
+                    MWRender::FalloutActorPreview::ViewMode::FrontLeft));
+                proofNeutralActorPreviews.emplace_back(std::make_unique<MWRender::FalloutActorPreview>(
+                    proofNeutralActorPreviewRoot, mResourceSystem.get(), previewActor,
+                    MWRender::FalloutActorPreview::ViewMode::FrontRight));
+                for (const std::unique_ptr<MWRender::FalloutActorPreview>& preview : proofNeutralActorPreviews)
+                {
+                    preview->rebuild();
+                    preview->redraw();
+                }
+                proofNeutralActorPreviewComposite = createFalloutNeutralActorPreviewComposite(proofNeutralActorPreviews);
+                sceneRoot->addChild(proofNeutralActorPreviewComposite);
+
+                proofNeutralActorPreviewReady = true;
+                Log(Debug::Info) << "FNV/ESM4 proof: neutral actor preview assembled target=\"" << target
+                                 << "\" source=" << source << " panes=" << proofNeutralActorPreviews.size()
+                                 << " compositeQuads="
+                                 << (proofNeutralActorPreviewComposite != nullptr
+                                         ? proofNeutralActorPreviewComposite->getNumChildren()
+                                         : 0)
+                                 << " runtime=runtime-supported gate=runtime-neutral-actor-preview";
+                return true;
+            }
+            catch (const std::exception& e)
+            {
+                Log(Debug::Warning) << "FNV/ESM4 proof: neutral actor preview failed target=\"" << target
+                                    << "\" source=" << source << " error=\"" << e.what()
+                                    << "\" runtime=known-blocked gate=runtime-neutral-actor-preview";
+                return false;
+            }
+        };
+
+        auto isolateNeutralActorPreview = [&]() {
+            if (!proofNeutralActorPreviewRequested || !proofNeutralActorPreviewReady
+                || proofNeutralActorPreviewIsolationApplied)
+                return;
+
+            if (mWindowManager)
+                mWindowManager->setHudVisibility(false);
+            if (MWRender::RenderingManager* rendering = mWorld->getRenderingManager())
+            {
+                rendering->setWaterEnabled(false);
+                rendering->setSkyEnabled(false);
+                const MWWorld::Ptr player = mWorld->getPlayerPtr();
+                if (!player.isEmpty() && player.isInCell() && player.getCell() != nullptr
+                    && player.getCell()->getCell() != nullptr)
+                    rendering->enableTerrain(false, player.getCell()->getCell()->getWorldSpace());
+            }
+            if (mViewer && mViewer->getCamera())
+            {
+                mViewer->getCamera()->setClearColor(osg::Vec4(0.22f, 0.23f, 0.24f, 1.f));
+                mViewer->getCamera()->setCullMask(MWRender::Mask_RenderToTexture);
+            }
+            proofActorCameraApplied = true;
+            if (proofActorCameraFirstAppliedFrame == 0)
+                proofActorCameraFirstAppliedFrame = frameNumber;
+            proofActorCameraLastAppliedFrame = frameNumber;
+            proofNeutralActorPreviewIsolationApplied = true;
+            Log(Debug::Info) << "FNV/ESM4 proof: neutral actor preview isolation target=\"" << target
+                             << "\" cullMask=Mask_RenderToTexture hud=hidden sky=hidden water=hidden"
+                             << " terrain=hidden runtime=runtime-supported gate=runtime-neutral-actor-preview";
+        };
+
         if (!proofActor.isEmpty())
         {
-            if (proofNeutralActorPreviewRequested && !proofNeutralActorPreviewAttempted)
-            {
-                proofNeutralActorPreviewAttempted = true;
-                try
-                {
-                    osg::Group* sceneRoot = mViewer != nullptr && mViewer->getSceneData() != nullptr
-                        ? mViewer->getSceneData()->asGroup()
-                        : nullptr;
-                    if (sceneRoot == nullptr)
-                        throw std::runtime_error("missing viewer scene root");
+            assembleNeutralActorPreview(proofActor, "active-cell-actor");
 
-                    proofNeutralActorPreviewRoot = new osg::Group;
-                    proofNeutralActorPreviewRoot->setName("FNV Neutral Actor Preview Root");
-                    proofNeutralActorPreviewRoot->setNodeMask(MWRender::Mask_RenderToTexture);
-                    sceneRoot->addChild(proofNeutralActorPreviewRoot);
-
-                    proofNeutralActorPreviews.clear();
-                    proofNeutralActorPreviews.emplace_back(std::make_unique<MWRender::FalloutActorPreview>(
-                        proofNeutralActorPreviewRoot, mResourceSystem.get(), proofActor,
-                        MWRender::FalloutActorPreview::ViewMode::Front));
-                    proofNeutralActorPreviews.emplace_back(std::make_unique<MWRender::FalloutActorPreview>(
-                        proofNeutralActorPreviewRoot, mResourceSystem.get(), proofActor,
-                        MWRender::FalloutActorPreview::ViewMode::FrontLeft));
-                    proofNeutralActorPreviews.emplace_back(std::make_unique<MWRender::FalloutActorPreview>(
-                        proofNeutralActorPreviewRoot, mResourceSystem.get(), proofActor,
-                        MWRender::FalloutActorPreview::ViewMode::FrontRight));
-                    for (const std::unique_ptr<MWRender::FalloutActorPreview>& preview : proofNeutralActorPreviews)
-                    {
-                        preview->rebuild();
-                        preview->redraw();
-                    }
-                    proofNeutralActorPreviewComposite
-                        = createFalloutNeutralActorPreviewComposite(proofNeutralActorPreviews);
-                    sceneRoot->addChild(proofNeutralActorPreviewComposite);
-
-                    proofNeutralActorPreviewReady = true;
-                    Log(Debug::Info) << "FNV/ESM4 proof: neutral actor preview assembled target=\"" << target
-                                     << "\" panes=" << proofNeutralActorPreviews.size()
-                                     << " compositeQuads="
-                                     << (proofNeutralActorPreviewComposite != nullptr
-                                             ? proofNeutralActorPreviewComposite->getNumChildren()
-                                             : 0)
-                                     << " runtime=runtime-supported gate=runtime-neutral-actor-preview";
-                }
-                catch (const std::exception& e)
-                {
-                    Log(Debug::Warning) << "FNV/ESM4 proof: neutral actor preview failed target=\"" << target
-                                        << "\" error=\"" << e.what()
-                                        << "\" runtime=known-blocked gate=runtime-neutral-actor-preview";
-                }
-            }
-
-            if (proofNeutralActorPreviewRequested && proofNeutralActorPreviewReady
-                && !proofNeutralActorPreviewIsolationApplied)
-            {
-                if (mWindowManager)
-                    mWindowManager->setHudVisibility(false);
-                if (MWRender::RenderingManager* rendering = mWorld->getRenderingManager())
-                {
-                    rendering->setWaterEnabled(false);
-                    rendering->setSkyEnabled(false);
-                    const MWWorld::Ptr player = mWorld->getPlayerPtr();
-                    if (!player.isEmpty() && player.isInCell() && player.getCell() != nullptr
-                        && player.getCell()->getCell() != nullptr)
-                        rendering->enableTerrain(false, player.getCell()->getCell()->getWorldSpace());
-                }
-                if (mViewer && mViewer->getCamera())
-                {
-                    mViewer->getCamera()->setClearColor(osg::Vec4(0.22f, 0.23f, 0.24f, 1.f));
-                    mViewer->getCamera()->setCullMask(MWRender::Mask_RenderToTexture);
-                }
-                proofActorCameraApplied = true;
-                if (proofActorCameraFirstAppliedFrame == 0)
-                    proofActorCameraFirstAppliedFrame = frameNumber;
-                proofActorCameraLastAppliedFrame = frameNumber;
-                proofNeutralActorPreviewIsolationApplied = true;
-                Log(Debug::Info) << "FNV/ESM4 proof: neutral actor preview isolation target=\"" << target
-                                 << "\" cullMask=Mask_RenderToTexture hud=hidden sky=hidden water=hidden"
-                                 << " terrain=hidden runtime=runtime-supported gate=runtime-neutral-actor-preview";
-            }
+            isolateNeutralActorPreview();
 
             if (proofNeutralActorPreviewRequested)
                 proofActorCameraLastAppliedFrame = frameNumber;
@@ -3100,10 +3148,41 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
         }
         else
         {
+            bool basePreviewHandled = false;
+            int npcBaseRecordsScanned = 0;
+            if (proofNeutralActorPreviewRequested && !proofNeutralActorPreviewAttempted)
+            {
+                const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
+                const ESM4::Npc* npcBase = store != nullptr
+                    ? findFalloutProofNpcBaseByTarget(*store, target, npcBaseRecordsScanned)
+                    : nullptr;
+                if (npcBase != nullptr)
+                {
+                    ESM::CellRef proxyRef;
+                    proxyRef.blank();
+                    proxyRef.mRefID = npcBase->mEditorId.empty() ? ESM::RefId(npcBase->mId)
+                                                                 : ESM::RefId::stringRefId(npcBase->mEditorId);
+                    proofNeutralActorPreviewNpcProxy
+                        = std::make_unique<MWWorld::LiveCellRef<ESM4::Npc>>(proxyRef, npcBase);
+                    MWWorld::Ptr basePreviewActor(proofNeutralActorPreviewNpcProxy.get(), nullptr);
+                    Log(Debug::Info) << "FNV/ESM4 proof: base NPC preview match target=\"" << target
+                                     << "\" actor=" << npcBase->mEditorId << " form="
+                                     << ESM::RefId(npcBase->mId).toDebugString() << " full=\"" << npcBase->mFullName
+                                     << "\" scannedActive=" << scanned << " activeActors=" << actors
+                                     << " scannedNpcBases=" << npcBaseRecordsScanned
+                                     << " runtime=loaded-pending-runtime gate=runtime-neutral-actor-preview";
+                    basePreviewHandled = assembleNeutralActorPreview(basePreviewActor, "base-npc-record");
+                    isolateNeutralActorPreview();
+                }
+            }
+
             if (lastProofActorLookupFailureLogFrame == 0 || frameNumber - lastProofActorLookupFailureLogFrame >= 60)
             {
                 Log(Debug::Warning) << "FNV/ESM4 proof: active-cell actor lookup failed target=\"" << target
-                                    << "\" frame=" << frameNumber << " scanned=" << scanned << " actors=" << actors;
+                                    << "\" frame=" << frameNumber << " scanned=" << scanned << " actors=" << actors
+                                    << " baseNpcPreview="
+                                    << (basePreviewHandled ? "runtime-supported" : "not-applied")
+                                    << " scannedNpcBases=" << npcBaseRecordsScanned;
                 lastProofActorLookupFailureLogFrame = frameNumber;
             }
         }

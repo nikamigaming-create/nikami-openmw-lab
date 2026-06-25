@@ -150,6 +150,7 @@ foreach ($prefix in @("OPENMW_FNV_HEADGEAR", "OPENMW_FNV_HAIR", "OPENMW_FNV_BROW
         generatedProofOutputsOnly = $true
         noRetailPayloadBytes = $true
         activeCellActorSwitchOnly = $true
+        baseNpcPreviewWhenInactive = $true
     }
 } | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $LiveRuntimeCommandFile -Encoding UTF8
 
@@ -245,6 +246,7 @@ $manifest = [pscustomobject][ordered]@{
         noRetailAssetsCommitted = $true
         liveNumericControlsOnly = $true
         activeCellActorSwitchOnly = $true
+        baseNpcPreviewWhenInactive = $true
         pcFlatFirst = $true
     }
 }
