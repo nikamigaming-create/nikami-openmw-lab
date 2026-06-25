@@ -70,6 +70,7 @@ $collision = Assert-File "scripts/nikami/run-fnv-goodsprings-collision-path-proo
 Assert-File "scripts/nikami/run-fnv-opening-vertical-slice.ps1" | Out-Null
 $mugshot = Assert-File "scripts/nikami/run-fnv-actor-mugshot-sweep.ps1"
 $easyPete = Assert-File "scripts/nikami/run-fnv-easy-pete-angle-sweep.ps1"
+$skinningModeSweep = Assert-File "scripts/nikami/run-fnv-skinning-mode-sweep.ps1"
 $characterBuilder = Assert-File "scripts/nikami/run-fnv-character-builder-tester.ps1"
 $characterBuilderReport = Assert-File "scripts/nikami/fnv_character_builder_report.py"
 $characterViewer = Assert-File "scripts/nikami/run-fnv-character-viewer.ps1"
@@ -154,6 +155,10 @@ Assert-Text $flat "Target visible hand geometry status:" "flat proof reports tar
 Assert-Text $flat "did not prove visible skinned hand geometry follows animated hand anchors" "flat proof fails when visible hand skin does not follow skeleton"
 Assert-Text $flat "OPENMW_FNV_SKINNING_MATRIX_AUDIT" "flat proof can request skinning matrix evidence without external environment setup"
 Assert-Text $flat "OPENMW_FNV_HAIR_EMISSION_STRENGTH" "flat proof can request hair material emission proof control without external environment setup"
+Assert-Text $skinningModeSweep "OPENMW_FNV_SKINNING_MODE" "skinning mode sweep can run runtime rig-mode candidates without source edits"
+Assert-Text $skinningModeSweep "nikami-fnv-skinning-mode-sweep-v1" "skinning mode sweep writes stable generated JSON schema"
+Assert-Text $skinningModeSweep "promoteToCpp = `$false" "skinning mode sweep records non-promoted candidates until proof improves"
+Assert-Text $skinningModeSweep "no retail assets are committed" "skinning mode sweep records no-retail payload policy"
 Assert-Text $flat "OPENMW_FNV_LIVE_AUTHORING_FILE" "flat proof can bind a generated live authoring control file to runtime"
 Assert-Text $flat "OPENMW_FNV_LIVE_RUNTIME_COMMAND_FILE" "flat proof can bind a generated live runtime command file to runtime"
 Assert-Text $flat "OPENMW_PROOF_ACTOR_VIEW_LOCAL_OFFSET" "flat proof can frame actor closeups in actor-local space"
