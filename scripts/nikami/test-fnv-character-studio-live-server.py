@@ -364,8 +364,8 @@ def main() -> int:
             raise AssertionError("snapshot replay did not rebuild selector command from metadata")
         if "-RunSeconds" not in replay_args or replay_args[replay_args.index("-RunSeconds") + 1] != "90":
             raise AssertionError("snapshot replay did not add capture-safe runtime seconds")
-        if "-ScreenshotFrames" not in replay_args or replay_args[replay_args.index("-ScreenshotFrames") + 1] != "300,360,420,480,540":
-            raise AssertionError("snapshot replay did not add capture-safe screenshot frames")
+        if "-ScreenshotFrames" not in replay_args or replay_args[replay_args.index("-ScreenshotFrames") + 1] != "600,660,720,780,840":
+            raise AssertionError("snapshot replay did not add post-actor-camera capture-safe screenshot frames")
         if any("should-not-be-saved" in str(arg) or "Remove-Item" in str(arg) for arg in replay_args):
             raise AssertionError("snapshot replay used raw saved command metadata")
         ready_replay = sessions.write_snapshot_replay(session["id"], loaded_snapshot, replay_command, replay_request)

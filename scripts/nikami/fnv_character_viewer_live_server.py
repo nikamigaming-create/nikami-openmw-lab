@@ -1918,7 +1918,7 @@ def structured_actor_job(entry: dict[str, Any], payload: dict[str, Any]) -> tupl
         "fnvSkinningMatrixAudit": first_text(selector_value(payload, "fnvSkinningMatrixAudit"), "arms,rightHand,leftHand,HeadOld,HeadHuman"),
         "fnvHairEmissionStrength": first_text(selector_value(payload, "fnvHairEmissionStrength")),
         "runSeconds": positive_int_selector(selector_value(payload, "runSeconds"), "90" if command_key == "runtimeThreeCamera" else "70", "runSeconds"),
-        "screenshotFrames": screenshot_frame_selector(selector_value(payload, "screenshotFrames"), "300,360,420,480,540"),
+        "screenshotFrames": screenshot_frame_selector(selector_value(payload, "screenshotFrames"), "600,660,720,780,840"),
     }
     command = (
         "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/nikami/run-fnv-character-viewer.ps1 "
