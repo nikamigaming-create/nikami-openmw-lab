@@ -484,6 +484,91 @@ def build_runtime_part_timelines(audits: list[dict[str, Any]]) -> list[dict[str,
     return timelines
 
 
+def axis_range(center: float, extent: float) -> tuple[float, float]:
+    half = abs(extent) * 0.5
+    return (center - half, center + half)
+
+
+def first_face_point(audits: list[dict[str, Any]], class_name: str, needles: tuple[str, ...]) -> list[float] | None:
+    for item in audits:
+        part = item.get("part", "").replace("\\", "/").lower()
+        if item.get("class") != class_name:
+            continue
+        if needles and not any(needle in part for needle in needles):
+            continue
+        rel_local = item.get("relLocal")
+        if isinstance(rel_local, list) and len(rel_local) == 3:
+            return rel_local
+    return None
+
+
+def find_face_occlusion_findings(bounds: list[dict[str, Any]], audits: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    left_eye = first_face_point(audits, "faceEye", ("eyelefthuman", "eyeleft"))
+    right_eye = first_face_point(audits, "faceEye", ("eyerighthuman", "eyeright"))
+    mouth = first_face_point(audits, "faceMouth", ("mouth",))
+    if not left_eye or not right_eye or not mouth:
+        return []
+
+    eye_y = (left_eye[1] + right_eye[1]) * 0.5
+    eye_z = (left_eye[2] + right_eye[2]) * 0.5
+    mouth_y = mouth[1]
+    mouth_z = mouth[2]
+    findings: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+
+    for item in bounds:
+        model = item.get("model", "").replace("\\", "/").lower()
+        head_rel = item.get("headRel") or []
+        extent = item.get("extent") or []
+        if len(head_rel) != 3 or len(extent) != 3:
+            continue
+
+        x_range = axis_range(head_rel[0], extent[0])
+        y_range = axis_range(head_rel[1], extent[1])
+        z_range = axis_range(head_rel[2], extent[2])
+        reason = ""
+
+        if "/hair/" in model and "eyebrow" not in model:
+            broad = max(abs(value) for value in extent) >= 10.0
+            forward_of_mouth = head_rel[1] >= mouth_y + 2.0
+            low_against_mouth = head_rel[2] <= mouth_z + 0.75
+            covers_mouth_z = z_range[0] <= mouth_z + 0.75 and z_range[1] >= mouth_z
+            if broad and forward_of_mouth and low_against_mouth and covers_mouth_z:
+                reason = "hair bounds are forward/low enough to cover the mouth/face corridor"
+
+        if "/headgear/" in model:
+            overlaps_eye_y = y_range[0] <= eye_y <= y_range[1]
+            drops_to_eye = z_range[0] < eye_z - 0.75
+            if overlaps_eye_y and drops_to_eye:
+                reason = "headgear bounds intersect eye corridor"
+            elif ("cap" in model or "hat1950" in model) and y_range[1] < eye_y - 1.0:
+                reason = "cap/headgear forward extent is behind eye plane"
+
+        if not reason:
+            continue
+        key = (model, reason)
+        if key in seen:
+            continue
+        seen.add(key)
+        findings.append(
+            {
+                "model": item.get("model", ""),
+                "parent": item.get("parent", ""),
+                "reason": reason,
+                "headRel": head_rel,
+                "extent": extent,
+                "xRange": list(x_range),
+                "yRange": list(y_range),
+                "zRange": list(z_range),
+                "eyeY": eye_y,
+                "eyeZ": eye_z,
+                "mouthY": mouth_y,
+                "mouthZ": mouth_z,
+            }
+        )
+    return findings
+
+
 def summarize_categories(gates: list[dict[str, Any]]) -> dict[str, dict[str, int]]:
     summary: dict[str, dict[str, int]] = {}
     for gate in gates:
@@ -691,6 +776,7 @@ def evaluate(
     animation_requests: list[dict[str, Any]],
     animation_playback: list[dict[str, Any]],
     animation_blockers: list[str],
+    face_occlusion_findings: list[dict[str, Any]],
 ) -> tuple[str, list[str]]:
     failures: list[str] = []
     screenshots = sorted(p.name for p in proof_dir.glob("*.png"))
@@ -731,6 +817,8 @@ def evaluate(
     regressions = [item for item in summarize_runtime_audits(audits) if item["regressed"]]
     if regressions:
         failures.append(f"runtime audit regressions after initial OK: {len(regressions)}")
+    if face_occlusion_findings:
+        failures.append(f"face occlusion/headgear orientation findings: {len(face_occlusion_findings)}")
     collapsed_heads = []
     for item in drawables:
         model = item["model"].replace("\\", "/").lower()
@@ -824,6 +912,17 @@ def write_markdown(path: Path, report: dict[str, Any]) -> None:
         for failure in report["failures"]:
             lines.append(f"- {failure}")
         lines.append("")
+    if report["faceOcclusionFindings"]:
+        lines.append("## Face Occlusion Findings")
+        lines.append("")
+        lines.append("| Model | Reason | HeadRel | Extent | Y Range | Z Range |")
+        lines.append("|---|---|---|---|---|---|")
+        for item in report["faceOcclusionFindings"][:24]:
+            lines.append(
+                f"| {item['model']} | {item['reason']} | {item['headRel']} | {item['extent']} | "
+                f"{item['yRange']} | {item['zRange']} |"
+            )
+        lines.append("")
     lines.append("## First Attachments")
     lines.append("")
     lines.append("| Model | Parent | HeadRel | Extent | Verdict |")
@@ -905,6 +1004,7 @@ def main() -> int:
     animation_blockers = collect_animation_blockers(lines, patterns)
     runtime_audit_summary = summarize_runtime_audits(audits)
     runtime_part_timelines = build_runtime_part_timelines(audits)
+    face_occlusion_findings = find_face_occlusion_findings(bounds, audits)
     actor_kind = args.actor_kind
     if actor_kind == "auto":
         actor_kind = "creature" if creature_evidence else "npc"
@@ -943,6 +1043,7 @@ def main() -> int:
         animation_requests,
         animation_playback,
         animation_blockers,
+        face_occlusion_findings,
     )
 
     report: dict[str, Any] = {
@@ -961,6 +1062,7 @@ def main() -> int:
         "runtimePartAudits": audits,
         "runtimeAuditSummary": runtime_audit_summary,
         "runtimePartTimelines": runtime_part_timelines,
+        "faceOcclusionFindings": face_occlusion_findings,
         "faceDrawables": drawables,
         "morphLines": morph_lines,
         "weaponLines": weapon_lines,

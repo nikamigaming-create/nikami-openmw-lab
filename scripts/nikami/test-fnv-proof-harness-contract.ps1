@@ -457,6 +457,8 @@ Assert-Text $characterBuilderReport "deltaPartInAnchorTrans" "character builder 
 Assert-Text $characterBuilderReport "runtime audit regressions after initial OK" "character builder report fails parts that attach then regress during runtime"
 Assert-Text $characterBuilderReport '"runtimeAuditSummary"' "character builder report writes runtime audit summary JSON"
 Assert-Text $characterBuilderReport "collapsed or empty head source geometry" "character builder report fails collapsed head source geometry"
+Assert-Text $characterBuilderReport "faceOcclusionFindings" "character builder report writes face occlusion and headgear orientation findings"
+Assert-Text $characterBuilderReport "face occlusion/headgear orientation findings" "character builder report fails face occlusion and headgear orientation findings"
 Assert-Text $characterBuilderReport "missing talk/mouth runtime evidence" "character builder report fails missing talk runtime proof"
 Assert-Text $characterBuilderReport "missing equipped weapon evidence" "character builder report fails missing weapon runtime proof"
 Assert-Text $characterBuilderReport "missing target animation playback evidence" "character builder report fails missing target animation playback proof"
