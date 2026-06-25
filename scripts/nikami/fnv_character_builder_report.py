@@ -21,6 +21,35 @@ CREATURE_RUNTIME_NEEDLES = (
     "creature KF candidate",
     "creature KF global candidate",
 )
+NEUTRAL_PREVIEW_PANES = (
+    {
+        "name": "full-body",
+        "centerNdcX": -0.64,
+        "widthNdc": 0.58,
+        "heightNdc": 1.03,
+        "minForegroundFraction": 0.025,
+        "maxForegroundFraction": 0.35,
+        "allowedTouchEdges": ("bottom",),
+    },
+    {
+        "name": "face-hat",
+        "centerNdcX": 0.0,
+        "widthNdc": 0.58,
+        "heightNdc": 1.03,
+        "minForegroundFraction": 0.05,
+        "maxForegroundFraction": 0.42,
+        "allowedTouchEdges": ("bottom",),
+    },
+    {
+        "name": "right-hand-weapon",
+        "centerNdcX": 0.64,
+        "widthNdc": 0.58,
+        "heightNdc": 1.03,
+        "minForegroundFraction": 0.015,
+        "maxForegroundFraction": 0.25,
+        "allowedTouchEdges": (),
+    },
+)
 
 
 def parse_vec3(text: str) -> list[float]:
@@ -643,6 +672,197 @@ def collect_matching(lines: list[str], patterns: list[str], needle: str) -> list
     return result
 
 
+def has_neutral_preview_runtime(lines: list[str], actor: str) -> bool:
+    return any(f'neutral actor preview assembled target="{actor}"' in line for line in lines)
+
+
+def pane_box(width: int, height: int, pane: dict[str, Any]) -> tuple[int, int, int, int]:
+    pane_width = pane["widthNdc"] * width / 2.0
+    pane_height = pane["heightNdc"] * height / 2.0
+    center_x = (pane["centerNdcX"] + 1.0) * width / 2.0
+    left = max(0, int(round(center_x - pane_width / 2.0)))
+    right = min(width, int(round(center_x + pane_width / 2.0)))
+    top = max(0, int(round((1.0 - pane["heightNdc"] / 2.0) * height / 2.0)))
+    bottom = min(height, int(round((1.0 + pane["heightNdc"] / 2.0) * height / 2.0)))
+    return (left, top, right, bottom)
+
+
+def rects_intersect(a: tuple[int, int, int, int], b: tuple[int, int, int, int]) -> bool:
+    return min(a[2], b[2]) > max(a[0], b[0]) and min(a[3], b[3]) > max(a[1], b[1])
+
+
+def foreground_components(mask: list[bool], width: int, height: int, min_pixels: int) -> list[dict[str, Any]]:
+    seen = bytearray(len(mask))
+    components: list[dict[str, Any]] = []
+    for index, is_foreground in enumerate(mask):
+        if not is_foreground or seen[index]:
+            continue
+        stack = [index]
+        seen[index] = 1
+        count = 0
+        min_x = width
+        min_y = height
+        max_x = 0
+        max_y = 0
+        while stack:
+            current = stack.pop()
+            y, x = divmod(current, width)
+            count += 1
+            min_x = min(min_x, x)
+            min_y = min(min_y, y)
+            max_x = max(max_x, x)
+            max_y = max(max_y, y)
+            for neighbor in (current - 1, current + 1, current - width, current + width):
+                if neighbor < 0 or neighbor >= len(mask) or seen[neighbor] or not mask[neighbor]:
+                    continue
+                neighbor_y, neighbor_x = divmod(neighbor, width)
+                if abs(neighbor_x - x) + abs(neighbor_y - y) != 1:
+                    continue
+                seen[neighbor] = 1
+                stack.append(neighbor)
+        if count >= min_pixels:
+            components.append({"pixels": count, "bbox": [min_x, min_y, max_x + 1, max_y + 1]})
+    components.sort(key=lambda item: int(item["pixels"]), reverse=True)
+    return components
+
+
+def analyze_neutral_preview_image(path: Path) -> dict[str, Any]:
+    from collections import Counter
+
+    from PIL import Image
+
+    with Image.open(path) as raw_image:
+        original_width, original_height = raw_image.size
+        scale = min(1.0, 480.0 / max(1, original_width))
+        image = raw_image.convert("RGB")
+        if scale < 1.0:
+            image = image.resize((480, max(1, int(round(original_height * scale)))))
+        width, height = image.size
+        flattened = getattr(image, "get_flattened_data", None)
+        pixels = list(flattened() if flattened else image.getdata())
+
+    sample_step = 2
+    quantized_background: Counter[tuple[int, int, int]] = Counter()
+    for y in range(0, height, sample_step):
+        offset = y * width
+        for x in range(0, width, sample_step):
+            r, g, b = pixels[offset + x]
+            quantized_background[(r // 8, g // 8, b // 8)] += 1
+    background_bin, background_samples = quantized_background.most_common(1)[0]
+    background = [value * 8 + 4 for value in background_bin]
+    background_sample_count = sum(quantized_background.values())
+    background_fraction = background_samples / max(1, background_sample_count)
+
+    foreground_mask: list[bool] = []
+    for r, g, b in pixels:
+        distance = abs(r - background[0]) + abs(g - background[1]) + abs(b - background[2])
+        foreground_mask.append(distance > 45)
+
+    components = foreground_components(foreground_mask, width, height, min_pixels=8)
+    pane_results: list[dict[str, Any]] = []
+    findings: list[str] = []
+    pane_boxes = [pane_box(width, height, pane) for pane in NEUTRAL_PREVIEW_PANES]
+    edge_tolerance = 2
+
+    for pane, box in zip(NEUTRAL_PREVIEW_PANES, pane_boxes):
+        left, top, right, bottom = box
+        area = max(1, (right - left) * (bottom - top))
+        foreground_pixels = 0
+        for y in range(top, bottom):
+            row = y * width
+            for x in range(left, right):
+                if foreground_mask[row + x]:
+                    foreground_pixels += 1
+        foreground_fraction = foreground_pixels / area
+        pane_components = [
+            item for item in components if rects_intersect(tuple(item["bbox"]), (left, top, right, bottom))
+        ]
+        largest = pane_components[0] if pane_components else {"pixels": 0, "bbox": []}
+        touch_edges: list[str] = []
+        bbox = largest.get("bbox") or []
+        if bbox:
+            if bbox[0] <= left + edge_tolerance:
+                touch_edges.append("left")
+            if bbox[2] >= right - edge_tolerance:
+                touch_edges.append("right")
+            if bbox[1] <= top + edge_tolerance:
+                touch_edges.append("top")
+            if bbox[3] >= bottom - edge_tolerance:
+                touch_edges.append("bottom")
+
+        pane_findings: list[str] = []
+        if foreground_fraction < pane["minForegroundFraction"]:
+            pane_findings.append(
+                f"foreground fraction {foreground_fraction:.4f} below {pane['minForegroundFraction']:.4f}"
+            )
+        if foreground_fraction > pane["maxForegroundFraction"]:
+            pane_findings.append(
+                f"foreground fraction {foreground_fraction:.4f} above {pane['maxForegroundFraction']:.4f}"
+            )
+        disallowed_edges = [edge for edge in touch_edges if edge not in pane["allowedTouchEdges"]]
+        if disallowed_edges:
+            pane_findings.append(f"foreground touches disallowed pane edge(s): {','.join(disallowed_edges)}")
+        if pane_findings:
+            findings.extend([f"{pane['name']}: {finding}" for finding in pane_findings])
+
+        pane_results.append(
+            {
+                "name": pane["name"],
+                "box": [left, top, right, bottom],
+                "foregroundPixels": foreground_pixels,
+                "foregroundFraction": foreground_fraction,
+                "componentCount": len(pane_components),
+                "largestComponentPixels": int(largest.get("pixels", 0)),
+                "largestComponentBox": bbox,
+                "touchEdges": touch_edges,
+                "findings": pane_findings,
+                "status": "PASS" if not pane_findings else "FAIL",
+            }
+        )
+
+    outside_components = [
+        item
+        for item in components
+        if int(item["pixels"]) >= 16 and not any(rects_intersect(tuple(item["bbox"]), box) for box in pane_boxes)
+    ]
+    if outside_components:
+        findings.append(f"foreground components outside neutral preview panes: {len(outside_components)}")
+
+    return {
+        "image": path.name,
+        "status": "PASS" if not findings else "FAIL",
+        "originalSize": [original_width, original_height],
+        "analysisSize": [width, height],
+        "backgroundRgb": background,
+        "backgroundDominantFraction": background_fraction,
+        "foregroundComponentCount": len(components),
+        "outsideComponentCount": len(outside_components),
+        "outsideComponents": outside_components[:12],
+        "panes": pane_results,
+        "findings": findings,
+        "runtime": "runtime-supported" if not findings else "loaded-pending-runtime",
+    }
+
+
+def analyze_neutral_preview_composition(proof_dir: Path, lines: list[str], actor: str) -> list[dict[str, Any]]:
+    if not has_neutral_preview_runtime(lines, actor):
+        return []
+    screenshots = sorted(proof_dir.glob("*.png"))
+    if not screenshots:
+        return []
+    try:
+        return [analyze_neutral_preview_image(screenshots[-1])]
+    except Exception as exc:
+        return [
+            {
+                "image": screenshots[-1].name,
+                "status": "FAIL",
+                "runtime": "known-blocked",
+                "findings": [f"neutral preview composition analysis failed: {exc}"],
+            }
+        ]
+
+
 def parse_actor_matches(lines: list[str], actor: str) -> list[dict[str, Any]]:
     match_re = re.compile(
         rf'active-cell actor match target="{re.escape(actor)}".*?\bframe=(?P<frame>[0-9]+) '
@@ -869,6 +1089,7 @@ def evaluate(
     animation_playback: list[dict[str, Any]],
     animation_blockers: list[str],
     face_occlusion_findings: list[dict[str, Any]],
+    neutral_preview_composition: list[dict[str, Any]],
 ) -> tuple[str, list[str]]:
     failures: list[str] = []
     phase_lower = phase.lower()
@@ -918,6 +1139,14 @@ def evaluate(
     regressions = [item for item in runtime_audit_summary if item["regressed"]]
     if regressions:
         failures.append(f"runtime audit regressions after initial OK: {len(regressions)}")
+    neutral_preview_findings = [
+        finding
+        for item in neutral_preview_composition
+        if item.get("status") != "PASS"
+        for finding in item.get("findings", [])
+    ]
+    if neutral_preview_findings:
+        failures.append(f"neutral preview composition findings: {len(neutral_preview_findings)}")
     if face_occlusion_findings:
         failures.append(f"face occlusion/headgear orientation findings: {len(face_occlusion_findings)}")
     collapsed_heads = []
@@ -1000,6 +1229,7 @@ def write_markdown(path: Path, report: dict[str, Any]) -> None:
     lines.append(f"Head surface offsets: {len(report['headSurfaceOffsets'])}")
     lines.append(f"Runtime part audits: {len(report['runtimePartAudits'])}")
     lines.append(f"Runtime audit summaries: {len(report['runtimeAuditSummary'])}")
+    lines.append(f"Neutral preview composition samples: {len(report['neutralPreviewComposition'])}")
     lines.append(f"Face drawable audits: {len(report['faceDrawables'])}")
     lines.append(f"TRI/EGM/talk lines: {len(report['morphLines'])}")
     lines.append(f"Weapon lines: {len(report['weaponLines'])}")
@@ -1014,6 +1244,23 @@ def write_markdown(path: Path, report: dict[str, Any]) -> None:
         for failure in report["failures"]:
             lines.append(f"- {failure}")
         lines.append("")
+    if report["neutralPreviewComposition"]:
+        lines.append("## Neutral Preview Composition")
+        lines.append("")
+        for item in report["neutralPreviewComposition"]:
+            lines.append(f"- `{item['image']}`: **{item['status']}**")
+            for finding in item.get("findings", []):
+                lines.append(f"  - {finding}")
+            lines.append("")
+            lines.append("| Pane | Status | Foreground | Components | Largest Box | Touch Edges |")
+            lines.append("|---|---|---:|---:|---|---|")
+            for pane in item.get("panes", []):
+                lines.append(
+                    f"| {pane['name']} | {pane['status']} | {pane['foregroundFraction']:.4f} | "
+                    f"{pane['componentCount']} | {pane.get('largestComponentBox', [])} | "
+                    f"{pane.get('touchEdges', [])} |"
+                )
+            lines.append("")
     if report["faceOcclusionFindings"]:
         lines.append("## Face Occlusion Findings")
         lines.append("")
@@ -1119,6 +1366,7 @@ def main() -> int:
     runtime_audit_summary = summarize_runtime_audits(audits)
     runtime_part_timelines = build_runtime_part_timelines(audits)
     face_occlusion_findings = find_face_occlusion_findings(bounds, audits)
+    neutral_preview_composition = analyze_neutral_preview_composition(proof_dir, lines, args.actor)
     actor_kind = args.actor_kind
     if actor_kind == "auto":
         actor_kind = "creature" if creature_evidence else "npc"
@@ -1158,6 +1406,7 @@ def main() -> int:
         animation_playback,
         animation_blockers,
         face_occlusion_findings,
+        neutral_preview_composition,
     )
 
     report: dict[str, Any] = {
@@ -1178,6 +1427,7 @@ def main() -> int:
         "runtimeAuditSummary": runtime_audit_summary,
         "runtimePartTimelines": runtime_part_timelines,
         "faceOcclusionFindings": face_occlusion_findings,
+        "neutralPreviewComposition": neutral_preview_composition,
         "faceDrawables": drawables,
         "morphLines": morph_lines,
         "weaponLines": weapon_lines,

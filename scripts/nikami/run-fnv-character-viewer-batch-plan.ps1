@@ -15,7 +15,7 @@ param(
     [int]$MaxEntries = 1,
     [int]$RunSeconds = 28,
     [int]$ActorFrame = 520,
-    [string]$ScreenshotFrames = "760",
+    [string]$ScreenshotFrames = "600,660,720,780,840",
     [switch]$NoSound,
     [switch]$Serve,
     [int]$ServePort = 0,

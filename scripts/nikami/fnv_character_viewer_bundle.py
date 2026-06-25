@@ -1107,6 +1107,7 @@ def load_suite(suite_dir: Path) -> dict[str, Any]:
                 "runtimePartAudits": len(as_list(report.get("runtimePartAudits"))),
                 "runtimeAuditSummary": len(as_list(report.get("runtimeAuditSummary"))),
                 "runtimePartTimelines": len(as_list(report.get("runtimePartTimelines"))),
+                "neutralPreviewComposition": len(as_list(report.get("neutralPreviewComposition"))),
                 "failureFocus": len(failure_focus),
                 "faceDrawables": len(as_list(report.get("faceDrawables"))),
                 "morphLines": len(as_list(report.get("morphLines"))),
@@ -1125,6 +1126,7 @@ def load_suite(suite_dir: Path) -> dict[str, Any]:
             "runtimePartAudits": as_list(report.get("runtimePartAudits")),
             "runtimeAuditSummary": as_list(report.get("runtimeAuditSummary")),
             "runtimePartTimelines": as_list(report.get("runtimePartTimelines")),
+            "neutralPreviewComposition": as_list(report.get("neutralPreviewComposition")),
             "failureFocus": failure_focus,
             "faceDrawables": as_list(report.get("faceDrawables")),
             "morphLines": as_list(report.get("morphLines")),
@@ -1333,6 +1335,10 @@ a {{ color: #9fc2ff; }}
   <div class="section">
     <h2>Runtime Drift</h2>
     <div id="driftTable"></div>
+  </div>
+  <div class="section">
+    <h2>Neutral Preview Composition</h2>
+    <div id="compositionTable"></div>
   </div>
   <div class="section">
     <h2>Failure Summary</h2>
@@ -1594,6 +1600,20 @@ function renderDrift(c) {{
   const rows = filterPartRows(c?.runtimeAuditSummary || [], a => a.part, a => a.class).map(a => `<tr><td><code>${{esc(a.part)}}</code></td><td>${{esc(a.class)}}</td><td>${{esc(a.firstVerdict)}} -> ${{esc(a.lastVerdict)}}</td><td>${{esc(a.badCount)}} / ${{esc(a.count)}}</td><td>${{esc(a.firstSampleIndex)}} -> ${{esc(a.lastSampleIndex)}}</td><td>${{esc(a.firstAnimationTime)}} -> ${{esc(a.lastAnimationTime)}}</td><td>${{esc(a.maxDistance)}}</td><td>${{esc(JSON.stringify(a.deltaRelLocal || []))}}</td><td>${{esc(JSON.stringify(a.deltaPartInAnchorTrans || []))}}</td><td>${{esc(a.firstBadSampleIndex || "")}}</td></tr>`);
   document.getElementById("driftTable").innerHTML = table(["Part", "Class", "Verdict", "Bad", "Samples", "Anim Time", "Max Distance", "Delta Rel", "Delta Anchor", "First Bad"], rows);
 }}
+function renderComposition(c) {{
+  const rows = [];
+  for (const sample of c?.neutralPreviewComposition || []) {{
+    for (const finding of sample.findings || []) {{
+      rows.push(`<tr><td>${{statusSpan(sample.status)}}</td><td><code>${{esc(sample.image || "")}}</code></td><td>finding</td><td colspan="4">${{esc(finding)}}</td></tr>`);
+    }}
+    for (const pane of sample.panes || []) {{
+      rows.push(`<tr><td>${{statusSpan(pane.status)}}</td><td><code>${{esc(sample.image || "")}}</code></td><td>${{esc(pane.name)}}</td><td>${{esc(pane.foregroundFraction)}}</td><td>${{esc(pane.componentCount)}}</td><td>${{esc(JSON.stringify(pane.largestComponentBox || []))}}</td><td>${{esc((pane.touchEdges || []).join(", "))}}</td></tr>`);
+    }}
+  }}
+  document.getElementById("compositionTable").innerHTML = rows.length
+    ? table(["Status", "Image", "Pane", "Foreground", "Components", "Largest Box", "Touch Edges"], rows)
+    : `<div class="empty">No neutral preview composition sample</div>`;
+}}
 function renderFailureSummary() {{
   const rows = filterPartRows(MANIFEST.failureSummary || [], f => (f.parts || []).join(" "), f => f.category).map(f => `<tr><td>${{esc(f.category)}}</td><td><code>${{esc(f.matchedModel || "")}}</code></td><td>${{esc((f.angles || []).join(", "))}}</td><td>${{esc((f.cases || []).length)}}</td><td>${{esc(f.badCount)}} / ${{esc(f.sampleCount)}}</td><td>${{esc(f.firstBadSampleIndex || "")}}</td><td>${{esc(f.firstBadDistance ?? "")}}</td><td>${{esc(f.maxAbsDeltaPartInAnchorTrans)}}</td><td>${{commandBlock(f.command || "", f.matchedModel || f.category)}}</td></tr>`);
   document.getElementById("failureSummaryTable").innerHTML = table(["Category", "Matched Model", "Angles", "Cases", "Bad", "First Bad", "Distance", "Max Delta Anchor", "Rerun"], rows);
@@ -1640,6 +1660,7 @@ function render() {{
   renderAssemblyInventory();
   renderCoords(c);
   renderDrift(c);
+  renderComposition(c);
   renderFailureSummary();
   renderFailureFocus(c);
   renderTimeline(c);
