@@ -672,6 +672,27 @@ def collect_matching(lines: list[str], patterns: list[str], needle: str) -> list
     return result
 
 
+def parse_actor_weapon_states(lines: list[str], patterns: list[str]) -> list[dict[str, Any]]:
+    state_re = re.compile(r'initialized actor shell for NPC "(?P<editor>[^"]+)".*? weapon=(?P<weapon>[^ ]*)')
+    states: list[dict[str, Any]] = []
+    for line in lines:
+        match = state_re.search(line)
+        if not match:
+            continue
+        editor = match.group("editor")
+        if not line_matches_actor(line, patterns) and not matches_known_actor_value(editor, patterns):
+            continue
+        states.append(
+            {
+                "timestamp": timestamp_from_line(line),
+                "editor": editor,
+                "weapon": match.group("weapon").strip(),
+                "line": compact_line(line),
+            }
+        )
+    return states
+
+
 def has_neutral_preview_runtime(lines: list[str], actor: str) -> bool:
     return any(f'neutral actor preview assembled target="{actor}"' in line for line in lines)
 
@@ -1088,6 +1109,7 @@ def evaluate(
     animation_requests: list[dict[str, Any]],
     animation_playback: list[dict[str, Any]],
     animation_blockers: list[str],
+    actor_weapon_states: list[dict[str, Any]],
     face_occlusion_findings: list[dict[str, Any]],
     neutral_preview_composition: list[dict[str, Any]],
 ) -> tuple[str, list[str]]:
@@ -1161,7 +1183,8 @@ def evaluate(
         failures.append(f"collapsed or empty head source geometry: {len(collapsed_heads)}")
     if phase in {"weapon", "weapons", "headgear", "talk", "dialogue", "full"}:
         weapon_lines = collect_matching(lines, patterns, "equipped NPC weapon")
-        if not weapon_lines:
+        weapon_expected = not actor_weapon_states or any(item["weapon"] for item in actor_weapon_states)
+        if weapon_expected and not weapon_lines:
             failures.append("missing equipped weapon evidence")
     if phase in {"talk", "dialogue"}:
         talk_lines = [
@@ -1232,6 +1255,7 @@ def write_markdown(path: Path, report: dict[str, Any]) -> None:
     lines.append(f"Neutral preview composition samples: {len(report['neutralPreviewComposition'])}")
     lines.append(f"Face drawable audits: {len(report['faceDrawables'])}")
     lines.append(f"TRI/EGM/talk lines: {len(report['morphLines'])}")
+    lines.append(f"Actor weapon states: {len(report['actorWeaponStates'])} expected={report['weaponExpected']}")
     lines.append(f"Weapon lines: {len(report['weaponLines'])}")
     lines.append(f"Creature evidence lines: {len(report['creatureEvidence'])}")
     lines.append(f"Animation sources: {len(report['animationSources'])}")
@@ -1318,6 +1342,15 @@ def write_markdown(path: Path, report: dict[str, Any]) -> None:
                     f"{sample.get('relLocal', [])} | {sample.get('partInAnchorTrans', [])} |"
                 )
         lines.append("")
+    if report["actorWeaponStates"] or report["weaponLines"]:
+        lines.append("## Weapon Evidence")
+        lines.append("")
+        for item in report["actorWeaponStates"][:16]:
+            weapon = item["weapon"] if item["weapon"] else "(none)"
+            lines.append(f"- `actor-state` {item['editor']} weapon={weapon} {item['line']}")
+        for line in report["weaponLines"][:16]:
+            lines.append(f"- `equipped` {line}")
+        lines.append("")
     if report["creatureEvidence"]:
         lines.append("## Creature Evidence")
         lines.append("")
@@ -1363,6 +1396,7 @@ def main() -> int:
     animation_requests = parse_animation_requests(lines, patterns)
     animation_playback = parse_animation_playback(lines, patterns)
     animation_blockers = collect_animation_blockers(lines, patterns)
+    actor_weapon_states = parse_actor_weapon_states(lines, patterns)
     runtime_audit_summary = summarize_runtime_audits(audits)
     runtime_part_timelines = build_runtime_part_timelines(audits)
     face_occlusion_findings = find_face_occlusion_findings(bounds, audits)
@@ -1405,6 +1439,7 @@ def main() -> int:
         animation_requests,
         animation_playback,
         animation_blockers,
+        actor_weapon_states,
         face_occlusion_findings,
         neutral_preview_composition,
     )
@@ -1430,6 +1465,8 @@ def main() -> int:
         "neutralPreviewComposition": neutral_preview_composition,
         "faceDrawables": drawables,
         "morphLines": morph_lines,
+        "actorWeaponStates": actor_weapon_states,
+        "weaponExpected": (None if not actor_weapon_states else any(item["weapon"] for item in actor_weapon_states)),
         "weaponLines": weapon_lines,
         "creatureEvidence": creature_evidence,
         "creatureLines": [item["line"] for item in creature_evidence],

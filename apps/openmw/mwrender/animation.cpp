@@ -2041,6 +2041,8 @@ namespace
 
             const std::string partClass = getFalloutRuntimePartClass(part->getName());
             osg::Vec3f center = transformFalloutPoint(box.center(), getFalloutParentWorldMatrix(part));
+            osg::Vec3f renderExtent;
+            bool hasRenderExtent = false;
             if (partClass == "head" || partClass == "leftHand" || partClass == "rightHand" || partClass == "body")
             {
                 FalloutPartRigBoundsVisitor rigBoundsVisitor(getFalloutParentWorldMatrix(part));
@@ -2050,11 +2052,14 @@ namespace
                     if (!sample.mRenderValid)
                         continue;
                     center = sample.mRenderCenterPathWorld;
+                    renderExtent = sample.mRenderExtent;
+                    hasRenderExtent = true;
                     break;
                 }
             }
             osg::Vec3f anchor;
             float limit = 180.f;
+            const char* limitSource = "static";
             if (partClass == "head")
             {
                 anchor = head;
@@ -2085,11 +2090,21 @@ namespace
             {
                 anchor = leftHand;
                 limit = 30.f;
+                if (hasRenderExtent)
+                {
+                    limit = std::clamp(renderExtent.length() * 2.55f, limit, 72.f);
+                    limitSource = "rigged-hand-surface-envelope";
+                }
             }
             else if (partClass == "rightHand")
             {
                 anchor = rightHand;
                 limit = 30.f;
+                if (hasRenderExtent)
+                {
+                    limit = std::clamp(renderExtent.length() * 2.55f, limit, 72.f);
+                    limitSource = "rigged-hand-surface-envelope";
+                }
             }
             else if (partClass == "weapon")
             {
@@ -2217,7 +2232,7 @@ namespace
                     << " centerLocal=" << formatFalloutAuditVec3(centerLocal)
                     << " anchorLocal=" << formatFalloutAuditVec3(anchorLocal)
                     << " relLocal=" << formatFalloutAuditVec3(relLocal)
-                    << " distance=" << distance << " limit=" << limit
+                    << " distance=" << distance << " limit=" << limit << " limitSource=" << limitSource
                     << (candidateDistances.empty() ? "" : " candidateTargets=") << candidateDistances
                     << " verdict=" << (bad ? "SUSPECT" : "OK");
             }

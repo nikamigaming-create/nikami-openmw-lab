@@ -16,6 +16,7 @@ param(
     [int]$RunSeconds = 28,
     [int]$ActorFrame = 520,
     [string]$ScreenshotFrames = "600,660,720,780,840",
+    [string[]]$Angles = @("front"),
     [switch]$NoSound,
     [switch]$Serve,
     [int]$ServePort = 0,
@@ -180,6 +181,7 @@ function Invoke-ViewerEntry([object]$Entry, [string]$RunDir) {
         Targets = @($runtimeTarget)
         ActorKind = [string]$Entry.actorKind
         Phases = @($phases)
+        Angles = @($Angles)
         RunSeconds = $RunSeconds
         ActorFrame = $ActorFrame
         ScreenshotFrames = $ScreenshotFrames
@@ -236,9 +238,24 @@ function Invoke-ViewerEntry([object]$Entry, [string]$RunDir) {
                 if ($null -ne $firstRun -and $null -ne $firstRun.ActorKitJson) {
                     $result.actorKit = [string]$firstRun.ActorKitJson
                 }
+                $failedRuns = @($viewerRuns | Where-Object { [string]$_.Status -ne "PASS" })
+                if ($viewerRuns.Count -eq 0) {
+                    $result.status = "FAIL"
+                    $result.error = "Viewer runner wrote no child run status."
+                }
+                elseif ($failedRuns.Count -gt 0) {
+                    $result.status = "FAIL"
+                    $result.error = "Viewer child failed: $(@($failedRuns | ForEach-Object { "$($_.Target)=$($_.Status)" }) -join ', ')"
+                }
             }
             catch {
+                $result.status = "FAIL"
+                $result.error = "Unable to parse viewer child status: $($_.Exception.Message)"
             }
+        }
+        else {
+            $result.status = "FAIL"
+            $result.error = "Viewer runner did not write viewer-runs.json."
         }
         $serverJson = if (![string]::IsNullOrWhiteSpace($newDir)) { Join-Path $newDir "viewer-server.json" } else { "" }
         if (![string]::IsNullOrWhiteSpace($serverJson) -and (Test-Path -LiteralPath $serverJson -PathType Leaf)) {
@@ -297,6 +314,7 @@ function Write-BatchRunMarkdown([string]$Path, [object]$Summary) {
     $lines.Add("Actor kind filter: ``$($Summary.actorKind)``")
     $lines.Add("Target filter: ``$($Summary.target)``")
     $lines.Add("Source filter: ``$($Summary.source)``")
+    $lines.Add("Angles: ``$(@($Summary.angles) -join ',')``")
     $lines.Add("Plan: ``$($Summary.planJson)``")
     $lines.Add("Policy: $($Summary.payloadPolicy)")
     $lines.Add("")
@@ -358,6 +376,7 @@ a{color:#9fc2ff}
   <span class="pill">Actor kind: $(ConvertTo-HtmlText $Summary.actorKind)</span>
   <span class="pill">Source: $(ConvertTo-HtmlText $Summary.source)</span>
   <span class="pill">Target: $(ConvertTo-HtmlText $Summary.target)</span>
+  <span class="pill">Angles: $(ConvertTo-HtmlText (@($Summary.angles) -join ','))</span>
 </section>
 <section class="panel">
   <div>Plan: $planLink</div>
@@ -394,6 +413,7 @@ Write-Host "ActorKind: $ActorKind"
 Write-Host "Target: $Target"
 Write-Host "Source: $Source"
 Write-Host "MaxEntries: $MaxEntries"
+Write-Host "Angles: $($Angles -join ',')"
 Write-Host "Policy: generated command/identifier plan only; no retail assets are committed"
 Write-Host ""
 
@@ -459,6 +479,7 @@ $summary = [pscustomobject][ordered]@{
     target = $Target
     source = $Source
     maxEntries = $MaxEntries
+    angles = @($Angles)
     payloadPolicy = "generated run summary only; no retail assets are committed"
     selectedEntriesJson = $selectedPath
     html = (Join-Path $runDir "viewer-batch-run.html")

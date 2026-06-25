@@ -1040,8 +1040,8 @@ namespace MWRender
                     viewName = "face-hat";
                     break;
                 case ViewMode::FrontRight:
-                    position = osg::Vec3f(28.f, 205.f, 126.f);
-                    lookAt = osg::Vec3f(28.f, 24.f, 122.f);
+                    position = osg::Vec3f(28.f, 340.f, 128.f);
+                    lookAt = osg::Vec3f(28.f, 24.f, 120.f);
                     viewName = "right-hand-weapon";
                     break;
             }
