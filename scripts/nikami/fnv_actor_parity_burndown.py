@@ -198,10 +198,13 @@ def phase_command(entry: dict[str, Any], phase: str, states: list[str]) -> str:
     if not target or actor_kind == "unknown":
         return ""
     flags = " -CreatureDiagnostics" if actor_kind == "creature" else ""
+    placement_args = as_text(entry.get("placementCommandArgs"))
+    if placement_args:
+        placement_args = f" {placement_args}"
     command = (
         "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/nikami/run-fnv-character-viewer.ps1 "
         f"-Targets '{target.replace(chr(39), chr(39) + chr(39))}' -ActorKind {actor_kind}{flags} "
-        f"-Phases {phase} -Angles front,left,right,face,hand -Serve"
+        f"-Phases {phase} -Angles front,front-left,front-right{placement_args} -Serve"
     )
     if states:
         command += f" # states={','.join(states)}"
@@ -284,6 +287,8 @@ def burn_rows_for_entry(entry: dict[str, Any], sequence: int) -> list[dict[str, 
                     "baseActorTarget": as_text(entry.get("baseActorTarget")),
                     "actorFormId": as_text(entry.get("actorFormId")),
                     "actorEditorId": as_text(entry.get("actorEditorId")),
+                    "placement": entry.get("placement", {}),
+                    "placementCommandArgs": as_text(entry.get("placementCommandArgs")),
                     "phase": phase,
                     "gate": gate_name,
                     "runtimeStates": states,

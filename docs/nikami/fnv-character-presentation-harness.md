@@ -31,6 +31,8 @@ Any unclassified skip is a failing gate.
 
 ## Current Repo Starting Point
 
+The actor harness follows the broader [FNV parity burn-down operating plan](fnv-parity-burndown-operating-plan.md): PC flat first, row-by-row runtime proof, exact classification, no silent skips, and no retail payload bytes in Git.
+
 Existing pieces:
 
 - `scripts/nikami/run-fnv-actor-mugshot-sweep.ps1` stages selected actors, captures screenshots, crops faces, builds a contact sheet, and checks `FACE CHECK` plus controller audit logs.

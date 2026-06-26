@@ -191,8 +191,200 @@ if (!$csv.Contains("projectile-muzzle-sound") -or !$csv.Contains("voice-lip-side
     throw "Burn-down CSV does not expose weapon projectile or voice/LIP rows."
 }
 
+$runRoot = Join-Path $ProofRoot "fnv-actor-parity-burndown-run"
+$beforeRunDirs = @()
+if (Test-Path -LiteralPath $runRoot -PathType Container) {
+    $beforeRunDirs = @(Get-ChildItem -LiteralPath $runRoot -Directory -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName)
+}
+& $Runner -ProofRoot $ProofRoot -BurnDownJson $jsonPath -DryRun -ActorKind "npc" -Target "GSEasyPete" -Priority "easy-pete" -Classification "loaded-pending-runtime" -Phase "weapon" -Gate "projectile-muzzle-sound" -MaxRows 1 -RequirePass | Out-Host
+if ($LASTEXITCODE -ne 0) {
+    throw "FNV actor parity burn-down dry-run row fixture failed with exit code $LASTEXITCODE."
+}
+$newRunDir = Get-ChildItem -LiteralPath $runRoot -Directory -ErrorAction SilentlyContinue |
+    Sort-Object LastWriteTime -Descending |
+    Where-Object { $beforeRunDirs -notcontains $_.FullName } |
+    Select-Object -First 1
+if ($null -eq $newRunDir) {
+    throw "Dry-run row fixture did not create a new burn-down run directory."
+}
+$runJsonPath = Join-Path $newRunDir.FullName "actor-parity-burndown-run.json"
+$runHtmlPath = Join-Path $newRunDir.FullName "actor-parity-burndown-run.html"
+$runMarkdownPath = Join-Path $newRunDir.FullName "actor-parity-burndown-run.md"
+$selectedRowsPath = Join-Path $newRunDir.FullName "selected-rows.json"
+foreach ($path in @($runJsonPath, $runHtmlPath, $runMarkdownPath, $selectedRowsPath)) {
+    if (!(Test-Path -LiteralPath $path -PathType Leaf)) {
+        throw "Missing actor parity burn-down run artifact: $path"
+    }
+}
+$run = Get-Content -LiteralPath $runJsonPath -Raw | ConvertFrom-Json
+if ($run.schema -ne "nikami-fnv-actor-parity-burndown-run-v1") {
+    throw "Unexpected burn-down row run schema: $($run.schema)"
+}
+if ($run.status -ne "PASS" -or $run.dryRun -ne $true -or [int]$run.selectedRows -ne 1) {
+    throw "Dry-run row fixture did not pass with exactly one selected row."
+}
+$runResult = @($run.results) | Select-Object -First 1
+if ($null -eq $runResult -or $runResult.status -ne "DRY-RUN") {
+    throw "Dry-run row fixture did not mark the selected row as DRY-RUN."
+}
+if ($runResult.phase -ne "weapon" -or $runResult.gate -ne "projectile-muzzle-sound") {
+    throw "Dry-run row fixture selected the wrong phase/gate: $($runResult.phase)/$($runResult.gate)"
+}
+if ([string]$runResult.command -notmatch "run-fnv-character-viewer.ps1") {
+    throw "Dry-run row fixture did not expose the runnable viewer command."
+}
+if (@($runResult.evidence) -notcontains "selected-row" -or @($runResult.evidence) -notcontains "selected-gate" -or @($runResult.evidence) -notcontains "selected-runtime-states" -or @($runResult.evidence) -notcontains "no-runtime-launch") {
+    throw "Dry-run row fixture did not record no-launch evidence."
+}
+$selectedRows = @(Get-Content -LiteralPath $selectedRowsPath -Raw | ConvertFrom-Json)
+if ($selectedRows.Count -ne 1 -or [string]$selectedRows[0].gate -ne "projectile-muzzle-sound") {
+    throw "Dry-run selected-rows.json is not a stable one-row projectile array."
+}
+$rowJson = Get-Content -LiteralPath ([string]$runResult.rowJson) -Raw | ConvertFrom-Json
+if ([string]$rowJson.gate -ne "projectile-muzzle-sound" -or @($rowJson.runtimeStates) -notcontains "projectile-fire") {
+    throw "Dry-run row.json did not preserve selected gate/runtime state."
+}
+$runHtmlText = Get-Content -LiteralPath $runHtmlPath -Raw
+$runMarkdownText = Get-Content -LiteralPath $runMarkdownPath -Raw
+if (!$runHtmlText.Contains("FNV Actor Parity Burn-Down Run") -or !$runHtmlText.Contains("projectile-muzzle-sound")) {
+    throw "Dry-run row HTML does not expose the selected projectile gate."
+}
+if (!$runMarkdownText.Contains("FNV Actor Parity Burn-Down Run") -or !$runMarkdownText.Contains("projectile-muzzle-sound")) {
+    throw "Dry-run row Markdown does not expose the selected projectile gate."
+}
+
+$fakeViewer = Join-Path $FixtureDir "fake-run-fnv-character-viewer.ps1"
+@'
+param(
+    [string]$ProofRoot,
+    [string[]]$Targets,
+    [string]$ActorKind,
+    [string[]]$Phases,
+    [string[]]$Angles,
+    [int]$RunSeconds,
+    [int]$ActorFrame,
+    [string]$ScreenshotFrames,
+    [string]$ActorKitAnimationGroup = "",
+    [string]$ActorKitDialogueMode = "",
+    [switch]$CreatureDiagnostics,
+    [switch]$NoSound,
+    [switch]$Serve,
+    [int]$ServePort = 0
+)
+$ErrorActionPreference = "Stop"
+Set-StrictMode -Version Latest
+$stamp = Get-Date -Format "yyyyMMdd_HHmmss_fff"
+$runDir = Join-Path $ProofRoot "fnv-character-viewer/fake-$stamp"
+New-Item -ItemType Directory -Force -Path $runDir | Out-Null
+$viewerHtml = Join-Path $runDir "character-viewer.html"
+$viewerJson = Join-Path $runDir "character-viewer-manifest.json"
+$actorKitJson = Join-Path $runDir "character-actor-kit.json"
+"<html><body>fake viewer</body></html>" | Set-Content -LiteralPath $viewerHtml -Encoding UTF8
+[pscustomobject][ordered]@{
+    overallStatus = "PASS"
+    target = @($Targets)[0]
+    actorKind = $ActorKind
+    phases = @($Phases)
+    angles = @($Angles)
+    actorKitAnimationGroup = $ActorKitAnimationGroup
+    actorKitDialogueMode = $ActorKitDialogueMode
+    runSeconds = $RunSeconds
+    actorFrame = $ActorFrame
+    screenshotFrames = $ScreenshotFrames
+} | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $viewerJson -Encoding UTF8
+[pscustomobject][ordered]@{
+    schema = "fake-actor-kit-v1"
+    target = @($Targets)[0]
+    phases = @($Phases)
+    angles = @($Angles)
+} | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $actorKitJson -Encoding UTF8
+$runs = @([pscustomobject][ordered]@{
+    Target = @($Targets)[0]
+    Status = "PASS"
+    SuiteDir = $runDir
+    ViewerHtml = $viewerHtml
+    ViewerJson = $viewerJson
+    ActorKitJson = $actorKitJson
+})
+ConvertTo-Json -InputObject $runs -Depth 8 | Set-Content -LiteralPath (Join-Path $runDir "viewer-runs.json") -Encoding UTF8
+"<html><body>fake run index</body></html>" | Set-Content -LiteralPath (Join-Path $runDir "index.html") -Encoding UTF8
+'@ | Set-Content -LiteralPath $fakeViewer -Encoding UTF8
+
+$beforeNonDryDirs = @()
+if (Test-Path -LiteralPath $runRoot -PathType Container) {
+    $beforeNonDryDirs = @(Get-ChildItem -LiteralPath $runRoot -Directory -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName)
+}
+& $Runner -ProofRoot $ProofRoot -BurnDownJson $jsonPath -RunRows -ActorKind "npc" -Target "GSEasyPete" -Priority "easy-pete" -Classification "loaded-pending-runtime" -Phase "talk" -Gate "voice-lip-sidecar" -MaxRows 1 -ViewerRunner $fakeViewer -RequirePass | Out-Host
+if ($LASTEXITCODE -ne 0) {
+    throw "FNV actor parity burn-down fake non-dry row fixture failed with exit code $LASTEXITCODE."
+}
+$nonDryRunDir = Get-ChildItem -LiteralPath $runRoot -Directory -ErrorAction SilentlyContinue |
+    Sort-Object LastWriteTime -Descending |
+    Where-Object { $beforeNonDryDirs -notcontains $_.FullName } |
+    Select-Object -First 1
+if ($null -eq $nonDryRunDir) {
+    throw "Fake non-dry row fixture did not create a burn-down run directory."
+}
+$nonDryJsonPath = Join-Path $nonDryRunDir.FullName "actor-parity-burndown-run.json"
+$nonDryRun = Get-Content -LiteralPath $nonDryJsonPath -Raw | ConvertFrom-Json
+$nonDryResult = @($nonDryRun.results) | Select-Object -First 1
+if ($nonDryRun.status -ne "PASS" -or $nonDryResult.status -ne "PASS") {
+    throw "Fake non-dry row run did not pass."
+}
+if ($nonDryResult.rowGateProofMode -ne "viewer-phase-proof-pending-gate-state-audit") {
+    throw "Fake non-dry row run falsely claimed exact gate-state proof."
+}
+if (@($nonDryResult.evidence) -notcontains "viewer-manifest-phase-angle-match" -or @($nonDryResult.evidence) -notcontains "selected-runtime-states") {
+    throw "Fake non-dry row run did not preserve child manifest and selected runtime-state evidence."
+}
+$childViewerManifest = Get-Content -LiteralPath ([string]$nonDryResult.viewerJson) -Raw | ConvertFrom-Json
+if (@($childViewerManifest.phases) -notcontains "talk" -or @($childViewerManifest.angles) -notcontains "front-left" -or [string]$childViewerManifest.actorKitDialogueMode -ne "mouth-open-pose") {
+    throw "Fake non-dry child viewer manifest did not receive selected phase/angles/dialogue mode."
+}
+
+$emptySelectionFailed = $false
+try {
+    & $Runner -ProofRoot $ProofRoot -BurnDownJson $jsonPath -DryRun -Target "DefinitelyMissingActorForContract" -MaxRows 1 | Out-Host
+}
+catch {
+    $emptySelectionFailed = $true
+}
+if (!$emptySelectionFailed) {
+    throw "Empty dry-run row selection did not fail."
+}
+
+$badBurn = Get-Content -LiteralPath $jsonPath -Raw | ConvertFrom-Json
+$badBurn.status = "PASS"
+$badBurn.rows[0].classification = ""
+$badBurn.counts.unclassified = 1
+$badBurnPath = Join-Path $FixtureDir "bad-actor-parity-burndown.json"
+$badBurn | ConvertTo-Json -Depth 16 | Set-Content -LiteralPath $badBurnPath -Encoding UTF8
+$badBurnFailed = $false
+try {
+    & $Runner -ProofRoot $ProofRoot -BurnDownJson $badBurnPath -DryRun -MaxRows 1 | Out-Host
+}
+catch {
+    $badBurnFailed = $true
+}
+if (!$badBurnFailed) {
+    throw "Malformed burn-down matrix did not fail before row dry-run."
+}
+
+$invalidAngleFailed = $false
+try {
+    & $Runner -ProofRoot $ProofRoot -BurnDownJson $jsonPath -DryRun -Angles "left" -MaxRows 1 | Out-Host
+}
+catch {
+    $invalidAngleFailed = $true
+}
+if (!$invalidAngleFailed) {
+    throw "Invalid dry-run camera angle did not fail."
+}
+
 Write-Host "FNV actor parity burn-down contract PASS"
 Write-Host "ProofDir: $ProofDir"
 Write-Host "BurnDownJson: $jsonPath"
 Write-Host "BurnDownMarkdown: $markdownPath"
 Write-Host "BurnDownCsv: $csvPath"
+Write-Host "BurnDownRunJson: $runJsonPath"
+Write-Host "BurnDownFakeNonDryRunJson: $nonDryJsonPath"
