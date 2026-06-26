@@ -21,6 +21,7 @@ param(
     [switch]$StartWorld,
     [switch]$Attached,
     [int]$RunSeconds = 0,
+    [string]$ScreenshotFrames = "",
     [switch]$Sound
 )
 
@@ -117,6 +118,9 @@ if (!(Test-Path -LiteralPath $FlatRunner -PathType Leaf)) {
 }
 
 $runtimeTag = "native-asset-studio"
+$runtimeName = "fnv-flat-clean-$runtimeTag"
+$runtimeDir = Join-Path $ProofRoot "runtime/$runtimeName"
+$screenshotDir = Join-Path $runtimeDir "screenshots"
 $previousEnv = @{}
 
 try {
@@ -138,6 +142,12 @@ try {
     Set-ScopedEnv $previousEnv "OPENMW_FNV_ASSET_STUDIO_ROT_Z" ($RotZ.ToString("0.######", [Globalization.CultureInfo]::InvariantCulture))
     Set-ScopedEnv $previousEnv "OPENMW_FNV_ASSET_STUDIO_SCALE" ($Scale.ToString("0.######", [Globalization.CultureInfo]::InvariantCulture))
     Set-ScopedEnv $previousEnv "OPENMW_FNV_ASSET_STUDIO_ZOOM" ($Zoom.ToString("0.######", [Globalization.CultureInfo]::InvariantCulture))
+    if (![string]::IsNullOrWhiteSpace($ScreenshotFrames)) {
+        Set-ScopedEnv $previousEnv "OPENMW_PROOF_SCREENSHOT_FRAME" $ScreenshotFrames
+        if (Test-Path -LiteralPath $screenshotDir -PathType Container) {
+            Get-ChildItem -LiteralPath $screenshotDir -File -ErrorAction SilentlyContinue | Remove-Item -Force
+        }
+    }
     if (!$StartWorld) {
         Set-ScopedEnv $previousEnv "OPENMW_FNV_ASSET_STUDIO_CLEAN_BOOT" "1"
     }
@@ -171,6 +181,7 @@ try {
     Write-Host "Rotation: $RotX,$RotY,$RotZ"
     Write-Host "Scale: $Scale"
     Write-Host "Zoom: $Zoom"
+    Write-Host "ScreenshotFrames: $ScreenshotFrames"
     Write-Host "World start: $StartWorld"
     Write-Host "CleanBoot: $(!$StartWorld)"
     Write-Host "Policy: generated config/proof output only; no retail assets are committed"

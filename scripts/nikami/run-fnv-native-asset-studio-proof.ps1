@@ -20,6 +20,7 @@ param(
     [double]$Zoom = 1,
     [switch]$StartWorld,
     [int]$RunSeconds = 14,
+    [string]$ScreenshotFrames = "120,180,240",
     [switch]$RequirePass
 )
 
@@ -52,6 +53,10 @@ function Get-LogMatches([string]$Path, [string]$Pattern) {
 
 function Get-NativeStudioRuntimeDir([string]$ProofRoot) {
     return Join-Path $ProofRoot "configs/fnv-flat-clean-native-asset-studio"
+}
+
+function Get-NativeStudioScreenshotDir([string]$ProofRoot) {
+    return Join-Path $ProofRoot "runtime/fnv-flat-clean-native-asset-studio/screenshots"
 }
 
 function ConvertTo-ProofLineText([object]$Value) {
@@ -91,6 +96,7 @@ Write-ProofLine "Zoom: $Zoom"
 Write-ProofLine "World start: $StartWorld"
 Write-ProofLine "CleanBoot: $(!$StartWorld)"
 Write-ProofLine "RunSeconds: $RunSeconds"
+Write-ProofLine "ScreenshotFrames: $ScreenshotFrames"
 Write-ProofLine "Policy: generated proof output only; no retail assets are committed"
 Write-ProofLine ""
 
@@ -115,13 +121,26 @@ Write-ProofLine ""
     -Scale $Scale `
     -Zoom $Zoom `
     -StartWorld:$StartWorld `
-    -RunSeconds $RunSeconds | Out-Host
+    -RunSeconds $RunSeconds `
+    -ScreenshotFrames $ScreenshotFrames | Out-Host
 
 $ConfigDir = Get-NativeStudioRuntimeDir $ProofRoot
 $OpenMwLog = Join-Path $ConfigDir "openmw.log"
 $CopiedLog = Join-Path $ProofDir "openmw.log"
 if (Test-Path -LiteralPath $OpenMwLog -PathType Leaf) {
     Copy-Item -LiteralPath $OpenMwLog -Destination $CopiedLog -Force
+}
+
+$ScreenshotSourceDir = Get-NativeStudioScreenshotDir $ProofRoot
+$copiedScreenshots = @()
+if (Test-Path -LiteralPath $ScreenshotSourceDir -PathType Container) {
+    $copiedScreenshots = @(Get-ChildItem -LiteralPath $ScreenshotSourceDir -Filter "*.png" -File -ErrorAction SilentlyContinue |
+        Sort-Object Name |
+        ForEach-Object {
+            $destination = Join-Path $ProofDir $_.Name
+            Copy-Item -LiteralPath $_.FullName -Destination $destination -Force
+            Get-Item -LiteralPath $destination
+        })
 }
 
 $registeredLine = Get-FirstLogLine $CopiedLog "FNV/ESM4 asset studio registered gate=native-asset-studio-window"
@@ -152,6 +171,10 @@ if ([string]::IsNullOrWhiteSpace($threeCameraLine) -and [string]::IsNullOrWhiteS
 }
 if ($terminalCount -ne 1) { $status = "FAIL"; $failures.Add("expected exactly one preview terminal state, saw $terminalCount") }
 if ($fatalLines.Count -gt 0) { $status = "FAIL"; $failures.Add("fatal/blocker log lines present") }
+if (![string]::IsNullOrWhiteSpace($ScreenshotFrames) -and $copiedScreenshots.Count -eq 0) {
+    $status = "FAIL"
+    $failures.Add("missing native asset studio screenshots")
+}
 
 $terminalLine = if ($loadedLines.Count -gt 0) {
     $loadedLines[0]
@@ -188,6 +211,8 @@ $proof = [pscustomobject][ordered]@{
     startWorld = [bool]$StartWorld
     cleanBoot = (!$StartWorld)
     runSeconds = $RunSeconds
+    screenshotFrames = $ScreenshotFrames
+    screenshots = @($copiedScreenshots | ForEach-Object { $_.Name })
     runtimeClassification = $runtimeClassification
     gates = [pscustomobject][ordered]@{
         registered = (![string]::IsNullOrWhiteSpace($registeredLine))
@@ -202,6 +227,7 @@ $proof = [pscustomobject][ordered]@{
         actorLoadedCount = $actorLoadedLines.Count
         actorFailedCount = $actorFailedLines.Count
         fatalCount = $fatalLines.Count
+        screenshotCount = $copiedScreenshots.Count
     }
     evidence = [pscustomobject][ordered]@{
         registeredLine = (ConvertTo-ProofLineText $registeredLine)
@@ -213,6 +239,7 @@ $proof = [pscustomobject][ordered]@{
         terminalLine = $terminalLine
         openmwLog = $CopiedLog
         sourceConfigDir = $ConfigDir
+        sourceScreenshotDir = $ScreenshotSourceDir
     }
     failures = @($failures.ToArray())
     policy = [pscustomobject][ordered]@{
@@ -227,6 +254,10 @@ Write-ProofLine "OpenMW log: $CopiedLog"
 Write-ProofLine "Proof JSON: $ProofJson"
 Write-ProofLine "Status: $status"
 Write-ProofLine "RuntimeClassification: $runtimeClassification"
+Write-ProofLine "Screenshots: $($copiedScreenshots.Count)"
+foreach ($screenshot in $copiedScreenshots) {
+    Write-ProofLine "Screenshot: $($screenshot.FullName)"
+}
 Write-ProofLine "RegisteredLine: $(ConvertTo-ProofLineText $registeredLine)"
 Write-ProofLine "CleanBootLine: $(ConvertTo-ProofLineText $cleanBootLine)"
 Write-ProofLine "OpenedLine: $(ConvertTo-ProofLineText $openedLine)"
