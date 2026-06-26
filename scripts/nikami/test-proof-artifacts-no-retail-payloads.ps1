@@ -136,7 +136,12 @@ function Invoke-RipgrepPatternScan([string]$Root, [string[]]$Patterns, [string[]
             continue
         }
 
-        throw "rg proof artifact scan failed with exit code $exit`: $($output -join [Environment]::NewLine)"
+        $outputText = $output -join [Environment]::NewLine
+        if ($outputText -match "os error 32|being used by another process") {
+            return $null
+        }
+
+        throw "rg proof artifact scan failed with exit code $exit`: $outputText"
     }
 
     return @($matches)

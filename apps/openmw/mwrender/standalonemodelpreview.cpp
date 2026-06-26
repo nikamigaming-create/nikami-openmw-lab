@@ -250,7 +250,9 @@ namespace MWRender
         osg::Vec3f cameraDirection = mSettings.mCameraDirection;
         if (cameraDirection.normalize() == 0.f)
             cameraDirection = osg::Vec3f(0.f, 1.f, 0.f);
-        const float cameraDistance = std::max(48.f, mState.mFrameRadius * mSettings.mScale * 3.1f);
+        const float cameraDistanceMultiplier = std::clamp(mSettings.mCameraDistanceMultiplier, 0.15f, 12.f);
+        const float cameraDistance = std::max(48.f, mState.mFrameRadius * mSettings.mScale * 3.1f)
+            * cameraDistanceMultiplier;
         mState.mLookAt = lookAt;
         mState.mCameraPosition = lookAt + cameraDirection * cameraDistance;
         mRTTNode->setViewMatrix(osg::Matrixf::lookAt(mState.mCameraPosition, mState.mLookAt, osg::Vec3f(0.f, 0.f, 1.f)));

@@ -3,10 +3,12 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
+#include <sstream>
 #include <string_view>
 
 #include <osg/BlendFunc>
 #include <osg/Camera>
+#include <osg/ComputeBoundsVisitor>
 #include <osg/Fog>
 #include <osg/Material>
 #include <osg/PositionAttitudeTransform>
@@ -167,6 +169,15 @@ namespace MWRender
             return std::clamp(parsed, 0.f, 0.999f);
         }
 
+        bool shouldUseFalloutNeutralActorBindPose()
+        {
+            if (std::getenv("OPENMW_FNV_NEUTRAL_ACTOR_PREVIEW_BIND_POSE") != nullptr)
+                return true;
+
+            return std::getenv("OPENMW_FNV_ASSET_STUDIO") != nullptr
+                && std::getenv("OPENMW_FNV_ASSET_STUDIO_ANIMATE") == nullptr;
+        }
+
         std::string_view getFalloutNeutralActorPreviewProfile()
         {
             const char* value = std::getenv("OPENMW_FNV_NEUTRAL_ACTOR_PREVIEW_PROFILE");
@@ -222,6 +233,25 @@ namespace MWRender
             position = lookAt
                 + osg::Vec3f(delta.x() * cosYaw - delta.y() * sinYaw,
                     delta.x() * sinYaw + delta.y() * cosYaw, delta.z());
+        }
+
+        osg::Vec3f getWorldPosition(const osg::Node* node)
+        {
+            if (node == nullptr)
+                return osg::Vec3f();
+
+            osg::NodePathList paths = node->getParentalNodePaths();
+            if (paths.empty())
+                return osg::Vec3f();
+
+            return osg::computeLocalToWorld(paths.front()).getTrans();
+        }
+
+        std::string formatVec3(const osg::Vec3f& value)
+        {
+            std::ostringstream stream;
+            stream << "(" << value.x() << "," << value.y() << "," << value.z() << ")";
+            return stream.str();
         }
     }
 
@@ -952,11 +982,12 @@ namespace MWRender
 
     // --------------------------------------------------------------------------------------------------
 
-    FalloutActorPreview::FalloutActorPreview(
-        osg::Group* parent, Resource::ResourceSystem* resourceSystem, const MWWorld::Ptr& character, ViewMode viewMode)
+    FalloutActorPreview::FalloutActorPreview(osg::Group* parent, Resource::ResourceSystem* resourceSystem,
+        const MWWorld::Ptr& character, ViewMode viewMode, float cameraDistanceMultiplier)
         : CharacterPreview(parent, resourceSystem, MWWorld::Ptr(character.getBase(), nullptr), 720, 720,
             osg::Vec3f(0, 420, 112), osg::Vec3f(0, 0, 112))
         , mViewMode(viewMode)
+        , mCameraDistanceMultiplier(cameraDistanceMultiplier)
     {
         mNode->setName("FNV Neutral Actor Preview");
     }
@@ -1092,19 +1123,61 @@ namespace MWRender
         const float yawOffsetDeg
             = getFalloutNeutralActorPreviewFloat("OPENMW_FNV_NEUTRAL_ACTOR_PREVIEW_YAW_OFFSET_DEG", 0.f);
         applyFalloutNeutralActorPreviewYawOffset(position, lookAt, yawOffsetDeg);
+        const float cameraDistanceMultiplier = std::clamp(mCameraDistanceMultiplier, 0.15f, 12.f);
+        position = lookAt + (position - lookAt) * cameraDistanceMultiplier;
 
         mRTTNode->setViewMatrix(osg::Matrixf::lookAt(position * scale.z(), lookAt * scale.z(), osg::Vec3f(0, 0, 1)));
 
         const std::string animationGroup = getFalloutPreviewAnimationGroup();
         const float previewStart = getFalloutPreviewAnimationStartPoint();
+        const bool bindPose = shouldUseFalloutNeutralActorBindPose();
         if (mAnimation)
         {
-            if (mAnimation->hasAnimation(animationGroup))
+            if (!bindPose && mAnimation->hasAnimation(animationGroup))
                 mAnimation->play(animationGroup, 1, BlendMask::BlendMask_All, false, 1.0f, "start", "stop", previewStart,
                     std::numeric_limits<uint32_t>::max(), true);
             mAnimation->runAnimation(0.0f);
         }
-        setRedrawSimulationTime(previewStart);
+        setRedrawSimulationTime(bindPose ? 0.0 : previewStart);
+
+        osg::ComputeBoundsVisitor boundsVisitor;
+        boundsVisitor.setTraversalMask(~(Mask_ParticleSystem | Mask_Effect));
+        mNode->accept(boundsVisitor);
+        const osg::BoundingBox& bounds = boundsVisitor.getBoundingBox();
+        const bool boundsValid = bounds.valid();
+        osg::Vec3f boundsSize;
+        osg::Vec3f boundsCenter;
+        if (boundsValid)
+        {
+            boundsCenter = bounds.center();
+            boundsSize = osg::Vec3f(
+                bounds.xMax() - bounds.xMin(), bounds.yMax() - bounds.yMin(), bounds.zMax() - bounds.zMin());
+        }
+
+        const osg::Vec3f head = getWorldPosition(mAnimation ? mAnimation->getNode("Bip01 Head") : nullptr);
+        const osg::Vec3f pelvis = getWorldPosition(mAnimation ? mAnimation->getNode("Bip01 Pelvis") : nullptr);
+        const osg::Vec3f leftFoot = getWorldPosition(mAnimation ? mAnimation->getNode("Bip01 L Foot") : nullptr);
+        const osg::Vec3f rightFoot = getWorldPosition(mAnimation ? mAnimation->getNode("Bip01 R Foot") : nullptr);
+        const float feetZ = (leftFoot.z() + rightFoot.z()) * 0.5f;
+        const float headAboveFeet = head.z() - feetZ;
+        const float headAbovePelvis = head.z() - pelvis.z();
+        const bool upright = boundsValid && headAboveFeet > 80.f && headAbovePelvis > 30.f && boundsSize.z() > 80.f;
+
+        Log(upright ? Debug::Info : Debug::Warning)
+            << "FNV/ESM4 proof: neutral actor preview bounds view=" << viewName
+            << " actor=" << mCharacter.getCellRef().getRefId()
+            << " boundsValid=" << boundsValid
+            << " center=" << formatVec3(boundsCenter)
+            << " size=" << formatVec3(boundsSize)
+            << " head=" << formatVec3(head)
+            << " pelvis=" << formatVec3(pelvis)
+            << " leftFoot=" << formatVec3(leftFoot)
+            << " rightFoot=" << formatVec3(rightFoot)
+            << " headAboveFeet=" << headAboveFeet
+            << " headAbovePelvis=" << headAbovePelvis
+            << " verdict=" << (upright ? "OK" : "BAD")
+            << " runtime=" << (upright ? "runtime-supported" : "loaded-pending-runtime")
+            << " gate=runtime-neutral-actor-preview-bounds";
 
         if (Misc::StringUtils::ciEqual(profile, "audit") || Misc::StringUtils::ciEqual(profile, "bot-audit"))
         {
@@ -1128,8 +1201,10 @@ namespace MWRender
         Log(Debug::Info) << "FNV/ESM4 proof: neutral actor preview camera view=" << viewName << " position=("
                          << position.x() << "," << position.y() << "," << position.z() << ") lookAt=("
                          << lookAt.x() << "," << lookAt.y() << "," << lookAt.z() << ") profile=" << profile
-                         << " yawOffsetDeg=" << yawOffsetDeg << " animationGroup=" << animationGroup << " startPoint=" << previewStart
-                         << " simulationTime=" << previewStart
+                         << " yawOffsetDeg=" << yawOffsetDeg << " zoom=" << cameraDistanceMultiplier
+                         << " animationGroup=" << animationGroup << " startPoint=" << previewStart
+                         << " bindPose=" << bindPose
+                         << " simulationTime=" << (bindPose ? 0.0f : previewStart)
                          << " runtime=runtime-supported gate=runtime-neutral-actor-preview";
     }
 

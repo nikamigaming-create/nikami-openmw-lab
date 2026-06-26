@@ -33,6 +33,7 @@ param(
     [int]$ActorFrame = 240,
     [switch]$NeutralActorPreview,
     [switch]$NeutralActorPreviewStandingIdle,
+    [switch]$FnvDisablePackageProcedureIdles,
     [string]$NeutralActorPreviewProfile = "",
     [double]$NeutralActorPreviewYawOffsetDeg = [double]::NaN,
     [string]$ProofItemTarget = "",
@@ -93,6 +94,8 @@ param(
     [string]$FnvFaceGenTextureMode = $env:OPENMW_FNV_FACEGEN_TEXTURE_MODE,
     [string]$FnvUseEgtMaterialTint = $env:OPENMW_FNV_USE_EGT_MATERIAL_TINT,
     [string]$FnvUseRawBodyTintSwatch = $env:OPENMW_FNV_USE_RAW_BODY_TINT_SWATCH,
+    [string]$FnvDisableEgtMaterialTint = $env:OPENMW_FNV_DISABLE_EGT_MATERIAL_TINT,
+    [string]$FnvDisableRawBodyTintSwatch = $env:OPENMW_FNV_DISABLE_RAW_BODY_TINT_SWATCH,
     [string]$CharacterBuilderPhase = "",
     [string[]]$ActorKitParts = @(),
     [string[]]$ActorKitPartModels = @(),
@@ -1718,7 +1721,7 @@ try {
     Set-ProofEnv $previousEnv "OPENMW_PROOF_ACTOR_FRAME" $ActorFrame
     if ($NeutralActorPreview) { Set-ProofEnv $previousEnv "OPENMW_PROOF_NEUTRAL_ACTOR_PREVIEW" "1" }
     else { Clear-ProofEnv $previousEnv "OPENMW_PROOF_NEUTRAL_ACTOR_PREVIEW" }
-    if ($NeutralActorPreviewStandingIdle) { Set-ProofEnv $previousEnv "OPENMW_FNV_DISABLE_PACKAGE_PROCEDURE_IDLES" "1" }
+    if ($NeutralActorPreviewStandingIdle -or $FnvDisablePackageProcedureIdles) { Set-ProofEnv $previousEnv "OPENMW_FNV_DISABLE_PACKAGE_PROCEDURE_IDLES" "1" }
     else { Clear-ProofEnv $previousEnv "OPENMW_FNV_DISABLE_PACKAGE_PROCEDURE_IDLES" }
     Set-ProofEnv $previousEnv "OPENMW_FNV_NEUTRAL_ACTOR_PREVIEW_PROFILE" $NeutralActorPreviewProfile
     Set-ProofEnv $previousEnv "OPENMW_FNV_NEUTRAL_ACTOR_PREVIEW_YAW_OFFSET_DEG" $NeutralActorPreviewYawOffsetDeg
@@ -1777,6 +1780,8 @@ try {
     Set-ProofEnv $previousEnv "OPENMW_FNV_FACEGEN_TEXTURE_MODE" $FnvFaceGenTextureMode
     Set-ProofEnv $previousEnv "OPENMW_FNV_USE_EGT_MATERIAL_TINT" $FnvUseEgtMaterialTint
     Set-ProofEnv $previousEnv "OPENMW_FNV_USE_RAW_BODY_TINT_SWATCH" $FnvUseRawBodyTintSwatch
+    Set-ProofEnv $previousEnv "OPENMW_FNV_DISABLE_EGT_MATERIAL_TINT" $FnvDisableEgtMaterialTint
+    Set-ProofEnv $previousEnv "OPENMW_FNV_DISABLE_RAW_BODY_TINT_SWATCH" $FnvDisableRawBodyTintSwatch
     Set-ProofEnv $previousEnv "OPENMW_FNV_ROTATION_MODE" $FnvRotationMode
     Set-ProofEnv $previousEnv "OPENMW_FNV_LIVE_AUTHORING_FILE" $LiveAuthoringFile
     Set-ProofEnv $previousEnv "OPENMW_FNV_LIVE_RUNTIME_COMMAND_FILE" $LiveRuntimeCommandFile
@@ -1905,6 +1910,8 @@ try {
     Write-ProofLine "FnvFaceGenTextureMode: $FnvFaceGenTextureMode"
     Write-ProofLine "FnvUseEgtMaterialTint: $FnvUseEgtMaterialTint"
     Write-ProofLine "FnvUseRawBodyTintSwatch: $FnvUseRawBodyTintSwatch"
+    Write-ProofLine "FnvDisableEgtMaterialTint: $FnvDisableEgtMaterialTint"
+    Write-ProofLine "FnvDisableRawBodyTintSwatch: $FnvDisableRawBodyTintSwatch"
     Write-ProofLine "LiveAuthoringFile: $LiveAuthoringFile"
     Write-ProofLine "LiveRuntimeCommandFile: $LiveRuntimeCommandFile"
     Write-ProofLine "CharacterBuilderPhase: $CharacterBuilderPhase"
@@ -1924,6 +1931,7 @@ try {
     Write-ProofLine "ActorKind: $ActorKind"
     Write-ProofLine "NeutralActorPreview: $NeutralActorPreview"
     Write-ProofLine "NeutralActorPreviewStandingIdle: $NeutralActorPreviewStandingIdle"
+    Write-ProofLine "FnvDisablePackageProcedureIdles: $FnvDisablePackageProcedureIdles"
     Write-ProofLine "NeutralActorPreviewProfile: $NeutralActorPreviewProfile"
     Write-ProofLine "NeutralActorPreviewYawOffsetDeg: $(Format-Double $NeutralActorPreviewYawOffsetDeg)"
     Write-ProofLine "ProofItemTarget: $ProofItemTarget"

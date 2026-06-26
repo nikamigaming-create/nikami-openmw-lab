@@ -6,11 +6,18 @@ param(
     [string]$VcpkgRoot = $env:NIKAMI_VCPKG_ROOT,
     [string]$Triplet = "x64-windows",
     [string]$ProofRoot = "",
+    [string]$AssetClass = "mesh",
+    [string]$Record = "direct-model",
+    [string]$Session = "native-session",
     [string]$Model = "meshes\armor\headgear\cowboyhat\cowboyhat.nif",
+    [string]$View = "front",
+    [string]$ActorProfile = "",
+    [switch]$AllowPackageProcedureIdles,
     [double]$RotX = 0,
     [double]$RotY = 0,
     [double]$RotZ = 0,
     [double]$Scale = 1,
+    [double]$Zoom = 1,
     [switch]$StartWorld,
     [switch]$Attached,
     [int]$RunSeconds = 0,
@@ -114,11 +121,22 @@ $previousEnv = @{}
 
 try {
     Set-ScopedEnv $previousEnv "OPENMW_FNV_ASSET_STUDIO" "1"
+    Set-ScopedEnv $previousEnv "OPENMW_FNV_ASSET_STUDIO_ASSET_CLASS" $AssetClass
+    Set-ScopedEnv $previousEnv "OPENMW_FNV_ASSET_STUDIO_RECORD" $Record
+    Set-ScopedEnv $previousEnv "OPENMW_FNV_ASSET_STUDIO_SESSION" $Session
     Set-ScopedEnv $previousEnv "OPENMW_FNV_ASSET_STUDIO_MODEL" $Model
+    Set-ScopedEnv $previousEnv "OPENMW_FNV_ASSET_STUDIO_VIEW" $View
+    if (![string]::IsNullOrWhiteSpace($ActorProfile)) {
+        Set-ScopedEnv $previousEnv "OPENMW_FNV_NEUTRAL_ACTOR_PREVIEW_PROFILE" $ActorProfile
+    }
+    if (!$AllowPackageProcedureIdles) {
+        Set-ScopedEnv $previousEnv "OPENMW_FNV_DISABLE_PACKAGE_PROCEDURE_IDLES" "1"
+    }
     Set-ScopedEnv $previousEnv "OPENMW_FNV_ASSET_STUDIO_ROT_X" ($RotX.ToString("0.######", [Globalization.CultureInfo]::InvariantCulture))
     Set-ScopedEnv $previousEnv "OPENMW_FNV_ASSET_STUDIO_ROT_Y" ($RotY.ToString("0.######", [Globalization.CultureInfo]::InvariantCulture))
     Set-ScopedEnv $previousEnv "OPENMW_FNV_ASSET_STUDIO_ROT_Z" ($RotZ.ToString("0.######", [Globalization.CultureInfo]::InvariantCulture))
     Set-ScopedEnv $previousEnv "OPENMW_FNV_ASSET_STUDIO_SCALE" ($Scale.ToString("0.######", [Globalization.CultureInfo]::InvariantCulture))
+    Set-ScopedEnv $previousEnv "OPENMW_FNV_ASSET_STUDIO_ZOOM" ($Zoom.ToString("0.######", [Globalization.CultureInfo]::InvariantCulture))
 
     $flatArgs = @{
         BuildDir = $BuildDir
@@ -139,9 +157,16 @@ try {
     Write-Host "Native FNV Asset Studio"
     Write-Host "RepoRoot: $RepoRoot"
     Write-Host "FnvData: $FnvData"
+    Write-Host "AssetClass: $AssetClass"
+    Write-Host "Record: $Record"
+    Write-Host "Session: $Session"
     Write-Host "Model: $Model"
+    Write-Host "View: $View"
+    Write-Host "ActorProfile: $ActorProfile"
+    Write-Host "ActorStandingIdle: $(!$AllowPackageProcedureIdles)"
     Write-Host "Rotation: $RotX,$RotY,$RotZ"
     Write-Host "Scale: $Scale"
+    Write-Host "Zoom: $Zoom"
     Write-Host "World start: $StartWorld"
     Write-Host "Policy: generated config/proof output only; no retail assets are committed"
     & $FlatRunner @flatArgs

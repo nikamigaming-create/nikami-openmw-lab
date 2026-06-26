@@ -1,48 +1,93 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <MyGUI type="Layout">
-  <Widget type="Window" skin="MW_Window" position="20 20 980 700" layer="Windows" name="_Main">
-    <Property key="Caption" value="FNV Asset Studio"/>
-    <Property key="MinSize" value="520 360"/>
+  <Widget type="Widget" skin="FullBlackBG" position="0 0 1280 720" layer="Windows" align="Stretch" name="_Main">
     <Property key="Visible" value="false"/>
 
-    <Widget type="Widget" skin="MW_Box" position="8 8 664 646" name="PreviewBox" align="Left Top Stretch">
-      <Widget type="ImageBox" skin="ImageBox" position="4 4 656 638" align="Stretch" name="PreviewImage"/>
+    <Widget type="TextBox" skin="SandBrightText" position="24 12 640 26" name="TitleText" align="Left Top HStretch">
+      <Property key="Caption" value="FNV Asset Studio"/>
     </Widget>
 
-    <Widget type="Widget" skin="" position="680 8 284 646" name="Controls" align="Right Top VStretch">
-      <Widget type="TextBox" skin="SandText" position="0 0 284 20" name="ModelLabel">
-        <Property key="Caption" value="Model path"/>
+    <Widget type="Widget" skin="MW_Box" position="24 48 844 648" name="PreviewBox" align="Left Top Stretch">
+      <Widget type="ImageBox" skin="ImageBox" position="6 6 832 636" align="Stretch" name="PreviewImage"/>
+    </Widget>
+
+    <Widget type="Widget" skin="" position="896 48 360 648" name="Controls" align="Right Top VStretch">
+      <Widget type="TextBox" skin="SandText" position="0 0 108 20" name="AssetClassLabel">
+        <Property key="Caption" value="Asset class"/>
       </Widget>
-      <Widget type="EditBox" skin="MW_TextBoxEditWithBorder" position="0 24 284 24" name="ModelEdit">
+      <Widget type="EditBox" skin="MW_TextBoxEditWithBorder" position="116 0 244 24" name="AssetClassEdit">
         <UserString key="AcceptTab" value="true"/>
       </Widget>
-      <Widget type="TextBox" skin="SandText" position="0 58 284 20" name="TransformLabel">
+      <Widget type="TextBox" skin="SandText" position="0 32 108 20" name="RecordLabel">
+        <Property key="Caption" value="Record"/>
+      </Widget>
+      <Widget type="EditBox" skin="MW_TextBoxEditWithBorder" position="116 32 244 24" name="RecordEdit">
+        <UserString key="AcceptTab" value="true"/>
+      </Widget>
+      <Widget type="TextBox" skin="SandText" position="0 64 108 20" name="SessionLabel">
+        <Property key="Caption" value="Session"/>
+      </Widget>
+      <Widget type="EditBox" skin="MW_TextBoxEditWithBorder" position="116 64 244 24" name="SessionEdit">
+        <UserString key="AcceptTab" value="true"/>
+      </Widget>
+      <Widget type="TextBox" skin="SandText" position="0 102 360 20" name="ModelLabel">
+        <Property key="Caption" value="Model path"/>
+      </Widget>
+      <Widget type="EditBox" skin="MW_TextBoxEditWithBorder" position="0 126 360 24" name="ModelEdit">
+        <UserString key="AcceptTab" value="true"/>
+      </Widget>
+      <Widget type="TextBox" skin="SandText" position="0 160 360 20" name="TransformLabel">
         <Property key="Caption" value="Transform"/>
       </Widget>
-      <Widget type="TextBox" skin="SandText" position="0 86 60 20" name="RotXLabel">
-        <Property key="Caption" value="Rot X"/>
+      <Widget type="TextBox" skin="SandText" position="0 188 56 20" name="ViewLabel">
+        <Property key="Caption" value="View"/>
       </Widget>
-      <Widget type="EditBox" skin="MW_TextBoxEditWithBorder" position="64 82 70 24" name="RotXEdit"/>
-      <Widget type="TextBox" skin="SandText" position="146 86 60 20" name="RotYLabel">
-        <Property key="Caption" value="Rot Y"/>
+      <Widget type="EditBox" skin="MW_TextBoxEditWithBorder" position="64 184 88 24" name="ViewEdit"/>
+      <Widget type="TextBox" skin="SandText" position="166 188 56 20" name="ZoomLabel">
+        <Property key="Caption" value="Zoom"/>
       </Widget>
-      <Widget type="EditBox" skin="MW_TextBoxEditWithBorder" position="210 82 70 24" name="RotYEdit"/>
-      <Widget type="TextBox" skin="SandText" position="0 118 60 20" name="RotZLabel">
-        <Property key="Caption" value="Rot Z"/>
-      </Widget>
-      <Widget type="EditBox" skin="MW_TextBoxEditWithBorder" position="64 114 70 24" name="RotZEdit"/>
-      <Widget type="TextBox" skin="SandText" position="146 118 60 20" name="ScaleLabel">
+      <Widget type="EditBox" skin="MW_TextBoxEditWithBorder" position="224 184 104 24" name="ZoomEdit"/>
+      <Widget type="TextBox" skin="SandText" position="0 222 56 20" name="ScaleLabel">
         <Property key="Caption" value="Scale"/>
       </Widget>
-      <Widget type="EditBox" skin="MW_TextBoxEditWithBorder" position="210 114 70 24" name="ScaleEdit"/>
-      <Widget type="Button" skin="MW_Button" position="0 152 284 28" name="ApplyButton">
+      <Widget type="EditBox" skin="MW_TextBoxEditWithBorder" position="64 218 88 24" name="ScaleEdit"/>
+      <Widget type="TextBox" skin="SandText" position="166 222 56 20" name="RotXLabel">
+        <Property key="Caption" value="Rot X"/>
+      </Widget>
+      <Widget type="EditBox" skin="MW_TextBoxEditWithBorder" position="224 218 104 24" name="RotXEdit"/>
+      <Widget type="TextBox" skin="SandText" position="0 256 56 20" name="RotYLabel">
+        <Property key="Caption" value="Rot Y"/>
+      </Widget>
+      <Widget type="EditBox" skin="MW_TextBoxEditWithBorder" position="64 252 88 24" name="RotYEdit"/>
+      <Widget type="TextBox" skin="SandText" position="166 256 56 20" name="RotZLabel">
+        <Property key="Caption" value="Rot Z"/>
+      </Widget>
+      <Widget type="EditBox" skin="MW_TextBoxEditWithBorder" position="224 252 104 24" name="RotZEdit"/>
+      <Widget type="Button" skin="MW_Button" position="0 292 360 30" name="ApplyButton">
         <Property key="Caption" value="Apply"/>
       </Widget>
-      <Widget type="TextBox" skin="SandText" position="0 194 284 120" name="StatusText">
+      <Widget type="TextBox" skin="SandText" position="0 338 360 132" name="StatusText">
         <Property key="Caption" value="Asset studio idle"/>
       </Widget>
-      <Widget type="TextBox" skin="SandText" position="0 330 284 280" name="ContractText">
-        <Property key="Caption" value="Native render target. Browser is not the renderer. Model preview first; actor, creature, activation, door, weapon, and animation gates plug into this window next."/>
+      <Widget type="Widget" skin="MW_Box" position="0 444 360 186" name="ViewStrip" align="Left Bottom HStretch">
+        <Widget type="TextBox" skin="SandText" position="10 10 340 20" name="ViewStripTitle">
+          <Property key="Caption" value="Camera slots"/>
+        </Widget>
+        <Widget type="ImageBox" skin="ImageBox" position="10 36 104 78" name="FrontPreviewImage"/>
+        <Widget type="ImageBox" skin="ImageBox" position="128 36 104 78" name="LeftPreviewImage"/>
+        <Widget type="ImageBox" skin="ImageBox" position="246 36 104 78" name="RightPreviewImage"/>
+        <Widget type="TextBox" skin="SandText" position="10 124 104 22" name="FrontSlot">
+          <Property key="Caption" value="front"/>
+        </Widget>
+        <Widget type="TextBox" skin="SandText" position="128 124 104 22" name="LeftSlot">
+          <Property key="Caption" value="left"/>
+        </Widget>
+        <Widget type="TextBox" skin="SandText" position="246 124 104 22" name="RightSlot">
+          <Property key="Caption" value="right"/>
+        </Widget>
+        <Widget type="TextBox" skin="SandText" position="10 154 340 22" name="ProofSlot">
+          <Property key="Caption" value="selector / preview / bounds / camera"/>
+        </Widget>
       </Widget>
     </Widget>
   </Widget>

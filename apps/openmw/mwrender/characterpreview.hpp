@@ -146,7 +146,7 @@ namespace MWRender
         };
 
         FalloutActorPreview(osg::Group* parent, Resource::ResourceSystem* resourceSystem, const MWWorld::Ptr& character,
-            ViewMode viewMode);
+            ViewMode viewMode, float cameraDistanceMultiplier = 1.f);
 
     protected:
         void onSetup() override;
@@ -154,6 +154,7 @@ namespace MWRender
 
     private:
         ViewMode mViewMode;
+        float mCameraDistanceMultiplier;
     };
 
 }

@@ -37,6 +37,7 @@ namespace MWRender
         std::uint32_t mHeight = 720;
         osg::Vec4f mClearColor = osg::Vec4f(0.22f, 0.23f, 0.24f, 1.f);
         osg::Vec3f mCameraDirection = osg::Vec3f(0.f, 1.f, 0.f);
+        float mCameraDistanceMultiplier = 1.f;
     };
 
     struct StandaloneModelPreviewState

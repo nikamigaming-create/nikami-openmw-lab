@@ -3291,8 +3291,9 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
     }
 
     static std::size_t proofScreenshotFrameIndex = 0;
+    const bool proofNativeAssetStudioRequested = std::getenv("OPENMW_FNV_ASSET_STUDIO") != nullptr;
     const bool proofScreenshotStateReady = mStateManager->getState() == MWBase::StateManager::State_Running
-        || (proofItemRequested && proofItemCameraApplied);
+        || (proofItemRequested && proofItemCameraApplied) || proofNativeAssetStudioRequested;
     if (proofScreenshotFrameIndex < proofScreenshotFrames.size()
         && frameNumber >= static_cast<unsigned>(proofScreenshotFrames[proofScreenshotFrameIndex])
         && proofScreenshotStateReady && mScreenCaptureHandler != nullptr)
@@ -3310,7 +3311,8 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                          << " itemModel=\"" << (proofItemModel != nullptr ? proofItemModel : "") << "\""
                          << " itemCameraApplied=" << proofItemCameraApplied
                          << " itemCameraFirstFrame=" << proofItemCameraFirstAppliedFrame
-                         << " itemCameraLastFrame=" << proofItemCameraLastAppliedFrame;
+                         << " itemCameraLastFrame=" << proofItemCameraLastAppliedFrame
+                         << " nativeAssetStudio=" << proofNativeAssetStudioRequested;
         mScreenCaptureHandler->setFramesToCapture(1);
         mScreenCaptureHandler->captureNextFrame(*mViewer);
         ++proofScreenshotFrameIndex;
