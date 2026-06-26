@@ -761,6 +761,8 @@ function Get-ScreenshotCaptureEvents([string]$Path) {
         if ($text -match "actorCameraLastFrame=([0-9]+)") { $actorCameraLastFrame = [int]$Matches[1] }
         $actorStageLock = $false
         if ($text -match "actorStageLock=([^ ]+)") { $actorStageLock = ConvertTo-ProofBool $Matches[1] }
+        $nativeAssetStudio = $false
+        if ($text -match "nativeAssetStudio=([^ ]+)") { $nativeAssetStudio = ConvertTo-ProofBool $Matches[1] }
 
         $events.Add([pscustomobject][ordered]@{
             order = $order
@@ -773,6 +775,7 @@ function Get-ScreenshotCaptureEvents([string]$Path) {
             actorCameraFirstFrame = $actorCameraFirstFrame
             actorCameraLastFrame = $actorCameraLastFrame
             actorStageLock = $actorStageLock
+            nativeAssetStudio = $nativeAssetStudio
             line = $text
         })
         ++$order
@@ -821,7 +824,10 @@ function Get-ScreenshotTimingResult(
         else {
             $frame = $event.frame
             $cameraSettleAge = $event.frame - $event.flatCameraSettledFrame
-            if (!$event.flatCameraSettled) {
+            if ($event.nativeAssetStudio) {
+                $reason = "native_asset_studio_screenshot"
+            }
+            elseif (!$event.flatCameraSettled) {
                 $pass = $false
                 $reason = "flat_camera_not_settled_at_capture"
             }

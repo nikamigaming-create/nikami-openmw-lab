@@ -137,6 +137,9 @@ try {
     Set-ScopedEnv $previousEnv "OPENMW_FNV_ASSET_STUDIO_ROT_Z" ($RotZ.ToString("0.######", [Globalization.CultureInfo]::InvariantCulture))
     Set-ScopedEnv $previousEnv "OPENMW_FNV_ASSET_STUDIO_SCALE" ($Scale.ToString("0.######", [Globalization.CultureInfo]::InvariantCulture))
     Set-ScopedEnv $previousEnv "OPENMW_FNV_ASSET_STUDIO_ZOOM" ($Zoom.ToString("0.######", [Globalization.CultureInfo]::InvariantCulture))
+    if (!$StartWorld) {
+        Set-ScopedEnv $previousEnv "OPENMW_FNV_ASSET_STUDIO_CLEAN_BOOT" "1"
+    }
 
     $flatArgs = @{
         BuildDir = $BuildDir
@@ -168,6 +171,7 @@ try {
     Write-Host "Scale: $Scale"
     Write-Host "Zoom: $Zoom"
     Write-Host "World start: $StartWorld"
+    Write-Host "CleanBoot: $(!$StartWorld)"
     Write-Host "Policy: generated config/proof output only; no retail assets are committed"
     & $FlatRunner @flatArgs
 }

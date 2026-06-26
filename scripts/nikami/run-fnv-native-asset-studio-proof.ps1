@@ -18,6 +18,7 @@ param(
     [double]$RotZ = 0,
     [double]$Scale = 1,
     [double]$Zoom = 1,
+    [switch]$StartWorld,
     [int]$RunSeconds = 14,
     [switch]$RequirePass
 )
@@ -87,6 +88,8 @@ Write-ProofLine "ActorStandingIdle: $(!$AllowPackageProcedureIdles)"
 Write-ProofLine "Rotation: $RotX,$RotY,$RotZ"
 Write-ProofLine "Scale: $Scale"
 Write-ProofLine "Zoom: $Zoom"
+Write-ProofLine "World start: $StartWorld"
+Write-ProofLine "CleanBoot: $(!$StartWorld)"
 Write-ProofLine "RunSeconds: $RunSeconds"
 Write-ProofLine "Policy: generated proof output only; no retail assets are committed"
 Write-ProofLine ""
@@ -111,7 +114,7 @@ Write-ProofLine ""
     -RotZ $RotZ `
     -Scale $Scale `
     -Zoom $Zoom `
-    -StartWorld `
+    -StartWorld:$StartWorld `
     -RunSeconds $RunSeconds | Out-Host
 
 $ConfigDir = Get-NativeStudioRuntimeDir $ProofRoot
@@ -122,6 +125,7 @@ if (Test-Path -LiteralPath $OpenMwLog -PathType Leaf) {
 }
 
 $registeredLine = Get-FirstLogLine $CopiedLog "FNV/ESM4 asset studio registered gate=native-asset-studio-window"
+$cleanBootLine = Get-FirstLogLine $CopiedLog "FNV/ESM4 asset studio clean boot active .*gate=native-asset-studio-clean-boot runtime=runtime-supported"
 $openedLine = Get-FirstLogLine $CopiedLog "FNV/ESM4 asset studio native window opened"
 $selectorLine = Get-FirstLogLine $CopiedLog "FNV/ESM4 asset studio selector .*gate=native-asset-studio-selector runtime=loaded-pending-runtime"
 $threeCameraLine = Get-FirstLogLine $CopiedLog "FNV/ESM4 asset studio three camera preview .*gate=native-asset-studio-three-camera-preview runtime=runtime-supported"
@@ -136,6 +140,10 @@ $terminalCount = $loadedLines.Count + $failedLines.Count + $actorLoadedLines.Cou
 $status = "PASS"
 $failures = New-Object "System.Collections.Generic.List[string]"
 if ([string]::IsNullOrWhiteSpace($registeredLine)) { $status = "FAIL"; $failures.Add("missing asset studio registered log line") }
+if (!$StartWorld -and [string]::IsNullOrWhiteSpace($cleanBootLine)) {
+    $status = "FAIL"
+    $failures.Add("missing clean asset studio boot log line")
+}
 if ([string]::IsNullOrWhiteSpace($openedLine)) { $status = "FAIL"; $failures.Add("missing native window opened log line") }
 if ([string]::IsNullOrWhiteSpace($selectorLine)) { $status = "FAIL"; $failures.Add("missing asset selector log line") }
 if ([string]::IsNullOrWhiteSpace($threeCameraLine) -and [string]::IsNullOrWhiteSpace($threeCameraActorLine)) {
@@ -177,10 +185,13 @@ $proof = [pscustomobject][ordered]@{
     rotation = [pscustomobject][ordered]@{ x = $RotX; y = $RotY; z = $RotZ }
     scale = $Scale
     zoom = $Zoom
+    startWorld = [bool]$StartWorld
+    cleanBoot = (!$StartWorld)
     runSeconds = $RunSeconds
     runtimeClassification = $runtimeClassification
     gates = [pscustomobject][ordered]@{
         registered = (![string]::IsNullOrWhiteSpace($registeredLine))
+        cleanBoot = (![string]::IsNullOrWhiteSpace($cleanBootLine))
         opened = (![string]::IsNullOrWhiteSpace($openedLine))
         selector = (![string]::IsNullOrWhiteSpace($selectorLine))
         threeCamera = (![string]::IsNullOrWhiteSpace($threeCameraLine))
@@ -194,6 +205,7 @@ $proof = [pscustomobject][ordered]@{
     }
     evidence = [pscustomobject][ordered]@{
         registeredLine = (ConvertTo-ProofLineText $registeredLine)
+        cleanBootLine = (ConvertTo-ProofLineText $cleanBootLine)
         openedLine = (ConvertTo-ProofLineText $openedLine)
         selectorLine = (ConvertTo-ProofLineText $selectorLine)
         threeCameraLine = (ConvertTo-ProofLineText $threeCameraLine)
@@ -216,6 +228,7 @@ Write-ProofLine "Proof JSON: $ProofJson"
 Write-ProofLine "Status: $status"
 Write-ProofLine "RuntimeClassification: $runtimeClassification"
 Write-ProofLine "RegisteredLine: $(ConvertTo-ProofLineText $registeredLine)"
+Write-ProofLine "CleanBootLine: $(ConvertTo-ProofLineText $cleanBootLine)"
 Write-ProofLine "OpenedLine: $(ConvertTo-ProofLineText $openedLine)"
 Write-ProofLine "SelectorLine: $(ConvertTo-ProofLineText $selectorLine)"
 Write-ProofLine "ThreeCameraLine: $(ConvertTo-ProofLineText $threeCameraLine)"

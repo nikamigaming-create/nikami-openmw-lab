@@ -3903,7 +3903,8 @@ void OMW::Engine::prepareEngine()
     auto dataLoading = std::async(std::launch::async,
         [&] { mWorld->loadData(mFileCollections, mContentFiles, mGroundcoverFiles, mEncoder.get(), &asyncListener); });
 
-    if (!mSkipMenu)
+    const bool fnvAssetStudioCleanBoot = std::getenv("OPENMW_FNV_ASSET_STUDIO_CLEAN_BOOT") != nullptr;
+    if (!mSkipMenu && !fnvAssetStudioCleanBoot)
     {
         std::string_view logo = Fallback::Map::getString("Movies_Company_Logo");
         if (!logo.empty())
@@ -4027,9 +4028,15 @@ void OMW::Engine::go()
         Resource::collectStatistics(*mViewer);
 
     // Start the game
+    const bool fnvAssetStudioCleanBoot = std::getenv("OPENMW_FNV_ASSET_STUDIO_CLEAN_BOOT") != nullptr;
     if (!mSaveGameFile.empty())
     {
         mStateManager->loadGame(mSaveGameFile);
+    }
+    else if (fnvAssetStudioCleanBoot)
+    {
+        Log(Debug::Info) << "FNV/ESM4 asset studio clean boot active state=no-game terrain=not-started "
+                         << "gate=native-asset-studio-clean-boot runtime=runtime-supported";
     }
     else if (!mSkipMenu)
     {
