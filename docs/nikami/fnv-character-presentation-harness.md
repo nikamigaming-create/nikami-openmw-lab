@@ -38,6 +38,7 @@ Existing pieces:
 - `scripts/nikami/test-fnv-lip-runtime-contract.ps1` proves the runtime has LIP loading/sampling hooks and mouth-animation consumption.
 - `scripts/nikami/test-fnv-facegen-ctl-contract.ps1` and `scripts/nikami/test-fnv-egt-runtime-contract.ps1` prove FaceGen CTL/EGT parsing and partial application contracts.
 - `scripts/nikami/run-fnv-flat-proof.ps1` already provides the PC-flat proof shell, screenshot gates, no-silent-skip integration, actor staging env vars, and runtime log collection.
+- `scripts/nikami/run-fnv-actor-parity-burndown.ps1` generates the current actor-first parity burn-down matrix from the actor presentation ledger and character viewer batch plan. It expands every actor into phase/gate/state rows for body, head, face, eyes, mouth, teeth, hair, headgear, outfit, weapon, projectile, dialogue/LIP, animation, and creature/robot paths.
 
 Known gaps:
 
@@ -68,6 +69,20 @@ The ledger fails if any referenced item has no classification and no first faili
 ### 2. Runtime Actor Sweep
 
 Add `scripts/nikami/run-fnv-actor-presentation-sweep.ps1`, extending the mugshot sweep instead of replacing it.
+
+Before any sweep claims progress, run:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/nikami/run-fnv-actor-parity-burndown.ps1 -RegeneratePlan -RequirePass
+```
+
+This writes generated no-payload proof metadata under `proof/fnv-actor-parity-burndown/<stamp>/`:
+
+- `actor-parity-burndown.json`
+- `actor-parity-burndown.md`
+- `actor-parity-burndown.csv`
+
+The burn-down is not a visual pass claim. It is the authoritative queue of what still needs proof. `loaded-pending-runtime` means harvested records and referenced bytes are accounted and queued, not that the actor looks right or gameplay works.
 
 For each target, the sweep stages the actor in a controlled PC-flat cell with fixed weather/time and captures:
 
