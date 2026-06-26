@@ -62,7 +62,7 @@ namespace SceneUtil
         {
             if (const char* env = std::getenv("OPENMW_FNV_SKINNING_MODE"))
                 return env;
-            return "current";
+            return "auto";
         }
 
         bool isFalloutHandRig(std::string_view name, std::string_view rootBone)
@@ -948,7 +948,8 @@ namespace SceneUtil
             }
 
             const bool badCenter = centerDelta > std::max(24.f, sourceDiag * 1.25f);
-            const bool badExtent = extentRatio > 3.5f;
+            constexpr float falloutAutoFallbackExtentRatio = 2.25f;
+            const bool badExtent = extentRatio > falloutAutoFallbackExtentRatio;
             const bool badDelta = maxVertexDelta > std::max(96.f, sourceDiag * 2.0f);
             const bool badOutliers = vertexCount > 0 && outlierVertices > std::max<std::size_t>(24, vertexCount / 5);
             const bool bad = badCenter || badExtent || badDelta || badOutliers;
@@ -964,8 +965,27 @@ namespace SceneUtil
                 if (bad)
                 {
                     mFalloutUseSourceFallback = true;
-                    copySourceSkinningGeometry(
-                        positionSrc, normalSrc, tangentSrc, positionDst, normalDst, tangentDst);
+                    for (osg::ref_ptr<osg::Geometry>& fallbackGeometry : mGeometry)
+                    {
+                        if (fallbackGeometry == nullptr)
+                            continue;
+
+                        osg::Vec3Array* fallbackPositionDst
+                            = static_cast<osg::Vec3Array*>(fallbackGeometry->getVertexArray());
+                        osg::Vec3Array* fallbackNormalDst
+                            = static_cast<osg::Vec3Array*>(fallbackGeometry->getNormalArray());
+                        osg::Vec4Array* fallbackTangentDst
+                            = static_cast<osg::Vec4Array*>(fallbackGeometry->getTexCoordArray(7));
+                        copySourceSkinningGeometry(positionSrc, normalSrc, tangentSrc, fallbackPositionDst,
+                            fallbackNormalDst, fallbackTangentDst);
+                        if (fallbackPositionDst != nullptr)
+                            fallbackPositionDst->dirty();
+                        if (fallbackNormalDst != nullptr)
+                            fallbackNormalDst->dirty();
+                        if (fallbackTangentDst != nullptr)
+                            fallbackTangentDst->dirty();
+                        fallbackGeometry->osg::Drawable::dirtyGLObjects();
+                    }
                     Log(Debug::Info) << "FNV/ESM4 diag: Fallout RigGeometry '" << getName()
                                      << "' auto skinning fallback=source reason=" << reason;
                 }
@@ -983,6 +1003,7 @@ namespace SceneUtil
                              << skinnedCenter.z() << ")"
                              << " sourceDiag=" << sourceDiag << " skinnedDiag=" << skinnedDiag
                              << " centerDelta=" << centerDelta << " extentRatio=" << extentRatio
+                             << " extentLimit=" << falloutAutoFallbackExtentRatio
                              << " maxVertexDelta=" << maxVertexDelta << " maxVertex=" << maxVertexDeltaIndex
                              << " outlierVertices=" << outlierVertices << " outlierRadius=" << outlierRadius
                              << " verdict=" << (bad ? "BAD" : "OK") << " reason=" << reason;

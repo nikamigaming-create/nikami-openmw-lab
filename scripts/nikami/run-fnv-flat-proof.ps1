@@ -1794,6 +1794,7 @@ try {
     Set-ProofEnv $previousEnv "OPENMW_PROOF_WALK_SPEED" $WalkSpeed
     Set-ProofEnv $previousEnv "OPENMW_PROOF_WALK_REACH_RADIUS" $WalkReachRadius
     Set-ProofEnv $previousEnv "OPENMW_PROOF_WALK_MIN_Z" $WalkMinZ
+    Set-ProofEnv $previousEnv "OPENMW_FNV_PROOF_DIR" $ProofDir
     if ($RequirePlayerTerrainSupport) { Set-ProofEnv $previousEnv "OPENMW_FNV_FLOOR_WATCHDOG" "1" }
     if ($FnvPartMatrixAudit) { Set-ProofEnv $previousEnv "OPENMW_FNV_PART_MATRIX_AUDIT" "1" }
     Set-ProofEnv $previousEnv "OPENMW_FNV_SKINNING_MATRIX_AUDIT" $FnvSkinningMatrixAudit

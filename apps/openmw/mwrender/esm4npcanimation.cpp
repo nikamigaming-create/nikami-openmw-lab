@@ -22,9 +22,11 @@
 #include <cmath>
 #include <cctype>
 #include <cstdlib>
+#include <filesystem>
 #include <fstream>
 #include <iomanip>
 #include <regex>
+#include <osgDB/WriteFile>
 #include <components/misc/resourcehelpers.hpp>
 #include <components/misc/strings/algorithm.hpp>
 #include <components/misc/strings/lower.hpp>
@@ -1616,14 +1618,87 @@ namespace MWRender
             return color;
         }
 
+        struct FaceGenEgt;
+
+        std::shared_ptr<const FaceGenEgt> loadFaceGenEgt(
+            Resource::ResourceSystem* resourceSystem, std::string_view model);
+        bool hasFaceGenEgtModePixels(const FaceGenEgt& egt);
+        osg::Vec3f sampleFaceGenEgtDelta(const FaceGenEgt& egt, const ESM4::Npc& traits, int sourceX, int sourceY,
+            int sourceWidth, int sourceHeight);
+
+        std::string formatFaceGenRgb(const osg::Vec3f& color)
+        {
+            std::ostringstream stream;
+            stream << "(" << color.x() << ", " << color.y() << ", " << color.z() << ")";
+            return stream.str();
+        }
+
+        osg::Vec3f computeImageAverageRgb(const osg::Image& image)
+        {
+            if (image.s() <= 0 || image.t() <= 0)
+                return osg::Vec3f();
+
+            osg::Vec3f total;
+            unsigned int samples = 0;
+            for (int y = 0; y < image.t(); ++y)
+            {
+                for (int x = 0; x < image.s(); ++x)
+                {
+                    const osg::Vec4f color = sampleImageColorClamped(image, x, y);
+                    total += osg::Vec3f(color.x(), color.y(), color.z());
+                    ++samples;
+                }
+            }
+
+            return samples == 0 ? osg::Vec3f() : total / static_cast<float>(samples);
+        }
+
+        void writeFaceGenProofImage(const osg::Image& image, const ESM4::Npc& traits, std::string_view suffix)
+        {
+            const char* proofDir = std::getenv("OPENMW_FNV_PROOF_DIR");
+            if (proofDir == nullptr || proofDir[0] == '\0')
+                return;
+
+            try
+            {
+                std::filesystem::path dir = std::filesystem::path(proofDir) / "facegen-proof";
+                std::filesystem::create_directories(dir);
+                std::filesystem::path path = dir / (formatFalloutFormIndex(traits.mId) + "-" + std::string(suffix) + ".png");
+                const std::string pathString = path.string();
+                if (osgDB::writeImageFile(image, pathString))
+                    Log(Debug::Info) << "FNV/ESM4 diag: wrote FaceGen proof image " << pathString << " for "
+                                     << traits.mEditorId << " runtime=runtime-supported gate=runtime-fnv-facegen-proof-image";
+                else
+                    Log(Debug::Warning) << "FNV/ESM4 diag: failed to write FaceGen proof image " << pathString
+                                        << " for " << traits.mEditorId;
+            }
+            catch (const std::exception& e)
+            {
+                Log(Debug::Warning) << "FNV/ESM4 diag: failed to write FaceGen proof image for " << traits.mEditorId
+                                    << ": " << e.what();
+            }
+        }
+
         osg::ref_ptr<osg::Image> generateFonvFaceGenDiffuse(Resource::ResourceSystem* resourceSystem,
-            std::string_view baseDiffuseTexture, std::string_view npcFaceTexture, const ESM4::Npc& traits)
+            std::string_view baseDiffuseTexture, std::string_view npcFaceTexture, std::string_view headModel,
+            const ESM4::Npc& traits)
         {
             osg::ref_ptr<osg::Image> base = getExistingTextureImage(resourceSystem, baseDiffuseTexture);
             osg::ref_ptr<osg::Image> face = getExistingTextureImage(resourceSystem, npcFaceTexture);
             if (base == nullptr || face == nullptr || base->s() <= 0 || base->t() <= 0 || face->s() <= 0
                 || face->t() <= 0)
                 return nullptr;
+
+            const bool egtDiffuseDisabled = std::getenv("OPENMW_FNV_DISABLE_EGT_DIFFUSE_SYNTHESIS") != nullptr;
+            const std::shared_ptr<const FaceGenEgt> egt
+                = egtDiffuseDisabled ? nullptr : loadFaceGenEgt(resourceSystem, headModel);
+            const bool egtDiffuseApplied = egt != nullptr && hasFaceGenEgtModePixels(*egt);
+            osg::Vec3f egtDeltaTotal;
+            osg::Vec3f egtDeltaMin(std::numeric_limits<float>::max(), std::numeric_limits<float>::max(),
+                std::numeric_limits<float>::max());
+            osg::Vec3f egtDeltaMax(std::numeric_limits<float>::lowest(), std::numeric_limits<float>::lowest(),
+                std::numeric_limits<float>::lowest());
+            unsigned int egtDeltaSamples = 0;
 
             osg::ref_ptr<osg::Image> generated = new osg::Image;
             generated->setFileName("generated/fnv-facegen/" + formatFalloutFormIndex(traits.mId) + "-head-diffuse");
@@ -1640,19 +1715,52 @@ namespace MWRender
                         / static_cast<float>(base->s()));
                     const osg::Vec4f baseColor = sampleImageColorClamped(*base, x, y);
                     const osg::Vec4f faceColor = sampleImageColorClamped(*face, faceX, faceY);
+                    const osg::Vec3f egtDelta = egtDiffuseApplied
+                        ? sampleFaceGenEgtDelta(*egt, traits, faceX, faceY, face->s(), face->t())
+                        : osg::Vec3f();
+                    if (egtDiffuseApplied)
+                    {
+                        egtDeltaTotal += egtDelta;
+                        egtDeltaMin.x() = std::min(egtDeltaMin.x(), egtDelta.x());
+                        egtDeltaMin.y() = std::min(egtDeltaMin.y(), egtDelta.y());
+                        egtDeltaMin.z() = std::min(egtDeltaMin.z(), egtDelta.z());
+                        egtDeltaMax.x() = std::max(egtDeltaMax.x(), egtDelta.x());
+                        egtDeltaMax.y() = std::max(egtDeltaMax.y(), egtDelta.y());
+                        egtDeltaMax.z() = std::max(egtDeltaMax.z(), egtDelta.z());
+                        ++egtDeltaSamples;
+                    }
                     osg::Vec4f composed(std::clamp(baseColor.x() * faceColor.x() * 2.f, 0.f, 1.f),
                         std::clamp(baseColor.y() * faceColor.y() * 2.f, 0.f, 1.f),
                         std::clamp(baseColor.z() * faceColor.z() * 2.f, 0.f, 1.f), baseColor.w());
+                    if (egtDiffuseApplied)
+                    {
+                        composed.x() = std::clamp(composed.x() + egtDelta.x(), 0.f, 1.f);
+                        composed.y() = std::clamp(composed.y() + egtDelta.y(), 0.f, 1.f);
+                        composed.z() = std::clamp(composed.z() + egtDelta.z(), 0.f, 1.f);
+                    }
                     generated->setColor(composed, x, y);
                 }
             }
 
+            const osg::Vec3f generatedAverage = computeImageAverageRgb(*generated);
+            const osg::Vec3f egtDeltaAverage
+                = egtDeltaSamples == 0 ? osg::Vec3f() : egtDeltaTotal / static_cast<float>(egtDeltaSamples);
+
             Log(Debug::Info) << "FNV/ESM4 diag: generated NPC FaceGen diffuse " << generated->getFileName()
                              << " base=" << baseDiffuseTexture << " " << base->s() << "x" << base->t()
                              << " face=" << npcFaceTexture << " " << face->s() << "x" << face->t()
+                             << " egtModel=" << headModel
+                             << " egtDiffuse=" << (egtDiffuseApplied ? "applied" : egtDiffuseDisabled ? "disabled" : "missing")
+                             << " generatedAverage=" << formatFaceGenRgb(generatedAverage)
+                             << " egtDeltaAverage=" << formatFaceGenRgb(egtDeltaAverage)
+                             << " egtDeltaMin="
+                             << (egtDeltaSamples == 0 ? std::string("(0, 0, 0)") : formatFaceGenRgb(egtDeltaMin))
+                             << " egtDeltaMax="
+                             << (egtDeltaSamples == 0 ? std::string("(0, 0, 0)") : formatFaceGenRgb(egtDeltaMax))
                              << " for " << traits.mEditorId
-                             << " runtime=loaded-pending-exact-facegen-texture-synthesis"
+                             << " runtime=runtime-supported-pending-exact-facegen-parity"
                              << " gate=runtime-fnv-facegen-generated-diffuse-applied";
+            writeFaceGenProofImage(*generated, traits, egtDiffuseApplied ? "generated-egt-diffuse" : "generated-diffuse");
             return generated;
         }
 
@@ -1969,6 +2077,7 @@ namespace MWRender
             std::uint32_t mAsymmetricTextureModeCount = 0;
             std::uint32_t mTextureModeCount = 0;
             std::uint32_t mBasisVersion = 0;
+            std::vector<std::vector<osg::Vec3f>> mModePixels;
             std::vector<osg::Vec3f> mModeAverages;
             osg::Vec3f mMeanAverage{ 0.f, 0.f, 0.f };
         };
@@ -2362,6 +2471,7 @@ namespace MWRender
             egt->mAsymmetricTextureModeCount = asymmetricTextureModeCount;
             egt->mTextureModeCount = textureModeCount;
             egt->mBasisVersion = basisVersion;
+            egt->mModePixels.reserve(textureModeCount);
             egt->mModeAverages.reserve(textureModeCount);
 
             for (std::uint32_t mode = 0; mode < textureModeCount; ++mode)
@@ -2376,6 +2486,7 @@ namespace MWRender
                 }
 
                 double channelAverage[3] = {};
+                std::vector<osg::Vec3f> modePixels(pixelCount);
                 for (std::size_t channel = 0; channel < 3; ++channel)
                 {
                     stream->read(reinterpret_cast<char*>(pixels.data()), static_cast<std::streamsize>(pixels.size()));
@@ -2388,13 +2499,23 @@ namespace MWRender
                     }
 
                     double total = 0.0;
-                    for (const std::int8_t pixel : pixels)
-                        total += static_cast<double>(pixel) * static_cast<double>(modeScale);
-                    channelAverage[channel] = total / (static_cast<double>(pixelCount64) * 255.0);
+                    for (std::size_t pixelIndex = 0; pixelIndex < pixels.size(); ++pixelIndex)
+                    {
+                        const float value = static_cast<float>(pixels[pixelIndex]) * modeScale / 255.f;
+                        total += static_cast<double>(value);
+                        if (channel == 0)
+                            modePixels[pixelIndex].x() = value;
+                        else if (channel == 1)
+                            modePixels[pixelIndex].y() = value;
+                        else
+                            modePixels[pixelIndex].z() = value;
+                    }
+                    channelAverage[channel] = total / static_cast<double>(pixelCount64);
                 }
 
                 const osg::Vec3f average(static_cast<float>(channelAverage[0]), static_cast<float>(channelAverage[1]),
                     static_cast<float>(channelAverage[2]));
+                egt->mModePixels.push_back(std::move(modePixels));
                 egt->mModeAverages.push_back(average);
                 egt->mMeanAverage += average;
             }
@@ -2410,6 +2531,39 @@ namespace MWRender
                              << egt->mMeanAverage.z() << ")";
             sCache.emplace(cacheKey, egt);
             return egt;
+        }
+
+        bool hasFaceGenEgtModePixels(const FaceGenEgt& egt)
+        {
+            return !egt.mModePixels.empty() && egt.mWidth > 0 && egt.mHeight > 0;
+        }
+
+        osg::Vec3f sampleFaceGenEgtDelta(
+            const FaceGenEgt& egt, const ESM4::Npc& traits, int sourceX, int sourceY, int sourceWidth, int sourceHeight)
+        {
+            if (!hasFaceGenEgtModePixels(egt) || sourceWidth <= 0 || sourceHeight <= 0)
+                return osg::Vec3f();
+
+            const int egtX = std::clamp(static_cast<int>(
+                                            (static_cast<float>(sourceX) + 0.5f) * static_cast<float>(egt.mWidth)
+                                            / static_cast<float>(sourceWidth)),
+                0, static_cast<int>(egt.mWidth) - 1);
+            const int egtY = std::clamp(static_cast<int>(
+                                            (static_cast<float>(sourceY) + 0.5f) * static_cast<float>(egt.mHeight)
+                                            / static_cast<float>(sourceHeight)),
+                0, static_cast<int>(egt.mHeight) - 1);
+            const std::size_t pixelIndex = static_cast<std::size_t>(egtY) * egt.mWidth + static_cast<std::size_t>(egtX);
+
+            osg::Vec3f delta;
+            const std::size_t modeCount = std::min(egt.mModePixels.size(), traits.mSymTextureModeCoefficients.size());
+            for (std::size_t mode = 0; mode < modeCount; ++mode)
+            {
+                const float coefficient = traits.mSymTextureModeCoefficients[mode];
+                if (std::abs(coefficient) <= 0.0001f || pixelIndex >= egt.mModePixels[mode].size())
+                    continue;
+                delta += egt.mModePixels[mode][pixelIndex] * coefficient;
+            }
+            return delta;
         }
 
         osg::Vec4f deriveFaceGenEgtMaterialTint(const FaceGenEgt& egt, const ESM4::Npc& traits)
@@ -4235,7 +4389,7 @@ namespace MWRender
 
         bool preserveFalloutHairTintVertexIntensity(std::string_view model)
         {
-            return isFalloutHairTintModel(model) && !isFalloutFaceHairModel(model);
+            return isFalloutHairTintModel(model);
         }
 
         bool isFalloutScalpHairModel(std::string_view model)
@@ -7666,7 +7820,7 @@ namespace MWRender
             if (headSurface && useNpcFaceAsGeneratedDiffuse && !npcFaceTexture.empty() && !headDiffuseTexture.empty())
             {
                 generatedHeadDiffuse
-                    = generateFonvFaceGenDiffuse(mResourceSystem, headDiffuseTexture, npcFaceTexture, traits);
+                    = generateFonvFaceGenDiffuse(mResourceSystem, headDiffuseTexture, npcFaceTexture, headPart.mesh, traits);
                 if (generatedHeadDiffuse == nullptr)
                     Log(Debug::Warning) << "FNV/ESM4 diag: failed to generate NPC FaceGen diffuse base="
                                         << headDiffuseTexture << " face=" << npcFaceTexture << " for "
