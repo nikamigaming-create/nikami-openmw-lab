@@ -191,6 +191,30 @@ if (!$csv.Contains("projectile-muzzle-sound") -or !$csv.Contains("voice-lip-side
     throw "Burn-down CSV does not expose weapon projectile or voice/LIP rows."
 }
 
+$targetOutDir = Join-Path $ProofDir "target-filtered-out"
+& $Runner -ProofRoot $ProofRoot -PlanJson $planPath -OutDir $targetOutDir -ActorKind "npc" -Target "GSEasyPete" -Priority "easy-pete" -RequirePass | Out-Host
+if ($LASTEXITCODE -ne 0) {
+    throw "FNV actor parity burn-down target-filtered fixture failed with exit code $LASTEXITCODE."
+}
+$targetJsonPath = Join-Path $targetOutDir "actor-parity-burndown.json"
+if (!(Test-Path -LiteralPath $targetJsonPath -PathType Leaf)) {
+    throw "Missing target-filtered actor parity burn-down artifact: $targetJsonPath"
+}
+$targetBurn = Get-Content -LiteralPath $targetJsonPath -Raw | ConvertFrom-Json
+if ($targetBurn.schema -ne "nikami-fnv-actor-parity-burndown-v1" -or $targetBurn.status -ne "PASS") {
+    throw "Target-filtered burn-down did not pass with the expected schema."
+}
+if ([int]$targetBurn.counts.sourceEntries -ne 3 -or [int]$targetBurn.counts.filteredEntries -ne 1 -or [int]$targetBurn.counts.entries -ne 1) {
+    throw "Target-filtered burn-down did not filter the source plan to one Easy Pete entry."
+}
+if ($targetBurn.entryFilters.actorKind -ne "npc" -or $targetBurn.entryFilters.target -ne "GSEasyPete" -or $targetBurn.entryFilters.priority -ne "easy-pete") {
+    throw "Target-filtered burn-down did not preserve generator filter metadata."
+}
+$targetRows = @($targetBurn.rows)
+if ($targetRows.Count -eq 0 -or @($targetRows | Where-Object { $_.runtimeTarget -ne "GSEasyPete" }).Count -gt 0) {
+    throw "Target-filtered burn-down emitted rows for an actor other than GSEasyPete."
+}
+
 $runRoot = Join-Path $ProofRoot "fnv-actor-parity-burndown-run"
 $beforeRunDirs = @()
 if (Test-Path -LiteralPath $runRoot -PathType Container) {

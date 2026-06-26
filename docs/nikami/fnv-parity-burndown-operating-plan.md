@@ -44,6 +44,14 @@ Dry-runs prove row selection, commands, filters, and no-retail metadata without 
 
 Each selected row writes a `nikami-fnv-actor-row-gate-audit-v1` object. The audit separates process status from runtime support: a viewer phase can pass while the selected gate remains `loaded-pending-runtime` if the child manifest lacks exact gate/state evidence such as screenshots, mouth runtime evidence, projectile evidence, weapon lines, material evidence, face drawables, animation playback, creature evidence, attachment bounds, or runtime part audits.
 
+Named actor rows must be generated with source-plan filters instead of front-slicing the plan:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/nikami/run-fnv-actor-parity-burndown.ps1 -PlanJson <viewer-batch-plan.json> -OutDir <proof-out> -ActorKind npc -Target EasyPeteRef -RequirePass
+```
+
+That command filters the full source plan before row expansion, producing the placed Easy Pete row ladder directly. The first real Easy Pete face run proved target FACE CHECK and screenshots with capture frames `120,180,240,300`; it still correctly stayed `loaded-pending-runtime` because exact FNV FaceGen/skin synthesis and hand finger articulation remain pending runtime work.
+
 After rows have run, generate the row coverage report:
 
 ```powershell

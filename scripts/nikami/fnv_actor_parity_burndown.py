@@ -310,8 +310,65 @@ def burn_rows_for_entry(entry: dict[str, Any], sequence: int) -> list[dict[str, 
     return rows
 
 
-def build_burndown(plan: dict[str, Any], limit: int) -> dict[str, Any]:
+def entry_target_values(entry: dict[str, Any]) -> list[str]:
+    return [
+        as_text(entry.get(key))
+        for key in (
+            "target",
+            "selectedTarget",
+            "runtimeTarget",
+            "placedTarget",
+            "baseActorTarget",
+            "assemblyTarget",
+            "actorEditorId",
+            "placedRefEditorId",
+            "actorFormId",
+            "placedRefFormId",
+            "resolvedEditorId",
+            "resolvedFormId",
+        )
+    ]
+
+
+def entry_matches_target(entry: dict[str, Any], target_filter: str) -> bool:
+    if not target_filter:
+        return True
+    needle = target_filter.casefold()
+    return any(value.casefold() == needle for value in entry_target_values(entry) if value)
+
+
+def entry_matches_priority(entry: dict[str, Any], priority_filter: str) -> bool:
+    if not priority_filter:
+        return True
+    return actor_priority(entry).casefold() == priority_filter.casefold()
+
+
+def filter_entries(
+    entries: list[dict[str, Any]],
+    actor_kind_filter: str,
+    target_filter: str,
+    priority_filter: str,
+) -> list[dict[str, Any]]:
+    filtered = entries
+    if actor_kind_filter and actor_kind_filter != "all":
+        filtered = [entry for entry in filtered if as_text(entry.get("actorKind")).casefold() == actor_kind_filter.casefold()]
+    if target_filter:
+        filtered = [entry for entry in filtered if entry_matches_target(entry, target_filter)]
+    if priority_filter:
+        filtered = [entry for entry in filtered if entry_matches_priority(entry, priority_filter)]
+    return filtered
+
+
+def build_burndown(
+    plan: dict[str, Any],
+    limit: int,
+    actor_kind_filter: str = "all",
+    target_filter: str = "",
+    priority_filter: str = "",
+) -> dict[str, Any]:
     entries = [entry for entry in as_list(plan.get("entries")) if isinstance(entry, dict)]
+    source_entry_count = len(entries)
+    entries = filter_entries(entries, actor_kind_filter, target_filter, priority_filter)
     if limit > 0:
         entries = entries[:limit]
     rows: list[dict[str, Any]] = []
@@ -336,6 +393,11 @@ def build_burndown(plan: dict[str, Any], limit: int) -> dict[str, Any]:
         "sourcePlan": as_text(plan.get("artifacts", {}).get("plan")) or as_text(plan.get("sourcePlan")),
         "payloadPolicy": "generated proof/control metadata only; no retail assets or mod payload bytes",
         "runtimeBoundary": "This is an actor-first parity burn-down matrix. loaded-pending-runtime means the item is accounted and queued, not visually/gameplay complete.",
+        "entryFilters": {
+            "actorKind": actor_kind_filter,
+            "target": target_filter,
+            "priority": priority_filter,
+        },
         "sourceReferences": {
             "geckNpcCategory": "https://geckwiki.com/index.php/Category:NPC",
             "geckArmorSlots": "https://geckwiki.com/index.php/Armor",
@@ -344,6 +406,8 @@ def build_burndown(plan: dict[str, Any], limit: int) -> dict[str, Any]:
             "geckAnimationTab": "https://geckwiki.com/index.php/Animation_Tab",
         },
         "counts": {
+            "sourceEntries": source_entry_count,
+            "filteredEntries": len(entries),
             "entries": len(entries),
             "rows": len(rows),
             "criticalRows": sum(1 for row in rows if row["priority"] != "normal"),
@@ -440,6 +504,9 @@ def main() -> int:
     parser.add_argument("--plan-json", default="")
     parser.add_argument("--out-dir", default="")
     parser.add_argument("--limit", type=int, default=0)
+    parser.add_argument("--actor-kind", choices=["all", "npc", "creature"], default="all")
+    parser.add_argument("--target", default="")
+    parser.add_argument("--priority", default="")
     parser.add_argument("--require-pass", action="store_true")
     args = parser.parse_args()
 
@@ -448,7 +515,7 @@ def main() -> int:
     plan_path = Path(args.plan_json) if args.plan_json else latest_batch_plan(proof_root)
     plan = read_json(plan_path)
     plan.setdefault("sourcePlan", str(plan_path))
-    burn = build_burndown(plan, args.limit)
+    burn = build_burndown(plan, args.limit, args.actor_kind, args.target, args.priority)
     burn["sourcePlan"] = str(plan_path)
 
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")

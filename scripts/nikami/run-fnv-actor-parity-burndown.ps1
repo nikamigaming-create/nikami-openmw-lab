@@ -20,7 +20,7 @@ param(
     [int]$ShardCount = 0,
     [int]$RunSeconds = 28,
     [int]$ActorFrame = 520,
-    [string]$ScreenshotFrames = "600,660,720,780,840",
+    [string]$ScreenshotFrames = "120,180,240,300",
     [string[]]$Angles = @("front", "front-left", "front-right"),
     [string]$ViewerRunner = "",
     [switch]$NoSound,
@@ -943,6 +943,9 @@ else {
     $argsList += @("--plan-json", $PlanJson)
     if (![string]::IsNullOrWhiteSpace($OutDir)) { $argsList += @("--out-dir", $OutDir) }
     if ($Limit -gt 0) { $argsList += @("--limit", [string]$Limit) }
+    if ($ActorKind -ne "all") { $argsList += @("--actor-kind", $ActorKind) }
+    if (![string]::IsNullOrWhiteSpace($Target)) { $argsList += @("--target", $Target) }
+    if (![string]::IsNullOrWhiteSpace($Priority)) { $argsList += @("--priority", $Priority) }
     if ($RequirePass) { $argsList += "--require-pass" }
 
     & $python.Command @argsList
