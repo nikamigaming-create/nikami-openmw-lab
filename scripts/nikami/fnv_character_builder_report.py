@@ -1411,8 +1411,14 @@ def evaluate(
         failures.append(f"neutral preview composition findings: {len(neutral_preview_findings)}")
     if face_occlusion_findings:
         failures.append(f"face occlusion/headgear orientation findings: {len(face_occlusion_findings)}")
+    staticized_hands_requested = summary_value(lines, "FnvStaticizeRiggedHandParts").strip() not in {
+        "",
+        "0",
+        "False",
+        "false",
+    }
     if actor_kind != "creature":
-        if int(hand_runtime_summary.get("pendingFingerArticulation", 0)) > 0:
+        if staticized_hands_requested and int(hand_runtime_summary.get("pendingFingerArticulation", 0)) > 0:
             failures.append(
                 "pending hand finger articulation runtime support: "
                 f"{hand_runtime_summary['pendingFingerArticulation']}"

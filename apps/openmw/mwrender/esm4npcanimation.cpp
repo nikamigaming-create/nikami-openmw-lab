@@ -1626,6 +1626,20 @@ namespace MWRender
         osg::Vec3f sampleFaceGenEgtDelta(const FaceGenEgt& egt, const ESM4::Npc& traits, int sourceX, int sourceY,
             int sourceWidth, int sourceHeight);
 
+        float readFaceGenProofFloat(const char* name, float fallback, float minValue, float maxValue)
+        {
+            const char* value = std::getenv(name);
+            if (value == nullptr || value[0] == '\0')
+                return fallback;
+
+            char* end = nullptr;
+            const float parsed = std::strtof(value, &end);
+            if (end == value || !std::isfinite(parsed))
+                return fallback;
+
+            return std::clamp(parsed, minValue, maxValue);
+        }
+
         std::string formatFaceGenRgb(const osg::Vec3f& color)
         {
             std::ostringstream stream;
@@ -1699,6 +1713,14 @@ namespace MWRender
             osg::Vec3f egtDeltaMax(std::numeric_limits<float>::lowest(), std::numeric_limits<float>::lowest(),
                 std::numeric_limits<float>::lowest());
             unsigned int egtDeltaSamples = 0;
+            const float facegenCompositeScale
+                = readFaceGenProofFloat("OPENMW_FNV_FACEGEN_COMPOSITE_SCALE", 2.f, 0.f, 8.f);
+            const float egtDiffuseScale
+                = readFaceGenProofFloat("OPENMW_FNV_EGT_DIFFUSE_SCALE", 1.f, -4.f, 4.f);
+            const osg::Vec3f facegenBias(
+                readFaceGenProofFloat("OPENMW_FNV_FACEGEN_BIAS_R", 0.f, -1.f, 1.f),
+                readFaceGenProofFloat("OPENMW_FNV_FACEGEN_BIAS_G", 0.f, -1.f, 1.f),
+                readFaceGenProofFloat("OPENMW_FNV_FACEGEN_BIAS_B", 0.f, -1.f, 1.f));
 
             osg::ref_ptr<osg::Image> generated = new osg::Image;
             generated->setFileName("generated/fnv-facegen/" + formatFalloutFormIndex(traits.mId) + "-head-diffuse");
@@ -1729,15 +1751,18 @@ namespace MWRender
                         egtDeltaMax.z() = std::max(egtDeltaMax.z(), egtDelta.z());
                         ++egtDeltaSamples;
                     }
-                    osg::Vec4f composed(std::clamp(baseColor.x() * faceColor.x() * 2.f, 0.f, 1.f),
-                        std::clamp(baseColor.y() * faceColor.y() * 2.f, 0.f, 1.f),
-                        std::clamp(baseColor.z() * faceColor.z() * 2.f, 0.f, 1.f), baseColor.w());
+                    osg::Vec4f composed(std::clamp(baseColor.x() * faceColor.x() * facegenCompositeScale, 0.f, 1.f),
+                        std::clamp(baseColor.y() * faceColor.y() * facegenCompositeScale, 0.f, 1.f),
+                        std::clamp(baseColor.z() * faceColor.z() * facegenCompositeScale, 0.f, 1.f), baseColor.w());
                     if (egtDiffuseApplied)
                     {
-                        composed.x() = std::clamp(composed.x() + egtDelta.x(), 0.f, 1.f);
-                        composed.y() = std::clamp(composed.y() + egtDelta.y(), 0.f, 1.f);
-                        composed.z() = std::clamp(composed.z() + egtDelta.z(), 0.f, 1.f);
+                        composed.x() = std::clamp(composed.x() + egtDelta.x() * egtDiffuseScale, 0.f, 1.f);
+                        composed.y() = std::clamp(composed.y() + egtDelta.y() * egtDiffuseScale, 0.f, 1.f);
+                        composed.z() = std::clamp(composed.z() + egtDelta.z() * egtDiffuseScale, 0.f, 1.f);
                     }
+                    composed.x() = std::clamp(composed.x() + facegenBias.x(), 0.f, 1.f);
+                    composed.y() = std::clamp(composed.y() + facegenBias.y(), 0.f, 1.f);
+                    composed.z() = std::clamp(composed.z() + facegenBias.z(), 0.f, 1.f);
                     generated->setColor(composed, x, y);
                 }
             }
@@ -1751,6 +1776,9 @@ namespace MWRender
                              << " face=" << npcFaceTexture << " " << face->s() << "x" << face->t()
                              << " egtModel=" << headModel
                              << " egtDiffuse=" << (egtDiffuseApplied ? "applied" : egtDiffuseDisabled ? "disabled" : "missing")
+                             << " compositeScale=" << facegenCompositeScale
+                             << " egtDiffuseScale=" << egtDiffuseScale
+                             << " bias=" << formatFaceGenRgb(facegenBias)
                              << " generatedAverage=" << formatFaceGenRgb(generatedAverage)
                              << " egtDeltaAverage=" << formatFaceGenRgb(egtDeltaAverage)
                              << " egtDeltaMin="
@@ -7154,6 +7182,7 @@ namespace MWRender
         const bool wantsStaticizedHeadPartRig = headAttachedStaticPart && rigProbe.mRigGeometryCount > 0
             && std::getenv("OPENMW_FNV_KEEP_RIGGED_HEAD_PARTS") == nullptr;
         const bool wantsStaticizedBareHandPartRig = bareHandSurfacePart && rigProbe.mRigGeometryCount > 0
+            && std::getenv("OPENMW_FNV_STATICIZE_RIGGED_HAND_PARTS") != nullptr
             && std::getenv("OPENMW_FNV_KEEP_RIGGED_HAND_PARTS") == nullptr;
         if (wantsStaticizedHeadPartRig)
         {

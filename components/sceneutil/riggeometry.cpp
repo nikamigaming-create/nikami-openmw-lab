@@ -65,6 +65,12 @@ namespace SceneUtil
             return "auto";
         }
 
+        bool hasFalloutSkinningModeOverride()
+        {
+            const char* env = std::getenv("OPENMW_FNV_SKINNING_MODE");
+            return env != nullptr && env[0] != '\0';
+        }
+
         bool isFalloutHandRig(std::string_view name, std::string_view rootBone)
         {
             return Misc::StringUtils::ciFind(name, "hand") != std::string_view::npos
@@ -92,6 +98,9 @@ namespace SceneUtil
             {
                 if (const char* env = std::getenv("OPENMW_FNV_VR_HAND_SKINNING_MODE"))
                     return env;
+
+                if (hasFalloutSkinningModeOverride())
+                    return getFalloutSkinningMode();
 
                 return "current";
             }

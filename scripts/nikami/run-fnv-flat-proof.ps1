@@ -92,10 +92,21 @@ param(
     [string]$FnvSkinningMatrixAudit = "",
     [string]$FnvHairEmissionStrength = "",
     [string]$FnvFaceGenTextureMode = $env:OPENMW_FNV_FACEGEN_TEXTURE_MODE,
+    [string]$FnvFaceGenCompositeScale = $env:OPENMW_FNV_FACEGEN_COMPOSITE_SCALE,
+    [string]$FnvEgtDiffuseScale = $env:OPENMW_FNV_EGT_DIFFUSE_SCALE,
+    [string]$FnvFaceGenBiasR = $env:OPENMW_FNV_FACEGEN_BIAS_R,
+    [string]$FnvFaceGenBiasG = $env:OPENMW_FNV_FACEGEN_BIAS_G,
+    [string]$FnvFaceGenBiasB = $env:OPENMW_FNV_FACEGEN_BIAS_B,
+    [string]$FnvDisableEgtDiffuseSynthesis = $env:OPENMW_FNV_DISABLE_EGT_DIFFUSE_SYNTHESIS,
     [string]$FnvUseEgtMaterialTint = $env:OPENMW_FNV_USE_EGT_MATERIAL_TINT,
     [string]$FnvUseRawBodyTintSwatch = $env:OPENMW_FNV_USE_RAW_BODY_TINT_SWATCH,
     [string]$FnvDisableEgtMaterialTint = $env:OPENMW_FNV_DISABLE_EGT_MATERIAL_TINT,
     [string]$FnvDisableRawBodyTintSwatch = $env:OPENMW_FNV_DISABLE_RAW_BODY_TINT_SWATCH,
+    [string]$FnvSkinningMode = $env:OPENMW_FNV_SKINNING_MODE,
+    [string]$FnvVrHandSkinningMode = $env:OPENMW_FNV_VR_HAND_SKINNING_MODE,
+    [string]$FnvStaticizeRiggedHandParts = $env:OPENMW_FNV_STATICIZE_RIGGED_HAND_PARTS,
+    [string]$FnvKeepRiggedHandParts = $env:OPENMW_FNV_KEEP_RIGGED_HAND_PARTS,
+    [string]$FnvHandBindFrameAttach = $env:OPENMW_FNV_HAND_BIND_FRAME_ATTACH,
     [string]$CharacterBuilderPhase = "",
     [string[]]$ActorKitParts = @(),
     [string[]]$ActorKitPartModels = @(),
@@ -1800,10 +1811,21 @@ try {
     Set-ProofEnv $previousEnv "OPENMW_FNV_SKINNING_MATRIX_AUDIT" $FnvSkinningMatrixAudit
     Set-ProofEnv $previousEnv "OPENMW_FNV_HAIR_EMISSION_STRENGTH" $FnvHairEmissionStrength
     Set-ProofEnv $previousEnv "OPENMW_FNV_FACEGEN_TEXTURE_MODE" $FnvFaceGenTextureMode
+    Set-ProofEnv $previousEnv "OPENMW_FNV_FACEGEN_COMPOSITE_SCALE" $FnvFaceGenCompositeScale
+    Set-ProofEnv $previousEnv "OPENMW_FNV_EGT_DIFFUSE_SCALE" $FnvEgtDiffuseScale
+    Set-ProofEnv $previousEnv "OPENMW_FNV_FACEGEN_BIAS_R" $FnvFaceGenBiasR
+    Set-ProofEnv $previousEnv "OPENMW_FNV_FACEGEN_BIAS_G" $FnvFaceGenBiasG
+    Set-ProofEnv $previousEnv "OPENMW_FNV_FACEGEN_BIAS_B" $FnvFaceGenBiasB
+    Set-ProofEnv $previousEnv "OPENMW_FNV_DISABLE_EGT_DIFFUSE_SYNTHESIS" $FnvDisableEgtDiffuseSynthesis
     Set-ProofEnv $previousEnv "OPENMW_FNV_USE_EGT_MATERIAL_TINT" $FnvUseEgtMaterialTint
     Set-ProofEnv $previousEnv "OPENMW_FNV_USE_RAW_BODY_TINT_SWATCH" $FnvUseRawBodyTintSwatch
     Set-ProofEnv $previousEnv "OPENMW_FNV_DISABLE_EGT_MATERIAL_TINT" $FnvDisableEgtMaterialTint
     Set-ProofEnv $previousEnv "OPENMW_FNV_DISABLE_RAW_BODY_TINT_SWATCH" $FnvDisableRawBodyTintSwatch
+    Set-ProofEnv $previousEnv "OPENMW_FNV_SKINNING_MODE" $FnvSkinningMode
+    Set-ProofEnv $previousEnv "OPENMW_FNV_VR_HAND_SKINNING_MODE" $FnvVrHandSkinningMode
+    Set-ProofEnv $previousEnv "OPENMW_FNV_STATICIZE_RIGGED_HAND_PARTS" $FnvStaticizeRiggedHandParts
+    Set-ProofEnv $previousEnv "OPENMW_FNV_KEEP_RIGGED_HAND_PARTS" $FnvKeepRiggedHandParts
+    Set-ProofEnv $previousEnv "OPENMW_FNV_HAND_BIND_FRAME_ATTACH" $FnvHandBindFrameAttach
     Set-ProofEnv $previousEnv "OPENMW_FNV_ROTATION_MODE" $FnvRotationMode
     Set-ProofEnv $previousEnv "OPENMW_FNV_LIVE_AUTHORING_FILE" $LiveAuthoringFile
     Set-ProofEnv $previousEnv "OPENMW_FNV_LIVE_RUNTIME_COMMAND_FILE" $LiveRuntimeCommandFile
@@ -1930,10 +1952,19 @@ try {
     Write-ProofLine "FnvSkinningMatrixAudit: $FnvSkinningMatrixAudit"
     Write-ProofLine "FnvHairEmissionStrength: $FnvHairEmissionStrength"
     Write-ProofLine "FnvFaceGenTextureMode: $FnvFaceGenTextureMode"
+    Write-ProofLine "FnvFaceGenCompositeScale: $FnvFaceGenCompositeScale"
+    Write-ProofLine "FnvEgtDiffuseScale: $FnvEgtDiffuseScale"
+    Write-ProofLine "FnvFaceGenBias: $FnvFaceGenBiasR,$FnvFaceGenBiasG,$FnvFaceGenBiasB"
+    Write-ProofLine "FnvDisableEgtDiffuseSynthesis: $FnvDisableEgtDiffuseSynthesis"
     Write-ProofLine "FnvUseEgtMaterialTint: $FnvUseEgtMaterialTint"
     Write-ProofLine "FnvUseRawBodyTintSwatch: $FnvUseRawBodyTintSwatch"
     Write-ProofLine "FnvDisableEgtMaterialTint: $FnvDisableEgtMaterialTint"
     Write-ProofLine "FnvDisableRawBodyTintSwatch: $FnvDisableRawBodyTintSwatch"
+    Write-ProofLine "FnvSkinningMode: $FnvSkinningMode"
+    Write-ProofLine "FnvVrHandSkinningMode: $FnvVrHandSkinningMode"
+    Write-ProofLine "FnvStaticizeRiggedHandParts: $FnvStaticizeRiggedHandParts"
+    Write-ProofLine "FnvKeepRiggedHandParts: $FnvKeepRiggedHandParts"
+    Write-ProofLine "FnvHandBindFrameAttach: $FnvHandBindFrameAttach"
     Write-ProofLine "LiveAuthoringFile: $LiveAuthoringFile"
     Write-ProofLine "LiveRuntimeCommandFile: $LiveRuntimeCommandFile"
     Write-ProofLine "CharacterBuilderPhase: $CharacterBuilderPhase"
@@ -2186,9 +2217,9 @@ if (![string]::IsNullOrWhiteSpace($ActorTarget) -and $targetStandingArmPoseBadLi
 if (![string]::IsNullOrWhiteSpace($ActorTarget) -and $targetWorldPostureOkLines -eq 0) { throw "FNV actor proof did not log target world posture lines. See $OpenMwLog" }
 if (![string]::IsNullOrWhiteSpace($ActorTarget) -and $targetStandingArmPoseOkLines -eq 0) { throw "FNV actor proof did not log target standing arm pose lines. See $OpenMwLog" }
 if (![string]::IsNullOrWhiteSpace($ActorTarget) -and $targetVisibleHandGeometry.PoseSanityBadCount -gt 0) { throw "FNV actor proof saw target hand mesh pose sanity BAD lines. See $OpenMwLog" }
-if (![string]::IsNullOrWhiteSpace($ActorTarget) -and $targetBareHandIncludes -gt 0 -and $targetStaticHandNoTwist.Count -eq 0) { throw "FNV actor proof did not prove target bare hands use the static no-twist path. See $OpenMwLog" }
-if (![string]::IsNullOrWhiteSpace($ActorTarget) -and $targetStaticHandNoTwist.Count -gt 0 -and $targetStaticHandNoTwist.FingerWeightLoadedCount -eq 0) { throw "FNV actor proof staticized target hands without loading finger-weight evidence. See $OpenMwLog" }
-if (![string]::IsNullOrWhiteSpace($ActorTarget) -and $targetStaticHandNoTwist.PendingArticulationCount -gt 0) { throw "FNV actor proof loaded target hand finger weights but still has pending hand finger articulation runtime support. See $OpenMwLog" }
+if (![string]::IsNullOrWhiteSpace($FnvStaticizeRiggedHandParts) -and ![string]::IsNullOrWhiteSpace($ActorTarget) -and $targetBareHandIncludes -gt 0 -and $targetStaticHandNoTwist.Count -eq 0) { throw "FNV actor proof did not prove target bare hands use the requested static no-twist path. See $OpenMwLog" }
+if (![string]::IsNullOrWhiteSpace($FnvStaticizeRiggedHandParts) -and ![string]::IsNullOrWhiteSpace($ActorTarget) -and $targetStaticHandNoTwist.Count -gt 0 -and $targetStaticHandNoTwist.FingerWeightLoadedCount -eq 0) { throw "FNV actor proof staticized target hands without loading finger-weight evidence. See $OpenMwLog" }
+if (![string]::IsNullOrWhiteSpace($FnvStaticizeRiggedHandParts) -and ![string]::IsNullOrWhiteSpace($ActorTarget) -and $targetStaticHandNoTwist.PendingArticulationCount -gt 0) { throw "FNV actor proof loaded target hand finger weights but still has pending hand finger articulation runtime support. See $OpenMwLog" }
 if ($RequireActorVisibleHandGeometry -and [string]::IsNullOrWhiteSpace($ActorTarget)) { throw "FNV actor visible hand geometry proof requires ActorTarget." }
 if ($RequireActorVisibleHandGeometry -and !$FnvPartMatrixAudit) { throw "FNV actor visible hand geometry proof requires FnvPartMatrixAudit." }
 if ($RequireActorVisibleHandGeometry -and $targetVisibleHandGeometry.Status -ne "PASS") { throw "FNV actor proof did not prove visible skinned hand geometry follows animated hand anchors. See $OpenMwLog" }

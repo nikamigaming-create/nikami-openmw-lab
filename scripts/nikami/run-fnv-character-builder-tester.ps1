@@ -48,10 +48,21 @@ param(
     [string]$FnvSkinningMatrixAudit = "arms,rightHand,leftHand,HeadOld,HeadHuman",
     [string]$FnvHairEmissionStrength = "",
     [string]$FnvFaceGenTextureMode = $env:OPENMW_FNV_FACEGEN_TEXTURE_MODE,
+    [string]$FnvFaceGenCompositeScale = $env:OPENMW_FNV_FACEGEN_COMPOSITE_SCALE,
+    [string]$FnvEgtDiffuseScale = $env:OPENMW_FNV_EGT_DIFFUSE_SCALE,
+    [string]$FnvFaceGenBiasR = $env:OPENMW_FNV_FACEGEN_BIAS_R,
+    [string]$FnvFaceGenBiasG = $env:OPENMW_FNV_FACEGEN_BIAS_G,
+    [string]$FnvFaceGenBiasB = $env:OPENMW_FNV_FACEGEN_BIAS_B,
+    [string]$FnvDisableEgtDiffuseSynthesis = $env:OPENMW_FNV_DISABLE_EGT_DIFFUSE_SYNTHESIS,
     [string]$FnvUseEgtMaterialTint = $env:OPENMW_FNV_USE_EGT_MATERIAL_TINT,
     [string]$FnvUseRawBodyTintSwatch = $env:OPENMW_FNV_USE_RAW_BODY_TINT_SWATCH,
     [string]$FnvDisableEgtMaterialTint = $env:OPENMW_FNV_DISABLE_EGT_MATERIAL_TINT,
     [string]$FnvDisableRawBodyTintSwatch = $env:OPENMW_FNV_DISABLE_RAW_BODY_TINT_SWATCH,
+    [string]$FnvSkinningMode = $env:OPENMW_FNV_SKINNING_MODE,
+    [string]$FnvVrHandSkinningMode = $env:OPENMW_FNV_VR_HAND_SKINNING_MODE,
+    [string]$FnvStaticizeRiggedHandParts = $env:OPENMW_FNV_STATICIZE_RIGGED_HAND_PARTS,
+    [string]$FnvKeepRiggedHandParts = $env:OPENMW_FNV_KEEP_RIGGED_HAND_PARTS,
+    [string]$FnvHandBindFrameAttach = $env:OPENMW_FNV_HAND_BIND_FRAME_ATTACH,
     [string]$LiveAuthoringFile = $env:OPENMW_FNV_LIVE_AUTHORING_FILE,
     [switch]$FnvUseNativeAnimationCallbacks,
     [switch]$CreatureDiagnostics,
@@ -329,6 +340,9 @@ if ($ActorKind -ine "creature" -and [string]::IsNullOrWhiteSpace($ResolvedActorK
     $ResolvedActorKitAnimationSource = "hands-at-side"
     $ActorKitAnimationSourceDefaulted = $true
 }
+if ($ActorKind -ine "creature" -and [string]::IsNullOrWhiteSpace($FnvSkinningMode)) {
+    $FnvSkinningMode = "source"
+}
 
 Write-SuiteLine "FNV character builder tester $Stamp"
 Write-SuiteLine "RepoRoot: $RepoRoot"
@@ -361,10 +375,19 @@ Write-SuiteLine "ActorVisibleHandMaxDistance: $ActorVisibleHandMaxDistance"
 Write-SuiteLine "FnvSkinningMatrixAudit: $FnvSkinningMatrixAudit"
 Write-SuiteLine "FnvHairEmissionStrength: $FnvHairEmissionStrength"
 Write-SuiteLine "FnvFaceGenTextureMode: $FnvFaceGenTextureMode"
+Write-SuiteLine "FnvFaceGenCompositeScale: $FnvFaceGenCompositeScale"
+Write-SuiteLine "FnvEgtDiffuseScale: $FnvEgtDiffuseScale"
+Write-SuiteLine "FnvFaceGenBias: $FnvFaceGenBiasR,$FnvFaceGenBiasG,$FnvFaceGenBiasB"
+Write-SuiteLine "FnvDisableEgtDiffuseSynthesis: $FnvDisableEgtDiffuseSynthesis"
 Write-SuiteLine "FnvUseEgtMaterialTint: $FnvUseEgtMaterialTint"
 Write-SuiteLine "FnvUseRawBodyTintSwatch: $FnvUseRawBodyTintSwatch"
 Write-SuiteLine "FnvDisableEgtMaterialTint: $FnvDisableEgtMaterialTint"
 Write-SuiteLine "FnvDisableRawBodyTintSwatch: $FnvDisableRawBodyTintSwatch"
+Write-SuiteLine "FnvSkinningMode: $FnvSkinningMode"
+Write-SuiteLine "FnvVrHandSkinningMode: $FnvVrHandSkinningMode"
+Write-SuiteLine "FnvStaticizeRiggedHandParts: $FnvStaticizeRiggedHandParts"
+Write-SuiteLine "FnvKeepRiggedHandParts: $FnvKeepRiggedHandParts"
+Write-SuiteLine "FnvHandBindFrameAttach: $FnvHandBindFrameAttach"
 Write-SuiteLine "LiveAuthoringFile: $LiveAuthoringFile"
 Write-SuiteLine "FnvUseNativeAnimationCallbacks: $FnvUseNativeAnimationCallbacks"
 Write-SuiteLine "Angles: $(@($CameraAngles | ForEach-Object { $_.Name }) -join ',')"
@@ -439,10 +462,21 @@ foreach ($phase in $Phases) {
             FnvSkinningMatrixAudit = $FnvSkinningMatrixAudit
             FnvHairEmissionStrength = $FnvHairEmissionStrength
             FnvFaceGenTextureMode = $FnvFaceGenTextureMode
+            FnvFaceGenCompositeScale = $FnvFaceGenCompositeScale
+            FnvEgtDiffuseScale = $FnvEgtDiffuseScale
+            FnvFaceGenBiasR = $FnvFaceGenBiasR
+            FnvFaceGenBiasG = $FnvFaceGenBiasG
+            FnvFaceGenBiasB = $FnvFaceGenBiasB
+            FnvDisableEgtDiffuseSynthesis = $FnvDisableEgtDiffuseSynthesis
             FnvUseEgtMaterialTint = $FnvUseEgtMaterialTint
             FnvUseRawBodyTintSwatch = $FnvUseRawBodyTintSwatch
             FnvDisableEgtMaterialTint = $FnvDisableEgtMaterialTint
             FnvDisableRawBodyTintSwatch = $FnvDisableRawBodyTintSwatch
+            FnvSkinningMode = $FnvSkinningMode
+            FnvVrHandSkinningMode = $FnvVrHandSkinningMode
+            FnvStaticizeRiggedHandParts = $FnvStaticizeRiggedHandParts
+            FnvKeepRiggedHandParts = $FnvKeepRiggedHandParts
+            FnvHandBindFrameAttach = $FnvHandBindFrameAttach
             LiveAuthoringFile = $LiveAuthoringFile
             FnvRotationMode = $FnvRotationMode
             CharacterBuilderPhase = $phase

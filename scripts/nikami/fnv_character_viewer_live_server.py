@@ -2210,6 +2210,7 @@ def structured_actor_job(entry: dict[str, Any], payload: dict[str, Any]) -> tupl
         "neutralPreviewProfile": first_text(selector_value(payload, "neutralPreviewProfile")),
         "neutralPreviewYawOffsetDeg": first_text(selector_value(payload, "neutralPreviewYawOffsetDeg")),
         "fnvRotationMode": first_text(selector_value(payload, "fnvRotationMode")),
+        "fnvSkinningMode": first_text(selector_value(payload, "fnvSkinningMode"), "source" if actor_kind != "creature" else ""),
         "allowMissingActorVisibleHandGeometry": first_text(selector_value(payload, "allowMissingActorVisibleHandGeometry")),
         "actorVisibleHandMaxDistance": first_text(selector_value(payload, "actorVisibleHandMaxDistance"), "30"),
         "fnvSkinningMatrixAudit": first_text(selector_value(payload, "fnvSkinningMatrixAudit"), "arms,rightHand,leftHand,HeadOld,HeadHuman"),
@@ -2234,6 +2235,7 @@ def structured_actor_job(entry: dict[str, Any], payload: dict[str, Any]) -> tupl
     command += selector_arg("NeutralActorPreviewProfile", selectors["neutralPreviewProfile"])
     command += selector_arg("NeutralActorPreviewYawOffsetDeg", selectors["neutralPreviewYawOffsetDeg"])
     command += selector_arg("FnvRotationMode", selectors["fnvRotationMode"])
+    command += selector_arg("FnvSkinningMode", selectors["fnvSkinningMode"])
     if actor_kind != "creature":
         command += selector_arg("ActorVisibleHandMaxDistance", selectors["actorVisibleHandMaxDistance"])
         if selectors["allowMissingActorVisibleHandGeometry"].lower() in {"1", "true", "yes"}:
