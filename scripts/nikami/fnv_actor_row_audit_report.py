@@ -48,6 +48,30 @@ def load_json(path: Path) -> Any:
         return json.load(handle)
 
 
+def path_or_empty(value: str, base_dir: Path | None = None) -> str:
+    text = as_text(value).strip()
+    if not text:
+        return ""
+    path = Path(text)
+    if not path.is_absolute() and base_dir is not None:
+        path = base_dir / path
+    return str(path)
+
+
+def unique_texts(values: list[str], limit: int = 100) -> list[str]:
+    seen: set[str] = set()
+    out: list[str] = []
+    for value in values:
+        text = value.strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        out.append(text)
+        if len(out) >= limit:
+            break
+    return out
+
+
 def write_json(path: Path, data: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as handle:
@@ -128,9 +152,183 @@ def select_run_results(run_paths: list[Path], burn_path: Path, include_all_runs:
     return selected
 
 
+def child_json_candidates(result: dict[str, Any]) -> list[Path]:
+    candidates: list[Path] = []
+    for key in ("viewerJson", "viewerManifest", "actorKit"):
+        text = as_text(result.get(key))
+        if not text:
+            continue
+        path = Path(text)
+        candidates.append(path)
+        parent = path.parent
+        candidates.extend(
+            [
+                parent / "character-builder-suite.json",
+                parent / "character-builder-report.json",
+                parent / "character-viewer-manifest.json",
+                parent / "viewer-runs.json",
+            ]
+        )
+    run_path = as_text(result.get("_runPath"))
+    if run_path:
+        parent = Path(run_path).parent
+        candidates.extend(
+            [
+                parent / "character-builder-suite.json",
+                parent / "character-builder-report.json",
+                parent / "character-viewer-manifest.json",
+            ]
+        )
+    unique: list[Path] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        norm = norm_path(str(candidate))
+        if norm in seen:
+            continue
+        seen.add(norm)
+        unique.append(candidate)
+    return unique
+
+
+def collect_child_artifacts(data: Any, base_dir: Path, state: dict[str, list[str]]) -> None:
+    if isinstance(data, list):
+        for item in data:
+            collect_child_artifacts(item, base_dir, state)
+        return
+    if not isinstance(data, dict):
+        return
+    proof_base = base_dir
+    case_base = base_dir
+    proof_dir = as_text(data.get("proofDir"))
+    case_dir = as_text(data.get("caseDir"))
+    if proof_dir:
+        proof_base = Path(proof_dir)
+    if case_dir:
+        case_base = Path(case_dir)
+
+    status = (
+        as_text(data.get("runtimeGateStatus"))
+        or as_text(data.get("reportStatus"))
+        or as_text(data.get("status"))
+        or as_text(data.get("runStatus"))
+    )
+    if status:
+        state["statuses"].append(status)
+
+    for failure in as_list(data.get("failures")):
+        text = as_text(failure)
+        if text:
+            state["failures"].append(text)
+    runtime_error = as_text(data.get("runtimeGateError"))
+    if runtime_error:
+        state["failures"].append(runtime_error)
+    error = as_text(data.get("error"))
+    if error:
+        state["failures"].append(error)
+
+    for screenshot in as_list(data.get("screenshots")):
+        if isinstance(screenshot, dict):
+            path_text = (
+                as_text(screenshot.get("path"))
+                or as_text(screenshot.get("file"))
+                or as_text(screenshot.get("name"))
+            )
+        else:
+            path_text = as_text(screenshot)
+        resolved = path_or_empty(path_text, proof_base)
+        if resolved:
+            state["screenshots"].append(resolved)
+
+    main_image = path_or_empty(as_text(data.get("mainImage")), case_base)
+    if main_image:
+        state["mainImages"].append(main_image)
+
+    for key in ("reviewCrops", "crops", "images"):
+        for image in as_list(data.get(key)):
+            if isinstance(image, dict):
+                crop_text = as_text(image.get("cropImage"))
+                source_text = as_text(image.get("sourceImage"))
+                path_text = (
+                    crop_text
+                    or as_text(image.get("path"))
+                    or as_text(image.get("file"))
+                    or as_text(image.get("name"))
+                    or source_text
+                )
+                path_base = proof_base if source_text and path_text == source_text else case_base
+            else:
+                path_text = as_text(image)
+                path_base = case_base
+            resolved = path_or_empty(path_text, path_base)
+            if resolved:
+                state["screenshots"].append(resolved)
+                if isinstance(image, dict) and (image.get("activeForPhase") is True or as_text(image.get("pane")) == "face-hat"):
+                    state["mainImages"].append(resolved)
+
+    for key in ("cases", "entries", "results", "runs", "caseResults"):
+        for child in as_list(data.get(key)):
+            collect_child_artifacts(child, case_base, state)
+
+
+def first_existing_path(values: list[str]) -> str:
+    for value in values:
+        try:
+            if Path(value).is_file():
+                return value
+        except Exception:
+            continue
+    return values[0] if values else ""
+
+
+def child_evidence(result: dict[str, Any] | None) -> dict[str, Any]:
+    if result is None:
+        return {
+            "childStatuses": [],
+            "childFailures": [],
+            "screenshots": [],
+            "screenshotCount": 0,
+            "mainImage": "",
+            "childArtifacts": [],
+            "childLoadErrors": [],
+        }
+
+    state: dict[str, list[str]] = {
+        "statuses": [],
+        "failures": [],
+        "screenshots": [],
+        "mainImages": [],
+    }
+    artifacts: list[str] = []
+    load_errors: list[str] = []
+    for candidate in child_json_candidates(result):
+        if not candidate.is_file():
+            continue
+        try:
+            data = load_json(candidate)
+        except Exception as exc:
+            load_errors.append(f"{candidate}: {exc}")
+            continue
+        artifacts.append(str(candidate))
+        collect_child_artifacts(data, candidate.parent, state)
+
+    screenshots = unique_texts(state["screenshots"], limit=50)
+    main_images = unique_texts(state["mainImages"], limit=10)
+    main_image = first_existing_path(main_images) if main_images else first_existing_path(screenshots)
+    return {
+        "childStatuses": unique_texts(state["statuses"], limit=20),
+        "childFailures": unique_texts(state["failures"], limit=50),
+        "screenshots": screenshots,
+        "screenshotCount": len(screenshots),
+        "mainImage": main_image,
+        "childArtifacts": unique_texts(artifacts, limit=20),
+        "childLoadErrors": unique_texts(load_errors, limit=20),
+    }
+
+
 def classify_result(row: dict[str, Any], result: dict[str, Any] | None) -> dict[str, Any]:
     source_class = as_text(row.get("classification"))
     runtime_required = source_class in RUNTIME_REQUIRED
+    child = child_evidence(result)
     if result is None:
         if runtime_required:
             effective = "loaded-pending-runtime"
@@ -154,6 +352,7 @@ def classify_result(row: dict[str, Any], result: dict[str, Any] | None) -> dict[
             "viewerJson": "",
             "viewerIndex": "",
             "error": "",
+            **child,
         }
 
     audit = result.get("rowGateAudit") if isinstance(result.get("rowGateAudit"), dict) else {}
@@ -185,6 +384,7 @@ def classify_result(row: dict[str, Any], result: dict[str, Any] | None) -> dict[
         "viewerJson": as_text(result.get("viewerJson")),
         "viewerIndex": as_text(result.get("viewerIndex")),
         "error": as_text(result.get("error")) or "; ".join(as_text(item) for item in as_list(audit.get("errors")) if as_text(item)),
+        **child,
     }
 
 
@@ -202,6 +402,7 @@ def build_report(burn_path: Path, run_root: Path, include_all_runs: bool) -> dic
     phase_counts: Counter[str] = Counter()
     gate_counts: Counter[str] = Counter()
     missing_counts: Counter[str] = Counter()
+    child_failure_counts: Counter[str] = Counter()
 
     for row in rows:
         row_id = as_text(row.get("id"))
@@ -215,6 +416,8 @@ def build_report(burn_path: Path, run_root: Path, include_all_runs: bool) -> dic
         gate_counts[as_text(row.get("gate"))] += 1
         for missing in classified["missingEvidenceKinds"]:
             missing_counts[missing] += 1
+        for failure in classified["childFailures"]:
+            child_failure_counts[failure] += 1
         report_rows.append(
             {
                 "id": row_id,
@@ -239,6 +442,13 @@ def build_report(burn_path: Path, run_root: Path, include_all_runs: bool) -> dic
                 "viewerJson": classified["viewerJson"],
                 "viewerIndex": classified["viewerIndex"],
                 "error": classified["error"],
+                "childStatuses": classified["childStatuses"],
+                "childFailures": classified["childFailures"],
+                "childArtifacts": classified["childArtifacts"],
+                "childLoadErrors": classified["childLoadErrors"],
+                "screenshots": classified["screenshots"],
+                "screenshotCount": classified["screenshotCount"],
+                "mainImage": classified["mainImage"],
                 "payloadPolicy": "generated row/audit metadata and proof links only; no retail payload bytes",
             }
         )
@@ -274,6 +484,8 @@ def build_report(burn_path: Path, run_root: Path, include_all_runs: bool) -> dic
             "loadedPendingRuntimeRows": len(pending_rows),
             "failedRows": len(failed_rows),
             "runJsonFilesScanned": len(run_paths),
+            "rowsWithScreenshots": sum(1 for row in report_rows if row["screenshotCount"] > 0),
+            "childFailureRows": sum(1 for row in report_rows if row["childFailures"]),
         },
         "sourceClassificationCounts": dict(sorted(source_counts.items())),
         "effectiveClassificationCounts": dict(sorted(effective_counts.items())),
@@ -281,6 +493,7 @@ def build_report(burn_path: Path, run_root: Path, include_all_runs: bool) -> dic
         "phaseCounts": dict(sorted(phase_counts.items())),
         "gateCounts": dict(sorted(gate_counts.items())),
         "missingEvidenceCounts": dict(sorted(missing_counts.items())),
+        "childFailureCounts": dict(sorted(child_failure_counts.items(), key=lambda item: (-item[1], item[0]))),
         "rows": report_rows,
     }
 
@@ -300,6 +513,11 @@ def write_csv_report(path: Path, rows: list[dict[str, Any]]) -> None:
         "rowAuditStatus",
         "rowGateProofMode",
         "missingEvidenceKinds",
+        "childStatuses",
+        "childFailures",
+        "screenshotCount",
+        "mainImage",
+        "childArtifacts",
         "runPath",
         "viewerJson",
         "error",
@@ -310,6 +528,9 @@ def write_csv_report(path: Path, rows: list[dict[str, Any]]) -> None:
         for row in rows:
             writable = dict(row)
             writable["missingEvidenceKinds"] = ",".join(row.get("missingEvidenceKinds", []))
+            writable["childStatuses"] = ",".join(row.get("childStatuses", []))
+            writable["childFailures"] = " | ".join(row.get("childFailures", []))
+            writable["childArtifacts"] = " | ".join(row.get("childArtifacts", []))
             writer.writerow({field: writable.get(field, "") for field in fieldnames})
 
 
@@ -333,6 +554,8 @@ def write_markdown(path: Path, report: dict[str, Any]) -> None:
         f"- Runtime-supported rows: {counts['runtimeSupportedRows']}",
         f"- Loaded-pending-runtime rows: {counts['loadedPendingRuntimeRows']}",
         f"- Failed rows: {counts['failedRows']}",
+        f"- Rows with screenshots: {counts['rowsWithScreenshots']}",
+        f"- Rows with child failures: {counts['childFailureRows']}",
         "",
         "## Missing Evidence",
         "",
@@ -342,11 +565,18 @@ def write_markdown(path: Path, report: dict[str, Any]) -> None:
             lines.append(f"- `{key}`: {value}")
     else:
         lines.append("- none")
-    lines.extend(["", "## Rows", "", "| Runtime | Audit | Target | Phase | Gate | Missing Evidence | Run |", "|---|---|---|---|---|---|---|"])
+    lines.extend(["", "## Child Failures", ""])
+    if report["childFailureCounts"]:
+        for key, value in sorted(report["childFailureCounts"].items(), key=lambda item: (-item[1], item[0])):
+            lines.append(f"- `{key}`: {value}")
+    else:
+        lines.append("- none")
+    lines.extend(["", "## Rows", "", "| Runtime | Audit | Target | Phase | Gate | Missing Evidence | Child Failures | Shots | Main Image | Run |", "|---|---|---|---|---|---|---|---:|---|---|"])
     for row in report["rows"][:500]:
         missing = ",".join(row.get("missingEvidenceKinds", []))
+        failures = " | ".join(row.get("childFailures", [])[:3])
         lines.append(
-            f"| {row['effectiveClassification']} | {row['rowAuditStatus']} | `{row['runtimeTarget']}` | {row['phase']} | {row['gate']} | `{missing}` | `{row['runStatus']}` |"
+            f"| {row['effectiveClassification']} | {row['rowAuditStatus']} | `{row['runtimeTarget']}` | {row['phase']} | {row['gate']} | `{missing}` | `{failures}` | {row['screenshotCount']} | `{row['mainImage']}` | `{row['runStatus']}` |"
         )
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
@@ -355,10 +585,31 @@ def write_html(path: Path, report: dict[str, Any]) -> None:
     def esc(value: Any) -> str:
         return html.escape(as_text(value))
 
+    def file_href(value: Any) -> str:
+        text = as_text(value)
+        if not text:
+            return ""
+        try:
+            path_value = Path(text)
+            if path_value.is_absolute():
+                return path_value.as_uri()
+        except Exception:
+            pass
+        return text
+
     row_html = []
     for row in report["rows"][:1000]:
         missing = ",".join(row.get("missingEvidenceKinds", []))
+        failures = " | ".join(row.get("childFailures", [])[:4])
         run_link = esc(row.get("runPath", ""))
+        main_image = as_text(row.get("mainImage"))
+        image_uri = file_href(main_image)
+        image_html = ""
+        if main_image:
+            image_html = (
+                f"<a href=\"{esc(image_uri)}\"><img src=\"{esc(image_uri)}\" alt=\"row proof screenshot\"></a>"
+                f"<div><code>{esc(main_image)}</code></div>"
+            )
         row_html.append(
             "<tr>"
             f"<td>{esc(row['effectiveClassification'])}</td>"
@@ -367,6 +618,9 @@ def write_html(path: Path, report: dict[str, Any]) -> None:
             f"<td>{esc(row['phase'])}</td>"
             f"<td>{esc(row['gate'])}</td>"
             f"<td><code>{esc(missing)}</code></td>"
+            f"<td><code>{esc(failures)}</code></td>"
+            f"<td>{esc(row.get('screenshotCount', 0))}</td>"
+            f"<td>{image_html}</td>"
             f"<td><code>{run_link}</code></td>"
             "</tr>"
         )
@@ -386,6 +640,7 @@ table{{border-collapse:collapse;width:100%}}
 td,th{{border-bottom:1px solid #363c45;padding:7px;text-align:left;vertical-align:top}}
 th{{color:#aeb6c2}}
 code{{color:#d8e6ff;overflow-wrap:anywhere}}
+img{{max-width:220px;max-height:160px;border:1px solid #363c45;background:#090a0c;display:block;margin-bottom:6px}}
 </style>
 </head>
 <body><main>
@@ -398,10 +653,12 @@ code{{color:#d8e6ff;overflow-wrap:anywhere}}
 <span class=\"pill\">Pending: {esc(report['counts']['loadedPendingRuntimeRows'])}</span>
 <span class=\"pill\">Unrun: {esc(report['counts']['unrunRuntimeRequiredRows'])}</span>
 <span class=\"pill\">Failed: {esc(report['counts']['failedRows'])}</span>
+<span class=\"pill\">Rows with screenshots: {esc(report['counts']['rowsWithScreenshots'])}</span>
+<span class=\"pill\">Child failures: {esc(report['counts']['childFailureRows'])}</span>
 </section>
 <section class=\"panel\"><div>Burn-down: <code>{esc(report['burnDownJson'])}</code></div><div>Policy: {esc(report['payloadPolicy'])}</div></section>
 <section class=\"panel\"><table>
-<thead><tr><th>Runtime Class</th><th>Audit</th><th>Target</th><th>Phase</th><th>Gate</th><th>Missing Evidence</th><th>Run</th></tr></thead>
+<thead><tr><th>Runtime Class</th><th>Audit</th><th>Target</th><th>Phase</th><th>Gate</th><th>Missing Evidence</th><th>Child Failures</th><th>Shots</th><th>Main Image</th><th>Run</th></tr></thead>
 <tbody>{''.join(row_html)}</tbody>
 </table></section>
 </main></body></html>

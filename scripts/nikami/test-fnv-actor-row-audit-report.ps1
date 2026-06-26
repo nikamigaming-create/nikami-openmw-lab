@@ -121,6 +121,44 @@ function New-Result(
     [string[]]$Observed,
     [string]$ProofMode
 ) {
+    $safeId = $Row.id -replace '[^A-Za-z0-9_.-]', '_'
+    $childDir = Join-Path $FixtureDir "child-$safeId"
+    $proofDir = Join-Path $childDir "proof"
+    New-Item -ItemType Directory -Force -Path $proofDir | Out-Null
+
+    $childFailures = @()
+    if ($AuditStatus -eq "PENDING") {
+        $childFailures = @("contract child pending failure")
+    } elseif ($AuditStatus -eq "FAIL") {
+        $childFailures = @("contract child failure")
+    }
+    $viewerJson = Join-Path $childDir "character-viewer-manifest.json"
+    $viewerManifest = Join-Path $childDir "viewer-runs.json"
+    $suiteJson = Join-Path $childDir "character-builder-suite.json"
+    [pscustomobject][ordered]@{
+        reportStatus = $RunStatus
+        runtimeGateStatus = $AuditStatus
+        proofDir = $proofDir
+        phase = $Row.phase
+        angle = "front"
+        screenshots = @("screenshot000.png")
+        failures = @($childFailures)
+        runtimeGateError = if ($AuditStatus -eq "FAIL") { "contract runtime gate error" } else { "" }
+    } | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $suiteJson -Encoding UTF8
+    [pscustomobject][ordered]@{
+        reportStatus = $RunStatus
+        runtimeGateStatus = $AuditStatus
+        proofDir = $proofDir
+        screenshots = @("screenshot000.png")
+        failures = @($childFailures)
+        suiteJson = $suiteJson
+    } | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $viewerJson -Encoding UTF8
+    [pscustomobject][ordered]@{
+        schema = "contract-viewer-runs-v1"
+        viewerJson = $viewerJson
+        suiteJson = $suiteJson
+    } | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $viewerManifest -Encoding UTF8
+
     [pscustomobject][ordered]@{
         id = $Row.id
         entryId = $Row.entryId
@@ -135,12 +173,12 @@ function New-Result(
         runtimeStates = @($Row.runtimeStates)
         status = $RunStatus
         dryRun = $false
-        rowJson = Join-Path $FixtureDir "$($Row.id -replace '[^A-Za-z0-9_.-]', '_').json"
+        rowJson = Join-Path $FixtureDir "$safeId.json"
         command = $Row.runGateCommand
-        viewerIndex = Join-Path $FixtureDir "$($Row.id).html"
-        viewerManifest = Join-Path $FixtureDir "$($Row.id)-viewer-runs.json"
-        viewerJson = Join-Path $FixtureDir "$($Row.id)-viewer.json"
-        actorKit = Join-Path $FixtureDir "$($Row.id)-actor-kit.json"
+        viewerIndex = Join-Path $childDir "$safeId.html"
+        viewerManifest = $viewerManifest
+        viewerJson = $viewerJson
+        actorKit = Join-Path $childDir "$safeId-actor-kit.json"
         rowRuntimeClassification = $RuntimeClass
         rowGateProofMode = $ProofMode
         rowGateAudit = [pscustomobject][ordered]@{
@@ -199,23 +237,33 @@ if ([int]$report.counts.runMatchedRows -ne 3 -or [int]$report.counts.unrunRuntim
 if ([int]$report.counts.runtimeSupportedRows -ne 1 -or [int]$report.counts.loadedPendingRuntimeRows -ne 2 -or [int]$report.counts.failedRows -ne 1) {
     throw "Actor row audit report runtime classification counts are wrong."
 }
+if ([int]$report.counts.rowsWithScreenshots -ne 3 -or [int]$report.counts.childFailureRows -ne 2) {
+    throw "Actor row audit report child proof counts are wrong."
+}
 if ([int]$report.effectiveClassificationCounts."known-blocked" -ne 2 -or [int]$report.effectiveClassificationCounts."intentionally-excluded-with-proof" -ne 1) {
     throw "Actor row audit report did not preserve blocked/excluded accounting."
 }
 if ([int]$report.missingEvidenceCounts."runtime-row-run" -ne 1 -or [int]$report.missingEvidenceCounts."mouth-runtime-evidence" -ne 1 -or [int]$report.missingEvidenceCounts."projectile-runtime-evidence" -ne 1) {
     throw "Actor row audit report missing-evidence counts are wrong."
 }
+if ([int]$report.childFailureCounts."contract child pending failure" -ne 1 -or [int]$report.childFailureCounts."contract child failure" -ne 1) {
+    throw "Actor row audit report child failure counts are wrong."
+}
+$supportedRow = @($report.rows | Where-Object { $_.runtimeTarget -eq "GSEasyPete" })[0]
+if ([int]$supportedRow.screenshotCount -ne 1 -or !$supportedRow.mainImage.Contains("screenshot000.png")) {
+    throw "Actor row audit report did not surface child screenshot evidence."
+}
 
 $markdown = Get-Content -LiteralPath $markdownPath -Raw
 $html = Get-Content -LiteralPath $htmlPath -Raw
 $csv = Get-Content -LiteralPath $csvPath -Raw
-foreach ($needle in @("FNV Actor Row Audit Report", "Runtime status", "mouth-runtime-evidence", "runtime-row-run")) {
+foreach ($needle in @("FNV Actor Row Audit Report", "Runtime status", "mouth-runtime-evidence", "runtime-row-run", "Rows with screenshots", "contract child pending failure", "screenshot000.png")) {
     if (!$markdown.Contains($needle)) { throw "Actor row audit Markdown missing $needle" }
 }
-foreach ($needle in @("FNV Actor Row Audit Report", "Runtime: FAIL", "projectile-runtime-evidence")) {
+foreach ($needle in @("FNV Actor Row Audit Report", "Runtime: FAIL", "projectile-runtime-evidence", "contract child failure", "screenshot000.png")) {
     if (!$html.Contains($needle)) { throw "Actor row audit HTML missing $needle" }
 }
-if (!$csv.Contains("runtime-row-run") -or !$csv.Contains("viewer-gate-state-runtime-supported")) {
+if (!$csv.Contains("runtime-row-run") -or !$csv.Contains("viewer-gate-state-runtime-supported") -or !$csv.Contains("contract child pending failure") -or !$csv.Contains("screenshot000.png")) {
     throw "Actor row audit CSV missing expected row proof values."
 }
 

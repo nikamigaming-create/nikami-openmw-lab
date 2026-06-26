@@ -60,6 +60,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/nikami/run-fnv-actor
 
 The report writes `nikami-fnv-actor-row-audit-report-v1` JSON/HTML/Markdown/CSV and is the human/bot burn-down view for actor rows. It counts runtime-supported rows, loaded-pending rows, failed rows, unrun runtime-required rows, source-blocked rows, intentionally excluded rows, and missing evidence kinds.
 
+The row report must also follow each row into its child viewer artifacts. For every matched runtime row it surfaces child statuses, child failures, screenshot count, a main proof image, child artifact paths, and child load errors. These child screenshots are review evidence only; they do not promote a row to `runtime-supported`. A row only becomes supported when the selected row gate proves the exact requested gate and runtime state.
+
 ## Runtime Proof Loop
 
 For each selected row:
