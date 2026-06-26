@@ -5,6 +5,7 @@ import json
 import math
 import os
 import struct
+import zlib
 from collections import Counter, defaultdict
 from datetime import datetime
 from pathlib import Path
@@ -55,7 +56,11 @@ SUPPORT_RECORD_TYPES = {
     "ANIO",
     "OTFT",
     "VTYP",
+    "WEAP",
 }
+PAYLOAD_RECORD_TYPES = ACTOR_RECORD_TYPES | PLACED_ACTOR_TYPES | SUPPORT_RECORD_TYPES | {"CELL"}
+
+REC_COMPRESSED = 0x00040000
 
 RACE_FACE_ROLES = {
     0: "head",
@@ -282,6 +287,36 @@ def form_ids_from_payload(payload, masters, plugin, content_index):
         if adjusted:
             result.append(adjusted)
     return result
+
+
+def record_payload(payload, flags):
+    if not flags & REC_COMPRESSED:
+        return payload, "", len(payload)
+    if len(payload) < 4:
+        raise ValueError("Compressed record payload is missing its uncompressed-size prefix.")
+    expected_size = struct.unpack_from("<I", payload, 0)[0]
+    compressed = payload[4:]
+    try:
+        inflated = zlib.decompress(compressed)
+        mode = "compressed-zlib"
+    except zlib.error:
+        # Match components/esm4/reader.cpp: if whole-record inflate fails, retry in
+        # 4-byte blocks. Some FNV records rely on that fallback.
+        decompressor = zlib.decompressobj()
+        pieces = []
+        try:
+            for offset in range(0, len(compressed), 4):
+                pieces.append(decompressor.decompress(compressed[offset : offset + 4]))
+                if decompressor.eof:
+                    break
+            pieces.append(decompressor.flush())
+        except zlib.error as exc:
+            raise ValueError(f"Compressed record zlib block inflate failed: {exc}") from exc
+        inflated = b"".join(pieces)
+        mode = "compressed-zlib-block"
+    if expected_size and len(inflated) != expected_size:
+        raise ValueError(f"Compressed record inflated to {len(inflated)} bytes, expected {expected_size}.")
+    return inflated, mode, expected_size
 
 
 class RowBuilder:
@@ -555,6 +590,7 @@ def read_plugin_records(path, plugin, content_index):
     masters = []
     records = []
     counts = Counter()
+    compression_counts = Counter()
 
     def read_range(offset, end, context):
         nonlocal masters
@@ -582,7 +618,19 @@ def read_plugin_records(path, plugin, content_index):
                     f"size={size} next={next_offset} limit={end}"
                 )
 
-            payload = data[offset:next_offset]
+            raw_payload = data[offset:next_offset]
+            expected_size = len(raw_payload)
+            if rec_type in PAYLOAD_RECORD_TYPES or not flags & REC_COMPRESSED:
+                try:
+                    payload, compression, expected_size = record_payload(raw_payload, flags)
+                except ValueError as exc:
+                    raise ValueError(f"{path} {rec_type} FormId:{raw_form_id:#010x}: {exc}") from exc
+            else:
+                payload = b""
+                compression = "compressed-skipped-unsupported"
+                if len(raw_payload) >= 4:
+                    expected_size = struct.unpack_from("<I", raw_payload, 0)[0]
+            compression_counts[compression or "uncompressed"] += 1
             subrecords = base.read_subrecords(payload)
             if rec_type == "TES4":
                 masters = [base.zstring(payload) for kind, payload in subrecords if kind == "MAST"]
@@ -594,6 +642,8 @@ def read_plugin_records(path, plugin, content_index):
                 "rawFormId": form_id_or_empty(raw_form_id),
                 "formId": form_id_or_empty(form_id),
                 "flags": flags,
+                "compression": compression,
+                "expectedPayloadSize": expected_size,
                 "editorId": base.first_zstring(subrecords, "EDID"),
                 "fullNameHash": text_hash(base.first_zstring(subrecords, "FULL")),
                 "subrecords": subrecords,
@@ -613,6 +663,7 @@ def read_plugin_records(path, plugin, content_index):
         "masters": masters,
         "counts": counts,
         "records": records,
+        "compressionCounts": compression_counts,
     }
 
 
@@ -750,12 +801,216 @@ def collect_actor_inventory_ids(record, content_index):
     return result
 
 
+def collect_outfit_item_ids(record, content_index):
+    result = []
+    for kind, payload in record["subrecords"]:
+        if kind == "INAM" and len(payload) >= 4:
+            form_id = adjusted_form_id(struct.unpack_from("<I", payload, 0)[0], record["masters"], record["plugin"], content_index)
+            if form_id:
+                result.append((form_id, None, "INAM"))
+        elif kind == "CNTO" and len(payload) >= 4:
+            form_id = adjusted_form_id(struct.unpack_from("<I", payload, 0)[0], record["masters"], record["plugin"], content_index)
+            count = get_i32(payload, 4) if len(payload) >= 8 else None
+            if form_id:
+                result.append((form_id, count, "CNTO"))
+    return result
+
+
 def collect_strings(record, subrecord):
     result = []
     for kind, payload in record["subrecords"]:
         if kind == subrecord:
             result.extend(zero_string_array(payload))
     return result
+
+
+def emit_actor_armor_detail_rows(rows, by_form, content_index, armor_record, actor, subrecord_prefix):
+    for kind, payload in armor_record["subrecords"]:
+        if kind == "MODL" and len(payload) == 4:
+            add_reference_row(
+                rows,
+                armor_record,
+                by_form,
+                adjusted_form_id(struct.unpack_from("<I", payload, 0)[0], armor_record["masters"], armor_record["plugin"], content_index),
+                component="equipment-armor-addon",
+                subrecord=f"{subrecord_prefix}/{kind}",
+                proof_anchor="npc-equipment-assembly",
+                notes="Actor worn ARMO addon reference inherited through inventory/outfit expansion.",
+                actor=actor,
+            )
+        elif kind in {"MODL", "MOD2", "MOD3", "MOD4"}:
+            value = base.zstring(payload)
+            if value:
+                add_asset_row(
+                    rows,
+                    armor_record,
+                    component="equipment-armor-model",
+                    subrecord=f"{subrecord_prefix}/{kind}",
+                    asset_path=model_archive_path(value),
+                    proof_anchor="npc-equipment-assembly",
+                    notes="Actor worn FNV ARMO model inherited through inventory/outfit expansion.",
+                    actor=actor,
+                )
+
+
+def emit_actor_clothing_detail_rows(rows, clothing_record, actor, subrecord_prefix):
+    for kind, payload in clothing_record["subrecords"]:
+        if kind in {"MODL", "MOD2", "MOD3", "MOD4"}:
+            value = base.zstring(payload)
+            if value:
+                add_asset_row(
+                    rows,
+                    clothing_record,
+                    component="equipment-clothing-model",
+                    subrecord=f"{subrecord_prefix}/{kind}",
+                    asset_path=model_archive_path(value),
+                    classification="loaded-pending-runtime",
+                    first_failing_gate="clothing-fnv-equipment-binding",
+                    proof_anchor="npc-equipment-assembly",
+                    notes="Actor worn CLOT model inherited through inventory/outfit/template expansion.",
+                    actor=actor,
+                )
+
+
+def emit_actor_weapon_detail_rows(rows, by_form, content_index, weapon_record, actor, subrecord_prefix):
+    for kind, payload in weapon_record["subrecords"]:
+        if kind in {"MODL", "MOD2", "MOD3", "MOD4", "MWD1", "MWD2", "MWD3", "MWD4", "MWD5", "MWD6", "MWD7"}:
+            value = base.zstring(payload)
+            if value:
+                add_asset_row(
+                    rows,
+                    weapon_record,
+                    component="equipment-weapon-model",
+                    subrecord=f"{subrecord_prefix}/{kind}",
+                    asset_path=model_archive_path(value),
+                    classification="loaded-pending-runtime",
+                    first_failing_gate="weapon-prop-attachment-runtime",
+                    proof_anchor="npc-kffz-animation",
+                    notes="Actor weapon model inherited through inventory/outfit/template expansion.",
+                    actor=actor,
+                )
+        elif kind in {"NAM0", "WNAM", "ETYP", "INAM", "YNAM", "ZNAM", "SNAM", "XNAM", "TNAM", "NAM8", "NAM9", "WMS1", "WMS2"} and len(payload) >= 4:
+            for form_id in form_ids_from_payload(payload, weapon_record["masters"], weapon_record["plugin"], content_index):
+                add_reference_row(
+                    rows,
+                    weapon_record,
+                    by_form,
+                    form_id,
+                    component="equipment-weapon-reference",
+                    subrecord=f"{subrecord_prefix}/{kind}",
+                    classification="loaded-pending-runtime",
+                    first_failing_gate="weapon-projectile-sound-animation-runtime",
+                    proof_anchor="npc-kffz-animation",
+                    notes="Actor weapon linked form inherited through inventory/outfit/template expansion.",
+                    actor=actor,
+                )
+
+
+def emit_actor_equipment_item_rows(rows, by_form, content_index, source_record, item, count, actor, subrecord, notes):
+    actor_kind = actor.get("type", "")
+    target_type = record_type(by_form, item)
+    target_record = resolve(by_form, item)
+    if target_type == "ARMO":
+        component = "equipment-armor"
+        anchor = "npc-equipment-assembly"
+    elif target_type == "CLOT":
+        component = "equipment-clothing"
+        anchor = "npc-equipment-assembly"
+    elif target_type == "WEAP":
+        component = "equipment-weapon"
+        anchor = "npc-kffz-animation"
+    else:
+        component = "inventory-item"
+        anchor = "npc-equipment-assembly" if actor_kind == "NPC_" else "creature-body-assembly"
+    count_note = "" if count is None else f" count={count};"
+    add_reference_row(
+        rows,
+        source_record,
+        by_form,
+        item,
+        component=component,
+        subrecord=subrecord,
+        classification="loaded-pending-runtime",
+        first_failing_gate="actor-inventory-presentation-sweep",
+        proof_anchor=anchor,
+        notes=f"{notes}{count_note} actor presentation must prove visible/equipped behavior when applicable.",
+        actor=actor,
+    )
+    if target_record is None:
+        return
+    if target_type == "ARMO":
+        emit_actor_armor_detail_rows(rows, by_form, content_index, target_record, actor, subrecord)
+    elif target_type == "CLOT":
+        emit_actor_clothing_detail_rows(rows, target_record, actor, subrecord)
+    elif target_type == "WEAP":
+        emit_actor_weapon_detail_rows(rows, by_form, content_index, target_record, actor, subrecord)
+
+
+def emit_actor_outfit_rows(rows, by_form, content_index, actor_record, actor, field, depth=0, visited=None, subrecord_prefix=None):
+    if visited is None:
+        visited = set()
+    subrecord_prefix = subrecord_prefix or field
+    if depth > 4:
+        return
+    for outfit_id in all_adjusted_form_ids(actor_record["subrecords"], field, actor_record["masters"], actor_record["plugin"], content_index):
+        outfit_record = resolve(by_form, outfit_id)
+        if not outfit_record or outfit_record["type"] != "OTFT":
+            continue
+        key = (actor_record["formId"], field, outfit_record["formId"])
+        if key in visited:
+            continue
+        visited.add(key)
+        for item, count, item_subrecord in collect_outfit_item_ids(outfit_record, content_index):
+            emit_actor_equipment_item_rows(
+                rows,
+                by_form,
+                content_index,
+                outfit_record,
+                item,
+                count,
+                actor,
+                f"{subrecord_prefix}/{item_subrecord}",
+                f"Actor {subrecord_prefix} outfit item inherited from {outfit_record.get('editorId', '') or outfit_record['formId']};",
+            )
+
+
+def emit_actor_template_equipment_rows(rows, by_form, content_index, actor_record, actor, depth=0, visited=None):
+    if visited is None:
+        visited = set()
+    if depth > 4:
+        return
+    for template_id in all_adjusted_form_ids(actor_record["subrecords"], "TPLT", actor_record["masters"], actor_record["plugin"], content_index):
+        template_record = resolve(by_form, template_id)
+        if not template_record or template_record["type"] not in ACTOR_RECORD_TYPES:
+            continue
+        if template_record["formId"] in visited:
+            continue
+        visited.add(template_record["formId"])
+        for item, count in collect_actor_inventory_ids(template_record, content_index):
+            emit_actor_equipment_item_rows(
+                rows,
+                by_form,
+                content_index,
+                template_record,
+                item,
+                count,
+                actor,
+                "TPLT/CNTO",
+                f"Actor template inventory item inherited from {template_record.get('editorId', '') or template_record['formId']};",
+            )
+        for outfit_field in ("DOFT", "SOFT"):
+            emit_actor_outfit_rows(
+                rows,
+                by_form,
+                content_index,
+                template_record,
+                actor,
+                outfit_field,
+                depth + 1,
+                visited,
+                f"TPLT/{outfit_field}",
+            )
+        emit_actor_template_equipment_rows(rows, by_form, content_index, template_record, actor, depth + 1, visited)
 
 
 def emit_actor_rows(rows, by_form, content_index, record):
@@ -949,32 +1204,20 @@ def emit_actor_rows(rows, by_form, content_index, record):
             )
 
     for item, count in collect_actor_inventory_ids(record, content_index):
-        target_type = record_type(by_form, item)
-        if target_type == "ARMO":
-            component = "equipment-armor"
-            anchor = "npc-equipment-assembly"
-        elif target_type == "CLOT":
-            component = "equipment-clothing"
-            anchor = "npc-equipment-assembly"
-        elif target_type == "WEAP":
-            component = "equipment-weapon"
-            anchor = "npc-kffz-animation"
-        else:
-            component = "inventory-item"
-            anchor = "npc-equipment-assembly" if actor_kind == "NPC_" else "creature-body-assembly"
-        add_reference_row(
+        emit_actor_equipment_item_rows(
             rows,
-            record,
             by_form,
+            content_index,
+            record,
             item,
-            component=component,
-            subrecord="CNTO",
-            classification="loaded-pending-runtime",
-            first_failing_gate="actor-inventory-presentation-sweep",
-            proof_anchor=anchor,
-            notes=f"Inventory item count={count}; actor presentation must prove visible/equipped behavior when applicable.",
-            actor=actor,
+            count,
+            actor,
+            "CNTO",
+            "Actor direct inventory item;",
         )
+    for outfit_field in ("DOFT", "SOFT"):
+        emit_actor_outfit_rows(rows, by_form, content_index, record, actor, outfit_field)
+    emit_actor_template_equipment_rows(rows, by_form, content_index, record, actor)
 
 
 def emit_placed_actor_rows(rows, by_form, content_index, exterior_cell_index, record):
@@ -1511,12 +1754,16 @@ def main():
 
     rows = builder.rows
     summary = summarize_rows(rows)
+    compression_counts = Counter()
+    for ledger in plugin_ledgers:
+        compression_counts.update(ledger["compressionCounts"])
     record_manifest = [
         {
             "plugin": ledger["plugin"],
             "path": ledger["path"],
             "length": ledger["length"],
             "masters": ledger["masters"],
+            "compressionCounts": dict(sorted(ledger["compressionCounts"].items())),
             "records": [{"type": key, "count": ledger["counts"][key]} for key in sorted(ledger["counts"])],
         }
         for ledger in plugin_ledgers
@@ -1555,6 +1802,7 @@ def main():
         "payloadPolicy": "retail-text-redacted-v1; no retail/mod payload bytes are copied by this proof",
         "content": args.content,
         "pluginCount": len(plugin_ledgers),
+        "compressionCounts": dict(sorted(compression_counts.items())),
         **actor_counts,
         **summary,
         "runtimeAnchors": RUNTIME_ANCHORS,

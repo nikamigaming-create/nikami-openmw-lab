@@ -243,6 +243,53 @@ if ([string]$easyPete.placedCellFormId -ne "0x000daeb9" -or [string]$easyPete.pl
 if ([int]$easyPete.placedCellGridX -ne -17 -or [int]$easyPete.placedCellGridY -ne 0 -or [string]$easyPete.placedCellFallbackFormId -ne "0x000846ea") {
     throw "EasyPeteRef grid/fallback proof is wrong. Expected grid=(-17,0) fallback=0x000846ea; actual grid=($($easyPete.placedCellGridX),$($easyPete.placedCellGridY)) fallback=$($easyPete.placedCellFallbackFormId). See $LedgerPath"
 }
+$easyPeteActorRows = @($Ledger | Where-Object { [string]$_.actorFormId -eq [string]$easyPete.actorFormId })
+if (@($easyPeteActorRows | Where-Object { [string]$_.actorEditorId -eq "GSEasyPete" }).Count -le 0) {
+    throw "Actor presentation ledger did not decompress Easy Pete's base NPC record into GSEasyPete actor rows. See $LedgerPath"
+}
+if ([int]$Result.compressionCounts.'compressed-zlib' -le 0) {
+    throw "Actor presentation ledger did not report any compressed-zlib records. See $ResultPath"
+}
+$easyPeteRequiredComponents = @(
+    "hair",
+    "npc-headpart",
+    "facegen-symmetric-texture",
+    "equipment-armor",
+    "equipment-armor-model",
+    "equipment-weapon"
+)
+$easyPeteComponentSet = @{}
+foreach ($row in $easyPeteActorRows) {
+    $easyPeteComponentSet[[string]$row.component] = $true
+}
+$missingEasyPeteComponents = @($easyPeteRequiredComponents | Where-Object { !$easyPeteComponentSet.ContainsKey($_) })
+if ($missingEasyPeteComponents.Count -gt 0) {
+    throw "Easy Pete actor rows are missing decompressed face/hair/equipment components: $($missingEasyPeteComponents -join ', '). See $LedgerPath"
+}
+$expectedEasyPeteRows = @{
+    "hair:HairAfricanAmericanBaseOld" = @($easyPeteActorRows | Where-Object { [string]$_.component -eq "hair" -and [string]$_.resolvedEditorId -eq "HairAfricanAmericanBaseOld" })
+    "npc-headpart:BeardFullOld" = @($easyPeteActorRows | Where-Object { [string]$_.component -eq "npc-headpart" -and [string]$_.resolvedEditorId -eq "BeardFullOld" })
+    "equipment-armor:CowboyHat02" = @($easyPeteActorRows | Where-Object { [string]$_.component -eq "equipment-armor" -and [string]$_.resolvedEditorId -eq "CowboyHat02" })
+    "equipment-armor:OutfitRepublican02" = @($easyPeteActorRows | Where-Object { [string]$_.component -eq "equipment-armor" -and [string]$_.resolvedEditorId -eq "OutfitRepublican02" })
+    "equipment-weapon:WeapNVDynamite" = @($easyPeteActorRows | Where-Object { [string]$_.component -eq "equipment-weapon" -and [string]$_.resolvedEditorId -eq "WeapNVDynamite" })
+}
+foreach ($expectation in $expectedEasyPeteRows.GetEnumerator()) {
+    if ($expectation.Value.Count -le 0) {
+        throw "Easy Pete actor rows are missing required static evidence $($expectation.Key). See $LedgerPath"
+    }
+}
+$easyPeteHatRows = @($easyPeteActorRows | Where-Object { [string]$_.component -eq "equipment-armor" -and [string]$_.resolvedEditorId -eq "CowboyHat02" })
+if ($easyPeteHatRows.Count -le 0) {
+    throw "Easy Pete actor rows did not resolve CowboyHat02 from actor inventory. See $LedgerPath"
+}
+$easyPeteHatModelRows = @($easyPeteActorRows | Where-Object { [string]$_.component -eq "equipment-armor-model" -and [string]$_.sourceEditorId -eq "CowboyHat02" -and [string]$_.assetPath -match "cowboyhat" })
+if ($easyPeteHatModelRows.Count -le 0) {
+    throw "Easy Pete actor rows did not inherit CowboyHat02 model paths for headgear proof. See $LedgerPath"
+}
+$easyPeteOutfitModelRows = @($easyPeteActorRows | Where-Object { [string]$_.component -eq "equipment-armor-model" -and [string]$_.sourceEditorId -eq "OutfitRepublican02" -and [string]$_.assetPath -match "republican" })
+if ($easyPeteOutfitModelRows.Count -le 0) {
+    throw "Easy Pete actor rows did not inherit OutfitRepublican02 worn model paths. See $LedgerPath"
+}
 
 $requiredComponents = @(
     "actor-base-record",
