@@ -324,6 +324,11 @@ namespace SceneUtil
         return mGeometry[index].get();
     }
 
+    osg::Geometry* RigGeometry::getLastFrameGeometry() const
+    {
+        return getGeometry(mLastFrameNumber);
+    }
+
     bool RigGeometry::initFromParentSkeleton(osg::NodeVisitor* nv)
     {
         const osg::NodePath& path = nv->getNodePath();

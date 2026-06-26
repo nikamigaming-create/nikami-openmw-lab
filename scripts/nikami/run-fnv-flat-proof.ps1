@@ -495,6 +495,8 @@ function Get-ActorVisibleHandGeometryProbe([string]$Path, [string[]]$ActorPatter
             FailureLine = $null
             PoseSanityBadCount = 0
             PoseSanityFailureLine = $null
+            LimbShapeBadCount = 0
+            LimbShapeFailureLine = $null
         }
     }
 
@@ -503,6 +505,8 @@ function Get-ActorVisibleHandGeometryProbe([string]$Path, [string[]]$ActorPatter
     $auditSamples = [System.Collections.Generic.List[object]]::new()
     $poseSanityBadSeen = [System.Collections.Generic.HashSet[string]]::new()
     $poseSanityBadLines = [System.Collections.Generic.List[string]]::new()
+    $limbShapeBadSeen = [System.Collections.Generic.HashSet[string]]::new()
+    $limbShapeBadLines = [System.Collections.Generic.List[string]]::new()
     foreach ($pattern in $ActorPatterns) {
         $actorPattern = "(?:`"$pattern`"|$pattern)"
         $matches = @(Select-String -LiteralPath $Path -Pattern "FNV/ESM4 ACTOR HAND GEOMETRY AUDIT $actorPattern " -ErrorAction SilentlyContinue)
@@ -524,6 +528,12 @@ function Get-ActorVisibleHandGeometryProbe([string]$Path, [string[]]$ActorPatter
 
             $drawable = ""
             if ($match.Line -match " drawable='([^']+)'") { $drawable = $Matches[1] }
+
+            if ($match.Line -match " shapeVerdict=SUSPECT") {
+                if ($limbShapeBadSeen.Add($match.Line)) {
+                    $limbShapeBadLines.Add($match.Line)
+                }
+            }
 
             $anchor = $null
             if ($match.Line -match " anchor=\(([-+0-9.eE]+,[-+0-9.eE]+,[-+0-9.eE]+)\)") {
@@ -611,12 +621,15 @@ function Get-ActorVisibleHandGeometryProbe([string]$Path, [string[]]$ActorPatter
     $rightDistance = if ($null -ne $bestRight) { [double]$bestRight.RenderDistance } else { $null }
     $leftOk = $null -ne $leftDistance -and $leftDistance -le $MaxDistance
     $rightOk = $null -ne $rightDistance -and $rightDistance -le $MaxDistance
-    $status = if ($poseSanityBadLines.Count -gt 0) { "FAIL" } elseif ($leftOk -and $rightOk) { "PASS" } elseif ($samples.Count -gt 0) { "FAIL" } else { "MISSING" }
+    $status = if ($poseSanityBadLines.Count -gt 0 -or $limbShapeBadLines.Count -gt 0) { "FAIL" } elseif ($leftOk -and $rightOk) { "PASS" } elseif ($samples.Count -gt 0) { "FAIL" } else { "MISSING" }
 
     $failureLine = $null
     if ($status -ne "PASS") {
         if ($poseSanityBadLines.Count -gt 0) {
             $failureLine = $poseSanityBadLines[0]
+        }
+        if ($limbShapeBadLines.Count -gt 0 -and $null -eq $failureLine) {
+            $failureLine = $limbShapeBadLines[0]
         }
         if ($null -ne $bestLeft -and ($null -eq $failureLine -or [double]$bestLeft.RenderDistance -gt $MaxDistance)) {
             $failureLine = $bestLeft.Line
@@ -638,6 +651,8 @@ function Get-ActorVisibleHandGeometryProbe([string]$Path, [string[]]$ActorPatter
         FailureLine = $failureLine
         PoseSanityBadCount = $poseSanityBadLines.Count
         PoseSanityFailureLine = if ($poseSanityBadLines.Count -gt 0) { $poseSanityBadLines[0] } else { $null }
+        LimbShapeBadCount = $limbShapeBadLines.Count
+        LimbShapeFailureLine = if ($limbShapeBadLines.Count -gt 0) { $limbShapeBadLines[0] } else { $null }
     }
 }
 
@@ -2132,6 +2147,10 @@ Write-ProofLine ("Target visible hand geometry samples: {0} leftBest={1} rightBe
 Write-ProofLine "Target visible hand geometry pose sanity BAD lines: $($targetVisibleHandGeometry.PoseSanityBadCount)"
 if (![string]::IsNullOrWhiteSpace($targetVisibleHandGeometry.PoseSanityFailureLine)) {
     Write-ProofLine "Target visible hand geometry pose sanity failure line: $($targetVisibleHandGeometry.PoseSanityFailureLine)"
+}
+Write-ProofLine "Target visible limb shape BAD lines: $($targetVisibleHandGeometry.LimbShapeBadCount)"
+if (![string]::IsNullOrWhiteSpace($targetVisibleHandGeometry.LimbShapeFailureLine)) {
+    Write-ProofLine "Target visible limb shape failure line: $($targetVisibleHandGeometry.LimbShapeFailureLine)"
 }
 if (![string]::IsNullOrWhiteSpace($targetVisibleHandGeometry.FailureLine)) {
     Write-ProofLine "Target visible hand geometry failure line: $($targetVisibleHandGeometry.FailureLine)"

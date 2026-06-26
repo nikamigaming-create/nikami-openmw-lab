@@ -81,6 +81,7 @@ namespace SceneUtil
 
         osg::ref_ptr<osg::Geometry> getSourceGeometry() const;
         osg::Geometry* getRenderGeometry(unsigned int index) const;
+        osg::Geometry* getLastFrameGeometry() const;
 
         void accept(osg::NodeVisitor& nv) override;
         bool supports(const osg::PrimitiveFunctor&) const override { return true; }

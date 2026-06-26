@@ -133,6 +133,8 @@ try {
         $flatArgs.Add("-NeutralActorPreview")
         if ($ActorKind -ine "creature") {
             $flatArgs.Add("-NeutralActorPreviewStandingIdle")
+            $flatArgs.Add("-RequireActorVisibleHandGeometry")
+            Add-Arg $flatArgs "-ActorVisibleHandMaxDistance" 30.0
         }
         Add-Arg $flatArgs "-NeutralActorPreviewProfile" $NeutralActorPreviewProfile
         Add-Arg $flatArgs "-ActorStageX" $ActorStageX

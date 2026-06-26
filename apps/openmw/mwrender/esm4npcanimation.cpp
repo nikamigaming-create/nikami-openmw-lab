@@ -346,6 +346,10 @@ namespace MWRender
                 stateSet->setMode(GL_BLEND, osg::StateAttribute::OFF | osg::StateAttribute::OVERRIDE);
                 stateSet->setMode(GL_ALPHA_TEST, osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
                 stateSet->setAttributeAndModes(alphaFunc, osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
+                stateSet->setMode(GL_DEPTH_TEST, osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
+                osg::ref_ptr<osg::Depth> depth = new SceneUtil::AutoDepth(osg::Depth::LEQUAL);
+                depth->setWriteMask(true);
+                stateSet->setAttributeAndModes(depth, osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
                 stateSet->setRenderingHint(osg::StateSet::OPAQUE_BIN);
                 // Hair/beard geometry uses vertex or texture alpha for strand cutouts.
                 // Keep blending disabled so it does not bleed through hats, but do not force final alpha to 1.
@@ -551,11 +555,14 @@ namespace MWRender
 
         osg::Vec4f getFalloutRenderHairTint(const ESM4::Npc& traits) { return getHairTint(traits); }
 
-        float getFalloutHairEmissionStrength(const osg::Vec4f&)
+        float getFalloutHairEmissionStrength(const osg::Vec4f& tint)
         {
             const char* value = std::getenv("OPENMW_FNV_HAIR_EMISSION_STRENGTH");
             if (value == nullptr || value[0] == '\0')
-                return 0.f;
+            {
+                const float luma = tint.x() * 0.2126f + tint.y() * 0.7152f + tint.z() * 0.0722f;
+                return std::clamp((luma - 0.55f) * 0.8f, 0.f, 0.28f);
+            }
 
             char* end = nullptr;
             const float parsed = std::strtof(value, &end);
@@ -1504,7 +1511,7 @@ namespace MWRender
         {
             const char* value = std::getenv("OPENMW_FNV_FACEGEN_TEXTURE_MODE");
             if (value == nullptr || value[0] == '\0')
-                return "direct-diffuse";
+                return "generated-diffuse";
 
             std::string mode(value);
             Misc::StringUtils::lowerCaseInPlace(mode);
@@ -1513,9 +1520,11 @@ namespace MWRender
                 return "generated-diffuse";
             if (mode == "direct" || mode == "diffuse" || mode == "direct-diffuse" || mode == "direct_diffuse")
                 return "direct-diffuse";
+            if (mode == "detail" || mode == "detail-overlay" || mode == "detail_overlay")
+                return "detail";
             if (mode == "none" || mode == "source-only" || mode == "disabled")
                 return "source-only";
-            return "direct-diffuse";
+            return "generated-diffuse";
         }
 
         std::string findFonvNpcBodyTexture(Resource::ResourceSystem* resourceSystem, const ESM4::Npc& traits, bool isFemale)
@@ -3486,7 +3495,7 @@ namespace MWRender
         {
             const char* value = std::getenv("OPENMW_FNV_COVERED_HEAD_SKIN_SCALP_Z_FRACTION");
             if (value == nullptr || value[0] == '\0')
-                return 0.76f;
+                return 0.70f;
 
             char* end = nullptr;
             const float parsed = std::strtof(value, &end);
@@ -3577,7 +3586,8 @@ namespace MWRender
                     const osg::Vec3f& cv = (*vertices)[c];
                     const float minZ = std::min({ av.z(), bv.z(), cv.z() });
                     const float maxZ = std::max({ av.z(), bv.z(), cv.z() });
-                    if (minZ > cutoffZ)
+                    const float averageZ = (av.z() + bv.z() + cv.z()) / 3.f;
+                    if (averageZ > cutoffZ)
                     {
                         ++removedTriangles;
                         ++stats.mRemovedTriangles;
@@ -4221,6 +4231,11 @@ namespace MWRender
             std::string lowered(model);
             Misc::StringUtils::lowerCaseInPlace(lowered);
             return lowered.find("beard") != std::string::npos || lowered.find("facial") != std::string::npos;
+        }
+
+        bool preserveFalloutHairTintVertexIntensity(std::string_view model)
+        {
+            return isFalloutHairTintModel(model) && !isFalloutFaceHairModel(model);
         }
 
         bool isFalloutScalpHairModel(std::string_view model)
@@ -6007,14 +6022,16 @@ namespace MWRender
             if (!egt)
                 return false;
 
+            const bool egtMaterialTintEnabled = std::getenv("OPENMW_FNV_USE_EGT_MATERIAL_TINT") != nullptr;
             const bool egtMaterialTintDisabled = std::getenv("OPENMW_FNV_DISABLE_EGT_MATERIAL_TINT") != nullptr;
-            if (egtMaterialTintDisabled || std::getenv("OPENMW_FNV_USE_EGT_MATERIAL_TINT") == nullptr)
+            if (!egtMaterialTintEnabled || egtMaterialTintDisabled)
             {
                 Log(Debug::Info) << "FNV/ESM4 diag: loaded FaceGen EGT complexion " << model << " size="
                                  << egt->mWidth << "x" << egt->mHeight << " modes=" << egt->mTextureModeCount
                                  << " for " << traits.mEditorId
                                  << " runtime=loaded-pending-exact-facegen-texture-synthesis"
-                                 << " optIn=OPENMW_FNV_USE_EGT_MATERIAL_TINT"
+                                 << " optIn=OPENMW_FNV_USE_EGT_MATERIAL_TINT enabled="
+                                 << egtMaterialTintEnabled
                                  << " optOut=OPENMW_FNV_DISABLE_EGT_MATERIAL_TINT disabled="
                                  << egtMaterialTintDisabled;
                 return false;
@@ -6029,6 +6046,7 @@ namespace MWRender
                              << " sumAbs=" << textureTotal << " tintLayers=" << traits.mTintLayers.size()
                              << " materialTint=(" << tint.x() << ", " << tint.y() << ", " << tint.z() << ") for "
                              << traits.mEditorId << " runtime=runtime-fnv-egt-material-tint-applied"
+                             << " optIn=OPENMW_FNV_USE_EGT_MATERIAL_TINT"
                              << " optOut=OPENMW_FNV_DISABLE_EGT_MATERIAL_TINT";
             return true;
         }
@@ -7209,7 +7227,9 @@ namespace MWRender
         {
             const bool hairTintModel = isFalloutHairTintModel(correctedModel.value());
             const float emissionStrength = hairTintModel ? getFalloutHairEmissionStrength(*tint) : 0.f;
-            TintMaterialVisitor visitor(*tint, emissionStrength, hairTintModel, hairTintModel, hairTintModel);
+            const bool preserveVertexIntensity = preserveFalloutHairTintVertexIntensity(correctedModel.value());
+            TintMaterialVisitor visitor(
+                *tint, emissionStrength, hairTintModel, hairTintModel, preserveVertexIntensity);
             attached->accept(visitor);
             if (hairTintModel)
                 Log(Debug::Info) << "FNV/ESM4 diag: applied hair tint material " << correctedModel.value()
@@ -7217,7 +7237,8 @@ namespace MWRender
                                  << ") emissionStrength=" << emissionStrength
                                  << " preservedVertexIntensityArrays="
                                  << visitor.mPreservedVertexColorIntensityArrays << " for "
-                                 << mPtr.getCellRef().getRefId();
+                                 << mPtr.getCellRef().getRefId()
+                                 << " preserveVertexIntensity=" << preserveVertexIntensity;
         }
         if (attached != nullptr
             && (isFalloutHairTintModel(correctedModel.value()) || isFalloutScalpHairModel(correctedModel.value())
@@ -7228,6 +7249,15 @@ namespace MWRender
             Log(Debug::Info) << "FNV/ESM4 diag: enabled opaque cutout alpha on " << cutoutAlpha.getAppliedCount()
                              << " hair/brow state(s) for " << correctedModel.value() << " on "
                              << mPtr.getCellRef().getRefId();
+        }
+        if (attached != nullptr && headgearStaticPart)
+        {
+            FalloutCutoutAlphaVisitor cutoutAlpha;
+            attached->accept(cutoutAlpha);
+            Log(Debug::Info) << "FNV/ESM4 diag: enabled opaque cutout alpha on " << cutoutAlpha.getAppliedCount()
+                             << " headgear state(s) for " << correctedModel.value() << " on "
+                             << mPtr.getCellRef().getRefId()
+                             << " runtime=runtime-fnv-headgear-opaque-cutout";
         }
         if (attached != nullptr && isFalloutEyeSurfaceModel(correctedModel.value()))
         {
@@ -7541,7 +7571,7 @@ namespace MWRender
                 if (!appliedEgtTint && npcBodyDetailIsTinyTint)
                 {
                     const bool rawBodyTintDisabled = std::getenv("OPENMW_FNV_DISABLE_RAW_BODY_TINT_SWATCH") != nullptr;
-                    if (!rawBodyTintDisabled && std::getenv("OPENMW_FNV_USE_RAW_BODY_TINT_SWATCH") != nullptr)
+                    if (!rawBodyTintDisabled)
                     {
                         tintFalloutSkinMaterial(attached.get(), bodyPart.mesh, traits, npcBodyMaterialTint);
                         Log(Debug::Info) << "FNV/ESM4 diag: applied raw BSA body tint swatch " << npcBodyDetailTexture
@@ -7550,6 +7580,7 @@ namespace MWRender
                                          << npcBodyMaterialTint.z() << ") on " << bodyPart.mesh << " for "
                                          << traits.mEditorId
                                          << " runtime=runtime-fnv-body-tint-swatch-applied multiplier=none"
+                                         << " default=data-derived"
                                          << " optOut=OPENMW_FNV_DISABLE_RAW_BODY_TINT_SWATCH";
                     }
                     else
@@ -7785,15 +7816,17 @@ namespace MWRender
                     applyFalloutDialogueMorph(mResourceSystem, this, attached.get(), hair->mModel, traits);
                 if (attached != nullptr)
                 {
+                    const bool preserveVertexIntensity = preserveFalloutHairTintVertexIntensity(hair->mModel);
                     TintMaterialVisitor visitor(
-                        hairTint, getFalloutHairEmissionStrength(hairTint), true, true, true);
+                        hairTint, getFalloutHairEmissionStrength(hairTint), true, true, preserveVertexIntensity);
                     attached->accept(visitor);
                     Log(Debug::Info) << "FNV/ESM4 diag: applied hair tint material " << hair->mModel
                                      << " tint=(" << hairTint.x() << ", " << hairTint.y() << ", " << hairTint.z()
                                      << ") emissionStrength=" << getFalloutHairEmissionStrength(hairTint)
                                      << " preservedVertexIntensityArrays="
                                      << visitor.mPreservedVertexColorIntensityArrays
-                                     << " for " << traits.mEditorId;
+                                     << " for " << traits.mEditorId
+                                     << " preserveVertexIntensity=" << preserveVertexIntensity;
                     hideFonvNoHatHairVariant(attached.get(), hair->mModel, traits, coveredBodySlots);
                     logFalloutFaceDrawableAudit(attached.get(), hair->mModel, mPtr, "final-hat-hair");
                     const FalloutVisibleGeometryVisitor hairVisibility = countFalloutVisibleGeometry(attached.get());
@@ -7906,10 +7939,11 @@ namespace MWRender
                 Log(Debug::Info) << "FNV/ESM4 diag: made headgear surface double-sided " << armor->mEditorId
                                  << " for " << traits.mEditorId
                                  << " gate=runtime-fnv-headgear-double-sided";
-                ForceOpaqueNoBlendVisitor opaque;
-                attached->accept(opaque);
-                Log(Debug::Info) << "FNV/ESM4 diag: forced opaque no-blend headgear " << armor->mEditorId
-                                 << " states=" << opaque.getAppliedCount() << " for " << traits.mEditorId;
+                FalloutCutoutAlphaVisitor cutoutAlpha;
+                attached->accept(cutoutAlpha);
+                Log(Debug::Info) << "FNV/ESM4 diag: preserved cutout alpha no-blend headgear " << armor->mEditorId
+                                 << " states=" << cutoutAlpha.getAppliedCount() << " for " << traits.mEditorId
+                                 << " gate=runtime-fnv-headgear-cutout-depth";
             }
         };
         const auto insertClothingEquipment = [&](const ESM4::Clothing* clothing, const char* layer) {
@@ -7946,10 +7980,11 @@ namespace MWRender
                 Log(Debug::Info) << "FNV/ESM4 diag: made headgear surface double-sided " << clothing->mEditorId
                                  << " for " << traits.mEditorId
                                  << " gate=runtime-fnv-headgear-double-sided";
-                ForceOpaqueNoBlendVisitor opaque;
-                attached->accept(opaque);
-                Log(Debug::Info) << "FNV/ESM4 diag: forced opaque no-blend headgear " << clothing->mEditorId
-                                 << " states=" << opaque.getAppliedCount() << " for " << traits.mEditorId;
+                FalloutCutoutAlphaVisitor cutoutAlpha;
+                attached->accept(cutoutAlpha);
+                Log(Debug::Info) << "FNV/ESM4 diag: preserved cutout alpha no-blend headgear " << clothing->mEditorId
+                                 << " states=" << cutoutAlpha.getAppliedCount() << " for " << traits.mEditorId
+                                 << " gate=runtime-fnv-headgear-cutout-depth";
             }
         };
 
@@ -8064,7 +8099,9 @@ namespace MWRender
                 {
                     const bool hairTintModel = isFalloutHairTintModel(part->mModel);
                     const float emissionStrength = hairTintModel ? getFalloutHairEmissionStrength(*tint) : 0.f;
-                    TintMaterialVisitor visitor(*tint, emissionStrength, hairTintModel, hairTintModel, hairTintModel);
+                    const bool preserveVertexIntensity = preserveFalloutHairTintVertexIntensity(part->mModel);
+                    TintMaterialVisitor visitor(
+                        *tint, emissionStrength, hairTintModel, hairTintModel, preserveVertexIntensity);
                     attached->accept(visitor);
                     if (hairTintModel)
                         Log(Debug::Info) << "FNV/ESM4 diag: applied hair tint material " << part->mModel
@@ -8072,7 +8109,8 @@ namespace MWRender
                                          << ") emissionStrength=" << emissionStrength
                                          << " preservedVertexIntensityArrays="
                                          << visitor.mPreservedVertexColorIntensityArrays << " for "
-                                         << mPtr.getCellRef().getRefId();
+                                         << mPtr.getCellRef().getRefId()
+                                         << " preserveVertexIntensity=" << preserveVertexIntensity;
                 }
                 if (useHatHairVariant)
                     hideFonvNoHatHairVariant(attached.get(), part->mModel, traits, coveredBodySlots);
@@ -8126,8 +8164,9 @@ namespace MWRender
                     {
                         const bool hairTintModel = isFalloutHairTintModel(extraPart->mModel);
                         const float emissionStrength = hairTintModel ? getFalloutHairEmissionStrength(*tint) : 0.f;
+                        const bool preserveVertexIntensity = preserveFalloutHairTintVertexIntensity(extraPart->mModel);
                         TintMaterialVisitor visitor(
-                            *tint, emissionStrength, hairTintModel, hairTintModel, hairTintModel);
+                            *tint, emissionStrength, hairTintModel, hairTintModel, preserveVertexIntensity);
                         extraAttached->accept(visitor);
                         if (hairTintModel)
                             Log(Debug::Info) << "FNV/ESM4 diag: applied hair tint material " << extraPart->mModel
@@ -8135,7 +8174,8 @@ namespace MWRender
                                              << ") emissionStrength=" << emissionStrength
                                              << " preservedVertexIntensityArrays="
                                              << visitor.mPreservedVertexColorIntensityArrays << " for "
-                                             << mPtr.getCellRef().getRefId();
+                                             << mPtr.getCellRef().getRefId()
+                                             << " preserveVertexIntensity=" << preserveVertexIntensity;
                     }
                     if (useExtraHatHairVariant)
                         hideFonvNoHatHairVariant(extraAttached.get(), extraPart->mModel, traits, coveredBodySlots);

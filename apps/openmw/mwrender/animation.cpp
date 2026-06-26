@@ -483,14 +483,45 @@ namespace
         osg::Vec3f mSourceCenterPathWorld;
         osg::Vec3f mRenderExtent;
         osg::Vec3f mSourceExtent;
+        std::string mLimbBoneSummary;
     };
 
-    bool isFalloutHandGeometrySampleName(const std::string& name, const std::string& rootBone = std::string())
+    bool isFalloutLimbGeometryToken(const std::string& lower)
+    {
+        return lower.find("hand") != std::string::npos || lower.find("finger") != std::string::npos
+            || lower.find("thumb") != std::string::npos || lower.find("wrist") != std::string::npos
+            || lower.find("forearm") != std::string::npos || lower.find("foretwist") != std::string::npos
+            || lower.find("upperarm") != std::string::npos || lower.find("arm") != std::string::npos;
+    }
+
+    std::string summarizeFalloutLimbRigBones(const SceneUtil::RigGeometry& rig)
+    {
+        std::ostringstream stream;
+        std::size_t matched = 0;
+        for (std::size_t i = 0; i < rig.getBoneCount(); ++i)
+        {
+            const std::string boneName(rig.getBoneName(i));
+            if (!isFalloutLimbGeometryToken(Misc::StringUtils::lowerCase(boneName)))
+                continue;
+            if (matched > 0)
+                stream << "|";
+            if (matched < 12)
+                stream << boneName;
+            ++matched;
+        }
+        if (matched > 12)
+            stream << "|+" << (matched - 12);
+        return stream.str();
+    }
+
+    bool isFalloutHandGeometrySampleName(
+        const std::string& name, const std::string& rootBone = std::string(), const SceneUtil::RigGeometry* rig = nullptr)
     {
         const std::string lowerName = Misc::StringUtils::lowerCase(name);
         const std::string lowerRootBone = Misc::StringUtils::lowerCase(rootBone);
-        return lowerName.find("hand") != std::string::npos || lowerRootBone.find("hand") != std::string::npos
-            || lowerRootBone.find("upperarm") != std::string::npos;
+        if (isFalloutLimbGeometryToken(lowerName) || isFalloutLimbGeometryToken(lowerRootBone))
+            return true;
+        return rig != nullptr && !summarizeFalloutLimbRigBones(*rig).empty();
     }
 
     osg::Vec3f falloutBoundingBoxExtent(const osg::BoundingBox& box)
@@ -498,6 +529,18 @@ namespace
         if (!box.valid())
             return osg::Vec3f();
         return osg::Vec3f(box.xMax() - box.xMin(), box.yMax() - box.yMin(), box.zMax() - box.zMin());
+    }
+
+    float falloutExtentAxisRatio(const osg::Vec3f& renderExtent, const osg::Vec3f& sourceExtent)
+    {
+        float ratio = 1.f;
+        for (int i = 0; i < 3; ++i)
+        {
+            if (renderExtent[i] <= 0.001f || sourceExtent[i] <= 0.001f)
+                continue;
+            ratio = std::max(ratio, std::max(renderExtent[i] / sourceExtent[i], sourceExtent[i] / renderExtent[i]));
+        }
+        return ratio;
     }
 
     osg::BoundingBox computeFalloutGeometryBounds(const osg::Geometry& geometry)
@@ -560,8 +603,9 @@ namespace
                 sample.mKind = "SceneUtil::RigGeometry";
                 sample.mRootBone = std::string(rig->getRootBone());
                 sample.mBoneCount = rig->getBoneCount();
+                sample.mLimbBoneSummary = summarizeFalloutLimbRigBones(*rig);
 
-                if (osg::Geometry* renderGeometry = rig->getRenderGeometry(0))
+                if (osg::Geometry* renderGeometry = rig->getLastFrameGeometry())
                 {
                     const osg::BoundingBox box = computeFalloutGeometryBounds(*renderGeometry);
                     sample.mRenderValid = box.valid();
@@ -606,8 +650,9 @@ namespace
             sample.mKind = "SceneUtil::RigGeometry";
             sample.mRootBone = std::string(rig->getRootBone());
             sample.mBoneCount = rig->getBoneCount();
+            sample.mLimbBoneSummary = summarizeFalloutLimbRigBones(*rig);
 
-            if (osg::Geometry* renderGeometry = rig->getRenderGeometry(0))
+            if (osg::Geometry* renderGeometry = rig->getLastFrameGeometry())
             {
                 const osg::BoundingBox box = computeFalloutGeometryBounds(*renderGeometry);
                 sample.mRenderValid = box.valid();
@@ -676,7 +721,7 @@ namespace
 
                 const std::string rigName = rig->getName();
                 const std::string rootBone = std::string(rig->getRootBone());
-                if (!isFalloutHandGeometrySampleName(rigName, rootBone))
+                if (!isFalloutHandGeometrySampleName(rigName, rootBone, rig))
                     continue;
 
                 FalloutRigBoundsSample sample;
@@ -684,8 +729,9 @@ namespace
                 sample.mKind = "SceneUtil::RigGeometry";
                 sample.mRootBone = rootBone;
                 sample.mBoneCount = rig->getBoneCount();
+                sample.mLimbBoneSummary = summarizeFalloutLimbRigBones(*rig);
 
-                if (osg::Geometry* renderGeometry = rig->getRenderGeometry(0))
+                if (osg::Geometry* renderGeometry = rig->getLastFrameGeometry())
                 {
                     const osg::BoundingBox box = computeFalloutGeometryBounds(*renderGeometry);
                     sample.mRenderValid = box.valid();
@@ -723,10 +769,11 @@ namespace
                 if (geometry == nullptr)
                     continue;
 
-                const bool handAncestor = fnvPartAncestor.find("lefthand") != std::string::npos
-                    || fnvPartAncestor.find("righthand") != std::string::npos
-                    || fnvPartAncestor.find("left hand") != std::string::npos
-                    || fnvPartAncestor.find("right hand") != std::string::npos;
+                const std::string lowerPartAncestor = Misc::StringUtils::lowerCase(fnvPartAncestor);
+                const bool handAncestor = lowerPartAncestor.find("lefthand") != std::string::npos
+                    || lowerPartAncestor.find("righthand") != std::string::npos
+                    || lowerPartAncestor.find("left hand") != std::string::npos
+                    || lowerPartAncestor.find("right hand") != std::string::npos;
                 if (!handAncestor && !isFalloutHandGeometrySampleName(geometry->getName()))
                     continue;
 
@@ -757,7 +804,7 @@ namespace
 
             const std::string rigName = rig->getName();
             const std::string rootBone = std::string(rig->getRootBone());
-            if (!isFalloutHandGeometrySampleName(rigName, rootBone))
+            if (!isFalloutHandGeometrySampleName(rigName, rootBone, rig))
                 return;
 
             const osg::Matrix localToActor = osg::computeLocalToWorld(getNodePath());
@@ -781,8 +828,9 @@ namespace
             sample.mKind = "SceneUtil::RigGeometry";
             sample.mRootBone = rootBone;
             sample.mBoneCount = rig->getBoneCount();
+            sample.mLimbBoneSummary = summarizeFalloutLimbRigBones(*rig);
 
-            if (osg::Geometry* renderGeometry = rig->getRenderGeometry(0))
+            if (osg::Geometry* renderGeometry = rig->getLastFrameGeometry())
             {
                 const osg::BoundingBox box = computeFalloutGeometryBounds(*renderGeometry);
                 sample.mRenderValid = box.valid();
@@ -2204,6 +2252,7 @@ namespace
                         << " kind=" << sample.mKind
                         << " drawable='" << sample.mName << "' rootBone=" << sample.mRootBone
                         << " boneCount=" << sample.mBoneCount
+                        << " limbBones='" << sample.mLimbBoneSummary << "'"
                         << " anchor=" << formatFalloutAuditVec3(anchor)
                         << " renderValid=" << sample.mRenderValid
                         << " renderCenterParentWorld=" << formatFalloutAuditVec3(sample.mRenderCenterParentWorld)
@@ -2292,6 +2341,10 @@ namespace
                 const osg::Vec3f anchor = left && !right ? leftHand : rightHand;
                 const float renderDistance = sample.mRenderValid ? (sample.mRenderCenterPathWorld - anchor).length() : -1.f;
                 const float sourceDistance = sample.mSourceValid ? (sample.mSourceCenterPathWorld - anchor).length() : -1.f;
+                const float extentAxisRatio = sample.mRenderValid && sample.mSourceValid
+                    ? falloutExtentAxisRatio(sample.mRenderExtent, sample.mSourceExtent)
+                    : 1.f;
+                const bool limbShapeSuspect = !sample.mLimbBoneSummary.empty() && extentAxisRatio > 2.25f;
                 Log(Debug::Info)
                     << "FNV/ESM4 ACTOR HAND GEOMETRY AUDIT " << ptr.getCellRef().getRefId()
                     << " sampleIndex=" << i
@@ -2300,6 +2353,7 @@ namespace
                     << " side=" << (left && !right ? "left" : right ? "right" : "unknown")
                     << " fnvPartAncestor='" << handRigVisitor.mPartAncestors[i] << "'"
                     << " boneCount=" << sample.mBoneCount
+                    << " limbBones='" << sample.mLimbBoneSummary << "'"
                     << " anchor=" << formatFalloutAuditVec3(anchor)
                     << " renderValid=" << sample.mRenderValid
                     << " renderCenterWorld=" << formatFalloutAuditVec3(sample.mRenderCenterPathWorld)
@@ -2309,6 +2363,8 @@ namespace
                     << " sourceCenterWorld=" << formatFalloutAuditVec3(sample.mSourceCenterPathWorld)
                     << " sourceExtent=" << formatFalloutAuditVec3(sample.mSourceExtent)
                     << " sourceDistance=" << sourceDistance
+                    << " extentAxisRatio=" << extentAxisRatio
+                    << " shapeVerdict=" << (limbShapeSuspect ? "SUSPECT" : "OK")
                     << " path='" << handRigVisitor.mPaths[i] << "'";
                 ++loggedHandRigs;
                 ++sActorHandRigAuditLines;
