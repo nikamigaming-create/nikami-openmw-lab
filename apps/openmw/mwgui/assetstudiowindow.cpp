@@ -87,6 +87,7 @@ namespace MWGui
         getWidget(mSessionEdit, "SessionEdit");
         getWidget(mModelEdit, "ModelEdit");
         getWidget(mViewEdit, "ViewEdit");
+        getWidget(mProfileEdit, "ProfileEdit");
         getWidget(mRotXEdit, "RotXEdit");
         getWidget(mRotYEdit, "RotYEdit");
         getWidget(mRotZEdit, "RotZEdit");
@@ -104,6 +105,7 @@ namespace MWGui
         mRecordEdit->eventEditSelectAccept += MyGUI::newDelegate(this, &AssetStudioWindow::onAccept);
         mSessionEdit->eventEditSelectAccept += MyGUI::newDelegate(this, &AssetStudioWindow::onAccept);
         mViewEdit->eventEditSelectAccept += MyGUI::newDelegate(this, &AssetStudioWindow::onAccept);
+        mProfileEdit->eventEditSelectAccept += MyGUI::newDelegate(this, &AssetStudioWindow::onAccept);
         mZoomEdit->eventEditSelectAccept += MyGUI::newDelegate(this, &AssetStudioWindow::onAccept);
 
         const std::string initialAssetClass = getenvTextOr("OPENMW_FNV_ASSET_STUDIO_ASSET_CLASS", "mesh");
@@ -111,12 +113,16 @@ namespace MWGui
         const std::string initialSession = getenvTextOr("OPENMW_FNV_ASSET_STUDIO_SESSION", "native-session");
         const std::string initialModel = getenvText("OPENMW_FNV_ASSET_STUDIO_MODEL");
         const std::string initialView = getenvTextOr("OPENMW_FNV_ASSET_STUDIO_VIEW", "front");
+        std::string initialProfile = getenvText("OPENMW_FNV_ASSET_STUDIO_ACTOR_PROFILE");
+        if (initialProfile.empty())
+            initialProfile = getenvText("OPENMW_FNV_NEUTRAL_ACTOR_PREVIEW_PROFILE");
 
         mAssetClassEdit->setCaption(initialAssetClass);
         mRecordEdit->setCaption(initialRecord);
         mSessionEdit->setCaption(initialSession);
         mModelEdit->setCaption(initialModel);
         mViewEdit->setCaption(initialView);
+        mProfileEdit->setCaption(initialProfile);
         mRotXEdit->setCaption(getenvTextOr("OPENMW_FNV_ASSET_STUDIO_ROT_X", "0"));
         mRotYEdit->setCaption(getenvTextOr("OPENMW_FNV_ASSET_STUDIO_ROT_Y", "0"));
         mRotZEdit->setCaption(getenvTextOr("OPENMW_FNV_ASSET_STUDIO_ROT_Z", "0"));
@@ -131,6 +137,7 @@ namespace MWGui
         Log(Debug::Info) << "FNV/ESM4 asset studio native window opened model=\"" << initialModel
                          << "\" assetClass=\"" << initialAssetClass << "\" record=\"" << initialRecord
                          << "\" session=\"" << initialSession << "\" view=\"" << initialView
+                         << "\" profile=\"" << initialProfile
                          << "\" gate=native-asset-studio-window cleanBackdrop=1";
         rebuildPreview();
     }
@@ -222,17 +229,19 @@ namespace MWGui
         const std::string record = editText(mRecordEdit).empty() ? "direct-model" : editText(mRecordEdit);
         const std::string session = editText(mSessionEdit).empty() ? "native-session" : editText(mSessionEdit);
         const std::string view = editText(mViewEdit).empty() ? "front" : editText(mViewEdit);
+        const std::string profile = editText(mProfileEdit);
         const std::string model = editText(mModelEdit);
         const float zoom = editFloat(mZoomEdit, 1.f);
 
         Log(Debug::Info) << "FNV/ESM4 asset studio selector assetClass=\"" << assetClass << "\" record=\"" << record
                          << "\" session=\"" << session << "\" model=\"" << model << "\" view=\"" << view
+                         << "\" profile=\"" << profile
                          << "\" zoom=" << zoom
                          << " gate=native-asset-studio-selector runtime=loaded-pending-runtime";
 
         if (isActorAssetClass(assetClass))
         {
-            rebuildActorPreview(assetClass, record, session, view, zoom);
+            rebuildActorPreview(assetClass, record, session, view, profile, zoom);
             return;
         }
 
@@ -240,7 +249,7 @@ namespace MWGui
     }
 
     bool AssetStudioWindow::rebuildActorPreview(const std::string& assetClass, const std::string& record,
-        const std::string& session, const std::string& view, float zoom)
+        const std::string& session, const std::string& view, const std::string& profile, float zoom)
     {
         mPreview.reset();
         mPreviewTexture.reset();
@@ -331,7 +340,7 @@ namespace MWGui
             };
 
             mActorPreview = std::make_unique<MWRender::FalloutActorPreview>(
-                mParent, mResourceSystem, actor, actorViewModeForView(view), zoom);
+                mParent, mResourceSystem, actor, actorViewModeForView(view), zoom, profile);
             mActorPreview->rebuild();
             mActorPreview->redraw();
             mActorPreviewTexture = std::make_unique<MyGUIPlatform::OSGTexture>(
@@ -341,7 +350,7 @@ namespace MWGui
             for (std::size_t i = 0; i < modes.size(); ++i)
             {
                 mActorCameraPreviews[i]
-                    = std::make_unique<MWRender::FalloutActorPreview>(mParent, mResourceSystem, actor, modes[i], zoom);
+                    = std::make_unique<MWRender::FalloutActorPreview>(mParent, mResourceSystem, actor, modes[i], zoom, profile);
                 mActorCameraPreviews[i]->rebuild();
                 mActorCameraPreviews[i]->redraw();
                 mActorCameraPreviewTextures[i] = std::make_unique<MyGUIPlatform::OSGTexture>(
@@ -353,12 +362,13 @@ namespace MWGui
             Log(Debug::Info) << "FNV/ESM4 asset studio actor loaded assetClass=\"" << assetClass << "\" record=\""
                              << record << "\" resolvedKind=\"" << resolvedKind << "\" actor=\"" << actorId
                              << "\" full=\"" << fullName << "\" form=" << formId << " session=\"" << session
-                             << "\" view=\"" << view << "\" zoom=" << zoom << " panes=4 threeCamera=1"
+                             << "\" view=\"" << view << "\" profile=\"" << profile << "\" zoom=" << zoom
+                             << " panes=4 threeCamera=1"
                              << " scannedNpcBases=" << scannedNpcs << " scannedCreatureBases=" << scannedCreatures
                              << " gate=native-asset-studio-actor-preview runtime=runtime-supported";
             Log(Debug::Info) << "FNV/ESM4 asset studio three camera actor preview assetClass=\"" << assetClass
                              << "\" record=\"" << record << "\" actor=\"" << actorId
-                             << "\" views=\"front,front-left,front-right\" zoom=" << zoom
+                             << "\" views=\"front,front-left,front-right\" profile=\"" << profile << "\" zoom=" << zoom
                              << " gate=native-asset-studio-three-camera-actor-preview runtime=runtime-supported";
             return true;
         }
@@ -378,7 +388,7 @@ namespace MWGui
             setStatus(std::string("actor failed: ") + e.what());
             Log(Debug::Warning) << "FNV/ESM4 asset studio actor failed assetClass=\"" << assetClass
                                 << "\" record=\"" << record << "\" session=\"" << session << "\" view=\"" << view
-                                << "\" zoom=" << zoom << " error=\"" << e.what()
+                                << "\" profile=\"" << profile << "\" zoom=" << zoom << " error=\"" << e.what()
                                 << "\" gate=native-asset-studio-actor-preview runtime=known-blocked";
             return false;
         }

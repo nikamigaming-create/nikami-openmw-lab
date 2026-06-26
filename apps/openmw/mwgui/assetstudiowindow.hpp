@@ -67,7 +67,7 @@ namespace MWGui
         void onAccept(MyGUI::EditBox* sender);
         void rebuildPreview();
         bool rebuildActorPreview(const std::string& assetClass, const std::string& record, const std::string& session,
-            const std::string& view, float zoom);
+            const std::string& view, const std::string& profile, float zoom);
         bool rebuildModelPreview(const std::string& assetClass, const std::string& record, const std::string& session,
             const std::string& view, const std::string& model, float zoom);
         osg::Vec3f cameraDirectionForView(const std::string& view) const;
@@ -88,6 +88,7 @@ namespace MWGui
         MyGUI::EditBox* mSessionEdit = nullptr;
         MyGUI::EditBox* mModelEdit = nullptr;
         MyGUI::EditBox* mViewEdit = nullptr;
+        MyGUI::EditBox* mProfileEdit = nullptr;
         MyGUI::EditBox* mRotXEdit = nullptr;
         MyGUI::EditBox* mRotYEdit = nullptr;
         MyGUI::EditBox* mRotZEdit = nullptr;

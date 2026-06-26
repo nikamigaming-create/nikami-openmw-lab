@@ -5,6 +5,7 @@
 #include <cstdlib>
 #include <sstream>
 #include <string_view>
+#include <utility>
 
 #include <osg/BlendFunc>
 #include <osg/Camera>
@@ -983,11 +984,12 @@ namespace MWRender
     // --------------------------------------------------------------------------------------------------
 
     FalloutActorPreview::FalloutActorPreview(osg::Group* parent, Resource::ResourceSystem* resourceSystem,
-        const MWWorld::Ptr& character, ViewMode viewMode, float cameraDistanceMultiplier)
+        const MWWorld::Ptr& character, ViewMode viewMode, float cameraDistanceMultiplier, std::string profileOverride)
         : CharacterPreview(parent, resourceSystem, MWWorld::Ptr(character.getBase(), nullptr), 720, 720,
             osg::Vec3f(0, 420, 112), osg::Vec3f(0, 0, 112))
         , mViewMode(viewMode)
         , mCameraDistanceMultiplier(cameraDistanceMultiplier)
+        , mProfileOverride(std::move(profileOverride))
     {
         mNode->setName("FNV Neutral Actor Preview");
     }
@@ -1046,7 +1048,8 @@ namespace MWRender
         osg::Vec3f position(0.f, 420.f, 112.f);
         osg::Vec3f lookAt(0.f, 0.f, 112.f);
         const char* viewName = "front";
-        const std::string_view profile = getFalloutNeutralActorPreviewProfile();
+        const std::string envProfile(getFalloutNeutralActorPreviewProfile());
+        const std::string profile = !mProfileOverride.empty() ? mProfileOverride : envProfile;
         if (Misc::StringUtils::ciEqual(profile, "full-body") || Misc::StringUtils::ciEqual(profile, "fullbody"))
         {
             applyFalloutNeutralActorOrbitCamera(mViewMode,

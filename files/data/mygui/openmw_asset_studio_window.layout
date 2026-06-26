@@ -47,26 +47,30 @@
         <Property key="Caption" value="Zoom"/>
       </Widget>
       <Widget type="EditBox" skin="MW_TextBoxEditWithBorder" position="224 184 104 24" name="ZoomEdit"/>
-      <Widget type="TextBox" skin="SandText" position="0 222 56 20" name="ScaleLabel">
+      <Widget type="TextBox" skin="SandText" position="0 222 56 20" name="ProfileLabel">
+        <Property key="Caption" value="Profile"/>
+      </Widget>
+      <Widget type="EditBox" skin="MW_TextBoxEditWithBorder" position="64 218 264 24" name="ProfileEdit"/>
+      <Widget type="TextBox" skin="SandText" position="0 256 56 20" name="ScaleLabel">
         <Property key="Caption" value="Scale"/>
       </Widget>
-      <Widget type="EditBox" skin="MW_TextBoxEditWithBorder" position="64 218 88 24" name="ScaleEdit"/>
-      <Widget type="TextBox" skin="SandText" position="166 222 56 20" name="RotXLabel">
+      <Widget type="EditBox" skin="MW_TextBoxEditWithBorder" position="64 252 88 24" name="ScaleEdit"/>
+      <Widget type="TextBox" skin="SandText" position="166 256 56 20" name="RotXLabel">
         <Property key="Caption" value="Rot X"/>
       </Widget>
-      <Widget type="EditBox" skin="MW_TextBoxEditWithBorder" position="224 218 104 24" name="RotXEdit"/>
-      <Widget type="TextBox" skin="SandText" position="0 256 56 20" name="RotYLabel">
+      <Widget type="EditBox" skin="MW_TextBoxEditWithBorder" position="224 252 104 24" name="RotXEdit"/>
+      <Widget type="TextBox" skin="SandText" position="0 290 56 20" name="RotYLabel">
         <Property key="Caption" value="Rot Y"/>
       </Widget>
-      <Widget type="EditBox" skin="MW_TextBoxEditWithBorder" position="64 252 88 24" name="RotYEdit"/>
-      <Widget type="TextBox" skin="SandText" position="166 256 56 20" name="RotZLabel">
+      <Widget type="EditBox" skin="MW_TextBoxEditWithBorder" position="64 286 88 24" name="RotYEdit"/>
+      <Widget type="TextBox" skin="SandText" position="166 290 56 20" name="RotZLabel">
         <Property key="Caption" value="Rot Z"/>
       </Widget>
-      <Widget type="EditBox" skin="MW_TextBoxEditWithBorder" position="224 252 104 24" name="RotZEdit"/>
-      <Widget type="Button" skin="MW_Button" position="0 292 360 30" name="ApplyButton">
+      <Widget type="EditBox" skin="MW_TextBoxEditWithBorder" position="224 286 104 24" name="RotZEdit"/>
+      <Widget type="Button" skin="MW_Button" position="0 326 360 30" name="ApplyButton">
         <Property key="Caption" value="Apply"/>
       </Widget>
-      <Widget type="TextBox" skin="SandText" position="0 338 360 132" name="StatusText">
+      <Widget type="TextBox" skin="SandText" position="0 372 360 64" name="StatusText">
         <Property key="Caption" value="Asset studio idle"/>
       </Widget>
       <Widget type="Widget" skin="MW_Box" position="0 444 360 186" name="ViewStrip" align="Left Bottom HStretch">

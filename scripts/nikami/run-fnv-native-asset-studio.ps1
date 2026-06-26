@@ -127,6 +127,7 @@ try {
     Set-ScopedEnv $previousEnv "OPENMW_FNV_ASSET_STUDIO_MODEL" $Model
     Set-ScopedEnv $previousEnv "OPENMW_FNV_ASSET_STUDIO_VIEW" $View
     if (![string]::IsNullOrWhiteSpace($ActorProfile)) {
+        Set-ScopedEnv $previousEnv "OPENMW_FNV_ASSET_STUDIO_ACTOR_PROFILE" $ActorProfile
         Set-ScopedEnv $previousEnv "OPENMW_FNV_NEUTRAL_ACTOR_PREVIEW_PROFILE" $ActorProfile
     }
     if (!$AllowPackageProcedureIdles) {

@@ -2,6 +2,7 @@
 #define MWRENDER_CHARACTERPREVIEW_H
 
 #include <memory>
+#include <string>
 #include <osg/ref_ptr>
 
 #include <osg/PositionAttitudeTransform>
@@ -146,7 +147,7 @@ namespace MWRender
         };
 
         FalloutActorPreview(osg::Group* parent, Resource::ResourceSystem* resourceSystem, const MWWorld::Ptr& character,
-            ViewMode viewMode, float cameraDistanceMultiplier = 1.f);
+            ViewMode viewMode, float cameraDistanceMultiplier = 1.f, std::string profileOverride = {});
 
     protected:
         void onSetup() override;
@@ -155,6 +156,7 @@ namespace MWRender
     private:
         ViewMode mViewMode;
         float mCameraDistanceMultiplier;
+        std::string mProfileOverride;
     };
 
 }
