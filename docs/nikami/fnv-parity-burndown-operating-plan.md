@@ -44,6 +44,14 @@ Dry-runs prove row selection, commands, filters, and no-retail metadata without 
 
 Each selected row writes a `nikami-fnv-actor-row-gate-audit-v1` object. The audit separates process status from runtime support: a viewer phase can pass while the selected gate remains `loaded-pending-runtime` if the child manifest lacks exact gate/state evidence such as screenshots, mouth runtime evidence, projectile evidence, weapon lines, material evidence, face drawables, animation playback, creature evidence, attachment bounds, or runtime part audits.
 
+After rows have run, generate the row coverage report:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/nikami/run-fnv-actor-row-audit-report.ps1 -BurnDownJson <actor-parity-burndown.json>
+```
+
+The report writes `nikami-fnv-actor-row-audit-report-v1` JSON/HTML/Markdown/CSV and is the human/bot burn-down view for actor rows. It counts runtime-supported rows, loaded-pending rows, failed rows, unrun runtime-required rows, source-blocked rows, intentionally excluded rows, and missing evidence kinds.
+
 ## Runtime Proof Loop
 
 For each selected row:
