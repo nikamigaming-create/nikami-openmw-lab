@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<MyGUI type="Layout">
+  <Widget type="Window" skin="MW_Window" position="20 20 980 700" layer="Windows" name="_Main">
+    <Property key="Caption" value="FNV Asset Studio"/>
+    <Property key="MinSize" value="520 360"/>
+    <Property key="Visible" value="false"/>
+
+    <Widget type="Widget" skin="MW_Box" position="8 8 664 646" name="PreviewBox" align="Left Top Stretch">
+      <Widget type="ImageBox" skin="ImageBox" position="4 4 656 638" align="Stretch" name="PreviewImage"/>
+    </Widget>
+
+    <Widget type="Widget" skin="" position="680 8 284 646" name="Controls" align="Right Top VStretch">
+      <Widget type="TextBox" skin="SandText" position="0 0 284 20" name="ModelLabel">
+        <Property key="Caption" value="Model path"/>
+      </Widget>
+      <Widget type="EditBox" skin="MW_TextBoxEditWithBorder" position="0 24 284 24" name="ModelEdit">
+        <UserString key="AcceptTab" value="true"/>
+      </Widget>
+      <Widget type="TextBox" skin="SandText" position="0 58 284 20" name="TransformLabel">
+        <Property key="Caption" value="Transform"/>
+      </Widget>
+      <Widget type="TextBox" skin="SandText" position="0 86 60 20" name="RotXLabel">
+        <Property key="Caption" value="Rot X"/>
+      </Widget>
+      <Widget type="EditBox" skin="MW_TextBoxEditWithBorder" position="64 82 70 24" name="RotXEdit"/>
+      <Widget type="TextBox" skin="SandText" position="146 86 60 20" name="RotYLabel">
+        <Property key="Caption" value="Rot Y"/>
+      </Widget>
+      <Widget type="EditBox" skin="MW_TextBoxEditWithBorder" position="210 82 70 24" name="RotYEdit"/>
+      <Widget type="TextBox" skin="SandText" position="0 118 60 20" name="RotZLabel">
+        <Property key="Caption" value="Rot Z"/>
+      </Widget>
+      <Widget type="EditBox" skin="MW_TextBoxEditWithBorder" position="64 114 70 24" name="RotZEdit"/>
+      <Widget type="TextBox" skin="SandText" position="146 118 60 20" name="ScaleLabel">
+        <Property key="Caption" value="Scale"/>
+      </Widget>
+      <Widget type="EditBox" skin="MW_TextBoxEditWithBorder" position="210 114 70 24" name="ScaleEdit"/>
+      <Widget type="Button" skin="MW_Button" position="0 152 284 28" name="ApplyButton">
+        <Property key="Caption" value="Apply"/>
+      </Widget>
+      <Widget type="TextBox" skin="SandText" position="0 194 284 120" name="StatusText">
+        <Property key="Caption" value="Asset studio idle"/>
+      </Widget>
+      <Widget type="TextBox" skin="SandText" position="0 330 284 280" name="ContractText">
+        <Property key="Caption" value="Native render target. Browser is not the renderer. Model preview first; actor, creature, activation, door, weapon, and animation gates plug into this window next."/>
+      </Widget>
+    </Widget>
+  </Widget>
+</MyGUI>

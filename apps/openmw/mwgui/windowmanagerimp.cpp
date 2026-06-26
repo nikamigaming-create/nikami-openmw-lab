@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cassert>
 #include <chrono>
+#include <cstdlib>
 #include <filesystem>
 #include <thread>
 
@@ -87,6 +88,7 @@
 #endif
 
 #include "alchemywindow.hpp"
+#include "assetstudiowindow.hpp"
 #include "backgroundimage.hpp"
 #include "bookpage.hpp"
 #include "bookwindow.hpp"
@@ -571,6 +573,16 @@ namespace MWGui
         mStatsWatcher->addListener(mStatsWindow);
         mStatsWatcher->addListener(mCharGen.get());
 
+        if (std::getenv("OPENMW_FNV_ASSET_STUDIO") != nullptr)
+        {
+            auto assetStudioWindow = std::make_unique<AssetStudioWindow>(
+                mViewer->getSceneData()->asGroup(), mResourceSystem);
+            mWindows.push_back(std::move(assetStudioWindow));
+            setCursorVisible(true);
+            MWBase::Environment::get().getInputManager()->changeInputMode(true);
+            Log(Debug::Info) << "FNV/ESM4 asset studio registered gate=native-asset-studio-window";
+        }
+
         for (auto& window : mWindows)
         {
             std::string_view id = window->getWindowIdForLua();
@@ -692,6 +704,13 @@ namespace MWGui
 
         if (gameMode)
             setKeyFocusWidget(nullptr);
+
+        if (std::getenv("OPENMW_FNV_ASSET_STUDIO") != nullptr)
+        {
+            MWBase::Environment::get().getInputManager()->changeInputMode(true);
+            mInputBlocker->setVisible(false);
+            setCursorVisible(true);
+        }
 
         // Icons of forced hidden windows are displayed
         setMinimapVisibility((mAllowed & GW_Map) && (!mMap->pinned() || (mForceHidden & GW_Map)));

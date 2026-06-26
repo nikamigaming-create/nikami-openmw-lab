@@ -103,30 +103,55 @@ function Invoke-RipgrepPatternScan([string]$Root, [string[]]$Patterns, [string[]
         return $null
     }
 
-    $args = @(
-        "--no-heading",
-        "--line-number",
-        "--hidden",
-        "--no-ignore",
-        "--color", "never"
-    )
-    foreach ($glob in $Globs) {
-        $args += "--glob"
-        $args += $glob
-    }
-    $args += ($Patterns -join "|")
-    $args += $Root
+    $matches = @()
+    foreach ($pattern in $Patterns) {
+        $literal = $pattern
+        $match = [regex]::Match($pattern, '"[^"]+"')
+        if ($match.Success) {
+            $literal = $match.Value
+        }
 
-    $output = & $rg.Source @args 2>&1
-    $exit = $LASTEXITCODE
-    if ($exit -eq 0) {
-        return @($output | ForEach-Object { $_.ToString() })
-    }
-    if ($exit -eq 1) {
-        return @()
+        $args = @(
+            "--no-heading",
+            "--line-number",
+            "--hidden",
+            "--no-ignore",
+            "--color", "never",
+            "--fixed-strings"
+        )
+        foreach ($glob in $Globs) {
+            $args += "--glob"
+            $args += $glob
+        }
+        $args += $literal
+        $args += $Root
+
+        $output = & $rg.Source @args 2>&1
+        $exit = $LASTEXITCODE
+        if ($exit -eq 0) {
+            $matches += @($output | ForEach-Object { $_.ToString() })
+            continue
+        }
+        if ($exit -eq 1) {
+            continue
+        }
+
+        throw "rg proof artifact scan failed with exit code $exit`: $($output -join [Environment]::NewLine)"
     }
 
-    throw "rg proof artifact scan failed with exit code $exit`: $($output -join [Environment]::NewLine)"
+    return @($matches)
+}
+
+function Write-FailureLines([string]$Prefix, [object[]]$Items, [int]$Limit = 200) {
+    $count = 0
+    foreach ($item in $Items) {
+        if ($count -ge $Limit) { break }
+        Write-ProofLine "$Prefix$item"
+        ++$count
+    }
+    if ($Items.Count -gt $Limit) {
+        Write-ProofLine "$Prefix... truncated $($Items.Count - $Limit) additional match(es)"
+    }
 }
 
 Write-ProofLine "Proof artifact payload safety $Stamp"
@@ -150,7 +175,7 @@ $tempExtractDirs = @($allDirectories |
     Select-Object -ExpandProperty FullName)
 
 $TextGlobs = @("*.json", "*.jsonl", "*.txt", "*.log", "*.csv", "*.md")
-$rawByteMatches = Invoke-RipgrepPatternScan $ProofRoot $RawByteTextPatterns $TextGlobs
+$rawByteMatches = @(Invoke-RipgrepPatternScan $ProofRoot $RawByteTextPatterns $TextGlobs)
 if ($null -eq $rawByteMatches) {
     $rawByteMatches = @()
     $textFiles = $allFiles |
@@ -166,16 +191,12 @@ if ($null -eq $rawByteMatches) {
 $contentLedgerTextMatches = @()
 $contentLedgerRoot = Join-Path $ProofRoot "fnv-content-ledger"
 if (Test-Path -LiteralPath $contentLedgerRoot -PathType Container) {
-    $contentLedgerTextMatches = Invoke-RipgrepPatternScan $contentLedgerRoot $ContentLedgerTextPayloadPatterns @("*.json")
-    if ($null -eq $contentLedgerTextMatches) {
-        $contentLedgerTextMatches = @()
-        $contentLedgerFiles = $allFiles |
-            Where-Object { $_.FullName.StartsWith($contentLedgerRoot, [System.StringComparison]::OrdinalIgnoreCase) -and $_.Extension.ToLowerInvariant() -eq ".json" }
-        foreach ($file in $contentLedgerFiles) {
-            $match = Find-FirstPatternMatch $file.FullName $ContentLedgerTextPayloadPatterns
-            if ($null -ne $match) {
-                $contentLedgerTextMatches += "$($file.FullName) $match"
-            }
+    $contentLedgerFiles = $allFiles |
+        Where-Object { $_.FullName.StartsWith($contentLedgerRoot, [System.StringComparison]::OrdinalIgnoreCase) -and $_.Extension.ToLowerInvariant() -eq ".json" }
+    foreach ($file in $contentLedgerFiles) {
+        $match = Find-FirstPatternMatch $file.FullName $ContentLedgerTextPayloadPatterns
+        if ($null -ne $match) {
+            $contentLedgerTextMatches += "$($file.FullName) $match"
         }
     }
 }
@@ -186,16 +207,16 @@ Write-ProofLine "Raw byte text matches: $($rawByteMatches.Count)"
 Write-ProofLine "Content ledger text payload matches: $($contentLedgerTextMatches.Count)"
 
 if ($payloadFiles.Count -gt 0) {
-    $payloadFiles | ForEach-Object { Write-ProofLine "FAIL payload file: $_" }
+    Write-FailureLines "FAIL payload file: " @($payloadFiles)
 }
 if ($tempExtractDirs.Count -gt 0) {
-    $tempExtractDirs | ForEach-Object { Write-ProofLine "FAIL temp extract dir: $_" }
+    Write-FailureLines "FAIL temp extract dir: " @($tempExtractDirs)
 }
 if ($rawByteMatches.Count -gt 0) {
-    $rawByteMatches | ForEach-Object { Write-ProofLine "FAIL raw byte text: $_" }
+    Write-FailureLines "FAIL raw byte text: " @($rawByteMatches)
 }
 if ($contentLedgerTextMatches.Count -gt 0) {
-    $contentLedgerTextMatches | ForEach-Object { Write-ProofLine "FAIL content ledger text payload: $_" }
+    Write-FailureLines "FAIL content ledger text payload: " @($contentLedgerTextMatches)
 }
 
 if ($payloadFiles.Count -gt 0 -or $tempExtractDirs.Count -gt 0 -or $rawByteMatches.Count -gt 0 -or $contentLedgerTextMatches.Count -gt 0) {

@@ -187,6 +187,7 @@ set(BUILTIN_DATA_FILES
     mygui/core.xml
     mygui/core_layouteditor.xml
     mygui/openmw_alchemy_window.layout
+    mygui/openmw_asset_studio_window.layout
     mygui/openmw_book.layout
     mygui/openmw_box.skin.xml
     mygui/openmw_button.skin.xml
