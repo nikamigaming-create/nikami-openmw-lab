@@ -611,6 +611,7 @@ def build_catalog(plan: dict[str, Any], gameplay_rows: list[dict[str, Any]], lim
             "component-review-rows-v1",
             "critical-character-queue-v1",
             "compact-html-index-v1",
+            "compact-index-full-row-on-select",
             "live-api-catalog-search-v1",
             "placed-runtime-target-map-v1",
             "placement-bootstrap-job-args-v1",
@@ -657,7 +658,7 @@ def compact_entry(entry: dict[str, Any]) -> dict[str, Any]:
 
 def html_catalog(catalog: dict[str, Any]) -> dict[str, Any]:
     markers = [as_text(marker) for marker in as_list(catalog.get("schemaMarkers")) if as_text(marker)]
-    for marker in ("compact-html-index-v1", "live-api-catalog-search-v1"):
+    for marker in ("thin-html-shell-v1", "compact-index-full-row-on-select", "live-api-catalog-search-v1"):
         if marker not in markers:
             markers.append(marker)
     return {
@@ -670,9 +671,9 @@ def html_catalog(catalog: dict[str, Any]) -> dict[str, Any]:
         "sourceContentLedger": catalog.get("sourceContentLedger", ""),
         "counts": catalog.get("counts", {}),
         "commands": catalog.get("commands", {}),
-        "htmlEntryMode": "compact-index-full-row-on-select",
+        "htmlEntryMode": "thin-shell-live-api-required",
         "criticalQueue": catalog.get("criticalQueue", []),
-        "entries": [compact_entry(entry) for entry in as_list(catalog.get("entries")) if isinstance(entry, dict)],
+        "entries": [],
     }
 
 
@@ -821,6 +822,12 @@ button:disabled {{ opacity: .45; cursor: not-allowed; }}
           <label>Rot X<input id="liveRotationX" type="number" step="1" value="0"></label>
           <label>Rot Y<input id="liveRotationY" type="number" step="1" value="0"></label>
           <label>Rot Z<input id="liveRotationZ" type="number" step="1" value="0"></label>
+          <label>Pivot X<input id="livePivotX" type="number" step="0.05" placeholder="bounds"></label>
+          <label>Pivot Y<input id="livePivotY" type="number" step="0.05" placeholder="bounds"></label>
+          <label>Pivot Z<input id="livePivotZ" type="number" step="0.05" placeholder="bounds"></label>
+          <label>Pivot dX<input id="livePivotOffsetX" type="number" step="0.05" value="0"></label>
+          <label>Pivot dY<input id="livePivotOffsetY" type="number" step="0.05" value="0"></label>
+          <label>Pivot dZ<input id="livePivotOffsetZ" type="number" step="0.05" value="0"></label>
         </div>
         <div class="actions">
           <button id="applyLiveAuthoring" type="button">Apply Live</button>
@@ -836,6 +843,8 @@ button:disabled {{ opacity: .45; cursor: not-allowed; }}
         <label>Animation Source<input id="animationSourceInput" placeholder="meshes/characters/_male/idleanims/example.kf"></label>
         <label>Animation Start<input id="animationStartPointInput" type="number" min="0" max="0.999" step="0.001" placeholder="0.35"></label>
         <label>Preview Yaw<input id="neutralPreviewYawInput" type="number" min="-180" max="180" step="1" placeholder="angle default"></label>
+        <label>Part Models<input id="partModelInput" placeholder="exact actor part NIFs, comma separated"></label>
+        <label>Prop Models<input id="propModelInput" placeholder="exact prop/weapon/headgear NIFs, comma separated"></label>
         <label>Animation<select id="animationSelect"></select></label>
         <label>Dialogue<select id="dialogueSelect"></select></label>
         <label>Angles<select id="angleSelect"></select></label>
@@ -1014,6 +1023,15 @@ function liveControlsFromInputs() {{
   controls[`${{prefix}}_ROTATION_X`] = liveNumber("liveRotationX");
   controls[`${{prefix}}_ROTATION_Y`] = liveNumber("liveRotationY");
   controls[`${{prefix}}_ROTATION_Z`] = liveNumber("liveRotationZ", liveDefaultRotationZ(prefix));
+  const pivotX = document.getElementById("livePivotX")?.value;
+  const pivotY = document.getElementById("livePivotY")?.value;
+  const pivotZ = document.getElementById("livePivotZ")?.value;
+  if (pivotX !== "") controls[`${{prefix}}_PIVOT_X`] = liveNumber("livePivotX");
+  if (pivotY !== "") controls[`${{prefix}}_PIVOT_Y`] = liveNumber("livePivotY");
+  if (pivotZ !== "") controls[`${{prefix}}_PIVOT_Z`] = liveNumber("livePivotZ");
+  controls[`${{prefix}}_PIVOT_OFFSET_X`] = liveNumber("livePivotOffsetX");
+  controls[`${{prefix}}_PIVOT_OFFSET_Y`] = liveNumber("livePivotOffsetY");
+  controls[`${{prefix}}_PIVOT_OFFSET_Z`] = liveNumber("livePivotOffsetZ");
   controls[`${{prefix}}_PIVOT_MODE`] = !!document.getElementById("livePivotMode")?.checked;
   return controls;
 }}
@@ -1030,6 +1048,12 @@ function hydrateLiveInputs() {{
   setValue("liveRotationX", "ROTATION_X", 0);
   setValue("liveRotationY", "ROTATION_Y", 0);
   setValue("liveRotationZ", "ROTATION_Z", liveDefaultRotationZ(prefix));
+  setValue("livePivotX", "PIVOT_X", "");
+  setValue("livePivotY", "PIVOT_Y", "");
+  setValue("livePivotZ", "PIVOT_Z", "");
+  setValue("livePivotOffsetX", "PIVOT_OFFSET_X", 0);
+  setValue("livePivotOffsetY", "PIVOT_OFFSET_Y", 0);
+  setValue("livePivotOffsetZ", "PIVOT_OFFSET_Z", 0);
   const pivot = document.getElementById("livePivotMode");
   if (pivot) pivot.checked = !!controls[`${{prefix}}_PIVOT_MODE`];
 }}
@@ -1056,10 +1080,12 @@ function renderLiveRuntimeState() {{
   const selectors = state.liveRuntime?.selectors || {{}};
   const phase = selectors.phase || "default phase";
   const parts = Array.isArray(selectors.parts) && selectors.parts.length ? selectors.parts.join(",") : "all parts";
+  const exactParts = Array.isArray(selectors.partModels) && selectors.partModels.length ? `${{selectors.partModels.length}} exact parts` : "no exact part models";
+  const exactProps = Array.isArray(selectors.propModels) && selectors.propModels.length ? `${{selectors.propModels.length}} exact props` : "no exact prop models";
   const mode = state.liveRuntimeAuto ? "auto-live" : "manual-live";
   const pending = state.liveRuntimeSending ? "sending" : (state.liveRuntimeDirty ? "dirty" : "applied");
   const error = state.liveRuntimeLastError ? ` / failed: ${{state.liveRuntimeLastError}}` : "";
-  node.textContent = `${{target}} / ${{phase}} / ${{parts}} / ${{mode}} / ${{pending}} / ${{path}}${{error}}`;
+  node.textContent = `${{target}} / ${{phase}} / ${{parts}} / ${{exactParts}} / ${{exactProps}} / ${{mode}} / ${{pending}} / ${{path}}${{error}}`;
 }}
 function renderRuntimeStatus() {{
   const node = document.getElementById("runtimeStatus");
@@ -1225,7 +1251,9 @@ async function sendSelectedLiveRuntime(options = {{}}) {{
         selectors: {{
           phases: selectorPayload.phases,
           parts: selectorPayload.parts,
+          partModels: selectorPayload.partModels || [],
           propSlots: selectorPayload.propSlots,
+          propModels: selectorPayload.propModels || [],
           animationSource: selectorPayload.animationSource || "",
           animationStartPoint: selectorPayload.animationStartPoint || "",
           animationGroup: selectorPayload.animationGroup || "",
@@ -1349,6 +1377,10 @@ function expandPartSelection(parts) {{
 function selectedPropSlots() {{
   return selectedParts().filter(part => ["equipment-body", "weapon", "headgear"].includes(part));
 }}
+function selectorListInput(id) {{
+  const raw = document.getElementById(id)?.value || "";
+  return raw.split(/[\\n,;]+/).map(value => value.trim()).filter(Boolean);
+}}
 function selectedPhases() {{
   const value = document.getElementById("phaseSelect")?.value || "";
   if (value) return [value];
@@ -1372,7 +1404,9 @@ function studioPayload(commandKey) {{
     phases: selectedPhases(),
     angles: selectedAngles(commandKey),
     parts: selectedParts(),
-    propSlots: selectedPropSlots()
+    propSlots: selectedPropSlots(),
+    partModels: selectorListInput("partModelInput"),
+    propModels: selectorListInput("propModelInput")
   }};
   const animation = document.getElementById("animationSelect")?.value || "";
   const animationSource = document.getElementById("animationSourceInput")?.value || "";
@@ -1536,7 +1570,9 @@ function componentReviewRows(activeOnly = false) {{
           phases: payload.phases,
           angles: payload.angles,
           parts: payload.parts,
+          partModels: payload.partModels || [],
           propSlots: payload.propSlots,
+          propModels: payload.propModels || [],
           animationSource: payload.animationSource || "",
           animationStartPoint: payload.animationStartPoint || "",
           animationGroup: payload.animationGroup || "",
@@ -1747,14 +1783,14 @@ function renderControls() {{
     recordEvent("live-authoring.surface", {{ prefix: livePrefix() }});
     renderLiveAuthoringState();
   }};
-  ["liveOffsetX", "liveOffsetY", "liveOffsetZ", "liveRotationX", "liveRotationY", "liveRotationZ"].forEach(id => {{
+  ["liveOffsetX", "liveOffsetY", "liveOffsetZ", "liveRotationX", "liveRotationY", "liveRotationZ", "livePivotX", "livePivotY", "livePivotZ", "livePivotOffsetX", "livePivotOffsetY", "livePivotOffsetZ"].forEach(id => {{
     document.getElementById(id).addEventListener("input", queueLiveAuthoringWrite);
     document.getElementById(id).addEventListener("change", queueLiveAuthoringWrite);
   }});
   document.getElementById("livePivotMode").addEventListener("change", queueLiveAuthoringWrite);
   document.getElementById("applyLiveAuthoring").addEventListener("click", () => writeLiveAuthoring(false));
   document.getElementById("resetLiveAuthoring").addEventListener("click", () => writeLiveAuthoring(true));
-  ["phaseSelect", "partFocusSelect", "animationSourceInput", "animationStartPointInput", "neutralPreviewYawInput", "animationSelect", "dialogueSelect"].forEach(id => {{
+  ["phaseSelect", "partFocusSelect", "animationSourceInput", "animationStartPointInput", "neutralPreviewYawInput", "partModelInput", "propModelInput", "animationSelect", "dialogueSelect"].forEach(id => {{
     const node = document.getElementById(id);
     const handler = () => {{
       recordEvent("selector.change", studioPayload("runtimeThreeCamera"));
@@ -2040,8 +2076,8 @@ function render() {{
   }});
   renderWorkbench();
 }}
-fillSelect("domain", [...new Set((CATALOG.entries || []).map(e => e.domain).filter(Boolean))].sort());
-fillSelect("kind", [...new Set((CATALOG.entries || []).map(e => e.kind).filter(Boolean))].sort());
+fillSelect("domain", Object.keys(CATALOG.counts?.domains || {{}}).sort());
+fillSelect("kind", Object.keys(CATALOG.counts?.kinds || {{}}).sort());
 renderControls();
 document.getElementById("newSession").addEventListener("click", async () => {{
   try {{
@@ -2071,6 +2107,302 @@ refreshRuntimeStatus();
 refreshRuntimeAudit();
 window.setInterval(refreshRuntimeStatus, 2500);
 window.setInterval(refreshRuntimeAudit, 2500);
+</script>
+</body>
+</html>
+"""
+
+
+def html_doc(catalog: dict[str, Any]) -> str:
+    data = json.dumps(html_catalog(catalog), ensure_ascii=False).replace("</", "<\\/")
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FNV Live Actor Authoring</title>
+<style>
+:root {{
+  color-scheme: dark;
+  --bg: #0d0f12;
+  --panel: #171b20;
+  --panel2: #20262e;
+  --line: #343b45;
+  --text: #edf1f5;
+  --muted: #aab3bf;
+  --ok: #69d28b;
+  --bad: #ff746b;
+  --warn: #e7c764;
+}}
+* {{ box-sizing: border-box; }}
+body {{ margin: 0; background: var(--bg); color: var(--text); font: 13px/1.4 Segoe UI, Arial, sans-serif; }}
+header {{ position: sticky; top: 0; z-index: 2; background: #11151a; border-bottom: 1px solid var(--line); padding: 10px 12px; display: grid; gap: 8px; }}
+h1 {{ margin: 0; font-size: 16px; }}
+main {{ padding: 12px; display: grid; grid-template-columns: minmax(280px, 420px) minmax(0, 1fr); gap: 10px; align-items: start; }}
+input, select, button {{ border: 1px solid var(--line); border-radius: 5px; background: var(--panel2); color: var(--text); padding: 7px 9px; font: inherit; }}
+button {{ cursor: pointer; }}
+button:disabled {{ opacity: .45; cursor: not-allowed; }}
+label {{ display: grid; gap: 4px; color: var(--muted); }}
+.panel {{ background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 10px; display: grid; gap: 9px; min-width: 0; }}
+.row {{ display: flex; flex-wrap: wrap; gap: 7px; align-items: center; }}
+.grid2 {{ display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; }}
+.grid3 {{ display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px; }}
+.pill {{ border: 1px solid var(--line); background: var(--panel2); border-radius: 99px; padding: 3px 8px; color: var(--muted); }}
+.ok {{ color: #06130b; background: var(--ok); }}
+.bad {{ color: #1a0503; background: var(--bad); }}
+.warn {{ color: #171002; background: var(--warn); }}
+.muted {{ color: var(--muted); }}
+.mono {{ font-family: Consolas, monospace; overflow-wrap: anywhere; }}
+.list {{ display: grid; gap: 6px; max-height: 340px; overflow: auto; }}
+.item {{ border: 1px solid #2c333d; border-radius: 5px; padding: 7px; background: #101419; display: grid; gap: 5px; }}
+.selected {{ border-color: #6f9ee8; }}
+.stage {{ min-height: 420px; border: 1px solid var(--line); border-radius: 6px; background:
+  linear-gradient(transparent 95%, rgba(112,158,232,.16) 96%),
+  linear-gradient(90deg, transparent 95%, rgba(112,158,232,.16) 96%),
+  #080b0f; background-size: 36px 36px; display: grid; grid-template-rows: auto 1fr auto; overflow: hidden; }}
+.stageHead, .stageFoot {{ padding: 9px 10px; background: #12161c; border-bottom: 1px solid var(--line); display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; }}
+.stageFoot {{ border-top: 1px solid var(--line); border-bottom: 0; }}
+.stageBody {{ display: grid; place-items: center; min-height: 330px; position: relative; }}
+.actorGlyph {{ width: 92px; height: 250px; border: 1px solid #657181; border-radius: 46% 46% 9px 9px; background: linear-gradient(#38414d, #161a20); box-shadow: 0 22px 90px rgba(112,158,232,.25); }}
+.shots {{ display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }}
+.shot {{ border: 1px solid var(--line); border-radius: 5px; overflow: hidden; background: #07090c; min-height: 170px; display: grid; place-items: center; color: var(--muted); }}
+.shot img {{ width: 100%; display: block; }}
+@media (max-width: 1000px) {{ main, .shots {{ grid-template-columns: 1fr; }} }}
+</style>
+</head>
+<body>
+<header>
+  <h1>FNV Live Actor Authoring <span id="status" class="pill"></span></h1>
+  <div class="row">
+    <span class="pill">OpenMW renders assets live</span>
+    <span class="pill">this window only sends actor/part/slider commands</span>
+    <span class="pill">no embedded catalog blob</span>
+  </div>
+</header>
+<main>
+  <section class="panel">
+    <label>Find actor, creature, weapon, outfit, hair, hat, prop, or form ID
+      <input id="search" placeholder="Easy Pete, Sunny, hat, weapon, 00104C0">
+    </label>
+    <div class="row">
+      <button id="searchButton" type="button">Search</button>
+      <button id="easyPete" type="button">Easy Pete</button>
+      <button id="sunny" type="button">Sunny</button>
+      <button id="refreshAudit" type="button">Refresh Runtime</button>
+    </div>
+    <div id="results" class="list"></div>
+  </section>
+
+  <section class="panel">
+    <div class="stage">
+      <div class="stageHead">
+        <span id="targetLabel">no actor selected</span>
+        <span id="runtimeState" class="pill">runtime unknown</span>
+      </div>
+      <div class="stageBody">
+        <div class="actorGlyph"></div>
+      </div>
+      <div class="stageFoot">
+        <span id="fingerprint" class="mono muted">no live command sent</span>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="grid3">
+        <label>Phase<select id="phase">
+          <option value="">entry default</option><option>body</option><option>head</option><option>face</option><option>hair</option><option>equipment</option><option>weapon</option><option>headgear</option><option>talk</option>
+        </select></label>
+        <label>Animation<select id="animation">
+          <option value="">none</option><option>idle</option><option>walkforward</option><option>runforward</option><option>attackright</option>
+        </select></label>
+        <label>Dialogue<select id="dialogue">
+          <option value="">none</option><option>mouth-open-pose</option><option>mouth-open</option>
+        </select></label>
+      </div>
+      <div class="grid2">
+        <label>Exact part models<input id="partModels" placeholder="comma separated NIF paths"></label>
+        <label>Exact prop models<input id="propModels" placeholder="comma separated NIF paths"></label>
+      </div>
+      <div class="grid3">
+        <label>Surface<select id="surface">
+          <option value="OPENMW_FNV_HEADGEAR">hat/headgear</option>
+          <option value="OPENMW_FNV_HAIR">hair</option>
+          <option value="OPENMW_FNV_BEARD">beard</option>
+          <option value="OPENMW_FNV_EYE">eyes</option>
+          <option value="OPENMW_FNV_MOUTH">mouth/teeth</option>
+        </select></label>
+        <label>Offset X<input id="offX" type="number" step="0.05" value="0"></label>
+        <label>Offset Y<input id="offY" type="number" step="0.05" value="0"></label>
+        <label>Offset Z<input id="offZ" type="number" step="0.05" value="0"></label>
+        <label>Rot X<input id="rotX" type="number" step="1" value="0"></label>
+        <label>Rot Y<input id="rotY" type="number" step="1" value="0"></label>
+        <label>Rot Z<input id="rotZ" type="number" step="1" value="0"></label>
+        <label>Pivot X<input id="pivotX" type="number" step="0.05" placeholder="bounds"></label>
+        <label>Pivot Y<input id="pivotY" type="number" step="0.05" placeholder="bounds"></label>
+        <label>Pivot Z<input id="pivotZ" type="number" step="0.05" placeholder="bounds"></label>
+        <label>Pivot dX<input id="pivotOffsetX" type="number" step="0.05" value="0"></label>
+        <label>Pivot dY<input id="pivotOffsetY" type="number" step="0.05" value="0"></label>
+        <label>Pivot dZ<input id="pivotOffsetZ" type="number" step="0.05" value="0"></label>
+      </div>
+      <div class="row">
+        <button id="sendLive" type="button">Send Live</button>
+        <button id="applyKnobs" type="button">Apply Sliders</button>
+        <button id="runShots" type="button">Run 3 Shots</button>
+      </div>
+    </div>
+
+    <div class="shots" id="shots">
+      <div class="shot">front</div><div class="shot">front-left</div><div class="shot">front-right</div>
+    </div>
+    <div id="audit" class="panel mono muted">audit pending</div>
+  </section>
+</main>
+<script>
+const CATALOG = {data};
+let selected = null;
+let latestJob = null;
+function esc(v) {{ return String(v ?? "").replace(/[&<>"']/g, c => ({{"&":"&amp;","<":"&lt;",">":"&gt;","\\"":"&quot;","'":"&#39;"}}[c])); }}
+function liveAvailable() {{ return location.protocol.startsWith("http") && ["127.0.0.1", "localhost"].includes(location.hostname); }}
+async function api(path, options = {{}}) {{
+  const response = await fetch(path, {{ cache: "no-store", ...options, headers: {{ "Content-Type": "application/json", ...(options.headers || {{}}) }} }});
+  const payload = await response.json();
+  if (!response.ok) throw new Error(payload.error || response.statusText);
+  return payload;
+}}
+function csv(id) {{ return (document.getElementById(id).value || "").split(/[\\n,;]+/).map(v => v.trim()).filter(Boolean); }}
+function partsForPhase() {{
+  const phase = document.getElementById("phase").value;
+  if (phase === "face" || phase === "talk") return ["body-skin", "head-skin", "face-organs", "hair-beard"];
+  if (phase === "hair") return ["body-skin", "head-skin", "hair-beard"];
+  if (phase === "headgear") return ["body-skin", "head-skin", "hair-beard", "headgear"];
+  if (phase === "weapon") return ["body-skin", "equipment-body", "weapon"];
+  return ["body-skin", "head-skin", "face-organs", "hair-beard", "equipment-body", "weapon", "headgear"];
+}}
+function renderSelected() {{
+  document.getElementById("targetLabel").innerHTML = selected
+    ? `${{esc(selected.label)}} <span class="pill">${{esc(selected.kind)}}</span> <code>${{esc(selected.runtimeTarget || selected.target || "")}}</code>`
+    : "no actor selected";
+  document.getElementById("sendLive").disabled = !selected;
+  document.getElementById("runShots").disabled = !selected;
+}}
+function renderResults(entries) {{
+  const node = document.getElementById("results");
+  node.innerHTML = entries.length ? entries.map(e => `
+    <div class="item ${{selected?.id === e.id ? "selected" : ""}}">
+      <b>${{esc(e.label || e.target)}}</b>
+      <div class="muted"><span class="pill">${{esc(e.domain)}}</span> <span class="pill">${{esc(e.kind)}}</span> runtime <code>${{esc(e.runtimeTarget || e.target || "")}}</code></div>
+      <button type="button" data-id="${{esc(e.id)}}">Select</button>
+    </div>`).join("") : `<div class="muted">No results</div>`;
+  node.querySelectorAll("[data-id]").forEach(button => button.onclick = async () => {{
+    selected = await api(`/nikami/catalog/entries/${{encodeURIComponent(button.dataset.id)}}`);
+    renderSelected();
+    await sendLive(true);
+  }});
+}}
+async function search(q = "") {{
+  if (!liveAvailable()) {{ renderResults([]); return; }}
+  const params = new URLSearchParams();
+  params.set("q", q || document.getElementById("search").value || "");
+  params.set("limit", "40");
+  const payload = await api(`/nikami/catalog/search?${{params.toString()}}`);
+  renderResults(payload.entries || []);
+}}
+async function selectCritical(label) {{
+  const item = (CATALOG.criticalQueue || []).find(row => String(row.label || "").toLowerCase().includes(label));
+  if (!item?.entryId) {{ await search(label); return; }}
+  selected = await api(`/nikami/catalog/entries/${{encodeURIComponent(item.entryId)}}`);
+  renderSelected();
+  await sendLive(true);
+}}
+async function sendLive(silent = false) {{
+  if (!selected || !liveAvailable()) return;
+  const target = selected.runtimeTarget || selected.baseActorTarget || selected.target || "";
+  const payload = {{
+    actorTarget: target,
+    runtimeTarget: target,
+    selectedTarget: selected.selectedTarget || selected.target || "",
+    placedTarget: selected.placedTarget || "",
+    actorKind: selected.kind || "npc",
+    command: "update-actor-kit",
+    selectors: {{
+      phases: document.getElementById("phase").value ? [document.getElementById("phase").value] : (selected.phases || []),
+      parts: partsForPhase(),
+      partModels: csv("partModels"),
+      propSlots: ["equipment-body", "weapon", "headgear"].filter(part => partsForPhase().includes(part)),
+      propModels: csv("propModels"),
+      animationGroup: document.getElementById("animation").value,
+      dialogueMode: document.getElementById("dialogue").value
+    }}
+  }};
+  const result = await api("/nikami/live-runtime", {{ method: "POST", body: JSON.stringify(payload) }});
+  document.getElementById("fingerprint").textContent = result.fingerprint || JSON.stringify(result.selectors || {{}});
+  if (!silent) await refreshAudit();
+}}
+async function applyKnobs() {{
+  const prefix = document.getElementById("surface").value;
+  const controls = {{}};
+  controls[`${{prefix}}_OFFSET_X`] = Number(document.getElementById("offX").value || 0);
+  controls[`${{prefix}}_OFFSET_Y`] = Number(document.getElementById("offY").value || 0);
+  controls[`${{prefix}}_OFFSET_Z`] = Number(document.getElementById("offZ").value || 0);
+  controls[`${{prefix}}_ROTATION_X`] = Number(document.getElementById("rotX").value || 0);
+  controls[`${{prefix}}_ROTATION_Y`] = Number(document.getElementById("rotY").value || 0);
+  controls[`${{prefix}}_ROTATION_Z`] = Number(document.getElementById("rotZ").value || 0);
+  if (document.getElementById("pivotX").value !== "") controls[`${{prefix}}_PIVOT_X`] = Number(document.getElementById("pivotX").value || 0);
+  if (document.getElementById("pivotY").value !== "") controls[`${{prefix}}_PIVOT_Y`] = Number(document.getElementById("pivotY").value || 0);
+  if (document.getElementById("pivotZ").value !== "") controls[`${{prefix}}_PIVOT_Z`] = Number(document.getElementById("pivotZ").value || 0);
+  controls[`${{prefix}}_PIVOT_OFFSET_X`] = Number(document.getElementById("pivotOffsetX").value || 0);
+  controls[`${{prefix}}_PIVOT_OFFSET_Y`] = Number(document.getElementById("pivotOffsetY").value || 0);
+  controls[`${{prefix}}_PIVOT_OFFSET_Z`] = Number(document.getElementById("pivotOffsetZ").value || 0);
+  controls[`${{prefix}}_PIVOT_MODE`] = true;
+  await api("/nikami/live-authoring", {{ method: "POST", body: JSON.stringify({{ controls }}) }});
+  await refreshAudit();
+}}
+async function refreshAudit() {{
+  if (!liveAvailable()) return;
+  const status = await api("/nikami/runtime-status");
+  const audit = await api("/nikami/runtime-audit");
+  document.getElementById("runtimeState").className = `pill ${{status.runtimeRunning ? "ok" : "bad"}}`;
+  document.getElementById("runtimeState").textContent = status.runtimeRunning ? `engine pid ${{status.runtimeProcessId || ""}}` : "engine not running";
+  document.getElementById("audit").textContent = JSON.stringify({{
+    classification: audit.classification,
+    firstFailingGate: audit.firstFailingGate,
+    liveCommand: audit.liveRuntimeCommand,
+    counts: audit.counts
+  }}, null, 2);
+}}
+async function runShots() {{
+  if (!selected || !liveAvailable()) return;
+  const payload = {{
+    entryId: selected.id,
+    commandKey: "runtimeThreeCamera",
+    phases: document.getElementById("phase").value ? [document.getElementById("phase").value] : (selected.phases || []),
+    angles: ["front", "front-left", "front-right"],
+    parts: partsForPhase(),
+    propSlots: ["equipment-body", "weapon", "headgear"].filter(part => partsForPhase().includes(part)),
+    partModels: csv("partModels"),
+    propModels: csv("propModels"),
+    animationGroup: document.getElementById("animation").value,
+    dialogueMode: document.getElementById("dialogue").value
+  }};
+  const session = await api("/nikami/studio/sessions", {{ method: "POST", body: JSON.stringify({{ entryId: selected.id }}) }});
+  const job = await api(`/nikami/studio/sessions/${{encodeURIComponent(session.id)}}/jobs`, {{ method: "POST", body: JSON.stringify(payload) }});
+  latestJob = job;
+  document.getElementById("shots").innerHTML = `<div class="shot">job ${{esc(job.id)}} running</div><div class="shot">waiting</div><div class="shot">waiting</div>`;
+}}
+document.getElementById("status").textContent = CATALOG.status || "ready";
+document.getElementById("searchButton").onclick = () => search();
+document.getElementById("search").addEventListener("keydown", event => {{ if (event.key === "Enter") search(); }});
+document.getElementById("easyPete").onclick = () => selectCritical("easy");
+document.getElementById("sunny").onclick = () => selectCritical("sunny");
+document.getElementById("sendLive").onclick = () => sendLive(false);
+document.getElementById("applyKnobs").onclick = applyKnobs;
+document.getElementById("refreshAudit").onclick = refreshAudit;
+document.getElementById("runShots").onclick = runShots;
+["phase", "animation", "dialogue", "partModels", "propModels"].forEach(id => document.getElementById(id).addEventListener("change", () => sendLive(true)));
+["offX", "offY", "offZ", "rotX", "rotY", "rotZ", "pivotX", "pivotY", "pivotZ", "pivotOffsetX", "pivotOffsetY", "pivotOffsetZ"].forEach(id => document.getElementById(id).addEventListener("input", applyKnobs));
+renderSelected();
+refreshAudit().catch(() => {{}});
+search("Easy Pete").catch(() => {{}});
 </script>
 </body>
 </html>

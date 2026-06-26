@@ -70,6 +70,7 @@ namespace MWGui
             const std::string& view, const std::string& profile, float zoom);
         bool rebuildModelPreview(const std::string& assetClass, const std::string& record, const std::string& session,
             const std::string& view, const std::string& model, float zoom);
+        std::string resolveRecordModel(const std::string& assetClass, const std::string& record) const;
         osg::Vec3f cameraDirectionForView(const std::string& view) const;
         MWRender::FalloutActorPreview::ViewMode actorViewModeForView(const std::string& view) const;
         void attachTexture(MyGUI::ImageBox* image, MyGUIPlatform::OSGTexture* texture) const;

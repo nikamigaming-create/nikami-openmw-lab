@@ -199,6 +199,32 @@ def main() -> int:
             "animationSource=hands-at-side;animationStartPoint=0.25;animationGroup=idle;dialogueMode=mouth-open;"
         ):
             raise AssertionError(f"live runtime command fingerprint mismatch: {expected_fingerprint}")
+        exact_model_doc = runtime_store.update(
+            {
+                "actorTarget": "ContractNpc",
+                "selectors": {
+                    "partModels": ["meshes/characters/hair/contract.nif"],
+                    "propModels": ["meshes/armor/headgear/contract_hat.nif"],
+                },
+            }
+        )
+        if exact_model_doc["actorKitPartModels"] != "meshes/characters/hair/contract.nif":
+            raise AssertionError("live runtime command did not persist exact part model selectors")
+        if exact_model_doc["actorKitPropModels"] != "meshes/armor/headgear/contract_hat.nif":
+            raise AssertionError("live runtime command did not persist exact prop model selectors")
+        cleared_model_doc = runtime_store.update(
+            {
+                "actorTarget": "ContractNpc",
+                "selectors": {
+                    "partModels": [],
+                    "propModels": [],
+                },
+            }
+        )
+        if cleared_model_doc["actorKitPartModels"] or cleared_model_doc["selectors"]["partModels"]:
+            raise AssertionError("live runtime command did not clear exact part model selectors")
+        if cleared_model_doc["actorKitPropModels"] or cleared_model_doc["selectors"]["propModels"]:
+            raise AssertionError("live runtime command did not clear exact prop model selectors")
         stale_audit = live.runtime_audit(run_dir, root, live_authoring_path, live_runtime_path)
         if stale_audit["classification"] != "loaded-pending-runtime":
             raise AssertionError("runtime audit treated stale actor-kit fingerprint evidence as current")

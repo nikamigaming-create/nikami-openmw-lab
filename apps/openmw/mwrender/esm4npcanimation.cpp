@@ -4727,6 +4727,21 @@ namespace MWRender
                 readFalloutProofFloat((keyPrefix + "_ROTATION_Z").c_str(), getFalloutHeadFrameSurfaceZFallback(prefix)));
         }
 
+        osg::Vec3f getFalloutHeadFrameSurfacePivot(std::string_view prefix, const osg::Vec3f& fallback)
+        {
+            if (prefix.empty())
+                return fallback;
+
+            const std::string keyPrefix(prefix);
+            osg::Vec3f pivot(readFalloutProofFloat((keyPrefix + "_PIVOT_X").c_str(), fallback.x()),
+                readFalloutProofFloat((keyPrefix + "_PIVOT_Y").c_str(), fallback.y()),
+                readFalloutProofFloat((keyPrefix + "_PIVOT_Z").c_str(), fallback.z()));
+            pivot += osg::Vec3f(readFalloutProofFloat((keyPrefix + "_PIVOT_OFFSET_X").c_str(), 0.f),
+                readFalloutProofFloat((keyPrefix + "_PIVOT_OFFSET_Y").c_str(), 0.f),
+                readFalloutProofFloat((keyPrefix + "_PIVOT_OFFSET_Z").c_str(), 0.f));
+            return pivot;
+        }
+
         osg::Quat getFalloutHeadFrameSurfaceAttitude(std::string_view model, bool headgearStaticPart)
         {
             const std::string prefix = getFalloutHeadFrameSurfacePrefix(model, headgearStaticPart);
@@ -4860,6 +4875,8 @@ namespace MWRender
                         mLastContent = content;
                         osg::Vec3f offset = mDefaultOffset;
                         osg::Vec3f rotation = mDefaultRotationDegrees;
+                        osg::Vec3f pivot = mPivot;
+                        osg::Vec3f pivotOffset;
                         bool pivotMode = mDefaultPivotMode;
                         readFalloutLiveAuthoringFloat(content, mPrefix + "_OFFSET_X", offset.x());
                         readFalloutLiveAuthoringFloat(content, mPrefix + "_OFFSET_Y", offset.y());
@@ -4867,18 +4884,26 @@ namespace MWRender
                         readFalloutLiveAuthoringFloat(content, mPrefix + "_ROTATION_X", rotation.x());
                         readFalloutLiveAuthoringFloat(content, mPrefix + "_ROTATION_Y", rotation.y());
                         readFalloutLiveAuthoringFloat(content, mPrefix + "_ROTATION_Z", rotation.z());
+                        readFalloutLiveAuthoringFloat(content, mPrefix + "_PIVOT_X", pivot.x());
+                        readFalloutLiveAuthoringFloat(content, mPrefix + "_PIVOT_Y", pivot.y());
+                        readFalloutLiveAuthoringFloat(content, mPrefix + "_PIVOT_Z", pivot.z());
+                        readFalloutLiveAuthoringFloat(content, mPrefix + "_PIVOT_OFFSET_X", pivotOffset.x());
+                        readFalloutLiveAuthoringFloat(content, mPrefix + "_PIVOT_OFFSET_Y", pivotOffset.y());
+                        readFalloutLiveAuthoringFloat(content, mPrefix + "_PIVOT_OFFSET_Z", pivotOffset.z());
+                        pivot += pivotOffset;
                         readFalloutLiveAuthoringBool(content, mPrefix + "_PIVOT_MODE", pivotMode);
                         if (osg::MatrixTransform* matrixNode = dynamic_cast<osg::MatrixTransform*>(node))
                         {
                             matrixNode->setMatrix(
-                                makeFalloutHeadSurfaceMatrix(offset, makeFalloutEulerAttitude(rotation), mPivot, pivotMode));
+                                makeFalloutHeadSurfaceMatrix(offset, makeFalloutEulerAttitude(rotation), pivot, pivotMode));
                             matrixNode->dirtyBound();
                             Log(Debug::Info)
                                 << "FNV/ESM4 live authoring: applied head surface authoring model=" << mModel
                                 << " prefix=" << mPrefix << " file=" << livePath << " offset=(" << offset.x() << ","
                                 << offset.y() << "," << offset.z() << ") rotation=(" << rotation.x() << ","
-                                << rotation.y() << "," << rotation.z() << ") pivot=(" << mPivot.x() << ","
-                                << mPivot.y() << "," << mPivot.z() << ") pivotMode=" << pivotMode;
+                                << rotation.y() << "," << rotation.z() << ") pivot=(" << pivot.x() << ","
+                                << pivot.y() << "," << pivot.z() << ") pivotOffset=(" << pivotOffset.x() << ","
+                                << pivotOffset.y() << "," << pivotOffset.z() << ") pivotMode=" << pivotMode;
                         }
                     }
                 }
@@ -5982,12 +6007,16 @@ namespace MWRender
             if (!egt)
                 return false;
 
-            if (std::getenv("OPENMW_FNV_USE_EGT_MATERIAL_TINT") == nullptr)
+            const bool egtMaterialTintDisabled = std::getenv("OPENMW_FNV_DISABLE_EGT_MATERIAL_TINT") != nullptr;
+            if (egtMaterialTintDisabled || std::getenv("OPENMW_FNV_USE_EGT_MATERIAL_TINT") == nullptr)
             {
                 Log(Debug::Info) << "FNV/ESM4 diag: loaded FaceGen EGT complexion " << model << " size="
                                  << egt->mWidth << "x" << egt->mHeight << " modes=" << egt->mTextureModeCount
                                  << " for " << traits.mEditorId
-                                 << " runtime=loaded-pending-exact-facegen-texture-synthesis";
+                                 << " runtime=loaded-pending-exact-facegen-texture-synthesis"
+                                 << " optIn=OPENMW_FNV_USE_EGT_MATERIAL_TINT"
+                                 << " optOut=OPENMW_FNV_DISABLE_EGT_MATERIAL_TINT disabled="
+                                 << egtMaterialTintDisabled;
                 return false;
             }
 
@@ -5999,7 +6028,8 @@ namespace MWRender
                              << textureNonZero << "/" << traits.mSymTextureModeCoefficients.size()
                              << " sumAbs=" << textureTotal << " tintLayers=" << traits.mTintLayers.size()
                              << " materialTint=(" << tint.x() << ", " << tint.y() << ", " << tint.z() << ") for "
-                             << traits.mEditorId;
+                             << traits.mEditorId << " runtime=runtime-fnv-egt-material-tint-applied"
+                             << " optOut=OPENMW_FNV_DISABLE_EGT_MATERIAL_TINT";
             return true;
         }
 
@@ -6668,6 +6698,8 @@ namespace MWRender
 
             osg::Vec3f offset = target.defaultOffset;
             osg::Vec3f rotation = target.defaultRotationDegrees;
+            osg::Vec3f pivot = target.pivot;
+            osg::Vec3f pivotOffset;
             bool pivotMode = target.defaultPivotMode;
             readFalloutLiveAuthoringFloat(content, target.prefix + "_OFFSET_X", offset.x());
             readFalloutLiveAuthoringFloat(content, target.prefix + "_OFFSET_Y", offset.y());
@@ -6675,16 +6707,24 @@ namespace MWRender
             readFalloutLiveAuthoringFloat(content, target.prefix + "_ROTATION_X", rotation.x());
             readFalloutLiveAuthoringFloat(content, target.prefix + "_ROTATION_Y", rotation.y());
             readFalloutLiveAuthoringFloat(content, target.prefix + "_ROTATION_Z", rotation.z());
+            readFalloutLiveAuthoringFloat(content, target.prefix + "_PIVOT_X", pivot.x());
+            readFalloutLiveAuthoringFloat(content, target.prefix + "_PIVOT_Y", pivot.y());
+            readFalloutLiveAuthoringFloat(content, target.prefix + "_PIVOT_Z", pivot.z());
+            readFalloutLiveAuthoringFloat(content, target.prefix + "_PIVOT_OFFSET_X", pivotOffset.x());
+            readFalloutLiveAuthoringFloat(content, target.prefix + "_PIVOT_OFFSET_Y", pivotOffset.y());
+            readFalloutLiveAuthoringFloat(content, target.prefix + "_PIVOT_OFFSET_Z", pivotOffset.z());
+            pivot += pivotOffset;
             readFalloutLiveAuthoringBool(content, target.prefix + "_PIVOT_MODE", pivotMode);
 
             matrixNode->setMatrix(
-                makeFalloutHeadSurfaceMatrix(offset, makeFalloutEulerAttitude(rotation), target.pivot, pivotMode));
+                makeFalloutHeadSurfaceMatrix(offset, makeFalloutEulerAttitude(rotation), pivot, pivotMode));
             matrixNode->dirtyBound();
             Log(Debug::Info) << "FNV/ESM4 live authoring: frame-applied head surface authoring model="
                              << target.model << " prefix=" << target.prefix << " file=" << livePath << " offset=("
                              << offset.x() << "," << offset.y() << "," << offset.z() << ") rotation=("
                              << rotation.x() << "," << rotation.y() << "," << rotation.z() << ") pivot=("
-                             << target.pivot.x() << "," << target.pivot.y() << "," << target.pivot.z()
+                             << pivot.x() << "," << pivot.y() << "," << pivot.z() << ") pivotOffset=("
+                             << pivotOffset.x() << "," << pivotOffset.y() << "," << pivotOffset.z()
                              << ") pivotMode=" << pivotMode << " for " << mPtr.getCellRef().getRefId();
         }
     }
@@ -7093,7 +7133,8 @@ namespace MWRender
                 || (liveAuthoringFile != nullptr && !surfacePrefix.empty()))
             {
                 osg::ref_ptr<osg::Transform> offsetNode;
-                const osg::Vec3f pivot = localBoundsCenter(*attached);
+                const osg::Vec3f boundsPivot = localBoundsCenter(*attached);
+                const osg::Vec3f pivot = getFalloutHeadFrameSurfacePivot(surfacePrefix, boundsPivot);
                 const bool pivotMode = std::getenv("OPENMW_FNV_HEAD_SURFACE_PIVOT_ROTATION") != nullptr;
                 if (liveAuthoringFile != nullptr)
                 {
@@ -7111,8 +7152,9 @@ namespace MWRender
                                      << liveAuthoringFile << " offset=(" << surfaceOffset.x() << ","
                                      << surfaceOffset.y() << "," << surfaceOffset.z() << ") rotation=("
                                      << surfaceRotationDegrees.x() << "," << surfaceRotationDegrees.y() << ","
-                                     << surfaceRotationDegrees.z() << ") pivot=(" << pivot.x() << "," << pivot.y()
-                                     << "," << pivot.z() << ") pivotMode=" << pivotMode;
+                                     << surfaceRotationDegrees.z() << ") boundsPivot=(" << boundsPivot.x() << ","
+                                     << boundsPivot.y() << "," << boundsPivot.z() << ") pivot=(" << pivot.x() << ","
+                                     << pivot.y() << "," << pivot.z() << ") pivotMode=" << pivotMode;
                 }
                 else if (!surfaceAttitude.zeroRotation() && pivotMode)
                 {
@@ -7140,9 +7182,10 @@ namespace MWRender
                 Log(Debug::Info) << "FNV/ESM4 diag: applied head frame surface offset model="
                                  << correctedModel.value() << " offset=(" << surfaceOffset.x() << ","
                                  << surfaceOffset.y() << "," << surfaceOffset.z() << ") rotationPrefix="
-                                 << surfacePrefix << " pivot=("
-                                 << pivot.x() << "," << pivot.y() << "," << pivot.z() << ") pivotMode="
-                                 << pivotMode << " liveFile=" << (liveAuthoringFile != nullptr ? liveAuthoringFile : "")
+                                 << surfacePrefix << " boundsPivot=(" << boundsPivot.x() << "," << boundsPivot.y()
+                                 << "," << boundsPivot.z() << ") pivot=(" << pivot.x() << "," << pivot.y() << ","
+                                 << pivot.z() << ") pivotMode=" << pivotMode << " liveFile="
+                                 << (liveAuthoringFile != nullptr ? liveAuthoringFile : "")
                                  << " for " << mPtr.getCellRef().getRefId();
             }
         }
@@ -7497,14 +7540,17 @@ namespace MWRender
                 const bool appliedEgtTint = applyFaceGenEgtTint(mResourceSystem, attached.get(), bodyPart.mesh, traits);
                 if (!appliedEgtTint && npcBodyDetailIsTinyTint)
                 {
-                    if (std::getenv("OPENMW_FNV_USE_RAW_BODY_TINT_SWATCH") != nullptr)
+                    const bool rawBodyTintDisabled = std::getenv("OPENMW_FNV_DISABLE_RAW_BODY_TINT_SWATCH") != nullptr;
+                    if (!rawBodyTintDisabled && std::getenv("OPENMW_FNV_USE_RAW_BODY_TINT_SWATCH") != nullptr)
                     {
                         tintFalloutSkinMaterial(attached.get(), bodyPart.mesh, traits, npcBodyMaterialTint);
                         Log(Debug::Info) << "FNV/ESM4 diag: applied raw BSA body tint swatch " << npcBodyDetailTexture
                                          << " size=" << npcBodyTintWidth << "x" << npcBodyTintHeight << " average=("
                                          << npcBodyMaterialTint.x() << ", " << npcBodyMaterialTint.y() << ", "
                                          << npcBodyMaterialTint.z() << ") on " << bodyPart.mesh << " for "
-                                         << traits.mEditorId << " multiplier=none";
+                                         << traits.mEditorId
+                                         << " runtime=runtime-fnv-body-tint-swatch-applied multiplier=none"
+                                         << " optOut=OPENMW_FNV_DISABLE_RAW_BODY_TINT_SWATCH";
                     }
                     else
                     {
@@ -7514,7 +7560,9 @@ namespace MWRender
                                          << npcBodyMaterialTint.z() << ") on " << bodyPart.mesh << " for "
                                          << traits.mEditorId
                                          << " runtime=loaded-pending-exact-body-tint-synthesis multiplier=none"
-                                         << " optIn=OPENMW_FNV_USE_RAW_BODY_TINT_SWATCH";
+                                         << " optIn=OPENMW_FNV_USE_RAW_BODY_TINT_SWATCH"
+                                         << " optOut=OPENMW_FNV_DISABLE_RAW_BODY_TINT_SWATCH"
+                                         << " disabled=" << rawBodyTintDisabled;
                     }
                 }
                 if (!npcBodyDetailTexture.empty() && !npcBodyDetailIsTinyTint)

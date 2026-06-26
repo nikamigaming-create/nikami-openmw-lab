@@ -1,4 +1,5 @@
 #include "engine.hpp"
+#include "mwrender/assetcapture.hpp"
 
 #include <cerrno>
 #include <algorithm>
@@ -4091,6 +4092,9 @@ void OMW::Engine::go()
         mViewer->advance(timeManager.getRenderingSimulationTime());
 
         const unsigned frameNumber = mViewer->getFrameStamp()->getFrameNumber();
+
+        MWRender::AssetCapture::maybeStartFromEnvironment(frameNumber, mViewer.get());
+        MWRender::AssetCapture::update();
 
         if (!frame(frameNumber, static_cast<float>(dt)))
         {

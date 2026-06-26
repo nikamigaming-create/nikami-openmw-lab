@@ -64,6 +64,31 @@ function ConvertTo-ProofLineText([object]$Value) {
     return [string]$Value
 }
 
+function Test-NativeAssetStudioRecordModelClass([string]$Value) {
+    $lowered = $Value.ToLowerInvariant()
+    return @(
+        "acti", "activator", "activators",
+        "alch", "potion", "potions",
+        "ammo", "ammunition",
+        "armo", "armor", "armour",
+        "book", "books",
+        "cont", "container", "containers",
+        "door", "doors",
+        "flor", "flora",
+        "furn", "furniture",
+        "ingr", "ingredient", "ingredients",
+        "keym", "key", "keys",
+        "ligh", "light", "lights",
+        "misc", "misc-item", "miscitem", "misc-items",
+        "item", "items",
+        "object", "objects",
+        "prop", "props",
+        "record", "model-record",
+        "stat", "static", "statics",
+        "weap", "weapon", "weapons"
+    ).Contains($lowered)
+}
+
 $Stamp = New-ProofRunStamp
 $ProofDir = Join-Path $ProofRoot "fnv-native-asset-studio-proof/$Stamp"
 $SummaryFile = Join-Path $ProofDir "summary.txt"
@@ -147,6 +172,8 @@ $registeredLine = Get-FirstLogLine $CopiedLog "FNV/ESM4 asset studio registered 
 $cleanBootLine = Get-FirstLogLine $CopiedLog "FNV/ESM4 asset studio clean boot active .*gate=native-asset-studio-clean-boot runtime=runtime-supported"
 $openedLine = Get-FirstLogLine $CopiedLog "FNV/ESM4 asset studio native window opened"
 $selectorLine = Get-FirstLogLine $CopiedLog "FNV/ESM4 asset studio selector .*gate=native-asset-studio-selector runtime=loaded-pending-runtime"
+$recordModelResolvedLine = Get-FirstLogLine $CopiedLog "FNV/ESM4 asset studio record model resolved .*gate=native-asset-studio-record-model runtime=loaded-pending-runtime"
+$recordModelFailedLine = Get-FirstLogLine $CopiedLog "FNV/ESM4 asset studio record model failed .*gate=native-asset-studio-record-model runtime=known-blocked"
 $threeCameraLine = Get-FirstLogLine $CopiedLog "FNV/ESM4 asset studio three camera preview .*gate=native-asset-studio-three-camera-preview runtime=runtime-supported"
 $threeCameraActorLine = Get-FirstLogLine $CopiedLog "FNV/ESM4 asset studio three camera actor preview .*gate=native-asset-studio-three-camera-actor-preview runtime=runtime-supported"
 $loadedLines = @(Get-LogMatches $CopiedLog "FNV/ESM4 asset studio model loaded .*gate=native-asset-studio-model-preview runtime=runtime-supported")
@@ -156,6 +183,7 @@ $actorFailedLines = @(Get-LogMatches $CopiedLog "FNV/ESM4 asset studio actor fai
 $fatalLines = @(Get-LogMatches $CopiedLog "Fatal error|Failed to start new game|Lua error|marker_error")
 
 $terminalCount = $loadedLines.Count + $failedLines.Count + $actorLoadedLines.Count + $actorFailedLines.Count
+$expectsRecordModel = [string]::IsNullOrWhiteSpace($Model) -and (Test-NativeAssetStudioRecordModelClass $AssetClass)
 $status = "PASS"
 $failures = New-Object "System.Collections.Generic.List[string]"
 if ([string]::IsNullOrWhiteSpace($registeredLine)) { $status = "FAIL"; $failures.Add("missing asset studio registered log line") }
@@ -165,6 +193,10 @@ if (!$StartWorld -and [string]::IsNullOrWhiteSpace($cleanBootLine)) {
 }
 if ([string]::IsNullOrWhiteSpace($openedLine)) { $status = "FAIL"; $failures.Add("missing native window opened log line") }
 if ([string]::IsNullOrWhiteSpace($selectorLine)) { $status = "FAIL"; $failures.Add("missing asset selector log line") }
+if ($expectsRecordModel -and [string]::IsNullOrWhiteSpace($recordModelResolvedLine) -and [string]::IsNullOrWhiteSpace($recordModelFailedLine)) {
+    $status = "FAIL"
+    $failures.Add("missing record-model classification log line for empty-model record-backed asset")
+}
 if ([string]::IsNullOrWhiteSpace($threeCameraLine) -and [string]::IsNullOrWhiteSpace($threeCameraActorLine)) {
     $status = "FAIL"
     $failures.Add("missing three-camera preview log line")
@@ -219,6 +251,9 @@ $proof = [pscustomobject][ordered]@{
         cleanBoot = (![string]::IsNullOrWhiteSpace($cleanBootLine))
         opened = (![string]::IsNullOrWhiteSpace($openedLine))
         selector = (![string]::IsNullOrWhiteSpace($selectorLine))
+        recordModelExpected = $expectsRecordModel
+        recordModelResolved = (![string]::IsNullOrWhiteSpace($recordModelResolvedLine))
+        recordModelFailed = (![string]::IsNullOrWhiteSpace($recordModelFailedLine))
         threeCamera = (![string]::IsNullOrWhiteSpace($threeCameraLine))
         threeCameraActor = (![string]::IsNullOrWhiteSpace($threeCameraActorLine))
         terminalStateCount = $terminalCount
@@ -234,6 +269,8 @@ $proof = [pscustomobject][ordered]@{
         cleanBootLine = (ConvertTo-ProofLineText $cleanBootLine)
         openedLine = (ConvertTo-ProofLineText $openedLine)
         selectorLine = (ConvertTo-ProofLineText $selectorLine)
+        recordModelResolvedLine = (ConvertTo-ProofLineText $recordModelResolvedLine)
+        recordModelFailedLine = (ConvertTo-ProofLineText $recordModelFailedLine)
         threeCameraLine = (ConvertTo-ProofLineText $threeCameraLine)
         threeCameraActorLine = (ConvertTo-ProofLineText $threeCameraActorLine)
         terminalLine = $terminalLine
@@ -262,6 +299,8 @@ Write-ProofLine "RegisteredLine: $(ConvertTo-ProofLineText $registeredLine)"
 Write-ProofLine "CleanBootLine: $(ConvertTo-ProofLineText $cleanBootLine)"
 Write-ProofLine "OpenedLine: $(ConvertTo-ProofLineText $openedLine)"
 Write-ProofLine "SelectorLine: $(ConvertTo-ProofLineText $selectorLine)"
+Write-ProofLine "RecordModelResolvedLine: $(ConvertTo-ProofLineText $recordModelResolvedLine)"
+Write-ProofLine "RecordModelFailedLine: $(ConvertTo-ProofLineText $recordModelFailedLine)"
 Write-ProofLine "ThreeCameraLine: $(ConvertTo-ProofLineText $threeCameraLine)"
 Write-ProofLine "ThreeCameraActorLine: $(ConvertTo-ProofLineText $threeCameraActorLine)"
 Write-ProofLine "TerminalLine: $terminalLine"

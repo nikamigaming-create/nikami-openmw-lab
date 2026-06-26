@@ -4,9 +4,11 @@
 #include <array>
 #include <cctype>
 #include <cstdlib>
+#include <initializer_list>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <utility>
 
 #include <MyGUI_Button.h>
 #include <MyGUI_EditBox.h>
@@ -18,8 +20,22 @@
 #include <osg/Texture2D>
 
 #include <components/debug/debuglog.hpp>
+#include <components/esm4/loadacti.hpp>
+#include <components/esm4/loadalch.hpp>
+#include <components/esm4/loadammo.hpp>
+#include <components/esm4/loadarmo.hpp>
+#include <components/esm4/loadbook.hpp>
+#include <components/esm4/loadcont.hpp>
 #include <components/esm4/loadcrea.hpp>
+#include <components/esm4/loaddoor.hpp>
+#include <components/esm4/loadflor.hpp>
+#include <components/esm4/loadfurn.hpp>
+#include <components/esm4/loadingr.hpp>
+#include <components/esm4/loadligh.hpp>
+#include <components/esm4/loadmisc.hpp>
 #include <components/esm4/loadnpc.hpp>
+#include <components/esm4/loadstat.hpp>
+#include <components/esm4/loadweap.hpp>
 #include <components/myguiplatform/myguitexture.hpp>
 
 #include "../mwbase/environment.hpp"
@@ -52,6 +68,40 @@ namespace MWGui
             return value;
         }
 
+        std::string falloutFormToken(std::string_view value)
+        {
+            while (!value.empty()
+                && (std::isspace(static_cast<unsigned char>(value.front())) || value.front() == '"'
+                    || value.front() == '\''))
+                value.remove_prefix(1);
+            while (!value.empty()
+                && (std::isspace(static_cast<unsigned char>(value.back())) || value.back() == '"'
+                    || value.back() == '\''))
+                value.remove_suffix(1);
+
+            std::string text = lowerAscii(std::string(value));
+            constexpr std::string_view prefix = "formid:";
+            if (text.rfind(prefix, 0) == 0)
+                text.erase(0, prefix.size());
+            if (text.rfind("0x", 0) == 0)
+                text.erase(0, 2);
+            if (text.empty())
+                return {};
+            if (!std::all_of(text.begin(), text.end(), [](unsigned char ch) { return std::isxdigit(ch) != 0; }))
+                return {};
+            if (text.size() > 6)
+                text.erase(0, text.size() - 6);
+            while (text.size() < 6)
+                text.insert(text.begin(), '0');
+            return text;
+        }
+
+        bool falloutFormTargetMatches(std::string_view target, std::string_view candidate)
+        {
+            const std::string targetToken = falloutFormToken(target);
+            return !targetToken.empty() && targetToken == falloutFormToken(candidate);
+        }
+
         bool targetMatches(std::string_view target, std::string_view candidate)
         {
             if (target.empty() || candidate.empty())
@@ -59,7 +109,9 @@ namespace MWGui
 
             const std::string targetLower = lowerAscii(std::string(target));
             const std::string candidateLower = lowerAscii(std::string(candidate));
-            return candidateLower == targetLower || candidateLower.find(targetLower) != std::string::npos;
+            return candidateLower == targetLower || falloutFormTargetMatches(target, candidate)
+                || candidateLower.find(targetLower) != std::string::npos
+                || targetLower.find(candidateLower) != std::string::npos;
         }
 
         bool npcMatches(std::string_view target, const ESM4::Npc& npc)
@@ -72,6 +124,78 @@ namespace MWGui
         {
             return targetMatches(target, creature.mEditorId) || targetMatches(target, creature.mFullName)
                 || targetMatches(target, ESM::RefId(creature.mId).toDebugString());
+        }
+
+        bool classMatches(const std::string& lowered, std::initializer_list<std::string_view> aliases)
+        {
+            for (std::string_view alias : aliases)
+            {
+                if (lowered == alias)
+                    return true;
+            }
+            return false;
+        }
+
+        bool isRecordModelAssetClass(std::string_view assetClass)
+        {
+            const std::string lowered = lowerAscii(std::string(assetClass));
+            return classMatches(lowered,
+                { "acti", "activator", "activators", "alch", "potion", "potions", "ammo", "ammunition", "armo",
+                    "armor", "armour", "book", "books", "cont", "container", "containers", "door", "doors",
+                    "flor", "flora", "furn", "furniture", "ingr", "ingredient", "ingredients", "keym", "key",
+                    "keys", "ligh", "light", "lights", "misc", "misc-item", "miscitem", "misc-items", "item",
+                    "items", "object", "objects", "prop", "props", "record", "model-record", "stat", "static",
+                    "statics", "weap", "weapon", "weapons" });
+        }
+
+        std::string firstNonEmpty(std::initializer_list<std::string_view> values)
+        {
+            for (std::string_view value : values)
+            {
+                if (!value.empty())
+                    return std::string(value);
+            }
+            return {};
+        }
+
+        template <class T>
+        bool recordMatches(std::string_view target, const T& record)
+        {
+            return targetMatches(target, record.mEditorId) || targetMatches(target, record.mFullName)
+                || targetMatches(target, ESM::RefId(record.mId).toDebugString());
+        }
+
+        struct RecordModelMatch
+        {
+            bool mFound = false;
+            int mScanned = 0;
+            std::string mKind;
+            std::string mEditorId;
+            std::string mFullName;
+            std::string mFormId;
+            std::string mModel;
+        };
+
+        template <class T, class ModelFn>
+        RecordModelMatch findRecordModel(const MWWorld::ESMStore& store, std::string_view target, std::string kind,
+            ModelFn&& modelFn)
+        {
+            RecordModelMatch result;
+            result.mKind = std::move(kind);
+            for (const T& candidate : store.get<T>())
+            {
+                ++result.mScanned;
+                if (!recordMatches(target, candidate))
+                    continue;
+
+                result.mFound = true;
+                result.mEditorId = candidate.mEditorId;
+                result.mFullName = candidate.mFullName;
+                result.mFormId = ESM::RefId(candidate.mId).toDebugString();
+                result.mModel = std::string(modelFn(candidate));
+                return result;
+            }
+            return result;
         }
     }
 
@@ -230,7 +354,7 @@ namespace MWGui
         const std::string session = editText(mSessionEdit).empty() ? "native-session" : editText(mSessionEdit);
         const std::string view = editText(mViewEdit).empty() ? "front" : editText(mViewEdit);
         const std::string profile = editText(mProfileEdit);
-        const std::string model = editText(mModelEdit);
+        std::string model = editText(mModelEdit);
         const float zoom = editFloat(mZoomEdit, 1.f);
 
         Log(Debug::Info) << "FNV/ESM4 asset studio selector assetClass=\"" << assetClass << "\" record=\"" << record
@@ -243,6 +367,13 @@ namespace MWGui
         {
             rebuildActorPreview(assetClass, record, session, view, profile, zoom);
             return;
+        }
+
+        if (model.empty())
+        {
+            model = resolveRecordModel(assetClass, record);
+            if (!model.empty())
+                mModelEdit->setCaption(model);
         }
 
         rebuildModelPreview(assetClass, record, session, view, model, zoom);
@@ -489,5 +620,150 @@ namespace MWGui
                                 << "\" gate=native-asset-studio-model-preview runtime=known-blocked";
             return false;
         }
+    }
+
+    std::string AssetStudioWindow::resolveRecordModel(const std::string& assetClass, const std::string& record) const
+    {
+        if (!isRecordModelAssetClass(assetClass))
+            return {};
+
+        const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
+        if (store == nullptr)
+        {
+            Log(Debug::Warning) << "FNV/ESM4 asset studio record model failed assetClass=\"" << assetClass
+                                << "\" record=\"" << record << "\" error=\"missing ESM store\""
+                                << " gate=native-asset-studio-record-model runtime=known-blocked";
+            return {};
+        }
+
+        const std::string lowered = lowerAscii(assetClass);
+        RecordModelMatch match;
+
+        auto scanActivator = [&] {
+            return findRecordModel<ESM4::Activator>(
+                *store, record, "activator", [](const ESM4::Activator& value) { return value.mModel; });
+        };
+        auto scanPotion = [&] {
+            return findRecordModel<ESM4::Potion>(
+                *store, record, "potion", [](const ESM4::Potion& value) { return value.mModel; });
+        };
+        auto scanAmmo = [&] {
+            return findRecordModel<ESM4::Ammunition>(
+                *store, record, "ammo", [](const ESM4::Ammunition& value) { return value.mModel; });
+        };
+        auto scanArmor = [&] {
+            return findRecordModel<ESM4::Armor>(*store, record, "armor", [](const ESM4::Armor& value) {
+                return firstNonEmpty(
+                    { value.mModelMaleWorld, value.mModelFemaleWorld, value.mModelMale, value.mModelFemale, value.mModel });
+            });
+        };
+        auto scanBook = [&] {
+            return findRecordModel<ESM4::Book>(
+                *store, record, "book", [](const ESM4::Book& value) { return value.mModel; });
+        };
+        auto scanContainer = [&] {
+            return findRecordModel<ESM4::Container>(
+                *store, record, "container", [](const ESM4::Container& value) { return value.mModel; });
+        };
+        auto scanDoor = [&] {
+            return findRecordModel<ESM4::Door>(
+                *store, record, "door", [](const ESM4::Door& value) { return value.mModel; });
+        };
+        auto scanFlora = [&] {
+            return findRecordModel<ESM4::Flora>(
+                *store, record, "flora", [](const ESM4::Flora& value) { return value.mModel; });
+        };
+        auto scanFurniture = [&] {
+            return findRecordModel<ESM4::Furniture>(
+                *store, record, "furniture", [](const ESM4::Furniture& value) { return value.mModel; });
+        };
+        auto scanIngredient = [&] {
+            return findRecordModel<ESM4::Ingredient>(
+                *store, record, "ingredient", [](const ESM4::Ingredient& value) { return value.mModel; });
+        };
+        auto scanLight = [&] {
+            return findRecordModel<ESM4::Light>(
+                *store, record, "light", [](const ESM4::Light& value) { return value.mModel; });
+        };
+        auto scanMisc = [&] {
+            return findRecordModel<ESM4::MiscItem>(
+                *store, record, "misc-item", [](const ESM4::MiscItem& value) { return value.mModel; });
+        };
+        auto scanStatic = [&] {
+            return findRecordModel<ESM4::Static>(
+                *store, record, "static", [](const ESM4::Static& value) { return value.mModel; });
+        };
+        auto scanWeapon = [&] {
+            return findRecordModel<ESM4::Weapon>(
+                *store, record, "weapon", [](const ESM4::Weapon& value) { return value.mModel; });
+        };
+
+        if (classMatches(lowered, { "acti", "activator", "activators" }))
+            match = scanActivator();
+        else if (classMatches(lowered, { "alch", "potion", "potions" }))
+            match = scanPotion();
+        else if (classMatches(lowered, { "ammo", "ammunition" }))
+            match = scanAmmo();
+        else if (classMatches(lowered, { "armo", "armor", "armour" }))
+            match = scanArmor();
+        else if (classMatches(lowered, { "book", "books" }))
+            match = scanBook();
+        else if (classMatches(lowered, { "cont", "container", "containers" }))
+            match = scanContainer();
+        else if (classMatches(lowered, { "door", "doors" }))
+            match = scanDoor();
+        else if (classMatches(lowered, { "flor", "flora" }))
+            match = scanFlora();
+        else if (classMatches(lowered, { "furn", "furniture" }))
+            match = scanFurniture();
+        else if (classMatches(lowered, { "ingr", "ingredient", "ingredients" }))
+            match = scanIngredient();
+        else if (classMatches(lowered, { "keym", "key", "keys" }))
+        {
+            Log(Debug::Warning) << "FNV/ESM4 asset studio record model failed assetClass=\"" << assetClass
+                                << "\" record=\"" << record << "\" resolvedKind=\"key\" scanned=0 foundRecord=0"
+                                << " model=\"\" error=\"ESM4::Key is not registered in ESMStore\""
+                                << " gate=native-asset-studio-record-model runtime=known-blocked";
+            return {};
+        }
+        else if (classMatches(lowered, { "ligh", "light", "lights" }))
+            match = scanLight();
+        else if (classMatches(lowered, { "misc", "misc-item", "miscitem", "misc-items" }))
+            match = scanMisc();
+        else if (classMatches(lowered, { "stat", "static", "statics" }))
+            match = scanStatic();
+        else if (classMatches(lowered, { "weap", "weapon", "weapons" }))
+            match = scanWeapon();
+        else
+        {
+            const std::array<RecordModelMatch, 14> scans{ scanActivator(), scanPotion(), scanAmmo(), scanArmor(),
+                scanBook(), scanContainer(), scanDoor(), scanFlora(), scanFurniture(), scanIngredient(), scanLight(),
+                scanMisc(), scanStatic(), scanWeapon() };
+            for (const RecordModelMatch& candidate : scans)
+            {
+                if (candidate.mFound)
+                {
+                    match = candidate;
+                    break;
+                }
+                match.mScanned += candidate.mScanned;
+            }
+        }
+
+        if (match.mFound && !match.mModel.empty())
+        {
+            Log(Debug::Info) << "FNV/ESM4 asset studio record model resolved assetClass=\"" << assetClass
+                             << "\" record=\"" << record << "\" resolvedKind=\"" << match.mKind << "\" editorId=\""
+                             << match.mEditorId << "\" full=\"" << match.mFullName << "\" form=" << match.mFormId
+                             << " model=\"" << match.mModel << "\" scanned=" << match.mScanned
+                             << " gate=native-asset-studio-record-model runtime=loaded-pending-runtime";
+            return match.mModel;
+        }
+
+        Log(Debug::Warning) << "FNV/ESM4 asset studio record model failed assetClass=\"" << assetClass
+                            << "\" record=\"" << record << "\" resolvedKind=\"" << match.mKind << "\" scanned="
+                            << match.mScanned << " foundRecord=" << match.mFound << " model=\"" << match.mModel
+                            << "\" gate=native-asset-studio-record-model runtime=known-blocked";
+        return {};
     }
 }

@@ -50,6 +50,8 @@ param(
     [string]$FnvFaceGenTextureMode = $env:OPENMW_FNV_FACEGEN_TEXTURE_MODE,
     [string]$FnvUseEgtMaterialTint = $env:OPENMW_FNV_USE_EGT_MATERIAL_TINT,
     [string]$FnvUseRawBodyTintSwatch = $env:OPENMW_FNV_USE_RAW_BODY_TINT_SWATCH,
+    [string]$FnvDisableEgtMaterialTint = $env:OPENMW_FNV_DISABLE_EGT_MATERIAL_TINT,
+    [string]$FnvDisableRawBodyTintSwatch = $env:OPENMW_FNV_DISABLE_RAW_BODY_TINT_SWATCH,
     [string]$LiveAuthoringFile = $env:OPENMW_FNV_LIVE_AUTHORING_FILE,
     [switch]$FnvUseNativeAnimationCallbacks,
     [string]$SuiteDir = "",
@@ -435,6 +437,8 @@ Write-Host "FnvHairEmissionStrength: $FnvHairEmissionStrength"
 Write-Host "FnvFaceGenTextureMode: $FnvFaceGenTextureMode"
 Write-Host "FnvUseEgtMaterialTint: $FnvUseEgtMaterialTint"
 Write-Host "FnvUseRawBodyTintSwatch: $FnvUseRawBodyTintSwatch"
+Write-Host "FnvDisableEgtMaterialTint: $FnvDisableEgtMaterialTint"
+Write-Host "FnvDisableRawBodyTintSwatch: $FnvDisableRawBodyTintSwatch"
 Write-Host "LiveAuthoringFile: $LiveAuthoringFile"
 Write-Host "FnvUseNativeAnimationCallbacks: $FnvUseNativeAnimationCallbacks"
 Write-Host "BootstrapCell: $BootstrapCell"
@@ -517,6 +521,8 @@ else {
             FnvFaceGenTextureMode = $FnvFaceGenTextureMode
             FnvUseEgtMaterialTint = $FnvUseEgtMaterialTint
             FnvUseRawBodyTintSwatch = $FnvUseRawBodyTintSwatch
+            FnvDisableEgtMaterialTint = $FnvDisableEgtMaterialTint
+            FnvDisableRawBodyTintSwatch = $FnvDisableRawBodyTintSwatch
             LiveAuthoringFile = $LiveAuthoringFile
         }
         if ($AllowMissingActorVisibleHandGeometry) { $builderArgs.AllowMissingActorVisibleHandGeometry = $true }

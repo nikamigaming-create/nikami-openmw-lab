@@ -4602,9 +4602,15 @@ namespace MWVR
                             getHandEnvFloat(surface.left, "OFFSET_Z", defaultHandOffset.z()));
                     }
                     osg::Vec3f normalizeOffset = targetCuffAnchor - (transform->getAttitude() * modelCuffAnchor);
-                    const osg::Vec3f modelPalmPivot(scale.x() * getHandEnvFloat(surface.left, "PIVOT_X", center.x()),
-                        scale.y() * getHandEnvFloat(surface.left, "PIVOT_Y", center.y()),
-                        scale.z() * getHandEnvFloat(surface.left, "PIVOT_Z", center.z()));
+                    const osg::Vec3f rawPalmPivot(getHandEnvFloat(surface.left, "PIVOT_X", center.x()),
+                        getHandEnvFloat(surface.left, "PIVOT_Y", center.y()),
+                        getHandEnvFloat(surface.left, "PIVOT_Z", center.z()));
+                    const osg::Vec3f palmPivotOffset(getHandEnvFloat(surface.left, "PIVOT_OFFSET_X", 0.f),
+                        getHandEnvFloat(surface.left, "PIVOT_OFFSET_Y", 0.f),
+                        getHandEnvFloat(surface.left, "PIVOT_OFFSET_Z", 0.f));
+                    const osg::Vec3f palmPivot = rawPalmPivot + palmPivotOffset;
+                    const osg::Vec3f modelPalmPivot(
+                        scale.x() * palmPivot.x(), scale.y() * palmPivot.y(), scale.z() * palmPivot.z());
                     const float pivotRotX = getHandEnvFloat(surface.left, "PIVOT_ROT_X", 0.f);
                     const float pivotRotY = getHandEnvFloat(surface.left, "PIVOT_ROT_Y", 0.f);
                     const float pivotRotZ = getHandEnvFloat(surface.left, "PIVOT_ROT_Z", 0.f);
@@ -4657,6 +4663,7 @@ namespace MWVR
                     {
                         transform->setPosition(transform->getPosition() + normalizeOffset);
                     }
+                    bool pivotRotationApplied = false;
                     if (!frameSolve && (pivotRotX != 0.f || pivotRotY != 0.f || pivotRotZ != 0.f))
                     {
                         const osg::Quat baseRotation = transform->getAttitude();
@@ -4664,6 +4671,7 @@ namespace MWVR
                         const osg::Quat pivotRotation = baseRotation * makeEulerDegrees(pivotRotX, pivotRotY, pivotRotZ);
                         transform->setAttitude(pivotRotation);
                         transform->setPosition(pivotTarget - pivotRotation * modelPalmPivot);
+                        pivotRotationApplied = true;
                     }
 #if defined(ANDROID)
                     const bool useControllerSpacePosition = getHandEnvFloat(surface.left, "CONTROLLER_SPACE_POSITION",
@@ -4714,6 +4722,7 @@ namespace MWVR
                     }
                     const osg::Vec3f finalPosition = transform->getPosition();
                     const osg::Quat handRotation = transform->getAttitude();
+                    const osg::Vec3f finalPalmPivotTarget = finalPosition + handRotation * modelPalmPivot;
                     const osg::Vec3f candidateXMin = finalPosition
                         + handRotation
                             * osg::Vec3f(scale.x() * staticizedHandBounds.xMin(), scale.y() * center.y(),
@@ -4746,6 +4755,7 @@ namespace MWVR
                     if (!attachNode->getParentalNodePaths().empty())
                         parentToWorld = osg::computeLocalToWorld(attachNode->getParentalNodePaths().front());
                     const osg::Vec3f worldWrist = candidateWrist * parentToWorld;
+                    const osg::Vec3f worldPalmPivot = finalPalmPivotTarget * parentToWorld;
                     const osg::Vec3f worldAxisX = osg::Matrix::transform3x3(localAxisX, parentToWorld);
                     const osg::Vec3f worldAxisY = osg::Matrix::transform3x3(localAxisY, parentToWorld);
                     const osg::Vec3f worldAxisZ = osg::Matrix::transform3x3(localAxisZ, parentToWorld);
@@ -4764,6 +4774,13 @@ namespace MWVR
                                      << modelPalmPivot.y() << "," << modelPalmPivot.z() << ") pivotRotationDegrees=("
                                      << pivotRotX << "," << pivotRotY << "," << pivotRotZ << ") scale=("
                                      << scale.x() << "," << scale.y() << "," << scale.z()
+                                     << ") rawPalmPivot=(" << rawPalmPivot.x() << "," << rawPalmPivot.y() << ","
+                                     << rawPalmPivot.z() << ") palmPivotOffset=(" << palmPivotOffset.x() << ","
+                                     << palmPivotOffset.y() << "," << palmPivotOffset.z() << ") finalPalmPivotTarget=("
+                                     << finalPalmPivotTarget.x() << "," << finalPalmPivotTarget.y() << ","
+                                     << finalPalmPivotTarget.z() << ") worldPalmPivot=(" << worldPalmPivot.x() << ","
+                                     << worldPalmPivot.y() << "," << worldPalmPivot.z()
+                                     << ") pivotRotationApplied=" << pivotRotationApplied
                                      << ") modelCuffForward=(" << modelCuffForward.x() << ","
                                      << modelCuffForward.y() << "," << modelCuffForward.z()
                                      << ") cuffSliceMin=(" << staticizedHandCuffAnchor.mSliceMin.x() << ","

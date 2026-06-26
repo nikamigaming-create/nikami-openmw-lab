@@ -77,6 +77,12 @@ HEAD_SURFACE_FLOAT_SUFFIXES = (
     "ROTATION_X",
     "ROTATION_Y",
     "ROTATION_Z",
+    "PIVOT_X",
+    "PIVOT_Y",
+    "PIVOT_Z",
+    "PIVOT_OFFSET_X",
+    "PIVOT_OFFSET_Y",
+    "PIVOT_OFFSET_Z",
 )
 HEAD_SURFACE_BOOL_SUFFIXES = ("PIVOT_MODE",)
 HEAD_SURFACE_CONTROL_KEYS = {
@@ -1020,9 +1026,9 @@ class LiveRuntimeCommandStore:
         has_selector_payload = False
         for field in LIVE_RUNTIME_SELECTOR_FIELDS:
             for alias in LIVE_RUNTIME_SELECTOR_ALIASES[field]:
-                if alias in payload and csv_values(payload.get(alias)):
+                if alias in payload:
                     has_selector_payload = True
-                if alias in selector_payload and csv_values(selector_payload.get(alias)):
+                if alias in selector_payload:
                     has_selector_payload = True
         command = first_text(
             payload.get("command"),
@@ -1047,11 +1053,14 @@ class LiveRuntimeCommandStore:
             applied: dict[str, str] = {}
             for field in LIVE_RUNTIME_SELECTOR_FIELDS:
                 values = []
+                field_present = False
                 for alias in LIVE_RUNTIME_SELECTOR_ALIASES[field]:
                     if alias in payload:
                         values.append(payload.get(alias))
+                        field_present = True
                     if alias in selector_payload:
                         values.append(selector_payload.get(alias))
+                        field_present = True
                 if field in LIVE_RUNTIME_SELECTOR_LIST_FIELDS:
                     tokens: list[str] = []
                     for candidate in values:
@@ -1059,11 +1068,11 @@ class LiveRuntimeCommandStore:
                     value = ",".join(tokens)
                 else:
                     value = first_text(*values)
-                if value:
+                if value or field_present:
                     if field == "characterBuilderPhase":
                         phase_values = csv_values(value)
                         value = phase_values[0] if phase_values else value
-                    if not re.fullmatch(r"[-A-Za-z0-9_:.\\ /,]{0,300}", value):
+                    if value and not re.fullmatch(r"[-A-Za-z0-9_:.\\ /,]{0,300}", value):
                         raise ValueError(f"live runtime selector {field} contains unsupported characters")
                     doc[field] = value
                     applied[field] = value

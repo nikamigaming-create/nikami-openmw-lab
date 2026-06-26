@@ -50,6 +50,8 @@ param(
     [string]$FnvFaceGenTextureMode = $env:OPENMW_FNV_FACEGEN_TEXTURE_MODE,
     [string]$FnvUseEgtMaterialTint = $env:OPENMW_FNV_USE_EGT_MATERIAL_TINT,
     [string]$FnvUseRawBodyTintSwatch = $env:OPENMW_FNV_USE_RAW_BODY_TINT_SWATCH,
+    [string]$FnvDisableEgtMaterialTint = $env:OPENMW_FNV_DISABLE_EGT_MATERIAL_TINT,
+    [string]$FnvDisableRawBodyTintSwatch = $env:OPENMW_FNV_DISABLE_RAW_BODY_TINT_SWATCH,
     [string]$LiveAuthoringFile = $env:OPENMW_FNV_LIVE_AUTHORING_FILE,
     [switch]$FnvUseNativeAnimationCallbacks,
     [switch]$CreatureDiagnostics,
@@ -361,6 +363,8 @@ Write-SuiteLine "FnvHairEmissionStrength: $FnvHairEmissionStrength"
 Write-SuiteLine "FnvFaceGenTextureMode: $FnvFaceGenTextureMode"
 Write-SuiteLine "FnvUseEgtMaterialTint: $FnvUseEgtMaterialTint"
 Write-SuiteLine "FnvUseRawBodyTintSwatch: $FnvUseRawBodyTintSwatch"
+Write-SuiteLine "FnvDisableEgtMaterialTint: $FnvDisableEgtMaterialTint"
+Write-SuiteLine "FnvDisableRawBodyTintSwatch: $FnvDisableRawBodyTintSwatch"
 Write-SuiteLine "LiveAuthoringFile: $LiveAuthoringFile"
 Write-SuiteLine "FnvUseNativeAnimationCallbacks: $FnvUseNativeAnimationCallbacks"
 Write-SuiteLine "Angles: $(@($CameraAngles | ForEach-Object { $_.Name }) -join ',')"
@@ -437,6 +441,8 @@ foreach ($phase in $Phases) {
             FnvFaceGenTextureMode = $FnvFaceGenTextureMode
             FnvUseEgtMaterialTint = $FnvUseEgtMaterialTint
             FnvUseRawBodyTintSwatch = $FnvUseRawBodyTintSwatch
+            FnvDisableEgtMaterialTint = $FnvDisableEgtMaterialTint
+            FnvDisableRawBodyTintSwatch = $FnvDisableRawBodyTintSwatch
             LiveAuthoringFile = $LiveAuthoringFile
             FnvRotationMode = $FnvRotationMode
             CharacterBuilderPhase = $phase
