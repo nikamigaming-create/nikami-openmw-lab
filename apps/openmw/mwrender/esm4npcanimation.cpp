@@ -1504,7 +1504,7 @@ namespace MWRender
         {
             const char* value = std::getenv("OPENMW_FNV_FACEGEN_TEXTURE_MODE");
             if (value == nullptr || value[0] == '\0')
-                return "detail";
+                return "direct-diffuse";
 
             std::string mode(value);
             Misc::StringUtils::lowerCaseInPlace(mode);
@@ -1515,7 +1515,7 @@ namespace MWRender
                 return "direct-diffuse";
             if (mode == "none" || mode == "source-only" || mode == "disabled")
                 return "source-only";
-            return "detail";
+            return "direct-diffuse";
         }
 
         std::string findFonvNpcBodyTexture(Resource::ResourceSystem* resourceSystem, const ESM4::Npc& traits, bool isFemale)

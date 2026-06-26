@@ -1092,6 +1092,7 @@ def create_neutral_preview_crops(
 def parse_material_evidence(lines: list[str], patterns: list[str]) -> list[dict[str, Any]]:
     evidence_needles = (
         ("facegen-source", "loaded exported NPC FaceGen texture source"),
+        ("facegen-diffuse", "applying NPC FaceGen diffuse"),
         ("facegen-detail", "applying NPC FaceGen detail component"),
         ("face-normal", "binding data-derived face normal map"),
         ("skin-map", "binding FNV face skin/subsurface companion"),
@@ -1569,7 +1570,7 @@ def evaluate(
                 item
                 for item in face_checks
                 if item["values"].get("faceGenTexture")
-                in {"DETAIL_APPLIED_PENDING_EXACT", "DIFFUSE_APPLIED", "GENERATED_DIFFUSE_APPLIED_PENDING_EXACT"}
+                in {"DETAIL_APPLIED_PENDING_EXACT", "GENERATED_DIFFUSE_APPLIED_PENDING_EXACT"}
             ]
             if facegen_exact_pending_checks:
                 failures.append(
