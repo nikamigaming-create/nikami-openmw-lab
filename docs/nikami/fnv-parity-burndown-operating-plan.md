@@ -42,6 +42,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/nikami/run-fnv-actor
 
 Dry-runs prove row selection, commands, filters, and no-retail metadata without launching the runtime. They first revalidate that the input burn-down matrix is `PASS`, has no invalid classifications, has no unclassified rows, and has no missing runtime commands. Non-dry runs must launch `run-fnv-character-viewer.ps1`, capture viewer artifacts, and fail if the child runtime manifest fails.
 
+Each selected row writes a `nikami-fnv-actor-row-gate-audit-v1` object. The audit separates process status from runtime support: a viewer phase can pass while the selected gate remains `loaded-pending-runtime` if the child manifest lacks exact gate/state evidence such as screenshots, mouth runtime evidence, projectile evidence, weapon lines, material evidence, face drawables, animation playback, creature evidence, attachment bounds, or runtime part audits.
+
 ## Runtime Proof Loop
 
 For each selected row:

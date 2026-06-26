@@ -279,6 +279,29 @@ New-Item -ItemType Directory -Force -Path $runDir | Out-Null
 $viewerHtml = Join-Path $runDir "character-viewer.html"
 $viewerJson = Join-Path $runDir "character-viewer-manifest.json"
 $actorKitJson = Join-Path $runDir "character-actor-kit.json"
+$cases = @()
+foreach ($phase in @($Phases)) {
+    foreach ($angle in @($Angles)) {
+        $cases += [pscustomobject][ordered]@{
+            case = "$($phase)_$($angle)"
+            phase = $phase
+            angle = $angle
+            runtimeGateStatus = "PASS"
+            reportStatus = "PASS"
+            actorKitSelection = [pscustomobject][ordered]@{
+                animationGroup = $ActorKitAnimationGroup
+                dialogueMode = $ActorKitDialogueMode
+            }
+            screenshots = @()
+            faceDrawables = @()
+            materialEvidence = @()
+            morphLines = @()
+            weaponLines = @()
+            animationPlayback = @()
+            creatureEvidence = @()
+        }
+    }
+}
 "<html><body>fake viewer</body></html>" | Set-Content -LiteralPath $viewerHtml -Encoding UTF8
 [pscustomobject][ordered]@{
     overallStatus = "PASS"
@@ -291,6 +314,7 @@ $actorKitJson = Join-Path $runDir "character-actor-kit.json"
     runSeconds = $RunSeconds
     actorFrame = $ActorFrame
     screenshotFrames = $ScreenshotFrames
+    cases = @($cases)
 } | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $viewerJson -Encoding UTF8
 [pscustomobject][ordered]@{
     schema = "fake-actor-kit-v1"
@@ -334,12 +358,123 @@ if ($nonDryRun.status -ne "PASS" -or $nonDryResult.status -ne "PASS") {
 if ($nonDryResult.rowGateProofMode -ne "viewer-phase-proof-pending-gate-state-audit") {
     throw "Fake non-dry row run falsely claimed exact gate-state proof."
 }
+if ($nonDryResult.rowRuntimeClassification -ne "loaded-pending-runtime" -or $nonDryResult.rowGateAudit.status -ne "PENDING") {
+    throw "Fake non-dry row run did not classify missing gate evidence as loaded-pending-runtime."
+}
 if (@($nonDryResult.evidence) -notcontains "viewer-manifest-phase-angle-match" -or @($nonDryResult.evidence) -notcontains "selected-runtime-states") {
     throw "Fake non-dry row run did not preserve child manifest and selected runtime-state evidence."
+}
+if (@($nonDryResult.rowGateAudit.missingEvidenceKinds) -notcontains "mouth-runtime-evidence") {
+    throw "Fake non-dry row run did not name missing mouth runtime evidence."
 }
 $childViewerManifest = Get-Content -LiteralPath ([string]$nonDryResult.viewerJson) -Raw | ConvertFrom-Json
 if (@($childViewerManifest.phases) -notcontains "talk" -or @($childViewerManifest.angles) -notcontains "front-left" -or [string]$childViewerManifest.actorKitDialogueMode -ne "mouth-open-pose") {
     throw "Fake non-dry child viewer manifest did not receive selected phase/angles/dialogue mode."
+}
+
+$exactViewer = Join-Path $FixtureDir "fake-exact-run-fnv-character-viewer.ps1"
+@'
+param(
+    [string]$ProofRoot,
+    [string[]]$Targets,
+    [string]$ActorKind,
+    [string[]]$Phases,
+    [string[]]$Angles,
+    [int]$RunSeconds,
+    [int]$ActorFrame,
+    [string]$ScreenshotFrames,
+    [string]$ActorKitAnimationGroup = "",
+    [string]$ActorKitDialogueMode = "",
+    [switch]$CreatureDiagnostics,
+    [switch]$NoSound,
+    [switch]$Serve,
+    [int]$ServePort = 0
+)
+$ErrorActionPreference = "Stop"
+Set-StrictMode -Version Latest
+$stamp = Get-Date -Format "yyyyMMdd_HHmmss_fff"
+$runDir = Join-Path $ProofRoot "fnv-character-viewer/fake-exact-$stamp"
+New-Item -ItemType Directory -Force -Path $runDir | Out-Null
+$viewerHtml = Join-Path $runDir "character-viewer.html"
+$viewerJson = Join-Path $runDir "character-viewer-manifest.json"
+$actorKitJson = Join-Path $runDir "character-actor-kit.json"
+$cases = @()
+foreach ($phase in @($Phases)) {
+    foreach ($angle in @($Angles)) {
+        $cases += [pscustomobject][ordered]@{
+            case = "$($phase)_$($angle)"
+            phase = $phase
+            angle = $angle
+            runtimeGateStatus = "PASS"
+            reportStatus = "PASS"
+            actorKitSelection = [pscustomobject][ordered]@{
+                animationGroup = $ActorKitAnimationGroup
+                dialogueMode = $ActorKitDialogueMode
+            }
+            screenshots = @([pscustomobject][ordered]@{ name = "$($phase)_$($angle).png"; path = "$($phase)_$($angle).png" })
+            faceDrawables = @([pscustomobject][ordered]@{ drawable = "faceMouth"; model = "generated/contract-mouth.mesh"; texture = "generated/contract-mouth.dds" })
+            materialEvidence = @()
+            morphLines = @("FNV/ESM4 proof: mouth driver active dialogue pose for selected actor")
+            weaponLines = @()
+            animationPlayback = @()
+            creatureEvidence = @()
+        }
+    }
+}
+"<html><body>fake exact viewer</body></html>" | Set-Content -LiteralPath $viewerHtml -Encoding UTF8
+[pscustomobject][ordered]@{
+    overallStatus = "PASS"
+    target = @($Targets)[0]
+    actorKind = $ActorKind
+    phases = @($Phases)
+    angles = @($Angles)
+    actorKitDialogueMode = $ActorKitDialogueMode
+    cases = @($cases)
+} | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $viewerJson -Encoding UTF8
+[pscustomobject][ordered]@{
+    schema = "fake-actor-kit-v1"
+    target = @($Targets)[0]
+    phases = @($Phases)
+    angles = @($Angles)
+} | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $actorKitJson -Encoding UTF8
+$runs = @([pscustomobject][ordered]@{
+    Target = @($Targets)[0]
+    Status = "PASS"
+    SuiteDir = $runDir
+    ViewerHtml = $viewerHtml
+    ViewerJson = $viewerJson
+    ActorKitJson = $actorKitJson
+})
+ConvertTo-Json -InputObject $runs -Depth 8 | Set-Content -LiteralPath (Join-Path $runDir "viewer-runs.json") -Encoding UTF8
+"<html><body>fake exact run index</body></html>" | Set-Content -LiteralPath (Join-Path $runDir "index.html") -Encoding UTF8
+'@ | Set-Content -LiteralPath $exactViewer -Encoding UTF8
+
+$beforeExactDirs = @()
+if (Test-Path -LiteralPath $runRoot -PathType Container) {
+    $beforeExactDirs = @(Get-ChildItem -LiteralPath $runRoot -Directory -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName)
+}
+& $Runner -ProofRoot $ProofRoot -BurnDownJson $jsonPath -RunRows -ActorKind "npc" -Target "GSEasyPete" -Priority "easy-pete" -Classification "loaded-pending-runtime" -Phase "talk" -Gate "voice-lip-sidecar" -MaxRows 1 -ViewerRunner $exactViewer -RequirePass | Out-Host
+if ($LASTEXITCODE -ne 0) {
+    throw "FNV actor parity burn-down exact fake row fixture failed with exit code $LASTEXITCODE."
+}
+$exactRunDir = Get-ChildItem -LiteralPath $runRoot -Directory -ErrorAction SilentlyContinue |
+    Sort-Object LastWriteTime -Descending |
+    Where-Object { $beforeExactDirs -notcontains $_.FullName } |
+    Select-Object -First 1
+if ($null -eq $exactRunDir) {
+    throw "Exact fake row fixture did not create a burn-down run directory."
+}
+$exactJsonPath = Join-Path $exactRunDir.FullName "actor-parity-burndown-run.json"
+$exactRun = Get-Content -LiteralPath $exactJsonPath -Raw | ConvertFrom-Json
+$exactResult = @($exactRun.results) | Select-Object -First 1
+if ($exactResult.rowGateProofMode -ne "viewer-gate-state-runtime-supported") {
+    throw "Exact fake row run did not promote gate/state proof mode."
+}
+if ($exactResult.rowRuntimeClassification -ne "runtime-supported" -or $exactResult.rowGateAudit.status -ne "PASS") {
+    throw "Exact fake row run did not classify row as runtime-supported."
+}
+if (@($exactResult.rowGateAudit.missingEvidenceKinds).Count -ne 0 -or @($exactResult.rowGateAudit.observedEvidenceKinds) -notcontains "mouth-runtime-evidence") {
+    throw "Exact fake row audit did not consume the expected mouth runtime evidence."
 }
 
 $emptySelectionFailed = $false
@@ -388,3 +523,4 @@ Write-Host "BurnDownMarkdown: $markdownPath"
 Write-Host "BurnDownCsv: $csvPath"
 Write-Host "BurnDownRunJson: $runJsonPath"
 Write-Host "BurnDownFakeNonDryRunJson: $nonDryJsonPath"
+Write-Host "BurnDownExactFakeRunJson: $exactJsonPath"

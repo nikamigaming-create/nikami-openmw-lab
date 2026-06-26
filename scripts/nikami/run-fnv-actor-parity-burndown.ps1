@@ -237,6 +237,203 @@ function Assert-BurnDownMatrix([object]$BurnDown, [string]$Path) {
     }
 }
 
+function Add-UniqueString([System.Collections.Generic.List[string]]$List, [string]$Value) {
+    if ([string]::IsNullOrWhiteSpace($Value)) { return }
+    if (!$List.Contains($Value)) {
+        $List.Add($Value)
+    }
+}
+
+function Test-ObjectArrayHasItems([object]$Object, [string]$Name) {
+    return @(ConvertTo-PlainArray (Get-ObjectProperty $Object $Name)).Count -gt 0
+}
+
+function Test-CaseLineNeedle([object[]]$Cases, [string[]]$Names, [string[]]$Needles) {
+    foreach ($case in @($Cases)) {
+        foreach ($name in @($Names)) {
+            foreach ($item in @(ConvertTo-PlainArray (Get-ObjectProperty $case $name))) {
+                $text = [string]$item
+                if ($item -isnot [string]) {
+                    $text = ($item | ConvertTo-Json -Depth 6 -Compress)
+                }
+                foreach ($needle in @($Needles)) {
+                    if ($text -match [regex]::Escape($needle)) {
+                        return $true
+                    }
+                }
+            }
+        }
+    }
+    return $false
+}
+
+function Get-RowRequiredEvidenceKinds([object]$Row) {
+    $required = [System.Collections.Generic.List[string]]::new()
+    foreach ($kind in @("viewer-manifest", "phase-angle", "case-pass")) {
+        Add-UniqueString $required $kind
+    }
+
+    $gate = ([string](Get-ObjectProperty $Row "gate")).ToLowerInvariant()
+    $phase = ([string](Get-ObjectProperty $Row "phase")).ToLowerInvariant()
+    $states = @(ConvertTo-PlainArray (Get-ObjectProperty $Row "runtimeStates") | ForEach-Object { ([string]$_).ToLowerInvariant() })
+
+    if ($phase -notmatch "^creature-") {
+        Add-UniqueString $required "screenshots"
+    }
+
+    switch ($gate) {
+        "actor-base-record" { Add-UniqueString $required "actor-match" }
+        "race-body-skeleton" { Add-UniqueString $required "actor-match"; Add-UniqueString $required "runtime-part-audits" }
+        "skin-material-tone" { Add-UniqueString $required "material-evidence" }
+        "full-body-screenshot" { Add-UniqueString $required "screenshots"; Add-UniqueString $required "assembly-inventory" }
+        "headpart-stack" { Add-UniqueString $required "assembly-inventory"; Add-UniqueString $required "face-drawables" }
+        "facegen-morph-targets" { Add-UniqueString $required "morph-lines" }
+        "head-transform-pivot" { Add-UniqueString $required "runtime-part-audits"; Add-UniqueString $required "attachment-bounds" }
+        "face-skin-tone-wrinkles" { Add-UniqueString $required "material-evidence"; Add-UniqueString $required "face-drawables" }
+        "eyes-mouth-teeth-tongue" { Add-UniqueString $required "face-drawables" }
+        "face-closeup-screenshot" { Add-UniqueString $required "screenshots"; Add-UniqueString $required "face-drawables" }
+        "hair-beard-brow" { Add-UniqueString $required "assembly-inventory"; Add-UniqueString $required "runtime-part-audits" }
+        "hair-under-headgear-policy" { Add-UniqueString $required "assembly-inventory"; Add-UniqueString $required "runtime-part-audits" }
+        "outfit-inventory-resolution" { Add-UniqueString $required "assembly-inventory" }
+        "armor-addon-geometry" { Add-UniqueString $required "assembly-inventory"; Add-UniqueString $required "runtime-part-audits" }
+        "biped-slot-visibility" { Add-UniqueString $required "assembly-inventory"; Add-UniqueString $required "runtime-part-audits" }
+        "weapon-prop-attachment" { Add-UniqueString $required "weapon-lines"; Add-UniqueString $required "attachment-bounds"; Add-UniqueString $required "runtime-part-audits" }
+        "weapon-animation-family" { Add-UniqueString $required "weapon-lines"; Add-UniqueString $required "animation-playback" }
+        "projectile-muzzle-sound" { Add-UniqueString $required "weapon-lines"; Add-UniqueString $required "projectile-runtime-evidence" }
+        "hand-weapon-transform" { Add-UniqueString $required "weapon-lines"; Add-UniqueString $required "runtime-part-audits" }
+        "headgear-slot-composition" { Add-UniqueString $required "assembly-inventory"; Add-UniqueString $required "runtime-part-audits" }
+        "hat-hair-occlusion" { Add-UniqueString $required "assembly-inventory"; Add-UniqueString $required "runtime-part-audits"; Add-UniqueString $required "face-drawables" }
+        "headgear-transform-pivot" { Add-UniqueString $required "attachment-bounds"; Add-UniqueString $required "runtime-part-audits" }
+        "dialogue-info-selection" { Add-UniqueString $required "dialogue-mode" }
+        "voice-lip-sidecar" { Add-UniqueString $required "dialogue-mode"; Add-UniqueString $required "mouth-runtime-evidence" }
+        "mouth-teeth-lip-sync" { Add-UniqueString $required "dialogue-mode"; Add-UniqueString $required "mouth-runtime-evidence"; Add-UniqueString $required "face-drawables" }
+        "creature-model-root" { Add-UniqueString $required "creature-evidence" }
+        "creature-bounds-camera" { Add-UniqueString $required "creature-evidence" }
+        "creature-bodypart-data" { Add-UniqueString $required "creature-evidence"; Add-UniqueString $required "assembly-inventory" }
+        "creature-material-texture" { Add-UniqueString $required "creature-evidence" }
+        "creature-idle-walk-run" { Add-UniqueString $required "creature-evidence"; Add-UniqueString $required "animation-playback" }
+        "creature-attack-hit-death" { Add-UniqueString $required "creature-evidence"; Add-UniqueString $required "animation-playback" }
+        "creature-full-runtime-view" { Add-UniqueString $required "creature-evidence"; Add-UniqueString $required "assembly-inventory" }
+    }
+
+    foreach ($state in @($states)) {
+        switch ($state) {
+            "talk" { Add-UniqueString $required "dialogue-mode" }
+            "mouth-open" { Add-UniqueString $required "mouth-runtime-evidence" }
+            "attack" { Add-UniqueString $required "animation-playback" }
+            "reload" { Add-UniqueString $required "animation-playback" }
+            "walk" { Add-UniqueString $required "animation-playback" }
+            "run" { Add-UniqueString $required "animation-playback" }
+            "idle" { Add-UniqueString $required "animation-playback" }
+            "projectile-fire" { Add-UniqueString $required "projectile-runtime-evidence" }
+        }
+    }
+
+    return @($required.ToArray())
+}
+
+function Get-ManifestEvidenceKinds([object]$Manifest, [object[]]$Cases) {
+    $evidence = [System.Collections.Generic.List[string]]::new()
+    Add-UniqueString $evidence "viewer-manifest"
+    if (@($Cases).Count -gt 0) {
+        Add-UniqueString $evidence "phase-angle"
+        $badCases = @($Cases | Where-Object { [string]$_.runtimeGateStatus -ne "PASS" -or [string]$_.reportStatus -ne "PASS" })
+        if ($badCases.Count -eq 0) {
+            Add-UniqueString $evidence "case-pass"
+        }
+    }
+    if (Test-ObjectArrayHasItems $Manifest "assemblyInventory") { Add-UniqueString $evidence "assembly-inventory" }
+
+    foreach ($case in @($Cases)) {
+        if (Test-ObjectArrayHasItems $case "screenshots" -or ![string]::IsNullOrWhiteSpace([string](Get-ObjectProperty $case "mainImage"))) { Add-UniqueString $evidence "screenshots" }
+        if (Test-ObjectArrayHasItems $case "actorMatches") { Add-UniqueString $evidence "actor-match" }
+        if (Test-ObjectArrayHasItems $case "attachmentBounds") { Add-UniqueString $evidence "attachment-bounds" }
+        if (Test-ObjectArrayHasItems $case "runtimePartAudits") { Add-UniqueString $evidence "runtime-part-audits" }
+        if (Test-ObjectArrayHasItems $case "runtimeAuditSummary") { Add-UniqueString $evidence "runtime-audit-summary" }
+        if (Test-ObjectArrayHasItems $case "runtimePartTimelines") { Add-UniqueString $evidence "runtime-part-timelines" }
+        if (Test-ObjectArrayHasItems $case "faceDrawables") { Add-UniqueString $evidence "face-drawables" }
+        if (Test-ObjectArrayHasItems $case "materialEvidence") { Add-UniqueString $evidence "material-evidence" }
+        if (Test-ObjectArrayHasItems $case "morphLines") { Add-UniqueString $evidence "morph-lines" }
+        if (Test-ObjectArrayHasItems $case "weaponLines") { Add-UniqueString $evidence "weapon-lines" }
+        if (Test-ObjectArrayHasItems $case "animationPlayback") { Add-UniqueString $evidence "animation-playback" }
+        if (Test-ObjectArrayHasItems $case "animationRequests") { Add-UniqueString $evidence "animation-request" }
+        if (Test-ObjectArrayHasItems $case "creatureEvidence") { Add-UniqueString $evidence "creature-evidence" }
+        $selection = Get-ObjectProperty $case "actorKitSelection"
+        if (![string]::IsNullOrWhiteSpace([string](Get-ObjectProperty $selection "dialogueMode"))) { Add-UniqueString $evidence "dialogue-mode" }
+        if (![string]::IsNullOrWhiteSpace([string](Get-ObjectProperty $selection "animationGroup"))) { Add-UniqueString $evidence "animation-group" }
+    }
+
+    $controls = Get-ObjectProperty $Manifest "controls"
+    if (Test-ObjectArrayHasItems $controls "dialogueControls") { Add-UniqueString $evidence "dialogue-controls" }
+    if (Test-CaseLineNeedle $Cases @("animationLines", "morphLines", "skinLines", "hairLines") @("mouth driver", "dialogue morph", "dialogue pose", "mouth open")) { Add-UniqueString $evidence "mouth-runtime-evidence" }
+    if (Test-CaseLineNeedle $Cases @("weaponLines", "animationLines") @("projectile", "muzzle", "ammo", "firing trace")) { Add-UniqueString $evidence "projectile-runtime-evidence" }
+    return @($evidence.ToArray())
+}
+
+function New-RowGateAudit([object]$Row, [object]$Manifest, [string[]]$RequestedAngles) {
+    $phaseValue = [string](Get-ObjectProperty $Row "phase")
+    $gateValue = [string](Get-ObjectProperty $Row "gate")
+    $runtimeStates = @(ConvertTo-PlainArray (Get-ObjectProperty $Row "runtimeStates") | ForEach-Object { [string]$_ })
+    $manifestPhases = @(ConvertTo-PlainArray (Get-ObjectProperty $Manifest "phases") | ForEach-Object { [string]$_ })
+    $manifestAngles = @(ConvertTo-PlainArray (Get-ObjectProperty $Manifest "angles") | ForEach-Object { [string]$_ })
+    $cases = @(ConvertTo-PlainArray (Get-ObjectProperty $Manifest "cases") | Where-Object { [string]$_.phase -eq $phaseValue })
+    $caseAngles = @($cases | ForEach-Object { [string]$_.angle } | Where-Object { ![string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique)
+    $missingAngles = @($RequestedAngles | Where-Object {
+            ($manifestAngles.Count -gt 0 -and $manifestAngles -notcontains $_) -or
+            ($caseAngles.Count -gt 0 -and $caseAngles -notcontains $_)
+        })
+    $required = @(Get-RowRequiredEvidenceKinds $Row)
+    $evidence = @(Get-ManifestEvidenceKinds $Manifest $cases)
+    $missingEvidence = @($required | Where-Object { $evidence -notcontains $_ })
+    $badCases = @($cases | Where-Object { [string]$_.runtimeGateStatus -ne "PASS" -or [string]$_.reportStatus -ne "PASS" })
+
+    $errors = [System.Collections.Generic.List[string]]::new()
+    if ([string](Get-ObjectProperty $Manifest "overallStatus") -ne "PASS" -and [string](Get-ObjectProperty $Manifest "status") -ne "PASS") {
+        $errors.Add("child viewer manifest status is not PASS")
+    }
+    if ($manifestPhases.Count -gt 0 -and $manifestPhases -notcontains $phaseValue) {
+        $errors.Add("child viewer manifest does not list selected phase")
+    }
+    if ($cases.Count -eq 0) {
+        $errors.Add("child viewer manifest has no selected phase cases")
+    }
+    if ($missingAngles.Count -gt 0) {
+        $errors.Add("child viewer manifest is missing selected angle(s): $($missingAngles -join ',')")
+    }
+    if ($badCases.Count -gt 0) {
+        $errors.Add("child viewer case status is not PASS for selected phase")
+    }
+
+    $status = if ($errors.Count -gt 0) { "FAIL" } elseif ($missingEvidence.Count -gt 0) { "PENDING" } else { "PASS" }
+    $classification = if ($status -eq "PASS") { "runtime-supported" } elseif ($status -eq "PENDING") { "loaded-pending-runtime" } else { "known-blocked" }
+
+    return [pscustomobject][ordered]@{
+        schema = "nikami-fnv-actor-row-gate-audit-v1"
+        status = $status
+        classification = $classification
+        selectedPhase = $phaseValue
+        selectedGate = $gateValue
+        selectedRuntimeStates = @($runtimeStates)
+        requestedAngles = @($RequestedAngles)
+        manifestPhases = @($manifestPhases)
+        manifestAngles = @($manifestAngles)
+        caseCount = $cases.Count
+        passingCaseCount = @($cases | Where-Object { [string]$_.runtimeGateStatus -eq "PASS" -and [string]$_.reportStatus -eq "PASS" }).Count
+        missingAngles = @($missingAngles)
+        requiredEvidenceKinds = @($required)
+        observedEvidenceKinds = @($evidence)
+        missingEvidenceKinds = @($missingEvidence)
+        errors = @($errors.ToArray())
+        boundary = if ($status -eq "PASS") {
+            "Selected row has child manifest phase/angle/case success and the required gate/state evidence buckets."
+        } elseif ($status -eq "PENDING") {
+            "Selected row reached the viewer phase, but exact gate/state runtime evidence is incomplete."
+        } else {
+            "Selected row child runtime proof failed or did not cover the selected phase/angle."
+        }
+    }
+}
+
 function Select-BurnDownRows([object]$BurnDown) {
     $rows = @(ConvertTo-PlainArray $BurnDown.rows)
     if (![string]::IsNullOrWhiteSpace($RowId)) {
@@ -404,7 +601,22 @@ function Invoke-BurnDownRow([object]$Row, [string]$RunDir) {
         viewerHtml = ""
         actorKit = ""
         viewerServer = ""
+        rowRuntimeClassification = $Row.classification
         rowGateProofMode = "not-run"
+        rowGateAudit = [pscustomobject][ordered]@{
+            schema = "nikami-fnv-actor-row-gate-audit-v1"
+            status = "NOT-RUN"
+            classification = $Row.classification
+            selectedPhase = $phaseValue
+            selectedGate = $gateValue
+            selectedRuntimeStates = @($runtimeStates)
+            requestedAngles = @($Angles)
+            requiredEvidenceKinds = @()
+            observedEvidenceKinds = @()
+            missingEvidenceKinds = @()
+            errors = @()
+            boundary = "Runtime was not launched for this selected row."
+        }
         runtimeEvidenceBoundary = "Selected row gate/state is preserved in the run summary; full row-level gameplay proof requires child runtime evidence for the selected gate and runtime states."
         evidence = @()
         error = ""
@@ -419,6 +631,21 @@ function Invoke-BurnDownRow([object]$Row, [string]$RunDir) {
     if ($DryRun) {
         $result.status = "DRY-RUN"
         $result.rowGateProofMode = "dry-run-command-only"
+        $result.rowRuntimeClassification = $Row.classification
+        $result.rowGateAudit = [pscustomobject][ordered]@{
+            schema = "nikami-fnv-actor-row-gate-audit-v1"
+            status = "DRY-RUN"
+            classification = $Row.classification
+            selectedPhase = $phaseValue
+            selectedGate = $gateValue
+            selectedRuntimeStates = @($runtimeStates)
+            requestedAngles = @($Angles)
+            requiredEvidenceKinds = @(Get-RowRequiredEvidenceKinds $Row)
+            observedEvidenceKinds = @("selected-row", "selected-gate", "selected-runtime-states", "validated-target-phase-kind")
+            missingEvidenceKinds = @(Get-RowRequiredEvidenceKinds $Row)
+            errors = @()
+            boundary = "Dry-run validates row selection and command shape only; no runtime evidence is claimed."
+        }
         $result.evidence = @("selected-row", "selected-gate", "selected-runtime-states", "validated-target-phase-kind", "no-runtime-launch")
         return [pscustomobject]$result
     }
@@ -494,16 +721,21 @@ function Invoke-BurnDownRow([object]$Row, [string]$RunDir) {
                     $result.evidence = @("viewer-runs.json", "selected-gate", "selected-runtime-states", "screenshots", "actor-kit", "viewer-phase-proof-pending-gate-state-audit")
                     if (![string]::IsNullOrWhiteSpace($result.viewerJson) -and (Test-Path -LiteralPath $result.viewerJson -PathType Leaf)) {
                         $childManifest = Get-Content -LiteralPath $result.viewerJson -Raw | ConvertFrom-Json
-                        $childPhases = @(ConvertTo-PlainArray (Get-ObjectProperty $childManifest "phases") | ForEach-Object { [string]$_ })
-                        $childAngles = @(ConvertTo-PlainArray (Get-ObjectProperty $childManifest "angles") | ForEach-Object { [string]$_ })
-                        if ($childPhases.Count -gt 0 -and $childPhases -notcontains $phaseValue) {
-                            $result.status = "FAIL"
-                            $result.error = "Viewer child manifest did not include selected phase '$phaseValue'."
+                        $audit = New-RowGateAudit $Row $childManifest $Angles
+                        $result.rowGateAudit = $audit
+                        $result.rowRuntimeClassification = $audit.classification
+                        if ($audit.status -eq "PASS") {
+                            $result.rowGateProofMode = "viewer-gate-state-runtime-supported"
+                            $result.runtimeEvidenceBoundary = $audit.boundary
+                            $result.evidence = @($result.evidence + @("viewer-gate-state-runtime-supported"))
                         }
-                        $missingAngles = @($Angles | Where-Object { $childAngles.Count -gt 0 -and $childAngles -notcontains $_ })
-                        if ([string]::IsNullOrWhiteSpace($result.error) -and $missingAngles.Count -gt 0) {
+                        elseif ($audit.status -eq "PENDING") {
+                            $result.rowGateProofMode = "viewer-phase-proof-pending-gate-state-audit"
+                            $result.runtimeEvidenceBoundary = $audit.boundary
+                        }
+                        else {
                             $result.status = "FAIL"
-                            $result.error = "Viewer child manifest did not include selected angle(s): $($missingAngles -join ',')"
+                            $result.error = "Viewer child row gate audit failed: $(@($audit.errors) -join '; ')"
                         }
                         if ($result.status -eq "PASS") {
                             $result.evidence = @($result.evidence + @("viewer-manifest-phase-angle-match"))
@@ -558,11 +790,13 @@ function Write-BurnDownRunMarkdown([string]$Path, [object]$Summary) {
     $lines.Add("Burn-down: ``$($Summary.burnDownJson)``")
     $lines.Add("Policy: $($Summary.payloadPolicy)")
     $lines.Add("")
-    $lines.Add("| Status | Priority | Kind | Target | Phase | Gate | Classification | Viewer | Row JSON |")
-    $lines.Add("|---|---|---|---|---|---|---|---|---|")
+    $lines.Add("| Status | Row Audit | Runtime Class | Priority | Kind | Target | Phase | Gate | Missing Evidence | Viewer | Row JSON |")
+    $lines.Add("|---|---|---|---|---|---|---|---|---|---|---|")
     foreach ($result in @($Summary.results)) {
         $viewer = if (![string]::IsNullOrWhiteSpace($result.viewerIndex)) { $result.viewerIndex } elseif (![string]::IsNullOrWhiteSpace($result.viewerServer)) { $result.viewerServer } else { "" }
-        $lines.Add("| $($result.status) | $($result.priority) | $($result.actorKind) | ``$($result.runtimeTarget)`` | $($result.phase) | $($result.gate) | $($result.classification) | ``$viewer`` | ``$($result.rowJson)`` |")
+        $auditStatus = if ($null -ne $result.rowGateAudit) { $result.rowGateAudit.status } else { "" }
+        $missingEvidence = if ($null -ne $result.rowGateAudit) { @($result.rowGateAudit.missingEvidenceKinds) -join "," } else { "" }
+        $lines.Add("| $($result.status) | $auditStatus | $($result.rowRuntimeClassification) | $($result.priority) | $($result.actorKind) | ``$($result.runtimeTarget)`` | $($result.phase) | $($result.gate) | ``$missingEvidence`` | ``$viewer`` | ``$($result.rowJson)`` |")
     }
     $lines.Add("")
     $Path | Split-Path -Parent | ForEach-Object { New-Item -ItemType Directory -Force -Path $_ | Out-Null }
@@ -575,7 +809,9 @@ function Write-BurnDownRunHtml([string]$Path, [object]$Summary) {
         $viewerTarget = if (![string]::IsNullOrWhiteSpace($result.viewerIndex)) { $result.viewerIndex } elseif (![string]::IsNullOrWhiteSpace($result.viewerServer)) { $result.viewerServer } else { "" }
         $viewerCell = New-LinkHtml $Path $viewerTarget "viewer"
         $rowCell = New-LinkHtml $Path $result.rowJson "row"
-        $rows.Add("<tr><td class=`"status $($result.status)`">$(ConvertTo-HtmlText $result.status)</td><td>$(ConvertTo-HtmlText $result.priority)</td><td>$(ConvertTo-HtmlText $result.actorKind)</td><td><code>$(ConvertTo-HtmlText $result.runtimeTarget)</code></td><td>$(ConvertTo-HtmlText $result.phase)</td><td>$(ConvertTo-HtmlText $result.gate)</td><td>$(ConvertTo-HtmlText $result.classification)</td><td>$viewerCell</td><td>$rowCell</td><td>$(ConvertTo-HtmlText $result.error)</td></tr>")
+        $auditStatus = if ($null -ne $result.rowGateAudit) { [string]$result.rowGateAudit.status } else { "" }
+        $missingEvidence = if ($null -ne $result.rowGateAudit) { @($result.rowGateAudit.missingEvidenceKinds) -join "," } else { "" }
+        $rows.Add("<tr><td class=`"status $($result.status)`">$(ConvertTo-HtmlText $result.status)</td><td>$(ConvertTo-HtmlText $auditStatus)</td><td>$(ConvertTo-HtmlText $result.rowRuntimeClassification)</td><td>$(ConvertTo-HtmlText $result.priority)</td><td>$(ConvertTo-HtmlText $result.actorKind)</td><td><code>$(ConvertTo-HtmlText $result.runtimeTarget)</code></td><td>$(ConvertTo-HtmlText $result.phase)</td><td>$(ConvertTo-HtmlText $result.gate)</td><td><code>$(ConvertTo-HtmlText $missingEvidence)</code></td><td>$viewerCell</td><td>$rowCell</td><td>$(ConvertTo-HtmlText $result.error)</td></tr>")
     }
     $burnLink = New-LinkHtml $Path $Summary.burnDownJson "burn-down"
     $selectedLink = New-LinkHtml $Path $Summary.selectedRowsJson "selected rows"
@@ -628,7 +864,7 @@ a{color:#9fc2ff}
 </section>
 <section class="panel">
 <table>
-<thead><tr><th>Status</th><th>Priority</th><th>Kind</th><th>Target</th><th>Phase</th><th>Gate</th><th>Classification</th><th>Viewer</th><th>Row</th><th>Error</th></tr></thead>
+<thead><tr><th>Status</th><th>Row Audit</th><th>Runtime Class</th><th>Priority</th><th>Kind</th><th>Target</th><th>Phase</th><th>Gate</th><th>Missing Evidence</th><th>Viewer</th><th>Row</th><th>Error</th></tr></thead>
 <tbody>
 $($rows -join "`n")
 </tbody>
@@ -749,6 +985,9 @@ foreach ($row in $selectedRows) {
 }
 
 $failed = @($runResults | Where-Object { $_.status -eq "FAIL" })
+$auditSupported = @($runResults | Where-Object { $null -ne $_.rowGateAudit -and [string]$_.rowGateAudit.status -eq "PASS" })
+$auditPending = @($runResults | Where-Object { $null -ne $_.rowGateAudit -and ([string]$_.rowGateAudit.status -eq "PENDING" -or [string]$_.rowGateAudit.status -eq "DRY-RUN") })
+$auditFailed = @($runResults | Where-Object { $null -ne $_.rowGateAudit -and [string]$_.rowGateAudit.status -eq "FAIL" })
 $selectionStatus = if ($selectedRows.Count -eq 0) { "FAIL" } elseif ($failed.Count -eq 0) { "PASS" } else { "FAIL" }
 $summary = [pscustomobject][ordered]@{
     schema = "nikami-fnv-actor-parity-burndown-run-v1"
@@ -774,6 +1013,11 @@ $summary = [pscustomobject][ordered]@{
     runSeconds = $RunSeconds
     actorFrame = $ActorFrame
     screenshotFrames = $ScreenshotFrames
+    rowGateAuditCounts = [pscustomobject][ordered]@{
+        runtimeSupported = $auditSupported.Count
+        loadedPendingRuntime = $auditPending.Count
+        failed = $auditFailed.Count
+    }
     payloadPolicy = "generated row/run metadata and proof links only; no retail asset payload bytes"
     selectionError = if ($selectedRows.Count -eq 0) { "No burn-down rows matched the requested filters." } else { "" }
     results = @($runResults.ToArray())
