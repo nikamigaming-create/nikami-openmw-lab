@@ -353,6 +353,7 @@ Assert-Text $characterBuilderReport "empty active visual pane" "character builde
 Assert-Text $animation "falloutSortedExtentAxisRatio" "FNV visible limb shape proof uses rotation-invariant sorted extents"
 Assert-Text $animation "sortedExtentAxisRatio" "FNV visible limb shape proof logs sorted extent ratios beside raw axis ratios"
 Assert-Text $animation 'stem.find("attackright")' "synthetic Fallout KF groups classify attackright before movement-right"
+Assert-Text $animation 'return "aim"' "synthetic Fallout KF groups expose standing aim playback"
 Assert-Text $animation 'return "attackright"' "synthetic Fallout KF groups expose actor-kit attackright playback"
 Assert-Text $animation 'return "sneakattackright"' "synthetic Fallout KF groups expose crouch/sneak attackright playback"
 Assert-Text $animation 'return "sneakidle"' "synthetic Fallout KF groups preserve the real sneak idle base pose"

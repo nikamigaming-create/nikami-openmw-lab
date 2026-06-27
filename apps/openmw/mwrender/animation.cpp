@@ -4209,6 +4209,8 @@ namespace MWRender
             return "attack1";
         if (stem.find("reload") != std::string::npos)
             return "reload";
+        if (stem.find("aim") != std::string::npos)
+            return "aim";
         if (Misc::StringUtils::ciEndsWith(stem, "turnleft"))
             return "turnleft";
         if (Misc::StringUtils::ciEndsWith(stem, "turnright"))
