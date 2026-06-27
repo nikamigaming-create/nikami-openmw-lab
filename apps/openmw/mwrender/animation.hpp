@@ -201,6 +201,8 @@ namespace MWRender
         osg::ref_ptr<osg::Group> mObjectRoot;
         SceneUtil::Skeleton* mSkeleton;
 
+        virtual void applyPostManualFalloutActorPose() {}
+
         // The node expected to accumulate movement during movement animations.
         osg::ref_ptr<osg::Node> mAccumRoot;
 

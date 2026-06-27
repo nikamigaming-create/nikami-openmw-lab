@@ -45,6 +45,7 @@ namespace MWRender
         void applyLiveHeadSurfaceAuthoring();
         void applyLiveRuntimeActorKitSelectors();
         void applyFONVWeaponIk(const ESM4::Npc& traits);
+        void applyPostManualFalloutActorPose() override;
         void updateFONVBoneIkDebug(const ESM4::Npc& traits);
         bool rebuildLiveRuntimeActorKitParts(const ESM4::Npc& traits, unsigned int generation, std::string_view fingerprint);
 

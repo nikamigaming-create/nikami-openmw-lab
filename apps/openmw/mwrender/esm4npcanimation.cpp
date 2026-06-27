@@ -7213,6 +7213,12 @@ namespace MWRender
         }
     }
 
+    void ESM4NpcAnimation::applyPostManualFalloutActorPose()
+    {
+        if (const ESM4::Npc* traits = MWClass::ESM4Npc::getTraitsRecord(mPtr); traits != nullptr && traits->mIsFONV)
+            applyFONVWeaponIk(*traits);
+    }
+
     void ESM4NpcAnimation::updateFONVBoneIkDebug(const ESM4::Npc& traits)
     {
         const bool enabled = std::getenv("OPENMW_FNV_BONE_IK_DEBUG") != nullptr
@@ -7283,7 +7289,6 @@ namespace MWRender
         osg::Vec3f movement = Animation::runAnimation(duration);
         if (const ESM4::Npc* traits = MWClass::ESM4Npc::getTraitsRecord(mPtr); traits != nullptr && traits->mIsFONV)
         {
-            applyFONVWeaponIk(*traits);
             updateFONVBoneIkDebug(*traits);
             if (!mFONVActorKitProjectileProofFired && isFonvProofTargetActor(mPtr, *traits))
             {

@@ -5890,6 +5890,7 @@ namespace MWRender
             }
 
             applyFalloutSeatedHumanIk(duplicateTransformTargets, mPtr);
+            applyPostManualFalloutActorPose();
 
             if (mSkeleton)
                 mSkeleton->markBoneMatriceDirty();
