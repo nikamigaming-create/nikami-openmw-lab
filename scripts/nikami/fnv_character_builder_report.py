@@ -550,6 +550,48 @@ def summarize_runtime_audits(audits: list[dict[str, Any]]) -> list[dict[str, Any
     return result
 
 
+def normalized_model_key(value: str) -> str:
+    normalized = value.replace("\\", "/").lower()
+    prefix = "fnv part "
+    if normalized.startswith(prefix):
+        normalized = normalized[len(prefix) :]
+    return normalized
+
+
+def settled_runtime_audit_lookup(runtime_audit_summary: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    settled: dict[str, dict[str, Any]] = {}
+    for item in runtime_audit_summary:
+        if item.get("okCount", 0) <= 0 or item.get("badCount", 0) > 0 or item.get("regressed"):
+            continue
+        part = normalized_model_key(item.get("part", ""))
+        if not part:
+            continue
+        settled[part] = item
+    return settled
+
+
+def attachment_bound_runtime_settlement(
+    bounds: list[dict[str, Any]], runtime_audit_summary: list[dict[str, Any]]
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    settled = settled_runtime_audit_lookup(runtime_audit_summary)
+    settled_bounds: list[dict[str, Any]] = []
+    unresolved_bounds: list[dict[str, Any]] = []
+    for item in bounds:
+        if item.get("verdict") == "OK":
+            continue
+        model = normalized_model_key(item.get("model", ""))
+        runtime = settled.get(model)
+        if runtime:
+            copy = dict(item)
+            copy["settledRuntimePart"] = runtime.get("part", "")
+            copy["settledRuntimeOkCount"] = runtime.get("okCount", 0)
+            copy["settledRuntimeMaxDistance"] = runtime.get("maxDistance", 0.0)
+            settled_bounds.append(copy)
+        else:
+            unresolved_bounds.append(item)
+    return settled_bounds, unresolved_bounds
+
+
 def build_runtime_part_timelines(audits: list[dict[str, Any]]) -> list[dict[str, Any]]:
     grouped: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
     order: list[tuple[str, str, str]] = []
@@ -811,6 +853,14 @@ def parse_hand_runtime_summary(lines: list[str]) -> dict[str, Any]:
     static_text = summary_value(lines, "Target static hand no-twist proof lines")
     visible_text = summary_value(lines, "Target visible hand geometry samples")
     visible_limb_shape_text = summary_value(lines, "Target visible limb shape BAD lines")
+    raw_limb_shape_lines = [
+        line
+        for line in lines
+        if "FNV/ESM4 ACTOR HAND GEOMETRY AUDIT" in line and "shapeVerdict=" in line
+    ]
+    raw_limb_shape_bad_lines = [
+        line for line in raw_limb_shape_lines if re.search(r"\bshapeVerdict=(?!OK\b)[^ ]+", line)
+    ]
     return {
         "staticProofLines": int(static_text.split()[0]) if static_text and static_text.split()[0].isdigit() else 0,
         "leftStaticProofLines": parse_summary_int(static_text, "left"),
@@ -824,8 +874,9 @@ def parse_hand_runtime_summary(lines: list[str]) -> dict[str, Any]:
         "visibleHandGeometryPoseSanityBadLines": int(
             summary_value(lines, "Target visible hand geometry pose sanity BAD lines") or "0"
         ),
-        "visibleLimbShapeBadLinesPresent": bool(visible_limb_shape_text),
-        "visibleLimbShapeBadLines": int(visible_limb_shape_text or "0"),
+        "visibleLimbShapeBadLinesPresent": bool(visible_limb_shape_text) or bool(raw_limb_shape_lines),
+        "visibleLimbShapeBadLines": int(visible_limb_shape_text) if visible_limb_shape_text else len(raw_limb_shape_bad_lines),
+        "visibleLimbShapeRawAuditLines": len(raw_limb_shape_lines),
         "targetStandingArmPoseOkLines": int(summary_value(lines, "Target standing arm pose OK lines") or "0"),
         "targetStandingArmPoseBadLines": int(summary_value(lines, "Target standing arm pose BAD lines") or "0"),
     }
@@ -1514,10 +1565,12 @@ def evaluate(
     ]
     if bad_class:
         failures.append(f"phase skip without proof classification: {len(bad_class)}")
-    suspect_bounds = [item for item in bounds if item["verdict"] != "OK"]
-    if suspect_bounds:
-        failures.append(f"suspect attachment bounds: {len(suspect_bounds)}")
     runtime_audit_summary = summarize_runtime_audits(audits)
+    _settled_suspect_bounds, unresolved_suspect_bounds = attachment_bound_runtime_settlement(
+        bounds, runtime_audit_summary
+    )
+    if unresolved_suspect_bounds:
+        failures.append(f"unsettled suspect attachment bounds: {len(unresolved_suspect_bounds)}")
     never_settled_audits = [item for item in runtime_audit_summary if item["okCount"] == 0 and item["badCount"] > 0]
     if never_settled_audits:
         failures.append(f"bad runtime part audits: {len(never_settled_audits)}")
@@ -1784,6 +1837,8 @@ def write_markdown(path: Path, report: dict[str, Any]) -> None:
     lines.append("## Math")
     lines.append("")
     lines.append(f"Attachment bounds: {len(report['attachmentBounds'])}")
+    lines.append(f"Settled suspect attachment bounds: {len(report['settledSuspectAttachmentBounds'])}")
+    lines.append(f"Unsettled suspect attachment bounds: {len(report['unsettledSuspectAttachmentBounds'])}")
     lines.append(f"Head surface offsets: {len(report['headSurfaceOffsets'])}")
     lines.append(f"Runtime part audits: {len(report['runtimePartAudits'])}")
     lines.append(f"Runtime audit summaries: {len(report['runtimeAuditSummary'])}")
@@ -1887,6 +1942,28 @@ def write_markdown(path: Path, report: dict[str, Any]) -> None:
             lines.append(
                 f"| {item['model']} | {item['offset']} | {item['rotationPrefix']} | "
                 f"{item['pivot']} | {item['pivotMode']} |"
+            )
+        lines.append("")
+    if report["settledSuspectAttachmentBounds"]:
+        lines.append("## Settled Attachment Suspects")
+        lines.append("")
+        lines.append("| Model | Parent | Early HeadRel | Runtime Part | Runtime OK Samples | Runtime Max Distance |")
+        lines.append("|---|---|---|---|---:|---:|")
+        for item in report["settledSuspectAttachmentBounds"][:24]:
+            lines.append(
+                f"| {item['model']} | {item['parent']} | {item['headRel']} | "
+                f"{item.get('settledRuntimePart', '')} | {item.get('settledRuntimeOkCount', 0)} | "
+                f"{item.get('settledRuntimeMaxDistance', 0.0):.4g} |"
+            )
+        lines.append("")
+    if report["unsettledSuspectAttachmentBounds"]:
+        lines.append("## Unsettled Attachment Suspects")
+        lines.append("")
+        lines.append("| Model | Parent | HeadRel | Extent | Verdict |")
+        lines.append("|---|---|---|---|---|")
+        for item in report["unsettledSuspectAttachmentBounds"][:24]:
+            lines.append(
+                f"| {item['model']} | {item['parent']} | {item['headRel']} | {item['extent']} | {item['verdict']} |"
             )
         lines.append("")
     lines.append("## First Attachments")
@@ -1998,6 +2075,7 @@ def main() -> int:
     ]
     weapon_present = any(item["weapon"] for item in actor_weapon_states) or bool(weapon_lines)
     runtime_audit_summary = summarize_runtime_audits(audits)
+    settled_suspect_bounds, unsettled_suspect_bounds = attachment_bound_runtime_settlement(bounds, runtime_audit_summary)
     runtime_part_timelines = build_runtime_part_timelines(audits)
     face_occlusion_findings = find_face_occlusion_findings(bounds, audits)
     attachment_world_jumps = find_attachment_world_jumps(bounds)
@@ -2066,6 +2144,8 @@ def main() -> int:
         "categorySummary": summarize_categories(gates),
         "gates": gates,
         "attachmentBounds": bounds,
+        "settledSuspectAttachmentBounds": settled_suspect_bounds,
+        "unsettledSuspectAttachmentBounds": unsettled_suspect_bounds,
         "headSurfaceOffsets": head_surface_offsets,
         "runtimePartAudits": audits,
         "runtimeAuditSummary": runtime_audit_summary,
