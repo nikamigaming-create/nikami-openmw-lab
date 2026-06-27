@@ -485,12 +485,16 @@ namespace
         std::size_t mBoneCount = 0;
         bool mRenderValid = false;
         bool mSourceValid = false;
+        bool mLiveValid = false;
         osg::Vec3f mRenderCenterParentWorld;
         osg::Vec3f mRenderCenterPathWorld;
         osg::Vec3f mSourceCenterParentWorld;
         osg::Vec3f mSourceCenterPathWorld;
+        osg::Vec3f mLiveCenterParentWorld;
+        osg::Vec3f mLiveCenterPathWorld;
         osg::Vec3f mRenderExtent;
         osg::Vec3f mSourceExtent;
+        osg::Vec3f mLiveExtent;
         std::string mLimbBoneSummary;
     };
 
@@ -623,6 +627,14 @@ namespace
                         sample.mRenderCenterPathWorld = transformFalloutPoint(box.center(), localToWorld);
                     }
                 }
+                osg::BoundingBox liveBox;
+                if (rig->computeCurrentFalloutSkinningBounds(this, liveBox))
+                {
+                    sample.mLiveValid = true;
+                    sample.mLiveExtent = falloutBoundingBoxExtent(liveBox);
+                    sample.mLiveCenterParentWorld = transformFalloutPoint(liveBox.center(), mPartParentWorld);
+                    sample.mLiveCenterPathWorld = transformFalloutPoint(liveBox.center(), localToWorld);
+                }
 
                 osg::ref_ptr<osg::Geometry> sourceGeometry = rig->getSourceGeometry();
                 if (sourceGeometry != nullptr)
@@ -669,6 +681,14 @@ namespace
                     sample.mRenderCenterParentWorld = transformFalloutPoint(box.center(), mPartParentWorld);
                     sample.mRenderCenterPathWorld = transformFalloutPoint(box.center(), localToWorld);
                 }
+            }
+            osg::BoundingBox liveBox;
+            if (rig->computeCurrentFalloutSkinningBounds(this, liveBox))
+            {
+                sample.mLiveValid = true;
+                sample.mLiveExtent = falloutBoundingBoxExtent(liveBox);
+                sample.mLiveCenterParentWorld = transformFalloutPoint(liveBox.center(), mPartParentWorld);
+                sample.mLiveCenterPathWorld = transformFalloutPoint(liveBox.center(), localToWorld);
             }
 
             osg::ref_ptr<osg::Geometry> sourceGeometry = rig->getSourceGeometry();
@@ -747,6 +767,13 @@ namespace
                         sample.mRenderExtent = falloutBoundingBoxExtent(box);
                         sample.mRenderCenterPathWorld = transformFalloutPoint(box.center(), localToWorld);
                     }
+                }
+                osg::BoundingBox liveBox;
+                if (rig->computeCurrentFalloutSkinningBounds(this, liveBox))
+                {
+                    sample.mLiveValid = true;
+                    sample.mLiveExtent = falloutBoundingBoxExtent(liveBox);
+                    sample.mLiveCenterPathWorld = transformFalloutPoint(liveBox.center(), localToWorld);
                 }
 
                 osg::ref_ptr<osg::Geometry> sourceGeometry = rig->getSourceGeometry();
@@ -846,6 +873,13 @@ namespace
                     sample.mRenderExtent = falloutBoundingBoxExtent(box);
                     sample.mRenderCenterPathWorld = transformFalloutPoint(box.center(), localToWorld);
                 }
+            }
+            osg::BoundingBox liveBox;
+            if (rig->computeCurrentFalloutSkinningBounds(this, liveBox))
+            {
+                sample.mLiveValid = true;
+                sample.mLiveExtent = falloutBoundingBoxExtent(liveBox);
+                sample.mLiveCenterPathWorld = transformFalloutPoint(liveBox.center(), localToWorld);
             }
 
             osg::ref_ptr<osg::Geometry> sourceGeometry = rig->getSourceGeometry();
@@ -2356,6 +2390,10 @@ namespace
                         << " renderExtent=" << formatFalloutAuditVec3(sample.mRenderExtent)
                         << " renderParentDistance=" << renderParentDistance
                         << " renderPathDistance=" << renderPathDistance
+                        << " liveValid=" << sample.mLiveValid
+                        << " liveCenterParentWorld=" << formatFalloutAuditVec3(sample.mLiveCenterParentWorld)
+                        << " liveCenterPathWorld=" << formatFalloutAuditVec3(sample.mLiveCenterPathWorld)
+                        << " liveExtent=" << formatFalloutAuditVec3(sample.mLiveExtent)
                         << " sourceValid=" << sample.mSourceValid
                         << " sourceCenterParentWorld=" << formatFalloutAuditVec3(sample.mSourceCenterParentWorld)
                         << " sourceCenterPathWorld=" << formatFalloutAuditVec3(sample.mSourceCenterPathWorld)
@@ -2437,9 +2475,18 @@ namespace
                     || lowerName.find(" r ") != std::string::npos || lowerRoot.find(" r ") != std::string::npos;
                 const osg::Vec3f anchor = left && !right ? leftHand : rightHand;
                 const float renderDistance = sample.mRenderValid ? (sample.mRenderCenterPathWorld - anchor).length() : -1.f;
+                const float liveDistance = sample.mLiveValid ? (sample.mLiveCenterPathWorld - anchor).length() : -1.f;
                 const float sourceDistance = sample.mSourceValid ? (sample.mSourceCenterPathWorld - anchor).length() : -1.f;
-                const float extentAxisRatio = sample.mRenderValid && sample.mSourceValid
+                const osg::Vec3f auditExtent = sample.mLiveValid ? sample.mLiveExtent : sample.mRenderExtent;
+                const bool auditValid = sample.mLiveValid || sample.mRenderValid;
+                const float renderExtentAxisRatio = sample.mRenderValid && sample.mSourceValid
                     ? falloutExtentAxisRatio(sample.mRenderExtent, sample.mSourceExtent)
+                    : 1.f;
+                const float liveExtentAxisRatio = sample.mLiveValid && sample.mSourceValid
+                    ? falloutExtentAxisRatio(sample.mLiveExtent, sample.mSourceExtent)
+                    : 1.f;
+                const float extentAxisRatio = auditValid && sample.mSourceValid
+                    ? falloutExtentAxisRatio(auditExtent, sample.mSourceExtent)
                     : 1.f;
                 const bool limbShapeSuspect = !sample.mLimbBoneSummary.empty() && extentAxisRatio > 2.25f;
                 Log(Debug::Info)
@@ -2456,10 +2503,17 @@ namespace
                     << " renderCenterWorld=" << formatFalloutAuditVec3(sample.mRenderCenterPathWorld)
                     << " renderExtent=" << formatFalloutAuditVec3(sample.mRenderExtent)
                     << " renderDistance=" << renderDistance
+                    << " liveValid=" << sample.mLiveValid
+                    << " liveCenterWorld=" << formatFalloutAuditVec3(sample.mLiveCenterPathWorld)
+                    << " liveExtent=" << formatFalloutAuditVec3(sample.mLiveExtent)
+                    << " liveDistance=" << liveDistance
                     << " sourceValid=" << sample.mSourceValid
                     << " sourceCenterWorld=" << formatFalloutAuditVec3(sample.mSourceCenterPathWorld)
                     << " sourceExtent=" << formatFalloutAuditVec3(sample.mSourceExtent)
                     << " sourceDistance=" << sourceDistance
+                    << " renderExtentAxisRatio=" << renderExtentAxisRatio
+                    << " liveExtentAxisRatio=" << liveExtentAxisRatio
+                    << " shapeExtentSource=" << (sample.mLiveValid ? "liveSkin" : "renderBuffer")
                     << " extentAxisRatio=" << extentAxisRatio
                     << " shapeVerdict=" << (limbShapeSuspect ? "SUSPECT" : "OK")
                     << " path='" << handRigVisitor.mPaths[i] << "'";

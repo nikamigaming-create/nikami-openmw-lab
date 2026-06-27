@@ -3,6 +3,7 @@
 
 #include <osg/Geometry>
 #include <osg/Matrixf>
+#include <osg/NodeVisitor>
 
 #include <array>
 #include <string>
@@ -82,6 +83,7 @@ namespace SceneUtil
         osg::ref_ptr<osg::Geometry> getSourceGeometry() const;
         osg::Geometry* getRenderGeometry(unsigned int index) const;
         osg::Geometry* getLastFrameGeometry() const;
+        bool computeCurrentFalloutSkinningBounds(osg::NodeVisitor* nv, osg::BoundingBox& box);
 
         void accept(osg::NodeVisitor& nv) override;
         bool supports(const osg::PrimitiveFunctor&) const override { return true; }
