@@ -367,6 +367,7 @@ Assert-Text $npcAnimation "actor projectile visual launch" "FNV NPC firing logs 
 Assert-Text $npcAnimation "launchProjectile(" "FNV NPC firing uses runtime projectile manager"
 Assert-Text $npcAnimation "applyFONVWeaponIk" "FNV NPC animation has a runtime weapon IK solver hook"
 Assert-Text $npcAnimation "OPENMW_FNV_DISABLE_WEAPON_IK" "FNV weapon IK can be disabled without source edits"
+Assert-Text $npcAnimation 'readFalloutProofFloat("OPENMW_FNV_WEAPON_IK_STRENGTH", 1.f)' "FNV weapon IK defaults to proven full-strength endpoint solving"
 Assert-Text $npcAnimation "weapon IK solver active" "FNV weapon IK emits runtime solver evidence"
 Assert-Text $npcAnimation "rightTargetDistanceBefore" "FNV weapon IK evidence records pre-solve right hand target distance"
 Assert-Text $npcAnimation "rightTargetDistanceAfter" "FNV weapon IK evidence records post-solve right hand target distance"

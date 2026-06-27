@@ -7145,7 +7145,7 @@ namespace MWRender
         if (getFalloutEffectiveEquippedWeapon(mPtr, traits) == nullptr)
             return;
 
-        const float strength = std::clamp(readFalloutProofFloat("OPENMW_FNV_WEAPON_IK_STRENGTH", 0.18f), 0.f, 1.f);
+        const float strength = std::clamp(readFalloutProofFloat("OPENMW_FNV_WEAPON_IK_STRENGTH", 1.f), 0.f, 1.f);
         if (strength <= 0.f)
             return;
 
