@@ -7182,6 +7182,24 @@ namespace MWRender
         const auto endpointMove = [](const osg::Vec3f& before, const osg::Vec3f& after, bool valid) {
             return valid ? (after - before).length() : -1.f;
         };
+        const auto normalizedDirection = [](osg::Vec3f value, const osg::Vec3f& fallback) {
+            if (value.normalize() <= 0.0001f)
+                return fallback;
+            return value;
+        };
+        const auto directionAngleDegrees = [&](osg::Vec3f left, osg::Vec3f right) {
+            if (left.normalize() <= 0.0001f || right.normalize() <= 0.0001f)
+                return -1.f;
+            return std::acos(std::clamp(left * right, -1.f, 1.f)) * 57.29577951308232f;
+        };
+        osg::Node* weaponFrameNode = mFONVEquippedWeaponNode.get();
+        if (weaponFrameNode == nullptr)
+            weaponFrameNode = findBestAttachmentNode(nodeMap, { "Weapon", "weapon", "Bip01 Weapon" });
+        const auto weaponFrameForward = [&]() {
+            return normalizedDirection(
+                getNodeWorldMatrix(weaponFrameNode).getRotate() * osg::Vec3f(0.f, 1.f, 0.f), forward);
+        };
+        const osg::Vec3f weaponForwardBefore = weaponFrameForward();
 
         bool rightHandValidBefore = false;
         bool leftHandValidBefore = false;
@@ -7292,6 +7310,36 @@ namespace MWRender
             solved = std::max(solved, fallbackSolved);
         }
 
+        const auto solveWeaponAimFrame = [&]() {
+            osg::MatrixTransform* weaponAim = dynamic_cast<osg::MatrixTransform*>(
+                findBestAttachmentNode(nodeMap, { "Weapon", "weapon", "Bip01 Weapon" }));
+            if (weaponAim == nullptr || weaponFrameNode == nullptr)
+                return false;
+
+            osg::Vec3f current = weaponFrameForward();
+            osg::Vec3f desired = forward;
+            if (current.normalize() <= 0.0001f || desired.normalize() <= 0.0001f)
+                return false;
+
+            osg::Quat delta;
+            delta.makeRotate(current, desired);
+            osg::Quat limitedDelta;
+            limitedDelta.slerp(strength, osg::Quat(), delta);
+
+            const osg::Matrix aimWorld = getNodeWorldMatrix(weaponAim);
+            const osg::Quat desiredRotation = limitedDelta * aimWorld.getRotate();
+            const osg::Matrix desiredWorld
+                = osg::Matrix::rotate(desiredRotation) * osg::Matrix::translate(aimWorld.getTrans());
+            osg::Group* parent = weaponAim->getNumParents() > 0 ? weaponAim->getParent(0) : nullptr;
+            weaponAim->setMatrix(desiredWorld * osg::Matrix::inverse(getNodeWorldMatrix(parent)));
+            weaponAim->dirtyBound();
+            if (mSkeleton != nullptr)
+                mSkeleton->markBoneMatriceDirty();
+            return true;
+        };
+
+        const bool weaponAimSolved = solveWeaponAimFrame();
+
         if (mSkeleton != nullptr)
             mSkeleton->markBoneMatriceDirty();
 
@@ -7322,11 +7370,17 @@ namespace MWRender
         const float rightEndpointMoved = endpointMove(rightHandBefore, rightHandAfter, rightHandValidBefore && rightHandValidAfter);
         const float leftEndpointMoved = endpointMove(leftHandBefore, leftHandAfter, leftHandValidBefore && leftHandValidAfter);
         const float weaponEndpointMoved = endpointMove(weaponBefore, weaponAfter, weaponValidBefore && weaponValidAfter);
+        const osg::Vec3f weaponForwardAfter = weaponFrameForward();
+        const float weaponAimAngleBefore = directionAngleDegrees(weaponForwardBefore, forward);
+        const float weaponAimAngleAfter = directionAngleDegrees(weaponForwardAfter, forward);
         const bool endpointMoved = rightEndpointMoved > 1.f || leftEndpointMoved > 1.f || weaponEndpointMoved > 1.f;
         const bool targetImproved = (rightTargetBefore >= 0.f && rightTargetAfter >= 0.f
                                         && rightTargetAfter + 0.5f < rightTargetBefore)
             || (leftTargetBefore >= 0.f && leftTargetAfter >= 0.f && leftTargetAfter + 0.5f < leftTargetBefore);
-        const bool runtimeSupported = solved == 4 && (endpointMoved || targetImproved);
+        const bool aimImproved = weaponAimAngleBefore >= 0.f && weaponAimAngleAfter >= 0.f
+            && weaponAimAngleAfter + 0.5f < weaponAimAngleBefore;
+        const bool runtimeSupported = solved == 4 && (endpointMoved || targetImproved) && weaponAimSolved
+            && (aimImproved || weaponAimAngleAfter <= 5.f);
 
         if (!mFONVBoneIkLogged)
         {
@@ -7340,6 +7394,13 @@ namespace MWRender
                 << " chest=(" << chest.x() << "," << chest.y() << "," << chest.z() << ")"
                 << " solverBasisForward=(" << forward.x() << "," << forward.y() << "," << forward.z() << ")"
                 << " solverBasisRight=(" << right.x() << "," << right.y() << "," << right.z() << ")"
+                << " weaponAimSolved=" << weaponAimSolved
+                << " weaponForwardBefore=(" << weaponForwardBefore.x() << "," << weaponForwardBefore.y() << ","
+                << weaponForwardBefore.z() << ")"
+                << " weaponForwardAfter=(" << weaponForwardAfter.x() << "," << weaponForwardAfter.y() << ","
+                << weaponForwardAfter.z() << ")"
+                << " weaponAimAngleBefore=" << weaponAimAngleBefore
+                << " weaponAimAngleAfter=" << weaponAimAngleAfter
                 << " rightTarget=(" << rightTarget.x() << "," << rightTarget.y() << "," << rightTarget.z() << ")"
                 << " leftTarget=(" << leftTarget.x() << "," << leftTarget.y() << "," << leftTarget.z() << ")"
                 << " rightUpperBefore=(" << rightUpperBefore.x() << "," << rightUpperBefore.y() << ","
@@ -7377,6 +7438,7 @@ namespace MWRender
                 << " leftEndpointMoved=" << leftEndpointMoved
                 << " weaponEndpointMoved=" << weaponEndpointMoved
                 << " targetImproved=" << targetImproved
+                << " aimImproved=" << aimImproved
                 << " endpointMoved=" << endpointMoved
                 << " runtime=" << (runtimeSupported ? "runtime-supported" : "loaded-pending-runtime")
                 << " gate=runtime-fnv-weapon-ik";
