@@ -1140,11 +1140,13 @@ def parse_projectile_runtime_evidence(lines: list[str], patterns: list[str]) -> 
                 continue
             runtime_match = re.search(r"\bruntime=([^ ]+)", line)
             source_match = re.search(r"\bsource=([^ ]+)", line)
+            right_hand_distance_match = re.search(r"\brightHandDistance=([-+0-9.eE]+)", line)
             rows.append(
                 {
                     "kind": kind,
                     "runtime": runtime_match.group(1) if runtime_match else "",
                     "source": source_match.group(1) if source_match else "",
+                    "rightHandDistance": float(right_hand_distance_match.group(1)) if right_hand_distance_match else None,
                     "line": compact_line(line),
                 }
             )
@@ -1496,6 +1498,19 @@ def evaluate(
             "attack" in group or "shoot" in group or "fire" in group for group in selected_groups if group
         )
         if projectile_requested:
+            muzzle_lines = [item for item in projectile_runtime_evidence if item["kind"] == "muzzle-frame"]
+            if not muzzle_lines:
+                failures.append("missing weapon muzzle frame runtime evidence")
+            weapon_helper_muzzle_lines = [item for item in muzzle_lines if item.get("source") == "weapon-helper"]
+            if not weapon_helper_muzzle_lines:
+                failures.append("missing weapon-helper muzzle frame runtime evidence")
+            distant_muzzle_lines = [
+                item
+                for item in weapon_helper_muzzle_lines
+                if item.get("rightHandDistance") is not None and item["rightHandDistance"] > 36.0
+            ]
+            if distant_muzzle_lines:
+                failures.append(f"weapon-helper muzzle drifted from right hand: {len(distant_muzzle_lines)}")
             projectile_lines = [
                 item
                 for item in projectile_runtime_evidence
@@ -1503,6 +1518,11 @@ def evaluate(
             ]
             if not projectile_lines:
                 failures.append("missing projectile fire request runtime evidence")
+            actor_projectile_lines = [
+                item for item in projectile_lines if item["kind"] == "projectile-fire-request"
+            ]
+            if actor_projectile_lines and not any(item.get("source") == "weapon-helper" for item in actor_projectile_lines):
+                failures.append("missing weapon-helper projectile launch runtime evidence")
     dialogue_mode = summary_value(lines, "ActorKitDialogueMode").lower()
     dialogue_requested = phase in {"talk", "dialogue"} or dialogue_mode in {"mouth-open", "mouth-open-pose", "pose"}
     if dialogue_requested:
