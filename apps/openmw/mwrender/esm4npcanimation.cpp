@@ -7192,6 +7192,53 @@ namespace MWRender
             = nodeOrigin({ "Bip01 L Hand", "bip01 l hand" }, leftHandValidBefore);
         const osg::Vec3f weaponBefore = nodeOrigin({ "Weapon", "weapon", "Bip01 Weapon" }, weaponValidBefore);
 
+        constexpr unsigned int ccdIterations = 4;
+        const auto solveArmEndpoint = [&](std::string_view upperName, std::string_view forearmName,
+                                          std::initializer_list<std::string_view> handNames,
+                                          const osg::Vec3f& target) -> unsigned int {
+            osg::MatrixTransform* upper
+                = dynamic_cast<osg::MatrixTransform*>(findBestAttachmentNode(nodeMap, { upperName }));
+            osg::MatrixTransform* forearm
+                = dynamic_cast<osg::MatrixTransform*>(findBestAttachmentNode(nodeMap, { forearmName }));
+            osg::Group* endpoint = findBestAttachmentNode(nodeMap, handNames);
+            if (upper == nullptr || forearm == nullptr || endpoint == nullptr)
+                return 0;
+
+            bool upperSolved = false;
+            bool forearmSolved = false;
+            const auto solveBone = [&](osg::MatrixTransform& bone, bool& solvedFlag) {
+                const osg::Matrix boneWorld = getNodeWorldMatrix(&bone);
+                const osg::Vec3f boneOrigin = boneWorld.getTrans();
+                const osg::Vec3f endpointOrigin = getNodeWorldMatrix(endpoint).getTrans();
+                osg::Vec3f from = endpointOrigin - boneOrigin;
+                osg::Vec3f to = target - boneOrigin;
+                if (from.normalize() <= 0.0001f || to.normalize() <= 0.0001f)
+                    return;
+
+                osg::Quat delta;
+                delta.makeRotate(from, to);
+                osg::Quat limitedDelta;
+                limitedDelta.slerp(strength, osg::Quat(), delta);
+                const osg::Quat desiredRotation = limitedDelta * boneWorld.getRotate();
+                const osg::Matrix desiredWorld
+                    = osg::Matrix::rotate(desiredRotation) * osg::Matrix::translate(boneWorld.getTrans());
+                osg::Group* parent = bone.getNumParents() > 0 ? bone.getParent(0) : nullptr;
+                bone.setMatrix(desiredWorld * osg::Matrix::inverse(getNodeWorldMatrix(parent)));
+                bone.dirtyBound();
+                solvedFlag = true;
+                if (mSkeleton != nullptr)
+                    mSkeleton->markBoneMatriceDirty();
+            };
+
+            for (unsigned int i = 0; i < ccdIterations; ++i)
+            {
+                solveBone(*forearm, forearmSolved);
+                solveBone(*upper, upperSolved);
+            }
+
+            return (upperSolved ? 1u : 0u) + (forearmSolved ? 1u : 0u);
+        };
+
         const auto rotateBoneToward = [&](std::string_view name, const osg::Vec3f& target) -> bool {
             osg::Group* group = findBestAttachmentNode(nodeMap, { name });
             osg::MatrixTransform* bone = dynamic_cast<osg::MatrixTransform*>(group);
@@ -7217,13 +7264,21 @@ namespace MWRender
             return true;
         };
 
-        unsigned int solved = 0;
-        for (std::string_view bone : { "Bip01 R UpperArm", "Bip01 R Forearm" })
-            if (rotateBoneToward(bone, rightTarget))
-                ++solved;
-        for (std::string_view bone : { "Bip01 L UpperArm", "Bip01 L Forearm" })
-            if (rotateBoneToward(bone, leftTarget))
-                ++solved;
+        unsigned int solved = solveArmEndpoint(
+            "Bip01 R UpperArm", "Bip01 R Forearm", { "Bip01 R Hand", "bip01 r hand" }, rightTarget);
+        solved += solveArmEndpoint(
+            "Bip01 L UpperArm", "Bip01 L Forearm", { "Bip01 L Hand", "bip01 l hand" }, leftTarget);
+        if (solved != 4)
+        {
+            unsigned int fallbackSolved = 0;
+            for (std::string_view bone : { "Bip01 R UpperArm", "Bip01 R Forearm" })
+                if (rotateBoneToward(bone, rightTarget))
+                    ++fallbackSolved;
+            for (std::string_view bone : { "Bip01 L UpperArm", "Bip01 L Forearm" })
+                if (rotateBoneToward(bone, leftTarget))
+                    ++fallbackSolved;
+            solved = std::max(solved, fallbackSolved);
+        }
 
         if (mSkeleton != nullptr)
             mSkeleton->markBoneMatriceDirty();
@@ -7254,6 +7309,8 @@ namespace MWRender
             mFONVBoneIkLogged = true;
             Log(runtimeSupported ? Debug::Info : Debug::Warning)
                 << "FNV/ESM4 proof: weapon IK solver active actor=" << traits.mEditorId
+                << " solver=ccd-endpoint"
+                << " iterations=" << ccdIterations
                 << " solvedBones=" << solved
                 << " strength=" << strength
                 << " rightTarget=(" << rightTarget.x() << "," << rightTarget.y() << "," << rightTarget.z() << ")"
