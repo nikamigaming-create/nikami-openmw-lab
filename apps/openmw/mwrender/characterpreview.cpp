@@ -11,6 +11,8 @@
 #include <osg/Camera>
 #include <osg/ComputeBoundsVisitor>
 #include <osg/Fog>
+#include <osg/Geode>
+#include <osg/Geometry>
 #include <osg/Material>
 #include <osg/PositionAttitudeTransform>
 #include <osg/Texture2D>
@@ -429,6 +431,64 @@ namespace MWRender
         Mode mMode;
         unsigned int mKept = 0;
         unsigned int mMasked = 0;
+    };
+
+    class FalloutActorPreviewDrawableAuditVisitor : public osg::NodeVisitor
+    {
+    public:
+        FalloutActorPreviewDrawableAuditVisitor()
+            : osg::NodeVisitor(TRAVERSE_ALL_CHILDREN)
+        {
+        }
+
+        void apply(osg::Node& node) override
+        {
+            if (node.getNodeMask() == 0)
+                return;
+            traverse(node);
+        }
+
+        void apply(osg::Geode& geode) override
+        {
+            if (geode.getNodeMask() == 0)
+                return;
+
+            ++mGeodes;
+            for (unsigned int index = 0; index < geode.getNumDrawables(); ++index)
+            {
+                osg::Drawable* drawable = geode.getDrawable(index);
+                if (drawable == nullptr)
+                    continue;
+
+                ++mDrawables;
+                const osg::BoundingBox bound = drawable->getBoundingBox();
+                if (bound.valid())
+                    mBounds.expandBy(bound);
+
+                osg::Geometry* geometry = drawable->asGeometry();
+                if (geometry == nullptr)
+                    continue;
+
+                ++mGeometry;
+                if (const osg::Array* vertices = geometry->getVertexArray())
+                    mVertices += vertices->getNumElements();
+            }
+
+            traverse(geode);
+        }
+
+        unsigned int getGeodes() const { return mGeodes; }
+        unsigned int getDrawables() const { return mDrawables; }
+        unsigned int getGeometry() const { return mGeometry; }
+        unsigned int getVertices() const { return mVertices; }
+        const osg::BoundingBox& getBounds() const { return mBounds; }
+
+    private:
+        unsigned int mGeodes = 0;
+        unsigned int mDrawables = 0;
+        unsigned int mGeometry = 0;
+        unsigned int mVertices = 0;
+        osg::BoundingBox mBounds;
     };
 
     class CharacterPreviewRTTNode : public SceneUtil::RTTNode
@@ -1199,6 +1259,52 @@ namespace MWRender
                                  << " kept=" << partMask->getKept() << " masked=" << partMask->getMasked()
                                  << " runtime=runtime-supported gate=runtime-neutral-actor-preview";
             }
+
+            FalloutActorPreviewDrawableAuditVisitor drawableAudit;
+            mNode->accept(drawableAudit);
+            const osg::BoundingBox& drawableBounds = drawableAudit.getBounds();
+            osg::ComputeBoundsVisitor visibleBoundsVisitor;
+            mNode->accept(visibleBoundsVisitor);
+            const osg::BoundingBox visibleBounds = visibleBoundsVisitor.getBoundingBox();
+            const bool handCameraOverride = std::getenv("OPENMW_FNV_NEUTRAL_ACTOR_PREVIEW_HAND_CAMERA_X") != nullptr
+                || std::getenv("OPENMW_FNV_NEUTRAL_ACTOR_PREVIEW_HAND_CAMERA_Y") != nullptr
+                || std::getenv("OPENMW_FNV_NEUTRAL_ACTOR_PREVIEW_HAND_CAMERA_Z") != nullptr
+                || std::getenv("OPENMW_FNV_NEUTRAL_ACTOR_PREVIEW_HAND_LOOK_X") != nullptr
+                || std::getenv("OPENMW_FNV_NEUTRAL_ACTOR_PREVIEW_HAND_LOOK_Y") != nullptr
+                || std::getenv("OPENMW_FNV_NEUTRAL_ACTOR_PREVIEW_HAND_LOOK_Z") != nullptr;
+            if (mViewMode == ViewMode::FrontRight && visibleBounds.valid() && !handCameraOverride)
+            {
+                const osg::Vec3f center = visibleBounds.center();
+                const float distance = getFalloutNeutralActorPreviewFloat(
+                    "OPENMW_FNV_NEUTRAL_ACTOR_PREVIEW_HAND_CAMERA_Y", 190.f);
+                lookAt = center;
+                position = osg::Vec3f(center.x(), center.y() + distance, center.z());
+                mRTTNode->setViewMatrix(
+                    osg::Matrixf::lookAt(position * scale.z(), lookAt * scale.z(), osg::Vec3f(0, 0, 1)));
+                Log(Debug::Info) << "FNV/ESM4 proof: neutral actor preview auto hand camera view=" << viewName
+                                 << " target=" << formatVec3(center)
+                                 << " distance=" << distance
+                                 << " runtime=runtime-supported gate=runtime-neutral-actor-preview";
+            }
+            Log(drawableAudit.getDrawables() > 0 ? Debug::Info : Debug::Warning)
+                << "FNV/ESM4 proof: neutral actor preview drawable audit view=" << viewName
+                << " geodes=" << drawableAudit.getGeodes()
+                << " drawables=" << drawableAudit.getDrawables()
+                << " geometry=" << drawableAudit.getGeometry()
+                << " vertices=" << drawableAudit.getVertices()
+                << " boundsValid=" << drawableBounds.valid()
+                << " boundsMin=(" << drawableBounds.xMin() << "," << drawableBounds.yMin() << ","
+                << drawableBounds.zMin() << ")"
+                << " boundsMax=(" << drawableBounds.xMax() << "," << drawableBounds.yMax() << ","
+                << drawableBounds.zMax() << ")"
+                << " visibleBoundsValid=" << visibleBounds.valid()
+                << " visibleBoundsCenter=(" << visibleBounds.center().x() << "," << visibleBounds.center().y() << ","
+                << visibleBounds.center().z() << ")"
+                << " visibleBoundsSize=(" << (visibleBounds.xMax() - visibleBounds.xMin()) << ","
+                << (visibleBounds.yMax() - visibleBounds.yMin()) << ","
+                << (visibleBounds.zMax() - visibleBounds.zMin()) << ")"
+                << " runtime=" << (drawableAudit.getDrawables() > 0 ? "runtime-supported" : "loaded-pending-runtime")
+                << " gate=runtime-neutral-actor-preview-drawables";
         }
 
         Log(Debug::Info) << "FNV/ESM4 proof: neutral actor preview camera view=" << viewName << " position=("

@@ -1044,7 +1044,9 @@ def analyze_neutral_preview_image(path: Path, weapon_present: bool = False, phas
             and foreground_fraction < min_foreground_fraction
         )
         if active_for_phase:
-            if foreground_fraction < min_foreground_fraction and not weapon_pane_runtime_backed:
+            if foreground_fraction <= 0.0:
+                pane_findings.append("empty active visual pane")
+            elif foreground_fraction < min_foreground_fraction:
                 pane_findings.append(
                     f"foreground fraction {foreground_fraction:.4f} below {min_foreground_fraction:.4f}"
                 )
