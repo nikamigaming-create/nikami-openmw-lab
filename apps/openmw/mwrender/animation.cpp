@@ -555,6 +555,22 @@ namespace
         return ratio;
     }
 
+    osg::Vec3f falloutSortedExtent(osg::Vec3f extent)
+    {
+        if (extent.x() < extent.y())
+            std::swap(extent.x(), extent.y());
+        if (extent.y() < extent.z())
+            std::swap(extent.y(), extent.z());
+        if (extent.x() < extent.y())
+            std::swap(extent.x(), extent.y());
+        return extent;
+    }
+
+    float falloutSortedExtentAxisRatio(const osg::Vec3f& renderExtent, const osg::Vec3f& sourceExtent)
+    {
+        return falloutExtentAxisRatio(falloutSortedExtent(renderExtent), falloutSortedExtent(sourceExtent));
+    }
+
     osg::BoundingBox computeFalloutGeometryBounds(const osg::Geometry& geometry)
     {
         osg::BoundingBox computed;
@@ -2494,7 +2510,10 @@ namespace
                 const float extentAxisRatio = auditValid && sample.mSourceValid
                     ? falloutExtentAxisRatio(auditExtent, sample.mSourceExtent)
                     : 1.f;
-                const bool limbShapeSuspect = !sample.mLimbBoneSummary.empty() && extentAxisRatio > 2.25f;
+                const float sortedExtentAxisRatio = auditValid && sample.mSourceValid
+                    ? falloutSortedExtentAxisRatio(auditExtent, sample.mSourceExtent)
+                    : 1.f;
+                const bool limbShapeSuspect = !sample.mLimbBoneSummary.empty() && sortedExtentAxisRatio > 3.25f;
                 Log(Debug::Info)
                     << "FNV/ESM4 ACTOR HAND GEOMETRY AUDIT " << ptr.getCellRef().getRefId()
                     << " sampleIndex=" << i
@@ -2521,6 +2540,7 @@ namespace
                     << " liveExtentAxisRatio=" << liveExtentAxisRatio
                     << " shapeExtentSource=" << (sample.mLiveValid ? "liveSkin" : "renderBuffer")
                     << " extentAxisRatio=" << extentAxisRatio
+                    << " sortedExtentAxisRatio=" << sortedExtentAxisRatio
                     << " shapeVerdict=" << (limbShapeSuspect ? "SUSPECT" : "OK")
                     << " path='" << handRigVisitor.mPaths[i] << "'";
                 ++loggedHandRigs;
