@@ -84,6 +84,8 @@ namespace SceneUtil
         osg::Geometry* getRenderGeometry(unsigned int index) const;
         osg::Geometry* getLastFrameGeometry() const;
         bool computeCurrentFalloutSkinningBounds(osg::NodeVisitor* nv, osg::BoundingBox& box);
+        void forceNextUpdate();
+        bool refreshFalloutSkinningForCurrentPose();
 
         void accept(osg::NodeVisitor& nv) override;
         bool supports(const osg::PrimitiveFunctor&) const override { return true; }
@@ -140,6 +142,7 @@ namespace SceneUtil
         bool mLoggedFalloutPoseSanity{ false };
         bool mFalloutUseVrRigidHandSolve{ false };
         bool mLoggedFalloutVrRigidHandSolve{ false };
+        bool mLoggedFalloutArmSleeveProjection{ false };
         bool mLoggedFalloutCullInitRecovery{ false };
         bool mFalloutDerivedInvBindComputed{ false };
         bool mLoggedFalloutDerivedInvBind{ false };

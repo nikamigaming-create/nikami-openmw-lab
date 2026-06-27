@@ -1895,7 +1895,8 @@ namespace
             = ((leftUpperArmLocal.z() - pelvisLocal.z()) + (rightUpperArmLocal.z() - pelvisLocal.z())) * 0.5f;
         const float averageUpperToHandDrop
             = ((leftUpperArmLocal.z() - leftHandLocal.z()) + (rightUpperArmLocal.z() - rightHandLocal.z())) * 0.5f;
-        const bool weaponEquipped = ptr.getType() == ESM4::Npc::sRecordId
+        const bool proofNoWeapon = std::getenv("OPENMW_FNV_PROOF_NO_WEAPON") != nullptr;
+        const bool weaponEquipped = !proofNoWeapon && ptr.getType() == ESM4::Npc::sRecordId
             && MWClass::ESM4Npc::getEquippedWeapon(ptr) != nullptr;
         osg::MatrixTransform* weaponNode = findFalloutTarget(targets, "weapon");
         const float rightHandWeaponDistance
@@ -1931,6 +1932,7 @@ namespace
             << " averageForearmAbovePelvis=" << averageForearmAbovePelvis
             << " averageUpperArmAbovePelvis=" << averageUpperArmAbovePelvis
             << " averageUpperToHandDrop=" << averageUpperToHandDrop
+            << " proofNoWeapon=" << proofNoWeapon
             << " weaponEquipped=" << weaponEquipped
             << " rightHandWeaponDistance=" << rightHandWeaponDistance
             << " bindPoseSpread=" << bindPoseSpread

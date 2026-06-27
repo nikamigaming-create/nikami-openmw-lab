@@ -44,6 +44,7 @@ namespace MWRender
         osg::ref_ptr<osg::Geode> mFONVBoneIkDebugGeode;
         osg::ref_ptr<osg::Geometry> mFONVBoneIkDebugGeometry;
         bool mFONVBoneIkLogged = false;
+        unsigned int mFONVWeaponIkTelemetryLogs = 0;
         unsigned int mFONVBoneIkDebugFrameLogs = 0;
         bool mFONVBoneIkDebugInProofPreview = false;
         bool mFONVActorKitProjectileProofFired = false;

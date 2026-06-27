@@ -40,6 +40,35 @@ namespace SceneUtil
             return Misc::StringUtils::ciStartsWith(name, "Tri ");
         }
 
+        bool shouldHideFalloutBadArmRig(std::string_view name)
+        {
+            const char* env = std::getenv("OPENMW_FNV_HIDE_BAD_ARM_RIG");
+            if (env == nullptr || env[0] == '\0' || std::string_view(env) == "0")
+                return false;
+
+            return Misc::StringUtils::ciEqual(name, "arms:0");
+        }
+
+        bool isFalloutArmSleeveRig(std::string_view name, std::string_view rootBone,
+            const std::vector<RigGeometry::BoneInfo>& bones)
+        {
+            if (!Misc::StringUtils::ciEqual(name, "arms:0"))
+                return false;
+
+            bool hasHand = false;
+            bool hasForearm = false;
+            bool hasUpperArm = false;
+            for (const RigGeometry::BoneInfo& bone : bones)
+            {
+                hasHand = hasHand || Misc::StringUtils::ciFind(bone.mName, " hand") != std::string_view::npos;
+                hasForearm = hasForearm || Misc::StringUtils::ciFind(bone.mName, "forearm") != std::string_view::npos
+                    || Misc::StringUtils::ciFind(bone.mName, "foretwist") != std::string_view::npos;
+                hasUpperArm = hasUpperArm || Misc::StringUtils::ciFind(bone.mName, "upperarm") != std::string_view::npos
+                    || Misc::StringUtils::ciFind(bone.mName, "uparmtwist") != std::string_view::npos;
+            }
+            return hasHand && hasForearm && hasUpperArm;
+        }
+
         osg::Vec3f boundingBoxExtent(const osg::BoundingBox& box)
         {
             if (!box.valid())
@@ -226,6 +255,68 @@ namespace SceneUtil
 
             return invBind * skeleton;
         }
+
+        bool findFalloutBoneIndex(const std::vector<RigGeometry::BoneInfo>& bones, std::string_view name,
+            std::size_t& index)
+        {
+            for (std::size_t i = 0; i < bones.size(); ++i)
+            {
+                if (Misc::StringUtils::ciEqual(bones[i].mName, name))
+                {
+                    index = i;
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        osg::Vec3f falloutBindPoint(const RigGeometry::BoneInfo& boneInfo)
+        {
+            osg::Matrixf bind;
+            if (!bind.invert(boneInfo.mInvBindMatrix))
+                return osg::Vec3f();
+            return bind.preMult(osg::Vec3f());
+        }
+
+        osg::Vec3f falloutLivePoint(const Bone* bone, const osg::Matrixf& transform)
+        {
+            if (bone == nullptr)
+                return osg::Vec3f();
+            osg::Matrixf live = bone->mMatrixInSkeletonSpace;
+            live *= transform;
+            return live.preMult(osg::Vec3f());
+        }
+
+        osg::Quat makeFalloutSegmentRotation(osg::Vec3f from, osg::Vec3f to)
+        {
+            osg::Quat rotation;
+            if (from.normalize() <= 0.0001f || to.normalize() <= 0.0001f)
+                return rotation;
+            rotation.makeRotate(from, to);
+            return rotation;
+        }
+
+        float falloutClosestSegmentT(const osg::Vec3f& point, const osg::Vec3f& start, const osg::Vec3f& end)
+        {
+            const osg::Vec3f segment = end - start;
+            const float length2 = segment.length2();
+            if (length2 <= 0.0001f)
+                return 0.f;
+            return std::clamp(((point - start) * segment) / length2, 0.f, 1.f);
+        }
+
+        osg::Vec3f falloutSegmentPoint(const osg::Vec3f& start, const osg::Vec3f& end, float t)
+        {
+            return start + (end - start) * std::clamp(t, 0.f, 1.f);
+        }
+
+        struct FalloutArmChain
+        {
+            std::size_t mUpper = 0;
+            std::size_t mForearm = 0;
+            std::size_t mHand = 0;
+            bool mValid = false;
+        };
 
 
         void copySourceSkinningGeometry(const osg::Vec3Array* positionSrc, const osg::Vec3Array* normalSrc,
@@ -415,6 +506,114 @@ namespace SceneUtil
         return getGeometry(mLastFrameNumber);
     }
 
+    void RigGeometry::forceNextUpdate()
+    {
+        mLastFrameNumber = 0;
+        dirtyBound();
+    }
+
+    bool RigGeometry::refreshFalloutSkinningForCurrentPose()
+    {
+        if (!mData || !mSourceGeometry || !isFalloutCharacterRig() || mNodes.empty())
+            return false;
+
+        const osg::Vec3Array* positionSrc = static_cast<osg::Vec3Array*>(mSourceGeometry->getVertexArray());
+        const osg::Vec3Array* normalSrc = static_cast<osg::Vec3Array*>(mSourceGeometry->getNormalArray());
+        const osg::Vec4Array* tangentSrc = mSourceTangents;
+        if (positionSrc == nullptr || positionSrc->empty())
+            return false;
+
+        const std::string_view falloutSkinningMode = getFalloutSkinningMode(getName(), mData->mRootBone, false);
+        const bool sourceSkinOnly = falloutSkinningMode == "sourceSkinOnly" && mSkinToSkelMatrix != nullptr;
+        const bool falloutSourceSkinning = falloutSkinningMode == "source" || sourceSkinOnly
+            || (falloutSkinningMode == "auto" && mFalloutUseSourceFallback);
+
+        std::vector<osg::Matrixf> boneMatrices(mNodes.size());
+        std::vector<Bone*>::const_iterator bone = mNodes.begin();
+        std::vector<BoneInfo>::const_iterator boneInfo = mData->mBones.begin();
+        for (osg::Matrixf& boneMat : boneMatrices)
+        {
+            if (*bone != nullptr)
+            {
+                boneMat = falloutSourceSkinning ? osg::Matrixf()
+                    : composeFalloutBoneMatrix(*boneInfo, *bone, falloutSkinningMode);
+            }
+            ++bone;
+            ++boneInfo;
+        }
+
+        osg::Matrixf transform;
+        if (mFalloutFlagSkinning || falloutSourceSkinning)
+            transform.makeIdentity();
+        else if (mSkinToSkelMatrix && useFalloutSkinToSkelMatrix())
+            transform = (*mSkinToSkelMatrix) * mData->mTransform;
+        else
+            transform = mData->mTransform;
+
+        bool refreshed = false;
+        for (osg::ref_ptr<osg::Geometry>& geometry : mGeometry)
+        {
+            if (geometry == nullptr)
+                continue;
+
+            osg::Vec3Array* positionDst = static_cast<osg::Vec3Array*>(geometry->getVertexArray());
+            osg::Vec3Array* normalDst = static_cast<osg::Vec3Array*>(geometry->getNormalArray());
+            osg::Vec4Array* tangentDst = static_cast<osg::Vec4Array*>(geometry->getTexCoordArray(7));
+            if (positionDst == nullptr || positionDst->size() < positionSrc->size())
+                continue;
+
+            if (falloutSourceSkinning)
+            {
+                copySourceSkinningGeometry(positionSrc, normalSrc, tangentSrc, positionDst, normalDst, tangentDst);
+            }
+            else
+            {
+                for (const auto& [influences, vertices] : mData->mInfluences)
+                {
+                    osg::Matrixf resultMat = makeFalloutSkinningAccumulator();
+                    for (const auto& [index, weight] : influences)
+                    {
+                        if (index >= boneMatrices.size() || mNodes[index] == nullptr)
+                            continue;
+                        addWeightedFalloutMatrix(resultMat, boneMatrices[index], weight);
+                    }
+                    resultMat *= transform;
+
+                    for (unsigned short vertex : vertices)
+                    {
+                        if (vertex >= positionSrc->size() || vertex >= positionDst->size())
+                            continue;
+                        (*positionDst)[vertex] = resultMat.preMult((*positionSrc)[vertex]);
+                        if (normalSrc != nullptr && normalDst != nullptr && vertex < normalSrc->size()
+                            && vertex < normalDst->size())
+                            (*normalDst)[vertex] = osg::Matrixf::transform3x3((*normalSrc)[vertex], resultMat);
+                        if (tangentSrc != nullptr && tangentDst != nullptr && vertex < tangentSrc->size()
+                            && vertex < tangentDst->size())
+                        {
+                            const osg::Vec4f& srcTangent = (*tangentSrc)[vertex];
+                            const osg::Vec3f transformedTangent = osg::Matrixf::transform3x3(
+                                osg::Vec3f(srcTangent.x(), srcTangent.y(), srcTangent.z()), resultMat);
+                            (*tangentDst)[vertex] = osg::Vec4f(transformedTangent, srcTangent.w());
+                        }
+                    }
+                }
+            }
+
+            positionDst->dirty();
+            if (normalDst != nullptr)
+                normalDst->dirty();
+            if (tangentDst != nullptr)
+                tangentDst->dirty();
+            geometry->dirtyBound();
+            geometry->osg::Drawable::dirtyGLObjects();
+            refreshed = true;
+        }
+
+        if (refreshed)
+            dirtyBound();
+        return refreshed;
+    }
+
     bool RigGeometry::computeCurrentFalloutSkinningBounds(osg::NodeVisitor* nv, osg::BoundingBox& box)
     {
         box.init();
@@ -565,6 +764,16 @@ namespace SceneUtil
         if (isFalloutCharacterRig() && isFalloutHiddenMorphRig(getName()))
         {
             setNodeMask(0);
+            return;
+        }
+
+        if (isFalloutCharacterRig() && shouldHideFalloutBadArmRig(getName()))
+        {
+            setNodeMask(0);
+            static std::unordered_set<std::string> loggedHiddenArmRigs;
+            if (loggedHiddenArmRigs.insert(getName()).second)
+                Log(Debug::Info) << "FNV/ESM4 diag: Fallout RigGeometry '" << getName()
+                                 << "' hidden by OPENMW_FNV_HIDE_BAD_ARM_RIG";
             return;
         }
 
@@ -1059,6 +1268,187 @@ namespace SceneUtil
                     osg::Vec3f transformedTangent = osg::Matrixf::transform3x3(
                         osg::Vec3f(srcTangent.x(), srcTangent.y(), srcTangent.z()), resultMat);
                     (*tangentDst)[vertex] = osg::Vec4f(transformedTangent, srcTangent.w());
+                }
+            }
+        }
+
+        if (falloutRig && !falloutSourceSkinning
+            && isFalloutArmSleeveRig(getName(), mData->mRootBone, mData->mBones)
+            && positionSrc != nullptr && positionDst != nullptr && !positionSrc->empty() && !positionDst->empty())
+        {
+            FalloutArmChain left;
+            FalloutArmChain right;
+            left.mValid = findFalloutBoneIndex(mData->mBones, "bip01 l upperarm", left.mUpper)
+                && findFalloutBoneIndex(mData->mBones, "bip01 l forearm", left.mForearm)
+                && findFalloutBoneIndex(mData->mBones, "bip01 l hand", left.mHand);
+            right.mValid = findFalloutBoneIndex(mData->mBones, "bip01 r upperarm", right.mUpper)
+                && findFalloutBoneIndex(mData->mBones, "bip01 r forearm", right.mForearm)
+                && findFalloutBoneIndex(mData->mBones, "bip01 r hand", right.mHand);
+
+            if (left.mValid && right.mValid && left.mUpper < mNodes.size() && left.mForearm < mNodes.size()
+                && left.mHand < mNodes.size() && right.mUpper < mNodes.size() && right.mForearm < mNodes.size()
+                && right.mHand < mNodes.size() && mNodes[left.mUpper] != nullptr && mNodes[left.mForearm] != nullptr
+                && mNodes[left.mHand] != nullptr && mNodes[right.mUpper] != nullptr && mNodes[right.mForearm] != nullptr
+                && mNodes[right.mHand] != nullptr)
+            {
+                struct ChainPose
+                {
+                    osg::Vec3f mBindUpper;
+                    osg::Vec3f mBindForearm;
+                    osg::Vec3f mBindHand;
+                    osg::Vec3f mLiveUpper;
+                    osg::Vec3f mLiveForearm;
+                    osg::Vec3f mLiveHand;
+                    osg::Quat mUpperRotation;
+                    osg::Quat mLowerRotation;
+                };
+
+                auto makeChainPose = [&](const FalloutArmChain& chain) {
+                    ChainPose pose;
+                    pose.mBindUpper = falloutBindPoint(mData->mBones[chain.mUpper]);
+                    pose.mBindForearm = falloutBindPoint(mData->mBones[chain.mForearm]);
+                    pose.mBindHand = falloutBindPoint(mData->mBones[chain.mHand]);
+                    pose.mLiveUpper = falloutLivePoint(mNodes[chain.mUpper], transform);
+                    pose.mLiveForearm = falloutLivePoint(mNodes[chain.mForearm], transform);
+                    pose.mLiveHand = falloutLivePoint(mNodes[chain.mHand], transform);
+                    pose.mUpperRotation = makeFalloutSegmentRotation(
+                        pose.mBindForearm - pose.mBindUpper, pose.mLiveForearm - pose.mLiveUpper);
+                    pose.mLowerRotation
+                        = makeFalloutSegmentRotation(pose.mBindHand - pose.mBindForearm, pose.mLiveHand - pose.mLiveForearm);
+                    return pose;
+                };
+
+                const ChainPose leftPose = makeChainPose(left);
+                const ChainPose rightPose = makeChainPose(right);
+                std::size_t projectedVertices = 0;
+                float maxProjectionDelta = 0.f;
+
+                auto sideWeights = [&](const BoneWeights& influences) {
+                    std::array<float, 4> weights = { 0.f, 0.f, 0.f, 0.f };
+                    for (const auto& [index, weight] : influences)
+                    {
+                        if (index >= mData->mBones.size())
+                            continue;
+                        const std::string& boneName = mData->mBones[index].mName;
+                        const bool leftBone = Misc::StringUtils::ciFind(boneName, " l ") != std::string_view::npos
+                            || Misc::StringUtils::ciFind(boneName, " luparm") != std::string_view::npos;
+                        const bool rightBone = Misc::StringUtils::ciFind(boneName, " r ") != std::string_view::npos
+                            || Misc::StringUtils::ciFind(boneName, " ruparm") != std::string_view::npos;
+                        const bool lowerBone = Misc::StringUtils::ciFind(boneName, "fore") != std::string_view::npos
+                            || Misc::StringUtils::ciFind(boneName, "hand") != std::string_view::npos;
+                        if (leftBone)
+                            weights[0] += weight;
+                        if (rightBone)
+                            weights[1] += weight;
+                        if (leftBone || rightBone)
+                            weights[2] += weight;
+                        if (lowerBone)
+                            weights[3] += weight;
+                    }
+                    return weights;
+                };
+
+                for (const auto& [influences, vertices] : mData->mInfluences)
+                {
+                    const std::array<float, 4> weights = sideWeights(influences);
+                    if (weights[2] < 0.35f)
+                        continue;
+
+                    for (unsigned short vertex : vertices)
+                    {
+                        if (vertex >= positionSrc->size() || vertex >= positionDst->size())
+                            continue;
+
+                        const osg::Vec3f source = (*positionSrc)[vertex];
+                        const bool useLeft = weights[0] > weights[1] || (weights[0] == weights[1] && source.x() < 0.f);
+                        const ChainPose& pose = useLeft ? leftPose : rightPose;
+
+                        const float upperT = falloutClosestSegmentT(source, pose.mBindUpper, pose.mBindForearm);
+                        const float lowerT = falloutClosestSegmentT(source, pose.mBindForearm, pose.mBindHand);
+                        const osg::Vec3f upperPoint = falloutSegmentPoint(pose.mBindUpper, pose.mBindForearm, upperT);
+                        const osg::Vec3f lowerPoint = falloutSegmentPoint(pose.mBindForearm, pose.mBindHand, lowerT);
+                        const bool useLower = weights[3] > 0.45f
+                            || (source - lowerPoint).length2() < (source - upperPoint).length2();
+                        const osg::Vec3f bindPoint = useLower ? lowerPoint : upperPoint;
+                        const osg::Vec3f livePoint = useLower
+                            ? falloutSegmentPoint(pose.mLiveForearm, pose.mLiveHand, lowerT)
+                            : falloutSegmentPoint(pose.mLiveUpper, pose.mLiveForearm, upperT);
+                        const osg::Quat& rotation = useLower ? pose.mLowerRotation : pose.mUpperRotation;
+                        const osg::Vec3f projected = livePoint + rotation * (source - bindPoint);
+
+                        const float upperTaper = std::clamp((upperT - 0.15f) / 0.7f, 0.f, 1.f);
+                        const float projectionStrength = useLower
+                            ? std::clamp(0.55f + weights[3] * 0.45f, 0.f, 1.f)
+                            : std::clamp((0.10f + weights[2] * 0.30f) * upperTaper, 0.f, 0.40f);
+                        if (projectionStrength <= 0.001f)
+                            continue;
+                        const osg::Vec3f before = (*positionDst)[vertex];
+                        (*positionDst)[vertex] = before * (1.f - projectionStrength) + projected * projectionStrength;
+                        maxProjectionDelta = std::max(maxProjectionDelta, ((*positionDst)[vertex] - before).length());
+
+                        if (normalSrc != nullptr && normalDst != nullptr && vertex < normalSrc->size()
+                            && vertex < normalDst->size())
+                        {
+                            osg::Vec3f normal = (*normalDst)[vertex] * (1.f - projectionStrength)
+                                + (rotation * (*normalSrc)[vertex]) * projectionStrength;
+                            if (normal.normalize() > 0.0001f)
+                                (*normalDst)[vertex] = normal;
+                        }
+
+                        if (tangentSrc != nullptr && tangentDst != nullptr && vertex < tangentSrc->size()
+                            && vertex < tangentDst->size())
+                        {
+                            const osg::Vec4f& srcTangent = (*tangentSrc)[vertex];
+                            osg::Vec3f tangent = osg::Vec3f((*tangentDst)[vertex].x(), (*tangentDst)[vertex].y(),
+                                                   (*tangentDst)[vertex].z())
+                                    * (1.f - projectionStrength)
+                                + (rotation * osg::Vec3f(srcTangent.x(), srcTangent.y(), srcTangent.z()))
+                                    * projectionStrength;
+                            if (tangent.normalize() > 0.0001f)
+                                (*tangentDst)[vertex] = osg::Vec4f(tangent, srcTangent.w());
+                        }
+
+                        ++projectedVertices;
+                    }
+                }
+
+                if (projectedVertices > 0)
+                {
+                    mFalloutUseVrRigidHandSolve = true;
+                    const bool armBaselinePose = std::getenv("OPENMW_FNV_ARM_BASELINE_POSE") != nullptr;
+                    if (!mLoggedFalloutArmSleeveProjection)
+                    {
+                        mLoggedFalloutArmSleeveProjection = true;
+                        Log(Debug::Info) << "FNV/ESM4 proof: arm sleeve IK projection active rig='" << getName()
+                                         << "' projectedVertices=" << projectedVertices
+                                         << " maxProjectionDelta=" << maxProjectionDelta
+                                         << " leftBind=(" << vec3ToString(leftPose.mBindUpper) << ","
+                                         << vec3ToString(leftPose.mBindForearm) << ","
+                                         << vec3ToString(leftPose.mBindHand) << ")"
+                                         << " leftLive=(" << vec3ToString(leftPose.mLiveUpper) << ","
+                                         << vec3ToString(leftPose.mLiveForearm) << ","
+                                         << vec3ToString(leftPose.mLiveHand) << ")"
+                                         << " rightBind=(" << vec3ToString(rightPose.mBindUpper) << ","
+                                         << vec3ToString(rightPose.mBindForearm) << ","
+                                         << vec3ToString(rightPose.mBindHand) << ")"
+                                         << " rightLive=(" << vec3ToString(rightPose.mLiveUpper) << ","
+                                         << vec3ToString(rightPose.mLiveForearm) << ","
+                                         << vec3ToString(rightPose.mLiveHand) << ")"
+                                         << " poseBasis=" << (armBaselinePose ? "t-pose-baseline" : "runtime")
+                                         << " runtime=runtime-supported gate=runtime-fnv-arm-sleeve-ik";
+                    }
+                    if (getFalloutVrRigidHandSolveDefault() && !mLoggedFalloutVrRigidHandSolve)
+                    {
+                        mLoggedFalloutVrRigidHandSolve = true;
+                        Log(Debug::Info) << "FNV/ESM4 proof: VR arcade IK hand solver active rig='" << getName()
+                                         << "' rootBone='" << mData->mRootBone
+                                         << "' scope='limb'"
+                                         << " projectedVertices=" << projectedVertices
+                                         << " maxProjectionDelta=" << maxProjectionDelta
+                                         << " leftHandAnchorTarget=" << vec3ToString(leftPose.mLiveHand)
+                                         << " rightHandAnchorTarget=" << vec3ToString(rightPose.mLiveHand)
+                                         << " runtime=runtime-supported gate=runtime-fnv-vr-arcade-hand-ik";
+                    }
                 }
             }
         }

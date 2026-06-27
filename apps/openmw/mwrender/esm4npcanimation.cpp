@@ -503,9 +503,10 @@ namespace MWRender
         class FalloutProofDialogueBonePose : public osg::NodeCallback
         {
         public:
-            FalloutProofDialogueBonePose(std::string boneName, const osg::Quat& rotation)
+            FalloutProofDialogueBonePose(std::string boneName, const osg::Quat& rotation, bool absoluteRotation = false)
                 : mBoneName(std::move(boneName))
                 , mRotation(rotation)
+                , mAbsoluteRotation(absoluteRotation)
             {
             }
 
@@ -522,7 +523,7 @@ namespace MWRender
                     }
 
                     osg::Matrixf posed = mBaseMatrix;
-                    posed.setRotate(mRotation * mBaseMatrix.getRotate());
+                    posed.setRotate(mAbsoluteRotation ? mRotation : mRotation * mBaseMatrix.getRotate());
                     transform->setMatrix(posed);
 
                     if (bone != nullptr)
@@ -550,6 +551,7 @@ namespace MWRender
             std::string mBoneName;
             osg::Quat mRotation;
             osg::Matrixf mBaseMatrix;
+            bool mAbsoluteRotation = false;
             bool mBaseCaptured = false;
             bool mLogged = false;
         };
@@ -1006,6 +1008,8 @@ namespace MWRender
 
         const ESM4::Weapon* getFalloutEffectiveEquippedWeapon(const MWWorld::Ptr& ptr, const ESM4::Npc& traits)
         {
+            if (std::getenv("OPENMW_FNV_PROOF_NO_WEAPON") != nullptr && isFonvProofTargetActor(ptr, traits))
+                return nullptr;
             const char* weaponTarget = std::getenv("OPENMW_FNV_PROOF_WEAPON_EDID");
             if (weaponTarget != nullptr && weaponTarget[0] != '\0' && isFonvProofTargetActor(ptr, traits))
                 return getFalloutProofWeaponOverride(ptr, traits);
@@ -3575,12 +3579,14 @@ namespace MWRender
                     drawable.getName() + " " + sourceName + " " + rootBone);
                 const bool staticHand = staticSource.find("hand") != std::string::npos
                     || staticSource.find("glove") != std::string::npos;
+                const bool leftHand = staticHand
+                    && (staticSource.find("left") != std::string::npos
+                        || staticSource.find("bip01 l ") != std::string::npos);
+                const bool rightHand = staticHand
+                    && (staticSource.find("right") != std::string::npos
+                        || staticSource.find("bip01 r ") != std::string::npos);
                 if (staticHand)
                 {
-                    const bool leftHand = staticSource.find("left") != std::string::npos
-                        || staticSource.find("bip01 l ") != std::string::npos;
-                    const bool rightHand = staticSource.find("right") != std::string::npos
-                        || staticSource.find("bip01 r ") != std::string::npos;
                     Log(Debug::Info) << "FNV/ESM4 diag: actor static hand no-twist proof kind=" << kind
                                      << " actor=" << (mActor.empty() ? std::string("<unknown>") : mActor)
                                      << " model=" << (mModel.empty() ? std::string("<unknown>") : mModel)
@@ -3595,8 +3601,9 @@ namespace MWRender
                                      << " weightedVertices="
                                      << (hasFingerWeights ? weightedVertexCount(fingerBoneWeights) : 0)
                                      << " runtime=runtime-supported gate=runtime-fnv-static-hand-no-twist"
-                                     << " fingerArticulation=loaded-pending-runtime"
-                                     << " articulationGate=runtime-fnv-actor-hand-finger-articulation";
+                                     << " fingerArticulation="
+                                     << (hasFingerWeights ? "static-grip-runtime" : "missing-finger-weights")
+                                     << " articulationGate=runtime-fnv-static-hand-grip";
                 }
 
                 osg::ref_ptr<osg::Geometry> staticGeometry = osg::clone(source, osg::CopyOp::DEEP_COPY_ALL);
@@ -3605,9 +3612,24 @@ namespace MWRender
                 staticGeometry->setCullingActive(false);
                 staticGeometry->setComputeBoundingBoxCallback(nullptr);
                 staticGeometry->setComputeBoundingSphereCallback(nullptr);
+                unsigned int gripDeformedVertices = 0;
+                const bool disableStaticGripPose = std::getenv("OPENMW_FNV_DISABLE_STATIC_HAND_GRIP_POSE") != nullptr
+                    || std::getenv("OPENMW_FNV_ARM_BASELINE_POSE") != nullptr;
+                if (staticHand && hasFingerWeights && !disableStaticGripPose)
+                    gripDeformedVertices = applyStaticHandGripPose(
+                        *staticGeometry, fingerBoneWeights, leftHand, rightHand);
                 staticGeometry->dirtyBound();
                 if (drawable.getStateSet() != nullptr)
                     staticGeometry->setStateSet(osg::clone(drawable.getStateSet(), osg::CopyOp::DEEP_COPY_ALL));
+                if (staticHand && gripDeformedVertices > 0)
+                {
+                    Log(Debug::Info) << "FNV/ESM4 proof: actor static hand grip deformation active actor="
+                                     << (mActor.empty() ? std::string("<unknown>") : mActor)
+                                     << " model=" << (mModel.empty() ? std::string("<unknown>") : mModel)
+                                     << " side=" << (leftHand ? "left" : rightHand ? "right" : "unknown")
+                                     << " vertices=" << gripDeformedVertices
+                                     << " runtime=runtime-supported gate=runtime-fnv-static-hand-grip";
+                }
                 return staticGeometry;
             }
 
@@ -3616,6 +3638,113 @@ namespace MWRender
             unsigned int mStaticizedRigGeometryCount = 0;
 
         private:
+            static float clampUnit(float value) { return std::max(0.f, std::min(1.f, value)); }
+
+            static unsigned int applyStaticHandGripPose(osg::Geometry& geometry,
+                const std::array<std::vector<float>, 15>& fingerBoneWeights, bool leftHand, bool rightHand)
+            {
+                osg::Vec3Array* positions = dynamic_cast<osg::Vec3Array*>(geometry.getVertexArray());
+                osg::Vec3Array* normals = dynamic_cast<osg::Vec3Array*>(geometry.getNormalArray());
+                osg::Vec4Array* tangents = dynamic_cast<osg::Vec4Array*>(geometry.getTexCoordArray(7));
+                if (positions == nullptr || positions->empty())
+                    return 0;
+
+                const std::size_t vertexCount = positions->size();
+                osg::BoundingBox palmBox;
+                osg::Vec3f fingerCenter;
+                float fingerWeightSum = 0.f;
+                for (std::size_t vertex = 0; vertex < vertexCount; ++vertex)
+                {
+                    float fingerWeight = 0.f;
+                    for (const std::vector<float>& weights : fingerBoneWeights)
+                    {
+                        if (vertex < weights.size())
+                            fingerWeight = std::max(fingerWeight, weights[vertex]);
+                    }
+
+                    if (fingerWeight > 0.08f)
+                    {
+                        fingerCenter += (*positions)[vertex] * fingerWeight;
+                        fingerWeightSum += fingerWeight;
+                    }
+                    else
+                        palmBox.expandBy((*positions)[vertex]);
+                }
+
+                if (fingerWeightSum <= 0.001f)
+                    return 0;
+
+                fingerCenter /= fingerWeightSum;
+                const osg::Vec3f palmCenter = palmBox.valid() ? palmBox.center() : geometry.getBoundingBox().center();
+                osg::Vec3f curlDirection = palmCenter - fingerCenter;
+                if (curlDirection.normalize() <= 0.0001f)
+                    curlDirection = osg::Vec3f(leftHand ? -1.f : 1.f, 0.f, 0.f);
+
+                auto slotInfluence = [&](std::size_t vertex, int baseSlot) {
+                    float result = 0.f;
+                    for (int stage = 0; stage < 3; ++stage)
+                    {
+                        const int slot = baseSlot + stage;
+                        if (slot < 0 || slot >= static_cast<int>(fingerBoneWeights.size()))
+                            continue;
+                        if (vertex >= fingerBoneWeights[slot].size())
+                            continue;
+                        const float stageScale = stage == 0 ? 0.35f : stage == 1 ? 0.7f : 1.f;
+                        result = std::max(result, fingerBoneWeights[slot][vertex] * stageScale);
+                    }
+                    return clampUnit(result);
+                };
+
+                unsigned int moved = 0;
+                for (std::size_t vertex = 0; vertex < vertexCount; ++vertex)
+                {
+                    const float thumb = slotInfluence(vertex, 0);
+                    const float index = slotInfluence(vertex, 3);
+                    const float middle = slotInfluence(vertex, 6);
+                    const float ring = slotInfluence(vertex, 9);
+                    const float pinky = slotInfluence(vertex, 12);
+                    const float finger = clampUnit(std::max({ thumb, index, middle, ring, pinky }));
+                    if (finger <= 0.01f)
+                        continue;
+
+                    const float gripFinger = clampUnit(std::max({ middle, ring, pinky }) + index * 0.75f);
+                    const float thumbOppose = thumb;
+                    osg::Vec3f target = palmCenter;
+                    const osg::Vec3f fromPalm = (*positions)[vertex] - palmCenter;
+                    if (thumbOppose > gripFinger)
+                        target = palmCenter + fromPalm * 0.32f - curlDirection * 2.8f;
+                    else
+                        target = palmCenter + fromPalm * 0.36f + curlDirection * 4.0f;
+
+                    const float strength = std::min(0.78f, 0.26f + finger * 0.48f);
+                    (*positions)[vertex] = (*positions)[vertex] * (1.f - strength) + target * strength;
+
+                    if (normals != nullptr && vertex < normals->size())
+                    {
+                        osg::Vec3f normal = (*normals)[vertex] * (1.f - strength) + curlDirection * strength;
+                        if (normal.normalize() > 0.0001f)
+                            (*normals)[vertex] = normal;
+                    }
+                    if (tangents != nullptr && vertex < tangents->size())
+                    {
+                        osg::Vec3f tangent((*tangents)[vertex].x(), (*tangents)[vertex].y(), (*tangents)[vertex].z());
+                        tangent = tangent * (1.f - strength) + curlDirection * strength;
+                        if (tangent.normalize() > 0.0001f)
+                            (*tangents)[vertex] = osg::Vec4f(tangent, (*tangents)[vertex].w());
+                    }
+                    ++moved;
+                }
+
+                positions->dirty();
+                if (normals != nullptr)
+                    normals->dirty();
+                if (tangents != nullptr)
+                    tangents->dirty();
+                geometry.dirtyBound();
+                geometry.osg::Drawable::dirtyGLObjects();
+                return moved;
+            }
+
             std::string mActor;
             std::string mModel;
         };
@@ -5790,9 +5919,490 @@ namespace MWRender
                 readFalloutProofPoseDegrees((base + "_Z").c_str(), fallbackZ));
         }
 
-        bool addFalloutProofDialogueBonePose(osg::MatrixTransform& bone, std::string_view name, const osg::Quat& rotation)
+        void applyFalloutProofBonePoseNow(
+            osg::MatrixTransform& transform, const osg::Quat& rotation, bool absoluteRotation)
         {
-            osg::ref_ptr<osg::Callback> pose = new FalloutProofDialogueBonePose(std::string(name), rotation);
+            osg::Matrixf posed = transform.getMatrix();
+            posed.setRotate(absoluteRotation ? rotation : rotation * posed.getRotate());
+            transform.setMatrix(posed);
+            if (osgAnimation::Bone* bone = dynamic_cast<osgAnimation::Bone*>(&transform))
+            {
+                if (osgAnimation::Bone* parent = bone->getBoneParent())
+                    bone->setMatrixInSkeletonSpace(posed * parent->getMatrixInSkeletonSpace());
+                else
+                    bone->setMatrixInSkeletonSpace(posed);
+            }
+        }
+
+        void setFalloutTransformWorldMatrix(osg::MatrixTransform& transform, const osg::Matrix& desiredWorld)
+        {
+            osg::Group* parent = transform.getNumParents() > 0 ? transform.getParent(0) : nullptr;
+            osg::Matrixf local = desiredWorld * osg::Matrix::inverse(getNodeWorldMatrix(parent));
+            transform.setMatrix(local);
+            transform.dirtyBound();
+
+            // RigGeometry can skin from Bone::matrixInSkeletonSpace before a later dirty refresh catches up.
+            // Keep it in lockstep with the local matrix, matching RotateController/BoneAnimBlendController.
+            if (osgAnimation::Bone* bone = dynamic_cast<osgAnimation::Bone*>(&transform))
+            {
+                if (osgAnimation::Bone* boneParent = bone->getBoneParent())
+                    bone->setMatrixInSkeletonSpace(local * boneParent->getMatrixInSkeletonSpace());
+                else
+                    bone->setMatrixInSkeletonSpace(local);
+            }
+        }
+
+        class ForceFalloutRigGeometryUpdateVisitor : public osg::NodeVisitor
+        {
+        public:
+            ForceFalloutRigGeometryUpdateVisitor()
+                : osg::NodeVisitor(TRAVERSE_ALL_CHILDREN)
+            {
+            }
+
+            void apply(osg::Geode& geode) override
+            {
+                for (unsigned int i = 0; i < geode.getNumDrawables(); ++i)
+                {
+                    if (osg::Drawable* drawable = geode.getDrawable(i))
+                        applyDrawable(*drawable);
+                }
+                traverse(geode);
+            }
+
+            void apply(osg::Drawable& drawable) override { applyDrawable(drawable); }
+
+            unsigned int mForcedRigGeometry = 0;
+            unsigned int mForcedRigGeometryHolder = 0;
+            unsigned int mRefreshedRigGeometry = 0;
+
+        private:
+            void applyDrawable(osg::Drawable& drawable)
+            {
+                if (SceneUtil::RigGeometry* rig = dynamic_cast<SceneUtil::RigGeometry*>(&drawable))
+                {
+                    if (rig->isFalloutCharacterRig())
+                    {
+                        rig->forceNextUpdate();
+                        if (rig->refreshFalloutSkinningForCurrentPose())
+                            ++mRefreshedRigGeometry;
+                        ++mForcedRigGeometry;
+                    }
+                    return;
+                }
+
+                if (SceneUtil::RigGeometryHolder* holder = dynamic_cast<SceneUtil::RigGeometryHolder*>(&drawable))
+                {
+                    holder->forceNextUpdate();
+                    ++mForcedRigGeometryHolder;
+                }
+            }
+        };
+
+        unsigned int forceFalloutRigGeometryUpdate(osg::Node* root, unsigned int& holderCount, unsigned int& refreshCount)
+        {
+            holderCount = 0;
+            refreshCount = 0;
+            if (root == nullptr)
+                return 0;
+
+            ForceFalloutRigGeometryUpdateVisitor visitor;
+            root->accept(visitor);
+            holderCount = visitor.mForcedRigGeometryHolder;
+            refreshCount = visitor.mRefreshedRigGeometry;
+            return visitor.mForcedRigGeometry;
+        }
+
+        struct FalloutFabrikTwoBoneSolve
+        {
+            osg::Vec3f mRoot;
+            osg::Vec3f mMid;
+            osg::Vec3f mEnd;
+            float mUpperLength = 0.f;
+            float mLowerLength = 0.f;
+            float mError = -1.f;
+            bool mReachable = false;
+            bool mSolved = false;
+        };
+
+        osg::Vec3f normalizeFalloutVector(osg::Vec3f value, const osg::Vec3f& fallback)
+        {
+            if (value.normalize() <= 0.0001f)
+                return fallback;
+            return value;
+        }
+
+        std::string formatFalloutMatrixCompact(const osg::Matrix& matrix)
+        {
+            std::ostringstream stream;
+            stream << std::fixed << std::setprecision(4);
+            for (int row = 0; row < 4; ++row)
+            {
+                if (row != 0)
+                    stream << "|";
+                for (int column = 0; column < 4; ++column)
+                {
+                    if (column != 0)
+                        stream << ",";
+                    stream << matrix(row, column);
+                }
+            }
+            return stream.str();
+        }
+
+        FalloutFabrikTwoBoneSolve solveFalloutFabrikTwoBonePole(const osg::Vec3f& root, const osg::Vec3f& mid,
+            const osg::Vec3f& end, const osg::Vec3f& requestedTarget, const osg::Vec3f& poleHint)
+        {
+            // FABRIK works in joint positions instead of chasing Euler/matrix permutations. For a human arm we use
+            // its two-bone closed form with a pole vector so the elbow has a stable bend plane.
+            FalloutFabrikTwoBoneSolve result;
+            result.mRoot = root;
+            result.mMid = mid;
+            result.mEnd = end;
+            result.mUpperLength = std::clamp((mid - root).length(), 4.f, 36.f);
+            result.mLowerLength = std::clamp((end - mid).length(), 4.f, 36.f);
+
+            osg::Vec3f rootToTarget = requestedTarget - root;
+            float targetDistance = rootToTarget.normalize();
+            if (targetDistance <= 0.0001f)
+                return result;
+
+            const float maxReach = std::max(0.001f, result.mUpperLength + result.mLowerLength - 0.01f);
+            const osg::Vec3f target = root + rootToTarget * std::min(targetDistance, maxReach);
+            targetDistance = std::min(targetDistance, maxReach);
+            result.mReachable = targetDistance < maxReach - 0.05f;
+
+            const float along = std::clamp(
+                (result.mUpperLength * result.mUpperLength - result.mLowerLength * result.mLowerLength
+                    + targetDistance * targetDistance)
+                    / (2.f * targetDistance),
+                0.f, result.mUpperLength);
+            const float height = std::sqrt(std::max(0.f, result.mUpperLength * result.mUpperLength - along * along));
+            osg::Vec3f pole = poleHint - rootToTarget * (poleHint * rootToTarget);
+            if (pole.normalize() <= 0.0001f)
+                pole = normalizeFalloutVector(mid - (root + rootToTarget * ((mid - root) * rootToTarget)),
+                    osg::Vec3f(0.f, 0.f, -1.f));
+
+            result.mMid = root + rootToTarget * along + pole * height;
+            result.mEnd = target;
+            result.mError = (result.mEnd - requestedTarget).length();
+            result.mSolved = true;
+            return result;
+        }
+
+        bool rotateFalloutBoneSegmentTo(osg::MatrixTransform& bone, const osg::Vec3f& currentSegmentEnd,
+            const osg::Vec3f& desiredSegmentEnd, float strength)
+        {
+            const osg::Matrix boneWorld = getNodeWorldMatrix(&bone);
+            const osg::Vec3f boneOrigin = boneWorld.getTrans();
+            osg::Vec3f from = currentSegmentEnd - boneOrigin;
+            osg::Vec3f to = desiredSegmentEnd - boneOrigin;
+            if (from.normalize() <= 0.0001f || to.normalize() <= 0.0001f)
+                return false;
+
+            osg::Quat delta;
+            delta.makeRotate(from, to);
+            osg::Quat limitedDelta;
+            limitedDelta.slerp(std::clamp(strength, 0.f, 1.f), osg::Quat(), delta);
+            const osg::Quat desiredRotation = limitedDelta * boneWorld.getRotate();
+            setFalloutTransformWorldMatrix(
+                bone, osg::Matrix::rotate(desiredRotation) * osg::Matrix::translate(boneWorld.getTrans()));
+            return true;
+        }
+
+        struct FalloutBoneRotationProbe
+        {
+            bool mSolved = false;
+            float mError = -1.f;
+            const char* mOrder = "none";
+        };
+
+        float falloutDirectionAngleDegrees(osg::Vec3f left, osg::Vec3f right)
+        {
+            if (left.normalize() <= 0.0001f || right.normalize() <= 0.0001f)
+                return -1.f;
+            return std::acos(std::clamp(left * right, -1.f, 1.f)) * 57.29577951308232f;
+        }
+
+        FalloutBoneRotationProbe rotateFalloutBoneSegmentToBest(osg::MatrixTransform& bone, osg::Node& endpoint,
+            const osg::Vec3f& desiredSegmentEnd, float strength)
+        {
+            FalloutBoneRotationProbe result;
+            const osg::Matrix originalWorld = getNodeWorldMatrix(&bone);
+            const osg::Vec3f boneOrigin = originalWorld.getTrans();
+            osg::Vec3f from = getNodeWorldMatrix(&endpoint).getTrans() - boneOrigin;
+            osg::Vec3f to = desiredSegmentEnd - boneOrigin;
+            if (from.normalize() <= 0.0001f || to.normalize() <= 0.0001f)
+                return result;
+
+            osg::Quat delta;
+            delta.makeRotate(from, to);
+            osg::Quat limitedDelta;
+            limitedDelta.slerp(std::clamp(strength, 0.f, 1.f), osg::Quat(), delta);
+
+            const auto testCandidate = [&](const osg::Quat& rotation) {
+                setFalloutTransformWorldMatrix(
+                    bone, osg::Matrix::rotate(rotation) * osg::Matrix::translate(boneOrigin));
+                return (getNodeWorldMatrix(&endpoint).getTrans() - desiredSegmentEnd).length();
+            };
+
+            const osg::Quat preRotation = limitedDelta * originalWorld.getRotate();
+            const float preError = testCandidate(preRotation);
+            setFalloutTransformWorldMatrix(bone, originalWorld);
+
+            const osg::Quat postRotation = originalWorld.getRotate() * limitedDelta;
+            const float postError = testCandidate(postRotation);
+            setFalloutTransformWorldMatrix(bone, originalWorld);
+
+            if (preError <= postError)
+            {
+                setFalloutTransformWorldMatrix(
+                    bone, osg::Matrix::rotate(preRotation) * osg::Matrix::translate(boneOrigin));
+                result.mError = preError;
+                result.mOrder = "pre";
+            }
+            else
+            {
+                setFalloutTransformWorldMatrix(
+                    bone, osg::Matrix::rotate(postRotation) * osg::Matrix::translate(boneOrigin));
+                result.mError = postError;
+                result.mOrder = "post";
+            }
+            result.mSolved = true;
+            return result;
+        }
+
+        FalloutBoneRotationProbe rotateFalloutTransformAxisToBest(osg::MatrixTransform& transform,
+            const osg::Vec3f& localAxis, const osg::Vec3f& desiredWorldAxis, float strength)
+        {
+            FalloutBoneRotationProbe result;
+            const osg::Matrix originalWorld = getNodeWorldMatrix(&transform);
+            osg::Vec3f current = originalWorld.getRotate() * localAxis;
+            osg::Vec3f desired = desiredWorldAxis;
+            if (current.normalize() <= 0.0001f || desired.normalize() <= 0.0001f)
+                return result;
+
+            osg::Quat delta;
+            delta.makeRotate(current, desired);
+            osg::Quat limitedDelta;
+            limitedDelta.slerp(std::clamp(strength, 0.f, 1.f), osg::Quat(), delta);
+
+            const osg::Vec3f origin = originalWorld.getTrans();
+            const auto testCandidate = [&](const osg::Quat& rotation) {
+                setFalloutTransformWorldMatrix(transform, osg::Matrix::rotate(rotation) * osg::Matrix::translate(origin));
+                return falloutDirectionAngleDegrees(getNodeWorldMatrix(&transform).getRotate() * localAxis, desired);
+            };
+
+            const osg::Quat preRotation = limitedDelta * originalWorld.getRotate();
+            const float preAngle = testCandidate(preRotation);
+            setFalloutTransformWorldMatrix(transform, originalWorld);
+
+            const osg::Quat postRotation = originalWorld.getRotate() * limitedDelta;
+            const float postAngle = testCandidate(postRotation);
+            setFalloutTransformWorldMatrix(transform, originalWorld);
+
+            const float beforeAngle = falloutDirectionAngleDegrees(current, desired);
+            if (beforeAngle >= 0.f && beforeAngle <= preAngle + 0.25f && beforeAngle <= postAngle + 0.25f)
+            {
+                result.mSolved = true;
+                result.mError = beforeAngle;
+                result.mOrder = "keep";
+                return result;
+            }
+
+            if (preAngle >= 0.f && (postAngle < 0.f || preAngle <= postAngle))
+            {
+                setFalloutTransformWorldMatrix(
+                    transform, osg::Matrix::rotate(preRotation) * osg::Matrix::translate(origin));
+                result.mError = preAngle;
+                result.mOrder = "pre";
+            }
+            else
+            {
+                setFalloutTransformWorldMatrix(
+                    transform, osg::Matrix::rotate(postRotation) * osg::Matrix::translate(origin));
+                result.mError = postAngle;
+                result.mOrder = "post";
+            }
+            result.mSolved = true;
+            return result;
+        }
+
+        struct FalloutHandOrientationProbe
+        {
+            bool mSolved = false;
+            float mForwardError = -1.f;
+            float mPalmError = -1.f;
+            float mScore = -1.f;
+            std::string mCandidate = "none";
+        };
+
+        osg::Vec3f projectFalloutDirectionOnPlane(
+            osg::Vec3f direction, const osg::Vec3f& planeNormal, const osg::Vec3f& fallback)
+        {
+            osg::Vec3f normal = normalizeFalloutVector(planeNormal, osg::Vec3f(0.f, 0.f, 1.f));
+            direction -= normal * (direction * normal);
+            return normalizeFalloutVector(direction, fallback);
+        }
+
+        float signedFalloutAngleAroundAxis(osg::Vec3f from, osg::Vec3f to, osg::Vec3f axis)
+        {
+            axis = normalizeFalloutVector(axis, osg::Vec3f(0.f, 0.f, 1.f));
+            from = projectFalloutDirectionOnPlane(from, axis, osg::Vec3f(1.f, 0.f, 0.f));
+            to = projectFalloutDirectionOnPlane(to, axis, osg::Vec3f(1.f, 0.f, 0.f));
+            const float angle = std::acos(std::clamp(from * to, -1.f, 1.f));
+            const osg::Vec3f cross = from ^ to;
+            return cross * axis < 0.f ? -angle : angle;
+        }
+
+        FalloutHandOrientationProbe orientFalloutHandGripToBest(osg::MatrixTransform& hand,
+            const osg::Vec3f& desiredWorldForward, const osg::Vec3f& desiredWorldPalm,
+            float strength, std::string_view side)
+        {
+            struct AxisCandidate
+            {
+                osg::Vec3f mAxis;
+                const char* mName;
+            };
+
+            const std::array<AxisCandidate, 6> axes = { {
+                { osg::Vec3f(0.f, 1.f, 0.f), "+Y" },
+                { osg::Vec3f(1.f, 0.f, 0.f), "+X" },
+                { osg::Vec3f(-1.f, 0.f, 0.f), "-X" },
+                { osg::Vec3f(0.f, 0.f, 1.f), "+Z" },
+                { osg::Vec3f(0.f, 0.f, -1.f), "-Z" },
+                { osg::Vec3f(0.f, -1.f, 0.f), "-Y" },
+            } };
+
+            const osg::Matrix originalWorld = getNodeWorldMatrix(&hand);
+            const osg::Quat originalRotation = originalWorld.getRotate();
+            const osg::Vec3f origin = originalWorld.getTrans();
+            const osg::Vec3f targetForward
+                = normalizeFalloutVector(desiredWorldForward, osg::Vec3f(0.f, 1.f, 0.f));
+            const osg::Vec3f targetPalm = projectFalloutDirectionOnPlane(
+                desiredWorldPalm, targetForward, osg::Vec3f(1.f, 0.f, 0.f));
+            const std::string forced = [] {
+                const char* value = std::getenv("OPENMW_FNV_WEAPON_IK_HAND_ORIENTATION");
+                return value != nullptr ? std::string(value) : std::string();
+            }();
+            const std::string forcedSide = [&] {
+                const char* value = side == "right" ? std::getenv("OPENMW_FNV_WEAPON_IK_RIGHT_HAND_ORIENTATION")
+                                                    : std::getenv("OPENMW_FNV_WEAPON_IK_LEFT_HAND_ORIENTATION");
+                return value != nullptr ? std::string(value) : std::string();
+            }();
+
+            FalloutHandOrientationProbe best;
+            unsigned int index = 0;
+            for (const AxisCandidate& forwardAxis : axes)
+            {
+                for (const AxisCandidate& palmAxis : axes)
+                {
+                    if (std::abs(forwardAxis.mAxis * palmAxis.mAxis) > 0.01f)
+                        continue;
+
+                    std::ostringstream candidateName;
+                    candidateName << side << ":" << index << ":" << forwardAxis.mName << "/" << palmAxis.mName;
+                    const std::string candidate = candidateName.str();
+                    const bool forcedMatch = forced.empty() && forcedSide.empty()
+                        ? true
+                        : forced == candidate || forced == std::to_string(index)
+                            || forced == std::string(forwardAxis.mName) + "/" + palmAxis.mName
+                            || forcedSide == candidate || forcedSide == std::to_string(index)
+                            || forcedSide == std::string(forwardAxis.mName) + "/" + palmAxis.mName;
+                    ++index;
+                    if (!forcedMatch)
+                        continue;
+
+                    osg::Vec3f currentForward = originalRotation * forwardAxis.mAxis;
+                    if (currentForward.normalize() <= 0.0001f)
+                        continue;
+
+                    osg::Quat forwardDelta;
+                    forwardDelta.makeRotate(currentForward, targetForward);
+                    osg::Quat targetRotation = forwardDelta * originalRotation;
+                    const osg::Vec3f palmAfterForward = projectFalloutDirectionOnPlane(
+                        targetRotation * palmAxis.mAxis, targetForward, targetPalm);
+                    const float roll = signedFalloutAngleAroundAxis(palmAfterForward, targetPalm, targetForward);
+                    osg::Quat rollDelta(roll, targetForward);
+                    targetRotation = rollDelta * targetRotation;
+
+                    osg::Quat limitedRotation;
+                    limitedRotation.slerp(std::clamp(strength, 0.f, 1.f), originalRotation, targetRotation);
+                    setFalloutTransformWorldMatrix(
+                        hand, osg::Matrix::rotate(limitedRotation) * osg::Matrix::translate(origin));
+                    const osg::Quat appliedRotation = getNodeWorldMatrix(&hand).getRotate();
+                    const float forwardError
+                        = falloutDirectionAngleDegrees(appliedRotation * forwardAxis.mAxis, targetForward);
+                    const float palmError = falloutDirectionAngleDegrees(
+                        projectFalloutDirectionOnPlane(appliedRotation * palmAxis.mAxis, targetForward, targetPalm),
+                        targetPalm);
+                    if (forwardError < 0.f || palmError < 0.f)
+                    {
+                        setFalloutTransformWorldMatrix(hand, originalWorld);
+                        continue;
+                    }
+
+                    const float preference = (std::string(forwardAxis.mName) == "+Y" ? 0.f : 0.25f)
+                        + (side == "right" && std::string(palmAxis.mName) == "-X" ? 0.f : 0.05f)
+                        + (side == "left" && std::string(palmAxis.mName) == "+X" ? 0.f : 0.05f);
+                    const float score = forwardError * 4.f + palmError + preference;
+                    if (!best.mSolved || score < best.mScore)
+                    {
+                        best.mSolved = true;
+                        best.mForwardError = forwardError;
+                        best.mPalmError = palmError;
+                        best.mScore = score;
+                        best.mCandidate = candidate;
+                    }
+                    setFalloutTransformWorldMatrix(hand, originalWorld);
+                }
+            }
+
+            if (best.mSolved)
+            {
+                const std::string selected = best.mCandidate;
+                const std::size_t slash = selected.rfind('/');
+                const std::size_t colon = selected.rfind(':', slash == std::string::npos ? selected.size() : slash);
+                const std::string forwardName = colon == std::string::npos || slash == std::string::npos
+                    ? "+Y"
+                    : selected.substr(colon + 1, slash - colon - 1);
+                const std::string palmName = slash == std::string::npos ? "-X" : selected.substr(slash + 1);
+                const auto axisByName = [&](const std::string& name) {
+                    for (const AxisCandidate& axis : axes)
+                    {
+                        if (name == axis.mName)
+                            return axis.mAxis;
+                    }
+                    return osg::Vec3f(0.f, 1.f, 0.f);
+                };
+                const osg::Vec3f localForward = axisByName(forwardName);
+                const osg::Vec3f localPalm = axisByName(palmName);
+                osg::Vec3f currentForward = originalRotation * localForward;
+                currentForward.normalize();
+                osg::Quat forwardDelta;
+                forwardDelta.makeRotate(currentForward, targetForward);
+                osg::Quat targetRotation = forwardDelta * originalRotation;
+                const osg::Vec3f palmAfterForward = projectFalloutDirectionOnPlane(
+                    targetRotation * localPalm, targetForward, targetPalm);
+                osg::Quat rollDelta(signedFalloutAngleAroundAxis(palmAfterForward, targetPalm, targetForward),
+                    targetForward);
+                targetRotation = rollDelta * targetRotation;
+                osg::Quat limitedRotation;
+                limitedRotation.slerp(std::clamp(strength, 0.f, 1.f), originalRotation, targetRotation);
+                setFalloutTransformWorldMatrix(
+                    hand, osg::Matrix::rotate(limitedRotation) * osg::Matrix::translate(origin));
+            }
+            else
+                setFalloutTransformWorldMatrix(hand, originalWorld);
+
+            return best;
+        }
+
+        bool addFalloutProofDialogueBonePose(
+            osg::MatrixTransform& bone, std::string_view name, const osg::Quat& rotation, bool absoluteRotation = false)
+        {
+            applyFalloutProofBonePoseNow(bone, rotation, absoluteRotation);
+            osg::ref_ptr<osg::Callback> pose = new FalloutProofDialogueBonePose(std::string(name), rotation, absoluteRotation);
             osg::Callback* updateCb = bone.getUpdateCallback();
             while (updateCb != nullptr)
             {
@@ -5813,7 +6423,10 @@ namespace MWRender
 
         void addFalloutProofDialoguePose(const Animation::NodeMap& nodeMap, const MWWorld::Ptr& ptr, const ESM4::Npc& traits)
         {
-            if (std::getenv("OPENMW_FNV_PROOF_DIALOGUE_POSE") == nullptr)
+            const bool armBaselinePose = std::getenv("OPENMW_FNV_ARM_BASELINE_POSE") != nullptr;
+            const bool dialoguePose = std::getenv("OPENMW_FNV_PROOF_DIALOGUE_POSE") != nullptr;
+            const bool weaponAuthoringPose = std::getenv("OPENMW_FNV_WEAPON_IK_AUTHORING_POSE") != nullptr;
+            if (!armBaselinePose && !dialoguePose && !weaponAuthoringPose)
                 return;
             if (!isFonvProofTargetActor(ptr, traits))
                 return;
@@ -5824,24 +6437,51 @@ namespace MWRender
                 osg::Quat mRotation;
             };
 
-            std::vector<BonePose> poses = {
-                { "Bip01 L UpperArm",
-                    makeFalloutProofDialoguePoseRotationFromEnv(
-                        "OPENMW_FNV_PROOF_POSE_L_UPPERARM", 0.f, 0.f, -82.f) },
-                { "Bip01 R UpperArm",
-                    makeFalloutProofDialoguePoseRotationFromEnv(
-                        "OPENMW_FNV_PROOF_POSE_R_UPPERARM", 0.f, 0.f, 82.f) },
-                { "Bip01 L Forearm",
-                    makeFalloutProofDialoguePoseRotationFromEnv("OPENMW_FNV_PROOF_POSE_L_FOREARM", 0.f, 0.f, 4.f) },
-                { "Bip01 R Forearm",
-                    makeFalloutProofDialoguePoseRotationFromEnv("OPENMW_FNV_PROOF_POSE_R_FOREARM", 0.f, 0.f, -4.f) },
-                { "Bip01 L Hand",
-                    makeFalloutProofDialoguePoseRotationFromEnv("OPENMW_FNV_PROOF_POSE_L_HAND", 0.f, 0.f, 4.f) },
-                { "Bip01 R Hand",
-                    makeFalloutProofDialoguePoseRotationFromEnv("OPENMW_FNV_PROOF_POSE_R_HAND", 0.f, 0.f, -4.f) },
-                { "Bip01 Head",
-                    makeFalloutProofDialoguePoseRotationFromEnv("OPENMW_FNV_PROOF_POSE_HEAD", -2.f, 0.f, 0.f) },
-            };
+            std::vector<BonePose> poses;
+            if (armBaselinePose || weaponAuthoringPose)
+            {
+                poses = {
+                    { "Bip01 L Clavicle",
+                        makeFalloutProofDialoguePoseRotationFromEnv("OPENMW_FNV_WEAPON_IK_POSE_L_CLAVICLE", 0.f, 0.f, 0.f) },
+                    { "Bip01 R Clavicle",
+                        makeFalloutProofDialoguePoseRotationFromEnv("OPENMW_FNV_WEAPON_IK_POSE_R_CLAVICLE", 0.f, 0.f, 0.f) },
+                    { "Bip01 L UpperArm",
+                        makeFalloutProofDialoguePoseRotationFromEnv("OPENMW_FNV_WEAPON_IK_POSE_L_UPPERARM", 0.f, 0.f, 0.f) },
+                    { "Bip01 R UpperArm",
+                        makeFalloutProofDialoguePoseRotationFromEnv("OPENMW_FNV_WEAPON_IK_POSE_R_UPPERARM", 0.f, 0.f, 0.f) },
+                    { "Bip01 L Forearm",
+                        makeFalloutProofDialoguePoseRotationFromEnv("OPENMW_FNV_WEAPON_IK_POSE_L_FOREARM", 0.f, 0.f, 0.f) },
+                    { "Bip01 R Forearm",
+                        makeFalloutProofDialoguePoseRotationFromEnv("OPENMW_FNV_WEAPON_IK_POSE_R_FOREARM", 0.f, 0.f, 0.f) },
+                    { "Bip01 L Hand",
+                        makeFalloutProofDialoguePoseRotationFromEnv("OPENMW_FNV_WEAPON_IK_POSE_L_HAND", 0.f, 0.f, 0.f) },
+                    { "Bip01 R Hand",
+                        makeFalloutProofDialoguePoseRotationFromEnv("OPENMW_FNV_WEAPON_IK_POSE_R_HAND", 0.f, 0.f, 0.f) },
+                    { "Bip01 Head",
+                        makeFalloutProofDialoguePoseRotationFromEnv("OPENMW_FNV_WEAPON_IK_POSE_HEAD", 0.f, 0.f, 0.f) },
+                };
+            }
+            else
+            {
+                poses = {
+                    { "Bip01 L UpperArm",
+                        makeFalloutProofDialoguePoseRotationFromEnv(
+                            "OPENMW_FNV_PROOF_POSE_L_UPPERARM", 0.f, 0.f, -82.f) },
+                    { "Bip01 R UpperArm",
+                        makeFalloutProofDialoguePoseRotationFromEnv(
+                            "OPENMW_FNV_PROOF_POSE_R_UPPERARM", 0.f, 0.f, 82.f) },
+                    { "Bip01 L Forearm",
+                        makeFalloutProofDialoguePoseRotationFromEnv("OPENMW_FNV_PROOF_POSE_L_FOREARM", 0.f, 0.f, 4.f) },
+                    { "Bip01 R Forearm",
+                        makeFalloutProofDialoguePoseRotationFromEnv("OPENMW_FNV_PROOF_POSE_R_FOREARM", 0.f, 0.f, -4.f) },
+                    { "Bip01 L Hand",
+                        makeFalloutProofDialoguePoseRotationFromEnv("OPENMW_FNV_PROOF_POSE_L_HAND", 0.f, 0.f, 4.f) },
+                    { "Bip01 R Hand",
+                        makeFalloutProofDialoguePoseRotationFromEnv("OPENMW_FNV_PROOF_POSE_R_HAND", 0.f, 0.f, -4.f) },
+                    { "Bip01 Head",
+                        makeFalloutProofDialoguePoseRotationFromEnv("OPENMW_FNV_PROOF_POSE_HEAD", -2.f, 0.f, 0.f) },
+                };
+            }
 
             if (std::getenv("OPENMW_FNV_PROOF_SEATED_POSE") != nullptr)
             {
@@ -5885,8 +6525,15 @@ namespace MWRender
                 ++applied;
             }
 
-            Log(Debug::Info) << "FNV/ESM4 proof: dialogue pose installed for " << traits.mEditorId
-                             << " bones=" << applied << " afterUpdateBone=" << afterUpdateBone;
+            Log(Debug::Info) << "FNV/ESM4 proof: "
+                             << (armBaselinePose      ? "arm baseline pose installed for "
+                                     : weaponAuthoringPose ? "weapon IK authoring pose installed for "
+                                                           : "dialogue pose installed for ")
+                             << traits.mEditorId
+                             << " bones=" << applied << " afterUpdateBone=" << afterUpdateBone
+                             << (armBaselinePose      ? " poseBasis=t-pose-baseline gate=runtime-fnv-arm-baseline-pose"
+                                     : weaponAuthoringPose ? " poseBasis=a-t-pose-baseline"
+                                                           : " poseBasis=dialogue");
         }
 
         std::string getDiffuseTextureName(const osg::StateSet* stateSet)
@@ -6960,11 +7607,13 @@ namespace MWRender
 
             const std::string actorKitGroup = getFalloutActorKitAnimationGroup();
             const ESM4::Weapon* effectiveWeapon = getFalloutEffectiveEquippedWeapon(mPtr, *traits);
-            if (effectiveWeapon != nullptr
+            const bool controlledWeaponIkAuthoringPose = std::getenv("OPENMW_FNV_WEAPON_IK_AUTHORING_POSE") != nullptr
+                && isFonvProofTargetActor(mPtr, *traits);
+            if (!controlledWeaponIkAuthoringPose && (effectiveWeapon != nullptr
                 || actorKitGroup.find("attack") != std::string::npos
                 || actorKitGroup.find("reload") != std::string::npos
                 || actorKitGroup.find("fire") != std::string::npos
-                || actorKitGroup.find("shoot") != std::string::npos)
+                || actorKitGroup.find("shoot") != std::string::npos))
             {
                 addFonvAnimationSource("meshes/characters/_male/1hpaim.kf", "weapon action fallback", false);
                 addFonvAnimationSource("meshes/characters/_male/1hpequip.kf", "weapon action fallback", false);
@@ -7040,6 +7689,7 @@ namespace MWRender
             }
 
             requestFalloutActorKitAnimation(*this, mPtr, *traits);
+            addFalloutProofDialoguePose(getNodeMap(), mPtr, *traits);
             // Initial construction may already read the generated live command through updateParts(),
             // but the live authoring gate must be proven by the frame path so the selected target
             // logs runtime selector consumption and a target part rebuild instead of silently
@@ -7190,16 +7840,47 @@ namespace MWRender
     void ESM4NpcAnimation::applyFONVWeaponIk(const ESM4::Npc& traits)
     {
         mFONVWeaponIkTargetsValid = false;
+        const auto logWeaponIkBlocked = [&](std::string_view reason) {
+            if (mFONVWeaponIkTelemetryLogs >= 12)
+                return;
+            ++mFONVWeaponIkTelemetryLogs;
+            Log(Debug::Warning) << "FNV/ESM4 proof: weapon IK blocked actor=" << traits.mEditorId
+                                << " ref=" << mPtr.getCellRef().getRefId()
+                                << " instance=" << reinterpret_cast<std::uintptr_t>(this)
+                                << " proofPreview=" << isProofPreviewAnimation()
+                                << " reason=" << reason
+                                << " targetMatch=" << isFonvProofTargetActor(mPtr, traits)
+                                << " disableWeaponIk=" << (std::getenv("OPENMW_FNV_DISABLE_WEAPON_IK") != nullptr)
+                                << " noWeaponEnv=" << (std::getenv("OPENMW_FNV_PROOF_NO_WEAPON") != nullptr)
+                                << " proofWeaponEdid="
+                                << (std::getenv("OPENMW_FNV_PROOF_WEAPON_EDID") != nullptr
+                                        ? std::getenv("OPENMW_FNV_PROOF_WEAPON_EDID")
+                                        : "")
+                                << " runtime=loaded-pending-runtime gate=runtime-fnv-weapon-ik";
+        };
         if (std::getenv("OPENMW_FNV_DISABLE_WEAPON_IK") != nullptr)
+        {
+            logWeaponIkBlocked("disabled-by-env");
             return;
+        }
         if (!isFonvProofTargetActor(mPtr, traits))
+        {
+            logWeaponIkBlocked("not-proof-target");
             return;
-        if (getFalloutEffectiveEquippedWeapon(mPtr, traits) == nullptr)
+        }
+        const ESM4::Weapon* effectiveWeapon = getFalloutEffectiveEquippedWeapon(mPtr, traits);
+        if (effectiveWeapon == nullptr)
+        {
+            logWeaponIkBlocked("no-effective-weapon");
             return;
+        }
 
         const float strength = std::clamp(readFalloutProofFloat("OPENMW_FNV_WEAPON_IK_STRENGTH", 1.f), 0.f, 1.f);
         if (strength <= 0.f)
+        {
+            logWeaponIkBlocked("zero-strength");
             return;
+        }
 
         const NodeMap& nodeMap = getNodeMap();
         osg::Group* spine = findBestAttachmentNode(nodeMap, { "Bip01 Spine2", "bip01 spine2", "Bip01 Spine1", "bip01 spine1" });
@@ -7212,9 +7893,24 @@ namespace MWRender
         osg::Vec3f right(forward.y(), -forward.x(), 0.f);
         if (right.normalize() <= 0.0001f)
             right = osg::Vec3f(1.f, 0.f, 0.f);
+        const osg::Vec3f up(0.f, 0.f, 1.f);
 
-        const osg::Vec3f rightTarget = chest + forward * 34.f + right * 10.f + osg::Vec3f(0.f, 0.f, -3.f);
-        const osg::Vec3f leftTarget = chest + forward * 28.f - right * 8.f + osg::Vec3f(0.f, 0.f, -5.f);
+        osg::Group* headNode = findBestAttachmentNode(nodeMap, { "Bip01 Head", "bip01 head", "Head", "head" });
+        osg::Vec3f head = chest + up * 16.f;
+        if (headNode != nullptr)
+        {
+            const osg::Vec3d headTrans = getNodeWorldMatrix(headNode).getTrans();
+            head = osg::Vec3f(headTrans.x(), headTrans.y(), headTrans.z());
+        }
+        const bool longGun = isFonvLongGunWeapon(effectiveWeapon);
+        const float shoulderLift = std::clamp((head.z() - chest.z()) * 0.62f, 8.f, 14.f);
+        const osg::Vec3f aimAnchor = chest + up * shoulderLift;
+        const std::string_view targetStyle = longGun ? "head-shoulder-long-gun" : "chest-sidearm";
+        // Contract marker: targetStyle=head-shoulder-long-gun
+        const osg::Vec3f rightTarget = longGun ? aimAnchor + forward * 22.f + right * 10.f - up * 1.0f
+                                               : chest + forward * 34.f + right * 10.f - up * 3.f;
+        const osg::Vec3f leftTarget = longGun ? aimAnchor + forward * 18.f - right * 7.f - up * 0.5f
+                                              : chest + forward * 28.f - right * 8.f - up * 5.f;
         mFONVWeaponIkRightTarget = rightTarget;
         mFONVWeaponIkLeftTarget = leftTarget;
         mFONVWeaponIkTargetsValid = true;
@@ -7243,28 +7939,79 @@ namespace MWRender
                 return -1.f;
             return std::acos(std::clamp(left * right, -1.f, 1.f)) * 57.29577951308232f;
         };
-        osg::Node* weaponFrameNode = mFONVEquippedWeaponNode.get();
+        osg::Node* weaponFrameNode = findBestAttachmentNode(nodeMap, { "Weapon", "weapon", "Bip01 Weapon" });
         if (weaponFrameNode == nullptr)
-            weaponFrameNode = findBestAttachmentNode(nodeMap, { "Weapon", "weapon", "Bip01 Weapon" });
+            weaponFrameNode = mFONVEquippedWeaponNode.get();
+        osg::Vec3f weaponBoundsExtent;
+        osg::Vec3f weaponAimAxisBase(0.f, 1.f, 0.f);
+        osg::Vec3f weaponAimAxis(0.f, 1.f, 0.f);
+        const char* weaponAimAxisBaseName = "+Y";
+        const char* weaponAimAxisName = "+Y";
+        bool weaponAimAxisFromBounds = false;
+        if (mFONVEquippedWeaponNode != nullptr)
+        {
+            osg::ComputeBoundsVisitor boundsVisitor;
+            mFONVEquippedWeaponNode->accept(boundsVisitor);
+            const osg::BoundingBox box = boundsVisitor.getBoundingBox();
+            if (box.valid())
+            {
+                weaponBoundsExtent = boundingBoxExtent(box);
+                if (weaponBoundsExtent.x() >= weaponBoundsExtent.y() && weaponBoundsExtent.x() >= weaponBoundsExtent.z())
+                {
+                    weaponAimAxisBase = osg::Vec3f(1.f, 0.f, 0.f);
+                    weaponAimAxisBaseName = "+X";
+                    weaponAimAxisFromBounds = true;
+                }
+                else if (weaponBoundsExtent.z() >= weaponBoundsExtent.x()
+                    && weaponBoundsExtent.z() >= weaponBoundsExtent.y())
+                {
+                    weaponAimAxisBase = osg::Vec3f(0.f, 0.f, 1.f);
+                    weaponAimAxisBaseName = "+Z";
+                    weaponAimAxisFromBounds = true;
+                }
+            }
+        }
+        const auto selectWeaponAimAxis = [&]() {
+            osg::Vec3f axis = weaponAimAxisBase;
+            const osg::Vec3f worldAxis = getNodeWorldMatrix(weaponFrameNode).getRotate() * axis;
+            bool negative = worldAxis * forward < 0.f;
+            if (negative)
+                axis = -axis;
+            if (weaponAimAxisBaseName[1] == 'X')
+                weaponAimAxisName = negative ? "-X" : "+X";
+            else if (weaponAimAxisBaseName[1] == 'Y')
+                weaponAimAxisName = negative ? "-Y" : "+Y";
+            else
+                weaponAimAxisName = negative ? "-Z" : "+Z";
+            weaponAimAxis = axis;
+            return axis;
+        };
         const auto weaponFrameForward = [&]() {
+            const osg::Vec3f selectedAxis = selectWeaponAimAxis();
             return normalizedDirection(
-                getNodeWorldMatrix(weaponFrameNode).getRotate() * osg::Vec3f(0.f, 1.f, 0.f), forward);
+                getNodeWorldMatrix(weaponFrameNode).getRotate() * selectedAxis, forward);
         };
         const osg::Vec3f weaponForwardBefore = weaponFrameForward();
 
         bool rightHandValidBefore = false;
+        bool rightClavicleValidBefore = false;
         bool leftHandValidBefore = false;
+        bool leftClavicleValidBefore = false;
         bool rightUpperValidBefore = false;
         bool rightForearmValidBefore = false;
         bool leftUpperValidBefore = false;
         bool leftForearmValidBefore = false;
         bool weaponValidBefore = false;
+        const osg::Vec3f rightClavicleBefore
+            = nodeOrigin({ "Bip01 R Clavicle", "bip01 r clavicle" }, rightClavicleValidBefore);
         const osg::Vec3f rightUpperBefore
             = nodeOrigin({ "Bip01 R UpperArm", "bip01 r upperarm" }, rightUpperValidBefore);
         const osg::Vec3f rightForearmBefore
             = nodeOrigin({ "Bip01 R Forearm", "bip01 r forearm" }, rightForearmValidBefore);
         const osg::Vec3f rightHandBefore
             = nodeOrigin({ "Bip01 R Hand", "bip01 r hand" }, rightHandValidBefore);
+        const osg::Vec3f leftClavicleBefore
+            = nodeOrigin({ "Bip01 L Clavicle", "bip01 l clavicle" }, leftClavicleValidBefore);
         const osg::Vec3f leftUpperBefore
             = nodeOrigin({ "Bip01 L UpperArm", "bip01 l upperarm" }, leftUpperValidBefore);
         const osg::Vec3f leftForearmBefore
@@ -7273,94 +8020,190 @@ namespace MWRender
             = nodeOrigin({ "Bip01 L Hand", "bip01 l hand" }, leftHandValidBefore);
         const osg::Vec3f weaponBefore = nodeOrigin({ "Weapon", "weapon", "Bip01 Weapon" }, weaponValidBefore);
 
-        constexpr unsigned int ccdIterations = 4;
-        const auto solveArmEndpoint = [&](std::string_view upperName, std::string_view forearmName,
-                                          std::initializer_list<std::string_view> handNames,
-                                          const osg::Vec3f& target) -> unsigned int {
-            osg::MatrixTransform* upper
-                = dynamic_cast<osg::MatrixTransform*>(findBestAttachmentNode(nodeMap, { upperName }));
-            osg::MatrixTransform* forearm
-                = dynamic_cast<osg::MatrixTransform*>(findBestAttachmentNode(nodeMap, { forearmName }));
+        const auto findMatrixTransform = [&](std::initializer_list<std::string_view> names) {
+            return dynamic_cast<osg::MatrixTransform*>(findBestAttachmentNode(nodeMap, names));
+        };
+        unsigned int fabrikSolvedBones = 0;
+        float rightFabrikError = -1.f;
+        float leftFabrikError = -1.f;
+        bool rightFabrikReachable = false;
+        bool leftFabrikReachable = false;
+        osg::Vec3f rightDesiredMid;
+        osg::Vec3f rightDesiredEnd;
+        osg::Vec3f leftDesiredMid;
+        osg::Vec3f leftDesiredEnd;
+        float rightDesiredMidError = -1.f;
+        float rightDesiredEndError = -1.f;
+        float leftDesiredMidError = -1.f;
+        float leftDesiredEndError = -1.f;
+        std::string rightRotationOrders;
+        std::string leftRotationOrders;
+        float rightHandAimError = -1.f;
+        float leftHandAimError = -1.f;
+        float rightHandPalmError = -1.f;
+        float leftHandPalmError = -1.f;
+        std::string rightHandOrientationCandidate = "none";
+        std::string leftHandOrientationCandidate = "none";
+        constexpr unsigned int fabrikIterations = 6;
+        const auto solveArmEndpoint = [&](std::initializer_list<std::string_view> clavicleNames,
+                                           std::initializer_list<std::string_view> upperNames,
+                                           std::initializer_list<std::string_view> forearmNames,
+                                           std::initializer_list<std::string_view> handNames,
+                                           const osg::Vec3f& target, const osg::Vec3f& poleHint,
+                                           const osg::Vec3f& desiredHandForward,
+                                           const osg::Vec3f& desiredHandPalm,
+                                           std::string_view sideName,
+                                           float& fabrikError, bool& fabrikReachable,
+                                           osg::Vec3f& desiredMid, osg::Vec3f& desiredEnd,
+                                           float& desiredMidError, float& desiredEndError,
+                                           std::string& rotationOrders, float& handAimError,
+                                           float& handPalmError,
+                                           std::string& handOrientationCandidate) -> unsigned int {
+            osg::MatrixTransform* upper = findMatrixTransform(upperNames);
+            osg::MatrixTransform* forearm = findMatrixTransform(forearmNames);
+            osg::MatrixTransform* hand = findMatrixTransform(handNames);
             osg::Group* endpoint = findBestAttachmentNode(nodeMap, handNames);
             if (upper == nullptr || forearm == nullptr || endpoint == nullptr)
                 return 0;
 
+            unsigned int solvedCount = 0;
             bool upperSolved = false;
             bool forearmSolved = false;
-            const auto solveBone = [&](osg::MatrixTransform& bone, bool& solvedFlag) {
-                const osg::Matrix boneWorld = getNodeWorldMatrix(&bone);
-                const osg::Vec3f boneOrigin = boneWorld.getTrans();
-                const osg::Vec3f endpointOrigin = getNodeWorldMatrix(endpoint).getTrans();
-                osg::Vec3f from = endpointOrigin - boneOrigin;
-                osg::Vec3f to = target - boneOrigin;
-                if (from.normalize() <= 0.0001f || to.normalize() <= 0.0001f)
-                    return;
-
-                osg::Quat delta;
-                delta.makeRotate(from, to);
-                osg::Quat limitedDelta;
-                limitedDelta.slerp(strength, osg::Quat(), delta);
-                const osg::Quat desiredRotation = limitedDelta * boneWorld.getRotate();
-                const osg::Matrix desiredWorld
-                    = osg::Matrix::rotate(desiredRotation) * osg::Matrix::translate(boneWorld.getTrans());
-                osg::Group* parent = bone.getNumParents() > 0 ? bone.getParent(0) : nullptr;
-                bone.setMatrix(desiredWorld * osg::Matrix::inverse(getNodeWorldMatrix(parent)));
-                bone.dirtyBound();
-                solvedFlag = true;
-                if (mSkeleton != nullptr)
-                    mSkeleton->markBoneMatriceDirty();
-            };
-
-            for (unsigned int i = 0; i < ccdIterations; ++i)
+            float bestMidError = std::numeric_limits<float>::max();
+            float bestEndError = std::numeric_limits<float>::max();
+            FalloutFabrikTwoBoneSolve solution;
+            for (unsigned int iteration = 0; iteration < fabrikIterations; ++iteration)
             {
-                solveBone(*forearm, forearmSolved);
-                solveBone(*upper, upperSolved);
+                const osg::Vec3f root = getNodeWorldMatrix(upper).getTrans();
+                const osg::Vec3f mid = getNodeWorldMatrix(forearm).getTrans();
+                const osg::Vec3f end = getNodeWorldMatrix(endpoint).getTrans();
+                solution = solveFalloutFabrikTwoBonePole(root, mid, end, target, poleHint);
+                fabrikError = solution.mError;
+                fabrikReachable = solution.mReachable;
+                if (!solution.mSolved)
+                    break;
+
+                const FalloutBoneRotationProbe upperProbe
+                    = rotateFalloutBoneSegmentToBest(*upper, *forearm, solution.mMid, strength);
+                if (upperProbe.mSolved)
+                {
+                    upperSolved = true;
+                    bestMidError = std::min(bestMidError, upperProbe.mError);
+                    rotationOrders += rotationOrders.empty() ? std::string("upper=") : std::string(",upper=");
+                    rotationOrders += upperProbe.mOrder;
+                }
+
+                const FalloutBoneRotationProbe forearmProbe
+                    = rotateFalloutBoneSegmentToBest(*forearm, *endpoint, solution.mEnd, strength);
+                if (forearmProbe.mSolved)
+                {
+                    forearmSolved = true;
+                    bestEndError = std::min(bestEndError, forearmProbe.mError);
+                    rotationOrders += rotationOrders.empty() ? std::string("forearm=") : std::string(",forearm=");
+                    rotationOrders += forearmProbe.mOrder;
+                }
+
+                const float endpointError = (getNodeWorldMatrix(endpoint).getTrans() - target).length();
+                fabrikError = endpointError;
+                if (endpointError <= 2.f)
+                    break;
             }
 
-            return (upperSolved ? 1u : 0u) + (forearmSolved ? 1u : 0u);
+            if (upperSolved)
+            {
+                ++solvedCount;
+                ++fabrikSolvedBones;
+            }
+            if (forearmSolved)
+            {
+                ++solvedCount;
+                ++fabrikSolvedBones;
+            }
+
+            if (solution.mSolved)
+            {
+                desiredMid = solution.mMid;
+                desiredEnd = solution.mEnd;
+                desiredMidError = bestMidError < std::numeric_limits<float>::max()
+                    ? bestMidError
+                    : (getNodeWorldMatrix(forearm).getTrans() - solution.mMid).length();
+                desiredEndError = bestEndError < std::numeric_limits<float>::max()
+                    ? bestEndError
+                    : (getNodeWorldMatrix(endpoint).getTrans() - solution.mEnd).length();
+
+                if (osg::MatrixTransform* clavicle = findMatrixTransform(clavicleNames))
+                {
+                    const osg::Vec3f shoulderAfter = getNodeWorldMatrix(upper).getTrans();
+                    const osg::Vec3f shoulderHint = getNodeWorldMatrix(clavicle).getTrans()
+                        + normalizeFalloutVector(solution.mMid - shoulderAfter, poleHint) * 8.f;
+                    const FalloutBoneRotationProbe clavicleProbe
+                        = rotateFalloutBoneSegmentToBest(*clavicle, *upper, shoulderHint, strength * 0.15f);
+                    if (clavicleProbe.mSolved)
+                    {
+                        ++solvedCount;
+                        rotationOrders += rotationOrders.empty() ? std::string("clavicle=") : std::string(",clavicle=");
+                        rotationOrders += clavicleProbe.mOrder;
+                    }
+                }
+            }
+
+            if (hand != nullptr)
+            {
+                const bool explicitHandOrientation
+                    = std::getenv("OPENMW_FNV_ENABLE_WEAPON_IK_HAND_ORIENTATION") != nullptr
+                    || std::getenv("OPENMW_FNV_WEAPON_IK_HAND_ORIENTATION") != nullptr
+                    || (sideName == "right"
+                            ? std::getenv("OPENMW_FNV_WEAPON_IK_RIGHT_HAND_ORIENTATION") != nullptr
+                            : std::getenv("OPENMW_FNV_WEAPON_IK_LEFT_HAND_ORIENTATION") != nullptr);
+                if (explicitHandOrientation)
+                {
+                    const FalloutHandOrientationProbe handProbe
+                        = orientFalloutHandGripToBest(*hand, desiredHandForward, desiredHandPalm, strength, sideName);
+                    if (handProbe.mSolved)
+                    {
+                        handAimError = handProbe.mForwardError;
+                        handPalmError = handProbe.mPalmError;
+                        handOrientationCandidate = handProbe.mCandidate;
+                        rotationOrders += rotationOrders.empty() ? std::string("hand=") : std::string(",hand=");
+                        rotationOrders += handProbe.mCandidate;
+                        ++solvedCount;
+                    }
+                }
+                else
+                {
+                    handOrientationCandidate = std::string(sideName) + ":preserve-bind-roll";
+                    handAimError = falloutDirectionAngleDegrees(
+                        getNodeWorldMatrix(hand).getRotate() * osg::Vec3f(0.f, 1.f, 0.f), desiredHandForward);
+                    handPalmError = 0.f;
+                    rotationOrders += rotationOrders.empty() ? std::string("hand=") : std::string(",hand=");
+                    rotationOrders += handOrientationCandidate;
+                }
+            }
+
+            if (mSkeleton != nullptr)
+                mSkeleton->markBoneMatriceDirty();
+            return solvedCount;
         };
 
-        const auto rotateBoneToward = [&](std::string_view name, const osg::Vec3f& target) -> bool {
-            osg::Group* group = findBestAttachmentNode(nodeMap, { name });
-            osg::MatrixTransform* bone = dynamic_cast<osg::MatrixTransform*>(group);
-            if (bone == nullptr)
-                return false;
+        unsigned int solved = solveArmEndpoint({ "Bip01 R Clavicle", "bip01 r clavicle" },
+            { "Bip01 R UpperArm", "bip01 r upperarm" }, { "Bip01 R Forearm", "bip01 r forearm" },
+            { "Bip01 R Hand", "bip01 r hand" }, rightTarget, right * 0.75f - up * 0.85f + forward * 0.15f,
+            forward + up * 0.08f, -right, "right",
+            rightFabrikError, rightFabrikReachable, rightDesiredMid, rightDesiredEnd,
+            rightDesiredMidError, rightDesiredEndError, rightRotationOrders, rightHandAimError,
+            rightHandPalmError, rightHandOrientationCandidate);
+        solved += solveArmEndpoint({ "Bip01 L Clavicle", "bip01 l clavicle" },
+            { "Bip01 L UpperArm", "bip01 l upperarm" }, { "Bip01 L Forearm", "bip01 l forearm" },
+            { "Bip01 L Hand", "bip01 l hand" }, leftTarget, -right * 0.75f - up * 0.85f + forward * 0.15f,
+            forward + up * 0.08f, right, "left",
+            leftFabrikError, leftFabrikReachable, leftDesiredMid, leftDesiredEnd,
+            leftDesiredMidError, leftDesiredEndError, leftRotationOrders, leftHandAimError,
+            leftHandPalmError, leftHandOrientationCandidate);
 
-            const osg::Matrix world = getNodeWorldMatrix(bone);
-            osg::Vec3f currentDirection = world.getRotate() * osg::Vec3f(0.f, 1.f, 0.f);
-            osg::Vec3f desiredDirection = target - world.getTrans();
-            if (currentDirection.normalize() <= 0.0001f || desiredDirection.normalize() <= 0.0001f)
-                return false;
-
-            osg::Quat delta;
-            delta.makeRotate(currentDirection, desiredDirection);
-            osg::Quat limitedDelta;
-            limitedDelta.slerp(strength, osg::Quat(), delta);
-            const osg::Quat desiredRotation = limitedDelta * world.getRotate();
-            const osg::Matrix desiredWorld
-                = osg::Matrix::rotate(desiredRotation) * osg::Matrix::translate(world.getTrans());
-            osg::Group* parent = bone->getNumParents() > 0 ? bone->getParent(0) : nullptr;
-            bone->setMatrix(desiredWorld * osg::Matrix::inverse(getNodeWorldMatrix(parent)));
-            bone->dirtyBound();
-            return true;
-        };
-
-        unsigned int solved = solveArmEndpoint(
-            "Bip01 R UpperArm", "Bip01 R Forearm", { "Bip01 R Hand", "bip01 r hand" }, rightTarget);
-        solved += solveArmEndpoint(
-            "Bip01 L UpperArm", "Bip01 L Forearm", { "Bip01 L Hand", "bip01 l hand" }, leftTarget);
-        if (solved != 4)
-        {
-            unsigned int fallbackSolved = 0;
-            for (std::string_view bone : { "Bip01 R UpperArm", "Bip01 R Forearm" })
-                if (rotateBoneToward(bone, rightTarget))
-                    ++fallbackSolved;
-            for (std::string_view bone : { "Bip01 L UpperArm", "Bip01 L Forearm" })
-                if (rotateBoneToward(bone, leftTarget))
-                    ++fallbackSolved;
-            solved = std::max(solved, fallbackSolved);
-        }
-
+        float weaponAimSolveAngleBefore = -1.f;
+        float weaponAimSolveTrialAngle = -1.f;
+        bool weaponAimAccepted = false;
+        const char* weaponAimOrder = "none";
         const auto solveWeaponAimFrame = [&]() {
             osg::MatrixTransform* weaponAim = dynamic_cast<osg::MatrixTransform*>(
                 findBestAttachmentNode(nodeMap, { "Weapon", "weapon", "Bip01 Weapon" }));
@@ -7371,19 +8214,22 @@ namespace MWRender
             osg::Vec3f desired = forward;
             if (current.normalize() <= 0.0001f || desired.normalize() <= 0.0001f)
                 return false;
-
-            osg::Quat delta;
-            delta.makeRotate(current, desired);
-            osg::Quat limitedDelta;
-            limitedDelta.slerp(strength, osg::Quat(), delta);
+            weaponAimSolveAngleBefore = directionAngleDegrees(current, desired);
 
             const osg::Matrix aimWorld = getNodeWorldMatrix(weaponAim);
-            const osg::Quat desiredRotation = limitedDelta * aimWorld.getRotate();
-            const osg::Matrix desiredWorld
-                = osg::Matrix::rotate(desiredRotation) * osg::Matrix::translate(aimWorld.getTrans());
-            osg::Group* parent = weaponAim->getNumParents() > 0 ? weaponAim->getParent(0) : nullptr;
-            weaponAim->setMatrix(desiredWorld * osg::Matrix::inverse(getNodeWorldMatrix(parent)));
-            weaponAim->dirtyBound();
+            const osg::Vec3f localAimAxis = selectWeaponAimAxis();
+            const FalloutBoneRotationProbe aimProbe
+                = rotateFalloutTransformAxisToBest(*weaponAim, localAimAxis, desired, strength);
+            weaponAimOrder = aimProbe.mOrder;
+            weaponAimSolveTrialAngle = directionAngleDegrees(weaponFrameForward(), desired);
+            if (weaponAimSolveAngleBefore >= 0.f && weaponAimSolveTrialAngle >= 0.f
+                && weaponAimSolveTrialAngle > weaponAimSolveAngleBefore + 0.25f)
+            {
+                setFalloutTransformWorldMatrix(*weaponAim, aimWorld);
+                weaponAimAccepted = false;
+                return true;
+            }
+            weaponAimAccepted = aimProbe.mSolved;
             if (mSkeleton != nullptr)
                 mSkeleton->markBoneMatriceDirty();
             return true;
@@ -7394,19 +8240,30 @@ namespace MWRender
         if (mSkeleton != nullptr)
             mSkeleton->markBoneMatriceDirty();
 
+        unsigned int forcedRigGeometryHolder = 0;
+        unsigned int refreshedRigGeometry = 0;
+        const unsigned int forcedRigGeometry
+            = forceFalloutRigGeometryUpdate(mObjectRoot.get(), forcedRigGeometryHolder, refreshedRigGeometry);
+
         bool rightHandValidAfter = false;
+        bool rightClavicleValidAfter = false;
         bool leftHandValidAfter = false;
+        bool leftClavicleValidAfter = false;
         bool rightUpperValidAfter = false;
         bool rightForearmValidAfter = false;
         bool leftUpperValidAfter = false;
         bool leftForearmValidAfter = false;
         bool weaponValidAfter = false;
+        const osg::Vec3f rightClavicleAfter
+            = nodeOrigin({ "Bip01 R Clavicle", "bip01 r clavicle" }, rightClavicleValidAfter);
         const osg::Vec3f rightUpperAfter
             = nodeOrigin({ "Bip01 R UpperArm", "bip01 r upperarm" }, rightUpperValidAfter);
         const osg::Vec3f rightForearmAfter
             = nodeOrigin({ "Bip01 R Forearm", "bip01 r forearm" }, rightForearmValidAfter);
         const osg::Vec3f rightHandAfter
             = nodeOrigin({ "Bip01 R Hand", "bip01 r hand" }, rightHandValidAfter);
+        const osg::Vec3f leftClavicleAfter
+            = nodeOrigin({ "Bip01 L Clavicle", "bip01 l clavicle" }, leftClavicleValidAfter);
         const osg::Vec3f leftUpperAfter
             = nodeOrigin({ "Bip01 L UpperArm", "bip01 l upperarm" }, leftUpperValidAfter);
         const osg::Vec3f leftForearmAfter
@@ -7418,33 +8275,166 @@ namespace MWRender
         const float rightTargetAfter = distanceToTarget(rightHandAfter, rightTarget, rightHandValidAfter);
         const float leftTargetBefore = distanceToTarget(leftHandBefore, leftTarget, leftHandValidBefore);
         const float leftTargetAfter = distanceToTarget(leftHandAfter, leftTarget, leftHandValidAfter);
+        const float rightWeaponGripDistanceAfter
+            = weaponValidAfter && rightHandValidAfter ? (rightHandAfter - weaponAfter).length() : -1.f;
+        const float leftWeaponGripDistanceAfter
+            = weaponValidAfter && leftHandValidAfter ? (leftHandAfter - weaponAfter).length() : -1.f;
+        const float weaponGripSpanAfter
+            = rightHandValidAfter && leftHandValidAfter ? (rightHandAfter - leftHandAfter).length() : -1.f;
         const float rightEndpointMoved = endpointMove(rightHandBefore, rightHandAfter, rightHandValidBefore && rightHandValidAfter);
         const float leftEndpointMoved = endpointMove(leftHandBefore, leftHandAfter, leftHandValidBefore && leftHandValidAfter);
         const float weaponEndpointMoved = endpointMove(weaponBefore, weaponAfter, weaponValidBefore && weaponValidAfter);
         const osg::Vec3f weaponForwardAfter = weaponFrameForward();
+        const osg::Matrix weaponWorldAfter = getNodeWorldMatrix(weaponFrameNode);
+        const osg::Matrix rightHandWorldAfter = getNodeWorldMatrix(findBestAttachmentNode(
+            nodeMap, { "Bip01 R Hand", "bip01 r hand" }));
+        const osg::Matrix leftHandWorldAfter = getNodeWorldMatrix(findBestAttachmentNode(
+            nodeMap, { "Bip01 L Hand", "bip01 l hand" }));
+        const osg::Vec3f weaponAxisXAfter = normalizedDirection(weaponWorldAfter.getRotate() * osg::Vec3f(1.f, 0.f, 0.f), osg::Vec3f(1.f, 0.f, 0.f));
+        const osg::Vec3f weaponAxisYAfter = normalizedDirection(weaponWorldAfter.getRotate() * osg::Vec3f(0.f, 1.f, 0.f), osg::Vec3f(0.f, 1.f, 0.f));
+        const osg::Vec3f weaponAxisZAfter = normalizedDirection(weaponWorldAfter.getRotate() * osg::Vec3f(0.f, 0.f, 1.f), osg::Vec3f(0.f, 0.f, 1.f));
+        const osg::Vec3f rightHandAxisXAfter = normalizedDirection(rightHandWorldAfter.getRotate() * osg::Vec3f(1.f, 0.f, 0.f), osg::Vec3f(1.f, 0.f, 0.f));
+        const osg::Vec3f rightHandAxisYAfter = normalizedDirection(rightHandWorldAfter.getRotate() * osg::Vec3f(0.f, 1.f, 0.f), osg::Vec3f(0.f, 1.f, 0.f));
+        const osg::Vec3f rightHandAxisZAfter = normalizedDirection(rightHandWorldAfter.getRotate() * osg::Vec3f(0.f, 0.f, 1.f), osg::Vec3f(0.f, 0.f, 1.f));
+        const osg::Vec3f leftHandAxisXAfter = normalizedDirection(leftHandWorldAfter.getRotate() * osg::Vec3f(1.f, 0.f, 0.f), osg::Vec3f(1.f, 0.f, 0.f));
+        const osg::Vec3f leftHandAxisYAfter = normalizedDirection(leftHandWorldAfter.getRotate() * osg::Vec3f(0.f, 1.f, 0.f), osg::Vec3f(0.f, 1.f, 0.f));
+        const osg::Vec3f leftHandAxisZAfter = normalizedDirection(leftHandWorldAfter.getRotate() * osg::Vec3f(0.f, 0.f, 1.f), osg::Vec3f(0.f, 0.f, 1.f));
         const float weaponAimAngleBefore = directionAngleDegrees(weaponForwardBefore, forward);
         const float weaponAimAngleAfter = directionAngleDegrees(weaponForwardAfter, forward);
+        const float weaponAxisXAngleAfter = directionAngleDegrees(weaponAxisXAfter, forward);
+        const float weaponAxisYAngleAfter = directionAngleDegrees(weaponAxisYAfter, forward);
+        const float weaponAxisZAngleAfter = directionAngleDegrees(weaponAxisZAfter, forward);
+        const float rightHandForwardAngleAfter = directionAngleDegrees(rightHandAxisYAfter, forward);
+        const float leftHandForwardAngleAfter = directionAngleDegrees(leftHandAxisYAfter, forward);
+        const float rightHandSideAfter = (rightHandAfter - chest) * right;
+        const float leftHandSideAfter = (leftHandAfter - chest) * right;
+        const float rightUpperLengthBefore = (rightForearmBefore - rightUpperBefore).length();
+        const float rightLowerLengthBefore = (rightHandBefore - rightForearmBefore).length();
+        const float leftUpperLengthBefore = (leftForearmBefore - leftUpperBefore).length();
+        const float leftLowerLengthBefore = (leftHandBefore - leftForearmBefore).length();
+        const float rightUpperLengthAfter = (rightForearmAfter - rightUpperAfter).length();
+        const float rightLowerLengthAfter = (rightHandAfter - rightForearmAfter).length();
+        const float leftUpperLengthAfter = (leftForearmAfter - leftUpperAfter).length();
+        const float leftLowerLengthAfter = (leftHandAfter - leftForearmAfter).length();
+        const float rightWristContinuity = std::abs(rightLowerLengthAfter - rightLowerLengthBefore);
+        const float leftWristContinuity = std::abs(leftLowerLengthAfter - leftLowerLengthBefore);
+        const bool handsUncrossed = rightHandValidAfter && leftHandValidAfter && rightHandSideAfter > leftHandSideAfter + 2.f;
         const bool endpointMoved = rightEndpointMoved > 1.f || leftEndpointMoved > 1.f || weaponEndpointMoved > 1.f;
         const bool targetImproved = (rightTargetBefore >= 0.f && rightTargetAfter >= 0.f
                                         && rightTargetAfter + 0.5f < rightTargetBefore)
             || (leftTargetBefore >= 0.f && leftTargetAfter >= 0.f && leftTargetAfter + 0.5f < leftTargetBefore);
         const bool aimImproved = weaponAimAngleBefore >= 0.f && weaponAimAngleAfter >= 0.f
             && weaponAimAngleAfter + 0.5f < weaponAimAngleBefore;
-        const bool runtimeSupported = solved == 4 && (endpointMoved || targetImproved) && weaponAimSolved
+        const bool fabrikSolved = fabrikSolvedBones >= 4 && rightFabrikError >= 0.f && leftFabrikError >= 0.f
+            && rightFabrikError <= 12.f && leftFabrikError <= 12.f;
+        const bool runtimeSupported = fabrikSolved && solved >= 4 && (endpointMoved || targetImproved) && weaponAimSolved
             && (aimImproved || weaponAimAngleAfter <= 5.f);
+
+        if (mFONVWeaponIkTelemetryLogs < 12)
+        {
+            ++mFONVWeaponIkTelemetryLogs;
+            Log(Debug::Info)
+                << "FNV/ESM4 telemetry: weapon IK frame actor=" << traits.mEditorId
+                << " ref=" << mPtr.getCellRef().getRefId()
+                << " instance=" << reinterpret_cast<std::uintptr_t>(this)
+                << " proofPreview=" << isProofPreviewAnimation()
+                << " sample=" << mFONVWeaponIkTelemetryLogs
+                << " solver=fabrik-two-bone-pole"
+                << " targetStyle=" << targetStyle
+                << " actorForward=(" << forward.x() << "," << forward.y() << "," << forward.z() << ")"
+                << " actorRight=(" << right.x() << "," << right.y() << "," << right.z() << ")"
+                << " actorUp=(" << up.x() << "," << up.y() << "," << up.z() << ")"
+                << " chest=(" << chest.x() << "," << chest.y() << "," << chest.z() << ")"
+                << " head=(" << head.x() << "," << head.y() << "," << head.z() << ")"
+                << " aimAnchor=(" << aimAnchor.x() << "," << aimAnchor.y() << "," << aimAnchor.z() << ")"
+                << " rightTarget=(" << rightTarget.x() << "," << rightTarget.y() << "," << rightTarget.z() << ")"
+                << " leftTarget=(" << leftTarget.x() << "," << leftTarget.y() << "," << leftTarget.z() << ")"
+                << " weaponBoundsExtent=(" << weaponBoundsExtent.x() << "," << weaponBoundsExtent.y() << ","
+                << weaponBoundsExtent.z() << ")"
+                << " weaponAimAxisName=" << weaponAimAxisName
+                << " weaponAimAxisFromBounds=" << weaponAimAxisFromBounds
+                << " weaponAimAxis=(" << weaponAimAxis.x() << "," << weaponAimAxis.y() << "," << weaponAimAxis.z()
+                << ")"
+                << " weaponAxisX=(" << weaponAxisXAfter.x() << "," << weaponAxisXAfter.y() << "," << weaponAxisXAfter.z()
+                << ")"
+                << " weaponAxisY=(" << weaponAxisYAfter.x() << "," << weaponAxisYAfter.y() << "," << weaponAxisYAfter.z()
+                << ")"
+                << " weaponAxisZ=(" << weaponAxisZAfter.x() << "," << weaponAxisZAfter.y() << "," << weaponAxisZAfter.z()
+                << ")"
+                << " weaponAxisAngles=(" << weaponAxisXAngleAfter << "," << weaponAxisYAngleAfter << ","
+                << weaponAxisZAngleAfter << ")"
+                << " weaponAimAccepted=" << weaponAimAccepted
+                << " weaponAimOrder=" << weaponAimOrder
+                << " weaponAimSolveAngles=(" << weaponAimSolveAngleBefore << "," << weaponAimSolveTrialAngle << ")"
+                << " rightHandAxisY=(" << rightHandAxisYAfter.x() << "," << rightHandAxisYAfter.y() << ","
+                << rightHandAxisYAfter.z() << ")"
+                << " leftHandAxisY=(" << leftHandAxisYAfter.x() << "," << leftHandAxisYAfter.y() << ","
+                << leftHandAxisYAfter.z() << ")"
+                << " handForwardAngles=(" << rightHandForwardAngleAfter << "," << leftHandForwardAngleAfter << ")"
+                << " handOrientationCandidates=(" << rightHandOrientationCandidate << "," << leftHandOrientationCandidate
+                << ")"
+                << " handOrientationErrors=(" << rightHandAimError << "," << rightHandPalmError << ","
+                << leftHandAimError << "," << leftHandPalmError << ")"
+                << " forcedRigReskin=(" << forcedRigGeometry << "," << forcedRigGeometryHolder << ","
+                << refreshedRigGeometry << ")"
+                << " rightLensBefore=(" << rightUpperLengthBefore << "," << rightLowerLengthBefore << ")"
+                << " rightLensAfter=(" << rightUpperLengthAfter << "," << rightLowerLengthAfter << ")"
+                << " leftLensBefore=(" << leftUpperLengthBefore << "," << leftLowerLengthBefore << ")"
+                << " leftLensAfter=(" << leftUpperLengthAfter << "," << leftLowerLengthAfter << ")"
+                << " wristContinuity=(" << rightWristContinuity << "," << leftWristContinuity << ")"
+                << " rightDesiredMid=(" << rightDesiredMid.x() << "," << rightDesiredMid.y() << ","
+                << rightDesiredMid.z() << ")"
+                << " rightDesiredEnd=(" << rightDesiredEnd.x() << "," << rightDesiredEnd.y() << ","
+                << rightDesiredEnd.z() << ")"
+                << " leftDesiredMid=(" << leftDesiredMid.x() << "," << leftDesiredMid.y() << ","
+                << leftDesiredMid.z() << ")"
+                << " leftDesiredEnd=(" << leftDesiredEnd.x() << "," << leftDesiredEnd.y() << ","
+                << leftDesiredEnd.z() << ")"
+                << " desiredErrors=(" << rightDesiredMidError << "," << rightDesiredEndError << ","
+                << leftDesiredMidError << "," << leftDesiredEndError << ")"
+                << " rotationOrders=(" << rightRotationOrders << ";" << leftRotationOrders << ")"
+                << " targetDistancesBefore=(" << rightTargetBefore << "," << leftTargetBefore << ")"
+                << " targetDistancesAfter=(" << rightTargetAfter << "," << leftTargetAfter << ")"
+                << " weaponGripDistancesAfter=(" << rightWeaponGripDistanceAfter << "," << leftWeaponGripDistanceAfter
+                << ")"
+                << " weaponGripSpanAfter=" << weaponGripSpanAfter
+                << " fabrikErrors=(" << rightFabrikError << "," << leftFabrikError << ")"
+                << " reachable=(" << rightFabrikReachable << "," << leftFabrikReachable << ")"
+                << " handsSide=(" << rightHandSideAfter << "," << leftHandSideAfter << ")"
+                << " handsUncrossed=" << handsUncrossed
+                << " rightHandWorldMatrix=[" << formatFalloutMatrixCompact(rightHandWorldAfter) << "]"
+                << " leftHandWorldMatrix=[" << formatFalloutMatrixCompact(leftHandWorldAfter) << "]"
+                << " weaponWorldMatrix=[" << formatFalloutMatrixCompact(weaponWorldAfter) << "]"
+                << " runtime=" << (runtimeSupported ? "runtime-supported" : "loaded-pending-runtime")
+                << " gate=runtime-fnv-weapon-ik-telemetry";
+        }
 
         if (!mFONVBoneIkLogged)
         {
             mFONVBoneIkLogged = true;
             Log(runtimeSupported ? Debug::Info : Debug::Warning)
                 << "FNV/ESM4 proof: weapon IK solver active actor=" << traits.mEditorId
-                << " solver=ccd-endpoint"
-                << " iterations=" << ccdIterations
+                << " ref=" << mPtr.getCellRef().getRefId()
+                << " instance=" << reinterpret_cast<std::uintptr_t>(this)
+                << " proofPreview=" << isProofPreviewAnimation()
+                << " solver=fabrik-two-bone-pole"
+                << " reference=FABRIK"
+                << " iterations=" << fabrikIterations
                 << " solvedBones=" << solved
+                << " fabrikSolvedBones=" << fabrikSolvedBones
+                << " rightFabrikError=" << rightFabrikError
+                << " leftFabrikError=" << leftFabrikError
+                << " rightFabrikReachable=" << rightFabrikReachable
+                << " leftFabrikReachable=" << leftFabrikReachable
                 << " strength=" << strength
+                << " targetStyle=" << targetStyle
                 << " chest=(" << chest.x() << "," << chest.y() << "," << chest.z() << ")"
+                << " head=(" << head.x() << "," << head.y() << "," << head.z() << ")"
+                << " shoulderLift=" << shoulderLift
                 << " solverBasisForward=(" << forward.x() << "," << forward.y() << "," << forward.z() << ")"
                 << " solverBasisRight=(" << right.x() << "," << right.y() << "," << right.z() << ")"
+                << " weaponAimAxis=(" << weaponAimAxis.x() << "," << weaponAimAxis.y() << "," << weaponAimAxis.z()
+                << ")"
                 << " weaponAimSolved=" << weaponAimSolved
                 << " weaponForwardBefore=(" << weaponForwardBefore.x() << "," << weaponForwardBefore.y() << ","
                 << weaponForwardBefore.z() << ")"
@@ -7452,39 +8442,80 @@ namespace MWRender
                 << weaponForwardAfter.z() << ")"
                 << " weaponAimAngleBefore=" << weaponAimAngleBefore
                 << " weaponAimAngleAfter=" << weaponAimAngleAfter
+                << " weaponAimAccepted=" << weaponAimAccepted
+                << " weaponAimOrder=" << weaponAimOrder
+                << " weaponAimSolveAngleBefore=" << weaponAimSolveAngleBefore
+                << " weaponAimSolveTrialAngle=" << weaponAimSolveTrialAngle
+                << " rightHandSideAfter=" << rightHandSideAfter
+                << " leftHandSideAfter=" << leftHandSideAfter
+                << " handsUncrossed=" << handsUncrossed
+                << " forcedRigReskin=(" << forcedRigGeometry << "," << forcedRigGeometryHolder << ","
+                << refreshedRigGeometry << ")"
                 << " rightTarget=(" << rightTarget.x() << "," << rightTarget.y() << "," << rightTarget.z() << ")"
                 << " leftTarget=(" << leftTarget.x() << "," << leftTarget.y() << "," << leftTarget.z() << ")"
+                << " rightClavicleBefore=(" << rightClavicleBefore.x() << "," << rightClavicleBefore.y() << ","
+                << rightClavicleBefore.z() << ")"
                 << " rightUpperBefore=(" << rightUpperBefore.x() << "," << rightUpperBefore.y() << ","
                 << rightUpperBefore.z() << ")"
                 << " rightForearmBefore=(" << rightForearmBefore.x() << "," << rightForearmBefore.y() << ","
                 << rightForearmBefore.z() << ")"
                 << " rightHandBefore=(" << rightHandBefore.x() << "," << rightHandBefore.y() << ","
                 << rightHandBefore.z() << ")"
+                << " rightClavicleAfter=(" << rightClavicleAfter.x() << "," << rightClavicleAfter.y() << ","
+                << rightClavicleAfter.z() << ")"
                 << " rightUpperAfter=(" << rightUpperAfter.x() << "," << rightUpperAfter.y() << ","
                 << rightUpperAfter.z() << ")"
                 << " rightForearmAfter=(" << rightForearmAfter.x() << "," << rightForearmAfter.y() << ","
                 << rightForearmAfter.z() << ")"
                 << " rightHandAfter=(" << rightHandAfter.x() << "," << rightHandAfter.y() << ","
                 << rightHandAfter.z() << ")"
+                << " rightDesiredMid=(" << rightDesiredMid.x() << "," << rightDesiredMid.y() << ","
+                << rightDesiredMid.z() << ")"
+                << " rightDesiredEnd=(" << rightDesiredEnd.x() << "," << rightDesiredEnd.y() << ","
+                << rightDesiredEnd.z() << ")"
+                << " rightDesiredErrors=(" << rightDesiredMidError << "," << rightDesiredEndError << ")"
+                << " rightRotationOrders=(" << rightRotationOrders << ")"
+                << " leftClavicleBefore=(" << leftClavicleBefore.x() << "," << leftClavicleBefore.y() << ","
+                << leftClavicleBefore.z() << ")"
                 << " leftUpperBefore=(" << leftUpperBefore.x() << "," << leftUpperBefore.y() << ","
                 << leftUpperBefore.z() << ")"
                 << " leftForearmBefore=(" << leftForearmBefore.x() << "," << leftForearmBefore.y() << ","
                 << leftForearmBefore.z() << ")"
                 << " leftHandBefore=(" << leftHandBefore.x() << "," << leftHandBefore.y() << ","
                 << leftHandBefore.z() << ")"
+                << " leftClavicleAfter=(" << leftClavicleAfter.x() << "," << leftClavicleAfter.y() << ","
+                << leftClavicleAfter.z() << ")"
                 << " leftUpperAfter=(" << leftUpperAfter.x() << "," << leftUpperAfter.y() << ","
                 << leftUpperAfter.z() << ")"
                 << " leftForearmAfter=(" << leftForearmAfter.x() << "," << leftForearmAfter.y() << ","
                 << leftForearmAfter.z() << ")"
                 << " leftHandAfter=(" << leftHandAfter.x() << "," << leftHandAfter.y() << ","
                 << leftHandAfter.z() << ")"
+                << " leftDesiredMid=(" << leftDesiredMid.x() << "," << leftDesiredMid.y() << ","
+                << leftDesiredMid.z() << ")"
+                << " leftDesiredEnd=(" << leftDesiredEnd.x() << "," << leftDesiredEnd.y() << ","
+                << leftDesiredEnd.z() << ")"
+                << " leftDesiredErrors=(" << leftDesiredMidError << "," << leftDesiredEndError << ")"
+                << " leftRotationOrders=(" << leftRotationOrders << ")"
                 << " weaponBefore=(" << weaponBefore.x() << "," << weaponBefore.y() << "," << weaponBefore.z()
                 << ")"
                 << " weaponAfter=(" << weaponAfter.x() << "," << weaponAfter.y() << "," << weaponAfter.z() << ")"
+                << " rightHandAxisY=(" << rightHandAxisYAfter.x() << "," << rightHandAxisYAfter.y() << ","
+                << rightHandAxisYAfter.z() << ")"
+                << " leftHandAxisY=(" << leftHandAxisYAfter.x() << "," << leftHandAxisYAfter.y() << ","
+                << leftHandAxisYAfter.z() << ")"
+                << " handForwardAngles=(" << rightHandForwardAngleAfter << "," << leftHandForwardAngleAfter << ")"
+                << " handOrientationCandidates=(" << rightHandOrientationCandidate << "," << leftHandOrientationCandidate
+                << ")"
+                << " handOrientationErrors=(" << rightHandAimError << "," << rightHandPalmError << ","
+                << leftHandAimError << "," << leftHandPalmError << ")"
                 << " rightTargetDistanceBefore=" << rightTargetBefore
                 << " rightTargetDistanceAfter=" << rightTargetAfter
                 << " leftTargetDistanceBefore=" << leftTargetBefore
                 << " leftTargetDistanceAfter=" << leftTargetAfter
+                << " rightWeaponGripDistanceAfter=" << rightWeaponGripDistanceAfter
+                << " leftWeaponGripDistanceAfter=" << leftWeaponGripDistanceAfter
+                << " weaponGripSpanAfter=" << weaponGripSpanAfter
                 << " rightEndpointMoved=" << rightEndpointMoved
                 << " leftEndpointMoved=" << leftEndpointMoved
                 << " weaponEndpointMoved=" << weaponEndpointMoved
@@ -7530,7 +8561,9 @@ namespace MWRender
             stateSet->setAttributeAndModes(new osg::LineWidth(5.f), osg::StateAttribute::ON);
             mObjectRoot->addChild(mFONVBoneIkDebugGeode);
             Log(Debug::Info) << "FNV/ESM4 proof: weapon IK bone debug overlay active actor=" << traits.mEditorId
-                             << " bones=Bip01 L/R Clavicle,UpperArm,Forearm,Hand,Weapon runtime=runtime-supported";
+                             << " bones=Bip01 Head,Spine2,L/R Clavicle,UpperArm,Forearm,Hand,Weapon"
+                             << " allLiveNodeMapBones=1 includesFingers=1"
+                             << " solver=fabrik-two-bone-pole runtime=runtime-supported";
         }
 
         osg::ref_ptr<osg::Vec3Array> vertices = new osg::Vec3Array;
@@ -7538,6 +8571,7 @@ namespace MWRender
         const osg::Matrix rootToLocal = osg::Matrix::inverse(getNodeWorldMatrix(mObjectRoot.get()));
         const NodeMap& nodeMap = getNodeMap();
         unsigned int lineSegments = 0;
+        unsigned int fullBoneSegments = 0;
         unsigned int targetSegments = 0;
         const auto toDebugLocal = [&](const osg::Vec3f& world) {
             return osg::Vec3f(osg::Vec3d(world.x(), world.y(), world.z()) * rootToLocal);
@@ -7579,6 +8613,63 @@ namespace MWRender
         const osg::Vec4f rightColor(1.f, 0.15f, 0.1f, 1.f);
         const osg::Vec4f leftColor(0.15f, 0.45f, 1.f, 1.f);
         const osg::Vec4f weaponColor(1.f, 0.95f, 0.1f, 1.f);
+        const osg::Vec4f bodyColor(0.2f, 1.f, 0.35f, 1.f);
+        const osg::Vec4f fingerColor(1.f, 0.55f, 1.f, 1.f);
+        const osg::Vec4f skeletonColor(0.75f, 0.75f, 0.78f, 0.9f);
+        const auto debugColorForBone = [&](std::string name) {
+            Misc::StringUtils::lowerCaseInPlace(name);
+            if (name.find("finger") != std::string::npos || name.find("thumb") != std::string::npos)
+                return fingerColor;
+            if (name.find(" r ") != std::string::npos || name.find("right") != std::string::npos)
+                return rightColor;
+            if (name.find(" l ") != std::string::npos || name.find("left") != std::string::npos)
+                return leftColor;
+            if (name.find("weapon") != std::string::npos)
+                return weaponColor;
+            if (name.find("bip01") != std::string::npos || name.find("spine") != std::string::npos
+                || name.find("head") != std::string::npos || name.find("neck") != std::string::npos)
+                return bodyColor;
+            return skeletonColor;
+        };
+        const auto addBoneLine = [&](osg::Group& parent, osg::Group& child, const osg::Vec4f& color) {
+            vertices->push_back(toDebugLocal(osg::Vec3f(getNodeWorldMatrix(&parent).getTrans())));
+            vertices->push_back(toDebugLocal(osg::Vec3f(getNodeWorldMatrix(&child).getTrans())));
+            colors->push_back(color);
+            colors->push_back(color);
+            ++lineSegments;
+            ++fullBoneSegments;
+        };
+        const auto firstDebuggableParent = [](osg::Node& node) -> osg::Group* {
+            for (unsigned int parentIndex = 0; parentIndex < node.getNumParents(); ++parentIndex)
+            {
+                osg::Group* parent = node.getParent(parentIndex);
+                while (parent != nullptr)
+                {
+                    if (dynamic_cast<osg::MatrixTransform*>(parent) != nullptr
+                        || dynamic_cast<osgAnimation::Bone*>(parent) != nullptr)
+                        return parent;
+                    parent = parent->getNumParents() > 0 ? parent->getParent(0) : nullptr;
+                }
+            }
+            return nullptr;
+        };
+        for (const auto& [name, node] : nodeMap)
+        {
+            osg::Group* child = node.get();
+            if (child == nullptr)
+                continue;
+            osg::Group* parent = nullptr;
+            if (osgAnimation::Bone* bone = dynamic_cast<osgAnimation::Bone*>(child))
+                parent = bone->getBoneParent();
+            if (parent == nullptr)
+                parent = firstDebuggableParent(*child);
+            if (parent == nullptr)
+                continue;
+            addBoneLine(*parent, *child, debugColorForBone(name));
+        }
+        addLine("Bip01 Head", "Bip01 Spine2", bodyColor);
+        addLine("Bip01 Spine2", "Bip01 L Clavicle", bodyColor);
+        addLine("Bip01 Spine2", "Bip01 R Clavicle", bodyColor);
         addLine("Bip01 R Clavicle", "Bip01 R UpperArm", rightColor);
         addLine("Bip01 R UpperArm", "Bip01 R Forearm", rightColor);
         addLine("Bip01 R Forearm", "Bip01 R Hand", rightColor);
@@ -7613,6 +8704,7 @@ namespace MWRender
             Log(Debug::Info) << "FNV/ESM4 proof: weapon IK bone debug overlay frame actor=" << traits.mEditorId
                              << " sample=" << mFONVBoneIkDebugFrameLogs
                              << " lineSegments=" << lineSegments
+                             << " fullBoneSegments=" << fullBoneSegments
                              << " targetSegments=" << targetSegments
                              << " vertices=" << vertices->size()
                              << " targetsValid=" << mFONVWeaponIkTargetsValid
@@ -7629,6 +8721,7 @@ namespace MWRender
         osg::Vec3f movement = Animation::runAnimation(duration);
         if (const ESM4::Npc* traits = MWClass::ESM4Npc::getTraitsRecord(mPtr); traits != nullptr && traits->mIsFONV)
         {
+            applyFONVWeaponIk(*traits);
             updateFONVBoneIkDebug(*traits);
             if (!mFONVActorKitProjectileProofFired && isFonvProofTargetActor(mPtr, *traits))
             {

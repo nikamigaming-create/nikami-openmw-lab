@@ -1063,7 +1063,12 @@ namespace MWRender
             osg::ref_ptr<ESM4NpcAnimation> animation = new ESM4NpcAnimation(mCharacter, mNode, mResourceSystem);
             animation->setProofPreviewAnimation(true);
             animation->setProofPreviewGameplayAudit(mViewMode == ViewMode::Front);
-            animation->setFONVBoneIkDebugInProofPreview(mViewMode == ViewMode::FrontRight);
+            const std::string previewProfile = !mProfileOverride.empty()
+                ? mProfileOverride
+                : std::string(getFalloutNeutralActorPreviewProfile());
+            animation->setFONVBoneIkDebugInProofPreview(
+                mViewMode == ViewMode::FrontRight || Misc::StringUtils::ciEqual(previewProfile, "weapon-arms")
+                || Misc::StringUtils::ciEqual(previewProfile, "arms"));
             return animation;
         }
         if (mCharacter.getType() == ESM::REC_CREA4)
@@ -1127,24 +1132,25 @@ namespace MWRender
                 getFalloutNeutralActorPreviewFloat("OPENMW_FNV_NEUTRAL_ACTOR_PREVIEW_LOOK_Z", 116.f), position, lookAt,
                 viewName);
         }
-        else if (Misc::StringUtils::ciEqual(profile, "hands"))
+        else if (Misc::StringUtils::ciEqual(profile, "hands") || Misc::StringUtils::ciEqual(profile, "weapon-arms")
+            || Misc::StringUtils::ciEqual(profile, "arms"))
         {
             switch (mViewMode)
             {
                 case ViewMode::Front:
-                    position = osg::Vec3f(0.f, 280.f, 91.f);
-                    lookAt = osg::Vec3f(0.f, 0.f, 91.f);
-                    viewName = "hands-wide";
+                    position = osg::Vec3f(0.f, 520.f, 82.f);
+                    lookAt = osg::Vec3f(0.f, 0.f, 82.f);
+                    viewName = "arm-elbow-hands-wide";
                     break;
                 case ViewMode::FrontLeft:
-                    position = osg::Vec3f(-48.f, 190.f, 90.f);
-                    lookAt = osg::Vec3f(-42.f, 0.f, 90.f);
-                    viewName = "left-hand";
+                    position = osg::Vec3f(-42.f, 500.f, 82.f);
+                    lookAt = osg::Vec3f(-28.f, 0.f, 82.f);
+                    viewName = "left-elbow-hand";
                     break;
                 case ViewMode::FrontRight:
-                    position = osg::Vec3f(48.f, 190.f, 90.f);
-                    lookAt = osg::Vec3f(42.f, 0.f, 90.f);
-                    viewName = "right-hand";
+                    position = osg::Vec3f(42.f, 500.f, 82.f);
+                    lookAt = osg::Vec3f(28.f, 0.f, 82.f);
+                    viewName = "right-elbow-hand-weapon";
                     break;
             }
         }
@@ -1243,10 +1249,14 @@ namespace MWRender
             << " runtime=" << (upright ? "runtime-supported" : "loaded-pending-runtime")
             << " gate=runtime-neutral-actor-preview-bounds";
 
-        if (Misc::StringUtils::ciEqual(profile, "audit") || Misc::StringUtils::ciEqual(profile, "bot-audit"))
+        const bool auditProfile = Misc::StringUtils::ciEqual(profile, "audit")
+            || Misc::StringUtils::ciEqual(profile, "bot-audit");
+        const bool weaponArmsProfile = Misc::StringUtils::ciEqual(profile, "weapon-arms")
+            || Misc::StringUtils::ciEqual(profile, "arms");
+        if (auditProfile || weaponArmsProfile)
         {
             std::unique_ptr<FalloutActorPreviewPartMaskVisitor> partMask;
-            if (mViewMode == ViewMode::FrontLeft)
+            if (auditProfile && mViewMode == ViewMode::FrontLeft)
                 partMask = std::make_unique<FalloutActorPreviewPartMaskVisitor>(
                     FalloutActorPreviewPartMaskVisitor::Mode::FaceHeadgear);
 
@@ -1269,7 +1279,7 @@ namespace MWRender
                 || std::getenv("OPENMW_FNV_NEUTRAL_ACTOR_PREVIEW_HAND_LOOK_X") != nullptr
                 || std::getenv("OPENMW_FNV_NEUTRAL_ACTOR_PREVIEW_HAND_LOOK_Y") != nullptr
                 || std::getenv("OPENMW_FNV_NEUTRAL_ACTOR_PREVIEW_HAND_LOOK_Z") != nullptr;
-            if (mViewMode == ViewMode::FrontRight && visibleBounds.valid() && !handCameraOverride)
+            if (auditProfile && mViewMode == ViewMode::FrontRight && visibleBounds.valid() && !handCameraOverride)
             {
                 const osg::Vec3f center = visibleBounds.center();
                 const float distance = getFalloutNeutralActorPreviewFloat(

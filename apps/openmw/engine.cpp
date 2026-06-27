@@ -551,6 +551,12 @@ namespace
             const float bottom = -height * 0.5f;
             osg::ref_ptr<osg::Geometry> geom = osg::createTexturedQuadGeometry(
                 osg::Vec3f(left, bottom, 0.f), osg::Vec3f(width, 0.f, 0.f), osg::Vec3f(0.f, height, 0.f));
+            osg::ref_ptr<osg::Vec2Array> texCoords = new osg::Vec2Array;
+            texCoords->push_back(osg::Vec2f(0.f, 1.f));
+            texCoords->push_back(osg::Vec2f(0.f, 0.f));
+            texCoords->push_back(osg::Vec2f(1.f, 0.f));
+            texCoords->push_back(osg::Vec2f(1.f, 1.f));
+            geom->setTexCoordArray(0, texCoords.get(), osg::Array::BIND_PER_VERTEX);
             osg::StateSet* stateset = geom->getOrCreateStateSet();
             stateset->setTextureAttributeAndModes(0, texture.get(), osg::StateAttribute::ON);
             stateset->setMode(GL_DEPTH_TEST, osg::StateAttribute::OFF);
@@ -560,6 +566,8 @@ namespace
             camera->addChild(geom);
         }
 
+        Log(Debug::Info) << "FNV/ESM4 proof: neutral actor preview composite uses upright RTT V coordinates"
+                         << " runtime=runtime-supported gate=runtime-neutral-actor-preview-uv";
         return camera.release();
     }
 

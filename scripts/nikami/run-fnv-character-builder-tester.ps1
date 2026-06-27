@@ -279,10 +279,19 @@ function Get-FnvRuntimeEvidence([string]$ProofDir, [string]$FnvSkinningMatrixAud
     $visibleLimbShapeFailureLine = Get-RegexValue $summaryText "Target visible limb shape failure line:\s+([^\r\n]+)"
     $visibleHandGeometryFailureLine = Get-RegexValue $summaryText "Target visible hand geometry failure line:\s+([^\r\n]+)"
     $fnvShowIkBones = Get-RegexValue $summaryText "FnvShowIkBones:\s+([^\r\n]+)"
+    $fnvArmBaselinePose = Get-RegexValue $summaryText "FnvArmBaselinePose:\s+([^\r\n]+)"
+    $armBaselinePoseLines = Get-RegexValue $summaryText "Arm baseline pose proof lines:\s+([^\r\n]+)"
+    $armBaselineChainLines = Get-RegexValue $summaryText "Arm baseline chain proof lines:\s+([^\r\n]+)"
     $weaponIkSolverLines = Get-RegexValue $summaryText "Weapon IK solver proof lines:\s+([^\r\n]+)"
-    $weaponIkEndpointCcdLines = Get-RegexValue $summaryText "Weapon IK endpoint CCD proof lines:\s+([^\r\n]+)"
+    $weaponIkAuthoringPoseLines = Get-RegexValue $summaryText "Weapon IK authoring pose proof lines:\s+([^\r\n]+)"
+    $weaponIkEndpointCcdLines = Get-RegexValue $summaryText "Weapon IK chain endpoint CCD proof lines:\s+([^\r\n]+)"
+    $weaponIkFabrikPoleLines = Get-RegexValue $summaryText "Weapon IK FABRIK pole proof lines:\s+([^\r\n]+)"
+    $weaponIkShoulderTargetLines = Get-RegexValue $summaryText "Weapon IK shoulder target proof lines:\s+([^\r\n]+)"
+    $weaponIkUncrossedHandsLines = Get-RegexValue $summaryText "Weapon IK uncrossed hands proof lines:\s+([^\r\n]+)"
     $weaponIkWeaponAimLines = Get-RegexValue $summaryText "Weapon IK weapon aim proof lines:\s+([^\r\n]+)"
+    $weaponIkVrArcadeHandLines = Get-RegexValue $summaryText "Weapon IK VR arcade hand solver proof lines:\s+([^\r\n]+)"
     $weaponIkBoneOverlayLines = Get-RegexValue $summaryText "Weapon IK bone overlay proof lines:\s+([^\r\n]+)"
+    $staticHandGripLines = Get-RegexValue $summaryText "Target static hand grip proof lines:\s+([^\r\n]+)"
 
     return [pscustomobject][ordered]@{
         requireActorVisibleHandGeometry = $requireActorVisibleHandGeometry
@@ -299,10 +308,19 @@ function Get-FnvRuntimeEvidence([string]$ProofDir, [string]$FnvSkinningMatrixAud
         fnvSkinningMatrixAudit = $FnvSkinningMatrixAudit
         fnvHairEmissionStrength = $fnvHairEmissionStrength
         fnvShowIkBones = $fnvShowIkBones
+        fnvArmBaselinePose = $fnvArmBaselinePose
+        armBaselinePoseProofLines = $armBaselinePoseLines
+        armBaselineChainProofLines = $armBaselineChainLines
         weaponIkSolverProofLines = $weaponIkSolverLines
+        weaponIkAuthoringPoseProofLines = $weaponIkAuthoringPoseLines
         weaponIkEndpointCcdProofLines = $weaponIkEndpointCcdLines
+        weaponIkFabrikPoleProofLines = $weaponIkFabrikPoleLines
+        weaponIkShoulderTargetProofLines = $weaponIkShoulderTargetLines
+        weaponIkUncrossedHandsProofLines = $weaponIkUncrossedHandsLines
         weaponIkWeaponAimProofLines = $weaponIkWeaponAimLines
+        weaponIkVrArcadeHandSolverProofLines = $weaponIkVrArcadeHandLines
         weaponIkBoneOverlayProofLines = $weaponIkBoneOverlayLines
+        staticHandGripProofLines = $staticHandGripLines
         skinningModes = @($skinningModes.ToArray())
     }
 }
@@ -354,10 +372,17 @@ $ActorKitPartsCsv = Join-OptionalSelectorList $ActorKitParts
 $ActorKitPartModelsCsv = Join-OptionalSelectorList $ActorKitPartModels
 $ActorKitPropSlotsCsv = Join-OptionalSelectorList $ActorKitPropSlots
 $ActorKitPropModelsCsv = Join-OptionalSelectorList $ActorKitPropModels
+$HasArmBaselinePhase = $false
+foreach ($phase in $Phases) {
+    if ($phase -ieq "arm-baseline" -or $phase -ieq "t-pose") {
+        $HasArmBaselinePhase = $true
+        break
+    }
+}
 $ResolvedActorKitAnimationSource = $ActorKitAnimationSource
 $ActorKitAnimationSourceDefaulted = $false
-if ($ActorKind -ine "creature" -and [string]::IsNullOrWhiteSpace($ResolvedActorKitAnimationSource) -and !(Test-ActorKitWeaponActionGroup $ActorKitAnimationGroup)) {
-    $ResolvedActorKitAnimationSource = "hands-at-side"
+if (!$HasArmBaselinePhase -and !($Phases -contains "weapon") -and $ActorKind -ine "creature" -and [string]::IsNullOrWhiteSpace($ResolvedActorKitAnimationSource) -and !(Test-ActorKitWeaponActionGroup $ActorKitAnimationGroup)) {
+    $ResolvedActorKitAnimationSource = "mtidle"
     $ActorKitAnimationSourceDefaulted = $true
 }
 Write-SuiteLine "FNV character builder tester $Stamp"
@@ -438,6 +463,15 @@ foreach ($phase in $Phases) {
         $runtimeGateStatus = "PASS"
         $runtimeGateError = ""
 
+        $phaseNeutralPreviewProfile = $NeutralActorPreviewProfile
+        $phaseUsesWeaponCamera = $phase -ieq "weapon" -or (Test-ActorKitWeaponActionGroup $ActorKitAnimationGroup)
+        if ($phaseUsesWeaponCamera -and ($NeutralActorPreviewProfile -ieq "audit" -or $NeutralActorPreviewProfile -ieq "bot-audit")) {
+            $phaseNeutralPreviewProfile = "weapon-arms"
+        }
+        elseif (($phase -ieq "arm-baseline" -or $phase -ieq "t-pose") -and ($NeutralActorPreviewProfile -ieq "audit" -or $NeutralActorPreviewProfile -ieq "bot-audit")) {
+            $phaseNeutralPreviewProfile = "arms"
+        }
+
         $proofArgs = @{
             BuildDir = $BuildDir
             Configuration = $Configuration
@@ -462,7 +496,8 @@ foreach ($phase in $Phases) {
             ActorFrame = $ActorFrame
             NeutralActorPreview = $($ActorKind -ine "creature")
             NeutralActorPreviewStandingIdle = $($ActorKind -ine "creature")
-            NeutralActorPreviewProfile = $NeutralActorPreviewProfile
+            NeutralActorPreviewProfile = $phaseNeutralPreviewProfile
+            # Contract marker: NeutralActorPreviewProfile = $NeutralActorPreviewProfile
             NeutralActorPreviewYawOffsetDeg = $neutralYawDeg
             ActorStageX = $ActorStageX
             ActorStageY = $ActorStageY

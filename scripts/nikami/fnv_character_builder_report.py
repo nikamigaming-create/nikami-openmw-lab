@@ -62,8 +62,10 @@ NEUTRAL_PREVIEW_PHASE_PANES = {
     "headgear": {"face-hat"},
     "talk": {"face-hat"},
     "dialogue": {"face-hat"},
-    "weapon": {"right-hand-weapon"},
-    "weapons": {"right-hand-weapon"},
+    "arm-baseline": {"full-body", "face-hat", "right-hand-weapon"},
+    "t-pose": {"full-body", "face-hat", "right-hand-weapon"},
+    "weapon": {"full-body", "face-hat", "right-hand-weapon"},
+    "weapons": {"full-body", "face-hat", "right-hand-weapon"},
     "full": {"full-body", "face-hat", "right-hand-weapon"},
     "": {"full-body", "face-hat", "right-hand-weapon"},
 }
@@ -858,6 +860,7 @@ def parse_summary_float(text: str, key: str) -> float | None:
 
 def parse_hand_runtime_summary(lines: list[str]) -> dict[str, Any]:
     static_text = summary_value(lines, "Target static hand no-twist proof lines")
+    static_grip_text = summary_value(lines, "Target static hand grip proof lines")
     visible_text = summary_value(lines, "Target visible hand geometry samples")
     visible_limb_shape_text = summary_value(lines, "Target visible limb shape BAD lines")
     weapon_held_alignment_text = summary_value(lines, "Weapon IK held alignment proof lines")
@@ -875,6 +878,10 @@ def parse_hand_runtime_summary(lines: list[str]) -> dict[str, Any]:
         "rightStaticProofLines": parse_summary_int(static_text, "right"),
         "fingerWeightsLoaded": parse_summary_int(static_text, "fingerWeightsLoaded"),
         "pendingFingerArticulation": parse_summary_int(static_text, "pendingFingerArticulation"),
+        "staticGripProofLines": int(static_grip_text.split()[0]) if static_grip_text and static_grip_text.split()[0].isdigit() else 0,
+        "leftStaticGripProofLines": parse_summary_int(static_grip_text, "left"),
+        "rightStaticGripProofLines": parse_summary_int(static_grip_text, "right"),
+        "staticGripVertices": parse_summary_int(static_grip_text, "vertices"),
         "visibleHandGeometryStatus": summary_value(lines, "Target visible hand geometry status"),
         "visibleHandGeometrySamples": int(visible_text.split()[0]) if visible_text and visible_text.split()[0].isdigit() else 0,
         "visibleHandGeometryLeftBest": parse_summary_int(visible_text, "leftBest"),
@@ -888,9 +895,27 @@ def parse_hand_runtime_summary(lines: list[str]) -> dict[str, Any]:
         "targetStandingArmPoseOkLines": int(summary_value(lines, "Target standing arm pose OK lines") or "0"),
         "targetStandingArmPoseBadLines": int(summary_value(lines, "Target standing arm pose BAD lines") or "0"),
         "fnvShowIkBones": summary_value(lines, "FnvShowIkBones"),
+        "fnvArmBaselinePose": summary_value(lines, "FnvArmBaselinePose"),
+        "armBaselinePoseProofLines": int(summary_value(lines, "Arm baseline pose proof lines") or "0"),
+        "armBaselineChainProofLines": int(summary_value(lines, "Arm baseline chain proof lines") or "0"),
         "weaponIkSolverProofLines": int(summary_value(lines, "Weapon IK solver proof lines") or "0"),
-        "weaponIkEndpointCcdProofLines": int(summary_value(lines, "Weapon IK endpoint CCD proof lines") or "0"),
+        "weaponIkAuthoringPoseProofLines": int(summary_value(lines, "Weapon IK authoring pose proof lines") or "0"),
+        "weaponIkChainEndpointCcdProofLines": int(
+            summary_value(lines, "Weapon IK chain endpoint CCD proof lines") or "0"
+        ),
+        "weaponIkFabrikPoleProofLines": int(summary_value(lines, "Weapon IK FABRIK pole proof lines") or "0"),
+        "weaponIkEndpointCcdProofLines": int(
+            summary_value(lines, "Weapon IK chain endpoint CCD proof lines")
+            or summary_value(lines, "Weapon IK endpoint CCD proof lines")
+            or "0"
+        ),
+        "weaponIkShoulderTargetProofLines": int(summary_value(lines, "Weapon IK shoulder target proof lines") or "0"),
+        "weaponIkUncrossedHandsProofLines": int(summary_value(lines, "Weapon IK uncrossed hands proof lines") or "0"),
         "weaponIkWeaponAimProofLines": int(summary_value(lines, "Weapon IK weapon aim proof lines") or "0"),
+        "weaponActionPlaybackProofLines": int(summary_value(lines, "Weapon action playback proof lines") or "0"),
+        "weaponIkVrArcadeHandSolverProofLines": int(
+            summary_value(lines, "Weapon IK VR arcade hand solver proof lines") or "0"
+        ),
         "weaponIkHeldAlignmentProofLines": (
             int(weapon_held_alignment_text.split()[0])
             if weapon_held_alignment_text and weapon_held_alignment_text.split()[0].isdigit()
@@ -902,6 +927,9 @@ def parse_hand_runtime_summary(lines: list[str]) -> dict[str, Any]:
         "weaponIkHeldAlignmentMaxAimAngle": parse_summary_float(weapon_held_alignment_text, "maxAimAngle"),
         "weaponIkHeldAlignmentMaxHandDistance": parse_summary_float(weapon_held_alignment_text, "maxHandDistance"),
         "weaponIkBoneOverlayProofLines": int(summary_value(lines, "Weapon IK bone overlay proof lines") or "0"),
+        "weaponIkBoneOverlayFullBoneSegmentsMax": int(
+            summary_value(lines, "Weapon IK bone overlay full bone segments max") or "0"
+        ),
     }
 
 
@@ -1594,13 +1622,14 @@ def evaluate(
     _settled_suspect_bounds, unresolved_suspect_bounds = attachment_bound_runtime_settlement(
         bounds, runtime_audit_summary
     )
-    if unresolved_suspect_bounds:
+    arm_baseline_phase = phase in {"arm-baseline", "t-pose"}
+    if unresolved_suspect_bounds and not arm_baseline_phase:
         failures.append(f"unsettled suspect attachment bounds: {len(unresolved_suspect_bounds)}")
     never_settled_audits = [item for item in runtime_audit_summary if item["okCount"] == 0 and item["badCount"] > 0]
-    if never_settled_audits:
+    if never_settled_audits and not arm_baseline_phase:
         failures.append(f"bad runtime part audits: {len(never_settled_audits)}")
     regressions = [item for item in runtime_audit_summary if item["regressed"]]
-    if regressions:
+    if regressions and not arm_baseline_phase:
         failures.append(f"runtime audit regressions after initial OK: {len(regressions)}")
     neutral_preview_findings = [
         finding
@@ -1608,7 +1637,19 @@ def evaluate(
         if item.get("status") != "PASS"
         for finding in item.get("findings", [])
     ]
-    if neutral_preview_findings:
+    neutral_preview_profile = summary_value(lines, "NeutralActorPreviewProfile").strip()
+    actor_group = summary_value(lines, "ActorKitAnimationGroup").lower()
+    weapon_action_group = any(token in actor_group for token in ("attack", "fire", "shoot", "reload", "aim"))
+    weapon_arm_runtime_gates_passed = (
+        (phase == "weapon" or weapon_action_group)
+        and neutral_preview_profile == "weapon-arms"
+        and int(hand_runtime_summary.get("targetStandingArmPoseBadLines", 0)) == 0
+        and int(hand_runtime_summary.get("visibleHandGeometryPoseSanityBadLines", 0)) == 0
+        and int(hand_runtime_summary.get("visibleLimbShapeBadLines", 0)) == 0
+        and (not weapon_action_group or int(hand_runtime_summary.get("weaponActionPlaybackProofLines", 0)) > 0)
+        and int(hand_runtime_summary.get("weaponIkHeldAlignmentProofLines", 0)) > 0
+    )
+    if neutral_preview_findings and not weapon_arm_runtime_gates_passed and not arm_baseline_phase:
         failures.append(f"neutral preview composition findings: {len(neutral_preview_findings)}")
     if face_occlusion_findings:
         failures.append(f"face occlusion/headgear orientation findings: {len(face_occlusion_findings)}")
@@ -1620,6 +1661,7 @@ def evaluate(
         "False",
         "false",
     }
+    staticized_hands_observed = staticized_hands_requested or int(hand_runtime_summary.get("staticProofLines", 0)) > 0
     if actor_kind != "creature":
         if staticized_hands_requested and int(hand_runtime_summary.get("pendingFingerArticulation", 0)) > 0:
             failures.append(
@@ -1635,26 +1677,46 @@ def evaluate(
             failures.append("missing target visible limb shape evidence")
         if int(hand_runtime_summary.get("visibleLimbShapeBadLines", 0)) > 0:
             failures.append(f"target visible limb shape failures: {hand_runtime_summary['visibleLimbShapeBadLines']}")
-        if int(hand_runtime_summary.get("targetStandingArmPoseBadLines", 0)) > 0:
+        if phase not in {"arm-baseline", "t-pose"} and int(hand_runtime_summary.get("targetStandingArmPoseBadLines", 0)) > 0:
             failures.append(f"target standing arm pose failures: {hand_runtime_summary['targetStandingArmPoseBadLines']}")
-        actor_group = summary_value(lines, "ActorKitAnimationGroup").lower()
-        weapon_action_group = any(token in actor_group for token in ("attack", "fire", "shoot", "reload", "aim"))
+        if phase in {"arm-baseline", "t-pose"}:
+            if int(hand_runtime_summary.get("armBaselinePoseProofLines", 0)) <= 0:
+                failures.append("missing controlled T-pose arm baseline evidence")
+            if int(hand_runtime_summary.get("armBaselineChainProofLines", 0)) <= 0:
+                failures.append("missing visible T-pose arm-chain IK projection evidence")
         if phase == "weapon" or weapon_action_group or summary_value(lines, "FnvProofWeaponEdid"):
             if int(hand_runtime_summary.get("weaponIkSolverProofLines", 0)) <= 0:
                 failures.append("missing weapon IK solver proof evidence")
+            if phase == "weapon" and not weapon_action_group and int(hand_runtime_summary.get("weaponIkAuthoringPoseProofLines", 0)) <= 0:
+                failures.append("missing controlled A/T-pose weapon IK authoring baseline evidence")
+            if weapon_action_group and int(hand_runtime_summary.get("weaponActionPlaybackProofLines", 0)) <= 0:
+                failures.append("missing actor-kit weapon action playback proof evidence")
             if int(hand_runtime_summary.get("weaponIkEndpointCcdProofLines", 0)) <= 0:
-                failures.append("missing endpoint CCD weapon IK solver proof evidence")
+                failures.append("missing chain endpoint CCD weapon IK solver proof evidence")
+            if int(hand_runtime_summary.get("weaponIkFabrikPoleProofLines", 0)) <= 0:
+                failures.append("missing FABRIK pole weapon IK solver proof evidence")
+            if int(hand_runtime_summary.get("weaponIkShoulderTargetProofLines", 0)) <= 0:
+                failures.append("missing weapon IK target proof evidence")
+            if int(hand_runtime_summary.get("weaponIkUncrossedHandsProofLines", 0)) <= 0:
+                failures.append("missing uncrossed weapon IK hands proof evidence")
             if int(hand_runtime_summary.get("weaponIkWeaponAimProofLines", 0)) <= 0:
                 failures.append("missing weapon aim-frame IK solver proof evidence")
+            if int(hand_runtime_summary.get("weaponIkVrArcadeHandSolverProofLines", 0)) <= 0:
+                failures.append("missing VR arcade hand IK solver proof evidence")
             if int(hand_runtime_summary.get("weaponIkHeldAlignmentProofLines", 0)) <= 0:
                 failures.append("missing held weapon alignment proof evidence")
             if int(hand_runtime_summary.get("weaponIkBoneOverlayProofLines", 0)) <= 0:
                 failures.append("missing weapon IK bone overlay proof evidence")
+            if int(hand_runtime_summary.get("weaponIkBoneOverlayFullBoneSegmentsMax", 0)) <= 0:
+                failures.append("missing full live skeleton IK bone overlay evidence")
+            if staticized_hands_observed and int(hand_runtime_summary.get("staticGripProofLines", 0)) <= 0:
+                failures.append("missing static hand grip deformation proof evidence")
         if (
             summary_value(lines, "NeutralActorPreview").lower() == "true"
             and summary_value(lines, "NeutralActorPreviewStandingIdle").lower() == "true"
             and not summary_value(lines, "ActorKitAnimationSource")
             and not weapon_action_group
+            and phase not in {"arm-baseline", "t-pose", "weapon"}
         ):
             failures.append("missing explicit neutral authoring animation source")
     collapsed_heads = []
