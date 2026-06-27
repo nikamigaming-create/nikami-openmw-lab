@@ -741,6 +741,7 @@ def parse_summary_int(text: str, key: str) -> int:
 def parse_hand_runtime_summary(lines: list[str]) -> dict[str, Any]:
     static_text = summary_value(lines, "Target static hand no-twist proof lines")
     visible_text = summary_value(lines, "Target visible hand geometry samples")
+    visible_limb_shape_text = summary_value(lines, "Target visible limb shape BAD lines")
     return {
         "staticProofLines": int(static_text.split()[0]) if static_text and static_text.split()[0].isdigit() else 0,
         "leftStaticProofLines": parse_summary_int(static_text, "left"),
@@ -754,7 +755,8 @@ def parse_hand_runtime_summary(lines: list[str]) -> dict[str, Any]:
         "visibleHandGeometryPoseSanityBadLines": int(
             summary_value(lines, "Target visible hand geometry pose sanity BAD lines") or "0"
         ),
-        "visibleLimbShapeBadLines": int(summary_value(lines, "Target visible limb shape BAD lines") or "0"),
+        "visibleLimbShapeBadLinesPresent": bool(visible_limb_shape_text),
+        "visibleLimbShapeBadLines": int(visible_limb_shape_text or "0"),
         "targetStandingArmPoseOkLines": int(summary_value(lines, "Target standing arm pose OK lines") or "0"),
         "targetStandingArmPoseBadLines": int(summary_value(lines, "Target standing arm pose BAD lines") or "0"),
     }
@@ -1479,6 +1481,8 @@ def evaluate(
                 "target visible hand geometry pose sanity failures: "
                 f"{hand_runtime_summary['visibleHandGeometryPoseSanityBadLines']}"
             )
+        if not bool(hand_runtime_summary.get("visibleLimbShapeBadLinesPresent", False)):
+            failures.append("missing target visible limb shape evidence")
         if int(hand_runtime_summary.get("visibleLimbShapeBadLines", 0)) > 0:
             failures.append(f"target visible limb shape failures: {hand_runtime_summary['visibleLimbShapeBadLines']}")
         if int(hand_runtime_summary.get("targetStandingArmPoseBadLines", 0)) > 0:

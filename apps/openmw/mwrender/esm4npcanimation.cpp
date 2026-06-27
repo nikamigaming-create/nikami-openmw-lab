@@ -1125,10 +1125,10 @@ namespace MWRender
                                  << " ref=" << ptr.getCellRef().getRefId()
                                  << " group=sneakidle"
                                  << " weaponGroup=" << group
-                                 << " blendMask=" << BlendMask_All
+                                 << " blendMask=" << BlendMask_LowerBody
                                  << " runtime=runtime-supported";
-                animation.play("sneakidle", sneakBasePriority, BlendMask_All, false, 1.f, "start", "stop", 0.f, 0,
-                    true);
+                animation.play("sneakidle", sneakBasePriority, BlendMask_LowerBody, false, 1.f, "start", "stop", 0.f,
+                    0, true);
             }
 
             animation.play(group, MWMechanics::Priority_Scripted, blendMask, false, 1.f, "start", "stop",

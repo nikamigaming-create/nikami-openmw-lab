@@ -4011,14 +4011,44 @@ namespace MWRender
             || std::getenv("OPENMW_FNV_APPLY_PROCEDURE_BONE_TRANSLATIONS") != nullptr;
     }
 
-    bool shouldApplyFalloutSneakBaseBoneTranslations(
-        std::string_view groupname, const std::string& sourceName, size_t blendMask)
+    bool isFalloutSneakBaseLowerBodyLayer(std::string_view groupname, const std::string& sourceName, size_t blendMask)
     {
         if (blendMask != BoneGroup_LowerBody || groupname != "sneakidle")
             return false;
 
         const std::string lowerSource = Misc::StringUtils::lowerCase(sourceName);
         return lowerSource.find("sneakmtidle.kf") != std::string::npos;
+    }
+
+    bool shouldApplyFalloutSneakBaseBoneTranslations(
+        std::string_view groupname, const std::string& sourceName, size_t blendMask)
+    {
+        return isFalloutSneakBaseLowerBodyLayer(groupname, sourceName, blendMask);
+    }
+
+    osg::Quat composeFalloutSneakBaseLowerBodyRotation(
+        osg::MatrixTransform* transform, osg::Quat rotation, const std::string& lowerBone)
+    {
+        normalizeFiniteQuat(rotation);
+        rotation = swizzleFalloutKeyRotation(rotation);
+        normalizeFiniteQuat(rotation);
+        osg::Quat bindRotation = getFalloutBindRotation(transform);
+        normalizeFiniteQuat(bindRotation);
+
+        if (isFalloutLowerBodyBone(lowerBone))
+            return rotation;
+        if (lowerBone == "bip01" || lowerBone == "bip01 nonaccum" || isFalloutSpineBone(lowerBone))
+            return rotation * bindRotation;
+        return bindRotation;
+    }
+
+    osg::Quat composeFalloutAnimationRotation(osg::MatrixTransform* transform, osg::Quat rotation,
+        const std::string& lowerBone, bool procedureIdle, std::string_view groupname, const std::string& sourceName,
+        size_t blendMask)
+    {
+        if (isFalloutSneakBaseLowerBodyLayer(groupname, sourceName, blendMask))
+            return composeFalloutSneakBaseLowerBodyRotation(transform, rotation, lowerBone);
+        return composeFalloutBindRelativeRotation(transform, rotation, lowerBone, procedureIdle);
     }
 
     bool shouldApplyFalloutAccumulationRotation()
@@ -5491,24 +5521,27 @@ namespace MWRender
                         }
                     }
                     const bool accumulationBone = isFalloutAccumulationBone(lowerAppliedBone);
-                    const bool allowAccumulationTranslation = !accumulationBone || falloutProcedureIdle;
+                    const bool falloutSneakBaseLayer = isFalloutSneakBaseLowerBodyLayer(
+                        active->second.mGroupname, animsrc ? animsrc->mSourceName : std::string(), blendMask);
+                    const bool allowAccumulationTranslation = !accumulationBone || falloutProcedureIdle || falloutSneakBaseLayer;
                     const bool applyBoneTranslation
                         = ((falloutProcedureIdle ? shouldApplyFalloutProcedureBoneTranslations()
                                                  : shouldApplyFalloutBoneTranslations())
-                              || shouldApplyFalloutSneakBaseBoneTranslations(
-                                  active->second.mGroupname, animsrc ? animsrc->mSourceName : std::string(), blendMask))
+                              || falloutSneakBaseLayer)
                         && allowAccumulationTranslation
                         && keyframe.mTranslation
                         && isSafeFalloutBoneTranslation(*keyframe.mTranslation, before.getTrans());
-                    if (accumulationBone && !falloutProcedureIdle && !shouldApplyFalloutAccumulationRotation())
+                    if (accumulationBone && !falloutProcedureIdle && !falloutSneakBaseLayer
+                        && !shouldApplyFalloutAccumulationRotation())
                         keyframe.mRotation.reset();
                     if (auto* nifTransform = dynamic_cast<NifOsg::MatrixTransform*>(transform))
                     {
                         osg::Matrixf candidate = before;
                         if (keyframe.mRotation)
                         {
-                            osg::Quat rotation = composeFalloutBindRelativeRotation(
-                                nifTransform, *keyframe.mRotation, lowerAppliedBone, falloutProcedureIdle);
+                            osg::Quat rotation = composeFalloutAnimationRotation(nifTransform, *keyframe.mRotation,
+                                lowerAppliedBone, falloutProcedureIdle, active->second.mGroupname,
+                                animsrc ? animsrc->mSourceName : std::string(), blendMask);
                             if (normalizeFiniteQuat(rotation))
                             {
                                 candidate = osg::Matrixf::rotate(rotation) * osg::Matrixf::translate(before.getTrans());
@@ -5601,8 +5634,9 @@ namespace MWRender
                         bool hasRotation = false;
                         if (keyframe.mRotation)
                         {
-                            rotation = composeFalloutBindRelativeRotation(
-                                transform, *keyframe.mRotation, lowerAppliedBone, falloutProcedureIdle);
+                            rotation = composeFalloutAnimationRotation(transform, *keyframe.mRotation, lowerAppliedBone,
+                                falloutProcedureIdle, active->second.mGroupname,
+                                animsrc ? animsrc->mSourceName : std::string(), blendMask);
                             hasRotation = normalizeFiniteQuat(rotation);
                         }
 
