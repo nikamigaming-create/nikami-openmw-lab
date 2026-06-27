@@ -1248,9 +1248,6 @@ namespace MWRender
             if (mViewMode == ViewMode::FrontLeft)
                 partMask = std::make_unique<FalloutActorPreviewPartMaskVisitor>(
                     FalloutActorPreviewPartMaskVisitor::Mode::FaceHeadgear);
-            else if (mViewMode == ViewMode::FrontRight)
-                partMask = std::make_unique<FalloutActorPreviewPartMaskVisitor>(
-                    FalloutActorPreviewPartMaskVisitor::Mode::RightHandWeapon);
 
             if (partMask != nullptr)
             {
@@ -1267,7 +1264,6 @@ namespace MWRender
             mNode->accept(visibleBoundsVisitor);
             const osg::BoundingBox visibleBounds = visibleBoundsVisitor.getBoundingBox();
             const bool handCameraOverride = std::getenv("OPENMW_FNV_NEUTRAL_ACTOR_PREVIEW_HAND_CAMERA_X") != nullptr
-                || std::getenv("OPENMW_FNV_NEUTRAL_ACTOR_PREVIEW_HAND_CAMERA_Y") != nullptr
                 || std::getenv("OPENMW_FNV_NEUTRAL_ACTOR_PREVIEW_HAND_CAMERA_Z") != nullptr
                 || std::getenv("OPENMW_FNV_NEUTRAL_ACTOR_PREVIEW_HAND_LOOK_X") != nullptr
                 || std::getenv("OPENMW_FNV_NEUTRAL_ACTOR_PREVIEW_HAND_LOOK_Y") != nullptr
@@ -1276,13 +1272,14 @@ namespace MWRender
             {
                 const osg::Vec3f center = visibleBounds.center();
                 const float distance = getFalloutNeutralActorPreviewFloat(
-                    "OPENMW_FNV_NEUTRAL_ACTOR_PREVIEW_HAND_CAMERA_Y", 190.f);
+                    "OPENMW_FNV_NEUTRAL_ACTOR_PREVIEW_HAND_CAMERA_Y", 760.f);
                 lookAt = center;
                 position = osg::Vec3f(center.x(), center.y() + distance, center.z());
                 mRTTNode->setViewMatrix(
                     osg::Matrixf::lookAt(position * scale.z(), lookAt * scale.z(), osg::Vec3f(0, 0, 1)));
                 Log(Debug::Info) << "FNV/ESM4 proof: neutral actor preview auto hand camera view=" << viewName
                                  << " target=" << formatVec3(center)
+                                 << " targetSource=visible-combat-pose-bounds"
                                  << " distance=" << distance
                                  << " runtime=runtime-supported gate=runtime-neutral-actor-preview";
             }
