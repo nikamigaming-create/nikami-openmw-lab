@@ -7164,6 +7164,30 @@ namespace MWRender
         const osg::Vec3f rightTarget = chest + forward * 34.f + right * 10.f + osg::Vec3f(0.f, 0.f, -3.f);
         const osg::Vec3f leftTarget = chest + forward * 28.f - right * 8.f + osg::Vec3f(0.f, 0.f, -5.f);
 
+        const auto nodeOrigin = [&](std::initializer_list<std::string_view> names, bool& valid) -> osg::Vec3f {
+            osg::Group* group = findBestAttachmentNode(nodeMap, names);
+            valid = group != nullptr;
+            if (!valid)
+                return osg::Vec3f();
+            const osg::Vec3d trans = getNodeWorldMatrix(group).getTrans();
+            return osg::Vec3f(trans.x(), trans.y(), trans.z());
+        };
+        const auto distanceToTarget = [](const osg::Vec3f& point, const osg::Vec3f& target, bool valid) {
+            return valid ? (point - target).length() : -1.f;
+        };
+        const auto endpointMove = [](const osg::Vec3f& before, const osg::Vec3f& after, bool valid) {
+            return valid ? (after - before).length() : -1.f;
+        };
+
+        bool rightHandValidBefore = false;
+        bool leftHandValidBefore = false;
+        bool weaponValidBefore = false;
+        const osg::Vec3f rightHandBefore
+            = nodeOrigin({ "Bip01 R Hand", "bip01 r hand" }, rightHandValidBefore);
+        const osg::Vec3f leftHandBefore
+            = nodeOrigin({ "Bip01 L Hand", "bip01 l hand" }, leftHandValidBefore);
+        const osg::Vec3f weaponBefore = nodeOrigin({ "Weapon", "weapon", "Bip01 Weapon" }, weaponValidBefore);
+
         const auto rotateBoneToward = [&](std::string_view name, const osg::Vec3f& target) -> bool {
             osg::Group* group = findBestAttachmentNode(nodeMap, { name });
             osg::MatrixTransform* bone = dynamic_cast<osg::MatrixTransform*>(group);
@@ -7200,16 +7224,58 @@ namespace MWRender
         if (mSkeleton != nullptr)
             mSkeleton->markBoneMatriceDirty();
 
+        bool rightHandValidAfter = false;
+        bool leftHandValidAfter = false;
+        bool weaponValidAfter = false;
+        const osg::Vec3f rightHandAfter
+            = nodeOrigin({ "Bip01 R Hand", "bip01 r hand" }, rightHandValidAfter);
+        const osg::Vec3f leftHandAfter
+            = nodeOrigin({ "Bip01 L Hand", "bip01 l hand" }, leftHandValidAfter);
+        const osg::Vec3f weaponAfter = nodeOrigin({ "Weapon", "weapon", "Bip01 Weapon" }, weaponValidAfter);
+        const float rightTargetBefore = distanceToTarget(rightHandBefore, rightTarget, rightHandValidBefore);
+        const float rightTargetAfter = distanceToTarget(rightHandAfter, rightTarget, rightHandValidAfter);
+        const float leftTargetBefore = distanceToTarget(leftHandBefore, leftTarget, leftHandValidBefore);
+        const float leftTargetAfter = distanceToTarget(leftHandAfter, leftTarget, leftHandValidAfter);
+        const float rightEndpointMoved = endpointMove(rightHandBefore, rightHandAfter, rightHandValidBefore && rightHandValidAfter);
+        const float leftEndpointMoved = endpointMove(leftHandBefore, leftHandAfter, leftHandValidBefore && leftHandValidAfter);
+        const float weaponEndpointMoved = endpointMove(weaponBefore, weaponAfter, weaponValidBefore && weaponValidAfter);
+        const bool endpointMoved = rightEndpointMoved > 1.f || leftEndpointMoved > 1.f || weaponEndpointMoved > 1.f;
+        const bool targetImproved = (rightTargetBefore >= 0.f && rightTargetAfter >= 0.f
+                                        && rightTargetAfter + 0.5f < rightTargetBefore)
+            || (leftTargetBefore >= 0.f && leftTargetAfter >= 0.f && leftTargetAfter + 0.5f < leftTargetBefore);
+        const bool runtimeSupported = solved == 4 && (endpointMoved || targetImproved);
+
         if (!mFONVBoneIkLogged)
         {
             mFONVBoneIkLogged = true;
-            Log(Debug::Info) << "FNV/ESM4 proof: weapon IK solver active actor=" << traits.mEditorId
-                             << " solvedBones=" << solved
-                             << " strength=" << strength
-                             << " rightTarget=(" << rightTarget.x() << "," << rightTarget.y() << ","
-                             << rightTarget.z() << ")"
-                             << " leftTarget=(" << leftTarget.x() << "," << leftTarget.y() << ","
-                             << leftTarget.z() << ") runtime=runtime-supported gate=runtime-fnv-weapon-ik";
+            Log(runtimeSupported ? Debug::Info : Debug::Warning)
+                << "FNV/ESM4 proof: weapon IK solver active actor=" << traits.mEditorId
+                << " solvedBones=" << solved
+                << " strength=" << strength
+                << " rightTarget=(" << rightTarget.x() << "," << rightTarget.y() << "," << rightTarget.z() << ")"
+                << " leftTarget=(" << leftTarget.x() << "," << leftTarget.y() << "," << leftTarget.z() << ")"
+                << " rightHandBefore=(" << rightHandBefore.x() << "," << rightHandBefore.y() << ","
+                << rightHandBefore.z() << ")"
+                << " rightHandAfter=(" << rightHandAfter.x() << "," << rightHandAfter.y() << ","
+                << rightHandAfter.z() << ")"
+                << " leftHandBefore=(" << leftHandBefore.x() << "," << leftHandBefore.y() << ","
+                << leftHandBefore.z() << ")"
+                << " leftHandAfter=(" << leftHandAfter.x() << "," << leftHandAfter.y() << ","
+                << leftHandAfter.z() << ")"
+                << " weaponBefore=(" << weaponBefore.x() << "," << weaponBefore.y() << "," << weaponBefore.z()
+                << ")"
+                << " weaponAfter=(" << weaponAfter.x() << "," << weaponAfter.y() << "," << weaponAfter.z() << ")"
+                << " rightTargetDistanceBefore=" << rightTargetBefore
+                << " rightTargetDistanceAfter=" << rightTargetAfter
+                << " leftTargetDistanceBefore=" << leftTargetBefore
+                << " leftTargetDistanceAfter=" << leftTargetAfter
+                << " rightEndpointMoved=" << rightEndpointMoved
+                << " leftEndpointMoved=" << leftEndpointMoved
+                << " weaponEndpointMoved=" << weaponEndpointMoved
+                << " targetImproved=" << targetImproved
+                << " endpointMoved=" << endpointMoved
+                << " runtime=" << (runtimeSupported ? "runtime-supported" : "loaded-pending-runtime")
+                << " gate=runtime-fnv-weapon-ik";
         }
     }
 

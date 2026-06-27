@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <cmath>
 #include <cstdlib>
 #include <limits>
@@ -147,13 +148,30 @@ namespace SceneUtil
             if (env == nullptr)
                 return false;
 
-            const std::string_view filter(env);
-            if (filter.empty() || filter == "1" || Misc::StringUtils::ciEqual(filter, "true")
-                || Misc::StringUtils::ciEqual(filter, "all"))
+            const std::string_view filters(env);
+            if (filters.empty() || filters == "1" || Misc::StringUtils::ciEqual(filters, "true")
+                || Misc::StringUtils::ciEqual(filters, "all"))
                 return true;
 
-            return Misc::StringUtils::ciFind(name, filter) != std::string_view::npos
-                || Misc::StringUtils::ciFind(rootBone, filter) != std::string_view::npos;
+            std::size_t start = 0;
+            while (start <= filters.size())
+            {
+                const std::size_t end = filters.find_first_of(",;", start);
+                std::string_view filter = filters.substr(start, end == std::string_view::npos ? end : end - start);
+                while (!filter.empty() && std::isspace(static_cast<unsigned char>(filter.front())))
+                    filter.remove_prefix(1);
+                while (!filter.empty() && std::isspace(static_cast<unsigned char>(filter.back())))
+                    filter.remove_suffix(1);
+                if (!filter.empty()
+                    && (Misc::StringUtils::ciEqual(filter, "all")
+                        || Misc::StringUtils::ciFind(name, filter) != std::string_view::npos
+                        || Misc::StringUtils::ciFind(rootBone, filter) != std::string_view::npos))
+                    return true;
+                if (end == std::string_view::npos)
+                    break;
+                start = end + 1;
+            }
+            return false;
         }
 
         osg::Matrixf makeFalloutSkinningAccumulator()
