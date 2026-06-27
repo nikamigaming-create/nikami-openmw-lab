@@ -342,6 +342,8 @@ Assert-Text $animation 'lowered.find("characters/head/head")' "runtime part audi
 Assert-Text $animation 'lowered.find("characters\\head\\head")' "runtime part audit classifies backslash FNV head surface paths as head parts"
 Assert-Text $npcAnimation "const osg::Vec3f headFrameCenter = headLocalCenter" "FNV face attachment axis checks use head-local coordinates"
 Assert-Text $npcAnimation "const bool headDetached = headRelative" "FNV head attachment bounds do not exempt detached head surface meshes"
+Assert-Text $characterBuilderReport "find_attachment_world_jumps" "character builder report detects head attachments that jump world coordinate frames"
+Assert-Text $characterBuilderReport "attachment world-frame jumps" "character builder report fails head attachments that are locally plausible but globally detached"
 Assert-Text $animation 'stem.find("attackright")' "synthetic Fallout KF groups classify attackright before movement-right"
 Assert-Text $animation 'return "attackright"' "synthetic Fallout KF groups expose actor-kit attackright playback"
 Assert-Text $animation 'return "sneakattackright"' "synthetic Fallout KF groups expose crouch/sneak attackright playback"

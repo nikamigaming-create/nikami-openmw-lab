@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import re
 from pathlib import Path
 from typing import Any
@@ -694,6 +695,56 @@ def find_face_occlusion_findings(bounds: list[dict[str, Any]], audits: list[dict
                 "eyeZ": eye_z,
                 "mouthY": mouth_y,
                 "mouthZ": mouth_z,
+            }
+        )
+    return findings
+
+
+def vec3_distance(a: list[float], b: list[float]) -> float:
+    if len(a) != 3 or len(b) != 3:
+        return 0.0
+    return math.sqrt(sum((a[index] - b[index]) ** 2 for index in range(3)))
+
+
+def find_attachment_world_jumps(bounds: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    timelines: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for item in bounds:
+        model = item.get("model", "").replace("\\", "/").lower()
+        if not (
+            "/characters/head/" in model
+            or "/characters/hair/" in model
+            or model.startswith("meshes/characters/head/")
+            or model.startswith("meshes/characters/hair/")
+        ):
+            continue
+        world_center = item.get("worldCenter") or []
+        if not isinstance(world_center, list) or len(world_center) != 3:
+            continue
+        key = (item.get("ref", ""), item.get("model", ""))
+        timelines.setdefault(key, []).append(item)
+
+    findings: list[dict[str, Any]] = []
+    for (ref, model), samples in timelines.items():
+        if len(samples) < 2:
+            continue
+        first = samples[0]
+        worst = max(samples[1:], key=lambda sample: vec3_distance(first["worldCenter"], sample["worldCenter"]))
+        jump_distance = vec3_distance(first["worldCenter"], worst["worldCenter"])
+        if jump_distance <= 120.0:
+            continue
+        findings.append(
+            {
+                "ref": ref,
+                "model": model,
+                "parent": worst.get("parent", ""),
+                "firstWorldCenter": first.get("worldCenter", []),
+                "worstWorldCenter": worst.get("worldCenter", []),
+                "jumpDistance": jump_distance,
+                "firstHeadRel": first.get("headRel", []),
+                "worstHeadRel": worst.get("headRel", []),
+                "firstVerdict": first.get("verdict", ""),
+                "worstVerdict": worst.get("verdict", ""),
+                "reason": "head attachment moved into a different world frame between samples",
             }
         )
     return findings
@@ -1402,6 +1453,7 @@ def evaluate(
     actor_weapon_states: list[dict[str, Any]],
     projectile_runtime_evidence: list[dict[str, Any]],
     face_occlusion_findings: list[dict[str, Any]],
+    attachment_world_jumps: list[dict[str, Any]],
     neutral_preview_composition: list[dict[str, Any]],
     face_checks: list[dict[str, Any]],
     hand_runtime_summary: dict[str, Any],
@@ -1464,6 +1516,8 @@ def evaluate(
         failures.append(f"neutral preview composition findings: {len(neutral_preview_findings)}")
     if face_occlusion_findings:
         failures.append(f"face occlusion/headgear orientation findings: {len(face_occlusion_findings)}")
+    if attachment_world_jumps:
+        failures.append(f"attachment world-frame jumps: {len(attachment_world_jumps)}")
     staticized_hands_requested = summary_value(lines, "FnvStaticizeRiggedHandParts").strip() not in {
         "",
         "0",
@@ -1794,6 +1848,18 @@ def write_markdown(path: Path, report: dict[str, Any]) -> None:
                 f"{item['yRange']} | {item['zRange']} |"
             )
         lines.append("")
+    if report["attachmentWorldJumps"]:
+        lines.append("## Attachment World Jumps")
+        lines.append("")
+        lines.append("| Model | Reason | First World | Worst World | Jump | First HeadRel | Worst HeadRel |")
+        lines.append("|---|---|---|---|---:|---|---|")
+        for item in report["attachmentWorldJumps"][:24]:
+            lines.append(
+                f"| {item['model']} | {item['reason']} | {item['firstWorldCenter']} | "
+                f"{item['worstWorldCenter']} | {item['jumpDistance']:.4g} | "
+                f"{item['firstHeadRel']} | {item['worstHeadRel']} |"
+            )
+        lines.append("")
     if report["headSurfaceOffsets"]:
         lines.append("## Head Surface Offsets")
         lines.append("")
@@ -1916,6 +1982,7 @@ def main() -> int:
     runtime_audit_summary = summarize_runtime_audits(audits)
     runtime_part_timelines = build_runtime_part_timelines(audits)
     face_occlusion_findings = find_face_occlusion_findings(bounds, audits)
+    attachment_world_jumps = find_attachment_world_jumps(bounds)
     neutral_preview_composition = analyze_neutral_preview_composition(
         proof_dir, lines, args.actor, weapon_present=weapon_present, phase=args.phase.lower()
     )
@@ -1957,6 +2024,7 @@ def main() -> int:
         actor_weapon_states,
         projectile_runtime_evidence,
         face_occlusion_findings,
+        attachment_world_jumps,
         neutral_preview_composition,
         face_checks,
         hand_runtime_summary,
@@ -1985,6 +2053,7 @@ def main() -> int:
         "runtimeAuditSummary": runtime_audit_summary,
         "runtimePartTimelines": runtime_part_timelines,
         "faceOcclusionFindings": face_occlusion_findings,
+        "attachmentWorldJumps": attachment_world_jumps,
         "neutralPreviewComposition": neutral_preview_composition,
         "faceChecks": face_checks,
         "faceDrawables": drawables,
