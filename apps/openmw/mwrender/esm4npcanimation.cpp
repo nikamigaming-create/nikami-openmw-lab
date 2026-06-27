@@ -1012,6 +1012,10 @@ namespace MWRender
                 return "meshes/characters/_male/idleanims/talk_handsatside_still2.kf";
             if (source == "pistol-pose" || source == "pistol" || source == "1hpistol")
                 return "meshes/characters/_male/idleanims/dlcanch1hpistolpose.kf";
+            if (source == "sneakidle" || source == "sneak-idle" || source == "crouch-idle")
+                return "meshes/characters/_male/sneakmtidle.kf";
+            if (source == "sneak-pistol" || source == "crouch-pistol" || source == "crouch-fire")
+                return "meshes/characters/_male/sneak1hpaim.kf";
             if (source == "rifle-loiter" || source == "rifle" || source == "2hrloiter")
                 return "meshes/characters/_male/idleanims/2hrloiter.kf";
             VFS::Path::normalizeFilenameInPlace(source);
@@ -1045,6 +1049,11 @@ namespace MWRender
 
         int getFalloutActorKitAnimationBlendMask(const std::string& group)
         {
+            if (group.rfind("sneak", 0) == 0 && isFalloutActorKitWeaponActionGroup(group)
+                && group.find("aim") == std::string::npos)
+                return BlendMask_UpperBody;
+            if (group.rfind("sneak", 0) == 0)
+                return BlendMask_All;
             if (isFalloutActorKitWeaponActionGroup(group))
                 return BlendMask_LeftArm | BlendMask_RightArm;
             return BlendMask_All;
@@ -1066,6 +1075,20 @@ namespace MWRender
                              << " blendMask=" << blendMask
                              << " available=" << available
                              << " runtime=" << (available ? "runtime-supported" : "known-blocked");
+
+            if (group.rfind("sneakattack", 0) == 0 && animation.hasAnimation("sneakidle"))
+            {
+                Animation::AnimPriority sneakBasePriority(MWMechanics::Priority_Default);
+                sneakBasePriority[BoneGroup_LowerBody] = MWMechanics::Priority_SneakIdleLowerBody;
+                Log(Debug::Info) << "FNV/ESM4 proof: actor-kit layered sneak base actor=" << traits.mEditorId
+                                 << " ref=" << ptr.getCellRef().getRefId()
+                                 << " group=sneakidle"
+                                 << " weaponGroup=" << group
+                                 << " blendMask=" << BlendMask_All
+                                 << " runtime=runtime-supported";
+                animation.play("sneakidle", sneakBasePriority, BlendMask_All, false, 1.f, "start", "stop", 0.f, 0,
+                    true);
+            }
 
             animation.play(group, MWMechanics::Priority_Scripted, blendMask, false, 1.f, "start", "stop",
                 startPoint, 0, true);
@@ -6891,6 +6914,24 @@ namespace MWRender
                 addFonvAnimationSource("meshes/characters/_male/1hpattackrightdown.kf", "weapon action fallback", false);
                 addFonvAnimationSource("meshes/characters/_male/1hpattackloop.kf", "weapon action fallback", false);
                 addFonvAnimationSource("meshes/characters/_male/1hpreloadx.kf", "weapon action fallback", false);
+                if (actorKitGroup.find("sneak") != std::string::npos || actorKitGroup.find("crouch") != std::string::npos)
+                {
+                    addFonvAnimationSource("meshes/characters/_male/sneakmtidle.kf", "sneak weapon action fallback", false);
+                    addFonvAnimationSource("meshes/characters/_male/sneak1hpaim.kf", "sneak weapon action fallback", false);
+                    addFonvAnimationSource("meshes/characters/_male/sneak1hpequip.kf", "sneak weapon action fallback", false);
+                    addFonvAnimationSource(
+                        "meshes/characters/_male/sneak1hpattackright.kf", "sneak weapon action fallback", false);
+                    addFonvAnimationSource(
+                        "meshes/characters/_male/sneak1hpattackrightis.kf", "sneak weapon action fallback", false);
+                    addFonvAnimationSource(
+                        "meshes/characters/_male/sneak1hpattackrightup.kf", "sneak weapon action fallback", false);
+                    addFonvAnimationSource(
+                        "meshes/characters/_male/sneak1hpattackrightdown.kf", "sneak weapon action fallback", false);
+                    addFonvAnimationSource(
+                        "meshes/characters/_male/sneak1hpattackloop.kf", "sneak weapon action fallback", false);
+                    addFonvAnimationSource(
+                        "meshes/characters/_male/sneak1hpreloadx.kf", "sneak weapon action fallback", false);
+                }
             }
 
             // Add scheduled package procedure sources last because Animation::play resolves sources in reverse order.

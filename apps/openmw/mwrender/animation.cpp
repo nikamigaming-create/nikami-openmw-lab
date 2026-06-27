@@ -4011,6 +4011,16 @@ namespace MWRender
             || std::getenv("OPENMW_FNV_APPLY_PROCEDURE_BONE_TRANSLATIONS") != nullptr;
     }
 
+    bool shouldApplyFalloutSneakBaseBoneTranslations(
+        std::string_view groupname, const std::string& sourceName, size_t blendMask)
+    {
+        if (blendMask != BoneGroup_LowerBody || groupname != "sneakidle")
+            return false;
+
+        const std::string lowerSource = Misc::StringUtils::lowerCase(sourceName);
+        return lowerSource.find("sneakmtidle.kf") != std::string::npos;
+    }
+
     bool shouldApplyFalloutAccumulationRotation()
     {
         return std::getenv("OPENMW_FNV_APPLY_ACCUM_ROTATION") != nullptr;
@@ -4069,8 +4079,18 @@ namespace MWRender
             return "flyforward";
         if (stem.find("specialidle") != std::string::npos)
             return "idle2";
+        if (stem.rfind("sneak", 0) == 0 && (stem == "sneakmtidle" || Misc::StringUtils::ciEndsWith(stem, "idle")))
+            return "sneakidle";
         if (stem == "mtidle" || stem == "idle" || Misc::StringUtils::ciEndsWith(stem, "idle"))
             return "idle";
+        if (stem.rfind("sneak", 0) == 0 && stem.find("attackright") != std::string::npos)
+            return "sneakattackright";
+        if (stem.rfind("sneak", 0) == 0 && stem.find("attackleft") != std::string::npos)
+            return "sneakattackleft";
+        if (stem.rfind("sneak", 0) == 0 && stem.find("reload") != std::string::npos)
+            return "sneakreload";
+        if (stem.rfind("sneak", 0) == 0 && stem.find("aim") != std::string::npos)
+            return "sneakaim";
         if (stem.find("attackright") != std::string::npos)
             return "attackright";
         if (stem.find("attackleft") != std::string::npos)
@@ -4654,7 +4674,8 @@ namespace MWRender
             return;
         }
 
-        if (falloutNpc && isFalloutWeaponActionAnimationGroup(groupname)
+        const bool falloutFullBodyWeaponAction = groupname.starts_with("sneak");
+        if (falloutNpc && isFalloutWeaponActionAnimationGroup(groupname) && !falloutFullBodyWeaponAction
             && (blendMask & (BlendMask_LowerBody | BlendMask_Torso | BlendMask_Head)) != 0)
         {
             const int requestedBlendMask = blendMask;
@@ -5462,8 +5483,11 @@ namespace MWRender
                     }
                     const bool accumulationBone = isFalloutAccumulationBone(lowerAppliedBone);
                     const bool allowAccumulationTranslation = !accumulationBone || falloutProcedureIdle;
-                    const bool applyBoneTranslation = (falloutProcedureIdle ? shouldApplyFalloutProcedureBoneTranslations()
-                                                                            : shouldApplyFalloutBoneTranslations())
+                    const bool applyBoneTranslation
+                        = ((falloutProcedureIdle ? shouldApplyFalloutProcedureBoneTranslations()
+                                                 : shouldApplyFalloutBoneTranslations())
+                              || shouldApplyFalloutSneakBaseBoneTranslations(
+                                  active->second.mGroupname, animsrc ? animsrc->mSourceName : std::string(), blendMask))
                         && allowAccumulationTranslation
                         && keyframe.mTranslation
                         && isSafeFalloutBoneTranslation(*keyframe.mTranslation, before.getTrans());

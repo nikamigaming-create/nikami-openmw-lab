@@ -182,8 +182,10 @@ function Add-PlacementArgsIfPresent([hashtable]$ArgMap, [object]$Placement) {
 
 function Resolve-ActorKitAnimationGroup([string[]]$RuntimeStates) {
     $states = @($RuntimeStates | ForEach-Object { ([string]$_).ToLowerInvariant() })
+    if (($states -contains "crouch" -or $states -contains "sneak") -and ($states -contains "projectile-fire" -or $states -contains "attack")) { return "sneakattackright" }
     if ($states -contains "projectile-fire") { return "attackright" }
     if ($states -contains "attack") { return "attackright" }
+    if ($states -contains "crouch" -or $states -contains "sneak") { return "sneakaim" }
     if ($states -contains "run") { return "runforward" }
     if ($states -contains "walk") { return "walkforward" }
     if ($states -contains "idle" -or $states -contains "neutral") { return "idle" }
