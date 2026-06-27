@@ -2131,6 +2131,7 @@ $targetVisibleHandGeometry = Get-ActorVisibleHandGeometryProbe $OpenMwLog $actor
 $targetBareHandIncludes = Count-ActorBareHandIncludeMatches $OpenMwLog $actorProofPatterns
 $targetStaticHandNoTwist = Get-ActorStaticHandNoTwistProbe $OpenMwLog $actorProofPatterns
 $weaponIkSolverLines = Count-LogMatches $OpenMwLog "FNV/ESM4 proof: weapon IK solver active .*gate=runtime-fnv-weapon-ik"
+$weaponIkEndpointCcdLines = Count-LogMatches $OpenMwLog "FNV/ESM4 proof: weapon IK solver active .*solver=ccd-endpoint .*gate=runtime-fnv-weapon-ik"
 $weaponIkBoneOverlayLines = Count-LogMatches $OpenMwLog "FNV/ESM4 proof: weapon IK bone debug overlay frame .*gate=runtime-fnv-weapon-ik-bone-overlay"
 $unsupportedEsm4Skips = @(Get-UnsupportedEsm4Skips $OpenMwLog)
 $screenshots = @(Get-ChildItem -LiteralPath $ProofDir -Filter "*.png" -File -ErrorAction SilentlyContinue)
@@ -2181,6 +2182,7 @@ Write-ProofLine "Target world posture BAD lines: $targetWorldPostureBadLines"
 Write-ProofLine "Target standing arm pose OK lines: $targetStandingArmPoseOkLines"
 Write-ProofLine "Target standing arm pose BAD lines: $targetStandingArmPoseBadLines"
 Write-ProofLine "Weapon IK solver proof lines: $weaponIkSolverLines"
+Write-ProofLine "Weapon IK endpoint CCD proof lines: $weaponIkEndpointCcdLines"
 Write-ProofLine "Weapon IK bone overlay proof lines: $weaponIkBoneOverlayLines"
 Write-ProofLine "Target bare hand skin include lines: $targetBareHandIncludes"
 Write-ProofLine ("Target static hand no-twist proof lines: {0} left={1} right={2} fingerWeightsLoaded={3} pendingFingerArticulation={4}" -f `
@@ -2239,6 +2241,7 @@ if (![string]::IsNullOrWhiteSpace($ActorTarget) -and $targetStandingArmPoseBadLi
 if (![string]::IsNullOrWhiteSpace($ActorTarget) -and $targetWorldPostureOkLines -eq 0) { throw "FNV actor proof did not log target world posture lines. See $OpenMwLog" }
 if (![string]::IsNullOrWhiteSpace($ActorTarget) -and $targetStandingArmPoseOkLines -eq 0) { throw "FNV actor proof did not log target standing arm pose lines. See $OpenMwLog" }
 if ($weaponActionProof -and $weaponIkSolverLines -eq 0) { throw "FNV weapon action proof did not log weapon IK solver evidence. See $OpenMwLog" }
+if ($weaponActionProof -and $weaponIkEndpointCcdLines -eq 0) { throw "FNV weapon action proof did not log endpoint CCD weapon IK solver evidence. See $OpenMwLog" }
 if ($weaponActionProof -and $weaponIkBoneOverlayLines -eq 0) { throw "FNV weapon action proof did not log visible IK bone overlay evidence. See $OpenMwLog" }
 if (![string]::IsNullOrWhiteSpace($ActorTarget) -and $targetVisibleHandGeometry.PoseSanityBadCount -gt 0) { throw "FNV actor proof saw target hand mesh pose sanity BAD lines. See $OpenMwLog" }
 if (![string]::IsNullOrWhiteSpace($ActorTarget) -and $targetVisibleHandGeometry.LimbShapeBadCount -gt 0) { throw "FNV actor proof saw target visible limb shape BAD lines. See $OpenMwLog" }

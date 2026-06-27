@@ -280,6 +280,7 @@ function Get-FnvRuntimeEvidence([string]$ProofDir, [string]$FnvSkinningMatrixAud
     $visibleHandGeometryFailureLine = Get-RegexValue $summaryText "Target visible hand geometry failure line:\s+([^\r\n]+)"
     $fnvShowIkBones = Get-RegexValue $summaryText "FnvShowIkBones:\s+([^\r\n]+)"
     $weaponIkSolverLines = Get-RegexValue $summaryText "Weapon IK solver proof lines:\s+([^\r\n]+)"
+    $weaponIkEndpointCcdLines = Get-RegexValue $summaryText "Weapon IK endpoint CCD proof lines:\s+([^\r\n]+)"
     $weaponIkBoneOverlayLines = Get-RegexValue $summaryText "Weapon IK bone overlay proof lines:\s+([^\r\n]+)"
 
     return [pscustomobject][ordered]@{
@@ -298,6 +299,7 @@ function Get-FnvRuntimeEvidence([string]$ProofDir, [string]$FnvSkinningMatrixAud
         fnvHairEmissionStrength = $fnvHairEmissionStrength
         fnvShowIkBones = $fnvShowIkBones
         weaponIkSolverProofLines = $weaponIkSolverLines
+        weaponIkEndpointCcdProofLines = $weaponIkEndpointCcdLines
         weaponIkBoneOverlayProofLines = $weaponIkBoneOverlayLines
         skinningModes = @($skinningModes.ToArray())
     }

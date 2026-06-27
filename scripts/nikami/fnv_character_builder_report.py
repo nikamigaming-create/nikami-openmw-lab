@@ -881,6 +881,7 @@ def parse_hand_runtime_summary(lines: list[str]) -> dict[str, Any]:
         "targetStandingArmPoseBadLines": int(summary_value(lines, "Target standing arm pose BAD lines") or "0"),
         "fnvShowIkBones": summary_value(lines, "FnvShowIkBones"),
         "weaponIkSolverProofLines": int(summary_value(lines, "Weapon IK solver proof lines") or "0"),
+        "weaponIkEndpointCcdProofLines": int(summary_value(lines, "Weapon IK endpoint CCD proof lines") or "0"),
         "weaponIkBoneOverlayProofLines": int(summary_value(lines, "Weapon IK bone overlay proof lines") or "0"),
     }
 
@@ -1622,6 +1623,8 @@ def evaluate(
         if phase == "weapon" or weapon_action_group or summary_value(lines, "FnvProofWeaponEdid"):
             if int(hand_runtime_summary.get("weaponIkSolverProofLines", 0)) <= 0:
                 failures.append("missing weapon IK solver proof evidence")
+            if int(hand_runtime_summary.get("weaponIkEndpointCcdProofLines", 0)) <= 0:
+                failures.append("missing endpoint CCD weapon IK solver proof evidence")
             if int(hand_runtime_summary.get("weaponIkBoneOverlayProofLines", 0)) <= 0:
                 failures.append("missing weapon IK bone overlay proof evidence")
         if (

@@ -7185,9 +7185,21 @@ namespace MWRender
 
         bool rightHandValidBefore = false;
         bool leftHandValidBefore = false;
+        bool rightUpperValidBefore = false;
+        bool rightForearmValidBefore = false;
+        bool leftUpperValidBefore = false;
+        bool leftForearmValidBefore = false;
         bool weaponValidBefore = false;
+        const osg::Vec3f rightUpperBefore
+            = nodeOrigin({ "Bip01 R UpperArm", "bip01 r upperarm" }, rightUpperValidBefore);
+        const osg::Vec3f rightForearmBefore
+            = nodeOrigin({ "Bip01 R Forearm", "bip01 r forearm" }, rightForearmValidBefore);
         const osg::Vec3f rightHandBefore
             = nodeOrigin({ "Bip01 R Hand", "bip01 r hand" }, rightHandValidBefore);
+        const osg::Vec3f leftUpperBefore
+            = nodeOrigin({ "Bip01 L UpperArm", "bip01 l upperarm" }, leftUpperValidBefore);
+        const osg::Vec3f leftForearmBefore
+            = nodeOrigin({ "Bip01 L Forearm", "bip01 l forearm" }, leftForearmValidBefore);
         const osg::Vec3f leftHandBefore
             = nodeOrigin({ "Bip01 L Hand", "bip01 l hand" }, leftHandValidBefore);
         const osg::Vec3f weaponBefore = nodeOrigin({ "Weapon", "weapon", "Bip01 Weapon" }, weaponValidBefore);
@@ -7285,9 +7297,21 @@ namespace MWRender
 
         bool rightHandValidAfter = false;
         bool leftHandValidAfter = false;
+        bool rightUpperValidAfter = false;
+        bool rightForearmValidAfter = false;
+        bool leftUpperValidAfter = false;
+        bool leftForearmValidAfter = false;
         bool weaponValidAfter = false;
+        const osg::Vec3f rightUpperAfter
+            = nodeOrigin({ "Bip01 R UpperArm", "bip01 r upperarm" }, rightUpperValidAfter);
+        const osg::Vec3f rightForearmAfter
+            = nodeOrigin({ "Bip01 R Forearm", "bip01 r forearm" }, rightForearmValidAfter);
         const osg::Vec3f rightHandAfter
             = nodeOrigin({ "Bip01 R Hand", "bip01 r hand" }, rightHandValidAfter);
+        const osg::Vec3f leftUpperAfter
+            = nodeOrigin({ "Bip01 L UpperArm", "bip01 l upperarm" }, leftUpperValidAfter);
+        const osg::Vec3f leftForearmAfter
+            = nodeOrigin({ "Bip01 L Forearm", "bip01 l forearm" }, leftForearmValidAfter);
         const osg::Vec3f leftHandAfter
             = nodeOrigin({ "Bip01 L Hand", "bip01 l hand" }, leftHandValidAfter);
         const osg::Vec3f weaponAfter = nodeOrigin({ "Weapon", "weapon", "Bip01 Weapon" }, weaponValidAfter);
@@ -7313,14 +7337,33 @@ namespace MWRender
                 << " iterations=" << ccdIterations
                 << " solvedBones=" << solved
                 << " strength=" << strength
+                << " chest=(" << chest.x() << "," << chest.y() << "," << chest.z() << ")"
+                << " solverBasisForward=(" << forward.x() << "," << forward.y() << "," << forward.z() << ")"
+                << " solverBasisRight=(" << right.x() << "," << right.y() << "," << right.z() << ")"
                 << " rightTarget=(" << rightTarget.x() << "," << rightTarget.y() << "," << rightTarget.z() << ")"
                 << " leftTarget=(" << leftTarget.x() << "," << leftTarget.y() << "," << leftTarget.z() << ")"
+                << " rightUpperBefore=(" << rightUpperBefore.x() << "," << rightUpperBefore.y() << ","
+                << rightUpperBefore.z() << ")"
+                << " rightForearmBefore=(" << rightForearmBefore.x() << "," << rightForearmBefore.y() << ","
+                << rightForearmBefore.z() << ")"
                 << " rightHandBefore=(" << rightHandBefore.x() << "," << rightHandBefore.y() << ","
                 << rightHandBefore.z() << ")"
+                << " rightUpperAfter=(" << rightUpperAfter.x() << "," << rightUpperAfter.y() << ","
+                << rightUpperAfter.z() << ")"
+                << " rightForearmAfter=(" << rightForearmAfter.x() << "," << rightForearmAfter.y() << ","
+                << rightForearmAfter.z() << ")"
                 << " rightHandAfter=(" << rightHandAfter.x() << "," << rightHandAfter.y() << ","
                 << rightHandAfter.z() << ")"
+                << " leftUpperBefore=(" << leftUpperBefore.x() << "," << leftUpperBefore.y() << ","
+                << leftUpperBefore.z() << ")"
+                << " leftForearmBefore=(" << leftForearmBefore.x() << "," << leftForearmBefore.y() << ","
+                << leftForearmBefore.z() << ")"
                 << " leftHandBefore=(" << leftHandBefore.x() << "," << leftHandBefore.y() << ","
                 << leftHandBefore.z() << ")"
+                << " leftUpperAfter=(" << leftUpperAfter.x() << "," << leftUpperAfter.y() << ","
+                << leftUpperAfter.z() << ")"
+                << " leftForearmAfter=(" << leftForearmAfter.x() << "," << leftForearmAfter.y() << ","
+                << leftForearmAfter.z() << ")"
                 << " leftHandAfter=(" << leftHandAfter.x() << "," << leftHandAfter.y() << ","
                 << leftHandAfter.z() << ")"
                 << " weaponBefore=(" << weaponBefore.x() << "," << weaponBefore.y() << "," << weaponBefore.z()
