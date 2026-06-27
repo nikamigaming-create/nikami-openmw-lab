@@ -849,10 +849,18 @@ def parse_summary_int(text: str, key: str) -> int:
     return int(match.group(1)) if match else 0
 
 
+def parse_summary_float(text: str, key: str) -> float | None:
+    match = re.search(rf"{re.escape(key)}=({FLOAT_RE}|n/a)", text)
+    if not match or match.group(1) == "n/a":
+        return None
+    return float(match.group(1))
+
+
 def parse_hand_runtime_summary(lines: list[str]) -> dict[str, Any]:
     static_text = summary_value(lines, "Target static hand no-twist proof lines")
     visible_text = summary_value(lines, "Target visible hand geometry samples")
     visible_limb_shape_text = summary_value(lines, "Target visible limb shape BAD lines")
+    weapon_held_alignment_text = summary_value(lines, "Weapon IK held alignment proof lines")
     raw_limb_shape_lines = [
         line
         for line in lines
@@ -883,6 +891,16 @@ def parse_hand_runtime_summary(lines: list[str]) -> dict[str, Any]:
         "weaponIkSolverProofLines": int(summary_value(lines, "Weapon IK solver proof lines") or "0"),
         "weaponIkEndpointCcdProofLines": int(summary_value(lines, "Weapon IK endpoint CCD proof lines") or "0"),
         "weaponIkWeaponAimProofLines": int(summary_value(lines, "Weapon IK weapon aim proof lines") or "0"),
+        "weaponIkHeldAlignmentProofLines": (
+            int(weapon_held_alignment_text.split()[0])
+            if weapon_held_alignment_text and weapon_held_alignment_text.split()[0].isdigit()
+            else 0
+        ),
+        "weaponIkHeldAlignmentBestAimAngle": parse_summary_float(weapon_held_alignment_text, "bestAimAngle"),
+        "weaponIkHeldAlignmentBestRightDistance": parse_summary_float(weapon_held_alignment_text, "bestRightDistance"),
+        "weaponIkHeldAlignmentBestLeftDistance": parse_summary_float(weapon_held_alignment_text, "bestLeftDistance"),
+        "weaponIkHeldAlignmentMaxAimAngle": parse_summary_float(weapon_held_alignment_text, "maxAimAngle"),
+        "weaponIkHeldAlignmentMaxHandDistance": parse_summary_float(weapon_held_alignment_text, "maxHandDistance"),
         "weaponIkBoneOverlayProofLines": int(summary_value(lines, "Weapon IK bone overlay proof lines") or "0"),
     }
 
@@ -1628,6 +1646,8 @@ def evaluate(
                 failures.append("missing endpoint CCD weapon IK solver proof evidence")
             if int(hand_runtime_summary.get("weaponIkWeaponAimProofLines", 0)) <= 0:
                 failures.append("missing weapon aim-frame IK solver proof evidence")
+            if int(hand_runtime_summary.get("weaponIkHeldAlignmentProofLines", 0)) <= 0:
+                failures.append("missing held weapon alignment proof evidence")
             if int(hand_runtime_summary.get("weaponIkBoneOverlayProofLines", 0)) <= 0:
                 failures.append("missing weapon IK bone overlay proof evidence")
         if (

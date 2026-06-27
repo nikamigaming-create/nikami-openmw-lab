@@ -477,6 +477,78 @@ function Format-ProofNumber([object]$Value) {
     return ([double]$Value).ToString("0.###", [System.Globalization.CultureInfo]::InvariantCulture)
 }
 
+function Get-WeaponIkHeldAlignmentProbe([string]$Path, [string[]]$ActorPatterns, [double]$MaxAimAngle, [double]$MaxHandDistance) {
+    if (!(Test-Path -LiteralPath $Path) -or $ActorPatterns.Count -eq 0) {
+        return [pscustomobject]@{
+            Count = 0
+            BestAimAngle = $null
+            BestRightDistance = $null
+            BestLeftDistance = $null
+            MaxAimAngle = $MaxAimAngle
+            MaxHandDistance = $MaxHandDistance
+            FailureLine = $null
+        }
+    }
+
+    $candidates = [System.Collections.Generic.List[object]]::new()
+    $allTargetLines = [System.Collections.Generic.List[string]]::new()
+    foreach ($pattern in $ActorPatterns) {
+        $actorPattern = "(?:`"$pattern`"|$pattern)"
+        $matches = @(Select-String -LiteralPath $Path -Pattern "FNV/ESM4 proof: weapon IK solver active .*actor=$actorPattern .*gate=runtime-fnv-weapon-ik" -ErrorAction SilentlyContinue)
+        foreach ($match in $matches) {
+            if ($allTargetLines -contains $match.Line) { continue }
+            $allTargetLines.Add($match.Line)
+
+            if ($match.Line -notmatch "runtime=runtime-supported") { continue }
+            if ($match.Line -notmatch "weaponAimAngleAfter=([-+0-9.eE]+)") { continue }
+            $aimAngle = Convert-LogFloat $Matches[1]
+            if ($match.Line -notmatch "rightTargetDistanceAfter=([-+0-9.eE]+)") { continue }
+            $rightDistance = Convert-LogFloat $Matches[1]
+            if ($match.Line -notmatch "leftTargetDistanceAfter=([-+0-9.eE]+)") { continue }
+            $leftDistance = Convert-LogFloat $Matches[1]
+
+            $candidates.Add([pscustomobject]@{
+                AimAngle = $aimAngle
+                RightDistance = $rightDistance
+                LeftDistance = $leftDistance
+                Line = $match.Line
+                Pass = $aimAngle -le $MaxAimAngle -and $rightDistance -le $MaxHandDistance -and $leftDistance -le $MaxHandDistance
+            })
+        }
+    }
+
+    $passing = @($candidates | Where-Object { $_.Pass })
+    $best = $candidates |
+        Sort-Object @{ Expression = { [double]$_.AimAngle } }, @{ Expression = { [Math]::Max([double]$_.RightDistance, [double]$_.LeftDistance) } } |
+        Select-Object -First 1
+    $failureLine = $null
+    if ($passing.Count -eq 0) {
+        if ($null -ne $best) {
+            $failureLine = $best.Line
+        } elseif ($allTargetLines.Count -gt 0) {
+            $failureLine = $allTargetLines[0]
+        }
+    }
+    $bestAimAngle = $null
+    $bestRightDistance = $null
+    $bestLeftDistance = $null
+    if ($null -ne $best) {
+        $bestAimAngle = [double]$best.AimAngle
+        $bestRightDistance = [double]$best.RightDistance
+        $bestLeftDistance = [double]$best.LeftDistance
+    }
+
+    return [pscustomobject]@{
+        Count = $passing.Count
+        BestAimAngle = $bestAimAngle
+        BestRightDistance = $bestRightDistance
+        BestLeftDistance = $bestLeftDistance
+        MaxAimAngle = $MaxAimAngle
+        MaxHandDistance = $MaxHandDistance
+        FailureLine = $failureLine
+    }
+}
+
 function Convert-LogVec3([string]$Text) {
     if ([string]::IsNullOrWhiteSpace($Text)) { return $null }
     $parts = @($Text.Split(","))
@@ -2133,6 +2205,7 @@ $targetStaticHandNoTwist = Get-ActorStaticHandNoTwistProbe $OpenMwLog $actorProo
 $weaponIkSolverLines = Count-LogMatches $OpenMwLog "FNV/ESM4 proof: weapon IK solver active .*gate=runtime-fnv-weapon-ik"
 $weaponIkEndpointCcdLines = Count-LogMatches $OpenMwLog "FNV/ESM4 proof: weapon IK solver active .*solver=ccd-endpoint .*gate=runtime-fnv-weapon-ik"
 $weaponIkWeaponAimLines = Count-LogMatches $OpenMwLog "FNV/ESM4 proof: weapon IK solver active .*weaponAimSolved=1 .*weaponAimAngleAfter=.*gate=runtime-fnv-weapon-ik"
+$weaponIkHeldAlignment = Get-WeaponIkHeldAlignmentProbe $OpenMwLog $actorProofPatterns 30.0 25.0
 $weaponIkBoneOverlayLines = Count-LogMatches $OpenMwLog "FNV/ESM4 proof: weapon IK bone debug overlay frame .*gate=runtime-fnv-weapon-ik-bone-overlay"
 $unsupportedEsm4Skips = @(Get-UnsupportedEsm4Skips $OpenMwLog)
 $screenshots = @(Get-ChildItem -LiteralPath $ProofDir -Filter "*.png" -File -ErrorAction SilentlyContinue)
@@ -2185,6 +2258,16 @@ Write-ProofLine "Target standing arm pose BAD lines: $targetStandingArmPoseBadLi
 Write-ProofLine "Weapon IK solver proof lines: $weaponIkSolverLines"
 Write-ProofLine "Weapon IK endpoint CCD proof lines: $weaponIkEndpointCcdLines"
 Write-ProofLine "Weapon IK weapon aim proof lines: $weaponIkWeaponAimLines"
+Write-ProofLine ("Weapon IK held alignment proof lines: {0} bestAimAngle={1} bestRightDistance={2} bestLeftDistance={3} maxAimAngle={4} maxHandDistance={5}" -f `
+    $weaponIkHeldAlignment.Count, `
+    (Format-ProofNumber $weaponIkHeldAlignment.BestAimAngle), `
+    (Format-ProofNumber $weaponIkHeldAlignment.BestRightDistance), `
+    (Format-ProofNumber $weaponIkHeldAlignment.BestLeftDistance), `
+    (Format-ProofNumber $weaponIkHeldAlignment.MaxAimAngle), `
+    (Format-ProofNumber $weaponIkHeldAlignment.MaxHandDistance))
+if (![string]::IsNullOrWhiteSpace($weaponIkHeldAlignment.FailureLine)) {
+    Write-ProofLine "Weapon IK held alignment failure line: $($weaponIkHeldAlignment.FailureLine)"
+}
 Write-ProofLine "Weapon IK bone overlay proof lines: $weaponIkBoneOverlayLines"
 Write-ProofLine "Target bare hand skin include lines: $targetBareHandIncludes"
 Write-ProofLine ("Target static hand no-twist proof lines: {0} left={1} right={2} fingerWeightsLoaded={3} pendingFingerArticulation={4}" -f `
@@ -2245,6 +2328,7 @@ if (![string]::IsNullOrWhiteSpace($ActorTarget) -and $targetStandingArmPoseOkLin
 if ($weaponActionProof -and $weaponIkSolverLines -eq 0) { throw "FNV weapon action proof did not log weapon IK solver evidence. See $OpenMwLog" }
 if ($weaponActionProof -and $weaponIkEndpointCcdLines -eq 0) { throw "FNV weapon action proof did not log endpoint CCD weapon IK solver evidence. See $OpenMwLog" }
 if ($weaponActionProof -and $weaponIkWeaponAimLines -eq 0) { throw "FNV weapon action proof did not log weapon aim-frame IK solver evidence. See $OpenMwLog" }
+if ($weaponActionProof -and $weaponIkHeldAlignment.Count -eq 0) { throw "FNV weapon action proof did not prove held weapon alignment. See $OpenMwLog" }
 if ($weaponActionProof -and $weaponIkBoneOverlayLines -eq 0) { throw "FNV weapon action proof did not log visible IK bone overlay evidence. See $OpenMwLog" }
 if (![string]::IsNullOrWhiteSpace($ActorTarget) -and $targetVisibleHandGeometry.PoseSanityBadCount -gt 0) { throw "FNV actor proof saw target hand mesh pose sanity BAD lines. See $OpenMwLog" }
 if (![string]::IsNullOrWhiteSpace($ActorTarget) -and $targetVisibleHandGeometry.LimbShapeBadCount -gt 0) { throw "FNV actor proof saw target visible limb shape BAD lines. See $OpenMwLog" }
