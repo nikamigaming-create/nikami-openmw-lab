@@ -163,6 +163,7 @@ foreach ($needle in @(
     "[double]`$ActorKitAnimationStartPoint",
     "[string]`$ActorKitAnimationGroup",
     "[string]`$ActorKitDialogueMode",
+    "[string]`$FnvProofWeaponEdid",
     "[string]`$FnvRotationMode",
     "[switch]`$CharacterBuilderTalk",
     "[switch]`$CreatureDiagnostics",
@@ -229,6 +230,8 @@ Assert-Text $flat "OPENMW_FNV_ACTOR_KIT_ANIMATION_SOURCE" "flat proof can select
 Assert-Text $flat "OPENMW_FNV_ACTOR_KIT_ANIMATION_STARTPOINT" "flat proof can scrub actor-kit animation time at runtime"
 Assert-Text $flat "OPENMW_FNV_ACTOR_KIT_ANIMATION_GROUP" "flat proof can select exact actor-kit animation groups at runtime"
 Assert-Text $flat "OPENMW_FNV_ACTOR_KIT_DIALOGUE_MODE" "flat proof can select actor-kit dialogue proof mode at runtime"
+Assert-Text $flat "OPENMW_FNV_PROOF_WEAPON_EDID" "flat proof can override the proof actor weapon for projectile runtime checks"
+Assert-Text $flat 'Clear-ProofEnv $previousEnv "OPENMW_FNV_PROOF_WEAPON_EDID"' "flat proof clears inherited proof weapon override when no override is requested"
 Assert-Text $flat "OPENMW_FNV_PROOF_MOUTH_FORCE_OPEN" "flat proof can force talk/mouth proof phase"
 Assert-Text $flat "OPENMW_FNV_PROOF_TARGET_NPC" "flat proof bridges generic actor target into FNV NPC assembly diagnostics"
 Assert-Text $flat "OPENMW_PROOF_ACTOR_KIND" "flat proof records actor-kind intent for proof artifacts"
@@ -247,6 +250,7 @@ Assert-Text $flat 'hands-at-side' "flat proof defaults NPC neutral previews to a
 Assert-Text $flat "ActorKitAnimationStartPoint:" "flat proof summary records selected actor-kit animation start point"
 Assert-Text $flat "ActorKitAnimationGroup:" "flat proof summary records selected actor-kit animation group"
 Assert-Text $flat "ActorKitDialogueMode:" "flat proof summary records selected actor-kit dialogue mode"
+Assert-Text $flat "FnvProofWeaponEdid:" "flat proof summary records selected proof weapon override"
 Assert-Text $flat "FnvRotationMode:" "flat proof summary records selected FNV rotation mode"
 Assert-Text $flat "FnvDisableNativeAnimationCallbacks:" "flat proof summary records native callback policy"
 Assert-Text $flat "ActorViewLocalOffset:" "flat proof summary records actor-local closeup mode"
@@ -341,6 +345,9 @@ Assert-Text $animation "clamped NPC weapon action blend mask" "NPC weapon action
 Assert-Text $animation "OPENMW_FNV_FORCE_NATIVE_WEAPON_ACTION_CALLBACKS" "NPC weapon action proofs default to bind-relative manual transforms unless native callbacks are explicitly forced"
 Assert-Text $npcAnimationHeader "void releaseArrow(float attackStrength) override;" "FNV NPC animation overrides projectile release callback"
 Assert-Text $npcAnimation "actor weapon muzzle frame" "FNV NPC firing logs weapon-helper muzzle frame evidence"
+Assert-Text $npcAnimation "OPENMW_FNV_PROOF_WEAPON_EDID" "FNV NPC firing can use a proof-only actor weapon override"
+Assert-Text $npcAnimation "actor weapon override" "FNV NPC firing logs proof weapon override evidence"
+Assert-Text $npcAnimation "actor projectile visual fallback" "FNV NPC firing can recover a projectile visual model for proof launcher ammo"
 Assert-Text $npcAnimation "actor projectile fire request" "FNV NPC firing logs projectile request evidence"
 Assert-Text $npcAnimation "actor projectile visual launch" "FNV NPC firing logs nonzero projectile visual launch evidence"
 Assert-Text $npcAnimation "launchProjectile(" "FNV NPC firing uses runtime projectile manager"
@@ -358,7 +365,10 @@ Assert-Text $characterBuilderReport "missing weapon-helper muzzle frame runtime 
 Assert-Text $characterBuilderReport "weapon-helper muzzle drifted from right hand" "character builder report fails drifting weapon-helper muzzle evidence"
 Assert-Text $characterBuilderReport "missing weapon-helper projectile launch runtime evidence" "character builder report requires projectile launches from the weapon helper"
 Assert-Text $characterBuilderReport "missing nonzero projectile visual launch runtime evidence" "character builder report requires visual launches for nonzero projectile proofs"
+Assert-Text $characterBuilderReport "missing proof weapon visual launch runtime evidence" "character builder report fails proof-weapon firing without a visual projectile launch"
 Assert-Text $characterBuilder "Test-ActorKitWeaponActionGroup" "character builder does not default weapon action proofs to hands-at-side"
+Assert-Text $characterBuilder "FnvProofWeaponEdid" "character builder accepts and forwards the proof weapon override"
+Assert-Text $characterBuilder "fnvProofWeaponEdid" "character builder manifest records the selected proof weapon override"
 Assert-Text $flat "Test-ActorKitWeaponActionGroup" "flat proof does not default weapon action proofs to hands-at-side"
 Assert-Text $actorParityBurndownRunner 'if ($states -contains "projectile-fire") { return "attackright" }' "actor parity runner maps projectile-fire rows to attack playback"
 Assert-Text $actorParityBurndownRunner '$viewerArgs.FnvUseNativeAnimationCallbacks = $true' "actor parity runner enables native callbacks for projectile/attack rows"

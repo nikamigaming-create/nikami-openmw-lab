@@ -19,6 +19,7 @@ param(
     [double]$ActorKitAnimationStartPoint = [double]::NaN,
     [string]$ActorKitAnimationGroup = "",
     [string]$ActorKitDialogueMode = "",
+    [string]$FnvProofWeaponEdid = "",
     [string[]]$Angles = @("front", "front-left", "front-right"),
     [int]$RunSeconds = 28,
     [int]$ActorFrame = 520,
@@ -370,6 +371,7 @@ Write-SuiteLine "ActorKitAnimationSourceDefaulted: $ActorKitAnimationSourceDefau
 Write-SuiteLine "ActorKitAnimationStartPoint: $(Format-Double $ActorKitAnimationStartPoint)"
 Write-SuiteLine "ActorKitAnimationGroup: $ActorKitAnimationGroup"
 Write-SuiteLine "ActorKitDialogueMode: $ActorKitDialogueMode"
+Write-SuiteLine "FnvProofWeaponEdid: $FnvProofWeaponEdid"
 Write-SuiteLine "FnvRotationMode: $FnvRotationMode"
 Write-SuiteLine "AllowMissingActorVisibleHandGeometry: $AllowMissingActorVisibleHandGeometry"
 Write-SuiteLine "ActorVisibleHandMaxDistance: $ActorVisibleHandMaxDistance"
@@ -495,6 +497,7 @@ foreach ($phase in $Phases) {
         if (![double]::IsNaN($ActorKitAnimationStartPoint)) { $proofArgs.ActorKitAnimationStartPoint = $ActorKitAnimationStartPoint }
         if (![string]::IsNullOrWhiteSpace($ActorKitAnimationGroup)) { $proofArgs.ActorKitAnimationGroup = $ActorKitAnimationGroup }
         if (![string]::IsNullOrWhiteSpace($ActorKitDialogueMode)) { $proofArgs.ActorKitDialogueMode = $ActorKitDialogueMode }
+        if (![string]::IsNullOrWhiteSpace($FnvProofWeaponEdid)) { $proofArgs.FnvProofWeaponEdid = $FnvProofWeaponEdid }
         if (![string]::IsNullOrWhiteSpace($FnvConfigData)) { $proofArgs.FnvConfigData = $FnvConfigData }
         if (![string]::IsNullOrWhiteSpace($ExtraOsgPluginDir)) { $proofArgs.ExtraOsgPluginDir = $ExtraOsgPluginDir }
         if (!$FnvUseNativeAnimationCallbacks) { $proofArgs.FnvDisableNativeAnimationCallbacks = $true }
@@ -594,6 +597,7 @@ foreach ($phase in $Phases) {
                 animationStartPoint = $ActorKitAnimationStartPointValue
                 animationGroup = $ActorKitAnimationGroup
                 dialogueMode = $ActorKitDialogueMode
+                fnvProofWeaponEdid = $FnvProofWeaponEdid
                 neutralPreviewProfile = $NeutralActorPreviewProfile
                 fnvRotationMode = $FnvRotationMode
                 requireVisibleHandGeometry = [bool]$requireVisibleHandGeometry

@@ -116,6 +116,7 @@ param(
     [double]$ActorKitAnimationStartPoint = [double]::NaN,
     [string]$ActorKitAnimationGroup = "",
     [string]$ActorKitDialogueMode = "",
+    [string]$FnvProofWeaponEdid = "",
     [switch]$CharacterBuilderTalk,
     [switch]$CreatureDiagnostics,
     [switch]$FnvDisableNativeAnimationCallbacks,
@@ -1840,6 +1841,12 @@ try {
     Set-ProofEnv $previousEnv "OPENMW_FNV_ACTOR_KIT_ANIMATION_STARTPOINT" $ActorKitAnimationStartPoint
     Set-ProofEnv $previousEnv "OPENMW_FNV_ACTOR_KIT_ANIMATION_GROUP" $ActorKitAnimationGroup
     Set-ProofEnv $previousEnv "OPENMW_FNV_ACTOR_KIT_DIALOGUE_MODE" $ActorKitDialogueMode
+    if ([string]::IsNullOrWhiteSpace($FnvProofWeaponEdid)) {
+        Clear-ProofEnv $previousEnv "OPENMW_FNV_PROOF_WEAPON_EDID"
+    }
+    else {
+        Set-ProofEnv $previousEnv "OPENMW_FNV_PROOF_WEAPON_EDID" $FnvProofWeaponEdid
+    }
     if ($CharacterBuilderTalk -or $CharacterBuilderPhase -ieq "talk" -or $CharacterBuilderPhase -ieq "dialogue" -or $ActorKitDialogueMode -ieq "mouth-open" -or $ActorKitDialogueMode -ieq "mouth-open-pose") {
         Set-ProofEnv $previousEnv "OPENMW_FNV_PROOF_MOUTH_FORCE_OPEN" "1"
     }
@@ -1980,6 +1987,7 @@ try {
     Write-ProofLine "ActorKitAnimationStartPoint: $(Format-Double $ActorKitAnimationStartPoint)"
     Write-ProofLine "ActorKitAnimationGroup: $ActorKitAnimationGroup"
     Write-ProofLine "ActorKitDialogueMode: $ActorKitDialogueMode"
+    Write-ProofLine "FnvProofWeaponEdid: $FnvProofWeaponEdid"
     Write-ProofLine "CharacterBuilderTalk: $CharacterBuilderTalk"
     Write-ProofLine "ActorTarget: $ActorTarget"
     Write-ProofLine "FnvProofTargetNpc: $ActorTarget"

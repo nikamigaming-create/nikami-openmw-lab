@@ -971,6 +971,47 @@ namespace MWRender
                         || falloutTargetMatchesFormId(base->mId, target)));
         }
 
+        const ESM4::Weapon* getFalloutProofWeaponOverride(const MWWorld::Ptr& ptr, const ESM4::Npc& traits)
+        {
+            const char* weaponTarget = std::getenv("OPENMW_FNV_PROOF_WEAPON_EDID");
+            if (weaponTarget == nullptr || weaponTarget[0] == '\0')
+                return nullptr;
+            if (!isFonvProofTargetActor(ptr, traits))
+                return nullptr;
+
+            const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
+            if (store == nullptr)
+                return nullptr;
+
+            const auto& weaponStore = store->get<ESM4::Weapon>();
+            for (auto it = weaponStore.begin(); it != weaponStore.end(); ++it)
+            {
+                if (Misc::StringUtils::ciEqual(it->mEditorId, weaponTarget)
+                    || falloutTargetMatchesFormId(it->mId, weaponTarget))
+                {
+                    Log(Debug::Info) << "FNV/ESM4 proof: actor weapon override actor=" << traits.mEditorId
+                                     << " ref=" << ptr.getCellRef().getRefId()
+                                     << " weaponEdid=" << it->mEditorId
+                                     << " weaponId=" << ESM::RefId(it->mId)
+                                     << " model=\"" << it->mModel << "\""
+                                     << " runtime=runtime-supported";
+                    return &*it;
+                }
+            }
+
+            Log(Debug::Warning) << "FNV/ESM4 proof: actor weapon override BLOCKED actor=" << traits.mEditorId
+                                << " requested=" << weaponTarget << " reason=weapon-not-found";
+            return nullptr;
+        }
+
+        const ESM4::Weapon* getFalloutEffectiveEquippedWeapon(const MWWorld::Ptr& ptr, const ESM4::Npc& traits)
+        {
+            const char* weaponTarget = std::getenv("OPENMW_FNV_PROOF_WEAPON_EDID");
+            if (weaponTarget != nullptr && weaponTarget[0] != '\0' && isFonvProofTargetActor(ptr, traits))
+                return getFalloutProofWeaponOverride(ptr, traits);
+            return MWClass::ESM4Npc::getEquippedWeapon(ptr);
+        }
+
         std::string getFalloutActorKitAnimationGroup()
         {
             std::string group = readFalloutLiveRuntimeOrEnvString("OPENMW_FNV_ACTOR_KIT_ANIMATION_GROUP",
@@ -6745,7 +6786,7 @@ namespace MWRender
                         addProcedureSourceIfPresent(
                             result, *vfs, "meshes/characters/_male/idleanims/dynamicidle_sit.kf");
                     }
-                    else if (const ESM4::Weapon* weapon = MWClass::ESM4Npc::getEquippedWeapon(ptr))
+                    else if (const ESM4::Weapon* weapon = getFalloutEffectiveEquippedWeapon(ptr, traits))
                         Log(Debug::Info) << "FNV/ESM4 diag: package procedure keeps neutral idle for "
                                          << traits.mEditorId << " package=" << selected->mEditorId
                                          << " type=" << getFonvPackageTypeName(selected->mData.type)
@@ -6894,13 +6935,13 @@ namespace MWRender
                 // Fallout's Idle Manager selects idles by conditions and animation group. A holstered weapon in
                 // inventory is not enough to force a combat/weapon pose onto ambient porch NPCs like Easy Pete.
                 // Until those condition-selected idles are implemented, keep the fallback on locomotion/mtidle only.
-                if (const ESM4::Weapon* weapon = MWClass::ESM4Npc::getEquippedWeapon(mPtr))
+                if (const ESM4::Weapon* weapon = getFalloutEffectiveEquippedWeapon(mPtr, *traits))
                     Log(Debug::Info) << "FNV/ESM4 diag: keeping ambient neutral idle for " << traits->mEditorId
                                      << " despite equipped weapon=" << weapon->mEditorId;
             }
 
             const std::string actorKitGroup = getFalloutActorKitAnimationGroup();
-            if (MWClass::ESM4Npc::getEquippedWeapon(mPtr) != nullptr
+            if (getFalloutEffectiveEquippedWeapon(mPtr, *traits) != nullptr
                 || actorKitGroup.find("attack") != std::string::npos
                 || actorKitGroup.find("reload") != std::string::npos
                 || actorKitGroup.find("fire") != std::string::npos
@@ -7101,7 +7142,7 @@ namespace MWRender
             return;
         if (!isFonvProofTargetActor(mPtr, traits))
             return;
-        if (MWClass::ESM4Npc::getEquippedWeapon(mPtr) == nullptr)
+        if (getFalloutEffectiveEquippedWeapon(mPtr, traits) == nullptr)
             return;
 
         const float strength = std::clamp(readFalloutProofFloat("OPENMW_FNV_WEAPON_IK_STRENGTH", 0.18f), 0.f, 1.f);
@@ -7768,7 +7809,7 @@ namespace MWRender
         if (traits == nullptr || !traits->mIsFONV)
             return;
 
-        const ESM4::Weapon* weapon = MWClass::ESM4Npc::getEquippedWeapon(mPtr);
+        const ESM4::Weapon* weapon = getFalloutEffectiveEquippedWeapon(mPtr, *traits);
         if (weapon == nullptr)
         {
             Log(Debug::Warning) << "FNV/ESM4 proof: actor projectile fire BLOCKED actor=" << traits->mEditorId
@@ -7807,6 +7848,9 @@ namespace MWRender
             else if (weaponEditorId.find("varmint") != std::string::npos
                 || weaponEditorId.find("556") != std::string::npos)
                 fallbackAmmo = { "Ammo556mm", "Ammo223", "Ammo10mm" };
+            else if (weaponEditorId.find("grenade") != std::string::npos
+                || weaponEditorId.find("launcher") != std::string::npos)
+                fallbackAmmo = { "Ammo40mmGrenadeIncendiary", "Ammo40mmGrenade" };
 
             for (std::string_view editorId : fallbackAmmo)
             {
@@ -7827,8 +7871,41 @@ namespace MWRender
         }
 
         const ESM4::Projectile* projectile = nullptr;
+        std::string projectileVisualSource = "ammo-projectile";
         if (ammo != nullptr && !ammo->mData.mProjectile.isZeroOrUnset())
             projectile = store->get<ESM4::Projectile>().search(ammo->mData.mProjectile);
+        if (projectile == nullptr)
+        {
+            std::string weaponEditorId = weapon->mEditorId;
+            Misc::StringUtils::lowerCaseInPlace(weaponEditorId);
+            if (weaponEditorId.find("grenade") != std::string::npos
+                || weaponEditorId.find("launcher") != std::string::npos)
+            {
+                const auto& projectileStore = store->get<ESM4::Projectile>();
+                for (std::string_view editorId : { "40mmGrenadeProjectileInc", "40mmGrenadeProjectile" })
+                {
+                    for (auto it = projectileStore.begin(); it != projectileStore.end(); ++it)
+                    {
+                        if (Misc::StringUtils::ciEqual(it->mEditorId, editorId))
+                        {
+                            projectile = &*it;
+                            projectileVisualSource = "projectile-editor-id-fallback";
+                            Log(Debug::Info) << "FNV/ESM4 proof: actor projectile visual fallback actor="
+                                             << traits->mEditorId
+                                             << " weaponEdid=" << weapon->mEditorId
+                                             << " ammoEdid=" << (ammo != nullptr ? ammo->mEditorId : std::string())
+                                             << " projectileEdid=" << projectile->mEditorId
+                                             << " projectileModel=\"" << projectile->mModel << "\""
+                                             << " source=projectile-editor-id-fallback"
+                                             << " runtime=runtime-supported";
+                            break;
+                        }
+                    }
+                    if (projectile != nullptr)
+                        break;
+                }
+            }
+        }
 
         osg::Node* launchNode = mFONVEquippedWeaponNode.get();
         if (launchNode == nullptr)
@@ -7918,7 +7995,7 @@ namespace MWRender
                                  << " ammoEdid=" << ammo->mEditorId
                                  << " projectileEdid=" << projectile->mEditorId
                                  << " projectileModel=\"" << projectile->mModel << "\""
-                                 << " visualSource=ammo-projectile"
+                                 << " visualSource=" << projectileVisualSource
                                  << " gameplayProjectile=ammo"
                                  << " saveReloadVisual=ammo-model-fallback"
                                  << " runtime=runtime-supported";
@@ -8595,7 +8672,7 @@ namespace MWRender
             if (!fonvCoveredSlotsUseHeadStack(clothing->mClothingFlags))
                 insertClothingEquipment(clothing, getFonvEquipmentAssemblyLayer(clothing->mClothingFlags));
 
-        if (const ESM4::Weapon* weapon = MWClass::ESM4Npc::getEquippedWeapon(mPtr))
+        if (const ESM4::Weapon* weapon = getFalloutEffectiveEquippedWeapon(mPtr, traits))
         {
             const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
             osg::ref_ptr<osg::Node> attached;

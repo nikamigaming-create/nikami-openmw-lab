@@ -1548,6 +1548,9 @@ def evaluate(
             ]
             if nonzero_projectile_lines and not visual_launch_lines:
                 failures.append("missing nonzero projectile visual launch runtime evidence")
+            proof_weapon_edid = summary_value(lines, "FnvProofWeaponEdid")
+            if proof_weapon_edid and actor_projectile_lines and not visual_launch_lines:
+                failures.append("missing proof weapon visual launch runtime evidence")
     dialogue_mode = summary_value(lines, "ActorKitDialogueMode").lower()
     dialogue_requested = phase in {"talk", "dialogue"} or dialogue_mode in {"mouth-open", "mouth-open-pose", "pose"}
     if dialogue_requested:
