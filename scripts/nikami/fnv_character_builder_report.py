@@ -108,6 +108,13 @@ def timestamp_from_line(line: str) -> str:
     return match.group(1) if match else ""
 
 
+def timestamp_seconds(timestamp: str) -> float | None:
+    match = re.match(r"(\d+):(\d+):(\d+(?:\.\d+)?)", timestamp)
+    if not match:
+        return None
+    return int(match.group(1)) * 3600.0 + int(match.group(2)) * 60.0 + float(match.group(3))
+
+
 def read_lines(path: Path) -> list[str]:
     return path.read_text(encoding="utf-8", errors="replace").splitlines()
 
@@ -219,6 +226,7 @@ def parse_attachment_bounds(lines: list[str], patterns: list[str]) -> list[dict[
                 "centerDistance": float(data["centerDistance"]),
                 "diagonal": float(data["diagonal"]),
                 "verdict": data["verdict"],
+                "timestamp": timestamp_from_line(line),
                 "line": compact_line(line),
             }
         )
@@ -727,26 +735,36 @@ def find_attachment_world_jumps(bounds: list[dict[str, Any]]) -> list[dict[str, 
     for (ref, model), samples in timelines.items():
         if len(samples) < 2:
             continue
-        first = samples[0]
-        worst = max(samples[1:], key=lambda sample: vec3_distance(first["worldCenter"], sample["worldCenter"]))
-        jump_distance = vec3_distance(first["worldCenter"], worst["worldCenter"])
-        if jump_distance <= 120.0:
-            continue
-        findings.append(
-            {
-                "ref": ref,
-                "model": model,
-                "parent": worst.get("parent", ""),
-                "firstWorldCenter": first.get("worldCenter", []),
-                "worstWorldCenter": worst.get("worldCenter", []),
-                "jumpDistance": jump_distance,
-                "firstHeadRel": first.get("headRel", []),
-                "worstHeadRel": worst.get("headRel", []),
-                "firstVerdict": first.get("verdict", ""),
-                "worstVerdict": worst.get("verdict", ""),
-                "reason": "head attachment moved into a different world frame between samples",
-            }
-        )
+        for previous, current in zip(samples, samples[1:]):
+            previous_seconds = timestamp_seconds(previous.get("timestamp", ""))
+            current_seconds = timestamp_seconds(current.get("timestamp", ""))
+            if previous_seconds is None or current_seconds is None:
+                continue
+            delta_seconds = current_seconds - previous_seconds
+            if delta_seconds < 0.0 or delta_seconds > 1.0:
+                continue
+            jump_distance = vec3_distance(previous["worldCenter"], current["worldCenter"])
+            if jump_distance <= 120.0:
+                continue
+            findings.append(
+                {
+                    "ref": ref,
+                    "model": model,
+                    "parent": current.get("parent", ""),
+                    "previousWorldCenter": previous.get("worldCenter", []),
+                    "currentWorldCenter": current.get("worldCenter", []),
+                    "jumpDistance": jump_distance,
+                    "deltaSeconds": delta_seconds,
+                    "previousHeadRel": previous.get("headRel", []),
+                    "currentHeadRel": current.get("headRel", []),
+                    "previousTimestamp": previous.get("timestamp", ""),
+                    "currentTimestamp": current.get("timestamp", ""),
+                    "previousVerdict": previous.get("verdict", ""),
+                    "currentVerdict": current.get("verdict", ""),
+                    "reason": "head attachment jumped world frame inside one attachment epoch",
+                }
+            )
+            break
     return findings
 
 
@@ -1851,13 +1869,13 @@ def write_markdown(path: Path, report: dict[str, Any]) -> None:
     if report["attachmentWorldJumps"]:
         lines.append("## Attachment World Jumps")
         lines.append("")
-        lines.append("| Model | Reason | First World | Worst World | Jump | First HeadRel | Worst HeadRel |")
-        lines.append("|---|---|---|---|---:|---|---|")
+        lines.append("| Model | Reason | Previous World | Current World | Jump | Delta Sec | Previous HeadRel | Current HeadRel |")
+        lines.append("|---|---|---|---|---:|---:|---|---|")
         for item in report["attachmentWorldJumps"][:24]:
             lines.append(
-                f"| {item['model']} | {item['reason']} | {item['firstWorldCenter']} | "
-                f"{item['worstWorldCenter']} | {item['jumpDistance']:.4g} | "
-                f"{item['firstHeadRel']} | {item['worstHeadRel']} |"
+                f"| {item['model']} | {item['reason']} | {item['previousWorldCenter']} | "
+                f"{item['currentWorldCenter']} | {item['jumpDistance']:.4g} | "
+                f"{item['deltaSeconds']:.4g} | {item['previousHeadRel']} | {item['currentHeadRel']} |"
             )
         lines.append("")
     if report["headSurfaceOffsets"]:
