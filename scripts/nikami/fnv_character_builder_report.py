@@ -1132,6 +1132,7 @@ def parse_projectile_runtime_evidence(lines: list[str], patterns: list[str]) -> 
     evidence_needles = (
         ("muzzle-frame", "actor weapon muzzle frame"),
         ("projectile-fire-request", "actor projectile fire request"),
+        ("projectile-visual-launch", "actor projectile visual launch"),
         ("projectile-fire-blocked", "actor projectile fire BLOCKED"),
         ("real-10mm-muzzle", "real 10mm muzzle ray origin"),
         ("real-10mm-firing-trace", "real 10mm firing trace"),
@@ -1147,12 +1148,22 @@ def parse_projectile_runtime_evidence(lines: list[str], patterns: list[str]) -> 
             runtime_match = re.search(r"\bruntime=([^ ]+)", line)
             source_match = re.search(r"\bsource=([^ ]+)", line)
             right_hand_distance_match = re.search(r"\brightHandDistance=([-+0-9.eE]+)", line)
+            ammo_projectile_set_match = re.search(r"\bammoProjectileSet=([^ ]+)", line)
+            projectile_edid_match = re.search(r"\bprojectileEdid=([^ ]*)", line)
+            projectile_model_match = re.search(r'\bprojectileModel="([^"]*)"', line)
             rows.append(
                 {
                     "kind": kind,
                     "runtime": runtime_match.group(1) if runtime_match else "",
                     "source": source_match.group(1) if source_match else "",
                     "rightHandDistance": float(right_hand_distance_match.group(1)) if right_hand_distance_match else None,
+                    "ammoProjectileSet": (
+                        ammo_projectile_set_match.group(1).lower() in {"1", "true"}
+                        if ammo_projectile_set_match
+                        else None
+                    ),
+                    "projectileEdid": projectile_edid_match.group(1) if projectile_edid_match else "",
+                    "projectileModel": projectile_model_match.group(1) if projectile_model_match else "",
                     "line": compact_line(line),
                 }
             )
@@ -1520,7 +1531,7 @@ def evaluate(
             projectile_lines = [
                 item
                 for item in projectile_runtime_evidence
-                if item["kind"] in {"projectile-fire-request", "real-10mm-projectile-request"}
+                if item["kind"] in {"projectile-fire-request", "real-10mm-projectile"}
             ]
             if not projectile_lines:
                 failures.append("missing projectile fire request runtime evidence")
@@ -1529,6 +1540,14 @@ def evaluate(
             ]
             if actor_projectile_lines and not any(item.get("source") == "weapon-helper" for item in actor_projectile_lines):
                 failures.append("missing weapon-helper projectile launch runtime evidence")
+            nonzero_projectile_lines = [
+                item for item in actor_projectile_lines if item.get("ammoProjectileSet") and item.get("projectileModel")
+            ]
+            visual_launch_lines = [
+                item for item in projectile_runtime_evidence if item["kind"] == "projectile-visual-launch"
+            ]
+            if nonzero_projectile_lines and not visual_launch_lines:
+                failures.append("missing nonzero projectile visual launch runtime evidence")
     dialogue_mode = summary_value(lines, "ActorKitDialogueMode").lower()
     dialogue_requested = phase in {"talk", "dialogue"} or dialogue_mode in {"mouth-open", "mouth-open-pose", "pose"}
     if dialogue_requested:

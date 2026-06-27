@@ -364,6 +364,12 @@ namespace MWWorld
     void ProjectileManager::launchProjectile(const Ptr& actor, const ConstPtr& projectile, const osg::Vec3f& pos,
         const osg::Quat& orient, const Ptr& bow, float speed, float attackStrength)
     {
+        launchProjectile(actor, projectile, pos, orient, bow, speed, attackStrength, {});
+    }
+
+    void ProjectileManager::launchProjectile(const Ptr& actor, const ConstPtr& projectile, const osg::Vec3f& pos,
+        const osg::Quat& orient, const Ptr& bow, float speed, float attackStrength, std::string_view modelOverride)
+    {
         ProjectileState state;
         state.mCaster = actor.getCellRef().getRefNum();
         state.mBowId = bow.getCellRef().getRefId();
@@ -375,7 +381,9 @@ namespace MWWorld
         MWWorld::ManualRef ref(*MWBase::Environment::get().getESMStore(), projectile.getCellRef().getRefId());
         MWWorld::Ptr ptr = ref.getPtr();
 
-        const VFS::Path::Normalized model = ptr.getClass().getCorrectedModel(ptr);
+        const VFS::Path::Normalized model = modelOverride.empty()
+            ? ptr.getClass().getCorrectedModel(ptr)
+            : Misc::ResourceHelpers::correctMeshPath(VFS::Path::Normalized(std::string(modelOverride)));
         createModel(state, model, pos, orient, false, false, osg::Vec4(0, 0, 0, 0));
         if (!ptr.getClass().getEnchantment(ptr).empty())
             SceneUtil::addEnchantedGlow(state.mNode, mResourceSystem, ptr.getClass().getEnchantmentColor(ptr));

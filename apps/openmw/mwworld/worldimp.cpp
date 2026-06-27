@@ -3295,6 +3295,12 @@ namespace MWWorld
     void World::launchProjectile(MWWorld::Ptr& actor, MWWorld::Ptr& projectile, const osg::Vec3f& worldPos,
         const osg::Quat& orient, MWWorld::Ptr& bow, float speed, float attackStrength)
     {
+        launchProjectile(actor, projectile, worldPos, orient, bow, speed, attackStrength, {});
+    }
+
+    void World::launchProjectile(MWWorld::Ptr& actor, MWWorld::Ptr& projectile, const osg::Vec3f& worldPos,
+        const osg::Quat& orient, MWWorld::Ptr& bow, float speed, float attackStrength, std::string_view modelOverride)
+    {
         // An initial position of projectile can be outside shooter's collision box, so any object between shooter and
         // launch position will be ignored. To avoid this issue, we should check for impact immediately before launch
         // the projectile. So we cast a 1-yard-length ray from shooter to launch position and check if there are
@@ -3326,7 +3332,8 @@ namespace MWWorld
             return;
         }
 
-        mProjectileManager->launchProjectile(actor, projectile, worldPos, orient, bow, speed, attackStrength);
+        mProjectileManager->launchProjectile(
+            actor, projectile, worldPos, orient, bow, speed, attackStrength, modelOverride);
     }
 
     void World::launchMagicBolt(

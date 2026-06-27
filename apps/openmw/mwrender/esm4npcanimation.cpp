@@ -7910,8 +7910,24 @@ namespace MWRender
                              << " source=" << (usedWeaponFrame ? "weapon-helper" : "actor-forward-fallback")
                              << " runtime=runtime-supported";
 
-            MWBase::Environment::get().getWorld()->launchProjectile(
-                mPtr, ammoPtr, launchPos, orient, weaponPtr, speed, attackStrength);
+            if (projectile != nullptr && !projectile->mModel.empty())
+            {
+                Log(Debug::Info) << "FNV/ESM4 proof: actor projectile visual launch actor=" << traits->mEditorId
+                                 << " ref=" << mPtr.getCellRef().getRefId()
+                                 << " weaponEdid=" << weapon->mEditorId
+                                 << " ammoEdid=" << ammo->mEditorId
+                                 << " projectileEdid=" << projectile->mEditorId
+                                 << " projectileModel=\"" << projectile->mModel << "\""
+                                 << " visualSource=ammo-projectile"
+                                 << " gameplayProjectile=ammo"
+                                 << " saveReloadVisual=ammo-model-fallback"
+                                 << " runtime=runtime-supported";
+                MWBase::Environment::get().getWorld()->launchProjectile(
+                    mPtr, ammoPtr, launchPos, orient, weaponPtr, speed, attackStrength, projectile->mModel);
+            }
+            else
+                MWBase::Environment::get().getWorld()->launchProjectile(
+                    mPtr, ammoPtr, launchPos, orient, weaponPtr, speed, attackStrength);
         }
         catch (const std::exception& e)
         {

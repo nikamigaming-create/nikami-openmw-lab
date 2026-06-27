@@ -2,6 +2,7 @@
 #define OPENMW_MWWORLD_PROJECTILEMANAGER_H
 
 #include <string>
+#include <string_view>
 
 #include <osg/PositionAttitudeTransform>
 #include <osg/ref_ptr>
@@ -55,6 +56,9 @@ namespace MWWorld
 
         void launchProjectile(const MWWorld::Ptr& actor, const MWWorld::ConstPtr& projectile, const osg::Vec3f& pos,
             const osg::Quat& orient, const MWWorld::Ptr& bow, float speed, float attackStrength);
+        void launchProjectile(const MWWorld::Ptr& actor, const MWWorld::ConstPtr& projectile, const osg::Vec3f& pos,
+            const osg::Quat& orient, const MWWorld::Ptr& bow, float speed, float attackStrength,
+            std::string_view modelOverride);
 
         void updateCasters();
 
