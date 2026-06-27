@@ -1733,6 +1733,11 @@ $ActorKitPropSlotsCsv = Join-SelectorList $ActorKitPropSlots
 $ActorKitPropModelsCsv = Join-SelectorList $ActorKitPropModels
 $ResolvedActorKitAnimationSource = $ActorKitAnimationSource
 $ActorKitAnimationSourceDefaulted = $false
+$weaponActionProof = $ActorKind -ine "creature" -and (
+    $CharacterBuilderPhase -ieq "weapon" -or
+    ![string]::IsNullOrWhiteSpace($FnvProofWeaponEdid) -or
+    (Test-ActorKitWeaponActionGroup $ActorKitAnimationGroup)
+)
 if ($NeutralActorPreviewStandingIdle -and $ActorKind -ine "creature" -and [string]::IsNullOrWhiteSpace($ResolvedActorKitAnimationSource) -and !(Test-ActorKitWeaponActionGroup $ActorKitAnimationGroup)) {
     $ResolvedActorKitAnimationSource = "hands-at-side"
     $ActorKitAnimationSourceDefaulted = $true
@@ -1833,6 +1838,8 @@ try {
     Set-ProofEnv $previousEnv "OPENMW_FNV_LIVE_AUTHORING_FILE" $LiveAuthoringFile
     Set-ProofEnv $previousEnv "OPENMW_FNV_LIVE_RUNTIME_COMMAND_FILE" $LiveRuntimeCommandFile
     Set-ProofEnv $previousEnv "OPENMW_FNV_CHARACTER_BUILDER_PHASE" $CharacterBuilderPhase
+    if ($weaponActionProof) { Set-ProofEnv $previousEnv "OPENMW_FNV_SHOW_IK_BONES" "1" }
+    else { Clear-ProofEnv $previousEnv "OPENMW_FNV_SHOW_IK_BONES" }
     Set-ProofEnv $previousEnv "OPENMW_FNV_ACTOR_KIT_PARTS" $ActorKitPartsCsv
     Set-ProofEnv $previousEnv "OPENMW_FNV_ACTOR_KIT_PART_MODELS" $ActorKitPartModelsCsv
     Set-ProofEnv $previousEnv "OPENMW_FNV_ACTOR_KIT_PROP_SLOTS" $ActorKitPropSlotsCsv
@@ -1977,6 +1984,7 @@ try {
     Write-ProofLine "LiveAuthoringFile: $LiveAuthoringFile"
     Write-ProofLine "LiveRuntimeCommandFile: $LiveRuntimeCommandFile"
     Write-ProofLine "CharacterBuilderPhase: $CharacterBuilderPhase"
+    Write-ProofLine "FnvShowIkBones: $weaponActionProof"
     Write-ProofLine "ActorKitParts: $ActorKitPartsCsv"
     Write-ProofLine "ActorKitPartModels: $ActorKitPartModelsCsv"
     Write-ProofLine "ActorKitPropSlots: $ActorKitPropSlotsCsv"
@@ -2122,6 +2130,8 @@ $targetStandingArmPoseOkLines = Count-ActorPostureMatches $OpenMwLog $actorProof
 $targetVisibleHandGeometry = Get-ActorVisibleHandGeometryProbe $OpenMwLog $actorProofPatterns $ActorVisibleHandMaxDistance
 $targetBareHandIncludes = Count-ActorBareHandIncludeMatches $OpenMwLog $actorProofPatterns
 $targetStaticHandNoTwist = Get-ActorStaticHandNoTwistProbe $OpenMwLog $actorProofPatterns
+$weaponIkSolverLines = Count-LogMatches $OpenMwLog "FNV/ESM4 proof: weapon IK solver active .*gate=runtime-fnv-weapon-ik"
+$weaponIkBoneOverlayLines = Count-LogMatches $OpenMwLog "FNV/ESM4 proof: weapon IK bone debug overlay frame .*gate=runtime-fnv-weapon-ik-bone-overlay"
 $unsupportedEsm4Skips = @(Get-UnsupportedEsm4Skips $OpenMwLog)
 $screenshots = @(Get-ChildItem -LiteralPath $ProofDir -Filter "*.png" -File -ErrorAction SilentlyContinue)
 $screenshotStability = [pscustomobject](Get-ScreenshotStabilityResult `
@@ -2170,6 +2180,8 @@ Write-ProofLine "Target world posture OK lines: $targetWorldPostureOkLines"
 Write-ProofLine "Target world posture BAD lines: $targetWorldPostureBadLines"
 Write-ProofLine "Target standing arm pose OK lines: $targetStandingArmPoseOkLines"
 Write-ProofLine "Target standing arm pose BAD lines: $targetStandingArmPoseBadLines"
+Write-ProofLine "Weapon IK solver proof lines: $weaponIkSolverLines"
+Write-ProofLine "Weapon IK bone overlay proof lines: $weaponIkBoneOverlayLines"
 Write-ProofLine "Target bare hand skin include lines: $targetBareHandIncludes"
 Write-ProofLine ("Target static hand no-twist proof lines: {0} left={1} right={2} fingerWeightsLoaded={3} pendingFingerArticulation={4}" -f `
     $targetStaticHandNoTwist.Count, `
@@ -2226,6 +2238,8 @@ if (![string]::IsNullOrWhiteSpace($ActorTarget) -and $targetWorldPostureBadLines
 if (![string]::IsNullOrWhiteSpace($ActorTarget) -and $targetStandingArmPoseBadLines -gt 0) { throw "FNV actor proof saw target standing arm bind/T-pose lines. See $OpenMwLog" }
 if (![string]::IsNullOrWhiteSpace($ActorTarget) -and $targetWorldPostureOkLines -eq 0) { throw "FNV actor proof did not log target world posture lines. See $OpenMwLog" }
 if (![string]::IsNullOrWhiteSpace($ActorTarget) -and $targetStandingArmPoseOkLines -eq 0) { throw "FNV actor proof did not log target standing arm pose lines. See $OpenMwLog" }
+if ($weaponActionProof -and $weaponIkSolverLines -eq 0) { throw "FNV weapon action proof did not log weapon IK solver evidence. See $OpenMwLog" }
+if ($weaponActionProof -and $weaponIkBoneOverlayLines -eq 0) { throw "FNV weapon action proof did not log visible IK bone overlay evidence. See $OpenMwLog" }
 if (![string]::IsNullOrWhiteSpace($ActorTarget) -and $targetVisibleHandGeometry.PoseSanityBadCount -gt 0) { throw "FNV actor proof saw target hand mesh pose sanity BAD lines. See $OpenMwLog" }
 if (![string]::IsNullOrWhiteSpace($ActorTarget) -and $targetVisibleHandGeometry.LimbShapeBadCount -gt 0) { throw "FNV actor proof saw target visible limb shape BAD lines. See $OpenMwLog" }
 if (![string]::IsNullOrWhiteSpace($FnvStaticizeRiggedHandParts) -and ![string]::IsNullOrWhiteSpace($ActorTarget) -and $targetBareHandIncludes -gt 0 -and $targetStaticHandNoTwist.Count -eq 0) { throw "FNV actor proof did not prove target bare hands use the requested static no-twist path. See $OpenMwLog" }

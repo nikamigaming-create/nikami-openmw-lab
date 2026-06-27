@@ -1060,9 +1060,10 @@ namespace MWRender
         {
             Log(Debug::Info) << "FNV/ESM4 proof: neutral actor preview using ESM4NpcAnimation for "
                              << mCharacter.toString();
-            osg::ref_ptr<Animation> animation = new ESM4NpcAnimation(mCharacter, mNode, mResourceSystem);
+            osg::ref_ptr<ESM4NpcAnimation> animation = new ESM4NpcAnimation(mCharacter, mNode, mResourceSystem);
             animation->setProofPreviewAnimation(true);
             animation->setProofPreviewGameplayAudit(mViewMode == ViewMode::Front);
+            animation->setFONVBoneIkDebugInProofPreview(mViewMode == ViewMode::FrontRight);
             return animation;
         }
         if (mCharacter.getType() == ESM::REC_CREA4)

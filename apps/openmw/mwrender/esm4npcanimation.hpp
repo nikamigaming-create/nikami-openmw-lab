@@ -15,6 +15,7 @@ namespace MWRender
     public:
         ESM4NpcAnimation(
             const MWWorld::Ptr& ptr, osg::ref_ptr<osg::Group> parentNode, Resource::ResourceSystem* resourceSystem);
+        void setFONVBoneIkDebugInProofPreview(bool enabled) { mFONVBoneIkDebugInProofPreview = enabled; }
 
     private:
         struct LiveHeadSurfaceAuthoringTarget
@@ -37,9 +38,14 @@ namespace MWRender
         osg::ref_ptr<osg::Node> mFONVEquippedWeaponNode;
         std::string mFONVEquippedWeaponEditorId;
         std::string mFONVEquippedWeaponModel;
+        osg::Vec3f mFONVWeaponIkRightTarget;
+        osg::Vec3f mFONVWeaponIkLeftTarget;
+        bool mFONVWeaponIkTargetsValid = false;
         osg::ref_ptr<osg::Geode> mFONVBoneIkDebugGeode;
         osg::ref_ptr<osg::Geometry> mFONVBoneIkDebugGeometry;
         bool mFONVBoneIkLogged = false;
+        unsigned int mFONVBoneIkDebugFrameLogs = 0;
+        bool mFONVBoneIkDebugInProofPreview = false;
         bool mFONVActorKitProjectileProofFired = false;
 
         void applyLiveHeadSurfaceAuthoring();

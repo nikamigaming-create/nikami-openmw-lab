@@ -7138,6 +7138,7 @@ namespace MWRender
 
     void ESM4NpcAnimation::applyFONVWeaponIk(const ESM4::Npc& traits)
     {
+        mFONVWeaponIkTargetsValid = false;
         if (std::getenv("OPENMW_FNV_DISABLE_WEAPON_IK") != nullptr)
             return;
         if (!isFonvProofTargetActor(mPtr, traits))
@@ -7163,6 +7164,9 @@ namespace MWRender
 
         const osg::Vec3f rightTarget = chest + forward * 34.f + right * 10.f + osg::Vec3f(0.f, 0.f, -3.f);
         const osg::Vec3f leftTarget = chest + forward * 28.f - right * 8.f + osg::Vec3f(0.f, 0.f, -5.f);
+        mFONVWeaponIkRightTarget = rightTarget;
+        mFONVWeaponIkLeftTarget = leftTarget;
+        mFONVWeaponIkTargetsValid = true;
 
         const auto nodeOrigin = [&](std::initializer_list<std::string_view> names, bool& valid) -> osg::Vec3f {
             osg::Group* group = findBestAttachmentNode(nodeMap, names);
@@ -7289,7 +7293,8 @@ namespace MWRender
     {
         const bool enabled = std::getenv("OPENMW_FNV_BONE_IK_DEBUG") != nullptr
             || std::getenv("OPENMW_FNV_SHOW_IK_BONES") != nullptr;
-        if (!enabled || !isFonvProofTargetActor(mPtr, traits))
+        if (!enabled || (isProofPreviewAnimation() && !mFONVBoneIkDebugInProofPreview)
+            || !isFonvProofTargetActor(mPtr, traits))
         {
             if (mFONVBoneIkDebugGeode != nullptr && mObjectRoot != nullptr)
                 mObjectRoot->removeChild(mFONVBoneIkDebugGeode);
@@ -7319,15 +7324,43 @@ namespace MWRender
         osg::ref_ptr<osg::Vec4Array> colors = new osg::Vec4Array;
         const osg::Matrix rootToLocal = osg::Matrix::inverse(getNodeWorldMatrix(mObjectRoot.get()));
         const NodeMap& nodeMap = getNodeMap();
+        unsigned int lineSegments = 0;
+        unsigned int targetSegments = 0;
+        const auto toDebugLocal = [&](const osg::Vec3f& world) {
+            return osg::Vec3f(osg::Vec3d(world.x(), world.y(), world.z()) * rootToLocal);
+        };
         const auto addLine = [&](std::string_view a, std::string_view b, const osg::Vec4f& color) {
             osg::Group* nodeA = findBestAttachmentNode(nodeMap, { a });
             osg::Group* nodeB = findBestAttachmentNode(nodeMap, { b });
             if (nodeA == nullptr || nodeB == nullptr)
                 return;
-            vertices->push_back(osg::Vec3f(osg::Vec3d(getNodeWorldMatrix(nodeA).getTrans()) * rootToLocal));
-            vertices->push_back(osg::Vec3f(osg::Vec3d(getNodeWorldMatrix(nodeB).getTrans()) * rootToLocal));
+            vertices->push_back(toDebugLocal(osg::Vec3f(getNodeWorldMatrix(nodeA).getTrans())));
+            vertices->push_back(toDebugLocal(osg::Vec3f(getNodeWorldMatrix(nodeB).getTrans())));
             colors->push_back(color);
             colors->push_back(color);
+            ++lineSegments;
+        };
+        const auto addWorldLine = [&](const osg::Vec3f& a, const osg::Vec3f& b, const osg::Vec4f& color) {
+            vertices->push_back(toDebugLocal(a));
+            vertices->push_back(toDebugLocal(b));
+            colors->push_back(color);
+            colors->push_back(color);
+            ++lineSegments;
+            ++targetSegments;
+        };
+        const auto nodeOrigin = [&](std::initializer_list<std::string_view> names, bool& valid) -> osg::Vec3f {
+            osg::Group* group = findBestAttachmentNode(nodeMap, names);
+            valid = group != nullptr;
+            if (!valid)
+                return osg::Vec3f();
+            const osg::Vec3d trans = getNodeWorldMatrix(group).getTrans();
+            return osg::Vec3f(trans.x(), trans.y(), trans.z());
+        };
+        const auto addTargetCross = [&](const osg::Vec3f& center, const osg::Vec4f& color) {
+            const float size = 5.f;
+            addWorldLine(center + osg::Vec3f(-size, 0.f, 0.f), center + osg::Vec3f(size, 0.f, 0.f), color);
+            addWorldLine(center + osg::Vec3f(0.f, -size, 0.f), center + osg::Vec3f(0.f, size, 0.f), color);
+            addWorldLine(center + osg::Vec3f(0.f, 0.f, -size), center + osg::Vec3f(0.f, 0.f, size), color);
         };
 
         const osg::Vec4f rightColor(1.f, 0.15f, 0.1f, 1.f);
@@ -7340,6 +7373,19 @@ namespace MWRender
         addLine("Bip01 L UpperArm", "Bip01 L Forearm", leftColor);
         addLine("Bip01 L Forearm", "Bip01 L Hand", leftColor);
         addLine("Bip01 R Hand", "Weapon", weaponColor);
+        if (mFONVWeaponIkTargetsValid)
+        {
+            bool rightHandValid = false;
+            bool leftHandValid = false;
+            const osg::Vec3f rightHand = nodeOrigin({ "Bip01 R Hand", "bip01 r hand" }, rightHandValid);
+            const osg::Vec3f leftHand = nodeOrigin({ "Bip01 L Hand", "bip01 l hand" }, leftHandValid);
+            if (rightHandValid)
+                addWorldLine(rightHand, mFONVWeaponIkRightTarget, rightColor);
+            if (leftHandValid)
+                addWorldLine(leftHand, mFONVWeaponIkLeftTarget, leftColor);
+            addTargetCross(mFONVWeaponIkRightTarget, rightColor);
+            addTargetCross(mFONVWeaponIkLeftTarget, leftColor);
+        }
 
         mFONVBoneIkDebugGeometry->setVertexArray(vertices.get());
         mFONVBoneIkDebugGeometry->setColorArray(colors.get(), osg::Array::BIND_PER_VERTEX);
@@ -7348,6 +7394,21 @@ namespace MWRender
             mFONVBoneIkDebugGeometry->addPrimitiveSet(new osg::DrawArrays(osg::PrimitiveSet::LINES, 0, vertices->size()));
         mFONVBoneIkDebugGeometry->dirtyDisplayList();
         mFONVBoneIkDebugGeometry->dirtyBound();
+        if (mFONVBoneIkDebugFrameLogs < 8)
+        {
+            ++mFONVBoneIkDebugFrameLogs;
+            Log(Debug::Info) << "FNV/ESM4 proof: weapon IK bone debug overlay frame actor=" << traits.mEditorId
+                             << " sample=" << mFONVBoneIkDebugFrameLogs
+                             << " lineSegments=" << lineSegments
+                             << " targetSegments=" << targetSegments
+                             << " vertices=" << vertices->size()
+                             << " targetsValid=" << mFONVWeaponIkTargetsValid
+                             << " rightTarget=(" << mFONVWeaponIkRightTarget.x() << ","
+                             << mFONVWeaponIkRightTarget.y() << "," << mFONVWeaponIkRightTarget.z() << ")"
+                             << " leftTarget=(" << mFONVWeaponIkLeftTarget.x() << ","
+                             << mFONVWeaponIkLeftTarget.y() << "," << mFONVWeaponIkLeftTarget.z() << ")"
+                             << " runtime=runtime-supported gate=runtime-fnv-weapon-ik-bone-overlay";
+        }
     }
 
     osg::Vec3f ESM4NpcAnimation::runAnimation(float duration)

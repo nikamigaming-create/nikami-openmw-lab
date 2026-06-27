@@ -879,6 +879,9 @@ def parse_hand_runtime_summary(lines: list[str]) -> dict[str, Any]:
         "visibleLimbShapeRawAuditLines": len(raw_limb_shape_lines),
         "targetStandingArmPoseOkLines": int(summary_value(lines, "Target standing arm pose OK lines") or "0"),
         "targetStandingArmPoseBadLines": int(summary_value(lines, "Target standing arm pose BAD lines") or "0"),
+        "fnvShowIkBones": summary_value(lines, "FnvShowIkBones"),
+        "weaponIkSolverProofLines": int(summary_value(lines, "Weapon IK solver proof lines") or "0"),
+        "weaponIkBoneOverlayProofLines": int(summary_value(lines, "Weapon IK bone overlay proof lines") or "0"),
     }
 
 
@@ -1616,6 +1619,11 @@ def evaluate(
             failures.append(f"target standing arm pose failures: {hand_runtime_summary['targetStandingArmPoseBadLines']}")
         actor_group = summary_value(lines, "ActorKitAnimationGroup").lower()
         weapon_action_group = any(token in actor_group for token in ("attack", "fire", "shoot", "reload", "aim"))
+        if phase == "weapon" or weapon_action_group or summary_value(lines, "FnvProofWeaponEdid"):
+            if int(hand_runtime_summary.get("weaponIkSolverProofLines", 0)) <= 0:
+                failures.append("missing weapon IK solver proof evidence")
+            if int(hand_runtime_summary.get("weaponIkBoneOverlayProofLines", 0)) <= 0:
+                failures.append("missing weapon IK bone overlay proof evidence")
         if (
             summary_value(lines, "NeutralActorPreview").lower() == "true"
             and summary_value(lines, "NeutralActorPreviewStandingIdle").lower() == "true"

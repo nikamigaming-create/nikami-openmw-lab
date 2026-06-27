@@ -278,6 +278,9 @@ function Get-FnvRuntimeEvidence([string]$ProofDir, [string]$FnvSkinningMatrixAud
     $visibleLimbShapeBadLines = Get-RegexValue $summaryText "Target visible limb shape BAD lines:\s+([^\r\n]+)"
     $visibleLimbShapeFailureLine = Get-RegexValue $summaryText "Target visible limb shape failure line:\s+([^\r\n]+)"
     $visibleHandGeometryFailureLine = Get-RegexValue $summaryText "Target visible hand geometry failure line:\s+([^\r\n]+)"
+    $fnvShowIkBones = Get-RegexValue $summaryText "FnvShowIkBones:\s+([^\r\n]+)"
+    $weaponIkSolverLines = Get-RegexValue $summaryText "Weapon IK solver proof lines:\s+([^\r\n]+)"
+    $weaponIkBoneOverlayLines = Get-RegexValue $summaryText "Weapon IK bone overlay proof lines:\s+([^\r\n]+)"
 
     return [pscustomobject][ordered]@{
         requireActorVisibleHandGeometry = $requireActorVisibleHandGeometry
@@ -293,6 +296,9 @@ function Get-FnvRuntimeEvidence([string]$ProofDir, [string]$FnvSkinningMatrixAud
         }
         fnvSkinningMatrixAudit = $FnvSkinningMatrixAudit
         fnvHairEmissionStrength = $fnvHairEmissionStrength
+        fnvShowIkBones = $fnvShowIkBones
+        weaponIkSolverProofLines = $weaponIkSolverLines
+        weaponIkBoneOverlayProofLines = $weaponIkBoneOverlayLines
         skinningModes = @($skinningModes.ToArray())
     }
 }
