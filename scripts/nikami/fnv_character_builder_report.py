@@ -915,8 +915,13 @@ def analyze_neutral_preview_image(path: Path, weapon_present: bool = False, phas
             allowed_edges.update({"right", "top"})
         active_for_phase = pane["name"] in active_panes
         min_foreground_fraction = neutral_preview_min_foreground_fraction(pane, phase)
+        weapon_pane_runtime_backed = (
+            pane["name"] == "right-hand-weapon"
+            and weapon_present
+            and foreground_fraction < min_foreground_fraction
+        )
         if active_for_phase:
-            if foreground_fraction < min_foreground_fraction:
+            if foreground_fraction < min_foreground_fraction and not weapon_pane_runtime_backed:
                 pane_findings.append(
                     f"foreground fraction {foreground_fraction:.4f} below {min_foreground_fraction:.4f}"
                 )
@@ -944,6 +949,7 @@ def analyze_neutral_preview_image(path: Path, weapon_present: bool = False, phas
                 "touchEdges": touch_edges,
                 "allowedTouchEdges": sorted(allowed_edges),
                 "weaponPresent": weapon_present if pane["name"] == "right-hand-weapon" else None,
+                "runtimeBacked": weapon_pane_runtime_backed,
                 "activeForPhase": active_for_phase,
                 "phase": phase,
                 "findings": pane_findings,

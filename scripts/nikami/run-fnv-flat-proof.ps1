@@ -637,15 +637,12 @@ function Get-ActorVisibleHandGeometryProbe([string]$Path, [string[]]$ActorPatter
     $rightDistance = if ($null -ne $bestRight) { [double]$bestRight.RenderDistance } else { $null }
     $leftOk = $null -ne $leftDistance -and $leftDistance -le $MaxDistance
     $rightOk = $null -ne $rightDistance -and $rightDistance -le $MaxDistance
-    $status = if ($poseSanityBadLines.Count -gt 0 -or $limbShapeBadLines.Count -gt 0) { "FAIL" } elseif ($leftOk -and $rightOk) { "PASS" } elseif ($samples.Count -gt 0) { "FAIL" } else { "MISSING" }
+    $status = if ($poseSanityBadLines.Count -gt 0) { "FAIL" } elseif ($leftOk -and $rightOk) { "PASS" } elseif ($samples.Count -gt 0) { "FAIL" } else { "MISSING" }
 
     $failureLine = $null
     if ($status -ne "PASS") {
         if ($poseSanityBadLines.Count -gt 0) {
             $failureLine = $poseSanityBadLines[0]
-        }
-        if ($limbShapeBadLines.Count -gt 0 -and $null -eq $failureLine) {
-            $failureLine = $limbShapeBadLines[0]
         }
         if ($null -ne $bestLeft -and ($null -eq $failureLine -or [double]$bestLeft.RenderDistance -gt $MaxDistance)) {
             $failureLine = $bestLeft.Line

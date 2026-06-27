@@ -1,7 +1,5 @@
 #include "controller.hpp"
 
-#include <algorithm>
-#include <cctype>
 #include <cmath>
 
 #include <osg/Material>
@@ -52,19 +50,6 @@ namespace NifOsg
         osg::Quat falloutHalfTurnX()
         {
             return osg::Quat(osg::PI, osg::Vec3f(1.f, 0.f, 0.f));
-        }
-
-        std::string asciiLower(std::string value)
-        {
-            std::transform(value.begin(), value.end(), value.begin(),
-                [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
-            return value;
-        }
-
-        bool isFalloutActorBasisBone(const std::string& bone)
-        {
-            const std::string lowerBone = asciiLower(bone);
-            return lowerBone == "bip01" || lowerBone.rfind("bip01 ", 0) == 0;
         }
 
         bool shouldPinFalloutActorBindRotation(const std::string& bone)
@@ -248,7 +233,10 @@ namespace NifOsg
     void KeyframeController::setFalloutActorTransformBasis(
         const std::string& lowerBone, const osg::Vec3f& bindTranslation, const osg::Quat& bindRotation, float bindScale)
     {
-        mUseFalloutActorRotationBasis = isFalloutActorBasisBone(lowerBone);
+        // FNV actor KFs already sample into the actor skeleton's local basis. Applying
+        // an extra half-turn here in native callbacks inverts crouch/sneak poses; the
+        // manual Fallout composer handles bind-relative experiments separately.
+        mUseFalloutActorRotationBasis = false;
         mPinFalloutActorBindRotation = shouldPinFalloutActorBindRotation(lowerBone);
         mFalloutLowerBone = lowerBone;
         mFalloutBindTranslation = bindTranslation;
@@ -499,6 +487,18 @@ namespace NifOsg
 
     KeyframeController::KfTransform KeyframeController::getCurrentTransformation(osg::NodeVisitor* nv)
     {
+        return getCurrentTransformation(nv, false);
+    }
+
+    KeyframeController::KfTransform KeyframeController::getCurrentTransformationWithoutFalloutActorBasis(
+        osg::NodeVisitor* nv)
+    {
+        return getCurrentTransformation(nv, false);
+    }
+
+    KeyframeController::KfTransform KeyframeController::getCurrentTransformation(
+        osg::NodeVisitor* nv, bool applyFalloutActorBasis)
+    {
         KfTransform out;
 
         if (hasInput())
@@ -544,7 +544,7 @@ namespace NifOsg
                         data.mDefaultValue.mScale, data.mScaleOffset, data.mScaleHalfRange);
                 }
 
-                if (mUseFalloutActorRotationBasis)
+                if (applyFalloutActorBasis && mUseFalloutActorRotationBasis)
                 {
                     if (mPinFalloutActorBindRotation)
                     {
@@ -571,7 +571,7 @@ namespace NifOsg
             if (!mScales.empty())
                 out.mScale = mScales.interpKey(time);
 
-            if (mUseFalloutActorRotationBasis)
+            if (applyFalloutActorBasis && mUseFalloutActorRotationBasis)
             {
                 if (mPinFalloutActorBindRotation)
                 {

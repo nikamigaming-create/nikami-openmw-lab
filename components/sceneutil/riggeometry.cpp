@@ -128,7 +128,10 @@ namespace SceneUtil
                 return "current";
             }
 
-            return getFalloutSkinningMode();
+            if (hasFalloutSkinningModeOverride())
+                return getFalloutSkinningMode();
+
+            return "current";
         }
 
         bool useFalloutSkinToSkelMatrix()
@@ -973,8 +976,9 @@ namespace SceneUtil
                              << " vertex=" << maxFalloutVertex;
         }
 
+        const bool handRig = isFalloutHandRig(getName(), mData->mRootBone);
         const bool falloutVrArcadeHandSolveRig
-            = falloutRig && isFalloutVrArcadeHandSolveRig(getName(), mData->mRootBone, mData->mBones);
+            = falloutRig && handRig && isFalloutVrArcadeHandSolveRig(getName(), mData->mRootBone, mData->mBones);
         if (falloutRig && !falloutSourceSkinning && falloutVrArcadeHandSolveRig
             && getFalloutVrRigidHandSolveDefault() && positionSrc != nullptr && positionDst != nullptr
             && !positionSrc->empty() && !positionDst->empty())
@@ -993,7 +997,6 @@ namespace SceneUtil
             const osg::Vec3f sourceCenter = sourceBox.valid() ? sourceBox.center() : osg::Vec3f();
             const osg::Vec3f skinnedCenter = skinnedBox.valid() ? skinnedBox.center() : osg::Vec3f();
             const float extentRatio = maxFiniteExtentRatio(skinnedExtent, sourceExtent);
-            const bool handRig = isFalloutHandRig(getName(), mData->mRootBone);
             osg::Vec3f solveTarget = skinnedCenter;
             bool hasHandAnchor = false;
             if (handRig)

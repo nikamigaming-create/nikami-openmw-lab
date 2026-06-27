@@ -254,6 +254,7 @@ namespace NifOsg
         osg::Callback* getAsCallback() override { return this; }
 
         KfTransform getCurrentTransformation(osg::NodeVisitor* nv) override;
+        KfTransform getCurrentTransformationWithoutFalloutActorBasis(osg::NodeVisitor* nv);
 
         void operator()(NifOsg::MatrixTransform*, osg::NodeVisitor*);
         void setFalloutActorTransformBasis(
@@ -263,6 +264,7 @@ namespace NifOsg
     private:
         void initFromDefaultTransform(const Nif::NiQuatTransform& transform);
         bool initFromInterpolator(const Nif::NiInterpolator* interp);
+        KfTransform getCurrentTransformation(osg::NodeVisitor* nv, bool applyFalloutActorBasis);
 
         QuaternionInterpolator mRotations;
 

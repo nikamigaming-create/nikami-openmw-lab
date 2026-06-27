@@ -5410,9 +5410,11 @@ namespace MWRender
             float maxNativeWorldMatrixDelta = 0.f;
             std::string maxNativeWorldMatrixDeltaBone;
             const std::string refIdText = mPtr.getCellRef().getRefId().serializeText();
-            const bool matrixAudit = (std::getenv("OPENMW_FNV_MATRIX_AUDIT") != nullptr
-                                         || std::getenv("OPENMW_FNV_PART_MATRIX_AUDIT") != nullptr)
-                && (refIdText.find("4104c7f") != std::string::npos || refIdText == "player");
+            const bool auditAllFalloutActors = std::getenv("OPENMW_FNV_FULL_MATRIX_AUDIT") != nullptr;
+            const bool matrixAudit = auditAllFalloutActors
+                || ((std::getenv("OPENMW_FNV_MATRIX_AUDIT") != nullptr
+                        || std::getenv("OPENMW_FNV_PART_MATRIX_AUDIT") != nullptr)
+                    && (refIdText.find("4104c7f") != std::string::npos || refIdText == "player"));
             unsigned int matrixAuditLines = 0;
             constexpr unsigned int matrixAuditLineLimit = 96;
             for (size_t blendMask = 0; blendMask < sNumBlendMasks; ++blendMask)
@@ -5446,7 +5448,11 @@ namespace MWRender
 
                     const std::string lowerAppliedBone = Misc::StringUtils::lowerCase(it->first);
                     const osg::Matrixf before = transform->getMatrix();
-                    SceneUtil::KeyframeController::KfTransform keyframe = it->second->getCurrentTransformation(nullptr);
+                    SceneUtil::KeyframeController::KfTransform keyframe;
+                    if (auto* nifController = dynamic_cast<NifOsg::KeyframeController*>(it->second.get()))
+                        keyframe = nifController->getCurrentTransformationWithoutFalloutActorBasis(nullptr);
+                    else
+                        keyframe = it->second->getCurrentTransformation(nullptr);
                     if (std::getenv("OPENMW_FNV_ENABLE_CHAIR_LOWER_LEG_DONOR") != nullptr
                         && falloutProcedureIdle && blendMask == BoneGroup_LowerBody && animsrc
                         && isFalloutCalfFootBone(lowerAppliedBone)
@@ -5469,7 +5475,10 @@ namespace MWRender
                             if (donor == donorControllers.end())
                                 continue;
 
-                            keyframe = donor->second->getCurrentTransformation(nullptr);
+                            if (auto* nifController = dynamic_cast<NifOsg::KeyframeController*>(donor->second.get()))
+                                keyframe = nifController->getCurrentTransformationWithoutFalloutActorBasis(nullptr);
+                            else
+                                keyframe = donor->second->getCurrentTransformation(nullptr);
                             if (matrixAudit && matrixAuditLines < matrixAuditLineLimit)
                             {
                                 Log(Debug::Info) << "FNV/ESM4 MATRIX AUDIT " << mPtr.getCellRef().getRefId()
