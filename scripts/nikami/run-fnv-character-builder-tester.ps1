@@ -222,6 +222,11 @@ function Join-OptionalSelectorList([string[]]$Values) {
     return ($items -join ",")
 }
 
+function Test-ActorKitWeaponActionGroup([string]$Group) {
+    if ([string]::IsNullOrWhiteSpace($Group)) { return $false }
+    return $Group -match '(?i)(attack|fire|shoot|reload|aim)'
+}
+
 function Get-RegexValue([string]$Text, [string]$Pattern) {
     if ([string]::IsNullOrWhiteSpace($Text)) { return $null }
     $match = [regex]::Match($Text, $Pattern)
@@ -336,14 +341,10 @@ $ActorKitPropSlotsCsv = Join-OptionalSelectorList $ActorKitPropSlots
 $ActorKitPropModelsCsv = Join-OptionalSelectorList $ActorKitPropModels
 $ResolvedActorKitAnimationSource = $ActorKitAnimationSource
 $ActorKitAnimationSourceDefaulted = $false
-if ($ActorKind -ine "creature" -and [string]::IsNullOrWhiteSpace($ResolvedActorKitAnimationSource)) {
+if ($ActorKind -ine "creature" -and [string]::IsNullOrWhiteSpace($ResolvedActorKitAnimationSource) -and !(Test-ActorKitWeaponActionGroup $ActorKitAnimationGroup)) {
     $ResolvedActorKitAnimationSource = "hands-at-side"
     $ActorKitAnimationSourceDefaulted = $true
 }
-if ($ActorKind -ine "creature" -and [string]::IsNullOrWhiteSpace($FnvSkinningMode)) {
-    $FnvSkinningMode = "source"
-}
-
 Write-SuiteLine "FNV character builder tester $Stamp"
 Write-SuiteLine "RepoRoot: $RepoRoot"
 Write-SuiteLine "SuiteDir: $SuiteDir"

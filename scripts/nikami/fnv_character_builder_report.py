@@ -1122,6 +1122,36 @@ def parse_material_evidence(lines: list[str], patterns: list[str]) -> list[dict[
     return rows
 
 
+def parse_projectile_runtime_evidence(lines: list[str], patterns: list[str]) -> list[dict[str, Any]]:
+    evidence_needles = (
+        ("muzzle-frame", "actor weapon muzzle frame"),
+        ("projectile-fire-request", "actor projectile fire request"),
+        ("projectile-fire-blocked", "actor projectile fire BLOCKED"),
+        ("real-10mm-muzzle", "real 10mm muzzle ray origin"),
+        ("real-10mm-firing-trace", "real 10mm firing trace"),
+        ("real-10mm-projectile", "real 10mm projectile request"),
+    )
+    rows: list[dict[str, Any]] = []
+    for line in lines:
+        if not line_matches_actor(line, patterns):
+            continue
+        for kind, needle in evidence_needles:
+            if needle not in line:
+                continue
+            runtime_match = re.search(r"\bruntime=([^ ]+)", line)
+            source_match = re.search(r"\bsource=([^ ]+)", line)
+            rows.append(
+                {
+                    "kind": kind,
+                    "runtime": runtime_match.group(1) if runtime_match else "",
+                    "source": source_match.group(1) if source_match else "",
+                    "line": compact_line(line),
+                }
+            )
+            break
+    return rows
+
+
 def parse_actor_matches(lines: list[str], actor: str) -> list[dict[str, Any]]:
     match_re = re.compile(
         rf'active-cell actor match target="{re.escape(actor)}".*?\bframe=(?P<frame>[0-9]+) '
@@ -1348,6 +1378,7 @@ def evaluate(
     animation_playback: list[dict[str, Any]],
     animation_blockers: list[str],
     actor_weapon_states: list[dict[str, Any]],
+    projectile_runtime_evidence: list[dict[str, Any]],
     face_occlusion_findings: list[dict[str, Any]],
     neutral_preview_composition: list[dict[str, Any]],
     face_checks: list[dict[str, Any]],
@@ -1430,10 +1461,13 @@ def evaluate(
             )
         if int(hand_runtime_summary.get("targetStandingArmPoseBadLines", 0)) > 0:
             failures.append(f"target standing arm pose failures: {hand_runtime_summary['targetStandingArmPoseBadLines']}")
+        actor_group = summary_value(lines, "ActorKitAnimationGroup").lower()
+        weapon_action_group = any(token in actor_group for token in ("attack", "fire", "shoot", "reload", "aim"))
         if (
             summary_value(lines, "NeutralActorPreview").lower() == "true"
             and summary_value(lines, "NeutralActorPreviewStandingIdle").lower() == "true"
             and not summary_value(lines, "ActorKitAnimationSource")
+            and not weapon_action_group
         ):
             failures.append("missing explicit neutral authoring animation source")
     collapsed_heads = []
@@ -1456,6 +1490,19 @@ def evaluate(
         weapon_expected = not actor_weapon_states or any(item["weapon"] for item in actor_weapon_states)
         if weapon_expected and not weapon_lines:
             failures.append("missing equipped weapon evidence")
+        selected_groups = [summary_value(lines, "ActorKitAnimationGroup").lower()]
+        selected_groups.extend(item["group"].lower() for item in animation_requests)
+        projectile_requested = any(
+            "attack" in group or "shoot" in group or "fire" in group for group in selected_groups if group
+        )
+        if projectile_requested:
+            projectile_lines = [
+                item
+                for item in projectile_runtime_evidence
+                if item["kind"] in {"projectile-fire-request", "real-10mm-projectile-request"}
+            ]
+            if not projectile_lines:
+                failures.append("missing projectile fire request runtime evidence")
     dialogue_mode = summary_value(lines, "ActorKitDialogueMode").lower()
     dialogue_requested = phase in {"talk", "dialogue"} or dialogue_mode in {"mouth-open", "mouth-open-pose", "pose"}
     if dialogue_requested:
@@ -1556,9 +1603,6 @@ def evaluate(
             "hair",
             "hair-beard",
             "beard",
-            "equipment",
-            "weapon",
-            "weapons",
             "headgear",
             "talk",
             "dialogue",
@@ -1622,6 +1666,7 @@ def write_markdown(path: Path, report: dict[str, Any]) -> None:
     lines.append(f"TRI/EGM/talk lines: {len(report['morphLines'])}")
     lines.append(f"Actor weapon states: {len(report['actorWeaponStates'])} expected={report['weaponExpected']}")
     lines.append(f"Weapon lines: {len(report['weaponLines'])}")
+    lines.append(f"Projectile runtime evidence: {len(report['projectileRuntimeEvidence'])}")
     hand_summary = report.get("handRuntimeSummary", {})
     lines.append(
         "Hand runtime: "
@@ -1802,7 +1847,14 @@ def main() -> int:
     weapon_lines = [
         compact_line(line)
         for line in lines
-        if ("equipped NPC weapon" in line or "weapon metadata" in line or "weapon sound files" in line)
+        if (
+            "equipped NPC weapon" in line
+            or "weapon metadata" in line
+            or "weapon sound files" in line
+            or "actor weapon muzzle frame" in line
+            or "actor projectile fire request" in line
+            or "actor projectile fire BLOCKED" in line
+        )
         and line_matches_actor(line, patterns)
     ]
     weapon_present = any(item["weapon"] for item in actor_weapon_states) or bool(weapon_lines)
@@ -1813,6 +1865,7 @@ def main() -> int:
         proof_dir, lines, args.actor, weapon_present=weapon_present, phase=args.phase.lower()
     )
     material_evidence = parse_material_evidence(lines, patterns)
+    projectile_runtime_evidence = parse_projectile_runtime_evidence(lines, patterns)
     hand_runtime_summary = parse_hand_runtime_summary(lines)
     actor_kind = args.actor_kind
     if actor_kind == "auto":
@@ -1847,6 +1900,7 @@ def main() -> int:
         animation_playback,
         animation_blockers,
         actor_weapon_states,
+        projectile_runtime_evidence,
         face_occlusion_findings,
         neutral_preview_composition,
         face_checks,
@@ -1884,6 +1938,7 @@ def main() -> int:
         "actorWeaponStates": actor_weapon_states,
         "weaponExpected": (None if not actor_weapon_states else any(item["weapon"] for item in actor_weapon_states)),
         "weaponLines": weapon_lines,
+        "projectileRuntimeEvidence": projectile_runtime_evidence,
         "handRuntimeSummary": hand_runtime_summary,
         "creatureEvidence": creature_evidence,
         "creatureLines": [item["line"] for item in creature_evidence],

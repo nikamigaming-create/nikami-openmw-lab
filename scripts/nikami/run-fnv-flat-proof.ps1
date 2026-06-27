@@ -217,6 +217,11 @@ function Join-SelectorList([string[]]$Values) {
     return ($items -join ",")
 }
 
+function Test-ActorKitWeaponActionGroup([string]$Group) {
+    if ([string]::IsNullOrWhiteSpace($Group)) { return $false }
+    return $Group -match '(?i)(attack|fire|shoot|reload|aim)'
+}
+
 function Format-Double([double]$Value) {
     if ([double]::IsNaN($Value)) { return "" }
     return $Value.ToString("0.######", [Globalization.CultureInfo]::InvariantCulture)
@@ -1730,7 +1735,7 @@ $ActorKitPropSlotsCsv = Join-SelectorList $ActorKitPropSlots
 $ActorKitPropModelsCsv = Join-SelectorList $ActorKitPropModels
 $ResolvedActorKitAnimationSource = $ActorKitAnimationSource
 $ActorKitAnimationSourceDefaulted = $false
-if ($NeutralActorPreviewStandingIdle -and $ActorKind -ine "creature" -and [string]::IsNullOrWhiteSpace($ResolvedActorKitAnimationSource)) {
+if ($NeutralActorPreviewStandingIdle -and $ActorKind -ine "creature" -and [string]::IsNullOrWhiteSpace($ResolvedActorKitAnimationSource) -and !(Test-ActorKitWeaponActionGroup $ActorKitAnimationGroup)) {
     $ResolvedActorKitAnimationSource = "hands-at-side"
     $ActorKitAnimationSourceDefaulted = $true
 }

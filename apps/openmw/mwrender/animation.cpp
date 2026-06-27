@@ -242,6 +242,14 @@ namespace
             || groupname.starts_with("turn");
     }
 
+    bool isFalloutWeaponActionAnimationGroup(std::string_view groupname)
+    {
+        const std::string lower = Misc::StringUtils::lowerCase(std::string(groupname));
+        return lower.find("attack") != std::string::npos || lower.find("fire") != std::string::npos
+            || lower.find("shoot") != std::string::npos || lower.find("reload") != std::string::npos
+            || lower.find("aim") != std::string::npos;
+    }
+
     float matrixDifference(const osg::Matrixf& left, const osg::Matrixf& right)
     {
         float result = 0.f;
@@ -545,18 +553,17 @@ namespace
 
     osg::BoundingBox computeFalloutGeometryBounds(const osg::Geometry& geometry)
     {
-        const osg::BoundingBox cached = geometry.getBoundingBox();
-        if (cached.valid())
-            return cached;
-
         osg::BoundingBox computed;
         const osg::Vec3Array* vertices = dynamic_cast<const osg::Vec3Array*>(geometry.getVertexArray());
-        if (vertices == nullptr)
-            return computed;
+        if (vertices != nullptr)
+        {
+            for (const osg::Vec3f& vertex : *vertices)
+                computed.expandBy(vertex);
+            if (computed.valid())
+                return computed;
+        }
 
-        for (const osg::Vec3f& vertex : *vertices)
-            computed.expandBy(vertex);
-        return computed;
+        return geometry.getBoundingBox();
     }
 
     class FalloutPartRigBoundsVisitor : public osg::NodeVisitor
@@ -1929,6 +1936,90 @@ namespace
         return false;
     }
 
+    bool shouldWarmupStagedProofPostureAudit(const MWWorld::Ptr& ptr)
+    {
+        if (std::getenv("OPENMW_PROOF_STAGE_ACTOR") == nullptr)
+            return false;
+
+        const auto getEnvFloat = [](const char* name, float& value) {
+            const char* env = std::getenv(name);
+            if (env == nullptr || *env == '\0')
+                return false;
+            try
+            {
+                value = std::stof(env);
+                return std::isfinite(value);
+            }
+            catch (...) {}
+            return false;
+        };
+        const auto getEnvInt = [](const char* name, int fallback) {
+            if (const char* value = std::getenv(name))
+            {
+                try
+                {
+                    return std::max(0, std::stoi(value));
+                }
+                catch (...) {}
+            }
+            return fallback;
+        };
+
+        const std::string key = ptr.toString();
+        float stageX = 0.f;
+        float stageY = 0.f;
+        float stageZ = 0.f;
+        if (getEnvFloat("OPENMW_PROOF_ACTOR_STAGE_X", stageX)
+            && getEnvFloat("OPENMW_PROOF_ACTOR_STAGE_Y", stageY)
+            && getEnvFloat("OPENMW_PROOF_ACTOR_STAGE_Z", stageZ))
+        {
+            const osg::Vec3f stage(stageX, stageY, stageZ);
+            const osg::Vec3f scene = ptr.getRefData().getPosition().asVec3();
+            const float distance = (scene - stage).length();
+            const float tolerance = [&] {
+                float value = 24.f;
+                getEnvFloat("OPENMW_PROOF_POSTURE_STAGE_TOLERANCE", value);
+                return std::max(0.f, value);
+            }();
+            if (distance > tolerance)
+                return true;
+
+            static std::unordered_map<std::string, int> sStageSettleSamples;
+            const int settleSamples = getEnvInt("OPENMW_PROOF_POSTURE_STAGE_SETTLE_SAMPLES", 8);
+            int& samples = sStageSettleSamples[key];
+            if (samples >= settleSamples)
+                return false;
+
+            ++samples;
+            if (samples == settleSamples)
+            {
+                Log(Debug::Info) << "OPENMW PROOF posture stage ready target=" << ptr.getCellRef().getRefId()
+                                 << " scene=" << formatFalloutAuditVec3(scene)
+                                 << " stage=" << formatFalloutAuditVec3(stage)
+                                 << " distance=" << distance
+                                 << " settleSamples=" << samples
+                                 << " gate=stage_actor_audit";
+            }
+            return true;
+        }
+
+        const int warmup = getEnvInt("OPENMW_PROOF_POSTURE_WARMUP_SAMPLES", 192);
+        if (warmup <= 0)
+            return false;
+
+        static std::unordered_map<std::string, int> sWarmupSamples;
+        int& samples = sWarmupSamples[key];
+        if (samples >= warmup)
+            return false;
+
+        ++samples;
+        if (samples == warmup)
+            Log(Debug::Info) << "OPENMW PROOF posture warmup complete target=" << ptr.getCellRef().getRefId()
+                             << " warmupSamples=" << samples
+                             << " gate=stage_actor_audit";
+        return true;
+    }
+
     void auditGenericProofPosture(osg::Node* root, const MWWorld::Ptr& ptr)
     {
         if (root == nullptr || !shouldAuditGenericProofPosture(ptr))
@@ -1950,6 +2041,10 @@ namespace
         }();
         if (samples >= maxSamples)
             return;
+
+        if (shouldWarmupStagedProofPostureAudit(ptr))
+            return;
+
         ++samples;
 
         std::unordered_map<std::string, std::vector<osg::MatrixTransform*>> targets;
@@ -2225,13 +2320,14 @@ namespace
                 logFalloutPartMatrixAudit(part, partClass, anchorWorld, center, anchor, targets, ptr);
             if (partMatrixAudit && (partClass == "leftHand" || partClass == "rightHand"))
             {
-                static unsigned int sHandPartRigAuditLines = 0;
+                static std::unordered_map<std::string, unsigned int> sHandPartRigAuditLines;
+                unsigned int& handPartRigAuditLines = sHandPartRigAuditLines[ptr.toString()];
                 FalloutPartRigBoundsVisitor rigBoundsVisitor(getFalloutParentWorldMatrix(part));
                 part->accept(rigBoundsVisitor);
                 unsigned int rigIndex = 0;
                 for (const FalloutRigBoundsSample& sample : rigBoundsVisitor.mSamples)
                 {
-                    if (sHandPartRigAuditLines >= 48)
+                    if (handPartRigAuditLines >= 48)
                         break;
                     const float renderParentDistance = sample.mRenderValid
                         ? (sample.mRenderCenterParentWorld - anchor).length()
@@ -2266,14 +2362,14 @@ namespace
                         << " sourceExtent=" << formatFalloutAuditVec3(sample.mSourceExtent)
                         << " sourceParentDistance=" << sourceParentDistance
                         << " sourcePathDistance=" << sourcePathDistance;
-                    ++sHandPartRigAuditLines;
+                    ++handPartRigAuditLines;
                 }
-                if (rigBoundsVisitor.mSamples.empty() && sHandPartRigAuditLines < 48)
+                if (rigBoundsVisitor.mSamples.empty() && handPartRigAuditLines < 48)
                 {
                     Log(Debug::Warning) << "FNV/ESM4 HAND GEOMETRY BOUNDS AUDIT " << ptr.getCellRef().getRefId()
                                         << " part='" << part->getName() << "' class=" << partClass
                                         << " geometryCount=0";
-                    ++sHandPartRigAuditLines;
+                    ++handPartRigAuditLines;
                 }
             }
             if (logged < 14 && (bad || partClass != "other"))
@@ -2324,12 +2420,13 @@ namespace
             << " maxPart='" << maxPart << "'";
         if (partMatrixAudit)
         {
-            static unsigned int sActorHandRigAuditLines = 0;
+            static std::unordered_map<std::string, unsigned int> sActorHandRigAuditLines;
+            unsigned int& actorHandRigAuditLines = sActorHandRigAuditLines[ptr.toString()];
             FalloutActorHandRigBoundsVisitor handRigVisitor(getFalloutNodeWorldMatrix(objectRoot));
             objectRoot->accept(handRigVisitor);
             unsigned int loggedHandRigs = 0;
             for (std::size_t i = 0; i < handRigVisitor.mSamples.size() && loggedHandRigs < 18
-                 && sActorHandRigAuditLines < 96; ++i)
+                 && actorHandRigAuditLines < 96; ++i)
             {
                 const FalloutRigBoundsSample& sample = handRigVisitor.mSamples[i];
                 const std::string lowerName = Misc::StringUtils::lowerCase(sample.mName);
@@ -2367,13 +2464,13 @@ namespace
                     << " shapeVerdict=" << (limbShapeSuspect ? "SUSPECT" : "OK")
                     << " path='" << handRigVisitor.mPaths[i] << "'";
                 ++loggedHandRigs;
-                ++sActorHandRigAuditLines;
+                ++actorHandRigAuditLines;
             }
-            if (handRigVisitor.mSamples.empty() && sActorHandRigAuditLines < 96)
+            if (handRigVisitor.mSamples.empty() && actorHandRigAuditLines < 96)
             {
                 Log(Debug::Warning) << "FNV/ESM4 ACTOR HAND GEOMETRY AUDIT " << ptr.getCellRef().getRefId()
                                     << " geometryCount=0";
-                ++sActorHandRigAuditLines;
+                ++actorHandRigAuditLines;
             }
         }
         return maxDistance;
@@ -2811,7 +2908,8 @@ namespace MWRender
             const std::string& name = node->getName();
             for (size_t i = 1; i < sNumBlendMasks; i++)
             {
-                if (name == sBlendMaskRoots[i] || controllerName == sBlendMaskRoots[i])
+                if (Misc::StringUtils::ciEqual(name, sBlendMaskRoots[i])
+                    || Misc::StringUtils::ciEqual(controllerName, sBlendMaskRoots[i]))
                     return i;
             }
 
@@ -3923,6 +4021,13 @@ namespace MWRender
         if (std::getenv("OPENMW_FNV_DISABLE_NATIVE_ANIMATION_CALLBACKS") != nullptr)
             return false;
 
+        if (std::getenv("OPENMW_FNV_FORCE_NATIVE_WEAPON_ACTION_CALLBACKS") == nullptr)
+        {
+            const char* actorKitGroup = std::getenv("OPENMW_FNV_ACTOR_KIT_ANIMATION_GROUP");
+            if (actorKitGroup != nullptr && isFalloutWeaponActionAnimationGroup(actorKitGroup))
+                return false;
+        }
+
         // Fallout KFs are data: sampled local translation/rotation/scale belongs on the
         // matched target node through the same callback path OpenMW uses for native actors.
         // Keep the manual path available only for proof audits that compare transform modes.
@@ -3966,6 +4071,14 @@ namespace MWRender
             return "idle2";
         if (stem == "mtidle" || stem == "idle" || Misc::StringUtils::ciEndsWith(stem, "idle"))
             return "idle";
+        if (stem.find("attackright") != std::string::npos)
+            return "attackright";
+        if (stem.find("attackleft") != std::string::npos)
+            return "attackleft";
+        if (stem.find("attack") != std::string::npos)
+            return "attack1";
+        if (stem.find("reload") != std::string::npos)
+            return "reload";
         if (Misc::StringUtils::ciEndsWith(stem, "turnleft"))
             return "turnleft";
         if (Misc::StringUtils::ciEndsWith(stem, "turnright"))
@@ -3986,8 +4099,6 @@ namespace MWRender
             return "walkleft";
         if (Misc::StringUtils::ciEndsWith(stem, "right") || Misc::StringUtils::ciEndsWith(stem, "walkright"))
             return "walkright";
-        if (stem.find("attack") != std::string::npos)
-            return "attack1";
 
         return {};
     }
@@ -4105,6 +4216,17 @@ namespace MWRender
         }
         if (animsrc->mKeyframes && !animsrc->mKeyframes->mKeyframeControllers.empty() && isFonvActorAnim)
         {
+            const std::string syntheticGroup = getFalloutSyntheticGroupFromKf(kfname);
+            if (!syntheticGroup.empty() && !animsrc->mKeyframes->mTextKeys.hasGroupStart(syntheticGroup))
+            {
+                osg::ref_ptr<SceneUtil::KeyframeHolder> keyframes
+                    = new SceneUtil::KeyframeHolder(*animsrc->mKeyframes, osg::CopyOp::SHALLOW_COPY);
+                addSyntheticLoopingTextKeys(keyframes->mTextKeys, syntheticGroup);
+                animsrc->mKeyframes = keyframes;
+                Log(Debug::Info) << "FNV/ESM4 diag: synthesized actor KF filename text key group '"
+                                 << syntheticGroup << "' for " << kfname;
+            }
+
             const char* forcedGroup = std::getenv("OPENMW_FNV_FORCED_KF_GROUP");
             const char* forcedOverlayGroup = std::getenv("OPENMW_FNV_FORCED_OVERLAY_GROUP");
             const char* forcedSource = std::getenv("OPENMW_FNV_FORCED_KF_SOURCE");
@@ -4530,6 +4652,21 @@ namespace MWRender
                                  << "' for " << mPtr.getCellRef().getRefId();
             }
             return;
+        }
+
+        if (falloutNpc && isFalloutWeaponActionAnimationGroup(groupname)
+            && (blendMask & (BlendMask_LowerBody | BlendMask_Torso | BlendMask_Head)) != 0)
+        {
+            const int requestedBlendMask = blendMask;
+            blendMask = BlendMask_LeftArm | BlendMask_RightArm;
+            static unsigned int sClampedWeaponActionLogs = 0;
+            if (sClampedWeaponActionLogs < 64)
+            {
+                ++sClampedWeaponActionLogs;
+                Log(Debug::Info) << "FNV/ESM4 diag: clamped NPC weapon action blend mask for "
+                                 << mPtr.getCellRef().getRefId() << " group '" << groupname
+                                 << "' requestedBlendMask=" << requestedBlendMask << " blendMask=" << blendMask;
+            }
         }
 
         if (falloutNpc)
@@ -5663,8 +5800,8 @@ namespace MWRender
                 {
                     if (SceneUtil::Bone* rootBone = mSkeleton->getBone("Bip01"))
                         correctRoot(rootBone->mNode);
-                    else if (SceneUtil::Bone* rootBone = mSkeleton->getBone("bip01"))
-                        correctRoot(rootBone->mNode);
+                    else if (SceneUtil::Bone* lowerRootBone = mSkeleton->getBone("bip01"))
+                        correctRoot(lowerRootBone->mNode);
                 }
                 auto duplicateRootIt = duplicateTransformTargets.find("bip01");
                 if (duplicateRootIt != duplicateTransformTargets.end())
@@ -5693,7 +5830,7 @@ namespace MWRender
             static std::unordered_map<std::string, unsigned int> sFalloutManualApplyLogs;
             const std::string refId = mPtr.getCellRef().getRefId().serializeText();
             unsigned int& logs = sFalloutManualApplyLogs[refId];
-            const unsigned int maxManualApplyLogs = refId.find("4104c7f") != std::string::npos ? 20 : 3;
+            const unsigned int maxManualApplyLogs = refId.find("1104c7f") != std::string::npos ? 20 : 3;
             const bool bindPoseProofAudit = appliedControllers == 0
                 && std::getenv("OPENMW_FNV_BIND_POSE_PROOF") != nullptr;
             if ((appliedControllers > 0 || bindPoseProofAudit) && logs < maxManualApplyLogs)
@@ -5785,12 +5922,13 @@ namespace MWRender
                     auditFalloutSeatedLegChain(duplicateTransformTargets, mPtr);
                     auditFalloutSeatedUpperBody(duplicateTransformTargets, mPtr);
                 }
-                if (shouldAuditProofPreviewGameplay())
-                {
-                    auditFalloutWorldPosture(duplicateTransformTargets, mPtr);
-                    auditFalloutStandingArmPose(duplicateTransformTargets, mPtr);
-                    auditFalloutRuntimeParts(mObjectRoot.get(), duplicateTransformTargets, mPtr);
-                }
+            }
+
+            if (shouldAuditProofPreviewGameplay() && !shouldWarmupStagedProofPostureAudit(mPtr))
+            {
+                auditFalloutWorldPosture(duplicateTransformTargets, mPtr);
+                auditFalloutStandingArmPose(duplicateTransformTargets, mPtr);
+                auditFalloutRuntimeParts(mObjectRoot.get(), duplicateTransformTargets, mPtr);
             }
         }
 
@@ -5798,32 +5936,35 @@ namespace MWRender
             && (std::getenv("OPENMW_FNV_SEATED_POSTURE_AUDIT") != nullptr
                 || std::getenv("OPENMW_FNV_PART_MATRIX_AUDIT") != nullptr))
         {
-            std::unordered_map<std::string, std::vector<osg::MatrixTransform*>> duplicateTransformTargets;
-            if (mObjectRoot != nullptr)
+            if (!shouldWarmupStagedProofPostureAudit(mPtr))
             {
-                FalloutTransformTargetVisitor targetVisitor(duplicateTransformTargets);
-                mObjectRoot->accept(targetVisitor);
-            }
-
-            static std::unordered_map<std::string, unsigned int> sFalloutNativeAuditLogs;
-            const std::string refId = mPtr.getCellRef().getRefId().serializeText();
-            unsigned int& logs = sFalloutNativeAuditLogs[refId];
-            const unsigned int maxNativeAuditLogs = refId.find("4104c7f") != std::string::npos ? 20 : 3;
-            if (logs < maxNativeAuditLogs)
-            {
-                ++logs;
-                Log(Debug::Info) << "FNV/ESM4 diag: native callback pose audit for "
-                                 << mPtr.getCellRef().getRefId()
-                                 << " targets=" << duplicateTransformTargets.size();
-                if (std::getenv("OPENMW_FNV_SEATED_POSTURE_AUDIT") != nullptr)
+                std::unordered_map<std::string, std::vector<osg::MatrixTransform*>> duplicateTransformTargets;
+                if (mObjectRoot != nullptr)
                 {
-                    auditFalloutSeatedPlacement(duplicateTransformTargets, mPtr);
-                    auditFalloutSeatedLegChain(duplicateTransformTargets, mPtr);
-                    auditFalloutSeatedUpperBody(duplicateTransformTargets, mPtr);
+                    FalloutTransformTargetVisitor targetVisitor(duplicateTransformTargets);
+                    mObjectRoot->accept(targetVisitor);
                 }
-                auditFalloutWorldPosture(duplicateTransformTargets, mPtr);
-                auditFalloutStandingArmPose(duplicateTransformTargets, mPtr);
-                auditFalloutRuntimeParts(mObjectRoot.get(), duplicateTransformTargets, mPtr);
+
+                static std::unordered_map<std::string, unsigned int> sFalloutNativeAuditLogs;
+                const std::string refId = mPtr.getCellRef().getRefId().serializeText();
+                unsigned int& logs = sFalloutNativeAuditLogs[refId];
+                const unsigned int maxNativeAuditLogs = refId.find("1104c7f") != std::string::npos ? 20 : 3;
+                if (logs < maxNativeAuditLogs)
+                {
+                    ++logs;
+                    Log(Debug::Info) << "FNV/ESM4 diag: native callback pose audit for "
+                                     << mPtr.getCellRef().getRefId()
+                                     << " targets=" << duplicateTransformTargets.size();
+                    if (std::getenv("OPENMW_FNV_SEATED_POSTURE_AUDIT") != nullptr)
+                    {
+                        auditFalloutSeatedPlacement(duplicateTransformTargets, mPtr);
+                        auditFalloutSeatedLegChain(duplicateTransformTargets, mPtr);
+                        auditFalloutSeatedUpperBody(duplicateTransformTargets, mPtr);
+                    }
+                    auditFalloutWorldPosture(duplicateTransformTargets, mPtr);
+                    auditFalloutStandingArmPose(duplicateTransformTargets, mPtr);
+                    auditFalloutRuntimeParts(mObjectRoot.get(), duplicateTransformTargets, mPtr);
+                }
             }
         }
 

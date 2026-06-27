@@ -1,6 +1,7 @@
 #include "esm4npcanimation.hpp"
 
 #include <components/esm4/loadarma.hpp>
+#include <components/esm4/loadammo.hpp>
 #include <components/esm4/loadarmo.hpp>
 #include <components/esm4/loadclot.hpp>
 #include <components/esm4/loadeyes.hpp>
@@ -15,6 +16,7 @@
 #include <components/esm4/loadrefr.hpp>
 #include <components/esm4/loadsndr.hpp>
 #include <components/esm4/loadsoun.hpp>
+#include <components/esm4/loadproj.hpp>
 #include <components/esm4/loadstat.hpp>
 #include <components/esm4/loadweap.hpp>
 
@@ -51,6 +53,8 @@
 #include <osg/ComputeBoundsVisitor>
 #include <osg/FrontFace>
 #include <osg/Geode>
+#include <osg/Geometry>
+#include <osg/LineWidth>
 #include <osg/Material>
 #include <osg/MatrixTransform>
 #include <osg/NodeCallback>
@@ -79,6 +83,7 @@
 #include "../mwclass/esm4npc.hpp"
 #include "../mwworld/cell.hpp"
 #include "../mwworld/esmstore.hpp"
+#include "../mwworld/manualref.hpp"
 #include "../mwworld/timestamp.hpp"
 #include "util.hpp"
 
@@ -1031,6 +1036,20 @@ namespace MWRender
             return std::clamp(parsed, 0.f, 0.999f);
         }
 
+        bool isFalloutActorKitWeaponActionGroup(const std::string& group)
+        {
+            return group.find("attack") != std::string::npos || group.find("fire") != std::string::npos
+                || group.find("shoot") != std::string::npos || group.find("reload") != std::string::npos
+                || group.find("aim") != std::string::npos;
+        }
+
+        int getFalloutActorKitAnimationBlendMask(const std::string& group)
+        {
+            if (isFalloutActorKitWeaponActionGroup(group))
+                return BlendMask_LeftArm | BlendMask_RightArm;
+            return BlendMask_All;
+        }
+
         void requestFalloutActorKitAnimation(Animation& animation, const MWWorld::Ptr& ptr, const ESM4::Npc& traits)
         {
             const std::string group = getFalloutActorKitAnimationGroup();
@@ -1039,14 +1058,16 @@ namespace MWRender
 
             const float startPoint = getFalloutActorKitAnimationStartPoint();
             const bool available = animation.hasAnimation(group);
+            const int blendMask = getFalloutActorKitAnimationBlendMask(group);
             Log(Debug::Info) << "FNV/ESM4 proof: actor-kit animation request actor=" << traits.mEditorId
                              << " ref=" << ptr.getCellRef().getRefId()
                              << " group=" << group
                              << " startPoint=" << startPoint
+                             << " blendMask=" << blendMask
                              << " available=" << available
                              << " runtime=" << (available ? "runtime-supported" : "known-blocked");
 
-            animation.play(group, MWMechanics::Priority_Scripted, BlendMask_All, false, 1.f, "start", "stop",
+            animation.play(group, MWMechanics::Priority_Scripted, blendMask, false, 1.f, "start", "stop",
                 startPoint, 0, true);
         }
 
@@ -6855,6 +6876,23 @@ namespace MWRender
                                      << " despite equipped weapon=" << weapon->mEditorId;
             }
 
+            const std::string actorKitGroup = getFalloutActorKitAnimationGroup();
+            if (MWClass::ESM4Npc::getEquippedWeapon(mPtr) != nullptr
+                || actorKitGroup.find("attack") != std::string::npos
+                || actorKitGroup.find("reload") != std::string::npos
+                || actorKitGroup.find("fire") != std::string::npos
+                || actorKitGroup.find("shoot") != std::string::npos)
+            {
+                addFonvAnimationSource("meshes/characters/_male/1hpaim.kf", "weapon action fallback", false);
+                addFonvAnimationSource("meshes/characters/_male/1hpequip.kf", "weapon action fallback", false);
+                addFonvAnimationSource("meshes/characters/_male/1hpattackright.kf", "weapon action fallback", false);
+                addFonvAnimationSource("meshes/characters/_male/1hpattackrightis.kf", "weapon action fallback", false);
+                addFonvAnimationSource("meshes/characters/_male/1hpattackrightup.kf", "weapon action fallback", false);
+                addFonvAnimationSource("meshes/characters/_male/1hpattackrightdown.kf", "weapon action fallback", false);
+                addFonvAnimationSource("meshes/characters/_male/1hpattackloop.kf", "weapon action fallback", false);
+                addFonvAnimationSource("meshes/characters/_male/1hpreloadx.kf", "weapon action fallback", false);
+            }
+
             // Add scheduled package procedure sources last because Animation::play resolves sources in reverse order.
             // These are narrow candidates such as Easy Pete's chair/eat package and should beat neutral mTIdle.
             for (const std::string& kfPath : procedureIdleSources)
@@ -7016,9 +7054,169 @@ namespace MWRender
         return runtimeSupported;
     }
 
+    void ESM4NpcAnimation::applyFONVWeaponIk(const ESM4::Npc& traits)
+    {
+        if (std::getenv("OPENMW_FNV_DISABLE_WEAPON_IK") != nullptr)
+            return;
+        if (!isFonvProofTargetActor(mPtr, traits))
+            return;
+        if (MWClass::ESM4Npc::getEquippedWeapon(mPtr) == nullptr)
+            return;
+
+        const float strength = std::clamp(readFalloutProofFloat("OPENMW_FNV_WEAPON_IK_STRENGTH", 0.18f), 0.f, 1.f);
+        if (strength <= 0.f)
+            return;
+
+        const NodeMap& nodeMap = getNodeMap();
+        osg::Group* spine = findBestAttachmentNode(nodeMap, { "Bip01 Spine2", "bip01 spine2", "Bip01 Spine1", "bip01 spine1" });
+        const osg::Vec3f chest = getNodeWorldMatrix(spine != nullptr ? spine : mObjectRoot.get()).getTrans();
+        const ESM::Position& position = mPtr.getRefData().getPosition();
+        const float yaw = position.rot[2];
+        osg::Vec3f forward(std::sin(yaw), std::cos(yaw), 0.f);
+        if (forward.normalize() <= 0.0001f)
+            forward = osg::Vec3f(0.f, 1.f, 0.f);
+        osg::Vec3f right(forward.y(), -forward.x(), 0.f);
+        if (right.normalize() <= 0.0001f)
+            right = osg::Vec3f(1.f, 0.f, 0.f);
+
+        const osg::Vec3f rightTarget = chest + forward * 34.f + right * 10.f + osg::Vec3f(0.f, 0.f, -3.f);
+        const osg::Vec3f leftTarget = chest + forward * 28.f - right * 8.f + osg::Vec3f(0.f, 0.f, -5.f);
+
+        const auto rotateBoneToward = [&](std::string_view name, const osg::Vec3f& target) -> bool {
+            osg::Group* group = findBestAttachmentNode(nodeMap, { name });
+            osg::MatrixTransform* bone = dynamic_cast<osg::MatrixTransform*>(group);
+            if (bone == nullptr)
+                return false;
+
+            const osg::Matrix world = getNodeWorldMatrix(bone);
+            osg::Vec3f currentDirection = world.getRotate() * osg::Vec3f(0.f, 1.f, 0.f);
+            osg::Vec3f desiredDirection = target - world.getTrans();
+            if (currentDirection.normalize() <= 0.0001f || desiredDirection.normalize() <= 0.0001f)
+                return false;
+
+            osg::Quat delta;
+            delta.makeRotate(currentDirection, desiredDirection);
+            osg::Quat limitedDelta;
+            limitedDelta.slerp(strength, osg::Quat(), delta);
+            const osg::Quat desiredRotation = limitedDelta * world.getRotate();
+            const osg::Matrix desiredWorld
+                = osg::Matrix::rotate(desiredRotation) * osg::Matrix::translate(world.getTrans());
+            osg::Group* parent = bone->getNumParents() > 0 ? bone->getParent(0) : nullptr;
+            bone->setMatrix(desiredWorld * osg::Matrix::inverse(getNodeWorldMatrix(parent)));
+            bone->dirtyBound();
+            return true;
+        };
+
+        unsigned int solved = 0;
+        for (std::string_view bone : { "Bip01 R UpperArm", "Bip01 R Forearm" })
+            if (rotateBoneToward(bone, rightTarget))
+                ++solved;
+        for (std::string_view bone : { "Bip01 L UpperArm", "Bip01 L Forearm" })
+            if (rotateBoneToward(bone, leftTarget))
+                ++solved;
+
+        if (mSkeleton != nullptr)
+            mSkeleton->markBoneMatriceDirty();
+
+        if (!mFONVBoneIkLogged)
+        {
+            mFONVBoneIkLogged = true;
+            Log(Debug::Info) << "FNV/ESM4 proof: weapon IK solver active actor=" << traits.mEditorId
+                             << " solvedBones=" << solved
+                             << " strength=" << strength
+                             << " rightTarget=(" << rightTarget.x() << "," << rightTarget.y() << ","
+                             << rightTarget.z() << ")"
+                             << " leftTarget=(" << leftTarget.x() << "," << leftTarget.y() << ","
+                             << leftTarget.z() << ") runtime=runtime-supported gate=runtime-fnv-weapon-ik";
+        }
+    }
+
+    void ESM4NpcAnimation::updateFONVBoneIkDebug(const ESM4::Npc& traits)
+    {
+        const bool enabled = std::getenv("OPENMW_FNV_BONE_IK_DEBUG") != nullptr
+            || std::getenv("OPENMW_FNV_SHOW_IK_BONES") != nullptr;
+        if (!enabled || !isFonvProofTargetActor(mPtr, traits))
+        {
+            if (mFONVBoneIkDebugGeode != nullptr && mObjectRoot != nullptr)
+                mObjectRoot->removeChild(mFONVBoneIkDebugGeode);
+            mFONVBoneIkDebugGeode = nullptr;
+            mFONVBoneIkDebugGeometry = nullptr;
+            return;
+        }
+
+        if (mFONVBoneIkDebugGeode == nullptr)
+        {
+            mFONVBoneIkDebugGeode = new osg::Geode;
+            mFONVBoneIkDebugGeode->setName("FNV Bone IK Debug");
+            mFONVBoneIkDebugGeode->setCullingActive(false);
+            mFONVBoneIkDebugGeometry = new osg::Geometry;
+            mFONVBoneIkDebugGeometry->setUseDisplayList(false);
+            mFONVBoneIkDebugGeometry->setUseVertexBufferObjects(true);
+            mFONVBoneIkDebugGeode->addDrawable(mFONVBoneIkDebugGeometry);
+            osg::StateSet* stateSet = mFONVBoneIkDebugGeode->getOrCreateStateSet();
+            stateSet->setMode(GL_LIGHTING, osg::StateAttribute::OFF);
+            stateSet->setAttributeAndModes(new osg::LineWidth(5.f), osg::StateAttribute::ON);
+            mObjectRoot->addChild(mFONVBoneIkDebugGeode);
+            Log(Debug::Info) << "FNV/ESM4 proof: weapon IK bone debug overlay active actor=" << traits.mEditorId
+                             << " bones=Bip01 L/R Clavicle,UpperArm,Forearm,Hand,Weapon runtime=runtime-supported";
+        }
+
+        osg::ref_ptr<osg::Vec3Array> vertices = new osg::Vec3Array;
+        osg::ref_ptr<osg::Vec4Array> colors = new osg::Vec4Array;
+        const osg::Matrix rootToLocal = osg::Matrix::inverse(getNodeWorldMatrix(mObjectRoot.get()));
+        const NodeMap& nodeMap = getNodeMap();
+        const auto addLine = [&](std::string_view a, std::string_view b, const osg::Vec4f& color) {
+            osg::Group* nodeA = findBestAttachmentNode(nodeMap, { a });
+            osg::Group* nodeB = findBestAttachmentNode(nodeMap, { b });
+            if (nodeA == nullptr || nodeB == nullptr)
+                return;
+            vertices->push_back(osg::Vec3f(osg::Vec3d(getNodeWorldMatrix(nodeA).getTrans()) * rootToLocal));
+            vertices->push_back(osg::Vec3f(osg::Vec3d(getNodeWorldMatrix(nodeB).getTrans()) * rootToLocal));
+            colors->push_back(color);
+            colors->push_back(color);
+        };
+
+        const osg::Vec4f rightColor(1.f, 0.15f, 0.1f, 1.f);
+        const osg::Vec4f leftColor(0.15f, 0.45f, 1.f, 1.f);
+        const osg::Vec4f weaponColor(1.f, 0.95f, 0.1f, 1.f);
+        addLine("Bip01 R Clavicle", "Bip01 R UpperArm", rightColor);
+        addLine("Bip01 R UpperArm", "Bip01 R Forearm", rightColor);
+        addLine("Bip01 R Forearm", "Bip01 R Hand", rightColor);
+        addLine("Bip01 L Clavicle", "Bip01 L UpperArm", leftColor);
+        addLine("Bip01 L UpperArm", "Bip01 L Forearm", leftColor);
+        addLine("Bip01 L Forearm", "Bip01 L Hand", leftColor);
+        addLine("Bip01 R Hand", "Weapon", weaponColor);
+
+        mFONVBoneIkDebugGeometry->setVertexArray(vertices.get());
+        mFONVBoneIkDebugGeometry->setColorArray(colors.get(), osg::Array::BIND_PER_VERTEX);
+        mFONVBoneIkDebugGeometry->removePrimitiveSet(0, mFONVBoneIkDebugGeometry->getNumPrimitiveSets());
+        if (!vertices->empty())
+            mFONVBoneIkDebugGeometry->addPrimitiveSet(new osg::DrawArrays(osg::PrimitiveSet::LINES, 0, vertices->size()));
+        mFONVBoneIkDebugGeometry->dirtyDisplayList();
+        mFONVBoneIkDebugGeometry->dirtyBound();
+    }
+
     osg::Vec3f ESM4NpcAnimation::runAnimation(float duration)
     {
         osg::Vec3f movement = Animation::runAnimation(duration);
+        if (const ESM4::Npc* traits = MWClass::ESM4Npc::getTraitsRecord(mPtr); traits != nullptr && traits->mIsFONV)
+        {
+            applyFONVWeaponIk(*traits);
+            updateFONVBoneIkDebug(*traits);
+            if (!mFONVActorKitProjectileProofFired && isFonvProofTargetActor(mPtr, *traits))
+            {
+                const std::string group = getFalloutActorKitAnimationGroup();
+                if (group.find("attack") != std::string::npos || group.find("fire") != std::string::npos
+                    || group.find("shoot") != std::string::npos)
+                {
+                    mFONVActorKitProjectileProofFired = true;
+                    Log(Debug::Info) << "FNV/ESM4 proof: actor-kit projectile release bridge actor="
+                                     << traits->mEditorId << " group=" << group
+                                     << " runtime=runtime-supported gate=runtime-fnv-projectile-release";
+                    releaseArrow(1.f);
+                }
+            }
+        }
         applyLiveRuntimeActorKitSelectors();
         applyLiveHeadSurfaceAuthoring();
         return movement;
@@ -7182,7 +7380,6 @@ namespace MWRender
         const bool wantsStaticizedHeadPartRig = headAttachedStaticPart && rigProbe.mRigGeometryCount > 0
             && std::getenv("OPENMW_FNV_KEEP_RIGGED_HEAD_PARTS") == nullptr;
         const bool wantsStaticizedBareHandPartRig = bareHandSurfacePart && rigProbe.mRigGeometryCount > 0
-            && std::getenv("OPENMW_FNV_STATICIZE_RIGGED_HAND_PARTS") != nullptr
             && std::getenv("OPENMW_FNV_KEEP_RIGGED_HAND_PARTS") == nullptr;
         if (wantsStaticizedHeadPartRig)
         {
@@ -7524,6 +7721,165 @@ namespace MWRender
         return attached;
     }
 
+    void ESM4NpcAnimation::releaseArrow(float attackStrength)
+    {
+        const ESM4::Npc* traits = MWClass::ESM4Npc::getTraitsRecord(mPtr);
+        if (traits == nullptr || !traits->mIsFONV)
+            return;
+
+        const ESM4::Weapon* weapon = MWClass::ESM4Npc::getEquippedWeapon(mPtr);
+        if (weapon == nullptr)
+        {
+            Log(Debug::Warning) << "FNV/ESM4 proof: actor projectile fire BLOCKED actor=" << traits->mEditorId
+                                << " reason=no-equipped-weapon";
+            return;
+        }
+
+        const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
+        if (store == nullptr)
+            return;
+
+        const ESM4::Ammunition* ammo = nullptr;
+        if (!weapon->mAmmo.isZeroOrUnset())
+            ammo = store->get<ESM4::Ammunition>().search(weapon->mAmmo);
+        std::string ammoSource = "weapon-ammo";
+        const auto findAmmoByEditorId = [&](std::string_view editorId) -> const ESM4::Ammunition* {
+            const auto& ammoStore = store->get<ESM4::Ammunition>();
+            for (auto it = ammoStore.begin(); it != ammoStore.end(); ++it)
+            {
+                if (Misc::StringUtils::ciEqual(it->mEditorId, editorId))
+                    return &*it;
+            }
+            return nullptr;
+        };
+        if (ammo == nullptr)
+        {
+            std::vector<std::string_view> fallbackAmmo = { "Ammo10mm" };
+            std::string weaponEditorId = weapon->mEditorId;
+            Misc::StringUtils::lowerCaseInPlace(weaponEditorId);
+            if (weaponEditorId.find("357") != std::string::npos)
+                fallbackAmmo = { "Ammo357Magnum", "Ammo357", "Ammo10mm" };
+            else if (weaponEditorId.find("9mm") != std::string::npos)
+                fallbackAmmo = { "Ammo9mm", "Ammo10mm" };
+            else if (weaponEditorId.find("10mm") != std::string::npos)
+                fallbackAmmo = { "Ammo10mm" };
+            else if (weaponEditorId.find("varmint") != std::string::npos
+                || weaponEditorId.find("556") != std::string::npos)
+                fallbackAmmo = { "Ammo556mm", "Ammo223", "Ammo10mm" };
+
+            for (std::string_view editorId : fallbackAmmo)
+            {
+                ammo = findAmmoByEditorId(editorId);
+                if (ammo != nullptr)
+                {
+                    ammoSource = std::string("editor-id-fallback:") + std::string(editorId);
+                    Log(Debug::Info) << "FNV/ESM4 proof: actor projectile ammo fallback actor=" << traits->mEditorId
+                                     << " weaponEdid=" << weapon->mEditorId
+                                     << " weaponAmmo=" << ESM::RefId(weapon->mAmmo)
+                                     << " selectedAmmo=" << ESM::RefId(ammo->mId)
+                                     << " selectedAmmoEdid=" << ammo->mEditorId
+                                     << " source=" << ammoSource
+                                     << " runtime=runtime-supported";
+                    break;
+                }
+            }
+        }
+
+        const ESM4::Projectile* projectile = nullptr;
+        if (ammo != nullptr && !ammo->mData.mProjectile.isZeroOrUnset())
+            projectile = store->get<ESM4::Projectile>().search(ammo->mData.mProjectile);
+
+        osg::Node* launchNode = mFONVEquippedWeaponNode.get();
+        if (launchNode == nullptr)
+            launchNode = findBestAttachmentNode(getNodeMap(), { "Weapon", "weapon", "Bip01 R Hand", "bip01 r hand" });
+
+        const osg::Matrix launchMatrix = getNodeWorldMatrix(launchNode);
+        osg::Vec3f launchPos = launchMatrix.getTrans();
+        osg::Vec3f forward = launchMatrix.getRotate() * osg::Vec3f(0.f, 1.f, 0.f);
+        bool usedWeaponFrame = launchNode != nullptr && forward.length2() > 0.0001f;
+        if (!usedWeaponFrame)
+        {
+            const ESM::Position& position = mPtr.getRefData().getPosition();
+            const float yaw = position.rot[2];
+            launchPos = osg::Vec3f(position.pos[0], position.pos[1], position.pos[2] + 112.f);
+            forward = osg::Vec3f(std::sin(yaw), std::cos(yaw), 0.f);
+        }
+        forward.normalize();
+
+        osg::Quat orient;
+        orient.makeRotate(osg::Vec3f(0.f, 1.f, 0.f), forward);
+
+        osg::Group* rightHand = findBestAttachmentNode(getNodeMap(), { "Bip01 R Hand", "bip01 r hand" });
+        const osg::Vec3f rightHandPos = getNodeWorldMatrix(rightHand).getTrans();
+        const float rightHandDistance = rightHand != nullptr ? (launchPos - rightHandPos).length() : -1.f;
+        const std::string launchNodeName = launchNode != nullptr ? launchNode->getName() : std::string();
+
+        Log(Debug::Info) << "FNV/ESM4 proof: actor weapon muzzle frame actor=" << traits->mEditorId
+                         << " ref=" << mPtr.getCellRef().getRefId() << " weaponEdid=" << weapon->mEditorId
+                         << " helper=\"" << launchNodeName << "\""
+                         << " source=" << (usedWeaponFrame ? "weapon-helper" : "actor-forward-fallback")
+                         << " rightHandDistance=" << rightHandDistance << " launchPos=(" << launchPos.x() << ","
+                         << launchPos.y() << "," << launchPos.z() << ") forward=(" << forward.x() << ","
+                         << forward.y() << "," << forward.z() << ")";
+
+        if (ammo == nullptr)
+        {
+            Log(Debug::Warning) << "FNV/ESM4 proof: actor projectile fire BLOCKED actor=" << traits->mEditorId
+                                << " weaponEdid=" << weapon->mEditorId
+                                << " weaponAmmo=" << ESM::RefId(weapon->mAmmo)
+                                << " reason=no-ammo-record";
+            return;
+        }
+
+        float speed = ammo->mData.mSpeed;
+        if (speed <= 0.f)
+        {
+            const MWWorld::Store<ESM::GameSetting>& gmst = store->get<ESM::GameSetting>();
+            const float minSpeed = gmst.find("fProjectileMinSpeed")->mValue.getFloat();
+            const float maxSpeed = gmst.find("fProjectileMaxSpeed")->mValue.getFloat();
+            speed = minSpeed + (maxSpeed - minSpeed) * attackStrength;
+        }
+
+        try
+        {
+            MWWorld::ManualRef weaponRef(*store, ESM::RefId(weapon->mId), 1);
+            MWWorld::ManualRef ammoRef(*store, ESM::RefId(ammo->mId), 1);
+            MWWorld::Ptr weaponPtr = weaponRef.getPtr();
+            MWWorld::Ptr ammoPtr = ammoRef.getPtr();
+            const std::string_view projectileEditorId
+                = projectile != nullptr ? std::string_view(projectile->mEditorId) : std::string_view();
+            const std::string_view projectileModel
+                = projectile != nullptr ? std::string_view(projectile->mModel) : std::string_view();
+
+            Log(Debug::Info) << "FNV/ESM4 proof: actor projectile fire request actor=" << traits->mEditorId
+                             << " ref=" << mPtr.getCellRef().getRefId()
+                             << " weaponEdid=" << weapon->mEditorId
+                             << " weaponId=" << ESM::RefId(weapon->mId)
+                             << " ammoEdid=" << ammo->mEditorId
+                             << " ammoId=" << ESM::RefId(ammo->mId)
+                             << " ammoSource=" << ammoSource
+                             << " ammoModel=\"" << ammo->mModel << "\""
+                             << " ammoProjectile=" << ESM::RefId(ammo->mData.mProjectile)
+                             << " ammoProjectileSet=" << !ammo->mData.mProjectile.isZeroOrUnset()
+                             << " projectileEdid=" << projectileEditorId
+                             << " projectileModel=\"" << projectileModel << "\""
+                             << " launchPos=(" << launchPos.x() << "," << launchPos.y() << "," << launchPos.z()
+                             << ") forward=(" << forward.x() << "," << forward.y() << "," << forward.z()
+                             << ") speed=" << speed << " attackStrength=" << attackStrength
+                             << " source=" << (usedWeaponFrame ? "weapon-helper" : "actor-forward-fallback")
+                             << " runtime=runtime-supported";
+
+            MWBase::Environment::get().getWorld()->launchProjectile(
+                mPtr, ammoPtr, launchPos, orient, weaponPtr, speed, attackStrength);
+        }
+        catch (const std::exception& e)
+        {
+            Log(Debug::Warning) << "FNV/ESM4 proof: actor projectile fire BLOCKED actor=" << traits->mEditorId
+                                << " weaponEdid=" << weapon->mEditorId << " ammo=" << ESM::RefId(ammo->mId)
+                                << " reason=exception error=" << e.what();
+        }
+    }
+
     static bool fonvRaceBodyPartCovered(std::string_view model, uint32_t coveredSlots)
     {
         std::string lowered(model);
@@ -7592,6 +7948,10 @@ namespace MWRender
 
     void ESM4NpcAnimation::updatePartsFONV(const ESM4::Npc& traits)
     {
+        mFONVEquippedWeaponNode = nullptr;
+        mFONVEquippedWeaponEditorId.clear();
+        mFONVEquippedWeaponModel.clear();
+
         if (std::getenv("OPENMW_FNV_HIDE_PLAYER_PROOF_PARTS") != nullptr
             && mPtr.getCell() != nullptr
             && mPtr == MWBase::Environment::get().getWorld()->getPlayerPtr())
@@ -8194,6 +8554,12 @@ namespace MWRender
             {
                 logFalloutCharacterBuilderGate(true, "weapon", weapon->mModel, mPtr, traits);
                 attached = insertAttachedPart(weapon->mModel, "Weapon");
+                if (attached != nullptr)
+                {
+                    mFONVEquippedWeaponNode = attached;
+                    mFONVEquippedWeaponEditorId = weapon->mEditorId;
+                    mFONVEquippedWeaponModel = weapon->mModel;
+                }
             }
             Log(Debug::Info) << "FNV/ESM4 diag: equipped NPC weapon " << weapon->mEditorId << " model="
                              << weapon->mModel << " damage=" << weapon->mData.damage << " for "

@@ -34,9 +34,18 @@ namespace MWRender
         std::string mLiveRuntimeActorKitFingerprint;
         unsigned int mLiveRuntimeActorKitTick = 0;
         unsigned int mLiveRuntimeActorKitGeneration = 0;
+        osg::ref_ptr<osg::Node> mFONVEquippedWeaponNode;
+        std::string mFONVEquippedWeaponEditorId;
+        std::string mFONVEquippedWeaponModel;
+        osg::ref_ptr<osg::Geode> mFONVBoneIkDebugGeode;
+        osg::ref_ptr<osg::Geometry> mFONVBoneIkDebugGeometry;
+        bool mFONVBoneIkLogged = false;
+        bool mFONVActorKitProjectileProofFired = false;
 
         void applyLiveHeadSurfaceAuthoring();
         void applyLiveRuntimeActorKitSelectors();
+        void applyFONVWeaponIk(const ESM4::Npc& traits);
+        void updateFONVBoneIkDebug(const ESM4::Npc& traits);
         bool rebuildLiveRuntimeActorKitParts(const ESM4::Npc& traits, unsigned int generation, std::string_view fingerprint);
 
         osg::ref_ptr<osg::Node> insertPart(
@@ -53,6 +62,7 @@ namespace MWRender
         void updatePartsFONV(const ESM4::Npc& traits);
         void updatePartsTES5(const ESM4::Npc& traits);
 
+        void releaseArrow(float attackStrength) override;
         osg::Vec3f runAnimation(float duration) override;
     };
 }

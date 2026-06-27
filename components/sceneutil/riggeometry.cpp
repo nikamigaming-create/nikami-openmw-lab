@@ -78,6 +78,29 @@ namespace SceneUtil
                 || Misc::StringUtils::ciFind(rootBone, " hand") != std::string_view::npos;
         }
 
+        bool isFalloutVrArcadeHandSolveRig(
+            std::string_view name, std::string_view rootBone, const std::vector<RigGeometry::BoneInfo>& bones)
+        {
+            if (isFalloutHandRig(name, rootBone))
+                return true;
+
+            if (Misc::StringUtils::ciFind(name, "arms") == std::string_view::npos)
+                return false;
+
+            bool hasHand = false;
+            bool hasForearm = false;
+            bool hasUpperArm = false;
+            for (const RigGeometry::BoneInfo& bone : bones)
+            {
+                hasHand = hasHand || Misc::StringUtils::ciFind(bone.mName, " hand") != std::string_view::npos;
+                hasForearm = hasForearm || Misc::StringUtils::ciFind(bone.mName, "forearm") != std::string_view::npos
+                    || Misc::StringUtils::ciFind(bone.mName, "foretwist") != std::string_view::npos;
+                hasUpperArm = hasUpperArm || Misc::StringUtils::ciFind(bone.mName, "upperarm") != std::string_view::npos
+                    || Misc::StringUtils::ciFind(bone.mName, "uparmtwist") != std::string_view::npos;
+            }
+            return hasHand && hasForearm && hasUpperArm;
+        }
+
         bool isFalloutInventoryPaperDollPath(const osg::NodePath& path)
         {
             for (const osg::Node* node : path)
@@ -208,6 +231,39 @@ namespace SceneUtil
                 for (std::size_t i = 0; i < count; ++i)
                     (*tangentDst)[i] = (*tangentSrc)[i];
             }
+        }
+
+        void copyTranslatedSourceSkinningGeometry(const osg::Vec3Array* positionSrc, const osg::Vec3Array* normalSrc,
+            const osg::Vec4Array* tangentSrc, osg::Vec3Array* positionDst, osg::Vec3Array* normalDst,
+            osg::Vec4Array* tangentDst, const osg::Vec3f& offset)
+        {
+            if (positionSrc != nullptr && positionDst != nullptr)
+            {
+                const std::size_t count = std::min(positionSrc->size(), positionDst->size());
+                for (std::size_t i = 0; i < count; ++i)
+                    (*positionDst)[i] = (*positionSrc)[i] + offset;
+            }
+
+            if (normalSrc != nullptr && normalDst != nullptr)
+            {
+                const std::size_t count = std::min(normalSrc->size(), normalDst->size());
+                for (std::size_t i = 0; i < count; ++i)
+                    (*normalDst)[i] = (*normalSrc)[i];
+            }
+
+            if (tangentSrc != nullptr && tangentDst != nullptr)
+            {
+                const std::size_t count = std::min(tangentSrc->size(), tangentDst->size());
+                for (std::size_t i = 0; i < count; ++i)
+                    (*tangentDst)[i] = (*tangentSrc)[i];
+            }
+        }
+
+        bool getFalloutVrRigidHandSolveDefault()
+        {
+            if (const char* env = std::getenv("OPENMW_FNV_VR_ARCADE_HAND_SOLVER"))
+                return std::string_view(env) != "0";
+            return true;
         }
     }
 
@@ -917,6 +973,94 @@ namespace SceneUtil
                              << " vertex=" << maxFalloutVertex;
         }
 
+        const bool falloutVrArcadeHandSolveRig
+            = falloutRig && isFalloutVrArcadeHandSolveRig(getName(), mData->mRootBone, mData->mBones);
+        if (falloutRig && !falloutSourceSkinning && falloutVrArcadeHandSolveRig
+            && getFalloutVrRigidHandSolveDefault() && positionSrc != nullptr && positionDst != nullptr
+            && !positionSrc->empty() && !positionDst->empty())
+        {
+            osg::BoundingBox sourceBox;
+            osg::BoundingBox skinnedBox;
+            const std::size_t vertexCount = std::min(positionSrc->size(), positionDst->size());
+            for (std::size_t i = 0; i < vertexCount; ++i)
+            {
+                sourceBox.expandBy((*positionSrc)[i]);
+                skinnedBox.expandBy((*positionDst)[i]);
+            }
+
+            const osg::Vec3f sourceExtent = boundingBoxExtent(sourceBox);
+            const osg::Vec3f skinnedExtent = boundingBoxExtent(skinnedBox);
+            const osg::Vec3f sourceCenter = sourceBox.valid() ? sourceBox.center() : osg::Vec3f();
+            const osg::Vec3f skinnedCenter = skinnedBox.valid() ? skinnedBox.center() : osg::Vec3f();
+            const float extentRatio = maxFiniteExtentRatio(skinnedExtent, sourceExtent);
+            const bool handRig = isFalloutHandRig(getName(), mData->mRootBone);
+            osg::Vec3f solveTarget = skinnedCenter;
+            bool hasHandAnchor = false;
+            if (handRig)
+            {
+                const std::string lowerName = Misc::StringUtils::lowerCase(getName());
+                const std::string lowerRoot = Misc::StringUtils::lowerCase(mData->mRootBone);
+                const bool left = lowerName.find("left") != std::string::npos
+                    || lowerName.find(" l ") != std::string::npos || lowerRoot.find(" l ") != std::string::npos;
+                const std::string_view targetBone = left ? "bip01 l hand" : "bip01 r hand";
+                for (std::size_t i = 0; i < mData->mBones.size() && i < mNodes.size(); ++i)
+                {
+                    if (mNodes[i] == nullptr || !Misc::StringUtils::ciEqual(mData->mBones[i].mName, targetBone))
+                        continue;
+
+                    osg::Matrixf handMatrix = mNodes[i]->mMatrixInSkeletonSpace;
+                    handMatrix *= transform;
+                    solveTarget = handMatrix.preMult(osg::Vec3f());
+                    hasHandAnchor = true;
+                    break;
+                }
+            }
+            const float handAnchorDistance = hasHandAnchor ? (skinnedCenter - solveTarget).length() : 0.f;
+            const osg::Vec3f solveOffset = solveTarget - sourceCenter;
+            if ((extentRatio > 1.75f || handAnchorDistance > 18.f) && solveOffset.length2() > 0.0001f)
+            {
+                for (osg::ref_ptr<osg::Geometry>& solvedGeometry : mGeometry)
+                {
+                    if (solvedGeometry == nullptr)
+                        continue;
+
+                    osg::Vec3Array* solvedPositionDst
+                        = static_cast<osg::Vec3Array*>(solvedGeometry->getVertexArray());
+                    osg::Vec3Array* solvedNormalDst = static_cast<osg::Vec3Array*>(solvedGeometry->getNormalArray());
+                    osg::Vec4Array* solvedTangentDst
+                        = static_cast<osg::Vec4Array*>(solvedGeometry->getTexCoordArray(7));
+                    copyTranslatedSourceSkinningGeometry(positionSrc, normalSrc, tangentSrc, solvedPositionDst,
+                        solvedNormalDst, solvedTangentDst, solveOffset);
+                    if (solvedPositionDst != nullptr)
+                        solvedPositionDst->dirty();
+                    if (solvedNormalDst != nullptr)
+                        solvedNormalDst->dirty();
+                    if (solvedTangentDst != nullptr)
+                        solvedTangentDst->dirty();
+                    solvedGeometry->dirtyBound();
+                    solvedGeometry->osg::Drawable::dirtyGLObjects();
+                }
+                mFalloutUseVrRigidHandSolve = true;
+                mFalloutFallbackDecided = true;
+                if (!mLoggedFalloutVrRigidHandSolve)
+                {
+                    mLoggedFalloutVrRigidHandSolve = true;
+                    Log(Debug::Info) << "FNV/ESM4 proof: VR arcade IK hand solver active rig='" << getName()
+                                     << "' rootBone='" << mData->mRootBone
+                                     << "' scope='" << (handRig ? "hand" : "limb")
+                                     << "' sourceCenter=" << vec3ToString(sourceCenter)
+                                     << " skinnedTarget=" << vec3ToString(skinnedCenter)
+                                     << " handAnchorTarget=" << vec3ToString(solveTarget)
+                                     << " handAnchorDistance=" << handAnchorDistance
+                                     << " solveOffset=" << vec3ToString(solveOffset)
+                                     << " sourceExtent=" << vec3ToString(sourceExtent)
+                                     << " skinnedExtent=" << vec3ToString(skinnedExtent)
+                                     << " extentRatio=" << extentRatio
+                                     << " runtime=runtime-supported gate=runtime-fnv-vr-arcade-hand-ik";
+                }
+            }
+        }
+
         if (falloutRig && !mLoggedFalloutPoseSanity && positionSrc != nullptr && positionDst != nullptr
             && !positionSrc->empty() && !positionDst->empty())
         {
@@ -956,11 +1100,13 @@ namespace SceneUtil
                     ++outlierVertices;
             }
 
-            const bool badCenter = centerDelta > std::max(24.f, sourceDiag * 1.25f);
+            const bool vrArcadeSolved = mFalloutUseVrRigidHandSolve;
+            const bool badCenter = !vrArcadeSolved && centerDelta > std::max(24.f, sourceDiag * 1.25f);
             constexpr float falloutAutoFallbackExtentRatio = 2.25f;
             const bool badExtent = extentRatio > falloutAutoFallbackExtentRatio;
             const bool badDelta = maxVertexDelta > std::max(96.f, sourceDiag * 2.0f);
-            const bool badOutliers = vertexCount > 0 && outlierVertices > std::max<std::size_t>(24, vertexCount / 5);
+            const bool badOutliers
+                = !vrArcadeSolved && vertexCount > 0 && outlierVertices > std::max<std::size_t>(24, vertexCount / 5);
             const bool bad = badCenter || badExtent || badDelta || badOutliers;
             const char* reason = badCenter   ? "center"
                 : badExtent                  ? "extent"
@@ -968,7 +1114,7 @@ namespace SceneUtil
                 : badOutliers                ? "outliers"
                                              : "ok";
 
-            if (falloutAutoMode && !mFalloutFallbackDecided)
+            if (falloutAutoMode && !mFalloutFallbackDecided && !mFalloutUseVrRigidHandSolve)
             {
                 mFalloutFallbackDecided = true;
                 if (bad)
@@ -993,6 +1139,7 @@ namespace SceneUtil
                             fallbackNormalDst->dirty();
                         if (fallbackTangentDst != nullptr)
                             fallbackTangentDst->dirty();
+                        fallbackGeometry->dirtyBound();
                         fallbackGeometry->osg::Drawable::dirtyGLObjects();
                     }
                     Log(Debug::Info) << "FNV/ESM4 diag: Fallout RigGeometry '" << getName()
@@ -1024,6 +1171,7 @@ namespace SceneUtil
         if (tangentDst)
             tangentDst->dirty();
 
+        geom.dirtyBound();
         geom.osg::Drawable::dirtyGLObjects();
 
         nv->pushOntoNodePath(&geom);

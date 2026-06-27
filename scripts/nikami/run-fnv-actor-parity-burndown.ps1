@@ -182,6 +182,7 @@ function Add-PlacementArgsIfPresent([hashtable]$ArgMap, [object]$Placement) {
 
 function Resolve-ActorKitAnimationGroup([string[]]$RuntimeStates) {
     $states = @($RuntimeStates | ForEach-Object { ([string]$_).ToLowerInvariant() })
+    if ($states -contains "projectile-fire") { return "attackright" }
     if ($states -contains "attack") { return "attackright" }
     if ($states -contains "run") { return "runforward" }
     if ($states -contains "walk") { return "walkforward" }
@@ -286,6 +287,10 @@ function Get-RowRequiredEvidenceKinds([object]$Row) {
         "race-body-skeleton" { Add-UniqueString $required "actor-match"; Add-UniqueString $required "runtime-part-audits" }
         "skin-material-tone" { Add-UniqueString $required "material-evidence" }
         "full-body-screenshot" { Add-UniqueString $required "screenshots"; Add-UniqueString $required "assembly-inventory" }
+        "standing-pose-family" { Add-UniqueString $required "animation-playback" }
+        "crouch-pose-family" { Add-UniqueString $required "animation-playback" }
+        "kneel-pose-family" { Add-UniqueString $required "animation-playback" }
+        "prone-pose-family" { Add-UniqueString $required "animation-playback" }
         "headpart-stack" { Add-UniqueString $required "assembly-inventory"; Add-UniqueString $required "face-drawables" }
         "facegen-morph-targets" { Add-UniqueString $required "morph-lines" }
         "head-transform-pivot" { Add-UniqueString $required "runtime-part-audits"; Add-UniqueString $required "attachment-bounds" }
@@ -325,6 +330,9 @@ function Get-RowRequiredEvidenceKinds([object]$Row) {
             "walk" { Add-UniqueString $required "animation-playback" }
             "run" { Add-UniqueString $required "animation-playback" }
             "idle" { Add-UniqueString $required "animation-playback" }
+            "crouch" { Add-UniqueString $required "animation-playback" }
+            "kneel" { Add-UniqueString $required "animation-playback" }
+            "prone" { Add-UniqueString $required "animation-playback" }
             "projectile-fire" { Add-UniqueString $required "projectile-runtime-evidence" }
         }
     }
@@ -669,6 +677,9 @@ function Invoke-BurnDownRow([object]$Row, [string]$RunDir) {
     if ($actorKindValue -eq "creature") { $viewerArgs.CreatureDiagnostics = $true }
     if (![string]::IsNullOrWhiteSpace($animationGroup)) { $viewerArgs.ActorKitAnimationGroup = $animationGroup }
     if (![string]::IsNullOrWhiteSpace($dialogueMode)) { $viewerArgs.ActorKitDialogueMode = $dialogueMode }
+    if ($runtimeStates -contains "projectile-fire" -or $runtimeStates -contains "attack") {
+        $viewerArgs.FnvUseNativeAnimationCallbacks = $true
+    }
     Add-PlacementArgsIfPresent -ArgMap $viewerArgs -Placement $placement
     if ($NoSound) { $viewerArgs.NoSound = $true }
     if ($Serve) { $viewerArgs.Serve = $true }
