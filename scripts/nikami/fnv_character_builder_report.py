@@ -754,6 +754,7 @@ def parse_hand_runtime_summary(lines: list[str]) -> dict[str, Any]:
         "visibleHandGeometryPoseSanityBadLines": int(
             summary_value(lines, "Target visible hand geometry pose sanity BAD lines") or "0"
         ),
+        "visibleLimbShapeBadLines": int(summary_value(lines, "Target visible limb shape BAD lines") or "0"),
         "targetStandingArmPoseOkLines": int(summary_value(lines, "Target standing arm pose OK lines") or "0"),
         "targetStandingArmPoseBadLines": int(summary_value(lines, "Target standing arm pose BAD lines") or "0"),
     }
@@ -1478,6 +1479,8 @@ def evaluate(
                 "target visible hand geometry pose sanity failures: "
                 f"{hand_runtime_summary['visibleHandGeometryPoseSanityBadLines']}"
             )
+        if int(hand_runtime_summary.get("visibleLimbShapeBadLines", 0)) > 0:
+            failures.append(f"target visible limb shape failures: {hand_runtime_summary['visibleLimbShapeBadLines']}")
         if int(hand_runtime_summary.get("targetStandingArmPoseBadLines", 0)) > 0:
             failures.append(f"target standing arm pose failures: {hand_runtime_summary['targetStandingArmPoseBadLines']}")
         actor_group = summary_value(lines, "ActorKitAnimationGroup").lower()
