@@ -1890,8 +1890,11 @@ namespace
         const bool forearmsWide = forearmSpread > upperArmSpread * 1.35f;
         const bool handsNotAtSides = averageUpperToHandDrop < std::max(18.f, torsoHeight * 0.95f);
         const bool weaponPose = weaponEquipped && rightHandWeaponDistance <= std::max(16.f, torsoHeight * 0.4f);
-        const bool bad = armsWide && forearmsWide && handsNotAtSides && !weaponPose;
-        const char* reason = bad ? "arms_out_bind_pose" : weaponPose ? "weapon_pose" : "ok";
+        const bool bindPoseSpread = armsWide && forearmsWide && handsNotAtSides;
+        const bool bad = bindPoseSpread;
+        const char* reason = bad ? (weaponPose ? "arms_out_weapon_bind_pose" : "arms_out_bind_pose")
+                                 : weaponPose ? "weapon_pose"
+                                              : "ok";
 
         Log(bad ? Debug::Warning : Debug::Info)
             << "FNV/ESM4 diag: standing arm pose " << ptr.getCellRef().getRefId()
@@ -1914,6 +1917,7 @@ namespace
             << " averageUpperToHandDrop=" << averageUpperToHandDrop
             << " weaponEquipped=" << weaponEquipped
             << " rightHandWeaponDistance=" << rightHandWeaponDistance
+            << " bindPoseSpread=" << bindPoseSpread
             << " verdict=" << (bad ? "BAD" : "OK") << " reason=" << reason;
         return !bad;
     }
@@ -2107,7 +2111,9 @@ namespace
     {
         std::string lowered(name);
         Misc::StringUtils::lowerCaseInPlace(lowered);
-        if (lowered.find("headold") != std::string::npos)
+        if (lowered.find("headold") != std::string::npos
+            || lowered.find("characters/head/head") != std::string::npos
+            || lowered.find("characters\\head\\head") != std::string::npos)
             return "head";
         if (lowered.find("weapon") != std::string::npos || lowered.find("revolver") != std::string::npos
             || lowered.find("pistol") != std::string::npos || lowered.find("gun") != std::string::npos)

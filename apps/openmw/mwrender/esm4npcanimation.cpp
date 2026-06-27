@@ -5641,7 +5641,7 @@ namespace MWRender
             const bool browLike = isFalloutBrowModel(model);
             const bool faceHairLike = isFalloutFaceHairModel(model);
             const bool checksFaceAxes = faceTight && (mouthLike || eyeLike || browLike || faceHairLike);
-            const osg::Vec3f headFrameCenter = headDelta;
+            const osg::Vec3f headFrameCenter = headLocalCenter;
             bool headAxisDetached = false;
             const char* headAxisReason = "";
             if (checksFaceAxes)
@@ -5680,7 +5680,7 @@ namespace MWRender
             const float maxHeadPlanarDelta = faceTight ? 18.f : 42.f;
             const float maxHeadVerticalDelta = faceTight ? 24.f : 46.f;
             const float headPlanarDelta = std::sqrt(headDelta.x() * headDelta.x() + headDelta.y() * headDelta.y());
-            const bool headDetached = headRelative && !isFalloutHeadSurfaceModel(model)
+            const bool headDetached = headRelative
                 && (headPlanarDelta > maxHeadPlanarDelta || std::abs(headDelta.z()) > maxHeadVerticalDelta);
             const bool suspicious = (accessory && (centerDistance > 180.f || diagonal > 260.f))
                 || (!accessory && centerDistance > 420.f) || headDetached || headAxisDetached;
