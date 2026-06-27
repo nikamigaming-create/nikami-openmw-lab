@@ -3486,6 +3486,13 @@ namespace MWRender
         return "fnvProcedure";
     }
 
+    std::string_view getFalloutWeaponActionRotationMode()
+    {
+        if (const char* env = std::getenv("OPENMW_FNV_WEAPON_ACTION_ROTATION_MODE"))
+            return env;
+        return "standingUpperBody";
+    }
+
     osg::Quat composeFalloutRotationMode(
         std::string_view mode, osg::Quat rotation, osg::Quat bindRotation, const std::string& lowerBone)
     {
@@ -4128,6 +4135,15 @@ namespace MWRender
     {
         if (isFalloutSneakBaseLowerBodyLayer(groupname, sourceName, blendMask))
             return composeFalloutSneakBaseLowerBodyRotation(transform, rotation, lowerBone);
+        if (!procedureIdle && isFalloutWeaponActionAnimationGroup(groupname) && !groupname.starts_with("sneak"))
+        {
+            normalizeFiniteQuat(rotation);
+            rotation = swizzleFalloutKeyRotation(rotation);
+            normalizeFiniteQuat(rotation);
+            osg::Quat bindRotation = getFalloutBindRotation(transform);
+            normalizeFiniteQuat(bindRotation);
+            return composeFalloutRotationMode(getFalloutWeaponActionRotationMode(), rotation, bindRotation, lowerBone);
+        }
         return composeFalloutBindRelativeRotation(transform, rotation, lowerBone, procedureIdle);
     }
 
@@ -4201,6 +4217,8 @@ namespace MWRender
             return "sneakreload";
         if (stem.rfind("sneak", 0) == 0 && stem.find("aim") != std::string::npos)
             return "sneakaim";
+        if (stem.find("2hrloiter") != std::string::npos)
+            return "riflehold";
         if (stem.find("attackright") != std::string::npos)
             return "attackright";
         if (stem.find("attackleft") != std::string::npos)
@@ -5665,6 +5683,7 @@ namespace MWRender
                                                * osg::Vec3f(candidate(2, 0), candidate(2, 1), candidate(2, 2)))
                                         << " handedness=" << basisHandedness(candidate)
                                         << " mode=" << getFalloutRotationMode()
+                                        << " weaponActionMode=" << getFalloutWeaponActionRotationMode()
                                         << " procedureMode=" << getFalloutProcedureRotationMode()
                                         << " procedureIdle=" << falloutProcedureIdle;
                                     ++matrixAuditLines;
@@ -6026,6 +6045,7 @@ namespace MWRender
                                  << " appliedBoneTranslations=" << appliedBoneTranslations
                                  << " skippedBoneTranslations=" << skippedBoneTranslations
                                  << " falloutRotationMode=" << getFalloutRotationMode()
+                                 << " falloutWeaponActionRotationMode=" << getFalloutWeaponActionRotationMode()
                                  << " falloutProcedureRotationMode=" << getFalloutProcedureRotationMode()
                                  << " maxBoneTranslationDelta=" << maxBoneTranslationDelta
                                  << " maxBoneTranslationBone=" << maxBoneTranslationDeltaBone

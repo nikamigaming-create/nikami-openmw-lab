@@ -1059,6 +1059,10 @@ namespace MWRender
                 return "meshes/characters/_male/sneak1hpaim.kf";
             if (source == "rifle-loiter" || source == "rifle" || source == "2hrloiter")
                 return "meshes/characters/_male/idleanims/2hrloiter.kf";
+            if (source == "rifle-aim" || source == "2hraim")
+                return "meshes/characters/_male/2hraim.kf";
+            if (source == "rifle-iron-sights" || source == "2hraimis")
+                return "meshes/characters/_male/2hraimis.kf";
             VFS::Path::normalizeFilenameInPlace(source);
             if (source.rfind("meshes/", 0) != 0)
                 source = "meshes/" + source;
@@ -1085,7 +1089,17 @@ namespace MWRender
         {
             return group.find("attack") != std::string::npos || group.find("fire") != std::string::npos
                 || group.find("shoot") != std::string::npos || group.find("reload") != std::string::npos
-                || group.find("aim") != std::string::npos;
+                || group.find("aim") != std::string::npos || group.find("riflehold") != std::string::npos;
+        }
+
+        bool isFonvLongGunWeapon(const ESM4::Weapon* weapon)
+        {
+            if (weapon == nullptr)
+                return false;
+
+            std::string label = weapon->mEditorId + " " + weapon->mModel;
+            Misc::StringUtils::lowerCaseInPlace(label);
+            return containsAny(label, { "rifle", "shotgun", "sniper", "launcher", "2hand", "2hr", "varmint" });
         }
 
         int getFalloutActorKitAnimationBlendMask(const std::string& group)
@@ -1102,9 +1116,11 @@ namespace MWRender
 
         void requestFalloutActorKitAnimation(Animation& animation, const MWWorld::Ptr& ptr, const ESM4::Npc& traits)
         {
-            const std::string group = getFalloutActorKitAnimationGroup();
+            std::string group = getFalloutActorKitAnimationGroup();
             if (group.empty() || !isFonvProofTargetActor(ptr, traits))
                 return;
+
+            const std::string requestedGroup = group;
 
             const float startPoint = getFalloutActorKitAnimationStartPoint();
             const bool available = animation.hasAnimation(group);
@@ -1112,6 +1128,7 @@ namespace MWRender
             Log(Debug::Info) << "FNV/ESM4 proof: actor-kit animation request actor=" << traits.mEditorId
                              << " ref=" << ptr.getCellRef().getRefId()
                              << " group=" << group
+                             << " requestedGroup=" << requestedGroup
                              << " startPoint=" << startPoint
                              << " blendMask=" << blendMask
                              << " available=" << available
@@ -6418,10 +6435,11 @@ namespace MWRender
             if (weapon == nullptr)
                 return "meshes/characters/_male/idleanims/talk_handsatside_still2.kf";
 
+            if (isFonvLongGunWeapon(weapon))
+                return "meshes/characters/_male/idleanims/2hrloiter.kf";
+
             std::string label = weapon->mEditorId + " " + weapon->mModel;
             Misc::StringUtils::lowerCaseInPlace(label);
-            if (containsAny(label, { "rifle", "shotgun", "sniper", "launcher", "2hand", "2hr", "varmint" }))
-                return "meshes/characters/_male/idleanims/2hrloiter.kf";
             if (containsAny(label, { "pistol", "revolver", "357", "10mm", "9mm", "1hand", "1hp" }))
                 return "meshes/characters/_male/idleanims/dlcanch1hpistolpose.kf";
 
@@ -6941,7 +6959,8 @@ namespace MWRender
             }
 
             const std::string actorKitGroup = getFalloutActorKitAnimationGroup();
-            if (getFalloutEffectiveEquippedWeapon(mPtr, *traits) != nullptr
+            const ESM4::Weapon* effectiveWeapon = getFalloutEffectiveEquippedWeapon(mPtr, *traits);
+            if (effectiveWeapon != nullptr
                 || actorKitGroup.find("attack") != std::string::npos
                 || actorKitGroup.find("reload") != std::string::npos
                 || actorKitGroup.find("fire") != std::string::npos
@@ -6955,6 +6974,21 @@ namespace MWRender
                 addFonvAnimationSource("meshes/characters/_male/1hpattackrightdown.kf", "weapon action fallback", false);
                 addFonvAnimationSource("meshes/characters/_male/1hpattackloop.kf", "weapon action fallback", false);
                 addFonvAnimationSource("meshes/characters/_male/1hpreloadx.kf", "weapon action fallback", false);
+                if (isFonvLongGunWeapon(effectiveWeapon))
+                {
+                    addFonvAnimationSource("meshes/characters/_male/2hraim.kf", "long gun weapon action fallback", false);
+                    addFonvAnimationSource("meshes/characters/_male/2hrequip.kf", "long gun weapon action fallback", false);
+                    addFonvAnimationSource(
+                        "meshes/characters/_male/2hrattackright.kf", "long gun weapon action fallback", false);
+                    addFonvAnimationSource(
+                        "meshes/characters/_male/2hrattackrightis.kf", "long gun weapon action fallback", false);
+                    addFonvAnimationSource(
+                        "meshes/characters/_male/2hrattackrightup.kf", "long gun weapon action fallback", false);
+                    addFonvAnimationSource(
+                        "meshes/characters/_male/2hrattackrightdown.kf", "long gun weapon action fallback", false);
+                    addFonvAnimationSource(
+                        "meshes/characters/_male/2hrreloadx.kf", "long gun weapon action fallback", false);
+                }
                 if (actorKitGroup.find("sneak") != std::string::npos || actorKitGroup.find("crouch") != std::string::npos)
                 {
                     addFonvAnimationSource("meshes/characters/_male/sneakmtidle.kf", "sneak weapon action fallback", false);
@@ -6972,6 +7006,23 @@ namespace MWRender
                         "meshes/characters/_male/sneak1hpattackloop.kf", "sneak weapon action fallback", false);
                     addFonvAnimationSource(
                         "meshes/characters/_male/sneak1hpreloadx.kf", "sneak weapon action fallback", false);
+                    if (isFonvLongGunWeapon(effectiveWeapon))
+                    {
+                        addFonvAnimationSource(
+                            "meshes/characters/_male/sneak2hraim.kf", "sneak long gun weapon action fallback", false);
+                        addFonvAnimationSource(
+                            "meshes/characters/_male/sneak2hrequip.kf", "sneak long gun weapon action fallback", false);
+                        addFonvAnimationSource("meshes/characters/_male/sneak2hrattackright.kf",
+                            "sneak long gun weapon action fallback", false);
+                        addFonvAnimationSource("meshes/characters/_male/sneak2hrattackrightis.kf",
+                            "sneak long gun weapon action fallback", false);
+                        addFonvAnimationSource("meshes/characters/_male/sneak2hrattackrightup.kf",
+                            "sneak long gun weapon action fallback", false);
+                        addFonvAnimationSource("meshes/characters/_male/sneak2hrattackrightdown.kf",
+                            "sneak long gun weapon action fallback", false);
+                        addFonvAnimationSource("meshes/characters/_male/sneak2hrreloadx.kf",
+                            "sneak long gun weapon action fallback", false);
+                    }
                 }
             }
 
