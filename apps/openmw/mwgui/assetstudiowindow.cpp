@@ -298,9 +298,15 @@ namespace MWGui
     MWRender::FalloutActorPreview::ViewMode AssetStudioWindow::actorViewModeForView(const std::string& view) const
     {
         const std::string lowered = lowerAscii(view);
-        if (lowered == "left" || lowered == "front-left" || lowered == "face" || lowered == "face-hat")
+        if (lowered == "left")
+            return MWRender::FalloutActorPreview::ViewMode::Left;
+        if (lowered == "right")
+            return MWRender::FalloutActorPreview::ViewMode::Right;
+        if (lowered == "top")
+            return MWRender::FalloutActorPreview::ViewMode::Top;
+        if (lowered == "front-left" || lowered == "face" || lowered == "face-hat")
             return MWRender::FalloutActorPreview::ViewMode::FrontLeft;
-        if (lowered == "right" || lowered == "front-right" || lowered == "hands" || lowered == "weapon")
+        if (lowered == "front-right" || lowered == "hands" || lowered == "weapon")
             return MWRender::FalloutActorPreview::ViewMode::FrontRight;
         return MWRender::FalloutActorPreview::ViewMode::Front;
     }

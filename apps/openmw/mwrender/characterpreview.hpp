@@ -45,6 +45,7 @@ namespace MWRender
         void redraw();
 
         void rebuild();
+        void updateLive(double simulationTime = 0.0);
 
         osg::ref_ptr<osg::Texture2D> getTexture();
         /// Get the osg::StateSet required to render the texture correctly, if any.
@@ -144,6 +145,9 @@ namespace MWRender
             Front,
             FrontLeft,
             FrontRight,
+            Left,
+            Right,
+            Top,
         };
 
         FalloutActorPreview(osg::Group* parent, Resource::ResourceSystem* resourceSystem, const MWWorld::Ptr& character,

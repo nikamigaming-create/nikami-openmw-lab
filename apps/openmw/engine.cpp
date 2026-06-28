@@ -522,6 +522,35 @@ namespace
         return fallback;
     }
 
+    float getProofRuntimeFloat(std::initializer_list<std::string_view> keys, float fallback)
+    {
+        const char* path = std::getenv("OPENMW_FNV_LIVE_RUNTIME_COMMAND_FILE");
+        if (path == nullptr || path[0] == '\0')
+            return fallback;
+
+        std::string content;
+        if (!readProofRuntimeCommandFile(path, content))
+            return fallback;
+
+        std::string valueText;
+        for (std::string_view key : keys)
+        {
+            if (!readProofRuntimeCommandString(content, key, valueText) || valueText.empty())
+                continue;
+            try
+            {
+                size_t consumed = 0;
+                const float value = std::stof(valueText, &consumed);
+                if (consumed == valueText.size() && std::isfinite(value))
+                    return value;
+            }
+            catch (...)
+            {
+            }
+        }
+        return fallback;
+    }
+
     osg::Camera* createFalloutNeutralActorPreviewComposite(
         const std::vector<std::unique_ptr<MWRender::FalloutActorPreview>>& previews)
     {
@@ -535,9 +564,9 @@ namespace
         camera->setAllowEventFocus(false);
         camera->setNodeMask(MWRender::Mask_RenderToTexture);
 
-        constexpr float width = 0.58f;
-        constexpr float height = 1.03f;
-        constexpr std::array<float, 3> centers = { -0.64f, 0.f, 0.64f };
+        constexpr float width = 0.42f;
+        constexpr float height = 0.92f;
+        constexpr std::array<float, 3> centers = { -0.56f, 0.f, 0.56f };
         const std::size_t count = std::min<std::size_t>(previews.size(), centers.size());
         for (std::size_t i = 0; i < count; ++i)
         {
@@ -3015,10 +3044,10 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                     MWRender::FalloutActorPreview::ViewMode::Front));
                 proofNeutralActorPreviews.emplace_back(std::make_unique<MWRender::FalloutActorPreview>(
                     proofNeutralActorPreviewRoot, mResourceSystem.get(), previewActor,
-                    MWRender::FalloutActorPreview::ViewMode::FrontLeft));
+                    MWRender::FalloutActorPreview::ViewMode::Left));
                 proofNeutralActorPreviews.emplace_back(std::make_unique<MWRender::FalloutActorPreview>(
                     proofNeutralActorPreviewRoot, mResourceSystem.get(), previewActor,
-                    MWRender::FalloutActorPreview::ViewMode::FrontRight));
+                    MWRender::FalloutActorPreview::ViewMode::Top));
                 for (const std::unique_ptr<MWRender::FalloutActorPreview>& preview : proofNeutralActorPreviews)
                 {
                     preview->rebuild();
@@ -3092,9 +3121,13 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                 const osg::Vec3f stagePos(getProofFloat("OPENMW_PROOF_ACTOR_STAGE_X", current.pos[0]),
                     getProofFloat("OPENMW_PROOF_ACTOR_STAGE_Y", current.pos[1]),
                     getProofFloat("OPENMW_PROOF_ACTOR_STAGE_Z", current.pos[2]));
-                const osg::Vec3f stageRot(getProofFloat("OPENMW_PROOF_ACTOR_STAGE_ROT_X", current.rot[0]),
-                    getProofFloat("OPENMW_PROOF_ACTOR_STAGE_ROT_Y", current.rot[1]),
-                    getProofFloat("OPENMW_PROOF_ACTOR_STAGE_ROT_Z", current.rot[2]));
+                const osg::Vec3f stageRot(
+                    getProofRuntimeFloat({ "actorStageRotX", "stageRotX", "rotX" },
+                        getProofFloat("OPENMW_PROOF_ACTOR_STAGE_ROT_X", current.rot[0])),
+                    getProofRuntimeFloat({ "actorStageRotY", "stageRotY", "rotY" },
+                        getProofFloat("OPENMW_PROOF_ACTOR_STAGE_ROT_Y", current.rot[1])),
+                    getProofRuntimeFloat({ "actorStageRotZ", "stageRotZ", "rotZ", "yawRadians" },
+                        getProofFloat("OPENMW_PROOF_ACTOR_STAGE_ROT_Z", current.rot[2])));
                 proofActor = mWorld->moveObject(proofActor, stagePos, true, true);
                 mWorld->rotateObject(proofActor, stageRot);
                 if (proofActorLogThisFrame)
@@ -3261,6 +3294,47 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                                     << (baseCreaturePreviewHandled ? "visual-preview-supported" : "not-applied")
                                     << " scannedCreatureBases=" << creatureBaseRecordsScanned;
                 lastProofActorLookupFailureLogFrame = frameNumber;
+            }
+        }
+
+        static std::string proofNeutralActorPreviewLiveAuthoringContent;
+        static unsigned int proofNeutralActorPreviewLiveAuthoringTick = 0;
+        static unsigned int proofNeutralActorPreviewLiveAuthoringLogs = 0;
+        if (proofNeutralActorPreviewRequested && proofNeutralActorPreviewReady && !proofNeutralActorPreviews.empty())
+        {
+            const char* liveAuthoringPath = std::getenv("OPENMW_FNV_LIVE_AUTHORING_FILE");
+            if (liveAuthoringPath != nullptr && liveAuthoringPath[0] != '\0'
+                && ++proofNeutralActorPreviewLiveAuthoringTick % 3 == 0)
+            {
+                std::ifstream liveAuthoringInput(liveAuthoringPath, std::ios::binary);
+                std::ostringstream liveAuthoringStream;
+                liveAuthoringStream << liveAuthoringInput.rdbuf();
+                const std::string liveAuthoringContent = liveAuthoringStream.str();
+                if (!liveAuthoringContent.empty()
+                    && liveAuthoringContent != proofNeutralActorPreviewLiveAuthoringContent)
+                {
+                    proofNeutralActorPreviewLiveAuthoringContent = liveAuthoringContent;
+                    const double previewSimulationTime = static_cast<double>(frameNumber) / 60.0;
+                    unsigned int panesRedrawn = 0;
+                    for (const std::unique_ptr<MWRender::FalloutActorPreview>& preview : proofNeutralActorPreviews)
+                    {
+                        if (preview == nullptr)
+                            continue;
+                        preview->updateLive(previewSimulationTime);
+                        ++panesRedrawn;
+                    }
+                    if (proofNeutralActorPreviewLiveAuthoringLogs < 32)
+                    {
+                        ++proofNeutralActorPreviewLiveAuthoringLogs;
+                        Log(Debug::Info)
+                            << "FNV/ESM4 live authoring: neutral actor preview live redraw target=\"" << target
+                            << "\" frame=" << frameNumber
+                            << " panes=" << panesRedrawn
+                            << " file=" << liveAuthoringPath
+                            << " contentBytes=" << liveAuthoringContent.size()
+                            << " runtime=runtime-supported gate=runtime-live-neutral-preview-redraw";
+                    }
+                }
             }
         }
 

@@ -149,7 +149,7 @@ def actor_patterns(lines: list[str], actor: str) -> list[str]:
                 if value and value not in patterns:
                     patterns.append(value)
         assembly_match = assembly_re.search(line)
-        if assembly_match and any(matches_known_actor_value(value, patterns) for value in assembly_match.groups()):
+        if assembly_match and any(value == actor for value in assembly_match.groups()):
             matched_actor_line = True
             for value in assembly_match.groups():
                 if value and value not in patterns:
@@ -165,6 +165,11 @@ def actor_patterns(lines: list[str], actor: str) -> list[str]:
 
 def line_matches_actor(line: str, patterns: list[str]) -> bool:
     return any(pattern in line for pattern in patterns)
+
+
+def is_scalp_hair_model(model: str) -> bool:
+    lowered = model.lower().replace("\\", "/")
+    return "hair" in lowered and "brow" not in lowered and "beard" not in lowered and "facial" not in lowered
 
 
 def parse_builder_gates(lines: list[str], patterns: list[str]) -> list[dict[str, Any]]:
@@ -198,7 +203,7 @@ def parse_builder_gates(lines: list[str], patterns: list[str]) -> list[dict[str,
 
 def parse_attachment_bounds(lines: list[str], patterns: list[str]) -> list[dict[str, Any]]:
     bounds_re = re.compile(
-        r"attachment bounds (?P<model>.*?) for (?P<ref>[^ ]+) parent=(?P<parent>.*?) "
+        r"(?:attachment bounds|part 3d space) (?P<model>.*?) for (?P<ref>[^ ]+) parent=(?P<parent>.*?) "
         rf"center={FLOAT3_RE} extent={FLOAT3_RE} worldCenter={FLOAT3_RE} "
         rf"attachLocal={FLOAT3_RE} headRel={FLOAT3_RE} headLocal={FLOAT3_RE} "
         rf"headFrame={FLOAT3_RE}.*? centerDistance=(?P<centerDistance>[-+0-9.eE]+) "
@@ -228,6 +233,8 @@ def parse_attachment_bounds(lines: list[str], patterns: list[str]) -> list[dict[
                 "centerDistance": float(data["centerDistance"]),
                 "diagonal": float(data["diagonal"]),
                 "verdict": data["verdict"],
+                "measurementOnly": "runtime=measurement-only" in line,
+                "part3dSpace": "part 3d space" in line,
                 "timestamp": timestamp_from_line(line),
                 "line": compact_line(line),
             }
@@ -1387,7 +1394,7 @@ def parse_actor_matches(lines: list[str], actor: str) -> list[dict[str, Any]]:
         assembly_match = assembly_re.search(line)
         if assembly_match:
             data = assembly_match.groupdict()
-            if not any(matches_known_actor_value(value, known_patterns) for value in data.values()):
+            if not any(value == actor for value in data.values()):
                 continue
             for value in data.values():
                 if value and value not in known_patterns:
@@ -1594,6 +1601,16 @@ def evaluate(
         failures.append("missing screenshots")
     if not actor_matches:
         failures.append("missing active-cell actor match")
+    elif actor_kind != "creature":
+        active_cell_matches = [item for item in actor_matches if item.get("source") == "active-cell"]
+        if not active_cell_matches:
+            failures.append("missing exact active-cell actor identity evidence")
+        identity_keys = {
+            (item.get("name", ""), item.get("baseEditor", ""), item.get("baseForm", ""), item.get("traitsForm", ""))
+            for item in actor_matches
+        }
+        if len(identity_keys) > 1:
+            failures.append(f"mixed actor identities in evidence: {len(identity_keys)}")
     if not any(item["matchedControllers"] > 0 for item in animation_sources):
         failures.append("missing bound animation controller evidence")
     if requires_animation_playback and not any(item["controllers"] > 0 and item["playing"] for item in animation_playback):
@@ -1611,6 +1628,24 @@ def evaluate(
         failures.append(f"target animation blocker lines: {len(animation_blockers)}")
     if actor_kind != "creature" and phase and not gates:
         failures.append("missing character builder phase gate lines")
+    if actor_kind != "creature":
+        part_space_bounds = [item for item in bounds if item.get("part3dSpace")]
+        if not part_space_bounds:
+            failures.append("missing raw part 3D-space telemetry")
+        if not any(is_scalp_hair_model(item["model"]) for item in part_space_bounds):
+            failures.append("missing raw scalp hair 3D-space telemetry")
+        suspect_part_space = [item for item in part_space_bounds if item["verdict"] == "SUSPECT"]
+        if suspect_part_space:
+            failures.append(f"suspect raw part 3D-space telemetry: {len(suspect_part_space)}")
+        legacy_certifying_hair = [
+            item
+            for item in face_checks
+            if item["values"].get("hairAttached") == "OK" or item["values"].get("hairAttached") == "MEASURED_UNTRUSTED"
+        ]
+        if any(item["values"].get("hairAttached") == "OK" for item in face_checks):
+            failures.append("legacy FACE CHECK hairAttached=OK is untrusted")
+        if legacy_certifying_hair and not part_space_bounds:
+            failures.append("legacy FACE CHECK hair evidence present without raw 3D-space telemetry")
     bad_class = [
         gate
         for gate in gates

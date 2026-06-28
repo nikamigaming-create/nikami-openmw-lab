@@ -638,6 +638,19 @@ namespace MWRender
                     position = osg::Vec3f(diagonal, diagonal, cameraZ);
                     viewName = "front-right";
                     break;
+                case FalloutActorPreview::ViewMode::Left:
+                    position = osg::Vec3f(-distance, 0.f, cameraZ);
+                    viewName = "left";
+                    break;
+                case FalloutActorPreview::ViewMode::Right:
+                    position = osg::Vec3f(distance, 0.f, cameraZ);
+                    viewName = "right";
+                    break;
+                case FalloutActorPreview::ViewMode::Top:
+                    position = osg::Vec3f(0.f, 24.f, cameraZ + 210.f);
+                    lookAt = osg::Vec3f(0.f, 0.f, lookAtZ - 8.f);
+                    viewName = "top";
+                    break;
             }
         }
 
@@ -1146,6 +1159,17 @@ namespace MWRender
         mDrawOnceCallback->redrawNextFrame();
     }
 
+    void CharacterPreview::updateLive(double simulationTime)
+    {
+        if (!mAnimation)
+            return;
+
+        mAnimation->runAnimation(static_cast<float>(simulationTime));
+        setRedrawSimulationTime(simulationTime);
+        setBlendMode();
+        redraw();
+    }
+
     // --------------------------------------------------------------------------------------------------
 
     InventoryPreview::InventoryPreview(
@@ -1572,6 +1596,15 @@ namespace MWRender
                     lookAt = osg::Vec3f(28.f, 0.f, 82.f);
                     viewName = "right-elbow-hand-weapon";
                     break;
+                case ViewMode::Left:
+                case ViewMode::Right:
+                case ViewMode::Top:
+                    applyFalloutNeutralActorOrbitCamera(mViewMode,
+                        getFalloutNeutralActorPreviewFloat("OPENMW_FNV_NEUTRAL_ACTOR_PREVIEW_DISTANCE", 420.f),
+                        getFalloutNeutralActorPreviewFloat("OPENMW_FNV_NEUTRAL_ACTOR_PREVIEW_CAMERA_Z", 112.f),
+                        getFalloutNeutralActorPreviewFloat("OPENMW_FNV_NEUTRAL_ACTOR_PREVIEW_LOOK_Z", 112.f),
+                        position, lookAt, viewName);
+                    break;
             }
         }
         else if (rightHandCloseProfile || leftHandCloseProfile || handsCloseProfile)
@@ -1614,6 +1647,15 @@ namespace MWRender
                         getFalloutNeutralActorPreviewFloat("OPENMW_FNV_NEUTRAL_ACTOR_PREVIEW_HAND_LOOK_Y", 0.f),
                         getFalloutNeutralActorPreviewFloat("OPENMW_FNV_NEUTRAL_ACTOR_PREVIEW_HAND_LOOK_Z", 70.f));
                     viewName = "right-hand-weapon";
+                    break;
+                case ViewMode::Left:
+                case ViewMode::Right:
+                case ViewMode::Top:
+                    applyFalloutNeutralActorOrbitCamera(mViewMode,
+                        getFalloutNeutralActorPreviewFloat("OPENMW_FNV_NEUTRAL_ACTOR_PREVIEW_DISTANCE", 190.f),
+                        getFalloutNeutralActorPreviewFloat("OPENMW_FNV_NEUTRAL_ACTOR_PREVIEW_CAMERA_Z", 116.f),
+                        getFalloutNeutralActorPreviewFloat("OPENMW_FNV_NEUTRAL_ACTOR_PREVIEW_LOOK_Z", 116.f),
+                        position, lookAt, viewName);
                     break;
             }
         }

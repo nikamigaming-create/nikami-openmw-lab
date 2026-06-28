@@ -4284,6 +4284,26 @@ namespace MWRender
             unsigned int mHiddenGeometry = 0;
         };
 
+        class CountFonvHairVariantVisitor : public osg::NodeVisitor
+        {
+        public:
+            CountFonvHairVariantVisitor()
+                : osg::NodeVisitor(TRAVERSE_ALL_CHILDREN)
+            {
+            }
+
+            void apply(osg::Drawable& drawable) override
+            {
+                if (isFonvNoHatHairDrawable(drawable))
+                    ++mNoHat;
+                if (isFonvHatHairDrawable(drawable))
+                    ++mHat;
+            }
+
+            unsigned int mNoHat = 0;
+            unsigned int mHat = 0;
+        };
+
         bool isFalloutDialogueHeadSkinSurface(std::string_view model);
         bool fonvCoveredSlotsHideScalpHair(uint32_t coveredSlots);
 
@@ -5418,7 +5438,31 @@ namespace MWRender
                              << model << " for " << traits.mEditorId
                              << " because this covered hair variant draws over the face under opaque headgear slots=0x"
                              << std::hex << coveredSlots << std::dec
-                             << " hiddenGeometry=" << visitor.mHiddenGeometry;
+                              << " hiddenGeometry=" << visitor.mHiddenGeometry;
+        }
+
+        void hideFonvHatHairVariantForUncoveredHair(osg::Node* attached, std::string_view model, const ESM4::Npc& traits)
+        {
+            if (attached == nullptr)
+                return;
+
+            CountFonvHairVariantVisitor countVisitor;
+            attached->accept(countVisitor);
+            if (countVisitor.mNoHat == 0 || countVisitor.mHat == 0)
+                return;
+
+            HideFonvHatHairVariantVisitor visitor;
+            attached->accept(visitor);
+            if (visitor.mHidden == 0)
+                return;
+
+            Log(Debug::Info) << "FNV/ESM4 diag: hid " << visitor.mHidden
+                             << " hat-compatible hair drawable(s) on " << model << " for " << traits.mEditorId
+                             << " because uncovered hair uses the no-hat variant"
+                             << " noHatDrawables=" << countVisitor.mNoHat
+                             << " hatDrawables=" << countVisitor.mHat
+                             << " hiddenGeometry=" << visitor.mHiddenGeometry
+                             << " gate=runtime-fnv-hair-variant-selection";
         }
 
         void hideFonvNoHatHairVariant(
@@ -5524,7 +5568,16 @@ namespace MWRender
         {
             const bool faceInternal = prefix == "OPENMW_FNV_EYE" || prefix == "OPENMW_FNV_MOUTH"
                 || prefix == "OPENMW_FNV_BEARD" || prefix == "OPENMW_FNV_BROW";
-            return (faceInternal || prefix == "OPENMW_FNV_HAIR") ? -90.f : 0.f;
+            if (faceInternal)
+                return -90.f;
+            return 0.f;
+        }
+
+        osg::Vec3f getFalloutHeadFrameSurfaceRotationFallback(std::string_view prefix)
+        {
+            if (prefix == "OPENMW_FNV_HAIR")
+                return osg::Vec3f(90.f, 90.f, 0.f);
+            return osg::Vec3f(0.f, 0.f, getFalloutHeadFrameSurfaceZFallback(prefix));
         }
 
         osg::Vec3f getFalloutHeadFrameSurfaceRotationDegrees(std::string_view prefix)
@@ -5533,9 +5586,10 @@ namespace MWRender
                 return osg::Vec3f();
 
             const std::string keyPrefix(prefix);
-            return osg::Vec3f(readFalloutProofFloat((keyPrefix + "_ROTATION_X").c_str(), 0.f),
-                readFalloutProofFloat((keyPrefix + "_ROTATION_Y").c_str(), 0.f),
-                readFalloutProofFloat((keyPrefix + "_ROTATION_Z").c_str(), getFalloutHeadFrameSurfaceZFallback(prefix)));
+            const osg::Vec3f fallback = getFalloutHeadFrameSurfaceRotationFallback(prefix);
+            return osg::Vec3f(readFalloutProofFloat((keyPrefix + "_ROTATION_X").c_str(), fallback.x()),
+                readFalloutProofFloat((keyPrefix + "_ROTATION_Y").c_str(), fallback.y()),
+                readFalloutProofFloat((keyPrefix + "_ROTATION_Z").c_str(), fallback.z()));
         }
 
         osg::Vec3f getFalloutHeadFrameSurfacePivot(std::string_view prefix, const osg::Vec3f& fallback)
@@ -5839,7 +5893,7 @@ namespace MWRender
             void operator()(osg::Node* node, osg::NodeVisitor* visitor) override
             {
                 const char* livePath = getFalloutLiveAuthoringFile();
-                if (livePath != nullptr && mTick++ % 6 == 0)
+                if (livePath != nullptr)
                 {
                     std::string content;
                     if (readFalloutLiveAuthoringFile(livePath, content) && content != mLastContent)
@@ -5956,6 +6010,8 @@ namespace MWRender
 
         bool isFalloutStaticFaceChildPart(std::string_view model)
         {
+            if (isFalloutScalpHairModel(model))
+                return false;
             return shouldAttachFalloutStaticPartToHead(model) && !isFalloutStaticHeadgearPart(model)
                 && !isFalloutHeadSurfaceModel(model);
         }
@@ -6193,6 +6249,217 @@ namespace MWRender
             return osg::Vec3f(transformed.x(), transformed.y(), transformed.z());
         }
 
+        bool isFalloutDebugAxisNodeName(std::string_view name)
+        {
+            return name.find("FNV Debug Axis") != std::string_view::npos;
+        }
+
+        std::string formatFalloutVec3Telemetry(const osg::Vec3f& value)
+        {
+            std::ostringstream stream;
+            stream << "(" << value.x() << "," << value.y() << "," << value.z() << ")";
+            return stream.str();
+        }
+
+        struct FalloutPointBand
+        {
+            osg::Vec3f center;
+            unsigned int count = 0;
+        };
+
+        struct FalloutHeadSpacePointCloud
+        {
+            std::vector<osg::Vec3f> points;
+            unsigned int drawables = 0;
+            osg::Vec3f min = osg::Vec3f(std::numeric_limits<float>::max(), std::numeric_limits<float>::max(),
+                std::numeric_limits<float>::max());
+            osg::Vec3f max = osg::Vec3f(std::numeric_limits<float>::lowest(), std::numeric_limits<float>::lowest(),
+                std::numeric_limits<float>::lowest());
+            osg::Vec3f center;
+            std::array<FalloutPointBand, 6> bands;
+
+            bool valid() const { return !points.empty(); }
+        };
+
+        void includeFalloutHeadSpacePoint(FalloutHeadSpacePointCloud& cloud, const osg::Vec3f& point)
+        {
+            cloud.points.push_back(point);
+            for (unsigned int axis = 0; axis < 3; ++axis)
+            {
+                cloud.min[axis] = std::min(cloud.min[axis], point[axis]);
+                cloud.max[axis] = std::max(cloud.max[axis], point[axis]);
+            }
+        }
+
+        void finishFalloutHeadSpacePointCloud(FalloutHeadSpacePointCloud& cloud)
+        {
+            if (!cloud.valid())
+            {
+                cloud.min = osg::Vec3f();
+                cloud.max = osg::Vec3f();
+                return;
+            }
+
+            osg::Vec3f sum;
+            for (const osg::Vec3f& point : cloud.points)
+                sum += point;
+            cloud.center = sum / static_cast<float>(cloud.points.size());
+
+            for (unsigned int axis = 0; axis < 3; ++axis)
+            {
+                const float span = std::max(0.0001f, cloud.max[axis] - cloud.min[axis]);
+                const float lowCut = cloud.min[axis] + span * 0.15f;
+                const float highCut = cloud.max[axis] - span * 0.15f;
+                FalloutPointBand& low = cloud.bands[axis * 2];
+                FalloutPointBand& high = cloud.bands[axis * 2 + 1];
+                for (const osg::Vec3f& point : cloud.points)
+                {
+                    if (point[axis] <= lowCut)
+                    {
+                        low.center += point;
+                        ++low.count;
+                    }
+                    if (point[axis] >= highCut)
+                    {
+                        high.center += point;
+                        ++high.count;
+                    }
+                }
+                if (low.count != 0)
+                    low.center /= static_cast<float>(low.count);
+                if (high.count != 0)
+                    high.center /= static_cast<float>(high.count);
+            }
+        }
+
+        class FalloutHeadSpacePointCloudVisitor : public osg::NodeVisitor
+        {
+        public:
+            explicit FalloutHeadSpacePointCloudVisitor(const osg::Matrix& headWorldInverse)
+                : osg::NodeVisitor(TRAVERSE_ALL_CHILDREN)
+                , mHeadWorldInverse(headWorldInverse)
+            {
+            }
+
+            void apply(osg::Node& node) override
+            {
+                if (isFalloutDebugAxisNodeName(node.getName()))
+                    return;
+                traverse(node);
+            }
+
+            void apply(osg::Geode& geode) override
+            {
+                if (isFalloutDebugAxisNodeName(geode.getName()))
+                    return;
+
+                const osg::Matrix localToWorld = osg::computeLocalToWorld(getNodePath());
+                for (unsigned int i = 0; i < geode.getNumDrawables(); ++i)
+                {
+                    const osg::Drawable* drawable = geode.getDrawable(i);
+                    if (drawable != nullptr && !isFalloutDebugAxisNodeName(drawable->getName()))
+                        collectDrawable(*drawable, localToWorld);
+                }
+                traverse(geode);
+            }
+
+            FalloutHeadSpacePointCloud finish()
+            {
+                finishFalloutHeadSpacePointCloud(mCloud);
+                return mCloud;
+            }
+
+        private:
+            void collectVertex(const osg::Vec3f& vertex, const osg::Matrix& localToWorld)
+            {
+                const osg::Vec3f world = transformPoint(vertex, localToWorld);
+                includeFalloutHeadSpacePoint(mCloud, transformPoint(world, mHeadWorldInverse));
+            }
+
+            void collectGeometry(const osg::Geometry& geometry, const osg::Matrix& localToWorld)
+            {
+                const osg::Array* vertexArray = geometry.getVertexArray();
+                if (vertexArray == nullptr || vertexArray->getNumElements() == 0)
+                    return;
+
+                ++mCloud.drawables;
+
+                if (const osg::Vec3Array* vertices = dynamic_cast<const osg::Vec3Array*>(vertexArray))
+                {
+                    for (const osg::Vec3f& vertex : *vertices)
+                        collectVertex(vertex, localToWorld);
+                    return;
+                }
+                if (const osg::Vec3dArray* vertices = dynamic_cast<const osg::Vec3dArray*>(vertexArray))
+                {
+                    for (const osg::Vec3d& vertex : *vertices)
+                        collectVertex(osg::Vec3f(vertex.x(), vertex.y(), vertex.z()), localToWorld);
+                    return;
+                }
+                if (const osg::Vec4Array* vertices = dynamic_cast<const osg::Vec4Array*>(vertexArray))
+                {
+                    for (const osg::Vec4f& vertex : *vertices)
+                        collectVertex(osg::Vec3f(vertex.x(), vertex.y(), vertex.z()), localToWorld);
+                }
+            }
+
+            void collectDrawableBounds(const osg::Drawable& drawable, const osg::Matrix& localToWorld)
+            {
+                const osg::BoundingBox box = drawable.getBoundingBox();
+                if (!box.valid())
+                    return;
+
+                ++mCloud.drawables;
+                for (unsigned int x = 0; x < 2; ++x)
+                    for (unsigned int y = 0; y < 2; ++y)
+                        for (unsigned int z = 0; z < 2; ++z)
+                            collectVertex(osg::Vec3f(x == 0 ? box.xMin() : box.xMax(),
+                                              y == 0 ? box.yMin() : box.yMax(), z == 0 ? box.zMin() : box.zMax()),
+                                localToWorld);
+            }
+
+            void collectDrawable(const osg::Drawable& drawable, const osg::Matrix& localToWorld)
+            {
+                if (const SceneUtil::RigGeometry* rig = dynamic_cast<const SceneUtil::RigGeometry*>(&drawable))
+                {
+                    bool collectedRenderGeometry = false;
+                    for (unsigned int i = 0; i < 2; ++i)
+                    {
+                        if (const osg::Geometry* geometry = rig->getRenderGeometry(i))
+                        {
+                            collectGeometry(*geometry, localToWorld);
+                            collectedRenderGeometry = true;
+                        }
+                    }
+                    if (!collectedRenderGeometry)
+                        if (const osg::Geometry* source = rig->getSourceGeometry())
+                            collectGeometry(*source, localToWorld);
+                    return;
+                }
+
+                if (const osg::Geometry* geometry = drawable.asGeometry())
+                {
+                    const std::size_t before = mCloud.points.size();
+                    collectGeometry(*geometry, localToWorld);
+                    if (mCloud.points.size() == before)
+                        collectDrawableBounds(drawable, localToWorld);
+                    return;
+                }
+
+                collectDrawableBounds(drawable, localToWorld);
+            }
+
+            osg::Matrix mHeadWorldInverse;
+            FalloutHeadSpacePointCloud mCloud;
+        };
+
+        FalloutHeadSpacePointCloud collectFalloutHeadSpacePointCloud(osg::Node& node, const osg::Matrix& headWorldInverse)
+        {
+            FalloutHeadSpacePointCloudVisitor visitor(headWorldInverse);
+            node.accept(visitor);
+            return visitor.finish();
+        }
+
         class FindNamedNodeVisitor : public osg::NodeVisitor
         {
         public:
@@ -6330,7 +6597,9 @@ namespace MWRender
             const bool eyeLike = isFalloutEyeModel(model);
             const bool browLike = isFalloutBrowModel(model);
             const bool faceHairLike = isFalloutFaceHairModel(model);
+            const bool scalpHairLike = isFalloutScalpHairModel(model);
             const bool checksFaceAxes = faceTight && (mouthLike || eyeLike || browLike || faceHairLike);
+            const bool checksScalpHairAxes = headRelative && scalpHairLike;
             const osg::Vec3f headFrameCenter = headLocalCenter;
             bool headAxisDetached = false;
             const char* headAxisReason = "";
@@ -6372,11 +6641,21 @@ namespace MWRender
             const float headPlanarDelta = std::sqrt(headDelta.x() * headDelta.x() + headDelta.y() * headDelta.y());
             const bool headDetached = headRelative
                 && (headPlanarDelta > maxHeadPlanarDelta || std::abs(headDelta.z()) > maxHeadVerticalDelta);
-            const bool suspicious = (accessory && (centerDistance > 180.f || diagonal > 260.f))
+            const bool legacyHeuristicFinding = (accessory && (centerDistance > 180.f || diagonal > 260.f))
                 || (!accessory && centerDistance > 420.f) || headDetached || headAxisDetached;
+            const osg::Matrix attachWorld
+                = attachNode != nullptr ? getNodeWorldMatrix(attachNode) : osg::Matrix::identity();
+            const osg::Quat attachRotation = attachWorld.getRotate();
+            const osg::Quat headRotation = headWorld.getRotate();
+            const osg::Vec3f attachAxisRight = attachRotation * osg::Vec3f(1.f, 0.f, 0.f);
+            const osg::Vec3f attachAxisFront = attachRotation * osg::Vec3f(0.f, 1.f, 0.f);
+            const osg::Vec3f attachAxisTop = attachRotation * osg::Vec3f(0.f, 0.f, 1.f);
+            const osg::Vec3f headAxisRight = headRotation * osg::Vec3f(1.f, 0.f, 0.f);
+            const osg::Vec3f headAxisFront = headRotation * osg::Vec3f(0.f, 1.f, 0.f);
+            const osg::Vec3f headAxisTop = headRotation * osg::Vec3f(0.f, 0.f, 1.f);
 
             std::ostringstream message;
-            message << "FNV/ESM4 diag: attachment bounds " << model << " for " << ptr.getCellRef().getRefId()
+            message << "FNV/ESM4 telemetry: part 3d space " << model << " for " << ptr.getCellRef().getRefId()
                     << " parent=" << (attachNode != nullptr ? attachNode->getName() : std::string("<none>"))
                     << " center=(" << center.x() << "," << center.y() << "," << center.z() << ")"
                     << " extent=(" << extent.x() << "," << extent.y() << "," << extent.z() << ")"
@@ -6393,14 +6672,33 @@ namespace MWRender
                 message << " headDelta=(n/a)";
             message << " centerDistance=" << centerDistance << " diagonal=" << diagonal
                     << " headRelative=" << headRelative << " faceTight=" << faceTight
-                    << " faceAxisChecked=" << checksFaceAxes << " faceAxisReason="
+                    << " scalpHair=" << scalpHairLike
+                    << " signedHeadOffsets(right,front,top)=(" << headFrameCenter.x() << ","
+                    << headFrameCenter.y() << "," << headFrameCenter.z() << ")"
+                    << " frontMinusTop=" << (headFrameCenter.y() - headFrameCenter.z())
+                    << " topMinusFront=" << (headFrameCenter.z() - headFrameCenter.y())
+                    << " attachWorldOrigin=(" << attachWorld.getTrans().x() << "," << attachWorld.getTrans().y()
+                    << "," << attachWorld.getTrans().z() << ")"
+                    << " attachWorldAxisRight=(" << attachAxisRight.x() << "," << attachAxisRight.y() << ","
+                    << attachAxisRight.z() << ")"
+                    << " attachWorldAxisFront=(" << attachAxisFront.x() << "," << attachAxisFront.y() << ","
+                    << attachAxisFront.z() << ")"
+                    << " attachWorldAxisTop=(" << attachAxisTop.x() << "," << attachAxisTop.y() << ","
+                    << attachAxisTop.z() << ")"
+                    << " headWorldAxisRight=(" << headAxisRight.x() << "," << headAxisRight.y() << ","
+                    << headAxisRight.z() << ")"
+                    << " headWorldAxisFront=(" << headAxisFront.x() << "," << headAxisFront.y() << ","
+                    << headAxisFront.z() << ")"
+                    << " headWorldAxisTop=(" << headAxisTop.x() << "," << headAxisTop.y() << ","
+                    << headAxisTop.z() << ")"
+                    << " faceAxisChecked=" << checksFaceAxes
+                    << " scalpHairAxisChecked=" << checksScalpHairAxes << " faceAxisReason="
                     << (headAxisDetached ? headAxisReason : "OK")
-                    << " verdict=" << (suspicious ? "SUSPECT" : "OK");
+                    << " legacyHeuristicFinding=" << legacyHeuristicFinding
+                    << " verdict=MEASURED-UNTRUSTED"
+                    << " runtime=measurement-only gate=runtime-fnv-part-3d-space";
 
-            if (suspicious)
-                Log(Debug::Warning) << message.str();
-            else
-                Log(Debug::Info) << message.str();
+            Log(Debug::Info) << message.str();
         }
 
         osg::ref_ptr<osg::MatrixTransform> makeFalloutAttachmentHelper(
@@ -6607,6 +6905,146 @@ namespace MWRender
                 }
             }
             return stream.str();
+        }
+
+        osg::ref_ptr<osg::Geode> makeFalloutAxisDebugGeode(std::string_view name, float size)
+        {
+            size = std::max(size, readFalloutProofFloat("OPENMW_FNV_PART_AXIS_SIZE", size));
+            const bool surfaceFrame = name.find("Surface Frame") != std::string_view::npos;
+            const osg::Vec4f xColor = surfaceFrame ? osg::Vec4f(1.f, 0.f, 1.f, 1.f) : osg::Vec4f(1.f, 0.f, 0.f, 1.f);
+            const osg::Vec4f yColor = surfaceFrame ? osg::Vec4f(0.f, 1.f, 1.f, 1.f) : osg::Vec4f(0.f, 1.f, 0.f, 1.f);
+            const osg::Vec4f zColor
+                = surfaceFrame ? osg::Vec4f(1.f, 1.f, 0.f, 1.f) : osg::Vec4f(0.1f, 0.35f, 1.f, 1.f);
+
+            osg::ref_ptr<osg::Geode> geode = new osg::Geode;
+            geode->setName(std::string(name));
+            geode->setCullingActive(false);
+
+            osg::ref_ptr<osg::Geometry> geometry = new osg::Geometry;
+            geometry->setUseDisplayList(false);
+            geometry->setUseVertexBufferObjects(true);
+
+            osg::ref_ptr<osg::Vec3Array> vertices = new osg::Vec3Array;
+            osg::ref_ptr<osg::Vec4Array> colors = new osg::Vec4Array;
+            const auto addAxis = [&](const osg::Vec3f& axis, const osg::Vec4f& color) {
+                vertices->push_back(osg::Vec3f());
+                vertices->push_back(axis * size);
+                colors->push_back(color);
+                colors->push_back(color);
+            };
+            addAxis(osg::Vec3f(1.f, 0.f, 0.f), xColor);
+            addAxis(osg::Vec3f(0.f, 1.f, 0.f), yColor);
+            addAxis(osg::Vec3f(0.f, 0.f, 1.f), zColor);
+
+            geometry->setVertexArray(vertices);
+            geometry->setColorArray(colors, osg::Array::BIND_PER_VERTEX);
+            geometry->addPrimitiveSet(new osg::DrawArrays(osg::PrimitiveSet::LINES, 0, vertices->size()));
+            geode->addDrawable(geometry);
+
+            osg::StateSet* stateSet = geode->getOrCreateStateSet();
+            stateSet->setMode(GL_LIGHTING, osg::StateAttribute::OFF);
+            stateSet->setAttributeAndModes(new osg::LineWidth(8.f), osg::StateAttribute::ON);
+            return geode;
+        }
+
+        void ensureFalloutAxisDebugChild(osg::Group& parent, std::string_view name, float size)
+        {
+            for (unsigned int i = 0; i < parent.getNumChildren(); ++i)
+            {
+                osg::Node* child = parent.getChild(i);
+                if (child != nullptr && child->getName() == name)
+                    return;
+            }
+            parent.addChild(makeFalloutAxisDebugGeode(name, size));
+        }
+
+        void logFalloutLiveSurfaceFrameTelemetry(osg::MatrixTransform& surfaceNode, osg::Group* headNode,
+            std::string_view model, std::string_view prefix, const MWWorld::Ptr& ptr, const osg::Vec3f& offset,
+            const osg::Vec3f& rotation, const osg::Vec3f& pivot, bool pivotMode)
+        {
+            const osg::Matrix surfaceWorld = getNodeWorldMatrix(&surfaceNode);
+            const osg::Matrix headWorld = headNode != nullptr ? getNodeWorldMatrix(headNode) : osg::Matrix::identity();
+            osg::Matrix headWorldInverse;
+            if (!headWorldInverse.invert(headWorld))
+                headWorldInverse.makeIdentity();
+
+            osg::ComputeBoundsVisitor boundsVisitor;
+            surfaceNode.accept(boundsVisitor);
+            const osg::BoundingBox box = boundsVisitor.getBoundingBox();
+            const osg::Vec3f localBoundsCenter = box.valid() ? box.center() : osg::Vec3f();
+            osg::Vec3f localBoundsExtent = boundingBoxExtent(box);
+
+            const osg::Vec3f surfaceOrigin = transformPoint(osg::Vec3f(), surfaceWorld);
+            const osg::Vec3f headOrigin = transformPoint(osg::Vec3f(), headWorld);
+            const osg::Vec3f surfaceInHead = transformPoint(surfaceOrigin, headWorldInverse);
+            const osg::Vec3f boundsWorldCenter = transformPoint(localBoundsCenter, surfaceWorld);
+            osg::Vec3f boundsInHead = transformPoint(boundsWorldCenter, headWorldInverse);
+            const osg::Quat surfaceRotation = surfaceWorld.getRotate();
+            const osg::Quat headRotation = headWorld.getRotate();
+            FalloutHeadSpacePointCloud pointCloud = collectFalloutHeadSpacePointCloud(surfaceNode, headWorldInverse);
+            if (pointCloud.valid())
+            {
+                boundsInHead = pointCloud.center;
+                localBoundsExtent = pointCloud.max - pointCloud.min;
+            }
+
+            const osg::Vec3f surfaceAxisX = surfaceRotation * osg::Vec3f(1.f, 0.f, 0.f);
+            const osg::Vec3f surfaceAxisY = surfaceRotation * osg::Vec3f(0.f, 1.f, 0.f);
+            const osg::Vec3f surfaceAxisZ = surfaceRotation * osg::Vec3f(0.f, 0.f, 1.f);
+            const osg::Vec3f headAxisX = headRotation * osg::Vec3f(1.f, 0.f, 0.f);
+            const osg::Vec3f headAxisY = headRotation * osg::Vec3f(0.f, 1.f, 0.f);
+            const osg::Vec3f headAxisZ = headRotation * osg::Vec3f(0.f, 0.f, 1.f);
+
+            Log(Debug::Info) << "FNV/ESM4 telemetry: live surface frame model=" << model
+                             << " prefix=" << prefix
+                             << " ref=" << ptr.getCellRef().getRefId()
+                             << " parentHead=" << (headNode != nullptr ? headNode->getName() : std::string("<none>"))
+                             << " offset=(" << offset.x() << "," << offset.y() << "," << offset.z() << ")"
+                             << " rotation=(" << rotation.x() << "," << rotation.y() << "," << rotation.z() << ")"
+                             << " pivot=(" << pivot.x() << "," << pivot.y() << "," << pivot.z() << ")"
+                             << " pivotMode=" << pivotMode
+                             << " surfaceOriginWorld=(" << surfaceOrigin.x() << "," << surfaceOrigin.y() << ","
+                             << surfaceOrigin.z() << ")"
+                             << " headOriginWorld=(" << headOrigin.x() << "," << headOrigin.y() << ","
+                             << headOrigin.z() << ")"
+                             << " surfaceOriginHead=(" << surfaceInHead.x() << "," << surfaceInHead.y() << ","
+                             << surfaceInHead.z() << ")"
+                             << " boundsCenterHead=(" << boundsInHead.x() << "," << boundsInHead.y() << ","
+                             << boundsInHead.z() << ")"
+                             << " boundsExtent=(" << localBoundsExtent.x() << "," << localBoundsExtent.y() << ","
+                             << localBoundsExtent.z() << ")"
+                             << " pointCount=" << pointCloud.points.size()
+                             << " pointDrawableCount=" << pointCloud.drawables
+                             << " pointCenterHead=" << formatFalloutVec3Telemetry(pointCloud.center)
+                             << " pointMinHead=" << formatFalloutVec3Telemetry(pointCloud.min)
+                             << " pointMaxHead=" << formatFalloutVec3Telemetry(pointCloud.max)
+                             << " pointXMinBandCenterHead=" << formatFalloutVec3Telemetry(pointCloud.bands[0].center)
+                             << " pointXMinBandCount=" << pointCloud.bands[0].count
+                             << " pointXMaxBandCenterHead=" << formatFalloutVec3Telemetry(pointCloud.bands[1].center)
+                             << " pointXMaxBandCount=" << pointCloud.bands[1].count
+                             << " pointYMinBandCenterHead=" << formatFalloutVec3Telemetry(pointCloud.bands[2].center)
+                             << " pointYMinBandCount=" << pointCloud.bands[2].count
+                             << " pointYMaxBandCenterHead=" << formatFalloutVec3Telemetry(pointCloud.bands[3].center)
+                             << " pointYMaxBandCount=" << pointCloud.bands[3].count
+                             << " pointZMinBandCenterHead=" << formatFalloutVec3Telemetry(pointCloud.bands[4].center)
+                             << " pointZMinBandCount=" << pointCloud.bands[4].count
+                             << " pointZMaxBandCenterHead=" << formatFalloutVec3Telemetry(pointCloud.bands[5].center)
+                             << " pointZMaxBandCount=" << pointCloud.bands[5].count
+                             << " surfaceAxisXWorld=(" << surfaceAxisX.x() << "," << surfaceAxisX.y() << ","
+                             << surfaceAxisX.z() << ")"
+                             << " surfaceAxisYWorld=(" << surfaceAxisY.x() << "," << surfaceAxisY.y() << ","
+                             << surfaceAxisY.z() << ")"
+                             << " surfaceAxisZWorld=(" << surfaceAxisZ.x() << "," << surfaceAxisZ.y() << ","
+                             << surfaceAxisZ.z() << ")"
+                             << " headAxisXWorld=(" << headAxisX.x() << "," << headAxisX.y() << ","
+                             << headAxisX.z() << ")"
+                             << " headAxisYWorld=(" << headAxisY.x() << "," << headAxisY.y() << ","
+                             << headAxisY.z() << ")"
+                             << " headAxisZWorld=(" << headAxisZ.x() << "," << headAxisZ.y() << ","
+                             << headAxisZ.z() << ")"
+                             << " surfaceWorldMatrix=[" << formatFalloutMatrixCompact(surfaceWorld) << "]"
+                             << " headWorldMatrix=[" << formatFalloutMatrixCompact(headWorld) << "]"
+                             << " runtime=measurement-only gate=runtime-fnv-live-surface-frame";
         }
 
         FalloutFabrikTwoBoneSolve solveFalloutFabrikTwoBonePole(const osg::Vec3f& root, const osg::Vec3f& mid,
@@ -8262,8 +8700,7 @@ namespace MWRender
         const char* livePath = getFalloutLiveAuthoringFile();
         if (livePath == nullptr || mLiveHeadSurfaceAuthoringTargets.empty())
             return;
-        if (++mLiveHeadSurfaceAuthoringTick % 6 != 0)
-            return;
+        ++mLiveHeadSurfaceAuthoringTick;
 
         std::string content;
         if (!readFalloutLiveAuthoringFile(livePath, content) || content == mLiveHeadSurfaceAuthoringContent)
@@ -8299,6 +8736,13 @@ namespace MWRender
             matrixNode->setMatrix(
                 makeFalloutHeadSurfaceMatrix(offset, makeFalloutEulerAttitude(rotation), pivot, pivotMode));
             matrixNode->dirtyBound();
+            osg::Group* headNode = findBestAttachmentNode(getNodeMap(), { "Bip01 Head", "bip01 head", "Head", "head" });
+            if (headNode != nullptr && std::getenv("OPENMW_FNV_DRAW_PART_AXES") != nullptr)
+                ensureFalloutAxisDebugChild(*headNode, "FNV Debug Axis Head Frame", 16.f);
+            if (std::getenv("OPENMW_FNV_DRAW_PART_AXES") != nullptr)
+                ensureFalloutAxisDebugChild(*matrixNode, "FNV Debug Axis Surface Frame " + target.model, 16.f);
+            logFalloutLiveSurfaceFrameTelemetry(
+                *matrixNode, headNode, target.model, target.prefix, mPtr, offset, rotation, pivot, pivotMode);
             Log(Debug::Info) << "FNV/ESM4 live authoring: frame-applied head surface authoring model="
                              << target.model << " prefix=" << target.prefix << " file=" << livePath << " offset=("
                              << offset.x() << "," << offset.y() << "," << offset.z() << ") rotation=("
@@ -8467,7 +8911,7 @@ namespace MWRender
         const unsigned int requestedPropSlots = countFalloutActorKitSelectorTokens(
             readFalloutLiveRuntimeCommandString({ "actorKitPropSlots", "propSlots" }));
         const unsigned int requestedPartModels = countFalloutActorKitSelectorTokens(
-            readFalloutLiveRuntimeCommandString({ "actorKitPartModels", "partModels" }));
+            readFalloutActorKitRuntimeSelectorForEnv("OPENMW_FNV_ACTOR_KIT_PART_MODELS"));
         const unsigned int requestedPropModels = countFalloutActorKitSelectorTokens(
             readFalloutLiveRuntimeCommandString({ "actorKitPropModels", "propModels" }));
         const unsigned int requestedTotal = requestedParts + requestedPropSlots + requestedPartModels + requestedPropModels;
@@ -8898,6 +9342,53 @@ namespace MWRender
         };
 
         const bool weaponAimSolved = solveWeaponAimFrame();
+        const bool snapHandsToIkTargets = std::getenv("OPENMW_FNV_WEAPON_IK_SNAP_HANDS_TO_TARGETS") != nullptr;
+        bool snappedRightHandToIkTarget = false;
+        bool snappedLeftHandToIkTarget = false;
+        float rightSnapTargetErrorBefore = -1.f;
+        float rightSnapTargetErrorAfter = -1.f;
+        float leftSnapTargetErrorBefore = -1.f;
+        float leftSnapTargetErrorAfter = -1.f;
+        if (snapHandsToIkTargets)
+        {
+            const auto snapHandToTarget
+                = [&](std::initializer_list<std::string_view> handNames, const osg::Vec3f& target, bool& snapped,
+                      float& errorBefore, float& errorAfter) {
+                      osg::MatrixTransform* hand = findMatrixTransform(handNames);
+                      if (hand == nullptr)
+                          return;
+
+                      osg::Matrix desiredWorld = getNodeWorldMatrix(hand);
+                      errorBefore = (desiredWorld.getTrans() - target).length();
+                      desiredWorld.setTrans(target);
+                      setFalloutTransformWorldMatrix(*hand, desiredWorld);
+                      errorAfter = (getNodeWorldMatrix(hand).getTrans() - target).length();
+                      snapped = errorAfter <= 0.05f;
+                  };
+            snapHandToTarget({ "Bip01 R Hand", "bip01 r hand" }, rightTarget, snappedRightHandToIkTarget,
+                rightSnapTargetErrorBefore, rightSnapTargetErrorAfter);
+            snapHandToTarget({ "Bip01 L Hand", "bip01 l hand" }, leftTarget, snappedLeftHandToIkTarget,
+                leftSnapTargetErrorBefore, leftSnapTargetErrorAfter);
+            if (mSkeleton != nullptr)
+                mSkeleton->markBoneMatriceDirty();
+            Log((snappedRightHandToIkTarget && snappedLeftHandToIkTarget) ? Debug::Info : Debug::Warning)
+                << "FNV/ESM4 proof: weapon IK snapped hands to solver targets actor=" << traits.mEditorId
+                << " ref=" << mPtr.getCellRef().getRefId()
+                << " instance=" << reinterpret_cast<std::uintptr_t>(this)
+                << " proofPreview=" << isProofPreviewAnimation()
+                << " rightSnapped=" << snappedRightHandToIkTarget
+                << " leftSnapped=" << snappedLeftHandToIkTarget
+                << " rightTarget=(" << rightTarget.x() << "," << rightTarget.y() << "," << rightTarget.z() << ")"
+                << " leftTarget=(" << leftTarget.x() << "," << leftTarget.y() << "," << leftTarget.z() << ")"
+                << " rightErrorBefore=" << rightSnapTargetErrorBefore
+                << " rightErrorAfter=" << rightSnapTargetErrorAfter
+                << " leftErrorBefore=" << leftSnapTargetErrorBefore
+                << " leftErrorAfter=" << leftSnapTargetErrorAfter
+                << " runtime="
+                << ((snappedRightHandToIkTarget && snappedLeftHandToIkTarget) ? "runtime-supported"
+                                                                              : "loaded-pending-runtime")
+                << " gate=runtime-fnv-weapon-ik-snap-hands";
+        }
 
         if (mSkeleton != nullptr)
             mSkeleton->markBoneMatriceDirty();
@@ -9028,6 +9519,9 @@ namespace MWRender
                 << " weaponAimAccepted=" << weaponAimAccepted
                 << " weaponAimOrder=" << weaponAimOrder
                 << " weaponAimSolveAngles=(" << weaponAimSolveAngleBefore << "," << weaponAimSolveTrialAngle << ")"
+                << " snapHandsToIkTargets=" << snapHandsToIkTargets
+                << " snapTargetErrors=(" << rightSnapTargetErrorBefore << "," << rightSnapTargetErrorAfter << ","
+                << leftSnapTargetErrorBefore << "," << leftSnapTargetErrorAfter << ")"
                 << " rightHandAxisY=(" << rightHandAxisYAfter.x() << "," << rightHandAxisYAfter.y() << ","
                 << rightHandAxisYAfter.z() << ")"
                 << " leftHandAxisY=(" << leftHandAxisYAfter.x() << "," << leftHandAxisYAfter.y() << ","
@@ -9108,6 +9602,11 @@ namespace MWRender
                 << " weaponAimOrder=" << weaponAimOrder
                 << " weaponAimSolveAngleBefore=" << weaponAimSolveAngleBefore
                 << " weaponAimSolveTrialAngle=" << weaponAimSolveTrialAngle
+                << " snapHandsToIkTargets=" << snapHandsToIkTargets
+                << " rightSnapTargetErrorBefore=" << rightSnapTargetErrorBefore
+                << " rightSnapTargetErrorAfter=" << rightSnapTargetErrorAfter
+                << " leftSnapTargetErrorBefore=" << leftSnapTargetErrorBefore
+                << " leftSnapTargetErrorAfter=" << leftSnapTargetErrorAfter
                 << " rightHandSideAfter=" << rightHandSideAfter
                 << " leftHandSideAfter=" << leftHandSideAfter
                 << " handsUncrossed=" << handsUncrossed
@@ -9881,6 +10380,35 @@ namespace MWRender
                                  << mPtr.getCellRef().getRefId();
             attached->setName("FNV Part " + correctedModel.value());
         }
+        if (attached != nullptr && isFalloutHeadRelativeModel(correctedModel.value()))
+        {
+            FindNamedNodeVisitor boneOffset("BoneOffset");
+            attached->accept(boneOffset);
+            osg::Matrix boneOffsetLocal = osg::Matrix::identity();
+            osg::Matrix boneOffsetWorld = osg::Matrix::identity();
+            bool boneOffsetPresent = false;
+            if (osg::MatrixTransform* boneOffsetTransform = dynamic_cast<osg::MatrixTransform*>(boneOffset.mFound))
+            {
+                boneOffsetPresent = true;
+                boneOffsetLocal = boneOffsetTransform->getMatrix();
+                boneOffsetWorld = getNodeWorldMatrix(boneOffsetTransform);
+            }
+            const osg::Matrix attachWorld = getNodeWorldMatrix(attachNode);
+            const osg::Matrix partWorld = getNodeWorldMatrix(attached.get());
+            Log(Debug::Info) << "FNV/ESM4 telemetry: part attachment matrix model=" << correctedModel.value()
+                             << " ref=" << mPtr.getCellRef().getRefId()
+                             << " parent=" << (attachNode != nullptr ? attachNode->getName() : std::string("<none>"))
+                             << " scalpHair=" << isFalloutScalpHairModel(correctedModel.value())
+                             << " faceHair=" << isFalloutFaceHairModel(correctedModel.value())
+                             << " brow=" << isFalloutBrowModel(correctedModel.value())
+                             << " headgear=" << headgearStaticPart
+                             << " boneOffsetPresent=" << boneOffsetPresent
+                             << " boneOffsetLocalMatrix=[" << formatFalloutMatrixCompact(boneOffsetLocal) << "]"
+                             << " boneOffsetWorldMatrix=[" << formatFalloutMatrixCompact(boneOffsetWorld) << "]"
+                             << " attachWorldMatrix=[" << formatFalloutMatrixCompact(attachWorld) << "]"
+                             << " partWorldMatrix=[" << formatFalloutMatrixCompact(partWorld) << "]"
+                             << " runtime=measurement-only gate=runtime-fnv-part-attachment-matrix";
+        }
         logFalloutPartShapeSummary(attached.get(), correctedModel.value(), mPtr);
         logFalloutAttachmentBounds(
             attached.get(), attachNode, findBestAttachmentNode(nodeMap, { "Bip01 Head", "bip01 head" }),
@@ -10627,7 +11155,10 @@ namespace MWRender
                                      << visitor.mPreservedVertexColorIntensityArrays
                                      << " for " << traits.mEditorId
                                      << " preserveVertexIntensity=" << preserveVertexIntensity;
-                    hideFonvNoHatHairVariant(attached.get(), hair->mModel, traits, coveredBodySlots);
+                    if (fonvCoveredSlotsHideScalpHair(coveredBodySlots))
+                        hideFonvNoHatHairVariant(attached.get(), hair->mModel, traits, coveredBodySlots);
+                    else
+                        hideFonvHatHairVariantForUncoveredHair(attached.get(), hair->mModel, traits);
                     logFalloutFaceDrawableAudit(attached.get(), hair->mModel, mPtr, "final-hat-hair");
                     const FalloutVisibleGeometryVisitor hairVisibility = countFalloutVisibleGeometry(attached.get());
                     visibleHairGeometry += hairVisibility.mVisibleGeometryCount;
@@ -10635,9 +11166,7 @@ namespace MWRender
                                      << " for " << traits.mEditorId
                                      << " visibleGeometry=" << hairVisibility.mVisibleGeometryCount
                                      << " visibleVertices=" << hairVisibility.mVisibleVertexCount
-                                     << " runtime="
-                                     << (hairVisibility.mVisibleGeometryCount > 0 ? "runtime-supported"
-                                                                                  : "loaded-pending-runtime")
+                                     << " runtime=measurement-only"
                                      << " gate=runtime-fnv-visible-hair-geometry";
                 }
                 ++insertedHeadParts;
@@ -10653,7 +11182,7 @@ namespace MWRender
 
         const char* hairAttachStatus = "MISSING";
         if (usedHeadPartTypes.count(ESM4::HeadPart::Type_Hair) != 0 || fallbackHairAttached)
-            hairAttachStatus = visibleHairGeometry > 0 ? "OK" : "EMPTY";
+            hairAttachStatus = visibleHairGeometry > 0 ? "MEASURED_UNTRUSTED" : "EMPTY";
 
         Log(Debug::Info) << "FNV/ESM4 FACE CHECK " << traits.mEditorId
                          << ": head=" << getFonvFacePartStatus(raceFacePartAttached[0], raceFacePartHasMesh[0])
@@ -10920,6 +11449,8 @@ namespace MWRender
                 }
                 if (useHatHairVariant)
                     hideFonvNoHatHairVariant(attached.get(), part->mModel, traits, coveredBodySlots);
+                else
+                    hideFonvHatHairVariantForUncoveredHair(attached.get(), part->mModel, traits);
                 logFalloutFaceDrawableAudit(attached.get(), part->mModel, mPtr, "final-headpart");
                 if (part->mType == ESM4::HeadPart::Type_Hair)
                 {
@@ -10930,9 +11461,7 @@ namespace MWRender
                                      << " for " << mPtr.getCellRef().getRefId()
                                      << " visibleGeometry=" << hairVisibility.mVisibleGeometryCount
                                      << " visibleVertices=" << hairVisibility.mVisibleVertexCount
-                                     << " runtime="
-                                     << (hairVisibility.mVisibleGeometryCount > 0 ? "runtime-supported"
-                                                                                  : "loaded-pending-runtime")
+                                     << " runtime=measurement-only"
                                      << " gate=runtime-fnv-visible-hair-geometry";
                 }
                 if (isFonvFacialHairHeadPart(*part))
@@ -10985,6 +11514,8 @@ namespace MWRender
                     }
                     if (useExtraHatHairVariant)
                         hideFonvNoHatHairVariant(extraAttached.get(), extraPart->mModel, traits, coveredBodySlots);
+                    else
+                        hideFonvHatHairVariantForUncoveredHair(extraAttached.get(), extraPart->mModel, traits);
                     logFalloutFaceDrawableAudit(extraAttached.get(), extraPart->mModel, mPtr, "final-extra-headpart");
                     if (extraPart->mType == ESM4::HeadPart::Type_Hair)
                     {
@@ -10996,9 +11527,7 @@ namespace MWRender
                                          << " for " << mPtr.getCellRef().getRefId()
                                          << " visibleGeometry=" << hairVisibility.mVisibleGeometryCount
                                          << " visibleVertices=" << hairVisibility.mVisibleVertexCount
-                                         << " runtime="
-                                         << (hairVisibility.mVisibleGeometryCount > 0 ? "runtime-supported"
-                                                                                      : "loaded-pending-runtime")
+                                         << " runtime=measurement-only"
                                          << " gate=runtime-fnv-visible-hair-geometry";
                     }
                     if (isFonvFacialHairHeadPart(*extraPart))

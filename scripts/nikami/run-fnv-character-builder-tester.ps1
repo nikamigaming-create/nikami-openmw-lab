@@ -356,7 +356,14 @@ $unknownAngles = @($RequestedAngles | Where-Object { $KnownAngleNames -notcontai
 if ($unknownAngles.Count -gt 0) {
     throw "Unknown character builder camera angle(s): $($unknownAngles -join ','). Valid angles: $($KnownAngleNames -join ',')"
 }
+$duplicateAngles = @($RequestedAngles | Group-Object | Where-Object { $_.Count -gt 1 } | ForEach-Object { $_.Name })
+if ($duplicateAngles.Count -gt 0) {
+    throw "Duplicate character builder camera angle(s) requested: $($duplicateAngles -join ',')"
+}
 $CameraAngles = @($AllAngles | Where-Object { $RequestedAngles -contains $_.Name })
+if ($CameraAngles.Count -ne $RequestedAngles.Count) {
+    throw "Requested angle count/order did not survive normalization. Requested=$($RequestedAngles -join ',') Executed=$(@($CameraAngles | ForEach-Object { $_.Name }) -join ',')"
+}
 
 if ($ActorKind -ieq "creature" -and !$PSBoundParameters.ContainsKey("Phases")) {
     $Phases = @("creature-model", "creature-body", "creature-animation", "creature-full")
@@ -703,6 +710,6 @@ Write-SuiteLine "Aggregate Markdown: $AggregateMd"
 Write-SuiteLine "SuiteDir: $SuiteDir"
 
 $failed = @($Results | Where-Object { $_.runtimeGateStatus -ne "PASS" -or $_.reportStatus -ne "PASS" })
-if ($RequirePass -and $failed.Count -gt 0) {
+if ($failed.Count -gt 0) {
     throw "FNV character builder tester failed $($failed.Count) case(s). See $AggregateMd"
 }

@@ -1004,8 +1004,14 @@ async function api(path, options = {{}}) {{
   if (!response.ok) throw new Error(payload.error || response.statusText);
   return payload;
 }}
+function liveDefaultRotationX(prefix) {{
+  return prefix === "OPENMW_FNV_HAIR" ? 90 : 0;
+}}
+function liveDefaultRotationY(prefix) {{
+  return prefix === "OPENMW_FNV_HAIR" ? 90 : 0;
+}}
 function liveDefaultRotationZ(prefix) {{
-  return ["OPENMW_FNV_HAIR", "OPENMW_FNV_BROW", "OPENMW_FNV_EYE", "OPENMW_FNV_BEARD", "OPENMW_FNV_MOUTH"].includes(prefix) ? -90 : 0;
+  return ["OPENMW_FNV_BROW", "OPENMW_FNV_EYE", "OPENMW_FNV_BEARD", "OPENMW_FNV_MOUTH"].includes(prefix) ? -90 : 0;
 }}
 function livePrefix() {{
   return document.getElementById("liveSurfacePrefix")?.value || "OPENMW_FNV_HEADGEAR";
@@ -1047,8 +1053,8 @@ function liveControlsFromInputs() {{
   controls[`${{prefix}}_OFFSET_X`] = liveNumber("liveOffsetX");
   controls[`${{prefix}}_OFFSET_Y`] = liveNumber("liveOffsetY");
   controls[`${{prefix}}_OFFSET_Z`] = liveNumber("liveOffsetZ");
-  controls[`${{prefix}}_ROTATION_X`] = liveNumber("liveRotationX");
-  controls[`${{prefix}}_ROTATION_Y`] = liveNumber("liveRotationY");
+  controls[`${{prefix}}_ROTATION_X`] = liveNumber("liveRotationX", liveDefaultRotationX(prefix));
+  controls[`${{prefix}}_ROTATION_Y`] = liveNumber("liveRotationY", liveDefaultRotationY(prefix));
   controls[`${{prefix}}_ROTATION_Z`] = liveNumber("liveRotationZ", liveDefaultRotationZ(prefix));
   if (livePrefixIsBone(prefix)) return controls;
   const pivotX = document.getElementById("livePivotX")?.value;
@@ -1073,8 +1079,8 @@ function hydrateLiveInputs() {{
   setValue("liveOffsetX", "OFFSET_X", 0);
   setValue("liveOffsetY", "OFFSET_Y", 0);
   setValue("liveOffsetZ", "OFFSET_Z", 0);
-  setValue("liveRotationX", "ROTATION_X", 0);
-  setValue("liveRotationY", "ROTATION_Y", 0);
+  setValue("liveRotationX", "ROTATION_X", liveDefaultRotationX(prefix));
+  setValue("liveRotationY", "ROTATION_Y", liveDefaultRotationY(prefix));
   setValue("liveRotationZ", "ROTATION_Z", liveDefaultRotationZ(prefix));
   setValue("livePivotX", "PIVOT_X", "");
   setValue("livePivotY", "PIVOT_Y", "");

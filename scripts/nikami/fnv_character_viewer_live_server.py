@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import ctypes
 import json
+import math
 import os
 import re
 import subprocess
@@ -893,7 +894,6 @@ class LiveAuthoringStore:
         for prefix in HEAD_SURFACE_PREFIXES:
             for suffix in HEAD_SURFACE_FLOAT_SUFFIXES:
                 controls[f"{prefix}_{suffix}"] = -90.0 if suffix == "ROTATION_Z" and prefix in {
-                    "OPENMW_FNV_HAIR",
                     "OPENMW_FNV_BROW",
                     "OPENMW_FNV_EYE",
                     "OPENMW_FNV_BEARD",
@@ -1140,6 +1140,16 @@ class LiveRuntimeCommandStore:
             "neutralPreviewYawOffsetDeg",
             "yawOffsetDeg",
             "yaw",
+            "actorStageRotX",
+            "actorStageRotY",
+            "actorStageRotZ",
+            "stageRotX",
+            "stageRotY",
+            "stageRotZ",
+            "rotX",
+            "rotY",
+            "rotZ",
+            "yawRadians",
         }
         unknown = sorted(str(key) for key in payload if key not in allowed)
         if unknown:
@@ -1163,13 +1173,35 @@ class LiveRuntimeCommandStore:
             raise ValueError("unsupported live runtime command")
         with self.lock:
             doc = self.load()
-            target = first_text(
-                payload.get("actorTarget"),
-                payload.get("runtimeTarget"),
-                payload.get("target"),
-                doc.get("runtimeTarget"),
-                doc.get("actorTarget"),
-            )
+            if command == "set-actor-target":
+                target = first_text(
+                    payload.get("actorTarget"),
+                    payload.get("runtimeTarget"),
+                    payload.get("target"),
+                    doc.get("runtimeTarget"),
+                    doc.get("actorTarget"),
+                )
+            else:
+                target = first_text(
+                    doc.get("runtimeTarget"),
+                    doc.get("actorTarget"),
+                    payload.get("actorTarget"),
+                    payload.get("runtimeTarget"),
+                    payload.get("target"),
+                )
+                payload_target = first_text(
+                    payload.get("actorTarget"),
+                    payload.get("runtimeTarget"),
+                    payload.get("target"),
+                )
+                if payload_target and target and payload_target != target:
+                    doc["lastIgnoredUpdate"] = {
+                        "reason": "payload-target-does-not-match-active-target",
+                        "payloadTarget": payload_target,
+                        "activeTarget": target,
+                        "updatedAt": utc_now(),
+                    }
+                    return doc
             if not target:
                 raise ValueError("live runtime command requires actorTarget")
             if not re.fullmatch(r"[-A-Za-z0-9_:.\\ ]{1,160}", target):
@@ -1204,6 +1236,30 @@ class LiveRuntimeCommandStore:
             if actor_kind != "creature" and not first_text(doc.get("actorKitAnimationSource")):
                 doc["actorKitAnimationSource"] = "hands-at-side"
                 applied["actorKitAnimationSource"] = "hands-at-side"
+            for field, aliases in {
+                "actorStageRotX": ("actorStageRotX", "stageRotX", "rotX"),
+                "actorStageRotY": ("actorStageRotY", "stageRotY", "rotY"),
+                "actorStageRotZ": ("actorStageRotZ", "stageRotZ", "rotZ", "yawRadians"),
+            }.items():
+                values = []
+                field_present = False
+                for alias in aliases:
+                    if alias in payload:
+                        values.append(payload.get(alias))
+                        field_present = True
+                    if alias in selector_payload:
+                        values.append(selector_payload.get(alias))
+                        field_present = True
+                value = first_text(*values)
+                if value or field_present:
+                    try:
+                        numeric_value = float(value)
+                    except ValueError as exc:
+                        raise ValueError(f"live runtime {field} must be numeric radians") from exc
+                    if not math.isfinite(numeric_value):
+                        raise ValueError(f"live runtime {field} must be finite")
+                    doc[field] = f"{numeric_value:.8g}"
+                    applied[field] = doc[field]
             selectors.update(
                 {
                     "phase": doc.get("characterBuilderPhase", ""),
