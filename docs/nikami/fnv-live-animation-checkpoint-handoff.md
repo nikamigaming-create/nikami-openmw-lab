@@ -7,9 +7,10 @@ Date: 2026-06-27
 - Current repo: `D:\code\vulkanOpenMW\nikami-openmw-lab-publish`
 - Current branch: `nikami/fnv-vr-hands-hud`
 - Merge target: `main`
-- Current committed branch distance from fetched `origin/main`: `170 ahead / 2 behind`
-- Current branch is synced with `origin/nikami/fnv-vr-hands-hud`.
-- `origin/main` advanced to `fa90f3886488e9d69eb2cf5bdfcfe8cf2b29581c` via two merge commits from this same branch line; integrate current `origin/main` before final promotion.
+- Current committed branch distance from fetched `origin/main`: `173 ahead / 0 behind`
+- Current branch is synced with `origin/nikami/fnv-vr-hands-hud` at `53de5b79bf8262b8a0c43b21e9258ca6aeded85a`.
+- `origin/main` at `fa90f3886488e9d69eb2cf5bdfcfe8cf2b29581c` is integrated into the feature branch by merge commit `515c5e601c`.
+- The feature branch fast-forwards cleanly from `origin/main` to `53de5b79bf8262b8a0c43b21e9258ca6aeded85a`; see the `20260627_183558` promotion sandbox below.
 
 Do not merge from the older workspace copies by default. Treat `D:\code\vulkanOpenMW\nikami-openmw-lab`, `D:\code\vulkanOpenMW\vsgopenmw`, `old-fnv/*`, and `backup/*` as quarantine/reference sources unless a change is deliberately reviewed and cherry-picked.
 
@@ -19,31 +20,17 @@ Do not merge from the older workspace copies by default. Treat `D:\code\vulkanOp
 - `nikami/fnv-flat-baseline`: 5 commits ahead of `main`; not in the current canonical branch.
 - `old-fnv/*` remote refs point at `D:\Modlists\fnv\openmw-source`; reference only.
 
-## Current Dirty Bundle
+## Committed Checkpoint
 
-The live animation checkpoint is not committed yet. It includes runtime C++ changes, live studio/server changes, proof scripts, and docs.
+The live animation checkpoint is committed and pushed on `origin/nikami/fnv-vr-hands-hud`.
 
-Tracked modified files:
+Key commits:
 
-- `apps/openmw/mwrender/characterpreview.cpp`
-- `apps/openmw/mwrender/esm4npcanimation.cpp`
-- `apps/openmw/mwrender/esm4npcanimation.hpp`
-- `components/sceneutil/riggeometry.cpp`
-- `scripts/nikami/fnv_character_studio_catalog.py`
-- `scripts/nikami/fnv_character_viewer_live_server.py`
-- `scripts/nikami/run-fnv-live-character-authoring.ps1`
-- `scripts/nikami/run-fnv-skinning-mode-sweep.ps1`
-- `scripts/nikami/test-fnv-character-studio-live-server.py`
-- `scripts/nikami/test-fnv-proof-harness-contract.ps1`
+- `cea9933a67` - `Advance FNV live animation authoring baseline`
+- `515c5e601c` - `Merge remote-tracking branch 'origin/main' into nikami/fnv-vr-hands-hud`
+- `53de5b79bf` - `Record merged FNV live animation gate`
 
-Untracked files to include if promoting this checkpoint:
-
-- `docs/nikami/fnv-live-animation-authoring.md`
-- `docs/nikami/fnv-live-animation-checkpoint-handoff.md`
-- `scripts/nikami/run-fnv-animation-rotation-sweep.ps1`
-- `scripts/nikami/run-fnv-live-finger-closeup-sweep.ps1`
-- `scripts/nikami/test-fnv-live-animation-merge-gate.ps1`
-- `scripts/nikami/test-fnv-live-bone-authoring-closeup.ps1`
+The final worktree check after push was clean, and `origin/nikami/fnv-vr-hands-hud...HEAD` was `0 / 0`.
 - `scripts/nikami/test-fnv-live-bone-authoring-runtime.ps1`
 
 ## Latest Proof State
@@ -116,6 +103,18 @@ Meaning: the script created sandbox `D:\code\vulkanOpenMW\proof\scratch\fnv-live
 D:\code\vulkanOpenMW\proof\fnv-live-animation-merge-gate\20260627_182249\merge-gate.json
 ```
 
+Fast-forward promotion rehearsal from `origin/main`:
+
+```text
+D:\code\vulkanOpenMW\proof\scratch\fnv-main-ff-promotion-sandbox-20260627_183558
+```
+
+Meaning: a detached worktree was created at `origin/main` and fast-forwarded with `git merge --ff-only origin/nikami/fnv-vr-hands-hud`. The sandbox HEAD matched `53de5b79bf8262b8a0c43b21e9258ca6aeded85a`, and the sandbox merge gate passed:
+
+```text
+D:\code\vulkanOpenMW\proof\fnv-live-animation-merge-gate\20260627_183615\merge-gate.json
+```
+
 Fresh staticized T-pose bones/weights proof:
 
 ```text
@@ -159,9 +158,9 @@ The branch has two separate proof modes right now:
 
 That split is intentional for diagnosis. It is not parity. The next implementation milestone is to rerun the full merge gate after the stricter sweep assertion, then broaden the live rigged weight/movement proof across more finger chains and NPC fixtures, or add a deliberate staticized pose-bake path that consumes live skeleton edits.
 
-## Required Gate Before Merge
+## Required Gate Before Main Promotion
 
-Before promoting to `main`, rerun:
+Before promoting to `main`, the branch should have a current PASS from:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\nikami\test-fnv-live-animation-merge-gate.ps1 -BuildDir build-clean -Configuration Release -VcpkgRoot D:\code\c\FMODS\vcpkg -RunTposeWeightBaseline -RunLiveFingerSmoke -RunBuild -NoSound
@@ -179,21 +178,17 @@ That gate must pass with:
 - `origin-main-merge-conflict-forecast`
 - `canonical-branch-tracking-fresh`
 
-The latest animation/build proof above already includes `-RunBuild`, but the current merge-readiness gate is red until the branch incorporates fetched `origin/main`. Rerun the full gate after integration and after any additional source changes before promoting to `main`.
+The latest real-branch full gate above already includes `-RunBuild`, refreshed T-pose, refreshed live finger smoke, and `origin-main-integrated=PASS`. Rerun the full gate only if source/docs change again before promoting to `main`.
 
 ## Merge Path
 
-1. Commit the dirty bundle on `nikami/fnv-vr-hands-hud`.
-2. Integrate fetched `origin/main` into `nikami/fnv-vr-hands-hud` after the dirty bundle is safely committed or shelved. The `20260627_175206` sandbox rehearsed this exact shape successfully.
-3. Rerun the full merge gate with `-RunTposeWeightBaseline -RunLiveFingerSmoke -RunBuild`.
-4. Push `nikami/fnv-vr-hands-hud`.
-5. Update `main` with `git pull --ff-only origin main`.
-6. Merge or fast-forward from `nikami/fnv-vr-hands-hud` as allowed by the reconciled history, then push `main`.
-
-If the dirty bundle is not ready, stash with untracked files before touching `main`:
+The feature branch is now ready for main promotion by fast-forward:
 
 ```powershell
-git stash push -u -m "pre-merge FNV live animation WIP 2026-06-27"
+git checkout main
+git pull --ff-only origin main
+git merge --ff-only origin/nikami/fnv-vr-hands-hud
+git push origin main
 ```
 
-Prefer committing this checkpoint before merge-back, because the untracked proof scripts and docs define the current animation baseline.
+The `20260627_183558` sandbox rehearsed that exact fast-forward shape successfully. Do not use older workspace copies as merge sources.
