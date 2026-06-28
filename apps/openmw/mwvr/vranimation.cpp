@@ -1,6 +1,7 @@
 #include "openxrinput.hpp"
 #include "vranimation.hpp"
 #include "vrgui.hpp"
+#include "vrpointer.hpp"
 
 #include <osg/BlendFunc>
 #include <osg/Array>
@@ -93,20 +94,6 @@
 
 namespace MWVR
 {
-    class Crosshair
-    {
-    public:
-        Crosshair(osg::ref_ptr<osg::Group>, osg::Vec3f, float, float, bool) {}
-        ~Crosshair() = default;
-
-        void hide() {}
-        void show() {}
-        void setStretch(float) {}
-        void setWidth(float) {}
-        void setOffset(float) {}
-        void setParent(osg::ref_ptr<osg::Group>) {}
-    };
-
     int getActivePlayerWeaponType()
     {
         int weaponType = ESM::Weapon::HandToHand;
