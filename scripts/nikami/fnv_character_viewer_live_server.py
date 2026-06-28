@@ -90,6 +90,17 @@ HEAD_SURFACE_CONTROL_KEYS = {
     for prefix in HEAD_SURFACE_PREFIXES
     for suffix in (*HEAD_SURFACE_FLOAT_SUFFIXES, *HEAD_SURFACE_BOOL_SUFFIXES)
 }
+BONE_AUTHORING_FLOAT_SUFFIXES = (
+    "OFFSET_X",
+    "OFFSET_Y",
+    "OFFSET_Z",
+    "ROTATION_X",
+    "ROTATION_Y",
+    "ROTATION_Z",
+)
+BONE_AUTHORING_CONTROL_RE = re.compile(
+    rf"^OPENMW_FNV_BONE_[A-Z0-9_]+_({'|'.join(BONE_AUTHORING_FLOAT_SUFFIXES)})$"
+)
 LIVE_RUNTIME_SELECTOR_FIELDS = (
     "characterBuilderPhase",
     "actorKitParts",
@@ -270,6 +281,82 @@ def recent_matching_lines(text: str, patterns: tuple[str, ...], limit: int = 20)
     return matched[-limit:]
 
 
+def log_field(line: str, key: str) -> str:
+    match = re.search(rf'\b{re.escape(key)}=("([^"]*)"|\'([^\']*)\'|([^\s]+))', line)
+    if not match:
+        return ""
+    return first_text(match.group(2), match.group(3), match.group(4))
+
+
+def live_bone_prefix_from_name(name: str) -> str:
+    compact = re.sub(r"[^A-Za-z0-9]+", "_", first_text(name).strip()).strip("_")
+    return f"OPENMW_FNV_BONE_{compact.upper()}" if compact else ""
+
+
+def live_bone_label(prefix: str, bone: str) -> str:
+    if bone:
+        return f"Bone / {bone}"
+    suffix = first_text(prefix).removeprefix("OPENMW_FNV_BONE_").replace("_", " ").title()
+    return f"Bone / {suffix}" if suffix else "Bone"
+
+
+def parse_runtime_bone_controls(text: str) -> tuple[list[dict[str, Any]], list[str]]:
+    if not text:
+        return [], []
+    markers = (
+        "FNV/ESM4 live authoring: bone inventory",
+        "FNV/ESM4 live authoring: runtime bone",
+        "runtime-live-bone-inventory",
+        "runtime-live-bone-enumeration",
+        "FNV/ESM4 live authoring: frame-applied bone authoring",
+    )
+    by_prefix: dict[str, dict[str, Any]] = {}
+    raw_lines: list[str] = []
+    for line in text.splitlines():
+        if not any(marker in line for marker in markers):
+            continue
+        stripped = line.strip()
+        prefix = log_field(stripped, "prefix")
+        bone = log_field(stripped, "bone")
+        if not prefix:
+            prefix = live_bone_prefix_from_name(bone)
+        if not re.fullmatch(r"OPENMW_FNV_BONE_[A-Z0-9_]{1,160}", prefix):
+            continue
+        raw_lines.append(stripped)
+        existing = by_prefix.get(prefix, {})
+        index_text = log_field(stripped, "index")
+        index_value: int | None = None
+        if re.fullmatch(r"-?[0-9]+", index_text):
+            index_value = int(index_text)
+        controls_seen = int(existing.get("controlEvidenceLines", 0)) + (
+            1 if "frame-applied bone authoring" in stripped or "runtime-live-bone-authoring" in stripped else 0
+        )
+        inventory_seen = int(existing.get("inventoryEvidenceLines", 0)) + (
+            1 if "bone inventory" in stripped or "runtime-live-bone-inventory" in stripped or "runtime-live-bone-enumeration" in stripped else 0
+        )
+        by_prefix[prefix] = {
+            "prefix": prefix,
+            "bone": bone or first_text(existing.get("bone")),
+            "label": live_bone_label(prefix, bone or first_text(existing.get("bone"))),
+            "actor": log_field(stripped, "actor") or first_text(existing.get("actor")),
+            "ref": log_field(stripped, "ref") or first_text(existing.get("ref")),
+            "parent": log_field(stripped, "parent") or first_text(existing.get("parent")),
+            "index": index_value if index_value is not None else existing.get("index"),
+            "runtime": log_field(stripped, "runtime") or first_text(existing.get("runtime")),
+            "gate": log_field(stripped, "gate") or first_text(existing.get("gate")),
+            "source": "runtime-log",
+            "inventoryEvidenceLines": inventory_seen,
+            "controlEvidenceLines": controls_seen,
+            "latestLine": stripped,
+        }
+
+    def sort_key(item: dict[str, Any]) -> tuple[int, str, str]:
+        index = item.get("index")
+        return (index if isinstance(index, int) and index >= 0 else 1_000_000, first_text(item.get("bone")), item["prefix"])
+
+    return sorted(by_prefix.values(), key=sort_key), raw_lines
+
+
 def safe_runtime_tag(text: str) -> str:
     value = first_text(text)
     if not value:
@@ -415,6 +502,12 @@ def runtime_audit(
         ),
         24,
     )
+    bone_authoring_applies = recent_matching_lines(
+        openmw_text,
+        ("FNV/ESM4 live authoring: frame-applied bone authoring",),
+        24,
+    )
+    runtime_bone_controls, runtime_bone_lines = parse_runtime_bone_controls(openmw_text)
     face_checks = recent_matching_lines(openmw_text, ("FNV/ESM4 FACE CHECK",), 6)
     all_fingerprint_lines = [
         line.strip()
@@ -469,7 +562,8 @@ def runtime_audit(
         and (not command_requires_part_rebuild or latest_live_runtime_command_rebuilt_target)
     )
     any_consumption_evidence = bool(
-        target_switches or actor_kit_controls or actor_kit_part_rebuilds or authoring_applies or assembly_matches
+        target_switches or actor_kit_controls or actor_kit_part_rebuilds or authoring_applies
+        or bone_authoring_applies or assembly_matches
     )
     if current_fingerprint:
         consumption_status = (
@@ -504,6 +598,8 @@ def runtime_audit(
             "live-actor-kit-part-rebuild-audit-v1",
             "latest-live-runtime-command-fingerprint-audit-v1",
             "live-head-surface-authoring-audit-v1",
+            "live-bone-authoring-audit-v1",
+            "runtime-bone-control-enumeration-v1",
             "generated-proof-output-only-v1",
         ],
         "updatedAt": utc_now(),
@@ -524,6 +620,8 @@ def runtime_audit(
             "latestLiveRuntimeCommandTargetPartRebuilds": target_exact_part_rebuild_lines[-6:],
             "actorAssemblyMatches": assembly_matches,
             "liveAuthoringApplies": authoring_applies,
+            "liveBoneAuthoringApplies": bone_authoring_applies,
+            "runtimeBoneInventory": runtime_bone_lines[-24:],
             "faceChecks": face_checks,
         },
         "counts": {
@@ -538,7 +636,26 @@ def runtime_audit(
             "latestLiveRuntimeCommandTargetPartRebuilds": len(target_exact_part_rebuild_lines),
             "actorAssemblyMatches": len(assembly_matches),
             "liveAuthoringApplies": len(authoring_applies),
+            "liveBoneAuthoringApplies": len(bone_authoring_applies),
+            "runtimeBoneInventory": len(runtime_bone_lines),
+            "runtimeBoneControls": len(runtime_bone_controls),
             "faceChecks": len(face_checks),
+        },
+        "runtimeBones": {
+            "schema": "nikami-fnv-runtime-bone-controls-v1",
+            "schemaMarkers": [
+                "runtime-bone-control-enumeration-v1",
+                "live-bone-authoring-prefixes-v1",
+                "generated-proof-output-only-v1",
+            ],
+            "count": len(runtime_bone_controls),
+            "controls": runtime_bone_controls,
+            "controlPrefixes": [item["prefix"] for item in runtime_bone_controls],
+            "schemaAssumptions": [
+                "runtime emits prefix=OPENMW_FNV_BONE_* and bone=\"...\" on inventory/enumeration or applied-bone log lines",
+                "if prefix is absent, studio derives OPENMW_FNV_BONE_* from the logged bone name by uppercasing alphanumeric tokens",
+                "bone controls accept OFFSET_X/Y/Z and ROTATION_X/Y/Z numeric fields",
+            ],
         },
         "liveRuntimeCommand": {
             "path": str(live_runtime_path or ""),
@@ -792,6 +909,7 @@ class LiveAuthoringStore:
             "schemaMarkers": [
                 "runtime-live-authoring-v1",
                 "head-surface-transform-controls-v1",
+                "bone-transform-controls-v1",
                 "generated-control-file-only-v1",
             ],
             "path": str(self.path),
@@ -822,7 +940,7 @@ class LiveAuthoringStore:
             doc["schema"] = LIVE_AUTHORING_SCHEMA
             doc["path"] = str(self.path)
             markers = doc.get("schemaMarkers") if isinstance(doc.get("schemaMarkers"), list) else []
-            for marker in ["runtime-live-authoring-v1", "head-surface-transform-controls-v1"]:
+            for marker in ["runtime-live-authoring-v1", "head-surface-transform-controls-v1", "bone-transform-controls-v1"]:
                 if marker not in markers:
                     markers.append(marker)
             doc["schemaMarkers"] = markers
@@ -847,9 +965,15 @@ class LiveAuthoringStore:
             for key, value in incoming.items():
                 if key in {"schema", "schemaMarkers", "updatedAt", "path", "policy", "reset", "sessionId", "controls"}:
                     continue
-                if key not in HEAD_SURFACE_CONTROL_KEYS:
+                is_bone_control = BONE_AUTHORING_CONTROL_RE.match(key) is not None
+                if key not in HEAD_SURFACE_CONTROL_KEYS and not is_bone_control:
                     raise ValueError(f"unsupported live authoring control: {key}")
-                if key.endswith("_PIVOT_MODE"):
+                if is_bone_control:
+                    try:
+                        controls[key] = float(value)
+                    except (TypeError, ValueError) as exc:
+                        raise ValueError(f"{key} must be numeric") from exc
+                elif key.endswith("_PIVOT_MODE"):
                     if not isinstance(value, bool):
                         raise ValueError(f"{key} must be boolean")
                     controls[key] = value
@@ -876,6 +1000,7 @@ class LiveAuthoringStore:
             doc["schemaMarkers"] = [
                 "runtime-live-authoring-v1",
                 "head-surface-transform-controls-v1",
+                "bone-transform-controls-v1",
                 "generated-control-file-only-v1",
             ]
             self._write(doc)
@@ -1746,9 +1871,15 @@ def snapshot_live_controls(payload: dict[str, Any], live_authoring: dict[str, An
     result: dict[str, Any] = {}
     for key, value in controls.items():
         key_text = str(key)
-        if key_text not in HEAD_SURFACE_CONTROL_KEYS:
+        is_bone_control = BONE_AUTHORING_CONTROL_RE.match(key_text) is not None
+        if key_text not in HEAD_SURFACE_CONTROL_KEYS and not is_bone_control:
             continue
-        if key_text.endswith("_PIVOT_MODE"):
+        if is_bone_control:
+            try:
+                result[key_text] = float(value)
+            except (TypeError, ValueError):
+                continue
+        elif key_text.endswith("_PIVOT_MODE"):
             result[key_text] = bool(value)
         else:
             try:
@@ -2193,7 +2324,7 @@ def structured_actor_job(entry: dict[str, Any], payload: dict[str, Any]) -> tupl
         raise ValueError("structured studio job requires an actor or creature entry")
     targets = target_mapping(entry, payload)
     phases = csv_values(selector_value(payload, "phases") or entry.get("phases") or ["body", "head", "face", "hair", "equipment", "weapon", "headgear", "talk"])
-    angles = csv_values(selector_value(payload, "angles") or ("front" if command_key == "runtimeFrontOnly" else "front,front-left,front-right"))
+    angles = csv_values(selector_value(payload, "angles") or ("front" if command_key == "runtimeFrontOnly" else "left,right,top"))
     if not targets["runtimeTarget"] or not phases or not angles:
         raise ValueError("structured studio job is missing runtimeTarget, phases, or angles")
     selectors = {

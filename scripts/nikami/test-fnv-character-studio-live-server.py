@@ -35,7 +35,7 @@ def main() -> int:
                 "runtimeThreeCamera": (
                     "powershell -NoProfile -ExecutionPolicy Bypass -File "
                     "scripts/nikami/run-fnv-character-viewer.ps1 -Targets 'ContractNpc' "
-                    "-ActorKind npc -Phases 'body,head,face' -Angles 'front,front-left,front-right' -OpenViewer -LiveServe"
+                    "-ActorKind npc -Phases 'body,head,face' -Angles 'left,right,top' -OpenViewer -LiveServe"
                 ),
                 "runtimeFrontOnly": (
                     "powershell -NoProfile -ExecutionPolicy Bypass -File "
@@ -117,6 +117,10 @@ def main() -> int:
                     '[00:00:01.085 I] FNV/ESM4 live runtime: actor-kit part rebuild generation=1 actor=ContractNpc ref=FormId:0x1 targetMatches=1 requestedParts=1 requestedSelectorParts=1 requestedPropSlots=0 requestedPartModels=0 requestedPropModels=0 beforeParts=5 removedParents=5 staleAfterRemoval=0 rebuiltParts=5 attachedParts=5 duplicateParts=0 failedParts=0 beforeDuplicateParts=0 fingerprint="actorTarget=ContractNpc;parts=headgear;" firstParts="FNV Part meshes/example.nif" runtime=runtime-supported gate=runtime-live-actor-kit-part-rebuild',
                     '[00:00:01.100 I] FNV/ESM4 proof: actor part assembly target match target="ContractNpc" actor=ContractNpc refAlias=FormId:0x1 ref=FormId:0x11 runtime=runtime-supported',
                     "[00:00:01.200 I] FNV/ESM4 live authoring: frame-applied head surface authoring model=meshes/characters/head/eyelefthuman.nif prefix=OPENMW_FNV_EYE file=live-authoring.json offset=(0,0,0) rotation=(0,0,-90) pivot=(0,0,0) pivotMode=0 for FormId:0x1",
+                    '[00:00:01.225 I] FNV/ESM4 live authoring: bone inventory actor=ContractNpc ref=FormId:0x1 index=0 bone="Bip01" prefix=OPENMW_FNV_BONE_BIP01 parent="" runtime=runtime-supported gate=runtime-live-bone-inventory',
+                    '[00:00:01.226 I] FNV/ESM4 live authoring: bone inventory actor=ContractNpc ref=FormId:0x1 index=1 bone="Bip01 Spine" prefix=OPENMW_FNV_BONE_BIP01_SPINE parent="Bip01" runtime=runtime-supported gate=runtime-live-bone-inventory',
+                    '[00:00:01.227 I] FNV/ESM4 live authoring: bone inventory actor=ContractNpc ref=FormId:0x1 index=2 bone="Bip01 Head" prefix=OPENMW_FNV_BONE_BIP01_HEAD parent="Bip01 Spine" runtime=runtime-supported gate=runtime-live-bone-inventory',
+                    '[00:00:01.250 I] FNV/ESM4 live authoring: frame-applied bone authoring actor=ContractNpc ref=FormId:0x1 bone="Bip01 R Hand" prefix=OPENMW_FNV_BONE_BIP01_R_HAND file=live-authoring.json rotation=(0,0,25) offset=(0,0,0) runtime=runtime-supported gate=runtime-live-bone-authoring',
                 ]
             ),
             encoding="utf-8",
@@ -168,6 +172,13 @@ def main() -> int:
             or audit["counts"]["liveAuthoringApplies"] != 1
         ):
             raise AssertionError("runtime audit did not count target, actor-kit, rebuild, assembly, and knob lines")
+        if audit["counts"]["runtimeBoneControls"] < 4:
+            raise AssertionError("runtime audit did not expose enumerated runtime bone controls")
+        runtime_bone_prefixes = set(audit["runtimeBones"]["controlPrefixes"])
+        if "OPENMW_FNV_BONE_BIP01_HEAD" not in runtime_bone_prefixes:
+            raise AssertionError("runtime audit did not expose non-hand inventory bones for studio controls")
+        if "runtime-bone-control-enumeration-v1" not in audit["runtimeBones"]["schemaMarkers"]:
+            raise AssertionError("runtime audit did not advertise runtime bone enumeration schema marker")
         runtime_store = live.LiveRuntimeCommandStore(run_dir, root, live_runtime_path)
         runtime_doc = runtime_store.update(
             {
@@ -377,9 +388,15 @@ def main() -> int:
                     "OPENMW_FNV_HEADGEAR_OFFSET_X": 1.25,
                     "OPENMW_FNV_HEADGEAR_ROTATION_Z": -90,
                     "OPENMW_FNV_HEADGEAR_PIVOT_MODE": True,
+                    "OPENMW_FNV_BONE_BIP01_R_HAND_ROTATION_Z": 25,
                 }
             }
         )
+        if authoring_doc["lastApplied"]["OPENMW_FNV_BONE_BIP01_R_HAND_ROTATION_Z"] != 25.0:
+            raise AssertionError("live authoring server did not accept validated bone controls")
+        audit_with_bones = live.runtime_audit(run_dir, root, live_authoring_path, live_runtime_path)
+        if audit_with_bones["counts"].get("liveBoneAuthoringApplies") != 1:
+            raise AssertionError("runtime audit did not count live bone authoring consumption")
         snapshot = sessions.create_snapshot(
             session["id"],
             {
@@ -439,6 +456,8 @@ def main() -> int:
             raise AssertionError("studio snapshot did not advertise saveback schema marker")
         if snapshot["studioPayload"]["parts"] != ["headgear"] or snapshot["liveControls"]["OPENMW_FNV_HEADGEAR_OFFSET_X"] != 1.25:
             raise AssertionError("studio snapshot did not preserve selectors and live controls")
+        if snapshot["liveControls"]["OPENMW_FNV_BONE_BIP01_R_HAND_ROTATION_Z"] != 25.0:
+            raise AssertionError("studio snapshot did not preserve live bone controls")
         if "command" in snapshot["latestJob"] or "stdout" in snapshot["latestJob"] or "stderr" in snapshot["latestJob"]:
             raise AssertionError("studio snapshot copied raw job command/output fields")
         replay_artifact_path = Path(snapshot["replayArtifactPath"])
@@ -454,6 +473,8 @@ def main() -> int:
             raise AssertionError("studio snapshot replay artifact did not preserve runtime selector payload")
         if replay_artifact["liveAuthoringControls"]["OPENMW_FNV_HEADGEAR_OFFSET_X"] != 1.25:
             raise AssertionError("studio snapshot replay artifact did not preserve live authoring controls")
+        if replay_artifact["liveAuthoringControls"]["OPENMW_FNV_BONE_BIP01_R_HAND_ROTATION_Z"] != 25.0:
+            raise AssertionError("studio snapshot replay artifact did not preserve live bone controls")
         if "should-not-be-saved" in replay_artifact_text or "Remove-Item" in replay_artifact_text or "retail payload bytes" in replay_artifact_text:
             raise AssertionError("studio snapshot replay artifact copied raw job command/output fields")
         snapshots = sessions.snapshots(session["id"])
@@ -504,6 +525,8 @@ def main() -> int:
             raise AssertionError("snapshot live apply artifact did not preserve live runtime selector payload")
         if live_apply_artifact["liveAuthoringControls"]["OPENMW_FNV_HEADGEAR_OFFSET_X"] != 1.25:
             raise AssertionError("snapshot live apply artifact did not preserve live authoring controls")
+        if live_apply_artifact["liveAuthoringControls"]["OPENMW_FNV_BONE_BIP01_R_HAND_ROTATION_Z"] != 25.0:
+            raise AssertionError("snapshot live apply artifact did not preserve live bone controls")
         if not live_apply_path.is_file():
             raise AssertionError("snapshot live apply artifact was not written to generated proof outputs")
         live_apply_text = json.dumps(live_apply_artifact)
@@ -529,6 +552,22 @@ def main() -> int:
             raise AssertionError("structured command was not sanitized through actor-kit allowlist")
         if "-Angles" not in args or "front" not in args:
             raise AssertionError("structured command did not preserve front angle")
+
+        default_angle_command, default_angle_request = live.structured_actor_job(
+            placed_entry,
+            {
+                "entryId": "actor:000002",
+                "selectors": {
+                    "phases": ["body"],
+                    "parts": ["body-skin"],
+                },
+            },
+        )
+        default_angle_args = live.command_to_args(default_angle_command, Path("scripts/nikami/run-fnv-character-viewer.ps1"))
+        if "-Angles" not in default_angle_args or "left,right,top" not in default_angle_args:
+            raise AssertionError("structured actor job did not default rig diagnostics to left/right/top")
+        if default_angle_request["selectors"]["angles"] != ["left", "right", "top"]:
+            raise AssertionError("structured actor request did not record orthogonal rig diagnostic angles")
 
         selector_command, selector_request = live.structured_actor_job(
             placed_entry,

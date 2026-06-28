@@ -140,6 +140,8 @@ namespace SceneUtil
         bool mLoggedFalloutSkinningModes{ false };
         bool mLoggedFalloutMatrixAudit{ false };
         bool mLoggedFalloutPoseSanity{ false };
+        bool mLoggedFalloutFabricNoTwist{ false };
+        bool mLoggedFalloutLiveRigWeightDebug{ false };
         bool mFalloutUseVrRigidHandSolve{ false };
         bool mLoggedFalloutVrRigidHandSolve{ false };
         bool mLoggedFalloutArmSleeveProjection{ false };
@@ -156,6 +158,7 @@ namespace SceneUtil
         std::vector<osg::Matrixf> mFalloutDerivedInvBindMatrices;
 
         bool initFromParentSkeleton(osg::NodeVisitor* nv);
+        void applyFalloutLiveRigWeightDebug(osg::Geometry& geom);
 
         void updateSkinToSkelMatrix(const osg::NodePath& nodePath);
     };

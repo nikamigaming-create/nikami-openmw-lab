@@ -294,7 +294,7 @@ $creature = $entries | Where-Object { $_.label -eq "ContractCreatureRef" } | Sel
 $easyPete = $entries | Where-Object { $_.label -eq "EasyPeteRef" } | Select-Object -First 1
 $weapon = $entries | Where-Object { $_.label -eq "ContractPistol" } | Select-Object -First 1
 $armor = $entries | Where-Object { $_.label -eq "ContractArmor" } | Select-Object -First 1
-if ($null -eq $npc -or $npc.commands.runtimeThreeCamera -notmatch "-Angles 'front,front-left,front-right'") {
+if ($null -eq $npc -or $npc.commands.runtimeThreeCamera -notmatch "-Angles 'left,right,top'") {
     throw "Studio catalog NPC entry missing three-camera runtime command."
 }
 if ($null -eq $creature -or $creature.commands.runtimeThreeCamera -notmatch "-CreatureDiagnostics") {
@@ -302,6 +302,9 @@ if ($null -eq $creature -or $creature.commands.runtimeThreeCamera -notmatch "-Cr
 }
 if ($null -eq $easyPete -or $easyPete.commands.runtimeThreeCamera -notmatch "-Targets 'GSEasyPete'") {
     throw "Studio catalog EasyPeteRef fixture missing base-runtime three-camera command."
+}
+if ($easyPete.commands.runtimeThreeCamera -notmatch "-Angles 'left,right,top'") {
+    throw "Studio catalog EasyPeteRef fixture did not default to orthogonal rig diagnostic cameras."
 }
 $criticalQueue = @($catalog.criticalQueue)
 $easyPeteQueue = $criticalQueue | Where-Object { $_.id -eq "easy-pete" } | Select-Object -First 1

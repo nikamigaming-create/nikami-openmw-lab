@@ -3,6 +3,9 @@
 
 #include "animation.hpp"
 
+#include <unordered_map>
+#include <unordered_set>
+
 namespace ESM4
 {
     struct Npc;
@@ -32,6 +35,13 @@ namespace MWRender
         std::vector<LiveHeadSurfaceAuthoringTarget> mLiveHeadSurfaceAuthoringTargets;
         std::string mLiveHeadSurfaceAuthoringContent;
         unsigned int mLiveHeadSurfaceAuthoringTick = 0;
+        std::string mLiveBoneAuthoringContent;
+        std::string mLiveBoneAuthoringBoneCatalogFingerprint;
+        unsigned int mLiveBoneAuthoringTick = 0;
+        unsigned int mLiveBoneAuthoringFrameLogs = 0;
+        unsigned int mLiveBoneAuthoringMeshConsumerLogs = 0;
+        std::unordered_map<std::string, osg::Matrixf> mLiveBoneAuthoringDefaults;
+        std::unordered_set<std::string> mLiveBoneAuthoringDefaultBones;
         std::string mLiveRuntimeActorKitFingerprint;
         unsigned int mLiveRuntimeActorKitTick = 0;
         unsigned int mLiveRuntimeActorKitGeneration = 0;
@@ -50,6 +60,7 @@ namespace MWRender
         bool mFONVActorKitProjectileProofFired = false;
 
         void applyLiveHeadSurfaceAuthoring();
+        void applyLiveBoneAuthoring(const ESM4::Npc& traits);
         void applyLiveRuntimeActorKitSelectors();
         void applyFONVWeaponIk(const ESM4::Npc& traits);
         void applyPostManualFalloutActorPose() override;

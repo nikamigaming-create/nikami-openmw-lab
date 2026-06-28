@@ -20,7 +20,7 @@ param(
     [string]$ActorKitAnimationGroup = "",
     [string]$ActorKitDialogueMode = "",
     [string]$FnvProofWeaponEdid = "",
-    [string[]]$Angles = @("front", "front-left", "front-right"),
+    [string[]]$Angles = @("left", "right", "top"),
     [int]$RunSeconds = 28,
     [int]$ActorFrame = 520,
     [string]$ScreenshotFrames = "600,660,720,780,840",
@@ -277,6 +277,8 @@ function Get-FnvRuntimeEvidence([string]$ProofDir, [string]$FnvSkinningMatrixAud
     $visibleHandGeometryPoseSanityFailureLine = Get-RegexValue $summaryText "Target visible hand geometry pose sanity failure line:\s+([^\r\n]+)"
     $visibleLimbShapeBadLines = Get-RegexValue $summaryText "Target visible limb shape BAD lines:\s+([^\r\n]+)"
     $visibleLimbShapeFailureLine = Get-RegexValue $summaryText "Target visible limb shape failure line:\s+([^\r\n]+)"
+    $fabricNoTwistBadLines = Get-RegexValue $summaryText "Target fabric no-twist BAD lines:\s+([^\r\n]+)"
+    $fabricNoTwistFailureLine = Get-RegexValue $summaryText "Target fabric no-twist failure line:\s+([^\r\n]+)"
     $visibleHandGeometryFailureLine = Get-RegexValue $summaryText "Target visible hand geometry failure line:\s+([^\r\n]+)"
     $fnvShowIkBones = Get-RegexValue $summaryText "FnvShowIkBones:\s+([^\r\n]+)"
     $fnvArmBaselinePose = Get-RegexValue $summaryText "FnvArmBaselinePose:\s+([^\r\n]+)"
@@ -303,6 +305,8 @@ function Get-FnvRuntimeEvidence([string]$ProofDir, [string]$FnvSkinningMatrixAud
             poseSanityFailureLine = $visibleHandGeometryPoseSanityFailureLine
             limbShapeBadLines = $visibleLimbShapeBadLines
             limbShapeFailureLine = $visibleLimbShapeFailureLine
+            fabricNoTwistBadLines = $fabricNoTwistBadLines
+            fabricNoTwistFailureLine = $fabricNoTwistFailureLine
             failureLine = $visibleHandGeometryFailureLine
         }
         fnvSkinningMatrixAudit = $FnvSkinningMatrixAudit
@@ -327,9 +331,12 @@ function Get-FnvRuntimeEvidence([string]$ProofDir, [string]$FnvSkinningMatrixAud
 
 $diagonal = $ActorViewDistance * 0.7071067811865476
 $AllAngles = @(
-    [pscustomobject]@{ Name = "front"; OffsetX = $ActorViewDistance; OffsetY = 0.0; NeutralYawDeg = 0.0 },
-    [pscustomobject]@{ Name = "front-left"; OffsetX = $diagonal; OffsetY = -$diagonal; NeutralYawDeg = -45.0 },
-    [pscustomobject]@{ Name = "front-right"; OffsetX = $diagonal; OffsetY = $diagonal; NeutralYawDeg = 45.0 }
+    [pscustomobject]@{ Name = "front"; OffsetX = $ActorViewDistance; OffsetY = 0.0; OffsetZ = $ActorViewOffsetZ; TargetZ = $ActorViewTargetZ; NeutralYawDeg = 0.0 },
+    [pscustomobject]@{ Name = "front-left"; OffsetX = $diagonal; OffsetY = -$diagonal; OffsetZ = $ActorViewOffsetZ; TargetZ = $ActorViewTargetZ; NeutralYawDeg = -45.0 },
+    [pscustomobject]@{ Name = "front-right"; OffsetX = $diagonal; OffsetY = $diagonal; OffsetZ = $ActorViewOffsetZ; TargetZ = $ActorViewTargetZ; NeutralYawDeg = 45.0 },
+    [pscustomobject]@{ Name = "left"; OffsetX = 0.0; OffsetY = -$ActorViewDistance; OffsetZ = $ActorViewOffsetZ; TargetZ = $ActorViewTargetZ; NeutralYawDeg = -90.0 },
+    [pscustomobject]@{ Name = "right"; OffsetX = 0.0; OffsetY = $ActorViewDistance; OffsetZ = $ActorViewOffsetZ; TargetZ = $ActorViewTargetZ; NeutralYawDeg = 90.0 },
+    [pscustomobject]@{ Name = "top"; OffsetX = 0.0; OffsetY = 24.0; OffsetZ = ($ActorViewOffsetZ + 210.0); TargetZ = ($ActorViewTargetZ - 8.0); NeutralYawDeg = 0.0 }
 )
 
 $RequestedAngles = New-Object "System.Collections.Generic.List[string]"
@@ -507,8 +514,8 @@ foreach ($phase in $Phases) {
             ActorStageRotZ = $ActorStageRotZ
             ActorViewOffsetX = [double]$angle.OffsetX
             ActorViewOffsetY = [double]$angle.OffsetY
-            ActorViewOffsetZ = $ActorViewOffsetZ
-            ActorViewTargetZ = $ActorViewTargetZ
+            ActorViewOffsetZ = [double]$angle.OffsetZ
+            ActorViewTargetZ = [double]$angle.TargetZ
             ActorViewLocalOffset = $true
             FnvPartMatrixAudit = $true
             FnvSkinningMatrixAudit = $FnvSkinningMatrixAudit
@@ -602,6 +609,8 @@ foreach ($phase in $Phases) {
             case = $caseName
             phase = $phase
             angle = $angle.Name
+            actorTarget = $ActorTarget
+            actorKind = $ActorKind
             runtimeGateStatus = $runtimeGateStatus
             runtimeGateError = $runtimeGateError
             reportStatus = $reportStatus

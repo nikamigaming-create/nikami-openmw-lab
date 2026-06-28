@@ -11,6 +11,7 @@
 #include <unordered_set>
 
 #include <osg/MatrixTransform>
+#include <osg/PrimitiveSet>
 
 #include <osgUtil/CullVisitor>
 
@@ -47,6 +48,12 @@ namespace SceneUtil
                 return false;
 
             return Misc::StringUtils::ciEqual(name, "arms:0");
+        }
+
+        bool shouldDisableFalloutArmSleeveProjection()
+        {
+            const char* env = std::getenv("OPENMW_FNV_DISABLE_ARM_SLEEVE_IK_PROJECTION");
+            return env != nullptr && env[0] != '\0' && std::string_view(env) != "0";
         }
 
         bool isFalloutArmSleeveRig(std::string_view name, std::string_view rootBone,
@@ -86,6 +93,130 @@ namespace SceneUtil
                 result = std::max(result, std::max(numerator[i] / denominator[i], denominator[i] / numerator[i]));
             }
             return result;
+        }
+
+        struct FalloutFabricNoTwistStats
+        {
+            unsigned int mEdgeSamples = 0;
+            unsigned int mOverstretchedEdges = 0;
+            unsigned int mCollapsedEdges = 0;
+            float mMaxEdgeStretchRatio = 1.f;
+            float mMaxEdgeLengthDelta = 0.f;
+            unsigned int mMaxEdgeA = 0;
+            unsigned int mMaxEdgeB = 0;
+        };
+
+        void addFalloutFabricEdgeSample(FalloutFabricNoTwistStats& stats, const osg::Vec3Array& sourcePositions,
+            const osg::Vec3Array& skinnedPositions, unsigned int a, unsigned int b)
+        {
+            if (a >= sourcePositions.size() || b >= sourcePositions.size() || a >= skinnedPositions.size()
+                || b >= skinnedPositions.size() || a == b)
+                return;
+
+            const float sourceLength = (sourcePositions[a] - sourcePositions[b]).length();
+            const float skinnedLength = (skinnedPositions[a] - skinnedPositions[b]).length();
+            if (sourceLength <= 0.01f || skinnedLength <= 0.0001f)
+                return;
+
+            const float ratio = skinnedLength / sourceLength;
+            const float stretchRatio = std::max(ratio, 1.f / ratio);
+            const float lengthDelta = std::abs(skinnedLength - sourceLength);
+            ++stats.mEdgeSamples;
+            if (ratio > 3.5f && lengthDelta > 8.f)
+                ++stats.mOverstretchedEdges;
+            if (ratio < 0.25f && lengthDelta > 8.f)
+                ++stats.mCollapsedEdges;
+            if (stretchRatio > stats.mMaxEdgeStretchRatio || lengthDelta > stats.mMaxEdgeLengthDelta)
+            {
+                stats.mMaxEdgeStretchRatio = std::max(stats.mMaxEdgeStretchRatio, stretchRatio);
+                stats.mMaxEdgeLengthDelta = std::max(stats.mMaxEdgeLengthDelta, lengthDelta);
+                stats.mMaxEdgeA = a;
+                stats.mMaxEdgeB = b;
+            }
+        }
+
+        FalloutFabricNoTwistStats computeFalloutFabricNoTwistStats(
+            const osg::Geometry& sourceGeometry, const osg::Vec3Array& sourcePositions,
+            const osg::Vec3Array& skinnedPositions)
+        {
+            FalloutFabricNoTwistStats stats;
+            constexpr unsigned int maxEdgeSamples = 50000;
+            auto addEdge = [&](unsigned int a, unsigned int b) {
+                if (stats.mEdgeSamples < maxEdgeSamples)
+                    addFalloutFabricEdgeSample(stats, sourcePositions, skinnedPositions, a, b);
+            };
+
+            for (unsigned int primitiveIndex = 0; primitiveIndex < sourceGeometry.getNumPrimitiveSets(); ++primitiveIndex)
+            {
+                const osg::PrimitiveSet* primitive = sourceGeometry.getPrimitiveSet(primitiveIndex);
+                if (primitive == nullptr || primitive->getNumIndices() < 2)
+                    continue;
+
+                switch (primitive->getMode())
+                {
+                    case osg::PrimitiveSet::TRIANGLES:
+                        for (unsigned int i = 0; i + 2 < primitive->getNumIndices(); i += 3)
+                        {
+                            const unsigned int a = primitive->index(i);
+                            const unsigned int b = primitive->index(i + 1);
+                            const unsigned int c = primitive->index(i + 2);
+                            addEdge(a, b);
+                            addEdge(b, c);
+                            addEdge(c, a);
+                        }
+                        break;
+                    case osg::PrimitiveSet::TRIANGLE_STRIP:
+                        for (unsigned int i = 2; i < primitive->getNumIndices(); ++i)
+                        {
+                            const unsigned int a = primitive->index(i - 2);
+                            const unsigned int b = primitive->index(i - 1);
+                            const unsigned int c = primitive->index(i);
+                            addEdge(a, b);
+                            addEdge(b, c);
+                            addEdge(c, a);
+                        }
+                        break;
+                    case osg::PrimitiveSet::TRIANGLE_FAN:
+                        for (unsigned int i = 2; i < primitive->getNumIndices(); ++i)
+                        {
+                            const unsigned int a = primitive->index(0);
+                            const unsigned int b = primitive->index(i - 1);
+                            const unsigned int c = primitive->index(i);
+                            addEdge(a, b);
+                            addEdge(b, c);
+                            addEdge(c, a);
+                        }
+                        break;
+                    case osg::PrimitiveSet::QUADS:
+                        for (unsigned int i = 0; i + 3 < primitive->getNumIndices(); i += 4)
+                        {
+                            const unsigned int a = primitive->index(i);
+                            const unsigned int b = primitive->index(i + 1);
+                            const unsigned int c = primitive->index(i + 2);
+                            const unsigned int d = primitive->index(i + 3);
+                            addEdge(a, b);
+                            addEdge(b, c);
+                            addEdge(c, d);
+                            addEdge(d, a);
+                            addEdge(a, c);
+                        }
+                        break;
+                    default:
+                        for (unsigned int i = 1; i < primitive->getNumIndices(); ++i)
+                            addEdge(primitive->index(i - 1), primitive->index(i));
+                        break;
+                }
+            }
+
+            if (stats.mEdgeSamples == 0)
+            {
+                const unsigned int vertexCount = static_cast<unsigned int>(
+                    std::min(sourcePositions.size(), skinnedPositions.size()));
+                for (unsigned int i = 1; i < vertexCount && stats.mEdgeSamples < maxEdgeSamples; ++i)
+                    addFalloutFabricEdgeSample(stats, sourcePositions, skinnedPositions, i - 1, i);
+            }
+
+            return stats;
         }
 
         std::string_view getFalloutSkinningMode()
@@ -506,6 +637,150 @@ namespace SceneUtil
         return getGeometry(mLastFrameNumber);
     }
 
+    void RigGeometry::applyFalloutLiveRigWeightDebug(osg::Geometry& geom)
+    {
+        const bool enabled = std::getenv("OPENMW_FNV_ACTOR_PREVIEW_SKIN_WEIGHTS") != nullptr
+            || std::getenv("OPENMW_FNV_ACTOR_PREVIEW_FINGER_WEIGHTS") != nullptr
+            || std::getenv("OPENMW_FNV_LIVE_RIG_WEIGHT_DEBUG") != nullptr;
+        if (!enabled || !isFalloutCharacterRig() || !mData || !geom.getVertexArray())
+            return;
+
+        auto mixColor = [](const osg::Vec4f& low, const osg::Vec4f& high, float t) {
+            t = std::clamp(t, 0.f, 1.f);
+            return osg::Vec4f(low.r() * (1.f - t) + high.r() * t, low.g() * (1.f - t) + high.g() * t,
+                low.b() * (1.f - t) + high.b() * t, 1.f);
+        };
+        auto heatColor = [&](float weight) {
+            if (weight <= 0.001f)
+                return osg::Vec4f(0.035f, 0.035f, 0.04f, 1.f);
+            return mixColor(osg::Vec4f(0.05f, 0.16f, 0.75f, 1.f), osg::Vec4f(1.f, 0.92f, 0.12f, 1.f),
+                std::sqrt(std::clamp(weight, 0.f, 1.f)));
+        };
+        auto paletteColor = [&](std::size_t index, float weight) {
+            if (weight <= 0.001f)
+                return osg::Vec4f(0.035f, 0.035f, 0.04f, 1.f);
+            static const std::array<osg::Vec4f, 12> palette = {
+                osg::Vec4f(0.95f, 0.18f, 0.12f, 1.f), osg::Vec4f(0.12f, 0.62f, 1.f, 1.f),
+                osg::Vec4f(0.10f, 0.88f, 0.35f, 1.f), osg::Vec4f(0.95f, 0.78f, 0.12f, 1.f),
+                osg::Vec4f(0.78f, 0.30f, 1.f, 1.f), osg::Vec4f(0.05f, 0.88f, 0.88f, 1.f),
+                osg::Vec4f(1.f, 0.38f, 0.70f, 1.f), osg::Vec4f(0.98f, 0.50f, 0.10f, 1.f),
+                osg::Vec4f(0.48f, 0.72f, 0.12f, 1.f), osg::Vec4f(0.58f, 0.48f, 1.f, 1.f),
+                osg::Vec4f(0.92f, 0.12f, 0.46f, 1.f), osg::Vec4f(0.72f, 0.90f, 1.f, 1.f),
+            };
+            return mixColor(osg::Vec4f(0.03f, 0.03f, 0.035f, 1.f), palette[index % palette.size()],
+                0.25f + 0.75f * std::sqrt(std::clamp(weight, 0.f, 1.f)));
+        };
+
+        const char* selectorEnv = std::getenv("OPENMW_FNV_ACTOR_PREVIEW_WEIGHT_BONE");
+        const std::string selector = selectorEnv != nullptr && selectorEnv[0] != '\0' ? selectorEnv : "all";
+        const std::string loweredSelector = Misc::StringUtils::lowerCase(selector);
+        const bool allBones = loweredSelector.empty() || loweredSelector == "all" || loweredSelector == "*"
+            || loweredSelector == "strongest" || loweredSelector == "all-bones" || loweredSelector == "bones";
+        const bool fingers = loweredSelector == "fingers" || loweredSelector == "finger-bones";
+
+        std::vector<bool> matchedBones(mData->mBones.size(), false);
+        if (allBones)
+            std::fill(matchedBones.begin(), matchedBones.end(), true);
+        else
+        {
+            bool parsedIndex = true;
+            std::size_t selectedIndex = 0;
+            std::string indexText = loweredSelector;
+            if (!indexText.empty() && indexText.front() == '#')
+                indexText.erase(indexText.begin());
+            for (char c : indexText)
+            {
+                if (!std::isdigit(static_cast<unsigned char>(c)))
+                {
+                    parsedIndex = false;
+                    break;
+                }
+                selectedIndex = selectedIndex * 10 + static_cast<std::size_t>(c - '0');
+            }
+            if (parsedIndex && !indexText.empty())
+            {
+                if (selectedIndex < matchedBones.size())
+                    matchedBones[selectedIndex] = true;
+            }
+            else
+            {
+                for (std::size_t i = 0; i < mData->mBones.size(); ++i)
+                {
+                    const std::string bone = Misc::StringUtils::lowerCase(mData->mBones[i].mName);
+                    if ((fingers
+                            && (bone.find("finger") != std::string::npos || bone.find("thumb") != std::string::npos))
+                        || (!fingers && bone.find(loweredSelector) != std::string::npos))
+                        matchedBones[i] = true;
+                }
+            }
+        }
+
+        unsigned int matchedBoneCount = 0;
+        for (bool matched : matchedBones)
+            if (matched)
+                ++matchedBoneCount;
+        if (matchedBoneCount == 0)
+            return;
+
+        const std::size_t vertexCount = geom.getVertexArray()->getNumElements();
+        osg::ref_ptr<osg::Vec4Array> colors = new osg::Vec4Array;
+        colors->assign(vertexCount, osg::Vec4f(0.035f, 0.035f, 0.04f, 1.f));
+        std::vector<bool> weighted(vertexCount, false);
+        float maxWeight = 0.f;
+        for (const auto& [influences, vertices] : mData->mInfluences)
+        {
+            std::size_t strongestBone = 0;
+            float strongestWeight = 0.f;
+            float selectedWeight = 0.f;
+            for (const auto& [boneIndex, weight] : influences)
+            {
+                if (boneIndex >= matchedBones.size() || !matchedBones[boneIndex])
+                    continue;
+                selectedWeight += weight;
+                if (weight > strongestWeight)
+                {
+                    strongestBone = boneIndex;
+                    strongestWeight = weight;
+                }
+            }
+
+            selectedWeight = std::clamp(selectedWeight, 0.f, 1.f);
+            const float visibleWeight = allBones ? strongestWeight : selectedWeight;
+            maxWeight = std::max(maxWeight, visibleWeight);
+            const osg::Vec4f color = allBones ? paletteColor(strongestBone, strongestWeight) : heatColor(selectedWeight);
+            for (unsigned short vertex : vertices)
+            {
+                if (vertex >= vertexCount)
+                    continue;
+                (*colors)[vertex] = color;
+                if (visibleWeight > 0.001f)
+                    weighted[vertex] = true;
+            }
+        }
+
+        unsigned int weightedVertices = 0;
+        for (bool isWeighted : weighted)
+            if (isWeighted)
+                ++weightedVertices;
+
+        geom.setColorArray(colors.get(), osg::Array::BIND_PER_VERTEX);
+        geom.dirtyGLObjects();
+        if (!mLoggedFalloutLiveRigWeightDebug)
+        {
+            mLoggedFalloutLiveRigWeightDebug = true;
+            Log(Debug::Info) << "FNV/ESM4 proof: live RigGeometry weight debug rig='" << getName()
+                             << "' rootBone='" << mData->mRootBone
+                             << "' selector=" << selector
+                             << " bones=" << mData->mBones.size()
+                             << " matchedBones=" << matchedBoneCount
+                             << " influenceGroups=" << mData->mInfluences.size()
+                             << " vertices=" << vertexCount
+                             << " weightedVertices=" << weightedVertices
+                             << " maxWeight=" << maxWeight
+                             << " runtime=runtime-supported gate=runtime-fnv-live-rig-weight-debug";
+        }
+    }
+
     void RigGeometry::forceNextUpdate()
     {
         mLastFrameNumber = 0;
@@ -781,6 +1056,7 @@ namespace SceneUtil
         if (mLastFrameNumber == traversalNumber || (mLastFrameNumber != 0 && !mSkeleton->getActive()))
         {
             osg::Geometry& geom = *getGeometry(mLastFrameNumber);
+            applyFalloutLiveRigWeightDebug(geom);
             nv->pushOntoNodePath(&geom);
             nv->apply(geom);
             nv->popFromNodePath();
@@ -1272,8 +1548,19 @@ namespace SceneUtil
             }
         }
 
-        if (falloutRig && !falloutSourceSkinning
-            && isFalloutArmSleeveRig(getName(), mData->mRootBone, mData->mBones)
+        const bool falloutArmSleeveRig = falloutRig && isFalloutArmSleeveRig(getName(), mData->mRootBone, mData->mBones);
+        if (falloutArmSleeveRig && shouldDisableFalloutArmSleeveProjection())
+        {
+            if (!mLoggedFalloutArmSleeveProjection)
+            {
+                mLoggedFalloutArmSleeveProjection = true;
+                Log(Debug::Info) << "FNV/ESM4 proof: arm sleeve IK projection disabled rig='" << getName()
+                                 << "' env=OPENMW_FNV_DISABLE_ARM_SLEEVE_IK_PROJECTION"
+                                 << " runtime=runtime-supported gate=runtime-fnv-arm-sleeve-ik-disabled";
+            }
+        }
+        else if (falloutRig && !falloutSourceSkinning
+            && falloutArmSleeveRig
             && positionSrc != nullptr && positionDst != nullptr && !positionSrc->empty() && !positionDst->empty())
         {
             FalloutArmChain left;
@@ -1653,6 +1940,99 @@ namespace SceneUtil
                              << " verdict=" << (bad ? "BAD" : "OK") << " reason=" << reason;
         }
 
+        if (falloutRig && !mLoggedFalloutFabricNoTwist && mSourceGeometry != nullptr && positionSrc != nullptr
+            && positionDst != nullptr && !positionSrc->empty() && !positionDst->empty())
+        {
+            mLoggedFalloutFabricNoTwist = true;
+            const FalloutFabricNoTwistStats fabricStats
+                = computeFalloutFabricNoTwistStats(*mSourceGeometry, *positionSrc, *positionDst);
+            const unsigned int noisyEdgeLimit = std::max(12u, fabricStats.mEdgeSamples / 100u);
+            const bool badStretch = fabricStats.mMaxEdgeStretchRatio > 6.f && fabricStats.mMaxEdgeLengthDelta > 12.f;
+            const bool badMany = fabricStats.mOverstretchedEdges > noisyEdgeLimit
+                || fabricStats.mCollapsedEdges > noisyEdgeLimit;
+            const bool badFabric = fabricStats.mEdgeSamples == 0 || badStretch || badMany;
+            const char* reason = fabricStats.mEdgeSamples == 0 ? "missing-edges"
+                : badStretch                                 ? "max-edge-stretch"
+                : badMany                                    ? "many-stretched-edges"
+                                                             : "ok";
+            const bool detailedFabricAudit = badFabric || std::getenv("OPENMW_FNV_FABRIC_NO_TWIST_DETAIL") != nullptr;
+
+            std::string path;
+            if (detailedFabricAudit && nv != nullptr)
+            {
+                const osg::NodePath& nodePath = nv->getNodePath();
+                for (std::size_t i = 0; i < nodePath.size(); ++i)
+                {
+                    const osg::Node* node = nodePath[i];
+                    if (i != 0)
+                        path += "/";
+                    path += node != nullptr && !node->getName().empty() ? node->getName() : "<unnamed>";
+                }
+            }
+
+            auto vertexInfluences = [&](unsigned int vertex) {
+                std::ostringstream stream;
+                bool found = false;
+                if (mData != nullptr)
+                {
+                    for (const auto& [influences, vertices] : mData->mInfluences)
+                    {
+                        if (std::find(vertices.begin(), vertices.end(), vertex) == vertices.end())
+                            continue;
+
+                        for (const auto& [boneIndex, weight] : influences)
+                        {
+                            if (found)
+                                stream << ",";
+                            if (boneIndex < mData->mBones.size())
+                                stream << mData->mBones[boneIndex].mName;
+                            else
+                                stream << "<bone-" << boneIndex << ">";
+                            stream << ":" << weight;
+                            found = true;
+                        }
+                        break;
+                    }
+                }
+                if (!found)
+                    stream << "<none>";
+                return stream.str();
+            };
+
+            const bool haveMaxEdgeVertices = fabricStats.mMaxEdgeA < positionSrc->size()
+                && fabricStats.mMaxEdgeB < positionSrc->size() && fabricStats.mMaxEdgeA < positionDst->size()
+                && fabricStats.mMaxEdgeB < positionDst->size();
+            const osg::Vec3f maxEdgeSourceA = haveMaxEdgeVertices ? (*positionSrc)[fabricStats.mMaxEdgeA] : osg::Vec3f();
+            const osg::Vec3f maxEdgeSourceB = haveMaxEdgeVertices ? (*positionSrc)[fabricStats.mMaxEdgeB] : osg::Vec3f();
+            const osg::Vec3f maxEdgeSkinnedA = haveMaxEdgeVertices ? (*positionDst)[fabricStats.mMaxEdgeA] : osg::Vec3f();
+            const osg::Vec3f maxEdgeSkinnedB = haveMaxEdgeVertices ? (*positionDst)[fabricStats.mMaxEdgeB] : osg::Vec3f();
+            const float maxEdgeSourceLength = haveMaxEdgeVertices ? (maxEdgeSourceA - maxEdgeSourceB).length() : 0.f;
+            const float maxEdgeSkinnedLength = haveMaxEdgeVertices ? (maxEdgeSkinnedA - maxEdgeSkinnedB).length() : 0.f;
+
+            Log(Debug::Info) << "FNV/ESM4 proof: Fallout RigGeometry '" << getName()
+                             << "' fabric no-twist edge audit vertices="
+                             << std::min(positionSrc->size(), positionDst->size())
+                             << " edgeSamples=" << fabricStats.mEdgeSamples
+                             << " overstretchedEdges=" << fabricStats.mOverstretchedEdges
+                             << " collapsedEdges=" << fabricStats.mCollapsedEdges
+                             << " noisyEdgeLimit=" << noisyEdgeLimit
+                             << " maxEdgeStretchRatio=" << fabricStats.mMaxEdgeStretchRatio
+                             << " maxEdgeLengthDelta=" << fabricStats.mMaxEdgeLengthDelta
+                             << " maxEdge=(" << fabricStats.mMaxEdgeA << "," << fabricStats.mMaxEdgeB << ")"
+                             << " maxEdgeSourceLength=" << maxEdgeSourceLength
+                             << " maxEdgeSkinnedLength=" << maxEdgeSkinnedLength
+                             << " maxEdgeSourceA=" << vec3ToString(maxEdgeSourceA)
+                             << " maxEdgeSourceB=" << vec3ToString(maxEdgeSourceB)
+                             << " maxEdgeSkinnedA=" << vec3ToString(maxEdgeSkinnedA)
+                             << " maxEdgeSkinnedB=" << vec3ToString(maxEdgeSkinnedB)
+                             << " maxEdgeInfluencesA=\"" << vertexInfluences(fabricStats.mMaxEdgeA) << "\""
+                             << " maxEdgeInfluencesB=\"" << vertexInfluences(fabricStats.mMaxEdgeB) << "\""
+                             << " path=\"" << path << "\""
+                             << " verdict=" << (badFabric ? "BAD" : "OK")
+                             << " reason=" << reason
+                             << " runtime=runtime-supported gate=runtime-fnv-fabric-no-twist";
+        }
+
         positionDst->dirty();
         if (normalDst)
             normalDst->dirty();
@@ -1661,6 +2041,7 @@ namespace SceneUtil
 
         geom.dirtyBound();
         geom.osg::Drawable::dirtyGLObjects();
+        applyFalloutLiveRigWeightDebug(geom);
 
         nv->pushOntoNodePath(&geom);
         nv->apply(geom);

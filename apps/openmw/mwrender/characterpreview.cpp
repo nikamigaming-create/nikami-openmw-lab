@@ -1,11 +1,15 @@
 #include "characterpreview.hpp"
 
 #include <algorithm>
+#include <array>
+#include <cctype>
 #include <cmath>
 #include <cstdlib>
 #include <sstream>
+#include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 #include <osg/BlendFunc>
 #include <osg/Camera>
@@ -13,8 +17,10 @@
 #include <osg/Fog>
 #include <osg/Geode>
 #include <osg/Geometry>
+#include <osg/LineWidth>
 #include <osg/Material>
 #include <osg/PositionAttitudeTransform>
+#include <osg/PolygonMode>
 #include <osg/Texture2D>
 #include <osg/ValueObject>
 #include <osgUtil/IntersectionVisitor>
@@ -31,6 +37,7 @@
 #include <components/sceneutil/depth.hpp>
 #include <components/sceneutil/lightmanager.hpp>
 #include <components/sceneutil/nodecallback.hpp>
+#include <components/sceneutil/riggeometry.hpp>
 #include <components/sceneutil/rtt.hpp>
 #include <components/sceneutil/shadow.hpp>
 #include <components/settings/values.hpp>
@@ -201,6 +208,416 @@ namespace MWRender
                 return fallback;
             return parsed;
         }
+
+        bool getFalloutNeutralActorPreviewBool(const char* name)
+        {
+            const char* value = std::getenv(name);
+            return value != nullptr && value[0] != '\0' && std::string_view(value) != "0";
+        }
+
+        std::string getFalloutNeutralActorPreviewString(const char* name)
+        {
+            const char* value = std::getenv(name);
+            if (value == nullptr)
+                return {};
+
+            std::string result(value);
+            while (!result.empty() && std::isspace(static_cast<unsigned char>(result.front())))
+                result.erase(result.begin());
+            while (!result.empty() && std::isspace(static_cast<unsigned char>(result.back())))
+                result.pop_back();
+            return result;
+        }
+
+        osg::Vec4f mixFalloutDebugColor(const osg::Vec4f& low, const osg::Vec4f& high, float amount)
+        {
+            const float clamped = std::clamp(amount, 0.f, 1.f);
+            return low * (1.f - clamped) + high * clamped;
+        }
+
+        osg::Vec4f getFalloutBoneWeightHeatColor(float weight)
+        {
+            if (weight <= 0.001f)
+                return osg::Vec4f(0.035f, 0.035f, 0.04f, 1.f);
+
+            const osg::Vec4f low(0.05f, 0.16f, 0.75f, 1.f);
+            const osg::Vec4f high(1.f, 0.92f, 0.12f, 1.f);
+            return mixFalloutDebugColor(low, high, std::sqrt(std::clamp(weight, 0.f, 1.f)));
+        }
+
+        osg::Vec4f getFalloutBonePaletteColor(std::size_t index, float weight)
+        {
+            if (weight <= 0.001f)
+                return osg::Vec4f(0.035f, 0.035f, 0.04f, 1.f);
+
+            static const std::array<osg::Vec4f, 12> palette = {
+                osg::Vec4f(0.95f, 0.18f, 0.12f, 1.f), osg::Vec4f(0.12f, 0.62f, 1.f, 1.f),
+                osg::Vec4f(0.10f, 0.88f, 0.35f, 1.f), osg::Vec4f(0.95f, 0.78f, 0.12f, 1.f),
+                osg::Vec4f(0.78f, 0.30f, 1.f, 1.f), osg::Vec4f(0.05f, 0.88f, 0.88f, 1.f),
+                osg::Vec4f(1.f, 0.38f, 0.70f, 1.f), osg::Vec4f(0.98f, 0.50f, 0.10f, 1.f),
+                osg::Vec4f(0.48f, 0.72f, 0.12f, 1.f), osg::Vec4f(0.58f, 0.48f, 1.f, 1.f),
+                osg::Vec4f(0.92f, 0.12f, 0.46f, 1.f), osg::Vec4f(0.72f, 0.90f, 1.f, 1.f),
+            };
+
+            const osg::Vec4f base = palette[index % palette.size()];
+            const osg::Vec4f dark(0.03f, 0.03f, 0.035f, 1.f);
+            return mixFalloutDebugColor(dark, base, 0.25f + 0.75f * std::sqrt(std::clamp(weight, 0.f, 1.f)));
+        }
+
+        osg::Vec4f getFalloutFingerBoneDebugColor(std::size_t slot, float weight)
+        {
+            static const std::array<osg::Vec4f, 5> fingerColors = {
+                osg::Vec4f(1.f, 0.38f, 0.08f, 1.f), osg::Vec4f(0.10f, 0.68f, 1.f, 1.f),
+                osg::Vec4f(0.15f, 0.95f, 0.32f, 1.f), osg::Vec4f(0.78f, 0.34f, 1.f, 1.f),
+                osg::Vec4f(1.f, 0.30f, 0.68f, 1.f),
+            };
+
+            const std::size_t finger = std::min<std::size_t>(fingerColors.size() - 1, slot / 3);
+            const float segmentBoost = 0.72f + 0.14f * static_cast<float>(slot % 3);
+            const osg::Vec4f base(fingerColors[finger].r() * segmentBoost, fingerColors[finger].g() * segmentBoost,
+                fingerColors[finger].b() * segmentBoost, 1.f);
+            const osg::Vec4f dark(0.03f, 0.03f, 0.035f, 1.f);
+            return mixFalloutDebugColor(dark, base, 0.25f + 0.75f * std::sqrt(std::clamp(weight, 0.f, 1.f)));
+        }
+
+        bool applyFalloutWeightDebugColorArray(SceneUtil::RigGeometry& rig, osg::Vec4Array* colors)
+        {
+            if (colors == nullptr || colors->empty())
+                return false;
+
+            bool applied = false;
+            if (osg::Geometry* source = rig.getSourceGeometry().get())
+            {
+                source->setColorArray(colors, osg::Array::BIND_PER_VERTEX);
+                source->dirtyGLObjects();
+                applied = true;
+            }
+
+            for (unsigned int i = 0; i < 2; ++i)
+            {
+                osg::Geometry* renderGeometry = rig.getRenderGeometry(i);
+                if (renderGeometry == nullptr)
+                    continue;
+
+                osg::ref_ptr<osg::Vec4Array> renderColors
+                    = static_cast<osg::Vec4Array*>(colors->clone(osg::CopyOp::DEEP_COPY_ALL));
+                renderGeometry->setColorArray(renderColors.get(), osg::Array::BIND_PER_VERTEX);
+                renderGeometry->dirtyGLObjects();
+                applied = true;
+            }
+
+            return applied;
+        }
+
+        struct FalloutWeightDebugResult
+        {
+            bool mApplied = false;
+            unsigned int mMatchedBones = 0;
+            unsigned int mWeightedVertices = 0;
+            float mMaxWeight = 0.f;
+        };
+
+        osg::Vec4f getFalloutFingerWeightDebugColor(float thumb, float index, float grip)
+        {
+            const float strongest = std::max({ thumb, index, grip });
+            if (strongest <= 0.001f)
+                return osg::Vec4f(0.08f, 0.08f, 0.08f, 1.f);
+
+            const float alpha = 0.35f + 0.65f * std::min(1.f, strongest);
+            if (thumb >= index && thumb >= grip)
+                return osg::Vec4f(1.f, 0.25f, 0.05f, alpha);
+            if (index >= thumb && index >= grip)
+                return osg::Vec4f(0.1f, 0.75f, 1.f, alpha);
+            return osg::Vec4f(0.1f, 1.f, 0.25f, alpha);
+        }
+
+        FalloutWeightDebugResult applyFalloutFingerWeightDebugColors(SceneUtil::RigGeometry& rig)
+        {
+            FalloutWeightDebugResult result;
+            std::vector<float> thumbWeights;
+            std::vector<float> indexWeights;
+            std::vector<float> gripWeights;
+            if (!rig.getFalloutFingerVertexWeights(thumbWeights, indexWeights, gripWeights))
+                return result;
+
+            const std::size_t vertexCount = thumbWeights.size();
+            if (vertexCount == 0 || indexWeights.size() != vertexCount || gripWeights.size() != vertexCount)
+                return result;
+
+            osg::ref_ptr<osg::Vec4Array> colors = new osg::Vec4Array;
+            colors->reserve(vertexCount);
+            std::array<bool, 3> usedGroups{};
+            for (std::size_t i = 0; i < vertexCount; ++i)
+            {
+                const float strongest = std::max({ thumbWeights[i], indexWeights[i], gripWeights[i] });
+                if (strongest > 0.001f)
+                {
+                    ++result.mWeightedVertices;
+                    if (thumbWeights[i] >= indexWeights[i] && thumbWeights[i] >= gripWeights[i])
+                        usedGroups[0] = true;
+                    else if (indexWeights[i] >= thumbWeights[i] && indexWeights[i] >= gripWeights[i])
+                        usedGroups[1] = true;
+                    else
+                        usedGroups[2] = true;
+                }
+                result.mMaxWeight = std::max(result.mMaxWeight, strongest);
+                colors->push_back(getFalloutFingerWeightDebugColor(thumbWeights[i], indexWeights[i], gripWeights[i]));
+            }
+
+            for (bool used : usedGroups)
+                if (used)
+                    ++result.mMatchedBones;
+            result.mApplied = applyFalloutWeightDebugColorArray(rig, colors.get());
+            return result;
+        }
+
+        FalloutWeightDebugResult applyFalloutAllBoneWeightDebugColors(SceneUtil::RigGeometry& rig)
+        {
+            std::vector<SceneUtil::RigGeometry::BoneInfo> bones;
+            std::vector<SceneUtil::RigGeometry::BoneWeights> vertexInfluences;
+            std::vector<osg::Matrixf> localBoneMatrices;
+            std::vector<osg::Matrixf> skeletonBoneMatrices;
+            osg::Matrixf transform;
+            osg::Matrixf skinToSkelMatrix;
+            FalloutWeightDebugResult result;
+            if (!rig.getSkinningDebugData(
+                    bones, vertexInfluences, localBoneMatrices, skeletonBoneMatrices, transform, skinToSkelMatrix))
+                return result;
+
+            osg::ref_ptr<osg::Vec4Array> colors = new osg::Vec4Array;
+            colors->reserve(vertexInfluences.size());
+            for (const SceneUtil::RigGeometry::BoneWeights& influences : vertexInfluences)
+            {
+                std::size_t strongestBone = 0;
+                float strongestWeight = 0.f;
+                for (const auto& [boneIndex, weight] : influences)
+                {
+                    if (boneIndex < bones.size() && weight > strongestWeight)
+                    {
+                        strongestBone = boneIndex;
+                        strongestWeight = weight;
+                    }
+                }
+
+                if (strongestWeight > 0.001f)
+                    ++result.mWeightedVertices;
+                result.mMaxWeight = std::max(result.mMaxWeight, strongestWeight);
+                colors->push_back(getFalloutBonePaletteColor(strongestBone, strongestWeight));
+            }
+
+            result.mMatchedBones = static_cast<unsigned int>(bones.size());
+            result.mApplied = applyFalloutWeightDebugColorArray(rig, colors.get());
+            return result;
+        }
+
+        FalloutWeightDebugResult applyFalloutFingerBoneWeightDebugColors(SceneUtil::RigGeometry& rig)
+        {
+            std::array<std::vector<float>, 15> fingerBones;
+            FalloutWeightDebugResult result;
+            if (!rig.getFalloutFingerBoneVertexWeights(fingerBones))
+                return result;
+
+            const std::size_t vertexCount = fingerBones.front().size();
+            if (vertexCount == 0)
+                return result;
+
+            std::array<bool, 15> usedSlots{};
+            osg::ref_ptr<osg::Vec4Array> colors = new osg::Vec4Array;
+            colors->reserve(vertexCount);
+            for (std::size_t vertex = 0; vertex < vertexCount; ++vertex)
+            {
+                std::size_t strongestSlot = 0;
+                float strongestWeight = 0.f;
+                for (std::size_t slot = 0; slot < fingerBones.size(); ++slot)
+                {
+                    if (fingerBones[slot].size() != vertexCount)
+                        return {};
+
+                    if (fingerBones[slot][vertex] > strongestWeight)
+                    {
+                        strongestSlot = slot;
+                        strongestWeight = fingerBones[slot][vertex];
+                    }
+                }
+
+                if (strongestWeight > 0.001f)
+                {
+                    ++result.mWeightedVertices;
+                    usedSlots[strongestSlot] = true;
+                }
+                result.mMaxWeight = std::max(result.mMaxWeight, strongestWeight);
+                colors->push_back(getFalloutFingerBoneDebugColor(strongestSlot, strongestWeight));
+            }
+
+            for (bool used : usedSlots)
+                if (used)
+                    ++result.mMatchedBones;
+            result.mApplied = applyFalloutWeightDebugColorArray(rig, colors.get());
+            return result;
+        }
+
+        bool parseFalloutWeightBoneIndex(std::string_view selector, std::size_t& index)
+        {
+            if (selector.empty())
+                return false;
+
+            if (selector.front() == '#')
+                selector.remove_prefix(1);
+            if (selector.empty())
+                return false;
+
+            std::size_t parsed = 0;
+            for (char c : selector)
+            {
+                if (!std::isdigit(static_cast<unsigned char>(c)))
+                    return false;
+                parsed = parsed * 10 + static_cast<std::size_t>(c - '0');
+            }
+
+            index = parsed;
+            return true;
+        }
+
+        FalloutWeightDebugResult applyFalloutSelectedBoneWeightDebugColors(
+            SceneUtil::RigGeometry& rig, std::string_view selector)
+        {
+            std::vector<SceneUtil::RigGeometry::BoneInfo> bones;
+            std::vector<SceneUtil::RigGeometry::BoneWeights> vertexInfluences;
+            std::vector<osg::Matrixf> localBoneMatrices;
+            std::vector<osg::Matrixf> skeletonBoneMatrices;
+            osg::Matrixf transform;
+            osg::Matrixf skinToSkelMatrix;
+            FalloutWeightDebugResult result;
+            if (!rig.getSkinningDebugData(
+                    bones, vertexInfluences, localBoneMatrices, skeletonBoneMatrices, transform, skinToSkelMatrix))
+                return result;
+
+            std::vector<bool> matchedBones(bones.size(), false);
+            std::size_t selectedIndex = 0;
+            if (parseFalloutWeightBoneIndex(selector, selectedIndex))
+            {
+                if (selectedIndex < matchedBones.size())
+                    matchedBones[selectedIndex] = true;
+            }
+            else
+            {
+                const std::string loweredSelector = Misc::StringUtils::lowerCase(std::string(selector));
+                for (std::size_t i = 0; i < bones.size(); ++i)
+                {
+                    const std::string loweredBone = Misc::StringUtils::lowerCase(bones[i].mName);
+                    if (loweredBone.find(loweredSelector) != std::string::npos)
+                        matchedBones[i] = true;
+                }
+            }
+
+            for (bool matched : matchedBones)
+                if (matched)
+                    ++result.mMatchedBones;
+            if (result.mMatchedBones == 0)
+                return result;
+
+            osg::ref_ptr<osg::Vec4Array> colors = new osg::Vec4Array;
+            colors->reserve(vertexInfluences.size());
+            for (const SceneUtil::RigGeometry::BoneWeights& influences : vertexInfluences)
+            {
+                float selectedWeight = 0.f;
+                for (const auto& [boneIndex, weight] : influences)
+                    if (boneIndex < matchedBones.size() && matchedBones[boneIndex])
+                        selectedWeight += weight;
+
+                selectedWeight = std::clamp(selectedWeight, 0.f, 1.f);
+                if (selectedWeight > 0.001f)
+                    ++result.mWeightedVertices;
+                result.mMaxWeight = std::max(result.mMaxWeight, selectedWeight);
+                colors->push_back(getFalloutBoneWeightHeatColor(selectedWeight));
+            }
+
+            result.mApplied = applyFalloutWeightDebugColorArray(rig, colors.get());
+            return result;
+        }
+
+        class FalloutActorPreviewRigDebugVisitor : public osg::NodeVisitor
+        {
+        public:
+            FalloutActorPreviewRigDebugVisitor(bool wireframe, bool weights, std::string weightSelector)
+                : osg::NodeVisitor(TRAVERSE_ALL_CHILDREN)
+                , mWireframe(wireframe)
+                , mWeights(weights)
+                , mWeightSelector(std::move(weightSelector))
+            {
+            }
+
+            void apply(osg::Geode& geode) override
+            {
+                for (unsigned int i = 0; i < geode.getNumDrawables(); ++i)
+                {
+                    osg::Drawable* drawable = geode.getDrawable(i);
+                    if (drawable == nullptr)
+                        continue;
+
+                    if (mWireframe)
+                    {
+                        osg::StateSet* stateSet = drawable->getOrCreateStateSet();
+                        stateSet->setMode(GL_LIGHTING, osg::StateAttribute::OFF | osg::StateAttribute::OVERRIDE);
+                        stateSet->setAttributeAndModes(
+                            new osg::PolygonMode(osg::PolygonMode::FRONT_AND_BACK, osg::PolygonMode::LINE),
+                            osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
+                        stateSet->setAttributeAndModes(new osg::LineWidth(getFalloutNeutralActorPreviewFloat(
+                                                        "OPENMW_FNV_ACTOR_PREVIEW_DEBUG_LINE_WIDTH", 4.f)),
+                            osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
+                        ++mWireframeDrawables;
+                    }
+
+                    SceneUtil::RigGeometry* rig = dynamic_cast<SceneUtil::RigGeometry*>(drawable);
+                    if (rig == nullptr)
+                        continue;
+
+                    ++mRigs;
+                    mBones += rig->getBoneCount();
+                    if (mWeights)
+                    {
+                        FalloutWeightDebugResult result;
+                        if (mWeightSelector.empty() || Misc::StringUtils::ciEqual(mWeightSelector, "aggregate"))
+                            result = applyFalloutFingerWeightDebugColors(*rig);
+                        else if (Misc::StringUtils::ciEqual(mWeightSelector, "all")
+                            || Misc::StringUtils::ciEqual(mWeightSelector, "*")
+                            || Misc::StringUtils::ciEqual(mWeightSelector, "strongest"))
+                            result = applyFalloutAllBoneWeightDebugColors(*rig);
+                        else if (Misc::StringUtils::ciEqual(mWeightSelector, "fingers")
+                            || Misc::StringUtils::ciEqual(mWeightSelector, "finger-bones"))
+                            result = applyFalloutFingerBoneWeightDebugColors(*rig);
+                        else
+                            result = applyFalloutSelectedBoneWeightDebugColors(*rig, mWeightSelector);
+
+                        if (result.mApplied)
+                        {
+                            ++mWeightRigs;
+                            mWeightMatchedBones += result.mMatchedBones;
+                            mWeightVertices += result.mWeightedVertices;
+                            mMaxWeight = std::max(mMaxWeight, result.mMaxWeight);
+                        }
+                        else
+                            ++mWeightMisses;
+                    }
+                }
+
+                traverse(geode);
+            }
+
+            unsigned int mRigs = 0;
+            unsigned int mBones = 0;
+            unsigned int mWeightRigs = 0;
+            unsigned int mWeightMisses = 0;
+            unsigned int mWeightMatchedBones = 0;
+            unsigned int mWeightVertices = 0;
+            unsigned int mWireframeDrawables = 0;
+            float mMaxWeight = 0.f;
+
+        private:
+            bool mWireframe;
+            bool mWeights;
+            std::string mWeightSelector;
+        };
 
         void applyFalloutNeutralActorOrbitCamera(FalloutActorPreview::ViewMode viewMode, float distance, float cameraZ,
             float lookAtZ, osg::Vec3f& position, osg::Vec3f& lookAt, const char*& viewName)
@@ -1116,6 +1533,9 @@ namespace MWRender
         const char* viewName = "front";
         const std::string envProfile(getFalloutNeutralActorPreviewProfile());
         const std::string profile = !mProfileOverride.empty() ? mProfileOverride : envProfile;
+        const bool rightHandCloseProfile = Misc::StringUtils::ciEqual(profile, "right-hand-close");
+        const bool leftHandCloseProfile = Misc::StringUtils::ciEqual(profile, "left-hand-close");
+        const bool handsCloseProfile = Misc::StringUtils::ciEqual(profile, "hands-close");
         if (Misc::StringUtils::ciEqual(profile, "full-body") || Misc::StringUtils::ciEqual(profile, "fullbody"))
         {
             applyFalloutNeutralActorOrbitCamera(mViewMode,
@@ -1153,6 +1573,22 @@ namespace MWRender
                     viewName = "right-elbow-hand-weapon";
                     break;
             }
+        }
+        else if (rightHandCloseProfile || leftHandCloseProfile || handsCloseProfile)
+        {
+            const bool left = leftHandCloseProfile;
+            const float handX = left ? -24.f : 24.f;
+            position = osg::Vec3f(
+                getFalloutNeutralActorPreviewFloat("OPENMW_FNV_NEUTRAL_ACTOR_PREVIEW_HAND_CAMERA_X", handX),
+                getFalloutNeutralActorPreviewFloat("OPENMW_FNV_NEUTRAL_ACTOR_PREVIEW_HAND_CAMERA_Y", 120.f),
+                getFalloutNeutralActorPreviewFloat("OPENMW_FNV_NEUTRAL_ACTOR_PREVIEW_HAND_CAMERA_Z", 70.f));
+            lookAt = osg::Vec3f(
+                getFalloutNeutralActorPreviewFloat("OPENMW_FNV_NEUTRAL_ACTOR_PREVIEW_HAND_LOOK_X", handX),
+                getFalloutNeutralActorPreviewFloat("OPENMW_FNV_NEUTRAL_ACTOR_PREVIEW_HAND_LOOK_Y", 0.f),
+                getFalloutNeutralActorPreviewFloat("OPENMW_FNV_NEUTRAL_ACTOR_PREVIEW_HAND_LOOK_Z", 70.f));
+            viewName = left ? "left-hand-close" : "right-hand-close";
+            if (handsCloseProfile)
+                viewName = "hands-close";
         }
         else if (Misc::StringUtils::ciEqual(profile, "audit") || Misc::StringUtils::ciEqual(profile, "bot-audit"))
         {
@@ -1208,7 +1644,84 @@ namespace MWRender
                     std::numeric_limits<uint32_t>::max(), true);
             mAnimation->runAnimation(0.0f);
         }
+        if (mAnimation && (rightHandCloseProfile || leftHandCloseProfile || handsCloseProfile))
+        {
+            const osg::Vec3f rightHand = getWorldPosition(mAnimation->getNode("Bip01 R Hand"));
+            const osg::Vec3f leftHand = getWorldPosition(mAnimation->getNode("Bip01 L Hand"));
+            const bool rightValid = rightHand.length2() > 0.001f;
+            const bool leftValid = leftHand.length2() > 0.001f;
+            bool resolved = false;
+            osg::Vec3f handTarget;
+            if (rightHandCloseProfile && rightValid)
+            {
+                handTarget = rightHand;
+                resolved = true;
+            }
+            else if (leftHandCloseProfile && leftValid)
+            {
+                handTarget = leftHand;
+                resolved = true;
+            }
+            else if (handsCloseProfile && rightValid && leftValid)
+            {
+                handTarget = (rightHand + leftHand) * 0.5f;
+                resolved = true;
+            }
+
+            if (resolved)
+            {
+                handTarget.x() += getFalloutNeutralActorPreviewFloat(
+                    "OPENMW_FNV_NEUTRAL_ACTOR_PREVIEW_HAND_LOOK_OFFSET_X", 0.f);
+                handTarget.y() += getFalloutNeutralActorPreviewFloat(
+                    "OPENMW_FNV_NEUTRAL_ACTOR_PREVIEW_HAND_LOOK_OFFSET_Y", 0.f);
+                handTarget.z() += getFalloutNeutralActorPreviewFloat(
+                    "OPENMW_FNV_NEUTRAL_ACTOR_PREVIEW_HAND_LOOK_OFFSET_Z", 0.f);
+                const float distance = getFalloutNeutralActorPreviewFloat(
+                    "OPENMW_FNV_NEUTRAL_ACTOR_PREVIEW_HAND_CAMERA_Y", handsCloseProfile ? 190.f : 120.f);
+                const float cameraZOffset = getFalloutNeutralActorPreviewFloat(
+                    "OPENMW_FNV_NEUTRAL_ACTOR_PREVIEW_HAND_CAMERA_Z_OFFSET", 8.f);
+                lookAt = handTarget;
+                position = osg::Vec3f(handTarget.x(), handTarget.y() + distance, handTarget.z() + cameraZOffset);
+                applyFalloutNeutralActorPreviewYawOffset(position, lookAt, yawOffsetDeg);
+                position = lookAt + (position - lookAt) * cameraDistanceMultiplier;
+                mRTTNode->setViewMatrix(
+                    osg::Matrixf::lookAt(position * scale.z(), lookAt * scale.z(), osg::Vec3f(0, 0, 1)));
+                Log(Debug::Info) << "FNV/ESM4 proof: neutral actor preview auto hand-close camera view=" << viewName
+                                 << " target=" << formatVec3(handTarget)
+                                 << " rightHand=" << formatVec3(rightHand)
+                                 << " leftHand=" << formatVec3(leftHand)
+                                 << " distance=" << distance
+                                 << " cameraZOffset=" << cameraZOffset
+                                 << " runtime=runtime-supported gate=runtime-neutral-actor-preview-hand-close";
+            }
+        }
         setRedrawSimulationTime(bindPose ? 0.0 : previewStart);
+
+        const bool rigWireframe = getFalloutNeutralActorPreviewBool("OPENMW_FNV_ACTOR_PREVIEW_WIREFRAME");
+        const bool rigWeights = getFalloutNeutralActorPreviewBool("OPENMW_FNV_ACTOR_PREVIEW_FINGER_WEIGHTS")
+            || getFalloutNeutralActorPreviewBool("OPENMW_FNV_ACTOR_PREVIEW_SKIN_WEIGHTS");
+        const std::string rigWeightSelector
+            = getFalloutNeutralActorPreviewString("OPENMW_FNV_ACTOR_PREVIEW_WEIGHT_BONE");
+        if (rigWireframe || rigWeights)
+        {
+            FalloutActorPreviewRigDebugVisitor rigDebug(rigWireframe, rigWeights, rigWeightSelector);
+            mNode->accept(rigDebug);
+            Log(Debug::Info) << "FNV/ESM4 proof: neutral actor preview rig debug view=" << viewName
+                             << " actor=" << mCharacter.getCellRef().getRefId()
+                             << " wireframe=" << rigWireframe
+                             << " fingerWeights=" << rigWeights
+                             << " weightSelector="
+                             << (rigWeightSelector.empty() ? std::string("aggregate") : rigWeightSelector)
+                             << " rigDrawables=" << rigDebug.mRigs
+                             << " bones=" << rigDebug.mBones
+                             << " weightColoredRigs=" << rigDebug.mWeightRigs
+                             << " weightMisses=" << rigDebug.mWeightMisses
+                             << " weightMatchedBones=" << rigDebug.mWeightMatchedBones
+                             << " weightVertices=" << rigDebug.mWeightVertices
+                             << " maxWeight=" << rigDebug.mMaxWeight
+                             << " wireframeDrawables=" << rigDebug.mWireframeDrawables
+                             << " runtime=runtime-supported gate=runtime-neutral-actor-preview-rig-debug";
+        }
 
         osg::ComputeBoundsVisitor boundsVisitor;
         boundsVisitor.setTraversalMask(~(Mask_ParticleSystem | Mask_Effect));

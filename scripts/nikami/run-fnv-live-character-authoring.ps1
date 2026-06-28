@@ -28,7 +28,8 @@ param(
     [double]$ActorStageRotZ = 1.5708,
     [double]$ActorViewOffsetZ = 108,
     [double]$ActorViewTargetZ = 108,
-    [string]$NeutralActorPreviewProfile = "audit",
+    [string]$NeutralActorPreviewProfile = "right-hand-close",
+    [string]$CharacterBuilderPhase = "t-pose",
     [string]$FnvRotationMode = "bindCoreBindLowerRawUpper",
     [string]$FnvSkinningMatrixAudit = "arms,rightHand,leftHand,HeadOld,HeadHuman",
     [switch]$NoSound,
@@ -127,10 +128,41 @@ foreach ($prefix in @("OPENMW_FNV_HEADGEAR", "OPENMW_FNV_HAIR", "OPENMW_FNV_BROW
     $initialControls["${prefix}_ROTATION_Z"] = $defaultZ
     $initialControls["${prefix}_PIVOT_MODE"] = $false
 }
+foreach ($prefix in @(
+    "OPENMW_FNV_BONE_BIP01_R_HAND",
+    "OPENMW_FNV_BONE_BIP01_L_HAND",
+    "OPENMW_FNV_BONE_BIP01_R_THUMB1",
+    "OPENMW_FNV_BONE_BIP01_R_THUMB2",
+    "OPENMW_FNV_BONE_BIP01_R_FINGER11",
+    "OPENMW_FNV_BONE_BIP01_R_FINGER12",
+    "OPENMW_FNV_BONE_BIP01_R_FINGER21",
+    "OPENMW_FNV_BONE_BIP01_R_FINGER22",
+    "OPENMW_FNV_BONE_BIP01_R_FINGER31",
+    "OPENMW_FNV_BONE_BIP01_R_FINGER32",
+    "OPENMW_FNV_BONE_BIP01_R_FINGER41",
+    "OPENMW_FNV_BONE_BIP01_R_FINGER42",
+    "OPENMW_FNV_BONE_BIP01_L_THUMB1",
+    "OPENMW_FNV_BONE_BIP01_L_THUMB2",
+    "OPENMW_FNV_BONE_BIP01_L_FINGER11",
+    "OPENMW_FNV_BONE_BIP01_L_FINGER12",
+    "OPENMW_FNV_BONE_BIP01_L_FINGER21",
+    "OPENMW_FNV_BONE_BIP01_L_FINGER22",
+    "OPENMW_FNV_BONE_BIP01_L_FINGER31",
+    "OPENMW_FNV_BONE_BIP01_L_FINGER32",
+    "OPENMW_FNV_BONE_BIP01_L_FINGER41",
+    "OPENMW_FNV_BONE_BIP01_L_FINGER42"
+)) {
+    $initialControls["${prefix}_OFFSET_X"] = 0.0
+    $initialControls["${prefix}_OFFSET_Y"] = 0.0
+    $initialControls["${prefix}_OFFSET_Z"] = 0.0
+    $initialControls["${prefix}_ROTATION_X"] = 0.0
+    $initialControls["${prefix}_ROTATION_Y"] = 0.0
+    $initialControls["${prefix}_ROTATION_Z"] = 0.0
+}
 
 [pscustomobject][ordered]@{
     schema = "nikami-fnv-live-authoring-v1"
-    schemaMarkers = @("runtime-live-authoring-v1", "head-surface-transform-controls-v1", "generated-control-file-only-v1")
+    schemaMarkers = @("runtime-live-authoring-v1", "head-surface-transform-controls-v1", "bone-transform-controls-v1", "generated-control-file-only-v1")
     path = $LiveAuthoringFile
     updatedAt = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
     controls = $initialControls
@@ -223,8 +255,8 @@ Add-Arg $runtimeArgs "-ActorViewTargetZ" $ActorViewTargetZ
 $runtimeArgs.Add("-ActorViewLocalOffset")
 $runtimeArgs.Add("-FnvPartMatrixAudit")
 Add-Arg $runtimeArgs "-FnvSkinningMatrixAudit" $FnvSkinningMatrixAudit
-Add-Arg $runtimeArgs "-FnvRotationMode" $FnvRotationMode
-Add-Arg $runtimeArgs "-CharacterBuilderPhase" "full"
+    Add-Arg $runtimeArgs "-FnvRotationMode" $FnvRotationMode
+Add-Arg $runtimeArgs "-CharacterBuilderPhase" $CharacterBuilderPhase
 Add-Arg $runtimeArgs "-LiveAuthoringFile" $LiveAuthoringFile
 Add-Arg $runtimeArgs "-LiveRuntimeCommandFile" $LiveRuntimeCommandFile
 if ($NoSound) { $runtimeArgs.Add("-NoSound") }

@@ -626,6 +626,8 @@ function Get-ActorVisibleHandGeometryProbe([string]$Path, [string[]]$ActorPatter
             PoseSanityFailureLine = $null
             LimbShapeBadCount = 0
             LimbShapeFailureLine = $null
+            FabricNoTwistBadCount = 0
+            FabricNoTwistFailureLine = $null
         }
     }
 
@@ -636,6 +638,8 @@ function Get-ActorVisibleHandGeometryProbe([string]$Path, [string[]]$ActorPatter
     $poseSanityBadLines = [System.Collections.Generic.List[string]]::new()
     $limbShapeBadSeen = [System.Collections.Generic.HashSet[string]]::new()
     $limbShapeBadLines = [System.Collections.Generic.List[string]]::new()
+    $fabricNoTwistBadSeen = [System.Collections.Generic.HashSet[string]]::new()
+    $fabricNoTwistBadLines = [System.Collections.Generic.List[string]]::new()
     foreach ($pattern in $ActorPatterns) {
         $actorPattern = "(?:`"$pattern`"|$pattern)"
         $matches = @(Select-String -LiteralPath $Path -Pattern "FNV/ESM4 ACTOR HAND GEOMETRY AUDIT $actorPattern " -ErrorAction SilentlyContinue)
@@ -737,6 +741,13 @@ function Get-ActorVisibleHandGeometryProbe([string]$Path, [string[]]$ActorPatter
         }
     }
 
+    $fabricMatches = @(Select-String -LiteralPath $Path -Pattern "gate=runtime-fnv-fabric-no-twist" -ErrorAction SilentlyContinue)
+    foreach ($fabricMatch in $fabricMatches) {
+        if ($fabricMatch.Line -match " verdict=BAD" -and $fabricNoTwistBadSeen.Add($fabricMatch.Line)) {
+            $fabricNoTwistBadLines.Add($fabricMatch.Line)
+        }
+    }
+
     $bestLeft = $samples |
         Where-Object { $_.Side -eq "left" -and $_.RenderValid -and $null -ne $_.RenderDistance -and $_.RenderDistance -ge 0 } |
         Sort-Object RenderDistance |
@@ -750,12 +761,15 @@ function Get-ActorVisibleHandGeometryProbe([string]$Path, [string[]]$ActorPatter
     $rightDistance = if ($null -ne $bestRight) { [double]$bestRight.RenderDistance } else { $null }
     $leftOk = $null -ne $leftDistance -and $leftDistance -le $MaxDistance
     $rightOk = $null -ne $rightDistance -and $rightDistance -le $MaxDistance
-    $status = if ($poseSanityBadLines.Count -gt 0) { "FAIL" } elseif ($leftOk -and $rightOk) { "PASS" } elseif ($samples.Count -gt 0) { "FAIL" } else { "MISSING" }
+    $status = if ($poseSanityBadLines.Count -gt 0 -or $fabricNoTwistBadLines.Count -gt 0) { "FAIL" } elseif ($leftOk -and $rightOk) { "PASS" } elseif ($samples.Count -gt 0) { "FAIL" } else { "MISSING" }
 
     $failureLine = $null
     if ($status -ne "PASS") {
         if ($poseSanityBadLines.Count -gt 0) {
             $failureLine = $poseSanityBadLines[0]
+        }
+        if ($fabricNoTwistBadLines.Count -gt 0) {
+            $failureLine = $fabricNoTwistBadLines[0]
         }
         if ($null -ne $bestLeft -and ($null -eq $failureLine -or [double]$bestLeft.RenderDistance -gt $MaxDistance)) {
             $failureLine = $bestLeft.Line
@@ -779,6 +793,8 @@ function Get-ActorVisibleHandGeometryProbe([string]$Path, [string[]]$ActorPatter
         PoseSanityFailureLine = if ($poseSanityBadLines.Count -gt 0) { $poseSanityBadLines[0] } else { $null }
         LimbShapeBadCount = $limbShapeBadLines.Count
         LimbShapeFailureLine = if ($limbShapeBadLines.Count -gt 0) { $limbShapeBadLines[0] } else { $null }
+        FabricNoTwistBadCount = $fabricNoTwistBadLines.Count
+        FabricNoTwistFailureLine = if ($fabricNoTwistBadLines.Count -gt 0) { $fabricNoTwistBadLines[0] } else { $null }
     }
 }
 
@@ -2427,6 +2443,10 @@ Write-ProofLine "Target visible limb shape BAD lines: $($targetVisibleHandGeomet
 if (![string]::IsNullOrWhiteSpace($targetVisibleHandGeometry.LimbShapeFailureLine)) {
     Write-ProofLine "Target visible limb shape failure line: $($targetVisibleHandGeometry.LimbShapeFailureLine)"
 }
+Write-ProofLine "Target fabric no-twist BAD lines: $($targetVisibleHandGeometry.FabricNoTwistBadCount)"
+if (![string]::IsNullOrWhiteSpace($targetVisibleHandGeometry.FabricNoTwistFailureLine)) {
+    Write-ProofLine "Target fabric no-twist failure line: $($targetVisibleHandGeometry.FabricNoTwistFailureLine)"
+}
 if (![string]::IsNullOrWhiteSpace($targetVisibleHandGeometry.FailureLine)) {
     Write-ProofLine "Target visible hand geometry failure line: $($targetVisibleHandGeometry.FailureLine)"
 }
@@ -2476,6 +2496,7 @@ if ($weaponActionProof -and $weaponIkBoneOverlayLines -eq 0) { throw "FNV weapon
 if ($weaponActionProof -and $weaponIkVrArcadeHandLines -eq 0) { throw "FNV weapon action proof did not log VR arcade hand IK solver evidence. See $OpenMwLog" }
 if (![string]::IsNullOrWhiteSpace($ActorTarget) -and $targetVisibleHandGeometry.PoseSanityBadCount -gt 0) { throw "FNV actor proof saw target hand mesh pose sanity BAD lines. See $OpenMwLog" }
 if (![string]::IsNullOrWhiteSpace($ActorTarget) -and $targetVisibleHandGeometry.LimbShapeBadCount -gt 0) { throw "FNV actor proof saw target visible limb shape BAD lines. See $OpenMwLog" }
+if (![string]::IsNullOrWhiteSpace($ActorTarget) -and $targetVisibleHandGeometry.FabricNoTwistBadCount -gt 0) { throw "FNV actor proof saw target fabric no-twist BAD lines. See $OpenMwLog" }
 if (![string]::IsNullOrWhiteSpace($FnvStaticizeRiggedHandParts) -and ![string]::IsNullOrWhiteSpace($ActorTarget) -and $targetBareHandIncludes -gt 0 -and $targetStaticHandNoTwist.Count -eq 0) { throw "FNV actor proof did not prove target bare hands use the requested static no-twist path. See $OpenMwLog" }
 if (![string]::IsNullOrWhiteSpace($FnvStaticizeRiggedHandParts) -and ![string]::IsNullOrWhiteSpace($ActorTarget) -and $targetStaticHandNoTwist.Count -gt 0 -and $targetStaticHandNoTwist.FingerWeightLoadedCount -eq 0) { throw "FNV actor proof staticized target hands without loading finger-weight evidence. See $OpenMwLog" }
 if (![string]::IsNullOrWhiteSpace($FnvStaticizeRiggedHandParts) -and ![string]::IsNullOrWhiteSpace($ActorTarget) -and $targetStaticHandNoTwist.PendingArticulationCount -gt 0) { throw "FNV actor proof loaded target hand finger weights but still has pending hand finger articulation runtime support. See $OpenMwLog" }

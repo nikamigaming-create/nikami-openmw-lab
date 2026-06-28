@@ -19,7 +19,7 @@ param(
     [double]$ActorKitAnimationStartPoint = [double]::NaN,
     [string]$ActorKitAnimationGroup = "",
     [string]$ActorKitDialogueMode = "",
-    [string[]]$Angles = @("front", "front-left", "front-right"),
+    [string[]]$Angles = @("left", "right", "top"),
     [int]$RunSeconds = 28,
     [int]$ActorFrame = 520,
     [string]$ScreenshotFrames = "600,660,720,780,840",

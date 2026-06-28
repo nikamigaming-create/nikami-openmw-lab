@@ -3492,6 +3492,9 @@ namespace MWRender
                 const char* kind = nullptr;
                 bool hasFingerWeights = false;
                 std::array<std::vector<float>, 15> fingerBoneWeights;
+                bool hasSkinningDebug = false;
+                std::vector<SceneUtil::RigGeometry::BoneInfo> skinningBones;
+                std::vector<SceneUtil::RigGeometry::BoneWeights> skinningVertexInfluences;
                 auto vertexCount = [](const osg::Geometry* geometry) -> unsigned int {
                     if (geometry == nullptr || geometry->getVertexArray() == nullptr)
                         return 0;
@@ -3548,6 +3551,12 @@ namespace MWRender
                     rootBone = std::string(rig->getRootBone());
                     boneCount = rig->getBoneCount();
                     hasFingerWeights = rig->getFalloutFingerBoneVertexWeights(fingerBoneWeights);
+                    std::vector<osg::Matrixf> localBoneMatrices;
+                    std::vector<osg::Matrixf> skeletonBoneMatrices;
+                    osg::Matrixf transform;
+                    osg::Matrixf skinToSkelMatrix;
+                    hasSkinningDebug = rig->getSkinningDebugData(skinningBones, skinningVertexInfluences,
+                        localBoneMatrices, skeletonBoneMatrices, transform, skinToSkelMatrix);
                     kind = "SceneUtil::RigGeometry";
                 }
                 else if (SceneUtil::RigGeometryHolder* holder = dynamic_cast<SceneUtil::RigGeometryHolder*>(&drawable))
@@ -3621,6 +3630,44 @@ namespace MWRender
                 staticGeometry->dirtyBound();
                 if (drawable.getStateSet() != nullptr)
                     staticGeometry->setStateSet(osg::clone(drawable.getStateSet(), osg::CopyOp::DEEP_COPY_ALL));
+                if (staticHand && hasFingerWeights && wantsStaticHandWeightDebug())
+                {
+                    unsigned int matchedSlots = 0;
+                    float maxWeight = 0.f;
+                    const std::string selector = getStaticHandWeightSelector();
+                    const bool allBoneSelector = isStaticRigAllBoneWeightSelector(selector);
+                    const unsigned int weightedVertices = allBoneSelector && hasSkinningDebug
+                        ? applyStaticRigAllBoneWeightDebugColors(
+                            *staticGeometry, skinningBones, skinningVertexInfluences, matchedSlots, maxWeight)
+                        : applyStaticHandWeightDebugColors(
+                            *staticGeometry, fingerBoneWeights, selector, matchedSlots, maxWeight);
+                    Log(Debug::Info) << "FNV/ESM4 diag: actor static hand weight debug colors actor="
+                                     << (mActor.empty() ? std::string("<unknown>") : mActor)
+                                     << " model=" << (mModel.empty() ? std::string("<unknown>") : mModel)
+                                     << " side=" << (leftHand ? "left" : rightHand ? "right" : "unknown")
+                                     << " selector=" << (selector.empty() ? std::string("aggregate") : selector)
+                                     << " mode=" << (allBoneSelector && hasSkinningDebug ? "all-bones" : "finger-slots")
+                                     << " matchedSlots=" << matchedSlots
+                                     << " weightedVertices=" << weightedVertices
+                                     << " maxWeight=" << maxWeight
+                                     << " runtime=runtime-supported gate=runtime-fnv-static-hand-weight-debug";
+                }
+                else if (!staticHand && hasSkinningDebug && wantsStaticRigAllWeightDebug())
+                {
+                    unsigned int matchedBones = 0;
+                    float maxWeight = 0.f;
+                    const unsigned int weightedVertices = applyStaticRigAllBoneWeightDebugColors(
+                        *staticGeometry, skinningBones, skinningVertexInfluences, matchedBones, maxWeight);
+                    Log(Debug::Info) << "FNV/ESM4 diag: actor static rig weight debug colors actor="
+                                     << (mActor.empty() ? std::string("<unknown>") : mActor)
+                                     << " model=" << (mModel.empty() ? std::string("<unknown>") : mModel)
+                                     << " name=" << drawable.getName() << " source=" << sourceName
+                                     << " rootBone=" << rootBone << " bones=" << skinningBones.size()
+                                     << " matchedBones=" << matchedBones
+                                     << " weightedVertices=" << weightedVertices
+                                     << " maxWeight=" << maxWeight
+                                     << " runtime=runtime-supported gate=runtime-fnv-static-rig-weight-debug";
+                }
                 if (staticHand && gripDeformedVertices > 0)
                 {
                     Log(Debug::Info) << "FNV/ESM4 proof: actor static hand grip deformation active actor="
@@ -3639,6 +3686,342 @@ namespace MWRender
 
         private:
             static float clampUnit(float value) { return std::max(0.f, std::min(1.f, value)); }
+
+            static bool wantsStaticHandWeightDebug()
+            {
+                return std::getenv("OPENMW_FNV_ACTOR_PREVIEW_FINGER_WEIGHTS") != nullptr
+                    || std::getenv("OPENMW_FNV_STATIC_HAND_WEIGHT_DEBUG") != nullptr;
+            }
+
+            static bool isStaticRigAllBoneWeightSelector(std::string_view selector)
+            {
+                const std::string lowered = Misc::StringUtils::lowerCase(std::string(selector));
+                return lowered == "all" || lowered == "*" || lowered == "strongest" || lowered == "all-bones"
+                    || lowered == "bones";
+            }
+
+            static bool wantsStaticRigAllWeightDebug()
+            {
+                if (std::getenv("OPENMW_FNV_STATIC_RIG_WEIGHT_DEBUG") != nullptr)
+                    return true;
+                if (const char* selector = std::getenv("OPENMW_FNV_ACTOR_PREVIEW_WEIGHT_BONE"))
+                    return isStaticRigAllBoneWeightSelector(selector);
+                return false;
+            }
+
+            static std::string getStaticHandWeightSelector()
+            {
+                if (const char* selector = std::getenv("OPENMW_FNV_ACTOR_PREVIEW_WEIGHT_BONE"))
+                    return selector;
+                return {};
+            }
+
+            static osg::Vec4f mixStaticHandWeightColor(
+                const osg::Vec4f& low, const osg::Vec4f& high, float t)
+            {
+                t = clampUnit(t);
+                return osg::Vec4f(low.r() * (1.f - t) + high.r() * t,
+                    low.g() * (1.f - t) + high.g() * t, low.b() * (1.f - t) + high.b() * t,
+                    low.a() * (1.f - t) + high.a() * t);
+            }
+
+            static osg::Vec4f getStaticHandFingerBoneDebugColor(std::size_t slot, float weight)
+            {
+                static const std::array<osg::Vec4f, 5> fingerColors = {
+                    osg::Vec4f(1.f, 0.38f, 0.08f, 1.f), osg::Vec4f(0.10f, 0.68f, 1.f, 1.f),
+                    osg::Vec4f(0.15f, 0.95f, 0.32f, 1.f), osg::Vec4f(0.78f, 0.34f, 1.f, 1.f),
+                    osg::Vec4f(1.f, 0.30f, 0.68f, 1.f),
+                };
+
+                const std::size_t finger = std::min<std::size_t>(fingerColors.size() - 1, slot / 3);
+                const float segmentBoost = 0.72f + 0.14f * static_cast<float>(slot % 3);
+                const osg::Vec4f base(fingerColors[finger].r() * segmentBoost,
+                    fingerColors[finger].g() * segmentBoost, fingerColors[finger].b() * segmentBoost, 1.f);
+                return mixStaticHandWeightColor(
+                    osg::Vec4f(0.03f, 0.03f, 0.035f, 1.f), base,
+                    0.25f + 0.75f * std::sqrt(clampUnit(weight)));
+            }
+
+            static osg::Vec4f getStaticRigBonePaletteColor(std::size_t index, float weight)
+            {
+                static const std::array<osg::Vec4f, 12> palette = {
+                    osg::Vec4f(0.95f, 0.18f, 0.12f, 1.f), osg::Vec4f(0.12f, 0.62f, 1.f, 1.f),
+                    osg::Vec4f(0.10f, 0.88f, 0.35f, 1.f), osg::Vec4f(0.95f, 0.78f, 0.12f, 1.f),
+                    osg::Vec4f(0.78f, 0.30f, 1.f, 1.f), osg::Vec4f(0.05f, 0.88f, 0.88f, 1.f),
+                    osg::Vec4f(1.f, 0.38f, 0.70f, 1.f), osg::Vec4f(0.98f, 0.50f, 0.10f, 1.f),
+                    osg::Vec4f(0.48f, 0.72f, 0.12f, 1.f), osg::Vec4f(0.58f, 0.48f, 1.f, 1.f),
+                    osg::Vec4f(0.92f, 0.12f, 0.46f, 1.f), osg::Vec4f(0.72f, 0.90f, 1.f, 1.f),
+                };
+
+                return mixStaticHandWeightColor(osg::Vec4f(0.035f, 0.035f, 0.04f, 1.f),
+                    palette[index % palette.size()], 0.25f + 0.75f * std::sqrt(clampUnit(weight)));
+            }
+
+            static osg::Vec4f getStaticHandAggregateWeightDebugColor(float thumb, float index, float grip)
+            {
+                const float strongest = std::max({ thumb, index, grip });
+                if (strongest <= 0.001f)
+                    return osg::Vec4f(0.08f, 0.08f, 0.08f, 1.f);
+
+                const float alpha = 0.35f + 0.65f * clampUnit(strongest);
+                if (thumb >= index && thumb >= grip)
+                    return osg::Vec4f(1.f, 0.25f, 0.05f, alpha);
+                if (index >= thumb && index >= grip)
+                    return osg::Vec4f(0.1f, 0.75f, 1.f, alpha);
+                return osg::Vec4f(0.1f, 1.f, 0.25f, alpha);
+            }
+
+            static bool parseStaticHandWeightSlotIndex(std::string_view selector, std::size_t& index)
+            {
+                if (selector.empty())
+                    return false;
+                if (selector.front() == '#')
+                    selector.remove_prefix(1);
+                if (selector.empty())
+                    return false;
+
+                std::size_t parsed = 0;
+                for (char c : selector)
+                {
+                    if (!std::isdigit(static_cast<unsigned char>(c)))
+                        return false;
+                    parsed = parsed * 10 + static_cast<std::size_t>(c - '0');
+                }
+                index = parsed;
+                return true;
+            }
+
+            static void markStaticHandFingerSlots(std::array<bool, 15>& slots, std::size_t finger)
+            {
+                if (finger >= 5)
+                    return;
+                for (std::size_t stage = 0; stage < 3; ++stage)
+                    slots[finger * 3 + stage] = true;
+            }
+
+            static bool selectStaticHandWeightSlots(std::string_view selector, std::array<bool, 15>& slots)
+            {
+                const std::string lowered = Misc::StringUtils::lowerCase(std::string(selector));
+                if (lowered.empty() || lowered == "aggregate")
+                    return false;
+
+                std::size_t index = 0;
+                if (parseStaticHandWeightSlotIndex(lowered, index))
+                {
+                    if (index < slots.size())
+                        slots[index] = true;
+                    return index < slots.size();
+                }
+
+                const std::size_t fingerPos = lowered.find("finger");
+                if (fingerPos != std::string::npos)
+                {
+                    const std::size_t digitPos = fingerPos + 6;
+                    if (digitPos + 1 < lowered.size()
+                        && std::isdigit(static_cast<unsigned char>(lowered[digitPos]))
+                        && std::isdigit(static_cast<unsigned char>(lowered[digitPos + 1])))
+                    {
+                        const std::size_t finger = static_cast<std::size_t>(lowered[digitPos] - '0');
+                        const std::size_t segment = static_cast<std::size_t>(lowered[digitPos + 1] - '0');
+                        if (finger < 5 && segment >= 1 && segment <= 3)
+                        {
+                            slots[finger * 3 + (segment - 1)] = true;
+                            return true;
+                        }
+                    }
+                }
+
+                bool matched = false;
+                if (lowered.find("thumb") != std::string::npos || lowered.find("finger0") != std::string::npos)
+                {
+                    markStaticHandFingerSlots(slots, 0);
+                    matched = true;
+                }
+                if (lowered.find("index") != std::string::npos || lowered.find("finger1") != std::string::npos)
+                {
+                    markStaticHandFingerSlots(slots, 1);
+                    matched = true;
+                }
+                if (lowered.find("middle") != std::string::npos || lowered.find("finger2") != std::string::npos)
+                {
+                    markStaticHandFingerSlots(slots, 2);
+                    matched = true;
+                }
+                if (lowered.find("ring") != std::string::npos || lowered.find("finger3") != std::string::npos)
+                {
+                    markStaticHandFingerSlots(slots, 3);
+                    matched = true;
+                }
+                if (lowered.find("pinky") != std::string::npos || lowered.find("pinkie") != std::string::npos
+                    || lowered.find("finger4") != std::string::npos)
+                {
+                    markStaticHandFingerSlots(slots, 4);
+                    matched = true;
+                }
+
+                return matched;
+            }
+
+            static unsigned int applyStaticHandWeightDebugColors(osg::Geometry& geometry,
+                const std::array<std::vector<float>, 15>& fingerBoneWeights, std::string_view selector,
+                unsigned int& matchedSlots, float& maxWeight)
+            {
+                const osg::Array* vertices = geometry.getVertexArray();
+                if (vertices == nullptr || vertices->getNumElements() == 0)
+                    return 0;
+
+                const std::size_t vertexCount = vertices->getNumElements();
+                const std::string loweredSelector = Misc::StringUtils::lowerCase(std::string(selector));
+                const bool bonePalette = loweredSelector == "all" || loweredSelector == "*"
+                    || loweredSelector == "strongest" || loweredSelector == "fingers"
+                    || loweredSelector == "finger-bones";
+                std::array<bool, 15> selectedSlots{};
+                const bool selectedBone = !bonePalette && selectStaticHandWeightSlots(loweredSelector, selectedSlots);
+
+                osg::ref_ptr<osg::Vec4Array> colors = new osg::Vec4Array;
+                colors->reserve(vertexCount);
+                std::array<bool, 15> usedSlots{};
+                std::array<bool, 3> usedGroups{};
+                unsigned int weightedVertices = 0;
+
+                auto slotWeight = [&](std::size_t slot, std::size_t vertex) -> float {
+                    if (slot >= fingerBoneWeights.size() || vertex >= fingerBoneWeights[slot].size())
+                        return 0.f;
+                    return clampUnit(fingerBoneWeights[slot][vertex]);
+                };
+
+                for (std::size_t vertex = 0; vertex < vertexCount; ++vertex)
+                {
+                    if (selectedBone)
+                    {
+                        float selectedWeight = 0.f;
+                        for (std::size_t slot = 0; slot < selectedSlots.size(); ++slot)
+                            if (selectedSlots[slot])
+                                selectedWeight = std::max(selectedWeight, slotWeight(slot, vertex));
+
+                        if (selectedWeight > 0.001f)
+                            ++weightedVertices;
+                        maxWeight = std::max(maxWeight, selectedWeight);
+                        colors->push_back(mixStaticHandWeightColor(osg::Vec4f(0.035f, 0.035f, 0.04f, 1.f),
+                            osg::Vec4f(1.f, 0.12f, 0.05f, 1.f),
+                            0.25f + 0.75f * std::sqrt(clampUnit(selectedWeight))));
+                        continue;
+                    }
+
+                    if (bonePalette)
+                    {
+                        std::size_t strongestSlot = 0;
+                        float strongestWeight = 0.f;
+                        for (std::size_t slot = 0; slot < fingerBoneWeights.size(); ++slot)
+                        {
+                            const float weight = slotWeight(slot, vertex);
+                            if (weight > strongestWeight)
+                            {
+                                strongestSlot = slot;
+                                strongestWeight = weight;
+                            }
+                        }
+
+                        if (strongestWeight > 0.001f)
+                        {
+                            ++weightedVertices;
+                            usedSlots[strongestSlot] = true;
+                        }
+                        maxWeight = std::max(maxWeight, strongestWeight);
+                        colors->push_back(getStaticHandFingerBoneDebugColor(strongestSlot, strongestWeight));
+                        continue;
+                    }
+
+                    float thumb = 0.f;
+                    float index = 0.f;
+                    float grip = 0.f;
+                    for (std::size_t slot = 0; slot < fingerBoneWeights.size(); ++slot)
+                    {
+                        const float weight = slotWeight(slot, vertex);
+                        if (slot < 3)
+                            thumb = std::max(thumb, weight);
+                        else if (slot < 6)
+                            index = std::max(index, weight);
+                        else
+                            grip = std::max(grip, weight);
+                    }
+
+                    const float strongest = std::max({ thumb, index, grip });
+                    if (strongest > 0.001f)
+                    {
+                        ++weightedVertices;
+                        if (thumb >= index && thumb >= grip)
+                            usedGroups[0] = true;
+                        else if (index >= thumb && index >= grip)
+                            usedGroups[1] = true;
+                        else
+                            usedGroups[2] = true;
+                    }
+                    maxWeight = std::max(maxWeight, strongest);
+                    colors->push_back(getStaticHandAggregateWeightDebugColor(thumb, index, grip));
+                }
+
+                if (selectedBone)
+                {
+                    for (bool selected : selectedSlots)
+                        if (selected)
+                            ++matchedSlots;
+                }
+                else if (bonePalette)
+                {
+                    for (bool used : usedSlots)
+                        if (used)
+                            ++matchedSlots;
+                }
+                else
+                {
+                    for (bool used : usedGroups)
+                        if (used)
+                            ++matchedSlots;
+                }
+
+                geometry.setColorArray(colors.get(), osg::Array::BIND_PER_VERTEX);
+                geometry.dirtyGLObjects();
+                return weightedVertices;
+            }
+
+            static unsigned int applyStaticRigAllBoneWeightDebugColors(osg::Geometry& geometry,
+                const std::vector<SceneUtil::RigGeometry::BoneInfo>& bones,
+                const std::vector<SceneUtil::RigGeometry::BoneWeights>& vertexInfluences,
+                unsigned int& matchedBones, float& maxWeight)
+            {
+                const osg::Array* vertices = geometry.getVertexArray();
+                if (vertices == nullptr || vertices->getNumElements() == 0 || bones.empty()
+                    || vertexInfluences.size() != vertices->getNumElements())
+                    return 0;
+
+                osg::ref_ptr<osg::Vec4Array> colors = new osg::Vec4Array;
+                colors->reserve(vertexInfluences.size());
+                unsigned int weightedVertices = 0;
+                for (const SceneUtil::RigGeometry::BoneWeights& influences : vertexInfluences)
+                {
+                    std::size_t strongestBone = 0;
+                    float strongestWeight = 0.f;
+                    for (const auto& [boneIndex, weight] : influences)
+                    {
+                        if (boneIndex < bones.size() && weight > strongestWeight)
+                        {
+                            strongestBone = boneIndex;
+                            strongestWeight = weight;
+                        }
+                    }
+
+                    if (strongestWeight > 0.001f)
+                        ++weightedVertices;
+                    maxWeight = std::max(maxWeight, strongestWeight);
+                    colors->push_back(getStaticRigBonePaletteColor(strongestBone, strongestWeight));
+                }
+
+                matchedBones = static_cast<unsigned int>(bones.size());
+                geometry.setColorArray(colors.get(), osg::Array::BIND_PER_VERTEX);
+                geometry.dirtyGLObjects();
+                return weightedVertices;
+            }
 
             static unsigned int applyStaticHandGripPose(osg::Geometry& geometry,
                 const std::array<std::vector<float>, 15>& fingerBoneWeights, bool leftHand, bool rightHand)
@@ -5250,6 +5633,167 @@ namespace MWRender
             }
         }
 
+        std::string makeFalloutLiveBoneControlPrefix(std::string value)
+        {
+            std::string result = "OPENMW_FNV_BONE_";
+            bool previousUnderscore = false;
+            for (char c : value)
+            {
+                const bool alnum = std::isalnum(static_cast<unsigned char>(c)) != 0;
+                if (alnum)
+                {
+                    result.push_back(static_cast<char>(std::toupper(static_cast<unsigned char>(c))));
+                    previousUnderscore = false;
+                }
+                else if (!previousUnderscore)
+                {
+                    result.push_back('_');
+                    previousUnderscore = true;
+                }
+            }
+            while (!result.empty() && result.back() == '_')
+                result.pop_back();
+            return result;
+        }
+
+        std::string makeFalloutLiveAuthoringJsonString(std::string_view value)
+        {
+            std::ostringstream stream;
+            stream << '"';
+            for (unsigned char c : value)
+            {
+                switch (c)
+                {
+                    case '"':
+                        stream << "\\\"";
+                        break;
+                    case '\\':
+                        stream << "\\\\";
+                        break;
+                    case '\b':
+                        stream << "\\b";
+                        break;
+                    case '\f':
+                        stream << "\\f";
+                        break;
+                    case '\n':
+                        stream << "\\n";
+                        break;
+                    case '\r':
+                        stream << "\\r";
+                        break;
+                    case '\t':
+                        stream << "\\t";
+                        break;
+                    default:
+                        if (c < 0x20)
+                        {
+                            stream << "\\u" << std::hex << std::setw(4) << std::setfill('0')
+                                   << static_cast<unsigned int>(c) << std::dec << std::setfill(' ');
+                        }
+                        else
+                            stream << static_cast<char>(c);
+                        break;
+                }
+            }
+            stream << '"';
+            return stream.str();
+        }
+
+        struct FalloutLiveBoneCatalogEntry
+        {
+            std::string name;
+            std::string prefix;
+            std::string kind;
+            std::string parent;
+            bool authorable = false;
+        };
+
+        std::vector<FalloutLiveBoneCatalogEntry> collectFalloutLiveBoneCatalog(
+            const Animation::NodeMap& nodeMap)
+        {
+            std::vector<FalloutLiveBoneCatalogEntry> entries;
+            entries.reserve(nodeMap.size());
+            for (const auto& [name, node] : nodeMap)
+            {
+                osg::Group* group = node.get();
+                if (group == nullptr)
+                    continue;
+
+                FalloutLiveBoneCatalogEntry entry;
+                entry.name = name;
+                entry.prefix = makeFalloutLiveBoneControlPrefix(name);
+                entry.authorable = dynamic_cast<osg::MatrixTransform*>(group) != nullptr;
+                entry.kind = dynamic_cast<osgAnimation::Bone*>(group) != nullptr
+                    ? "bone"
+                    : entry.authorable ? "matrix-transform" : "group";
+                if (osgAnimation::Bone* bone = dynamic_cast<osgAnimation::Bone*>(group))
+                {
+                    if (osgAnimation::Bone* parent = bone->getBoneParent())
+                        entry.parent = parent->getName();
+                }
+                if (entry.parent.empty() && group->getNumParents() > 0 && group->getParent(0) != nullptr)
+                    entry.parent = group->getParent(0)->getName();
+
+                entries.push_back(std::move(entry));
+            }
+
+            std::sort(entries.begin(), entries.end(),
+                [](const FalloutLiveBoneCatalogEntry& left, const FalloutLiveBoneCatalogEntry& right) {
+                    std::string leftName = left.name;
+                    std::string rightName = right.name;
+                    Misc::StringUtils::lowerCaseInPlace(leftName);
+                    Misc::StringUtils::lowerCaseInPlace(rightName);
+                    if (leftName != rightName)
+                        return leftName < rightName;
+                    return left.name < right.name;
+                });
+            return entries;
+        }
+
+        std::string makeFalloutLiveBoneCatalogFingerprint(
+            const std::vector<FalloutLiveBoneCatalogEntry>& entries, const char* target, const char* livePath)
+        {
+            std::ostringstream stream;
+            stream << "fnv-live-bone-catalog-v1\n" << (target != nullptr ? target : "") << '\n'
+                   << (livePath != nullptr ? livePath : "") << '\n' << entries.size();
+            for (const FalloutLiveBoneCatalogEntry& entry : entries)
+                stream << '\n' << entry.name << '\t' << entry.prefix << '\t' << entry.kind << '\t'
+                       << entry.authorable << '\t' << entry.parent;
+            return stream.str();
+        }
+
+        std::string makeFalloutLiveBoneCatalogJson(const std::vector<FalloutLiveBoneCatalogEntry>& entries,
+            const ESM4::Npc& traits, const MWWorld::Ptr& ptr, const char* target, const char* livePath,
+            bool proofPreview)
+        {
+            std::ostringstream stream;
+            stream << "{\"schema\":\"fnv-live-bone-catalog-v1\""
+                   << ",\"actor\":" << makeFalloutLiveAuthoringJsonString(traits.mEditorId)
+                   << ",\"ref\":" << makeFalloutLiveAuthoringJsonString(ptr.getCellRef().getRefId().toString())
+                   << ",\"target\":" << makeFalloutLiveAuthoringJsonString(target != nullptr ? target : "")
+                   << ",\"file\":" << makeFalloutLiveAuthoringJsonString(livePath != nullptr ? livePath : "")
+                   << ",\"proofPreview\":" << (proofPreview ? "true" : "false")
+                   << ",\"runtime\":\"runtime-supported\""
+                   << ",\"gate\":\"runtime-live-bone-catalog\""
+                   << ",\"boneCount\":" << entries.size()
+                   << ",\"bones\":[";
+            bool first = true;
+            for (const FalloutLiveBoneCatalogEntry& entry : entries)
+            {
+                if (!first)
+                    stream << ',';
+                first = false;
+                stream << "{\"name\":" << makeFalloutLiveAuthoringJsonString(entry.name)
+                       << ",\"prefix\":" << makeFalloutLiveAuthoringJsonString(entry.prefix)
+                       << ",\"kind\":" << makeFalloutLiveAuthoringJsonString(entry.kind)
+                       << ",\"authorable\":" << (entry.authorable ? "true" : "false")
+                       << ",\"parent\":" << makeFalloutLiveAuthoringJsonString(entry.parent) << '}';
+            }
+            stream << "]}";
+            return stream.str();
+        }
+
         const char* getFalloutLiveAuthoringFile()
         {
             const char* path = std::getenv("OPENMW_FNV_LIVE_AUTHORING_FILE");
@@ -5932,6 +6476,21 @@ namespace MWRender
                 else
                     bone->setMatrixInSkeletonSpace(posed);
             }
+        }
+
+        void syncFalloutBoneMatrixInSkeletonSpace(
+            osgAnimation::Bone& bone, std::unordered_set<osgAnimation::Bone*>& visited)
+        {
+            if (!visited.insert(&bone).second)
+                return;
+
+            if (osgAnimation::Bone* parent = bone.getBoneParent())
+            {
+                syncFalloutBoneMatrixInSkeletonSpace(*parent, visited);
+                bone.setMatrixInSkeletonSpace(bone.getMatrix() * parent->getMatrixInSkeletonSpace());
+            }
+            else
+                bone.setMatrixInSkeletonSpace(bone.getMatrix());
         }
 
         void setFalloutTransformWorldMatrix(osg::MatrixTransform& transform, const osg::Matrix& desiredWorld)
@@ -7750,6 +8309,109 @@ namespace MWRender
         }
     }
 
+    void ESM4NpcAnimation::applyLiveBoneAuthoring(const ESM4::Npc& traits)
+    {
+        const char* livePath = getFalloutLiveAuthoringFile();
+        const char* target = getFonvProofActorTarget();
+        if (livePath == nullptr || target == nullptr || target[0] == '\0' || !isFonvProofTargetActor(mPtr, traits))
+            return;
+        if (!isProofPreviewAnimation() && ++mLiveBoneAuthoringTick % 3 != 0)
+            return;
+
+        std::string content;
+        if (!readFalloutLiveAuthoringFile(livePath, content))
+            return;
+
+        const bool contentChanged = content != mLiveBoneAuthoringContent;
+        if (contentChanged)
+            mLiveBoneAuthoringContent = content;
+        unsigned int applied = 0;
+        const NodeMap& nodeMap = getNodeMap();
+        const std::vector<FalloutLiveBoneCatalogEntry> boneCatalog = collectFalloutLiveBoneCatalog(nodeMap);
+        const std::string boneCatalogFingerprint = makeFalloutLiveBoneCatalogFingerprint(boneCatalog, target, livePath);
+        if (boneCatalogFingerprint != mLiveBoneAuthoringBoneCatalogFingerprint)
+        {
+            mLiveBoneAuthoringBoneCatalogFingerprint = boneCatalogFingerprint;
+            Log(Debug::Info) << "FNV/ESM4 live authoring: bone-catalog-json "
+                             << makeFalloutLiveBoneCatalogJson(
+                                    boneCatalog, traits, mPtr, target, livePath, isProofPreviewAnimation());
+        }
+        std::vector<osgAnimation::Bone*> authoredBones;
+        for (const auto& [boneName, node] : nodeMap)
+        {
+            osg::MatrixTransform* matrixNode = dynamic_cast<osg::MatrixTransform*>(node.get());
+            if (matrixNode == nullptr)
+                continue;
+
+            const std::string prefix = makeFalloutLiveBoneControlPrefix(boneName);
+            osg::Vec3f rotation;
+            osg::Vec3f offset;
+            bool hasControl = false;
+            hasControl = readFalloutLiveAuthoringFloat(content, prefix + "_ROTATION_X", rotation.x()) || hasControl;
+            hasControl = readFalloutLiveAuthoringFloat(content, prefix + "_ROTATION_Y", rotation.y()) || hasControl;
+            hasControl = readFalloutLiveAuthoringFloat(content, prefix + "_ROTATION_Z", rotation.z()) || hasControl;
+            hasControl = readFalloutLiveAuthoringFloat(content, prefix + "_OFFSET_X", offset.x()) || hasControl;
+            hasControl = readFalloutLiveAuthoringFloat(content, prefix + "_OFFSET_Y", offset.y()) || hasControl;
+            hasControl = readFalloutLiveAuthoringFloat(content, prefix + "_OFFSET_Z", offset.z()) || hasControl;
+            if (!hasControl)
+                continue;
+
+            if (mLiveBoneAuthoringDefaultBones.insert(boneName).second)
+                mLiveBoneAuthoringDefaults[boneName] = matrixNode->getMatrix();
+            const osg::Matrixf& defaultMatrix = mLiveBoneAuthoringDefaults[boneName];
+
+            osg::Matrixf authored = defaultMatrix;
+            authored.setRotate(makeFalloutEulerAttitude(rotation) * defaultMatrix.getRotate());
+            authored.setTrans(defaultMatrix.getTrans() + offset);
+            matrixNode->setMatrix(authored);
+            matrixNode->dirtyBound();
+            if (osgAnimation::Bone* bone = dynamic_cast<osgAnimation::Bone*>(matrixNode))
+                authoredBones.push_back(bone);
+            ++applied;
+
+            if (contentChanged || mLiveBoneAuthoringFrameLogs < 8)
+            {
+                ++mLiveBoneAuthoringFrameLogs;
+                Log(Debug::Info) << "FNV/ESM4 live authoring: frame-applied bone authoring actor="
+                                 << traits.mEditorId << " ref=" << mPtr.getCellRef().getRefId()
+                                 << " target=\"" << target << "\""
+                                 << " bone=\"" << boneName << "\" prefix=" << prefix
+                                 << " file=" << livePath << " rotation=(" << rotation.x() << "," << rotation.y()
+                                 << "," << rotation.z() << ") offset=(" << offset.x() << "," << offset.y() << ","
+                                 << offset.z() << ") persistentReapply=" << !contentChanged
+                                 << " runtime=runtime-supported gate=runtime-live-bone-authoring";
+            }
+        }
+
+        if (applied > 0 && mSkeleton)
+        {
+            std::unordered_set<osgAnimation::Bone*> visitedBones;
+            for (osgAnimation::Bone* bone : authoredBones)
+                if (bone != nullptr)
+                    syncFalloutBoneMatrixInSkeletonSpace(*bone, visitedBones);
+            mSkeleton->markBoneMatriceDirty();
+            const bool updatedSceneUtilBoneMatrices = mSkeleton->updateBoneMatrices(0);
+            unsigned int forcedRigGeometryHolder = 0;
+            unsigned int refreshedRigGeometry = 0;
+            const unsigned int forcedRigGeometry
+                = forceFalloutRigGeometryUpdate(mObjectRoot.get(), forcedRigGeometryHolder, refreshedRigGeometry);
+            if (contentChanged || mLiveBoneAuthoringMeshConsumerLogs < 8)
+            {
+                ++mLiveBoneAuthoringMeshConsumerLogs;
+                Log(Debug::Info) << "FNV/ESM4 live authoring: forced mesh consumers actor=" << traits.mEditorId
+                                 << " ref=" << mPtr.getCellRef().getRefId()
+                                 << " target=\"" << target << "\""
+                                 << " appliedBones=" << applied
+                                 << " syncedBoneSkeletonSpace=" << authoredBones.size()
+                                 << " updatedSceneUtilBoneMatrices=" << updatedSceneUtilBoneMatrices
+                                 << " forcedRigGeometry=" << forcedRigGeometry
+                                 << " forcedRigGeometryHolder=" << forcedRigGeometryHolder
+                                 << " refreshedRigGeometry=" << refreshedRigGeometry
+                                 << " runtime=runtime-supported gate=runtime-live-bone-authoring-mesh-consumers";
+            }
+        }
+    }
+
     void ESM4NpcAnimation::applyLiveRuntimeActorKitSelectors()
     {
         const char* livePath = std::getenv("OPENMW_FNV_LIVE_RUNTIME_COMMAND_FILE");
@@ -8535,8 +9197,10 @@ namespace MWRender
 
     void ESM4NpcAnimation::updateFONVBoneIkDebug(const ESM4::Npc& traits)
     {
+        const bool allBoneOverlay = std::getenv("OPENMW_FNV_SHOW_ALL_BONES") != nullptr
+            || std::getenv("OPENMW_FNV_ALL_BONE_DEBUG") != nullptr;
         const bool enabled = std::getenv("OPENMW_FNV_BONE_IK_DEBUG") != nullptr
-            || std::getenv("OPENMW_FNV_SHOW_IK_BONES") != nullptr;
+            || std::getenv("OPENMW_FNV_SHOW_IK_BONES") != nullptr || allBoneOverlay;
         if (!enabled || (isProofPreviewAnimation() && !mFONVBoneIkDebugInProofPreview)
             || !isFonvProofTargetActor(mPtr, traits))
         {
@@ -8667,6 +9331,18 @@ namespace MWRender
                 continue;
             addBoneLine(*parent, *child, debugColorForBone(name));
         }
+        std::ostringstream sampledBones;
+        unsigned int sampledBoneCount = 0;
+        for (const auto& [name, node] : nodeMap)
+        {
+            if (node == nullptr)
+                continue;
+            if (sampledBoneCount > 0)
+                sampledBones << ",";
+            sampledBones << name;
+            if (++sampledBoneCount >= 16)
+                break;
+        }
         addLine("Bip01 Head", "Bip01 Spine2", bodyColor);
         addLine("Bip01 Spine2", "Bip01 L Clavicle", bodyColor);
         addLine("Bip01 Spine2", "Bip01 R Clavicle", bodyColor);
@@ -8705,6 +9381,8 @@ namespace MWRender
                              << " sample=" << mFONVBoneIkDebugFrameLogs
                              << " lineSegments=" << lineSegments
                              << " fullBoneSegments=" << fullBoneSegments
+                             << " nodeMapBones=" << nodeMap.size()
+                             << " sampledBones=\"" << sampledBones.str() << "\""
                              << " targetSegments=" << targetSegments
                              << " vertices=" << vertices->size()
                              << " targetsValid=" << mFONVWeaponIkTargetsValid
@@ -8713,6 +9391,12 @@ namespace MWRender
                              << " leftTarget=(" << mFONVWeaponIkLeftTarget.x() << ","
                              << mFONVWeaponIkLeftTarget.y() << "," << mFONVWeaponIkLeftTarget.z() << ")"
                              << " runtime=runtime-supported gate=runtime-fnv-weapon-ik-bone-overlay";
+            if (allBoneOverlay)
+                Log(Debug::Info) << "FNV/ESM4 proof: all bone debug overlay frame actor=" << traits.mEditorId
+                                 << " nodeMapBones=" << nodeMap.size()
+                                 << " fullBoneSegments=" << fullBoneSegments
+                                 << " sampledBones=\"" << sampledBones.str() << "\""
+                                 << " runtime=runtime-supported gate=runtime-fnv-all-bone-overlay";
         }
     }
 
@@ -8722,6 +9406,7 @@ namespace MWRender
         if (const ESM4::Npc* traits = MWClass::ESM4Npc::getTraitsRecord(mPtr); traits != nullptr && traits->mIsFONV)
         {
             applyFONVWeaponIk(*traits);
+            applyLiveBoneAuthoring(*traits);
             updateFONVBoneIkDebug(*traits);
             if (!mFONVActorKitProjectileProofFired && isFonvProofTargetActor(mPtr, *traits))
             {

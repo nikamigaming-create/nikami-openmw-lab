@@ -376,7 +376,7 @@ def actor_entry(row: dict[str, Any], index: int) -> dict[str, Any]:
             },
         ],
         "commands": {
-            "runtimeThreeCamera": actor_studio_command(row, "front,front-left,front-right"),
+            "runtimeThreeCamera": actor_studio_command(row, "left,right,top"),
             "runtimeFrontOnly": actor_studio_command(row, "front"),
             "neutralStage": "",
         },
@@ -544,7 +544,7 @@ def build_critical_queue(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
                     "defaultPartFocus": preset.get("defaultPartFocus", ""),
                     "defaultJobType": preset.get("defaultJobType", ""),
                     "criticalPhases": as_list(preset.get("criticalPhases")),
-                    "defaultAngles": "front,front-left,front-right",
+                    "defaultAngles": "left,right,top",
                     "reviewFocus": as_list(preset.get("reviewFocus")),
                     "targetHints": as_list(preset.get("targetHints")),
                     "reason": preset.get("reason", ""),
@@ -571,7 +571,7 @@ def build_critical_queue(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
                     "defaultPartFocus": preset.get("defaultPartFocus", ""),
                     "defaultJobType": preset.get("defaultJobType", ""),
                     "criticalPhases": as_list(preset.get("criticalPhases")),
-                    "defaultAngles": "front,front-left,front-right",
+                    "defaultAngles": "left,right,top",
                     "reviewFocus": as_list(preset.get("reviewFocus")),
                     "targetHints": as_list(preset.get("targetHints")),
                     "reason": preset.get("reason", ""),
@@ -673,7 +673,7 @@ def html_catalog(catalog: dict[str, Any]) -> dict[str, Any]:
         "commands": catalog.get("commands", {}),
         "htmlEntryMode": "thin-shell-live-api-required",
         "criticalQueue": catalog.get("criticalQueue", []),
-        "entries": [],
+        "entries": [compact_entry(entry) for entry in as_list(catalog.get("entries")) if isinstance(entry, dict)],
     }
 
 
@@ -1010,6 +1010,33 @@ function liveDefaultRotationZ(prefix) {{
 function livePrefix() {{
   return document.getElementById("liveSurfacePrefix")?.value || "OPENMW_FNV_HEADGEAR";
 }}
+function livePrefixIsBone(prefix = livePrefix()) {{
+  return String(prefix || "").startsWith("OPENMW_FNV_BONE_");
+}}
+function runtimeBoneControls() {{
+  const controls = state.runtimeAudit?.runtimeBones?.controls;
+  return Array.isArray(controls) ? controls.filter(item => item?.prefix) : [];
+}}
+function liveSurfaceOptions() {{
+  const seen = new Set();
+  const options = [];
+  const add = (value, label) => {{
+    if (!value || seen.has(value)) return;
+    seen.add(value);
+    options.push([value, label || value]);
+  }};
+  LIVE_SURFACE_PREFIXES.forEach(([value, label]) => add(value, label));
+  runtimeBoneControls().forEach(item => add(item.prefix, item.label || `Bone / ${{item.bone || item.prefix}}`));
+  return options;
+}}
+function updateLiveSurfaceOptions() {{
+  const node = document.getElementById("liveSurfacePrefix");
+  if (!node) return;
+  const current = node.value || "OPENMW_FNV_HEADGEAR";
+  const options = liveSurfaceOptions();
+  node.innerHTML = options.map(([value, label]) => `<option value="${{esc(value)}}">${{esc(label)}}</option>`).join("");
+  node.value = options.some(([value]) => value === current) ? current : (options[0]?.[0] || "");
+}}
 function liveNumber(id, fallback = 0) {{
   const value = Number(document.getElementById(id)?.value ?? fallback);
   return Number.isFinite(value) ? value : fallback;
@@ -1023,6 +1050,7 @@ function liveControlsFromInputs() {{
   controls[`${{prefix}}_ROTATION_X`] = liveNumber("liveRotationX");
   controls[`${{prefix}}_ROTATION_Y`] = liveNumber("liveRotationY");
   controls[`${{prefix}}_ROTATION_Z`] = liveNumber("liveRotationZ", liveDefaultRotationZ(prefix));
+  if (livePrefixIsBone(prefix)) return controls;
   const pivotX = document.getElementById("livePivotX")?.value;
   const pivotY = document.getElementById("livePivotY")?.value;
   const pivotZ = document.getElementById("livePivotZ")?.value;
@@ -1056,6 +1084,11 @@ function hydrateLiveInputs() {{
   setValue("livePivotOffsetZ", "PIVOT_OFFSET_Z", 0);
   const pivot = document.getElementById("livePivotMode");
   if (pivot) pivot.checked = !!controls[`${{prefix}}_PIVOT_MODE`];
+  const disablePivot = livePrefixIsBone(prefix);
+  ["livePivotX", "livePivotY", "livePivotZ", "livePivotOffsetX", "livePivotOffsetY", "livePivotOffsetZ", "livePivotMode"].forEach(id => {{
+    const node = document.getElementById(id);
+    if (node) node.disabled = disablePivot;
+  }});
 }}
 function renderLiveAuthoringState() {{
   const node = document.getElementById("liveAuthoringState");
@@ -1126,6 +1159,8 @@ function renderRuntimeAudit() {{
   const counts = audit.counts || {{}};
   const recent = audit.recent || {{}};
   const liveCommand = audit.liveRuntimeCommand || {{}};
+  const boneControls = runtimeBoneControls();
+  const bonePreview = boneControls.slice(0, 8).map(item => item.bone || item.prefix).join(", ");
   const latest = [
     ...(recent.targetSwitches || []).slice(-2),
     ...(recent.liveActorKitControls || []).slice(-3),
@@ -1133,7 +1168,9 @@ function renderRuntimeAudit() {{
     ...(recent.liveActorKitPartRebuilds || []).slice(-2),
     ...(recent.latestLiveRuntimeCommandFingerprint || []).slice(-2),
     ...(recent.actorAssemblyMatches || []).slice(-2),
-    ...(recent.liveAuthoringApplies || []).slice(-3)
+    ...(recent.liveAuthoringApplies || []).slice(-3),
+    ...(recent.liveBoneAuthoringApplies || []).slice(-4),
+    ...(recent.runtimeBoneInventory || []).slice(-3)
   ].slice(-7);
   const statusClass = audit.classification === "runtime-supported" ? "runtime-supported" : audit.classification === "known-blocked" ? "known-blocked" : "loaded-pending-runtime";
   const exactClass = liveCommand.exactFingerprintConsumed ? "runtime-supported" : "loaded-pending-runtime";
@@ -1148,8 +1185,11 @@ function renderRuntimeAudit() {{
       <span class="pill">fingerprint ${{esc(counts.latestLiveRuntimeCommandFingerprint || 0)}}</span>
       <span class="pill">assembly ${{esc(counts.actorAssemblyMatches || 0)}}</span>
       <span class="pill">knobs ${{esc(counts.liveAuthoringApplies || 0)}}</span>
+      <span class="pill">bones ${{esc(counts.liveBoneAuthoringApplies || 0)}}</span>
+      <span class="pill">bone controls ${{esc(counts.runtimeBoneControls || boneControls.length || 0)}}</span>
     </div>
     <div class="liveFile">${{esc(liveCommand.fingerprint || "no actor-kit command fingerprint")}}</div>
+    <div class="liveFile">${{esc(bonePreview || "runtime bone controls pending")}}</div>
     <div class="liveFile">${{esc(audit.openMwLog || "no OpenMW log resolved")}}</div>
     ${{latest.length ? latest.map(line => `<div class="auditLine">${{esc(line)}}</div>`).join("") : `<div class="auditLine">${{esc(audit.firstFailingGate || "waiting for runtime log consumption")}}</div>`}}
   `;
@@ -1199,6 +1239,8 @@ async function refreshRuntimeAudit() {{
   }}
   try {{
     state.runtimeAudit = await api("/nikami/runtime-audit");
+    updateLiveSurfaceOptions();
+    hydrateLiveInputs();
     renderRuntimeAudit();
   }} catch (error) {{
     addLocalEvent("runtime-audit.load.failed", {{ message: error.message || String(error) }});
@@ -1392,7 +1434,9 @@ function selectedPhases() {{
 function selectedAngles(commandKey) {{
   const value = document.getElementById("angleSelect")?.value || "";
   if (value) return value.split(",");
-  return commandKey === "runtimeFrontOnly" ? ["front"] : ["front", "front-left", "front-right"];
+  if (commandKey === "runtimeFrontOnly") return ["front"];
+  const entry = selectedEntry();
+  return entry?.domain === "gameplay" ? ["front", "front-left", "front-right"] : ["left", "right", "top"];
 }}
 function studioPayload(commandKey) {{
   const payload = {{
@@ -1759,12 +1803,12 @@ function renderControls() {{
   document.getElementById("dialogueSelect").innerHTML = ["", "mouth-open", "mouth-open-pose"].map(value => `<option value="${{esc(value)}}">${{esc(value || "none")}}</option>`).join("");
   document.getElementById("angleSelect").innerHTML = [
     ["", "default"],
-    ["front,front-left,front-right", "front + left + right"],
+    ["left,right,top", "left + right + top"],
+    ["front,front-left,front-right", "front + diagonals"],
     ["front", "front only"]
   ].map(([value, label]) => `<option value="${{esc(value)}}">${{esc(label)}}</option>`).join("");
   document.getElementById("reviewSelect").innerHTML = REVIEW_STATES.map(value => `<option value="${{esc(value)}}">${{esc(value.replace(/-/g, " "))}}</option>`).join("");
-  document.getElementById("liveSurfacePrefix").innerHTML = LIVE_SURFACE_PREFIXES
-    .map(([value, label]) => `<option value="${{esc(value)}}">${{esc(label)}}</option>`).join("");
+  updateLiveSurfaceOptions();
   document.getElementById("partChecks").innerHTML = PARTS.map(part => `<label class="check"><input type="checkbox" data-part="${{esc(part)}}" ${{state.partEnabled[part] !== false ? "checked" : ""}}> ${{esc(PART_LABELS[part] || part)}}</label>`).join("");
   document.querySelectorAll("#partChecks input").forEach(input => input.onchange = () => {{
     state.partEnabled[input.dataset.part] = input.checked;
@@ -1815,7 +1859,7 @@ function renderEvents() {{
 function renderCameras() {{
   const job = state.latestJob;
   const manifest = state.latestManifest || job?.manifest;
-  const angles = ["front", "front-left", "front-right"];
+  const angles = selectedAngles("runtimeThreeCamera");
   document.getElementById("cameraStrip").innerHTML = angles.map(angle => {{
     const item = (manifest?.cases || []).find(c => c.angle === angle) || null;
     const image = caseImageUrl(job, item);
@@ -1902,7 +1946,7 @@ function applyCriticalDefaults(item) {{
   setSelectValue("phaseSelect", item.defaultPhase || "");
   setSelectValue("partFocusSelect", item.defaultPartFocus || "");
   setSelectValue("jobTypeSelect", item.defaultJobType || "appearance");
-  setSelectValue("angleSelect", item.defaultAngles || "front,front-left,front-right");
+  setSelectValue("angleSelect", item.defaultAngles || "left,right,top");
   setSelectValue("animationSelect", item.defaultPhase && String(item.defaultPhase).startsWith("creature") ? "" : "idle");
   setSelectValue("dialogueSelect", item.id === "easy-pete" ? "mouth-open-pose" : "");
 }}
@@ -2113,7 +2157,7 @@ window.setInterval(refreshRuntimeAudit, 2500);
 """
 
 
-def html_doc(catalog: dict[str, Any]) -> str:
+def compact_html_doc(catalog: dict[str, Any]) -> str:
     data = json.dumps(html_catalog(catalog), ensure_ascii=False).replace("</", "<\\/")
     return f"""<!doctype html>
 <html lang="en">
@@ -2252,7 +2296,7 @@ label {{ display: grid; gap: 4px; color: var(--muted); }}
     </div>
 
     <div class="shots" id="shots">
-      <div class="shot">front</div><div class="shot">front-left</div><div class="shot">front-right</div>
+      <div class="shot">left</div><div class="shot">right</div><div class="shot">top</div>
     </div>
     <div id="audit" class="panel mono muted">audit pending</div>
   </section>
@@ -2268,6 +2312,31 @@ async function api(path, options = {{}}) {{
   const payload = await response.json();
   if (!response.ok) throw new Error(payload.error || response.statusText);
   return payload;
+}}
+function compactSurfaceOptions(audit = null) {{
+  const seen = new Set();
+  const options = [
+    ["OPENMW_FNV_HEADGEAR", "hat/headgear"],
+    ["OPENMW_FNV_HAIR", "hair"],
+    ["OPENMW_FNV_BEARD", "beard"],
+    ["OPENMW_FNV_EYE", "eyes"],
+    ["OPENMW_FNV_MOUTH", "mouth/teeth"]
+  ];
+  const add = (value, label) => {{
+    if (!value || seen.has(value)) return "";
+    seen.add(value);
+    return `<option value="${{esc(value)}}">${{esc(label || value)}}</option>`;
+  }};
+  const surfaceRows = options.map(([value, label]) => add(value, label));
+  const boneRows = (audit?.runtimeBones?.controls || []).map(item => add(item.prefix, item.label || `Bone / ${{item.bone || item.prefix}}`));
+  return [...surfaceRows, ...boneRows].filter(Boolean).join("");
+}}
+function updateCompactSurfaceSelect(audit = null) {{
+  const node = document.getElementById("surface");
+  if (!node) return;
+  const current = node.value || "OPENMW_FNV_HEADGEAR";
+  node.innerHTML = compactSurfaceOptions(audit);
+  if ([...node.options].some(option => option.value === current)) node.value = current;
 }}
 function csv(id) {{ return (document.getElementById(id).value || "").split(/[\\n,;]+/).map(v => v.trim()).filter(Boolean); }}
 function partsForPhase() {{
@@ -2340,6 +2409,7 @@ async function sendLive(silent = false) {{
 }}
 async function applyKnobs() {{
   const prefix = document.getElementById("surface").value;
+  const isBone = String(prefix || "").startsWith("OPENMW_FNV_BONE_");
   const controls = {{}};
   controls[`${{prefix}}_OFFSET_X`] = Number(document.getElementById("offX").value || 0);
   controls[`${{prefix}}_OFFSET_Y`] = Number(document.getElementById("offY").value || 0);
@@ -2347,13 +2417,15 @@ async function applyKnobs() {{
   controls[`${{prefix}}_ROTATION_X`] = Number(document.getElementById("rotX").value || 0);
   controls[`${{prefix}}_ROTATION_Y`] = Number(document.getElementById("rotY").value || 0);
   controls[`${{prefix}}_ROTATION_Z`] = Number(document.getElementById("rotZ").value || 0);
-  if (document.getElementById("pivotX").value !== "") controls[`${{prefix}}_PIVOT_X`] = Number(document.getElementById("pivotX").value || 0);
-  if (document.getElementById("pivotY").value !== "") controls[`${{prefix}}_PIVOT_Y`] = Number(document.getElementById("pivotY").value || 0);
-  if (document.getElementById("pivotZ").value !== "") controls[`${{prefix}}_PIVOT_Z`] = Number(document.getElementById("pivotZ").value || 0);
-  controls[`${{prefix}}_PIVOT_OFFSET_X`] = Number(document.getElementById("pivotOffsetX").value || 0);
-  controls[`${{prefix}}_PIVOT_OFFSET_Y`] = Number(document.getElementById("pivotOffsetY").value || 0);
-  controls[`${{prefix}}_PIVOT_OFFSET_Z`] = Number(document.getElementById("pivotOffsetZ").value || 0);
-  controls[`${{prefix}}_PIVOT_MODE`] = true;
+  if (!isBone) {{
+    if (document.getElementById("pivotX").value !== "") controls[`${{prefix}}_PIVOT_X`] = Number(document.getElementById("pivotX").value || 0);
+    if (document.getElementById("pivotY").value !== "") controls[`${{prefix}}_PIVOT_Y`] = Number(document.getElementById("pivotY").value || 0);
+    if (document.getElementById("pivotZ").value !== "") controls[`${{prefix}}_PIVOT_Z`] = Number(document.getElementById("pivotZ").value || 0);
+    controls[`${{prefix}}_PIVOT_OFFSET_X`] = Number(document.getElementById("pivotOffsetX").value || 0);
+    controls[`${{prefix}}_PIVOT_OFFSET_Y`] = Number(document.getElementById("pivotOffsetY").value || 0);
+    controls[`${{prefix}}_PIVOT_OFFSET_Z`] = Number(document.getElementById("pivotOffsetZ").value || 0);
+    controls[`${{prefix}}_PIVOT_MODE`] = true;
+  }}
   await api("/nikami/live-authoring", {{ method: "POST", body: JSON.stringify({{ controls }}) }});
   await refreshAudit();
 }}
@@ -2361,13 +2433,15 @@ async function refreshAudit() {{
   if (!liveAvailable()) return;
   const status = await api("/nikami/runtime-status");
   const audit = await api("/nikami/runtime-audit");
+  updateCompactSurfaceSelect(audit);
   document.getElementById("runtimeState").className = `pill ${{status.runtimeRunning ? "ok" : "bad"}}`;
   document.getElementById("runtimeState").textContent = status.runtimeRunning ? `engine pid ${{status.runtimeProcessId || ""}}` : "engine not running";
   document.getElementById("audit").textContent = JSON.stringify({{
     classification: audit.classification,
     firstFailingGate: audit.firstFailingGate,
     liveCommand: audit.liveRuntimeCommand,
-    counts: audit.counts
+    counts: audit.counts,
+    runtimeBones: audit.runtimeBones
   }}, null, 2);
 }}
 async function runShots() {{
@@ -2376,7 +2450,7 @@ async function runShots() {{
     entryId: selected.id,
     commandKey: "runtimeThreeCamera",
     phases: document.getElementById("phase").value ? [document.getElementById("phase").value] : (selected.phases || []),
-    angles: ["front", "front-left", "front-right"],
+    angles: ["left", "right", "top"],
     parts: partsForPhase(),
     propSlots: ["equipment-body", "weapon", "headgear"].filter(part => partsForPhase().includes(part)),
     partModels: csv("partModels"),
@@ -2398,6 +2472,7 @@ document.getElementById("sendLive").onclick = () => sendLive(false);
 document.getElementById("applyKnobs").onclick = applyKnobs;
 document.getElementById("refreshAudit").onclick = refreshAudit;
 document.getElementById("runShots").onclick = runShots;
+updateCompactSurfaceSelect();
 ["phase", "animation", "dialogue", "partModels", "propModels"].forEach(id => document.getElementById(id).addEventListener("change", () => sendLive(true)));
 ["offX", "offY", "offZ", "rotX", "rotY", "rotZ", "pivotX", "pivotY", "pivotZ", "pivotOffsetX", "pivotOffsetY", "pivotOffsetZ"].forEach(id => document.getElementById(id).addEventListener("input", applyKnobs));
 renderSelected();
