@@ -48,7 +48,7 @@ Untracked files to include if promoting this checkpoint:
 
 ## Latest Proof State
 
-Latest animation/build proof gate with Release build passed:
+Latest real-branch animation/build proof gate with Release build passed:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\nikami\test-fnv-live-animation-merge-gate.ps1 -BuildDir build-clean -Configuration Release -VcpkgRoot D:\code\c\FMODS\vcpkg -RunBuild -NoSound
@@ -57,24 +57,24 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\nikami\test-fnv-live
 Artifact:
 
 ```text
-D:\code\vulkanOpenMW\proof\fnv-live-animation-merge-gate\20260627_174523\merge-gate.json
+D:\code\vulkanOpenMW\proof\fnv-live-animation-merge-gate\20260627_182805\merge-gate.json
 ```
 
 Fresh live finger smoke:
 
 ```text
-D:\code\vulkanOpenMW\proof\fnv-live-finger-closeup-sweep\20260627_174644\live-finger-closeup-sweep.json
+D:\code\vulkanOpenMW\proof\fnv-live-finger-closeup-sweep\20260627_182924\live-finger-closeup-sweep.json
 ```
 
-Meaning: current dirty checkpoint still compiles in Release, `GSEasyPete` T-pose bones/weights baseline was refreshed, `Bip01 R Finger21` live finger smoke was refreshed, live rigged hand movement/weight proof is accepted by the gate, and `release-build-openmw` passes.
+Meaning: the real `nikami/fnv-vr-hands-hud` branch has committed the checkpoint, integrated `origin/main`, still compiles in Release, refreshed `GSEasyPete` T-pose bones/weights baseline, refreshed `Bip01 R Finger21` live finger smoke, accepts live rigged hand movement/weight proof, and passes `release-build-openmw`.
 
-Current merge-readiness gate after fetching `origin`:
+Current merge-readiness gate on the real merged branch:
 
 ```text
-D:\code\vulkanOpenMW\proof\fnv-live-animation-merge-gate\20260627_182438\merge-gate.json
+D:\code\vulkanOpenMW\proof\fnv-live-animation-merge-gate\20260627_182805\merge-gate.json
 ```
 
-Meaning: remote tracking is fresh, canonical branch tracking is fresh, cached refreshed T-pose/live-finger evidence passes, and the non-mutating `origin-main-merge-conflict-forecast` passes. Final merge readiness is red because `worktree-clean-for-merge-promotion` fails while this checkpoint is dirty and `origin-main-integrated` fails with `170 ahead / 2 behind`. The full refreshed build/live gate above remains the Release-build proof for this checkpoint.
+Meaning: remote tracking is fresh, canonical branch tracking is fresh, refreshed T-pose/live-finger evidence passes, Release build passes, `worktree-clean-for-merge-promotion=PASS`, and `origin-main-integrated=PASS`. The branch is `172 ahead / 0 behind` relative to `origin/main`.
 
 Throwaway merge rehearsal:
 
@@ -82,7 +82,7 @@ Throwaway merge rehearsal:
 D:\code\vulkanOpenMW\proof\scratch\fnv-live-animation-merge-sandbox-20260627_175206
 ```
 
-Meaning: the current dirty checkpoint was copied into a detached worktree, committed there as `63451d978a`, and merged with `origin/main` into `e0bf2b6fcb` with no conflicts. The no-build merge gate then passed in the sandbox:
+Meaning: the pre-merge checkpoint was copied into a detached worktree, committed there as `63451d978a`, and merged with `origin/main` into `e0bf2b6fcb` with no conflicts. The no-build merge gate then passed in the sandbox:
 
 ```text
 D:\code\vulkanOpenMW\proof\fnv-live-animation-merge-gate\20260627_175218\merge-gate.json
@@ -96,7 +96,7 @@ The same post-merge sandbox then passed the Release build gate:
 D:\code\vulkanOpenMW\proof\fnv-live-animation-merge-gate\20260627_175503\merge-gate.json
 ```
 
-That build-inclusive sandbox PASS proves the rehearsed merged state also has `release-build-openmw=PASS`. The actual branch still needs the real checkpoint commit and real `origin/main` integration.
+That build-inclusive sandbox PASS proved the rehearsed merged state also had `release-build-openmw=PASS`. The actual branch has now committed the checkpoint and integrated `origin/main`; keep the rehearsal script for future pre-merge checks.
 
 Repeatable merge rehearsal runner:
 
@@ -119,7 +119,7 @@ D:\code\vulkanOpenMW\proof\fnv-live-animation-merge-gate\20260627_182249\merge-g
 Fresh staticized T-pose bones/weights proof:
 
 ```text
-D:\code\vulkanOpenMW\proof\fnv-character-builder\20260627_174541_460_12728_53ae5264\character-builder-suite.json
+D:\code\vulkanOpenMW\proof\fnv-character-builder\20260627_182826_723_41392_86878e2e\character-builder-suite.json
 ```
 
 Meaning: actor-matched `GSEasyPete` T-pose proof, explicit all-bone overlay proof lines present, sampled live bone names logged, staticized hand weights loaded, `runtime-fnv-static-hand-weight-debug` logged with `weightedVertices=780`, and `runtime-fnv-fabric-no-twist` reported no BAD lines.
@@ -138,7 +138,7 @@ D:\code\vulkanOpenMW\proof\configs\fnv-flat-clean-live-bone-authoring-contract-2
 
 Meaning: `GSEasyPete`, `Bip01 R Finger21`, live JSON edited while OpenMW was running, selected-finger authoring logged, `RightHand:0` skinned vertex movement logged, and the actual rendered `RigGeometry` cull path emitted `live RigGeometry weight debug rig='RightHand:0'` with `weightedVertices=780`.
 
-New no-ribbon fabric guardrail in this dirty checkpoint:
+New no-ribbon fabric guardrail in this checkpoint:
 
 - `components\sceneutil\riggeometry.cpp` emits `runtime-fnv-fabric-no-twist` from the real skinned draw path.
 - The gate compares source mesh edge lengths against the current skinned frame and logs stretched/collapsed edge counts, `maxEdgeStretchRatio`, worst-edge source/skinned lengths, endpoint coordinates, endpoint bone weights, and node path.
