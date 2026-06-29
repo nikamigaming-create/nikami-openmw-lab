@@ -84,12 +84,18 @@ HEAD_SURFACE_FLOAT_SUFFIXES = (
     "PIVOT_OFFSET_X",
     "PIVOT_OFFSET_Y",
     "PIVOT_OFFSET_Z",
+    "PIVOT_DELTA_ROTATION_X",
+    "PIVOT_DELTA_ROTATION_Y",
+    "PIVOT_DELTA_ROTATION_Z",
 )
 HEAD_SURFACE_BOOL_SUFFIXES = ("PIVOT_MODE",)
 HEAD_SURFACE_CONTROL_KEYS = {
     f"{prefix}_{suffix}"
     for prefix in HEAD_SURFACE_PREFIXES
     for suffix in (*HEAD_SURFACE_FLOAT_SUFFIXES, *HEAD_SURFACE_BOOL_SUFFIXES)
+}
+DEBUG_BOOL_CONTROL_KEYS = {
+    "OPENMW_FNV_DRAW_PART_AXES",
 }
 BONE_AUTHORING_FLOAT_SUFFIXES = (
     "OFFSET_X",
@@ -101,6 +107,9 @@ BONE_AUTHORING_FLOAT_SUFFIXES = (
 )
 BONE_AUTHORING_CONTROL_RE = re.compile(
     rf"^OPENMW_FNV_BONE_[A-Z0-9_]+_({'|'.join(BONE_AUTHORING_FLOAT_SUFFIXES)})$"
+)
+HEAD_SURFACE_MODEL_CONTROL_RE = re.compile(
+    rf"^OPENMW_FNV_(?:HEADGEAR|HAIR|BROW|EYE|BEARD|MOUTH)_MESH_[A-Z0-9_]+_({'|'.join((*HEAD_SURFACE_FLOAT_SUFFIXES, *HEAD_SURFACE_BOOL_SUFFIXES))})$"
 )
 LIVE_RUNTIME_SELECTOR_FIELDS = (
     "characterBuilderPhase",
@@ -901,6 +910,26 @@ class LiveAuthoringStore:
                 } else 0.0
             for suffix in HEAD_SURFACE_BOOL_SUFFIXES:
                 controls[f"{prefix}_{suffix}"] = False
+        for prefix, rotation in {
+            "OPENMW_FNV_HAIR_MESH_HAIRMESSY01": (0.0, 0.0, -90.0),
+            "OPENMW_FNV_HAIR_MESH_HAIRBUN": (90.0, 90.0, 0.0),
+        }.items():
+            controls[f"{prefix}_OFFSET_X"] = 0.0
+            controls[f"{prefix}_OFFSET_Y"] = 0.0
+            controls[f"{prefix}_OFFSET_Z"] = 0.0
+            controls[f"{prefix}_ROTATION_X"] = rotation[0]
+            controls[f"{prefix}_ROTATION_Y"] = rotation[1]
+            controls[f"{prefix}_ROTATION_Z"] = rotation[2]
+            controls[f"{prefix}_PIVOT_X"] = 0.0
+            controls[f"{prefix}_PIVOT_Y"] = 0.0
+            controls[f"{prefix}_PIVOT_Z"] = 0.0
+            controls[f"{prefix}_PIVOT_OFFSET_X"] = 0.0
+            controls[f"{prefix}_PIVOT_OFFSET_Y"] = 0.0
+            controls[f"{prefix}_PIVOT_OFFSET_Z"] = 0.0
+            controls[f"{prefix}_PIVOT_DELTA_ROTATION_X"] = 0.0
+            controls[f"{prefix}_PIVOT_DELTA_ROTATION_Y"] = 0.0
+            controls[f"{prefix}_PIVOT_DELTA_ROTATION_Z"] = 0.0
+            controls[f"{prefix}_PIVOT_MODE"] = False
         return controls
 
     def _default_doc(self) -> dict[str, Any]:
@@ -966,14 +995,20 @@ class LiveAuthoringStore:
                 if key in {"schema", "schemaMarkers", "updatedAt", "path", "policy", "reset", "sessionId", "controls"}:
                     continue
                 is_bone_control = BONE_AUTHORING_CONTROL_RE.match(key) is not None
-                if key not in HEAD_SURFACE_CONTROL_KEYS and not is_bone_control:
+                is_model_surface_control = HEAD_SURFACE_MODEL_CONTROL_RE.match(key) is not None
+                if (
+                    key not in HEAD_SURFACE_CONTROL_KEYS
+                    and key not in DEBUG_BOOL_CONTROL_KEYS
+                    and not is_bone_control
+                    and not is_model_surface_control
+                ):
                     raise ValueError(f"unsupported live authoring control: {key}")
                 if is_bone_control:
                     try:
                         controls[key] = float(value)
                     except (TypeError, ValueError) as exc:
                         raise ValueError(f"{key} must be numeric") from exc
-                elif key.endswith("_PIVOT_MODE"):
+                elif key.endswith("_PIVOT_MODE") or key in DEBUG_BOOL_CONTROL_KEYS:
                     if not isinstance(value, bool):
                         raise ValueError(f"{key} must be boolean")
                     controls[key] = value
@@ -1029,6 +1064,7 @@ class LiveRuntimeCommandStore:
             "schemaMarkers": [
                 "runtime-live-target-switch-v1",
                 "runtime-live-actor-kit-controls-v1",
+                "runtime-live-native-screenshot-request-v1",
                 "generated-command-file-only-v1",
             ],
             "path": str(self.path),
@@ -1040,6 +1076,9 @@ class LiveRuntimeCommandStore:
             "entryId": "",
             "selectedTarget": "",
             "placedTarget": "",
+            "screenshotRequestId": "",
+            "screenshotRequestedAt": "",
+            "screenshotLabel": "",
             **{field: "" for field in LIVE_RUNTIME_SELECTOR_FIELDS},
             "selectors": {
                 "phase": "",
@@ -1060,6 +1099,7 @@ class LiveRuntimeCommandStore:
                 "noRetailPayloadBytes": True,
                 "activeCellActorSwitchOnly": True,
                 "actorKitSelectorControls": True,
+                "nativeScreenshotOnRequestOnly": True,
                 "baseNpcPreviewWhenInactive": True,
                 "baseCreaturePreviewWhenInactive": True,
                 "baseActorPreviewWhenInactive": True,
@@ -1104,6 +1144,7 @@ class LiveRuntimeCommandStore:
             for marker in [
                 "runtime-live-target-switch-v1",
                 "runtime-live-actor-kit-controls-v1",
+                "runtime-live-native-screenshot-request-v1",
                 "generated-command-file-only-v1",
             ]:
                 if marker not in markers:
@@ -1150,6 +1191,11 @@ class LiveRuntimeCommandStore:
             "rotY",
             "rotZ",
             "yawRadians",
+            "requestScreenshot",
+            "captureFrame",
+            "screenshotRequest",
+            "screenshotRequestId",
+            "screenshotLabel",
         }
         unknown = sorted(str(key) for key in payload if key not in allowed)
         if unknown:
@@ -1182,26 +1228,16 @@ class LiveRuntimeCommandStore:
                     doc.get("actorTarget"),
                 )
             else:
-                target = first_text(
-                    doc.get("runtimeTarget"),
-                    doc.get("actorTarget"),
-                    payload.get("actorTarget"),
-                    payload.get("runtimeTarget"),
-                    payload.get("target"),
-                )
                 payload_target = first_text(
                     payload.get("actorTarget"),
                     payload.get("runtimeTarget"),
                     payload.get("target"),
                 )
-                if payload_target and target and payload_target != target:
-                    doc["lastIgnoredUpdate"] = {
-                        "reason": "payload-target-does-not-match-active-target",
-                        "payloadTarget": payload_target,
-                        "activeTarget": target,
-                        "updatedAt": utc_now(),
-                    }
-                    return doc
+                target = first_text(
+                    payload_target,
+                    doc.get("runtimeTarget"),
+                    doc.get("actorTarget"),
+                )
             if not target:
                 raise ValueError("live runtime command requires actorTarget")
             if not re.fullmatch(r"[-A-Za-z0-9_:.\\ ]{1,160}", target):
@@ -1219,23 +1255,37 @@ class LiveRuntimeCommandStore:
                         values.append(selector_payload.get(alias))
                         field_present = True
                 if field in LIVE_RUNTIME_SELECTOR_LIST_FIELDS:
-                    tokens: list[str] = []
-                    for candidate in values:
-                        tokens.extend(csv_values(candidate))
-                    value = ",".join(tokens)
+                    value = ",".join(selector_csv_values(values))
                 else:
                     value = first_text(*values)
                 if value or field_present:
                     if field == "characterBuilderPhase":
                         phase_values = csv_values(value)
                         value = phase_values[0] if phase_values else value
-                    if value and not re.fullmatch(r"[-A-Za-z0-9_:.\\ /,]{0,300}", value):
+                    if value and not re.fullmatch(r"[-A-Za-z0-9_:.\\ /,]{0,2000}", value):
                         raise ValueError(f"live runtime selector {field} contains unsupported characters")
                     doc[field] = value
                     applied[field] = value
             if actor_kind != "creature" and not first_text(doc.get("actorKitAnimationSource")):
                 doc["actorKitAnimationSource"] = "hands-at-side"
                 applied["actorKitAnimationSource"] = "hands-at-side"
+            wants_screenshot = any(bool(payload.get(key)) for key in ("requestScreenshot", "captureFrame", "screenshotRequest"))
+            explicit_screenshot_id = first_text(payload.get("screenshotRequestId"))
+            if wants_screenshot or explicit_screenshot_id:
+                screenshot_request_id = explicit_screenshot_id or f"capture-{time.time_ns()}"
+                if not re.fullmatch(r"[-A-Za-z0-9_:.]{1,120}", screenshot_request_id):
+                    raise ValueError("live runtime screenshotRequestId contains unsupported characters")
+                screenshot_label = first_text(payload.get("screenshotLabel"))[:160]
+                if screenshot_label and not re.fullmatch(r"[-A-Za-z0-9_:.\\ /]{1,160}", screenshot_label):
+                    raise ValueError("live runtime screenshotLabel contains unsupported characters")
+                doc["screenshotRequestId"] = screenshot_request_id
+                doc["screenshotRequestedAt"] = utc_now()
+                doc["screenshotLabel"] = screenshot_label
+                applied["screenshotRequestId"] = screenshot_request_id
+            else:
+                doc["screenshotRequestId"] = ""
+                doc["screenshotRequestedAt"] = ""
+                doc["screenshotLabel"] = ""
             for field, aliases in {
                 "actorStageRotX": ("actorStageRotX", "stageRotX", "rotX"),
                 "actorStageRotY": ("actorStageRotY", "stageRotY", "rotY"),
@@ -1282,6 +1332,7 @@ class LiveRuntimeCommandStore:
                     "schemaMarkers": [
                         "runtime-live-target-switch-v1",
                         "runtime-live-actor-kit-controls-v1",
+                        "runtime-live-native-screenshot-request-v1",
                         "generated-command-file-only-v1",
                     ],
                     "path": str(self.path),
@@ -1300,6 +1351,7 @@ class LiveRuntimeCommandStore:
                         "noRetailPayloadBytes": True,
                         "activeCellActorSwitchOnly": True,
                         "actorKitSelectorControls": True,
+                        "nativeScreenshotOnRequestOnly": True,
                         "baseNpcPreviewWhenInactive": True,
                         "baseCreaturePreviewWhenInactive": True,
                         "baseActorPreviewWhenInactive": True,
@@ -1796,6 +1848,18 @@ def csv_values(value: Any) -> list[str]:
     return values
 
 
+def selector_csv_values(values: list[Any]) -> list[str]:
+    tokens: list[str] = []
+    seen: set[str] = set()
+    for candidate in values:
+        for token in csv_values(candidate):
+            if token in seen:
+                continue
+            seen.add(token)
+            tokens.append(token)
+    return tokens
+
+
 def live_runtime_selector_text(doc: dict[str, Any], top_level_key: str, selector_key: str, *, list_value: bool = False) -> str:
     selectors = doc.get("selectors") if isinstance(doc.get("selectors"), dict) else {}
     value = doc.get(top_level_key)
@@ -1928,7 +1992,8 @@ def snapshot_live_controls(payload: dict[str, Any], live_authoring: dict[str, An
     for key, value in controls.items():
         key_text = str(key)
         is_bone_control = BONE_AUTHORING_CONTROL_RE.match(key_text) is not None
-        if key_text not in HEAD_SURFACE_CONTROL_KEYS and not is_bone_control:
+        is_model_surface_control = HEAD_SURFACE_MODEL_CONTROL_RE.match(key_text) is not None
+        if key_text not in HEAD_SURFACE_CONTROL_KEYS and not is_bone_control and not is_model_surface_control:
             continue
         if is_bone_control:
             try:

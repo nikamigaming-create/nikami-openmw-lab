@@ -12,6 +12,8 @@ param(
     [ValidateSet("npc", "creature", "auto")]
     [string]$ActorKind = "npc",
     [int]$RunSeconds = 3600,
+    [string]$ScreenshotFrames = "",
+    [int]$ActorDumpFrame = 360,
     [string]$BootstrapCell = "FormId:0x10daeb9",
     [double]$BootstrapX = -67480,
     [double]$BootstrapY = 1500,
@@ -57,18 +59,8 @@ $LiveRuntimeCommandFile = Join-Path $RunDir "live-runtime-command.json"
 $ManifestPath = Join-Path $RunDir "live-authoring-run.json"
 New-Item -ItemType Directory -Force -Path $RunDir, $StudioDir | Out-Null
 $InitialActorKitAnimationSource = if ($ActorKind -ine "creature") { "hands-at-side" } else { "" }
-$InitialFaceOnlyPartModels = @(
-    "HeadFemale.NIF",
-    "MouthHuman.NIF",
-    "TeethLowerHuman.NIF",
-    "TeethUpperHuman.NIF",
-    "TongueHuman.NIF",
-    "EyeLeftHumanFemale.NIF",
-    "EyeRightHumanFemale.NIF",
-    "EyebrowF.NIF",
-    "HairBun.NIF"
-)
-$InitialActorKitPartModels = if ($ActorKind -ine "creature") { $InitialFaceOnlyPartModels -join "," } else { "" }
+$InitialFaceFamilyParts = @("body-skin", "head-skin", "face-organs", "hair-beard")
+$InitialActorKitParts = if ($ActorKind -ine "creature") { $InitialFaceFamilyParts -join "," } else { "" }
 
 function Quote-ProcessArgument([string]$Value) {
     if ($Value -notmatch '[\s"]') {
@@ -154,6 +146,20 @@ foreach ($prefix in @("OPENMW_FNV_HEADGEAR", "OPENMW_FNV_HAIR", "OPENMW_FNV_BROW
     $initialControls["${prefix}_ROTATION_Z"] = $defaultZ
     $initialControls["${prefix}_PIVOT_MODE"] = $false
 }
+foreach ($entry in @(
+    @{ Prefix = "OPENMW_FNV_HAIR_MESH_HAIRMESSY01"; Rotation = @(0.0, 0.0, -90.0) },
+    @{ Prefix = "OPENMW_FNV_HAIR_MESH_HAIRBUN"; Rotation = @(90.0, 90.0, 0.0) }
+)) {
+    $prefix = $entry.Prefix
+    $rotation = $entry.Rotation
+    $initialControls["${prefix}_OFFSET_X"] = 0.0
+    $initialControls["${prefix}_OFFSET_Y"] = 0.0
+    $initialControls["${prefix}_OFFSET_Z"] = 0.0
+    $initialControls["${prefix}_ROTATION_X"] = $rotation[0]
+    $initialControls["${prefix}_ROTATION_Y"] = $rotation[1]
+    $initialControls["${prefix}_ROTATION_Z"] = $rotation[2]
+    $initialControls["${prefix}_PIVOT_MODE"] = $false
+}
 foreach ($prefix in @(
     "OPENMW_FNV_BONE_BIP01_R_HAND",
     "OPENMW_FNV_BONE_BIP01_L_HAND",
@@ -209,12 +215,12 @@ foreach ($prefix in @(
     actorKind = $ActorKind
     entryId = ""
     command = "update-actor-kit"
-    actorKitParts = ""
-    actorKitPartModels = $InitialActorKitPartModels
+    actorKitParts = $InitialActorKitParts
+    actorKitPartModels = ""
     actorKitAnimationSource = $InitialActorKitAnimationSource
     selectors = [pscustomobject][ordered]@{
-        parts = @()
-        partModels = if ($ActorKind -ine "creature") { $InitialFaceOnlyPartModels } else { @() }
+        parts = if ($ActorKind -ine "creature") { $InitialFaceFamilyParts } else { @() }
+        partModels = @()
         animationSource = $InitialActorKitAnimationSource
     }
     policy = [pscustomobject][ordered]@{
@@ -257,6 +263,7 @@ Add-Arg $runtimeArgs "-Triplet" $Triplet
 Add-Arg $runtimeArgs "-ProofRoot" $ProofRoot
 Add-Arg $runtimeArgs "-RuntimeTag" $RuntimeTag
 Add-Arg $runtimeArgs "-RunSeconds" $RunSeconds
+Add-Arg $runtimeArgs "-ScreenshotFrames" $ScreenshotFrames
 Add-Arg $runtimeArgs "-BootstrapCell" $BootstrapCell
 Add-Arg $runtimeArgs "-BootstrapX" $BootstrapX
 Add-Arg $runtimeArgs "-BootstrapY" $BootstrapY
@@ -267,6 +274,7 @@ Add-Arg $runtimeArgs "-BootstrapRotZ" $BootstrapRotZ
 Add-Arg $runtimeArgs "-BootstrapHour" $BootstrapHour
 Add-Arg $runtimeArgs "-ActorTarget" $ActorTarget
 Add-Arg $runtimeArgs "-ActorKind" $ActorKind
+Add-Arg $runtimeArgs "-ActorDumpFrame" $ActorDumpFrame
 $runtimeArgs.Add("-StageActor")
 $runtimeArgs.Add("-NeutralActorPreview")
 if ($ActorKind -ine "creature") {
@@ -325,24 +333,55 @@ label{display:inline-flex;align-items:center;gap:6px;margin:4px 10px 4px 0}
 pre{white-space:pre-wrap;border:1px solid #bbb;padding:12px;min-height:240px}
 button,input{font:inherit;margin:4px}
 button{min-width:84px}
+.panel{border:1px solid #bbb;padding:12px;margin:12px 0}
+.snaprow{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:6px 0}
+.snaprow b{min-width:70px}
+.snaprow input[type=text]{width:360px;max-width:100%}
+.pill{display:inline-block;border:1px solid #aaa;border-radius:999px;padding:3px 8px;margin:2px}
 </style>
 <h1>FNV Live Runtime</h1>
 <p><a href="/nikami/health">health</a> <a href="/nikami/runtime-status">status</a> <a href="/nikami/runtime-audit">audit</a> <a href="/nikami/live-authoring">authoring</a> <a href="/nikami/live-runtime">runtime</a></p>
 <p><label>actor <input id="actor" value="GSSunnySmiles"></label><button onclick="setActor()">set actor</button><button onclick="refresh()">refresh</button></p>
 <p><label>yaw <input id="yaw" type="number" step="0.01" value="1.5708"></label><label>rate <input id="rate" type="number" step="0.05" value="1.40"></label><button onclick="applyYaw()">apply yaw</button><button onclick="startSpin()">spin</button><button onclick="stopSpin()">stop</button></p>
+<div class="panel">
+  <div class="snaprow"><b>part</b><input id="surfacePrefix" type="text" value="OPENMW_FNV_HAIR_MESH_HAIRRAIDERMID"><button onclick="loadAuthoring()">load</button><button onclick="setPrefix('OPENMW_FNV_HAIR_MESH_HAIRRAIDERMID')">raider mid</button><button onclick="setPrefix('OPENMW_FNV_HAIR_MESH_HAIRBUN')">hair bun</button><label><input id="drawAxes" type="checkbox" onchange="setAxes()"> axes</label></div>
+  <div class="snaprow"><b>origin</b><button onclick="setOrigin('head')">head origin</button><button onclick="setOrigin('part')">part pivot</button><button onclick="resetOrigin()">reset origin</button><span id="originState" class="pill">origin pending</span></div>
+  <div class="snaprow" id="snapX"><b>snap X</b></div>
+  <div class="snaprow" id="snapY"><b>snap Y</b></div>
+  <div class="snaprow" id="snapZ"><b>snap Z</b></div>
+  <div class="snaprow"><b>nudge X</b><button onclick="nudgeOrigin('X',-1)">-1</button><button onclick="nudgeOrigin('X',-0.25)">-.25</button><button onclick="nudgeOrigin('X',0.25)">+.25</button><button onclick="nudgeOrigin('X',1)">+1</button></div>
+  <div class="snaprow"><b>nudge Y</b><button onclick="nudgeOrigin('Y',-1)">-1</button><button onclick="nudgeOrigin('Y',-0.25)">-.25</button><button onclick="nudgeOrigin('Y',0.25)">+.25</button><button onclick="nudgeOrigin('Y',1)">+1</button></div>
+  <div class="snaprow"><b>nudge Z</b><button onclick="nudgeOrigin('Z',-1)">-1</button><button onclick="nudgeOrigin('Z',-0.25)">-.25</button><button onclick="nudgeOrigin('Z',0.25)">+.25</button><button onclick="nudgeOrigin('Z',1)">+1</button></div>
+  <div class="snaprow"><b>snap state</b><span id="snapState" class="pill">not loaded</span></div>
+</div>
 <pre id="out"></pre>
 <script>
 let spinTimer=null,spinStart=0,spinBase=1.5708;
+let authoring=null;
 async function j(u,o){let r=await fetch(u,o);return await r.json()}
-    const faceOnlyPartModels=["HeadFemale.NIF","MouthHuman.NIF","TeethLowerHuman.NIF","TeethUpperHuman.NIF","TongueHuman.NIF","EyeLeftHumanFemale.NIF","EyeRightHumanFemale.NIF","EyebrowF.NIF","HairBun.NIF"];
-    function actorPayload(extra){return Object.assign({actorTarget:actor.value,runtimeTarget:actor.value,actorKind:"npc",command:"update-actor-kit",actorKitParts:"",actorKitPartModels:faceOnlyPartModels.join(","),selectors:{parts:[],partModels:faceOnlyPartModels,animationSource:"hands-at-side"}},extra||{})}
+    const faceFamilyParts=["body-skin","head-skin","face-organs","hair-beard"];
+    function actorPayload(extra){return Object.assign({actorTarget:actor.value,runtimeTarget:actor.value,actorKind:"npc",command:"update-actor-kit",actorKitParts:faceFamilyParts.join(","),actorKitPartModels:"",selectors:{parts:faceFamilyParts,partModels:[],animationSource:"hands-at-side"}},extra||{})}
 async function postRuntime(extra){let doc=await j("/nikami/live-runtime",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(actorPayload(extra))});out.textContent=JSON.stringify(doc,null,2);return doc}
 async function refresh(){out.textContent=JSON.stringify({health:await j("/nikami/health"),status:await j("/nikami/runtime-status"),audit:await j("/nikami/runtime-audit"),runtime:await j("/nikami/live-runtime")},null,2)}
 async function setActor(){await postRuntime({command:"set-actor-target"});setTimeout(refresh,500)}
 async function applyYaw(){spinBase=parseFloat(yaw.value)||1.5708;await postRuntime({actorStageRotZ:spinBase});setTimeout(refresh,250)}
 function startSpin(){stopSpin();spinBase=parseFloat(yaw.value)||1.5708;spinStart=performance.now();spinTimer=setInterval(async()=>{let z=spinBase+((performance.now()-spinStart)/1000)*(parseFloat(rate.value)||1.4);yaw.value=z.toFixed(4);await postRuntime({actorStageRotZ:z})},120)}
 function stopSpin(){if(spinTimer){clearInterval(spinTimer);spinTimer=null}}
-refresh()
+function key(suffix){return surfacePrefix.value+"_"+suffix}
+function num(suffix){let v=Number(authoring?.controls?.[key(suffix)]);return Number.isFinite(v)?v:0}
+function bool(suffix){return authoring?.controls?.[key(suffix)]===true}
+function setPrefix(value){surfacePrefix.value=value;loadAuthoring()}
+async function loadAuthoring(){authoring=await j("/nikami/live-authoring");drawAxes.checked=authoring.controls?.OPENMW_FNV_DRAW_PART_AXES===true;renderSnapState();out.textContent=JSON.stringify(authoring,null,2)}
+async function postAuthoring(controls){authoring=await j("/nikami/live-authoring",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({controls})});renderSnapState();out.textContent=JSON.stringify(authoring.lastApplied||controls,null,2);return authoring}
+function renderSnapButtons(axis){let node=document.getElementById("snap"+axis);node.innerHTML="<b>snap "+axis+"</b>"+[-180,-90,0,90,180].map(v=>`<button onclick="snap('${axis}',${v})">${v}</button>`).join("")}
+function renderSnapState(){snapState.textContent=`dx ${num("PIVOT_DELTA_ROTATION_X")} / dy ${num("PIVOT_DELTA_ROTATION_Y")} / dz ${num("PIVOT_DELTA_ROTATION_Z")}`;originState.textContent=`${bool("PIVOT_MODE")?"part/custom pivot":"head origin"} ox ${num("PIVOT_OFFSET_X").toFixed(2)} oy ${num("PIVOT_OFFSET_Y").toFixed(2)} oz ${num("PIVOT_OFFSET_Z").toFixed(2)}`}
+async function snap(axis,value){let c={};c[key("PIVOT_DELTA_ROTATION_X")]=axis==="X"?value:0;c[key("PIVOT_DELTA_ROTATION_Y")]=axis==="Y"?value:0;c[key("PIVOT_DELTA_ROTATION_Z")]=axis==="Z"?value:0;await postAuthoring(c)}
+async function setOrigin(mode){let c={};c[key("PIVOT_MODE")]=mode==="part";c[key("PIVOT_OFFSET_X")]=0;c[key("PIVOT_OFFSET_Y")]=0;c[key("PIVOT_OFFSET_Z")]=0;await postAuthoring(c)}
+async function resetOrigin(){await setOrigin("head")}
+async function nudgeOrigin(axis,delta){let suffix="PIVOT_OFFSET_"+axis;let c={};c[key("PIVOT_MODE")]=true;c[key(suffix)]=num(suffix)+delta;await postAuthoring(c)}
+async function setAxes(){await postAuthoring({OPENMW_FNV_DRAW_PART_AXES:drawAxes.checked})}
+renderSnapButtons("X");renderSnapButtons("Y");renderSnapButtons("Z");
+refresh();loadAuthoring();
     </script>
 '@ |
         Set-Content -LiteralPath $StudioHtml -Encoding UTF8
@@ -399,6 +438,7 @@ $manifest = [pscustomobject][ordered]@{
     runtimeStderr = $RuntimeStderr
     runtimeCommand = $RuntimeCommand
     runtimeTag = $RuntimeTag
+    screenshotFrames = $ScreenshotFrames
     actorKitAnimationSource = $InitialActorKitAnimationSource
     target = [pscustomobject][ordered]@{
         actorTarget = $ActorTarget

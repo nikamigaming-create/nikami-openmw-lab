@@ -751,8 +751,11 @@ button:disabled {{ opacity: .45; cursor: not-allowed; }}
 .reviewRow .proofLinks {{ grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 5px; color: var(--muted); }}
 .liveAuthoringPanel {{ border: 1px solid #334154; border-radius: 6px; padding: 8px; display: grid; gap: 7px; background: #0e1218; }}
 .knobGrid {{ display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }}
-.knobGrid label {{ display: grid; gap: 3px; color: var(--muted); font-size: 12px; }}
+.knobGrid label {{ display: grid; grid-template-columns: 74px minmax(62px, .62fr) minmax(118px, 1fr); gap: 5px; align-items: center; color: var(--muted); font-size: 12px; }}
 .knobGrid input {{ width: 100%; box-sizing: border-box; }}
+.knobGrid input[type="range"] {{ min-width: 118px; }}
+.snapRow {{ display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }}
+.snapRow b {{ min-width: 76px; }}
 .liveFile {{ font-family: Consolas, monospace; font-size: 11px; color: var(--muted); overflow-wrap: anywhere; }}
 .runtimeStatus {{ display: grid; gap: 4px; padding: 8px; border: 1px solid var(--line); border-radius: 6px; background: #0d1117; }}
 .runtimeStatus .runtimeLine {{ display: flex; flex-wrap: wrap; gap: 6px; align-items: center; color: var(--muted); }}
@@ -816,18 +819,31 @@ button:disabled {{ opacity: .45; cursor: not-allowed; }}
           <label class="check"><input id="livePivotMode" type="checkbox"> Pivot</label>
         </div>
         <div class="knobGrid">
-          <label>Off X<input id="liveOffsetX" type="number" step="0.05" value="0"></label>
-          <label>Off Y<input id="liveOffsetY" type="number" step="0.05" value="0"></label>
-          <label>Off Z<input id="liveOffsetZ" type="number" step="0.05" value="0"></label>
-          <label>Rot X<input id="liveRotationX" type="number" step="1" value="0"></label>
-          <label>Rot Y<input id="liveRotationY" type="number" step="1" value="0"></label>
-          <label>Rot Z<input id="liveRotationZ" type="number" step="1" value="0"></label>
-          <label>Pivot X<input id="livePivotX" type="number" step="0.05" placeholder="bounds"></label>
-          <label>Pivot Y<input id="livePivotY" type="number" step="0.05" placeholder="bounds"></label>
-          <label>Pivot Z<input id="livePivotZ" type="number" step="0.05" placeholder="bounds"></label>
-          <label>Pivot dX<input id="livePivotOffsetX" type="number" step="0.05" value="0"></label>
-          <label>Pivot dY<input id="livePivotOffsetY" type="number" step="0.05" value="0"></label>
-          <label>Pivot dZ<input id="livePivotOffsetZ" type="number" step="0.05" value="0"></label>
+          <label><span>Off X</span><input id="liveOffsetX" type="number" step="0.05" value="0"><input id="liveOffsetXSlider" type="range" min="-50" max="50" step="0.05" value="0"></label>
+          <label><span>Off Y</span><input id="liveOffsetY" type="number" step="0.05" value="0"><input id="liveOffsetYSlider" type="range" min="-50" max="50" step="0.05" value="0"></label>
+          <label><span>Off Z</span><input id="liveOffsetZ" type="number" step="0.05" value="0"><input id="liveOffsetZSlider" type="range" min="-50" max="50" step="0.05" value="0"></label>
+          <label><span>Rot X</span><input id="liveRotationX" type="number" step="1" value="0"><input id="liveRotationXSlider" type="range" min="-360" max="360" step="1" value="0"></label>
+          <label><span>Rot Y</span><input id="liveRotationY" type="number" step="1" value="0"><input id="liveRotationYSlider" type="range" min="-360" max="360" step="1" value="0"></label>
+          <label><span>Rot Z</span><input id="liveRotationZ" type="number" step="1" value="0"><input id="liveRotationZSlider" type="range" min="-360" max="360" step="1" value="0"></label>
+          <label><span>Pivot X</span><input id="livePivotX" type="number" step="0.05" placeholder="bounds"><input id="livePivotXSlider" type="range" min="-50" max="50" step="0.05" value="0"></label>
+          <label><span>Pivot Y</span><input id="livePivotY" type="number" step="0.05" placeholder="bounds"><input id="livePivotYSlider" type="range" min="-50" max="50" step="0.05" value="0"></label>
+          <label><span>Pivot Z</span><input id="livePivotZ" type="number" step="0.05" placeholder="bounds"><input id="livePivotZSlider" type="range" min="-50" max="50" step="0.05" value="0"></label>
+          <label><span>Pivot dX</span><input id="livePivotOffsetX" type="number" step="0.05" value="0"><input id="livePivotOffsetXSlider" type="range" min="-50" max="50" step="0.05" value="0"></label>
+          <label><span>Pivot dY</span><input id="livePivotOffsetY" type="number" step="0.05" value="0"><input id="livePivotOffsetYSlider" type="range" min="-50" max="50" step="0.05" value="0"></label>
+          <label><span>Pivot dZ</span><input id="livePivotOffsetZ" type="number" step="0.05" value="0"><input id="livePivotOffsetZSlider" type="range" min="-50" max="50" step="0.05" value="0"></label>
+          <label><span>Snap X</span><input id="livePivotDeltaX" type="number" step="1" value="0"><input id="livePivotDeltaXSlider" type="range" min="-180" max="180" step="1" value="0"></label>
+          <label><span>Snap Y</span><input id="livePivotDeltaY" type="number" step="1" value="0"><input id="livePivotDeltaYSlider" type="range" min="-180" max="180" step="1" value="0"></label>
+          <label><span>Snap Z</span><input id="livePivotDeltaZ" type="number" step="1" value="0"><input id="livePivotDeltaZSlider" type="range" min="-180" max="180" step="1" value="0"></label>
+        </div>
+        <div class="snapRow">
+          <b>Origin</b>
+          <button id="liveOriginHead" type="button">Head Origin</button>
+          <button id="liveOriginPart" type="button">Part Pivot</button>
+          <button id="liveOriginReset" type="button">Reset Origin</button>
+          <label class="check"><input id="liveDrawAxes" type="checkbox"> Axes</label>
+        </div>
+        <div class="snapRow" id="liveSnapButtons">
+          <b>Snaps</b>
         </div>
         <div class="actions">
           <button id="applyLiveAuthoring" type="button">Apply Live</button>
@@ -948,6 +964,23 @@ const LIVE_SURFACE_PREFIXES = [
   ["OPENMW_FNV_BEARD", "Beard"],
   ["OPENMW_FNV_MOUTH", "Mouth / Teeth / Tongue"]
 ];
+const LIVE_KNOBS = [
+  ["liveOffsetX", "OFFSET_X", 0, false],
+  ["liveOffsetY", "OFFSET_Y", 0, false],
+  ["liveOffsetZ", "OFFSET_Z", 0, false],
+  ["liveRotationX", "ROTATION_X", 0, false],
+  ["liveRotationY", "ROTATION_Y", 0, false],
+  ["liveRotationZ", "ROTATION_Z", 0, false],
+  ["livePivotX", "PIVOT_X", "", true],
+  ["livePivotY", "PIVOT_Y", "", true],
+  ["livePivotZ", "PIVOT_Z", "", true],
+  ["livePivotOffsetX", "PIVOT_OFFSET_X", 0, true],
+  ["livePivotOffsetY", "PIVOT_OFFSET_Y", 0, true],
+  ["livePivotOffsetZ", "PIVOT_OFFSET_Z", 0, true],
+  ["livePivotDeltaX", "PIVOT_DELTA_ROTATION_X", 0, true],
+  ["livePivotDeltaY", "PIVOT_DELTA_ROTATION_Y", 0, true],
+  ["livePivotDeltaZ", "PIVOT_DELTA_ROTATION_Z", 0, true]
+];
 const state = {{
   query: "",
   domain: "",
@@ -1005,10 +1038,10 @@ async function api(path, options = {{}}) {{
   return payload;
 }}
 function liveDefaultRotationX(prefix) {{
-  return prefix === "OPENMW_FNV_HAIR" ? 90 : 0;
+  return String(prefix || "").startsWith("OPENMW_FNV_HAIR") ? 90 : 0;
 }}
 function liveDefaultRotationY(prefix) {{
-  return prefix === "OPENMW_FNV_HAIR" ? 90 : 0;
+  return String(prefix || "").startsWith("OPENMW_FNV_HAIR") ? 90 : 0;
 }}
 function liveDefaultRotationZ(prefix) {{
   return ["OPENMW_FNV_BROW", "OPENMW_FNV_EYE", "OPENMW_FNV_BEARD", "OPENMW_FNV_MOUTH"].includes(prefix) ? -90 : 0;
@@ -1018,6 +1051,16 @@ function livePrefix() {{
 }}
 function livePrefixIsBone(prefix = livePrefix()) {{
   return String(prefix || "").startsWith("OPENMW_FNV_BONE_");
+}}
+function liveSurfacePrefixFromControlKey(key) {{
+  for (const [, suffix] of LIVE_KNOBS) {{
+    const tail = "_" + suffix;
+    if (String(key || "").endsWith(tail)) {{
+      const prefix = String(key).slice(0, -tail.length);
+      if (/^OPENMW_FNV_(HEADGEAR|HAIR|BROW|EYE|BEARD|MOUTH)(?:_MESH_[A-Z0-9_]+)?$/.test(prefix)) return prefix;
+    }}
+  }}
+  return "";
 }}
 function runtimeBoneControls() {{
   const controls = state.runtimeAudit?.runtimeBones?.controls;
@@ -1032,6 +1075,11 @@ function liveSurfaceOptions() {{
     options.push([value, label || value]);
   }};
   LIVE_SURFACE_PREFIXES.forEach(([value, label]) => add(value, label));
+  Object.keys(state.liveAuthoring?.controls || {{}})
+    .map(liveSurfacePrefixFromControlKey)
+    .filter(Boolean)
+    .sort((a, b) => a.localeCompare(b))
+    .forEach(value => add(value, value.replace("OPENMW_FNV_", "").replace(/_/g, " ")));
   runtimeBoneControls().forEach(item => add(item.prefix, item.label || `Bone / ${{item.bone || item.prefix}}`));
   return options;
 }}
@@ -1047,51 +1095,52 @@ function liveNumber(id, fallback = 0) {{
   const value = Number(document.getElementById(id)?.value ?? fallback);
   return Number.isFinite(value) ? value : fallback;
 }}
+function liveKnobFallback(id, prefix) {{
+  if (id === "liveRotationX") return liveDefaultRotationX(prefix);
+  if (id === "liveRotationY") return liveDefaultRotationY(prefix);
+  if (id === "liveRotationZ") return liveDefaultRotationZ(prefix);
+  const knob = LIVE_KNOBS.find(([knobId]) => knobId === id);
+  return knob ? knob[2] : 0;
+}}
+function setLiveKnobValue(id, value) {{
+  const node = document.getElementById(id);
+  const slider = document.getElementById(`${{id}}Slider`);
+  if (node) node.value = value;
+  if (slider && value !== "") slider.value = value;
+}}
 function liveControlsFromInputs() {{
   const prefix = livePrefix();
   const controls = {{}};
-  controls[`${{prefix}}_OFFSET_X`] = liveNumber("liveOffsetX");
-  controls[`${{prefix}}_OFFSET_Y`] = liveNumber("liveOffsetY");
-  controls[`${{prefix}}_OFFSET_Z`] = liveNumber("liveOffsetZ");
-  controls[`${{prefix}}_ROTATION_X`] = liveNumber("liveRotationX", liveDefaultRotationX(prefix));
-  controls[`${{prefix}}_ROTATION_Y`] = liveNumber("liveRotationY", liveDefaultRotationY(prefix));
-  controls[`${{prefix}}_ROTATION_Z`] = liveNumber("liveRotationZ", liveDefaultRotationZ(prefix));
-  if (livePrefixIsBone(prefix)) return controls;
-  const pivotX = document.getElementById("livePivotX")?.value;
-  const pivotY = document.getElementById("livePivotY")?.value;
-  const pivotZ = document.getElementById("livePivotZ")?.value;
-  if (pivotX !== "") controls[`${{prefix}}_PIVOT_X`] = liveNumber("livePivotX");
-  if (pivotY !== "") controls[`${{prefix}}_PIVOT_Y`] = liveNumber("livePivotY");
-  if (pivotZ !== "") controls[`${{prefix}}_PIVOT_Z`] = liveNumber("livePivotZ");
-  controls[`${{prefix}}_PIVOT_OFFSET_X`] = liveNumber("livePivotOffsetX");
-  controls[`${{prefix}}_PIVOT_OFFSET_Y`] = liveNumber("livePivotOffsetY");
-  controls[`${{prefix}}_PIVOT_OFFSET_Z`] = liveNumber("livePivotOffsetZ");
-  controls[`${{prefix}}_PIVOT_MODE`] = !!document.getElementById("livePivotMode")?.checked;
+  for (const [id, suffix, fallback, surfaceOnly] of LIVE_KNOBS) {{
+    if (surfaceOnly && livePrefixIsBone(prefix)) continue;
+    const raw = document.getElementById(id)?.value;
+    if (raw === "" && suffix.startsWith("PIVOT_") && !suffix.startsWith("PIVOT_DELTA")) continue;
+    controls[`${{prefix}}_${{suffix}}`] = liveNumber(id, liveKnobFallback(id, prefix));
+  }}
+  if (!livePrefixIsBone(prefix))
+    controls[`${{prefix}}_PIVOT_MODE`] = !!document.getElementById("livePivotMode")?.checked;
   return controls;
 }}
 function hydrateLiveInputs() {{
   const prefix = livePrefix();
   const controls = state.liveAuthoring?.controls || {{}};
   const setValue = (id, key, fallback) => {{
-    const node = document.getElementById(id);
-    if (node) node.value = controls[`${{prefix}}_${{key}}`] ?? fallback;
+    setLiveKnobValue(id, controls[`${{prefix}}_${{key}}`] ?? fallback);
   }};
-  setValue("liveOffsetX", "OFFSET_X", 0);
-  setValue("liveOffsetY", "OFFSET_Y", 0);
-  setValue("liveOffsetZ", "OFFSET_Z", 0);
-  setValue("liveRotationX", "ROTATION_X", liveDefaultRotationX(prefix));
-  setValue("liveRotationY", "ROTATION_Y", liveDefaultRotationY(prefix));
-  setValue("liveRotationZ", "ROTATION_Z", liveDefaultRotationZ(prefix));
-  setValue("livePivotX", "PIVOT_X", "");
-  setValue("livePivotY", "PIVOT_Y", "");
-  setValue("livePivotZ", "PIVOT_Z", "");
-  setValue("livePivotOffsetX", "PIVOT_OFFSET_X", 0);
-  setValue("livePivotOffsetY", "PIVOT_OFFSET_Y", 0);
-  setValue("livePivotOffsetZ", "PIVOT_OFFSET_Z", 0);
+  for (const [id, suffix] of LIVE_KNOBS)
+    setValue(id, suffix, liveKnobFallback(id, prefix));
   const pivot = document.getElementById("livePivotMode");
   if (pivot) pivot.checked = !!controls[`${{prefix}}_PIVOT_MODE`];
+  const axes = document.getElementById("liveDrawAxes");
+  if (axes) axes.checked = controls.OPENMW_FNV_DRAW_PART_AXES === true;
   const disablePivot = livePrefixIsBone(prefix);
-  ["livePivotX", "livePivotY", "livePivotZ", "livePivotOffsetX", "livePivotOffsetY", "livePivotOffsetZ", "livePivotMode"].forEach(id => {{
+  LIVE_KNOBS.filter(([, , , surfaceOnly]) => surfaceOnly).forEach(([id]) => {{
+    const node = document.getElementById(id);
+    const slider = document.getElementById(`${{id}}Slider`);
+    if (node) node.disabled = disablePivot;
+    if (slider) slider.disabled = disablePivot;
+  }});
+  ["livePivotMode", "liveOriginHead", "liveOriginPart", "liveOriginReset"].forEach(id => {{
     const node = document.getElementById(id);
     if (node) node.disabled = disablePivot;
   }});
@@ -1274,6 +1323,57 @@ async function writeLiveAuthoring(reset = false) {{
     addLocalEvent("live-authoring.write.failed", {{ message: error.message || String(error) }});
   }}
 }}
+async function applyLiveAuthoringControls(controls, eventName = "live-authoring.control") {{
+  if (!liveAvailable()) return;
+  try {{
+    state.liveAuthoring = await api("/nikami/live-authoring", {{
+      method: "POST",
+      body: JSON.stringify({{ sessionId: state.session?.id || "", controls }})
+    }});
+    state.liveAuthoringDirty = false;
+    hydrateLiveInputs();
+    renderLiveAuthoringState();
+    addLocalEvent(eventName, {{
+      path: state.liveAuthoring.path,
+      controls: state.liveAuthoring.lastApplied || controls
+    }});
+    window.setTimeout(refreshRuntimeAudit, 500);
+  }} catch (error) {{
+    addLocalEvent(`${{eventName}}.failed`, {{ message: error.message || String(error), controls }});
+  }}
+}}
+function liveControlKey(suffix) {{
+  return `${{livePrefix()}}_${{suffix}}`;
+}}
+function applyLiveSnap(axis, value) {{
+  const controls = {{}};
+  controls[liveControlKey("PIVOT_DELTA_ROTATION_X")] = axis === "X" ? value : 0;
+  controls[liveControlKey("PIVOT_DELTA_ROTATION_Y")] = axis === "Y" ? value : 0;
+  controls[liveControlKey("PIVOT_DELTA_ROTATION_Z")] = axis === "Z" ? value : 0;
+  applyLiveAuthoringControls(controls, "live-authoring.snap");
+}}
+function setLiveOrigin(mode) {{
+  const controls = {{}};
+  controls[liveControlKey("PIVOT_MODE")] = mode === "part";
+  controls[liveControlKey("PIVOT_OFFSET_X")] = 0;
+  controls[liveControlKey("PIVOT_OFFSET_Y")] = 0;
+  controls[liveControlKey("PIVOT_OFFSET_Z")] = 0;
+  applyLiveAuthoringControls(controls, "live-authoring.origin");
+}}
+function resetLiveOriginAndSnaps() {{
+  const controls = {{}};
+  controls[liveControlKey("PIVOT_MODE")] = false;
+  controls[liveControlKey("PIVOT_OFFSET_X")] = 0;
+  controls[liveControlKey("PIVOT_OFFSET_Y")] = 0;
+  controls[liveControlKey("PIVOT_OFFSET_Z")] = 0;
+  controls[liveControlKey("PIVOT_DELTA_ROTATION_X")] = 0;
+  controls[liveControlKey("PIVOT_DELTA_ROTATION_Y")] = 0;
+  controls[liveControlKey("PIVOT_DELTA_ROTATION_Z")] = 0;
+  applyLiveAuthoringControls(controls, "live-authoring.origin-reset");
+}}
+function setLiveAxes(enabled) {{
+  applyLiveAuthoringControls({{ OPENMW_FNV_DRAW_PART_AXES: !!enabled }}, "live-authoring.axes");
+}}
 async function sendSelectedLiveRuntime(options = {{}}) {{
   if (!liveAvailable()) return;
   const entry = selectedEntry();
@@ -1350,6 +1450,39 @@ function queueLiveAuthoringWrite() {{
   renderLiveAuthoringState();
   if (liveAuthoringTimer) window.clearTimeout(liveAuthoringTimer);
   liveAuthoringTimer = window.setTimeout(() => writeLiveAuthoring(false), 120);
+}}
+function bindLiveKnob(id) {{
+  const number = document.getElementById(id);
+  const slider = document.getElementById(`${{id}}Slider`);
+  if (!number) return;
+  const syncFromNumber = () => {{
+    if (slider && number.value !== "") slider.value = number.value;
+    queueLiveAuthoringWrite();
+  }};
+  number.addEventListener("input", syncFromNumber);
+  number.addEventListener("change", syncFromNumber);
+  if (slider) {{
+    slider.addEventListener("input", () => {{
+      number.value = slider.value;
+      queueLiveAuthoringWrite();
+    }});
+    slider.addEventListener("change", () => {{
+      number.value = slider.value;
+      queueLiveAuthoringWrite();
+    }});
+  }}
+}}
+function renderLiveSnapButtons() {{
+  const host = document.getElementById("liveSnapButtons");
+  if (!host) return;
+  const values = [-180, -90, 0, 90, 180];
+  host.innerHTML = `<b>Snaps</b>` + ["X", "Y", "Z"].map(axis =>
+    `<span class="pill">${{axis}}</span>` + values.map(value =>
+      `<button type="button" data-live-snap-axis="${{axis}}" data-live-snap-value="${{value}}">${{value}}</button>`).join("")
+  ).join("");
+  host.querySelectorAll("[data-live-snap-axis]").forEach(button => {{
+    button.onclick = () => applyLiveSnap(button.dataset.liveSnapAxis || "X", Number(button.dataset.liveSnapValue || "0"));
+  }});
 }}
 function selectedEntry() {{
   return state.entryDetails[state.selectedId]
@@ -1833,11 +1966,13 @@ function renderControls() {{
     recordEvent("live-authoring.surface", {{ prefix: livePrefix() }});
     renderLiveAuthoringState();
   }};
-  ["liveOffsetX", "liveOffsetY", "liveOffsetZ", "liveRotationX", "liveRotationY", "liveRotationZ", "livePivotX", "livePivotY", "livePivotZ", "livePivotOffsetX", "livePivotOffsetY", "livePivotOffsetZ"].forEach(id => {{
-    document.getElementById(id).addEventListener("input", queueLiveAuthoringWrite);
-    document.getElementById(id).addEventListener("change", queueLiveAuthoringWrite);
-  }});
+  LIVE_KNOBS.forEach(([id]) => bindLiveKnob(id));
   document.getElementById("livePivotMode").addEventListener("change", queueLiveAuthoringWrite);
+  document.getElementById("liveDrawAxes").addEventListener("change", event => setLiveAxes(event.target.checked));
+  document.getElementById("liveOriginHead").addEventListener("click", () => setLiveOrigin("head"));
+  document.getElementById("liveOriginPart").addEventListener("click", () => setLiveOrigin("part"));
+  document.getElementById("liveOriginReset").addEventListener("click", resetLiveOriginAndSnaps);
+  renderLiveSnapButtons();
   document.getElementById("applyLiveAuthoring").addEventListener("click", () => writeLiveAuthoring(false));
   document.getElementById("resetLiveAuthoring").addEventListener("click", () => writeLiveAuthoring(true));
   ["phaseSelect", "partFocusSelect", "animationSourceInput", "animationStartPointInput", "neutralPreviewYawInput", "partModelInput", "propModelInput", "animationSelect", "dialogueSelect"].forEach(id => {{

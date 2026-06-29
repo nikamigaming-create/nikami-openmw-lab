@@ -148,10 +148,15 @@ namespace MWRender
             Left,
             Right,
             Top,
+            Bottom,
+            Back,
+            IsoNW,
+            IsoSW,
         };
 
         FalloutActorPreview(osg::Group* parent, Resource::ResourceSystem* resourceSystem, const MWWorld::Ptr& character,
-            ViewMode viewMode, float cameraDistanceMultiplier = 1.f, std::string profileOverride = {});
+            ViewMode viewMode, float cameraDistanceMultiplier = 1.f, std::string profileOverride = {},
+            osg::Vec3f editorRotation = osg::Vec3f(), float editorScale = 1.f);
 
     protected:
         void onSetup() override;
@@ -161,6 +166,8 @@ namespace MWRender
         ViewMode mViewMode;
         float mCameraDistanceMultiplier;
         std::string mProfileOverride;
+        osg::Vec3f mEditorRotation;
+        float mEditorScale;
     };
 
 }

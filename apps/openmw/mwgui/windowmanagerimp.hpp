@@ -121,6 +121,7 @@ namespace MWGui
     class ItemTransfer;
     class ControllerButtonsOverlay;
     class InventoryTabsOverlay;
+    class AssetStudioWindow;
 
     class WindowManager : public MWBase::WindowManager
     {
@@ -550,6 +551,7 @@ namespace MWGui
         bool mWindowVisible;
 
         MWGui::TextColours mTextColours;
+        AssetStudioWindow* mAssetStudioWindow = nullptr;
 
         std::unique_ptr<KeyboardNavigation> mKeyboardNavigation;
 

@@ -3,95 +3,253 @@
   <Widget type="Widget" skin="FullBlackBG" position="0 0 1280 720" layer="Windows" align="Stretch" name="_Main">
     <Property key="Visible" value="false"/>
 
-    <Widget type="TextBox" skin="SandBrightText" position="24 12 640 26" name="TitleText" align="Left Top HStretch">
+    <Widget type="TextBox" skin="SandBrightText" position="24 12 640 24" name="TitleText" align="Left Top HStretch">
       <Property key="Caption" value="FNV Asset Studio"/>
     </Widget>
 
-    <Widget type="Widget" skin="MW_Box" position="24 48 844 648" name="PreviewBox" align="Left Top Stretch">
-      <Widget type="ImageBox" skin="ImageBox" position="6 6 832 636" align="Stretch" name="PreviewImage"/>
+    <Widget type="Button" skin="MW_Button" position="4 4 1 1" name="ViewFrontButton">
+      <Property key="Visible" value="false"/>
+      <Property key="Caption" value="front"/>
+    </Widget>
+    <Widget type="Button" skin="MW_Button" position="6 4 1 1" name="ViewLeftButton">
+      <Property key="Visible" value="false"/>
+      <Property key="Caption" value="left"/>
+    </Widget>
+    <Widget type="Button" skin="MW_Button" position="8 4 1 1" name="ViewTopButton">
+      <Property key="Visible" value="false"/>
+      <Property key="Caption" value="top"/>
     </Widget>
 
-    <Widget type="Widget" skin="" position="896 48 360 648" name="Controls" align="Right Top VStretch">
-      <Widget type="TextBox" skin="SandText" position="0 0 108 20" name="AssetClassLabel">
-        <Property key="Caption" value="Asset class"/>
+    <Widget type="Widget" skin="MW_Box" position="24 42 1232 86" name="ViewStrip" align="Left Top HStretch">
+      <Widget type="TextBox" skin="SandBrightText" position="8 4 124 16" name="ViewStripTitle">
+        <Property key="Caption" value="Camera bar"/>
       </Widget>
-      <Widget type="EditBox" skin="MW_TextBoxEditWithBorder" position="116 0 244 24" name="AssetClassEdit">
+      <Widget type="TextBox" skin="SandText" position="142 4 72 16" name="ViewLabel">
+        <Property key="Caption" value="Active"/>
+      </Widget>
+      <Widget type="EditBox" skin="MW_TextBoxEditWithBorder" position="206 2 112 20" name="ViewEdit"/>
+      <Widget type="TextBox" skin="SandText" position="328 4 360 16" name="ProofSlot">
+        <Property key="Caption" value="click a camera tile to promote it"/>
+      </Widget>
+
+      <Widget type="ImageBox" skin="ImageBox" position="8 24 144 42" name="FrontPreviewImage"/>
+      <Widget type="ImageBox" skin="ImageBox" position="160 24 144 42" name="BackPreviewImage"/>
+      <Widget type="ImageBox" skin="ImageBox" position="312 24 144 42" name="LeftPreviewImage"/>
+      <Widget type="ImageBox" skin="ImageBox" position="464 24 144 42" name="RightPreviewImage"/>
+      <Widget type="ImageBox" skin="ImageBox" position="616 24 144 42" name="TopPreviewImage"/>
+      <Widget type="ImageBox" skin="ImageBox" position="768 24 144 42" name="BottomPreviewImage"/>
+      <Widget type="ImageBox" skin="ImageBox" position="920 24 144 42" name="IsoNWPreviewImage"/>
+      <Widget type="ImageBox" skin="ImageBox" position="1072 24 144 42" name="IsoSWPreviewImage"/>
+
+      <Widget type="TextBox" skin="SandText" position="8 66 144 16" name="FrontSlot">
+        <Property key="Caption" value="front"/>
+      </Widget>
+      <Widget type="TextBox" skin="SandText" position="160 66 144 16" name="BackSlot">
+        <Property key="Caption" value="back"/>
+      </Widget>
+      <Widget type="TextBox" skin="SandText" position="312 66 144 16" name="LeftSlot">
+        <Property key="Caption" value="left"/>
+      </Widget>
+      <Widget type="TextBox" skin="SandText" position="464 66 144 16" name="RightSlot">
+        <Property key="Caption" value="right"/>
+      </Widget>
+      <Widget type="TextBox" skin="SandText" position="616 66 144 16" name="TopSlot">
+        <Property key="Caption" value="top"/>
+      </Widget>
+      <Widget type="TextBox" skin="SandText" position="768 66 144 16" name="BottomSlot">
+        <Property key="Caption" value="bottom"/>
+      </Widget>
+      <Widget type="TextBox" skin="SandText" position="920 66 144 16" name="IsoNWSlot">
+        <Property key="Caption" value="iso-nw"/>
+      </Widget>
+      <Widget type="TextBox" skin="SandText" position="1072 66 144 16" name="IsoSWSlot">
+        <Property key="Caption" value="iso-sw"/>
+      </Widget>
+
+      <Widget type="Widget" skin="" position="8 24 144 58" name="FrontTileHotspot">
+        <Property key="NeedMouse" value="true"/>
+      </Widget>
+      <Widget type="Widget" skin="" position="160 24 144 58" name="BackTileHotspot">
+        <Property key="NeedMouse" value="true"/>
+      </Widget>
+      <Widget type="Widget" skin="" position="312 24 144 58" name="LeftTileHotspot">
+        <Property key="NeedMouse" value="true"/>
+      </Widget>
+      <Widget type="Widget" skin="" position="464 24 144 58" name="RightTileHotspot">
+        <Property key="NeedMouse" value="true"/>
+      </Widget>
+      <Widget type="Widget" skin="" position="616 24 144 58" name="TopTileHotspot">
+        <Property key="NeedMouse" value="true"/>
+      </Widget>
+      <Widget type="Widget" skin="" position="768 24 144 58" name="BottomTileHotspot">
+        <Property key="NeedMouse" value="true"/>
+      </Widget>
+      <Widget type="Widget" skin="" position="920 24 144 58" name="IsoNWTileHotspot">
+        <Property key="NeedMouse" value="true"/>
+      </Widget>
+      <Widget type="Widget" skin="" position="1072 24 144 58" name="IsoSWTileHotspot">
+        <Property key="NeedMouse" value="true"/>
+      </Widget>
+    </Widget>
+
+    <Widget type="Widget" skin="MW_Box" position="24 136 800 560" name="PreviewBox" align="Left Top Stretch">
+      <Widget type="ImageBox" skin="ImageBox" position="6 6 788 548" align="Stretch" name="PreviewImage"/>
+    </Widget>
+
+    <Widget type="Widget" skin="MW_Box" position="840 128 416 588" name="Controls" align="Right Top VStretch">
+      <Widget type="TextBox" skin="SandBrightText" position="14 8 388 20" name="ControlTitle">
+        <Property key="Caption" value="Live controls"/>
+      </Widget>
+      <Widget type="EditBox" skin="MW_TextBoxEditWithBorder" position="2 2 1 1" name="AssetClassEdit">
+        <Property key="Visible" value="false"/>
+      </Widget>
+      <Widget type="EditBox" skin="MW_TextBoxEditWithBorder" position="4 2 1 1" name="RecordEdit">
+        <Property key="Visible" value="false"/>
+      </Widget>
+      <Widget type="EditBox" skin="MW_TextBoxEditWithBorder" position="6 2 1 1" name="SessionEdit">
+        <Property key="Visible" value="false"/>
+      </Widget>
+      <Widget type="EditBox" skin="MW_TextBoxEditWithBorder" position="8 2 1 1" name="ModelEdit">
+        <Property key="Visible" value="false"/>
+      </Widget>
+
+      <Widget type="TextBox" skin="SandBrightText" position="14 32 388 18" name="AssetPickerTitle">
+        <Property key="Caption" value="Asset picker"/>
+      </Widget>
+      <Widget type="TextBox" skin="SandText" position="14 58 64 16" name="AssetCategoryLabel">
+        <Property key="Caption" value="Category"/>
+      </Widget>
+      <Widget type="ComboBox" skin="MW_ComboBox" position="82 54 122 24" name="AssetCategoryCombo"/>
+      <Widget type="TextBox" skin="SandText" position="214 58 50 16" name="AssetSearchLabel">
+        <Property key="Caption" value="Search"/>
+      </Widget>
+      <Widget type="EditBox" skin="MW_TextBoxEditWithBorder" position="266 54 136 24" name="AssetSearchEdit">
         <UserString key="AcceptTab" value="true"/>
       </Widget>
-      <Widget type="TextBox" skin="SandText" position="0 32 108 20" name="RecordLabel">
-        <Property key="Caption" value="Record"/>
+      <Widget type="ListBox" skin="MW_List" position="14 84 104 142" name="AssetCategoryList"/>
+      <Widget type="ListBox" skin="MW_List" position="124 84 278 142" name="AssetResultList"/>
+      <Widget type="Button" skin="MW_Button" position="14 232 96 24" name="AssetLoadButton">
+        <Property key="Caption" value="Load"/>
       </Widget>
-      <Widget type="EditBox" skin="MW_TextBoxEditWithBorder" position="116 32 244 24" name="RecordEdit">
-        <UserString key="AcceptTab" value="true"/>
+      <Widget type="Button" skin="MW_Button" position="116 232 104 24" name="ScreenshotButton">
+        <Property key="Caption" value="Screenshot"/>
       </Widget>
-      <Widget type="TextBox" skin="SandText" position="0 64 108 20" name="SessionLabel">
-        <Property key="Caption" value="Session"/>
+      <Widget type="TextBox" skin="SandText" position="230 237 172 16" name="AssetCountText">
+        <Property key="Caption" value="0/0 shown"/>
       </Widget>
-      <Widget type="EditBox" skin="MW_TextBoxEditWithBorder" position="116 64 244 24" name="SessionEdit">
-        <UserString key="AcceptTab" value="true"/>
+
+      <Widget type="TextBox" skin="SandBrightText" position="14 260 388 18" name="ProfileGroupLabel">
+        <Property key="Caption" value="Part profile"/>
       </Widget>
-      <Widget type="TextBox" skin="SandText" position="0 102 360 20" name="ModelLabel">
-        <Property key="Caption" value="Model path"/>
+      <Widget type="Button" skin="MW_Button" position="14 280 92 24" name="ProfileFaceButton">
+        <Property key="Caption" value="face"/>
       </Widget>
-      <Widget type="EditBox" skin="MW_TextBoxEditWithBorder" position="0 126 360 24" name="ModelEdit">
-        <UserString key="AcceptTab" value="true"/>
+      <Widget type="Button" skin="MW_Button" position="112 280 92 24" name="ProfileBodyButton">
+        <Property key="Caption" value="body"/>
       </Widget>
-      <Widget type="TextBox" skin="SandText" position="0 160 360 20" name="TransformLabel">
-        <Property key="Caption" value="Transform"/>
+      <Widget type="Button" skin="MW_Button" position="210 280 92 24" name="ProfileHandsButton">
+        <Property key="Caption" value="hands"/>
       </Widget>
-      <Widget type="TextBox" skin="SandText" position="0 188 56 20" name="ViewLabel">
-        <Property key="Caption" value="View"/>
+      <Widget type="Button" skin="MW_Button" position="310 280 92 24" name="ProfileWeaponButton">
+        <Property key="Caption" value="weapon"/>
       </Widget>
-      <Widget type="EditBox" skin="MW_TextBoxEditWithBorder" position="64 184 88 24" name="ViewEdit"/>
-      <Widget type="TextBox" skin="SandText" position="166 188 56 20" name="ZoomLabel">
+      <Widget type="EditBox" skin="MW_TextBoxEditWithBorder" position="14 308 388 22" name="ProfileEdit"/>
+
+      <Widget type="TextBox" skin="SandBrightText" position="14 334 388 18" name="CameraLabel">
+        <Property key="Caption" value="Camera"/>
+      </Widget>
+      <Widget type="TextBox" skin="SandText" position="14 356 52 16" name="ZoomLabel">
         <Property key="Caption" value="Zoom"/>
       </Widget>
-      <Widget type="EditBox" skin="MW_TextBoxEditWithBorder" position="224 184 104 24" name="ZoomEdit"/>
-      <Widget type="TextBox" skin="SandText" position="0 222 56 20" name="ProfileLabel">
-        <Property key="Caption" value="Profile"/>
+      <Widget type="EditBox" skin="MW_TextBoxEditWithBorder" position="68 352 74 20" name="ZoomEdit"/>
+      <Widget type="ScrollBar" skin="MW_HScroll" position="150 357 252 12" name="ZoomSlider"/>
+      <Widget type="TextBox" skin="SandText" position="14 380 52 16" name="PanXLabel">
+        <Property key="Caption" value="Pan X"/>
       </Widget>
-      <Widget type="EditBox" skin="MW_TextBoxEditWithBorder" position="64 218 264 24" name="ProfileEdit"/>
-      <Widget type="TextBox" skin="SandText" position="0 256 56 20" name="ScaleLabel">
+      <Widget type="EditBox" skin="MW_TextBoxEditWithBorder" position="68 376 74 20" name="PanXEdit"/>
+      <Widget type="TextBox" skin="SandText" position="150 380 52 16" name="PanZLabel">
+        <Property key="Caption" value="Pan Z"/>
+      </Widget>
+      <Widget type="EditBox" skin="MW_TextBoxEditWithBorder" position="206 376 74 20" name="PanZEdit"/>
+      <Widget type="TextBox" skin="SandText" position="288 380 34 16" name="TiltLabel">
+        <Property key="Caption" value="Tilt"/>
+      </Widget>
+      <Widget type="EditBox" skin="MW_TextBoxEditWithBorder" position="326 376 76 20" name="TiltEdit"/>
+
+      <Widget type="TextBox" skin="SandBrightText" position="14 402 388 18" name="TransformLabel">
+        <Property key="Caption" value="Asset transform"/>
+      </Widget>
+      <Widget type="TextBox" skin="SandText" position="14 424 52 16" name="ScaleLabel">
         <Property key="Caption" value="Scale"/>
       </Widget>
-      <Widget type="EditBox" skin="MW_TextBoxEditWithBorder" position="64 252 88 24" name="ScaleEdit"/>
-      <Widget type="TextBox" skin="SandText" position="166 256 56 20" name="RotXLabel">
+      <Widget type="EditBox" skin="MW_TextBoxEditWithBorder" position="68 420 74 20" name="ScaleEdit"/>
+      <Widget type="ScrollBar" skin="MW_HScroll" position="150 425 252 12" name="ScaleSlider"/>
+      <Widget type="TextBox" skin="SandText" position="14 446 52 16" name="RotXLabel">
         <Property key="Caption" value="Rot X"/>
       </Widget>
-      <Widget type="EditBox" skin="MW_TextBoxEditWithBorder" position="224 252 104 24" name="RotXEdit"/>
-      <Widget type="TextBox" skin="SandText" position="0 290 56 20" name="RotYLabel">
+      <Widget type="EditBox" skin="MW_TextBoxEditWithBorder" position="68 442 74 20" name="RotXEdit"/>
+      <Widget type="ScrollBar" skin="MW_HScroll" position="150 447 252 12" name="RotXSlider"/>
+      <Widget type="TextBox" skin="SandText" position="14 468 52 16" name="RotYLabel">
         <Property key="Caption" value="Rot Y"/>
       </Widget>
-      <Widget type="EditBox" skin="MW_TextBoxEditWithBorder" position="64 286 88 24" name="RotYEdit"/>
-      <Widget type="TextBox" skin="SandText" position="166 290 56 20" name="RotZLabel">
+      <Widget type="EditBox" skin="MW_TextBoxEditWithBorder" position="68 464 74 20" name="RotYEdit"/>
+      <Widget type="ScrollBar" skin="MW_HScroll" position="150 469 252 12" name="RotYSlider"/>
+      <Widget type="TextBox" skin="SandText" position="14 490 52 16" name="RotZLabel">
         <Property key="Caption" value="Rot Z"/>
       </Widget>
-      <Widget type="EditBox" skin="MW_TextBoxEditWithBorder" position="224 286 104 24" name="RotZEdit"/>
-      <Widget type="Button" skin="MW_Button" position="0 326 360 30" name="ApplyButton">
+      <Widget type="EditBox" skin="MW_TextBoxEditWithBorder" position="68 486 74 20" name="RotZEdit"/>
+      <Widget type="ScrollBar" skin="MW_HScroll" position="150 491 252 12" name="RotZSlider"/>
+
+      <Widget type="Button" skin="MW_Button" position="14 512 62 22" name="SnapXNegButton">
+        <Property key="Caption" value="X -90"/>
+      </Widget>
+      <Widget type="Button" skin="MW_Button" position="80 512 62 22" name="SnapXZeroButton">
+        <Property key="Caption" value="X 0"/>
+      </Widget>
+      <Widget type="Button" skin="MW_Button" position="146 512 62 22" name="SnapXPosButton">
+        <Property key="Caption" value="X 90"/>
+      </Widget>
+      <Widget type="Button" skin="MW_Button" position="212 512 62 22" name="SnapYNegButton">
+        <Property key="Caption" value="Y -90"/>
+      </Widget>
+      <Widget type="Button" skin="MW_Button" position="278 512 62 22" name="SnapYPosButton">
+        <Property key="Caption" value="Y 90"/>
+      </Widget>
+      <Widget type="Button" skin="MW_Button" position="344 512 58 22" name="SnapZPosButton">
+        <Property key="Caption" value="Z 90"/>
+      </Widget>
+
+      <Widget type="Button" skin="MW_Button" position="14 538 80 22" name="AxesButton">
+        <Property key="Caption" value="Axes off"/>
+      </Widget>
+      <Widget type="Button" skin="MW_Button" position="100 538 80 22" name="IkButton">
+        <Property key="Caption" value="IK off"/>
+      </Widget>
+      <Widget type="Button" skin="MW_Button" position="186 538 80 22" name="WireframeButton">
+        <Property key="Caption" value="Wire off"/>
+      </Widget>
+      <Widget type="Button" skin="MW_Button" position="272 538 64 22" name="WeightsButton">
+        <Property key="Caption" value="Weights"/>
+      </Widget>
+      <Widget type="Button" skin="MW_Button" position="342 538 60 22" name="BloodButton">
+        <Property key="Caption" value="Blood off"/>
+      </Widget>
+
+      <Widget type="Button" skin="MW_Button" position="14 564 92 22" name="ApplyButton">
         <Property key="Caption" value="Apply"/>
       </Widget>
-      <Widget type="TextBox" skin="SandText" position="0 372 360 64" name="StatusText">
-        <Property key="Caption" value="Asset studio idle"/>
+      <Widget type="Button" skin="MW_Button" position="112 564 92 22" name="SaveButton">
+        <Property key="Caption" value="Save"/>
       </Widget>
-      <Widget type="Widget" skin="MW_Box" position="0 444 360 186" name="ViewStrip" align="Left Bottom HStretch">
-        <Widget type="TextBox" skin="SandText" position="10 10 340 20" name="ViewStripTitle">
-          <Property key="Caption" value="Camera slots"/>
-        </Widget>
-        <Widget type="ImageBox" skin="ImageBox" position="10 36 104 78" name="FrontPreviewImage"/>
-        <Widget type="ImageBox" skin="ImageBox" position="128 36 104 78" name="LeftPreviewImage"/>
-        <Widget type="ImageBox" skin="ImageBox" position="246 36 104 78" name="RightPreviewImage"/>
-        <Widget type="TextBox" skin="SandText" position="10 124 104 22" name="FrontSlot">
-          <Property key="Caption" value="front"/>
-        </Widget>
-        <Widget type="TextBox" skin="SandText" position="128 124 104 22" name="LeftSlot">
-          <Property key="Caption" value="left"/>
-        </Widget>
-        <Widget type="TextBox" skin="SandText" position="246 124 104 22" name="RightSlot">
-          <Property key="Caption" value="right"/>
-        </Widget>
-        <Widget type="TextBox" skin="SandText" position="10 154 340 22" name="ProofSlot">
-          <Property key="Caption" value="selector / preview / bounds / camera"/>
-        </Widget>
+      <Widget type="Button" skin="MW_Button" position="210 564 92 22" name="InventoryButton">
+        <Property key="Caption" value="Inventory"/>
+      </Widget>
+      <Widget type="Button" skin="MW_Button" position="310 564 92 22" name="EquipmentButton">
+        <Property key="Caption" value="Equip"/>
+      </Widget>
+
+      <Widget type="TextBox" skin="SandText" position="14 588 388 14" name="StatusText">
+        <Property key="Caption" value="Asset studio idle"/>
       </Widget>
     </Widget>
   </Widget>

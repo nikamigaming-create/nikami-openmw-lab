@@ -1,5 +1,5 @@
 #version 120
-#pragma import_defines(FORCE_OPAQUE)
+#pragma import_defines(FORCE_OPAQUE, FNV_DIFFUSE_ALPHA_ONLY)
 
 #if @useGPUShader4
     #extension GL_EXT_gpu_shader4: require
@@ -42,6 +42,9 @@ void main()
 #if @diffuseMap
     gl_FragData[0] = texture2D(diffuseMap, diffuseMapUV);
     gl_FragData[0].a *= coveragePreservingAlphaScale(diffuseMap, diffuseMapUV);
+#if defined(FNV_DIFFUSE_ALPHA_ONLY) && FNV_DIFFUSE_ALPHA_ONLY
+    gl_FragData[0].rgb = vec3(1.0);
+#endif
 #else
     gl_FragData[0] = vec4(1.0);
 #endif

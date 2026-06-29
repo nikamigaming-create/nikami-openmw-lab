@@ -1,5 +1,6 @@
 #include "sdlcursormanager.hpp"
 
+#include <algorithm>
 #include <stdexcept>
 
 #include <SDL_endian.h>
@@ -26,6 +27,47 @@ USE_GRAPHICSWINDOW()
 
 namespace SDLUtil
 {
+    namespace
+    {
+        bool isLikelyMarkerMagentaCursor(osg::Image* image)
+        {
+            if (image == nullptr || image->s() <= 0 || image->t() <= 0)
+                return false;
+
+            const int stepX = std::max(1, image->s() / 16);
+            const int stepY = std::max(1, image->t() / 16);
+            int opaqueSamples = 0;
+            int magentaSamples = 0;
+            for (int s = 0; s < image->s(); s += stepX)
+            {
+                for (int t = 0; t < image->t(); t += stepY)
+                {
+                    const osg::Vec4 color = image->getColor(s, t, 0);
+                    if (color.a() < 0.35f)
+                        continue;
+
+                    ++opaqueSamples;
+                    if (color.r() > 0.7f && color.g() < 0.35f && color.b() > 0.7f)
+                        ++magentaSamples;
+                }
+            }
+
+            return opaqueSamples >= 8 && magentaSamples * 2 >= opaqueSamples;
+        }
+
+        SDL_Cursor* createSystemCursor(std::string_view name)
+        {
+            if (name == "hresize")
+                return SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_SIZEWE);
+            if (name == "vresize")
+                return SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_SIZENS);
+            if (name == "dresize")
+                return SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_SIZENESW);
+            if (name == "dresize2")
+                return SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_SIZENWSE);
+            return SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_ARROW);
+        }
+    }
 
     SDLCursorManager::SDLCursorManager()
         : mEnabled(false)
@@ -136,6 +178,18 @@ namespace SDLUtil
 
         try
         {
+            if (isLikelyMarkerMagentaCursor(image))
+            {
+                SDL_Cursor* cursor = createSystemCursor(name);
+                if (cursor != nullptr)
+                {
+                    mCursorMap.emplace(name, cursor);
+                    Log(Debug::Warning) << "Rejected marker-magenta cursor image '" << image->getFileName()
+                                        << "' for cursor '" << name << "'; using SDL system cursor.";
+                    return;
+                }
+            }
+
             auto surface = decompress(image, static_cast<float>(rotDegrees), cursorWidth, cursorHeight);
 
             // set the cursor and store it for later

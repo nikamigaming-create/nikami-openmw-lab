@@ -174,6 +174,9 @@ if(BUILD_OPENMW)
     endif()
 
     target_link_libraries(openmw openmw-lib)
+    if(BUILD_OPENMW_VR AND NOT ANDROID)
+        target_compile_definitions(openmw PRIVATE OPENMW_FLAT_LINKS_VR_LIB=1)
+    endif()
 
     if (ANDROID)
         if (NOT ANDROID_NATIVE_APP_GLUE)

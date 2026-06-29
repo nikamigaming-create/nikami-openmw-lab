@@ -8,7 +8,7 @@ The harness exists to prove that visible runtime data is correct from source rec
 
 ## Order
 
-1. Sunny Smiles hair/face.
+1. First proving fixture head/part alignment.
 2. One random non-Pete human actor using the same workflow.
 3. One non-hair target on a human actor.
 4. Broader human actor coverage.
@@ -45,13 +45,26 @@ A target is not complete unless all applicable gates pass:
 
 ## First Human Fixture
 
-Sunny is not special-case code. Sunny is the first proving fixture because the hair issue exposes the generic problem:
+Named actors are not special-case code. The first proving fixture exposes the generic problem:
 
 - The part can be visible and still have the wrong frame.
 - A visually obvious error must be explainable by origin, axis, matrix, or parent-frame data.
 - A transform must replay cleanly before it becomes C++.
 
-After Sunny passes, select one random non-Pete actor and repeat the same evidence path.
+After the first proving fixture passes, select one random non-Pete actor and repeat the same evidence path.
+
+## Alignment Jobs
+
+Every inspection is an alignment job, not a one-off screenshot:
+
+- `actor`: the resolved FNV actor/object record being inspected.
+- `profile`: head, full body, hands, weapon, door, container, prop, or another explicit target profile.
+- `sourcePart`: the moving or questioned part.
+- `targetPart`: the part or frame it must attach to.
+- `contextParts`: neighboring parts needed to judge the relationship.
+- `views`: front, left, and top in one composite image.
+- `overlays`: source axes, target axes, context axes, bounds, bones, IK chains, labels, skin weights, and wireframe toggles.
+- `telemetry`: local, parent, world, bind, and post-transform matrices from the same run and command revision.
 
 ## Outputs
 

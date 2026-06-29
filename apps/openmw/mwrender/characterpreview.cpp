@@ -21,6 +21,7 @@
 #include <osg/Material>
 #include <osg/PositionAttitudeTransform>
 #include <osg/PolygonMode>
+#include <osg/Quat>
 #include <osg/Texture2D>
 #include <osg/ValueObject>
 #include <osgUtil/IntersectionVisitor>
@@ -120,10 +121,7 @@ namespace MWRender
             if (std::getenv("OPENMW_FNV_DISABLE_INVENTORY_PREVIEW") != nullptr)
                 return false;
 
-            if (std::getenv("OPENMW_FNV_INVENTORY_PLAYER_PROXY") != nullptr)
-                return true;
-
-            return isFalloutContentLoaded();
+            return std::getenv("OPENMW_FNV_INVENTORY_PLAYER_PROXY") != nullptr;
         }
 
         void applyFalloutInventoryPlayerProxyProofOutfit(const MWWorld::Ptr& visualPtr)
@@ -536,6 +534,54 @@ namespace MWRender
             return result;
         }
 
+        void applyFalloutPreviewWireframeState(osg::StateSet& stateSet, float lineWidth)
+        {
+            stateSet.setMode(GL_LIGHTING, osg::StateAttribute::OFF | osg::StateAttribute::OVERRIDE);
+            stateSet.setMode(GL_CULL_FACE, osg::StateAttribute::OFF | osg::StateAttribute::OVERRIDE);
+            stateSet.setAttributeAndModes(
+                new osg::PolygonMode(osg::PolygonMode::FRONT_AND_BACK, osg::PolygonMode::LINE),
+                osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
+            stateSet.setAttributeAndModes(
+                new osg::LineWidth(lineWidth), osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
+        }
+
+        osg::ref_ptr<osg::Geode> makeFalloutPreviewAxisGeode(std::string_view name, float size, bool secondaryColors)
+        {
+            osg::ref_ptr<osg::Geode> geode = new osg::Geode;
+            geode->setName(std::string(name));
+            geode->setCullingActive(false);
+
+            osg::ref_ptr<osg::Geometry> geometry = new osg::Geometry;
+            geometry->setUseDisplayList(false);
+            geometry->setUseVertexBufferObjects(true);
+
+            osg::ref_ptr<osg::Vec3Array> vertices = new osg::Vec3Array;
+            osg::ref_ptr<osg::Vec4Array> colors = new osg::Vec4Array;
+            const osg::Vec4f xColor = secondaryColors ? osg::Vec4f(1.f, 0.f, 1.f, 1.f) : osg::Vec4f(1.f, 0.f, 0.f, 1.f);
+            const osg::Vec4f yColor = secondaryColors ? osg::Vec4f(0.f, 1.f, 1.f, 1.f) : osg::Vec4f(0.f, 1.f, 0.f, 1.f);
+            const osg::Vec4f zColor = secondaryColors ? osg::Vec4f(1.f, 1.f, 0.f, 1.f) : osg::Vec4f(0.1f, 0.35f, 1.f, 1.f);
+            const auto addAxis = [&](const osg::Vec3f& axis, const osg::Vec4f& color) {
+                vertices->push_back(osg::Vec3f());
+                vertices->push_back(axis * size);
+                colors->push_back(color);
+                colors->push_back(color);
+            };
+            addAxis(osg::Vec3f(1.f, 0.f, 0.f), xColor);
+            addAxis(osg::Vec3f(0.f, 1.f, 0.f), yColor);
+            addAxis(osg::Vec3f(0.f, 0.f, 1.f), zColor);
+
+            geometry->setVertexArray(vertices);
+            geometry->setColorArray(colors, osg::Array::BIND_PER_VERTEX);
+            geometry->addPrimitiveSet(new osg::DrawArrays(osg::PrimitiveSet::LINES, 0, vertices->size()));
+            geode->addDrawable(geometry);
+
+            osg::StateSet* stateSet = geode->getOrCreateStateSet();
+            stateSet->setMode(GL_LIGHTING, osg::StateAttribute::OFF | osg::StateAttribute::OVERRIDE);
+            stateSet->setMode(GL_DEPTH_TEST, osg::StateAttribute::OFF | osg::StateAttribute::OVERRIDE);
+            stateSet->setAttributeAndModes(new osg::LineWidth(6.f), osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
+            return geode;
+        }
+
         class FalloutActorPreviewRigDebugVisitor : public osg::NodeVisitor
         {
         public:
@@ -557,14 +603,8 @@ namespace MWRender
 
                     if (mWireframe)
                     {
-                        osg::StateSet* stateSet = drawable->getOrCreateStateSet();
-                        stateSet->setMode(GL_LIGHTING, osg::StateAttribute::OFF | osg::StateAttribute::OVERRIDE);
-                        stateSet->setAttributeAndModes(
-                            new osg::PolygonMode(osg::PolygonMode::FRONT_AND_BACK, osg::PolygonMode::LINE),
-                            osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
-                        stateSet->setAttributeAndModes(new osg::LineWidth(getFalloutNeutralActorPreviewFloat(
-                                                        "OPENMW_FNV_ACTOR_PREVIEW_DEBUG_LINE_WIDTH", 4.f)),
-                            osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
+                        applyFalloutPreviewWireframeState(*drawable->getOrCreateStateSet(),
+                            getFalloutNeutralActorPreviewFloat("OPENMW_FNV_ACTOR_PREVIEW_DEBUG_LINE_WIDTH", 4.f));
                         ++mWireframeDrawables;
                     }
 
@@ -650,6 +690,23 @@ namespace MWRender
                     position = osg::Vec3f(0.f, 24.f, cameraZ + 210.f);
                     lookAt = osg::Vec3f(0.f, 0.f, lookAtZ - 8.f);
                     viewName = "top";
+                    break;
+                case FalloutActorPreview::ViewMode::Bottom:
+                    position = osg::Vec3f(0.f, 24.f, lookAtZ - distance);
+                    lookAt = osg::Vec3f(0.f, 0.f, lookAtZ);
+                    viewName = "bottom";
+                    break;
+                case FalloutActorPreview::ViewMode::Back:
+                    position = osg::Vec3f(0.f, -distance, cameraZ);
+                    viewName = "back";
+                    break;
+                case FalloutActorPreview::ViewMode::IsoNW:
+                    position = osg::Vec3f(-diagonal, diagonal, cameraZ + distance * 0.35f);
+                    viewName = "iso-nw";
+                    break;
+                case FalloutActorPreview::ViewMode::IsoSW:
+                    position = osg::Vec3f(-diagonal, -diagonal, cameraZ + distance * 0.35f);
+                    viewName = "iso-sw";
                     break;
             }
         }
@@ -861,6 +918,94 @@ namespace MWRender
         Mode mMode;
         unsigned int mKept = 0;
         unsigned int mMasked = 0;
+    };
+
+    class FalloutActorPreviewHideBloodVisitor : public osg::NodeVisitor
+    {
+    public:
+        FalloutActorPreviewHideBloodVisitor()
+            : osg::NodeVisitor(TRAVERSE_ALL_CHILDREN)
+        {
+        }
+
+        void apply(osg::Node& node) override
+        {
+            if (shouldHide(node.getName()))
+            {
+                node.setNodeMask(0);
+                ++mNodes;
+                return;
+            }
+
+            traverse(node);
+        }
+
+        void apply(osg::Geode& geode) override
+        {
+            if (shouldHide(geode.getName()))
+            {
+                geode.setNodeMask(0);
+                ++mNodes;
+                return;
+            }
+
+            for (unsigned int index = 0; index < geode.getNumDrawables(); ++index)
+            {
+                osg::Drawable* drawable = geode.getDrawable(index);
+                if (drawable == nullptr)
+                    continue;
+
+                if (shouldHide(*drawable))
+                {
+                    drawable->setNodeMask(0);
+                    ++mDrawables;
+                }
+            }
+
+            traverse(geode);
+        }
+
+        unsigned int getHiddenNodes() const { return mNodes; }
+        unsigned int getHiddenDrawables() const { return mDrawables; }
+
+    private:
+        static bool containsAny(std::string_view value, std::initializer_list<std::string_view> needles)
+        {
+            for (std::string_view needle : needles)
+            {
+                if (value.find(needle) != std::string_view::npos)
+                    return true;
+            }
+            return false;
+        }
+
+        static bool shouldHide(std::string_view name)
+        {
+            const std::string lowered = Misc::StringUtils::lowerCase(std::string(name));
+            return containsAny(lowered,
+                { "meatcap", "gorecap", "bodymeat", "headmeat", "blood", "gore", "dismember", "dismemberment" });
+        }
+
+        static bool shouldHide(osg::Drawable& drawable)
+        {
+            if (shouldHide(drawable.getName()))
+                return true;
+
+            if (SceneUtil::RigGeometry* rig = dynamic_cast<SceneUtil::RigGeometry*>(&drawable))
+            {
+                if (osg::Geometry* source = rig->getSourceGeometry(); source != nullptr && shouldHide(source->getName()))
+                    return true;
+                for (unsigned int index = 0; index < 2; ++index)
+                    if (osg::Geometry* render = rig->getRenderGeometry(index);
+                        render != nullptr && shouldHide(render->getName()))
+                        return true;
+            }
+
+            return false;
+        }
+
+        unsigned int mNodes = 0;
+        unsigned int mDrawables = 0;
     };
 
     class FalloutActorPreviewDrawableAuditVisitor : public osg::NodeVisitor
@@ -1485,12 +1630,15 @@ namespace MWRender
     // --------------------------------------------------------------------------------------------------
 
     FalloutActorPreview::FalloutActorPreview(osg::Group* parent, Resource::ResourceSystem* resourceSystem,
-        const MWWorld::Ptr& character, ViewMode viewMode, float cameraDistanceMultiplier, std::string profileOverride)
+        const MWWorld::Ptr& character, ViewMode viewMode, float cameraDistanceMultiplier, std::string profileOverride,
+        osg::Vec3f editorRotation, float editorScale)
         : CharacterPreview(parent, resourceSystem, MWWorld::Ptr(character.getBase(), nullptr), 720, 720,
             osg::Vec3f(0, 420, 112), osg::Vec3f(0, 0, 112))
         , mViewMode(viewMode)
         , mCameraDistanceMultiplier(cameraDistanceMultiplier)
         , mProfileOverride(std::move(profileOverride))
+        , mEditorRotation(editorRotation)
+        , mEditorScale(editorScale)
     {
         mNode->setName("FNV Neutral Actor Preview");
     }
@@ -1507,8 +1655,13 @@ namespace MWRender
             const std::string previewProfile = !mProfileOverride.empty()
                 ? mProfileOverride
                 : std::string(getFalloutNeutralActorPreviewProfile());
+            const bool ikOverlayRequested = getFalloutNeutralActorPreviewBool("OPENMW_FNV_SHOW_IK_BONES")
+                || getFalloutNeutralActorPreviewBool("OPENMW_FNV_BONE_IK_DEBUG")
+                || getFalloutNeutralActorPreviewBool("OPENMW_FNV_SHOW_ALL_BONES")
+                || getFalloutNeutralActorPreviewBool("OPENMW_FNV_ALL_BONE_DEBUG");
             animation->setFONVBoneIkDebugInProofPreview(
-                mViewMode == ViewMode::FrontRight || Misc::StringUtils::ciEqual(previewProfile, "weapon-arms")
+                ikOverlayRequested || mViewMode == ViewMode::FrontRight
+                || Misc::StringUtils::ciEqual(previewProfile, "weapon-arms")
                 || Misc::StringUtils::ciEqual(previewProfile, "arms"));
             return animation;
         }
@@ -1550,7 +1703,11 @@ namespace MWRender
 
         osg::Vec3f scale(1.f, 1.f, 1.f);
         mCharacter.getClass().adjustScale(mCharacter, scale, true);
-        mNode->setScale(scale);
+        const float editorScale = std::clamp(mEditorScale, 0.05f, 10.f);
+        mNode->setScale(scale * editorScale);
+        mNode->setAttitude(osg::Quat(osg::DegreesToRadians(mEditorRotation.x()), osg::Vec3f(1.f, 0.f, 0.f),
+            osg::DegreesToRadians(mEditorRotation.y()), osg::Vec3f(0.f, 1.f, 0.f),
+            osg::DegreesToRadians(mEditorRotation.z()), osg::Vec3f(0.f, 0.f, 1.f)));
 
         osg::Vec3f position(0.f, 420.f, 112.f);
         osg::Vec3f lookAt(0.f, 0.f, 112.f);
@@ -1599,6 +1756,10 @@ namespace MWRender
                 case ViewMode::Left:
                 case ViewMode::Right:
                 case ViewMode::Top:
+                case ViewMode::Bottom:
+                case ViewMode::Back:
+                case ViewMode::IsoNW:
+                case ViewMode::IsoSW:
                     applyFalloutNeutralActorOrbitCamera(mViewMode,
                         getFalloutNeutralActorPreviewFloat("OPENMW_FNV_NEUTRAL_ACTOR_PREVIEW_DISTANCE", 420.f),
                         getFalloutNeutralActorPreviewFloat("OPENMW_FNV_NEUTRAL_ACTOR_PREVIEW_CAMERA_Z", 112.f),
@@ -1651,6 +1812,10 @@ namespace MWRender
                 case ViewMode::Left:
                 case ViewMode::Right:
                 case ViewMode::Top:
+                case ViewMode::Bottom:
+                case ViewMode::Back:
+                case ViewMode::IsoNW:
+                case ViewMode::IsoSW:
                     applyFalloutNeutralActorOrbitCamera(mViewMode,
                         getFalloutNeutralActorPreviewFloat("OPENMW_FNV_NEUTRAL_ACTOR_PREVIEW_DISTANCE", 190.f),
                         getFalloutNeutralActorPreviewFloat("OPENMW_FNV_NEUTRAL_ACTOR_PREVIEW_CAMERA_Z", 116.f),
@@ -1673,6 +1838,22 @@ namespace MWRender
         applyFalloutNeutralActorPreviewYawOffset(position, lookAt, yawOffsetDeg);
         const float cameraDistanceMultiplier = std::clamp(mCameraDistanceMultiplier, 0.15f, 12.f);
         position = lookAt + (position - lookAt) * cameraDistanceMultiplier;
+        const float cameraTiltDeg
+            = getFalloutNeutralActorPreviewFloat("OPENMW_FNV_ASSET_STUDIO_CAMERA_TILT_DEG", 0.f);
+        if (std::isfinite(cameraTiltDeg) && std::abs(cameraTiltDeg) > 0.001f)
+        {
+            osg::Vec3f direction = position - lookAt;
+            osg::Vec3f right = osg::Vec3f(0.f, 0.f, 1.f) ^ direction;
+            if (right.normalize() == 0.f)
+                right = osg::Vec3f(1.f, 0.f, 0.f);
+            direction = osg::Quat(osg::DegreesToRadians(cameraTiltDeg), right) * direction;
+            position = lookAt + direction;
+        }
+        const osg::Vec3f cameraPan(
+            getFalloutNeutralActorPreviewFloat("OPENMW_FNV_ASSET_STUDIO_CAMERA_PAN_X", 0.f), 0.f,
+            getFalloutNeutralActorPreviewFloat("OPENMW_FNV_ASSET_STUDIO_CAMERA_PAN_Z", 0.f));
+        position += cameraPan;
+        lookAt += cameraPan;
 
         mRTTNode->setViewMatrix(osg::Matrixf::lookAt(position * scale.z(), lookAt * scale.z(), osg::Vec3f(0, 0, 1)));
 
@@ -1739,6 +1920,31 @@ namespace MWRender
         }
         setRedrawSimulationTime(bindPose ? 0.0 : previewStart);
 
+        if (getFalloutNeutralActorPreviewBool("OPENMW_FNV_DRAW_PART_AXES"))
+        {
+            mNode->addChild(makeFalloutPreviewAxisGeode("FNV Studio Axis Actor Root", 30.f, false));
+            osg::Group* headNode = mAnimation
+                ? dynamic_cast<osg::Group*>(const_cast<osg::Node*>(mAnimation->getNode("Bip01 Head")))
+                : nullptr;
+            if (headNode != nullptr)
+                headNode->addChild(makeFalloutPreviewAxisGeode("FNV Studio Axis Head", 18.f, true));
+            Log(Debug::Info) << "FNV/ESM4 proof: neutral actor preview studio axes view=" << viewName
+                             << " actor=" << mCharacter.getCellRef().getRefId()
+                             << " actorRoot=1 head=" << (headNode != nullptr)
+                             << " runtime=runtime-supported gate=runtime-neutral-actor-preview-studio-axes";
+        }
+
+        if (getFalloutNeutralActorPreviewBool("OPENMW_FNV_ACTOR_PREVIEW_HIDE_BLOOD"))
+        {
+            FalloutActorPreviewHideBloodVisitor hideBlood;
+            mNode->accept(hideBlood);
+            Log(Debug::Info) << "FNV/ESM4 proof: neutral actor preview blood visibility view=" << viewName
+                             << " actor=" << mCharacter.getCellRef().getRefId()
+                             << " visible=0 hiddenNodes=" << hideBlood.getHiddenNodes()
+                             << " hiddenDrawables=" << hideBlood.getHiddenDrawables()
+                             << " runtime=runtime-supported gate=runtime-neutral-actor-preview-blood-toggle";
+        }
+
         const bool rigWireframe = getFalloutNeutralActorPreviewBool("OPENMW_FNV_ACTOR_PREVIEW_WIREFRAME");
         const bool rigWeights = getFalloutNeutralActorPreviewBool("OPENMW_FNV_ACTOR_PREVIEW_FINGER_WEIGHTS")
             || getFalloutNeutralActorPreviewBool("OPENMW_FNV_ACTOR_PREVIEW_SKIN_WEIGHTS");
@@ -1746,6 +1952,9 @@ namespace MWRender
             = getFalloutNeutralActorPreviewString("OPENMW_FNV_ACTOR_PREVIEW_WEIGHT_BONE");
         if (rigWireframe || rigWeights)
         {
+            if (rigWireframe)
+                applyFalloutPreviewWireframeState(*mNode->getOrCreateStateSet(),
+                    getFalloutNeutralActorPreviewFloat("OPENMW_FNV_ACTOR_PREVIEW_DEBUG_LINE_WIDTH", 4.f));
             FalloutActorPreviewRigDebugVisitor rigDebug(rigWireframe, rigWeights, rigWeightSelector);
             mNode->accept(rigDebug);
             Log(Debug::Info) << "FNV/ESM4 proof: neutral actor preview rig debug view=" << viewName

@@ -2,14 +2,19 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <stdexcept>
 
 #include <osg/Camera>
 #include <osg/ComputeBoundsVisitor>
 #include <osg/Fog>
+#include <osg/Geode>
 #include <osg/Group>
 #include <osg/Light>
+#include <osg/LineWidth>
 #include <osg/Material>
+#include <osg/Math>
+#include <osg/PolygonMode>
 #include <osg/Texture2D>
 
 #include <components/debug/debuglog.hpp>
@@ -125,6 +130,45 @@ namespace MWRender
 
     namespace
     {
+        bool getStandaloneModelPreviewBool(const char* name)
+        {
+            return std::getenv(name) != nullptr;
+        }
+
+        void applyStandaloneModelWireframeState(osg::StateSet& stateSet)
+        {
+            stateSet.setMode(GL_LIGHTING, osg::StateAttribute::OFF | osg::StateAttribute::OVERRIDE);
+            stateSet.setMode(GL_CULL_FACE, osg::StateAttribute::OFF | osg::StateAttribute::OVERRIDE);
+            stateSet.setAttributeAndModes(
+                new osg::PolygonMode(osg::PolygonMode::FRONT_AND_BACK, osg::PolygonMode::LINE),
+                osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
+            stateSet.setAttributeAndModes(new osg::LineWidth(3.f), osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
+        }
+
+        class StandaloneModelWireframeVisitor : public osg::NodeVisitor
+        {
+        public:
+            StandaloneModelWireframeVisitor()
+                : osg::NodeVisitor(TRAVERSE_ALL_CHILDREN)
+            {
+            }
+
+            void apply(osg::Geode& geode) override
+            {
+                for (unsigned int i = 0; i < geode.getNumDrawables(); ++i)
+                {
+                    osg::Drawable* drawable = geode.getDrawable(i);
+                    if (drawable == nullptr)
+                        continue;
+                    applyStandaloneModelWireframeState(*drawable->getOrCreateStateSet());
+                    ++mDrawables;
+                }
+                traverse(geode);
+            }
+
+            unsigned int mDrawables = 0;
+        };
+
         VFS::Path::Normalized resolveModel(Resource::ResourceSystem* resourceSystem, const std::string& model)
         {
             if (model.empty())
@@ -238,18 +282,38 @@ namespace MWRender
 
         mModelNode = new osg::PositionAttitudeTransform;
         mModelNode->setScale(osg::Vec3f(mSettings.mScale, mSettings.mScale, mSettings.mScale));
-        mModelNode->setAttitude(osg::Quat(mSettings.mRotation.x(), osg::Vec3f(1.f, 0.f, 0.f),
-            mSettings.mRotation.y(), osg::Vec3f(0.f, 1.f, 0.f), mSettings.mRotation.z(), osg::Vec3f(0.f, 0.f, 1.f)));
+        mModelNode->setAttitude(osg::Quat(osg::DegreesToRadians(mSettings.mRotation.x()), osg::Vec3f(1.f, 0.f, 0.f),
+            osg::DegreesToRadians(mSettings.mRotation.y()), osg::Vec3f(0.f, 1.f, 0.f),
+            osg::DegreesToRadians(mSettings.mRotation.z()), osg::Vec3f(0.f, 0.f, 1.f)));
         mModelNode->setPosition(-mState.mBoundsCenter * mSettings.mScale);
         mModelNode->addChild(model);
+
+        if (getStandaloneModelPreviewBool("OPENMW_FNV_ACTOR_PREVIEW_WIREFRAME"))
+        {
+            applyStandaloneModelWireframeState(*mModelNode->getOrCreateStateSet());
+            StandaloneModelWireframeVisitor wireframeVisitor;
+            mModelNode->accept(wireframeVisitor);
+            Log(Debug::Info) << "FNV/ESM4 standalone model preview wireframe model=\"" << mSettings.mModel
+                             << "\" correctedModel=\"" << mState.mCorrectedModel
+                             << "\" drawables=" << wireframeVisitor.mDrawables
+                             << " runtime=runtime-supported gate=runtime-neutral-rtt-preview-wireframe";
+        }
 
         lightManager->addChild(mModelNode);
         mRTTNode->addChild(lightManager);
 
-        const osg::Vec3f lookAt(0.f, 0.f, 0.f);
+        const osg::Vec3f lookAt = mSettings.mCameraPan;
         osg::Vec3f cameraDirection = mSettings.mCameraDirection;
         if (cameraDirection.normalize() == 0.f)
             cameraDirection = osg::Vec3f(0.f, 1.f, 0.f);
+        if (std::isfinite(mSettings.mCameraTiltDegrees) && std::abs(mSettings.mCameraTiltDegrees) > 0.001f)
+        {
+            osg::Vec3f right = osg::Vec3f(0.f, 0.f, 1.f) ^ cameraDirection;
+            if (right.normalize() == 0.f)
+                right = osg::Vec3f(1.f, 0.f, 0.f);
+            cameraDirection = osg::Quat(osg::DegreesToRadians(mSettings.mCameraTiltDegrees), right) * cameraDirection;
+            cameraDirection.normalize();
+        }
         const float cameraDistanceMultiplier = std::clamp(mSettings.mCameraDistanceMultiplier, 0.15f, 12.f);
         const float cameraDistance = std::max(48.f, mState.mFrameRadius * mSettings.mScale * 3.1f)
             * cameraDistanceMultiplier;

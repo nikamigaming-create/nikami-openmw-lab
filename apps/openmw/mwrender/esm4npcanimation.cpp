@@ -18,6 +18,7 @@
 #include <components/esm4/loadsoun.hpp>
 #include <components/esm4/loadproj.hpp>
 #include <components/esm4/loadstat.hpp>
+#include <components/esm4/loadtxst.hpp>
 #include <components/esm4/loadweap.hpp>
 
 #include <algorithm>
@@ -85,6 +86,7 @@
 #include "../mwworld/esmstore.hpp"
 #include "../mwworld/manualref.hpp"
 #include "../mwworld/timestamp.hpp"
+#include "renderbin.hpp"
 #include "util.hpp"
 
 namespace MWRender
@@ -1557,8 +1559,15 @@ namespace MWRender
 
             std::ostringstream stream;
             stream << texture << " " << image->s() << "x" << image->t() << " pf=0x" << std::hex
-                   << image->getPixelFormat() << std::dec;
+                   << image->getPixelFormat() << std::dec
+                   << " translucent=" << image->isImageTranslucent();
             return stream.str();
+        }
+
+        bool isTextureImageTranslucent(Resource::ResourceSystem* resourceSystem, std::string_view texture)
+        {
+            osg::ref_ptr<osg::Image> image = getExistingTextureImage(resourceSystem, texture);
+            return image != nullptr && image->isImageTranslucent();
         }
 
         std::string findFonvTextureNormalCompanion(Resource::ResourceSystem* resourceSystem, std::string_view texture)
@@ -2060,6 +2069,169 @@ namespace MWRender
             Resource::ResourceSystem* mResourceSystem;
         };
 
+        class FalloutAlphaOnlyDiffuseBlendVisitor : public osg::NodeVisitor
+        {
+        public:
+            FalloutAlphaOnlyDiffuseBlendVisitor(std::string_view texture, Resource::ResourceSystem* resourceSystem)
+                : osg::NodeVisitor(TRAVERSE_ALL_CHILDREN)
+                , mTexture(texture)
+                , mResourceSystem(resourceSystem)
+            {
+            }
+
+            void apply(osg::Node& node) override
+            {
+                applyState(*node.getOrCreateStateSet());
+                traverse(node);
+            }
+
+            void apply(osg::Geode& geode) override
+            {
+                applyState(*geode.getOrCreateStateSet());
+                for (unsigned int i = 0; i < geode.getNumDrawables(); ++i)
+                    if (osg::Drawable* drawable = geode.getDrawable(i))
+                        applyDrawable(*drawable);
+                traverse(geode);
+            }
+
+            void apply(osg::Drawable& drawable) override { applyDrawable(drawable); }
+
+            unsigned int getAppliedCount() const { return mApplied; }
+
+        private:
+            void applyDrawable(osg::Drawable& drawable)
+            {
+                applyState(*drawable.getOrCreateStateSet());
+                if (SceneUtil::RigGeometry* rig = dynamic_cast<SceneUtil::RigGeometry*>(&drawable))
+                {
+                    if (osg::Geometry* source = rig->getSourceGeometry())
+                        applyState(*source->getOrCreateStateSet());
+                    for (unsigned int i = 0; i < 2; ++i)
+                        if (osg::Geometry* geometry = rig->getRenderGeometry(i))
+                            applyState(*geometry->getOrCreateStateSet());
+                }
+            }
+
+            void applyState(osg::StateSet& stateSet)
+            {
+                overrideTextureSlot(mTexture, "diffuseMap", 0, mResourceSystem, stateSet);
+                stateSet.setDefine("FNV_DIFFUSE_ALPHA_ONLY", "1", osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
+                stateSet.setDefine("FORCE_OPAQUE", "0", osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
+                stateSet.setMode(GL_BLEND, osg::StateAttribute::OFF | osg::StateAttribute::OVERRIDE);
+                stateSet.setMode(GL_ALPHA_TEST, osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
+                osg::ref_ptr<osg::AlphaFunc> alphaFunc = new osg::AlphaFunc;
+                alphaFunc->setFunction(osg::AlphaFunc::GREATER);
+                alphaFunc->setReferenceValue(0.45f);
+                stateSet.setAttributeAndModes(alphaFunc, osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
+                stateSet.setMode(GL_DEPTH_TEST, osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
+                osg::ref_ptr<osg::Depth> depth = new SceneUtil::AutoDepth(osg::Depth::LEQUAL);
+                depth->setWriteMask(true);
+                stateSet.setAttributeAndModes(depth, osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
+                stateSet.setRenderBinDetails(RenderBin_Default, "RenderBin", osg::StateSet::OVERRIDE_RENDERBIN_DETAILS);
+                ++mApplied;
+            }
+
+            std::string_view mTexture;
+            Resource::ResourceSystem* mResourceSystem;
+            unsigned int mApplied = 0;
+        };
+
+        class FalloutVertexIntensityAlphaBlendVisitor : public osg::NodeVisitor
+        {
+        public:
+            FalloutVertexIntensityAlphaBlendVisitor(const osg::Vec4f& tint)
+                : osg::NodeVisitor(TRAVERSE_ALL_CHILDREN)
+                , mMaxTint(std::max({ tint.r(), tint.g(), tint.b(), 0.001f }))
+            {
+            }
+
+            void apply(osg::Node& node) override
+            {
+                applyState(*node.getOrCreateStateSet());
+                traverse(node);
+            }
+
+            void apply(osg::Geode& geode) override
+            {
+                applyState(*geode.getOrCreateStateSet());
+                for (unsigned int i = 0; i < geode.getNumDrawables(); ++i)
+                    if (osg::Drawable* drawable = geode.getDrawable(i))
+                        applyDrawable(*drawable);
+                traverse(geode);
+            }
+
+            void apply(osg::Drawable& drawable) override { applyDrawable(drawable); }
+
+            unsigned int getAppliedStates() const { return mAppliedStates; }
+            unsigned int getAlphaColorArrays() const { return mAlphaColorArrays; }
+
+        private:
+            void applyDrawable(osg::Drawable& drawable)
+            {
+                applyState(*drawable.getOrCreateStateSet());
+                if (osg::Geometry* geometry = drawable.asGeometry())
+                    applyGeometry(*geometry);
+                if (SceneUtil::RigGeometry* rig = dynamic_cast<SceneUtil::RigGeometry*>(&drawable))
+                {
+                    if (osg::Geometry* source = rig->getSourceGeometry())
+                    {
+                        applyState(*source->getOrCreateStateSet());
+                        applyGeometry(*source);
+                    }
+                    for (unsigned int i = 0; i < 2; ++i)
+                        if (osg::Geometry* geometry = rig->getRenderGeometry(i))
+                        {
+                            applyState(*geometry->getOrCreateStateSet());
+                            applyGeometry(*geometry);
+                        }
+                }
+            }
+
+            void applyGeometry(osg::Geometry& geometry)
+            {
+                osg::Array* existingColors = geometry.getColorArray();
+                if (osg::Vec4Array* floatColors = dynamic_cast<osg::Vec4Array*>(existingColors))
+                {
+                    for (osg::Vec4f& color : *floatColors)
+                        color.a() = std::clamp(std::max({ color.r(), color.g(), color.b() }) / mMaxTint, 0.f, 1.f);
+                    floatColors->dirty();
+                    ++mAlphaColorArrays;
+                }
+                else if (osg::Vec4ubArray* byteColors = dynamic_cast<osg::Vec4ubArray*>(existingColors))
+                {
+                    for (osg::Vec4ub& color : *byteColors)
+                    {
+                        const float intensity = std::clamp(
+                            static_cast<float>(std::max({ color.r(), color.g(), color.b() })) / (mMaxTint * 255.f),
+                            0.f, 1.f);
+                        color.a() = static_cast<unsigned char>(std::clamp(intensity * 255.f + 0.5f, 0.f, 255.f));
+                    }
+                    byteColors->dirty();
+                    ++mAlphaColorArrays;
+                }
+            }
+
+            void applyState(osg::StateSet& stateSet)
+            {
+                stateSet.setDefine("FORCE_OPAQUE", "0", osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
+                stateSet.setMode(GL_BLEND, osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
+                stateSet.setAttributeAndModes(new osg::BlendFunc(osg::BlendFunc::SRC_ALPHA,
+                                               osg::BlendFunc::ONE_MINUS_SRC_ALPHA),
+                    osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
+                stateSet.setMode(GL_ALPHA_TEST, osg::StateAttribute::OFF | osg::StateAttribute::OVERRIDE);
+                stateSet.setMode(GL_DEPTH_TEST, osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
+                osg::ref_ptr<osg::Depth> depth = new SceneUtil::AutoDepth(osg::Depth::LEQUAL);
+                depth->setWriteMask(false);
+                stateSet.setAttributeAndModes(depth, osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
+                stateSet.setRenderBinDetails(0, "SORT_BACK_TO_FRONT", osg::StateSet::OVERRIDE_RENDERBIN_DETAILS);
+                ++mAppliedStates;
+            }
+
+            float mMaxTint;
+            unsigned int mAppliedStates = 0;
+            unsigned int mAlphaColorArrays = 0;
+        };
+
         void overrideFalloutPartTexture(std::string_view texture, std::string_view textureType, unsigned int unit,
             Resource::ResourceSystem* resourceSystem, osg::Node& node)
         {
@@ -2084,12 +2256,26 @@ namespace MWRender
             std::string_view texture, Resource::ResourceSystem* resourceSystem, osg::Node& node)
         {
             overrideFalloutPartTexture(texture, "diffuseMap", 0, resourceSystem, node);
+            resourceSystem->getSceneManager()->applyShaders(node);
         }
 
         void overrideFalloutPartDiffuseTexture(
             osg::Image* image, Resource::ResourceSystem* resourceSystem, osg::Node& node)
         {
             overrideFalloutPartTexture(image, "diffuseMap", 0, resourceSystem, node);
+            resourceSystem->getSceneManager()->applyShaders(node);
+        }
+
+        unsigned int applyFalloutAlphaOnlyDiffuseBlend(
+            std::string_view texture, Resource::ResourceSystem* resourceSystem, osg::Node& node)
+        {
+            if (texture.empty() || resourceSystem == nullptr)
+                return 0;
+
+            FalloutAlphaOnlyDiffuseBlendVisitor visitor(texture, resourceSystem);
+            node.accept(visitor);
+            resourceSystem->getSceneManager()->applyShaders(node);
+            return visitor.getAppliedCount();
         }
 
         void overrideFalloutPartNormalTexture(
@@ -5020,6 +5206,82 @@ namespace MWRender
             return {};
         }
 
+        std::string getEsm4HeadPartDiffuseTexture(Resource::ResourceSystem* resourceSystem,
+            const MWWorld::ESMStore* store, const ESM4::HeadPart& part, std::string_view owner)
+        {
+            if (resourceSystem == nullptr || store == nullptr || part.mBaseTexture.isZeroOrUnset())
+                return {};
+
+            const ESM4::TextureSet* textureSet = store->get<ESM4::TextureSet>().search(part.mBaseTexture);
+            if (textureSet == nullptr)
+            {
+                Log(Debug::Warning) << "FNV/ESM4 diag: HDPT " << part.mEditorId
+                                    << " model=" << part.mModel
+                                    << " names missing TXST " << ESM::RefId(part.mBaseTexture)
+                                    << " for " << owner;
+                return {};
+            }
+
+            if (textureSet->mDiffuse.empty())
+            {
+                Log(Debug::Warning) << "FNV/ESM4 diag: HDPT " << part.mEditorId
+                                    << " model=" << part.mModel
+                                    << " TXST=" << textureSet->mEditorId
+                                    << " has no TX00 diffuse for " << owner;
+                return {};
+            }
+
+            const std::string texture = findExistingTexture(resourceSystem, { textureSet->mDiffuse });
+            if (texture.empty())
+            {
+                const VFS::Path::Normalized correctedTexture = Misc::ResourceHelpers::correctTexturePath(
+                    VFS::Path::toNormalized(textureSet->mDiffuse), *resourceSystem->getVFS());
+                Log(Debug::Warning) << "FNV/ESM4 diag: HDPT " << part.mEditorId
+                                    << " model=" << part.mModel
+                                    << " TXST=" << textureSet->mEditorId
+                                    << " TX00=" << textureSet->mDiffuse
+                                    << " corrected=" << correctedTexture.value()
+                                    << " is not present in VFS for " << owner;
+                return {};
+            }
+
+            Log(Debug::Info) << "FNV/ESM4 diag: HDPT " << part.mEditorId
+                             << " model=" << part.mModel
+                             << " binding TXST diffuse " << formatTextureImageSummary(resourceSystem, texture)
+                             << " baseTexture=" << ESM::RefId(part.mBaseTexture)
+                             << " txst=" << textureSet->mEditorId
+                             << " source=HDPT.TNAM->TXST.TX00 for " << owner
+                             << " gate=runtime-fnv-headpart-diffuse-from-data";
+            return texture;
+        }
+
+        std::string getEsm4HairDiffuseTexture(
+            Resource::ResourceSystem* resourceSystem, const ESM4::Hair& hair, std::string_view owner)
+        {
+            if (resourceSystem == nullptr || hair.mIcon.empty())
+                return {};
+
+            const std::string texture = findExistingTexture(resourceSystem, { hair.mIcon });
+            if (texture.empty())
+            {
+                const VFS::Path::Normalized correctedTexture = Misc::ResourceHelpers::correctTexturePath(
+                    VFS::Path::toNormalized(hair.mIcon), *resourceSystem->getVFS());
+                Log(Debug::Warning) << "FNV/ESM4 diag: HAIR " << hair.mEditorId
+                                    << " model=" << hair.mModel
+                                    << " ICON=" << hair.mIcon
+                                    << " corrected=" << correctedTexture.value()
+                                    << " is not present in VFS for " << owner;
+                return {};
+            }
+
+            Log(Debug::Info) << "FNV/ESM4 diag: HAIR " << hair.mEditorId
+                             << " model=" << hair.mModel
+                             << " binding ICON diffuse " << formatTextureImageSummary(resourceSystem, texture)
+                             << " source=HAIR.ICON for " << owner
+                             << " gate=runtime-fnv-hair-diffuse-from-data";
+            return texture;
+        }
+
         bool isFalloutMouthDriverPart(std::string_view model)
         {
             std::string lowered(model);
@@ -5555,6 +5817,47 @@ namespace MWRender
             return {};
         }
 
+        std::string getFalloutHeadFrameSurfaceModelKey(std::string_view model)
+        {
+            std::string path(model);
+            std::replace(path.begin(), path.end(), '\\', '/');
+            const std::size_t slash = path.find_last_of('/');
+            std::string name = slash == std::string::npos ? path : path.substr(slash + 1);
+            const std::size_t dot = name.find_last_of('.');
+            if (dot != std::string::npos)
+                name.resize(dot);
+
+            std::string key;
+            key.reserve(name.size());
+            for (char ch : name)
+            {
+                const unsigned char value = static_cast<unsigned char>(ch);
+                if (std::isalnum(value))
+                    key.push_back(static_cast<char>(std::toupper(value)));
+                else if (!key.empty() && key.back() != '_')
+                    key.push_back('_');
+            }
+            while (!key.empty() && key.back() == '_')
+                key.pop_back();
+            return key;
+        }
+
+        std::string getFalloutHeadFrameSurfaceAuthoringPrefix(std::string_view model, bool headgearStaticPart)
+        {
+            const std::string familyPrefix = getFalloutHeadFrameSurfacePrefix(model, headgearStaticPart);
+            if (familyPrefix.empty())
+                return familyPrefix;
+
+            if (familyPrefix == "OPENMW_FNV_HAIR" && isFalloutScalpHairModel(model))
+            {
+                const std::string key = getFalloutHeadFrameSurfaceModelKey(model);
+                if (!key.empty())
+                    return familyPrefix + "_MESH_" + key;
+            }
+
+            return familyPrefix;
+        }
+
         osg::Quat makeFalloutEulerAttitude(const osg::Vec3f& degrees)
         {
             constexpr float degreesToRadians = 0.017453292519943295f;
@@ -5575,7 +5878,9 @@ namespace MWRender
 
         osg::Vec3f getFalloutHeadFrameSurfaceRotationFallback(std::string_view prefix)
         {
-            if (prefix == "OPENMW_FNV_HAIR")
+            if (prefix == "OPENMW_FNV_HAIR_MESH_HAIRMESSY01")
+                return osg::Vec3f(0.f, 0.f, -90.f);
+            if (prefix == "OPENMW_FNV_HAIR" || prefix.find("OPENMW_FNV_HAIR_MESH_") == 0)
                 return osg::Vec3f(90.f, 90.f, 0.f);
             return osg::Vec3f(0.f, 0.f, getFalloutHeadFrameSurfaceZFallback(prefix));
         }
@@ -5867,9 +6172,17 @@ namespace MWRender
             return true;
         }
 
-        osg::Matrix makeFalloutHeadSurfaceMatrix(
-            const osg::Vec3f& offset, const osg::Quat& attitude, const osg::Vec3f& pivot, bool pivotMode)
+        osg::Matrix makeFalloutHeadSurfaceMatrix(const osg::Vec3f& offset, const osg::Quat& attitude,
+            const osg::Vec3f& pivot, bool pivotMode, const osg::Quat& pivotDeltaAttitude = osg::Quat())
         {
+            if (!pivotDeltaAttitude.zeroRotation())
+            {
+                if (pivotMode)
+                    return osg::Matrix::translate(-pivot) * osg::Matrix::rotate(pivotDeltaAttitude)
+                        * osg::Matrix::translate(pivot) * osg::Matrix::rotate(attitude) * osg::Matrix::translate(offset);
+                return osg::Matrix::rotate(attitude) * osg::Matrix::rotate(pivotDeltaAttitude)
+                    * osg::Matrix::translate(offset);
+            }
             if (pivotMode && !attitude.zeroRotation())
                 return osg::Matrix::translate(-pivot) * osg::Matrix::rotate(attitude)
                     * osg::Matrix::translate(pivot + offset);
@@ -5910,6 +6223,13 @@ namespace MWRender
                         readFalloutLiveAuthoringFloat(content, mPrefix + "_ROTATION_X", rotation.x());
                         readFalloutLiveAuthoringFloat(content, mPrefix + "_ROTATION_Y", rotation.y());
                         readFalloutLiveAuthoringFloat(content, mPrefix + "_ROTATION_Z", rotation.z());
+                        osg::Vec3f pivotDeltaRotation;
+                        readFalloutLiveAuthoringFloat(
+                            content, mPrefix + "_PIVOT_DELTA_ROTATION_X", pivotDeltaRotation.x());
+                        readFalloutLiveAuthoringFloat(
+                            content, mPrefix + "_PIVOT_DELTA_ROTATION_Y", pivotDeltaRotation.y());
+                        readFalloutLiveAuthoringFloat(
+                            content, mPrefix + "_PIVOT_DELTA_ROTATION_Z", pivotDeltaRotation.z());
                         readFalloutLiveAuthoringFloat(content, mPrefix + "_PIVOT_X", pivot.x());
                         readFalloutLiveAuthoringFloat(content, mPrefix + "_PIVOT_Y", pivot.y());
                         readFalloutLiveAuthoringFloat(content, mPrefix + "_PIVOT_Z", pivot.z());
@@ -5921,7 +6241,8 @@ namespace MWRender
                         if (osg::MatrixTransform* matrixNode = dynamic_cast<osg::MatrixTransform*>(node))
                         {
                             matrixNode->setMatrix(
-                                makeFalloutHeadSurfaceMatrix(offset, makeFalloutEulerAttitude(rotation), pivot, pivotMode));
+                                makeFalloutHeadSurfaceMatrix(offset, makeFalloutEulerAttitude(rotation), pivot, pivotMode,
+                                    makeFalloutEulerAttitude(pivotDeltaRotation)));
                             matrixNode->dirtyBound();
                             Log(Debug::Info)
                                 << "FNV/ESM4 live authoring: applied head surface authoring model=" << mModel
@@ -6271,6 +6592,7 @@ namespace MWRender
         {
             std::vector<osg::Vec3f> points;
             unsigned int drawables = 0;
+            bool boundsFallback = false;
             osg::Vec3f min = osg::Vec3f(std::numeric_limits<float>::max(), std::numeric_limits<float>::max(),
                 std::numeric_limits<float>::max());
             osg::Vec3f max = osg::Vec3f(std::numeric_limits<float>::lowest(), std::numeric_limits<float>::lowest(),
@@ -6289,6 +6611,21 @@ namespace MWRender
                 cloud.min[axis] = std::min(cloud.min[axis], point[axis]);
                 cloud.max[axis] = std::max(cloud.max[axis], point[axis]);
             }
+        }
+
+        void includeFalloutBoundingBoxCorners(FalloutHeadSpacePointCloud& cloud, const osg::BoundingBox& box,
+            const osg::Matrix& localToHead)
+        {
+            if (!box.valid())
+                return;
+
+            for (unsigned int x = 0; x < 2; ++x)
+                for (unsigned int y = 0; y < 2; ++y)
+                    for (unsigned int z = 0; z < 2; ++z)
+                        includeFalloutHeadSpacePoint(cloud,
+                            transformPoint(osg::Vec3f(x == 0 ? box.xMin() : box.xMax(),
+                                               y == 0 ? box.yMin() : box.yMax(), z == 0 ? box.zMin() : box.zMax()),
+                                localToHead));
         }
 
         void finishFalloutHeadSpacePointCloud(FalloutHeadSpacePointCloud& cloud)
@@ -6457,7 +6794,20 @@ namespace MWRender
         {
             FalloutHeadSpacePointCloudVisitor visitor(headWorldInverse);
             node.accept(visitor);
-            return visitor.finish();
+            FalloutHeadSpacePointCloud cloud = visitor.finish();
+            if (cloud.valid())
+                return cloud;
+
+            osg::ComputeBoundsVisitor boundsVisitor;
+            node.accept(boundsVisitor);
+            const osg::BoundingBox box = boundsVisitor.getBoundingBox();
+            if (!box.valid())
+                return cloud;
+
+            cloud.boundsFallback = true;
+            includeFalloutBoundingBoxCorners(cloud, box, getNodeWorldMatrix(&node) * headWorldInverse);
+            finishFalloutHeadSpacePointCloud(cloud);
+            return cloud;
         }
 
         class FindNamedNodeVisitor : public osg::NodeVisitor
@@ -6958,6 +7308,84 @@ namespace MWRender
             parent.addChild(makeFalloutAxisDebugGeode(name, size));
         }
 
+        void ensureFalloutTranslatedAxisDebugChild(
+            osg::Group& parent, std::string_view name, const osg::Vec3f& position, float size)
+        {
+            for (unsigned int i = 0; i < parent.getNumChildren(); ++i)
+            {
+                osg::MatrixTransform* child = dynamic_cast<osg::MatrixTransform*>(parent.getChild(i));
+                if (child != nullptr && child->getName() == name)
+                {
+                    child->setMatrix(osg::Matrix::translate(position));
+                    child->dirtyBound();
+                    return;
+                }
+            }
+
+            osg::ref_ptr<osg::MatrixTransform> transform = new osg::MatrixTransform;
+            transform->setName(std::string(name));
+            transform->setDataVariance(osg::Object::DYNAMIC);
+            transform->setCullingActive(false);
+            transform->setMatrix(osg::Matrix::translate(position));
+            transform->addChild(makeFalloutAxisDebugGeode(std::string(name) + " Lines", size));
+            parent.addChild(transform);
+        }
+
+        void removeFalloutAxisDebugChild(osg::Group& parent, std::string_view name)
+        {
+            for (unsigned int i = parent.getNumChildren(); i > 0; --i)
+            {
+                osg::Node* child = parent.getChild(i - 1);
+                if (child != nullptr && child->getName() == name)
+                    parent.removeChild(i - 1);
+            }
+        }
+
+        std::string summarizeFalloutHeadSurfaceRotationCandidates(osg::MatrixTransform& surfaceNode,
+            const osg::BoundingBox& localBox, const osg::Matrix& headWorldInverse, const osg::Vec3f& offset,
+            const osg::Vec3f& pivot, bool pivotMode)
+        {
+            if (!localBox.valid())
+                return "candidateBoundsHead=<invalid-local-bounds>";
+
+            osg::Group* parent = surfaceNode.getNumParents() > 0 ? surfaceNode.getParent(0) : nullptr;
+            const osg::Matrix parentWorld = parent != nullptr ? getNodeWorldMatrix(parent) : osg::Matrix::identity();
+            const std::array<std::pair<const char*, osg::Vec3f>, 10> candidates = { {
+                { "current", osg::Vec3f(std::numeric_limits<float>::quiet_NaN(), 0.f, 0.f) },
+                { "xyz(0,0,0)", osg::Vec3f(0.f, 0.f, 0.f) },
+                { "xyz(0,0,90)", osg::Vec3f(0.f, 0.f, 90.f) },
+                { "xyz(0,0,-90)", osg::Vec3f(0.f, 0.f, -90.f) },
+                { "xyz(0,0,180)", osg::Vec3f(0.f, 0.f, 180.f) },
+                { "xyz(90,0,0)", osg::Vec3f(90.f, 0.f, 0.f) },
+                { "xyz(-90,0,0)", osg::Vec3f(-90.f, 0.f, 0.f) },
+                { "xyz(0,90,0)", osg::Vec3f(0.f, 90.f, 0.f) },
+                { "xyz(0,-90,0)", osg::Vec3f(0.f, -90.f, 0.f) },
+                { "xyz(90,90,0)", osg::Vec3f(90.f, 90.f, 0.f) },
+            } };
+
+            std::ostringstream stream;
+            stream << std::fixed << std::setprecision(4) << "candidateBoundsHead=[";
+            for (std::size_t i = 0; i < candidates.size(); ++i)
+            {
+                const auto& [name, rotation] = candidates[i];
+                osg::Matrix localMatrix = surfaceNode.getMatrix();
+                if (!std::isnan(rotation.x()))
+                    localMatrix = makeFalloutHeadSurfaceMatrix(offset, makeFalloutEulerAttitude(rotation), pivot, pivotMode);
+
+                FalloutHeadSpacePointCloud cloud;
+                includeFalloutBoundingBoxCorners(cloud, localBox, localMatrix * parentWorld * headWorldInverse);
+                finishFalloutHeadSpacePointCloud(cloud);
+                if (i != 0)
+                    stream << ";";
+                stream << name << ":center=" << formatFalloutVec3Telemetry(cloud.center)
+                       << ",min=" << formatFalloutVec3Telemetry(cloud.min)
+                       << ",max=" << formatFalloutVec3Telemetry(cloud.max)
+                       << ",extent=" << formatFalloutVec3Telemetry(cloud.max - cloud.min);
+            }
+            stream << "]";
+            return stream.str();
+        }
+
         void logFalloutLiveSurfaceFrameTelemetry(osg::MatrixTransform& surfaceNode, osg::Group* headNode,
             std::string_view model, std::string_view prefix, const MWWorld::Ptr& ptr, const osg::Vec3f& offset,
             const osg::Vec3f& rotation, const osg::Vec3f& pivot, bool pivotMode)
@@ -6994,11 +7422,14 @@ namespace MWRender
             const osg::Vec3f headAxisX = headRotation * osg::Vec3f(1.f, 0.f, 0.f);
             const osg::Vec3f headAxisY = headRotation * osg::Vec3f(0.f, 1.f, 0.f);
             const osg::Vec3f headAxisZ = headRotation * osg::Vec3f(0.f, 0.f, 1.f);
+            const std::string candidateSummary = summarizeFalloutHeadSurfaceRotationCandidates(
+                surfaceNode, box, headWorldInverse, offset, pivot, pivotMode);
 
             Log(Debug::Info) << "FNV/ESM4 telemetry: live surface frame model=" << model
                              << " prefix=" << prefix
                              << " ref=" << ptr.getCellRef().getRefId()
                              << " parentHead=" << (headNode != nullptr ? headNode->getName() : std::string("<none>"))
+                             << " surfaceChildCount=" << surfaceNode.getNumChildren()
                              << " offset=(" << offset.x() << "," << offset.y() << "," << offset.z() << ")"
                              << " rotation=(" << rotation.x() << "," << rotation.y() << "," << rotation.z() << ")"
                              << " pivot=(" << pivot.x() << "," << pivot.y() << "," << pivot.z() << ")"
@@ -7013,6 +7444,7 @@ namespace MWRender
                              << boundsInHead.z() << ")"
                              << " boundsExtent=(" << localBoundsExtent.x() << "," << localBoundsExtent.y() << ","
                              << localBoundsExtent.z() << ")"
+                             << " pointBoundsFallback=" << pointCloud.boundsFallback
                              << " pointCount=" << pointCloud.points.size()
                              << " pointDrawableCount=" << pointCloud.drawables
                              << " pointCenterHead=" << formatFalloutVec3Telemetry(pointCloud.center)
@@ -7042,8 +7474,14 @@ namespace MWRender
                              << headAxisY.z() << ")"
                              << " headAxisZWorld=(" << headAxisZ.x() << "," << headAxisZ.y() << ","
                              << headAxisZ.z() << ")"
+                             << " surfaceDotHeadAxes[x=(" << (surfaceAxisX * headAxisX) << ","
+                             << (surfaceAxisX * headAxisY) << "," << (surfaceAxisX * headAxisZ) << ") y=("
+                             << (surfaceAxisY * headAxisX) << "," << (surfaceAxisY * headAxisY) << ","
+                             << (surfaceAxisY * headAxisZ) << ") z=(" << (surfaceAxisZ * headAxisX) << ","
+                             << (surfaceAxisZ * headAxisY) << "," << (surfaceAxisZ * headAxisZ) << ")]"
                              << " surfaceWorldMatrix=[" << formatFalloutMatrixCompact(surfaceWorld) << "]"
                              << " headWorldMatrix=[" << formatFalloutMatrixCompact(headWorld) << "]"
+                             << " " << candidateSummary
                              << " runtime=measurement-only gate=runtime-fnv-live-surface-frame";
         }
 
@@ -7592,6 +8030,56 @@ namespace MWRender
             return stream.str();
         }
 
+        std::string getFalloutAlphaFuncSummary(const osg::StateSet* stateSet)
+        {
+            const osg::AlphaFunc* alphaFunc = stateSet == nullptr ? nullptr
+                : dynamic_cast<const osg::AlphaFunc*>(stateSet->getAttribute(osg::StateAttribute::ALPHAFUNC));
+            if (alphaFunc == nullptr)
+                return "none";
+
+            const char* function = "unknown";
+            switch (alphaFunc->getFunction())
+            {
+                case osg::AlphaFunc::NEVER:
+                    function = "never";
+                    break;
+                case osg::AlphaFunc::LESS:
+                    function = "less";
+                    break;
+                case osg::AlphaFunc::EQUAL:
+                    function = "equal";
+                    break;
+                case osg::AlphaFunc::LEQUAL:
+                    function = "lequal";
+                    break;
+                case osg::AlphaFunc::GREATER:
+                    function = "greater";
+                    break;
+                case osg::AlphaFunc::NOTEQUAL:
+                    function = "notequal";
+                    break;
+                case osg::AlphaFunc::GEQUAL:
+                    function = "gequal";
+                    break;
+                case osg::AlphaFunc::ALWAYS:
+                    function = "always";
+                    break;
+            }
+
+            std::ostringstream stream;
+            stream << function << ":" << alphaFunc->getReferenceValue();
+            return stream.str();
+        }
+
+        std::string getFalloutDepthWriteSummary(const osg::StateSet* stateSet)
+        {
+            const osg::Depth* depth = stateSet == nullptr ? nullptr
+                : dynamic_cast<const osg::Depth*>(stateSet->getAttribute(osg::StateAttribute::DEPTH));
+            if (depth == nullptr)
+                return "inherit";
+            return depth->getWriteMask() ? "on" : "off";
+        }
+
         std::string getFalloutStateSetSummary(const osg::StateSet* stateSet)
         {
             if (stateSet == nullptr)
@@ -7602,6 +8090,9 @@ namespace MWRender
                    << ",cull=" << getFalloutGlModeSummary(stateSet, GL_CULL_FACE)
                    << ",blend=" << getFalloutGlModeSummary(stateSet, GL_BLEND)
                    << ",depth=" << getFalloutGlModeSummary(stateSet, GL_DEPTH_TEST)
+                   << ",depthWrite=" << getFalloutDepthWriteSummary(stateSet)
+                   << ",alphaFunc=" << getFalloutAlphaFuncSummary(stateSet)
+                   << ",bin=" << stateSet->getBinNumber()
                    << ",material={" << getFalloutMaterialSummary(stateSet) << "}";
             return stream.str();
         }
@@ -8724,6 +9215,13 @@ namespace MWRender
             readFalloutLiveAuthoringFloat(content, target.prefix + "_ROTATION_X", rotation.x());
             readFalloutLiveAuthoringFloat(content, target.prefix + "_ROTATION_Y", rotation.y());
             readFalloutLiveAuthoringFloat(content, target.prefix + "_ROTATION_Z", rotation.z());
+            osg::Vec3f pivotDeltaRotation;
+            readFalloutLiveAuthoringFloat(
+                content, target.prefix + "_PIVOT_DELTA_ROTATION_X", pivotDeltaRotation.x());
+            readFalloutLiveAuthoringFloat(
+                content, target.prefix + "_PIVOT_DELTA_ROTATION_Y", pivotDeltaRotation.y());
+            readFalloutLiveAuthoringFloat(
+                content, target.prefix + "_PIVOT_DELTA_ROTATION_Z", pivotDeltaRotation.z());
             readFalloutLiveAuthoringFloat(content, target.prefix + "_PIVOT_X", pivot.x());
             readFalloutLiveAuthoringFloat(content, target.prefix + "_PIVOT_Y", pivot.y());
             readFalloutLiveAuthoringFloat(content, target.prefix + "_PIVOT_Z", pivot.z());
@@ -8734,13 +9232,28 @@ namespace MWRender
             readFalloutLiveAuthoringBool(content, target.prefix + "_PIVOT_MODE", pivotMode);
 
             matrixNode->setMatrix(
-                makeFalloutHeadSurfaceMatrix(offset, makeFalloutEulerAttitude(rotation), pivot, pivotMode));
+                makeFalloutHeadSurfaceMatrix(offset, makeFalloutEulerAttitude(rotation), pivot, pivotMode,
+                    makeFalloutEulerAttitude(pivotDeltaRotation)));
             matrixNode->dirtyBound();
             osg::Group* headNode = findBestAttachmentNode(getNodeMap(), { "Bip01 Head", "bip01 head", "Head", "head" });
-            if (headNode != nullptr && std::getenv("OPENMW_FNV_DRAW_PART_AXES") != nullptr)
-                ensureFalloutAxisDebugChild(*headNode, "FNV Debug Axis Head Frame", 16.f);
-            if (std::getenv("OPENMW_FNV_DRAW_PART_AXES") != nullptr)
-                ensureFalloutAxisDebugChild(*matrixNode, "FNV Debug Axis Surface Frame " + target.model, 16.f);
+            bool drawPartAxes = std::getenv("OPENMW_FNV_DRAW_PART_AXES") != nullptr;
+            readFalloutLiveAuthoringBool(content, "OPENMW_FNV_DRAW_PART_AXES", drawPartAxes);
+            const std::string surfaceAxisName = "FNV Debug Axis Surface Frame " + target.model;
+            const std::string surfacePivotAxisName = "FNV Debug Axis Surface Pivot Frame " + target.model;
+            if (drawPartAxes)
+            {
+                if (headNode != nullptr)
+                    ensureFalloutAxisDebugChild(*headNode, "FNV Debug Axis Head Frame", 16.f);
+                ensureFalloutAxisDebugChild(*matrixNode, surfaceAxisName, 16.f);
+                ensureFalloutTranslatedAxisDebugChild(*matrixNode, surfacePivotAxisName, pivot, 12.f);
+            }
+            else
+            {
+                if (headNode != nullptr)
+                    removeFalloutAxisDebugChild(*headNode, "FNV Debug Axis Head Frame");
+                removeFalloutAxisDebugChild(*matrixNode, surfaceAxisName);
+                removeFalloutAxisDebugChild(*matrixNode, surfacePivotAxisName);
+            }
             logFalloutLiveSurfaceFrameTelemetry(
                 *matrixNode, headNode, target.model, target.prefix, mPtr, offset, rotation, pivot, pivotMode);
             Log(Debug::Info) << "FNV/ESM4 live authoring: frame-applied head surface authoring model="
@@ -10227,7 +10740,7 @@ namespace MWRender
         if (attached != nullptr && headAttachedStaticPart)
         {
             const osg::Vec3f surfaceOffset = getFalloutHeadFrameSurfaceOffset(model, headgearStaticPart);
-            const std::string surfacePrefix = getFalloutHeadFrameSurfacePrefix(model, headgearStaticPart);
+            const std::string surfacePrefix = getFalloutHeadFrameSurfaceAuthoringPrefix(model, headgearStaticPart);
             const osg::Vec3f surfaceRotationDegrees = getFalloutHeadFrameSurfaceRotationDegrees(surfacePrefix);
             const osg::Quat surfaceAttitude = makeFalloutEulerAttitude(surfaceRotationDegrees);
             const char* liveAuthoringFile = getFalloutLiveAuthoringFile();
@@ -10328,11 +10841,9 @@ namespace MWRender
             && (isFalloutHairTintModel(correctedModel.value()) || isFalloutScalpHairModel(correctedModel.value())
                 || isFalloutFaceHairModel(correctedModel.value()) || isFalloutBrowModel(correctedModel.value())))
         {
-            FalloutCutoutAlphaVisitor cutoutAlpha;
-            attached->accept(cutoutAlpha);
-            Log(Debug::Info) << "FNV/ESM4 diag: enabled opaque cutout alpha on " << cutoutAlpha.getAppliedCount()
-                             << " hair/brow state(s) for " << correctedModel.value() << " on "
-                             << mPtr.getCellRef().getRefId();
+            Log(Debug::Info) << "FNV/ESM4 diag: preserved source NIF alpha state for hair/brow "
+                             << correctedModel.value() << " on " << mPtr.getCellRef().getRefId()
+                             << " gate=runtime-fnv-hair-source-alpha-preserved";
         }
         if (attached != nullptr && headgearStaticPart)
         {
@@ -11137,6 +11648,12 @@ namespace MWRender
                                  << hair->mModel << " rawTint=(" << rawHairTint.x() << ", " << rawHairTint.y()
                                  << ", " << rawHairTint.z() << ") renderTint=(" << hairTint.x() << ", "
                                  << hairTint.y() << ", " << hairTint.z() << ") for " << traits.mEditorId;
+                const std::string diffuseTexture = getEsm4HairDiffuseTexture(mResourceSystem, *hair, traits.mEditorId);
+                if (!diffuseTexture.empty())
+                    Log(Debug::Info) << "FNV/ESM4 diag: observed legacy HAIR.ICON diffuse " << diffuseTexture
+                                     << " for " << hair->mModel
+                                     << " without binding it over baseline hair material"
+                                     << " gate=runtime-fnv-hair-baseline-material-preserved";
                 osg::ref_ptr<osg::Node> attached = insertPart(hair->mModel, &hairTint);
                 fallbackHairAttached = attached != nullptr;
                 applyFaceGenEgmMorph(mResourceSystem, attached.get(), hair->mModel, traits);
@@ -11426,6 +11943,8 @@ namespace MWRender
                                  << rawHairTint.x() << ", " << rawHairTint.y() << ", " << rawHairTint.z()
                                  << ") renderHairTint=(" << hairTint.x() << ", " << hairTint.y() << ", "
                                  << hairTint.z() << ") for " << mPtr.getCellRef().getRefId();
+                const std::string diffuseTexture
+                    = getEsm4HeadPartDiffuseTexture(mResourceSystem, store, *part, traits.mEditorId);
                 osg::ref_ptr<osg::Node> attached = insertPart(part->mModel);
                 applyFaceGenEgmMorph(mResourceSystem, attached.get(), part->mModel, traits);
                 if (attached != nullptr)
@@ -11491,6 +12010,8 @@ namespace MWRender
                         continue;
                     }
                     logFalloutCharacterBuilderGate(true, builderCategory, extraPart->mModel, mPtr, traits);
+                    const std::string extraDiffuseTexture
+                        = getEsm4HeadPartDiffuseTexture(mResourceSystem, store, *extraPart, traits.mEditorId);
                     osg::ref_ptr<osg::Node> extraAttached = insertPart(extraPart->mModel);
                     applyFaceGenEgmMorph(mResourceSystem, extraAttached.get(), extraPart->mModel, traits);
                     if (extraAttached != nullptr)

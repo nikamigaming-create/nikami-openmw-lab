@@ -15,7 +15,7 @@
 #include "engine.hpp"
 #include "options.hpp"
 
-#if !defined(OPENMW_ENABLE_VR) && !defined(OPENMW_VR)
+#if !defined(OPENMW_ENABLE_VR) && !defined(OPENMW_VR) && !defined(OPENMW_FLAT_LINKS_VR_LIB)
 #include "mwvr/openxrinput.hpp"
 #include "mwvr/vranimation.hpp"
 #include "mwvr/vrinputmanager.hpp"
@@ -29,7 +29,7 @@
 
 #include <boost/program_options/variables_map.hpp>
 
-#if !defined(OPENMW_ENABLE_VR) && !defined(OPENMW_VR)
+#if !defined(OPENMW_ENABLE_VR) && !defined(OPENMW_VR) && !defined(OPENMW_FLAT_LINKS_VR_LIB)
 #include <type_traits>
 #endif
 
@@ -47,7 +47,7 @@ extern "C" __declspec(dllexport) DWORD AmdPowerXpressRequestHighPerformance = 0x
 #include <unistd.h>
 #endif
 
-#if !defined(OPENMW_ENABLE_VR) && !defined(OPENMW_VR)
+#if !defined(OPENMW_ENABLE_VR) && !defined(OPENMW_VR) && !defined(OPENMW_FLAT_LINKS_VR_LIB)
 namespace VR
 {
     Frame::Frame() = default;

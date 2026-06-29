@@ -223,6 +223,33 @@ def main() -> int:
             raise AssertionError("live runtime command did not persist exact part model selectors")
         if exact_model_doc["actorKitPropModels"] != "meshes/armor/headgear/contract_hat.nif":
             raise AssertionError("live runtime command did not persist exact prop model selectors")
+        fnv_model_doc = runtime_store.update(
+            {
+                "actorTarget": "ContractNpc",
+                "actorKitPartModels": (
+                    "HeadFemale.NIF,MouthHuman.NIF,TeethLowerHuman.NIF,TeethUpperHuman.NIF,"
+                    "TongueHuman.NIF,EyeLeftHumanFemale.NIF,EyeRightHumanFemale.NIF,EyebrowF.NIF,HairBun.NIF"
+                ),
+                "selectors": {
+                    "partModels": [
+                        "HeadFemale.NIF",
+                        "MouthHuman.NIF",
+                        "TeethLowerHuman.NIF",
+                        "TeethUpperHuman.NIF",
+                        "TongueHuman.NIF",
+                        "EyeLeftHumanFemale.NIF",
+                        "EyeRightHumanFemale.NIF",
+                        "EyebrowF.NIF",
+                        "HairBun.NIF",
+                    ],
+                },
+            }
+        )
+        if fnv_model_doc["actorKitPartModels"] != (
+            "HeadFemale.NIF,MouthHuman.NIF,TeethLowerHuman.NIF,TeethUpperHuman.NIF,"
+            "TongueHuman.NIF,EyeLeftHumanFemale.NIF,EyeRightHumanFemale.NIF,EyebrowF.NIF,HairBun.NIF"
+        ):
+            raise AssertionError("live runtime command rejected or duplicated normal FNV exact model selectors")
         cleared_model_doc = runtime_store.update(
             {
                 "actorTarget": "ContractNpc",
@@ -388,12 +415,19 @@ def main() -> int:
                     "OPENMW_FNV_HEADGEAR_OFFSET_X": 1.25,
                     "OPENMW_FNV_HEADGEAR_ROTATION_Z": -90,
                     "OPENMW_FNV_HEADGEAR_PIVOT_MODE": True,
+                    "OPENMW_FNV_HAIR_MESH_HAIRRAIDERMID_PIVOT_DELTA_ROTATION_X": 90,
+                    "OPENMW_FNV_HAIR_MESH_HAIRRAIDERMID_PIVOT_OFFSET_Z": 0.25,
+                    "OPENMW_FNV_DRAW_PART_AXES": True,
                     "OPENMW_FNV_BONE_BIP01_R_HAND_ROTATION_Z": 25,
                 }
             }
         )
         if authoring_doc["lastApplied"]["OPENMW_FNV_BONE_BIP01_R_HAND_ROTATION_Z"] != 25.0:
             raise AssertionError("live authoring server did not accept validated bone controls")
+        if authoring_doc["lastApplied"]["OPENMW_FNV_HAIR_MESH_HAIRRAIDERMID_PIVOT_DELTA_ROTATION_X"] != 90.0:
+            raise AssertionError("live authoring server did not accept model-specific pivot snap controls")
+        if authoring_doc["lastApplied"]["OPENMW_FNV_DRAW_PART_AXES"] is not True:
+            raise AssertionError("live authoring server did not accept axes toggle control")
         audit_with_bones = live.runtime_audit(run_dir, root, live_authoring_path, live_runtime_path)
         if audit_with_bones["counts"].get("liveBoneAuthoringApplies") != 1:
             raise AssertionError("runtime audit did not count live bone authoring consumption")

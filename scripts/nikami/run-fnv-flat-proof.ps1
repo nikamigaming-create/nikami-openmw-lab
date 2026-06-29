@@ -31,6 +31,7 @@ param(
     [ValidateSet("npc", "creature", "auto")]
     [string]$ActorKind = "npc",
     [int]$ActorFrame = 240,
+    [int]$ActorDumpFrame = -1,
     [switch]$NeutralActorPreview,
     [switch]$NeutralActorPreviewStandingIdle,
     [switch]$FnvDisablePackageProcedureIdles,
@@ -1898,6 +1899,7 @@ try {
     Set-ProofEnv $previousEnv "OPENMW_FNV_PROOF_TARGET_NPC" $ActorTarget
     Set-ProofEnv $previousEnv "OPENMW_PROOF_ACTOR_KIND" $ActorKind
     Set-ProofEnv $previousEnv "OPENMW_PROOF_ACTOR_FRAME" $ActorFrame
+    Set-ProofEnv $previousEnv "OPENMW_PROOF_DUMP_ACTORS_FRAME" $ActorDumpFrame
     if ($NeutralActorPreview) { Set-ProofEnv $previousEnv "OPENMW_PROOF_NEUTRAL_ACTOR_PREVIEW" "1" }
     else { Clear-ProofEnv $previousEnv "OPENMW_PROOF_NEUTRAL_ACTOR_PREVIEW" }
     if ($NeutralActorPreviewStandingIdle -or $FnvDisablePackageProcedureIdles) { Set-ProofEnv $previousEnv "OPENMW_FNV_DISABLE_PACKAGE_PROCEDURE_IDLES" "1" }

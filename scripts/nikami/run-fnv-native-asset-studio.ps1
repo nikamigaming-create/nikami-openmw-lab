@@ -18,6 +18,7 @@ param(
     [double]$RotZ = 0,
     [double]$Scale = 1,
     [double]$Zoom = 1,
+    [string]$CommandFile = "",
     [switch]$StartWorld,
     [switch]$Attached,
     [int]$RunSeconds = 0,
@@ -121,7 +122,32 @@ $runtimeTag = "native-asset-studio"
 $runtimeName = "fnv-flat-clean-$runtimeTag"
 $runtimeDir = Join-Path $ProofRoot "runtime/$runtimeName"
 $screenshotDir = Join-Path $runtimeDir "screenshots"
+$saveFile = Join-Path $runtimeDir "asset-studio-session.json"
+$liveRuntimeCommandFile = Join-Path $runtimeDir "asset-studio-live-runtime-command.json"
+if ([string]::IsNullOrWhiteSpace($CommandFile)) {
+    $CommandFile = Join-Path $runtimeDir "asset-studio-command.json"
+}
 $previousEnv = @{}
+New-Item -ItemType Directory -Force -Path $runtimeDir | Out-Null
+
+[pscustomobject][ordered]@{
+    schema = "nikami-fnv-asset-studio-command-v1"
+    sequence = "boot"
+    command = "apply"
+    value = "boot"
+    policy = [pscustomobject][ordered]@{
+        generatedProofOutputsOnly = $true
+        noRetailPayloadBytes = $true
+        nativeCliControlSurface = $true
+    }
+} | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $CommandFile -Encoding UTF8
+
+[pscustomobject][ordered]@{
+    schema = "nikami-fnv-live-runtime-command-v1"
+    command = "idle"
+    screenshotRequestId = ""
+    screenshotLabel = ""
+} | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $liveRuntimeCommandFile -Encoding UTF8
 
 try {
     Set-ScopedEnv $previousEnv "OPENMW_FNV_ASSET_STUDIO" "1"
@@ -130,6 +156,9 @@ try {
     Set-ScopedEnv $previousEnv "OPENMW_FNV_ASSET_STUDIO_SESSION" $Session
     Set-ScopedEnv $previousEnv "OPENMW_FNV_ASSET_STUDIO_MODEL" $Model
     Set-ScopedEnv $previousEnv "OPENMW_FNV_ASSET_STUDIO_VIEW" $View
+    Set-ScopedEnv $previousEnv "OPENMW_FNV_ASSET_STUDIO_SAVE_FILE" $saveFile
+    Set-ScopedEnv $previousEnv "OPENMW_FNV_ASSET_STUDIO_COMMAND_FILE" $CommandFile
+    Set-ScopedEnv $previousEnv "OPENMW_FNV_LIVE_RUNTIME_COMMAND_FILE" $liveRuntimeCommandFile
     if (![string]::IsNullOrWhiteSpace($ActorProfile)) {
         Set-ScopedEnv $previousEnv "OPENMW_FNV_ASSET_STUDIO_ACTOR_PROFILE" $ActorProfile
         Set-ScopedEnv $previousEnv "OPENMW_FNV_NEUTRAL_ACTOR_PREVIEW_PROFILE" $ActorProfile
@@ -181,6 +210,8 @@ try {
     Write-Host "Rotation: $RotX,$RotY,$RotZ"
     Write-Host "Scale: $Scale"
     Write-Host "Zoom: $Zoom"
+    Write-Host "SaveFile: $saveFile"
+    Write-Host "CommandFile: $CommandFile"
     Write-Host "ScreenshotFrames: $ScreenshotFrames"
     Write-Host "World start: $StartWorld"
     Write-Host "CleanBoot: $(!$StartWorld)"

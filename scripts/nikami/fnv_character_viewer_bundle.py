@@ -1308,9 +1308,19 @@ code {{ color: #d8e6ff; }}
 .runButton {{ margin-top: 4px; border-color: var(--accent); }}
 .jobPanel {{ display: grid; gap: 6px; }}
 .jobItem {{ background: #101216; border: 1px solid #2b3038; border-radius: 5px; padding: 7px; }}
+.snapPanel {{ display: grid; gap: 10px; }}
+.snapTop {{ display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }}
+.snapRows {{ display: grid; gap: 7px; }}
+.snapRow {{ display: grid; grid-template-columns: 72px repeat(5, minmax(54px, 1fr)); gap: 6px; align-items: center; }}
+.snapRow .label {{ text-align: right; }}
+.snapValues {{ display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }}
+.snapValue {{ background: #101216; border: 1px solid #2b3038; border-radius: 4px; padding: 5px 6px; font-family: Consolas, monospace; overflow-wrap: anywhere; }}
+.snapOrigin {{ display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }}
+.snapNudge {{ display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 5px; align-items: center; }}
 a {{ color: #9fc2ff; }}
 @media (max-width: 980px) {{ .grid3 {{ grid-template-columns: 1fr; }} header {{ align-items: flex-start; flex-direction: column; }} }}
 @media (max-width: 980px) {{ .controlGrid {{ grid-template-columns: 1fr; }} }}
+@media (max-width: 980px) {{ .snapRow, .snapOrigin, .snapNudge {{ grid-template-columns: 1fr; }} .snapRow .label {{ text-align: left; }} }}
 </style>
 </head>
 <body>
@@ -1347,6 +1357,10 @@ a {{ color: #9fc2ff; }}
     <h2>Live Actor Kit Runs</h2>
     <div id="liveStatus" class="line">Live rerun endpoint is available only when launched with -LiveServe.</div>
     <div id="liveJobs" class="jobPanel"></div>
+  </div>
+  <div class="section">
+    <h2>Live Part Snaps</h2>
+    <div id="liveSnapControls" class="snapPanel"><div class="empty">Loopback live authoring required</div></div>
   </div>
   <div class="section">
     <h2>Case Status</h2>
@@ -1425,8 +1439,20 @@ const state = {{
   layer: "all",
   enabledLayers: Object.fromEntries((MANIFEST.controls?.partToggles || []).map(t => [t.category, t.defaultEnabled !== false])),
   slotFilters: Object.fromEntries((MANIFEST.controls?.propSlots || []).map(s => [s.id, "all"])),
-  liveJobs: []
+  liveJobs: [],
+  liveControls: null,
+  liveControlsLoading: false,
+  livePrefix: ""
 }};
+const LIVE_CONTROL_SUFFIXES = [
+  "OFFSET_X", "OFFSET_Y", "OFFSET_Z",
+  "ROTATION_X", "ROTATION_Y", "ROTATION_Z",
+  "PIVOT_X", "PIVOT_Y", "PIVOT_Z",
+  "PIVOT_OFFSET_X", "PIVOT_OFFSET_Y", "PIVOT_OFFSET_Z",
+  "PIVOT_DELTA_ROTATION_X", "PIVOT_DELTA_ROTATION_Y", "PIVOT_DELTA_ROTATION_Z",
+  "PIVOT_MODE"
+];
+const LIVE_SURFACE_PREFIX_RE = /^OPENMW_FNV_(HEADGEAR|HAIR|BROW|EYE|BEARD|MOUTH)(?:_MESH_[A-Z0-9_]+)?$/;
 function esc(value) {{
   return String(value ?? "").replace(/[&<>"']/g, c => ({{"&":"&amp;","<":"&lt;",">":"&gt;","\\"":"&quot;","'":"&#39;"}}[c]));
 }}
@@ -1451,6 +1477,180 @@ function table(headers, rows, className = "") {{
 }}
 function liveAvailable() {{
   return location.protocol.startsWith("http") && location.hostname === "127.0.0.1";
+}}
+function liveSurfacePrefixFromKey(key) {{
+  for (const suffix of LIVE_CONTROL_SUFFIXES) {{
+    const tail = "_" + suffix;
+    if (String(key || "").endsWith(tail)) {{
+      const prefix = String(key).slice(0, -tail.length);
+      return LIVE_SURFACE_PREFIX_RE.test(prefix) ? prefix : "";
+    }}
+  }}
+  return "";
+}}
+function liveControlPrefixes() {{
+  const controls = state.liveControls || {{}};
+  const prefixes = Array.from(new Set(Object.keys(controls).map(liveSurfacePrefixFromKey).filter(Boolean)));
+  return prefixes.sort((a, b) => {{
+    const ah = a.includes("_HAIR") ? 0 : 1;
+    const bh = b.includes("_HAIR") ? 0 : 1;
+    return ah - bh || a.localeCompare(b);
+  }});
+}}
+function liveKey(prefix, suffix) {{
+  return `${{prefix}}_${{suffix}}`;
+}}
+function liveNumber(prefix, suffix) {{
+  const value = state.liveControls?.[liveKey(prefix, suffix)];
+  const number = Number(value);
+  return Number.isFinite(number) ? number : 0;
+}}
+function liveBool(prefix, suffix) {{
+  return state.liveControls?.[liveKey(prefix, suffix)] === true;
+}}
+async function loadLiveControls() {{
+  if (!liveAvailable() || state.liveControlsLoading) return;
+  state.liveControlsLoading = true;
+  renderLiveSnapControls();
+  try {{
+    const response = await fetch("/nikami/live-authoring", {{ cache: "no-store" }});
+    const doc = await response.json();
+    if (!response.ok) throw new Error(doc.error || response.statusText);
+    state.liveControls = doc.controls || {{}};
+  }} catch (error) {{
+    document.getElementById("liveSnapControls").innerHTML = `<div class="line">Live controls failed: ${{esc(error.message || error)}}</div>`;
+  }} finally {{
+    state.liveControlsLoading = false;
+    renderLiveSnapControls();
+  }}
+}}
+async function updateLiveControls(controls) {{
+  if (!liveAvailable()) return;
+  const host = document.getElementById("liveSnapControls");
+  try {{
+    const response = await fetch("/nikami/live-authoring", {{
+      method: "POST",
+      headers: {{"Content-Type": "application/json"}},
+      body: JSON.stringify({{ controls }})
+    }});
+    const doc = await response.json();
+    if (!response.ok) throw new Error(doc.error || response.statusText);
+    state.liveControls = doc.controls || {{}};
+    renderLiveSnapControls();
+  }} catch (error) {{
+    host.insertAdjacentHTML("afterbegin", `<div class="line">Live snap failed: ${{esc(error.message || error)}}</div>`);
+  }}
+}}
+function applyLiveSnap(prefix, axis, value) {{
+  const controls = {{
+    [liveKey(prefix, "PIVOT_DELTA_ROTATION_X")]: axis === "X" ? value : 0,
+    [liveKey(prefix, "PIVOT_DELTA_ROTATION_Y")]: axis === "Y" ? value : 0,
+    [liveKey(prefix, "PIVOT_DELTA_ROTATION_Z")]: axis === "Z" ? value : 0,
+  }};
+  updateLiveControls(controls);
+}}
+function clearLiveSnaps(prefix) {{
+  updateLiveControls({{
+    [liveKey(prefix, "PIVOT_DELTA_ROTATION_X")]: 0,
+    [liveKey(prefix, "PIVOT_DELTA_ROTATION_Y")]: 0,
+    [liveKey(prefix, "PIVOT_DELTA_ROTATION_Z")]: 0,
+  }});
+}}
+function setLiveOrigin(prefix, mode) {{
+  const controls = {{
+    [liveKey(prefix, "PIVOT_OFFSET_X")]: 0,
+    [liveKey(prefix, "PIVOT_OFFSET_Y")]: 0,
+    [liveKey(prefix, "PIVOT_OFFSET_Z")]: 0,
+    [liveKey(prefix, "PIVOT_MODE")]: mode === "part",
+  }};
+  updateLiveControls(controls);
+}}
+function nudgeLiveOrigin(prefix, axis, delta) {{
+  const suffix = `PIVOT_OFFSET_${{axis}}`;
+  updateLiveControls({{
+    [liveKey(prefix, "PIVOT_MODE")]: true,
+    [liveKey(prefix, suffix)]: liveNumber(prefix, suffix) + delta,
+  }});
+}}
+function renderLiveSnapControls() {{
+  const host = document.getElementById("liveSnapControls");
+  if (!host) return;
+  if (!liveAvailable()) {{
+    host.innerHTML = `<div class="empty">Loopback live authoring required</div>`;
+    return;
+  }}
+  if (state.liveControlsLoading) {{
+    host.innerHTML = `<div class="line">Loading live controls...</div>`;
+    return;
+  }}
+  if (!state.liveControls) {{
+    host.innerHTML = `<button type="button" id="loadLiveControls">Load Live Controls</button>`;
+    document.getElementById("loadLiveControls").onclick = loadLiveControls;
+    loadLiveControls();
+    return;
+  }}
+  const prefixes = liveControlPrefixes();
+  if (!prefixes.length) {{
+    host.innerHTML = `<div class="empty">No live surface controls</div>`;
+    return;
+  }}
+  if (!prefixes.includes(state.livePrefix)) state.livePrefix = prefixes[0];
+  const prefix = state.livePrefix;
+  const snapValues = [-180, -90, 0, 90, 180];
+  const axisRows = ["X", "Y", "Z"].map(axis => `
+    <div class="snapRow">
+      <span class="label">Snap ${{axis}}</span>
+      ${{snapValues.map(value => `<button type="button" data-snap-axis="${{axis}}" data-snap-value="${{value}}">${{value}}</button>`).join("")}}
+    </div>`).join("");
+  const originRows = ["X", "Y", "Z"].map(axis => `
+    <div class="snapNudge">
+      <span class="label">Origin ${{axis}}</span>
+      <button type="button" data-origin-axis="${{axis}}" data-origin-delta="-1">-1</button>
+      <button type="button" data-origin-axis="${{axis}}" data-origin-delta="-0.25">-.25</button>
+      <button type="button" data-origin-axis="${{axis}}" data-origin-delta="0.25">+.25</button>
+      <button type="button" data-origin-axis="${{axis}}" data-origin-delta="1">+1</button>
+      <span class="snapValue">${{esc(liveNumber(prefix, `PIVOT_OFFSET_${{axis}}`).toFixed(3))}}</span>
+      <button type="button" data-origin-axis="${{axis}}" data-origin-delta="reset">0</button>
+    </div>`).join("");
+  host.innerHTML = `
+    <div class="snapTop">
+      <select id="liveSnapPrefix">${{prefixes.map(item => `<option value="${{esc(item)}}">${{esc(item)}}</option>`).join("")}}</select>
+      <button type="button" id="refreshLiveControls">Refresh</button>
+      <button type="button" id="clearLiveSnaps">Clear Snaps</button>
+      <label class="check"><input type="checkbox" id="liveAxesToggle" ${{state.liveControls.OPENMW_FNV_DRAW_PART_AXES === true ? "checked" : ""}}> Axes</label>
+    </div>
+    <div class="snapValues">
+      <div class="snapValue">Delta X: ${{esc(liveNumber(prefix, "PIVOT_DELTA_ROTATION_X"))}}</div>
+      <div class="snapValue">Delta Y: ${{esc(liveNumber(prefix, "PIVOT_DELTA_ROTATION_Y"))}}</div>
+      <div class="snapValue">Delta Z: ${{esc(liveNumber(prefix, "PIVOT_DELTA_ROTATION_Z"))}}</div>
+    </div>
+    <div class="snapOrigin">
+      <button type="button" id="originHead" class="${{!liveBool(prefix, "PIVOT_MODE") ? "active" : ""}}">Head Origin</button>
+      <button type="button" id="originPart" class="${{liveBool(prefix, "PIVOT_MODE") ? "active" : ""}}">Part Pivot</button>
+      <button type="button" id="originReset">Reset Origin</button>
+    </div>
+    <div class="snapRows">${{axisRows}}</div>
+    <div class="snapRows">${{originRows}}</div>
+  `;
+  document.getElementById("liveSnapPrefix").value = prefix;
+  document.getElementById("liveSnapPrefix").onchange = event => {{
+    state.livePrefix = event.target.value;
+    renderLiveSnapControls();
+  }};
+  document.getElementById("refreshLiveControls").onclick = loadLiveControls;
+  document.getElementById("clearLiveSnaps").onclick = () => clearLiveSnaps(prefix);
+  document.getElementById("originHead").onclick = () => setLiveOrigin(prefix, "head");
+  document.getElementById("originPart").onclick = () => setLiveOrigin(prefix, "part");
+  document.getElementById("originReset").onclick = () => setLiveOrigin(prefix, "head");
+  document.getElementById("liveAxesToggle").onchange = event => updateLiveControls({{ OPENMW_FNV_DRAW_PART_AXES: event.target.checked }});
+  host.querySelectorAll("[data-snap-axis]").forEach(button => button.onclick = () => applyLiveSnap(prefix, button.dataset.snapAxis, Number(button.dataset.snapValue)));
+  host.querySelectorAll("[data-origin-axis]").forEach(button => button.onclick = () => {{
+    if (button.dataset.originDelta === "reset") {{
+      updateLiveControls({{ [liveKey(prefix, `PIVOT_OFFSET_${{button.dataset.originAxis}}`)]: 0 }});
+    }} else {{
+      nudgeLiveOrigin(prefix, button.dataset.originAxis, Number(button.dataset.originDelta));
+    }}
+  }});
 }}
 async function startLiveRun(command, label) {{
   const status = document.getElementById("liveStatus");

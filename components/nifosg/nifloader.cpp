@@ -3788,6 +3788,18 @@ namespace NifOsg
         void applyDrawableProperties(osg::Node* node, const std::vector<const Nif::NiProperty*>& properties,
             SceneUtil::CompositeStateSetUpdater* composite, bool hasVertexColors, int animflags)
         {
+            const std::string lowerFilename = Misc::StringUtils::lowerCase(mFilename.generic_string());
+            const bool fnvHairTelemetry
+                = containsAny(lowerFilename, { "characters/hair/", "characters\\hair/" });
+            if (fnvHairTelemetry)
+            {
+                Log(Debug::Info) << "FNV/ESM4 source alpha: begin file=" << mFilename
+                                 << " node=" << (node != nullptr ? node->getName() : std::string("<none>"))
+                                 << " hasVertexColors=" << hasVertexColors
+                                 << " propertyCount=" << properties.size()
+                                 << " gate=runtime-fnv-source-alpha-telemetry";
+            }
+
             // Specular lighting is enabled by default, but there's a quirk...
             bool specEnabled = true;
             osg::ref_ptr<osg::Material> mat(new osg::Material);
@@ -3822,6 +3834,21 @@ namespace NifOsg
                     case Nif::RC_NiMaterialProperty:
                     {
                         const Nif::NiMaterialProperty* matprop = static_cast<const Nif::NiMaterialProperty*>(property);
+                        if (fnvHairTelemetry)
+                        {
+                            Log(Debug::Info) << "FNV/ESM4 source alpha: material file=" << mFilename
+                                             << " node=" << (node != nullptr ? node->getName() : std::string("<none>"))
+                                             << " diffuse=(" << matprop->mDiffuse.x() << "," << matprop->mDiffuse.y()
+                                             << "," << matprop->mDiffuse.z() << ")"
+                                             << " ambient=(" << matprop->mAmbient.x() << "," << matprop->mAmbient.y()
+                                             << "," << matprop->mAmbient.z() << ")"
+                                             << " emissive=(" << matprop->mEmissive.x() << ","
+                                             << matprop->mEmissive.y() << "," << matprop->mEmissive.z() << ")"
+                                             << " alpha=" << matprop->mAlpha
+                                             << " glossiness=" << matprop->mGlossiness
+                                             << " emissiveMult=" << matprop->mEmissiveMult
+                                             << " gate=runtime-fnv-source-alpha-telemetry";
+                        }
 
                         mat->setDiffuse(osg::Material::FRONT_AND_BACK, osg::Vec4f(matprop->mDiffuse, matprop->mAlpha));
                         mat->setAmbient(osg::Material::FRONT_AND_BACK, osg::Vec4f(matprop->mAmbient, 1.f));
@@ -3846,6 +3873,15 @@ namespace NifOsg
                     {
                         const Nif::NiVertexColorProperty* vertprop
                             = static_cast<const Nif::NiVertexColorProperty*>(property);
+                        if (fnvHairTelemetry)
+                        {
+                            Log(Debug::Info) << "FNV/ESM4 source alpha: vertex-color file=" << mFilename
+                                             << " node=" << (node != nullptr ? node->getName() : std::string("<none>"))
+                                             << " hasVertexColors=" << hasVertexColors
+                                             << " vertexMode=" << static_cast<int>(vertprop->mVertexMode)
+                                             << " lightingMode=" << static_cast<int>(vertprop->mLightingMode)
+                                             << " gate=runtime-fnv-source-alpha-telemetry";
+                        }
 
                         using VertexMode = Nif::NiVertexColorProperty::VertexMode;
                         switch (vertprop->mVertexMode)
@@ -3887,6 +3923,22 @@ namespace NifOsg
                     case Nif::RC_NiAlphaProperty:
                     {
                         const Nif::NiAlphaProperty* alphaprop = static_cast<const Nif::NiAlphaProperty*>(property);
+                        if (fnvHairTelemetry)
+                        {
+                            Log(Debug::Info) << "FNV/ESM4 source alpha: ni-alpha file=" << mFilename
+                                             << " node=" << (node != nullptr ? node->getName() : std::string("<none>"))
+                                             << " flags=0x" << std::hex << alphaprop->mFlags << std::dec
+                                             << " blend=" << alphaprop->useAlphaBlending()
+                                             << " src=" << alphaprop->sourceBlendMode()
+                                             << " dst=" << alphaprop->destinationBlendMode()
+                                             << " test=" << alphaprop->useAlphaTesting()
+                                             << " testMode=" << alphaprop->alphaTestMode()
+                                             << " thresholdByte=" << static_cast<int>(alphaprop->mThreshold)
+                                             << " thresholdFloat=" << (static_cast<float>(alphaprop->mThreshold) / 255.f)
+                                             << " noSorter=" << alphaprop->noSorter()
+                                             << " sortRequested=" << !alphaprop->noSorter()
+                                             << " gate=runtime-fnv-source-alpha-telemetry";
+                        }
                         handleAlphaBlending(alphaprop->useAlphaBlending(), alphaprop->sourceBlendMode(),
                             alphaprop->destinationBlendMode(), !alphaprop->noSorter(), hasSortAlpha, *node);
                         handleAlphaTesting(alphaprop->useAlphaTesting(), getTestMode(alphaprop->alphaTestMode()),

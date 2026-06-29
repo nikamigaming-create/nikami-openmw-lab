@@ -22,7 +22,11 @@ if ([string]::IsNullOrWhiteSpace($VcpkgRoot)) {
 
 $Toolchain = Join-Path $VcpkgRoot "scripts/buildsystems/vcpkg.cmake"
 $LuaJitInclude = Join-Path $VcpkgRoot "installed/$Triplet/include/luajit"
-$LuaJitLibrary = Join-Path $VcpkgRoot "installed/$Triplet/debug/lib/lua51.lib"
+$LuaJitLibrary = if ($Configuration -eq "Debug") {
+    Join-Path $VcpkgRoot "installed/$Triplet/debug/lib/lua51.lib"
+} else {
+    Join-Path $VcpkgRoot "installed/$Triplet/lib/lua51.lib"
+}
 
 function Invoke-CheckedNative {
     param(
@@ -127,6 +131,7 @@ if (!$SkipConfigure) {
         "-G", "Visual Studio 17 2022",
         "-A", "x64",
         "-DCMAKE_TOOLCHAIN_FILE=$Toolchain",
+        "-DCMAKE_POLICY_VERSION_MINIMUM=3.5",
         "-DVCPKG_TARGET_TRIPLET=$Triplet",
         "-DLuaJit_INCLUDE_DIR=$LuaJitInclude",
         "-DLuaJit_LIBRARY=$LuaJitLibrary",

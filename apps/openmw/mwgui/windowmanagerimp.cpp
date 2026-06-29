@@ -577,6 +577,7 @@ namespace MWGui
         {
             auto assetStudioWindow = std::make_unique<AssetStudioWindow>(
                 mViewer->getSceneData()->asGroup(), mResourceSystem);
+            mAssetStudioWindow = assetStudioWindow.get();
             mWindows.push_back(std::move(assetStudioWindow));
             setCursorVisible(true);
             MWBase::Environment::get().getInputManager()->changeInputMode(true);
@@ -1047,6 +1048,8 @@ namespace MWGui
     void WindowManager::update(float frameDuration)
     {
         handleScheduledMessageBoxes();
+        if (mAssetStudioWindow != nullptr)
+            mAssetStudioWindow->onFrame(frameDuration);
 
         bool gameRunning
             = MWBase::Environment::get().getStateManager()->getState() != MWBase::StateManager::State_NoGame;
