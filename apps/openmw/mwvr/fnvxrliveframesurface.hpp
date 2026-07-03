@@ -61,7 +61,9 @@ namespace MWVR
         bool ensurePlayerMapping();
         bool ensureStereoMapping();
         bool ensureVrPoseMapping();
+        bool ensureOpenMwPlayerMapping();
         void publishVrPose(std::uint64_t predictedDisplayTime);
+        void publishOpenMwPlayerState();
         void onSpaceUpdate() override;
         void onFrameUpdate(VR::Frame& frame) override;
         void onFrameEnd(osg::RenderInfo& info, VR::Frame& frame) override;
@@ -135,6 +137,8 @@ namespace MWVR
         bool mLoggedPlayerSyncDisabled = false;
         bool mLoggedPlayerSyncBlocked = false;
         bool mLoggedPlayerSyncApplied = false;
+        bool mLoggedOpenMwPlayer = false;
+        bool mLoggedOpenMwPlayerPublishFailure = false;
         std::uint64_t mLastLoggedPlayerFrame = 0;
         std::uint32_t mLastLoggedPlayerFlags = 0;
         std::uint64_t mLastSyncedPlayerFrame = 0;
@@ -166,7 +170,10 @@ namespace MWVR
         std::uint8_t* mStereoView = nullptr;
         void* mVrPoseMapping = nullptr;
         void* mVrPoseView = nullptr;
+        void* mOpenMwPlayerMapping = nullptr;
+        void* mOpenMwPlayerView = nullptr;
         std::uint64_t mVrPoseFrame = 0;
+        std::uint64_t mOpenMwPlayerFrame = 0;
         std::int32_t mLastStereoSequence = 0;
         std::int32_t mCurrentStereoSequence = 0;
         std::int32_t mUploadedStereoSequence = 0;

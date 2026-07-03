@@ -77,6 +77,8 @@ namespace MWVR
         constexpr std::uint32_t VrPoseSharedVersion = 2;
         constexpr std::uint32_t PlayerSharedMagic = 0x50564e46; // FNVP
         constexpr std::uint32_t PlayerSharedVersion = 1;
+        constexpr std::uint32_t OpenMwPlayerSharedMagic = 0x4f4d4e46; // FNMO
+        constexpr std::uint32_t OpenMwPlayerSharedVersion = 1;
         constexpr std::uint32_t PlayerSharedFlagPlayerNodeValid = 1u << 0;
         constexpr std::uint32_t PlayerSharedFlagCameraValid = 1u << 1;
         constexpr std::uint32_t PlayerSharedFlagCellKnown = 1u << 2;
@@ -338,6 +340,29 @@ namespace MWVR
         ESM::RefId retailCellRefId(std::uint32_t cellFormId)
         {
             return ESM::RefId::formIdRefId(ESM::FormId::fromUint32(cellFormId));
+        }
+
+        std::uint32_t cellFormId(const MWWorld::CellStore* cellStore)
+        {
+            if (!cellStore || !cellStore->getCell())
+                return 0;
+
+            const ESM::RefId& cellId = cellStore->getCell()->getId();
+            const ESM::FormId* formId = cellId.getIf<ESM::FormId>();
+            return formId ? formId->toUint32() : 0;
+        }
+
+        void writeIdentityMatrix(float out[9])
+        {
+            out[0] = 1.f;
+            out[1] = 0.f;
+            out[2] = 0.f;
+            out[3] = 0.f;
+            out[4] = 1.f;
+            out[5] = 0.f;
+            out[6] = 0.f;
+            out[7] = 0.f;
+            out[8] = 1.f;
         }
 
 #ifdef _WIN32
@@ -656,6 +681,10 @@ namespace MWVR
             UnmapViewOfFile(mVrPoseView);
         if (mVrPoseMapping)
             CloseHandle(static_cast<HANDLE>(mVrPoseMapping));
+        if (mOpenMwPlayerView)
+            UnmapViewOfFile(mOpenMwPlayerView);
+        if (mOpenMwPlayerMapping)
+            CloseHandle(static_cast<HANDLE>(mOpenMwPlayerMapping));
 #endif
     }
 
@@ -689,6 +718,8 @@ namespace MWVR
             setVisible(false);
             return;
         }
+
+        publishOpenMwPlayerState();
 
         const bool retailGameplay = retailRuntimeWorldReady();
         const bool panelAllowed = retailPanelAllowed();
@@ -1339,6 +1370,115 @@ namespace MWVR
                 loggedPoseFailure = true;
                 Log(Debug::Warning) << "FNVXR retail surface: VR pose publish skipped after OpenXR locate failure: "
                                     << e.what();
+            }
+        }
+#endif
+    }
+
+    bool FNVXRLiveFrameSurface::ensureOpenMwPlayerMapping()
+    {
+#ifdef _WIN32
+        if (mOpenMwPlayerView)
+            return true;
+
+        mOpenMwPlayerMapping = CreateFileMappingA(
+            INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, 0, sizeof(SharedPlayerState), "Local\\FNVXR_OpenMW_Player_State");
+        if (!mOpenMwPlayerMapping)
+            return false;
+
+        mOpenMwPlayerView = MapViewOfFile(
+            static_cast<HANDLE>(mOpenMwPlayerMapping), FILE_MAP_WRITE | FILE_MAP_READ, 0, 0, sizeof(SharedPlayerState));
+        if (!mOpenMwPlayerView)
+        {
+            CloseHandle(static_cast<HANDLE>(mOpenMwPlayerMapping));
+            mOpenMwPlayerMapping = nullptr;
+            return false;
+        }
+
+        auto* shared = static_cast<SharedPlayerState*>(mOpenMwPlayerView);
+        std::memset(shared, 0, sizeof(SharedPlayerState));
+        shared->magic = OpenMwPlayerSharedMagic;
+        shared->version = OpenMwPlayerSharedVersion;
+        Log(Debug::Info) << "FNVXR retail surface: publishing Local\\FNVXR_OpenMW_Player_State";
+        return true;
+#else
+        return false;
+#endif
+    }
+
+    void FNVXRLiveFrameSurface::publishOpenMwPlayerState()
+    {
+#ifdef _WIN32
+        if (!envEnabled("OPENMW_FNVXR_PUBLISH_PLAYER_STATE", true))
+            return;
+
+        try
+        {
+            if (!ensureOpenMwPlayerMapping())
+                return;
+
+            MWBase::World* world = MWBase::Environment::get().getWorld();
+            if (!world)
+                return;
+
+            const MWWorld::Ptr player = world->getPlayerPtr();
+            if (player.isEmpty() || !player.isInCell())
+                return;
+
+            const ESM::Position& position = player.getRefData().getPosition();
+            if (!finiteArray(position.pos, 3))
+                return;
+
+            const std::uint32_t currentCellFormId = cellFormId(player.getCell());
+            std::uint32_t flags = PlayerSharedFlagPlayerNodeValid;
+            if (currentCellFormId != 0)
+                flags |= PlayerSharedFlagCellKnown;
+
+            auto* shared = static_cast<SharedPlayerState*>(mOpenMwPlayerView);
+            if (shared->magic != OpenMwPlayerSharedMagic || shared->version != OpenMwPlayerSharedVersion)
+            {
+                shared->magic = OpenMwPlayerSharedMagic;
+                shared->version = OpenMwPlayerSharedVersion;
+            }
+
+            InterlockedIncrement(reinterpret_cast<volatile LONG*>(&shared->sequence));
+            MemoryBarrier();
+            shared->magic = OpenMwPlayerSharedMagic;
+            shared->version = OpenMwPlayerSharedVersion;
+            shared->frame = ++mOpenMwPlayerFrame;
+            shared->flags = flags;
+            shared->currentCellFormId = currentCellFormId;
+            shared->playerAddress = 0;
+            shared->playerNodeAddress = 0;
+            shared->cameraNodeAddress = 0;
+            writeIdentityMatrix(shared->playerWorldRot);
+            shared->playerWorldPos[0] = position.pos[0];
+            shared->playerWorldPos[1] = position.pos[1];
+            shared->playerWorldPos[2] = position.pos[2];
+            writeIdentityMatrix(shared->cameraWorldRot);
+            shared->cameraWorldPos[0] = 0.f;
+            shared->cameraWorldPos[1] = 0.f;
+            shared->cameraWorldPos[2] = 0.f;
+            std::memset(shared->reserved, 0, sizeof(shared->reserved));
+            MemoryBarrier();
+            InterlockedIncrement(reinterpret_cast<volatile LONG*>(&shared->sequence));
+
+            if (!mLoggedOpenMwPlayer || (mOpenMwPlayerFrame % 300) == 0)
+            {
+                mLoggedOpenMwPlayer = true;
+                Log(Debug::Info) << "FNVXR retail surface: OpenMW player state frame=" << mOpenMwPlayerFrame
+                                 << " cellKnown=" << ((flags & PlayerSharedFlagCellKnown) != 0)
+                                 << " cellFormId=" << currentCellFormId
+                                 << " pos=(" << position.pos[0] << ", " << position.pos[1] << ", "
+                                 << position.pos[2] << ")";
+            }
+        }
+        catch (const std::exception& e)
+        {
+            if (!mLoggedOpenMwPlayerPublishFailure)
+            {
+                mLoggedOpenMwPlayerPublishFailure = true;
+                Log(Debug::Warning) << "FNVXR retail surface: OpenMW player state publish failed: " << e.what();
             }
         }
 #endif
