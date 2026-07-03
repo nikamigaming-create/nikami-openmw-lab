@@ -119,6 +119,7 @@ add_openmw_dir (mwbase
 
 add_openmw_dir (mwvr
      openxrinput
+     fnvxrliveframesurface
      radialmenu realisticcombat
      vranimation vrgui vrinputmanager vrinput vrlistbox vrmetamenu vrpingpongcallback vrpointer vrtracking vrtypes vrutil vrvirtualkeyboard
     )
