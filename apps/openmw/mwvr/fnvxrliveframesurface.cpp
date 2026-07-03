@@ -25,6 +25,7 @@
 #include <components/resource/resourcesystem.hpp>
 #include <components/resource/scenemanager.hpp>
 #include <components/shader/shadermanager.hpp>
+#include <components/sceneutil/positionattitudetransform.hpp>
 #include <components/sceneutil/statesetupdater.hpp>
 #include <components/stereo/stereomanager.hpp>
 #include <components/stereo/types.hpp>
@@ -191,7 +192,9 @@ namespace MWVR
             std::uint32_t playerAddress = 0;
             std::uint32_t playerNodeAddress = 0;
             std::uint32_t cameraNodeAddress = 0;
+            float playerWorldRot[9] {};
             float playerWorldPos[3] {};
+            float cameraWorldRot[9] {};
             float cameraWorldPos[3] {};
         };
 
@@ -317,12 +320,25 @@ namespace MWVR
             return view;
         }
 
+        float distanceSquaredN(const float* left, const float* right, int count)
+        {
+            float result = 0.f;
+            for (int i = 0; i < count; ++i)
+            {
+                const float delta = left[i] - right[i];
+                result += delta * delta;
+            }
+            return result;
+        }
+
         float distanceSquared(const float left[3], const float right[3])
         {
-            const float dx = left[0] - right[0];
-            const float dy = left[1] - right[1];
-            const float dz = left[2] - right[2];
-            return dx * dx + dy * dy + dz * dz;
+            return distanceSquaredN(left, right, 3);
+        }
+
+        float retailPlayerYaw(const SharedPlayerSnapshot& player)
+        {
+            return -std::atan2(player.playerWorldRot[3], player.playerWorldRot[0]);
         }
 
         ESM::Position retailPlayerPosition(const SharedPlayerSnapshot& player)
@@ -333,7 +349,7 @@ namespace MWVR
             position.pos[2] = player.playerWorldPos[2];
             position.rot[0] = 0.f;
             position.rot[1] = 0.f;
-            position.rot[2] = 0.f;
+            position.rot[2] = retailPlayerYaw(player);
             return position;
         }
 
@@ -363,6 +379,42 @@ namespace MWVR
             out[6] = 0.f;
             out[7] = 0.f;
             out[8] = 1.f;
+        }
+
+        bool writeRotationMatrix(float out[9], const osg::Quat& quat)
+        {
+            const double x = quat.x();
+            const double y = quat.y();
+            const double z = quat.z();
+            const double w = quat.w();
+            const double lengthSquared = x * x + y * y + z * z + w * w;
+            if (!std::isfinite(lengthSquared) || lengthSquared < 0.25 || lengthSquared > 4.0)
+            {
+                writeIdentityMatrix(out);
+                return false;
+            }
+
+            const double scale = 2.0 / lengthSquared;
+            const double xx = x * x * scale;
+            const double yy = y * y * scale;
+            const double zz = z * z * scale;
+            const double xy = x * y * scale;
+            const double xz = x * z * scale;
+            const double yz = y * z * scale;
+            const double wx = w * x * scale;
+            const double wy = w * y * scale;
+            const double wz = w * z * scale;
+
+            out[0] = static_cast<float>(1.0 - yy - zz);
+            out[1] = static_cast<float>(xy - wz);
+            out[2] = static_cast<float>(xz + wy);
+            out[3] = static_cast<float>(xy + wz);
+            out[4] = static_cast<float>(1.0 - xx - zz);
+            out[5] = static_cast<float>(yz - wx);
+            out[6] = static_cast<float>(xz - wy);
+            out[7] = static_cast<float>(yz + wx);
+            out[8] = static_cast<float>(1.0 - xx - yy);
+            return finiteArray(out, 9);
         }
 
 #ifdef _WIN32
@@ -412,7 +464,9 @@ namespace MWVR
                 snapshot->playerAddress = shared->playerAddress;
                 snapshot->playerNodeAddress = shared->playerNodeAddress;
                 snapshot->cameraNodeAddress = shared->cameraNodeAddress;
+                std::memcpy(snapshot->playerWorldRot, shared->playerWorldRot, sizeof(snapshot->playerWorldRot));
                 std::memcpy(snapshot->playerWorldPos, shared->playerWorldPos, sizeof(snapshot->playerWorldPos));
+                std::memcpy(snapshot->cameraWorldRot, shared->cameraWorldRot, sizeof(snapshot->cameraWorldRot));
                 std::memcpy(snapshot->cameraWorldPos, shared->cameraWorldPos, sizeof(snapshot->cameraWorldPos));
                 const std::int32_t sequenceAfter = shared->sequence;
                 *tornOut = (sequenceBefore & 1) != 0 || sequenceBefore != sequenceAfter;
@@ -1430,7 +1484,11 @@ namespace MWVR
                 return;
 
             const std::uint32_t currentCellFormId = cellFormId(player.getCell());
-            std::uint32_t flags = PlayerSharedFlagPlayerNodeValid;
+            float playerWorldRot[9] {};
+            writeIdentityMatrix(playerWorldRot);
+            const SceneUtil::PositionAttitudeTransform* baseNode = player.getRefData().getBaseNode();
+            const bool playerNodeValid = baseNode != nullptr && writeRotationMatrix(playerWorldRot, baseNode->getAttitude());
+            std::uint32_t flags = playerNodeValid ? PlayerSharedFlagPlayerNodeValid : 0;
             if (currentCellFormId != 0)
                 flags |= PlayerSharedFlagCellKnown;
 
@@ -1451,7 +1509,7 @@ namespace MWVR
             shared->playerAddress = 0;
             shared->playerNodeAddress = 0;
             shared->cameraNodeAddress = 0;
-            writeIdentityMatrix(shared->playerWorldRot);
+            std::memcpy(shared->playerWorldRot, playerWorldRot, sizeof(shared->playerWorldRot));
             shared->playerWorldPos[0] = position.pos[0];
             shared->playerWorldPos[1] = position.pos[1];
             shared->playerWorldPos[2] = position.pos[2];
@@ -1467,6 +1525,7 @@ namespace MWVR
             {
                 mLoggedOpenMwPlayer = true;
                 Log(Debug::Info) << "FNVXR retail surface: OpenMW player state frame=" << mOpenMwPlayerFrame
+                                 << " playerNodeValid=" << playerNodeValid
                                  << " cellKnown=" << ((flags & PlayerSharedFlagCellKnown) != 0)
                                  << " cellFormId=" << currentCellFormId
                                  << " pos=(" << position.pos[0] << ", " << position.pos[1] << ", "
@@ -1945,7 +2004,7 @@ namespace MWVR
                     }
                 }
                 else if (!playerNodeValid || !cellKnown || player.currentCellFormId == 0
-                    || !finiteArray(player.playerWorldPos, 3))
+                    || !finiteArray(player.playerWorldPos, 3) || !finiteArray(player.playerWorldRot, 9))
                 {
                     if (!mLoggedPlayerSyncBlocked)
                     {
@@ -1955,12 +2014,15 @@ namespace MWVR
                                             << " playerNodeValid=" << playerNodeValid
                                             << " cellKnown=" << cellKnown
                                             << " cellFormId=" << player.currentCellFormId
-                                            << " posFinite=" << finiteArray(player.playerWorldPos, 3);
+                                            << " posFinite=" << finiteArray(player.playerWorldPos, 3)
+                                            << " rotFinite=" << finiteArray(player.playerWorldRot, 9);
                     }
                 }
                 else
                 {
                     const float minDelta = std::max(0.f, envFloat("OPENMW_FNVXR_SYNC_RETAIL_PLAYER_MIN_DELTA", 1.f));
+                    const float minRotationDelta
+                        = std::max(0.f, envFloat("OPENMW_FNVXR_SYNC_RETAIL_PLAYER_ROTATION_DELTA", 0.0001f));
                     const std::uint64_t minFrameDelta = static_cast<std::uint64_t>(
                         std::max(1.f, envFloat("OPENMW_FNVXR_SYNC_RETAIL_PLAYER_FRAME_DELTA", 1.f)));
                     const bool firstSync = mLastSyncedPlayerFrame == 0;
@@ -1970,7 +2032,10 @@ namespace MWVR
                         = frameAdvanced && !firstSync ? player.frame - mLastSyncedPlayerFrame : 0;
                     const bool movedEnough = firstSync || minDelta == 0.f
                         || distanceSquared(player.playerWorldPos, mLastSyncedPlayerPos) >= minDelta * minDelta;
-                    if (cellChanged || (frameAdvanced && frameDelta >= minFrameDelta && movedEnough))
+                    const bool rotatedEnough = firstSync || minRotationDelta == 0.f
+                        || distanceSquaredN(player.playerWorldRot, mLastSyncedPlayerRot, 9)
+                            >= minRotationDelta * minRotationDelta;
+                    if (cellChanged || (frameAdvanced && frameDelta >= minFrameDelta && (movedEnough || rotatedEnough)))
                     {
                         MWBase::World* world = MWBase::Environment::get().getWorld();
                         if (!world)
@@ -1990,10 +2055,13 @@ namespace MWVR
                             {
                                 if (cellChanged)
                                     world->changeToCell(cellId, position, false, true);
-                                world->moveObject(world->getPlayerPtr(), position.asVec3(), true, true);
+                                MWWorld::Ptr playerPtr
+                                    = world->moveObject(world->getPlayerPtr(), position.asVec3(), true, true);
+                                world->rotateObject(playerPtr, position.asRotationVec3(), MWBase::RotationFlag_none);
                                 mLastSyncedPlayerFrame = player.frame;
                                 mLastSyncedCellFormId = player.currentCellFormId;
                                 std::memcpy(mLastSyncedPlayerPos, player.playerWorldPos, sizeof(mLastSyncedPlayerPos));
+                                std::memcpy(mLastSyncedPlayerRot, player.playerWorldRot, sizeof(mLastSyncedPlayerRot));
                                 mLoggedPlayerSyncBlocked = false;
                                 if (!mLoggedPlayerSyncApplied || cellChanged)
                                 {
@@ -2001,8 +2069,8 @@ namespace MWVR
                                     Log(Debug::Info) << "FNVXR retail surface: synced OpenMW player to retail cell="
                                                      << cellId.toDebugString() << " frame=" << player.frame
                                                      << " pos=(" << player.playerWorldPos[0] << ", "
-                                                     << player.playerWorldPos[1] << ", " << player.playerWorldPos[2]
-                                                     << ")";
+                                                      << player.playerWorldPos[1] << ", " << player.playerWorldPos[2]
+                                                      << ") yaw=" << position.rot[2];
                                 }
                             }
                             catch (const std::exception& e)

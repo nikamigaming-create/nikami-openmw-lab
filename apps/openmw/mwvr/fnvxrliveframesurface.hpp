@@ -144,6 +144,7 @@ namespace MWVR
         std::uint64_t mLastSyncedPlayerFrame = 0;
         std::uint32_t mLastSyncedCellFormId = 0;
         float mLastSyncedPlayerPos[3] {};
+        float mLastSyncedPlayerRot[9] {};
         int mFocusLogCount = 0;
         int mPointerLogCount = 0;
         Stereo::Pose mAnchorPose;
