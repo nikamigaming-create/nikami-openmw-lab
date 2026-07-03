@@ -214,6 +214,18 @@ namespace MWVR
         };
 
         static_assert(sizeof(SharedPlayerState) == 160, "SharedPlayerState layout changed");
+        static_assert(offsetof(SharedPlayerState, sequence) == 8, "SharedPlayerState sequence offset changed");
+        static_assert(offsetof(SharedPlayerState, frame) == 16, "SharedPlayerState frame offset changed");
+        static_assert(offsetof(SharedPlayerState, currentCellFormId) == 24,
+            "SharedPlayerState currentCellFormId offset changed");
+        static_assert(
+            offsetof(SharedPlayerState, playerWorldRot) == 40, "SharedPlayerState playerWorldRot offset changed");
+        static_assert(
+            offsetof(SharedPlayerState, playerWorldPos) == 76, "SharedPlayerState playerWorldPos offset changed");
+        static_assert(
+            offsetof(SharedPlayerState, cameraWorldRot) == 88, "SharedPlayerState cameraWorldRot offset changed");
+        static_assert(
+            offsetof(SharedPlayerState, cameraWorldPos) == 124, "SharedPlayerState cameraWorldPos offset changed");
         static_assert(sizeof(SharedStereoHeader) == 136, "SharedStereoHeader layout changed");
         static_assert(offsetof(SharedStereoHeader, poseValid) == 40, "SharedStereoHeader poseValid offset changed");
         static_assert(offsetof(SharedStereoHeader, leftEyeRot) == 48, "SharedStereoHeader leftEyeRot offset changed");
