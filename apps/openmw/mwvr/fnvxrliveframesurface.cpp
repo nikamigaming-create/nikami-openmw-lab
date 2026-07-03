@@ -17,6 +17,9 @@
 #include "../mwworld/worldmodel.hpp"
 
 #include <components/debug/debuglog.hpp>
+#include <components/esm/formid.hpp>
+#include <components/esm/position.hpp>
+#include <components/esm/refid.hpp>
 #include <components/esm/util.hpp>
 #include <components/misc/constants.hpp>
 #include <components/resource/resourcesystem.hpp>
@@ -298,6 +301,31 @@ namespace MWVR
             view.pose.position = Stereo::Position::fromMeters(pos[0], pos[1], pos[2]);
             view.fov = Stereo::FieldOfView{ fov[0], fov[1], fov[2], fov[3] };
             return view;
+        }
+
+        float distanceSquared(const float left[3], const float right[3])
+        {
+            const float dx = left[0] - right[0];
+            const float dy = left[1] - right[1];
+            const float dz = left[2] - right[2];
+            return dx * dx + dy * dy + dz * dz;
+        }
+
+        ESM::Position retailPlayerPosition(const SharedPlayerSnapshot& player)
+        {
+            ESM::Position position;
+            position.pos[0] = player.playerWorldPos[0];
+            position.pos[1] = player.playerWorldPos[1];
+            position.pos[2] = player.playerWorldPos[2];
+            position.rot[0] = 0.f;
+            position.rot[1] = 0.f;
+            position.rot[2] = 0.f;
+            return position;
+        }
+
+        ESM::RefId retailCellRefId(std::uint32_t cellFormId)
+        {
+            return ESM::RefId::formIdRefId(ESM::FormId::fromUint32(cellFormId));
         }
 
 #ifdef _WIN32
@@ -1747,33 +1775,120 @@ namespace MWVR
                                         << playerMagic << " version=" << std::dec << playerVersion;
                 }
             }
-            else if (!playerTorn
-                && (!mLoggedPlayer || mLastLoggedPlayerFlags != player.flags
-                    || player.frame >= mLastLoggedPlayerFrame + 300))
+            else if (!playerTorn)
             {
-                mLoggedPlayer = true;
-                mLastLoggedPlayerFrame = player.frame;
-                mLastLoggedPlayerFlags = player.flags;
                 const bool playerNodeValid = (player.flags & PlayerSharedFlagPlayerNodeValid) != 0;
                 const bool cameraValid = (player.flags & PlayerSharedFlagCameraValid) != 0;
                 const bool cellKnown = (player.flags & PlayerSharedFlagCellKnown) != 0;
                 const bool thirdPerson = (player.flags & PlayerSharedFlagThirdPerson) != 0;
                 const bool gameplay = (player.flags & PlayerSharedFlagGameplay) != 0;
-                Log(Debug::Info) << "FNVXR retail surface: player state frame=" << player.frame
-                                 << " flags=0x" << std::hex << player.flags << std::dec
-                                 << " playerNodeValid=" << playerNodeValid
-                                 << " cameraValid=" << cameraValid
-                                 << " gameplay=" << gameplay
-                                 << " thirdPerson=" << thirdPerson
-                                 << " cellKnown=" << cellKnown
-                                 << " cellFormId=" << player.currentCellFormId
-                                 << " player=0x" << std::hex << player.playerAddress
-                                 << " playerNode=0x" << player.playerNodeAddress
-                                 << " cameraNode=0x" << player.cameraNodeAddress << std::dec
-                                 << " playerPos=(" << player.playerWorldPos[0] << ", "
-                                 << player.playerWorldPos[1] << ", " << player.playerWorldPos[2] << ")"
-                                 << " cameraPos=(" << player.cameraWorldPos[0] << ", "
-                                 << player.cameraWorldPos[1] << ", " << player.cameraWorldPos[2] << ")";
+
+                if (!envEnabled("OPENMW_FNVXR_SYNC_RETAIL_PLAYER", true))
+                {
+                    if (!mLoggedPlayerSyncDisabled)
+                    {
+                        mLoggedPlayerSyncDisabled = true;
+                        Log(Debug::Info)
+                            << "FNVXR retail surface: retail player sync disabled by OPENMW_FNVXR_SYNC_RETAIL_PLAYER";
+                    }
+                }
+                else if (!playerNodeValid || !cellKnown || player.currentCellFormId == 0
+                    || !finiteArray(player.playerWorldPos, 3))
+                {
+                    if (!mLoggedPlayerSyncBlocked)
+                    {
+                        mLoggedPlayerSyncBlocked = true;
+                        Log(Debug::Warning) << "FNVXR retail surface: retail player sync waiting for valid cell and "
+                                               "player transform"
+                                            << " playerNodeValid=" << playerNodeValid
+                                            << " cellKnown=" << cellKnown
+                                            << " cellFormId=" << player.currentCellFormId
+                                            << " posFinite=" << finiteArray(player.playerWorldPos, 3);
+                    }
+                }
+                else
+                {
+                    const float minDelta = std::max(0.f, envFloat("OPENMW_FNVXR_SYNC_RETAIL_PLAYER_MIN_DELTA", 1.f));
+                    const std::uint64_t minFrameDelta = static_cast<std::uint64_t>(
+                        std::max(1.f, envFloat("OPENMW_FNVXR_SYNC_RETAIL_PLAYER_FRAME_DELTA", 1.f)));
+                    const bool firstSync = mLastSyncedPlayerFrame == 0;
+                    const bool cellChanged = firstSync || player.currentCellFormId != mLastSyncedCellFormId;
+                    const bool frameAdvanced = firstSync || player.frame > mLastSyncedPlayerFrame;
+                    const std::uint64_t frameDelta
+                        = frameAdvanced && !firstSync ? player.frame - mLastSyncedPlayerFrame : 0;
+                    const bool movedEnough = firstSync || minDelta == 0.f
+                        || distanceSquared(player.playerWorldPos, mLastSyncedPlayerPos) >= minDelta * minDelta;
+                    if (cellChanged || (frameAdvanced && frameDelta >= minFrameDelta && movedEnough))
+                    {
+                        MWBase::World* world = MWBase::Environment::get().getWorld();
+                        if (!world)
+                        {
+                            if (!mLoggedPlayerSyncBlocked)
+                            {
+                                mLoggedPlayerSyncBlocked = true;
+                                Log(Debug::Warning)
+                                    << "FNVXR retail surface: retail player sync blocked because OpenMW world is null";
+                            }
+                        }
+                        else
+                        {
+                            const ESM::Position position = retailPlayerPosition(player);
+                            const ESM::RefId cellId = retailCellRefId(player.currentCellFormId);
+                            try
+                            {
+                                if (cellChanged)
+                                    world->changeToCell(cellId, position, false, true);
+                                world->moveObject(world->getPlayerPtr(), position.asVec3(), true, true);
+                                mLastSyncedPlayerFrame = player.frame;
+                                mLastSyncedCellFormId = player.currentCellFormId;
+                                std::memcpy(mLastSyncedPlayerPos, player.playerWorldPos, sizeof(mLastSyncedPlayerPos));
+                                mLoggedPlayerSyncBlocked = false;
+                                if (!mLoggedPlayerSyncApplied || cellChanged)
+                                {
+                                    mLoggedPlayerSyncApplied = true;
+                                    Log(Debug::Info) << "FNVXR retail surface: synced OpenMW player to retail cell="
+                                                     << cellId.toDebugString() << " frame=" << player.frame
+                                                     << " pos=(" << player.playerWorldPos[0] << ", "
+                                                     << player.playerWorldPos[1] << ", " << player.playerWorldPos[2]
+                                                     << ")";
+                                }
+                            }
+                            catch (const std::exception& e)
+                            {
+                                if (!mLoggedPlayerSyncBlocked)
+                                {
+                                    mLoggedPlayerSyncBlocked = true;
+                                    Log(Debug::Warning)
+                                        << "FNVXR retail surface: retail player sync failed for cell="
+                                        << cellId.toDebugString() << ": " << e.what();
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if (!mLoggedPlayer || mLastLoggedPlayerFlags != player.flags
+                    || player.frame >= mLastLoggedPlayerFrame + 300)
+                {
+                    mLoggedPlayer = true;
+                    mLastLoggedPlayerFrame = player.frame;
+                    mLastLoggedPlayerFlags = player.flags;
+                    Log(Debug::Info) << "FNVXR retail surface: player state frame=" << player.frame
+                                     << " flags=0x" << std::hex << player.flags << std::dec
+                                     << " playerNodeValid=" << playerNodeValid
+                                     << " cameraValid=" << cameraValid
+                                     << " gameplay=" << gameplay
+                                     << " thirdPerson=" << thirdPerson
+                                     << " cellKnown=" << cellKnown
+                                     << " cellFormId=" << player.currentCellFormId
+                                     << " player=0x" << std::hex << player.playerAddress
+                                     << " playerNode=0x" << player.playerNodeAddress
+                                     << " cameraNode=0x" << player.cameraNodeAddress << std::dec
+                                     << " playerPos=(" << player.playerWorldPos[0] << ", "
+                                     << player.playerWorldPos[1] << ", " << player.playerWorldPos[2] << ")"
+                                     << " cameraPos=(" << player.cameraWorldPos[0] << ", "
+                                     << player.cameraWorldPos[1] << ", " << player.cameraWorldPos[2] << ")";
+                }
             }
         }
 

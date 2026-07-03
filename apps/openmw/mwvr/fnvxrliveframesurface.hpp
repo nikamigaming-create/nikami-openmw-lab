@@ -132,8 +132,14 @@ namespace MWVR
         bool mLoggedPlayer = false;
         bool mLoggedPlayerReadFailure = false;
         bool mLoggedPlayerInvalid = false;
+        bool mLoggedPlayerSyncDisabled = false;
+        bool mLoggedPlayerSyncBlocked = false;
+        bool mLoggedPlayerSyncApplied = false;
         std::uint64_t mLastLoggedPlayerFrame = 0;
         std::uint32_t mLastLoggedPlayerFlags = 0;
+        std::uint64_t mLastSyncedPlayerFrame = 0;
+        std::uint32_t mLastSyncedCellFormId = 0;
+        float mLastSyncedPlayerPos[3] {};
         int mFocusLogCount = 0;
         int mPointerLogCount = 0;
         Stereo::Pose mAnchorPose;
