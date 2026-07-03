@@ -775,7 +775,9 @@ namespace MWVR
 
         publishOpenMwPlayerState();
 
-        const bool retailGameplay = retailRuntimeWorldReady();
+        const bool runtimeWorldReady = retailRuntimeWorldReady();
+        const bool retailGameplay = runtimeWorldReady
+            && (envEnabled("OPENMW_FNVXR_ALLOW_RUNTIME_ONLY_WORLD_READY", false) || retailWorldActive());
         const bool panelAllowed = retailPanelAllowed();
         const bool projectionTakeoverWasActive = !mGripMenuOverride
             && (mProjectionLayerRequested || mProjectionLayerInserted || mRetailProjectionTakeoverActive || mRetailWorldMode);
