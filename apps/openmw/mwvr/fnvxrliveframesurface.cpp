@@ -42,6 +42,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <cstdlib>
 #include <cstring>
 #include <exception>
@@ -210,6 +211,9 @@ namespace MWVR
         };
 
         static_assert(sizeof(SharedPlayerState) == 160, "SharedPlayerState layout changed");
+        static_assert(sizeof(SharedStereoHeader) == 136, "SharedStereoHeader layout changed");
+        static_assert(offsetof(SharedStereoHeader, poseValid) == 40, "SharedStereoHeader poseValid offset changed");
+        static_assert(offsetof(SharedStereoHeader, leftEyeRot) == 48, "SharedStereoHeader leftEyeRot offset changed");
 
         bool envEnabled(const char* name, bool defaultValue)
         {
