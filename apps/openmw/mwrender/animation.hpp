@@ -262,6 +262,7 @@ namespace MWRender
         bool mRequiresBoneMap;
         bool mProofPreviewAnimation;
         bool mProofPreviewGameplayAudit;
+        int mBethesdaBoneLodLevel;
 
         const NodeMap& getNodeMap() const;
 
@@ -270,6 +271,9 @@ namespace MWRender
          * in the AnimationState to the corresponding nodes.
          */
         void resetActiveGroups();
+
+        int getBethesdaBoneLodLevel() const;
+        bool isBethesdaBoneLodSuppressed(const osg::Node* node) const;
 
         std::string describeActiveFalloutAnimationStates() const;
         size_t forceFalloutNativeUpdateTraversalOnce(std::string_view reason);

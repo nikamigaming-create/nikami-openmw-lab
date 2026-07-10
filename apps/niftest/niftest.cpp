@@ -1162,8 +1162,59 @@ int runFnvTransformDump(
             out << "{\"node\":\"" << jsonEscape(object->mName) << "\""
                 << ",\"controllerType\":\"" << jsonEscape(controller->recName) << "\""
                 << ",\"controllerRecordType\":" << controller->recType
-                << ",\"flags\":" << controller->mFlags << "}";
+                << ",\"flags\":" << controller->mFlags;
+            if (const auto* transformController = dynamic_cast<const Nif::NiKeyframeController*>(controller.getPtr()))
+            {
+                const Nif::NiInterpolator* interpolator = transformController->mInterpolator.getPtr();
+                out << ",\"interpolatorType\":\""
+                    << jsonEscape(interpolator != nullptr ? interpolator->recName : std::string()) << "\"";
+                if (const auto* blend = dynamic_cast<const Nif::NiBlendInterpolator*>(interpolator))
+                {
+                    out << ",\"blendFlags\":" << static_cast<unsigned int>(blend->mFlags)
+                        << ",\"blendManagerControlled\":"
+                        << ((blend->mFlags & Nif::NiBlendInterpolator::Flag_ManagerControlled) ? "true" : "false")
+                        << ",\"blendOnlyUseHighestWeight\":"
+                        << ((blend->mFlags & Nif::NiBlendInterpolator::Flag_OnlyUseHighestWeight) ? "true" : "false");
+                }
+            }
+            out << "}";
         }
+    }
+    out << "],\n";
+    out << "  \"boneLodControllers\": [";
+    bool firstBoneLodController = true;
+    for (const auto& record : skeletonFile->mRecords)
+    {
+        const auto* controller = dynamic_cast<const Nif::NiBoneLODController*>(record.get());
+        if (controller == nullptr)
+            continue;
+        if (!firstBoneLodController)
+            out << ',';
+        firstBoneLodController = false;
+        out << "{\"type\":\"" << jsonEscape(controller->recName) << "\""
+            << ",\"activeLod\":" << controller->mLOD
+            << ",\"numNodeGroups\":" << controller->mNumNodeGroups
+            << ",\"groups\":[";
+        bool firstGroup = true;
+        for (std::size_t groupIndex = 0; groupIndex < controller->mNodeGroups.size(); ++groupIndex)
+        {
+            if (!firstGroup)
+                out << ',';
+            firstGroup = false;
+            out << "{\"index\":" << groupIndex << ",\"nodes\":[";
+            bool firstNode = true;
+            for (const auto& node : controller->mNodeGroups[groupIndex])
+            {
+                if (node.empty())
+                    continue;
+                if (!firstNode)
+                    out << ',';
+                firstNode = false;
+                out << "\"" << jsonEscape(node->mName) << "\"";
+            }
+            out << "]}";
+        }
+        out << "]}";
     }
     out << "],\n";
     out << "  \"controllerNames\": [";

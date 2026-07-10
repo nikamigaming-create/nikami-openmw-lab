@@ -85,6 +85,7 @@
 #include "../mwmechanics/weapontype.hpp"
 
 #include "actorutil.hpp"
+#include "camera.hpp"
 #include "rotatecontroller.hpp"
 #include "util.hpp"
 #include "vismask.hpp"
@@ -3171,6 +3172,7 @@ namespace MWRender
         , mRequiresBoneMap(false)
         , mProofPreviewAnimation(false)
         , mProofPreviewGameplayAudit(false)
+        , mBethesdaBoneLodLevel(-1)
     {
         for (size_t i = 0; i < sNumBlendMasks; i++)
             mAnimationTimePtr[i] = std::make_shared<AnimationTime>();
@@ -5408,6 +5410,54 @@ namespace MWRender
         return mActiveControllers.size();
     }
 
+    int Animation::getBethesdaBoneLodLevel() const
+    {
+        if (!isFalloutNpcAnimationContext(mPtr))
+            return 0;
+
+        if (const char* forced = std::getenv("OPENMW_ESM4_BONE_LOD_FORCE"))
+        {
+            char* end = nullptr;
+            const long value = std::strtol(forced, &end, 10);
+            if (end != forced && *end == '\0' && value >= 0 && value <= 8)
+                return static_cast<int>(value);
+        }
+
+        const MWWorld::Ptr player = MWMechanics::getPlayer();
+        if (mPtr == player
+            || Misc::StringUtils::ciEqual(mPtr.getCellRef().getRefId().serializeText(), "player"))
+            return 0;
+
+        // Retail FNV advances the authored bone-LOD group at each 1250-unit
+        // camera-distance step (1248.22 -> 0, 1251.15 -> 1, 2705.18 -> 2).
+        float lodDistance = 1250.f;
+        const char* configured = std::getenv("OPENMW_ESM4_BONE_LOD_DISTANCE");
+        if (configured == nullptr)
+            configured = std::getenv("OPENMW_ESM4_BONE_LOD_NEAR_DISTANCE");
+        if (configured != nullptr)
+        {
+            char* end = nullptr;
+            const float value = std::strtof(configured, &end);
+            if (end != configured && *end == '\0' && std::isfinite(value) && value > 0.f)
+                lodDistance = value;
+        }
+
+        osg::Vec3d lodOrigin(player.getRefData().getPosition().asVec3());
+        if (MWRender::Camera* camera = MWBase::Environment::get().getWorld()->getCamera())
+            lodOrigin = camera->getPosition();
+        const osg::Vec3d delta = osg::Vec3d(mPtr.getRefData().getPosition().asVec3()) - lodOrigin;
+        return std::clamp(static_cast<int>(std::sqrt(delta.length2()) / lodDistance), 0, 8);
+    }
+
+    bool Animation::isBethesdaBoneLodSuppressed(const osg::Node* node) const
+    {
+        if (node == nullptr || mBethesdaBoneLodLevel <= 0)
+            return false;
+        unsigned int group = 0;
+        return node->getUserValue("bethesdaBoneLodGroup", group)
+            && group < static_cast<unsigned int>(mBethesdaBoneLodLevel);
+    }
+
     void Animation::resetActiveGroups()
     {
 //## VR_PATCH BEGIN
@@ -5416,7 +5466,9 @@ namespace MWRender
 //## VR_PATCH END
         const bool falloutNpc = isFalloutNpc(mPtr);
         size_t falloutAddedControllers = 0;
+        size_t falloutBoneLodSuppressedControllers = 0;
         bool accumResetAttached = false;
+        mBethesdaBoneLodLevel = falloutNpc ? getBethesdaBoneLodLevel() : 0;
         // remove all previous external controllers from the scene graph
         for (auto it = mActiveControllers.begin(); it != mActiveControllers.end(); ++it)
         {
@@ -5463,6 +5515,12 @@ namespace MWRender
                 {
                     osg::ref_ptr<osg::Node> node = getNodeMap().at(
                         it->first); // this should not throw, we already checked for the node existing in addAnimSource
+
+                    if (falloutNpc && isBethesdaBoneLodSuppressed(node))
+                    {
+                        ++falloutBoneLodSuppressedControllers;
+                        continue;
+                    }
 
                     const bool useSmoothAnims = !falloutNpc && useSmoothAnimationTransitions();
 
@@ -5536,6 +5594,8 @@ namespace MWRender
         if (falloutNpc)
             Log(Debug::Info) << "FNV/ESM4 diag: active animation group reset for " << mPtr.getCellRef().getRefId()
                              << " states=" << mStates.size() << " callbacks=" << falloutAddedControllers
+                             << " boneLod=" << mBethesdaBoneLodLevel
+                             << " boneLodSuppressed=" << falloutBoneLodSuppressedControllers
                              << " activeControllers=" << mActiveControllers.size()
                              << " activeGroups=[" << describeActiveFalloutAnimationStates() << "]";
 
@@ -5739,6 +5799,15 @@ namespace MWRender
         osg::Vec3f movement(0.f, 0.f, 0.f);
         const bool falloutNpc = isFalloutNpc(mPtr);
         const bool falloutActor = isFalloutActor(mPtr);
+        if (falloutNpc)
+        {
+            const int boneLodLevel = getBethesdaBoneLodLevel();
+            if (boneLodLevel != mBethesdaBoneLodLevel)
+            {
+                mBethesdaBoneLodLevel = boneLodLevel;
+                resetActiveGroups();
+            }
+        }
         AnimStateMap::iterator stateiter = mStates.begin();
         while (stateiter != mStates.end())
         {
@@ -5903,6 +5972,8 @@ namespace MWRender
 
                     osg::MatrixTransform* transform = nodeIt->second.get();
                     if (transform == nullptr)
+                        continue;
+                    if (isBethesdaBoneLodSuppressed(transform))
                         continue;
 
                     const std::string lowerAppliedBone = Misc::StringUtils::lowerCase(it->first);

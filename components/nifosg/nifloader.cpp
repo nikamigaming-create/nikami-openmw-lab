@@ -1580,7 +1580,39 @@ namespace NifOsg
         std::vector<std::pair<size_t, osg::ref_ptr<Emitter>>> mEmitterQueue;
         std::unordered_map<const Nif::NiAVObject*, osg::Node*> mNodesByNif;
         std::unordered_map<std::string, osg::Node*> mNodesByName;
+        std::unordered_map<std::string, unsigned int> mBethesdaBoneLodGroups;
         std::vector<const Nif::NiControllerManager*> mControllerManagers;
+
+        void collectBethesdaBoneLodGroups(const Nif::NiAVObject* object)
+        {
+            if (object == nullptr)
+                return;
+
+            for (Nif::NiTimeControllerPtr controller = object->mController; !controller.empty();
+                 controller = controller->mNext)
+            {
+                const auto* boneLod = dynamic_cast<const Nif::NiBoneLODController*>(controller.getPtr());
+                if (boneLod == nullptr)
+                    continue;
+
+                for (std::size_t groupIndex = 0; groupIndex < boneLod->mNodeGroups.size(); ++groupIndex)
+                {
+                    for (const auto& node : boneLod->mNodeGroups[groupIndex])
+                    {
+                        if (!node.empty() && !node->mName.empty())
+                            mBethesdaBoneLodGroups[Misc::StringUtils::lowerCase(node->mName)]
+                                = static_cast<unsigned int>(groupIndex);
+                    }
+                }
+            }
+
+            const auto* node = dynamic_cast<const Nif::NiNode*>(object);
+            if (node == nullptr)
+                return;
+            for (const auto& child : node->mChildren)
+                if (!child.empty())
+                    collectBethesdaBoneLodGroups(child.getPtr());
+        }
 
         void loadKf(Nif::FileView nif, SceneUtil::KeyframeHolder& target) const
         {
@@ -1898,6 +1930,9 @@ namespace NifOsg
             }
             if (roots.empty())
                 throw Nif::Exception("Found no root nodes", nif.getFilename());
+
+            for (const Nif::NiAVObject* root : roots)
+                collectBethesdaBoneLodGroups(root);
 
             osg::ref_ptr<SceneUtil::TextKeyMapHolder> textkeys(new SceneUtil::TextKeyMapHolder);
 
@@ -2343,6 +2378,9 @@ namespace NifOsg
             }
 
             node->setName(nifNode->mName);
+            const auto boneLod = mBethesdaBoneLodGroups.find(Misc::StringUtils::lowerCase(nifNode->mName));
+            if (boneLod != mBethesdaBoneLodGroups.end())
+                node->setUserValue("bethesdaBoneLodGroup", boneLod->second);
 
             if (parentNode)
                 parentNode->addChild(node);
