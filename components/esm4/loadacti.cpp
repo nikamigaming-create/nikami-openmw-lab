@@ -51,22 +51,40 @@ void ESM4::Activator::load(ESM4::Reader& reader)
                 reader.getZString(mModel);
                 break;
             case ESM::fourCC("SCRI"):
-                reader.getFormId(mScriptId);
+                if (subHdr.dataSize == sizeof(ESM::FormId))
+                    reader.getFormId(mScriptId);
+                else
+                    reader.skipSubRecordData();
                 break;
             case ESM::fourCC("SNAM"):
-                reader.getFormId(mLoopingSound);
+                if (subHdr.dataSize == sizeof(ESM::FormId))
+                    reader.getFormId(mLoopingSound);
+                else
+                    reader.skipSubRecordData();
                 break;
             case ESM::fourCC("VNAM"):
-                reader.getFormId(mActivationSound);
+                if (subHdr.dataSize == sizeof(ESM::FormId))
+                    reader.getFormId(mActivationSound);
+                else
+                    reader.skipSubRecordData();
                 break;
             case ESM::fourCC("MODB"):
-                reader.get(mBoundRadius);
+                if (subHdr.dataSize == sizeof(mBoundRadius))
+                    reader.get(mBoundRadius);
+                else
+                    reader.skipSubRecordData();
                 break;
             case ESM::fourCC("INAM"):
-                reader.getFormId(mRadioTemplate);
+                if (subHdr.dataSize == sizeof(ESM::FormId))
+                    reader.getFormId(mRadioTemplate);
+                else
+                    reader.skipSubRecordData();
                 break; // FONV
             case ESM::fourCC("RNAM"):
-                reader.getFormId(mRadioStation);
+                if (subHdr.dataSize == sizeof(ESM::FormId))
+                    reader.getFormId(mRadioStation);
+                else
+                    reader.skipSubRecordData();
                 break;
             case ESM::fourCC("XATO"):
                 reader.getZString(mActivationPrompt);
@@ -98,15 +116,34 @@ void ESM4::Activator::load(ESM4::Reader& reader)
             case ESM::fourCC("CITC"):
             case ESM::fourCC("NVNM"):
             case ESM::fourCC("ATTX"): // FO4
+            case ESM::fourCC("ACSH"): // Starfield
+            case ESM::fourCC("ANAM"): // Starfield
+            case ESM::fourCC("BFCB"): // Starfield
+            case ESM::fourCC("BFCE"): // Starfield
+            case ESM::fourCC("BNAM"): // Starfield
+            case ESM::fourCC("CNAM"): // Starfield
+            case ESM::fourCC("FLLD"): // Starfield
             case ESM::fourCC("FTYP"): // FO4
+            case ESM::fourCC("JNAM"): // Starfield
+            case ESM::fourCC("MOLM"): // Starfield
             case ESM::fourCC("NTRM"): // FO4
+            case ESM::fourCC("ODTY"): // Starfield
+            case ESM::fourCC("PTCL"): // Starfield
+            case ESM::fourCC("PTT2"): // Starfield
             case ESM::fourCC("PTRN"): // FO4
             case ESM::fourCC("PRPS"): // FO4
             case ESM::fourCC("RADR"): // FO4
+            case ESM::fourCC("REFL"): // Starfield
+            case ESM::fourCC("SNTP"): // Starfield
             case ESM::fourCC("STCP"): // FO4
+            case ESM::fourCC("WTFM"): // Starfield
+            case ESM::fourCC("XALG"): // Starfield
+            case ESM::fourCC("XFLG"): // Starfield
                 reader.skipSubRecordData();
                 break;
             default:
+                if (reader.skipUnknownStarfieldSubRecordData("loadacti"))
+                    break;
                 throw std::runtime_error("ESM4::ACTI::load - Unknown subrecord " + ESM::printName(subHdr.typeId));
         }
     }

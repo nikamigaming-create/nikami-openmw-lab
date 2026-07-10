@@ -16,11 +16,16 @@ int main(int argc, char** argv)
 
 message(STATUS "Checking if Bullet uses double precision")
 
-try_compile(RESULT_VAR
-    ${TMP_ROOT}/temp
-    ${TMP_ROOT}/checkbullet.cpp
-    COMPILE_DEFINITIONS "-DBT_USE_DOUBLE_PRECISION"
-    LINK_LIBRARIES ${BULLET_LIBRARIES}
-    CMAKE_FLAGS  "-DINCLUDE_DIRECTORIES=${BULLET_INCLUDE_DIRS}"
-    )
-set(HAS_DOUBLE_PRECISION_BULLET ${RESULT_VAR})
+if(OPENMW_ASSUME_DOUBLE_PRECISION_BULLET)
+    message(STATUS "Assuming Bullet uses double precision")
+    set(HAS_DOUBLE_PRECISION_BULLET TRUE)
+else()
+    try_compile(RESULT_VAR
+        ${TMP_ROOT}/temp
+        ${TMP_ROOT}/checkbullet.cpp
+        COMPILE_DEFINITIONS "-DBT_USE_DOUBLE_PRECISION"
+        LINK_LIBRARIES ${BULLET_LIBRARIES}
+        CMAKE_FLAGS  "-DINCLUDE_DIRECTORIES=${BULLET_INCLUDE_DIRS}"
+        )
+    set(HAS_DOUBLE_PRECISION_BULLET ${RESULT_VAR})
+endif()

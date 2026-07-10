@@ -198,6 +198,13 @@ namespace Nif
         }
     }
 
+    void BSFaceGenNiNode::read(NIFStream* nif)
+    {
+        NiNode::read(nif);
+
+        nif->read(mUnknown);
+    }
+
     void NiGeometry::MaterialData::read(NIFStream* nif)
     {
         if (nif->getVersion() < NIFStream::generateVersion(10, 0, 1, 0))
@@ -539,6 +546,34 @@ namespace Nif
         mSkin.read(nif);
         mShaderProperty.read(nif);
         mAlphaProperty.read(nif);
+
+        if (recName == "BSGeometry" && nif->getBethVersion() >= NIFFile::BethVersion::BETHVER_STF)
+        {
+            mExternalGeometry.clear();
+            const bool internalGeometry = (mFlags & 0x200) != 0;
+
+            for (int i = 0; i < 4; ++i)
+            {
+                const uint8_t hasMesh = nif->get<uint8_t>();
+                if (hasMesh == 0)
+                    continue;
+
+                BSGeometryMeshRef mesh;
+                nif->read(mesh.mTriangleIndexCount);
+                nif->read(mesh.mVertexCount);
+                nif->read(mesh.mFlags);
+
+                if (!internalGeometry)
+                {
+                    const uint32_t meshPathLength = nif->get<uint32_t>();
+                    mesh.mMeshPath = nif->getSizedString(meshPathLength);
+                    mExternalGeometry.push_back(std::move(mesh));
+                }
+            }
+
+            return;
+        }
+
         mVertDesc.read(nif);
 
         if (nif->getBethVersion() >= NIFFile::BethVersion::BETHVER_FO4)

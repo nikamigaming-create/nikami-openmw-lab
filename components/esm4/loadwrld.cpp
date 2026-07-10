@@ -63,61 +63,105 @@ void ESM4::World::load(ESM4::Reader& reader)
                 reader.getLocalizedString(mFullName);
                 break;
             case ESM::fourCC("WCTR"): // TES5+
-                reader.get(mCenterCell);
+                if (subHdr.dataSize == sizeof(mCenterCell))
+                    reader.get(mCenterCell);
+                else
+                    reader.skipSubRecordData();
                 break;
             case ESM::fourCC("WNAM"):
-                reader.getFormId(mParent);
+                if (subHdr.dataSize == sizeof(ESM::FormId))
+                    reader.getFormId(mParent);
+                else
+                    reader.skipSubRecordData();
                 break;
             case ESM::fourCC("SNAM"):
-                reader.get(mSound);
+                if (subHdr.dataSize == sizeof(mSound))
+                    reader.get(mSound);
+                else
+                    reader.skipSubRecordData();
                 break; // sound, Oblivion only?
             case ESM::fourCC("ICON"):
                 reader.getZString(mMapFile);
                 break;
             case ESM::fourCC("CNAM"):
-                reader.getFormId(mClimate);
+                if (subHdr.dataSize == sizeof(ESM::FormId))
+                    reader.getFormId(mClimate);
+                else
+                    reader.skipSubRecordData();
                 break;
             case ESM::fourCC("NAM2"):
-                reader.getFormId(mWater);
+                if (subHdr.dataSize == sizeof(ESM::FormId))
+                    reader.getFormId(mWater);
+                else
+                    reader.skipSubRecordData();
                 break;
             case ESM::fourCC("NAM0"):
             {
-                reader.get(mMinX);
-                reader.get(mMinY);
+                if (subHdr.dataSize == 8)
+                {
+                    reader.get(mMinX);
+                    reader.get(mMinY);
+                }
+                else
+                    reader.skipSubRecordData();
                 break;
             }
             case ESM::fourCC("NAM9"):
             {
-                reader.get(mMaxX);
-                reader.get(mMaxY);
+                if (subHdr.dataSize == 8)
+                {
+                    reader.get(mMaxX);
+                    reader.get(mMaxY);
+                }
+                else
+                    reader.skipSubRecordData();
                 break;
             }
             case ESM::fourCC("DATA"):
-                reader.get(mWorldFlags);
+                if (subHdr.dataSize == sizeof(mWorldFlags))
+                    reader.get(mWorldFlags);
+                else if (subHdr.dataSize == sizeof(std::uint32_t))
+                {
+                    std::uint32_t value = 0;
+                    reader.get(value);
+                    mWorldFlags = static_cast<std::uint8_t>(value & 0xff);
+                }
+                else
+                    reader.skipSubRecordData();
                 break;
             case ESM::fourCC("MNAM"):
             {
-                reader.get(mMap.width);
-                reader.get(mMap.height);
-                reader.get(mMap.NWcellX);
-                reader.get(mMap.NWcellY);
-                reader.get(mMap.SEcellX);
-                reader.get(mMap.SEcellY);
-
-                if (subHdr.dataSize == 28) // Skyrim?
+                if (subHdr.dataSize == 16 || subHdr.dataSize == 28)
                 {
-                    reader.get(mMap.minHeight);
-                    reader.get(mMap.maxHeight);
-                    reader.get(mMap.initialPitch);
+                    reader.get(mMap.width);
+                    reader.get(mMap.height);
+                    reader.get(mMap.NWcellX);
+                    reader.get(mMap.NWcellY);
+                    reader.get(mMap.SEcellX);
+                    reader.get(mMap.SEcellY);
+
+                    if (subHdr.dataSize == 28) // Skyrim?
+                    {
+                        reader.get(mMap.minHeight);
+                        reader.get(mMap.maxHeight);
+                        reader.get(mMap.initialPitch);
+                    }
                 }
+                else
+                    reader.skipSubRecordData();
 
                 break;
             }
             case ESM::fourCC("DNAM"): // defaults
             {
-                reader.get(mLandLevel); //  -2700.f for TES5
-                reader.get(mWaterLevel); // -14000.f for TES5
-                usingDefaultLevels = false;
+                if (subHdr.dataSize == 8)
+                {
+                    reader.get(mLandLevel); //  -2700.f for TES5
+                    reader.get(mWaterLevel); // -14000.f for TES5
+                    usingDefaultLevels = false;
+                }
+                else
+                    reader.skipSubRecordData();
 
                 break;
             }
@@ -136,12 +180,38 @@ void ESM4::World::load(ESM4::Reader& reader)
             // 00119D2E freeside\freeside_01.mp3 0012D94E FreesideFortWorld (Old Mormon Fort)
             // NOTE: FONV DefaultObjectManager has 00090908 "explore" as the default music
             case ESM::fourCC("ZNAM"):
-                reader.getFormId(mMusic);
+                if (subHdr.dataSize == sizeof(ESM::FormId))
+                    reader.getFormId(mMusic);
+                else
+                    reader.skipSubRecordData();
                 break;
             case ESM::fourCC("PNAM"):
-                reader.get(mParentUseFlags);
+                if (subHdr.dataSize == sizeof(mParentUseFlags))
+                    reader.get(mParentUseFlags);
+                else if (subHdr.dataSize == sizeof(std::uint32_t))
+                {
+                    std::uint32_t value = 0;
+                    reader.get(value);
+                    mParentUseFlags = static_cast<std::uint16_t>(value & 0xffff);
+                }
+                else
+                    reader.skipSubRecordData();
                 break;
             case ESM::fourCC("OFST"):
+            case ESM::fourCC("BFCB"): // Starfield
+            case ESM::fourCC("BFCE"): // Starfield
+            case ESM::fourCC("BNAM"): // Starfield
+            case ESM::fourCC("CITC"): // Starfield
+            case ESM::fourCC("CTDA"): // Starfield
+            case ESM::fourCC("FNAM"): // Starfield
+            case ESM::fourCC("GNAM"): // Starfield
+            case ESM::fourCC("HNAM"): // Starfield
+            case ESM::fourCC("LNAM"): // Starfield
+            case ESM::fourCC("NAM1"): // Starfield
+            case ESM::fourCC("NAM5"): // Starfield
+            case ESM::fourCC("NAM6"): // Starfield
+            case ESM::fourCC("NAM7"): // Starfield
+            case ESM::fourCC("NAM8"): // Starfield
             case ESM::fourCC("RNAM"): // multiple
             case ESM::fourCC("MHDT"):
             case ESM::fourCC("LTMP"):
@@ -153,7 +223,13 @@ void ESM4::World::load(ESM4::Reader& reader)
             case ESM::fourCC("ONAM"):
             case ESM::fourCC("TNAM"):
             case ESM::fourCC("UNAM"):
+            case ESM::fourCC("VNAM"): // Starfield
+            case ESM::fourCC("WAMB"): // Starfield
+            case ESM::fourCC("WHGT"): // Starfield
+            case ESM::fourCC("XCLW"): // Starfield
+            case ESM::fourCC("XEMP"): // Starfield
             case ESM::fourCC("XWEM"):
+            case ESM::fourCC("YNAM"): // Starfield
             case ESM::fourCC("MODL"): // Model data start
             case ESM::fourCC("MODT"):
             case ESM::fourCC("MODC"):
@@ -169,6 +245,8 @@ void ESM4::World::load(ESM4::Reader& reader)
                 reader.skipSubRecordData();
                 break;
             default:
+                if (reader.skipUnknownStarfieldSubRecordData("loadwrld"))
+                    break;
                 throw std::runtime_error("ESM4::WRLD::load - Unknown subrecord " + ESM::printName(subHdr.typeId));
         }
 

@@ -1,5 +1,7 @@
 #include "weather.hpp"
 
+#include <cstdlib>
+
 #include <components/debug/debuglog.hpp>
 #include <components/esm/stringrefid.hpp>
 #include <components/settings/values.hpp>
@@ -28,6 +30,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <string_view>
 
 namespace MWWorld
 {
@@ -59,6 +62,28 @@ namespace MWWorld
                 stormDirection.normalize();
             }
             return stormDirection;
+        }
+
+        osg::Vec4f getOptionalWeatherColour(const std::string& weatherName, std::string_view colourGroup,
+            std::string_view timeName, const osg::Vec4f& fallback)
+        {
+            const std::string key = "Weather_" + weatherName + "_" + std::string(colourGroup) + "_"
+                + std::string(timeName) + "_Color";
+            const auto& fallbackMap = Fallback::Map::getNonNumericFallbackMap();
+            if (fallbackMap.find(key) == fallbackMap.end())
+                return fallback;
+
+            return Fallback::Map::getColour(key);
+        }
+
+        TimeOfDayInterpolator<osg::Vec4f> getOptionalWeatherColourInterpolator(const std::string& weatherName,
+            std::string_view colourGroup, const TimeOfDayInterpolator<osg::Vec4f>& fallback)
+        {
+            return TimeOfDayInterpolator<osg::Vec4f>(
+                getOptionalWeatherColour(weatherName, colourGroup, "Sunrise", fallback.getSunriseValue()),
+                getOptionalWeatherColour(weatherName, colourGroup, "Day", fallback.getDayValue()),
+                getOptionalWeatherColour(weatherName, colourGroup, "Sunset", fallback.getSunsetValue()),
+                getOptionalWeatherColour(weatherName, colourGroup, "Night", fallback.getNightValue()));
         }
     }
 
@@ -157,6 +182,8 @@ namespace MWWorld
               Fallback::Map::getColour("Weather_" + name + "_Fog_Day_Color"),
               Fallback::Map::getColour("Weather_" + name + "_Fog_Sunset_Color"),
               Fallback::Map::getColour("Weather_" + name + "_Fog_Night_Color"))
+        , mSkyLowerColor(getOptionalWeatherColourInterpolator(name, "Sky_Lower", mSkyColor))
+        , mSkyHorizonColor(getOptionalWeatherColourInterpolator(name, "Sky_Horizon", mFogColor))
         , mAmbientColor(Fallback::Map::getColour("Weather_" + name + "_Ambient_Sunrise_Color"),
               Fallback::Map::getColour("Weather_" + name + "_Ambient_Day_Color"),
               Fallback::Map::getColour("Weather_" + name + "_Ambient_Sunset_Color"),
@@ -176,7 +203,7 @@ namespace MWWorld
         , mIsStorm(mWindSpeed > stormWindSpeed)
         , mRainSpeed(rainSpeed)
         , mRainEntranceSpeed(Fallback::Map::getFloat("Weather_" + name + "_Rain_Entrance_Speed"))
-        , mRainMaxRaindrops(Fallback::Map::getFloat("Weather_" + name + "_Max_Raindrops"))
+        , mRainMaxRaindrops(static_cast<int>(Fallback::Map::getFloat("Weather_" + name + "_Max_Raindrops")))
         , mRainDiameter(Fallback::Map::getFloat("Weather_" + name + "_Rain_Diameter"))
         , mRainThreshold(Fallback::Map::getFloat("Weather_" + name + "_Rain_Threshold"))
         , mRainMinHeight(Fallback::Map::getFloat("Weather_" + name + "_Rain_Height_Min"))
@@ -307,15 +334,20 @@ namespace MWWorld
         return state;
     }
 
-    void RegionWeather::setChances(const std::vector<uint8_t>& chances)
+    void RegionWeather::setChances(std::span<const uint8_t> chances)
     {
-        mChances = chances;
+        mChances.assign(chances.begin(), chances.end());
 
         // Regional weather no longer supports the current type, select a new weather pattern.
         if ((static_cast<size_t>(mWeather) >= mChances.size()) || (mChances[mWeather] == 0))
         {
             chooseNewWeather();
         }
+    }
+
+    std::span<const uint8_t> RegionWeather::getChances() const
+    {
+        return mChances;
     }
 
     void RegionWeather::setWeather(int weatherID)
@@ -710,7 +742,7 @@ namespace MWWorld
             auto rIt = mRegions.find(regionID);
             if (rIt != mRegions.end())
             {
-                rIt->second.setWeather(std::distance(mWeatherSettings.begin(), wIt));
+                rIt->second.setWeather(wIt->mScriptId);
                 regionalWeatherChanged(rIt->first, rIt->second);
             }
         }
@@ -738,7 +770,7 @@ namespace MWWorld
         }
     }
 
-    void WeatherManager::modRegion(const ESM::RefId& regionID, const std::vector<uint8_t>& chances)
+    void WeatherManager::modRegion(const ESM::RefId& regionID, std::span<const uint8_t> chances)
     {
         // Sets the region's probability for various weather patterns. Note that this appears to be saved permanently.
         // In Morrowind, this seems to have the following behavior when applied to the current region:
@@ -754,6 +786,14 @@ namespace MWWorld
             it->second.setChances(chances);
             regionalWeatherChanged(it->first, it->second);
         }
+    }
+
+    std::span<const uint8_t> WeatherManager::getRegionChances(const ESM::RefId& regionID) const
+    {
+        auto it = mRegions.find(regionID);
+        if (it != mRegions.end())
+            return it->second.getChances();
+        return {};
     }
 
     void WeatherManager::playerTeleported(const ESM::RefId& playerRegion, bool isExterior)
@@ -840,6 +880,12 @@ namespace MWWorld
                                  << mResult.mSunColor.b() << "," << mResult.mSunColor.a()
                                  << ") sky=(" << mResult.mSkyColor.r() << "," << mResult.mSkyColor.g() << ","
                                  << mResult.mSkyColor.b() << "," << mResult.mSkyColor.a()
+                                 << ") skyLower=(" << mResult.mSkyLowerColor.r() << ","
+                                 << mResult.mSkyLowerColor.g() << "," << mResult.mSkyLowerColor.b() << ","
+                                 << mResult.mSkyLowerColor.a()
+                                 << ") skyHorizon=(" << mResult.mSkyHorizonColor.r() << ","
+                                 << mResult.mSkyHorizonColor.g() << "," << mResult.mSkyHorizonColor.b() << ","
+                                 << mResult.mSkyHorizonColor.a()
                                  << ") fog=(" << mResult.mFogColor.r() << "," << mResult.mFogColor.g() << ","
                                  << mResult.mFogColor.b() << "," << mResult.mFogColor.a() << ")";
                 ++proofWeatherLogs;
@@ -898,6 +944,26 @@ namespace MWWorld
 
             // Hardcoded constant from Morrowind
             const osg::Vec3f sunDir(-400.f * orbit, 75.f, -100.f);
+            if (std::getenv("OPENMW_FNV_PROOF_WEATHER_ID") != nullptr)
+            {
+                static int proofSunOrbitLogs = 0;
+                if (proofSunOrbitLogs < 12)
+                {
+                    osg::Vec3f skyPosition = -sunDir;
+                    skyPosition.z() = 400.f - std::abs(skyPosition.x());
+                    Log(Debug::Info) << "FNV/ESM4 proof: sun orbit hour=" << time.getHour()
+                                     << " sunrise=" << mSunriseTime
+                                     << " nightStart=" << mTimeSettings.mNightStart
+                                     << " dayDuration=" << dayDuration
+                                     << " nightDuration=" << nightDuration
+                                     << " orbit=" << orbit
+                                     << " isNight=" << (isNight ? 1 : 0)
+                                     << " rawDirection=(" << sunDir.x() << "," << sunDir.y() << "," << sunDir.z()
+                                     << ") expectedSkyPosition=(" << skyPosition.x() << "," << skyPosition.y() << ","
+                                     << skyPosition.z() << ")";
+                    ++proofSunOrbitLogs;
+                }
+            }
             mRendering.setSunDirection(sunDir);
             mRendering.setNight(isNight);
         }
@@ -1003,7 +1069,7 @@ namespace MWWorld
     {
         // In Morrowind, when the player sleeps/waits, serves jail time, travels, or trains, all weather transitions are
         // immediately applied, regardless of whatever transition time might have been remaining.
-        mTimePassed += hours;
+        mTimePassed += static_cast<float>(hours);
         mFastForward = !incremental ? true : mFastForward;
     }
 
@@ -1115,8 +1181,8 @@ namespace MWWorld
     {
         static const float fStromWindSpeed = mStore.get<ESM::GameSetting>().find("fStromWindSpeed")->mValue.getFloat();
         ESM::StringRefId id(name);
-        Weather weather(
-            id, mWeatherSettings.size(), name, fStromWindSpeed, mRainSpeed, dlFactor, dlOffset, particleEffect);
+        Weather weather(id, static_cast<int>(mWeatherSettings.size()), name, fStromWindSpeed, mRainSpeed, dlFactor,
+            dlOffset, particleEffect);
 
         mWeatherSettings.push_back(std::move(weather));
     }
@@ -1314,6 +1380,8 @@ namespace MWWorld
         mResult.mAmbientColor = current.mAmbientColor.getValue(gameHour, mTimeSettings, "Ambient");
         mResult.mSunColor = current.mSunColor.getValue(gameHour, mTimeSettings, "Sun");
         mResult.mSkyColor = current.mSkyColor.getValue(gameHour, mTimeSettings, "Sky");
+        mResult.mSkyLowerColor = current.mSkyLowerColor.getValue(gameHour, mTimeSettings, "Sky");
+        mResult.mSkyHorizonColor = current.mSkyHorizonColor.getValue(gameHour, mTimeSettings, "Sky");
         mResult.mNightFade = mNightFade.getValue(gameHour, mTimeSettings, "Stars");
         mResult.mDLFogFactor = current.mDL.FogFactor;
         mResult.mDLFogOffset = current.mDL.FogOffset;
@@ -1377,6 +1445,8 @@ namespace MWWorld
         mResult.mFogColor = lerp(current.mFogColor, other.mFogColor, factor);
         mResult.mSunColor = lerp(current.mSunColor, other.mSunColor, factor);
         mResult.mSkyColor = lerp(current.mSkyColor, other.mSkyColor, factor);
+        mResult.mSkyLowerColor = lerp(current.mSkyLowerColor, other.mSkyLowerColor, factor);
+        mResult.mSkyHorizonColor = lerp(current.mSkyHorizonColor, other.mSkyHorizonColor, factor);
 
         mResult.mAmbientColor = lerp(current.mAmbientColor, other.mAmbientColor, factor);
         mResult.mSunDiscColor = lerp(current.mSunDiscColor, other.mSunDiscColor, factor);

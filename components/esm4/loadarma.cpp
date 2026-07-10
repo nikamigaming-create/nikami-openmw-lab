@@ -148,6 +148,8 @@ void ESM4::ArmorAddon::load(ESM4::Reader& reader)
                 reader.skipSubRecordData();
                 break;
             default:
+                if (reader.skipUnknownStarfieldSubRecordData("loadarma"))
+                    break;
                 throw std::runtime_error("ESM4::ARMA::load - Unknown subrecord " + ESM::printName(subHdr.typeId));
         }
     }

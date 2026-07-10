@@ -1,5 +1,6 @@
 #include "scene.hpp"
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cmath>
@@ -192,6 +193,98 @@ namespace
             return false;
 
         value = static_cast<int>(parsed);
+        return true;
+    }
+
+    int getViewerEsm4CellGridRadius()
+    {
+        int radius = Constants::ESM4CellGridRadius;
+        int requested = radius;
+        if (parseFnvIntEnv("OPENMW_WORLD_VIEWER_ESM4_GRID_RADIUS", requested))
+        {
+            if (requested < 0)
+                requested = 0;
+            if (requested > 8)
+                requested = 8;
+            radius = requested;
+        }
+
+        static int loggedRadius = -1;
+        if (loggedRadius != radius)
+        {
+            loggedRadius = radius;
+            Log(Debug::Info) << "World viewer: ESM4 exterior grid radius=" << radius
+                             << " source="
+                             << (std::getenv("OPENMW_WORLD_VIEWER_ESM4_GRID_RADIUS") != nullptr ? "env" : "default");
+        }
+
+        return radius;
+    }
+
+    bool envEnabled(const char* name)
+    {
+        const char* value = std::getenv(name);
+        return value != nullptr && *value != '\0' && value[0] != '0';
+    }
+
+    bool worldViewerDiagnosticFilterEnabled()
+    {
+        return envEnabled("OPENMW_WORLD_VIEWER_HIDE_DIAGNOSTIC_MODELS")
+            || envEnabled("OPENMW_WORLD_VIEWER_TELEMETRY");
+    }
+
+    bool worldViewerFreezeEsm4ActorMechanics()
+    {
+        return envEnabled("OPENMW_WORLD_VIEWER_FREEZE_ESM4_ACTOR_MECHANICS");
+    }
+
+    bool isEsm4Actor(const MWWorld::Ptr& ptr)
+    {
+        return ptr.getType() == ESM::REC_NPC_4 || ptr.getType() == ESM::REC_CREA4;
+    }
+
+    bool contains(std::string_view value, std::string_view needle)
+    {
+        return value.find(needle) != std::string_view::npos;
+    }
+
+    bool isWorldViewerDiagnosticModel(std::string_view value)
+    {
+        return contains(value, "meshes/markers/")
+            || contains(value, "/editormarkers/")
+            || contains(value, "staticcollectionpivotdummy")
+            || contains(value, "fill_planes/")
+            || contains(value, "fillplane_")
+            || contains(value, "occlusion")
+            || contains(value, "occluder")
+            || contains(value, "portalmarker")
+            || contains(value, "roommarker")
+            || contains(value, "loadmarker")
+            || contains(value, "xmarker")
+            || contains(value, "headingmarker")
+            || contains(value, "triggerbox")
+            || contains(value, "collisionmarker")
+            || contains(value, "water/water");
+    }
+
+    bool skipWorldViewerDiagnosticObject(const MWWorld::Ptr& ptr, const VFS::Path::Normalized& model)
+    {
+        if (model.empty() || !worldViewerDiagnosticFilterEnabled() || !isWorldViewerDiagnosticModel(model.value()))
+            return false;
+
+        static std::atomic<int> skipLogCount{ 0 };
+        const int logIndex = skipLogCount.fetch_add(1);
+        if (logIndex < 240)
+        {
+            Log(Debug::Info) << "World viewer: skipped diagnostic scene object base="
+                             << ptr.getCellRef().getRefId().toDebugString()
+                             << " type=" << ptr.getTypeDescription()
+                             << " model=" << model.value()
+                             << " ptr=" << ptr.toString();
+        }
+        else if (logIndex == 240)
+            Log(Debug::Info) << "World viewer: further diagnostic scene object skip logs suppressed";
+
         return true;
     }
 
@@ -498,9 +591,21 @@ namespace
         const VFS::Path::Normalized model = getModel(ptr);
         const auto rotation = makeDirectNodeRotation(ptr);
 
+        if (skipWorldViewerDiagnosticObject(ptr, model))
+            return;
+
         ESM::RefNum refnum = ptr.getCellRef().getRefNum();
-        if (!refnum.hasContentFile() || !std::binary_search(pagedRefs.begin(), pagedRefs.end(), refnum))
+        const bool pagedRef = refnum.hasContentFile() && std::binary_search(pagedRefs.begin(), pagedRefs.end(), refnum);
+        const bool forceEsm4ActorRender = pagedRef && isEsm4Actor(ptr) && ptr.getClass().isActor();
+        if (!pagedRef || forceEsm4ActorRender)
+        {
+            if (forceEsm4ActorRender && envEnabled("OPENMW_WORLD_VIEWER_ACTOR_TELEMETRY"))
+                Log(Debug::Info) << "World viewer actor ledger: phase=paged-ref-actor-promote"
+                                 << " ref=" << ptr.getCellRef().getRefNum().toString("FormId:")
+                                 << " base=" << ptr.getCellRef().getRefId().toDebugString()
+                                 << " type=\"" << ptr.getTypeDescription() << "\"";
             ptr.getClass().insertObjectRendering(ptr, model, rendering);
+        }
         else
             ptr.getRefData().setBaseNode(pagedNode);
         setNodeRotation(ptr, rendering, rotation);
@@ -514,8 +619,14 @@ namespace
                              << scenePos.y() << "," << scenePos.z() << ") rotZ=" << refPos.rot[2];
         }
 
-        if (ptr.getClass().useAnim())
+        const bool freezeEsm4Actor = worldViewerFreezeEsm4ActorMechanics() && isEsm4Actor(ptr) && ptr.getClass().isActor();
+        if (ptr.getClass().useAnim() && !freezeEsm4Actor)
             MWBase::Environment::get().getMechanicsManager()->add(ptr);
+        else if (freezeEsm4Actor && envEnabled("OPENMW_WORLD_VIEWER_ACTOR_TELEMETRY"))
+        {
+            Log(Debug::Info) << "World viewer actor ledger: phase=mechanics-skip ref=\"" << ptr.getCellRef().getRefId()
+                             << "\" type=" << ptr.getType() << " reason=\"proof static ESM4 actor\"";
+        }
 
         if (ptr.getClass().isActor())
             rendering.addWaterRippleEmitter(ptr);
@@ -1005,7 +1116,7 @@ namespace MWWorld
     void Scene::changeCellGrid(const osg::Vec3f& pos, ESM::ExteriorCellLocation playerCellIndex, bool changeEvent)
     {
         const int halfGridSize
-            = isEsm4Ext(playerCellIndex.mWorldspace) ? Constants::ESM4CellGridRadius : Constants::CellGridRadius;
+            = isEsm4Ext(playerCellIndex.mWorldspace) ? getViewerEsm4CellGridRadius() : Constants::CellGridRadius;
         auto navigatorUpdateGuard = mNavigator.makeUpdateGuard();
         const int playerCellX = playerCellIndex.mX;
         const int playerCellY = playerCellIndex.mY;
@@ -1238,7 +1349,7 @@ namespace MWWorld
 
     void Scene::changePlayerCell(CellStore& cell, const ESM::Position& pos, bool adjustPlayerPos)
     {
-        mHalfGridSize = cell.getCell()->isEsm4() ? Constants::ESM4CellGridRadius : Constants::CellGridRadius;
+        mHalfGridSize = cell.getCell()->isEsm4() ? getViewerEsm4CellGridRadius() : Constants::CellGridRadius;
         mCurrentCell = &cell;
 
         mRendering.enableTerrain(cell.isExterior(), cell.getCell()->getWorldSpace());

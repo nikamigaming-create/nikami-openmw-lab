@@ -25,6 +25,7 @@
 #undef DEBUG_GROUPSTACK
 
 #include <algorithm>
+#include <cstdlib>
 #include <iomanip>
 #include <iostream>
 #include <optional>
@@ -156,6 +157,14 @@ namespace ESM4
               << std::resetiosflags(std::ios_base::hex) << " compressed size = " << compressed.size()
               << " uncompressed size = " << uncompressedSize << ": " << *blockError;
             throw std::runtime_error(s.str());
+        }
+
+        int starfieldUnknownSkipLogLimit()
+        {
+            const char* value = std::getenv("OPENMW_STARFIELD_ESM4_TOLERANCE_LOG_LIMIT");
+            if (value == nullptr || *value == '\0')
+                return 200;
+            return std::atoi(value);
         }
     }
 
@@ -473,6 +482,20 @@ namespace ESM4
         {
             if (mIgnoreMissingLocalizedStrings)
                 return;
+            if (esmVersionF() >= 0.959f && esmVersionF() <= 0.961f)
+            {
+                static int missingLocalizedStrings = 0;
+                const int logLimit = starfieldUnknownSkipLogLimit();
+                const std::string debugString = ESM::RefId(stringId).toDebugString();
+                if (logLimit < 0 || missingLocalizedStrings < logLimit)
+                    Log(Debug::Warning) << "ESM4 Starfield missing localized string: " << debugString;
+                else if (missingLocalizedStrings == logLimit)
+                    Log(Debug::Warning) << "ESM4 Starfield missing localized string: further logs suppressed; set "
+                                           "OPENMW_STARFIELD_ESM4_TOLERANCE_LOG_LIMIT=-1 to log all";
+                ++missingLocalizedStrings;
+                str = "<missing localized string " + debugString + ">";
+                return;
+            }
             throw std::runtime_error("ESM4::Reader::getLocalizedString localized string not found for "
                 + ESM::RefId(stringId).toDebugString());
         }
@@ -608,6 +631,31 @@ namespace ESM4
     void Reader::skipSubRecordData()
     {
         mStream->ignore(mCtx.subRecordHeader.dataSize);
+    }
+
+    bool Reader::skipUnknownStarfieldSubRecordData(std::string_view owner)
+    {
+        if (esmVersionF() < 0.959f || esmVersionF() > 0.961f)
+            return false;
+
+        static int skipped = 0;
+        const int logLimit = starfieldUnknownSkipLogLimit();
+        if (logLimit < 0 || skipped < logLimit)
+        {
+            Log(Debug::Warning) << "ESM4 Starfield tolerant skip: owner=" << owner
+                                << " record=" << ESM::printName(mCtx.recordHeader.record.typeId)
+                                << " id=" << mCtx.recordHeader.record.getFormId().toString()
+                                << " subrecord=" << ESM::printName(mCtx.subRecordHeader.typeId)
+                                << " size=" << mCtx.subRecordHeader.dataSize;
+        }
+        else if (skipped == logLimit)
+        {
+            Log(Debug::Warning) << "ESM4 Starfield tolerant skip: further unknown subrecord logs suppressed; set "
+                                   "OPENMW_STARFIELD_ESM4_TOLERANCE_LOG_LIMIT=-1 to log all";
+        }
+        ++skipped;
+        skipSubRecordData();
+        return true;
     }
 
     void Reader::skipSubRecordData(std::uint32_t size)

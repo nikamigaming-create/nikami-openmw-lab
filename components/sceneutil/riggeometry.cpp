@@ -57,11 +57,25 @@ namespace SceneUtil
             return result;
         }
 
+        const char* getEsm4RuntimeEnv(const char* name, const char* legacyName)
+        {
+            if (const char* env = std::getenv(name))
+                return env;
+
+            return std::getenv(legacyName);
+        }
+
         std::string_view getFalloutSkinningMode()
         {
-            if (const char* env = std::getenv("OPENMW_FNV_SKINNING_MODE"))
+            if (const char* env = getEsm4RuntimeEnv("OPENMW_ESM4_SKINNING_MODE", "OPENMW_FNV_SKINNING_MODE"))
                 return env;
-            return "source";
+            return "invBindThenSkeleton";
+        }
+
+        bool hasFalloutSkinningModeOverride()
+        {
+            const char* env = getEsm4RuntimeEnv("OPENMW_ESM4_SKINNING_MODE", "OPENMW_FNV_SKINNING_MODE");
+            return env != nullptr && env[0] != '\0';
         }
 
         bool isFalloutHandRig(std::string_view name, std::string_view rootBone)
@@ -71,22 +85,61 @@ namespace SceneUtil
                 || Misc::StringUtils::ciFind(rootBone, " hand") != std::string_view::npos;
         }
 
-        std::string_view getFalloutSkinningMode(std::string_view name, std::string_view rootBone)
+        bool isFalloutInventoryPaperDollPath(const osg::NodePath& path)
         {
+            for (const osg::Node* node : path)
+            {
+                if (node != nullptr && node->getName() == "FNV Inventory Paper Doll Preview")
+                    return true;
+            }
+            return false;
+        }
+
+        std::string_view getFalloutSkinningMode(
+            std::string_view name, std::string_view rootBone, bool inventoryPaperDoll)
+        {
+            if (inventoryPaperDoll)
+                return "source";
+
             if (isFalloutHandRig(name, rootBone))
             {
-                if (const char* env = std::getenv("OPENMW_FNV_VR_HAND_SKINNING_MODE"))
+                if (const char* env = getEsm4RuntimeEnv("OPENMW_ESM4_HAND_SKINNING_MODE", "OPENMW_FNV_VR_HAND_SKINNING_MODE"))
                     return env;
+
+                if (hasFalloutSkinningModeOverride())
+                    return getFalloutSkinningMode();
+
+                return getFalloutSkinningMode();
             }
 
-            return getFalloutSkinningMode();
+            if (hasFalloutSkinningModeOverride())
+                return getFalloutSkinningMode();
+
+            return "current";
         }
 
         bool useFalloutSkinToSkelMatrix()
         {
-            if (const char* env = std::getenv("OPENMW_FNV_USE_SKIN_TO_SKEL"))
+            if (const char* env = getEsm4RuntimeEnv("OPENMW_ESM4_USE_SKIN_TO_SKEL", "OPENMW_FNV_USE_SKIN_TO_SKEL"))
                 return std::string_view(env) != "0";
             return false;
+        }
+
+        osg::Matrixf makeFalloutSkinningAccumulator()
+        {
+            return osg::Matrixf(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1);
+        }
+
+        void addWeightedFalloutMatrix(osg::Matrixf& result, const osg::Matrixf& matrix, float weight)
+        {
+            const float* source = matrix.ptr();
+            float* destination = result.ptr();
+            for (int i = 0; i < 16; ++i, ++source, ++destination)
+            {
+                if (i % 4 == 3)
+                    continue;
+                *destination += *source * weight;
+            }
         }
 
         osg::Matrixf composeFalloutBoneMatrix(
@@ -158,10 +211,23 @@ namespace SceneUtil
         : Drawable(copy, copyop)
         , mData(copy.mData)
         , mFalloutFlagSkinning(copy.mFalloutFlagSkinning)
+        , mFalloutCharacterSkinning(copy.mFalloutCharacterSkinning)
         , mFalloutCharacterRig(copy.mFalloutCharacterRig)
     {
         setSourceGeometry(copy.mSourceGeometry);
         setNumChildrenRequiringUpdateTraversal(1);
+    }
+
+    void RigGeometry::setFalloutFlagSkinning(bool enabled)
+    {
+        mFalloutFlagSkinning = enabled;
+        mFalloutCharacterRigComputed = false;
+    }
+
+    void RigGeometry::setFalloutCharacterSkinning(bool enabled)
+    {
+        mFalloutCharacterSkinning = enabled;
+        mFalloutCharacterRigComputed = false;
     }
 
     bool RigGeometry::isFalloutCharacterRig() const
@@ -171,6 +237,16 @@ namespace SceneUtil
 
         if (mData == nullptr)
             return false;
+
+        const bool markedFalloutRig = mFalloutFlagSkinning || mFalloutCharacterSkinning;
+        const bool heuristicEnabled
+            = getEsm4RuntimeEnv("OPENMW_ESM4_ENABLE_RIG_HEURISTIC", "OPENMW_FNV_ENABLE_RIG_HEURISTIC") != nullptr;
+        if (!markedFalloutRig && !heuristicEnabled)
+        {
+            mFalloutCharacterRig = false;
+            mFalloutCharacterRigComputed = true;
+            return mFalloutCharacterRig;
+        }
 
         const bool hasBipRoot = mData->mRootBone.empty() || Misc::StringUtils::ciStartsWith(mData->mRootBone, "Bip01")
             || Misc::StringUtils::ciEqual(mData->mRootBone, "Scene Root");
@@ -264,6 +340,188 @@ namespace SceneUtil
             return nullptr;
 
         return mGeometry[index].get();
+    }
+
+    osg::Geometry* RigGeometry::getLastFrameGeometry() const
+    {
+        return getGeometry(mLastFrameNumber);
+    }
+
+    void RigGeometry::forceNextUpdate()
+    {
+        mLastFrameNumber = 0;
+        dirtyBound();
+    }
+
+    bool RigGeometry::refreshFalloutSkinningForCurrentPose()
+    {
+        if (!mData || !mSourceGeometry || !isFalloutCharacterRig() || mNodes.empty())
+            return false;
+
+        const osg::Vec3Array* positionSrc = static_cast<osg::Vec3Array*>(mSourceGeometry->getVertexArray());
+        const osg::Vec3Array* normalSrc = static_cast<osg::Vec3Array*>(mSourceGeometry->getNormalArray());
+        const osg::Vec4Array* tangentSrc = mSourceTangents;
+        if (positionSrc == nullptr || positionSrc->empty())
+            return false;
+
+        const std::string_view falloutSkinningMode = getFalloutSkinningMode(getName(), mData->mRootBone, false);
+        const bool sourceSkinOnly = falloutSkinningMode == "sourceSkinOnly" && mSkinToSkelMatrix != nullptr;
+        const bool falloutSourceSkinning = falloutSkinningMode == "source" || sourceSkinOnly
+            || (falloutSkinningMode == "auto" && mFalloutUseSourceFallback);
+
+        std::vector<osg::Matrixf> boneMatrices(mNodes.size());
+        std::vector<Bone*>::const_iterator bone = mNodes.begin();
+        std::vector<BoneInfo>::const_iterator boneInfo = mData->mBones.begin();
+        for (osg::Matrixf& boneMat : boneMatrices)
+        {
+            if (*bone != nullptr)
+                boneMat = falloutSourceSkinning ? osg::Matrixf()
+                                                : composeFalloutBoneMatrix(*boneInfo, *bone, falloutSkinningMode);
+            ++bone;
+            ++boneInfo;
+        }
+
+        osg::Matrixf transform;
+        if (mFalloutFlagSkinning || falloutSourceSkinning)
+            transform.makeIdentity();
+        else if (mSkinToSkelMatrix && useFalloutSkinToSkelMatrix())
+            transform = (*mSkinToSkelMatrix) * mData->mTransform;
+        else
+            transform = mData->mTransform;
+
+        bool refreshed = false;
+        for (osg::ref_ptr<osg::Geometry>& geometry : mGeometry)
+        {
+            if (geometry == nullptr)
+                continue;
+
+            osg::Vec3Array* positionDst = static_cast<osg::Vec3Array*>(geometry->getVertexArray());
+            osg::Vec3Array* normalDst = static_cast<osg::Vec3Array*>(geometry->getNormalArray());
+            osg::Vec4Array* tangentDst = static_cast<osg::Vec4Array*>(geometry->getTexCoordArray(7));
+            if (positionDst == nullptr || positionDst->size() < positionSrc->size())
+                continue;
+
+            if (falloutSourceSkinning)
+                copySourceSkinningGeometry(positionSrc, normalSrc, tangentSrc, positionDst, normalDst, tangentDst);
+            else
+            {
+                for (const auto& [influences, vertices] : mData->mInfluences)
+                {
+                    osg::Matrixf resultMat = makeFalloutSkinningAccumulator();
+                    for (const auto& [index, weight] : influences)
+                    {
+                        if (index >= boneMatrices.size() || mNodes[index] == nullptr)
+                            continue;
+                        addWeightedFalloutMatrix(resultMat, boneMatrices[index], weight);
+                    }
+                    resultMat *= transform;
+
+                    for (unsigned short vertex : vertices)
+                    {
+                        if (vertex >= positionSrc->size() || vertex >= positionDst->size())
+                            continue;
+                        (*positionDst)[vertex] = resultMat.preMult((*positionSrc)[vertex]);
+                        if (normalSrc != nullptr && normalDst != nullptr && vertex < normalSrc->size()
+                            && vertex < normalDst->size())
+                            (*normalDst)[vertex] = osg::Matrixf::transform3x3((*normalSrc)[vertex], resultMat);
+                        if (tangentSrc != nullptr && tangentDst != nullptr && vertex < tangentSrc->size()
+                            && vertex < tangentDst->size())
+                        {
+                            const osg::Vec4f& srcTangent = (*tangentSrc)[vertex];
+                            const osg::Vec3f transformedTangent = osg::Matrixf::transform3x3(
+                                osg::Vec3f(srcTangent.x(), srcTangent.y(), srcTangent.z()), resultMat);
+                            (*tangentDst)[vertex] = osg::Vec4f(transformedTangent, srcTangent.w());
+                        }
+                    }
+                }
+            }
+
+            positionDst->dirty();
+            if (normalDst != nullptr)
+                normalDst->dirty();
+            if (tangentDst != nullptr)
+                tangentDst->dirty();
+            geometry->dirtyBound();
+            geometry->osg::Drawable::dirtyGLObjects();
+            refreshed = true;
+        }
+
+        if (refreshed)
+            dirtyBound();
+        return refreshed;
+    }
+
+    bool RigGeometry::computeCurrentFalloutSkinningBounds(osg::NodeVisitor* nv, osg::BoundingBox& box)
+    {
+        box.init();
+        if (nv == nullptr || !mData || !mSourceGeometry || !isFalloutCharacterRig())
+            return false;
+
+        nv->pushOntoNodePath(this);
+        struct PopNodePath
+        {
+            osg::NodeVisitor* mVisitor;
+            ~PopNodePath() { mVisitor->popFromNodePath(); }
+        } popNodePath{ nv };
+
+        if (!mSkeleton && !initFromParentSkeleton(nv))
+            return false;
+        if (mSkeleton == nullptr || isFalloutHiddenMorphRig(getName()))
+            return false;
+
+        const osg::Vec3Array* positionSrc = static_cast<osg::Vec3Array*>(mSourceGeometry->getVertexArray());
+        if (positionSrc == nullptr || positionSrc->empty())
+            return false;
+
+        mSkeleton->updateBoneMatrices(nv->getTraversalNumber());
+        updateSkinToSkelMatrix(nv->getNodePath());
+
+        const bool falloutInventoryPaperDoll = isFalloutInventoryPaperDollPath(nv->getNodePath());
+        const std::string_view falloutSkinningMode
+            = getFalloutSkinningMode(getName(), mData->mRootBone, falloutInventoryPaperDoll);
+        const bool sourceSkinOnly = falloutSkinningMode == "sourceSkinOnly" && mSkinToSkelMatrix != nullptr;
+        const bool falloutSourceSkinning = falloutSkinningMode == "source" || sourceSkinOnly
+            || (falloutSkinningMode == "auto" && mFalloutUseSourceFallback);
+
+        std::vector<osg::Matrixf> boneMatrices(mNodes.size());
+        std::vector<Bone*>::const_iterator bone = mNodes.begin();
+        std::vector<BoneInfo>::const_iterator boneInfo = mData->mBones.begin();
+        for (osg::Matrixf& boneMat : boneMatrices)
+        {
+            if (*bone != nullptr)
+                boneMat = falloutSourceSkinning ? osg::Matrixf()
+                                                : composeFalloutBoneMatrix(*boneInfo, *bone, falloutSkinningMode);
+            ++bone;
+            ++boneInfo;
+        }
+
+        osg::Matrixf transform;
+        if (mFalloutFlagSkinning || falloutSourceSkinning)
+            transform.makeIdentity();
+        else if (mSkinToSkelMatrix && useFalloutSkinToSkelMatrix())
+            transform = (*mSkinToSkelMatrix) * mData->mTransform;
+        else
+            transform = mData->mTransform;
+
+        for (const auto& [influences, vertices] : mData->mInfluences)
+        {
+            osg::Matrixf resultMat = makeFalloutSkinningAccumulator();
+            for (const auto& [index, weight] : influences)
+            {
+                if (index >= boneMatrices.size() || mNodes[index] == nullptr)
+                    continue;
+                addWeightedFalloutMatrix(resultMat, boneMatrices[index], weight);
+            }
+
+            resultMat *= transform;
+            for (unsigned short vertex : vertices)
+            {
+                if (vertex < positionSrc->size())
+                    box.expandBy(resultMat.preMult((*positionSrc)[vertex]));
+            }
+        }
+
+        return box.valid();
     }
 
     bool RigGeometry::initFromParentSkeleton(osg::NodeVisitor* nv)
@@ -432,8 +690,10 @@ namespace SceneUtil
         osg::Vec3Array* normalDst = static_cast<osg::Vec3Array*>(geom.getNormalArray());
         osg::Vec4Array* tangentDst = static_cast<osg::Vec4Array*>(geom.getTexCoordArray(7));
 
-        const std::string_view falloutSkinningMode
-            = falloutRig ? getFalloutSkinningMode(getName(), mData->mRootBone) : std::string_view();
+        const bool falloutInventoryPaperDoll = falloutRig && isFalloutInventoryPaperDollPath(nv->getNodePath());
+        const std::string_view falloutSkinningMode = falloutRig
+            ? getFalloutSkinningMode(getName(), mData->mRootBone, falloutInventoryPaperDoll)
+            : std::string_view();
         const bool falloutAutoMode = falloutRig && falloutSkinningMode == "auto";
         const bool sourceSkinOnly = falloutRig && falloutSkinningMode == "sourceSkinOnly"
             && mSkinToSkelMatrix != nullptr;
@@ -616,6 +876,7 @@ namespace SceneUtil
                              << " bindThenSkeleton=" << maxBindThenSkeletonDelta
                              << " skeletonThenBind=" << maxSkeletonThenBindDelta
                              << " selected=" << falloutSkinningMode
+                             << " inventoryPaperDoll=" << falloutInventoryPaperDoll
                              << " sourceFallback=" << mFalloutUseSourceFallback
                              << " hasSkinToSkel=" << static_cast<bool>(mSkinToSkelMatrix)
                              << " useSkinToSkel=" << useFalloutSkinToSkelMatrix();
@@ -787,8 +1048,10 @@ namespace SceneUtil
         const bool falloutRig = isFalloutCharacterRig();
         const bool falloutFlagRig = mFalloutFlagSkinning;
         osg::Matrixf transform;
-        const std::string_view falloutSkinningMode
-            = falloutRig ? getFalloutSkinningMode(getName(), mData->mRootBone) : std::string_view();
+        const bool falloutInventoryPaperDoll = falloutRig && isFalloutInventoryPaperDollPath(nv->getNodePath());
+        const std::string_view falloutSkinningMode = falloutRig
+            ? getFalloutSkinningMode(getName(), mData->mRootBone, falloutInventoryPaperDoll)
+            : std::string_view();
         const bool sourceSkinOnly = falloutRig && falloutSkinningMode == "sourceSkinOnly"
             && mSkinToSkelMatrix != nullptr;
         const bool falloutSourceSkinning = falloutRig

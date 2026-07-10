@@ -1,6 +1,8 @@
 #include "sky.hpp"
 
 #include <osg/Depth>
+#include <osg/Geode>
+#include <osg/Geometry>
 #include <osg/PositionAttitudeTransform>
 
 #include <osgParticle/BoxPlacer>
@@ -8,6 +10,14 @@
 #include <osgParticle/ModularProgram>
 #include <osgParticle/Operator>
 #include <osgParticle/ParticleSystemUpdater>
+
+#include <algorithm>
+#include <cstdlib>
+#include <initializer_list>
+#include <limits>
+#include <sstream>
+#include <string>
+#include <string_view>
 
 #include <components/settings/values.hpp>
 
@@ -42,17 +52,456 @@
 
 namespace
 {
+    bool logMissingSkyAssets()
+    {
+        return std::getenv("OPENMW_FNV_SKY_MISSING_LOG") != nullptr;
+    }
+
+    bool isFalloutSkyMesh(VFS::Path::NormalizedView model)
+    {
+        const std::string_view value = model.value();
+        return value.rfind("meshes/sky/", 0) == 0;
+    }
+
+    bool hasConfiguredFalloutSkyModels()
+    {
+        return isFalloutSkyMesh(Settings::models().mSkyatmosphere.get())
+            || isFalloutSkyMesh(Settings::models().mSkyclouds.get())
+            || isFalloutSkyMesh(Settings::models().mSkynight01.get())
+            || isFalloutSkyMesh(Settings::models().mSkynight02.get());
+    }
+
+    bool hasAvailableConfiguredFalloutSkyModels(Resource::SceneManager& sceneManager)
+    {
+        const VFS::Manager* vfs = sceneManager.getVFS();
+        if (vfs == nullptr || !hasConfiguredFalloutSkyModels())
+            return false;
+
+        return (isFalloutSkyMesh(Settings::models().mSkyatmosphere.get())
+                   && vfs->exists(Settings::models().mSkyatmosphere.get()))
+            || (isFalloutSkyMesh(Settings::models().mSkyclouds.get())
+                && vfs->exists(Settings::models().mSkyclouds.get()))
+            || (isFalloutSkyMesh(Settings::models().mSkynight01.get())
+                && vfs->exists(Settings::models().mSkynight01.get()))
+            || (isFalloutSkyMesh(Settings::models().mSkynight02.get())
+                && vfs->exists(Settings::models().mSkynight02.get()));
+    }
+
+    void logInterpretedFalloutSkyMaterial(std::string_view label, VFS::Path::NormalizedView model,
+        std::string_view skyPass, std::string_view vertexAlphaMode, std::string_view vertexColorRgbMode)
+    {
+        Log(Debug::Info) << "FNV/ESM4: interpreted sky material " << label << " (" << model.value()
+                         << ") nativeMaterial=0 skyProgram=sky skyPass=" << skyPass
+                         << " updatersAttached=1 vertexAlpha=" << vertexAlphaMode
+                         << " vertexColorRgb=" << vertexColorRgbMode;
+    }
+
+    void logFalloutSkyCloudUvMode(std::string_view label, VFS::Path::NormalizedView model)
+    {
+        Log(Debug::Info) << "FNV/ESM4: cloud texture coordinates " << label << " (" << model.value()
+                         << ") mode=openmw-stock repeat-wrap uv-scroll=stock-negative runtime-supported";
+    }
+
+    VFS::Path::Normalized chooseExistingSkyTexture(
+        const VFS::Manager* vfs, std::initializer_list<std::string_view> candidates, std::string_view fallback)
+    {
+        if (vfs != nullptr)
+        {
+            for (std::string_view candidate : candidates)
+            {
+                VFS::Path::Normalized normalized{ std::string(candidate) };
+                if (vfs->exists(normalized))
+                    return normalized;
+            }
+        }
+
+        return VFS::Path::Normalized{ std::string(fallback) };
+    }
+
+    VFS::Path::Normalized resolveWeatherCloudTexture(
+        const VFS::Manager* vfs, VFS::Path::NormalizedView requested)
+    {
+        if (vfs != nullptr && vfs->exists(requested))
+            return VFS::Path::Normalized(requested);
+
+        const std::string_view value = requested.value();
+
+        if (value.find("clear") != std::string_view::npos)
+        {
+            return chooseExistingSkyTexture(vfs,
+                { "textures/sky/nvskyclouds.dds", "textures/sky/cloudsclear.dds",
+                    "textures/sky/cloudsclear02.dds", "textures/sky/skyrimcloudsupper01.dds",
+                    "textures/sky/cloudsupper01_d.dds", "textures/sky/wastelandcloudcloudyupper01.dds" },
+                value);
+        }
+
+        if (value.find("cloudy") != std::string_view::npos)
+        {
+            return chooseExistingSkyTexture(vfs,
+                { "textures/sky/nvskyclouds.dds", "textures/sky/cloudscloudy.dds",
+                    "textures/sky/wastelandcloudcloudyupper01.dds", "textures/sky/skyrimcloudsupper02.dds",
+                    "textures/sky/cloudsupper02_d.dds" },
+                value);
+        }
+
+        if (value.find("fog") != std::string_view::npos)
+        {
+            return chooseExistingSkyTexture(vfs,
+                { "textures/sky/cloudsfog.dds", "textures/sky/cloudsfoglower.dds",
+                    "textures/sky/wastelandcloudhorizon01.dds", "textures/sky/skyrimcloudshorizon01.dds",
+                    "textures/sky/cloudshorizon01_d.dds" },
+                value);
+        }
+
+        if (value.find("thunder") != std::string_view::npos)
+        {
+            return chooseExistingSkyTexture(vfs,
+                { "textures/sky/cloudsthunderstorm.dds", "textures/sky/wastelandcloudcloudyupper01.dds",
+                    "textures/sky/skyrimcloudsupper04.dds", "textures/sky/cloudsupper04_d.dds" },
+                value);
+        }
+
+        if (value.find("rain") != std::string_view::npos)
+        {
+            return chooseExistingSkyTexture(vfs,
+                { "textures/sky/cloudsrain.dds", "textures/sky/wastelandcloudcloudyupper01.dds",
+                    "textures/sky/skyrimcloudsupper04.dds", "textures/sky/cloudsupper04_d.dds" },
+                value);
+        }
+
+        if (value.find("overcast") != std::string_view::npos)
+        {
+            return chooseExistingSkyTexture(vfs,
+                { "textures/sky/cloudsovercast.dds", "textures/sky/urbancloudovercastupper01.dds",
+                    "textures/sky/skyrimcloudsupper03.dds", "textures/sky/cloudsupper03_d.dds" },
+                value);
+        }
+
+        if (value.find("snow") != std::string_view::npos || value.find("blizzard") != std::string_view::npos)
+        {
+            return chooseExistingSkyTexture(vfs,
+                { "textures/sky/cloudssnow.dds", "textures/sky/skyrimcloudsupper04.dds",
+                    "textures/sky/cloudsupper04_d.dds", "textures/sky/wastelandcloudcloudyupper01.dds" },
+                value);
+        }
+
+        return chooseExistingSkyTexture(vfs,
+            { "textures/sky/nvskyclouds.dds", "textures/sky/cloudsclear.dds",
+                "textures/sky/skyrimcloudsupper01.dds", "textures/sky/cloudsupper01_d.dds",
+                "textures/sky/wastelandcloudcloudyupper01.dds" },
+            value);
+    }
+
+    void pushFirstExistingSkyTexture(Resource::SceneManager& sceneManager,
+        std::vector<VFS::Path::Normalized>& textures, std::initializer_list<std::string_view> candidates,
+        std::string_view label)
+    {
+        const VFS::Manager* vfs = sceneManager.getVFS();
+        if (vfs != nullptr)
+        {
+            for (std::string_view candidate : candidates)
+            {
+                VFS::Path::Normalized normalized{ std::string(candidate) };
+                if (vfs->exists(normalized))
+                {
+                    textures.push_back(normalized);
+                    return;
+                }
+            }
+        }
+
+        if (logMissingSkyAssets())
+            Log(Debug::Info) << "FNV/ESM4: skipped preload for missing isolated sky texture " << label;
+    }
+
+    float falloutSkyMeshScaleMultiplier()
+    {
+        if (const char* value = std::getenv("OPENMW_FNV_SKY_MESH_SCALE"))
+        {
+            char* end = nullptr;
+            const float parsed = std::strtof(value, &end);
+            if (end != value && parsed > 0.f)
+                return parsed;
+        }
+
+        return 1.f;
+    }
+
+    float nativeSkyTargetRadius()
+    {
+        if (const char* value = std::getenv("OPENMW_FNV_SKY_TARGET_RADIUS"))
+        {
+            char* end = nullptr;
+            const float parsed = std::strtof(value, &end);
+            if (end != value && parsed > 1.f)
+                return parsed;
+        }
+
+        return 1024.f;
+    }
+
+    float nativeSkyCloudOpacity()
+    {
+        if (const char* value = std::getenv("OPENMW_FNV_NATIVE_CLOUD_OPACITY"))
+        {
+            char* end = nullptr;
+            const float parsed = std::strtof(value, &end);
+            if (end != value)
+                return std::clamp(parsed, 0.f, 1.f);
+        }
+
+        return 0.f;
+    }
+
+    struct FalloutSkyMeshFit
+    {
+        float mRadius = 0.f;
+        float mViewDistance = 0.f;
+        float mTargetRadius = 0.f;
+        float mScale = 0.f;
+        bool mApplied = false;
+    };
+
+    struct SkyVertexColorStats
+    {
+        unsigned int mColorArrays = 0;
+        unsigned int mSamples = 0;
+        osg::Vec4f mMin = osg::Vec4f(
+            std::numeric_limits<float>::max(), std::numeric_limits<float>::max(),
+            std::numeric_limits<float>::max(), std::numeric_limits<float>::max());
+        osg::Vec4f mMax = osg::Vec4f(
+            std::numeric_limits<float>::lowest(), std::numeric_limits<float>::lowest(),
+            std::numeric_limits<float>::lowest(), std::numeric_limits<float>::lowest());
+
+        void add(const osg::Vec4f& color)
+        {
+            ++mSamples;
+            for (int i = 0; i < 4; ++i)
+            {
+                mMin[i] = std::min(mMin[i], color[i]);
+                mMax[i] = std::max(mMax[i], color[i]);
+            }
+        }
+
+        bool hasNonZeroRgb() const
+        {
+            return mSamples != 0 && std::max({ mMax.r(), mMax.g(), mMax.b() }) > 0.001f;
+        }
+
+        bool hasVaryingRgb() const
+        {
+            if (mSamples == 0)
+                return false;
+
+            return std::max({ mMax.r() - mMin.r(), mMax.g() - mMin.g(), mMax.b() - mMin.b() }) > 0.001f;
+        }
+    };
+
+    struct FalloutAtmosphereAlphaStats
+    {
+        float mMinZ = 0.f;
+        float mMaxZ = 0.f;
+        unsigned int mVertexArrays = 0;
+        unsigned int mVertexSamples = 0;
+        bool mUsedVertexZRange = false;
+        bool mApplied = false;
+    };
+
+    class SkyVertexZRangeVisitor : public osg::NodeVisitor
+    {
+    public:
+        SkyVertexZRangeVisitor()
+            : osg::NodeVisitor(TRAVERSE_ALL_CHILDREN)
+        {
+        }
+
+        void apply(osg::Geometry& geometry) override
+        {
+            const osg::Vec3Array* vertices = dynamic_cast<const osg::Vec3Array*>(geometry.getVertexArray());
+            if (vertices == nullptr)
+                return;
+
+            ++mStats.mVertexArrays;
+            for (const osg::Vec3f& vertex : *vertices)
+            {
+                if (mStats.mVertexSamples == 0)
+                {
+                    mStats.mMinZ = vertex.z();
+                    mStats.mMaxZ = vertex.z();
+                }
+                else
+                {
+                    mStats.mMinZ = std::min(mStats.mMinZ, vertex.z());
+                    mStats.mMaxZ = std::max(mStats.mMaxZ, vertex.z());
+                }
+                ++mStats.mVertexSamples;
+            }
+        }
+
+        const FalloutAtmosphereAlphaStats& getStats() const { return mStats; }
+
+    private:
+        FalloutAtmosphereAlphaStats mStats;
+    };
+
+    class SkyVertexColorStatsVisitor : public osg::NodeVisitor
+    {
+    public:
+        SkyVertexColorStatsVisitor()
+            : osg::NodeVisitor(TRAVERSE_ALL_CHILDREN)
+        {
+        }
+
+        void apply(osg::Geode& geode) override
+        {
+            for (unsigned int i = 0; i < geode.getNumDrawables(); ++i)
+            {
+                const osg::Geometry* geometry = dynamic_cast<const osg::Geometry*>(geode.getDrawable(i));
+                if (geometry == nullptr)
+                    continue;
+
+                const osg::Vec4Array* colors = dynamic_cast<const osg::Vec4Array*>(geometry->getColorArray());
+                if (colors == nullptr)
+                    continue;
+
+                ++mStats.mColorArrays;
+                for (const osg::Vec4f& color : *colors)
+                    mStats.add(color);
+            }
+
+            traverse(geode);
+        }
+
+        const SkyVertexColorStats& getStats() const { return mStats; }
+
+    private:
+        SkyVertexColorStats mStats;
+    };
+
+    std::string formatVec4(const osg::Vec4f& value)
+    {
+        std::ostringstream stream;
+        stream << value.r() << "," << value.g() << "," << value.b() << "," << value.a();
+        return stream.str();
+    }
+
+    void logFalloutSkyVertexColorStats(std::string_view label, VFS::Path::NormalizedView model, osg::Node& instance)
+    {
+        SkyVertexColorStatsVisitor visitor;
+        instance.accept(visitor);
+        const SkyVertexColorStats& stats = visitor.getStats();
+        Log(Debug::Info) << "FNV/ESM4: sky mesh vertex colors " << label << " (" << model.value()
+                         << ") colorArrays=" << stats.mColorArrays << " samples=" << stats.mSamples
+                         << " rgbNonzero=" << stats.hasNonZeroRgb() << " rgbVarying=" << stats.hasVaryingRgb()
+                         << " min=" << (stats.mSamples == 0 ? "none" : formatVec4(stats.mMin))
+                         << " max=" << (stats.mSamples == 0 ? "none" : formatVec4(stats.mMax));
+    }
+
+    void logFalloutAtmosphereAlphaStats(
+        std::string_view label, VFS::Path::NormalizedView model, const FalloutAtmosphereAlphaStats& stats)
+    {
+        Log(Debug::Info) << "FNV/ESM4: generated atmosphere shader alpha " << label << " (" << model.value()
+                         << ") mode=" << (stats.mUsedVertexZRange ? "vertex-z-gradient" : "bound-z-gradient")
+                         << " vertexArrays=" << stats.mVertexArrays
+                         << " vertexSamples=" << stats.mVertexSamples
+                         << " zMin=" << (stats.mApplied ? stats.mMinZ : 0.f)
+                         << " zMax=" << (stats.mApplied ? stats.mMaxZ : 0.f)
+                         << " alphaMin=0 alphaMax=1 applied=" << stats.mApplied;
+    }
+
+    FalloutAtmosphereAlphaStats calculateFalloutAtmosphereAlpha(osg::Node& instance)
+    {
+        SkyVertexZRangeVisitor visitor;
+        instance.accept(visitor);
+        FalloutAtmosphereAlphaStats stats = visitor.getStats();
+        stats.mUsedVertexZRange = stats.mVertexSamples != 0 && stats.mMaxZ - stats.mMinZ > 0.001f;
+        if (stats.mUsedVertexZRange)
+        {
+            stats.mApplied = true;
+            return stats;
+        }
+
+        const osg::BoundingSphere bound = instance.getBound();
+        if (bound.valid() && bound.radius() > 1.f)
+        {
+            stats.mMinZ = bound.center().z() - bound.radius();
+            stats.mMaxZ = bound.center().z() + bound.radius();
+            stats.mApplied = stats.mMaxZ - stats.mMinZ > 0.001f;
+        }
+        return stats;
+    }
+
+    osg::PositionAttitudeTransform* createFalloutSkyMeshRoot(osg::Group* parentNode, VFS::Path::NormalizedView model)
+    {
+        osg::ref_ptr<osg::PositionAttitudeTransform> root = new osg::PositionAttitudeTransform;
+        root->setName(std::string("FNV camera-relative sky mesh: ") + std::string(model.value()));
+        root->setCullingActive(false);
+
+        osg::StateSet* stateset = root->getOrCreateStateSet();
+        osg::ref_ptr<osg::Depth> depth = new SceneUtil::AutoDepth(osg::Depth::ALWAYS, 0.0, 1.0, false);
+        stateset->setAttributeAndModes(depth, osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
+        stateset->setMode(GL_DEPTH_TEST, osg::StateAttribute::OFF | osg::StateAttribute::OVERRIDE);
+        stateset->setMode(GL_FOG, osg::StateAttribute::OFF | osg::StateAttribute::OVERRIDE);
+        stateset->setRenderBinDetails(MWRender::RenderBin_Sky, "RenderBin", osg::StateSet::OVERRIDE_RENDERBIN_DETAILS);
+        stateset->setNestRenderBins(false);
+
+        parentNode->addChild(root);
+        return root.release();
+    }
+
+    FalloutSkyMeshFit fitFalloutSkyMeshToViewDistance(osg::PositionAttitudeTransform& root, const osg::Node& instance)
+    {
+        FalloutSkyMeshFit fit;
+        const float radius = static_cast<float>(instance.getBound().radius());
+        if (radius <= 1.f)
+            return fit;
+
+        const float viewDistance = Settings::camera().mViewingDistance.get();
+        const float targetRadius = nativeSkyTargetRadius();
+        const float scale = (targetRadius / radius) * falloutSkyMeshScaleMultiplier();
+        root.setScale(osg::Vec3f(scale, scale, scale));
+        fit.mRadius = radius;
+        fit.mViewDistance = viewDistance;
+        fit.mTargetRadius = targetRadius;
+        fit.mScale = scale;
+        fit.mApplied = true;
+        return fit;
+    }
+
     osg::ref_ptr<osg::Node> getOptionalSkyInstance(Resource::SceneManager& sceneManager,
         VFS::Path::NormalizedView model, osg::Group* parentNode, std::string_view label)
     {
         if (!sceneManager.getVFS()->exists(model))
         {
-            Log(Debug::Info) << "FNV/ESM4: skipped missing OpenMW sky mesh " << label << " (" << model.value()
-                             << ")";
+            if (logMissingSkyAssets())
+                Log(Debug::Info) << "FNV/ESM4: skipped missing OpenMW sky mesh " << label << " (" << model.value()
+                                 << ")";
             return nullptr;
         }
 
+        if (isFalloutSkyMesh(model))
+        {
+            osg::PositionAttitudeTransform* skyMeshRoot = createFalloutSkyMeshRoot(parentNode, model);
+            osg::ref_ptr<osg::Node> instance = sceneManager.getInstance(model, skyMeshRoot);
+            const FalloutSkyMeshFit fit = fitFalloutSkyMeshToViewDistance(*skyMeshRoot, *instance);
+            if (logMissingSkyAssets())
+            {
+                Log(Debug::Info) << "FNV/ESM4: wrapped sky mesh " << label << " (" << model.value()
+                                 << ") radius=" << instance->getBound().radius() << " viewDistance="
+                                 << fit.mViewDistance << " targetRadius=" << fit.mTargetRadius
+                                 << " scale=" << skyMeshRoot->getScale().x() << " fitApplied=" << fit.mApplied;
+                logFalloutSkyVertexColorStats(label, model, *instance);
+            }
+            return instance;
+        }
+
         return sceneManager.getInstance(model, parentNode);
+    }
+
+    void attachSkyNodeIfUnattached(osg::Group& parentNode, osg::Node& node)
+    {
+        if (node.getNumParents() == 0)
+            parentNode.addChild(&node);
     }
 
     void pushOptionalSkyModel(Resource::SceneManager& sceneManager, std::vector<VFS::Path::Normalized>& models,
@@ -60,8 +509,9 @@ namespace
     {
         if (!sceneManager.getVFS()->exists(model))
         {
-            Log(Debug::Info) << "FNV/ESM4: skipped preload for missing OpenMW sky mesh " << label << " ("
-                             << model.value() << ")";
+            if (logMissingSkyAssets())
+                Log(Debug::Info) << "FNV/ESM4: skipped preload for missing OpenMW sky mesh " << label << " ("
+                                 << model.value() << ")";
             return;
         }
 
@@ -264,6 +714,8 @@ namespace MWRender
         : mSceneManager(sceneManager)
         , mCamera(camera)
         , mAtmosphereNightRoll(0.f)
+        , mNativeAtmosphereNight(false)
+        , mFalloutAtmosphereDay(false)
         , mCreated(false)
         , mIsStorm(false)
         , mTimescaleClouds(Fallback::Map::getBool("Weather_Timescale_Clouds"))
@@ -275,6 +727,12 @@ namespace MWRender
         , mCloudBlendFactor(0.f)
         , mCloudSpeed(0.f)
         , mStarsOpacity(0.f)
+        , mCloudColour(0.f, 0.f, 0.f, 0.f)
+        , mSkyColour(0.f, 0.f, 0.f, 0.f)
+        , mSkyLowerColour(0.f, 0.f, 0.f, 0.f)
+        , mSkyHorizonColour(0.f, 0.f, 0.f, 0.f)
+        , mFogColour(0.f, 0.f, 0.f, 0.f)
+        , mLoggedFalloutAtmosphereGradient(false)
         , mRainSpeed(0.f)
         , mRainDiameter(0.f)
         , mRainMinHeight(0.f)
@@ -292,10 +750,6 @@ namespace MWRender
     {
         mSkyRootNode = new CameraRelativeTransform;
         mSkyRootNode->setName("Sky Root");
-        // Assign empty program to specify we don't want shaders when we are rendering in FFP pipeline
-        if (!mSceneManager->getForceShaders())
-            mSkyRootNode->getOrCreateStateSet()->setAttributeAndModes(new osg::Program(),
-                osg::StateAttribute::OVERRIDE | osg::StateAttribute::PROTECTED | osg::StateAttribute::ON);
         mSceneManager->setUpNormalsRTForStateSet(mSkyRootNode->getOrCreateStateSet(), false);
         SceneUtil::ShadowManager::instance().disableShadowsForStateSet(*mSkyRootNode->getOrCreateStateSet());
         parentNode->addChild(mSkyRootNode);
@@ -327,17 +781,37 @@ namespace MWRender
     {
         assert(!mCreated);
 
-        bool forceShaders = mSceneManager->getForceShaders();
+        const bool falloutSkyModels = hasAvailableConfiguredFalloutSkyModels(*mSceneManager);
+        const bool forceShaders = Settings::shaders().mForceShaders;
+        const bool useSkyShader = true;
 
         mAtmosphereDay = getOptionalSkyInstance(
             *mSceneManager, Settings::models().mSkyatmosphere.get(), mEarlyRenderBinRoot, "day atmosphere");
         if (mAtmosphereDay)
         {
-            ModVertexAlphaVisitor modAtmosphere(ModVertexAlphaVisitor::Atmosphere);
-            mAtmosphereDay->accept(modAtmosphere);
+            const bool falloutAtmosphere = isFalloutSkyMesh(Settings::models().mSkyatmosphere.get());
+            mFalloutAtmosphereDay = falloutAtmosphere;
+            FalloutAtmosphereAlphaStats falloutAlphaStats;
+            if (!falloutAtmosphere)
+            {
+                ModVertexAlphaVisitor modAtmosphere(ModVertexAlphaVisitor::Atmosphere);
+                mAtmosphereDay->accept(modAtmosphere);
+            }
+            else
+            {
+                falloutAlphaStats = calculateFalloutAtmosphereAlpha(*mAtmosphereDay);
+                logFalloutAtmosphereAlphaStats(
+                    "day atmosphere", Settings::models().mSkyatmosphere.get(), falloutAlphaStats);
+            }
 
             mAtmosphereUpdater = new AtmosphereUpdater;
+            if (falloutAtmosphere && falloutAlphaStats.mApplied)
+                mAtmosphereUpdater->setFalloutAtmosphereZGradient(falloutAlphaStats.mMinZ, falloutAlphaStats.mMaxZ);
             mAtmosphereDay->addUpdateCallback(mAtmosphereUpdater);
+            if (falloutAtmosphere)
+                logInterpretedFalloutSkyMaterial(
+                    "day atmosphere", Settings::models().mSkyatmosphere.get(), "atmosphere",
+                    "generated-z-gradient", "not-used");
         }
 
         mAtmosphereNightNode = new osg::PositionAttitudeTransform;
@@ -345,21 +819,32 @@ namespace MWRender
         mEarlyRenderBinRoot->addChild(mAtmosphereNightNode);
 
         osg::ref_ptr<osg::Node> atmosphereNight;
+        VFS::Path::Normalized nightAtmosphereModel = Settings::models().mSkynight01.get();
         if (mSceneManager->getVFS()->exists(Settings::models().mSkynight02.get()))
-            atmosphereNight = getOptionalSkyInstance(
-                *mSceneManager, Settings::models().mSkynight02.get(), mAtmosphereNightNode, "night atmosphere");
+        {
+            nightAtmosphereModel = Settings::models().mSkynight02.get();
+            atmosphereNight
+                = getOptionalSkyInstance(*mSceneManager, nightAtmosphereModel, mAtmosphereNightNode, "night atmosphere");
+        }
         else
-            atmosphereNight = getOptionalSkyInstance(
-                *mSceneManager, Settings::models().mSkynight01.get(), mAtmosphereNightNode, "night atmosphere");
+            atmosphereNight
+                = getOptionalSkyInstance(*mSceneManager, nightAtmosphereModel, mAtmosphereNightNode, "night atmosphere");
         if (atmosphereNight)
         {
             atmosphereNight->getOrCreateStateSet()->setAttributeAndModes(
                 createAlphaTrackingUnlitMaterial(), osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
 
-            ModVertexAlphaVisitor modStars(ModVertexAlphaVisitor::Stars);
-            atmosphereNight->accept(modStars);
-            mAtmosphereNightUpdater = new AtmosphereNightUpdater(mSceneManager->getImageManager(), forceShaders);
+            const bool falloutNightAtmosphere = isFalloutSkyMesh(nightAtmosphereModel);
+            if (!falloutNightAtmosphere)
+            {
+                ModVertexAlphaVisitor modStars(ModVertexAlphaVisitor::Stars);
+                atmosphereNight->accept(modStars);
+            }
+            mAtmosphereNightUpdater = new AtmosphereNightUpdater(mSceneManager->getImageManager());
             atmosphereNight->addUpdateCallback(mAtmosphereNightUpdater);
+            if (falloutNightAtmosphere)
+                logInterpretedFalloutSkyMaterial(
+                    "night atmosphere", nightAtmosphereModel, "atmosphere-night", "texture-alpha", "not-used");
         }
 
         mSun = std::make_unique<Sun>(mEarlyRenderBinRoot, *mSceneManager);
@@ -377,10 +862,17 @@ namespace MWRender
             = getOptionalSkyInstance(*mSceneManager, Settings::models().mSkyclouds.get(), mCloudMesh, "clouds");
         if (cloudMeshChild)
         {
-            mCloudUpdater = new CloudUpdater(forceShaders);
-            mCloudUpdater->setOpacity(1.f);
+            mCloudUpdater = new CloudUpdater();
+            const bool falloutClouds = isFalloutSkyMesh(Settings::models().mSkyclouds.get());
+            mCloudUpdater->setOpacity(falloutClouds ? nativeSkyCloudOpacity() : 1.f);
             cloudMeshChild->addUpdateCallback(mCloudUpdater);
-            mCloudMesh->addChild(cloudMeshChild);
+            if (falloutClouds)
+            {
+                logInterpretedFalloutSkyMaterial(
+                    "clouds", Settings::models().mSkyclouds.get(), "clouds", "texture-alpha", "not-used");
+                logFalloutSkyCloudUvMode("clouds", Settings::models().mSkyclouds.get());
+            }
+            attachSkyNodeIfUnattached(*mCloudMesh, *cloudMeshChild);
         }
 
         mNextCloudMesh = new osg::PositionAttitudeTransform;
@@ -388,10 +880,17 @@ namespace MWRender
             = getOptionalSkyInstance(*mSceneManager, Settings::models().mSkyclouds.get(), mNextCloudMesh, "next clouds");
         if (nextCloudMeshChild)
         {
-            mNextCloudUpdater = new CloudUpdater(forceShaders);
+            mNextCloudUpdater = new CloudUpdater();
+            const bool falloutClouds = isFalloutSkyMesh(Settings::models().mSkyclouds.get());
             mNextCloudUpdater->setOpacity(0.f);
             nextCloudMeshChild->addUpdateCallback(mNextCloudUpdater);
-            mNextCloudMesh->addChild(nextCloudMeshChild);
+            if (falloutClouds)
+            {
+                logInterpretedFalloutSkyMaterial(
+                    "next clouds", Settings::models().mSkyclouds.get(), "clouds", "texture-alpha", "not-used");
+                logFalloutSkyCloudUvMode("next clouds", Settings::models().mSkyclouds.get());
+            }
+            attachSkyNodeIfUnattached(*mNextCloudMesh, *nextCloudMeshChild);
         }
         mNextCloudMesh->setNodeMask(0);
 
@@ -400,12 +899,15 @@ namespace MWRender
 
         if (mCloudUpdater || mNextCloudUpdater)
         {
-            ModVertexAlphaVisitor modClouds(ModVertexAlphaVisitor::Clouds);
-            mCloudMesh->accept(modClouds);
-            mNextCloudMesh->accept(modClouds);
+            if (!isFalloutSkyMesh(Settings::models().mSkyclouds.get()))
+            {
+                ModVertexAlphaVisitor modClouds(ModVertexAlphaVisitor::Clouds);
+                mCloudMesh->accept(modClouds);
+                mNextCloudMesh->accept(modClouds);
+            }
         }
 
-        if (mSceneManager->getForceShaders())
+        if (useSkyShader)
         {
             Shader::ShaderManager::DefineMap defines = {};
             Stereo::shaderStereoDefines(defines);
@@ -413,6 +915,12 @@ namespace MWRender
             mEarlyRenderBinRoot->getOrCreateStateSet()->addUniform(new osg::Uniform("pass", -1));
             mEarlyRenderBinRoot->getOrCreateStateSet()->setAttributeAndModes(
                 program, osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
+        }
+        if (falloutSkyModels || logMissingSkyAssets())
+        {
+            Log(Debug::Info) << "FNV/ESM4: sky shader mode forceShaders=" << forceShaders
+                             << " falloutSkyModels=" << falloutSkyModels << " program="
+                             << (falloutSkyModels && !forceShaders ? "sky-interpreted" : "sky");
         }
 
         osg::ref_ptr<osg::Depth> depth = new SceneUtil::AutoDepth;
@@ -432,14 +940,14 @@ namespace MWRender
             return;
 
         mRainNode = new osg::Group;
-        mRainNode->addCullCallback(new ParticleStereoStatesetUpdater);
 
         mRainParticleSystem = new NifOsg::ParticleSystem;
         osg::Vec3 rainRange = osg::Vec3(mRainDiameter, mRainDiameter, (mRainMinHeight + mRainMaxHeight) / 2.f);
 
         mRainParticleSystem->setParticleAlignment(osgParticle::ParticleSystem::FIXED);
-        mRainParticleSystem->setAlignVectorX(osg::Vec3f(0.1, 0, 0));
-        mRainParticleSystem->setAlignVectorY(osg::Vec3f(0, 0, 1));
+        // Vertical placement with some horizontal compression.
+        // Z-down alignment is used so that the UV uses Y-down convention
+        mRainParticleSystem->setAlignVectors(osg::Vec3f(0.1f, 0, 0), osg::Vec3f(0, 0, -1.f));
 
         osg::ref_ptr<osg::StateSet> stateset = mRainParticleSystem->getOrCreateStateSet();
 
@@ -564,7 +1072,7 @@ namespace MWRender
 
     bool SkyManager::getRainRipplesEnabled() const
     {
-        if (!mEnabled || mIsStorm)
+        if (!mEnabled)
             return false;
 
         if (hasRain())
@@ -578,10 +1086,7 @@ namespace MWRender
 
     float SkyManager::getPrecipitationAlpha() const
     {
-        if (mEnabled && !mIsStorm && (hasRain() || mParticleNode))
-            return mPrecipitationAlpha;
-
-        return 0.f;
+        return mPrecipitationAlpha;
     }
 
     void SkyManager::update(float duration)
@@ -752,8 +1257,9 @@ namespace MWRender
             {
                 if (!mSceneManager->getVFS()->exists(mCurrentParticleEffect))
                 {
-                    Log(Debug::Info) << "FNV/ESM4: skipped missing OpenMW weather mesh ("
-                                     << mCurrentParticleEffect.value() << ")";
+                    if (logMissingSkyAssets())
+                        Log(Debug::Info) << "FNV/ESM4: skipped missing OpenMW weather mesh ("
+                                         << mCurrentParticleEffect.value() << ")";
                     mCurrentParticleEffect.clear();
                     if (mParticleNode)
                     {
@@ -769,7 +1275,6 @@ namespace MWRender
                 {
                     mParticleNode = new osg::PositionAttitudeTransform;
                     mParticleNode->addCullCallback(mUnderwaterSwitch);
-                    mParticleNode->addCullCallback(new ParticleStereoStatesetUpdater());
                     mParticleNode->setNodeMask(Mask_WeatherParticles);
                     mSkyNode->addChild(mParticleNode);
                 }
@@ -795,7 +1300,7 @@ namespace MWRender
                         = static_cast<osgParticle::ParticleSystem*>(findPSVisitor.mFoundNodes[i]);
 
                     osg::ref_ptr<osgParticle::ModularProgram> program = new osgParticle::ModularProgram;
-                    if (!mIsStorm)
+                    if (occlusionEnabledForEffect)
                         program->addOperator(new WrapAroundOperator(mCamera, defaultWrapRange));
                     program->addOperator(new WeatherAlphaOperator(mPrecipitationAlpha, false));
                     program->setParticleSystem(ps);
@@ -831,8 +1336,10 @@ namespace MWRender
 
             if (mCloudUpdater)
             {
+                const VFS::Path::Normalized requested = Misc::ResourceHelpers::correctTexturePath(
+                    VFS::Path::toNormalized(mClouds), mSceneManager->getVFS());
                 const VFS::Path::Normalized texture
-                    = Misc::ResourceHelpers::correctTexturePath(mClouds, mSceneManager->getVFS());
+                    = resolveWeatherCloudTexture(mSceneManager->getVFS(), requested);
 
                 osg::ref_ptr<osg::Texture2D> cloudTex
                     = new osg::Texture2D(mSceneManager->getImageManager()->getImage(texture));
@@ -840,6 +1347,9 @@ namespace MWRender
                 cloudTex->setWrap(osg::Texture::WRAP_T, osg::Texture::REPEAT);
 
                 mCloudUpdater->setTexture(std::move(cloudTex));
+                if (logMissingSkyAssets() && texture != requested)
+                    Log(Debug::Info) << "FNV/ESM4: remapped weather cloud texture " << requested.value()
+                                     << " -> " << texture.value();
             }
         }
 
@@ -855,8 +1365,10 @@ namespace MWRender
 
             if (!mNextClouds.empty() && mNextCloudUpdater)
             {
+                const VFS::Path::Normalized requested = Misc::ResourceHelpers::correctTexturePath(
+                    VFS::Path::toNormalized(mNextClouds), mSceneManager->getVFS());
                 const VFS::Path::Normalized texture
-                    = Misc::ResourceHelpers::correctTexturePath(mNextClouds, mSceneManager->getVFS());
+                    = resolveWeatherCloudTexture(mSceneManager->getVFS(), requested);
 
                 osg::ref_ptr<osg::Texture2D> cloudTex
                     = new osg::Texture2D(mSceneManager->getImageManager()->getImage(texture));
@@ -864,6 +1376,9 @@ namespace MWRender
                 cloudTex->setWrap(osg::Texture::WRAP_T, osg::Texture::REPEAT);
 
                 mNextCloudUpdater->setTexture(std::move(cloudTex));
+                if (logMissingSkyAssets() && texture != requested)
+                    Log(Debug::Info) << "FNV/ESM4: remapped next weather cloud texture " << requested.value()
+                                     << " -> " << texture.value();
                 mNextStormDirection = weather.mStormDirection;
             }
         }
@@ -871,13 +1386,16 @@ namespace MWRender
         if (mCloudBlendFactor != weather.mCloudBlendFactor)
         {
             mCloudBlendFactor = std::clamp(weather.mCloudBlendFactor, 0.f, 1.f);
+            const float nativeCloudOpacity
+                = isFalloutSkyMesh(Settings::models().mSkyclouds.get()) ? nativeSkyCloudOpacity() : 1.f;
 
             if (mCloudUpdater)
-                mCloudUpdater->setOpacity(1.f - mCloudBlendFactor);
+                mCloudUpdater->setOpacity((1.f - mCloudBlendFactor) * nativeCloudOpacity);
             if (mNextCloudUpdater)
-                mNextCloudUpdater->setOpacity(mCloudBlendFactor);
+                mNextCloudUpdater->setOpacity(mCloudBlendFactor * nativeCloudOpacity);
             if (mNextCloudMesh)
-                mNextCloudMesh->setNodeMask(mCloudBlendFactor > 0.f && mNextCloudUpdater ? ~0u : 0);
+                mNextCloudMesh->setNodeMask(
+                    mCloudBlendFactor > 0.f && nativeCloudOpacity > 0.f && mNextCloudUpdater ? ~0u : 0);
         }
 
         if (mCloudColour != weather.mFogColor)
@@ -903,6 +1421,24 @@ namespace MWRender
             mSecunda->setAtmosphereColor(mSkyColour);
         }
 
+        if (mSkyLowerColour != weather.mSkyLowerColor || mSkyHorizonColour != weather.mSkyHorizonColor)
+        {
+            mSkyLowerColour = weather.mSkyLowerColor;
+            mSkyHorizonColour = weather.mSkyHorizonColor;
+        }
+
+        if (mAtmosphereUpdater && mFalloutAtmosphereDay)
+        {
+            mAtmosphereUpdater->setFalloutAtmosphereGradientColors(mSkyColour, mSkyLowerColour, mSkyHorizonColour);
+            if (!mLoggedFalloutAtmosphereGradient)
+            {
+                Log(Debug::Info) << "FNV/ESM4: atmosphere vertical colors runtime-supported skyUpper=("
+                                 << formatVec4(mSkyColour) << ") skyLower=(" << formatVec4(mSkyLowerColour)
+                                 << ") horizon=(" << formatVec4(mSkyHorizonColour) << ")";
+                mLoggedFalloutAtmosphereGradient = true;
+            }
+        }
+
         if (mFogColour != weather.mFogColor)
         {
             mFogColour = weather.mFogColor;
@@ -915,6 +1451,18 @@ namespace MWRender
 
         mSun->setColor(weather.mSunDiscColor);
         mSun->adjustTransparency(weather.mGlareView * weather.mSunDiscColor.a());
+        if (std::getenv("OPENMW_FNV_PROOF_WEATHER_ID") != nullptr)
+        {
+            static int proofSunDiscMaterialLogs = 0;
+            if (proofSunDiscMaterialLogs < 12)
+            {
+                Log(Debug::Info) << "FNV/ESM4 proof: sky sun disc material runtime-supported sunDiscColor=("
+                                 << formatVec4(weather.mSunDiscColor)
+                                 << ") glareView=" << weather.mGlareView
+                                 << " shader=emission-modulated-texture";
+                ++proofSunDiscMaterialLogs;
+            }
+        }
 
         float nextStarsOpacity = weather.mNightFade * weather.mGlareView;
 
@@ -927,7 +1475,9 @@ namespace MWRender
         }
 
         if (mAtmosphereNightNode)
-            mAtmosphereNightNode->setNodeMask(weather.mNight && mAtmosphereNightUpdater ? ~0u : 0);
+            mAtmosphereNightNode->setNodeMask(weather.mNight && (mAtmosphereNightUpdater || mNativeAtmosphereNight)
+                    ? ~0u
+                    : 0);
         mPrecipitationAlpha = weather.mPrecipitationAlpha;
     }
 
@@ -1017,31 +1567,42 @@ namespace MWRender
         pushOptionalSkyModel(*mSceneManager, models, Settings::models().mWeathersnow, "snow");
         pushOptionalSkyModel(*mSceneManager, models, Settings::models().mWeatherblizzard, "blizzard");
 
-        textures.emplace_back("textures/tx_mooncircle_full_s.dds");
-        textures.emplace_back("textures/tx_mooncircle_full_m.dds");
+        pushFirstExistingSkyTexture(*mSceneManager, textures,
+            { "textures/sky/secunda_full.dds", "textures/sky/skymoonfull.dds",
+                "textures/tx_mooncircle_full_s.dds" },
+            "Secunda moon circle");
+        pushFirstExistingSkyTexture(*mSceneManager, textures,
+            { "textures/sky/masser_full.dds", "textures/tx_mooncircle_full_m.dds" },
+            "Masser moon circle");
 
-        textures.emplace_back("textures/tx_masser_new.dds");
-        textures.emplace_back("textures/tx_masser_one_wax.dds");
-        textures.emplace_back("textures/tx_masser_half_wax.dds");
-        textures.emplace_back("textures/tx_masser_three_wax.dds");
-        textures.emplace_back("textures/tx_masser_one_wan.dds");
-        textures.emplace_back("textures/tx_masser_half_wan.dds");
-        textures.emplace_back("textures/tx_masser_three_wan.dds");
-        textures.emplace_back("textures/tx_masser_full.dds");
+        for (std::string_view phase :
+            { "new", "one_wax", "half_wax", "three_wax", "one_wan", "half_wan", "three_wan", "full" })
+        {
+            const std::string masserNative = "textures/sky/masser_" + std::string(phase) + ".dds";
+            const std::string masserFallback = "textures/tx_masser_" + std::string(phase) + ".dds";
+            pushFirstExistingSkyTexture(*mSceneManager, textures, { masserNative, masserFallback },
+                std::string("Masser phase ") + std::string(phase));
 
-        textures.emplace_back("textures/tx_secunda_new.dds");
-        textures.emplace_back("textures/tx_secunda_one_wax.dds");
-        textures.emplace_back("textures/tx_secunda_half_wax.dds");
-        textures.emplace_back("textures/tx_secunda_three_wax.dds");
-        textures.emplace_back("textures/tx_secunda_one_wan.dds");
-        textures.emplace_back("textures/tx_secunda_half_wan.dds");
-        textures.emplace_back("textures/tx_secunda_three_wan.dds");
-        textures.emplace_back("textures/tx_secunda_full.dds");
+            const std::string secundaNative = "textures/sky/secunda_" + std::string(phase) + ".dds";
+            const std::string secundaFallback = "textures/tx_secunda_" + std::string(phase) + ".dds";
+            pushFirstExistingSkyTexture(*mSceneManager, textures,
+                { secundaNative, "textures/sky/skymoonfull.dds", secundaFallback },
+                std::string("Secunda phase ") + std::string(phase));
+        }
 
-        textures.emplace_back("textures/tx_sun_05.dds");
-        textures.emplace_back("textures/tx_sun_flash_grey_05.dds");
+        pushFirstExistingSkyTexture(*mSceneManager, textures,
+            { "textures/sky/sun.dds", "textures/sky/sun_d.dds", "textures/lensflare/sun01.dds",
+                "textures/tx_sun_05.dds" },
+            "sun disc");
+        pushFirstExistingSkyTexture(*mSceneManager, textures,
+            { "textures/sky/nv_sunglare.dds", "textures/sky/sunglare.dds", "textures/sky/sunglarenonhdr.dds",
+                "textures/sky/sunglare_d.dds", "textures/lensflare/suncolor.dds",
+                "textures/tx_sun_flash_grey_05.dds" },
+            "sun glare");
 
-        textures.emplace_back("textures/tx_raindrop_01.dds");
+        pushFirstExistingSkyTexture(*mSceneManager, textures,
+            { "textures/sky/raindrop.dds", "textures/tx_raindrop_01.dds" },
+            "raindrop");
     }
 
     void SkyManager::setWaterEnabled(bool enabled)

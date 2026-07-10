@@ -69,6 +69,8 @@ void ESM4::Sound::load(ESM4::Reader& reader)
                 reader.skipSubRecordData();
                 break;
             default:
+                if (reader.skipUnknownStarfieldSubRecordData("loadsoun"))
+                    break;
                 throw std::runtime_error("ESM4::SOUN::load - Unknown subrecord " + ESM::printName(subHdr.typeId));
         }
     }

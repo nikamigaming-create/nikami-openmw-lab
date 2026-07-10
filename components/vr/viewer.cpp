@@ -297,6 +297,16 @@ namespace VR
         Log(Debug::Warning) << "VR::Viewer::removeLayer() called, but no such layer existed";
     }
 
+    void Viewer::setPrimaryProjectionLayerEnabled(bool enabled)
+    {
+        if (mPrimaryProjectionLayerEnabled == enabled)
+            return;
+
+        mPrimaryProjectionLayerEnabled = enabled;
+        Log(Debug::Info) << "VR::Viewer primary OpenMW projection layer "
+                         << (enabled ? "enabled" : "suppressed");
+    }
+
     osg::ref_ptr<osg::FrameBufferObject> Viewer::getFboForView(Stereo::Eye view)
     {
         osg::ref_ptr<osg::FrameBufferObject> fbo = nullptr;
@@ -558,7 +568,8 @@ namespace VR
         {
             projectionLayer->views[i].view = localViews[i];
         }
-        frame.layers.push_back(projectionLayer);
+        if (mPrimaryProjectionLayerEnabled)
+            frame.layers.push_back(projectionLayer);
         if (!mLayers.empty())
             frame.layers.insert(frame.layers.end(), mLayers.begin(), mLayers.end());
     }

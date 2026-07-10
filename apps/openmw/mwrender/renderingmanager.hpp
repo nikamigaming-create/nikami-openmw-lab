@@ -223,6 +223,8 @@ namespace MWRender
         /// Clear all savegame-specific data
         void clear();
 
+        void clearLiveObjectsForShutdown();
+
         /// Clear all worldspace-specific data
         void notifyWorldSpaceChanged();
 

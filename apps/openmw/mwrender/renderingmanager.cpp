@@ -2,6 +2,7 @@
 
 #include <cstdlib>
 #include <limits>
+#include <optional>
 #include <sstream>
 #include <string_view>
 
@@ -34,6 +35,8 @@
 #include <components/shader/shadermanager.hpp>
 
 #include <components/settings/values.hpp>
+
+#include <components/vfs/manager.hpp>
 
 #include <components/sceneutil/cullsafeboundsvisitor.hpp>
 #include <components/sceneutil/depth.hpp>
@@ -112,9 +115,15 @@ namespace MWRender
 {
     namespace
     {
+        bool envFlagEnabled(const char* name)
+        {
+            const char* value = std::getenv(name);
+            return value != nullptr && *value != '\0' && std::string(value) != "0";
+        }
+
         const ESM4::Npc* findFalloutPlayerVisualRecord()
         {
-            if (std::getenv("OPENMW_FNV_DISABLE_PLAYER_VISUAL_PROXY") != nullptr)
+            if (envFlagEnabled("OPENMW_FNV_DISABLE_PLAYER_VISUAL_PROXY"))
             {
                 Log(Debug::Info)
                     << "FNV/ESM4 proof: Fallout NPC player visual proxy disabled by "
@@ -454,6 +463,30 @@ namespace MWRender
             applyFalloutPlayerProxyProofOutfit(visualPtr, "vr-hands-attach");
             std::vector<MWVR::VRAnimation::FalloutVrHandSurface> surfaces
                 = collectFalloutVrHandSurfaces(visualPtr, "fallout-visual-record", false);
+            const bool rightPipBoyCalibration = [] {
+                if (const char* value = std::getenv("OPENMW_FNV_RIGHT_PIPBOY_CALIBRATION"))
+                    return std::string_view(value) != "0";
+                return true;
+            }();
+            if (rightPipBoyCalibration)
+            {
+                std::optional<MWVR::VRAnimation::FalloutVrHandSurface> rightPipBoySurface;
+                for (const MWVR::VRAnimation::FalloutVrHandSurface& surface : surfaces)
+                {
+                    const std::string lowered = Misc::StringUtils::lowerCase(surface.model);
+                    if (lowered.find("pipboyarm") == std::string::npos)
+                        continue;
+                    rightPipBoySurface = MWVR::VRAnimation::FalloutVrHandSurface{
+                        surface.model, surface.diffuseTexture, "right-pipboy-calibration:" + surface.source, false };
+                    break;
+                }
+                if (rightPipBoySurface)
+                {
+                    Log(Debug::Info) << "FNV/ESM4 diag: VRHandsOnly appended right PipBoy calibration model="
+                                     << rightPipBoySurface->model;
+                    surfaces.push_back(std::move(*rightPipBoySurface));
+                }
+            }
             appendFalloutVrWeaponSurface(surfaces, player, "save-loaded-vr-player-ptr");
             return surfaces;
         }
@@ -1013,6 +1046,8 @@ namespace MWRender
 
     RenderingManager::~RenderingManager()
     {
+        clearLiveObjectsForShutdown();
+
         // let background loading thread finish before we delete anything else
         mWorkQueue = nullptr;
     }
@@ -1048,7 +1083,11 @@ namespace MWRender
         mSky->listAssetsToPreload(workItem->mModels, workItem->mTextures);
         mWater->listAssetsToPreload(workItem->mTextures);
 
-        if (!hasFalloutNvContentLoaded())
+        const VFS::Manager* vfs = mResourceSystem != nullptr ? mResourceSystem->getVFS() : nullptr;
+        const bool hasMorrowindCommonActors = vfs != nullptr && vfs->exists(Settings::models().mXbaseanim)
+            && vfs->exists(Settings::models().mXbaseanimkf);
+
+        if (hasMorrowindCommonActors)
         {
             workItem->mModels.push_back(Settings::models().mXbaseanim);
             workItem->mModels.push_back(Settings::models().mXbaseanim1st);
@@ -1061,7 +1100,7 @@ namespace MWRender
             workItem->mKeyframes.push_back(Settings::models().mXargonianswimknakf);
         }
         else
-            Log(Debug::Info) << "FNV/ESM4: skipped Morrowind common actor preloads for Fallout content";
+            Log(Debug::Info) << "World viewer: skipped Morrowind common actor preloads because xbase assets are absent";
 
         workItem->mTextures.emplace_back("textures/_land_default.dds");
 
@@ -1756,6 +1795,41 @@ namespace MWRender
             mObjectPaging->clear();
     }
 
+    void RenderingManager::clearLiveObjectsForShutdown()
+    {
+        if (mCamera)
+        {
+            mCamera->setAnimation(nullptr);
+            mCamera->attachTo(MWWorld::Ptr());
+        }
+
+        if (mFalloutPlayerVisualAnimation)
+        {
+            mFalloutPlayerVisualAnimation->removeFromScene();
+            mFalloutPlayerVisualAnimation = nullptr;
+        }
+        mFalloutPlayerVisualRef.reset();
+
+        if (mPlayerAnimation)
+        {
+            mPlayerAnimation->removeFromScene();
+            mPlayerAnimation = nullptr;
+        }
+
+        if (mPlayerNode)
+        {
+            if (mPlayerNode->getNumParents() > 0)
+                mPlayerNode->getParent(0)->removeChild(mPlayerNode);
+            mPlayerNode = nullptr;
+        }
+
+        if (mObjects)
+            mObjects->clear();
+
+        if (mWater)
+            mWater->clearRipples();
+    }
+
     MWRender::Animation* RenderingManager::getAnimation(const MWWorld::Ptr& ptr)
     {
         if (mPlayerAnimation.get() && ptr == mPlayerAnimation->getPtr())
@@ -1829,8 +1903,8 @@ namespace MWRender
 //## VR_PATCH END
 
         const bool hideLocalPlayerVisual = VR::getVR();
-        const bool proofHidePlayerVisual = std::getenv("OPENMW_PROOF_HIDE_PLAYER_VISUAL") != nullptr
-            || std::getenv("OPENMW_FNV_HIDE_PLAYER_PROOF_PARTS") != nullptr;
+        const bool proofHidePlayerVisual = envFlagEnabled("OPENMW_PROOF_HIDE_PLAYER_VISUAL")
+            || envFlagEnabled("OPENMW_FNV_HIDE_PLAYER_PROOF_PARTS");
         const bool suppressFalloutPlayerProxy = hideLocalPlayerVisual || falloutFlatProfile || proofHidePlayerVisual;
         if (proofHidePlayerVisual)
             Log(Debug::Info) << "FNV/ESM4: skipped Fallout NPC player visual proxy for hidden player capture";

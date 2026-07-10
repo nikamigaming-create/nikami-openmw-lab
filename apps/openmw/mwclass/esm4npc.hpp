@@ -37,6 +37,11 @@ namespace MWClass
         void insertObjectRendering(const MWWorld::Ptr& ptr, const std::string& model,
             MWRender::RenderingInterface& renderingInterface) const override
         {
+            if (ESM4Impl::worldViewerDisableEsm4Actors() && !ESM4Impl::worldViewerUseEsm4ActorProxies())
+            {
+                ESM4Impl::logWorldViewerSkippedActor(ptr, "NPC");
+                return;
+            }
             renderingInterface.getObjects().insertNPC(ptr);
         }
 
@@ -49,6 +54,8 @@ namespace MWClass
         void insertObjectPhysics(const MWWorld::Ptr& ptr, const std::string& model, const osg::Quat& rotation,
             MWPhysics::PhysicsSystem& physics) const override
         {
+            if (ESM4Impl::worldViewerDisableEsm4Actors())
+                return;
             (void)rotation;
             physics.addActor(ptr, VFS::Path::toNormalized(model.empty() ? std::string(getModel(ptr)) : model));
         }

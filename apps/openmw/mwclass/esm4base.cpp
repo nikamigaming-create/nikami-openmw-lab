@@ -3,6 +3,10 @@
 #include <MyGUI_TextIterator.h>
 #include <MyGUI_UString.h>
 
+#include <atomic>
+#include <cstdlib>
+
+#include <components/debug/debuglog.hpp>
 #include <components/sceneutil/positionattitudetransform.hpp>
 
 #include "../mwgui/tooltips.hpp"
@@ -16,6 +20,29 @@
 
 namespace MWClass
 {
+    bool ESM4Impl::worldViewerDisableEsm4Actors()
+    {
+        return std::getenv("OPENMW_WORLD_VIEWER_DISABLE_ESM4_ACTORS") != nullptr;
+    }
+
+    bool ESM4Impl::worldViewerUseEsm4ActorProxies()
+    {
+        return std::getenv("OPENMW_WORLD_VIEWER_ESM4_ACTOR_PROXIES") != nullptr;
+    }
+
+    void ESM4Impl::logWorldViewerSkippedActor(const MWWorld::ConstPtr& ptr, std::string_view actorType)
+    {
+        static std::atomic<int> sSkippedActors { 0 };
+        const int count = sSkippedActors.fetch_add(1);
+        if (count >= 120)
+            return;
+
+        Log(Debug::Info) << "World viewer: skipped " << actorType << " actor "
+                         << ptr.getCellRef().getRefNum().toString("FormId:")
+                         << " base=" << ptr.getCellRef().getRefId().toDebugString()
+                         << " because OPENMW_WORLD_VIEWER_DISABLE_ESM4_ACTORS is set";
+    }
+
     void ESM4Impl::insertObjectRendering(
         const MWWorld::Ptr& ptr, const std::string& model, MWRender::RenderingInterface& renderingInterface)
     {

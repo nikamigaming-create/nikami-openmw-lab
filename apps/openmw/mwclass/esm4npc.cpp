@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
+#include <cctype>
+#include <string>
 
 #include <components/esm/attr.hpp>
 #include <components/esm4/loadarmo.hpp>
@@ -35,6 +37,38 @@
 
 namespace MWClass
 {
+    static bool worldViewerActorTelemetryEnabled()
+    {
+        const char* value = std::getenv("OPENMW_WORLD_VIEWER_ACTOR_TELEMETRY");
+        return value != nullptr && *value != '\0' && value[0] != '0';
+    }
+
+    static const char* getWorldViewerNpcGameTag(const ESM4::Npc& npc)
+    {
+        if (npc.mIsTES4)
+            return "TES4";
+        if (npc.mIsFO3)
+            return "FO3";
+        if (npc.mIsFONV)
+            return "FONV";
+        if (npc.mIsFO4)
+            return "FO4";
+        return "TES5_OR_UNKNOWN";
+    }
+
+    static bool isWorldViewerMarkerActorModel(std::string_view model)
+    {
+        std::string lowered;
+        lowered.reserve(model.size());
+        for (char ch : model)
+        {
+            const char normalized = ch == '\\' ? '/' : static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+            lowered.push_back(normalized);
+        }
+
+        return lowered.ends_with("marker_creature.nif") || lowered.ends_with("marker_npc.nif");
+    }
+
     template <class LevelledRecord, class TargetRecord>
     static std::vector<const TargetRecord*> withBaseTemplates(
         const TargetRecord* rec, int level = MWClass::ESM4Impl::sDefaultLevel)
@@ -58,9 +92,6 @@ namespace MWClass
                 return rec;
             else if (rec->mIsFONV)
             {
-                // TODO: FO3 should use this branch as well. But it is not clear how to distinguish FO3 from
-                // TES5. Currently FO3 uses wrong template flags that can lead to "ESM4 NPC traits not found"
-                // exception the NPC will not be added to the scene. But in any way it shouldn't cause a crash.
                 if (!(rec->mBaseConfig.fo3.templateFlags & flag))
                     return rec;
             }
@@ -126,6 +157,29 @@ namespace MWClass
         , mEquippedWeapon(other.mEquippedWeapon)
         , mFnvAiSequenceInitialised(other.mFnvAiSequenceInitialised)
     {
+    }
+
+    static std::string_view getFalloutNpcFallbackSkeleton(const ESM4NpcCustomData& data)
+    {
+        if (data.mTraits != nullptr && data.mTraits->mIsFONV)
+            return "characters/_male/skeleton.nif";
+        return {};
+    }
+
+    static void logWorldViewerNpcModelFallback(
+        const MWWorld::ConstPtr& ptr, const ESM4NpcCustomData& data, std::string_view model, std::string_view reason)
+    {
+        if (!worldViewerActorTelemetryEnabled() || data.mTraits == nullptr)
+            return;
+
+        Log(Debug::Info) << "World viewer actor ledger: phase=npc-model-fallback"
+                         << " ref=" << ptr.getCellRef().getRefId()
+                         << " base=" << ESM::FormId(data.mTraits->mId)
+                         << " game=" << getWorldViewerNpcGameTag(*data.mTraits)
+                         << " npc=\"" << data.mTraits->mEditorId << "\""
+                         << " model=\"" << model << "\""
+                         << " fallback=\"characters/_male/skeleton.nif\""
+                         << " reason=\"" << reason << "\"";
     }
 
     static const ESM4::Npc* chooseStatsRecord(const ESM4NpcCustomData& data)
@@ -484,37 +538,146 @@ namespace MWClass
                 data->mIsFemale = data->mTraits->mBaseConfig.tes5.flags & ESM4::Npc::TES5_Female;
         }
 
-        if (auto inv = chooseTemplate(npcRecs, ESM4::Npc::Template_UseInventory))
-        {
-            for (const ESM4::InventoryItem& item : inv->mInventory)
+        const auto addArmor = [&](const ESM4::Armor* armor) {
+            if (armor == nullptr)
+                return false;
+            if (std::find(data->mEquippedArmor.begin(), data->mEquippedArmor.end(), armor)
+                != data->mEquippedArmor.end())
+                return false;
+            data->mEquippedArmor.push_back(armor);
+            return true;
+        };
+        const auto addClothing = [&](const ESM4::Clothing* clothing) {
+            if (clothing == nullptr)
+                return false;
+            if (std::find(data->mEquippedClothing.begin(), data->mEquippedClothing.end(), clothing)
+                != data->mEquippedClothing.end())
+                return false;
+            data->mEquippedClothing.push_back(clothing);
+            return true;
+        };
+        const auto logInventoryItem = [&](std::string_view source, const ESM4::Npc* owner, ESM::FormId itemId,
+                                      std::string_view result, std::string_view editor) {
+            if (!worldViewerActorTelemetryEnabled())
+                return;
+
+            Log(Debug::Info) << "World viewer actor ledger: phase=npc-inventory-item"
+                             << " ref=" << ptr.getCellRef().getRefNum().toString("FormId:")
+                             << " base=" << ptr.getCellRef().getRefId().toDebugString()
+                             << " source=\"" << source << "\""
+                             << " owner=\"" << (owner != nullptr ? owner->mEditorId : std::string()) << "\""
+                             << " item=" << ESM::RefId(itemId)
+                             << " result=\"" << result << "\""
+                             << " editor=\"" << editor << "\"";
+        };
+        const auto equipInventoryItem = [&](ESM::FormId itemId, std::string_view source, const ESM4::Npc* owner) {
+            std::vector<const ESM4::Armor*> armors;
+            ESM4Impl::resolveLevelledAll<ESM4::LevelledItem, ESM4::Armor>(itemId, armors);
+            if (!armors.empty())
             {
-                if (auto* armor
-                    = ESM4Impl::resolveLevelled<ESM4::LevelledItem, ESM4::Armor>(ESM::FormId::fromUint32(item.item)))
-                    data->mEquippedArmor.push_back(armor);
-                else if (const ESM4::Weapon* weapon = ESM4Impl::resolveLevelled<ESM4::LevelledItem, ESM4::Weapon>(
-                             ESM::FormId::fromUint32(item.item)))
-                    considerEquippedWeapon(*data, weapon);
-                else if (data->mTraits != nullptr && data->mTraits->mIsTES4)
+                bool usedAny = false;
+                for (const ESM4::Armor* armor : armors)
                 {
-                    const auto* clothing = ESM4Impl::resolveLevelled<ESM4::LevelledItem, ESM4::Clothing>(
-                        ESM::FormId::fromUint32(item.item));
-                    if (clothing)
-                        data->mEquippedClothing.push_back(clothing);
+                    const bool added = addArmor(armor);
+                    logInventoryItem(source, owner, itemId, added ? "armor" : "armor-duplicate", armor->mEditorId);
+                    usedAny = added || usedAny;
                 }
+                return usedAny;
             }
-            if (!inv->mDefaultOutfit.isZeroOrUnset())
+
+            std::vector<const ESM4::Clothing*> clothes;
+            ESM4Impl::resolveLevelledAll<ESM4::LevelledItem, ESM4::Clothing>(itemId, clothes);
+            if (!clothes.empty())
             {
-                if (const ESM4::Outfit* outfit = store->get<ESM4::Outfit>().search(inv->mDefaultOutfit))
+                bool usedAny = false;
+                for (const ESM4::Clothing* clothing : clothes)
                 {
-                    for (ESM::FormId itemId : outfit->mInventory)
-                        if (auto* armor = ESM4Impl::resolveLevelled<ESM4::LevelledItem, ESM4::Armor>(itemId))
-                            data->mEquippedArmor.push_back(armor);
-                        else if (const ESM4::Weapon* weapon
-                            = ESM4Impl::resolveLevelled<ESM4::LevelledItem, ESM4::Weapon>(itemId))
-                            considerEquippedWeapon(*data, weapon);
+                    const bool added = addClothing(clothing);
+                    logInventoryItem(
+                        source, owner, itemId, added ? "clothing" : "clothing-duplicate", clothing->mEditorId);
+                    usedAny = added || usedAny;
                 }
-                else
-                    Log(Debug::Error) << "Outfit not found: " << ESM::RefId(inv->mDefaultOutfit);
+                return usedAny;
+            }
+
+            std::vector<const ESM4::Weapon*> weapons;
+            ESM4Impl::resolveLevelledAll<ESM4::LevelledItem, ESM4::Weapon>(itemId, weapons);
+            if (!weapons.empty())
+            {
+                for (const ESM4::Weapon* weapon : weapons)
+                {
+                    considerEquippedWeapon(*data, weapon);
+                    logInventoryItem(source, owner, itemId, "weapon", weapon->mEditorId);
+                }
+                return true;
+            }
+
+            logInventoryItem(source, owner, itemId, "unresolved", {});
+            return false;
+        };
+        const auto equipOutfit = [&](ESM::FormId outfitId, std::string_view source, const ESM4::Npc* owner) {
+            if (outfitId.isZeroOrUnset())
+                return false;
+
+            const ESM4::Outfit* outfit = store->get<ESM4::Outfit>().search(outfitId);
+            if (worldViewerActorTelemetryEnabled())
+            {
+                Log(Debug::Info) << "World viewer actor ledger: phase=npc-outfit"
+                                 << " ref=" << ptr.getCellRef().getRefNum().toString("FormId:")
+                                 << " base=" << ptr.getCellRef().getRefId().toDebugString()
+                                 << " source=\"" << source << "\""
+                                 << " owner=\"" << (owner != nullptr ? owner->mEditorId : std::string()) << "\""
+                                 << " outfit=" << ESM::RefId(outfitId)
+                                 << " resolved=" << static_cast<bool>(outfit)
+                                 << " editor=\"" << (outfit != nullptr ? outfit->mEditorId : std::string()) << "\""
+                                 << " items=" << (outfit != nullptr ? outfit->mInventory.size() : 0);
+            }
+            if (outfit == nullptr)
+            {
+                Log(Debug::Error) << "Outfit not found: " << ESM::RefId(outfitId);
+                return false;
+            }
+
+            bool usedAny = false;
+            for (ESM::FormId itemId : outfit->mInventory)
+                usedAny = equipInventoryItem(itemId, source, owner) || usedAny;
+            return usedAny;
+        };
+        const auto equipNpcInventory = [&](const ESM4::Npc* inv, std::string_view source) {
+            if (inv == nullptr)
+                return false;
+
+            if (worldViewerActorTelemetryEnabled())
+            {
+                Log(Debug::Info) << "World viewer actor ledger: phase=npc-inventory-source"
+                                 << " ref=" << ptr.getCellRef().getRefNum().toString("FormId:")
+                                 << " base=" << ptr.getCellRef().getRefId().toDebugString()
+                                 << " source=\"" << source << "\""
+                                 << " owner=\"" << inv->mEditorId << "\""
+                                 << " inventoryItems=" << inv->mInventory.size()
+                                 << " defaultOutfit=" << ESM::RefId(inv->mDefaultOutfit)
+                                 << " sleepOutfit=" << ESM::RefId(inv->mSleepOutfit);
+            }
+
+            bool usedAny = false;
+            for (const ESM4::InventoryItem& item : inv->mInventory)
+                usedAny = equipInventoryItem(ESM::FormId::fromUint32(item.item), source, inv) || usedAny;
+            usedAny = equipOutfit(inv->mDefaultOutfit, source, inv) || usedAny;
+            return usedAny;
+        };
+
+        const ESM4::Npc* chosenInventory = chooseTemplate(npcRecs, ESM4::Npc::Template_UseInventory);
+        equipNpcInventory(chosenInventory, "chosen-template");
+        if (data->mEquippedArmor.empty() && data->mEquippedClothing.empty())
+        {
+            for (const ESM4::Npc* candidate : npcRecs)
+            {
+                if (candidate == nullptr || candidate == chosenInventory)
+                    continue;
+                if (candidate->mInventory.empty() && candidate->mDefaultOutfit.isZeroOrUnset())
+                    continue;
+                if (equipNpcInventory(candidate, "fallback-template"))
+                    break;
             }
         }
 
@@ -534,6 +697,29 @@ namespace MWClass
                          << " packageCount=" << (data->mAIPackage != nullptr ? data->mAIPackage->mAIPackages.size() : 0)
                          << " weapon="
                          << (data->mEquippedWeapon != nullptr ? data->mEquippedWeapon->mEditorId : std::string_view{});
+        if (worldViewerActorTelemetryEnabled())
+        {
+            const ESM::Position& pos = ptr.getRefData().getPosition();
+            Log(Debug::Info) << "World viewer actor ledger: phase=npc-custom-data"
+                             << " ref=" << ptr.getCellRef().getRefNum().toString("FormId:")
+                             << " base=" << ptr.getCellRef().getRefId().toDebugString()
+                             << " game=" << (data->mTraits != nullptr ? getWorldViewerNpcGameTag(*data->mTraits) : "UNKNOWN")
+                             << " npc=\"" << base->mEditorId << "\""
+                             << " traits=\"" << (data->mTraits != nullptr ? data->mTraits->mEditorId : std::string()) << "\""
+                             << " modelRecord=\""
+                             << (data->mModel != nullptr ? data->mModel->mEditorId : std::string()) << "\""
+                             << " aiPackageRecord=\""
+                             << (data->mAIPackage != nullptr ? data->mAIPackage->mEditorId : std::string()) << "\""
+                             << " race=" << (data->mTraits != nullptr ? ESM::RefId(data->mTraits->mRace) : ESM::RefId())
+                             << " raceResolved=" << (data->mRace != nullptr)
+                             << " female=" << data->mIsFemale
+                             << " armor=" << data->mEquippedArmor.size()
+                             << " clothing=" << data->mEquippedClothing.size()
+                             << " weapon=\""
+                             << (data->mEquippedWeapon != nullptr ? data->mEquippedWeapon->mEditorId : std::string())
+                             << "\""
+                             << " pos=(" << pos.pos[0] << "," << pos.pos[1] << "," << pos.pos[2] << ")";
+        }
 
         ESM4NpcCustomData& res = *data;
         refData.setCustomData(std::move(data));
@@ -632,13 +818,23 @@ namespace MWClass
             return {};
         if (data.mTraits->mIsTES4)
             return data.mTraits->mModel;
+        const std::string_view falloutFallback = getFalloutNpcFallbackSkeleton(data);
         if (data.mRace != nullptr)
         {
             const std::string_view raceModel = data.mIsFemale ? data.mRace->mModelFemale : data.mRace->mModelMale;
-            if (!raceModel.empty())
+            if (!raceModel.empty() && (falloutFallback.empty() || !isWorldViewerMarkerActorModel(raceModel)))
                 return raceModel;
+            if (!raceModel.empty() && !falloutFallback.empty())
+                logWorldViewerNpcModelFallback(ptr, data, raceModel, "race marker model");
         }
         const ESM4::Npc* modelRecord = data.mModel != nullptr ? data.mModel : data.mTraits;
+        if (!falloutFallback.empty()
+            && (modelRecord->mModel.empty() || isWorldViewerMarkerActorModel(modelRecord->mModel)))
+        {
+            logWorldViewerNpcModelFallback(
+                ptr, data, modelRecord->mModel, modelRecord->mModel.empty() ? "empty model" : "record marker model");
+            return falloutFallback;
+        }
         if (modelRecord->mModel.empty())
             Log(Debug::Warning) << "FNV/ESM4 diag: no skeleton model for NPC \"" << data.mTraits->mEditorId << "\" ("
                                 << ESM::RefId(data.mTraits->mId) << ")";

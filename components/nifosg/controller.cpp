@@ -3,7 +3,10 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <cstdlib>
+#include <string_view>
 
+#include <components/debug/debuglog.hpp>
 #include <osg/Material>
 #include <osg/MatrixTransform>
 #include <osg/TexMat>
@@ -61,6 +64,14 @@ namespace NifOsg
             return value;
         }
 
+        const char* getEsm4RuntimeEnv(const char* name, const char* legacyName)
+        {
+            if (const char* env = std::getenv(name))
+                return env;
+
+            return std::getenv(legacyName);
+        }
+
         bool isFalloutActorBasisBone(const std::string& bone)
         {
             const std::string lowerBone = asciiLower(bone);
@@ -72,6 +83,22 @@ namespace NifOsg
                 || lowerBone.find("foretwist") != std::string::npos
                 || lowerBone.find("hand") != std::string::npos || lowerBone.find("finger") != std::string::npos
                 || lowerBone.find("thumb") != std::string::npos;
+        }
+
+        bool isFalloutActorLowerBodyBone(const std::string& bone)
+        {
+            const std::string lowerBone = asciiLower(bone);
+            return lowerBone.find("pelvis") != std::string::npos || lowerBone.find("thigh") != std::string::npos
+                || lowerBone.find("calf") != std::string::npos || lowerBone.find("foot") != std::string::npos
+                || lowerBone.find("toe") != std::string::npos;
+        }
+
+        bool shouldPinFalloutActorLowerBodyBindRotation()
+        {
+            if (const char* env = getEsm4RuntimeEnv("OPENMW_ESM4_PIN_ACTOR_LOWER_BODY_BIND_ROTATION",
+                    "OPENMW_FNV_PIN_ACTOR_LOWER_BODY_BIND_ROTATION"))
+                return std::string_view(env) != "0";
+            return true;
         }
 
         bool shouldPinFalloutActorBindRotation(const std::string& bone)
@@ -86,6 +113,112 @@ namespace NifOsg
                 || lowerBone.find("finger") != std::string::npos || lowerBone.find("thumb") != std::string::npos;
         }
 
+        bool esm4ActorBindPinningEnabled(bool defaultEnabled)
+        {
+            if (const char* env = getEsm4RuntimeEnv(
+                    "OPENMW_ESM4_PIN_ACTOR_BIND_ROTATION", "OPENMW_FNV_PIN_ACTOR_BIND_ROTATION"))
+                return std::string_view(env) != "0";
+            return defaultEnabled;
+        }
+
+        bool shouldPinFalloutActorKeyTranslationsToBind()
+        {
+            if (const char* env = getEsm4RuntimeEnv("OPENMW_ESM4_PIN_ACTOR_KEY_TRANSLATIONS_TO_BIND",
+                    "OPENMW_FNV_PIN_ACTOR_KEY_TRANSLATIONS_TO_BIND"))
+                return std::string_view(env) != "0";
+            return false;
+        }
+
+        bool shouldDropFalloutActorKeyTranslations()
+        {
+            if (const char* env = getEsm4RuntimeEnv(
+                    "OPENMW_ESM4_DROP_ACTOR_KEY_TRANSLATIONS", "OPENMW_FNV_DROP_ACTOR_KEY_TRANSLATIONS"))
+                return std::string_view(env) != "0";
+            return true;
+        }
+
+        std::string_view getFalloutActorRotationCompositionMode(bool useRawRotationCompositionDefault)
+        {
+            if (const char* env = getEsm4RuntimeEnv(
+                    "OPENMW_ESM4_ACTOR_ROTATION_COMPOSITION", "OPENMW_FNV_ACTOR_ROTATION_COMPOSITION"))
+            {
+                if (*env != '\0')
+                    return env;
+            }
+
+            if (useRawRotationCompositionDefault)
+                return "raw";
+            return "rawHalfBind";
+        }
+
+        osg::Quat composeFalloutActorRotation(
+            const osg::Quat& rawRotation, const osg::Quat& bindRotation, bool useRawRotationCompositionDefault)
+        {
+            const osg::Quat halfTurn = falloutHalfTurnX();
+            const std::string_view mode = getFalloutActorRotationCompositionMode(useRawRotationCompositionDefault);
+            if (mode == "raw")
+                return rawRotation;
+            if (mode == "bind")
+                return bindRotation;
+            if (mode == "rawBind")
+                return rawRotation * bindRotation;
+            if (mode == "bindRaw")
+                return bindRotation * rawRotation;
+            if (mode == "halfRaw")
+                return halfTurn * rawRotation;
+            if (mode == "rawHalf")
+                return rawRotation * halfTurn;
+            if (mode == "halfBind")
+                return halfTurn * bindRotation;
+            if (mode == "bindHalf")
+                return bindRotation * halfTurn;
+            if (mode == "halfRawBind")
+                return halfTurn * rawRotation * bindRotation;
+            if (mode == "rawBindHalf")
+                return rawRotation * bindRotation * halfTurn;
+            if (mode == "halfBindRaw")
+                return halfTurn * bindRotation * rawRotation;
+            if (mode == "bindHalfRaw")
+                return bindRotation * halfTurn * rawRotation;
+            if (mode == "bindRawHalf")
+                return bindRotation * rawRotation * halfTurn;
+
+            return rawRotation * halfTurn * bindRotation;
+        }
+
+        void applyFalloutActorTranslationPolicy(SceneUtil::KeyframeController::KfTransform& transform,
+            const std::string& lowerBone, const osg::Vec3f& bindTranslation)
+        {
+            if (lowerBone.empty())
+                return;
+
+            const bool dropTranslations = shouldDropFalloutActorKeyTranslations();
+            const bool pinTranslations = shouldPinFalloutActorKeyTranslationsToBind();
+            if (dropTranslations || pinTranslations)
+            {
+                const bool auditBone = lowerBone == "bip01 pelvis" || lowerBone.find("spine") != std::string::npos
+                    || lowerBone.find("foot") != std::string::npos || lowerBone.find("hand") != std::string::npos;
+                static unsigned int sTranslationPolicyLogs = 0;
+                if (auditBone && sTranslationPolicyLogs < 96)
+                {
+                    ++sTranslationPolicyLogs;
+                    const osg::Vec3f rawTranslation = transform.mTranslation.value_or(osg::Vec3f());
+                    Log(Debug::Info) << "FNV/ESM4 ACTOR KEY TRANSLATION POLICY bone=" << lowerBone
+                                     << " mode=" << (dropTranslations ? "drop" : "pin-bind")
+                                     << " hadTranslation=" << static_cast<bool>(transform.mTranslation)
+                                     << " raw=(" << rawTranslation.x() << "," << rawTranslation.y() << ","
+                                     << rawTranslation.z() << ")"
+                                     << " bind=(" << bindTranslation.x() << "," << bindTranslation.y() << ","
+                                     << bindTranslation.z() << ")";
+                }
+            }
+
+            if (dropTranslations)
+                transform.mTranslation.reset();
+            else if (pinTranslations)
+                transform.mTranslation = bindTranslation;
+        }
+
         void sanitizeTransform(SceneUtil::KeyframeController::KfTransform& transform)
         {
             if (transform.mTranslation && !isReasonableVec3(*transform.mTranslation, 1000000.f))
@@ -94,6 +227,27 @@ namespace NifOsg
                 transform.mRotation.reset();
             if (transform.mScale && !isReasonableScale(*transform.mScale))
                 transform.mScale.reset();
+        }
+
+        float quatAngleDeltaDegrees(osg::Quat left, osg::Quat right)
+        {
+            const double leftLength = std::sqrt(left.x() * left.x() + left.y() * left.y() + left.z() * left.z()
+                + left.w() * left.w());
+            const double rightLength = std::sqrt(right.x() * right.x() + right.y() * right.y() + right.z() * right.z()
+                + right.w() * right.w());
+            if (leftLength <= 0.000001 || rightLength <= 0.000001)
+                return 0.f;
+
+            double dot = (left.x() * right.x() + left.y() * right.y() + left.z() * right.z() + left.w() * right.w())
+                / (leftLength * rightLength);
+            dot = std::clamp(std::abs(dot), 0.0, 1.0);
+            return static_cast<float>(2.0 * std::acos(dot) * 180.0 / osg::PI);
+        }
+
+        bool shouldAuditFalloutActorBasis()
+        {
+            return std::getenv("OPENMW_FNV_ACTOR_BASIS_AUDIT") != nullptr
+                || std::getenv("OPENMW_ESM4_ACTOR_BASIS_AUDIT") != nullptr;
         }
     }
 
@@ -178,6 +332,7 @@ namespace NifOsg
         , mScales(copy.mScales)
         , mAxisOrder(copy.mAxisOrder)
         , mUseFalloutActorRotationBasis(copy.mUseFalloutActorRotationBasis)
+        , mFalloutUseRawRotationCompositionDefault(copy.mFalloutUseRawRotationCompositionDefault)
         , mPinFalloutActorBindRotation(copy.mPinFalloutActorBindRotation)
         , mFalloutLowerBone(copy.mFalloutLowerBone)
         , mFalloutBindTranslation(copy.mFalloutBindTranslation)
@@ -258,11 +413,17 @@ namespace NifOsg
         mScales = FloatInterpolator(Nif::FloatKeyMapPtr(), transform.mScale);
     }
 
-    void KeyframeController::setFalloutActorTransformBasis(
-        const std::string& lowerBone, const osg::Vec3f& bindTranslation, const osg::Quat& bindRotation, float bindScale)
+        void KeyframeController::setFalloutActorTransformBasis(
+        const std::string& lowerBone, const osg::Vec3f& bindTranslation, const osg::Quat& bindRotation, float bindScale,
+        bool useRawRotationCompositionDefault)
     {
-        mUseFalloutActorRotationBasis = isFalloutActorBasisBone(lowerBone);
-        mPinFalloutActorBindRotation = shouldPinFalloutActorBindRotation(lowerBone);
+        const bool pinLowerBodyBindRotation = shouldPinFalloutActorLowerBodyBindRotation();
+        const bool pinActorBindRotation = esm4ActorBindPinningEnabled(false);
+        mFalloutUseRawRotationCompositionDefault = useRawRotationCompositionDefault;
+        mUseFalloutActorRotationBasis = isFalloutActorBasisBone(lowerBone)
+            || (pinLowerBodyBindRotation && isFalloutActorLowerBodyBone(lowerBone));
+        mPinFalloutActorBindRotation = (pinActorBindRotation && shouldPinFalloutActorBindRotation(lowerBone))
+            || (pinLowerBodyBindRotation && isFalloutActorLowerBodyBone(lowerBone));
         mFalloutLowerBone = lowerBone;
         mFalloutBindTranslation = bindTranslation;
         mFalloutBindRotation = bindRotation;
@@ -491,6 +652,33 @@ namespace NifOsg
     {
         auto [translation, rotation, scale] = getCurrentTransformation(nv);
 
+        if (shouldAuditFalloutActorBasis() && mUseFalloutActorRotationBasis)
+        {
+            static unsigned int sFalloutActorBasisAuditLines = 0;
+            if (sFalloutActorBasisAuditLines < 256)
+            {
+                const KfTransform rawKeyframe = getCurrentTransformationWithoutFalloutActorBasis(nv);
+                float rotationDeltaDegrees = 0.f;
+                if (rotation && rawKeyframe.mRotation)
+                    rotationDeltaDegrees = quatAngleDeltaDegrees(*rotation, *rawKeyframe.mRotation);
+                float translationDelta = 0.f;
+                if (translation && rawKeyframe.mTranslation)
+                    translationDelta = (*translation - *rawKeyframe.mTranslation).length();
+
+                Log(Debug::Info) << "FNV/ESM4 ACTOR BASIS CALLBACK AUDIT bone=" << mFalloutLowerBone
+                                 << " appliedHasRotation=" << static_cast<bool>(rotation)
+                                 << " rawHasRotation=" << static_cast<bool>(rawKeyframe.mRotation)
+                                 << " rotationDeltaDegrees=" << rotationDeltaDegrees
+                                 << " appliedHasTranslation=" << static_cast<bool>(translation)
+                                 << " rawHasTranslation=" << static_cast<bool>(rawKeyframe.mTranslation)
+                                 << " translationDelta=" << translationDelta
+                                 << " compositionMode="
+                                 << getFalloutActorRotationCompositionMode(mFalloutUseRawRotationCompositionDefault)
+                                 << " pinnedBindRotation=" << mPinFalloutActorBindRotation;
+                ++sFalloutActorBasisAuditLines;
+            }
+        }
+
         if (rotation)
         {
             node->setRotation(*rotation);
@@ -511,6 +699,18 @@ namespace NifOsg
     }
 
     KeyframeController::KfTransform KeyframeController::getCurrentTransformation(osg::NodeVisitor* nv)
+    {
+        return getCurrentTransformation(nv, true);
+    }
+
+    KeyframeController::KfTransform KeyframeController::getCurrentTransformationWithoutFalloutActorBasis(
+        osg::NodeVisitor* nv)
+    {
+        return getCurrentTransformation(nv, false);
+    }
+
+    KeyframeController::KfTransform KeyframeController::getCurrentTransformation(
+        osg::NodeVisitor* nv, bool applyFalloutActorBasis)
     {
         KfTransform out;
 
@@ -557,7 +757,7 @@ namespace NifOsg
                         data.mDefaultValue.mScale, data.mScaleOffset, data.mScaleHalfRange);
                 }
 
-                if (mUseFalloutActorRotationBasis)
+                if (applyFalloutActorBasis && mUseFalloutActorRotationBasis)
                 {
                     if (mPinFalloutActorBindRotation)
                     {
@@ -566,8 +766,12 @@ namespace NifOsg
                         out.mScale = mFalloutBindScale;
                     }
                     else if (out.mRotation)
-                        out.mRotation = *out.mRotation * falloutHalfTurnX() * mFalloutBindRotation;
+                        out.mRotation = composeFalloutActorRotation(
+                            *out.mRotation, mFalloutBindRotation, mFalloutUseRawRotationCompositionDefault);
                 }
+
+                if (applyFalloutActorBasis)
+                    applyFalloutActorTranslationPolicy(out, mFalloutLowerBone, mFalloutBindTranslation);
 
                 sanitizeTransform(out);
                 return out;
@@ -584,7 +788,7 @@ namespace NifOsg
             if (!mScales.empty())
                 out.mScale = mScales.interpKey(time);
 
-            if (mUseFalloutActorRotationBasis)
+            if (applyFalloutActorBasis && mUseFalloutActorRotationBasis)
             {
                 if (mPinFalloutActorBindRotation)
                 {
@@ -593,8 +797,12 @@ namespace NifOsg
                     out.mScale = mFalloutBindScale;
                 }
                 else if (out.mRotation)
-                    out.mRotation = *out.mRotation * falloutHalfTurnX() * mFalloutBindRotation;
+                    out.mRotation = composeFalloutActorRotation(
+                        *out.mRotation, mFalloutBindRotation, mFalloutUseRawRotationCompositionDefault);
             }
+
+            if (applyFalloutActorBasis)
+                applyFalloutActorTranslationPolicy(out, mFalloutLowerBone, mFalloutBindTranslation);
         }
 
         sanitizeTransform(out);

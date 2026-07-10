@@ -86,6 +86,8 @@ namespace MWRender
 
         void removeCell(const MWWorld::CellStore* store);
 
+        void clear();
+
         /// Updates containing cell for object rendering data
         void updatePtr(const MWWorld::Ptr& old, const MWWorld::Ptr& cur);
 

@@ -3,6 +3,7 @@
 
 #include <osg/Geometry>
 #include <osg/Matrixf>
+#include <osg/NodeVisitor>
 
 #include <array>
 #include <string>
@@ -74,13 +75,18 @@ namespace SceneUtil
             std::vector<osg::Matrixf>& localBoneMatrices, std::vector<osg::Matrixf>& skeletonBoneMatrices,
             osg::Matrixf& transform, osg::Matrixf& skinToSkelMatrix) const;
         bool isFalloutCharacterRig() const;
-        void setFalloutFlagSkinning(bool enabled) { mFalloutFlagSkinning = enabled; }
+        void setFalloutFlagSkinning(bool enabled);
+        void setFalloutCharacterSkinning(bool enabled);
         bool getFalloutFingerVertexWeights(
             std::vector<float>& thumb, std::vector<float>& index, std::vector<float>& grip) const;
         bool getFalloutFingerBoneVertexWeights(std::array<std::vector<float>, 15>& fingerBones) const;
 
         osg::ref_ptr<osg::Geometry> getSourceGeometry() const;
         osg::Geometry* getRenderGeometry(unsigned int index) const;
+        osg::Geometry* getLastFrameGeometry() const;
+        bool computeCurrentFalloutSkinningBounds(osg::NodeVisitor* nv, osg::BoundingBox& box);
+        void forceNextUpdate();
+        bool refreshFalloutSkinningForCurrentPose();
 
         void accept(osg::NodeVisitor& nv) override;
         bool supports(const osg::PrimitiveFunctor&) const override { return true; }
@@ -140,6 +146,7 @@ namespace SceneUtil
         bool mFalloutFallbackDecided{ false };
         bool mFalloutUseSourceFallback{ false };
         bool mFalloutFlagSkinning{ false };
+        bool mFalloutCharacterSkinning{ false };
         bool mLoggedFalloutFlagSkinning{ false };
         mutable bool mFalloutCharacterRigComputed{ false };
         mutable bool mFalloutCharacterRig{ false };

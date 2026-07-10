@@ -138,6 +138,8 @@ namespace MWRender
         osg::ref_ptr<osg::PositionAttitudeTransform> mAtmosphereNightNode;
         float mAtmosphereNightRoll;
         osg::ref_ptr<AtmosphereNightUpdater> mAtmosphereNightUpdater;
+        bool mNativeAtmosphereNight;
+        bool mFalloutAtmosphereDay;
 
         osg::ref_ptr<AtmosphereUpdater> mAtmosphereUpdater;
 
@@ -174,7 +176,10 @@ namespace MWRender
         float mStarsOpacity;
         osg::Vec4f mCloudColour;
         osg::Vec4f mSkyColour;
+        osg::Vec4f mSkyLowerColour;
+        osg::Vec4f mSkyHorizonColour;
         osg::Vec4f mFogColour;
+        bool mLoggedFalloutAtmosphereGradient;
 
         VFS::Path::Normalized mCurrentParticleEffect;
 

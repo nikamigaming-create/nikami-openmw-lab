@@ -5,6 +5,7 @@
 
 #include <array>
 #include <cassert>
+#include <ios>
 #include <istream>
 #include <stdexcept>
 #include <stdint.h>
@@ -95,6 +96,16 @@ namespace Nif
         static constexpr uint32_t generateVersion(uint8_t major, uint8_t minor, uint8_t patch, uint8_t rev)
         {
             return (major << 24) + (minor << 16) + (patch << 8) + rev;
+        }
+
+        std::streampos tell() { return mStream->tellg(); }
+
+        void seek(std::streampos pos)
+        {
+            mStream->clear();
+            mStream->seekg(pos);
+            if (mStream->bad())
+                throw std::runtime_error("Failed to seek NIF stream");
         }
 
         void skip(size_t size) { mStream->ignore(size); }

@@ -254,15 +254,17 @@ namespace NifOsg
         osg::Callback* getAsCallback() override { return this; }
 
         KfTransform getCurrentTransformation(osg::NodeVisitor* nv) override;
+        KfTransform getCurrentTransformationWithoutFalloutActorBasis(osg::NodeVisitor* nv);
 
         void operator()(NifOsg::MatrixTransform*, osg::NodeVisitor*);
         void setFalloutActorTransformBasis(
             const std::string& lowerBone, const osg::Vec3f& bindTranslation, const osg::Quat& bindRotation,
-            float bindScale);
+            float bindScale, bool useRawRotationCompositionDefault = false);
 
     private:
         void initFromDefaultTransform(const Nif::NiQuatTransform& transform);
         bool initFromInterpolator(const Nif::NiInterpolator* interp);
+        KfTransform getCurrentTransformation(osg::NodeVisitor* nv, bool applyFalloutActorBasis);
 
         QuaternionInterpolator mRotations;
 
@@ -275,6 +277,7 @@ namespace NifOsg
 
         Nif::NiKeyframeData::AxisOrder mAxisOrder{ Nif::NiKeyframeData::AxisOrder::Order_XYZ };
         bool mUseFalloutActorRotationBasis{ false };
+        bool mFalloutUseRawRotationCompositionDefault{ false };
         bool mPinFalloutActorBindRotation{ false };
         std::string mFalloutLowerBone;
         osg::Vec3f mFalloutBindTranslation;

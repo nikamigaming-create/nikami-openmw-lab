@@ -1,4 +1,5 @@
 #include "openxrinput.hpp"
+#include "fnvxrliveframesurface.hpp"
 #include "vranimation.hpp"
 #include "vrgui.hpp"
 #include "vrpointer.hpp"
@@ -1068,7 +1069,7 @@ namespace MWVR
         Log(Debug::Info) << "FNV/ESM4 diag: VR debug capture modes snapshot="
                          << vrDebugSnapshotEnabled()
                          << " runningLog=" << vrDebugRunningLogEnabled()
-                         << " image=" << (getEnvFloat("OPENMW_FNV_VR_DEBUG_SNAPSHOT_IMAGE", 1.f) != 0.f)
+                         << " image=true"
                          << " dir=" << vrDebugSnapshotDir().string();
     }
 
@@ -1085,7 +1086,7 @@ namespace MWVR
         const std::filesystem::path jsonPath = dir / (baseName.str() + ".json");
         const std::filesystem::path imagePath = dir / (baseName.str() + ".png");
 
-        bool imageRequested = getEnvFloat("OPENMW_FNV_VR_DEBUG_SNAPSHOT_IMAGE", 1.f) != 0.f;
+        bool imageRequested = true;
         bool imageWritten = false;
         try
         {
@@ -2562,7 +2563,7 @@ namespace MWVR
         auto weaponType = MWBase::Environment::get().getWorld()->getActiveWeaponType();
         // Morrowind models do not hold most weapons at a natural angle, so i rotate the hand
         // to more natural angles on weapons to allow more comfortable combat.
-        if (!windowManager->isGuiMode() && !mFingerPointingMode)
+        if ((!windowManager->isGuiMode() || FNVXRLiveFrameSurface::instance().visible()) && !mFingerPointingMode)
         {
 
             switch (weaponType)
@@ -2787,6 +2788,7 @@ namespace MWVR
 
     void addLocalAxisMarker(osg::Group& parent, const osg::Vec3f& position, float length);
     void applyHandDebugState(osg::StateSet& stateSet);
+    void applyRetailPanelHandOverlayState(osg::StateSet& stateSet);
     bool applyFingerWeightDebugColors(SceneUtil::RigGeometry& rig);
 
     std::string formatVec3(const osg::Vec3f& value)
@@ -2946,6 +2948,7 @@ namespace MWVR
 
         void apply(osg::Node& node) override
         {
+            applyRetailPanelHandOverlayState(*node.getOrCreateStateSet());
             if (mWireframe || mWeightDebug)
                 applyHandDebugState(*node.getOrCreateStateSet());
             traverse(node);
@@ -2953,6 +2956,7 @@ namespace MWVR
 
         void apply(osg::Drawable& drawable) override
         {
+            applyRetailPanelHandOverlayState(*drawable.getOrCreateStateSet());
             if (mWireframe || mWeightDebug)
                 applyHandDebugState(*drawable.getOrCreateStateSet());
 
@@ -3186,6 +3190,15 @@ namespace MWVR
                 new osg::LineWidth(getEnvFloat("OPENMW_FNV_VR_HAND_WIREFRAME_WIDTH", 4.f)),
                 osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
         }
+    }
+
+    void applyRetailPanelHandOverlayState(osg::StateSet& stateSet)
+    {
+        if (getEnvFloat("OPENMW_FNVXR_RETAIL_HANDS_OVER_PANEL", 1.f) == 0.f)
+            return;
+
+        stateSet.setMode(GL_DEPTH_TEST, osg::StateAttribute::OFF | osg::StateAttribute::OVERRIDE);
+        stateSet.setRenderBinDetails(1100, "RenderBin");
     }
 
     osg::Vec4f getFingerWeightDebugColor(float thumb, float index, float grip)
@@ -3939,16 +3952,21 @@ namespace MWVR
 
     VRAnimation::~VRAnimation()
     {
-        clearFalloutVrHandSurfaces();
+        clearFalloutVrHandSurfaces(true);
     }
 
     void VRAnimation::setViewMode(NpcAnimation::ViewMode viewMode)
     {
         if (viewMode != VM_VRFirstPerson && viewMode != VM_VRNormal)
         {
-            clearFalloutVrHandSurfaces();
-            NpcAnimation::setViewMode(viewMode);
-            return;
+            static int sLoggedCoerce = 0;
+            if (sLoggedCoerce < 24)
+            {
+                ++sLoggedCoerce;
+                Log(Debug::Warning)
+                    << "FNV/ESM4 diag: coerced non-VR player view mode to VM_VRFirstPerson to keep VR hands";
+            }
+            viewMode = VM_VRFirstPerson;
         }
         NpcAnimation::setViewMode(viewMode);
         return;
@@ -3957,7 +3975,8 @@ namespace MWVR
     void VRAnimation::updateParts()
     {
         NpcAnimation::updateParts();
-        clearFalloutVrHandSurfaces();
+        if (!FNVXRLiveFrameSurface::instance().visible())
+            clearFalloutVrHandSurfaces();
 
         if (mViewMode == VM_VRFirstPerson)
         {
@@ -4008,15 +4027,24 @@ namespace MWVR
                         && left.source == right.source && left.left == right.left;
                 });
 
-        clearFalloutVrHandSurfaces();
-        if (!sameSurfaces)
-            mFalloutVrHandSurfaces = std::move(surfaces);
+        if (sameSurfaces)
+        {
+            attachFalloutVrHandSurfaces();
+            updateTrackingControllers();
+            return;
+        }
+
+        clearFalloutVrHandSurfaces(true);
+        mFalloutVrHandSurfaces = std::move(surfaces);
         attachFalloutVrHandSurfaces();
         updateTrackingControllers();
     }
 
-    void VRAnimation::clearFalloutVrHandSurfaces()
+    void VRAnimation::clearFalloutVrHandSurfaces(bool force)
     {
+        if (!force && FNVXRLiveFrameSurface::instance().visible())
+            return;
+
         int parentLinksRemoved = 0;
         for (const osg::ref_ptr<osg::Node>& node : mFalloutVrHandSurfaceNodes)
         {
@@ -4045,7 +4073,7 @@ namespace MWVR
         if (mViewMode != VM_VRFirstPerson)
             return;
 
-        if (MWBase::Environment::get().getWindowManager()->isGuiMode())
+        if (MWBase::Environment::get().getWindowManager()->isGuiMode() && !FNVXRLiveFrameSurface::instance().visible())
             return;
 
         if (mFalloutVrHandSurfacesAttached || mFalloutVrHandSurfaces.empty() || mObjectRoot == nullptr)
@@ -4754,7 +4782,8 @@ namespace MWVR
     void VRAnimation::updateFalloutVrHandSurfaceVisibility()
     {
         const bool shouldRenderHands = mViewMode == VM_VRFirstPerson
-            && !MWBase::Environment::get().getWindowManager()->isGuiMode();
+            && (!MWBase::Environment::get().getWindowManager()->isGuiMode()
+                || FNVXRLiveFrameSurface::instance().visible());
         if (!shouldRenderHands)
         {
             if (mFalloutVrHandSurfacesAttached || !mFalloutVrHandSurfaceNodes.empty())
@@ -5035,7 +5064,19 @@ namespace MWVR
         for (auto& it : mVrControllers)
         {
             disableTracking(it.second.topLevelPath);
-            if (VR::getControllerActive(it.second.topLevelPath))
+            const bool controllerActive = VR::getControllerActive(it.second.topLevelPath);
+            const bool trackingSpaceAvailable = OpenXRInput::instance().getSpace(it.second.spaceName) != nullptr;
+            static int sLoggedControllerState = 0;
+            if (sLoggedControllerState < 24)
+            {
+                ++sLoggedControllerState;
+                Log(Debug::Warning) << "FNV/ESM4 diag: VR controller tracking gate hand="
+                                    << (it.second.handBone.find(" L ") != std::string::npos ? "left" : "right")
+                                    << " active=" << controllerActive
+                                    << " trackingSpaceAvailable=" << trackingSpaceAvailable
+                                    << " space=" << it.second.spaceName;
+            }
+            if (controllerActive || trackingSpaceAvailable)
                 enableTracking(it.second.topLevelPath);
         }
 

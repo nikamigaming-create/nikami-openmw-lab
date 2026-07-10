@@ -3,6 +3,33 @@
 namespace Nif
 {
 
+    void SkinAttach::read(NIFStream* nif)
+    {
+        Extra::read(nif);
+
+        nif->getSizedStrings(mBones, nif->get<uint32_t>());
+    }
+
+    void BoneTranslations::Translation::read(NIFStream* nif)
+    {
+        mBone = nif->getSizedString();
+        nif->read(mTranslation);
+    }
+
+    void BoneTranslations::read(NIFStream* nif)
+    {
+        Extra::read(nif);
+
+        mTranslations.resize(nif->get<uint32_t>());
+        for (Translation& translation : mTranslations)
+            translation.read(nif);
+    }
+
+    void StarfieldNamedRecord::read(NIFStream* nif)
+    {
+        nif->read(mName);
+    }
+
     void NiExtraData::read(NIFStream* nif)
     {
         Extra::read(nif);

@@ -15,6 +15,7 @@ namespace MWRender
     public:
         ESM4NpcAnimation(
             const MWWorld::Ptr& ptr, osg::ref_ptr<osg::Group> parentNode, Resource::ResourceSystem* resourceSystem);
+        osg::Vec3f runAnimation(float duration) override;
 
     private:
         osg::ref_ptr<osg::Node> insertPart(
@@ -29,6 +30,7 @@ namespace MWRender
         void updatePartsTES4(const ESM4::Npc& traits);
         void updatePartsFONV(const ESM4::Npc& traits);
         void updatePartsTES5(const ESM4::Npc& traits);
+        void applyPostManualFalloutActorPose() override;
     };
 }
 

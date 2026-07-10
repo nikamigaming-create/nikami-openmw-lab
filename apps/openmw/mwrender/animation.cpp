@@ -6,6 +6,7 @@
 #include <iomanip>
 #include <limits>
 #include <sstream>
+#include <string_view>
 #include <typeinfo>
 #include <unordered_map>
 #include <unordered_set>
@@ -13,6 +14,7 @@
 
 #include <osg/BlendFunc>
 #include <osg/ComputeBoundsVisitor>
+#include <osg/FrameStamp>
 #include <osg/Geode>
 #include <osg/LightModel>
 #include <osg/Material>
@@ -21,6 +23,8 @@
 
 #include <osgParticle/ParticleProcessor>
 #include <osgParticle/ParticleSystem>
+
+#include <osgUtil/UpdateVisitor>
 
 #include <osgAnimation/Bone>
 #include <osgAnimation/UpdateBone>
@@ -40,6 +44,7 @@
 #include <components/esm3/loadrace.hpp>
 #include <components/esm4/loadcrea.hpp>
 #include <components/esm4/loadligh.hpp>
+#include <components/esm4/loadnpc.hpp>
 
 #include <components/misc/constants.hpp>
 #include <components/misc/pathhelpers.hpp>
@@ -229,6 +234,24 @@ namespace
         return isFalloutNpc(ptr) || isFalloutCreature(ptr);
     }
 
+    bool isFalloutNpcAnimationContext(const MWWorld::Ptr& ptr)
+    {
+        if (ptr.getType() != ESM::REC_NPC_4)
+            return false;
+
+        const MWWorld::LiveCellRef<ESM4::Npc>* ref = ptr.get<ESM4::Npc>();
+        return ref != nullptr && ref->mBase != nullptr && ref->mBase->mIsFONV;
+    }
+
+    bool isFallout3NpcAnimationContext(const MWWorld::Ptr& ptr)
+    {
+        if (ptr.getType() != ESM::REC_NPC_4)
+            return false;
+
+        const MWWorld::LiveCellRef<ESM4::Npc>* ref = ptr.get<ESM4::Npc>();
+        return ref != nullptr && ref->mBase != nullptr && ref->mBase->mIsFO3;
+    }
+
     float matrixDifference(const osg::Matrixf& left, const osg::Matrixf& right)
     {
         float result = 0.f;
@@ -237,6 +260,55 @@ namespace
         for (int i = 0; i < 16; ++i)
             result = std::max(result, std::abs(leftPtr[i] - rightPtr[i]));
         return result;
+    }
+
+    bool isFiniteFalloutAuditVec3(const osg::Vec3f& value)
+    {
+        return std::isfinite(value.x()) && std::isfinite(value.y()) && std::isfinite(value.z());
+    }
+
+    bool isFiniteFalloutAuditMatrix(const osg::Matrix& matrix)
+    {
+        const auto* values = matrix.ptr();
+        for (int i = 0; i < 16; ++i)
+        {
+            if (!std::isfinite(values[i]) || std::abs(values[i]) > 1000000000.0)
+                return false;
+        }
+        return true;
+    }
+
+    bool isFalloutSyntheticAttachmentHelperName(std::string_view lowerName)
+    {
+        return lowerName == "weapon" || lowerName == "torch" || lowerName == "sideweapon"
+            || lowerName == "backweapon" || lowerName == "quiver";
+    }
+
+    bool isFalloutSyntheticAttachmentHelperNode(const osg::Node* node)
+    {
+        if (node == nullptr)
+            return false;
+
+        int syntheticHelper = 0;
+        return node->getUserValue("esm4SyntheticAttachmentHelper", syntheticHelper) && syntheticHelper != 0;
+    }
+
+    bool shouldSkipFalloutSyntheticAttachmentHelperControllers(const MWWorld::Ptr& ptr)
+    {
+        if (const char* env = std::getenv("OPENMW_ESM4_SKIP_SYNTHETIC_ATTACHMENT_HELPER_CONTROLLERS"))
+            return std::string_view(env) != "0";
+        if (const char* env = std::getenv("OPENMW_FNV_SKIP_SYNTHETIC_ATTACHMENT_HELPER_CONTROLLERS"))
+            return std::string_view(env) != "0";
+        return isFalloutNpcAnimationContext(ptr);
+    }
+
+    bool shouldEnableFalloutWeaponIdlePose(const MWWorld::Ptr& ptr)
+    {
+        if (const char* env = std::getenv("OPENMW_ESM4_ENABLE_WEAPON_IDLE_POSE"))
+            return std::string_view(env) != "0";
+        if (const char* env = std::getenv("OPENMW_FNV_ENABLE_WEAPON_IDLE_POSE"))
+            return std::string_view(env) != "0";
+        return false;
     }
 
     class FalloutTransformTargetVisitor : public osg::NodeVisitor
@@ -464,12 +536,16 @@ namespace
         std::size_t mBoneCount = 0;
         bool mRenderValid = false;
         bool mSourceValid = false;
+        bool mLiveValid = false;
         osg::Vec3f mRenderCenterParentWorld;
         osg::Vec3f mRenderCenterPathWorld;
         osg::Vec3f mSourceCenterParentWorld;
         osg::Vec3f mSourceCenterPathWorld;
+        osg::Vec3f mLiveCenterParentWorld;
+        osg::Vec3f mLiveCenterPathWorld;
         osg::Vec3f mRenderExtent;
         osg::Vec3f mSourceExtent;
+        osg::Vec3f mLiveExtent;
     };
 
     bool isFalloutHandGeometrySampleName(const std::string& name, const std::string& rootBone = std::string())
@@ -532,7 +608,7 @@ namespace
                 sample.mRootBone = std::string(rig->getRootBone());
                 sample.mBoneCount = rig->getBoneCount();
 
-                if (osg::Geometry* renderGeometry = rig->getRenderGeometry(0))
+                if (osg::Geometry* renderGeometry = rig->getLastFrameGeometry())
                 {
                     const osg::BoundingBox box = renderGeometry->getBoundingBox();
                     sample.mRenderValid = box.valid();
@@ -542,6 +618,14 @@ namespace
                         sample.mRenderCenterParentWorld = transformFalloutPoint(box.center(), mPartParentWorld);
                         sample.mRenderCenterPathWorld = transformFalloutPoint(box.center(), localToWorld);
                     }
+                }
+                osg::BoundingBox liveBox;
+                if (rig->computeCurrentFalloutSkinningBounds(this, liveBox))
+                {
+                    sample.mLiveValid = true;
+                    sample.mLiveExtent = falloutBoundingBoxExtent(liveBox);
+                    sample.mLiveCenterParentWorld = transformFalloutPoint(liveBox.center(), mPartParentWorld);
+                    sample.mLiveCenterPathWorld = transformFalloutPoint(liveBox.center(), localToWorld);
                 }
 
                 osg::ref_ptr<osg::Geometry> sourceGeometry = rig->getSourceGeometry();
@@ -578,7 +662,7 @@ namespace
             sample.mRootBone = std::string(rig->getRootBone());
             sample.mBoneCount = rig->getBoneCount();
 
-            if (osg::Geometry* renderGeometry = rig->getRenderGeometry(0))
+            if (osg::Geometry* renderGeometry = rig->getLastFrameGeometry())
             {
                 const osg::BoundingBox box = renderGeometry->getBoundingBox();
                 sample.mRenderValid = box.valid();
@@ -588,6 +672,14 @@ namespace
                     sample.mRenderCenterParentWorld = transformFalloutPoint(box.center(), mPartParentWorld);
                     sample.mRenderCenterPathWorld = transformFalloutPoint(box.center(), localToWorld);
                 }
+            }
+            osg::BoundingBox liveBox;
+            if (rig->computeCurrentFalloutSkinningBounds(this, liveBox))
+            {
+                sample.mLiveValid = true;
+                sample.mLiveExtent = falloutBoundingBoxExtent(liveBox);
+                sample.mLiveCenterParentWorld = transformFalloutPoint(liveBox.center(), mPartParentWorld);
+                sample.mLiveCenterPathWorld = transformFalloutPoint(liveBox.center(), localToWorld);
             }
 
             osg::ref_ptr<osg::Geometry> sourceGeometry = rig->getSourceGeometry();
@@ -656,7 +748,7 @@ namespace
                 sample.mRootBone = rootBone;
                 sample.mBoneCount = rig->getBoneCount();
 
-                if (osg::Geometry* renderGeometry = rig->getRenderGeometry(0))
+                if (osg::Geometry* renderGeometry = rig->getLastFrameGeometry())
                 {
                     const osg::BoundingBox box = renderGeometry->getBoundingBox();
                     sample.mRenderValid = box.valid();
@@ -665,6 +757,13 @@ namespace
                         sample.mRenderExtent = falloutBoundingBoxExtent(box);
                         sample.mRenderCenterPathWorld = transformFalloutPoint(box.center(), localToWorld);
                     }
+                }
+                osg::BoundingBox liveBox;
+                if (rig->computeCurrentFalloutSkinningBounds(this, liveBox))
+                {
+                    sample.mLiveValid = true;
+                    sample.mLiveExtent = falloutBoundingBoxExtent(liveBox);
+                    sample.mLiveCenterPathWorld = transformFalloutPoint(liveBox.center(), localToWorld);
                 }
 
                 osg::ref_ptr<osg::Geometry> sourceGeometry = rig->getSourceGeometry();
@@ -753,7 +852,7 @@ namespace
             sample.mRootBone = rootBone;
             sample.mBoneCount = rig->getBoneCount();
 
-            if (osg::Geometry* renderGeometry = rig->getRenderGeometry(0))
+            if (osg::Geometry* renderGeometry = rig->getLastFrameGeometry())
             {
                 const osg::BoundingBox box = renderGeometry->getBoundingBox();
                 sample.mRenderValid = box.valid();
@@ -762,6 +861,13 @@ namespace
                     sample.mRenderExtent = falloutBoundingBoxExtent(box);
                     sample.mRenderCenterPathWorld = transformFalloutPoint(box.center(), localToWorld);
                 }
+            }
+            osg::BoundingBox liveBox;
+            if (rig->computeCurrentFalloutSkinningBounds(this, liveBox))
+            {
+                sample.mLiveValid = true;
+                sample.mLiveExtent = falloutBoundingBoxExtent(liveBox);
+                sample.mLiveCenterPathWorld = transformFalloutPoint(liveBox.center(), localToWorld);
             }
 
             osg::ref_ptr<osg::Geometry> sourceGeometry = rig->getSourceGeometry();
@@ -1404,11 +1510,41 @@ namespace
         return hip + hipToFoot * along + perpendicular * height;
     }
 
+    bool shouldApplyFalloutSeatedHumanIk()
+    {
+        if (const char* env = std::getenv("OPENMW_FNV_SEATED_HUMAN_IK"))
+            return std::string_view(env) != "0";
+        return false;
+    }
+
+    bool shouldApplyFalloutStandingLegIk(const MWWorld::Ptr& ptr)
+    {
+        if (const char* env = std::getenv("OPENMW_ESM4_STANDING_LEG_IK"))
+            return std::string_view(env) != "0";
+        if (const char* env = std::getenv("OPENMW_FNV_STANDING_LEG_IK"))
+            return std::string_view(env) != "0";
+        return false;
+    }
+
+    bool shouldApplyFalloutStandingArmIk(const MWWorld::Ptr& /*ptr*/)
+    {
+        if (const char* env = std::getenv("OPENMW_ESM4_STANDING_ARM_IK"))
+            return std::string_view(env) != "0";
+        if (const char* env = std::getenv("OPENMW_FNV_STANDING_ARM_IK"))
+            return std::string_view(env) != "0";
+        return false;
+    }
+
     bool applyFalloutSeatedHumanIk(
         const std::unordered_map<std::string, std::vector<osg::MatrixTransform*>>& targets, const MWWorld::Ptr& ptr)
     {
-        if (std::getenv("OPENMW_FNV_SEATED_HUMAN_IK") == nullptr)
+        const bool seatedIk = shouldApplyFalloutSeatedHumanIk();
+        const bool standingLegIk = shouldApplyFalloutStandingLegIk(ptr);
+        const bool standingArmIk = shouldApplyFalloutStandingArmIk(ptr);
+        const bool legIk = seatedIk || standingLegIk;
+        if (!seatedIk && !standingLegIk && !standingArmIk)
             return false;
+        const char* ikMode = standingLegIk ? "standing-leg" : standingArmIk ? "standing-arm" : "seated-human";
 
         const auto requireBone = [&](const std::string& bone, osg::Vec3f& value) {
             osg::MatrixTransform* node = findFalloutTarget(targets, bone);
@@ -1425,6 +1561,8 @@ namespace
         osg::Vec3f rightKnee;
         osg::Vec3f leftFoot;
         osg::Vec3f rightFoot;
+        osg::Vec3f leftHip;
+        osg::Vec3f rightHip;
         osg::Vec3f leftShoulder;
         osg::Vec3f rightShoulder;
         osg::Vec3f leftElbow;
@@ -1436,8 +1574,8 @@ namespace
                 && requireBone("bip01 r calf", rightKnee) && requireBone("bip01 l foot", leftFoot)
                 && requireBone("bip01 r foot", rightFoot)))
         {
-            Log(Debug::Warning) << "FNV/ESM4 diag: seated human IK " << ptr.getCellRef().getRefId()
-                                << " verdict=BAD reason=missing_bone";
+            Log(Debug::Warning) << "FNV/ESM4 diag: human IK mode=" << ikMode << " "
+                                << ptr.getCellRef().getRefId() << " verdict=BAD reason=missing_bone";
             return false;
         }
 
@@ -1447,36 +1585,59 @@ namespace
         lateral.z() = 0.f;
         lateral = normalizedOr(lateral, osg::Vec3f(-forward.y(), forward.x(), 0.f));
         const osg::Vec3f up(0.f, 0.f, 1.f);
+        const bool hasHipRoots = requireBone("bip01 l thigh", leftHip) && requireBone("bip01 r thigh", rightHip);
 
         const float leftThighLength = std::clamp((leftKnee - pelvis).length(), 18.f, 42.f);
         const float rightThighLength = std::clamp((rightKnee - pelvis).length(), 18.f, 42.f);
         const float leftCalfLength = std::clamp((leftFoot - leftKnee).length(), 18.f, 42.f);
         const float rightCalfLength = std::clamp((rightFoot - rightKnee).length(), 18.f, 42.f);
-        const float kneeForward = std::clamp(
-            (osg::Vec2f(leftKnee.x() - pelvis.x(), leftKnee.y() - pelvis.y()).length()
-                + osg::Vec2f(rightKnee.x() - pelvis.x(), rightKnee.y() - pelvis.y()).length())
-                * 0.5f,
-            22.f, 34.f);
-        const float side = std::clamp((rightKnee - leftKnee).length() * 0.25f, 5.f, 10.f);
-        const float footForward = kneeForward + 4.f;
-        const float footDrop = std::clamp(
-            (pelvis.z() - leftFoot.z() + pelvis.z() - rightFoot.z()) * 0.5f, 24.f, 42.f);
+        const float sourceFootDrop = (pelvis.z() - leftFoot.z() + pelvis.z() - rightFoot.z()) * 0.5f;
+        const float standingLegLength
+            = (leftThighLength + rightThighLength + leftCalfLength + rightCalfLength) * 0.5f;
+        const float kneeForward = standingLegIk
+            ? std::clamp(
+                (osg::Vec2f(leftKnee.x() - pelvis.x(), leftKnee.y() - pelvis.y()).length()
+                    + osg::Vec2f(rightKnee.x() - pelvis.x(), rightKnee.y() - pelvis.y()).length())
+                    * 0.18f,
+                3.f, 8.f)
+            : std::clamp(
+                (osg::Vec2f(leftKnee.x() - pelvis.x(), leftKnee.y() - pelvis.y()).length()
+                    + osg::Vec2f(rightKnee.x() - pelvis.x(), rightKnee.y() - pelvis.y()).length())
+                    * 0.5f,
+                22.f, 34.f);
+        const float side = standingLegIk && hasHipRoots ? std::clamp((rightHip - leftHip).length() * 0.5f, 4.f, 11.f)
+                                                        : std::clamp((rightKnee - leftKnee).length() * 0.25f, 5.f, 10.f);
+        const float footForward = standingLegIk ? std::clamp(kneeForward * 0.35f, 1.5f, 4.f) : kneeForward + 4.f;
+        const float footDrop = standingLegIk ? std::clamp(std::max(sourceFootDrop, standingLegLength * 0.92f), 54.f, 68.f)
+                                             : std::clamp(sourceFootDrop, 24.f, 42.f);
         const float footZ = pelvis.z() - footDrop;
 
-        const osg::Vec3f leftFootTarget = pelvis + forward * footForward - lateral * side - up * footDrop;
-        const osg::Vec3f rightFootTarget = osg::Vec3f(
-            pelvis.x() + forward.x() * footForward + lateral.x() * side,
-            pelvis.y() + forward.y() * footForward + lateral.y() * side,
-            footZ);
+        const osg::Vec3f leftHipBase = hasHipRoots ? leftHip : pelvis - lateral * side;
+        const osg::Vec3f rightHipBase = hasHipRoots ? rightHip : pelvis + lateral * side;
+        const osg::Vec3f leftFootTarget = standingLegIk
+            ? osg::Vec3f(leftHipBase.x() + forward.x() * footForward,
+                leftHipBase.y() + forward.y() * footForward, footZ)
+            : pelvis + forward * footForward - lateral * side - up * footDrop;
+        const osg::Vec3f rightFootTarget = standingLegIk
+            ? osg::Vec3f(rightHipBase.x() + forward.x() * footForward,
+                rightHipBase.y() + forward.y() * footForward, footZ)
+            : osg::Vec3f(pelvis.x() + forward.x() * footForward + lateral.x() * side,
+                pelvis.y() + forward.y() * footForward + lateral.y() * side, footZ);
         const osg::Vec3f leftKneeTarget
-            = solveFalloutTwoBoneKnee(pelvis, leftFootTarget, leftThighLength, leftCalfLength, forward + up * 0.15f);
+            = solveFalloutTwoBoneKnee(leftHipBase, leftFootTarget, leftThighLength, leftCalfLength,
+                standingLegIk ? forward + up * 0.04f : forward + up * 0.15f);
         const osg::Vec3f rightKneeTarget
-            = solveFalloutTwoBoneKnee(pelvis, rightFootTarget, rightThighLength, rightCalfLength, forward + up * 0.15f);
+            = solveFalloutTwoBoneKnee(rightHipBase, rightFootTarget, rightThighLength, rightCalfLength,
+                standingLegIk ? forward + up * 0.04f : forward + up * 0.15f);
 
-        bool applied = setFalloutTargetsWorldOrigin(targets, "bip01 l calf", leftKneeTarget)
-            && setFalloutTargetsWorldOrigin(targets, "bip01 r calf", rightKneeTarget)
-            && setFalloutTargetsWorldOrigin(targets, "bip01 l foot", leftFootTarget)
-            && setFalloutTargetsWorldOrigin(targets, "bip01 r foot", rightFootTarget);
+        bool legTargetsApplied = false;
+        if (legIk)
+        {
+            legTargetsApplied = setFalloutTargetsWorldOrigin(targets, "bip01 l calf", leftKneeTarget)
+                && setFalloutTargetsWorldOrigin(targets, "bip01 r calf", rightKneeTarget)
+                && setFalloutTargetsWorldOrigin(targets, "bip01 l foot", leftFootTarget)
+                && setFalloutTargetsWorldOrigin(targets, "bip01 r foot", rightFootTarget);
+        }
 
         bool appliedUpper = false;
         if (requireBone("bip01 l upperarm", leftShoulder) && requireBone("bip01 r upperarm", rightShoulder)
@@ -1494,6 +1655,10 @@ namespace
             osg::Vec3f leftHandTarget = leftElbowTarget + forward * 5.f + lateral * 5.f - up * 15.f;
             osg::Vec3f rightHandTarget = rightElbowTarget + forward * 5.f - lateral * 5.f - up * 15.f;
             const osg::Vec3f headTarget(head.x(), head.y(), targetShoulderZ + 10.f);
+            const float targetUpperLength = std::clamp(
+                ((leftElbow - leftShoulder).length() + (rightElbow - rightShoulder).length()) * 0.5f, 12.f, 22.f);
+            const float targetLowerLength
+                = std::clamp(((leftHand - leftElbow).length() + (rightHand - rightElbow).length()) * 0.5f, 12.f, 22.f);
 
             if (osg::MatrixTransform* root = findFalloutTarget(targets, "bip01"))
             {
@@ -1512,11 +1677,6 @@ namespace
                         return transformFalloutPoint(local, rootToWorld);
                     };
 
-                    const float targetUpperLength = std::clamp(
-                        ((leftElbow - leftShoulder).length() + (rightElbow - rightShoulder).length()) * 0.5f, 12.f,
-                        22.f);
-                    const float targetLowerLength = std::clamp(
-                        ((leftHand - leftElbow).length() + (rightHand - rightElbow).length()) * 0.5f, 12.f, 22.f);
                     float bestScore = std::numeric_limits<float>::max();
                     osg::Vec3f bestLeftElbow = leftElbowTarget;
                     osg::Vec3f bestLeftHand = leftHandTarget;
@@ -1579,12 +1739,28 @@ namespace
                 }
             }
 
-            // Do not apply upper-body origin targets. They can satisfy simple joint-position audits while breaking
-            // the skinned hierarchy visually. Upper-body correction needs rotation-space constraints.
-            appliedUpper = true;
+            if (standingArmIk)
+            {
+                leftShoulderTarget = leftShoulder;
+                rightShoulderTarget = rightShoulder;
+                const float shoulderWidth = (rightShoulderTarget - leftShoulderTarget).length();
+                const float armDrop = std::clamp(shoulderMid.z() - pelvis.z() - 1.5f, 26.f, 36.f);
+                const float handSide = std::clamp(shoulderWidth * 0.12f, 2.5f, 5.0f);
+                const float handForward = 2.5f;
+                leftHandTarget = leftShoulderTarget + forward * handForward - lateral * handSide - up * armDrop;
+                rightHandTarget = rightShoulderTarget + forward * handForward + lateral * handSide - up * armDrop;
+                leftElbowTarget = solveFalloutTwoBoneKnee(leftShoulderTarget, leftHandTarget, targetUpperLength,
+                    targetLowerLength, forward - lateral * 0.35f - up * 0.05f);
+                rightElbowTarget = solveFalloutTwoBoneKnee(rightShoulderTarget, rightHandTarget, targetUpperLength,
+                    targetLowerLength, forward + lateral * 0.35f - up * 0.05f);
+
+                // Upper-body actor repair must be applied as bone rotations. Writing world-space origins here
+                // can make telemetry look better while detaching the skinned limb chain.
+                appliedUpper = false;
+            }
 
             Log(appliedUpper ? Debug::Info : Debug::Warning)
-                << "FNV/ESM4 diag: seated human IK upper " << ptr.getCellRef().getRefId()
+                << "FNV/ESM4 diag: human IK upper mode=" << ikMode << " " << ptr.getCellRef().getRefId()
                 << " shoulderMidBefore=" << formatFalloutAuditVec3(shoulderMid)
                 << " shoulderDz=" << shoulderDz
                 << " leftShoulderTarget=" << formatFalloutAuditVec3(leftShoulderTarget)
@@ -1594,12 +1770,14 @@ namespace
                 << " leftHandTarget=" << formatFalloutAuditVec3(leftHandTarget)
                 << " rightHandTarget=" << formatFalloutAuditVec3(rightHandTarget)
                 << " headTarget=" << formatFalloutAuditVec3(headTarget)
-                << " applied=0 reason=rotation_space_required"
+                << " applied=" << (appliedUpper ? 1 : 0)
+                << " reason=" << (appliedUpper ? "standing_arm_ik" : "rotation_space_required")
                 << " verdict=" << (appliedUpper ? "OK" : "BAD");
         }
 
-        Log(applied ? Debug::Info : Debug::Warning)
-            << "FNV/ESM4 diag: seated human IK " << ptr.getCellRef().getRefId()
+        const bool overallApplied = legIk ? legTargetsApplied : appliedUpper;
+        Log(overallApplied ? Debug::Info : Debug::Warning)
+            << "FNV/ESM4 diag: human IK mode=" << ikMode << " " << ptr.getCellRef().getRefId()
             << " pelvis=" << formatFalloutAuditVec3(pelvis)
             << " forward=" << formatFalloutAuditVec3(forward)
             << " lateral=" << formatFalloutAuditVec3(lateral)
@@ -1607,13 +1785,20 @@ namespace
             << " rightKneeBefore=" << formatFalloutAuditVec3(rightKnee)
             << " leftFootBefore=" << formatFalloutAuditVec3(leftFoot)
             << " rightFootBefore=" << formatFalloutAuditVec3(rightFoot)
+            << " leftHipBase=" << formatFalloutAuditVec3(leftHipBase)
+            << " rightHipBase=" << formatFalloutAuditVec3(rightHipBase)
+            << " sourceFootDrop=" << sourceFootDrop
+            << " footDrop=" << footDrop
+            << " kneeForward=" << kneeForward
+            << " footForward=" << footForward
             << " leftKneeTarget=" << formatFalloutAuditVec3(leftKneeTarget)
             << " rightKneeTarget=" << formatFalloutAuditVec3(rightKneeTarget)
             << " leftFootTarget=" << formatFalloutAuditVec3(leftFootTarget)
             << " rightFootTarget=" << formatFalloutAuditVec3(rightFootTarget)
             << " upperApplied=" << appliedUpper
-            << " verdict=" << (applied ? "OK" : "BAD");
-        return applied;
+            << " legApplied=" << legTargetsApplied
+            << " verdict=" << (overallApplied ? "OK" : "BAD");
+        return overallApplied;
     }
 
     bool auditFalloutWorldPosture(
@@ -1690,6 +1875,114 @@ namespace
         return !bad;
     }
 
+    bool shouldAuditFalloutStandingUpperBody()
+    {
+        return std::getenv("OPENMW_ESM4_STANDING_UPPER_AUDIT") != nullptr
+            || std::getenv("OPENMW_FNV_STANDING_UPPER_AUDIT") != nullptr;
+    }
+
+    bool auditFalloutStandingUpperBody(
+        const std::unordered_map<std::string, std::vector<osg::MatrixTransform*>>& targets, const MWWorld::Ptr& ptr)
+    {
+        const auto requireBone = [&](std::initializer_list<std::string_view> bones, osg::Vec3f& value) {
+            osg::MatrixTransform* node = findFalloutTargetAny(targets, bones);
+            if (node == nullptr)
+                return false;
+            value = transformFalloutPoint(osg::Vec3f(), getFalloutNodeWorldMatrix(node));
+            return true;
+        };
+
+        osg::Vec3f pelvis;
+        osg::Vec3f leftShoulder;
+        osg::Vec3f rightShoulder;
+        osg::Vec3f leftElbow;
+        osg::Vec3f rightElbow;
+        osg::Vec3f leftHand;
+        osg::Vec3f rightHand;
+        const bool hasRequired = requireBone({ "bip01 pelvis" }, pelvis)
+            && requireBone({ "bip01 l upperarm" }, leftShoulder)
+            && requireBone({ "bip01 r upperarm" }, rightShoulder)
+            && requireBone({ "bip01 l forearm" }, leftElbow)
+            && requireBone({ "bip01 r forearm" }, rightElbow)
+            && requireBone({ "bip01 l hand" }, leftHand)
+            && requireBone({ "bip01 r hand" }, rightHand);
+        if (!hasRequired)
+        {
+            Log(Debug::Warning) << "FNV/ESM4 diag: standing upper body audit " << ptr.getCellRef().getRefId()
+                                << " verdict=BAD reason=missing_bone";
+            return false;
+        }
+
+        const osg::Vec3f shoulderMid = (leftShoulder + rightShoulder) * 0.5f;
+        const osg::Vec3f handMid = (leftHand + rightHand) * 0.5f;
+        const float shoulderSpan = (leftShoulder - rightShoulder).length();
+        const float handSpan = (leftHand - rightHand).length();
+        const float elbowSpan = (leftElbow - rightElbow).length();
+        const float handSpreadRatio = handSpan / std::max(1.f, shoulderSpan);
+        const float leftShoulderToHand = (leftHand - leftShoulder).length();
+        const float rightShoulderToHand = (rightHand - rightShoulder).length();
+        const float leftUpperLength = (leftElbow - leftShoulder).length();
+        const float rightUpperLength = (rightElbow - rightShoulder).length();
+        const float leftForearmLength = (leftHand - leftElbow).length();
+        const float rightForearmLength = (rightHand - rightElbow).length();
+        const float handMidDrop = shoulderMid.z() - handMid.z();
+        const float leftHandDrop = leftShoulder.z() - leftHand.z();
+        const float rightHandDrop = rightShoulder.z() - rightHand.z();
+        const float handMidPelvisZ = handMid.z() - pelvis.z();
+        const float minWeaponHandSpan = std::max(18.f, shoulderSpan * 0.65f);
+        const bool chestLevelHands = handMidDrop >= 8.f && handMidDrop <= 28.f && handMidPelvisZ > 6.f;
+        const bool badTightHands = chestLevelHands && handSpan < minWeaponHandSpan;
+        const bool badWideHands = handSpan > std::max(62.f, shoulderSpan * 2.25f);
+        const bool badWideElbows = elbowSpan > std::max(58.f, shoulderSpan * 2.1f);
+        const bool aimLikeHands = handSpan <= std::max(42.f, shoulderSpan * 1.45f)
+            && elbowSpan <= std::max(38.f, shoulderSpan * 1.65f);
+        const bool badHighHands = handMidDrop < -40.f || (!aimLikeHands && handMidDrop < 8.f);
+        const bool badCollapsed
+            = leftUpperLength < 6.f || rightUpperLength < 6.f || leftForearmLength < 6.f || rightForearmLength < 6.f;
+        const bool badArmStretch
+            = leftUpperLength > 34.f || rightUpperLength > 34.f || leftForearmLength > 34.f || rightForearmLength > 34.f
+            || leftShoulderToHand > 55.f || rightShoulderToHand > 55.f;
+        const bool badAsymmetry = std::abs(leftShoulderToHand - rightShoulderToHand) > 18.f;
+        const bool bad = badWideHands || badTightHands || badWideElbows || badHighHands || badCollapsed
+            || badArmStretch || badAsymmetry;
+        const char* reason = badWideHands ? "hand_span"
+            : badTightHands              ? "hand_collapse"
+            : badWideElbows               ? "elbow_span"
+            : badHighHands                ? "hand_height"
+            : badCollapsed                ? "arm_collapse"
+            : badArmStretch               ? "arm_stretch"
+            : badAsymmetry                ? "arm_asymmetry"
+                                          : "ok";
+
+        Log(bad ? Debug::Warning : Debug::Info)
+            << "FNV/ESM4 diag: standing upper body audit " << ptr.getCellRef().getRefId()
+            << " pelvis=" << formatFalloutAuditVec3(pelvis)
+            << " leftShoulder=" << formatFalloutAuditVec3(leftShoulder)
+            << " rightShoulder=" << formatFalloutAuditVec3(rightShoulder)
+            << " leftElbow=" << formatFalloutAuditVec3(leftElbow)
+            << " rightElbow=" << formatFalloutAuditVec3(rightElbow)
+            << " leftHand=" << formatFalloutAuditVec3(leftHand)
+            << " rightHand=" << formatFalloutAuditVec3(rightHand)
+            << " shoulderSpan=" << shoulderSpan
+            << " elbowSpan=" << elbowSpan
+            << " handSpan=" << handSpan
+            << " handSpreadRatio=" << handSpreadRatio
+            << " leftShoulderToHand=" << leftShoulderToHand
+            << " rightShoulderToHand=" << rightShoulderToHand
+            << " leftUpperLength=" << leftUpperLength
+            << " rightUpperLength=" << rightUpperLength
+            << " leftForearmLength=" << leftForearmLength
+            << " rightForearmLength=" << rightForearmLength
+            << " handMidDrop=" << handMidDrop
+            << " leftHandDrop=" << leftHandDrop
+            << " rightHandDrop=" << rightHandDrop
+            << " handMidPelvisZ=" << handMidPelvisZ
+            << " minWeaponHandSpan=" << minWeaponHandSpan
+            << " chestLevelHands=" << chestLevelHands
+            << " verdict=" << (bad ? "BAD" : "OK") << " reason=" << reason;
+        return !bad;
+    }
+
     bool shouldAuditGenericProofPosture(const MWWorld::Ptr& ptr)
     {
         const char* target = std::getenv("OPENMW_PROOF_POSTURE_TARGET");
@@ -1754,6 +2047,8 @@ namespace
                                     : "");
         auditFalloutSkeletonBounds(targets, ptr);
         auditFalloutWorldPosture(targets, ptr);
+        if (shouldAuditFalloutStandingUpperBody())
+            auditFalloutStandingUpperBody(targets, ptr);
         auditFalloutMirrorSymmetry(targets, ptr);
         if (std::getenv("OPENMW_PROOF_POSTURE_SEATED") != nullptr)
         {
@@ -1865,13 +2160,108 @@ namespace
                          << " anchorWorldQuat=" << formatFalloutAuditQuat(anchorWorldQuat)
                          << " partInAnchorQuat=" << formatFalloutAuditQuat(partInAnchorQuat)
                          << " anchorAngleDeg=" << anchorAngle
+                         << " finiteCenter=" << isFiniteFalloutAuditVec3(center)
+                         << " finiteAnchor=" << isFiniteFalloutAuditVec3(anchor)
+                         << " finitePartWorld=" << isFiniteFalloutAuditMatrix(partWorld)
+                         << " finiteParentWorld=" << isFiniteFalloutAuditMatrix(parentWorld)
+                         << " finiteAnchorWorld=" << isFiniteFalloutAuditMatrix(anchorWorld)
+                         << " finitePartInParent=" << isFiniteFalloutAuditMatrix(partInParent)
+                         << " finitePartInAnchor=" << isFiniteFalloutAuditMatrix(partInAnchor)
                          << " partHandedness=" << falloutMatrixBasisHandedness(partWorld)
                          << " anchorHandedness=" << falloutMatrixBasisHandedness(anchorWorld)
                          << (candidateDistances.empty() ? "" : " candidateTargets=") << candidateDistances;
     }
 
-    float auditFalloutRuntimeParts(osg::Group* objectRoot,
+    bool shouldAuditFalloutRootAttachment()
+    {
+        return std::getenv("OPENMW_FNV_ROOT_ATTACHMENT_AUDIT") != nullptr
+            || std::getenv("OPENMW_ESM4_ROOT_ATTACHMENT_AUDIT") != nullptr;
+    }
+
+    bool shouldAuditFalloutActorRenderLiveGeometry()
+    {
+        return std::getenv("OPENMW_WORLD_VIEWER_ACTOR_TELEMETRY") != nullptr
+            || std::getenv("OPENMW_ESM4_ROOT_ATTACHMENT_AUDIT") != nullptr
+            || std::getenv("OPENMW_ESM4_STANDING_UPPER_AUDIT") != nullptr
+            || std::getenv("OPENMW_FNV_PART_MATRIX_AUDIT") != nullptr;
+    }
+
+    osg::Vec3f falloutMatrixBasisRow(const osg::Matrix& matrix, int row)
+    {
+        return osg::Vec3f(matrix(row, 0), matrix(row, 1), matrix(row, 2));
+    }
+
+    void auditFalloutRootAttachmentFrame(osg::Group* objectRoot,
         const std::unordered_map<std::string, std::vector<osg::MatrixTransform*>>& targets, const MWWorld::Ptr& ptr)
+    {
+        if (!shouldAuditFalloutRootAttachment() || objectRoot == nullptr)
+            return;
+
+        static std::unordered_map<std::string, unsigned int> sRootAttachmentSamples;
+        const std::string refId = ptr.getCellRef().getRefId().serializeText();
+        unsigned int& samples = sRootAttachmentSamples[refId];
+        if (samples >= 6)
+            return;
+        ++samples;
+
+        osg::Node* bip01Node = findFalloutTarget(targets, "bip01");
+        osg::Node* pelvisNode = findFalloutTarget(targets, "bip01 pelvis");
+        osg::Node* spine2Node = findFalloutTarget(targets, "bip01 spine2");
+        osg::Node* headNode = findFalloutTarget(targets, "bip01 head");
+        osg::Node* leftFootNode = findFalloutTarget(targets, "bip01 l foot");
+        osg::Node* rightFootNode = findFalloutTarget(targets, "bip01 r foot");
+        osg::Node* leftHandNode = findFalloutTarget(targets, "bip01 l hand");
+        osg::Node* rightHandNode = findFalloutTarget(targets, "bip01 r hand");
+        osg::Node* weaponNode = findFalloutTarget(targets, "weapon");
+
+        const osg::Matrix rootWorld = getFalloutNodeWorldMatrix(objectRoot);
+        const osg::Matrix bip01World = getFalloutNodeWorldMatrix(bip01Node);
+        const osg::Vec3f root = transformFalloutPoint(osg::Vec3f(), rootWorld);
+        const osg::Vec3f bip01 = transformFalloutPoint(osg::Vec3f(), bip01World);
+        const osg::Vec3f pelvis = getFalloutTargetWorldOrigin(targets, "bip01 pelvis");
+        const osg::Vec3f spine2 = getFalloutTargetWorldOrigin(targets, "bip01 spine2");
+        const osg::Vec3f head = getFalloutTargetWorldOrigin(targets, "bip01 head");
+        const osg::Vec3f leftFoot = getFalloutTargetWorldOrigin(targets, "bip01 l foot");
+        const osg::Vec3f rightFoot = getFalloutTargetWorldOrigin(targets, "bip01 r foot");
+        const osg::Vec3f leftHand = getFalloutTargetWorldOrigin(targets, "bip01 l hand");
+        const osg::Vec3f rightHand = getFalloutTargetWorldOrigin(targets, "bip01 r hand");
+        const osg::Vec3f weapon = getFalloutTargetWorldOrigin(targets, "weapon");
+        const osg::Vec3f footMid = (leftFoot + rightFoot) * 0.5f;
+
+        Log(Debug::Info) << "FNV/ESM4 ACTOR ROOT ATTACHMENT AUDIT " << ptr.getCellRef().getRefId()
+                         << " sample=" << samples
+                         << " objectRoot='" << objectRoot->getName() << "'"
+                         << " targetCount=" << targets.size()
+                         << " hasBip01=" << (bip01Node != nullptr)
+                         << " hasPelvis=" << (pelvisNode != nullptr)
+                         << " hasSpine2=" << (spine2Node != nullptr)
+                         << " hasHead=" << (headNode != nullptr)
+                         << " hasLeftFoot=" << (leftFootNode != nullptr)
+                         << " hasRightFoot=" << (rightFootNode != nullptr)
+                         << " hasWeapon=" << (weaponNode != nullptr)
+                         << " root=" << formatFalloutAuditVec3(root)
+                         << " rootBasisX=" << formatFalloutAuditVec3(falloutMatrixBasisRow(rootWorld, 0))
+                         << " rootBasisY=" << formatFalloutAuditVec3(falloutMatrixBasisRow(rootWorld, 1))
+                         << " rootBasisZ=" << formatFalloutAuditVec3(falloutMatrixBasisRow(rootWorld, 2))
+                         << " rootHandedness=" << falloutMatrixBasisHandedness(rootWorld)
+                         << " bip01=" << formatFalloutAuditVec3(bip01)
+                         << " bip01BasisZ=" << formatFalloutAuditVec3(falloutMatrixBasisRow(bip01World, 2))
+                         << " pelvis=" << formatFalloutAuditVec3(pelvis)
+                         << " spine2=" << formatFalloutAuditVec3(spine2)
+                         << " head=" << formatFalloutAuditVec3(head)
+                         << " leftFoot=" << formatFalloutAuditVec3(leftFoot)
+                         << " rightFoot=" << formatFalloutAuditVec3(rightFoot)
+                         << " leftHand=" << formatFalloutAuditVec3(leftHand)
+                         << " rightHand=" << formatFalloutAuditVec3(rightHand)
+                         << " weapon=" << formatFalloutAuditVec3(weapon)
+                         << " headMinusPelvis=" << formatFalloutAuditVec3(head - pelvis)
+                         << " footMidMinusPelvis=" << formatFalloutAuditVec3(footMid - pelvis)
+                         << " rootMinusPelvis=" << formatFalloutAuditVec3(root - pelvis);
+    }
+
+    float auditFalloutRuntimeParts(osg::Group* objectRoot,
+        const std::unordered_map<std::string, std::vector<osg::MatrixTransform*>>& targets, const MWWorld::Ptr& ptr,
+        bool renderLiveGeometryAudit = false)
     {
         if (objectRoot == nullptr)
             return 0.f;
@@ -1896,6 +2286,7 @@ namespace
         unsigned int logged = 0;
         unsigned int suspect = 0;
         const bool partMatrixAudit = std::getenv("OPENMW_FNV_PART_MATRIX_AUDIT") != nullptr;
+        const bool handGeometryAudit = partMatrixAudit || renderLiveGeometryAudit;
 
         for (osg::Node* part : visitor.mParts)
         {
@@ -1962,13 +2353,16 @@ namespace
             const osg::Vec3f centerLocal = transformFalloutPoint(center, worldToActor);
             const osg::Vec3f anchorLocal = transformFalloutPoint(anchor, worldToActor);
             const osg::Vec3f relLocal = centerLocal - anchorLocal;
-            if (distance > maxDistance)
+            const bool finiteCenter = isFiniteFalloutAuditVec3(center);
+            const bool finiteAnchor = isFiniteFalloutAuditVec3(anchor);
+            const bool finiteDistance = std::isfinite(distance);
+            if (finiteDistance && distance > maxDistance)
             {
                 maxDistance = distance;
                 maxPart = part->getName();
                 maxClass = partClass;
             }
-            const bool bad = distance > limit;
+            const bool bad = !finiteCenter || !finiteAnchor || !finiteDistance || distance > limit;
             if (bad)
                 ++suspect;
             osg::Matrix anchorWorld;
@@ -1984,7 +2378,7 @@ namespace
                 anchorWorld = getFalloutNodeWorldMatrix(findFalloutTarget(targets, "bip01 head"));
             if (partMatrixAudit && partClass != "other")
                 logFalloutPartMatrixAudit(part, partClass, anchorWorld, center, anchor, targets, ptr);
-            if (partMatrixAudit && (partClass == "leftHand" || partClass == "rightHand"))
+            if (handGeometryAudit && (partClass == "leftHand" || partClass == "rightHand"))
             {
                 static unsigned int sHandPartRigAuditLines = 0;
                 FalloutPartRigBoundsVisitor rigBoundsVisitor(getFalloutParentWorldMatrix(part));
@@ -2006,6 +2400,12 @@ namespace
                     const float sourcePathDistance = sample.mSourceValid
                         ? (sample.mSourceCenterPathWorld - anchor).length()
                         : -1.f;
+                    const float liveParentDistance = sample.mLiveValid
+                        ? (sample.mLiveCenterParentWorld - anchor).length()
+                        : -1.f;
+                    const float livePathDistance = sample.mLiveValid
+                        ? (sample.mLiveCenterPathWorld - anchor).length()
+                        : -1.f;
                     Log(Debug::Info)
                         << "FNV/ESM4 HAND GEOMETRY BOUNDS AUDIT " << ptr.getCellRef().getRefId()
                         << " part='" << part->getName() << "' class=" << partClass
@@ -2025,7 +2425,13 @@ namespace
                         << " sourceCenterPathWorld=" << formatFalloutAuditVec3(sample.mSourceCenterPathWorld)
                         << " sourceExtent=" << formatFalloutAuditVec3(sample.mSourceExtent)
                         << " sourceParentDistance=" << sourceParentDistance
-                        << " sourcePathDistance=" << sourcePathDistance;
+                        << " sourcePathDistance=" << sourcePathDistance
+                        << " liveValid=" << sample.mLiveValid
+                        << " liveCenterParentWorld=" << formatFalloutAuditVec3(sample.mLiveCenterParentWorld)
+                        << " liveCenterPathWorld=" << formatFalloutAuditVec3(sample.mLiveCenterPathWorld)
+                        << " liveExtent=" << formatFalloutAuditVec3(sample.mLiveExtent)
+                        << " liveParentDistance=" << liveParentDistance
+                        << " livePathDistance=" << livePathDistance;
                     ++sHandPartRigAuditLines;
                 }
                 if (rigBoundsVisitor.mSamples.empty() && sHandPartRigAuditLines < 48)
@@ -2072,6 +2478,9 @@ namespace
                     << " anchorLocal=" << formatFalloutAuditVec3(anchorLocal)
                     << " relLocal=" << formatFalloutAuditVec3(relLocal)
                     << " distance=" << distance << " limit=" << limit
+                    << " finiteCenter=" << finiteCenter
+                    << " finiteAnchor=" << finiteAnchor
+                    << " finiteDistance=" << finiteDistance
                     << (candidateDistances.empty() ? "" : " candidateTargets=") << candidateDistances
                     << " verdict=" << (bad ? "SUSPECT" : "OK");
             }
@@ -2082,7 +2491,7 @@ namespace
             << " parts=" << visitor.mParts.size() << " suspect=" << suspect
             << " maxDistance=" << maxDistance << " maxClass=" << maxClass
             << " maxPart='" << maxPart << "'";
-        if (partMatrixAudit)
+        if (handGeometryAudit)
         {
             static unsigned int sActorHandRigAuditLines = 0;
             FalloutActorHandRigBoundsVisitor handRigVisitor(getFalloutNodeWorldMatrix(objectRoot));
@@ -2101,6 +2510,7 @@ namespace
                 const osg::Vec3f anchor = left && !right ? leftHand : rightHand;
                 const float renderDistance = sample.mRenderValid ? (sample.mRenderCenterPathWorld - anchor).length() : -1.f;
                 const float sourceDistance = sample.mSourceValid ? (sample.mSourceCenterPathWorld - anchor).length() : -1.f;
+                const float liveDistance = sample.mLiveValid ? (sample.mLiveCenterPathWorld - anchor).length() : -1.f;
                 Log(Debug::Info)
                     << "FNV/ESM4 ACTOR HAND GEOMETRY AUDIT " << ptr.getCellRef().getRefId()
                     << " sampleIndex=" << i
@@ -2118,6 +2528,10 @@ namespace
                     << " sourceCenterWorld=" << formatFalloutAuditVec3(sample.mSourceCenterPathWorld)
                     << " sourceExtent=" << formatFalloutAuditVec3(sample.mSourceExtent)
                     << " sourceDistance=" << sourceDistance
+                    << " liveValid=" << sample.mLiveValid
+                    << " liveCenterWorld=" << formatFalloutAuditVec3(sample.mLiveCenterPathWorld)
+                    << " liveExtent=" << formatFalloutAuditVec3(sample.mLiveExtent)
+                    << " liveDistance=" << liveDistance
                     << " path='" << handRigVisitor.mPaths[i] << "'";
                 ++loggedHandRigs;
                 ++sActorHandRigAuditLines;
@@ -2505,6 +2919,8 @@ namespace MWRender
         , mAlpha(1.f)
         , mPlayScriptedOnly(false)
         , mRequiresBoneMap(false)
+        , mProofPreviewAnimation(false)
+        , mProofPreviewGameplayAudit(false)
     {
         for (size_t i = 0; i < sNumBlendMasks; i++)
             mAnimationTimePtr[i] = std::make_shared<AnimationTime>();
@@ -2515,6 +2931,16 @@ namespace MWRender
     Animation::~Animation()
     {
         removeFromSceneImpl();
+    }
+
+    void Animation::setProofPreviewAnimation(bool enabled)
+    {
+        mProofPreviewAnimation = enabled;
+    }
+
+    void Animation::setProofPreviewGameplayAudit(bool enabled)
+    {
+        mProofPreviewGameplayAudit = enabled;
     }
 
     void Animation::setActive(int active)
@@ -2898,6 +3324,20 @@ namespace MWRender
             return !forcedGroup[0] || groupname == forcedGroup ? groupname == forcedGroup : false;
 
         return false;
+    }
+
+    bool isFalloutSeededLocomotionGroup(std::string_view groupname)
+    {
+        return groupname.starts_with("walk") || groupname.starts_with("run") || groupname.starts_with("sneak")
+            || groupname.starts_with("swim") || groupname.starts_with("turn");
+    }
+
+    float getFalloutLocomotionSeedSeconds(float duration)
+    {
+        if (!std::isfinite(duration) || duration <= 0.f)
+            return 0.f;
+
+        return std::clamp(duration * 0.06f, 0.033f, 0.08f);
     }
 
     osg::Quat falloutHalfTurn(char axis)
@@ -3700,6 +4140,14 @@ namespace MWRender
             return "turnleft";
         if (Misc::StringUtils::ciEndsWith(stem, "turnright"))
             return "turnright";
+        if (stem == "mtforward")
+            return "walkforward";
+        if (stem == "mtbackward")
+            return "walkback";
+        if (stem == "mtleft")
+            return "walkleft";
+        if (stem == "mtright")
+            return "walkright";
         if (Misc::StringUtils::ciEndsWith(stem, "fastforward") || Misc::StringUtils::ciEndsWith(stem, "runforward"))
             return "runforward";
         if (Misc::StringUtils::ciEndsWith(stem, "fastbackward") || Misc::StringUtils::ciEndsWith(stem, "runbackward"))
@@ -3808,12 +4256,13 @@ namespace MWRender
 
         std::string lowerKf = Misc::StringUtils::lowerCase(kfname);
         std::string lowerBaseModel = Misc::StringUtils::lowerCase(baseModel);
-        const bool isFonvActorAnim = lowerKf.find("meshes/characters/_male/") != std::string::npos
-            || lowerKf.find("meshes\\characters\\_male\\") != std::string::npos
-            || lowerKf.find("characters/_male/") != std::string::npos
-            || lowerKf.find("characters\\_male\\") != std::string::npos
-            || lowerBaseModel.find("characters\\_male\\") != std::string::npos
-            || lowerBaseModel.find("characters/_male/") != std::string::npos;
+        const bool isFonvActorAnim = isFalloutNpcAnimationContext(mPtr)
+            && (lowerKf.find("meshes/characters/_male/") != std::string::npos
+                || lowerKf.find("meshes\\characters\\_male\\") != std::string::npos
+                || lowerKf.find("characters/_male/") != std::string::npos
+                || lowerKf.find("characters\\_male\\") != std::string::npos
+                || lowerBaseModel.find("characters\\_male\\") != std::string::npos
+                || lowerBaseModel.find("characters/_male/") != std::string::npos);
         const bool isFonvCreatureAnim = lowerKf.find("meshes/creatures/") != std::string::npos
             || lowerBaseModel.find("meshes\\creatures\\") != std::string::npos
             || lowerBaseModel.find("meshes/creatures/") != std::string::npos;
@@ -3870,6 +4319,19 @@ namespace MWRender
                 synthesizeForcedGroup(forcedGroup, "primary", primarySourceMatches);
             if (forcedOverlayGroup != nullptr)
                 synthesizeForcedGroup(forcedOverlayGroup, "overlay", overlaySourceMatches);
+            const bool weaponIdlePose = shouldEnableFalloutWeaponIdlePose(mPtr);
+            if (weaponIdlePose
+                && (lowerKf == "meshes/characters/_male/2hraim.kf"
+                    || lowerKf == "meshes/characters/_male/2haaim.kf")
+                && !animsrc->mKeyframes->mTextKeys.hasGroupStart("idle"))
+            {
+                osg::ref_ptr<SceneUtil::KeyframeHolder> keyframes
+                    = new SceneUtil::KeyframeHolder(*animsrc->mKeyframes, osg::CopyOp::SHALLOW_COPY);
+                addSyntheticLoopingTextKeys(keyframes->mTextKeys, "idle");
+                animsrc->mKeyframes = keyframes;
+                Log(Debug::Info) << "FNV/ESM4 diag: synthesized weapon idle actor KF text key group 'idle' for "
+                                 << kfname;
+            }
         }
 
         if (!animsrc->mKeyframes || animsrc->mKeyframes->mTextKeys.empty()
@@ -3880,6 +4342,7 @@ namespace MWRender
         const auto& controllerMap = animsrc->mKeyframes->mKeyframeControllers;
         unsigned int matchedControllers = 0;
         unsigned int missingControllers = 0;
+        unsigned int skippedSyntheticAttachmentHelperControllers = 0;
         unsigned int falloutActorBasisApplied = 0;
         unsigned int falloutActorBasisMissed = 0;
         unsigned int falloutActorBasisAudited = 0;
@@ -3920,6 +4383,22 @@ namespace MWRender
                                     << " (referenced by " << kfname << ")";
                 continue;
             }
+            const std::string lowerResolvedBone = Misc::StringUtils::lowerCase(bonename);
+            if (isFonvActorAnim && shouldSkipFalloutSyntheticAttachmentHelperControllers(mPtr)
+                && isFalloutSyntheticAttachmentHelperName(lowerResolvedBone)
+                && isFalloutSyntheticAttachmentHelperNode(found->second))
+            {
+                ++skippedSyntheticAttachmentHelperControllers;
+                static unsigned int sSkippedSyntheticAttachmentHelperLogs = 0;
+                if (sSkippedSyntheticAttachmentHelperLogs < 24)
+                {
+                    ++sSkippedSyntheticAttachmentHelperLogs;
+                    Log(Debug::Info) << "FNV/ESM4 diag: skipped synthetic attachment helper controller bone="
+                                     << bonename << " source=" << kfname
+                                     << " so carried parts inherit the live actor hand/body transform";
+                }
+                continue;
+            }
             ++matchedControllers;
 
             osg::Node* node = found->second;
@@ -3943,7 +4422,7 @@ namespace MWRender
                         bindScale = nifTarget->mScale;
                     nifController->setFalloutActorTransformBasis(
                         bonename, found->second->getMatrix().getTrans(), getFalloutBindRotation(found->second),
-                        bindScale);
+                        bindScale, isFallout3NpcAnimationContext(mPtr));
                     ++falloutActorBasisApplied;
                     static unsigned int sFalloutBasisLogs = 0;
                     if ((sFalloutBasisLogs < 8
@@ -4009,7 +4488,8 @@ namespace MWRender
 
             Log(Debug::Info) << "FNV/ESM4 diag: animation source " << kfname << " bound " << matchedControllers << "/"
                              << controllerMap.size() << " controller(s) to " << baseModel << ", missing "
-                             << missingControllers;
+                             << missingControllers << ", skippedSyntheticAttachmentHelpers "
+                             << skippedSyntheticAttachmentHelperControllers;
             if (auditFalloutActorControllers)
                 Log(Debug::Info) << "FNV/ESM4 diag: actor controller audit result source=" << kfname
                                  << " basisApplied=" << falloutActorBasisApplied
@@ -4303,26 +4783,44 @@ namespace MWRender
                 state.mAutoDisable = autodisable;
                 state.mGroupname = groupname;
                 state.mStartKey = start;
-                if (isFalloutNpc(mPtr) && isFalloutSeededIdleGroup(groupname) && startpoint == 0.f
-                    && state.mStopTime > state.mStartTime)
+                if (falloutNpc && startpoint == 0.f && state.mStopTime > state.mStartTime)
                 {
-                    const float idleSeedSeconds = getFalloutIdleSeedSeconds();
-                    if (idleSeedSeconds >= 0.f)
+                    if (isFalloutSeededIdleGroup(groupname))
                     {
-                        const float seededIdleTime
-                            = std::min(state.mStartTime + idleSeedSeconds, state.mStopTime - 0.01f);
-                        if (seededIdleTime > state.getTime())
+                        const float idleSeedSeconds = getFalloutIdleSeedSeconds();
+                        if (idleSeedSeconds >= 0.f)
                         {
-                            Log(Debug::Info) << "FNV/ESM4 diag: seeding Fallout idle pose for "
-                                             << mPtr.getCellRef().getRefId() << " from=" << state.getTime()
-                                             << " to=" << seededIdleTime << " seconds=" << idleSeedSeconds;
-                            state.setTime(seededIdleTime);
+                            const float seededIdleTime
+                                = std::min(state.mStartTime + idleSeedSeconds, state.mStopTime - 0.01f);
+                            if (seededIdleTime > state.getTime())
+                            {
+                                Log(Debug::Info) << "FNV/ESM4 diag: seeding Fallout idle pose for "
+                                                 << mPtr.getCellRef().getRefId() << " from=" << state.getTime()
+                                                 << " to=" << seededIdleTime << " seconds=" << idleSeedSeconds;
+                                state.setTime(seededIdleTime);
+                                state.mPlaying = (state.getTime() < state.mStopTime);
+                            }
+                        }
+                        else
+                            Log(Debug::Info) << "FNV/ESM4 diag: Fallout idle seed disabled for "
+                                             << mPtr.getCellRef().getRefId();
+                    }
+                    else if (isFalloutSeededLocomotionGroup(groupname))
+                    {
+                        const float locomotionSeedSeconds
+                            = getFalloutLocomotionSeedSeconds(state.mStopTime - state.mStartTime);
+                        const float seededLocomotionTime
+                            = std::min(state.mStartTime + locomotionSeedSeconds, state.mStopTime - 0.01f);
+                        if (seededLocomotionTime > state.getTime())
+                        {
+                            Log(Debug::Info) << "FNV/ESM4 diag: seeding Fallout locomotion pose for "
+                                             << mPtr.getCellRef().getRefId() << " group '" << groupname
+                                             << "' from=" << state.getTime() << " to=" << seededLocomotionTime
+                                             << " seconds=" << locomotionSeedSeconds;
+                            state.setTime(seededLocomotionTime);
                             state.mPlaying = (state.getTime() < state.mStopTime);
                         }
                     }
-                    else
-                        Log(Debug::Info) << "FNV/ESM4 diag: Fallout idle seed disabled for "
-                                         << mPtr.getCellRef().getRefId();
                 }
                 mStates[std::string{ groupname }] = state;
 
@@ -4553,6 +5051,103 @@ namespace MWRender
             return asCallback;
     }
 
+    std::string Animation::describeActiveFalloutAnimationStates() const
+    {
+        std::ostringstream activeGroups;
+        for (size_t blendMask = 0; blendMask < sNumBlendMasks; ++blendMask)
+        {
+            AnimStateMap::const_iterator active = mStates.end();
+            for (AnimStateMap::const_iterator state = mStates.begin(); state != mStates.end(); ++state)
+            {
+                if (!state->second.blendMaskContains(blendMask))
+                    continue;
+
+                if (active == mStates.end()
+                    || active->second.mPriority[(BoneGroup)blendMask] < state->second.mPriority[(BoneGroup)blendMask])
+                    active = state;
+            }
+
+            if (active == mStates.end())
+                continue;
+
+            if (activeGroups.tellp() > 0)
+                activeGroups << " | ";
+
+            const size_t controllerCount = active->second.mSource
+                ? active->second.mSource->mControllerMap[blendMask].size()
+                : 0;
+            activeGroups << blendMask << ":" << active->second.mGroupname << "@t=" << active->second.getTime()
+                         << " controllers=" << controllerCount;
+            if (active->second.mSource)
+                activeGroups << " src=" << active->second.mSource->mSourceName;
+        }
+
+        if (activeGroups.tellp() == 0)
+            return "none";
+        return activeGroups.str();
+    }
+
+    size_t Animation::forceFalloutNativeUpdateTraversalOnce(std::string_view reason)
+    {
+        if (!mObjectRoot)
+            return 0;
+
+        float sampleTime = 0.f;
+        for (size_t blendMask = 0; blendMask < sNumBlendMasks; ++blendMask)
+        {
+            AnimStateMap::const_iterator active = mStates.end();
+            for (AnimStateMap::const_iterator state = mStates.begin(); state != mStates.end(); ++state)
+            {
+                if (!state->second.blendMaskContains(blendMask))
+                    continue;
+
+                if (active == mStates.end()
+                    || active->second.mPriority[(BoneGroup)blendMask] < state->second.mPriority[(BoneGroup)blendMask])
+                    active = state;
+            }
+
+            if (active != mStates.end())
+                sampleTime = std::max(sampleTime, active->second.getTime());
+        }
+
+        if (mSkeleton)
+            mSkeleton->markBoneMatriceDirty();
+
+        static unsigned int sFalloutForcedTraversalNumber = 1;
+        const unsigned int traversalNumber = ++sFalloutForcedTraversalNumber;
+
+        osg::ref_ptr<osg::FrameStamp> frameStamp = new osg::FrameStamp;
+        frameStamp->setFrameNumber(traversalNumber);
+        frameStamp->setReferenceTime(sampleTime);
+        frameStamp->setSimulationTime(sampleTime);
+
+        osgUtil::UpdateVisitor updateVisitor;
+        updateVisitor.setTraversalMode(osg::NodeVisitor::TRAVERSE_ALL_CHILDREN);
+        updateVisitor.setTraversalNumber(traversalNumber);
+        updateVisitor.setFrameStamp(frameStamp.get());
+        mObjectRoot->accept(updateVisitor);
+
+        static std::unordered_map<std::string, unsigned int> sFalloutForcedTraversalLogs;
+        const std::string refId = mPtr.getCellRef().getRefId().serializeText();
+        std::string logKey = refId;
+        logKey += ":";
+        logKey += std::string(reason);
+        unsigned int& logs = sFalloutForcedTraversalLogs[logKey];
+        if (logs < 8)
+        {
+            ++logs;
+            Log(Debug::Info) << "FNV/ESM4 diag: forced native update traversal for "
+                             << mPtr.getCellRef().getRefId()
+                             << " reason=" << reason
+                             << " traversalNumber=" << traversalNumber
+                             << " sampleTime=" << sampleTime
+                             << " activeGroups=[" << describeActiveFalloutAnimationStates() << "]"
+                             << " activeControllers=" << mActiveControllers.size();
+        }
+
+        return mActiveControllers.size();
+    }
+
     void Animation::resetActiveGroups()
     {
 //## VR_PATCH BEGIN
@@ -4608,7 +5203,7 @@ namespace MWRender
                     osg::ref_ptr<osg::Node> node = getNodeMap().at(
                         it->first); // this should not throw, we already checked for the node existing in addAnimSource
 
-                    const bool useSmoothAnims = useSmoothAnimationTransitions();
+                    const bool useSmoothAnims = !falloutNpc && useSmoothAnimationTransitions();
 
                     osg::Callback* callback = it->second->getAsCallback();
                     if (useSmoothAnims)
@@ -4662,9 +5257,13 @@ namespace MWRender
         if (falloutNpc)
             Log(Debug::Info) << "FNV/ESM4 diag: active animation group reset for " << mPtr.getCellRef().getRefId()
                              << " states=" << mStates.size() << " callbacks=" << falloutAddedControllers
-                             << " activeControllers=" << mActiveControllers.size();
+                             << " activeControllers=" << mActiveControllers.size()
+                             << " activeGroups=[" << describeActiveFalloutAnimationStates() << "]";
 
         addControllers();
+
+        if (falloutNpc && shouldUseNativeFalloutAnimationCallbacks())
+            forceFalloutNativeUpdateTraversalOnce("resetActiveGroups");
     }
 
     void Animation::adjustSpeedMult(const std::string& groupname, float speedmult)
@@ -4992,7 +5591,8 @@ namespace MWRender
             float maxNativeWorldMatrixDelta = 0.f;
             std::string maxNativeWorldMatrixDeltaBone;
             const std::string refIdText = mPtr.getCellRef().getRefId().serializeText();
-            const bool matrixAudit = (std::getenv("OPENMW_FNV_MATRIX_AUDIT") != nullptr
+            const bool actorBasisAudit = std::getenv("OPENMW_FNV_ACTOR_BASIS_AUDIT") != nullptr;
+            const bool matrixAudit = actorBasisAudit || (std::getenv("OPENMW_FNV_MATRIX_AUDIT") != nullptr
                                          || std::getenv("OPENMW_FNV_PART_MATRIX_AUDIT") != nullptr)
                 && (refIdText.find("4104c7f") != std::string::npos || refIdText == "player");
             unsigned int matrixAuditLines = 0;
@@ -5029,6 +5629,33 @@ namespace MWRender
                     const std::string lowerAppliedBone = Misc::StringUtils::lowerCase(it->first);
                     const osg::Matrixf before = transform->getMatrix();
                     SceneUtil::KeyframeController::KfTransform keyframe = it->second->getCurrentTransformation(nullptr);
+                    if (actorBasisAudit && matrixAuditLines < matrixAuditLineLimit
+                        && isFalloutMatrixAuditBone(lowerAppliedBone))
+                    {
+                        if (auto* nifController = dynamic_cast<NifOsg::KeyframeController*>(it->second.get()))
+                        {
+                            const SceneUtil::KeyframeController::KfTransform rawKeyframe
+                                = nifController->getCurrentTransformationWithoutFalloutActorBasis(nullptr);
+                            float rotationDeltaDegrees = 0.f;
+                            if (keyframe.mRotation && rawKeyframe.mRotation)
+                                rotationDeltaDegrees = quatAngleDeltaDegrees(*keyframe.mRotation, *rawKeyframe.mRotation);
+                            float translationDelta = 0.f;
+                            if (keyframe.mTranslation && rawKeyframe.mTranslation)
+                                translationDelta = (*keyframe.mTranslation - *rawKeyframe.mTranslation).length();
+
+                            Log(Debug::Info) << "FNV/ESM4 ACTOR BASIS AUDIT " << mPtr.getCellRef().getRefId()
+                                             << " source=" << (animsrc ? animsrc->mSourceName : std::string())
+                                             << " blendMask=" << blendMask
+                                             << " bone=" << it->first
+                                             << " appliedHasRotation=" << static_cast<bool>(keyframe.mRotation)
+                                             << " rawHasRotation=" << static_cast<bool>(rawKeyframe.mRotation)
+                                             << " rotationDeltaDegrees=" << rotationDeltaDegrees
+                                             << " appliedHasTranslation=" << static_cast<bool>(keyframe.mTranslation)
+                                             << " rawHasTranslation=" << static_cast<bool>(rawKeyframe.mTranslation)
+                                             << " translationDelta=" << translationDelta;
+                            ++matrixAuditLines;
+                        }
+                    }
                     if (std::getenv("OPENMW_FNV_ENABLE_CHAIR_LOWER_LEG_DONOR") != nullptr
                         && falloutProcedureIdle && blendMask == BoneGroup_LowerBody && animsrc
                         && isFalloutCalfFootBone(lowerAppliedBone)
@@ -5426,6 +6053,7 @@ namespace MWRender
             }
 
             applyFalloutSeatedHumanIk(duplicateTransformTargets, mPtr);
+            applyPostManualFalloutActorPose();
 
             if (mSkeleton)
                 mSkeleton->markBoneMatriceDirty();
@@ -5525,8 +6153,99 @@ namespace MWRender
                     auditFalloutSeatedLegChain(duplicateTransformTargets, mPtr);
                     auditFalloutSeatedUpperBody(duplicateTransformTargets, mPtr);
                 }
-                auditFalloutWorldPosture(duplicateTransformTargets, mPtr);
-                auditFalloutRuntimeParts(mObjectRoot.get(), duplicateTransformTargets, mPtr);
+                if (shouldAuditProofPreviewGameplay())
+                {
+                    auditFalloutWorldPosture(duplicateTransformTargets, mPtr);
+                    auditFalloutRuntimeParts(mObjectRoot.get(), duplicateTransformTargets, mPtr,
+                        shouldAuditFalloutActorRenderLiveGeometry());
+                }
+            }
+        }
+
+        if (falloutNpc
+            && (shouldApplyFalloutSeatedHumanIk() || shouldApplyFalloutStandingLegIk(mPtr)
+                || shouldApplyFalloutStandingArmIk(mPtr))
+            && mObjectRoot != nullptr)
+        {
+            std::unordered_map<std::string, std::vector<osg::MatrixTransform*>> runtimeTargets;
+            FalloutTransformTargetVisitor targetVisitor(runtimeTargets);
+            mObjectRoot->accept(targetVisitor);
+            if (applyFalloutSeatedHumanIk(runtimeTargets, mPtr) && mSkeleton)
+                mSkeleton->markBoneMatriceDirty();
+            applyPostManualFalloutActorPose();
+        }
+
+        if (falloutNpc && mObjectRoot != nullptr)
+        {
+            applyPostManualFalloutActorPose();
+            if (mSkeleton != nullptr)
+            {
+                mSkeleton->markBoneMatriceDirty();
+                mSkeleton->updateBoneMatrices(0);
+            }
+        }
+
+        if (shouldAuditProofPreviewGameplay() && falloutNpc && shouldAuditFalloutStandingUpperBody() && mObjectRoot != nullptr)
+        {
+            static std::unordered_map<std::string, unsigned int> sFalloutStandingUpperRuntimeAuditSamples;
+            const std::string refId = mPtr.getCellRef().getRefId().serializeText();
+            unsigned int& samples = sFalloutStandingUpperRuntimeAuditSamples[refId];
+            if (samples < 6)
+            {
+                ++samples;
+                std::unordered_map<std::string, std::vector<osg::MatrixTransform*>> runtimeTargets;
+                FalloutTransformTargetVisitor targetVisitor(runtimeTargets);
+                mObjectRoot->accept(targetVisitor);
+                auditFalloutStandingUpperBody(runtimeTargets, mPtr);
+            }
+        }
+
+        if (shouldAuditProofPreviewGameplay() && falloutNpc && shouldAuditFalloutRootAttachment() && mObjectRoot != nullptr)
+        {
+            static std::unordered_map<std::string, unsigned int> sFalloutRootAttachmentRuntimeAuditSamples;
+            const std::string refId = mPtr.getCellRef().getRefId().serializeText();
+            unsigned int& samples = sFalloutRootAttachmentRuntimeAuditSamples[refId];
+            if (samples < 6)
+            {
+                ++samples;
+                std::unordered_map<std::string, std::vector<osg::MatrixTransform*>> runtimeTargets;
+                FalloutTransformTargetVisitor targetVisitor(runtimeTargets);
+                mObjectRoot->accept(targetVisitor);
+                auditFalloutRootAttachmentFrame(mObjectRoot.get(), runtimeTargets, mPtr);
+            }
+        }
+
+        if (shouldAuditProofPreviewGameplay() && falloutNpc && mObjectRoot != nullptr)
+        {
+            static std::unordered_map<std::string, unsigned int> sFalloutSkeletonAnchorRuntimeAuditSamples;
+            const std::string refId = mPtr.getCellRef().getRefId().serializeText();
+            unsigned int& samples = sFalloutSkeletonAnchorRuntimeAuditSamples[refId];
+            if (samples < 6)
+            {
+                ++samples;
+                std::unordered_map<std::string, std::vector<osg::MatrixTransform*>> runtimeTargets;
+                FalloutTransformTargetVisitor targetVisitor(runtimeTargets);
+                mObjectRoot->accept(targetVisitor);
+                Log(Debug::Info) << "FNV/ESM4 diag: skeleton animation state " << mPtr.getCellRef().getRefId()
+                                 << " sample=" << samples
+                                 << " activeGroups=[" << describeActiveFalloutAnimationStates() << "]";
+                auditFalloutSkeletonBounds(runtimeTargets, mPtr);
+            }
+        }
+
+        if (shouldAuditProofPreviewGameplay() && falloutNpc && shouldAuditFalloutActorRenderLiveGeometry()
+            && mObjectRoot != nullptr)
+        {
+            static std::unordered_map<std::string, unsigned int> sFalloutPartMatrixRuntimeAuditSamples;
+            const std::string refId = mPtr.getCellRef().getRefId().serializeText();
+            unsigned int& samples = sFalloutPartMatrixRuntimeAuditSamples[refId];
+            if (samples < 6)
+            {
+                ++samples;
+                std::unordered_map<std::string, std::vector<osg::MatrixTransform*>> runtimeTargets;
+                FalloutTransformTargetVisitor targetVisitor(runtimeTargets);
+                mObjectRoot->accept(targetVisitor);
+                auditFalloutRuntimeParts(mObjectRoot.get(), runtimeTargets, mPtr, true);
             }
         }
 
@@ -5568,7 +6287,18 @@ namespace MWRender
                     osg::Quat(mHeadPitchRadians, osg::Vec3f(1, 0, 0)) * osg::Quat(yaw, osg::Vec3f(0, 0, 1)));
         }
 
-        auditGenericProofPosture(mObjectRoot.get(), mPtr);
+        if (falloutNpc && mObjectRoot != nullptr)
+        {
+            applyPostManualFalloutActorPose();
+            if (mSkeleton != nullptr)
+            {
+                mSkeleton->markBoneMatriceDirty();
+                mSkeleton->updateBoneMatrices(0);
+            }
+        }
+
+        if (shouldAuditProofPreviewGameplay())
+            auditGenericProofPosture(mObjectRoot.get(), mPtr);
 
         return movement;
     }
@@ -5736,7 +6466,10 @@ namespace MWRender
                 || VFS::Path::pathEqual(Settings::models().mBaseanimkna.get(), path)
                 || VFS::Path::pathEqual(Settings::models().mBaseanimkna1st.get(), path)
                 || VFS::Path::pathEqual(Settings::models().mBaseanimfemale.get(), path)
-                || VFS::Path::pathEqual(Settings::models().mBaseanimfemale1st.get(), path);
+                || VFS::Path::pathEqual(Settings::models().mBaseanimfemale1st.get(), path)
+                || VFS::Path::pathEqual("characters/_male/skeleton.nif", path)
+                || VFS::Path::pathEqual("actors/character/character assets/skeleton.nif", path)
+                || VFS::Path::pathEqual("actors/character/_1stperson/skeleton.nif", path);
         };
         const bool useEmptyMissingDefaultActorRoot
             = !model.empty() && isDefaultActorModel(model) && !mResourceSystem->getVFS()->exists(VFS::Path::toNormalized(model));

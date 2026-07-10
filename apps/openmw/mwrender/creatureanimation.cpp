@@ -56,6 +56,13 @@ namespace MWRender
                 || lowered.find("\\skeleton") != std::string::npos;
         }
 
+        bool isMarkerCreatureModel(std::string_view value)
+        {
+            const std::string lowered = toLowerAscii(value);
+            return lowered.ends_with("marker_creature.nif") || lowered.find("/marker_creature.nif") != std::string::npos
+                || lowered.find("\\marker_creature.nif") != std::string::npos;
+        }
+
         bool findCreatureKf(const VFS::Manager& vfs, const std::string& path, std::string& normalizedPath)
         {
             VFS::Path::Normalized normalized(path);
@@ -370,7 +377,9 @@ namespace MWRender
             {
                 MWWorld::LiveCellRef<ESM4::Creature>* ref = mPtr.get<ESM4::Creature>();
                 const ESM4::Creature& effective = getEffectiveCreatureForRendering(*ref->mBase);
-                addAnimSource(model, model);
+                const bool markerCreatureRoot = isMarkerCreatureModel(model);
+                if (!markerCreatureRoot)
+                    addAnimSource(model, model);
 
                 std::string animationDirectory = model;
                 const std::size_t slash = animationDirectory.find_last_of("/\\");
@@ -399,45 +408,54 @@ namespace MWRender
                 if (std::getenv("OPENMW_FNV_CREATURE_BODY_DIAG") != nullptr && mObjectRoot != nullptr)
                     logCreatureBounds("root", ref->mBase->mEditorId, model, *mObjectRoot);
                 unsigned int fallbackKfs = 0;
-                for (const std::string& kf : effective.mKf)
+                unsigned int discoveredKfs = 0;
+                if (!markerCreatureRoot)
                 {
-                    if (!kf.empty())
-                        addAnimSource(animationDirectory + kf, model);
-                }
-
-                static constexpr std::string_view fallbackNames[] = {
-                    "skeleton.kf",
-                    "idle.kf",
-                    "forward.kf",
-                    "backward.kf",
-                    "left.kf",
-                    "right.kf",
-                    "walkforward.kf",
-                    "runforward.kf",
-                    "attackleft.kf",
-                    "attackright.kf",
-                    "attack1.kf",
-                };
-                for (std::string_view fallback : fallbackNames)
-                {
-                    std::string path = animationDirectory + std::string(fallback);
-                    std::string normalizedPath;
-                    if (findCreatureKf(*vfs, path, normalizedPath))
+                    for (const std::string& kf : effective.mKf)
                     {
-                        addAnimSource(normalizedPath, model);
-                        ++fallbackKfs;
+                        if (!kf.empty())
+                            addAnimSource(animationDirectory + kf, model);
                     }
-                }
 
-                std::string normalizedDirectory = animationDirectory;
-                VFS::Path::normalizeFilenameInPlace(normalizedDirectory);
-                std::string probeToken = normalizedDirectory;
-                if (probeToken.ends_with('/'))
-                    probeToken.pop_back();
-                const std::vector<std::string> discoveredKfPaths
-                    = collectDiscoveredCreatureKfs(*vfs, normalizedDirectory, probeToken, effective.mEditorId);
-                for (const std::string& path : discoveredKfPaths)
-                    addAnimSource(path, model);
+                    static constexpr std::string_view fallbackNames[] = {
+                        "skeleton.kf",
+                        "idle.kf",
+                        "forward.kf",
+                        "backward.kf",
+                        "left.kf",
+                        "right.kf",
+                        "walkforward.kf",
+                        "runforward.kf",
+                        "attackleft.kf",
+                        "attackright.kf",
+                        "attack1.kf",
+                    };
+                    for (std::string_view fallback : fallbackNames)
+                    {
+                        std::string path = animationDirectory + std::string(fallback);
+                        std::string normalizedPath;
+                        if (findCreatureKf(*vfs, path, normalizedPath))
+                        {
+                            addAnimSource(normalizedPath, model);
+                            ++fallbackKfs;
+                        }
+                    }
+
+                    std::string normalizedDirectory = animationDirectory;
+                    VFS::Path::normalizeFilenameInPlace(normalizedDirectory);
+                    std::string probeToken = normalizedDirectory;
+                    if (probeToken.ends_with('/'))
+                        probeToken.pop_back();
+                    const std::vector<std::string> discoveredKfPaths
+                        = collectDiscoveredCreatureKfs(*vfs, normalizedDirectory, probeToken, effective.mEditorId);
+                    discoveredKfs = static_cast<unsigned int>(discoveredKfPaths.size());
+                    for (const std::string& path : discoveredKfPaths)
+                        addAnimSource(path, model);
+                }
+                else
+                    Log(Debug::Warning) << "FNV/ESM4 diag: skipped marker-creature animation binding for "
+                                        << ref->mBase->mEditorId << " effective=" << effective.mEditorId
+                                        << " model=" << model;
 
                 Log(Debug::Info) << "FNV/ESM4 diag: inserted creature animation for "
                                  << ref->mBase->mEditorId << " model=" << model
@@ -446,7 +464,7 @@ namespace MWRender
                                  << " bodyPartCount=" << effective.mBodyParts.size()
                                  << " attachedBodyNifs=" << attachedBodyNifs
                                  << " fallbackKfs=" << fallbackKfs
-                                 << " discoveredKfs=" << discoveredKfPaths.size();
+                                 << " discoveredKfs=" << discoveredKfs;
             }
         }
     }

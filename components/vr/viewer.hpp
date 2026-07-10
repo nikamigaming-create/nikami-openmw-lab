@@ -74,6 +74,8 @@ namespace VR
 
         void insertLayer(std::shared_ptr<Layer> layer);
         void removeLayer(std::shared_ptr<Layer> layer);
+        void setPrimaryProjectionLayerEnabled(bool enabled);
+        bool primaryProjectionLayerEnabled() const { return mPrimaryProjectionLayerEnabled; }
 
         osg::ref_ptr<osg::FrameBufferObject> getFboForView(Stereo::Eye view);
 
@@ -121,6 +123,7 @@ namespace VR
 
         std::shared_ptr<ProjectionLayer> mProjectionLayer;
         std::vector<std::shared_ptr<Layer>> mLayers;
+        bool mPrimaryProjectionLayerEnabled = true;
     };
 }
 

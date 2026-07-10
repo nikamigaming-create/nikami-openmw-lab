@@ -1,8 +1,10 @@
 #include "actors.hpp"
 
 #include <array>
+#include <algorithm>
 #include <cstdlib>
 #include <optional>
+#include <string_view>
 
 #include <components/esm3/esmreader.hpp>
 #include <components/esm3/esmwriter.hpp>
@@ -63,6 +65,12 @@
 
 namespace
 {
+    bool worldViewerActorTelemetryEnabled()
+    {
+        const char* value = std::getenv("OPENMW_WORLD_VIEWER_ACTOR_TELEMETRY");
+        return value != nullptr && *value != '\0' && value[0] != '0';
+    }
+
     bool shouldHoldFalloutActorDisplacement(const MWWorld::Ptr& ptr)
     {
         return VR::getVR() && (ptr.getType() == ESM::REC_NPC_4 || ptr.getType() == ESM::REC_CREA4)
@@ -1209,16 +1217,18 @@ namespace MWMechanics
         MWRender::Animation* anim = MWBase::Environment::get().getWorld()->getAnimation(ptr);
         if (!anim)
         {
-            if (ptr.getType() == ESM::REC_NPC_4)
-                Log(Debug::Warning) << "FNV/ESM4 diag: no animation when registering actor "
-                                    << ptr.getCellRef().getRefId();
+            if (worldViewerActorTelemetryEnabled())
+                Log(Debug::Warning) << "World viewer actor ledger: phase=no-animation-when-registering "
+                                    << "registeredActor=0 ref=" << ptr.getCellRef().getRefId()
+                                    << " type=" << ptr.getType();
             return;
         }
         const auto it = mActors.emplace(mActors.end(), ptr, *anim);
         mIndex.emplace(ptr.mRef, it);
-        if (ptr.getType() == ESM::REC_NPC_4)
-            Log(Debug::Info) << "FNV/ESM4 diag: registered CharacterController for "
-                             << ptr.getCellRef().getRefId();
+        if (worldViewerActorTelemetryEnabled())
+            Log(Debug::Info) << "World viewer actor ledger: phase=registered-character-controller "
+                             << "registered CharacterController for " << ptr.getCellRef().getRefId()
+                             << " type=" << ptr.getType();
 
         if (updateImmediately)
             it->getCharacterController().update(0);

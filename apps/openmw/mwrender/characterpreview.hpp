@@ -2,6 +2,7 @@
 #define MWRENDER_CHARACTERPREVIEW_H
 
 #include <memory>
+#include <string>
 #include <osg/ref_ptr>
 
 #include <osg/PositionAttitudeTransform>
@@ -44,6 +45,7 @@ namespace MWRender
         void redraw();
 
         void rebuild();
+        void updateLive(double simulationTime = 0.0);
 
         osg::ref_ptr<osg::Texture2D> getTexture();
         /// Get the osg::StateSet required to render the texture correctly, if any.
@@ -56,6 +58,7 @@ namespace MWRender
     protected:
         virtual bool renderHeadOnly() { return false; }
         void setBlendMode();
+        void setRedrawSimulationTime(double simulationTime);
         virtual void onSetup();
         virtual osg::ref_ptr<Animation> createAnimation();
 
@@ -132,6 +135,38 @@ namespace MWRender
         osg::ref_ptr<UpdateCameraCallback> mUpdateCameraCallback;
 
         float mPitchRadians;
+    };
+
+    class FalloutActorPreview : public CharacterPreview
+    {
+    public:
+        enum class ViewMode
+        {
+            Front,
+            FrontLeft,
+            FrontRight,
+            Left,
+            Right,
+            Top,
+            Back,
+            IsoNW,
+            IsoSW,
+        };
+
+        FalloutActorPreview(osg::Group* parent, Resource::ResourceSystem* resourceSystem, const MWWorld::Ptr& character,
+            ViewMode viewMode, float cameraDistanceMultiplier = 1.f, std::string profileOverride = {},
+            osg::Vec3f editorRotation = osg::Vec3f(), float editorScale = 1.f);
+
+    protected:
+        osg::ref_ptr<Animation> createAnimation() override;
+        void onSetup() override;
+
+    private:
+        ViewMode mViewMode;
+        float mCameraDistanceMultiplier;
+        std::string mProfileOverride;
+        osg::Vec3f mEditorRotation;
+        float mEditorScale;
     };
 
 }

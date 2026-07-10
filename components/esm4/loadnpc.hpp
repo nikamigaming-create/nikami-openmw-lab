@@ -187,6 +187,7 @@ namespace ESM4
         std::uint32_t mFlags = 0; // from the header, see enum type RecordFlag for details
 
         bool mIsTES4 = false;
+        bool mIsFO3 = false;
         bool mIsFONV = false;
         bool mIsFO4 = false;
 

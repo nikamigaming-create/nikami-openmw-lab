@@ -2,6 +2,7 @@
 #include "magiceffects.hpp"
 
 #include <algorithm>
+#include <cstdlib>
 #include <fstream>
 #include <type_traits>
 
@@ -90,6 +91,11 @@
 
 namespace
 {
+    bool worldViewerActorTelemetryEnabled()
+    {
+        const char* value = std::getenv("OPENMW_WORLD_VIEWER_ACTOR_TELEMETRY");
+        return value != nullptr && *value != '\0' && value[0] != '0';
+    }
 
     template <typename Record>
     struct RecordToState
@@ -336,18 +342,53 @@ namespace
         }
     }
 
+    template <class LiveRef>
+    void logWorldViewerActorIteration(const LiveRef& ref, std::string_view phase, bool accessible)
+    {
+        using BaseType = std::remove_cv_t<std::remove_pointer_t<decltype(ref.mBase)>>;
+        if constexpr (std::is_same_v<BaseType, ESM4::Npc> || std::is_same_v<BaseType, ESM4::Creature>)
+        {
+            if (!worldViewerActorTelemetryEnabled())
+                return;
+
+            const ESM::RefNum refnum = ref.mRef.getRefNum();
+            Log(Debug::Info) << "World viewer actor ledger: phase=" << phase
+                             << " type=" << ref.getTypeDescription()
+                             << " ref=" << refnum.toString("FormId:")
+                             << " base=" << ref.mRef.getRefId().toDebugString()
+                             << " count=" << ref.mRef.getCount(false)
+                             << " hasContentFile=" << refnum.hasContentFile()
+                             << " refSet=" << refnum.isSet()
+                             << " deleted=" << ref.mData.isDeletedByContentFile()
+                             << " enabled=" << ref.mData.isEnabled()
+                             << " accessible=" << accessible;
+        }
+    }
+
     // helper function for forEachInternal
     template <class Visitor, class List>
     bool forEachImp(Visitor& visitor, List& list, MWWorld::CellStore& cellStore, bool includeDeleted)
     {
         for (auto& v : list.mList)
         {
-            if (!includeDeleted && !MWWorld::CellStore::isAccessible(v.mData, v.mRef))
+            const bool accessible = MWWorld::CellStore::isAccessible(v.mData, v.mRef);
+            logWorldViewerActorIteration(v, accessible ? "cell-foreach-accept" : "cell-foreach-skip", accessible);
+            if (!includeDeleted && !accessible)
                 continue;
             if (!visitor(MWWorld::Ptr(&v, &cellStore)))
                 return false;
         }
         return true;
+    }
+
+    template <class Store>
+    constexpr bool isWorldViewerPriorityActorStore()
+    {
+        using StoreType = std::remove_cv_t<std::remove_reference_t<Store>>;
+        return std::is_same_v<StoreType, MWWorld::CellRefList<ESM::Creature>>
+            || std::is_same_v<StoreType, MWWorld::CellRefList<ESM::NPC>>
+            || std::is_same_v<StoreType, MWWorld::CellRefList<ESM4::Creature>>
+            || std::is_same_v<StoreType, MWWorld::CellRefList<ESM4::Npc>>;
     }
 }
 
@@ -388,6 +429,12 @@ namespace MWWorld
 
             return true;
         }
+
+        bool worldViewerRenderDisabledActors()
+        {
+            const char* value = std::getenv("OPENMW_WORLD_VIEWER_RENDER_DISABLED_ACTORS");
+            return value != nullptr && value[0] != '\0' && value[0] != '0';
+        }
     }
 
     struct CellStoreImp
@@ -413,8 +460,22 @@ namespace MWWorld
         {
             bool returnValue = true;
 
+            returnValue = returnValue && forEachImp(
+                visitor, std::get<CellRefList<ESM::Creature>>(cellStore.mCellStoreImp->mRefLists), cellStore,
+                includeDeleted);
+            returnValue = returnValue
+                && forEachImp(visitor, std::get<CellRefList<ESM::NPC>>(cellStore.mCellStoreImp->mRefLists), cellStore,
+                    includeDeleted);
+            returnValue = returnValue && forEachImp(
+                visitor, std::get<CellRefList<ESM4::Creature>>(cellStore.mCellStoreImp->mRefLists), cellStore,
+                includeDeleted);
+            returnValue = returnValue
+                && forEachImp(visitor, std::get<CellRefList<ESM4::Npc>>(cellStore.mCellStoreImp->mRefLists), cellStore,
+                    includeDeleted);
+
             Misc::tupleForEach(cellStore.mCellStoreImp->mRefLists, [&](auto& store) {
-                returnValue = returnValue && forEachImp(visitor, store, cellStore, includeDeleted);
+                if constexpr (!isWorldViewerPriorityActorStore<decltype(store)>())
+                    returnValue = returnValue && forEachImp(visitor, store, cellStore, includeDeleted);
             });
 
             return returnValue;
@@ -452,11 +513,33 @@ namespace MWWorld
         return rec == ESM::REC_NPC_4 || rec == ESM::REC_CREA4;
     }
 
+    template <typename X>
+    const X* searchEsm4ViewerBase(const MWWorld::Store<X>& store, ESM::FormId baseObj, ESM::FormId* resolvedBase)
+    {
+        if (const X* ptr = store.search(baseObj))
+        {
+            if (resolvedBase != nullptr)
+                *resolvedBase = baseObj;
+            return ptr;
+        }
+
+        if (!baseObj.hasContentFile() || baseObj.mContentFile == 0)
+            return nullptr;
+
+        ESM::FormId localBase = baseObj;
+        localBase.mContentFile = 0;
+        const X* ptr = store.search(localBase);
+        if (ptr && resolvedBase != nullptr)
+            *resolvedBase = localBase;
+        return ptr;
+    }
+
     template <typename X, typename R>
     static void loadImpl(const R& ref, const MWWorld::ESMStore& esmStore, auto& list)
     {
         const MWWorld::Store<X>& store = esmStore.get<X>();
-        const X* ptr = store.search(ref.mBaseObj);
+        ESM::FormId resolvedBase = ref.mBaseObj;
+        const X* ptr = searchEsm4ViewerBase(store, ref.mBaseObj, &resolvedBase);
         if (!ptr)
         {
             Log(Debug::Warning) << "FNV/ESM4 diag: could not resolve placed reference " << ESM::RefId(ref.mId)
@@ -465,17 +548,32 @@ namespace MWWorld
             return;
         }
         LiveCellRef<X> liveCellRef(ref, ptr);
-        if (!isEnabled(ref, esmStore))
-            liveCellRef.mData.disable();
+        const bool enabledByData = isEnabled(ref, esmStore);
+        const bool initiallyDisabledByFlag = (ref.mFlags & ESM4::Rec_Disabled) != 0;
+        bool forcedEnabledForWorldViewer = false;
+        if (!enabledByData || initiallyDisabledByFlag || !liveCellRef.mData.isEnabled())
+        {
+            if constexpr (isESM4ActorRec(X::sRecordId))
+                forcedEnabledForWorldViewer = worldViewerRenderDisabledActors();
+
+            if (forcedEnabledForWorldViewer)
+                liveCellRef.mData.enable();
+            else if (!enabledByData)
+                liveCellRef.mData.disable();
+        }
         if constexpr (isESM4ActorRec(X::sRecordId))
         {
             Log(Debug::Info) << "FNV/ESM4 diag: loaded placed actor ref " << ESM::RefId(ref.mId) << " editor '"
                              << ref.mEditorId << "' full '" << ref.mFullName << "' base " << ESM::RefId(ref.mBaseObj)
+                             << " resolvedBase " << ESM::RefId(resolvedBase)
                              << " baseEditor '" << ptr->mEditorId << "' baseFull '" << ptr->mFullName << "' parent "
                              << ref.mParent << " pos=(" << ref.mPos.pos[0] << ", " << ref.mPos.pos[1] << ", "
                              << ref.mPos.pos[2] << ") flags=0x" << std::hex << ref.mFlags << std::dec
                              << " enableParent=" << ESM::RefId(ref.mEsp.parent) << " enableFlags=0x" << std::hex
                              << static_cast<int>(ref.mEsp.flags) << std::dec
+                             << " enabledByData=" << enabledByData
+                             << " initiallyDisabledByFlag=" << initiallyDisabledByFlag
+                             << " forcedEnabledForWorldViewer=" << forcedEnabledForWorldViewer
                              << " enabled=" << liveCellRef.mData.isEnabled();
         }
         list.push_back(std::move(liveCellRef));
@@ -1004,6 +1102,17 @@ namespace MWWorld
                                 << " editor '" << ref.mEditorId << "' base " << ESM::RefId(ref.mBaseObj)
                                 << " in parent cell " << ref.mParent;
             return;
+        }
+        if (worldViewerActorTelemetryEnabled())
+        {
+            Log(Debug::Info) << "World viewer actor ledger: phase=cell-ref-resolved"
+                             << " ref=" << ESM::RefId(ref.mId)
+                             << " editor=\"" << ref.mEditorId << "\""
+                             << " base=" << ESM::RefId(ref.mBaseObj)
+                             << " foundType=" << ESM::printName(static_cast<std::uint32_t>(foundType))
+                             << " parent=" << ref.mParent
+                             << " pos=(" << ref.mPos.pos[0] << "," << ref.mPos.pos[1] << "," << ref.mPos.pos[2]
+                             << ")";
         }
 
         Misc::tupleForEach(this->mCellStoreImp->mRefLists, [&ref, &store, foundType](auto& x) {

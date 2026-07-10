@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <exception>
 #include <memory>
 #include <vector>
 
@@ -33,6 +34,7 @@
 #include <components/resource/bulletshapemanager.hpp>
 #include <components/resource/resourcesystem.hpp>
 #include <components/settings/values.hpp>
+#include <components/vfs/manager.hpp>
 
 #include "../mwbase/environment.hpp"
 #include "../mwbase/world.hpp"
@@ -668,7 +670,27 @@ namespace MWPhysics
     {
         const VFS::Path::Normalized animationMesh
             = Misc::ResourceHelpers::correctActorModelPath(mesh, mResourceSystem->getVFS());
-        osg::ref_ptr<const Resource::BulletShape> shape = mShapeManager->getShape(animationMesh);
+        osg::ref_ptr<const Resource::BulletShape> shape;
+        const VFS::Manager* vfs = mResourceSystem->getVFS();
+        if (vfs != nullptr && !vfs->exists(animationMesh))
+        {
+            Log(Debug::Info) << "World viewer: using fallback actor physics for missing actor mesh "
+                             << animationMesh;
+            shape = makeFallbackActorShape(ptr);
+        }
+        else
+        {
+            try
+            {
+                shape = mShapeManager->getShape(animationMesh);
+            }
+            catch (const std::exception& e)
+            {
+                Log(Debug::Info) << "World viewer: using fallback actor physics after mesh load failed for "
+                                 << animationMesh << ": " << e.what();
+                shape = makeFallbackActorShape(ptr);
+            }
+        }
 
         // Try to get shape from basic model as fallback for creatures
         if (!ptr.getClass().isNpc() && shape && shape->mCollisionBox.mExtents.length2() == 0)

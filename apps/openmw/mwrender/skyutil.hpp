@@ -5,6 +5,7 @@
 #include <osg/Matrixf>
 #include <osg/Texture2D>
 #include <osg/Transform>
+#include <osg/Vec2f>
 #include <osg/Vec4f>
 
 #include <osgParticle/ConstantRateCounter>
@@ -18,6 +19,11 @@ namespace Resource
 {
     class ImageManager;
     class SceneManager;
+}
+
+namespace VFS
+{
+    class Manager;
 }
 
 namespace MWRender
@@ -38,6 +44,8 @@ namespace MWRender
         osg::Vec4f mAmbientColor;
 
         osg::Vec4f mSkyColor;
+        osg::Vec4f mSkyLowerColor;
+        osg::Vec4f mSkyHorizonColor;
 
         // sun light color
         osg::Vec4f mSunColor;
@@ -128,6 +136,9 @@ namespace MWRender
     {
     public:
         void setEmissionColor(const osg::Vec4f& emissionColor);
+        void setFalloutAtmosphereZGradient(float minZ, float maxZ);
+        void setFalloutAtmosphereGradientColors(
+            const osg::Vec4f& skyUpperColor, const osg::Vec4f& skyLowerColor, const osg::Vec4f& skyHorizonColor);
 
     protected:
         void setDefaults(osg::StateSet* stateset) override;
@@ -135,12 +146,18 @@ namespace MWRender
 
     private:
         osg::Vec4f mEmissionColor;
+        osg::Vec2f mFalloutAtmosphereZRange = osg::Vec2f(0.f, 1.f);
+        osg::Vec4f mFalloutAtmosphereSkyUpperColor = osg::Vec4f(0.f, 0.f, 0.f, 1.f);
+        osg::Vec4f mFalloutAtmosphereSkyLowerColor = osg::Vec4f(0.f, 0.f, 0.f, 1.f);
+        osg::Vec4f mFalloutAtmosphereSkyHorizonColor = osg::Vec4f(0.f, 0.f, 0.f, 1.f);
+        bool mUseFalloutAtmosphereZGradient = false;
+        bool mHasFalloutAtmosphereGradientColors = false;
     };
 
     class AtmosphereNightUpdater : public SceneUtil::StateSetUpdater
     {
     public:
-        AtmosphereNightUpdater(Resource::ImageManager* imageManager, bool forceShaders);
+        AtmosphereNightUpdater(Resource::ImageManager* imageManager);
 
         void setFade(float fade);
 
@@ -152,16 +169,14 @@ namespace MWRender
     private:
         osg::Vec4f mColor;
         osg::ref_ptr<osg::Texture2D> mTexture;
-        bool mForceShaders;
     };
 
     class CloudUpdater : public SceneUtil::StateSetUpdater
     {
     public:
-        CloudUpdater(bool forceShaders);
+        CloudUpdater();
 
         void setTexture(osg::ref_ptr<osg::Texture2D> texture);
-
         void setEmissionColor(const osg::Vec4f& emissionColor);
         void setOpacity(float opacity);
         void setTextureCoord(float timer);
@@ -174,7 +189,6 @@ namespace MWRender
         osg::ref_ptr<osg::Texture2D> mTexture;
         osg::Vec4f mEmissionColor;
         float mOpacity;
-        bool mForceShaders;
         osg::Matrixf mTexMat;
     };
 
@@ -262,7 +276,7 @@ namespace MWRender
         /// pixels.
         osg::ref_ptr<osg::OcclusionQueryNode> createOcclusionQueryNode(osg::Group* parent, bool queryVisible);
 
-        void createSunFlash(Resource::ImageManager& imageManager);
+        void createSunFlash(Resource::SceneManager& sceneManager);
         void destroySunFlash();
 
         void createSunGlare();
@@ -275,6 +289,7 @@ namespace MWRender
         osg::ref_ptr<SunGlareCallback> mSunGlareCallback;
         osg::ref_ptr<osg::OcclusionQueryNode> mOcclusionQueryVisiblePixels;
         osg::ref_ptr<osg::OcclusionQueryNode> mOcclusionQueryTotalPixels;
+        bool mFalloutSkyContent;
     };
 
     class Moon : public CelestialBody
@@ -300,7 +315,9 @@ namespace MWRender
     private:
         Type mType;
         MoonState::Phase mPhase;
+        const VFS::Manager* mVFS;
         osg::ref_ptr<MoonUpdater> mUpdater;
+        bool mFalloutSkyContent;
 
         void setPhase(const MoonState::Phase& phase);
     };
@@ -346,22 +363,6 @@ namespace MWRender
 
     private:
         MeshType mType;
-    };
-
-    
-
-    class ParticleStereoStatesetUpdater : public SceneUtil::StateSetUpdater
-    {
-    public:
-        ParticleStereoStatesetUpdater() {}
-
-    protected:
-        void setDefaults(osg::StateSet* stateset) override;
-        void apply(osg::StateSet* stateset, osg::NodeVisitor* /*nv*/) override;
-        void applyLeft(osg::StateSet* stateset, osgUtil::CullVisitor* /*cv*/) override;
-        void applyRight(osg::StateSet* stateset, osgUtil::CullVisitor* /*cv*/) override;
-
-    private:
     };
 }
 

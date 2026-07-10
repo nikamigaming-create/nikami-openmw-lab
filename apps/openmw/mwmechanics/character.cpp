@@ -19,7 +19,11 @@
 
 #include "character.hpp"
 
+#include <algorithm>
 #include <array>
+#include <cstdlib>
+#include <string>
+#include <string_view>
 
 #include <components/esm/records.hpp>
 #include <components/esm/defs.hpp>
@@ -65,10 +69,39 @@
 #include "../mwrender/npcanimation.hpp"
 #include "../mwvr/openxrinput.hpp"
 #include "../mwvr/vranimation.hpp"
+#include "../mwvr/vrinputmanager.hpp"
 //## VR_PATCH END
 
 namespace
 {
+    float getFNVEnvFloat(std::string_view name, float fallback)
+    {
+        if (const char* value = std::getenv(std::string(name).c_str()))
+            return std::atof(value);
+        return fallback;
+    }
+
+    float getFNVVrLocomotionScale(float speedFactor, bool running, float walkSpeed, float runSpeed)
+    {
+        const float legacyRunScale =
+            std::clamp(getFNVEnvFloat("OPENMW_FNV_VR_THUMBSTICK_MOVE_SCALE", 2.75f), 0.25f, 12.f);
+        const float walkScale =
+            std::clamp(getFNVEnvFloat("OPENMW_FNV_VR_THUMBSTICK_WALK_SCALE", 1.15f), 0.25f, 12.f);
+        const float jogScale =
+            std::clamp(getFNVEnvFloat("OPENMW_FNV_VR_THUMBSTICK_JOG_SCALE", 1.75f), 0.25f, 12.f);
+        const float runScale =
+            std::clamp(getFNVEnvFloat("OPENMW_FNV_VR_THUMBSTICK_RUN_SCALE", legacyRunScale), 0.25f, 12.f);
+
+        if (!running || walkSpeed <= 0.f || runSpeed <= walkSpeed)
+            return walkScale;
+
+        const float walkEquivalentRunFactor = std::clamp(walkSpeed / runSpeed, 0.f, 0.98f);
+        const float runProgress =
+            std::clamp((speedFactor - walkEquivalentRunFactor) / (1.f - walkEquivalentRunFactor), 0.f, 1.f);
+        const float easedRunProgress = runProgress * runProgress * (3.f - 2.f * runProgress);
+        return jogScale + (runScale - jogScale) * easedRunProgress;
+    }
+
     bool isFalloutActor(const MWWorld::Ptr& ptr)
     {
         return ptr.getType() == ESM::REC_NPC_4 || ptr.getType() == ESM4::Creature::sRecordId;
@@ -2175,6 +2208,14 @@ namespace MWMechanics
             bool isrunning = cls.getCreatureStats(mPtr).getStance(MWMechanics::CreatureStats::Stance_Run) && !flying;
             CreatureStats& stats = cls.getCreatureStats(mPtr);
             Movement& movementSettings = cls.getMovementSettings(mPtr);
+            const bool logFalloutVrPlayerMovement = VR::getVR() && isPlayer;
+            if (logFalloutVrPlayerMovement && MWVR::hasFallbackMovementInput())
+            {
+                const osg::Vec2f fallbackMovement = MWVR::getFallbackMovementInput();
+                movementSettings.mPosition[0] = fallbackMovement.x();
+                movementSettings.mPosition[1] = fallbackMovement.y();
+                movementSettings.mSpeedFactor = std::min(fallbackMovement.length(), 1.f);
+            }
             const bool holdFalloutActorDisplacement = shouldHoldFalloutActorDisplacement(mPtr, isPlayer);
             if (holdFalloutActorDisplacement)
             {
@@ -2206,7 +2247,8 @@ namespace MWMechanics
             movementSettings.mSpeedFactor = std::min(vec.length(), 1.f);
             vec.normalize();
 
-            const bool smoothMovement = Settings::game().mSmoothMovement;
+            const bool vrPlayer = isPlayer && VR::getVR();
+            const bool smoothMovement = Settings::game().mSmoothMovement || vrPlayer;
             if (smoothMovement)
             {
                 float angle = mPtr.getRefData().getPosition().rot[2];
@@ -2217,7 +2259,13 @@ namespace MWMechanics
                 float deltaLen = delta.length();
 
                 float maxDelta;
-                if (isFirstPersonPlayer)
+                if (isFirstPersonPlayer && vrPlayer)
+                {
+                    const float accel = std::clamp(getFNVEnvFloat("OPENMW_FNV_VR_MOVE_ACCEL", 4.f), 0.5f, 20.f);
+                    const float decel = std::clamp(getFNVEnvFloat("OPENMW_FNV_VR_MOVE_DECEL", 7.f), 0.5f, 30.f);
+                    maxDelta = duration * (speedDelta < -deltaLen / 2 ? decel : accel);
+                }
+                else if (isFirstPersonPlayer)
                     maxDelta = 1;
                 else if (std::abs(speedDelta) < deltaLen / 2)
                     // Turning is smooth for player and less smooth for NPCs (otherwise NPC can miss a path point).
@@ -2225,7 +2273,7 @@ namespace MWMechanics
                 else if (isPlayer && speedDelta < -deltaLen / 2)
                     // As soon as controls are released, mwinput switches player from running to walking.
                     // So stopping should be instant for player, otherwise it causes a small twitch.
-                    maxDelta = 1;
+                    maxDelta = vrPlayer ? duration * std::clamp(getFNVEnvFloat("OPENMW_FNV_VR_MOVE_DECEL", 7.f), 0.5f, 30.f) : 1;
                 else // In all other cases speeding up and stopping are smooth.
                     maxDelta = duration * 3.f;
 
@@ -2294,6 +2342,9 @@ namespace MWMechanics
                 mAnimation->setUpperBodyYawRadians(mAnimation->getUpperBodyYawRadians() + mAnimation->getHeadYaw() / 2);
 
             speed = cls.getCurrentSpeed(mPtr);
+            if (vrPlayer)
+                speed *= getFNVVrLocomotionScale(
+                    movementSettings.mSpeedFactor, isrunning, cls.getWalkSpeed(mPtr), cls.getRunSpeed(mPtr));
             vec.x() *= speed;
             vec.y() *= speed;
 

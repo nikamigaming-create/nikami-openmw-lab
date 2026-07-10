@@ -146,6 +146,7 @@ namespace Settings
 
     std::filesystem::path Manager::load(const Files::ConfigurationManager& cfgMgr, bool loadEditorSettings)
     {
+        clear();
         SettingsFileParser parser;
         const std::vector<std::filesystem::path>& paths = cfgMgr.getActiveConfigPaths();
         if (paths.empty())

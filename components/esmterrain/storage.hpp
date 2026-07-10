@@ -172,7 +172,7 @@ namespace ESMTerrain
 
         Terrain::LayerInfo getLayerInfo(const std::string& texture);
         Terrain::LayerInfo getTextureSetLayerInfo(const ESM4::TextureSet& txst);
-        Terrain::LayerInfo getLandTextureLayerInfo(ESM::FormId id);
+        Terrain::LayerInfo getLandTextureLayerInfo(ESM::FormId id, const Terrain::LayerInfo* defaultLayer = nullptr);
 
         void getEsm4Blendmaps(float chunkSize, const osg::Vec2f& chunkCenter, ImageVector& blendmaps,
             std::vector<Terrain::LayerInfo>& layerList, ESM::RefId worldspace);

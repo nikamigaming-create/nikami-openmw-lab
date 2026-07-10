@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cmath>
 
+#include "fnvxrliveframesurface.hpp"
 #include "openxrinput.hpp"
 #include "vrpointer.hpp"
 
@@ -20,6 +21,7 @@
 #include <osgViewer/Viewer>
 
 #include <components/misc/constants.hpp>
+#include <components/debug/debuglog.hpp>
 #include <components/myguiplatform/additivelayer.hpp>
 #include <components/myguiplatform/myguirendermanager.hpp>
 #include <components/myguiplatform/scalinglayer.hpp>
@@ -67,6 +69,49 @@ namespace MWVR
             "SpellWindow", "MapWindow", "StatsWindow", "DialogueWindow", "ServiceWindow", "JournalBooks", "Debug",
             "MainMenuBackground", "MainMenu", "Settings", "Console", "RadialMenu", "LoadingScreenBackground", "LoadingScreen", "Modal",
                   "ListBox", "Popup", "Video", "InputBlocker", "VideoPlayer", "VirtualKeyboard", "Windows" };
+
+        bool isFalloutInventoryPanelLayer(const std::string& layerName)
+        {
+            return layerName == "InventoryWindow" || layerName == "StatsWindow" || layerName == "MapWindow"
+                || layerName == "SpellWindow";
+        }
+
+        bool isFalloutHudLayer(const std::string& layerName)
+        {
+            return layerName == "HUD_3D";
+        }
+
+        int falloutInventoryPanelIndex(const std::string& layerName)
+        {
+            if (layerName == "MapWindow")
+                return 0;
+            if (layerName == "InventoryWindow")
+                return 1;
+            if (layerName == "SpellWindow")
+                return 2;
+            if (layerName == "StatsWindow")
+                return 3;
+            return -1;
+        }
+
+        std::string activeControllerLayerName()
+        {
+            auto* activeWindow = MWBase::Environment::get().getWindowManager()->getActiveControllerWindow();
+            if (!activeWindow || !activeWindow->mMainWidget || !activeWindow->mMainWidget->getLayer())
+                return {};
+            return activeWindow->mMainWidget->getLayer()->getName();
+        }
+
+        int sFalloutInventoryFocusLogCount = 0;
+        int sFalloutInventoryClickLogCount = 0;
+        int sFalloutInventoryPromoteLogCount = 0;
+        int sFalloutInventoryConfigLogCount = 0;
+        int sFalloutInventoryVisibleLogCount = 0;
+        int sFalloutInventoryRectLogCount = 0;
+        int sFalloutHudConfigLogCount = 0;
+        int sFalloutHudVisibleLogCount = 0;
+        int sFalloutHudRectLogCount = 0;
+        std::string sLastFalloutInventoryFocusLayer;
 
         // Since the MODE stack cannot always inform us what should be in front, and MyGUI doesn't expose this
         // information, i have to manually re-compute what the actual priorities are
@@ -334,6 +379,22 @@ namespace MWVR
             return;
 
         mVisible = visible;
+        if (isFalloutInventoryPanelLayer(mLayerName) && sFalloutInventoryVisibleLogCount < 32)
+        {
+            ++sFalloutInventoryVisibleLogCount;
+            Log(Debug::Info) << "Fallout VR diag: inventory panel GUI visibility layer=" << mLayerName
+                             << " visible=" << mVisible << " widgets=" << mWidgets.size()
+                             << " lua=" << mLuaElements.size() << " forced=" << mForceVisible
+                             << " space=" << (mConfig ? mConfig->space : std::string("<none>"));
+        }
+        if (isFalloutHudLayer(mLayerName) && sFalloutHudVisibleLogCount < 12)
+        {
+            ++sFalloutHudVisibleLogCount;
+            Log(Debug::Info) << "FNV/ESM4 proof: wrist HUD layer visibility visible=" << mVisible
+                             << " widgets=" << mWidgets.size() << " lua=" << mLuaElements.size()
+                             << " forced=" << mForceVisible
+                             << " space=" << (mConfig ? mConfig->space : std::string("<none>"));
+        }
         if (mVisible)
             addToSceneGraph();
         else
@@ -397,9 +458,26 @@ namespace MWVR
         {
             // Implement priority by moving this UI quad slightly towards the viewer based on priority.
             auto view = OpenXRInput::instance().getSpace(OpenXRInput::DefaultReferenceSpaceView);
-            auto diff = view->locateInWorld().pose.position - pose.position;
-            diff = diff / 10000.f;
-            pose.position = pose.position + diff * priority;
+            if (view)
+            {
+                try
+                {
+                    auto tp = view->locateInWorld();
+                    if (static_cast<bool>(tp.status))
+                    {
+                        auto diff = tp.pose.position - pose.position;
+                        diff = diff / 10000.f;
+                        pose.position = pose.position + diff * priority;
+                    }
+                }
+                catch (const std::exception& e)
+                {
+                    if (!mSpaceIsLost)
+                        Log(Debug::Warning) << "Layer " << mLayerName
+                                            << " priority tracking skipped: " << e.what();
+                    mSpaceIsLost = true;
+                }
+            }
         }
 
         if (mVrLayer)
@@ -605,6 +683,35 @@ namespace MWVR
             subImage.height = mRect.bottom - mRect.top;
             mVrLayer->subImage = subImage;
         }
+
+        if (mVisible && isFalloutInventoryPanelLayer(mLayerName) && sFalloutInventoryRectLogCount < 32)
+        {
+            ++sFalloutInventoryRectLogCount;
+            Log(Debug::Info) << "Fallout VR diag: inventory panel GUI rect layer=" << mLayerName << " widgets="
+                             << mWidgets.size() << " lua=" << mLuaElements.size() << " rect=(" << mRect.left << ","
+                             << mRect.top << "," << mRect.right << "," << mRect.bottom << ")"
+                             << " real=(" << mRealRect.left << "," << mRealRect.top << "," << mRealRect.right << ","
+                             << mRealRect.bottom << ")"
+                             << " configExtent=(" << (mConfig ? mConfig->extent.x() : 0.f) << ","
+                             << (mConfig ? mConfig->extent.y() : 0.f) << ")"
+                             << " rtt=(" << (mConfig ? mConfig->pixelResolution.x() : 0) << ","
+                             << (mConfig ? mConfig->pixelResolution.y() : 0) << ")"
+                             << " space=" << (mConfig ? mConfig->space : std::string("<none>"));
+        }
+        if (mVisible && isFalloutHudLayer(mLayerName) && sFalloutHudRectLogCount < 12)
+        {
+            ++sFalloutHudRectLogCount;
+            Log(Debug::Info) << "FNV/ESM4 proof: wrist HUD layer rect widgets=" << mWidgets.size()
+                             << " lua=" << mLuaElements.size() << " rect=(" << mRect.left << "," << mRect.top
+                             << "," << mRect.right << "," << mRect.bottom << ")"
+                             << " real=(" << mRealRect.left << "," << mRealRect.top << "," << mRealRect.right
+                             << "," << mRealRect.bottom << ")"
+                             << " extent=(" << (mConfig ? mConfig->extent.x() : 0.f) << ","
+                             << (mConfig ? mConfig->extent.y() : 0.f) << ")"
+                             << " rtt=(" << (mConfig ? mConfig->pixelResolution.x() : 0) << ","
+                             << (mConfig ? mConfig->pixelResolution.y() : 0) << ")"
+                             << " space=" << (mConfig ? mConfig->space : std::string("<none>"));
+        }
     }
 
     void VRGUILayer::insertWidget(MWGui::Layout* widget)
@@ -717,6 +824,7 @@ namespace MWVR
         mGeometries->setNodeMask(MWRender::VisMask::Mask_3DGUI);
         mGeometries->setCullingActive(false);
         mRootNode->addChild(mGeometries);
+        FNVXRLiveFrameSurface::instance().init(mGeometries);
 
         mGUICameras->setName("VR GUI Cameras Root");
         mGUICameras->setNodeMask(MWRender::VisMask::Mask_3DGUI);
@@ -787,6 +895,7 @@ namespace MWVR
     {
         mGeometries->removeChildren(0, mGeometries->getNumChildren());
         mGUICameras->removeChildren(0, mGUICameras->getNumChildren());
+        FNVXRLiveFrameSurface::instance().init(mGeometries);
         setFocusLayer(nullptr);
         mLayers.clear();
     }
@@ -876,11 +985,30 @@ namespace MWVR
 
     void VRGUIManager::updateFocus(osg::Node* focusNode, osg::Vec3f hitPoint)
     {
+        if (FNVXRLiveFrameSurface::instance().visible())
+        {
+            setFocusLayer(nullptr);
+            computeGuiCursor(osg::Vec3(0, 0, 0));
+            return;
+        }
+
         if (focusNode && focusNode->getName() == "VRGUILayer")
         {
             VRGUILayerUserData* userData = static_cast<VRGUILayerUserData*>(focusNode->getUserData());
             setFocusLayer(userData->mLayer);
             computeGuiCursor(hitPoint);
+            if (mFocusLayer && isFalloutInventoryPanelLayer(mFocusLayer->mLayerName)
+                && (sLastFalloutInventoryFocusLayer != mFocusLayer->mLayerName || sFalloutInventoryFocusLogCount < 8))
+            {
+                ++sFalloutInventoryFocusLogCount;
+                sLastFalloutInventoryFocusLayer = mFocusLayer->mLayerName;
+                Log(Debug::Info) << "Fallout VR diag: inventory panel GUI focus layer=" << mFocusLayer->mLayerName
+                                 << " cursor=(" << mGuiCursor.x() << "," << mGuiCursor.y() << ")"
+                                 << " localHit=(" << hitPoint.x() << "," << hitPoint.y() << "," << hitPoint.z()
+                                 << ") widgets=" << mFocusLayer->widgetCount()
+                                 << " space="
+                                 << (mFocusLayer->mConfig ? mFocusLayer->mConfig->space : std::string("<none>"));
+            }
         }
         else
         {
@@ -896,6 +1024,7 @@ namespace MWVR
 
     void VRGUIManager::update(osg::NodeVisitor* nv)
     {
+        FNVXRLiveFrameSurface::instance().update(nv);
         for (auto& layer : mLayers)
             layer.second->update(nv);
     }
@@ -944,8 +1073,33 @@ namespace MWVR
     bool VRGUIManager::injectMouseClick()
     {
         // TODO: This relies on a MyGUI internal functions and may break un any future version.
+        if (mFocusLayer && isFalloutInventoryPanelLayer(mFocusLayer->mLayerName)
+            && MWBase::Environment::get().getWindowManager()->getMode() == MWGui::GM_Inventory)
+        {
+            const int paneIndex = falloutInventoryPanelIndex(mFocusLayer->mLayerName);
+            const std::string activeLayer = activeControllerLayerName();
+            if (paneIndex >= 0 && activeLayer != mFocusLayer->mLayerName)
+            {
+                MWBase::Environment::get().getWindowManager()->setActiveControllerWindow(MWGui::GM_Inventory, paneIndex);
+                if (sFalloutInventoryPromoteLogCount < 16)
+                {
+                    ++sFalloutInventoryPromoteLogCount;
+                    Log(Debug::Info) << "Fallout VR diag: inventory panel promoted layer=" << mFocusLayer->mLayerName
+                                     << " paneIndex=" << paneIndex << " previousLayer=" << activeLayer;
+                }
+                return true;
+            }
+        }
+
         if (hasFocus() && mFocusWidget != nullptr)
         {
+            if (mFocusLayer && isFalloutInventoryPanelLayer(mFocusLayer->mLayerName) && sFalloutInventoryClickLogCount < 12)
+            {
+                ++sFalloutInventoryClickLogCount;
+                Log(Debug::Info) << "Fallout VR diag: inventory panel GUI click layer=" << mFocusLayer->mLayerName
+                                 << " cursor=(" << mGuiCursor.x() << "," << mGuiCursor.y() << ") widget="
+                                 << mFocusWidget->getName();
+            }
             mFocusWidget->_riseMouseButtonClick();
             return true;
         }
@@ -1059,6 +1213,26 @@ namespace MWVR
     void VRGUIManager::setLayerConfig(const std::string& name, const LayerConfig& config)
     {
         std::scoped_lock lock(mMutex);
+        if (isFalloutInventoryPanelLayer(name) && sFalloutInventoryConfigLogCount < 16)
+        {
+            ++sFalloutInventoryConfigLogCount;
+            Log(Debug::Info) << "Fallout VR diag: inventory panel GUI config layer=" << name << " opacity=" << config.opacity
+                             << " center=(" << config.center.x() << "," << config.center.y() << ")"
+                             << " extent=(" << config.extent.x() << "," << config.extent.y() << ")"
+                             << " ppm=" << config.spatialResolution << " rtt=(" << config.pixelResolution.x() << ","
+                             << config.pixelResolution.y() << ") autosize=" << config.autoSize
+                             << " space=" << config.space;
+        }
+        if (isFalloutHudLayer(name) && sFalloutHudConfigLogCount < 8)
+        {
+            ++sFalloutHudConfigLogCount;
+            Log(Debug::Info) << "FNV/ESM4 proof: wrist HUD layer config opacity=" << config.opacity
+                             << " center=(" << config.center.x() << "," << config.center.y() << ")"
+                             << " extent=(" << config.extent.x() << "," << config.extent.y() << ")"
+                             << " ppm=" << config.spatialResolution << " rtt=(" << config.pixelResolution.x() << ","
+                             << config.pixelResolution.y() << ") autosize=" << config.autoSize
+                             << " space=" << config.space;
+        }
         getLayer(name)->setConfig(config);
     }
 
@@ -1115,10 +1289,11 @@ namespace MWVR
         mGuiCursor.y() = (int)y;
         MWBase::Environment::get().getWindowManager()->setCursorActive(true);
 
-        // The virtual keyboard must be interactive regardless of modals
-        // This could be generalized with another config entry, but i don't think any other
-        // widgets/layers need it so i'm hardcoding it for the VirtualKeyboard for now.
-        if (mFocusLayer && mFocusLayer->mLayerName == "VirtualKeyboard")
+        // The virtual keyboard and Fallout's native inventory panels are projected into VR and
+        // need the pointed MyGUI widget resolved before a controller click can activate them.
+        if (mFocusLayer
+            && (mFocusLayer->mLayerName == "VirtualKeyboard"
+                || isFalloutInventoryPanelLayer(mFocusLayer->mLayerName)))
         {
             auto* widget = MyGUI::LayerManager::getInstance().getWidgetFromPoint((int)x, (int)y);
             setFocusWidget(widget);

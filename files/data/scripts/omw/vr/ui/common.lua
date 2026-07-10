@@ -80,15 +80,6 @@ local layersForArrangement = {
     'DialogueWindow', 'MapWindow', 'SpellWindow', 'InventoryWindow', 'StatsWindow', 'InventoryCompanionWindow', 'Windows'
 }
 
-local pipBoyWindowLayers = {
-    'InventoryWindow',
-    'StatsWindow',
-    'MapWindow',
-    'SpellWindow',
-}
-
-local pipBoyLayers = {}
-
 local function getWindowLayer(window)
     return windowToLayer[window] or 'Windows'
 end
@@ -102,23 +93,12 @@ local function getAllLayers()
     return layers
 end
 
-local function getLayerSize(layer)
-    return ui.layers[ui.layers.indexOf(layer)].size
-end
-
 local function isFalloutContentLoaded()
     return core.contentFiles and core.contentFiles.has and core.contentFiles.has('FalloutNV.esm')
 end
 
-local function updatePipBoyLayerMembership()
-    pipBoyLayers = {}
-    if not isFalloutContentLoaded() then
-        return
-    end
-
-    for _, layer in ipairs(pipBoyWindowLayers) do
-        pipBoyLayers[layer] = true
-    end
+local function getLayerSize(layer)
+    return ui.layers[ui.layers.indexOf(layer)].size
 end
 
 local function createDerivedSpaces()
@@ -406,10 +386,10 @@ local function setLayerPoseIfNotOverridden(layer, pose)
     end
 end
 
-local configHUD3D = createDefaultConfig(0, true)
-configHUD3D.extent = util.vector2(0.033, 0.033)
+local configHUD3D = createDefaultConfig(0.08, true)
+configHUD3D.extent = util.vector2(0.18, 0.125)
 configHUD3D.center = util.vector2(0, 0.5)
-configHUD3D.pixelsPerMeter = 650
+configHUD3D.pixelsPerMeter = 1150
 configHUD3D.space = 'LeftWristTop'
 layerConfig.HUD_3D = configHUD3D
 
@@ -441,7 +421,6 @@ spacesSection:subscribe(async:callback(updateSpacesSettings))
 
 
 local function setupDefaults(modes)
-    updatePipBoyLayerMembership()
     updateSpacesSettings()
 
     local allLayers = getAllLayers()
@@ -469,46 +448,17 @@ local function setupDefaults(modes)
     layerConfig.Notification.space = 'DefaultNotification'
     layerConfig.HUD = createDefaultConfig(0, true)
 
+    local falloutPanelPixelsPerMeter = isFalloutContentLoaded() and 980 or 700
     layerConfig.InventoryWindow.backgroundOpacity = 0.82
-    layerConfig.InventoryWindow.pixelsPerMeter = 850
+    layerConfig.InventoryWindow.pixelsPerMeter = falloutPanelPixelsPerMeter
     layerConfig.StatsWindow.backgroundOpacity = 0.78
-    layerConfig.StatsWindow.pixelsPerMeter = 850
+    layerConfig.StatsWindow.pixelsPerMeter = falloutPanelPixelsPerMeter
     layerConfig.MapWindow.backgroundOpacity = 0.78
-    layerConfig.MapWindow.pixelsPerMeter = 850
+    layerConfig.MapWindow.pixelsPerMeter = falloutPanelPixelsPerMeter
     layerConfig.SpellWindow.backgroundOpacity = 0.78
-    layerConfig.SpellWindow.pixelsPerMeter = 850
+    layerConfig.SpellWindow.pixelsPerMeter = falloutPanelPixelsPerMeter
     layerConfig.Windows.backgroundOpacity = 0.82
     layerConfig.Windows.pixelsPerMeter = 850
-
-    if isFalloutContentLoaded() then
-        layerConfig.InventoryWindow.backgroundOpacity = 0.08
-        layerConfig.InventoryWindow.autosize = false
-        layerConfig.InventoryWindow.extent = util.vector2(0.18, 0.13)
-        layerConfig.InventoryWindow.rttResolution = util.vector2(1024, 768)
-        layerConfig.InventoryWindow.pixelsPerMeter = 900
-        layerConfig.InventoryWindow.space = 'PipBoyInventory'
-
-        layerConfig.StatsWindow.backgroundOpacity = 0.05
-        layerConfig.StatsWindow.autosize = false
-        layerConfig.StatsWindow.extent = util.vector2(0.09, 0.12)
-        layerConfig.StatsWindow.rttResolution = util.vector2(768, 768)
-        layerConfig.StatsWindow.pixelsPerMeter = 900
-        layerConfig.StatsWindow.space = 'PipBoyStats'
-
-        layerConfig.MapWindow.backgroundOpacity = 0.05
-        layerConfig.MapWindow.autosize = false
-        layerConfig.MapWindow.extent = util.vector2(0.09, 0.12)
-        layerConfig.MapWindow.rttResolution = util.vector2(768, 768)
-        layerConfig.MapWindow.pixelsPerMeter = 900
-        layerConfig.MapWindow.space = 'PipBoyMap'
-
-        layerConfig.SpellWindow.backgroundOpacity = 0.05
-        layerConfig.SpellWindow.autosize = false
-        layerConfig.SpellWindow.extent = util.vector2(0.12, 0.05)
-        layerConfig.SpellWindow.rttResolution = util.vector2(768, 384)
-        layerConfig.SpellWindow.pixelsPerMeter = 900
-        layerConfig.SpellWindow.space = 'PipBoyUtility'
-    end
 
     for layer, config in pairs(layerConfig) do
         setLayerConfigIfNotOverridden(layer, config)
@@ -549,6 +499,39 @@ local function updateLayerArrangement()
         return
     end
 
+    local visible = {}
+    for _, layer in ipairs(visibleLayersForArrangement) do
+        visible[layer] = true
+    end
+    if isFalloutContentLoaded() and visible.InventoryWindow and visible.MapWindow and visible.StatsWindow then
+        local falloutSlots = {
+            StatsWindow = -1,
+            InventoryWindow = 0,
+            MapWindow = 1,
+            SpellWindow = 2,
+        }
+        local activeLayer = vr._getActiveControllerLayer and vr._getActiveControllerLayer() or 'InventoryWindow'
+        local activeSlot = falloutSlots[activeLayer] or falloutSlots.InventoryWindow
+        local unitsPerMeter = I.vrspaces.unitsPerMeter or 1
+        local baseTransform = util.transform.rotateZ(referenceWorldPose.orientation:getYaw())
+            * util.transform.rotateZ(windowArrangementRelativePose.orientation:getYaw())
+        local basePosition = baseTransform:apply(windowArrangementRelativePose.position)
+        for _, layer in ipairs(visibleLayersForArrangement) do
+            local slot = falloutSlots[layer]
+            if slot and windowArrangementRelativePose.orientation and windowArrangementRelativePose.position then
+                local offset = math.max(-2, math.min(2, slot - activeSlot))
+                local sideStep = util.vector3(offset * 0.72, 0, 0) * unitsPerMeter
+                local rotatedPosition = basePosition + baseTransform:apply(sideStep)
+                local panelTransform = baseTransform * util.transform.rotateZ(offset * math.rad(12))
+                setLayerPoseIfNotOverridden(layer, {
+                    position = referenceWorldPose.position + rotatedPosition,
+                    orientation = panelTransform
+                })
+            end
+        end
+        return
+    end
+
     local layerPoses = {}
     local step = (-math.pi / 4)
     local span = step * (#visibleLayersForArrangement - 1)
@@ -570,13 +553,11 @@ local function updateLayerArrangement()
 end
 
 local function updateVisibleLayers()
-    updatePipBoyLayerMembership()
-
     local old = visibleLayersForArrangement
     visibleLayersForArrangement = {}
 
     for _, layer in ipairs(layersForArrangement) do
-        if not pipBoyLayers[layer] and vr._isLayerRendering(layer) then
+        if vr._isLayerRendering(layer) then
             visibleLayersForArrangement[#visibleLayersForArrangement + 1] = layer
         end
     end

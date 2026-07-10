@@ -52,6 +52,8 @@ void ESM4::SubSpace::load(ESM4::Reader& reader)
                 break;
             }
             default:
+                if (reader.skipUnknownStarfieldSubRecordData("loadsbsp"))
+                    break;
                 throw std::runtime_error("ESM4::SBSP::load - Unknown subrecord " + ESM::printName(subHdr.typeId));
         }
     }

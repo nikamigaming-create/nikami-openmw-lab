@@ -1,5 +1,8 @@
 #include "terrainstorage.hpp"
 
+#include <sstream>
+
+#include <components/debug/debuglog.hpp>
 #include <components/esm3/loadland.hpp>
 #include <components/esm4/loadltex.hpp>
 #include <components/esm4/loadtxst.hpp>
@@ -116,7 +119,45 @@ namespace MWRender
     const ESM4::LandTexture* TerrainStorage::getEsm4LandTexture(ESM::RefId ltexId) const
     {
         const MWWorld::ESMStore& esmStore = *MWBase::Environment::get().getESMStore();
-        return esmStore.get<ESM4::LandTexture>().search(ltexId);
+        const MWWorld::Store<ESM4::LandTexture>& ltexStore = esmStore.get<ESM4::LandTexture>();
+        if (const ESM4::LandTexture* direct = ltexStore.search(ltexId))
+            return direct;
+
+        const ESM::FormId* requestedFormId = ltexId.getIf<ESM::FormId>();
+        for (auto it = ltexStore.begin(); requestedFormId != nullptr && it != ltexStore.end(); ++it)
+        {
+            const ESM4::LandTexture& candidate = *it;
+            if (candidate.mId.mIndex == requestedFormId->mIndex)
+            {
+                static int resolvedIndexFallbackLogs = 0;
+                if (resolvedIndexFallbackLogs < 40)
+                {
+                    ++resolvedIndexFallbackLogs;
+                    Log(Debug::Warning) << "World viewer terrain: resolved LTEX " << ltexId.toString()
+                                        << " by matching index to loaded " << candidate.mId.toString()
+                                        << " editorId=\"" << candidate.mEditorId << "\"";
+                }
+                return &candidate;
+            }
+        }
+
+        static int missingLtexSampleLogs = 0;
+        if (missingLtexSampleLogs < 20)
+        {
+            ++missingLtexSampleLogs;
+            std::ostringstream sample;
+            unsigned int count = 0;
+            for (auto it = ltexStore.begin(); it != ltexStore.end() && count < 12; ++it, ++count)
+            {
+                if (count != 0)
+                    sample << ", ";
+                sample << it->mId.toString() << ":" << it->mEditorId;
+            }
+            Log(Debug::Warning) << "World viewer terrain: LTEX lookup failed for " << ltexId.toString()
+                                << " storeSize=" << ltexStore.getSize()
+                                << " sample=[" << sample.str() << "]";
+        }
+        return nullptr;
     }
 
     const ESM4::TextureSet* TerrainStorage::getEsm4TextureSet(ESM::RefId txstId) const
