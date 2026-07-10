@@ -208,6 +208,7 @@ add_component_dir (esm4
     grouptype
     inventory
     lighting
+    lip
     loadachr
     loadacti
     loadalch

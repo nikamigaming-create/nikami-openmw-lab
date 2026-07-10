@@ -62,6 +62,7 @@
 #include <cstdlib>
 #include <cstdint>
 #include <istream>
+#include <limits>
 #include <map>
 #include <memory>
 #include <sstream>
@@ -2873,8 +2874,10 @@ namespace MWRender
         class FalloutDialogueMorphDriver : public osg::NodeCallback
         {
         public:
-            FalloutDialogueMorphDriver(Animation* animation, const FaceGenTri& tri, const std::string& model)
-                : mAnimation(animation)
+            FalloutDialogueMorphDriver(const MWWorld::ConstPtr& actor, Animation* animation, const FaceGenTri& tri,
+                const std::string& model)
+                : mActor(actor)
+                , mAnimation(animation)
                 , mModel(model)
             {
                 for (const auto& [morphName, deltas] : tri.mDiffMorphs)
@@ -2899,11 +2902,36 @@ namespace MWRender
 
                 std::vector<float> values;
                 values.reserve(mMorphs.size());
+                float dominantLipValue = 0.f;
+                std::string_view dominantLipTarget;
 
                 for (const Morph& morph : mMorphs)
                 {
                     float val = mAnimation->getFalloutHeadAnimTrackValue(morph.name);
+                    const float lipValue
+                        = MWBase::Environment::get().getSoundManager()->getSaySoundFacialTrackValue(mActor, morph.name);
+                    val += lipValue;
+                    if (std::abs(lipValue) > std::abs(dominantLipValue))
+                    {
+                        dominantLipValue = lipValue;
+                        dominantLipTarget = morph.name;
+                    }
                     values.push_back(val);
+                }
+
+                if (std::getenv("OPENMW_FNV_PROOF_LIP_TELEMETRY") != nullptr
+                    && nv != nullptr && nv->getFrameStamp() != nullptr)
+                {
+                    const std::uint64_t frame = nv->getFrameStamp()->getFrameNumber();
+                    if (frame != mLastTelemetryFrame && frame % 5 == 0)
+                    {
+                        mLastTelemetryFrame = frame;
+                        Log(Debug::Info) << "FNV/ESM4 LIP SAMPLE actor=" << mActor.getCellRef().getRefId()
+                                         << " frame=" << frame << " target="
+                                         << (dominantLipTarget.empty() ? std::string_view("<neutral>")
+                                                                      : dominantLipTarget)
+                                         << " value=" << dominantLipValue;
+                    }
                 }
 
                 if (mLastValues != values)
@@ -3031,11 +3059,13 @@ namespace MWRender
                 }
             }
 
+            MWWorld::ConstPtr mActor;
             Animation* mAnimation;
             std::string mModel;
             std::vector<Morph> mMorphs;
             std::vector<Target> mTargets;
             std::vector<float> mLastValues;
+            std::uint64_t mLastTelemetryFrame = std::numeric_limits<std::uint64_t>::max();
         };
 
         class FalloutDialogueMorphTargetVisitor : public osg::NodeVisitor
@@ -3069,7 +3099,8 @@ namespace MWRender
         };
 
         bool applyFalloutDialogueMorph(
-            Resource::ResourceSystem* resourceSystem, Animation* animation, osg::Node* attached,
+            Resource::ResourceSystem* resourceSystem, const MWWorld::ConstPtr& actor, Animation* animation,
+            osg::Node* attached,
             std::string_view model, const ESM4::Npc& traits)
         {
             if (attached == nullptr)
@@ -3080,7 +3111,7 @@ namespace MWRender
                 return false;
 
             osg::ref_ptr<FalloutDialogueMorphDriver> driver
-                = new FalloutDialogueMorphDriver(animation, *tri, std::string(model));
+                = new FalloutDialogueMorphDriver(actor, animation, *tri, std::string(model));
             FalloutDialogueMorphTargetVisitor targetVisitor(*driver);
             attached->accept(targetVisitor);
 
@@ -3088,6 +3119,9 @@ namespace MWRender
                 return false;
 
             attached->addUpdateCallback(driver);
+            if (std::getenv("OPENMW_FNV_PROOF_LIP_TELEMETRY") != nullptr)
+                Log(Debug::Info) << "FNV/ESM4 LIP DRIVER actor=" << actor.getCellRef().getRefId()
+                                 << " model=\"" << model << "\" attached=1";
             return true;
         }
 
@@ -8381,7 +8415,7 @@ namespace MWRender
             if (attached != nullptr)
                 applyFalloutProofTriStaticMorph(mResourceSystem, attached.get(), headPart.mesh, traits);
             if (attached != nullptr)
-                applyFalloutDialogueMorph(mResourceSystem, this, attached.get(), headPart.mesh, traits);
+                applyFalloutDialogueMorph(mResourceSystem, mPtr, this, attached.get(), headPart.mesh, traits);
             logFalloutFaceDrawableAudit(attached.get(), headPart.mesh, mPtr, "final-race-head");
         }
 
@@ -8403,7 +8437,7 @@ namespace MWRender
                 applyFaceGenEgmMorph(mResourceSystem, attached.get(), hair->mModel, traits);
                 applyFalloutProofTriStaticMorph(mResourceSystem, attached.get(), hair->mModel, traits);
                 if (attached != nullptr)
-                    applyFalloutDialogueMorph(mResourceSystem, this, attached.get(), hair->mModel, traits);
+                    applyFalloutDialogueMorph(mResourceSystem, mPtr, this, attached.get(), hair->mModel, traits);
                 ++insertedHeadParts;
             }
             else
@@ -8555,7 +8589,7 @@ namespace MWRender
                 applyFaceGenEgmMorph(mResourceSystem, attached.get(), part->mModel, traits);
                 applyFalloutProofTriStaticMorph(mResourceSystem, attached.get(), part->mModel, traits);
                 if (attached != nullptr)
-                    applyFalloutDialogueMorph(mResourceSystem, this, attached.get(), part->mModel, traits);
+                    applyFalloutDialogueMorph(mResourceSystem, mPtr, this, attached.get(), part->mModel, traits);
                 if (isFonvFacialHairHeadPart(*part))
                     usedHeadPartTypes.insert(ESM4::HeadPart::Type_FacialHair);
                 ++inserted;
@@ -8573,7 +8607,8 @@ namespace MWRender
                     applyFaceGenEgmMorph(mResourceSystem, extraAttached.get(), extraPart->mModel, traits);
                     applyFalloutProofTriStaticMorph(mResourceSystem, extraAttached.get(), extraPart->mModel, traits);
                     if (extraAttached != nullptr)
-                        applyFalloutDialogueMorph(mResourceSystem, this, extraAttached.get(), extraPart->mModel, traits);
+                        applyFalloutDialogueMorph(
+                            mResourceSystem, mPtr, this, extraAttached.get(), extraPart->mModel, traits);
                     if (extraAttached != nullptr && std::getenv("OPENMW_FNV_PROOF_MOUTH_DRIVER") != nullptr
                         && isFalloutMouthDriverPart(extraPart->mModel))
                         applyFalloutProofTriOpenMorph(

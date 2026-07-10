@@ -128,11 +128,21 @@ namespace ESM4
 
         switch (condition.functionIndex)
         {
+            case FUN_GetDistance:
+            case FUN_GetItemCount:
+            case FUN_GetDeadCount:
             case FUN_GetInCell:
             case FUN_GetIsClass:
             case FUN_GetIsRace:
+            case FUN_GetIsVoiceType:
             case FUN_GetInFaction:
             case FUN_GetIsID:
+            case FUN_GetEquipped:
+            case FUN_GetIsCurrentPackage:
+            case FUN_GetIsReference:
+            case FUN_GetInWorldspace:
+            case FUN_GetHasNote:
+            case FUN_HasPerk:
             case FUN_GetGlobalValue:
             case FUN_GetQuestVariable:
             case FUN_GetQuestRunning:

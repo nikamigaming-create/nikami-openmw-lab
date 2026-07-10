@@ -112,6 +112,7 @@ namespace MWClass
     {
     public:
         const ESM4::Npc* mTraits = nullptr;
+        const ESM4::Npc* mFactions = nullptr;
         const ESM4::Npc* mModel = nullptr;
         const ESM4::Npc* mAIPackage = nullptr;
         const ESM4::Npc* mStats = nullptr;
@@ -143,6 +144,7 @@ namespace MWClass
 
     ESM4NpcCustomData::ESM4NpcCustomData(const ESM4NpcCustomData& other)
         : mTraits(other.mTraits)
+        , mFactions(other.mFactions)
         , mModel(other.mModel)
         , mAIPackage(other.mAIPackage)
         , mStats(other.mStats)
@@ -492,6 +494,12 @@ namespace MWClass
             Log(Debug::Warning) << "Traits are not found for ESM4 NPC base record: \"" << base->mEditorId << "\" ("
                                 << ESM::RefId(base->mId) << ")";
 
+        data->mFactions = chooseTemplate(npcRecs, ESM4::Npc::Template_UseFactions);
+
+        if (data->mFactions == nullptr)
+            Log(Debug::Warning) << "Faction data is not found for ESM4 NPC base record: \"" << base->mEditorId
+                                << "\" (" << ESM::RefId(base->mId) << ")";
+
         data->mModel = chooseTemplate(npcRecs, ESM4::Npc::Template_UseModel);
 
         if (data->mModel == nullptr)
@@ -759,6 +767,11 @@ namespace MWClass
     const ESM4::Npc* ESM4Npc::getTraitsRecord(const MWWorld::Ptr& ptr)
     {
         return getCustomData(ptr).mTraits;
+    }
+
+    const ESM4::Npc* ESM4Npc::getFactionsRecord(const MWWorld::Ptr& ptr)
+    {
+        return getCustomData(ptr).mFactions;
     }
 
     const ESM4::Npc* ESM4Npc::getModelRecord(const MWWorld::Ptr& ptr)

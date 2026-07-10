@@ -1,5 +1,6 @@
 #include <components/esm4/loaddial.hpp>
 #include <components/esm4/loadinfo.hpp>
+#include <components/esm4/loadnpc.hpp>
 #include <components/esm4/loadqust.hpp>
 #include <components/esm4/reader.hpp>
 
@@ -106,6 +107,28 @@ namespace
         result.functionIndex = function;
         result.param1 = parameter;
         return result;
+    }
+
+    TEST(Esm4BehaviorRecordTest, shouldPreserveNpcVoiceTypeAndAllFactions)
+    {
+        std::string payload;
+        appendSubRecord(payload, "EDID", zString("DialogueActor"));
+        appendSubRecord(payload, "VTCK", std::uint32_t{ 0x1234 });
+        ESM4::ActorFaction first{ .faction = 0x2001, .rank = 2 };
+        ESM4::ActorFaction second{ .faction = 0x2002, .rank = -1 };
+        appendSubRecord(payload, "SNAM", first);
+        appendSubRecord(payload, "SNAM", second);
+
+        auto reader = makeReader("NPC_", 0x1000, payload, 3);
+        ESM4::Npc npc;
+        npc.load(*reader);
+
+        EXPECT_EQ(npc.mVoiceType, ESM::FormId::fromUint32(0x03001234));
+        ASSERT_EQ(npc.mFactions.size(), 2);
+        EXPECT_EQ(ESM::FormId::fromUint32(npc.mFactions[0].faction), ESM::FormId::fromUint32(0x03002001));
+        EXPECT_EQ(npc.mFactions[0].rank, 2);
+        EXPECT_EQ(ESM::FormId::fromUint32(npc.mFactions[1].faction), ESM::FormId::fromUint32(0x03002002));
+        EXPECT_EQ(npc.mFactions[1].rank, -1);
     }
 
     TEST(Esm4BehaviorRecordTest, shouldPreserveFalloutQuestStagesObjectivesConditionsAndBytecode)

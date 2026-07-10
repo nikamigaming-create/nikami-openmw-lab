@@ -8,6 +8,7 @@
 #include <utility>
 
 #include <components/fallback/fallback.hpp>
+#include <components/esm4/lip.hpp>
 #include <components/misc/objectpool.hpp>
 #include <components/misc/strings/algorithm.hpp>
 #include <components/settings/settings.hpp>
@@ -76,6 +77,7 @@ namespace MWSound
         {
             const MWWorld::CellStore* mCell;
             StreamPtr mStream;
+            std::shared_ptr<const ESM4::LipAnimation> mLip;
         };
 
         typedef std::map<const MWWorld::LiveCellRefBase*, SaySound> SaySoundMap;
@@ -202,6 +204,9 @@ namespace MWSound
         ///< Check the currently playing say sound for this actor
         /// and get an average loudness value (scale [0,1]) at the current time position.
         /// If the actor is not saying anything, returns 0.
+
+        float getSaySoundFacialTrackValue(
+            const MWWorld::ConstPtr& reference, std::string_view trackName) const override;
 
         Stream* playTrack(const DecoderPtr& decoder, Type type) override;
         ///< Play a 2D audio track, using a custom decoder

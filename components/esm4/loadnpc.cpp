@@ -138,12 +138,15 @@ void ESM4::Npc::load(ESM4::Reader& reader)
                 break;
             case ESM::fourCC("SNAM"):
             {
+                ActorFaction faction{};
                 // FO4, FO76
                 if (subHdr.dataSize == 5)
-                    reader.get(&mFaction, 5);
+                    reader.get(&faction, 5);
                 else
-                    reader.get(mFaction);
-                reader.adjustFormId(mFaction.faction);
+                    reader.get(faction);
+                reader.adjustFormId(faction.faction);
+                mFaction = faction;
+                mFactions.push_back(faction);
                 break;
             }
             case ESM::fourCC("RNAM"):
@@ -402,7 +405,6 @@ void ESM4::Npc::load(ESM4::Reader& reader)
             case ESM::fourCC("PRKZ"):
             case ESM::fourCC("SPCT"):
             case ESM::fourCC("VMAD"):
-            case ESM::fourCC("VTCK"):
             case ESM::fourCC("GNAM"):
             case ESM::fourCC("SHRT"):
             case ESM::fourCC("SPOR"):
@@ -446,6 +448,9 @@ void ESM4::Npc::load(ESM4::Reader& reader)
             case ESM::fourCC("FMRS"): //
             case ESM::fourCC("FMIN"): // FO4 morph subrecords end
                 reader.skipSubRecordData();
+                break;
+            case ESM::fourCC("VTCK"):
+                reader.getFormId(mVoiceType);
                 break;
             default:
                 if (reader.skipUnknownStarfieldSubRecordData("loadnpc"))
