@@ -30,12 +30,14 @@
 #include <stdexcept>
 
 #include "reader.hpp"
-//#include "writer.hpp"
+// #include "writer.hpp"
 
 void ESM4::Dialogue::load(ESM4::Reader& reader)
 {
     mId = reader.getFormIdFromHeader();
     mFlags = reader.hdr().record.flags;
+
+    ESM::FormId currentQuest{};
 
     while (reader.getSubRecordHeader())
     {
@@ -49,7 +51,8 @@ void ESM4::Dialogue::load(ESM4::Reader& reader)
                 reader.getLocalizedString(mTopicName);
                 break;
             case ESM::fourCC("QSTI"):
-                reader.getFormId(mQuests.emplace_back());
+                reader.getFormId(currentQuest);
+                mQuests.push_back(currentQuest);
                 break;
             case ESM::fourCC("QSTR"): // Seems never used in TES4
                 reader.getFormId(mQuestsRemoved.emplace_back());
@@ -81,8 +84,31 @@ void ESM4::Dialogue::load(ESM4::Reader& reader)
                 reader.getZString(mTextDumb);
                 break; // FONV
             case ESM::fourCC("SCRI"):
-            case ESM::fourCC("INFC"): // FONV info connection
-            case ESM::fourCC("INFX"): // FONV info index
+                reader.getFormId(mScript);
+                break;
+            case ESM::fourCC("INFC"):
+                if (subHdr.dataSize == sizeof(ESM::FormId32))
+                {
+                    DialogueSharedInfo& sharedInfo = mSharedInfos.emplace_back();
+                    sharedInfo.mQuest = currentQuest;
+                    reader.getFormId(sharedInfo.mInfo);
+                }
+                else
+                    reader.skipSubRecordData();
+                break;
+            case ESM::fourCC("INFX"):
+                if (subHdr.dataSize == sizeof(std::int32_t))
+                {
+                    if (mSharedInfos.empty() || mSharedInfos.back().mIndex != -1)
+                    {
+                        DialogueSharedInfo& sharedInfo = mSharedInfos.emplace_back();
+                        sharedInfo.mQuest = currentQuest;
+                    }
+                    reader.get(mSharedInfos.back().mIndex);
+                }
+                else
+                    reader.skipSubRecordData();
+                break;
             case ESM::fourCC("QNAM"): // TES5
             case ESM::fourCC("BNAM"): // TES5
             case ESM::fourCC("SNAM"): // TES5

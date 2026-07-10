@@ -4,6 +4,7 @@
 
 #include <components/esm3/esmreader.hpp>
 #include <components/esm3/esmwriter.hpp>
+#include <components/esm4/loadglob.hpp>
 
 #include "esmstore.hpp"
 
@@ -38,6 +39,33 @@ namespace MWWorld
         for (const ESM::Global& esmGlobal : globals)
         {
             mVariables.emplace(esmGlobal.mId, esmGlobal);
+        }
+
+        const auto insertFalloutGlobal = [this](std::string_view id, float value, std::uint32_t flags) {
+            ESM::Global runtimeGlobal;
+            runtimeGlobal.mRecordFlags = flags;
+            runtimeGlobal.mId = ESM::RefId::stringRefId(id);
+            runtimeGlobal.mValue.setType(ESM::VT_Float);
+            runtimeGlobal.mValue.setFloat(value);
+            mVariables.insert_or_assign(runtimeGlobal.mId, std::move(runtimeGlobal));
+        };
+
+        for (const ESM4::GlobalVariable& esm4Global : store.get<ESM4::GlobalVariable>())
+        {
+            if (esm4Global.mEditorId.empty())
+                continue;
+            insertFalloutGlobal(esm4Global.mEditorId, esm4Global.mValue, esm4Global.mFlags);
+
+            // OpenMW's calendar names predate the TES4-family Game* names. Keep both IDs
+            // backed by the same initial retail value so DateTimeManager uses the master data.
+            if (Misc::StringUtils::ciEqual(esm4Global.mEditorId, "GameYear"))
+                insertFalloutGlobal(sYear.getValue(), esm4Global.mValue, esm4Global.mFlags);
+            else if (Misc::StringUtils::ciEqual(esm4Global.mEditorId, "GameMonth"))
+                insertFalloutGlobal(sMonth.getValue(), esm4Global.mValue, esm4Global.mFlags);
+            else if (Misc::StringUtils::ciEqual(esm4Global.mEditorId, "GameDay"))
+                insertFalloutGlobal(sDay.getValue(), esm4Global.mValue, esm4Global.mFlags);
+            else if (Misc::StringUtils::ciEqual(esm4Global.mEditorId, "GameDaysPassed"))
+                insertFalloutGlobal(sDaysPassed.getValue(), esm4Global.mValue, esm4Global.mFlags);
         }
     }
 

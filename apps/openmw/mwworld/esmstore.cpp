@@ -98,10 +98,9 @@ namespace
 
     bool containsAsciiNoCase(std::string_view value, std::string_view needle)
     {
-        auto it = std::search(value.begin(), value.end(), needle.begin(), needle.end(),
-            [](char left, char right) {
-                return std::tolower(static_cast<unsigned char>(left)) == std::tolower(static_cast<unsigned char>(right));
-            });
+        auto it = std::search(value.begin(), value.end(), needle.begin(), needle.end(), [](char left, char right) {
+            return std::tolower(static_cast<unsigned char>(left)) == std::tolower(static_cast<unsigned char>(right));
+        });
         return it != value.end();
     }
 
@@ -125,9 +124,9 @@ namespace
 
     void ensureFalloutCharacterDefaults(MWWorld::Store<ESM::Class>& classes, MWWorld::Store<ESM::Race>& races,
         MWWorld::Store<ESM::Skill>& skills, MWWorld::Store<ESM::MagicEffect>& magicEffects,
-        MWWorld::Store<ESM::Dialogue>& dialogues, MWWorld::Store<ESM::NPC>& npcs,
-        MWWorld::Store<ESM::Weapon>& weapons, MWWorld::Store<ESM::Potion>& potions,
-        MWWorld::Store<ESM::Miscellaneous>& miscItems, std::string_view playerSkeleton)
+        MWWorld::Store<ESM::Dialogue>& dialogues, MWWorld::Store<ESM::NPC>& npcs, MWWorld::Store<ESM::Weapon>& weapons,
+        MWWorld::Store<ESM::Potion>& potions, MWWorld::Store<ESM::Miscellaneous>& miscItems,
+        std::string_view playerSkeleton)
     {
         const ESM::RefId classId = ESM::RefId::stringRefId("FNV_Courier");
         const ESM::RefId raceId = ESM::RefId::stringRefId("FNV_Wastelander");
@@ -180,7 +179,8 @@ namespace
             skill.mIcon.clear();
             skill.mWerewolfValue = 1.f;
             skill.mData.mAttribute = i % ESM::Attribute::Length;
-            skill.mData.mSpecialization = i < 9 ? ESM::Class::Combat : (i < 18 ? ESM::Class::Magic : ESM::Class::Stealth);
+            skill.mData.mSpecialization
+                = i < 9 ? ESM::Class::Combat : (i < 18 ? ESM::Class::Magic : ESM::Class::Stealth);
             for (float& value : skill.mData.mUseValue)
                 value = 1.f;
             skills.insertStatic(skill);
@@ -251,74 +251,74 @@ namespace
                              << player.mModel;
         }
 
-        const auto ensureWeapon = [&weapons](
-                                      std::string_view id, std::string_view name, std::string_view icon, int value) {
-            const ESM::RefId refId = ESM::RefId::stringRefId(id);
-            if (weapons.searchStatic(refId) != nullptr)
-                return;
+        const auto ensureWeapon
+            = [&weapons](std::string_view id, std::string_view name, std::string_view icon, int value) {
+                  const ESM::RefId refId = ESM::RefId::stringRefId(id);
+                  if (weapons.searchStatic(refId) != nullptr)
+                      return;
 
-            ESM::Weapon weapon;
-            weapon.mId = refId;
-            weapon.blank();
-            weapon.mName = std::string(name);
-            weapon.mIcon = std::string(icon);
-            weapon.mData.mWeight = 2.f;
-            weapon.mData.mValue = value;
-            weapon.mData.mType = ESM::Weapon::MarksmanThrown;
-            weapon.mData.mHealth = 100;
-            weapon.mData.mSpeed = 1.f;
-            weapon.mData.mReach = 1.f;
-            weapon.mData.mChop = { 4, 12 };
-            weapon.mData.mSlash = { 4, 12 };
-            weapon.mData.mThrust = { 4, 12 };
-            weapons.insertStatic(weapon);
-            Log(Debug::Info) << "FNV/ESM4: inserted fallback inventory weapon " << id;
-        };
+                  ESM::Weapon weapon;
+                  weapon.mId = refId;
+                  weapon.blank();
+                  weapon.mName = std::string(name);
+                  weapon.mIcon = std::string(icon);
+                  weapon.mData.mWeight = 2.f;
+                  weapon.mData.mValue = value;
+                  weapon.mData.mType = ESM::Weapon::MarksmanThrown;
+                  weapon.mData.mHealth = 100;
+                  weapon.mData.mSpeed = 1.f;
+                  weapon.mData.mReach = 1.f;
+                  weapon.mData.mChop = { 4, 12 };
+                  weapon.mData.mSlash = { 4, 12 };
+                  weapon.mData.mThrust = { 4, 12 };
+                  weapons.insertStatic(weapon);
+                  Log(Debug::Info) << "FNV/ESM4: inserted fallback inventory weapon " << id;
+              };
 
-        const auto ensurePotion = [&potions](
-                                      std::string_view id, std::string_view name, std::string_view icon, int value) {
-            const ESM::RefId refId = ESM::RefId::stringRefId(id);
-            if (potions.searchStatic(refId) != nullptr)
-                return;
+        const auto ensurePotion
+            = [&potions](std::string_view id, std::string_view name, std::string_view icon, int value) {
+                  const ESM::RefId refId = ESM::RefId::stringRefId(id);
+                  if (potions.searchStatic(refId) != nullptr)
+                      return;
 
-            ESM::Potion potion;
-            potion.mId = refId;
-            potion.blank();
-            potion.mName = std::string(name);
-            potion.mIcon = std::string(icon);
-            potion.mData.mWeight = 0.1f;
-            potion.mData.mValue = value;
-            potions.insertStatic(potion);
-            Log(Debug::Info) << "FNV/ESM4: inserted fallback inventory potion " << id;
-        };
+                  ESM::Potion potion;
+                  potion.mId = refId;
+                  potion.blank();
+                  potion.mName = std::string(name);
+                  potion.mIcon = std::string(icon);
+                  potion.mData.mWeight = 0.1f;
+                  potion.mData.mValue = value;
+                  potions.insertStatic(potion);
+                  Log(Debug::Info) << "FNV/ESM4: inserted fallback inventory potion " << id;
+              };
 
-        const auto ensureMisc = [&miscItems](std::string_view id, std::string_view name, std::string_view icon,
-                                    float weight, int value) {
-            const ESM::RefId refId = ESM::RefId::stringRefId(id);
-            if (miscItems.searchStatic(refId) != nullptr)
-                return;
+        const auto ensureMisc
+            = [&miscItems](std::string_view id, std::string_view name, std::string_view icon, float weight, int value) {
+                  const ESM::RefId refId = ESM::RefId::stringRefId(id);
+                  if (miscItems.searchStatic(refId) != nullptr)
+                      return;
 
-            ESM::Miscellaneous item;
-            item.mId = refId;
-            item.blank();
-            item.mName = std::string(name);
-            item.mIcon = std::string(icon);
-            item.mData.mWeight = weight;
-            item.mData.mValue = value;
-            miscItems.insertStatic(item);
-            Log(Debug::Info) << "FNV/ESM4: inserted fallback inventory misc " << id;
-        };
+                  ESM::Miscellaneous item;
+                  item.mId = refId;
+                  item.blank();
+                  item.mName = std::string(name);
+                  item.mIcon = std::string(icon);
+                  item.mData.mWeight = weight;
+                  item.mData.mValue = value;
+                  miscItems.insertStatic(item);
+                  Log(Debug::Info) << "FNV/ESM4: inserted fallback inventory misc " << id;
+              };
 
         ensureWeapon("FNV_PROOF_9MM_PISTOL", "9mm Pistol",
             "textures/interface/icons/pipboyimages/weapons/weapons_9mm_pistol.dds", 100);
         ensureWeapon("FNV_PROOF_VARMINT_RIFLE", "Varmint Rifle",
             "textures/interface/icons/pipboyimages/weapons/weapons_varmint_rifle.dds", 75);
-        ensurePotion("FNV_PROOF_STIMPAK", "Stimpak",
-            "textures/interface/icons/pipboyimages/items/items_stimpack.dds", 25);
-        ensureMisc("FNV_PROOF_9MM_AMMO", "9mm Round",
-            "textures/interface/icons/pipboyimages/items/items_9mm_ammo.dds", 0.01f, 1);
-        ensureMisc("FNV_PROOF_BOBBY_PIN", "Bobby Pin",
-            "textures/interface/icons/pipboyimages/items/item_bobby_pin.dds", 0.01f, 1);
+        ensurePotion(
+            "FNV_PROOF_STIMPAK", "Stimpak", "textures/interface/icons/pipboyimages/items/items_stimpack.dds", 25);
+        ensureMisc("FNV_PROOF_9MM_AMMO", "9mm Round", "textures/interface/icons/pipboyimages/items/items_9mm_ammo.dds",
+            0.01f, 1);
+        ensureMisc("FNV_PROOF_BOBBY_PIN", "Bobby Pin", "textures/interface/icons/pipboyimages/items/item_bobby_pin.dds",
+            0.01f, 1);
         ensureMisc("FNV_PROOF_CAPS", "Bottle Cap",
             "textures/interface/icons/pipboyimages/items/items_nuka_cola_cap.dds", 0.f, 1);
     }
@@ -338,8 +338,8 @@ namespace
             return true;
 
         const bool missingEsm3CharacterBasis = classes.begin() == classes.end() || races.begin() == races.end();
-        const bool hasEsm4CharacterData
-            = npcs.begin() != npcs.end() || creatures.begin() != creatures.end() || esm4Races.begin() != esm4Races.end();
+        const bool hasEsm4CharacterData = npcs.begin() != npcs.end() || creatures.begin() != creatures.end()
+            || esm4Races.begin() != esm4Races.end();
         return missingEsm3CharacterBasis && hasEsm4CharacterData;
     }
 
@@ -608,9 +608,9 @@ namespace MWWorld
                 static int logged = 0;
                 if (logged < 120)
                 {
-                    Log(Debug::Info) << "World viewer: ESM4 dispatch type=" << ESM::printName(reader.hdr().record.typeId)
-                                     << " id=" << reader.hdr().record.getFormId().toString()
-                                     << " handled=" << result;
+                    Log(Debug::Info) << "World viewer: ESM4 dispatch type="
+                                     << ESM::printName(reader.hdr().record.typeId)
+                                     << " id=" << reader.hdr().record.getFormId().toString() << " handled=" << result;
                     ++logged;
                 }
             }
@@ -813,9 +813,9 @@ namespace MWWorld
         int handledActors = 0;
         int handledNpcBases = 0;
         int handledStatics = 0;
-        auto visitorRec = [this, listener, &seenWorlds, &seenCells, &seenRefs, &seenActors, &seenNpcBases,
-                              &seenStatics, &handledWorlds, &handledCells, &handledRefs, &handledActors,
-                              &handledNpcBases, &handledStatics](ESM4::Reader& r) {
+        auto visitorRec = [this, listener, &seenWorlds, &seenCells, &seenRefs, &seenActors, &seenNpcBases, &seenStatics,
+                              &handledWorlds, &handledCells, &handledRefs, &handledActors, &handledNpcBases,
+                              &handledStatics](ESM4::Reader& r) {
             const auto recordType = static_cast<ESM4::RecordTypes>(r.hdr().record.typeId);
             bool result = ESMStoreImp::readRecord(r, *this);
             switch (recordType)
@@ -865,31 +865,32 @@ namespace MWWorld
             if (r.stackSize() == 0 || group.type == ESM4::Grp_RecordType || group.type == ESM4::Grp_WorldChild)
             {
                 Log(Debug::Info) << "World viewer: ESM4 group offset=" << r.getFileOffset()
-                                 << " stack=" << r.stackSize()
-                                 << " " << ESM4::printLabel(group.label, group.type)
+                                 << " stack=" << r.stackSize() << " " << ESM4::printLabel(group.label, group.type)
                                  << " size=" << group.groupSize;
                 ++logged;
             }
         };
         ESM4::ReaderUtils::readAll(reader, visitorRec, visitorGroup);
         Log(Debug::Info) << "World viewer: ESM4 record counters"
-                         << " seenWorlds=" << seenWorlds << "/" << handledWorlds
-                         << " seenCells=" << seenCells << "/" << handledCells
-                         << " seenRefs=" << seenRefs << "/" << handledRefs
-                         << " seenActors=" << seenActors << "/" << handledActors
-                         << " seenNpcBases=" << seenNpcBases << "/" << handledNpcBases
-                         << " seenStatics=" << seenStatics << "/" << handledStatics;
+                         << " seenWorlds=" << seenWorlds << "/" << handledWorlds << " seenCells=" << seenCells << "/"
+                         << handledCells << " seenRefs=" << seenRefs << "/" << handledRefs
+                         << " seenActors=" << seenActors << "/" << handledActors << " seenNpcBases=" << seenNpcBases
+                         << "/" << handledNpcBases << " seenStatics=" << seenStatics << "/" << handledStatics;
         Log(Debug::Info) << "World viewer: ESM4 load counts offset=" << reader.getFileOffset() << "/"
-                         << reader.getFileSize()
-                         << " worlds=" << get<ESM4::World>().getSize()
-                         << " cells=" << get<ESM4::Cell>().getSize()
-                         << " refs=" << get<ESM4::Reference>().getSize()
+                         << reader.getFileSize() << " worlds=" << get<ESM4::World>().getSize()
+                         << " cells=" << get<ESM4::Cell>().getSize() << " refs=" << get<ESM4::Reference>().getSize()
                          << " actors=" << get<ESM4::ActorCharacter>().getSize()
                          << " creatures=" << get<ESM4::ActorCreature>().getSize()
                          << " npcBases=" << get<ESM4::Npc>().getSize()
                          << " creatureBases=" << get<ESM4::Creature>().getSize()
                          << " leveledNpcBases=" << get<ESM4::LevelledNpc>().getSize()
                          << " leveledCreatureBases=" << get<ESM4::LevelledCreature>().getSize()
+                         << " quests=" << get<ESM4::Quest>().getSize()
+                         << " dialogueTopics=" << get<ESM4::Dialogue>().getSize()
+                         << " dialogueInfos=" << get<ESM4::DialogInfo>().getSize()
+                         << " scripts=" << get<ESM4::Script>().getSize()
+                         << " globals=" << get<ESM4::GlobalVariable>().getSize()
+                         << " formLists=" << get<ESM4::FormIdList>().getSize()
                          << " statics=" << get<ESM4::Static>().getSize()
                          << " textureSets=" << get<ESM4::TextureSet>().getSize();
     }
@@ -1017,10 +1018,9 @@ namespace MWWorld
         auto& npcs = getWritable<ESM::NPC>();
         if (shouldEnsureFalloutCharacterDefaults(getWritable<ESM::Class>(), getWritable<ESM::Race>(),
                 getWritable<ESM4::Npc>(), getWritable<ESM4::Creature>(), getWritable<ESM4::Race>()))
-            ensureFalloutCharacterDefaults(
-                getWritable<ESM::Class>(), getWritable<ESM::Race>(), getWritable<ESM::Skill>(),
-                getWritable<ESM::MagicEffect>(), getWritable<ESM::Dialogue>(), npcs, getWritable<ESM::Weapon>(),
-                getWritable<ESM::Potion>(), getWritable<ESM::Miscellaneous>(),
+            ensureFalloutCharacterDefaults(getWritable<ESM::Class>(), getWritable<ESM::Race>(),
+                getWritable<ESM::Skill>(), getWritable<ESM::MagicEffect>(), getWritable<ESM::Dialogue>(), npcs,
+                getWritable<ESM::Weapon>(), getWritable<ESM::Potion>(), getWritable<ESM::Miscellaneous>(),
                 chooseViewerPlayerSkeleton(
                     getWritable<ESM4::World>(), getWritable<ESM4::ArmorAddon>(), getWritable<ESM4::HeadPart>()));
         rebuildIdsIndex();
@@ -1068,10 +1068,9 @@ namespace MWWorld
         auto& npcs = getWritable<ESM::NPC>();
         if (shouldEnsureFalloutCharacterDefaults(getWritable<ESM::Class>(), getWritable<ESM::Race>(),
                 getWritable<ESM4::Npc>(), getWritable<ESM4::Creature>(), getWritable<ESM4::Race>()))
-            ensureFalloutCharacterDefaults(
-                getWritable<ESM::Class>(), getWritable<ESM::Race>(), getWritable<ESM::Skill>(),
-                getWritable<ESM::MagicEffect>(), getWritable<ESM::Dialogue>(), npcs, getWritable<ESM::Weapon>(),
-                getWritable<ESM::Potion>(), getWritable<ESM::Miscellaneous>(),
+            ensureFalloutCharacterDefaults(getWritable<ESM::Class>(), getWritable<ESM::Race>(),
+                getWritable<ESM::Skill>(), getWritable<ESM::MagicEffect>(), getWritable<ESM::Dialogue>(), npcs,
+                getWritable<ESM::Weapon>(), getWritable<ESM::Potion>(), getWritable<ESM::Miscellaneous>(),
                 chooseViewerPlayerSkeleton(
                     getWritable<ESM4::World>(), getWritable<ESM4::ArmorAddon>(), getWritable<ESM4::HeadPart>()));
         rebuildIdsIndex();

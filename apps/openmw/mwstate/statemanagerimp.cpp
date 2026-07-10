@@ -63,7 +63,7 @@ void MWState::StateManager::cleanup(bool force)
         MWBase::Environment::get().getWorld()->clear();
         MWBase::Environment::get().getInputManager()->clear();
         MWBase::Environment::get().getMechanicsManager()->clear();
-        if(VR::getVR())
+        if (VR::getVR())
         {
             MWVR::VRGUIManager::instance().clearLua();
         }
@@ -551,6 +551,7 @@ void MWState::StateManager::loadGame(const Character* character, const std::file
                 case ESM::REC_CREA:
                 case ESM::REC_CONT:
                 case ESM::REC_RAND:
+                case ESM::REC_FQST:
                     MWBase::Environment::get().getWorld()->readRecord(reader, n.toInt());
                     break;
 

@@ -38,6 +38,8 @@
 
 namespace ESM4
 {
+    class Reader;
+
     enum EmotionType
     {
         EMO_Neutral = 0,
@@ -333,14 +335,14 @@ namespace ESM4
 
     struct TargetCondition
     {
-        std::uint32_t condition; // ConditionTypeAndFlag + padding
-        float comparison; // WARN: can be GLOB FormId if flag set
-        std::uint32_t functionIndex;
-        std::uint32_t param1; // FIXME: if formid needs modindex adjustment or not?
-        std::uint32_t param2;
-        std::uint32_t runOn; // 0 subject, 1 target, 2 reference, 3 combat target, 4 linked reference
+        std::uint32_t condition = 0; // ConditionTypeAndFlag + padding
+        float comparison = 0.f; // WARN: can be GLOB FormId if flag set
+        std::uint32_t functionIndex = 0;
+        std::uint32_t param1 = 0; // FIXME: if formid needs modindex adjustment or not?
+        std::uint32_t param2 = 0;
+        std::uint32_t runOn = 0; // 0 subject, 1 target, 2 reference, 3 combat target, 4 linked reference
         // below FO3/FONV/TES5
-        ESM::FormId32 reference;
+        ESM::FormId32 reference = 0;
     };
 
     struct ScriptHeader
@@ -369,13 +371,26 @@ namespace ESM4
 
     struct ScriptDefinition
     {
-        ScriptHeader scriptHeader;
+        ScriptHeader scriptHeader{};
         // SDCA compiled source
+        std::vector<std::uint8_t> compiledData;
         std::string scriptSource;
         std::vector<ScriptLocalVariableData> localVarData;
         std::vector<std::uint32_t> localRefVarIndex;
-        ESM::FormId globReference;
+        std::vector<ESM::FormId> references;
+
+        // Kept for source compatibility with the original loader. Retail scripts contain one
+        // SCRO per reference, so use references for execution and diagnostics.
+        ESM::FormId globReference{};
     };
+
+    // Load the current SCHR/SCDA/SCTX/SLSD/SCVR/SCRV/SCRO subrecord. Returns false
+    // when the current subrecord does not belong to an embedded or standalone script.
+    bool loadScriptSubRecord(Reader& reader, ScriptDefinition& script);
+
+    // Load the current TES4-family CTDA representation (20, 24, 28, or 36 bytes).
+    // The optional third parameter is present only in the 36-byte TES5 form.
+    bool loadTargetCondition(Reader& reader, TargetCondition& condition, ESM::FormId* parameter3 = nullptr);
 }
 
 #endif // ESM4_SCRIPT_H

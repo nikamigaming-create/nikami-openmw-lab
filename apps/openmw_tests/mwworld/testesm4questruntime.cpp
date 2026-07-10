@@ -1,0 +1,239 @@
+#include <gtest/gtest.h>
+
+#include <array>
+#include <bit>
+#include <map>
+#include <memory>
+#include <sstream>
+#include <string_view>
+
+#include <components/esm/defs.hpp>
+#include <components/esm/formid.hpp>
+#include <components/esm3/esmreader.hpp>
+#include <components/esm3/esmwriter.hpp>
+#include <components/esm4/loadglob.hpp>
+#include <components/esm4/loadqust.hpp>
+
+#include "apps/openmw/mwworld/esm4questruntime.hpp"
+#include "apps/openmw/mwworld/esmstore.hpp"
+#include "apps/openmw/mwworld/globals.hpp"
+
+namespace
+{
+    ESM4::Quest makeQuest(ESM::FormId id, std::string_view editorId)
+    {
+        ESM4::Quest quest;
+        quest.mId = id;
+        quest.mEditorId = editorId;
+        return quest;
+    }
+
+    ESM4::GlobalVariable makeGlobal(ESM::FormId id, std::string_view editorId, float value)
+    {
+        ESM4::GlobalVariable global;
+        global.mId = id;
+        global.mEditorId = editorId;
+        global.mValue = value;
+        return global;
+    }
+
+    ESM4::TargetCondition makeCondition(std::uint32_t function, ESM::FormId parameter, float comparison,
+        std::uint32_t type = ESM4::CTF_EqualTo, std::uint32_t parameter2 = 0)
+    {
+        ESM4::TargetCondition condition;
+        condition.condition = type;
+        condition.comparison = comparison;
+        condition.functionIndex = function;
+        condition.param1 = parameter.toUint32();
+        condition.param2 = parameter2;
+        return condition;
+    }
+}
+
+TEST(ESM4QuestRuntimeTest, MatchesRetailVcg02StageFiveTransition)
+{
+    MWWorld::ESMStore store;
+
+    const ESM::FormId vcg02Id{ .mIndex = 0x10a214, .mContentFile = 0 };
+    ESM4::Quest vcg02 = makeQuest(vcg02Id, "VCG02");
+    vcg02.mObjectives.push_back(ESM4::QuestObjective{ .mIndex = 3, .mDescription = "Choose your skills" });
+    ESM4::QuestStageEntry entry;
+    entry.mScript.scriptSource = "SetObjectiveDisplayed VCG02 3 1;\nForceActiveQuest VCG02\n";
+    vcg02.mStages.push_back(ESM4::QuestStage{ .mIndex = 5, .mEntries = { std::move(entry) } });
+    store.overrideRecord(vcg02);
+
+    const std::array<std::pair<ESM::FormId, std::string_view>, 3> unchangedQuests = {
+        std::pair{ ESM::FormId{ .mIndex = 0x10a212, .mContentFile = 0 }, std::string_view{ "VCG00" } },
+        std::pair{ ESM::FormId{ .mIndex = 0x10a213, .mContentFile = 0 }, std::string_view{ "VCG01" } },
+        std::pair{ ESM::FormId{ .mIndex = 0x10a215, .mContentFile = 0 }, std::string_view{ "VCG03" } },
+    };
+    for (const auto& [id, editorId] : unchangedQuests)
+        store.overrideRecord(makeQuest(id, editorId));
+
+    MWWorld::ESM4QuestRuntime runtime;
+    runtime.initialize(store);
+
+    const MWWorld::ESM4QuestState* before = runtime.search("vcg02");
+    ASSERT_NE(before, nullptr);
+    EXPECT_EQ(before->mFlags, 0);
+    EXPECT_EQ(before->mCurrentStage, 0);
+    ASSERT_TRUE(before->mStageDone.contains(5));
+    EXPECT_FALSE(before->mStageDone.at(5));
+
+    ASSERT_TRUE(runtime.setStage("VCG02", 5));
+
+    const MWWorld::ESM4QuestState* after = runtime.search(vcg02Id);
+    ASSERT_NE(after, nullptr);
+    EXPECT_EQ(after->mFlags, 0x21);
+    EXPECT_EQ(after->mCurrentStage, 5);
+    EXPECT_TRUE(after->mStageDone.at(5));
+    EXPECT_EQ(after->mObjectiveStatus.at(3), MWWorld::ESM4QuestState::Objective_Displayed);
+    EXPECT_EQ(runtime.getActiveQuest(), vcg02Id);
+    EXPECT_TRUE(runtime.getUnsupportedStageCommands().empty());
+
+    for (const auto& [id, editorId] : unchangedQuests)
+    {
+        const MWWorld::ESM4QuestState* state = runtime.search(id);
+        ASSERT_NE(state, nullptr) << editorId;
+        EXPECT_EQ(state->mFlags, 0) << editorId;
+        EXPECT_EQ(state->mCurrentStage, 0) << editorId;
+        EXPECT_TRUE(state->mStageDone.empty()) << editorId;
+    }
+}
+
+TEST(ESM4QuestRuntimeTest, ImportsFalloutGlobalsAndCalendarAliases)
+{
+    MWWorld::ESMStore store;
+    store.overrideRecord(makeGlobal({ .mIndex = 1, .mContentFile = 0 }, "TimeScale", 30.f));
+    store.overrideRecord(makeGlobal({ .mIndex = 2, .mContentFile = 0 }, "GameHour", 12.f));
+    store.overrideRecord(makeGlobal({ .mIndex = 3, .mContentFile = 0 }, "GameDaysPassed", 5.f));
+
+    MWWorld::Globals globals;
+    globals.fill(store);
+
+    EXPECT_FLOAT_EQ(globals[MWWorld::Globals::sTimeScale].getFloat(), 30.f);
+    EXPECT_FLOAT_EQ(globals[MWWorld::Globals::sGameHour].getFloat(), 12.f);
+    EXPECT_FLOAT_EQ(globals[MWWorld::Globals::sDaysPassed].getFloat(), 5.f);
+}
+
+TEST(ESM4QuestRuntimeTest, EvaluatesRetailQuestAndGlobalConditionGroups)
+{
+    MWWorld::ESMStore store;
+    const ESM::FormId vcg00Id{ .mIndex = 0x10a212, .mContentFile = 0 };
+    const ESM::FormId vcg02Id{ .mIndex = 0x10a214, .mContentFile = 0 };
+    const ESM::FormId doneQuestId{ .mIndex = 0x120000, .mContentFile = 0 };
+    const ESM::FormId targetQuestId{ .mIndex = 0x120001, .mContentFile = 0 };
+    const ESM::FormId timeScaleId{ .mIndex = 0x38, .mContentFile = 0 };
+    const ESM::FormId stageThresholdId{ .mIndex = 0x120002, .mContentFile = 0 };
+
+    store.overrideRecord(makeQuest(vcg00Id, "VCG00"));
+
+    ESM4::Quest vcg02 = makeQuest(vcg02Id, "VCG02");
+    vcg02.mStages.push_back(ESM4::QuestStage{ .mIndex = 5, .mEntries = { ESM4::QuestStageEntry{} } });
+    store.overrideRecord(vcg02);
+
+    ESM4::Quest doneQuest = makeQuest(doneQuestId, "DoneQuest");
+    ESM4::QuestStageEntry completeEntry;
+    completeEntry.mFlags = ESM4::QuestStageEntry::Flag_CompleteQuest;
+    doneQuest.mStages.push_back(ESM4::QuestStage{ .mIndex = 1, .mEntries = { completeEntry } });
+    store.overrideRecord(doneQuest);
+
+    ESM4::Quest targetQuest = makeQuest(targetQuestId, "ConditionTarget");
+    targetQuest.mObjectives.push_back(ESM4::QuestObjective{ .mIndex = 7, .mDescription = "Condition passed" });
+    ESM4::QuestStageEntry conditionedEntry;
+    conditionedEntry.mConditions = {
+        makeCondition(ESM4::FUN_GetQuestRunning, vcg00Id, 1.f, ESM4::CTF_EqualTo | ESM4::CTF_Combine),
+        makeCondition(ESM4::FUN_GetQuestRunning, vcg02Id, 1.f),
+        makeCondition(ESM4::FUN_GetStage, vcg02Id, std::bit_cast<float>(stageThresholdId.toUint32()),
+            ESM4::CTF_GrThOrEqTo | ESM4::CTF_UseGlobal),
+        makeCondition(ESM4::FUN_GetStageDone, vcg02Id, 1.f, ESM4::CTF_EqualTo, 5),
+        makeCondition(ESM4::FUN_GetGlobalValue, timeScaleId, 12.f),
+        makeCondition(ESM4::FUN_GetQuestCompleted, doneQuestId, 1.f),
+    };
+    conditionedEntry.mScript.scriptSource = "SetObjectiveDisplayed ConditionTarget 7 1";
+    targetQuest.mStages.push_back(ESM4::QuestStage{ .mIndex = 1, .mEntries = { conditionedEntry } });
+
+    ESM4::QuestStageEntry unsupportedEntry;
+    unsupportedEntry.mConditions = { makeCondition(9999, vcg02Id, 1.f) };
+    unsupportedEntry.mScript.scriptSource = "SetObjectiveDisplayed ConditionTarget 7 0";
+    targetQuest.mStages.push_back(ESM4::QuestStage{ .mIndex = 2, .mEntries = { unsupportedEntry } });
+    store.overrideRecord(targetQuest);
+
+    store.overrideRecord(makeGlobal(timeScaleId, "TimeScale", 12.f));
+    store.overrideRecord(makeGlobal(stageThresholdId, "StageThreshold", 5.f));
+    MWWorld::Globals globals;
+    globals.fill(store);
+
+    MWWorld::ESM4QuestRuntime runtime;
+    runtime.initialize(store, &globals);
+    ASSERT_TRUE(runtime.setStage("VCG02", 5));
+    ASSERT_TRUE(runtime.setStage("DoneQuest", 1));
+    ASSERT_TRUE(runtime.setStage("ConditionTarget", 1));
+
+    const MWWorld::ESM4QuestState* state = runtime.search(targetQuestId);
+    ASSERT_NE(state, nullptr);
+    EXPECT_EQ(state->mFlags, 0x21);
+    EXPECT_EQ(state->mObjectiveStatus.at(7), MWWorld::ESM4QuestState::Objective_Displayed);
+    EXPECT_TRUE(runtime.getUnsupportedConditionFunctions().empty());
+
+    ASSERT_TRUE(runtime.setStage("ConditionTarget", 2));
+    EXPECT_EQ(state->mObjectiveStatus.at(7), MWWorld::ESM4QuestState::Objective_Displayed);
+    EXPECT_EQ(runtime.getUnsupportedConditionFunctions(), std::vector<std::uint32_t>{ 9999 });
+}
+
+TEST(ESM4QuestRuntimeTest, RoundTripsQuestStateAcrossChangedLoadOrder)
+{
+    const ESM::FormId originalId{ .mIndex = 0x10a214, .mContentFile = 2 };
+    ESM4::Quest originalQuest = makeQuest(originalId, "VCG02");
+    originalQuest.mObjectives.push_back(ESM4::QuestObjective{ .mIndex = 3, .mDescription = "Choose your skills" });
+    ESM4::QuestStageEntry entry;
+    entry.mScript.scriptSource = "SetObjectiveDisplayed VCG02 3 1;\nForceActiveQuest VCG02";
+    originalQuest.mStages.push_back(ESM4::QuestStage{ .mIndex = 5, .mEntries = { entry } });
+
+    MWWorld::ESMStore originalStore;
+    originalStore.overrideRecord(originalQuest);
+    originalStore.overrideRecord(makeQuest({ .mIndex = 0x10a212, .mContentFile = 2 }, "VCG00"));
+    MWWorld::ESM4QuestRuntime originalRuntime;
+    originalRuntime.initialize(originalStore);
+    ASSERT_TRUE(originalRuntime.setStage("VCG02", 5));
+    ASSERT_EQ(originalRuntime.countSavedGameRecords(), 1);
+
+    auto stream = std::make_unique<std::stringstream>();
+    {
+        ESM::ESMWriter writer;
+        writer.setFormatVersion(ESM::CurrentSaveGameFormatVersion);
+        writer.save(*stream);
+        originalRuntime.write(writer);
+    }
+
+    ESM::ESMReader reader;
+    reader.open(std::move(stream), "fallout-quest-save");
+    const std::map<int, int> contentMapping{ { 2, 7 } };
+    reader.setContentFileMapping(&contentMapping);
+    ASSERT_TRUE(reader.hasMoreRecs());
+    ASSERT_EQ(reader.getRecName().toInt(), ESM::REC_FQST);
+    reader.getRecHeader();
+
+    const ESM::FormId remappedId{ .mIndex = originalId.mIndex, .mContentFile = 7 };
+    ESM4::Quest remappedQuest = originalQuest;
+    remappedQuest.mId = remappedId;
+    MWWorld::ESMStore remappedStore;
+    remappedStore.overrideRecord(remappedQuest);
+    remappedStore.overrideRecord(makeQuest({ .mIndex = 0x10a212, .mContentFile = 7 }, "VCG00"));
+    MWWorld::ESM4QuestRuntime restoredRuntime;
+    restoredRuntime.initialize(remappedStore);
+    restoredRuntime.readRecord(reader);
+
+    const MWWorld::ESM4QuestState* restored = restoredRuntime.search(remappedId);
+    ASSERT_NE(restored, nullptr);
+    EXPECT_EQ(restored->mFlags, 0x21);
+    EXPECT_EQ(restored->mCurrentStage, 5);
+    EXPECT_TRUE(restored->mStageDone.at(5));
+    EXPECT_EQ(restored->mObjectiveStatus.at(3), MWWorld::ESM4QuestState::Objective_Displayed);
+    EXPECT_EQ(restoredRuntime.getActiveQuest(), remappedId);
+
+    const MWWorld::ESM4QuestState* unchanged = restoredRuntime.search("VCG00");
+    ASSERT_NE(unchanged, nullptr);
+    EXPECT_EQ(unchanged->mFlags, 0);
+    EXPECT_EQ(unchanged->mCurrentStage, 0);
+}

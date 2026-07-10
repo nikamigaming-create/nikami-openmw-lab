@@ -15,6 +15,7 @@
 #include "../mwrender/renderingmanager.hpp"
 
 #include "contentloader.hpp"
+#include "esm4questruntime.hpp"
 #include "esmstore.hpp"
 #include "globals.hpp"
 #include "groundcoverstore.hpp"
@@ -94,6 +95,7 @@ namespace MWWorld
         GroundcoverStore mGroundcoverStore;
         LocalScripts mLocalScripts;
         MWWorld::Globals mGlobalVariables;
+        MWWorld::ESM4QuestRuntime mESM4QuestRuntime;
         Misc::Rng::Generator mPrng;
         WorldModel mWorldModel;
         std::vector<int> mESMVersions; // the versions of esm files
@@ -183,9 +185,9 @@ namespace MWWorld
             Loading::Listener* listener);
 
         float feetToGameUnits(float feet);
-//## VR_PATCH BEGIN
+        // ## VR_PATCH BEGIN
         float getActivationDistancePlusTelekinesis() override;
-//## VR_PATCH END
+        // ## VR_PATCH END
 
         MWWorld::ConstPtr getClosestMarker(const MWWorld::ConstPtr& ptr, const ESM::RefId& id);
         MWWorld::ConstPtr getClosestMarkerFromExteriorPosition(const osg::Vec3f& worldPos, const ESM::RefId& id);
@@ -207,7 +209,8 @@ namespace MWWorld
 
         // Must be called after `loadData`.
         void init(Debug::Level maxRecastLogLevel, osgViewer::Viewer* viewer, osg::ref_ptr<osg::Group> rootNode,
-            SceneUtil::WorkQueue* workQueue, SceneUtil::UnrefQueue& unrefQueue, std::unique_ptr<MWRender::Camera> camera);
+            SceneUtil::WorkQueue* workQueue, SceneUtil::UnrefQueue& unrefQueue,
+            std::unique_ptr<MWRender::Camera> camera);
 
         virtual ~World();
 
@@ -245,6 +248,10 @@ namespace MWWorld
         MWWorld::ESMStore& getStore() override { return mStore; }
 
         const MWWorld::ESMStore& getStore() const override { return mStore; }
+
+        MWWorld::ESM4QuestRuntime& getESM4QuestRuntime() override { return mESM4QuestRuntime; }
+
+        const MWWorld::ESM4QuestRuntime& getESM4QuestRuntime() const override { return mESM4QuestRuntime; }
 
         const std::vector<int>& getESMVersions() const override;
 
@@ -683,7 +690,7 @@ namespace MWWorld
 
         void setActorActive(const MWWorld::Ptr& ptr, bool value) override;
 
-//## VR_PATCH BEGIN
+        // ## VR_PATCH BEGIN
         /// Intersects the scene from the origin, in the specified orientation and distance, storing the %result in the
         /// result structure.
         /// @Return distance to the target object, or -1 if no object was targeted / in range
@@ -702,7 +709,7 @@ namespace MWWorld
         void enableVRPointer(bool left, bool right) override;
 
         std::optional<std::pair<MWWorld::Ptr, osg::Vec3f>> getVRMeleeHitContact(MWWorld::Ptr ptr) override;
-//## VR_PATCH END
+        // ## VR_PATCH END
     };
 }
 

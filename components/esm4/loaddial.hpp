@@ -39,23 +39,33 @@ namespace ESM4
     class Reader;
     class Writer;
 
+    struct DialogueSharedInfo
+    {
+        ESM::FormId mQuest{};
+        ESM::FormId mInfo{};
+        std::int32_t mIndex = -1;
+    };
+
     struct Dialogue
     {
-        ESM::FormId mId; // from the header
-        std::uint32_t mFlags; // from the header, see enum type RecordFlag for details
+        ESM::FormId mId{}; // from the header
+        std::uint32_t mFlags = 0; // from the header, see enum type RecordFlag for details
 
         std::string mEditorId;
         std::vector<ESM::FormId> mQuests;
         std::vector<ESM::FormId> mQuestsRemoved; // FONV only?
+        std::vector<DialogueSharedInfo> mSharedInfos;
         std::string mTopicName;
 
         std::string mTextDumb; // FIXME: temp name
 
-        bool mDoAllBeforeRepeat; // TES5 only
-        std::uint8_t mDialType; // DialType
-        std::uint8_t mDialFlags; // FO3/FONV: 0x1 rumours, 0x2 top-level
+        ESM::FormId mScript{};
 
-        float mPriority;
+        bool mDoAllBeforeRepeat = false; // TES5 only
+        std::uint8_t mDialType = 0; // DialType
+        std::uint8_t mDialFlags = 0; // FO3/FONV: 0x1 rumours, 0x2 top-level
+
+        float mPriority = 0.f;
 
         void load(ESM4::Reader& reader);
         // void save(ESM4::Writer& writer) const;
