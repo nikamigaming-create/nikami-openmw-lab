@@ -4442,7 +4442,11 @@ namespace MWRender
             stem.resize(dot);
         Misc::StringUtils::lowerCaseInPlace(stem);
 
-        if (stem == "dynamicidle_sit" || stem == "dynamicidle_chairsit" || stem == "dynamicidle_sleep")
+        if (stem == "dynamicidle_chairsit")
+            return "chairsit";
+        if (stem == "chair_forwardenter")
+            return "chairsitenter";
+        if (stem == "dynamicidle_sit" || stem == "dynamicidle_sleep")
             return "idle";
         if (stem.find("sitchairlisten") != std::string::npos)
             return "sitchairlisten";

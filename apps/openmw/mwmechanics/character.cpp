@@ -47,6 +47,8 @@
 #include "../mwbase/windowmanager.hpp"
 #include "../mwbase/world.hpp"
 
+#include "../mwclass/esm4npc.hpp"
+
 #include "../mwworld/class.hpp"
 #include "../mwworld/esmstore.hpp"
 #include "../mwworld/inventorystore.hpp"
@@ -895,6 +897,8 @@ namespace MWMechanics
 
         MWRender::Animation::AnimPriority priority = getIdlePriority(mIdleState);
         size_t numLoops = std::numeric_limits<uint32_t>::max();
+        const bool falloutFurnitureSeated
+            = mPtr.getType() == ESM::REC_NPC_4 && MWClass::ESM4Npc::isFurnitureSeated(mPtr);
 
         // Only play "idleswim" or "idlesneak" if they exist. Otherwise, fallback to
         // "idle"+weapon or "idle".
@@ -905,7 +909,14 @@ namespace MWMechanics
             idleGroup = idleStateToAnimGroup(CharState_Idle);
         }
 
-        if (fallback || mIdleState == CharState_Idle || mIdleState == CharState_SpecialIdle)
+        if (falloutFurnitureSeated && mAnimation->hasAnimation("chairsit"))
+        {
+            fallback = false;
+            priority = getIdlePriority(CharState_Idle);
+            idleGroup = "chairsit";
+            numLoops = std::numeric_limits<uint32_t>::max();
+        }
+        else if (fallback || mIdleState == CharState_Idle || mIdleState == CharState_SpecialIdle)
         {
             std::string_view weapShortGroup = getWeaponShortGroup(mWeaponType);
             if (!weapShortGroup.empty())
@@ -928,8 +939,8 @@ namespace MWMechanics
             if (const char* forcedIdleGroup = std::getenv("OPENMW_FNV_FORCE_IDLE_GROUP"))
             {
                 std::string forced = Misc::StringUtils::lowerCase(forcedIdleGroup);
-                if (forced == "idle" || forced == "sitchairlisten" || forced == "sitchairtalk"
-                    || forced == "sitchaireat")
+                if (forced == "idle" || forced == "chairsit" || forced == "chairsitenter"
+                    || forced == "sitchairlisten" || forced == "sitchairtalk" || forced == "sitchaireat")
                 {
                     Log(Debug::Info) << "FNV/ESM4 diag: forcing idle group '" << forced << "' for "
                                      << mPtr.getCellRef().getRefId();
@@ -966,7 +977,7 @@ namespace MWMechanics
 
         if (isFalloutActor(mPtr))
         {
-            if (mAnimation->hasAnimation("weaponpose"))
+            if (mAnimation->hasAnimation("weaponpose") && !falloutFurnitureSeated)
             {
                 MWRender::Animation::AnimPriority weaponPosePriority(Priority_Default);
                 weaponPosePriority[MWRender::BoneGroup_LeftArm] = Priority_Weapon;
@@ -982,6 +993,12 @@ namespace MWMechanics
                 const int weaponPoseMask = MWRender::BlendMask_LeftArm | MWRender::BlendMask_RightArm;
                 playBlendedAnimation("weaponpose", weaponPosePriority, weaponPoseMask, false, 1.0f, "start", "stop",
                     0.f, std::numeric_limits<uint32_t>::max(), true);
+            }
+            else if (falloutFurnitureSeated && mAnimation->isPlaying("weaponpose"))
+            {
+                Log(Debug::Info) << "FNV/ESM4 diag: suppressing standing weapon pose while furniture-seated for "
+                                 << mPtr.getCellRef().getRefId();
+                mAnimation->disable("weaponpose");
             }
 
             if (const char* forcedOverlayGroup = std::getenv("OPENMW_FNV_FORCED_OVERLAY_GROUP"))
@@ -1007,7 +1024,8 @@ namespace MWMechanics
 
         const bool hasFalloutSitTalk = isFalloutActor(mPtr) && mAnimation->hasAnimation("sitchairtalk")
             && std::getenv("OPENMW_FNV_DISABLE_SIT_TALK_OVERLAY") == nullptr;
-        if (isFalloutActor(mPtr) && mCurrentIdle == "idle" && mAnimation->hasAnimation("sitchairlisten")
+        if (isFalloutActor(mPtr) && (mCurrentIdle == "idle" || mCurrentIdle == "chairsit")
+            && mAnimation->hasAnimation("sitchairlisten")
             && !hasFalloutSitTalk
             && std::getenv("OPENMW_FNV_ENABLE_SIT_LISTEN_OVERLAY") != nullptr)
         {
@@ -1020,7 +1038,7 @@ namespace MWMechanics
                 listenPriority, MWRender::BlendMask_LeftArm | MWRender::BlendMask_RightArm, false, 1.0f, "start",
                 "stop", 0.f, numLoops, true);
         }
-        if (isFalloutActor(mPtr) && mCurrentIdle == "idle" && hasFalloutSitTalk
+        if (isFalloutActor(mPtr) && (mCurrentIdle == "idle" || mCurrentIdle == "chairsit") && hasFalloutSitTalk
             && std::getenv("OPENMW_FNV_ENABLE_SIT_LISTEN_OVERLAY") != nullptr)
         {
             MWRender::Animation::AnimPriority talkPriority(Priority_Default);

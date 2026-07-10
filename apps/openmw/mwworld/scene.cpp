@@ -419,6 +419,18 @@ namespace
                     }
                 }
 
+                // FO3/FNV MNAM is a marker-index bitfield. Retail Easy Pete telemetry, for
+                // example, reports markerIndex=2 for activeMarkers=0x40000004. High bits may
+                // carry furniture capabilities, so only compare indices that exist in the NIF.
+                for (std::size_t i = 0; i < markers.size() && i < 32; ++i)
+                {
+                    if ((furniture->mActiveMarkerFlags & (std::uint32_t{ 1 } << i)) != 0)
+                    {
+                        Log(Debug::Info) << "FNV/ESM4 diag: selected active furniture marker index " << i;
+                        return markers[i];
+                    }
+                }
+
                 const auto centered = std::min_element(markers.begin(), markers.end(), markerLess);
                 return centered != markers.end() ? *centered : markers.front();
             }
@@ -498,6 +510,9 @@ namespace
         if (target == nullptr)
             return FnvPackagePrePlacement::None;
 
+        const bool furnitureTarget = store->get<ESM4::Furniture>().search(target->mBaseObj) != nullptr;
+        MWClass::ESM4Npc::setFurnitureSeated(ptr, furnitureTarget);
+
         const ESM::RefId& currentCellId = ptr.getCell()->getCell()->getId();
         const bool sameCell = target->mParent == currentCellId;
         Log(Debug::Info) << "FNV/ESM4 diag: package pre-placement " << selected->mEditorId
@@ -519,10 +534,22 @@ namespace
         {
             const osg::Vec3f proofOffset = transformFnvFurnitureMarkerOffsetForProof(marker.mOffset);
             const osg::Vec3f worldOffset = rotateFnvPackageOffset(proofOffset, target->mPos.rot[2]);
-            position.pos[0] += worldOffset.x();
-            position.pos[1] += worldOffset.y();
-            position.pos[2] += worldOffset.z();
-            position.rot[2] = applyFnvFurnitureMarkerHeading(target->mPos.rot[2], marker.mHeading);
+            const bool entryMarkerPlacement = envEnabled("OPENMW_FNV_FURNITURE_ENTRY_MARKER_PLACEMENT");
+            if (furnitureTarget && !entryMarkerPlacement)
+            {
+                // Retail uses this marker transform while state 3 waits for the enter animation,
+                // then accumulated root motion places a state-4 seated actor at the furniture
+                // origin/yaw while retaining the marker height. Loading an already scheduled NPC
+                // begins in the settled state rather than freezing it at the entry marker.
+                position.pos[2] += marker.mOffset.z();
+            }
+            else
+            {
+                position.pos[0] += worldOffset.x();
+                position.pos[1] += worldOffset.y();
+                position.pos[2] += worldOffset.z();
+                position.rot[2] = applyFnvFurnitureMarkerHeading(target->mPos.rot[2], marker.mHeading);
+            }
             Log(Debug::Info) << "FNV/ESM4 diag: applied furniture marker package placement "
                              << selected->mEditorId << " targetRef=" << target->mEditorId
                              << " markerOffset=(" << marker.mOffset.x() << "," << marker.mOffset.y() << ","
@@ -532,6 +559,7 @@ namespace
                              << " type=" << marker.mType << " entryPoint=" << marker.mEntryPoint
                              << " positionRef=" << static_cast<int>(marker.mPositionRef)
                              << " legacy=" << marker.mLegacy
+                             << " state=" << (furnitureTarget && !entryMarkerPlacement ? "seated" : "entry")
                              << " finalPos=(" << position.pos[0] << "," << position.pos[1] << ","
                              << position.pos[2] << ") finalRotZ=" << position.rot[2] << " for "
                              << traits->mEditorId;

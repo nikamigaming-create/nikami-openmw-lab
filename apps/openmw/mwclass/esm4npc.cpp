@@ -129,6 +129,7 @@ namespace MWClass
         std::vector<const ESM4::Clothing*> mEquippedClothing;
         const ESM4::Weapon* mEquippedWeapon = nullptr;
         bool mFnvAiSequenceInitialised = false;
+        bool mFurnitureSeated = false;
 
         ESM4NpcCustomData();
         ESM4NpcCustomData(const ESM4NpcCustomData& other);
@@ -160,6 +161,7 @@ namespace MWClass
         , mEquippedClothing(other.mEquippedClothing)
         , mEquippedWeapon(other.mEquippedWeapon)
         , mFnvAiSequenceInitialised(other.mFnvAiSequenceInitialised)
+        , mFurnitureSeated(other.mFurnitureSeated)
     {
     }
 
@@ -749,6 +751,16 @@ namespace MWClass
     const ESM4::Weapon* ESM4Npc::getEquippedWeapon(const MWWorld::Ptr& ptr)
     {
         return getCustomData(ptr).mEquippedWeapon;
+    }
+
+    bool ESM4Npc::isFurnitureSeated(const MWWorld::Ptr& ptr)
+    {
+        return getCustomData(ptr).mFurnitureSeated;
+    }
+
+    void ESM4Npc::setFurnitureSeated(const MWWorld::Ptr& ptr, bool seated)
+    {
+        getCustomData(ptr).mFurnitureSeated = seated;
     }
 
     bool ESM4Npc::addEquippedArmor(const MWWorld::Ptr& ptr, const ESM4::Armor* armor)
