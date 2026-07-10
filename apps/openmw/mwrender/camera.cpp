@@ -116,6 +116,11 @@ namespace MWRender
 //## VR_PATCH END
     }
 
+    float Camera::getLodScale() const
+    {
+        return mCamera.valid() ? mCamera->getLODScale() : 1.f;
+    }
+
     Camera::~Camera()
     {
         mCamera->removeUpdateCallback(mUpdateCallback);

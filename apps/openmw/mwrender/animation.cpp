@@ -5428,9 +5428,15 @@ namespace MWRender
             || Misc::StringUtils::ciEqual(mPtr.getCellRef().getRefId().serializeText(), "player"))
             return 0;
 
-        // Retail FNV advances the authored bone-LOD group at each 1250-unit
-        // camera-distance step (1248.22 -> 0, 1251.15 -> 1, 2705.18 -> 2).
-        float lodDistance = 1250.f;
+        // FalloutNV 1.4.0.525 HighProcess computes:
+        // floor((cameraDistance / actorScale) * 12 * cameraLodAdjust
+        //       / (iBoneLODDistMult * actorFadeMultiplier)).
+        // The retail defaults 1000 and 15 produce the observed 1250-unit step
+        // at actorScale=1 and cameraLodAdjust=1.
+        float distanceMultiplier = 1000.f;
+        float actorFadeMultiplier = 15.f;
+        float distanceConstant = 12.f;
+        float forcedLodDistance = 0.f;
         const char* configured = std::getenv("OPENMW_ESM4_BONE_LOD_DISTANCE");
         if (configured == nullptr)
             configured = std::getenv("OPENMW_ESM4_BONE_LOD_NEAR_DISTANCE");
@@ -5439,14 +5445,27 @@ namespace MWRender
             char* end = nullptr;
             const float value = std::strtof(configured, &end);
             if (end != configured && *end == '\0' && std::isfinite(value) && value > 0.f)
-                lodDistance = value;
+                forcedLodDistance = value;
         }
 
         osg::Vec3d lodOrigin(player.getRefData().getPosition().asVec3());
+        float cameraLodAdjust = 1.f;
         if (MWRender::Camera* camera = MWBase::Environment::get().getWorld()->getCamera())
+        {
             lodOrigin = camera->getPosition();
+            cameraLodAdjust = camera->getLodScale();
+        }
         const osg::Vec3d delta = osg::Vec3d(mPtr.getRefData().getPosition().asVec3()) - lodOrigin;
-        return std::clamp(static_cast<int>(std::sqrt(delta.length2()) / lodDistance), 0, 8);
+        const float distance = static_cast<float>(std::sqrt(delta.length2()));
+        if (forcedLodDistance > 0.f)
+            return std::clamp(static_cast<int>(distance / forcedLodDistance), 0, 8);
+
+        const float actorScale = std::max(std::abs(mPtr.getCellRef().getScale()), 0.0001f);
+        if (!std::isfinite(cameraLodAdjust) || cameraLodAdjust <= 0.f)
+            cameraLodAdjust = 1.f;
+        const float quotient = (distance / actorScale) * distanceConstant * cameraLodAdjust
+            / (distanceMultiplier * actorFadeMultiplier);
+        return std::clamp(static_cast<int>(std::floor(quotient)), 0, 8);
     }
 
     bool Animation::isBethesdaBoneLodSuppressed(const osg::Node* node) const
@@ -5456,6 +5475,16 @@ namespace MWRender
         unsigned int group = 0;
         return node->getUserValue("bethesdaBoneLodGroup", group)
             && group < static_cast<unsigned int>(mBethesdaBoneLodLevel);
+    }
+
+    bool Animation::shouldDeferBethesdaBoneLodChange() const
+    {
+        if (!mPlayScriptedOnly)
+            return false;
+        return std::any_of(mStates.begin(), mStates.end(), [](const auto& state) {
+            return state.second.mPlaying
+                && state.second.mPriority.contains(MWMechanics::Priority_Scripted);
+        });
     }
 
     void Animation::resetActiveGroups()
@@ -5468,7 +5497,9 @@ namespace MWRender
         size_t falloutAddedControllers = 0;
         size_t falloutBoneLodSuppressedControllers = 0;
         bool accumResetAttached = false;
-        mBethesdaBoneLodLevel = falloutNpc ? getBethesdaBoneLodLevel() : 0;
+        const int requestedBoneLodLevel = falloutNpc ? getBethesdaBoneLodLevel() : 0;
+        if (mBethesdaBoneLodLevel < 0 || !shouldDeferBethesdaBoneLodChange())
+            mBethesdaBoneLodLevel = requestedBoneLodLevel;
         // remove all previous external controllers from the scene graph
         for (auto it = mActiveControllers.begin(); it != mActiveControllers.end(); ++it)
         {
@@ -5802,7 +5833,7 @@ namespace MWRender
         if (falloutNpc)
         {
             const int boneLodLevel = getBethesdaBoneLodLevel();
-            if (boneLodLevel != mBethesdaBoneLodLevel)
+            if (boneLodLevel != mBethesdaBoneLodLevel && !shouldDeferBethesdaBoneLodChange())
             {
                 mBethesdaBoneLodLevel = boneLodLevel;
                 resetActiveGroups();

@@ -274,6 +274,7 @@ namespace MWRender
 
         int getBethesdaBoneLodLevel() const;
         bool isBethesdaBoneLodSuppressed(const osg::Node* node) const;
+        bool shouldDeferBethesdaBoneLodChange() const;
 
         std::string describeActiveFalloutAnimationStates() const;
         size_t forceFalloutNativeUpdateTraversalOnce(std::string_view reason);

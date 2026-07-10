@@ -149,6 +149,7 @@ namespace MWRender
 
         const osg::Matrixf& getViewMatrix() const { return mViewMatrix; }
         const osg::Matrixf& getProjectionMatrix() const { return mProjectionMatrix; }
+        float getLodScale() const;
 
 //## VR_PATCH BEGIN
         void setPose(const Stereo::Pose& pose);
