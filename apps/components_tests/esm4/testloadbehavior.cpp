@@ -198,6 +198,9 @@ namespace
         ESM4::TargetResponseData firstResponse{};
         firstResponse.emoType = ESM4::EMO_Happy;
         firstResponse.responseNo = 1;
+        firstResponse.responsePadding[0] = 0x0f;
+        firstResponse.responsePadding[1] = 0x04;
+        firstResponse.responsePadding[2] = 0x01;
         appendSubRecord(payload, "TRDT", firstResponse);
         appendSubRecord(payload, "NAM1", zString("First response"));
         appendSubRecord(payload, "SNAM", std::uint32_t{ 0x2001 });
@@ -244,6 +247,7 @@ namespace
         EXPECT_EQ(info.mNextSpeaker, 1);
         EXPECT_EQ(info.mInfoFlags, 0x0104);
         ASSERT_EQ(info.mResponses.size(), 2);
+        EXPECT_EQ(info.mResponses[0].mData.responseNo, 1);
         EXPECT_EQ(info.mResponses[0].mResponse, "First response");
         EXPECT_EQ(info.mResponses[0].mSpeakerAnimation, ESM::FormId::fromUint32(0x2001));
         EXPECT_EQ(info.mResponses[1].mResponse, "Second response");

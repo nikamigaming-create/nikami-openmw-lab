@@ -51,6 +51,7 @@ namespace MWWorld
         std::uint8_t mCurrentStage = 0;
         std::map<std::int16_t, bool> mStageDone;
         std::map<std::int32_t, std::uint8_t> mObjectiveStatus;
+        std::map<std::string, float, std::less<>> mVariables;
     };
 
     class ESM4QuestRuntime
@@ -74,11 +75,16 @@ namespace MWWorld
         void clear();
 
         bool startQuest(std::string_view id);
+        bool stopQuest(std::string_view id);
+        bool completeQuest(std::string_view id);
+        bool failQuest(std::string_view id);
         bool setStage(std::string_view id, std::uint8_t stage);
         bool setStage(ESM::FormId id, std::uint8_t stage);
         bool setObjectiveDisplayed(std::string_view id, std::int32_t objective, bool displayed);
         bool setObjectiveCompleted(std::string_view id, std::int32_t objective, bool completed);
+        bool setQuestVariable(std::string_view id, std::string_view variable, float value);
         bool forceActiveQuest(std::string_view id);
+        void executeResultSource(std::string_view source);
         bool evaluateConditions(const std::vector<ESM4::TargetCondition>& conditions);
 
         int countSavedGameRecords() const;
@@ -87,6 +93,7 @@ namespace MWWorld
 
         const ESM4QuestState* search(std::string_view id) const;
         const ESM4QuestState* search(ESM::FormId id) const;
+        std::optional<float> getQuestVariable(std::string_view id, std::string_view variable) const;
         std::optional<ESM::FormId> getActiveQuest() const { return mActiveQuest; }
         const std::vector<std::string>& getUnsupportedStageCommands() const { return mUnsupportedStageCommands; }
         const std::vector<std::uint32_t>& getUnsupportedConditionFunctions() const

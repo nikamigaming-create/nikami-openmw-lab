@@ -2422,6 +2422,7 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
     static bool proofInventoryOpened = false;
     static bool proofQuickSaveQueued = false;
     static bool proofSayQueued = false;
+    static bool proofDialogueTopicQueued = false;
     static bool proofTimedScript1Executed = false;
     static bool proofTimedScript2Executed = false;
     static bool proofActorCameraAligned = false;
@@ -3780,6 +3781,26 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                                 << "\" because sound manager is unavailable at frame " << frameNumber;
         }
         proofSayQueued = true;
+    }
+
+    const char* proofDialogueTopic = std::getenv("OPENMW_PROOF_DIALOGUE_TOPIC");
+    const int proofDialogueTopicDelay = std::max(1, getProofFrame("OPENMW_PROOF_DIALOGUE_TOPIC_DELAY"));
+    if (!proofDialogueTopicQueued && proofSayQueued && proofDialogueTopic != nullptr && *proofDialogueTopic != '\0'
+        && proofSayFrame >= 0 && frameNumber >= static_cast<unsigned>(proofSayFrame + proofDialogueTopicDelay)
+        && mDialogueManager != nullptr)
+    {
+        struct ProofDialogueCallback final : MWBase::DialogueManager::ResponseCallback
+        {
+            void addResponse(std::string_view title, std::string_view text) override
+            {
+                Log(Debug::Info) << "FNV/ESM4 proof: dialogue response title=\"" << title << "\" text=\"" << text
+                                 << "\"";
+            }
+        } callback;
+        Log(Debug::Info) << "FNV/ESM4 proof: selecting dialogue topic \"" << proofDialogueTopic << "\" at frame "
+                         << frameNumber;
+        mDialogueManager->keywordSelected(proofDialogueTopic, &callback);
+        proofDialogueTopicQueued = true;
     }
 
     if (proofPinnedPlayerToActorView && proofRunning && mWorld != nullptr

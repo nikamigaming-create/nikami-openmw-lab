@@ -15,6 +15,7 @@
 #include <components/esm3/esmwriter.hpp>
 #include <components/esm4/loadglob.hpp>
 #include <components/esm4/loadqust.hpp>
+#include <components/esm4/loadscpt.hpp>
 #include <components/misc/strings/algorithm.hpp>
 
 namespace
@@ -47,6 +48,14 @@ namespace
         const auto parsed = std::from_chars(begin, end, result, 10);
         return parsed.ec == std::errc{} && parsed.ptr == end;
     }
+
+    bool parseFloat(std::string_view value, float& result)
+    {
+        const char* const begin = value.data();
+        const char* const end = value.data() + value.size();
+        const auto parsed = std::from_chars(begin, end, result);
+        return parsed.ec == std::errc{} && parsed.ptr == end;
+    }
 }
 
 namespace MWWorld
@@ -64,6 +73,10 @@ namespace MWWorld
                 state.mStageDone.emplace(stage.mIndex, false);
             for (const ESM4::QuestObjective& objective : quest.mObjectives)
                 state.mObjectiveStatus.emplace(objective.mIndex, 0);
+            if (const ESM4::Script* script = store.get<ESM4::Script>().search(ESM::RefId(quest.mQuestScript)))
+                for (const ESM4::ScriptLocalVariableData& variable : script->mScript.localVarData)
+                    if (!variable.variableName.empty())
+                        state.mVariables.emplace(Misc::StringUtils::lowerCase(variable.variableName), 0.f);
             mStates.insert_or_assign(quest.mId, std::move(state));
         }
     }
@@ -120,6 +133,38 @@ namespace MWWorld
         if (state == nullptr)
             return false;
         state->mFlags |= ESM4QuestState::Flag_Running;
+        return true;
+    }
+
+    bool ESM4QuestRuntime::stopQuest(std::string_view id)
+    {
+        const ESM4::Quest* quest = resolveQuest(id);
+        ESM4QuestState* state = quest != nullptr ? findState(*quest) : nullptr;
+        if (state == nullptr)
+            return false;
+        state->mFlags &= ~ESM4QuestState::Flag_Running;
+        return true;
+    }
+
+    bool ESM4QuestRuntime::completeQuest(std::string_view id)
+    {
+        const ESM4::Quest* quest = resolveQuest(id);
+        ESM4QuestState* state = quest != nullptr ? findState(*quest) : nullptr;
+        if (state == nullptr)
+            return false;
+        state->mFlags |= ESM4QuestState::Flag_Completed;
+        state->mFlags &= ~(ESM4QuestState::Flag_Running | ESM4QuestState::Flag_Failed);
+        return true;
+    }
+
+    bool ESM4QuestRuntime::failQuest(std::string_view id)
+    {
+        const ESM4::Quest* quest = resolveQuest(id);
+        ESM4QuestState* state = quest != nullptr ? findState(*quest) : nullptr;
+        if (state == nullptr)
+            return false;
+        state->mFlags |= ESM4QuestState::Flag_Failed;
+        state->mFlags &= ~(ESM4QuestState::Flag_Running | ESM4QuestState::Flag_Completed);
         return true;
     }
 
@@ -223,6 +268,39 @@ namespace MWWorld
                 if (const ESM4QuestState* state = findQuestState())
                     return (state->mFlags & ESM4QuestState::Flag_Completed) != 0 ? 1.f : 0.f;
                 return 0.f;
+            case ESM4::FUN_GetQuestVariable:
+                if (const ESM4::Quest* quest = mStore->get<ESM4::Quest>().search(ESM::RefId(parameter)))
+                    if (const ESM4QuestState* state = findState(*quest))
+                        if (const ESM4::Script* script
+                            = mStore->get<ESM4::Script>().search(ESM::RefId(quest->mQuestScript)))
+                            for (const ESM4::ScriptLocalVariableData& variable : script->mScript.localVarData)
+                                if (variable.index == condition.param2)
+                                {
+                                    const auto found = state->mVariables.find(
+                                        Misc::StringUtils::lowerCase(variable.variableName));
+                                    return found != state->mVariables.end() ? found->second : 0.f;
+                                }
+                return 0.f;
+            case ESM4::FUN_GetObjectiveCompleted:
+                if (const ESM4QuestState* state = findQuestState())
+                {
+                    const auto found = state->mObjectiveStatus.find(static_cast<std::int32_t>(condition.param2));
+                    return found != state->mObjectiveStatus.end()
+                            && (found->second & ESM4QuestState::Objective_Completed) != 0
+                        ? 1.f
+                        : 0.f;
+                }
+                return 0.f;
+            case ESM4::FUN_GetObjectiveDisplayed:
+                if (const ESM4QuestState* state = findQuestState())
+                {
+                    const auto found = state->mObjectiveStatus.find(static_cast<std::int32_t>(condition.param2));
+                    return found != state->mObjectiveStatus.end()
+                            && (found->second & ESM4QuestState::Objective_Displayed) != 0
+                        ? 1.f
+                        : 0.f;
+                }
+                return 0.f;
             default:
                 if (std::find(mUnsupportedConditionFunctions.begin(), mUnsupportedConditionFunctions.end(),
                         condition.functionIndex)
@@ -297,7 +375,9 @@ namespace MWWorld
                 state.mStageDone.begin(), state.mStageDone.end(), [](const auto& value) { return value.second; }))
             return true;
         return std::any_of(state.mObjectiveStatus.begin(), state.mObjectiveStatus.end(),
-            [](const auto& value) { return value.second != 0; });
+                   [](const auto& value) { return value.second != 0; })
+            || std::any_of(state.mVariables.begin(), state.mVariables.end(),
+                [](const auto& value) { return value.second != 0.f; });
     }
 
     int ESM4QuestRuntime::countSavedGameRecords() const
@@ -335,6 +415,12 @@ namespace MWWorld
                 {
                     writer.writeHNT("OIDX", index);
                     writer.writeHNT("OFLG", status);
+                }
+            for (const auto& [name, value] : state.mVariables)
+                if (value != 0.f)
+                {
+                    writer.writeHNString("VNAM", name);
+                    writer.writeHNT("VVAL", value);
                 }
             writer.endRecord(ESM::REC_FQST);
         }
@@ -384,6 +470,17 @@ namespace MWWorld
             status = 0;
         for (const auto& [index, status] : objectives)
             state->mObjectiveStatus[index] = status;
+        for (auto& [_, value] : state->mVariables)
+            value = 0.f;
+        while (reader.isNextSub("VNAM"))
+        {
+            const std::string name = reader.getHString();
+            float value = 0.f;
+            reader.getHNT(value, "VVAL");
+            if (const auto found = state->mVariables.find(Misc::StringUtils::lowerCase(name));
+                found != state->mVariables.end())
+                found->second = value;
+        }
         if (active != 0)
             mActiveQuest = id;
 
@@ -437,6 +534,21 @@ namespace MWWorld
         return true;
     }
 
+    bool ESM4QuestRuntime::setQuestVariable(std::string_view id, std::string_view variable, float value)
+    {
+        const ESM4::Quest* quest = resolveQuest(id);
+        ESM4QuestState* state = quest != nullptr ? findState(*quest) : nullptr;
+        if (state == nullptr)
+            return false;
+        const auto found = state->mVariables.find(Misc::StringUtils::lowerCase(variable));
+        if (found == state->mVariables.end())
+            return false;
+        found->second = value;
+        Log(Debug::Info) << "FNV/ESM4 behavior: SetQuestVariable quest=" << quest->mEditorId
+                         << " variable=" << variable << " value=" << value;
+        return true;
+    }
+
     void ESM4QuestRuntime::executeStageSource(std::string_view source)
     {
         std::istringstream stream{ std::string(source) };
@@ -454,12 +566,54 @@ namespace MWWorld
                     && setObjectiveDisplayed(tokens[1], objective, displayed != 0))
                     continue;
             }
+            else if (tokens.size() >= 4 && Misc::StringUtils::ciEqual(tokens[0], "set")
+                && Misc::StringUtils::ciEqual(tokens[2], "to"))
+            {
+                const std::size_t separator = tokens[1].find('.');
+                float value = 0.f;
+                if (separator != std::string_view::npos && separator != 0 && separator + 1 < tokens[1].size()
+                    && parseFloat(tokens[3], value)
+                    && setQuestVariable(tokens[1].substr(0, separator), tokens[1].substr(separator + 1), value))
+                    continue;
+            }
+            else if (tokens.size() >= 4 && Misc::StringUtils::ciEqual(tokens[0], "SetObjectiveCompleted"))
+            {
+                std::int32_t objective = 0;
+                std::int32_t completed = 0;
+                if (parseInt(tokens[2], objective) && parseInt(tokens[3], completed)
+                    && setObjectiveCompleted(tokens[1], objective, completed != 0))
+                    continue;
+            }
+            else if (tokens.size() >= 3 && Misc::StringUtils::ciEqual(tokens[0], "SetStage"))
+            {
+                std::int32_t stage = 0;
+                if (parseInt(tokens[2], stage) && stage >= 0 && stage <= 255
+                    && setStage(tokens[1], static_cast<std::uint8_t>(stage)))
+                    continue;
+            }
+            else if (tokens.size() >= 2 && Misc::StringUtils::ciEqual(tokens[0], "StartQuest")
+                && startQuest(tokens[1]))
+                continue;
+            else if (tokens.size() >= 2 && Misc::StringUtils::ciEqual(tokens[0], "StopQuest")
+                && stopQuest(tokens[1]))
+                continue;
+            else if (tokens.size() >= 2 && Misc::StringUtils::ciEqual(tokens[0], "CompleteQuest")
+                && completeQuest(tokens[1]))
+                continue;
+            else if (tokens.size() >= 2 && Misc::StringUtils::ciEqual(tokens[0], "FailQuest")
+                && failQuest(tokens[1]))
+                continue;
             else if (tokens.size() >= 2 && Misc::StringUtils::ciEqual(tokens[0], "ForceActiveQuest")
                 && forceActiveQuest(tokens[1]))
                 continue;
 
             mUnsupportedStageCommands.push_back(line);
         }
+    }
+
+    void ESM4QuestRuntime::executeResultSource(std::string_view source)
+    {
+        executeStageSource(source);
     }
 
     const ESM4QuestState* ESM4QuestRuntime::search(std::string_view id) const
@@ -472,5 +626,15 @@ namespace MWWorld
     {
         const auto found = mStates.find(id);
         return found != mStates.end() ? &found->second : nullptr;
+    }
+
+    std::optional<float> ESM4QuestRuntime::getQuestVariable(std::string_view id, std::string_view variable) const
+    {
+        const ESM4::Quest* quest = resolveQuest(id);
+        const ESM4QuestState* state = quest != nullptr ? findState(*quest) : nullptr;
+        if (state == nullptr)
+            return std::nullopt;
+        const auto found = state->mVariables.find(Misc::StringUtils::lowerCase(variable));
+        return found != state->mVariables.end() ? std::optional<float>(found->second) : std::nullopt;
     }
 }

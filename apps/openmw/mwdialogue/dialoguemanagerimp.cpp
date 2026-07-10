@@ -1,7 +1,9 @@
 #include "dialoguemanagerimp.hpp"
 
 #include <algorithm>
+#include <iomanip>
 #include <list>
+#include <limits>
 #include <optional>
 #include <sstream>
 
@@ -16,6 +18,8 @@
 #include <components/esm4/loaddial.hpp>
 #include <components/esm4/loadinfo.hpp>
 #include <components/esm4/loadnpc.hpp>
+#include <components/esm4/loadsoun.hpp>
+#include <components/esm4/loadsndr.hpp>
 #include <components/esm4/script.hpp>
 
 #include <components/compiler/errorhandler.hpp>
@@ -30,7 +34,11 @@
 
 #include <components/misc/resourcehelpers.hpp>
 
+#include <components/resource/resourcesystem.hpp>
+
 #include <components/settings/values.hpp>
+#include <components/vfs/manager.hpp>
+#include <components/vfs/recursivedirectoryiterator.hpp>
 
 #include "../mwbase/environment.hpp"
 #include "../mwbase/journal.hpp"
@@ -60,6 +68,26 @@
 
 namespace MWDialogue
 {
+    namespace
+    {
+        constexpr unsigned int maxEsm4SoundReferenceDepth = 8;
+
+        std::string resolveEsm4SoundFile(const MWWorld::ESMStore& store, ESM::FormId id, unsigned int depth = 0)
+        {
+            if (id.isZeroOrUnset() || depth >= maxEsm4SoundReferenceDepth)
+                return {};
+            if (const ESM4::Sound* sound = store.get<ESM4::Sound>().search(ESM::RefId(id)))
+                return sound->mSoundFile;
+            if (const ESM4::SoundReference* sound = store.get<ESM4::SoundReference>().search(ESM::RefId(id)))
+            {
+                if (!sound->mSoundFile.empty())
+                    return sound->mSoundFile;
+                return resolveEsm4SoundFile(store, sound->mSoundId, depth + 1);
+            }
+            return {};
+        }
+    }
+
     DialogueManager::DialogueManager(
         const Compiler::Extensions& extensions, Translation::Storage& translationDataStorage)
         : mTranslationDataStorage(translationDataStorage)
@@ -88,6 +116,8 @@ namespace MWDialogue
         mEsm4TopicIds.clear();
         mEsm4ChoiceTopics.clear();
         mEsm4SaidInfos.clear();
+        mEsm4AddedTopics.clear();
+        mEsm4VoicePaths.clear();
     }
 
     bool DialogueManager::matchesEsm4Info(const ESM4::DialogInfo& info) const
@@ -227,12 +257,62 @@ namespace MWDialogue
                 || Misc::StringUtils::ciEqual(dialogue.mEditorId, "GOODBYE"))
                 continue;
             const ESM4::DialogInfo* info = selectEsm4Info(dialogue.mId);
-            if (info == nullptr || getEsm4InfoActorAffinity(*info) == 0)
+            if (info == nullptr
+                || (getEsm4InfoActorAffinity(*info) == 0 && !mEsm4AddedTopics.contains(dialogue.mId)))
                 continue;
             const std::string& title = dialogue.mTopicName.empty() ? dialogue.mEditorId : dialogue.mTopicName;
             if (!title.empty())
+            {
                 mEsm4TopicIds.emplace(title, dialogue.mId);
+                if (std::getenv("OPENMW_PROOF_DIALOGUE_TOPIC") != nullptr)
+                    Log(Debug::Info) << "FNV/ESM4 dialogue: available topic=\"" << title << "\" form="
+                                     << ESM::RefId(dialogue.mId) << " info=" << ESM::RefId(info->mId);
+            }
         }
+    }
+
+    std::string DialogueManager::resolveEsm4Voice(
+        const ESM4::DialogInfo& info, const ESM4::DialogResponse& response, std::size_t responseIndex)
+    {
+        const std::uint32_t authoredResponseNumber = response.mData.responseNo;
+        const std::uint32_t responseNumber = authoredResponseNumber != 0 ? authoredResponseNumber
+                                                                         : static_cast<std::uint32_t>(responseIndex + 1);
+        const auto key = std::pair{ info.mId, responseNumber };
+        if (const auto found = mEsm4VoicePaths.find(key); found != mEsm4VoicePaths.end())
+            return found->second;
+
+        const MWWorld::ESMStore& store = *MWBase::Environment::get().getESMStore();
+        const VFS::Manager* vfs = MWBase::Environment::get().getResourceSystem()->getVFS();
+        std::string soundFile;
+        if (response.mData.sound != 0)
+            soundFile = resolveEsm4SoundFile(store, ESM::FormId::fromUint32(response.mData.sound));
+        if (soundFile.empty() && !info.mSound.isZeroOrUnset())
+            soundFile = resolveEsm4SoundFile(store, info.mSound);
+
+        std::string path;
+        if (!soundFile.empty())
+            path = Misc::ResourceHelpers::correctResourcePath({ { "sound" } }, soundFile, vfs);
+
+        if (path.empty() || !vfs->exists(VFS::Path::Normalized(path)))
+        {
+            std::ostringstream suffix;
+            suffix << '_' << std::hex << std::nouppercase << std::setfill('0') << std::setw(8) << info.mId.mIndex
+                   << '_' << std::dec << responseNumber;
+            const std::string stem = suffix.str();
+            for (const VFS::Path::Normalized& candidate : vfs->getRecursiveDirectoryIterator("sound/voice"))
+            {
+                const std::string_view value = candidate.view();
+                if ((value.ends_with(stem + ".ogg") || value.ends_with(stem + ".mp3")
+                        || value.ends_with(stem + ".wav")))
+                {
+                    path = candidate.value();
+                    break;
+                }
+            }
+        }
+
+        mEsm4VoicePaths.emplace(key, path);
+        return path;
     }
 
     void DialogueManager::executeEsm4Topic(ESM::FormId topic, ResponseCallback* callback, bool greeting)
@@ -243,14 +323,29 @@ namespace MWDialogue
         if (dialogue == nullptr || info == nullptr)
             return;
 
-        std::string response;
+        std::vector<const ESM4::DialogResponse*> orderedResponses;
+        orderedResponses.reserve(info->mResponses.size());
         for (const ESM4::DialogResponse& item : info->mResponses)
+            orderedResponses.push_back(&item);
+        std::stable_sort(orderedResponses.begin(), orderedResponses.end(),
+            [](const ESM4::DialogResponse* left, const ESM4::DialogResponse* right) {
+                const std::uint32_t leftAuthoredNumber = left->mData.responseNo;
+                const std::uint32_t rightAuthoredNumber = right->mData.responseNo;
+                const std::uint32_t leftNumber = leftAuthoredNumber != 0 ? leftAuthoredNumber
+                                                                         : std::numeric_limits<std::uint32_t>::max();
+                const std::uint32_t rightNumber = rightAuthoredNumber != 0 ? rightAuthoredNumber
+                                                                           : std::numeric_limits<std::uint32_t>::max();
+                return leftNumber < rightNumber;
+            });
+
+        std::string response;
+        for (const ESM4::DialogResponse* item : orderedResponses)
         {
-            if (item.mResponse.empty())
+            if (item->mResponse.empty())
                 continue;
             if (!response.empty())
                 response += "\n";
-            response += item.mResponse;
+            response += item->mResponse;
         }
         if (response.empty())
             response = info->mResponse;
@@ -259,6 +354,23 @@ namespace MWDialogue
         mLastEsm4Topic = topic;
         if ((info->mInfoFlags & ESM4::INFO_SayOnce) != 0)
             mEsm4SaidInfos.insert(info->mId);
+
+        for (ESM::FormId addedTopic : info->mAddTopics)
+            mEsm4AddedTopics.insert(addedTopic);
+
+        for (std::size_t i = 0; i < orderedResponses.size(); ++i)
+        {
+            const ESM4::DialogResponse& item = *orderedResponses[i];
+            const std::string voice = resolveEsm4Voice(*info, item, i);
+            if (voice.empty())
+                continue;
+            Log(Debug::Info) << "FNV/ESM4 dialogue: resolved authored voice info=" << ESM::RefId(info->mId)
+                             << " response="
+                             << (item.mData.responseNo != 0 ? item.mData.responseNo : i + 1)
+                             << " path=\"" << voice << "\"";
+            MWBase::Environment::get().getSoundManager()->say(mActor, VFS::Path::Normalized(voice));
+            break;
+        }
 
         mChoices.clear();
         mEsm4ChoiceTopics.clear();
@@ -277,10 +389,23 @@ namespace MWDialogue
         if ((info->mInfoFlags & ESM4::INFO_Goodbye) != 0)
             goodbye();
 
-        if (!info->mScript.scriptSource.empty() || !info->mEndScript.scriptSource.empty())
-            Log(Debug::Info) << "FNV/ESM4 dialogue: deferred result script info=" << ESM::RefId(info->mId)
-                             << " beginBytes=" << info->mScript.compiledData.size()
-                             << " endBytes=" << info->mEndScript.compiledData.size();
+        MWWorld::ESM4QuestRuntime& questRuntime
+            = MWBase::Environment::get().getWorld()->getESM4QuestRuntime();
+        const std::size_t unsupportedBefore = questRuntime.getUnsupportedStageCommands().size();
+        if (!info->mScript.scriptSource.empty())
+            questRuntime.executeResultSource(info->mScript.scriptSource);
+        if (!info->mEndScript.scriptSource.empty())
+            questRuntime.executeResultSource(info->mEndScript.scriptSource);
+        const std::size_t unsupportedAfter = questRuntime.getUnsupportedStageCommands().size();
+        if (!info->mScript.scriptSource.empty() || !info->mEndScript.scriptSource.empty()
+            || !info->mScript.compiledData.empty() || !info->mEndScript.compiledData.empty())
+            Log(Debug::Info) << "FNV/ESM4 dialogue: executed result source info=" << ESM::RefId(info->mId)
+                             << " beginSource=" << info->mScript.scriptSource.size()
+                             << " endSource=" << info->mEndScript.scriptSource.size()
+                             << " unsupportedAdded=" << (unsupportedAfter - unsupportedBefore)
+                             << " compiledOnly="
+                             << ((!info->mScript.compiledData.empty() && info->mScript.scriptSource.empty())
+                                     || (!info->mEndScript.compiledData.empty() && info->mEndScript.scriptSource.empty()));
 
         Log(Debug::Info) << "FNV/ESM4 dialogue: selected topic=" << dialogue->mEditorId
                          << " topicForm=" << ESM::RefId(dialogue->mId) << " info=" << ESM::RefId(info->mId)
@@ -387,6 +512,7 @@ namespace MWDialogue
 
             executeEsm4Topic(greeting->mId, callback, true);
             creatureStats.talkedToPlayer();
+            mTalkedTo = true;
             updateEsm4Topics();
             return true;
         }

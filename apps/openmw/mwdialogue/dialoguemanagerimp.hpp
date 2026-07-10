@@ -27,6 +27,7 @@ namespace ESM4
 {
     struct Dialogue;
     struct DialogInfo;
+    struct DialogResponse;
 }
 
 namespace MWDialogue
@@ -66,6 +67,8 @@ namespace MWDialogue
         std::map<std::string, ESM::FormId, Misc::StringUtils::CiComp> mEsm4TopicIds;
         std::vector<ESM::FormId> mEsm4ChoiceTopics;
         std::set<ESM::FormId> mEsm4SaidInfos;
+        std::set<ESM::FormId> mEsm4AddedTopics;
+        std::map<std::pair<ESM::FormId, std::uint32_t>, std::string> mEsm4VoicePaths;
 
         int mOriginalDisposition;
         int mCurrentDisposition;
@@ -86,6 +89,8 @@ namespace MWDialogue
         const ESM4::DialogInfo* selectEsm4Info(ESM::FormId topic) const;
         bool matchesEsm4Info(const ESM4::DialogInfo& info) const;
         int getEsm4InfoActorAffinity(const ESM4::DialogInfo& info) const;
+        std::string resolveEsm4Voice(
+            const ESM4::DialogInfo& info, const ESM4::DialogResponse& response, std::size_t responseIndex);
         void updateEsm4Topics();
 
         const ESM::Dialogue* searchDialogue(const ESM::RefId& id);

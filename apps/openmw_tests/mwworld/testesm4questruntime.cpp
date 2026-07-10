@@ -13,6 +13,7 @@
 #include <components/esm3/esmwriter.hpp>
 #include <components/esm4/loadglob.hpp>
 #include <components/esm4/loadqust.hpp>
+#include <components/esm4/loadscpt.hpp>
 
 #include "apps/openmw/mwworld/esm4questruntime.hpp"
 #include "apps/openmw/mwworld/esmstore.hpp"
@@ -116,6 +117,58 @@ TEST(ESM4QuestRuntimeTest, ImportsFalloutGlobalsAndCalendarAliases)
     EXPECT_FLOAT_EQ(globals[MWWorld::Globals::sDaysPassed].getFloat(), 5.f);
 }
 
+TEST(ESM4QuestRuntimeTest, ExecutesDialogueResultQuestCommands)
+{
+    MWWorld::ESMStore store;
+    const ESM::FormId questId{ .mIndex = 0x104eae, .mContentFile = 0 };
+    ESM4::Quest quest = makeQuest(questId, "GS001");
+    const ESM::FormId scriptId{ .mIndex = 0x104eb0, .mContentFile = 0 };
+    quest.mQuestScript = scriptId;
+    quest.mObjectives.push_back(ESM4::QuestObjective{ .mIndex = 10, .mDescription = "Recruit Goodsprings" });
+    quest.mStages.push_back(ESM4::QuestStage{ .mIndex = 20, .mEntries = { ESM4::QuestStageEntry{} } });
+    store.overrideRecord(quest);
+    ESM4::Script script;
+    script.mId = scriptId;
+    script.mEditorId = "VFreeformGoodspringsScript";
+    script.mScript.localVarData = {
+        ESM4::ScriptLocalVariableData{ .index = 1, .variableName = "bMetPete" },
+        ESM4::ScriptLocalVariableData{ .index = 2, .variableName = "bEasyPeteNCR" },
+    };
+    store.overrideRecord(script);
+
+    MWWorld::ESM4QuestRuntime runtime;
+    runtime.initialize(store);
+    runtime.executeResultSource("StartQuest GS001\nSetObjectiveDisplayed GS001 10 1\n"
+                                "SetObjectiveCompleted GS001 10 1\nSetStage GS001 20\n"
+                                "ForceActiveQuest GS001\nset GS001.bMetPete to 1\nset GS001.bEasyPeteNCR to 1");
+
+    const MWWorld::ESM4QuestState* state = runtime.search(questId);
+    ASSERT_NE(state, nullptr);
+    EXPECT_EQ(state->mCurrentStage, 20);
+    EXPECT_TRUE(state->mStageDone.at(20));
+    EXPECT_EQ(state->mObjectiveStatus.at(10),
+        MWWorld::ESM4QuestState::Objective_Displayed | MWWorld::ESM4QuestState::Objective_Completed);
+    EXPECT_EQ(runtime.getActiveQuest(), questId);
+    EXPECT_EQ(runtime.getQuestVariable("GS001", "bMetPete"), 1.f);
+    EXPECT_EQ(runtime.getQuestVariable("gs001", "beasypetencr"), 1.f);
+    EXPECT_TRUE(runtime.getUnsupportedStageCommands().empty());
+
+    EXPECT_TRUE(runtime.evaluateConditions(
+        { makeCondition(ESM4::FUN_GetObjectiveDisplayed, questId, 1.f, ESM4::CTF_EqualTo, 10),
+            makeCondition(ESM4::FUN_GetObjectiveCompleted, questId, 1.f, ESM4::CTF_EqualTo, 10) }));
+    EXPECT_TRUE(runtime.evaluateConditions(
+        { makeCondition(ESM4::FUN_GetQuestVariable, questId, 1.f, ESM4::CTF_EqualTo, 1) }));
+
+    runtime.executeResultSource("CompleteQuest GS001");
+    EXPECT_NE(state->mFlags & MWWorld::ESM4QuestState::Flag_Completed, 0);
+    EXPECT_EQ(state->mFlags & MWWorld::ESM4QuestState::Flag_Running, 0);
+    runtime.executeResultSource("FailQuest GS001");
+    EXPECT_NE(state->mFlags & MWWorld::ESM4QuestState::Flag_Failed, 0);
+    EXPECT_EQ(state->mFlags & MWWorld::ESM4QuestState::Flag_Completed, 0);
+    runtime.executeResultSource("StartQuest GS001\nStopQuest GS001");
+    EXPECT_EQ(state->mFlags & MWWorld::ESM4QuestState::Flag_Running, 0);
+}
+
 TEST(ESM4QuestRuntimeTest, EvaluatesRetailQuestAndGlobalConditionGroups)
 {
     MWWorld::ESMStore store;
@@ -184,7 +237,9 @@ TEST(ESM4QuestRuntimeTest, EvaluatesRetailQuestAndGlobalConditionGroups)
 TEST(ESM4QuestRuntimeTest, RoundTripsQuestStateAcrossChangedLoadOrder)
 {
     const ESM::FormId originalId{ .mIndex = 0x10a214, .mContentFile = 2 };
+    const ESM::FormId originalScriptId{ .mIndex = 0x10a216, .mContentFile = 2 };
     ESM4::Quest originalQuest = makeQuest(originalId, "VCG02");
+    originalQuest.mQuestScript = originalScriptId;
     originalQuest.mObjectives.push_back(ESM4::QuestObjective{ .mIndex = 3, .mDescription = "Choose your skills" });
     ESM4::QuestStageEntry entry;
     entry.mScript.scriptSource = "SetObjectiveDisplayed VCG02 3 1;\nForceActiveQuest VCG02";
@@ -192,10 +247,16 @@ TEST(ESM4QuestRuntimeTest, RoundTripsQuestStateAcrossChangedLoadOrder)
 
     MWWorld::ESMStore originalStore;
     originalStore.overrideRecord(originalQuest);
+    ESM4::Script originalScript;
+    originalScript.mId = originalScriptId;
+    originalScript.mScript.localVarData
+        = { ESM4::ScriptLocalVariableData{ .index = 1, .variableName = "bDialogueComplete" } };
+    originalStore.overrideRecord(originalScript);
     originalStore.overrideRecord(makeQuest({ .mIndex = 0x10a212, .mContentFile = 2 }, "VCG00"));
     MWWorld::ESM4QuestRuntime originalRuntime;
     originalRuntime.initialize(originalStore);
     ASSERT_TRUE(originalRuntime.setStage("VCG02", 5));
+    ASSERT_TRUE(originalRuntime.setQuestVariable("VCG02", "bDialogueComplete", 1.f));
     ASSERT_EQ(originalRuntime.countSavedGameRecords(), 1);
 
     auto stream = std::make_unique<std::stringstream>();
@@ -217,8 +278,12 @@ TEST(ESM4QuestRuntimeTest, RoundTripsQuestStateAcrossChangedLoadOrder)
     const ESM::FormId remappedId{ .mIndex = originalId.mIndex, .mContentFile = 7 };
     ESM4::Quest remappedQuest = originalQuest;
     remappedQuest.mId = remappedId;
+    remappedQuest.mQuestScript.mContentFile = 7;
     MWWorld::ESMStore remappedStore;
     remappedStore.overrideRecord(remappedQuest);
+    ESM4::Script remappedScript = originalScript;
+    remappedScript.mId.mContentFile = 7;
+    remappedStore.overrideRecord(remappedScript);
     remappedStore.overrideRecord(makeQuest({ .mIndex = 0x10a212, .mContentFile = 7 }, "VCG00"));
     MWWorld::ESM4QuestRuntime restoredRuntime;
     restoredRuntime.initialize(remappedStore);
@@ -231,6 +296,7 @@ TEST(ESM4QuestRuntimeTest, RoundTripsQuestStateAcrossChangedLoadOrder)
     EXPECT_TRUE(restored->mStageDone.at(5));
     EXPECT_EQ(restored->mObjectiveStatus.at(3), MWWorld::ESM4QuestState::Objective_Displayed);
     EXPECT_EQ(restoredRuntime.getActiveQuest(), remappedId);
+    EXPECT_EQ(restoredRuntime.getQuestVariable("VCG02", "bDialogueComplete"), 1.f);
 
     const MWWorld::ESM4QuestState* unchanged = restoredRuntime.search("VCG00");
     ASSERT_NE(unchanged, nullptr);
