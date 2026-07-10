@@ -969,16 +969,19 @@ namespace MWMechanics
             if (mAnimation->hasAnimation("weaponpose"))
             {
                 MWRender::Animation::AnimPriority weaponPosePriority(Priority_Default);
-                weaponPosePriority[MWRender::BoneGroup_Torso] = Priority_Weapon;
                 weaponPosePriority[MWRender::BoneGroup_LeftArm] = Priority_Weapon;
                 weaponPosePriority[MWRender::BoneGroup_RightArm] = Priority_Weapon;
-                weaponPosePriority[MWRender::BoneGroup_Head] = Priority_Weapon;
                 if (mAnimation->isPlaying("weaponpose"))
                     mAnimation->disable("weaponpose");
                 Log(Debug::Info) << "FNV/ESM4 diag: CharacterController layering retail weapon pose for "
                                  << mPtr.getCellRef().getRefId();
-                playBlendedAnimation("weaponpose", weaponPosePriority, MWRender::BlendMask_UpperBody, false, 1.0f,
-                    "start", "stop", 0.f, std::numeric_limits<uint32_t>::max(), true);
+                // Live FNV blend telemetry gives locomotion priority 30 over aim 25 on the lower body, locomotion
+                // 31 over aim 30 on the torso/neck/head, aim 35 over locomotion 31 on both arm branches, and aim 45
+                // on Weapon. Replacing the full upper body with 2hraim therefore freezes the walking torso and
+                // produces the persistent head/neck offset seen by the retail transform oracle.
+                const int weaponPoseMask = MWRender::BlendMask_LeftArm | MWRender::BlendMask_RightArm;
+                playBlendedAnimation("weaponpose", weaponPosePriority, weaponPoseMask, false, 1.0f, "start", "stop",
+                    0.f, std::numeric_limits<uint32_t>::max(), true);
             }
 
             if (const char* forcedOverlayGroup = std::getenv("OPENMW_FNV_FORCED_OVERLAY_GROUP"))

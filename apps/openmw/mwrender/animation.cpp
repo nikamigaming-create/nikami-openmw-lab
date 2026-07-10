@@ -2,9 +2,12 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <cstdlib>
+#include <fstream>
 #include <iomanip>
 #include <limits>
+#include <memory>
 #include <sstream>
 #include <string_view>
 #include <typeinfo>
@@ -2281,6 +2284,225 @@ namespace
                          << " rootMinusPelvis=" << formatFalloutAuditVec3(root - pelvis);
     }
 
+    struct FalloutTransformOracleConfig
+    {
+        std::string mOutputPath;
+        std::uint32_t mTargetForm = 0;
+        unsigned int mStartUpdate = 1;
+        unsigned int mSampleEvery = 1;
+        unsigned int mMaxSamples = 120;
+        bool mEnabled = false;
+    };
+
+    unsigned int falloutTransformOracleEnvUnsigned(const char* name, unsigned int fallback)
+    {
+        const char* value = std::getenv(name);
+        if (value == nullptr || *value == '\0')
+            return fallback;
+        char* end = nullptr;
+        const unsigned long parsed = std::strtoul(value, &end, 0);
+        return end != value ? static_cast<unsigned int>(parsed) : fallback;
+    }
+
+    std::uint32_t falloutTransformOracleParseForm(std::string_view value)
+    {
+        const std::size_t hex = value.find("0x");
+        const std::size_t offset = hex == std::string_view::npos ? 0 : hex + 2;
+        const int base = hex == std::string_view::npos ? 0 : 16;
+        const std::string token(value.substr(offset));
+        char* end = nullptr;
+        const unsigned long parsed = std::strtoul(token.c_str(), &end, base);
+        return end != token.c_str() ? static_cast<std::uint32_t>(parsed) : 0;
+    }
+
+    const FalloutTransformOracleConfig& getFalloutTransformOracleConfig()
+    {
+        static const FalloutTransformOracleConfig config = [] {
+            FalloutTransformOracleConfig value;
+            const char* output = std::getenv("OPENMW_ESM4_TRANSFORM_ORACLE_OUTPUT");
+            const char* target = std::getenv("OPENMW_ESM4_TRANSFORM_ORACLE_REF");
+            if (output == nullptr || *output == '\0' || target == nullptr || *target == '\0')
+                return value;
+            value.mOutputPath = output;
+            value.mTargetForm = falloutTransformOracleParseForm(target);
+            value.mStartUpdate
+                = std::max(1u, falloutTransformOracleEnvUnsigned("OPENMW_ESM4_TRANSFORM_ORACLE_START", 1));
+            value.mSampleEvery
+                = std::max(1u, falloutTransformOracleEnvUnsigned("OPENMW_ESM4_TRANSFORM_ORACLE_EVERY", 1));
+            value.mMaxSamples
+                = std::max(1u, falloutTransformOracleEnvUnsigned("OPENMW_ESM4_TRANSFORM_ORACLE_MAX", 120));
+            value.mEnabled = value.mTargetForm != 0;
+            return value;
+        }();
+        return config;
+    }
+
+    void writeFalloutTransformOracleJsonString(std::ostream& stream, std::string_view value)
+    {
+        stream << '"';
+        for (const unsigned char ch : value)
+        {
+            switch (ch)
+            {
+                case '\\':
+                    stream << "\\\\";
+                    break;
+                case '"':
+                    stream << "\\\"";
+                    break;
+                case '\n':
+                    stream << "\\n";
+                    break;
+                case '\r':
+                    stream << "\\r";
+                    break;
+                case '\t':
+                    stream << "\\t";
+                    break;
+                default:
+                    stream << (ch < 0x20 ? '?' : static_cast<char>(ch));
+                    break;
+            }
+        }
+        stream << '"';
+    }
+
+    void writeFalloutTransformOracleVec3(std::ostream& stream, const osg::Vec3f& value)
+    {
+        stream << '[' << value.x() << ',' << value.y() << ',' << value.z() << ']';
+    }
+
+    void writeFalloutTransformOracleRotation(std::ostream& stream, const osg::Matrix& value)
+    {
+        stream << '[';
+        for (int row = 0; row < 3; ++row)
+        {
+            for (int column = 0; column < 3; ++column)
+            {
+                if (row != 0 || column != 0)
+                    stream << ',';
+                stream << value(row, column);
+            }
+        }
+        stream << ']';
+    }
+
+    void writeFalloutTransformOracleTransform(
+        std::ostream& stream, const osg::Matrix& local, const osg::Matrix& actor)
+    {
+        stream << "{\"localRotation\":";
+        writeFalloutTransformOracleRotation(stream, local);
+        stream << ",\"localTranslation\":";
+        writeFalloutTransformOracleVec3(stream, local.getTrans());
+        stream << ",\"localScale\":";
+        writeFalloutTransformOracleVec3(stream, local.getScale());
+        stream << ",\"actorRotation\":";
+        writeFalloutTransformOracleRotation(stream, actor);
+        stream << ",\"actorTranslation\":";
+        writeFalloutTransformOracleVec3(stream, actor.getTrans());
+        stream << ",\"actorScale\":";
+        writeFalloutTransformOracleVec3(stream, actor.getScale());
+        stream << '}';
+    }
+
+    void writeFalloutTransformOracleFrame(osg::Group* objectRoot,
+        const std::unordered_map<std::string, std::vector<osg::MatrixTransform*>>& targets, const MWWorld::Ptr& ptr,
+        std::string_view activeGroups, const std::optional<osg::Vec3f>& accumulationTranslation)
+    {
+        const FalloutTransformOracleConfig& config = getFalloutTransformOracleConfig();
+        if (!config.mEnabled || objectRoot == nullptr)
+            return;
+
+        const std::string refId = ptr.getCellRef().getRefId().serializeText();
+        const std::uint32_t refForm = falloutTransformOracleParseForm(refId);
+        if ((refForm & 0x00ffffffu) != (config.mTargetForm & 0x00ffffffu))
+            return;
+
+        struct State
+        {
+            unsigned int mUpdates = 0;
+            unsigned int mSamples = 0;
+            bool mOpenFailed = false;
+            std::unique_ptr<std::ofstream> mOutput;
+        };
+        static State state;
+        ++state.mUpdates;
+        if (state.mSamples >= config.mMaxSamples || state.mUpdates < config.mStartUpdate
+            || (state.mUpdates - config.mStartUpdate) % config.mSampleEvery != 0)
+            return;
+
+        if (state.mOutput == nullptr && !state.mOpenFailed)
+        {
+            state.mOutput = std::make_unique<std::ofstream>(config.mOutputPath, std::ios::out | std::ios::trunc);
+            if (!*state.mOutput)
+            {
+                state.mOpenFailed = true;
+                state.mOutput.reset();
+                Log(Debug::Error) << "FNV/ESM4 transform oracle failed to open " << config.mOutputPath;
+                return;
+            }
+            *state.mOutput << "{\"schema\":\"nikami-openmw-transform-oracle/v1\",\"event\":\"start\","
+                              "\"coordinateSpace\":\"OSG-row-vector/local-and-actor\",\"ref\":";
+            writeFalloutTransformOracleJsonString(*state.mOutput, refId);
+            *state.mOutput << "}\n";
+        }
+        if (state.mOutput == nullptr)
+            return;
+
+        ++state.mSamples;
+        const osg::Matrix actorWorld = getFalloutNodeWorldMatrix(objectRoot);
+        const osg::Matrix worldToActor = osg::Matrix::inverse(actorWorld);
+        static constexpr std::array<std::string_view, 67> nodeNames{ "Bip01", "Bip01 NonAccum",
+            "Bip01 Looking", "Bip01 Translate", "Bip01 Rotate", "Bip", "Bip01 Pelvis", "Bip01 Spine",
+            "Bip01 Spine1", "Bip01 Spine2", "Bip01 Neck", "Bip01 Neck1", "Bip01 Head", "Bip01 L Clavicle",
+            "Bip01 L UpperArm", "Bip01 L Forearm", "Bip01 L Hand", "Bip01 L Thumb1", "Bip01 L Thumb11",
+            "Bip01 L Thumb12", "Bip01 L Finger1", "Bip01 L Finger11", "Bip01 L Finger12", "Bip01 L Finger2",
+            "Bip01 L Finger21", "Bip01 L Finger22", "Bip01 L Finger3", "Bip01 L Finger31", "Bip01 L Finger32",
+            "Bip01 L Finger4", "Bip01 L Finger41", "Bip01 L Finger42", "Bip01 L ForeTwist",
+            "Bip01 LUpArmTwistBone", "Bip01 LPauldron", "Bip01 R Clavicle", "Bip01 R UpperArm",
+            "Bip01 R Forearm", "Bip01 R Hand", "Bip01 R Thumb1", "Bip01 R Thumb11", "Bip01 R Thumb12",
+            "Bip01 R Finger1", "Bip01 R Finger11", "Bip01 R Finger12", "Bip01 R Finger2", "Bip01 R Finger21",
+            "Bip01 R Finger22", "Bip01 R Finger3", "Bip01 R Finger31", "Bip01 R Finger32", "Bip01 R Finger4",
+            "Bip01 R Finger41", "Bip01 R Finger42", "Bip01 R ForeTwist", "Bip01 RUpArmTwistBone",
+            "Bip01 RPauldron", "Weapon", "Bip01 L Thigh", "Bip01 L Calf", "Bip01 L Foot", "Bip01 L Toe0",
+            "Bip01 R Thigh", "Bip01 R Calf", "Bip01 R Foot", "Bip01 R Toe0", "FNV Face Surface Frame" };
+
+        std::ostream& output = *state.mOutput;
+        output << std::setprecision(9)
+               << "{\"schema\":\"nikami-openmw-transform-oracle/v1\",\"event\":\"actor-frame\","
+                  "\"sample\":"
+               << state.mSamples << ",\"update\":" << state.mUpdates << ",\"ref\":";
+        writeFalloutTransformOracleJsonString(output, refId);
+        output << ",\"activeGroups\":";
+        writeFalloutTransformOracleJsonString(output, activeGroups);
+        output << ",\"accumulationTranslation\":";
+        if (accumulationTranslation)
+            writeFalloutTransformOracleVec3(output, *accumulationTranslation);
+        else
+            output << "null";
+        output << ",\"nodes\":[";
+        for (std::size_t i = 0; i < nodeNames.size(); ++i)
+        {
+            if (i != 0)
+                output << ',';
+            const std::string lowerName = Misc::StringUtils::lowerCase(nodeNames[i]);
+            osg::MatrixTransform* node = findFalloutTarget(targets, lowerName);
+            output << "{\"name\":";
+            writeFalloutTransformOracleJsonString(output, nodeNames[i]);
+            output << ",\"present\":" << (node != nullptr ? "true" : "false");
+            if (node != nullptr)
+            {
+                const osg::Matrix local = node->getMatrix();
+                const osg::Matrix actor = getFalloutNodeWorldMatrix(node) * worldToActor;
+                output << ",\"transform\":";
+                writeFalloutTransformOracleTransform(output, local, actor);
+            }
+            output << '}';
+        }
+        output << "]}\n";
+        state.mOutput->flush();
+    }
+
     float auditFalloutRuntimeParts(osg::Group* objectRoot,
         const std::unordered_map<std::string, std::vector<osg::MatrixTransform*>>& targets, const MWWorld::Ptr& ptr,
         bool renderLiveGeometryAudit = false)
@@ -4449,6 +4671,18 @@ namespace MWRender
                     nifController->setFalloutActorTransformBasis(
                         bonename, found->second->getMatrix().getTrans(), getFalloutBindRotation(found->second),
                         bindScale);
+                    if (std::getenv("OPENMW_FNV_CONTROLLER_KEY_AUDIT") != nullptr)
+                    {
+                        Log(Debug::Info) << "FNV/ESM4 CONTROLLER KEY AUDIT source=" << kfname
+                                         << " bone=" << bonename
+                                         << " rotationInterpolation="
+                                         << nifController->getRotationInterpolationType()
+                                         << " rotationKeys=" << nifController->getRotationKeyCount()
+                                         << " translationInterpolation="
+                                         << nifController->getTranslationInterpolationType()
+                                         << " translationKeys=" << nifController->getTranslationKeyCount()
+                                         << " bspline=" << nifController->usesBSplineTransform();
+                    }
                     ++falloutActorBasisApplied;
                     static unsigned int sFalloutBasisLogs = 0;
                     if ((sFalloutBasisLogs < 8
@@ -6340,6 +6574,24 @@ namespace MWRender
                 mSkeleton->markBoneMatriceDirty();
                 mSkeleton->updateBoneMatrices(0);
             }
+        }
+
+        if (falloutNpc && mObjectRoot != nullptr
+            && std::getenv("OPENMW_ESM4_TRANSFORM_ORACLE_OUTPUT") != nullptr)
+        {
+            std::unordered_map<std::string, std::vector<osg::MatrixTransform*>> runtimeTargets;
+            FalloutTransformTargetVisitor targetVisitor(runtimeTargets);
+            mObjectRoot->accept(targetVisitor);
+            std::optional<osg::Vec3f> accumulationTranslation;
+            if (mAccumCtrl != nullptr)
+            {
+                const SceneUtil::KeyframeController::KfTransform transform
+                    = mAccumCtrl->getCurrentTransformation(nullptr);
+                accumulationTranslation = transform.mTranslation;
+            }
+            writeFalloutTransformOracleFrame(
+                mObjectRoot.get(), runtimeTargets, mPtr, describeActiveFalloutAnimationStates(),
+                accumulationTranslation);
         }
 
         if (shouldAuditProofPreviewGameplay())
