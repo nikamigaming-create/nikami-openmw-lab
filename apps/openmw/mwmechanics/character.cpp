@@ -966,6 +966,21 @@ namespace MWMechanics
 
         if (isFalloutActor(mPtr))
         {
+            if (mAnimation->hasAnimation("weaponpose"))
+            {
+                MWRender::Animation::AnimPriority weaponPosePriority(Priority_Default);
+                weaponPosePriority[MWRender::BoneGroup_Torso] = Priority_Weapon;
+                weaponPosePriority[MWRender::BoneGroup_LeftArm] = Priority_Weapon;
+                weaponPosePriority[MWRender::BoneGroup_RightArm] = Priority_Weapon;
+                weaponPosePriority[MWRender::BoneGroup_Head] = Priority_Weapon;
+                if (mAnimation->isPlaying("weaponpose"))
+                    mAnimation->disable("weaponpose");
+                Log(Debug::Info) << "FNV/ESM4 diag: CharacterController layering retail weapon pose for "
+                                 << mPtr.getCellRef().getRefId();
+                playBlendedAnimation("weaponpose", weaponPosePriority, MWRender::BlendMask_UpperBody, false, 1.0f,
+                    "start", "stop", 0.f, std::numeric_limits<uint32_t>::max(), true);
+            }
+
             if (const char* forcedOverlayGroup = std::getenv("OPENMW_FNV_FORCED_OVERLAY_GROUP"))
             {
                 std::string overlayGroup = Misc::StringUtils::lowerCase(forcedOverlayGroup);

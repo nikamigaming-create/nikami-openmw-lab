@@ -240,16 +240,7 @@ namespace
             return false;
 
         const MWWorld::LiveCellRef<ESM4::Npc>* ref = ptr.get<ESM4::Npc>();
-        return ref != nullptr && ref->mBase != nullptr && ref->mBase->mIsFONV;
-    }
-
-    bool isFallout3NpcAnimationContext(const MWWorld::Ptr& ptr)
-    {
-        if (ptr.getType() != ESM::REC_NPC_4)
-            return false;
-
-        const MWWorld::LiveCellRef<ESM4::Npc>* ref = ptr.get<ESM4::Npc>();
-        return ref != nullptr && ref->mBase != nullptr && ref->mBase->mIsFO3;
+        return ref != nullptr && ref->mBase != nullptr && (ref->mBase->mIsFO3 || ref->mBase->mIsFONV);
     }
 
     float matrixDifference(const osg::Matrixf& left, const osg::Matrixf& right)
@@ -299,7 +290,7 @@ namespace
             return std::string_view(env) != "0";
         if (const char* env = std::getenv("OPENMW_FNV_SKIP_SYNTHETIC_ATTACHMENT_HELPER_CONTROLLERS"))
             return std::string_view(env) != "0";
-        return isFalloutNpcAnimationContext(ptr);
+        return false;
     }
 
     bool shouldEnableFalloutWeaponIdlePose(const MWWorld::Ptr& ptr)
@@ -308,7 +299,17 @@ namespace
             return std::string_view(env) != "0";
         if (const char* env = std::getenv("OPENMW_FNV_ENABLE_WEAPON_IDLE_POSE"))
             return std::string_view(env) != "0";
-        return false;
+        return isFalloutNpcAnimationContext(ptr);
+    }
+
+    bool isFalloutWeaponAimKf(std::string_view lowerKf)
+    {
+        static constexpr std::array<std::string_view, 13> names{ "h2haim.kf", "1hmaim.kf", "2hmaim.kf",
+            "1hpaim.kf", "2hraim.kf", "2haaim.kf", "2hhaim.kf", "2hlaim.kf", "1gtaim.kf", "1mdaim.kf",
+            "1lmaim.kf", "1hgaim.kf", "2hgaim.kf" };
+        return std::any_of(names.begin(), names.end(), [&](std::string_view name) {
+            return Misc::StringUtils::ciEndsWith(lowerKf, name);
+        });
     }
 
     class FalloutTransformTargetVisitor : public osg::NodeVisitor
@@ -2214,6 +2215,12 @@ namespace
         osg::Node* rightHandNode = findFalloutTarget(targets, "bip01 r hand");
         osg::Node* weaponNode = findFalloutTarget(targets, "weapon");
 
+        const auto localMatrix = [](osg::Node* node) {
+            if (const auto* transform = dynamic_cast<const osg::MatrixTransform*>(node))
+                return transform->getMatrix();
+            return osg::Matrix{};
+        };
+
         const osg::Matrix rootWorld = getFalloutNodeWorldMatrix(objectRoot);
         const osg::Matrix bip01World = getFalloutNodeWorldMatrix(bip01Node);
         const osg::Vec3f root = transformFalloutPoint(osg::Vec3f(), rootWorld);
@@ -2227,6 +2234,9 @@ namespace
         const osg::Vec3f rightHand = getFalloutTargetWorldOrigin(targets, "bip01 r hand");
         const osg::Vec3f weapon = getFalloutTargetWorldOrigin(targets, "weapon");
         const osg::Vec3f footMid = (leftFoot + rightFoot) * 0.5f;
+        const osg::Matrix leftHandLocal = localMatrix(leftHandNode);
+        const osg::Matrix rightHandLocal = localMatrix(rightHandNode);
+        const osg::Matrix weaponLocal = localMatrix(weaponNode);
 
         Log(Debug::Info) << "FNV/ESM4 ACTOR ROOT ATTACHMENT AUDIT " << ptr.getCellRef().getRefId()
                          << " sample=" << samples
@@ -2251,10 +2261,22 @@ namespace
                          << " head=" << formatFalloutAuditVec3(head)
                          << " leftFoot=" << formatFalloutAuditVec3(leftFoot)
                          << " rightFoot=" << formatFalloutAuditVec3(rightFoot)
-                         << " leftHand=" << formatFalloutAuditVec3(leftHand)
-                         << " rightHand=" << formatFalloutAuditVec3(rightHand)
-                         << " weapon=" << formatFalloutAuditVec3(weapon)
-                         << " headMinusPelvis=" << formatFalloutAuditVec3(head - pelvis)
+                          << " leftHand=" << formatFalloutAuditVec3(leftHand)
+                          << " rightHand=" << formatFalloutAuditVec3(rightHand)
+                          << " weapon=" << formatFalloutAuditVec3(weapon)
+                          << " leftHandLocalT=" << formatFalloutAuditVec3(leftHandLocal.getTrans())
+                          << " leftHandLocalX=" << formatFalloutAuditVec3(falloutMatrixBasisRow(leftHandLocal, 0))
+                          << " leftHandLocalY=" << formatFalloutAuditVec3(falloutMatrixBasisRow(leftHandLocal, 1))
+                          << " leftHandLocalZ=" << formatFalloutAuditVec3(falloutMatrixBasisRow(leftHandLocal, 2))
+                          << " rightHandLocalT=" << formatFalloutAuditVec3(rightHandLocal.getTrans())
+                          << " rightHandLocalX=" << formatFalloutAuditVec3(falloutMatrixBasisRow(rightHandLocal, 0))
+                          << " rightHandLocalY=" << formatFalloutAuditVec3(falloutMatrixBasisRow(rightHandLocal, 1))
+                          << " rightHandLocalZ=" << formatFalloutAuditVec3(falloutMatrixBasisRow(rightHandLocal, 2))
+                          << " weaponLocalT=" << formatFalloutAuditVec3(weaponLocal.getTrans())
+                          << " weaponLocalX=" << formatFalloutAuditVec3(falloutMatrixBasisRow(weaponLocal, 0))
+                          << " weaponLocalY=" << formatFalloutAuditVec3(falloutMatrixBasisRow(weaponLocal, 1))
+                          << " weaponLocalZ=" << formatFalloutAuditVec3(falloutMatrixBasisRow(weaponLocal, 2))
+                          << " headMinusPelvis=" << formatFalloutAuditVec3(head - pelvis)
                          << " footMidMinusPelvis=" << formatFalloutAuditVec3(footMid - pelvis)
                          << " rootMinusPelvis=" << formatFalloutAuditVec3(root - pelvis);
     }
@@ -2882,7 +2904,7 @@ namespace MWRender
         {
             osg::Matrix mat = transform->getMatrix();
             osg::Vec3f position = mat.getTrans();
-            position = osg::componentMultiply(mResetAxes, position);
+            position = mResetAllTranslation ? osg::Vec3f() : osg::componentMultiply(mResetAxes, position);
             mat.setTrans(position);
             transform->setMatrix(mat);
 
@@ -2897,8 +2919,14 @@ namespace MWRender
             mResetAxes.z() = accumulate.z() != 0.f ? 0.f : 1.f;
         }
 
+        void setResetAllTranslation(bool resetAll)
+        {
+            mResetAllTranslation = resetAll;
+        }
+
     private:
         osg::Vec3f mResetAxes;
+        bool mResetAllTranslation = false;
     };
 
     Animation::Animation(
@@ -4320,16 +4348,14 @@ namespace MWRender
             if (forcedOverlayGroup != nullptr)
                 synthesizeForcedGroup(forcedOverlayGroup, "overlay", overlaySourceMatches);
             const bool weaponIdlePose = shouldEnableFalloutWeaponIdlePose(mPtr);
-            if (weaponIdlePose
-                && (lowerKf == "meshes/characters/_male/2hraim.kf"
-                    || lowerKf == "meshes/characters/_male/2haaim.kf")
-                && !animsrc->mKeyframes->mTextKeys.hasGroupStart("idle"))
+            if (weaponIdlePose && isFalloutWeaponAimKf(lowerKf)
+                && !animsrc->mKeyframes->mTextKeys.hasGroupStart("weaponpose"))
             {
                 osg::ref_ptr<SceneUtil::KeyframeHolder> keyframes
                     = new SceneUtil::KeyframeHolder(*animsrc->mKeyframes, osg::CopyOp::SHALLOW_COPY);
-                addSyntheticLoopingTextKeys(keyframes->mTextKeys, "idle");
+                addSyntheticLoopingTextKeys(keyframes->mTextKeys, "weaponpose");
                 animsrc->mKeyframes = keyframes;
-                Log(Debug::Info) << "FNV/ESM4 diag: synthesized weapon idle actor KF text key group 'idle' for "
+                Log(Debug::Info) << "FNV/ESM4 diag: synthesized retail weapon overlay group 'weaponpose' for "
                                  << kfname;
             }
         }
@@ -4422,7 +4448,7 @@ namespace MWRender
                         bindScale = nifTarget->mScale;
                     nifController->setFalloutActorTransformBasis(
                         bonename, found->second->getMatrix().getTrans(), getFalloutBindRotation(found->second),
-                        bindScale, isFallout3NpcAnimationContext(mPtr));
+                        bindScale);
                     ++falloutActorBasisApplied;
                     static unsigned int sFalloutBasisLogs = 0;
                     if ((sFalloutBasisLogs < 8
@@ -5156,6 +5182,7 @@ namespace MWRender
 //## VR_PATCH END
         const bool falloutNpc = isFalloutNpc(mPtr);
         size_t falloutAddedControllers = 0;
+        bool accumResetAttached = false;
         // remove all previous external controllers from the scene graph
         for (auto it = mActiveControllers.begin(); it != mActiveControllers.end(); ++it)
         {
@@ -5238,20 +5265,38 @@ namespace MWRender
                     {
                         mAccumCtrl = it->second;
 
-                        if (!falloutNpc)
+                        // Bethesda locomotion stores actor displacement on the accumulation root. Apply that
+                        // displacement to gameplay movement, then clear its accumulated axes from the rendered
+                        // skeleton just like the native engine. Leaving the callback off for Fallout actors makes
+                        // the complete body surge away from and back to its physics reference every animation cycle.
+                        if (!mResetAccumRootCallback)
                         {
-                            // make sure reset is last in the chain of callbacks
-                            if (!mResetAccumRootCallback)
-                            {
-                                mResetAccumRootCallback = new ResetAccumRootCallback;
-                                mResetAccumRootCallback->setAccumulate(mAccumulate);
-                            }
-                            mAccumRoot->addUpdateCallback(mResetAccumRootCallback);
-                            mActiveControllers.emplace_back(mAccumRoot, mResetAccumRootCallback);
+                            mResetAccumRootCallback = new ResetAccumRootCallback;
+                            mResetAccumRootCallback->setAccumulate(mAccumulate);
                         }
+                        mResetAccumRootCallback->setResetAllTranslation(falloutNpc);
+                        // Keep the reset last in the callback chain so it sees the sampled controller value.
+                        mAccumRoot->addUpdateCallback(mResetAccumRootCallback);
+                        mActiveControllers.emplace_back(mAccumRoot, mResetAccumRootCallback);
+                        accumResetAttached = true;
                     }
                 }
             }
+        }
+
+        if (falloutNpc && mAccumRoot != nullptr && !accumResetAttached)
+        {
+            // Retail FO3/FNV keeps Bip01 neutral even when the active sequence does not contain a Bip01 controller
+            // (notably mtidle.kf).  The skeleton NIF's authored Bip01 bind translation is not the runtime pose; if it
+            // leaks through, idle is one root-height above locomotion and the whole actor drops when walking starts.
+            if (!mResetAccumRootCallback)
+            {
+                mResetAccumRootCallback = new ResetAccumRootCallback;
+                mResetAccumRootCallback->setAccumulate(mAccumulate);
+            }
+            mResetAccumRootCallback->setResetAllTranslation(true);
+            mAccumRoot->addUpdateCallback(mResetAccumRootCallback);
+            mActiveControllers.emplace_back(mAccumRoot, mResetAccumRootCallback);
         }
 
         if (falloutNpc)
@@ -6887,6 +6932,20 @@ namespace MWRender
 
     void Animation::removeFromSceneImpl()
     {
+        // External keyframe callbacks hold animation/controller state that belongs to this Animation instance.
+        // Detach them while both the scene nodes and controller sources are still alive.  Leaving an upper-body
+        // overlay callback on the skeleton until member destruction can make OSG tear the callback chain down after
+        // its AnimationTime source has already gone away (observed as a ucrtbase FAST_FAIL_INVALID_ARG on shutdown).
+        for (const auto& [node, callback] : mActiveControllers)
+        {
+            if (node != nullptr && callback != nullptr)
+            {
+                node->removeUpdateCallback(callback);
+                callback->setNestedCallback(nullptr);
+            }
+        }
+        mActiveControllers.clear();
+
         if (mGlowLight != nullptr)
             mInsert->removeChild(mGlowLight);
 

@@ -1684,18 +1684,89 @@ namespace NifOsg
                 if (std::getenv("OPENMW_FNV_KF_BLOCK_AUDIT") != nullptr)
                 {
                     const std::string lowerTarget = Misc::StringUtils::lowerCase(targetName);
-                    if (lowerTarget.find("forearm") != std::string::npos
+                    if (lowerTarget == "bip01" || lowerTarget.find("forearm") != std::string::npos
                         || lowerTarget.find("foretwist") != std::string::npos
                         || lowerTarget.find("hand") != std::string::npos
                         || lowerTarget.find("finger") != std::string::npos
                         || lowerTarget.find("thumb") != std::string::npos
-                        || lowerTarget.find("head") != std::string::npos)
+                        || lowerTarget.find("head") != std::string::npos || lowerTarget == "weapon")
                     {
                         Log(Debug::Info) << "FNV/ESM4 KF BLOCK AUDIT file=" << filename.string()
                                          << " sequence=" << sequence->mName
                                          << " target=\"" << targetName << "\" interpolator="
                                          << block.mInterpolator->recName << " recType="
                                          << block.mInterpolator->recType;
+                        if (block.mInterpolator->recType == Nif::RC_NiTransformInterpolator)
+                        {
+                            const auto* transform
+                                = static_cast<const Nif::NiTransformInterpolator*>(block.mInterpolator.getPtr());
+                            const auto& value = transform->mDefaultValue;
+                            Log(Debug::Info) << "FNV/ESM4 KF DEFAULT TRANSFORM file=" << filename.string()
+                                             << " sequence=" << sequence->mName << " target=\"" << targetName
+                                             << "\" translation=(" << value.mTranslation.x() << ","
+                                             << value.mTranslation.y() << "," << value.mTranslation.z()
+                                             << ") quaternionXYZW=(" << value.mRotation.x() << ","
+                                             << value.mRotation.y() << "," << value.mRotation.z() << ","
+                                             << value.mRotation.w() << ") scale=" << value.mScale
+                                             << " hasData=" << !transform->mData.empty();
+                        }
+                        else if (block.mInterpolator->recType == Nif::RC_NiBSplineTransformInterpolator
+                            || block.mInterpolator->recType == Nif::RC_NiBSplineCompTransformInterpolator)
+                        {
+                            const auto* transform
+                                = static_cast<const Nif::NiBSplineTransformInterpolator*>(block.mInterpolator.getPtr());
+                            const auto& value = transform->mValue;
+                            Log(Debug::Info) << "FNV/ESM4 KF BSPLINE TRANSFORM file=" << filename.string()
+                                             << " sequence=" << sequence->mName << " target=\"" << targetName
+                                             << "\" translation=(" << value.mTranslation.x() << ","
+                                             << value.mTranslation.y() << "," << value.mTranslation.z()
+                                             << ") quaternionXYZW=(" << value.mRotation.x() << ","
+                                             << value.mRotation.y() << "," << value.mRotation.z() << ","
+                                             << value.mRotation.w() << ") scale=" << value.mScale
+                                             << " translationHandle=" << transform->mTranslationHandle
+                                             << " rotationHandle=" << transform->mRotationHandle
+                                             << " scaleHandle=" << transform->mScaleHandle;
+                            if (block.mInterpolator->recType == Nif::RC_NiBSplineCompTransformInterpolator)
+                            {
+                                const auto* compact = static_cast<const Nif::NiBSplineCompTransformInterpolator*>(
+                                    block.mInterpolator.getPtr());
+                                Log(Debug::Info) << "FNV/ESM4 KF BSPLINE COMPRESSION file=" << filename.string()
+                                                 << " sequence=" << sequence->mName << " target=\"" << targetName
+                                                 << "\" translationOffset=" << compact->mTranslationOffset
+                                                 << " translationHalfRange=" << compact->mTranslationHalfRange
+                                                 << " rotationOffset=" << compact->mRotationOffset
+                                                 << " rotationHalfRange=" << compact->mRotationHalfRange
+                                                 << " scaleOffset=" << compact->mScaleOffset
+                                                 << " scaleHalfRange=" << compact->mScaleHalfRange;
+                                if (lowerTarget == "bip01" && !compact->mSplineData.empty()
+                                    && !compact->mBasisData.empty()
+                                    && compact->mTranslationHandle != std::numeric_limits<uint16_t>::max())
+                                {
+                                    const auto& points = compact->mSplineData->mCompactControlPoints;
+                                    const uint32_t count = compact->mBasisData->mNumControlPoints;
+                                    const auto sample = [&](uint32_t point, uint32_t component) {
+                                        const size_t index = static_cast<size_t>(compact->mTranslationHandle)
+                                            + static_cast<size_t>(point) * 3 + component;
+                                        return index < points.size()
+                                            ? compact->mTranslationOffset
+                                                + compact->mTranslationHalfRange
+                                                    * (static_cast<float>(points[index]) / 32767.f)
+                                            : std::numeric_limits<float>::quiet_NaN();
+                                    };
+                                    if (count > 0)
+                                        Log(Debug::Info)
+                                            << "FNV/ESM4 KF BSPLINE ROOT CONTROL file=" << filename.string()
+                                            << " sequence=" << sequence->mName << " count=" << count
+                                            << " first=(" << sample(0, 0) << "," << sample(0, 1) << ","
+                                            << sample(0, 2) << ")"
+                                            << " second=(" << sample(std::min<uint32_t>(1, count - 1), 0) << ","
+                                            << sample(std::min<uint32_t>(1, count - 1), 1) << ","
+                                            << sample(std::min<uint32_t>(1, count - 1), 2) << ")"
+                                            << " last=(" << sample(count - 1, 0) << "," << sample(count - 1, 1)
+                                            << "," << sample(count - 1, 2) << ")";
+                                }
+                            }
+                        }
                     }
                 }
 

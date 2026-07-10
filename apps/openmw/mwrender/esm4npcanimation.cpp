@@ -25,6 +25,7 @@
 #include <components/misc/resourcehelpers.hpp>
 #include <components/misc/strings/algorithm.hpp>
 #include <components/misc/strings/lower.hpp>
+#include <components/nifosg/matrixtransform.hpp>
 #include <components/resource/imagemanager.hpp>
 #include <components/resource/resourcesystem.hpp>
 #include <components/resource/scenemanager.hpp>
@@ -2502,16 +2503,25 @@ namespace MWRender
             void apply(osg::Geode& geode) override
             {
                 for (unsigned int i = 0; i < geode.getNumDrawables(); ++i)
-                    if (SceneUtil::RigGeometry* rig = dynamic_cast<SceneUtil::RigGeometry*>(geode.getDrawable(i)))
-                    {
-                        rig->setFalloutCharacterSkinning(true);
-                        ++mMarked;
-                    }
+                    if (osg::Drawable* drawable = geode.getDrawable(i))
+                        mark(*drawable);
 
                 traverse(geode);
             }
 
+            void apply(osg::Drawable& drawable) override { mark(drawable); }
+
             unsigned int mMarked = 0;
+
+        private:
+            void mark(osg::Drawable& drawable)
+            {
+                if (SceneUtil::RigGeometry* rig = dynamic_cast<SceneUtil::RigGeometry*>(&drawable))
+                {
+                    rig->setFalloutCharacterSkinning(true);
+                    ++mMarked;
+                }
+            }
         };
 
         class ForceFalloutRigGeometryUpdateVisitor : public osg::NodeVisitor
@@ -2573,6 +2583,11 @@ namespace MWRender
             holderCount = visitor.mForcedRigGeometryHolder;
             refreshCount = visitor.mRefreshedRigGeometry;
             return visitor.mForcedRigGeometry;
+        }
+
+        bool isFallout3OrNewVegas(const ESM4::Npc& npc)
+        {
+            return npc.mIsFO3 || npc.mIsFONV;
         }
 
         class StaticizeFalloutRiggedGeometryVisitor : public osg::NodeVisitor
@@ -2920,14 +2935,18 @@ namespace MWRender
 
             void addRig(SceneUtil::RigGeometry& rig)
             {
-                if (rig.getSourceGeometry() == nullptr)
+                osg::ref_ptr<osg::Geometry> sourceGeometry = rig.getSourceGeometry();
+                if (sourceGeometry == nullptr)
                     return;
 
-                const osg::Vec3Array* baseVertices = dynamic_cast<const osg::Vec3Array*>(rig.getSourceGeometry()->getVertexArray());
+                const osg::Vec3Array* baseVertices
+                    = dynamic_cast<const osg::Vec3Array*>(sourceGeometry->getVertexArray());
                 if (baseVertices == nullptr)
                     return;
 
-                osg::ref_ptr<osg::Geometry> morphed = new osg::Geometry(*rig.getSourceGeometry(), osg::CopyOp::SHALLOW_COPY);
+                osg::ref_ptr<osg::Vec3Array> baseVertexCopy = new osg::Vec3Array(*baseVertices);
+                osg::ref_ptr<osg::Geometry> morphed
+                    = new osg::Geometry(*sourceGeometry, osg::CopyOp::SHALLOW_COPY);
                 osg::ref_ptr<osg::Vec3Array> activeVertices = new osg::Vec3Array(*baseVertices);
                 morphed->setVertexArray(activeVertices);
 
@@ -2940,18 +2959,24 @@ namespace MWRender
 
                 Target t;
                 t.mRig = &rig;
-                t.mBaseVertices = new osg::Vec3Array(*baseVertices);
+                t.mBaseVertices = std::move(baseVertexCopy);
                 t.mActiveVertices = activeVertices;
                 mTargets.push_back(t);
             }
 
             void addGeometry(osg::Geometry& geometry)
             {
-                const osg::Vec3Array* baseVertices = dynamic_cast<const osg::Vec3Array*>(geometry.getVertexArray());
+                // Replacing the drawable can release the last parent-owned reference to the source geometry. Keep
+                // it and the immutable vertex baseline alive before touching the parent list.
+                osg::ref_ptr<osg::Geometry> sourceGeometry = &geometry;
+                const osg::Vec3Array* baseVertices
+                    = dynamic_cast<const osg::Vec3Array*>(sourceGeometry->getVertexArray());
                 if (baseVertices == nullptr)
                     return;
 
-                osg::ref_ptr<osg::Geometry> morphed = new osg::Geometry(geometry, osg::CopyOp::SHALLOW_COPY);
+                osg::ref_ptr<osg::Vec3Array> baseVertexCopy = new osg::Vec3Array(*baseVertices);
+                osg::ref_ptr<osg::Geometry> morphed
+                    = new osg::Geometry(*sourceGeometry, osg::CopyOp::SHALLOW_COPY);
                 osg::ref_ptr<osg::Vec3Array> activeVertices = new osg::Vec3Array(*baseVertices);
                 morphed->setVertexArray(activeVertices);
 
@@ -2972,7 +2997,7 @@ namespace MWRender
 
                 Target t;
                 t.mGeometry = morphed;
-                t.mBaseVertices = new osg::Vec3Array(*baseVertices);
+                t.mBaseVertices = std::move(baseVertexCopy);
                 t.mActiveVertices = activeVertices;
                 mTargets.push_back(t);
             }
@@ -3846,7 +3871,7 @@ namespace MWRender
         {
             const char* mode = std::getenv("OPENMW_FNV_STATIC_HEAD_ATTACH_MODE");
             if (mode == nullptr || mode[0] == '\0')
-                return "headframe";
+                return "animatedheadframe";
             return mode;
         }
 
@@ -4070,7 +4095,8 @@ namespace MWRender
             else if (isFalloutBareHandSurfaceModel(lowered) || isStarfieldHumanHandSurfaceModelLowered(lowered))
                 applyScaleOverride("OPENMW_WORLD_VIEWER_SCALE_STATIC_ACTOR_HAND_PARTS");
             const ESM4::Npc* traits = MWClass::ESM4Npc::getTraitsRecord(ptr);
-            const bool tes5ActorSpaceStaticPart = traits != nullptr && !traits->mIsTES4 && !traits->mIsFONV;
+            const bool tes5ActorSpaceStaticPart
+                = traits != nullptr && !traits->mIsTES4 && !isFallout3OrNewVegas(*traits);
             const bool scaleAroundBoundsCenter = shouldAttachFalloutStaticPartToHead(lowered);
             const bool actorSpacePositionScale = tes5ActorSpaceStaticPart && scaleAroundBoundsCenter;
             const bool tes5ScalpHairPart = isFalloutScalpHairModel(lowered);
@@ -4268,7 +4294,8 @@ namespace MWRender
         {
             std::string text = weapon.mEditorId + " " + weapon.mFullName + " " + weapon.mModel;
             Misc::StringUtils::lowerCaseInPlace(text);
-            return weapon.mData.type == 5 || text.find("2hr") != std::string::npos
+            return (weapon.mData.animationType >= 5 && weapon.mData.animationType <= 9)
+                || text.find("2hr") != std::string::npos
                 || text.find("rifle") != std::string::npos || text.find("shotgun") != std::string::npos
                 || text.find("sniper") != std::string::npos || text.find("launcher") != std::string::npos
                 || text.find("minigun") != std::string::npos;
@@ -4277,27 +4304,59 @@ namespace MWRender
         osg::ref_ptr<osg::MatrixTransform> makeFalloutAttachmentHelper(
             osg::Group& parent, std::string_view name, Animation::NodeMap& nodeMap)
         {
-            osg::ref_ptr<osg::MatrixTransform> helper = new osg::MatrixTransform;
+            // These helpers are animation targets. NifOsg keyframe callbacks require a NifOsg::MatrixTransform;
+            // using a plain osg::MatrixTransform here makes the callback reinterpret the object as the larger NIF
+            // transform type and corrupt its matrix when a retail Weapon controller is active.
+            Nif::NiTransform bindTransform = Nif::NiTransform::getIdentity();
+            if (Misc::StringUtils::ciEqual(name, "Weapon"))
+            {
+                // FO3 and FNV ship the same empty Weapon node under Bip01 R Hand. The scene optimizer removes that
+                // empty node, so retain its authored local bind on the replacement animation target.
+                bindTransform.mTranslation = osg::Vec3f(6.171f, 1.989f, 0.759f);
+                bindTransform.mRotation.mValues[0][0] = 0.991f;
+                bindTransform.mRotation.mValues[0][1] = -0.051f;
+                bindTransform.mRotation.mValues[0][2] = -0.123f;
+                bindTransform.mRotation.mValues[1][0] = 0.125f;
+                bindTransform.mRotation.mValues[1][1] = 0.035f;
+                bindTransform.mRotation.mValues[1][2] = 0.992f;
+                bindTransform.mRotation.mValues[2][0] = -0.046f;
+                bindTransform.mRotation.mValues[2][1] = -0.998f;
+                bindTransform.mRotation.mValues[2][2] = 0.041f;
+            }
+
+            osg::ref_ptr<NifOsg::MatrixTransform> helper = new NifOsg::MatrixTransform(bindTransform);
             helper->setName(std::string(name));
             helper->setDataVariance(osg::Object::DYNAMIC);
             helper->setUserValue("esm4SyntheticAttachmentHelper", 1);
             if (Misc::StringUtils::ciEqual(name, "Weapon"))
             {
-                const osg::Vec3f offset(readFalloutProofFloat("OPENMW_FNV_WEAPON_OFFSET_X", 0.f),
-                    readFalloutProofFloat("OPENMW_FNV_WEAPON_OFFSET_Y", 0.f),
-                    readFalloutProofFloat("OPENMW_FNV_WEAPON_OFFSET_Z", 0.f));
-                constexpr float degreesToRadians = 0.017453292519943295f;
-                const float xDegrees = readFalloutProofFloat("OPENMW_FNV_WEAPON_ROTATION_X", 0.f);
-                const float yDegrees = readFalloutProofFloat("OPENMW_FNV_WEAPON_ROTATION_Y", 0.f);
-                const float zDegrees = readFalloutProofFloat("OPENMW_FNV_WEAPON_ROTATION_Z", 0.f);
-                const osg::Quat x(xDegrees * degreesToRadians, osg::Vec3f(1.f, 0.f, 0.f));
-                const osg::Quat y(yDegrees * degreesToRadians, osg::Vec3f(0.f, 1.f, 0.f));
-                const osg::Quat z(zDegrees * degreesToRadians, osg::Vec3f(0.f, 0.f, 1.f));
-                const osg::Quat rotation = z * y * x;
-                helper->setMatrix(osg::Matrix::rotate(rotation) * osg::Matrix::translate(offset));
-                Log(Debug::Info) << "FNV/ESM4 diag: weapon helper bone-local offset=(" << offset.x() << ","
-                                 << offset.y() << "," << offset.z() << ") rotation=(" << xDegrees << ","
-                                 << yDegrees << "," << zDegrees << ")";
+                const bool overrideBind = std::getenv("OPENMW_FNV_WEAPON_OFFSET_X") != nullptr
+                    || std::getenv("OPENMW_FNV_WEAPON_OFFSET_Y") != nullptr
+                    || std::getenv("OPENMW_FNV_WEAPON_OFFSET_Z") != nullptr
+                    || std::getenv("OPENMW_FNV_WEAPON_ROTATION_X") != nullptr
+                    || std::getenv("OPENMW_FNV_WEAPON_ROTATION_Y") != nullptr
+                    || std::getenv("OPENMW_FNV_WEAPON_ROTATION_Z") != nullptr;
+                if (overrideBind)
+                {
+                    const osg::Vec3f offset(readFalloutProofFloat("OPENMW_FNV_WEAPON_OFFSET_X", 6.171f),
+                        readFalloutProofFloat("OPENMW_FNV_WEAPON_OFFSET_Y", 1.989f),
+                        readFalloutProofFloat("OPENMW_FNV_WEAPON_OFFSET_Z", 0.759f));
+                    constexpr float degreesToRadians = 0.017453292519943295f;
+                    const float xDegrees = readFalloutProofFloat("OPENMW_FNV_WEAPON_ROTATION_X", -87.648f);
+                    const float yDegrees = readFalloutProofFloat("OPENMW_FNV_WEAPON_ROTATION_Y", 2.636f);
+                    const float zDegrees = readFalloutProofFloat("OPENMW_FNV_WEAPON_ROTATION_Z", 7.187f);
+                    const osg::Quat x(xDegrees * degreesToRadians, osg::Vec3f(1.f, 0.f, 0.f));
+                    const osg::Quat y(yDegrees * degreesToRadians, osg::Vec3f(0.f, 1.f, 0.f));
+                    const osg::Quat z(zDegrees * degreesToRadians, osg::Vec3f(0.f, 0.f, 1.f));
+                    const osg::Quat rotation = z * y * x;
+                    helper->setRotation(rotation);
+                    helper->setTranslation(offset);
+                    Log(Debug::Info) << "FNV/ESM4 diag: weapon helper override offset=(" << offset.x() << ","
+                                     << offset.y() << "," << offset.z() << ") rotation=(" << xDegrees << ","
+                                     << yDegrees << "," << zDegrees << ")";
+                }
+                else
+                    Log(Debug::Info) << "FNV/ESM4 diag: weapon helper uses retail FO3/FNV bind transform";
             }
             parent.addChild(helper);
             nodeMap.emplace(std::string(name), helper);
@@ -4327,6 +4386,20 @@ namespace MWRender
             if (const char* value = std::getenv("OPENMW_ESM4_WEAPON_IK"))
                 return value[0] != '0';
             return false;
+        }
+
+        bool worldViewerFONVWeaponFrameStabilizerEnabled()
+        {
+            // Diagnostic fallback only. Retail drives the Weapon node from the selected animation family.
+            return worldViewerEnvEnabled("OPENMW_FNV_WEAPON_FRAME_STABILIZER")
+                || worldViewerEnvEnabled("OPENMW_ESM4_WEAPON_FRAME_STABILIZER");
+        }
+
+        bool worldViewerFONVLongGunOffhandIkEnabled()
+        {
+            // Diagnostic fallback only. Authored 2hr/2ha/etc. sequences contain the retail offhand pose.
+            return worldViewerEnvEnabled("OPENMW_FNV_LONG_GUN_OFFHAND_IK")
+                || worldViewerEnvEnabled("OPENMW_ESM4_LONG_GUN_OFFHAND_IK");
         }
 
         osg::Vec3f normalizeFalloutIkVector(osg::Vec3f value, const osg::Vec3f& fallback)
@@ -5622,7 +5695,8 @@ namespace MWRender
             const Animation::NodeMap& nodeMap, const MWWorld::Ptr& ptr, const ESM4::Npc& traits,
             const ESM4::Weapon& weapon)
         {
-            if ((!traits.mIsFO3 && !traits.mIsFONV) || !isFalloutWeaponIkLongGun(weapon))
+            if (!worldViewerFONVWeaponFrameStabilizerEnabled()
+                || (!traits.mIsFO3 && !traits.mIsFONV) || !isFalloutWeaponIkLongGun(weapon))
                 return false;
 
             osg::MatrixTransform* weaponFrame = dynamic_cast<osg::MatrixTransform*>(
@@ -5680,7 +5754,8 @@ namespace MWRender
             const Animation::NodeMap& nodeMap, const MWWorld::Ptr& ptr, const ESM4::Npc& traits,
             const ESM4::Weapon& weapon)
         {
-            if ((!traits.mIsFO3 && !traits.mIsFONV) || isFalloutWeaponIkLongGun(weapon))
+            if (!worldViewerFONVWeaponFrameStabilizerEnabled()
+                || (!traits.mIsFO3 && !traits.mIsFONV) || isFalloutWeaponIkLongGun(weapon))
                 return false;
 
             osg::MatrixTransform* weaponFrame = dynamic_cast<osg::MatrixTransform*>(
@@ -5942,7 +6017,8 @@ namespace MWRender
         bool applyFalloutLongGunOffhandIk(const Animation::NodeMap& nodeMap, SceneUtil::Skeleton* skeleton,
             const MWWorld::Ptr& ptr, const ESM4::Npc& traits, const ESM4::Weapon& weapon)
         {
-            if ((!traits.mIsFO3 && !traits.mIsFONV) || !isFalloutWeaponIkLongGun(weapon))
+            if (!worldViewerFONVLongGunOffhandIkEnabled()
+                || (!traits.mIsFO3 && !traits.mIsFONV) || !isFalloutWeaponIkLongGun(weapon))
                 return false;
 
             const auto findMatrix = [&](std::initializer_list<std::string_view> names) {
@@ -6505,10 +6581,50 @@ namespace MWRender
             return stream.str();
         }
 
+        std::string_view getFonvWeaponAnimationPrefix(std::uint8_t animationType)
+        {
+            // TESObjectWEAP::EWeaponType, verified against xNVSE's runtime layout and retail sequence telemetry.
+            // In particular, TwoHandAutomatic is the 2ha family; TwoHandMelee is 2hm, not 2ha.
+            switch (animationType)
+            {
+                case 0:
+                    return "h2h";
+                case 1:
+                    return "1hm";
+                case 2:
+                    return "2hm";
+                case 3:
+                case 4:
+                    return "1hp";
+                case 5:
+                case 7:
+                    return "2hr";
+                case 6:
+                    return "2ha";
+                case 8:
+                    return "2hh";
+                case 9:
+                    return "2hl";
+                case 10:
+                case 13:
+                    return "1gt";
+                case 11:
+                    return "1md";
+                case 12:
+                    return "1lm";
+                default:
+                    return {};
+            }
+        }
+
         std::string getFonvWeaponIdlePoseKf(const ESM4::Weapon* weapon)
         {
             if (weapon == nullptr)
                 return "meshes/characters/_male/idleanims/talk_handsatside_still2.kf";
+
+            const std::string_view prefix = getFonvWeaponAnimationPrefix(weapon->mData.animationType);
+            if (!prefix.empty())
+                return "meshes/characters/_male/" + std::string(prefix) + "aim.kf";
 
             std::string label = weapon->mEditorId + " " + weapon->mModel;
             Misc::StringUtils::lowerCaseInPlace(label);
@@ -6957,7 +7073,7 @@ namespace MWRender
             logWorldViewerActorLedger(mPtr, "npc-root-end", details.str());
             logWorldViewerNodeMapSnapshot(mPtr, "npc-node-map", getNodeMap(), "afterRoot=1");
         }
-        if (traits != nullptr && traits->mIsFONV)
+        if (traits != nullptr && isFallout3OrNewVegas(*traits))
         {
             const NodeMap& currentNodeMap = getNodeMap();
             const auto ensureHelper = [&](std::string_view name, std::initializer_list<std::string_view> parents) {
@@ -6979,7 +7095,7 @@ namespace MWRender
         }
         updateParts();
 
-        if (traits != nullptr && !traits->mIsFONV)
+        if (traits != nullptr && !isFallout3OrNewVegas(*traits))
         {
             const std::vector<std::string> configuredSources
                 = collectWorldViewerNpcAnimationSources(mResourceSystem, *traits);
@@ -7002,7 +7118,7 @@ namespace MWRender
             }
         }
 
-        if (traits != nullptr && traits->mIsFONV)
+        if (traits != nullptr && isFallout3OrNewVegas(*traits))
         {
             const ESM4::Npc* animationRecord = MWClass::ESM4Npc::getModelRecord(mPtr);
             if (animationRecord == nullptr)
@@ -7105,8 +7221,27 @@ namespace MWRender
 
                 if (const ESM4::Weapon* weapon = MWClass::ESM4Npc::getEquippedWeapon(mPtr))
                 {
-                    const bool useWeaponIdlePose = worldViewerEnvEnabled("OPENMW_ESM4_ENABLE_WEAPON_IDLE_POSE")
-                        || worldViewerEnvEnabled("OPENMW_FNV_ENABLE_WEAPON_IDLE_POSE");
+                    const std::string_view prefix = getFonvWeaponAnimationPrefix(weapon->mData.animationType);
+                    if (!prefix.empty())
+                    {
+                        // Retail FNV resolves locomotion through the equipped weapon family. Some families author
+                        // only a subset (for example 2ha has a walk-forward plus four fast directions), so add the
+                        // complete candidate set and let the VFS-backed source loader ignore absent files.
+                        constexpr std::array<std::string_view, 10> suffixes{ "forward", "backward", "left", "right",
+                            "fastforward", "fastbackward", "fastleft", "fastright", "turnleft", "turnright" };
+                        for (std::string_view suffix : suffixes)
+                        {
+                            addFonvAnimationSource("meshes/characters/_male/locomotion/" + std::string(prefix)
+                                    + std::string(suffix) + ".kf",
+                                "retail weapon-family locomotion", false);
+                        }
+                    }
+
+                    const char* esm4WeaponPose = std::getenv("OPENMW_ESM4_ENABLE_WEAPON_IDLE_POSE");
+                    const char* fnvWeaponPose = std::getenv("OPENMW_FNV_ENABLE_WEAPON_IDLE_POSE");
+                    const bool useWeaponIdlePose = esm4WeaponPose != nullptr
+                        ? std::string_view(esm4WeaponPose) != "0"
+                        : (fnvWeaponPose != nullptr ? std::string_view(fnvWeaponPose) != "0" : true);
                     if (useWeaponIdlePose)
                     {
                         const std::string weaponPose = getFonvWeaponIdlePoseKf(weapon);
@@ -7229,8 +7364,8 @@ namespace MWRender
             return;
         }
         std::string_view branch = traits->mIsTES4 ? std::string_view("TES4")
-            : traits->mIsFONV                   ? std::string_view("FALLOUT")
-                                                : std::string_view("TES5");
+            : isFallout3OrNewVegas(*traits)       ? std::string_view("FALLOUT")
+                                                  : std::string_view("TES5");
         {
             std::ostringstream details;
             details << "branch=" << branch << " game=" << worldViewerNpcGameTag(*traits)
@@ -7243,7 +7378,7 @@ namespace MWRender
         }
         if (traits->mIsTES4)
             updatePartsTES4(*traits);
-        else if (traits->mIsFONV)
+        else if (isFallout3OrNewVegas(*traits))
             updatePartsFONV(*traits);
         else
         {
@@ -7288,8 +7423,9 @@ namespace MWRender
         const VFS::Manager* vfs = mResourceSystem != nullptr ? mResourceSystem->getVFS() : nullptr;
         const bool modelExists = vfs != nullptr && vfs->exists(correctedModel);
         const ESM4::Npc* traitsRecord = MWClass::ESM4Npc::getTraitsRecord(mPtr);
-        const bool falloutHumanPart = traitsRecord != nullptr && traitsRecord->mIsFONV;
-        const bool tes5StaticPart = traitsRecord != nullptr && !traitsRecord->mIsTES4 && !traitsRecord->mIsFONV;
+        const bool falloutHumanPart = traitsRecord != nullptr && isFallout3OrNewVegas(*traitsRecord);
+        const bool tes5StaticPart
+            = traitsRecord != nullptr && !traitsRecord->mIsTES4 && !isFallout3OrNewVegas(*traitsRecord);
         {
             std::ostringstream details;
             details << "model=\"" << model << "\" corrected=\"" << correctedModel.value() << "\""
@@ -7410,10 +7546,11 @@ namespace MWRender
                     osg::Group* head = findBestAttachmentNode(nodeMap, { "Bip01 Head", "bip01 head" });
                     if (bip01 != nullptr && head != nullptr)
                     {
-                        if (headgearMode != nullptr && Misc::StringUtils::ciEqual(headgearMode, "animatedheadframe"))
-                            attachNode = makeFalloutAnimatedHeadFrameHelper(*bip01, *head);
-                        else
+                        if (headgearMode != nullptr && (Misc::StringUtils::ciEqual(headgearMode, "headframe")
+                                                           || Misc::StringUtils::ciEqual(headgearMode, "headtranslation")))
                             attachNode = makeFalloutHeadFrameHelper(*bip01, *head);
+                        else
+                            attachNode = makeFalloutAnimatedHeadFrameHelper(*bip01, *head);
                     }
                 }
             }
@@ -7574,10 +7711,23 @@ namespace MWRender
         bool staticizedHeadPartRig = false;
         bool staticizedBareHandPartRig = false;
         const bool wantsStaticizedHeadPartRig = headAttachedStaticPart && rigProbe.mRigGeometryCount > 0
+            && std::getenv("OPENMW_FNV_STATICIZE_RIGGED_HEAD_PARTS") != nullptr
             && std::getenv("OPENMW_FNV_KEEP_RIGGED_HEAD_PARTS") == nullptr;
         const bool wantsStaticizedBareHandPartRig = bareHandSurfacePart && rigProbe.mRigGeometryCount > 0
-            && (falloutHumanPart || std::getenv("OPENMW_FNV_STATICIZE_RIGGED_HAND_PARTS") != nullptr)
+            && std::getenv("OPENMW_FNV_STATICIZE_RIGGED_HAND_PARTS") != nullptr
             && std::getenv("OPENMW_FNV_KEEP_RIGGED_HAND_PARTS") == nullptr;
+        if (rigProbe.mRigGeometryCount > 0)
+        {
+            // Mark the cached template before SceneManager clones it.  RigGeometry's copy constructor preserves
+            // this bit, so the very first update/cull traversal uses the Fallout skinning convention instead of
+            // briefly treating an attached Bethesda body part as a generic OpenMW rig.
+            MarkFalloutRigGeometryVisitor markFalloutRigs;
+            const_cast<osg::Node*>(attachTemplateNode.get())->accept(markFalloutRigs);
+            if (markFalloutRigs.mMarked > 0)
+                Log(Debug::Info) << "FNV/ESM4 diag: pre-marked " << markFalloutRigs.mMarked
+                                 << " Fallout rigged template drawable(s) on " << correctedModel.value() << " for "
+                                 << mPtr.getCellRef().getRefId();
+        }
         if (wantsStaticizedHeadPartRig)
         {
             osg::ref_ptr<osg::Node> staticTemplate = osg::clone(templateNode.get(), osg::CopyOp::DEEP_COPY_ALL);
@@ -8417,7 +8567,7 @@ namespace MWRender
                 Log(Debug::Error) << "Head part not found: " << ESM::RefId(partId);
                 continue;
             }
-            const bool miscPart = traits.mIsFONV && isFonvMiscHeadPart(*part);
+            const bool miscPart = isFallout3OrNewVegas(traits) && isFonvMiscHeadPart(*part);
             if (miscPart || usedHeadPartTypes.emplace(part->mType).second)
             {
                 const osg::Vec4f hairTint = getHairTint(traits);

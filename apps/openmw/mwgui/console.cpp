@@ -14,6 +14,7 @@
 #include <components/compiler/lineparser.hpp>
 #include <components/compiler/locals.hpp>
 #include <components/compiler/scanner.hpp>
+#include <components/debug/debuglog.hpp>
 #include <components/files/conversion.hpp>
 #include <components/interpreter/interpreter.hpp>
 #include <components/misc/utf8stream.hpp>
@@ -211,6 +212,7 @@ namespace MWGui
 
     void Console::printError(const std::string& msg)
     {
+        Log(Debug::Error) << "Console: " << msg;
         print(msg + "\n", MWBase::WindowManager::sConsoleColor_Error);
     }
 

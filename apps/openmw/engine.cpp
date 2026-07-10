@@ -1071,6 +1071,45 @@ namespace
             readProofFloat("OPENMW_WORLD_VIEWER_START_CAMERA_POS_Y", position.pos[1] - 4096.f),
             readProofFloat("OPENMW_WORLD_VIEWER_START_CAMERA_POS_Z", position.pos[2] + 2048.f));
 
+        const char* followRefText = std::getenv("OPENMW_WORLD_VIEWER_START_CAMERA_FOLLOW_REF");
+        if (followRefText != nullptr && *followRefText != '\0')
+        {
+            ESM::RefId followRef = ESM::RefId::deserializeText(followRefText);
+            if (followRef.empty())
+                followRef = ESM::RefId::stringRefId(followRefText);
+
+            MWWorld::Ptr followed;
+            if (const ESM::FormId* formId = followRef.getIf<ESM::FormId>())
+                followed = MWBase::Environment::get().getWorldModel()->getPtr(*formId);
+            if (followed.isEmpty())
+                followed = world.searchPtr(followRef, true);
+            if (!followed.isEmpty())
+            {
+                const ESM::Position& followedPosition = followed.getRefData().getPosition();
+                eye.set(followedPosition.pos[0]
+                        + readProofFloat("OPENMW_WORLD_VIEWER_START_CAMERA_FOLLOW_EYE_X", 0.f),
+                    followedPosition.pos[1]
+                        + readProofFloat("OPENMW_WORLD_VIEWER_START_CAMERA_FOLLOW_EYE_Y", -180.f),
+                    followedPosition.pos[2]
+                        + readProofFloat("OPENMW_WORLD_VIEWER_START_CAMERA_FOLLOW_EYE_Z", 115.f));
+                target.set(followedPosition.pos[0]
+                        + readProofFloat("OPENMW_WORLD_VIEWER_START_CAMERA_FOLLOW_TARGET_X", 0.f),
+                    followedPosition.pos[1]
+                        + readProofFloat("OPENMW_WORLD_VIEWER_START_CAMERA_FOLLOW_TARGET_Y", 0.f),
+                    followedPosition.pos[2]
+                        + readProofFloat("OPENMW_WORLD_VIEWER_START_CAMERA_FOLLOW_TARGET_Z", 78.f));
+
+                if (std::getenv("OPENMW_WORLD_VIEWER_START_CAMERA_FOLLOW_HEADING") != nullptr)
+                {
+                    const float distance
+                        = readProofFloat("OPENMW_WORLD_VIEWER_START_CAMERA_FOLLOW_HEADING_DISTANCE", 180.f);
+                    const float heading = followedPosition.rot[2];
+                    eye.x() = followedPosition.pos[0] + std::sin(heading) * distance;
+                    eye.y() = followedPosition.pos[1] + std::cos(heading) * distance;
+                }
+            }
+        }
+
         static const std::vector<WorldViewerCameraKeyframe> cameraSequence = getWorldViewerCameraSequence();
         static int loggedCameraSequenceIndex = -2;
         int cameraSequenceIndex = -1;
@@ -4688,7 +4727,8 @@ void OMW::Engine::go()
         mStateManager->newGame(!mNewGame);
     }
 
-    if (!mStartupScript.empty() && mStateManager->getState() == MWState::StateManager::State_Running)
+    if (!mStartupScript.empty() && std::getenv("OPENMW_PROOF_DELAY_STARTUP_SCRIPT") == nullptr
+        && mStateManager->getState() == MWState::StateManager::State_Running)
     {
         mWindowManager->executeInConsole(mStartupScript);
     }
