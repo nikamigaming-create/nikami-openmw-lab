@@ -23,6 +23,12 @@ namespace ESM
     struct Dialogue;
 }
 
+namespace ESM4
+{
+    struct Dialogue;
+    struct DialogInfo;
+}
+
 namespace MWDialogue
 {
     class DialogueManager : public MWBase::DialogueManager
@@ -55,6 +61,12 @@ namespace MWDialogue
 
         std::vector<std::pair<std::string, int>> mChoices;
 
+        bool mEsm4Dialogue = false;
+        ESM::FormId mLastEsm4Topic{};
+        std::map<std::string, ESM::FormId, Misc::StringUtils::CiComp> mEsm4TopicIds;
+        std::vector<ESM::FormId> mEsm4ChoiceTopics;
+        std::set<ESM::FormId> mEsm4SaidInfos;
+
         int mOriginalDisposition;
         int mCurrentDisposition;
         int mPermanentDispositionChange;
@@ -70,6 +82,11 @@ namespace MWDialogue
         void executeScript(const std::string& script, const MWWorld::Ptr& actor);
 
         void executeTopic(const ESM::RefId& topic, ResponseCallback* callback);
+        void executeEsm4Topic(ESM::FormId topic, ResponseCallback* callback, bool greeting = false);
+        const ESM4::DialogInfo* selectEsm4Info(ESM::FormId topic) const;
+        bool matchesEsm4Info(const ESM4::DialogInfo& info) const;
+        int getEsm4InfoActorAffinity(const ESM4::DialogInfo& info) const;
+        void updateEsm4Topics();
 
         const ESM::Dialogue* searchDialogue(const ESM::RefId& id);
 

@@ -171,10 +171,12 @@ namespace MWRender
         class TintMaterialVisitor : public osg::NodeVisitor
         {
         public:
-            TintMaterialVisitor(const osg::Vec4f& tint, float emissionStrength = 0.f)
+            TintMaterialVisitor(
+                const osg::Vec4f& tint, float emissionStrength = 0.f, bool replaceVertexRgb = false)
                 : osg::NodeVisitor(TRAVERSE_ALL_CHILDREN)
                 , mTint(tint)
                 , mEmissionStrength(emissionStrength)
+                , mReplaceVertexRgb(replaceVertexRgb)
             {
             }
 
@@ -187,9 +189,9 @@ namespace MWRender
             void apply(osg::Geode& geode) override
             {
                 applyTint(geode.getOrCreateStateSet());
-                for (unsigned int i = 0; i < geode.getNumDrawables(); ++i)
-                    if (osg::Drawable* drawable = geode.getDrawable(i))
-                        applyDrawable(*drawable);
+                // Geode::traverse visits its drawables and dispatches the
+                // Drawable overload below.  Applying them here as well
+                // multiplied vertex colours twice per visitor pass.
                 traverse(geode);
             }
 
@@ -206,9 +208,14 @@ namespace MWRender
                 {
                     for (osg::Vec4f& color : *colors)
                     {
-                        color.x() *= mTint.x();
-                        color.y() *= mTint.y();
-                        color.z() *= mTint.z();
+                        if (mReplaceVertexRgb)
+                            color.set(1.f, 1.f, 1.f, color.w());
+                        else
+                        {
+                            color.x() *= mTint.x();
+                            color.y() *= mTint.y();
+                            color.z() *= mTint.z();
+                        }
                     }
                     colors->dirty();
                     return true;
@@ -218,9 +225,14 @@ namespace MWRender
                 {
                     for (osg::Vec4ub& color : *colors)
                     {
-                        color.r() = static_cast<unsigned char>(std::clamp(color.r() * mTint.x(), 0.f, 255.f));
-                        color.g() = static_cast<unsigned char>(std::clamp(color.g() * mTint.y(), 0.f, 255.f));
-                        color.b() = static_cast<unsigned char>(std::clamp(color.b() * mTint.z(), 0.f, 255.f));
+                        if (mReplaceVertexRgb)
+                            color.set(255, 255, 255, color.a());
+                        else
+                        {
+                            color.r() = static_cast<unsigned char>(std::clamp(color.r() * mTint.x(), 0.f, 255.f));
+                            color.g() = static_cast<unsigned char>(std::clamp(color.g() * mTint.y(), 0.f, 255.f));
+                            color.b() = static_cast<unsigned char>(std::clamp(color.b() * mTint.z(), 0.f, 255.f));
+                        }
                     }
                     colors->dirty();
                     return true;
@@ -289,6 +301,7 @@ namespace MWRender
 
             osg::Vec4f mTint;
             float mEmissionStrength = 0.f;
+            bool mReplaceVertexRgb = false;
 
         public:
             mutable unsigned int mNeutralizedVertexColorArrays = 0;
@@ -944,8 +957,6 @@ namespace MWRender
 
         osg::Vec4f getHairTint(const ESM4::Npc& traits)
         {
-            if (Misc::StringUtils::ciEqual(traits.mEditorId, "GSEasyPete"))
-                return osg::Vec4f(0.96f, 0.96f, 0.92f, 1.f);
             return osg::Vec4f(traits.mHairColour.red / 255.f, traits.mHairColour.green / 255.f,
                 traits.mHairColour.blue / 255.f, 1.f);
         }
@@ -1227,26 +1238,6 @@ namespace MWRender
         {
             osg::ref_ptr<osg::Image> image = getExistingTextureImage(resourceSystem, texture);
             return image != nullptr && image->s() >= 64 && image->t() >= 64;
-        }
-
-        std::string findFonvNpcFaceTexture(Resource::ResourceSystem* resourceSystem, const ESM4::Npc& traits)
-        {
-            const std::string formIndex = formatFalloutFormIndex(traits.mId);
-            const std::string texture = findExistingTexture(resourceSystem,
-                { "textures/characters/facemods/falloutnv.esm/" + formIndex + "_0.dds",
-                    "textures/characters/facemods/falloutnv.esm/" + formIndex + "_1.dds" });
-            if (texture.empty())
-                return {};
-
-            osg::ref_ptr<osg::Image> image = getExistingTextureImage(resourceSystem, texture);
-            if (image == nullptr || image->s() < 64 || image->t() < 64)
-                return {};
-
-            Log(Debug::Info) << "FNV/ESM4 diag: using exported NPC FaceGen diffuse " << texture << " for "
-                             << traits.mEditorId << " "
-                             << (image != nullptr ? std::to_string(image->s()) + "x" + std::to_string(image->t())
-                                                  : std::string("<unloaded>"));
-            return texture;
         }
 
         std::string findFonvNpcFaceDetailTexture(Resource::ResourceSystem* resourceSystem, const ESM4::Npc& traits)
@@ -3414,15 +3405,6 @@ namespace MWRender
                 || lowered.find("actors\\human\\characterassets\\female\\righteye") != std::string::npos
                 || lowered.find("characters/head/eye") != std::string::npos
                 || lowered.find("characters\\head\\eye") != std::string::npos;
-        }
-
-        std::string getFalloutHairTintDiffuseOverride(std::string_view model)
-        {
-            std::string lowered(model);
-            Misc::StringUtils::lowerCaseInPlace(lowered);
-            if (lowered.find("hairbaseold") != std::string::npos)
-                return "textures/characters/hair/hairafricanamericanbase_hl.dds";
-            return {};
         }
 
         bool isFalloutMouthDriverPart(std::string_view model)
@@ -7951,20 +7933,13 @@ namespace MWRender
                              << correctedModel.value() << " for " << mPtr.getCellRef().getRefId();
             overrideFalloutPartDiffuseTexture(diffuseTexture, mResourceSystem, *attached);
         }
-        else if (attached != nullptr)
-        {
-            const std::string hairDiffuse = getFalloutHairTintDiffuseOverride(correctedModel.value());
-            if (!hairDiffuse.empty())
-            {
-                Log(Debug::Info) << "FNV/ESM4 diag: overriding hair tint diffuse " << hairDiffuse << " on "
-                                 << correctedModel.value() << " for " << mPtr.getCellRef().getRefId();
-                overrideFalloutPartDiffuseTexture(hairDiffuse, mResourceSystem, *attached);
-            }
-        }
         if (tint != nullptr && attached != nullptr)
         {
             const float emissionStrength = isFalloutHairTintModel(correctedModel.value()) ? 0.65f : 0.f;
-            TintMaterialVisitor visitor(*tint, emissionStrength);
+            // FO3/FNV HairShaderProperty uses vertex RGB as shader data, not
+            // as an extra diffuse colour multiplier.  Let HCLR drive the
+            // material once and keep the authored alpha channel.
+            TintMaterialVisitor visitor(*tint, emissionStrength, isFalloutHairTintModel(correctedModel.value()));
             attached->accept(visitor);
         }
         if (attached != nullptr
@@ -8230,9 +8205,11 @@ namespace MWRender
 
         const bool isFemale = MWClass::ESM4Npc::isFemale(mPtr);
         const uint32_t coveredBodySlots = getFonvCoveredBodySlots(mPtr);
-        const std::string npcFaceTexture = findFonvNpcFaceTexture(mResourceSystem, traits);
-        const std::string npcFaceDetailTexture
-            = npcFaceTexture.empty() ? findFonvNpcFaceDetailTexture(mResourceSystem, traits) : std::string();
+        // Fallout's exported *_0 face asset is a modulation/detail map over the
+        // race diffuse, not a replacement diffuse.  Bodymods use the same
+        // neutral-at-0.5 modulation convention, often as a uniform 8x8 map.
+        const std::string npcFaceTexture;
+        const std::string npcFaceDetailTexture = findFonvNpcFaceDetailTexture(mResourceSystem, traits);
         const std::string npcFaceNormalTexture = findFonvNpcFaceNormalTexture(mResourceSystem, traits);
         const std::string npcBodyTexture = findFonvNpcBodyTexture(mResourceSystem, traits, isFemale);
         const std::string npcBodyDetailTexture = findFonvNpcBodyDetailTexture(mResourceSystem, traits, isFemale);
@@ -8330,7 +8307,8 @@ namespace MWRender
             if (attached != nullptr && isFonvRaceSkinSurface(bodyPart.mesh))
             {
                 forceFalloutActorPartVisible(attached.get(), bodyPart.mesh, traits);
-                neutralizeFalloutSkinMaterial(attached.get(), bodyPart.mesh, traits);
+                if (npcBodyDetailIsTinyTint)
+                    tintFalloutSkinMaterial(attached.get(), bodyPart.mesh, traits, npcBodyMaterialTint);
                 if (!npcBodyDetailTexture.empty() && !npcBodyDetailIsTinyTint)
                 {
                     Log(Debug::Info) << "FNV/ESM4 diag: applying NPC body tint/detail " << npcBodyDetailTexture
@@ -8383,11 +8361,11 @@ namespace MWRender
                 applyFaceGenEgmMorph(mResourceSystem, attached.get(), headPart.mesh, traits);
                 if (!texture.empty())
                     overrideFalloutPartDiffuseTexture(texture, mResourceSystem, *attached);
-                if (std::getenv("OPENMW_FNV_APPLY_FACEGEN_DETAIL") != nullptr && !npcFaceTexture.empty())
+                if (!npcFaceDetailTexture.empty())
                 {
-                    Log(Debug::Info) << "FNV/ESM4 diag: applying NPC face detail overlay " << npcFaceTexture
+                    Log(Debug::Info) << "FNV/ESM4 diag: applying NPC face detail overlay " << npcFaceDetailTexture
                                      << " on " << headPart.mesh << " for " << traits.mEditorId;
-                    overrideFalloutPartDetailTexture(npcFaceTexture, mResourceSystem, *attached);
+                    overrideFalloutPartDetailTexture(npcFaceDetailTexture, mResourceSystem, *attached);
                 }
                 if (!npcFaceNormalTexture.empty())
                 {
@@ -8395,7 +8373,6 @@ namespace MWRender
                                      << " on " << headPart.mesh << " for " << traits.mEditorId;
                     overrideFalloutPartNormalTexture(npcFaceNormalTexture, mResourceSystem, *attached);
                 }
-                neutralizeFalloutSkinMaterial(attached.get(), headPart.mesh, traits);
                 DisableCullVisitor visitor;
                 attached->accept(visitor);
                 Log(Debug::Info) << "FNV/ESM4 diag: made head skin surface double-sided " << headPart.mesh
@@ -8427,11 +8404,6 @@ namespace MWRender
                 applyFalloutProofTriStaticMorph(mResourceSystem, attached.get(), hair->mModel, traits);
                 if (attached != nullptr)
                     applyFalloutDialogueMorph(mResourceSystem, this, attached.get(), hair->mModel, traits);
-                if (attached != nullptr)
-                {
-                    TintMaterialVisitor visitor(hairTint, 0.65f);
-                    attached->accept(visitor);
-                }
                 ++insertedHeadParts;
             }
             else
@@ -8461,7 +8433,7 @@ namespace MWRender
                          << (usedHeadPartTypes.count(ESM4::HeadPart::Type_FacialHair) != 0 ? "OK" : "UNKNOWN")
                          << " npcSpecificHeadParts=" << insertedHeadParts
                          << " faceTexture="
-                         << (!npcFaceTexture.empty() ? "OK" : "RACE")
+                         << (!npcFaceDetailTexture.empty() ? "RACE+DETAIL" : "RACE")
                          << " faceNormal=" << (!npcFaceNormalTexture.empty() ? "OK" : "RACE")
                          << " tintLayers=" << traits.mTintLayers.size();
 
@@ -8584,12 +8556,6 @@ namespace MWRender
                 applyFalloutProofTriStaticMorph(mResourceSystem, attached.get(), part->mModel, traits);
                 if (attached != nullptr)
                     applyFalloutDialogueMorph(mResourceSystem, this, attached.get(), part->mModel, traits);
-                if (attached != nullptr && tint != nullptr)
-                {
-                    const float emissionStrength = isFalloutHairTintModel(part->mModel) ? 0.65f : 0.f;
-                    TintMaterialVisitor visitor(*tint, emissionStrength);
-                    attached->accept(visitor);
-                }
                 if (isFonvFacialHairHeadPart(*part))
                     usedHeadPartTypes.insert(ESM4::HeadPart::Type_FacialHair);
                 ++inserted;
@@ -8612,12 +8578,6 @@ namespace MWRender
                         && isFalloutMouthDriverPart(extraPart->mModel))
                         applyFalloutProofTriOpenMorph(
                             mResourceSystem, mPtr, extraAttached.get(), extraPart->mModel, traits);
-                    if (extraAttached != nullptr && tint != nullptr)
-                    {
-                        const float emissionStrength = isFalloutHairTintModel(extraPart->mModel) ? 0.65f : 0.f;
-                        TintMaterialVisitor visitor(*tint, emissionStrength);
-                        extraAttached->accept(visitor);
-                    }
                     if (isFonvFacialHairHeadPart(*extraPart))
                         usedHeadPartTypes.insert(ESM4::HeadPart::Type_FacialHair);
                     ++inserted;

@@ -13,6 +13,10 @@
 #include <components/esm3/loadfact.hpp>
 #include <components/esm3/loadinfo.hpp>
 #include <components/esm3/loadmgef.hpp>
+#include <components/esm4/loaddial.hpp>
+#include <components/esm4/loadinfo.hpp>
+#include <components/esm4/loadnpc.hpp>
+#include <components/esm4/script.hpp>
 
 #include <components/compiler/errorhandler.hpp>
 #include <components/compiler/exception.hpp>
@@ -39,6 +43,7 @@
 #include "../mwworld/class.hpp"
 #include "../mwworld/containerstore.hpp"
 #include "../mwworld/esmstore.hpp"
+#include "../mwworld/esm4questruntime.hpp"
 
 #include "../mwscript/compilercontext.hpp"
 #include "../mwscript/extensions.hpp"
@@ -47,6 +52,8 @@
 #include "../mwmechanics/actorutil.hpp"
 #include "../mwmechanics/creaturestats.hpp"
 #include "../mwmechanics/npcstats.hpp"
+
+#include "../mwclass/esm4npc.hpp"
 
 #include "filter.hpp"
 #include "hypertextparser.hpp"
@@ -76,6 +83,208 @@ namespace MWDialogue
         mOriginalDisposition = 0;
         mCurrentDisposition = 0;
         mPermanentDispositionChange = 0;
+        mEsm4Dialogue = false;
+        mLastEsm4Topic = {};
+        mEsm4TopicIds.clear();
+        mEsm4ChoiceTopics.clear();
+        mEsm4SaidInfos.clear();
+    }
+
+    bool DialogueManager::matchesEsm4Info(const ESM4::DialogInfo& info) const
+    {
+        if (!info.mSpeaker.isZeroOrUnset())
+        {
+            const ESM4::Npc* base = mActor.get<ESM4::Npc>()->mBase;
+            if (base == nullptr || base->mId != info.mSpeaker)
+                return false;
+        }
+
+        const auto evaluate = [&](const ESM4::TargetCondition& condition) -> std::optional<bool> {
+            const ESM4::Npc* base = mActor.get<ESM4::Npc>()->mBase;
+            const ESM4::Npc* traits = MWClass::ESM4Npc::getTraitsRecord(mActor);
+            float actual = 0.f;
+            switch (condition.functionIndex)
+            {
+                case ESM4::FUN_GetIsID:
+                    actual = base != nullptr && base->mId == ESM::FormId::fromUint32(condition.param1) ? 1.f : 0.f;
+                    break;
+                case ESM4::FUN_GetIsRace:
+                    actual = traits != nullptr && traits->mRace == ESM::FormId::fromUint32(condition.param1) ? 1.f : 0.f;
+                    break;
+                case ESM4::FUN_GetIsSex:
+                    actual = static_cast<std::uint32_t>(MWClass::ESM4Npc::isFemale(mActor)) == condition.param1 ? 1.f : 0.f;
+                    break;
+                case ESM4::FUN_GetTalkedToPC:
+                    actual = mTalkedTo ? 1.f : 0.f;
+                    break;
+                case ESM4::FUN_GetDead:
+                    actual = mActor.getClass().getCreatureStats(mActor).isDead() ? 1.f : 0.f;
+                    break;
+                case ESM4::FUN_GetLevel:
+                    actual = static_cast<float>(mActor.getClass().getCreatureStats(mActor).getLevel());
+                    break;
+                case ESM4::FUN_GetQuestRunning:
+                case ESM4::FUN_GetStage:
+                case ESM4::FUN_GetStageDone:
+                case ESM4::FUN_GetGlobalValue:
+                case ESM4::FUN_GetQuestCompleted:
+                case ESM4::FUN_GetObjectiveCompleted:
+                case ESM4::FUN_GetObjectiveDisplayed:
+                    return MWBase::Environment::get().getWorld()->getESM4QuestRuntime().evaluateConditions({ condition });
+                default:
+                    return std::nullopt;
+            }
+
+            float expected = condition.comparison;
+            switch (condition.condition & 0xe0)
+            {
+                case ESM4::CTF_EqualTo:
+                    return actual == expected;
+                case ESM4::CTF_NotEqualTo:
+                    return actual != expected;
+                case ESM4::CTF_GreaterThan:
+                    return actual > expected;
+                case ESM4::CTF_GrThOrEqTo:
+                    return actual >= expected;
+                case ESM4::CTF_LessThan:
+                    return actual < expected;
+                case ESM4::CTF_LeThOrEqTo:
+                    return actual <= expected;
+                default:
+                    return false;
+            }
+        };
+
+        for (std::size_t i = 0; i < info.mTargetConditions.size(); ++i)
+        {
+            std::optional<bool> value = evaluate(info.mTargetConditions[i]);
+            bool groupResult = value.value_or(false);
+            while ((info.mTargetConditions[i].condition & ESM4::CTF_Combine) != 0
+                && i + 1 < info.mTargetConditions.size())
+            {
+                ++i;
+                value = evaluate(info.mTargetConditions[i]);
+                groupResult = groupResult || value.value_or(false);
+            }
+            if (!groupResult)
+                return false;
+        }
+        return true;
+    }
+
+    int DialogueManager::getEsm4InfoActorAffinity(const ESM4::DialogInfo& info) const
+    {
+        const ESM4::Npc* base = mActor.get<ESM4::Npc>()->mBase;
+        const ESM4::Npc* traits = MWClass::ESM4Npc::getTraitsRecord(mActor);
+        int affinity = 0;
+        if (base != nullptr && !info.mSpeaker.isZeroOrUnset() && info.mSpeaker == base->mId)
+            affinity += 10000;
+        for (const ESM4::TargetCondition& condition : info.mTargetConditions)
+        {
+            const ESM::FormId parameter = ESM::FormId::fromUint32(condition.param1);
+            if (condition.functionIndex == ESM4::FUN_GetIsID && base != nullptr && parameter == base->mId)
+                affinity += 10000;
+            else if (condition.functionIndex == ESM4::FUN_GetIsRace && traits != nullptr
+                && parameter == traits->mRace)
+                affinity += 1000;
+        }
+        return affinity;
+    }
+
+    const ESM4::DialogInfo* DialogueManager::selectEsm4Info(ESM::FormId topic) const
+    {
+        const ESM4::DialogInfo* selected = nullptr;
+        const auto& infos = MWBase::Environment::get().getESMStore()->get<ESM4::DialogInfo>();
+        for (const ESM4::DialogInfo& info : infos)
+        {
+            if (info.mTopic != topic || !matchesEsm4Info(info))
+                continue;
+            if ((info.mInfoFlags & ESM4::INFO_SayOnce) != 0 && mEsm4SaidInfos.contains(info.mId))
+                continue;
+            // FormId::operator< compares the local object index first, which
+            // lets an arbitrary DLC INFO with a smaller local index outrank a
+            // base-game response.  Compare load-order first for a stable
+            // authored order until PNAM chains are indexed explicitly.
+            const int affinity = getEsm4InfoActorAffinity(info);
+            const int selectedAffinity = selected == nullptr ? -1 : getEsm4InfoActorAffinity(*selected);
+            if (selected == nullptr || affinity > selectedAffinity
+                || (affinity == selectedAffinity
+                    && std::tie(info.mId.mContentFile, info.mId.mIndex)
+                        < std::tie(selected->mId.mContentFile, selected->mId.mIndex)))
+                selected = &info;
+        }
+        return selected;
+    }
+
+    void DialogueManager::updateEsm4Topics()
+    {
+        mEsm4TopicIds.clear();
+        const auto& dialogues = MWBase::Environment::get().getESMStore()->get<ESM4::Dialogue>();
+        for (const ESM4::Dialogue& dialogue : dialogues)
+        {
+            if (dialogue.mDialType != 0 || (dialogue.mDialFlags & 0x02) == 0
+                || Misc::StringUtils::ciEqual(dialogue.mEditorId, "GREETING")
+                || Misc::StringUtils::ciEqual(dialogue.mEditorId, "GOODBYE"))
+                continue;
+            const ESM4::DialogInfo* info = selectEsm4Info(dialogue.mId);
+            if (info == nullptr || getEsm4InfoActorAffinity(*info) == 0)
+                continue;
+            const std::string& title = dialogue.mTopicName.empty() ? dialogue.mEditorId : dialogue.mTopicName;
+            if (!title.empty())
+                mEsm4TopicIds.emplace(title, dialogue.mId);
+        }
+    }
+
+    void DialogueManager::executeEsm4Topic(ESM::FormId topic, ResponseCallback* callback, bool greeting)
+    {
+        const ESM4::Dialogue* dialogue
+            = MWBase::Environment::get().getESMStore()->get<ESM4::Dialogue>().search(ESM::RefId(topic));
+        const ESM4::DialogInfo* info = selectEsm4Info(topic);
+        if (dialogue == nullptr || info == nullptr)
+            return;
+
+        std::string response;
+        for (const ESM4::DialogResponse& item : info->mResponses)
+        {
+            if (item.mResponse.empty())
+                continue;
+            if (!response.empty())
+                response += "\n";
+            response += item.mResponse;
+        }
+        if (response.empty())
+            response = info->mResponse;
+
+        callback->addResponse(greeting ? std::string_view{} : std::string_view(dialogue->mTopicName), response);
+        mLastEsm4Topic = topic;
+        if ((info->mInfoFlags & ESM4::INFO_SayOnce) != 0)
+            mEsm4SaidInfos.insert(info->mId);
+
+        mChoices.clear();
+        mEsm4ChoiceTopics.clear();
+        for (ESM::FormId choice : info->mChoices)
+        {
+            const ESM4::Dialogue* choiceDialogue
+                = MWBase::Environment::get().getESMStore()->get<ESM4::Dialogue>().search(ESM::RefId(choice));
+            if (choiceDialogue == nullptr || selectEsm4Info(choice) == nullptr)
+                continue;
+            const std::string& title
+                = choiceDialogue->mTopicName.empty() ? choiceDialogue->mEditorId : choiceDialogue->mTopicName;
+            mEsm4ChoiceTopics.push_back(choice);
+            mChoices.emplace_back(title, static_cast<int>(mEsm4ChoiceTopics.size() - 1));
+        }
+        mIsInChoice = !mChoices.empty();
+        if ((info->mInfoFlags & ESM4::INFO_Goodbye) != 0)
+            goodbye();
+
+        if (!info->mScript.scriptSource.empty() || !info->mEndScript.scriptSource.empty())
+            Log(Debug::Info) << "FNV/ESM4 dialogue: deferred result script info=" << ESM::RefId(info->mId)
+                             << " beginBytes=" << info->mScript.compiledData.size()
+                             << " endBytes=" << info->mEndScript.compiledData.size();
+
+        Log(Debug::Info) << "FNV/ESM4 dialogue: selected topic=" << dialogue->mEditorId
+                         << " topicForm=" << ESM::RefId(dialogue->mId) << " info=" << ESM::RefId(info->mId)
+                         << " responses=" << info->mResponses.size() << " choices=" << mChoices.size();
     }
 
     void DialogueManager::addTopic(const ESM::RefId& topic)
@@ -156,6 +365,31 @@ namespace MWDialogue
         mTalkedTo = creatureStats.hasTalkedToPlayer();
 
         mActorKnownTopics.clear();
+
+        mEsm4Dialogue = actor.getType() == ESM4::Npc::sRecordId;
+        mLastEsm4Topic = {};
+        mEsm4TopicIds.clear();
+        mEsm4ChoiceTopics.clear();
+        if (mEsm4Dialogue)
+        {
+            const auto& esm4Dialogues = MWBase::Environment::get().getESMStore()->get<ESM4::Dialogue>();
+            const ESM4::Dialogue* greeting = nullptr;
+            for (const ESM4::Dialogue& dialogue : esm4Dialogues)
+            {
+                if (Misc::StringUtils::ciEqual(dialogue.mEditorId, "GREETING"))
+                {
+                    greeting = &dialogue;
+                    break;
+                }
+            }
+            if (greeting == nullptr || selectEsm4Info(greeting->mId) == nullptr)
+                return false;
+
+            executeEsm4Topic(greeting->mId, callback, true);
+            creatureStats.talkedToPlayer();
+            updateEsm4Topics();
+            return true;
+        }
 
         // greeting
         const MWWorld::Store<ESM::Dialogue>& dialogs = MWBase::Environment::get().getESMStore()->get<ESM::Dialogue>();
@@ -392,6 +626,14 @@ namespace MWDialogue
 
     std::list<std::string> DialogueManager::getAvailableTopics()
     {
+        if (mEsm4Dialogue)
+        {
+            updateEsm4Topics();
+            std::list<std::string> result;
+            for (const auto& [title, _] : mEsm4TopicIds)
+                result.push_back(title);
+            return result;
+        }
         updateActorKnownTopics();
 
         std::list<std::string> keywordList;
@@ -410,6 +652,8 @@ namespace MWDialogue
 
     int DialogueManager::getTopicFlag(const ESM::RefId& topicId) const
     {
+        if (mEsm4Dialogue)
+            return 0;
         auto known = mActorKnownTopics.find(topicId);
         if (known != mActorKnownTopics.end())
             return known->second.mFlags;
@@ -418,6 +662,13 @@ namespace MWDialogue
 
     void DialogueManager::keywordSelected(std::string_view keyword, ResponseCallback* callback)
     {
+        if (mEsm4Dialogue)
+        {
+            if (const auto found = mEsm4TopicIds.find(keyword); found != mEsm4TopicIds.end())
+                executeEsm4Topic(found->second, callback);
+            updateEsm4Topics();
+            return;
+        }
         if (!mIsInChoice)
         {
             const ESM::Dialogue* dialogue = searchDialogue(ESM::RefId::stringRefId(keyword));
@@ -457,6 +708,19 @@ namespace MWDialogue
 
     void DialogueManager::questionAnswered(int answer, ResponseCallback* callback)
     {
+        if (mEsm4Dialogue)
+        {
+            if (answer >= 0 && static_cast<std::size_t>(answer) < mEsm4ChoiceTopics.size())
+            {
+                const ESM::FormId topic = mEsm4ChoiceTopics[answer];
+                mChoices.clear();
+                mEsm4ChoiceTopics.clear();
+                mIsInChoice = false;
+                executeEsm4Topic(topic, callback);
+            }
+            updateEsm4Topics();
+            return;
+        }
         mChoice = answer;
 
         const ESM::Dialogue* dialogue = searchDialogue(mLastTopic);

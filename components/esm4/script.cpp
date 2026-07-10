@@ -128,11 +128,20 @@ namespace ESM4
 
         switch (condition.functionIndex)
         {
+            case FUN_GetInCell:
+            case FUN_GetIsClass:
+            case FUN_GetIsRace:
+            case FUN_GetInFaction:
+            case FUN_GetIsID:
+            case FUN_GetGlobalValue:
+            case FUN_GetQuestVariable:
             case FUN_GetQuestRunning:
             case FUN_GetStage:
             case FUN_GetStageDone:
-            case FUN_GetGlobalValue:
             case FUN_GetQuestCompleted:
+            case FUN_GetObjectiveCompleted:
+            case FUN_GetObjectiveDisplayed:
+            case FUN_IsInList:
                 reader.adjustFormId(condition.param1);
                 break;
             default:

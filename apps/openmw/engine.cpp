@@ -3746,7 +3746,14 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
             }
         }
 
-        if (!proofSayQueued && !proofActor.isEmpty() && proofSayTopic != nullptr && *proofSayTopic != '\0'
+        if (!proofSayQueued && !proofActor.isEmpty() && proofEnvEnabled("OPENMW_PROOF_START_DIALOGUE")
+            && mWindowManager != nullptr)
+        {
+            Log(Debug::Info) << "FNV/ESM4 proof: opening real dialogue GUI for " << proofActor.toString()
+                             << " at frame " << frameNumber;
+            mWindowManager->pushGuiMode(MWGui::GM_Dialogue, proofActor);
+        }
+        else if (!proofSayQueued && !proofActor.isEmpty() && proofSayTopic != nullptr && *proofSayTopic != '\0'
             && mDialogueManager != nullptr)
         {
             const bool said = mDialogueManager->say(proofActor, ESM::RefId::stringRefId(proofSayTopic));

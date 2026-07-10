@@ -32,6 +32,8 @@
 #include "../mwworld/containerstore.hpp"
 #include "../mwworld/customdata.hpp"
 #include "../mwworld/esmstore.hpp"
+#include "../mwworld/actiontalk.hpp"
+#include "../mwworld/failedaction.hpp"
 
 #include "esm4base.hpp"
 
@@ -912,6 +914,33 @@ namespace MWClass
         (void)ptr;
         (void)id;
         return 50.f;
+    }
+
+    int ESM4Npc::getServices(const MWWorld::ConstPtr& ptr) const
+    {
+        // Fallout merchant/service data is expressed through dialogue and
+        // package records rather than Morrowind's NPC service bitmask.  Zero
+        // keeps the shared dialogue window on authored ESM4 topics until the
+        // Fallout service-menu bridge is implemented.
+        (void)ptr;
+        return 0;
+    }
+
+    int ESM4Npc::getBaseGold(const MWWorld::ConstPtr& ptr) const
+    {
+        // Fallout caps are inventory items; they are not stored in the
+        // Morrowind NPC base-gold field used by the shared dialogue widget.
+        (void)ptr;
+        return 0;
+    }
+
+    std::unique_ptr<MWWorld::Action> ESM4Npc::activate(
+        const MWWorld::Ptr& ptr, const MWWorld::Ptr& actor) const
+    {
+        (void)actor;
+        if (getCreatureStats(ptr).isDead())
+            return std::make_unique<MWWorld::FailedAction>();
+        return std::make_unique<MWWorld::ActionTalk>(ptr);
     }
 
     bool ESM4Npc::isPersistent(const MWWorld::ConstPtr& ptr) const

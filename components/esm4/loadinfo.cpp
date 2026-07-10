@@ -32,12 +32,19 @@
 #include <components/esm/refid.hpp>
 
 #include "reader.hpp"
+#include "grouptype.hpp"
 // #include "writer.hpp"
 
 void ESM4::DialogInfo::load(ESM4::Reader& reader)
 {
     mId = reader.getFormIdFromHeader();
     mFlags = reader.hdr().record.flags;
+
+    // FO3/FONV INFO records normally inherit their topic from the surrounding
+    // topic-child GRUP rather than carrying a TPIC subrecord of their own.
+    // Retaining a zero topic here made every loaded response unreachable.
+    if (reader.stackSize() != 0 && reader.grp().type == ESM4::Grp_TopicChild)
+        mTopic = ESM::FormId::fromUint32(reader.grp().label.value);
 
     mEditorId = ESM::RefId(mId).serializeText(); // FIXME: quick workaround to use existing code
 
