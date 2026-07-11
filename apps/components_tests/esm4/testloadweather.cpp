@@ -87,6 +87,15 @@ namespace
         appendSubRecord(payload, std::string_view("\0IAD", 4), std::uint32_t{ 0x0cee1a });
         appendSubRecord(payload, std::string_view("\1IAD", 4), std::uint32_t{ 0x0cee18 });
         appendSubRecord(payload, std::string_view("\4IAD", 4), std::uint32_t{ 0x0cee18 });
+        appendSubRecord(payload, "DNAM", std::string_view("textures/sky/layer0.dds\0", 24));
+        appendSubRecord(payload, "CNAM", std::string_view("textures/sky/layer1.dds\0", 24));
+        const std::array<std::uint8_t, 4> cloudSpeeds{ 25, 50, 75, 100 };
+        appendSubRecord(payload, "ONAM", cloudSpeeds);
+        std::array<std::array<ESM4::Weather::Color, ESM4::Weather::sTimeCount>,
+            ESM4::Weather::sCloudLayerCount>
+            cloudColors{};
+        cloudColors[2][ESM4::Weather::Time_HighNoon] = { 10, 20, 30, 40 };
+        appendSubRecord(payload, "PNAM", cloudColors);
 
         std::array<std::array<ESM4::Weather::Color, ESM4::Weather::sTimeCount>,
             ESM4::Weather::sColorTypeCount>
@@ -112,6 +121,9 @@ namespace
         EXPECT_EQ(weather.mColors[ESM4::Weather::Color_Ambient][ESM4::Weather::Time_Day].r, 87);
         EXPECT_EQ(weather.mColors[ESM4::Weather::Color_Ambient][ESM4::Weather::Time_HighNoon].b, 154);
         EXPECT_EQ(weather.mColors[ESM4::Weather::Color_Sunlight][ESM4::Weather::Time_Day].g, 227);
+        EXPECT_EQ(weather.mCloudTextures[0], "textures/sky/layer0.dds");
+        EXPECT_EQ(weather.mCloudSpeeds[2], 75);
+        EXPECT_EQ(weather.mCloudColors[2][ESM4::Weather::Time_HighNoon].unused, 40);
         EXPECT_FLOAT_EQ(weather.mFogDistance[1], 120000.f);
         EXPECT_EQ(weather.mData.transitionDelta, 255);
         EXPECT_EQ(weather.mData.classification, 1);

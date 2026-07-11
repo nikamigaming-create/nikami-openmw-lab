@@ -597,6 +597,17 @@ namespace MWRender
         stateset->setAttribute(
             createAlphaTrackingUnlitMaterial(), osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
 
+        // Fallout's SkyShaderProperty performs ordinary source-alpha blending
+        // even when the NIF has no NiAlphaProperty. In particular, alpha.dds
+        // is a DXT5 transparency mask for the clear horizon layers; relying on
+        // OpenGL's default ONE/ZERO blend function turns those meshes into the
+        // opaque concentric bands seen in exterior proofs.
+        osg::ref_ptr<osg::BlendFunc> blendFunc = new osg::BlendFunc;
+        blendFunc->setFunction(osg::BlendFunc::SRC_ALPHA, osg::BlendFunc::ONE_MINUS_SRC_ALPHA);
+        stateset->setAttributeAndModes(
+            blendFunc, osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
+        stateset->setMode(GL_BLEND, osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
+
         osg::ref_ptr<osg::TexMat> texmat = new osg::TexMat;
         stateset->setTextureAttributeAndModes(0, texmat);
 

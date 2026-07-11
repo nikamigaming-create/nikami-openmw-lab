@@ -8,6 +8,8 @@
 #include <osg/Vec2f>
 #include <osg/Vec4f>
 
+#include <array>
+
 #include <osgParticle/ConstantRateCounter>
 #include <osgParticle/Shooter>
 
@@ -35,6 +37,8 @@ namespace MWRender
 
     struct WeatherResult
     {
+        static constexpr std::size_t sFalloutCloudLayerCount = 4;
+
         std::string mCloudTexture;
         std::string mNextCloudTexture;
         float mCloudBlendFactor;
@@ -64,6 +68,11 @@ namespace MWRender
         float mNextWindSpeed;
 
         float mCloudSpeed;
+
+        bool mHasFalloutCloudLayers = false;
+        std::array<std::string, sFalloutCloudLayerCount> mFalloutCloudTextures;
+        std::array<float, sFalloutCloudLayerCount> mFalloutCloudSpeeds{};
+        std::array<osg::Vec4f, sFalloutCloudLayerCount> mFalloutCloudColors{};
 
         float mGlareView;
 

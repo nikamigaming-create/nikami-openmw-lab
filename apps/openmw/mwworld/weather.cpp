@@ -99,6 +99,13 @@ namespace MWWorld
             return osg::Vec4f(value.r * byteToFloat, value.g * byteToFloat, value.b * byteToFloat, 1.f);
         }
 
+        osg::Vec4f falloutCloudColor(const ESM4::Weather::Color& value)
+        {
+            constexpr float byteToFloat = 1.f / 255.f;
+            return osg::Vec4f(
+                value.r * byteToFloat, value.g * byteToFloat, value.b * byteToFloat, value.unused * byteToFloat);
+        }
+
         FalloutWeatherColorSamples falloutColorSamples(
             const ESM4::Weather& weather, ESM4::Weather::ColorType type)
         {
@@ -1364,6 +1371,18 @@ namespace MWWorld
             weather.mCloudSpeed = static_cast<float>(source.mData.lowerCloudSpeed) / 255.f;
             weather.mGlareView = static_cast<float>(source.mData.sunGlare) / 255.f;
             weather.mFalloutImageSpaceModifiers = source.mImageSpaceModifiers;
+            weather.mFalloutCloudTextures = source.mCloudTextures;
+            std::array<float, 4> cloudSpeeds{};
+            std::array<FalloutWeatherColorSamples, 4> cloudColors{};
+            for (std::size_t layer = 0; layer < cloudSpeeds.size(); ++layer)
+            {
+                // xEdit/fopdoc specifies that ONAM uint8 values are divided by 2550.
+                cloudSpeeds[layer] = static_cast<float>(source.mCloudSpeeds[layer]) / 2550.f;
+                for (std::size_t sample = 0; sample < cloudColors[layer].size(); ++sample)
+                    cloudColors[layer][sample] = falloutCloudColor(source.mCloudColors[layer][sample]);
+            }
+            weather.mFalloutCloudSpeeds = cloudSpeeds;
+            weather.mFalloutCloudColors = cloudColors;
             mWeatherSettings.push_back(std::move(weather));
             ++imported;
         }
@@ -1537,6 +1556,27 @@ namespace MWWorld
         mResult.mBaseWindSpeed = mWeatherSettings[weatherID].mWindSpeed;
 
         mResult.mCloudSpeed = current.mCloudSpeed;
+        mResult.mHasFalloutCloudLayers = current.mFalloutCloudTextures && current.mFalloutCloudSpeeds
+            && current.mFalloutCloudColors;
+        if (mResult.mHasFalloutCloudLayers)
+        {
+            mResult.mFalloutCloudTextures = *current.mFalloutCloudTextures;
+            mResult.mFalloutCloudSpeeds = *current.mFalloutCloudSpeeds;
+            for (std::size_t layer = 0; layer < mResult.mFalloutCloudColors.size(); ++layer)
+            {
+                const FalloutWeatherColorSamples& samples = (*current.mFalloutCloudColors)[layer];
+                if (gameHour >= 12.f && gameHour <= mTimeSettings.mDayEnd)
+                    mResult.mFalloutCloudColors[layer]
+                        = sampleFalloutWeatherColor(samples, gameHour, mTimeSettings);
+                else
+                {
+                    const TimeOfDayInterpolator<osg::Vec4f> legacy(samples[ESM4::Weather::Time_Sunrise],
+                        samples[ESM4::Weather::Time_Day], samples[ESM4::Weather::Time_Sunset],
+                        samples[ESM4::Weather::Time_Night]);
+                    mResult.mFalloutCloudColors[layer] = legacy.getValue(gameHour, mTimeSettings, "Sky");
+                }
+            }
+        }
         mResult.mGlareView = current.mGlareView;
         mResult.mAmbientLoopSoundID = current.mAmbientLoopSoundID;
         mResult.mRainLoopSoundID = current.mRainLoopSoundID;
@@ -1657,6 +1697,19 @@ namespace MWWorld
 
         mResult.mWindSpeed = lerp(mResult.mCurrentWindSpeed, mResult.mNextWindSpeed, factor);
         mResult.mCloudSpeed = lerp(current.mCloudSpeed, other.mCloudSpeed, factor);
+        mResult.mHasFalloutCloudLayers = current.mHasFalloutCloudLayers && other.mHasFalloutCloudLayers;
+        if (mResult.mHasFalloutCloudLayers)
+        {
+            for (std::size_t layer = 0; layer < mResult.mFalloutCloudTextures.size(); ++layer)
+            {
+                mResult.mFalloutCloudTextures[layer] = factor < 0.5f ? current.mFalloutCloudTextures[layer]
+                                                                     : other.mFalloutCloudTextures[layer];
+                mResult.mFalloutCloudSpeeds[layer]
+                    = lerp(current.mFalloutCloudSpeeds[layer], other.mFalloutCloudSpeeds[layer], factor);
+                mResult.mFalloutCloudColors[layer]
+                    = lerp(current.mFalloutCloudColors[layer], other.mFalloutCloudColors[layer], factor);
+            }
+        }
         mResult.mGlareView = lerp(current.mGlareView, other.mGlareView, factor);
         mResult.mNightFade = lerp(current.mNightFade, other.mNightFade, factor);
 

@@ -169,6 +169,9 @@ namespace MWWorld
         std::optional<FalloutWeatherColorSamples> mFalloutAmbientColors;
         std::optional<FalloutWeatherColorSamples> mFalloutSunlightColors;
         std::array<ESM::FormId, 6> mFalloutImageSpaceModifiers{};
+        std::optional<std::array<std::string, 4>> mFalloutCloudTextures;
+        std::optional<std::array<float, 4>> mFalloutCloudSpeeds;
+        std::optional<std::array<FalloutWeatherColorSamples, 4>> mFalloutCloudColors;
 
         // Fog depth/density
         TimeOfDayInterpolator<float> mLandFogDepth;

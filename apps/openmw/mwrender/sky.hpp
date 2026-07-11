@@ -1,6 +1,7 @@
 #ifndef OPENMW_MWRENDER_SKY_H
 #define OPENMW_MWRENDER_SKY_H
 
+#include <array>
 #include <memory>
 #include <string>
 #include <vector>
@@ -132,6 +133,9 @@ namespace MWRender
         osg::ref_ptr<CloudUpdater> mNextCloudUpdater;
         osg::ref_ptr<osg::PositionAttitudeTransform> mCloudMesh;
         osg::ref_ptr<osg::PositionAttitudeTransform> mNextCloudMesh;
+        std::array<osg::ref_ptr<CloudUpdater>, WeatherResult::sFalloutCloudLayerCount> mFalloutCloudUpdaters;
+        std::array<osg::ref_ptr<osg::Node>, WeatherResult::sFalloutCloudLayerCount> mFalloutCloudLayerNodes;
+        osg::ref_ptr<osg::PositionAttitudeTransform> mFalloutCloudMesh;
 
         osg::ref_ptr<osg::Node> mAtmosphereDay;
 
@@ -162,6 +166,10 @@ namespace MWRender
 
         bool mTimescaleClouds;
         float mCloudAnimationTimer;
+        bool mHasFalloutCloudLayers;
+        std::array<float, WeatherResult::sFalloutCloudLayerCount> mFalloutCloudAnimationTimers{};
+        std::array<float, WeatherResult::sFalloutCloudLayerCount> mFalloutCloudSpeeds{};
+        float mFalloutCloudProofElapsed = 0.f;
 
         // particle system rotation is independent of cloud rotation internally
         osg::Vec3f mStormParticleDirection;
@@ -171,6 +179,8 @@ namespace MWRender
         // remember some settings so we don't have to apply them again if they didn't change
         std::string mClouds;
         std::string mNextClouds;
+        std::array<std::string, WeatherResult::sFalloutCloudLayerCount> mFalloutClouds;
+        std::array<osg::Vec4f, WeatherResult::sFalloutCloudLayerCount> mFalloutCloudColours{};
         float mCloudBlendFactor;
         float mCloudSpeed;
         float mStarsOpacity;
