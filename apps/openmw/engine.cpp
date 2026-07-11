@@ -1459,6 +1459,94 @@ namespace
         return forward.length2() > 1e-6;
     }
 
+    struct FalloutProofPortraitPose
+    {
+        osg::Vec3d mHeadCenter;
+        osg::Vec3d mHeadForward;
+        osg::Vec3d mLeftHandCenter;
+        osg::Vec3d mRightHandCenter;
+        bool mHeadResolved = false;
+        bool mLeftHandResolved = false;
+        bool mRightHandResolved = false;
+    };
+
+    class FalloutProofPortraitPoseVisitor : public osg::NodeVisitor
+    {
+    public:
+        FalloutProofPortraitPoseVisitor()
+            : osg::NodeVisitor(osg::NodeVisitor::TRAVERSE_ALL_CHILDREN)
+        {
+            setTraversalMask(~(MWRender::Mask_ParticleSystem | MWRender::Mask_Effect));
+        }
+
+        void apply(osg::Node& node) override
+        {
+            const std::string lowerName = Misc::StringUtils::lowerCase(node.getName());
+            if (lowerName == "bip01 head" || lowerName == "bip01 head_nub"
+                || lowerName == "bip01 l hand" || lowerName == "bip01 r hand")
+            {
+                const osg::Matrixd localToWorld = osg::computeLocalToWorld(getNodePath());
+                const osg::Vec3d center = localToWorld.getTrans();
+                if (lowerName == "bip01 head" || lowerName == "bip01 head_nub")
+                {
+                    mPose.mHeadCenter += center;
+                    osg::Vec3d forward
+                        = osg::Matrixd::transform3x3(osg::Vec3d(0.0, 1.0, 0.0), localToWorld);
+                    if (forward.normalize() > 1e-6)
+                        mPose.mHeadForward += forward;
+                    ++mHeadCount;
+                }
+                else if (lowerName == "bip01 l hand")
+                {
+                    mPose.mLeftHandCenter += center;
+                    ++mLeftHandCount;
+                }
+                else
+                {
+                    mPose.mRightHandCenter += center;
+                    ++mRightHandCount;
+                }
+            }
+            traverse(node);
+        }
+
+        FalloutProofPortraitPose getPose() const
+        {
+            FalloutProofPortraitPose result = mPose;
+            if (mHeadCount > 0)
+            {
+                result.mHeadCenter /= static_cast<double>(mHeadCount);
+                result.mHeadResolved = result.mHeadForward.normalize() > 1e-6;
+            }
+            if (mLeftHandCount > 0)
+            {
+                result.mLeftHandCenter /= static_cast<double>(mLeftHandCount);
+                result.mLeftHandResolved = true;
+            }
+            if (mRightHandCount > 0)
+            {
+                result.mRightHandCenter /= static_cast<double>(mRightHandCount);
+                result.mRightHandResolved = true;
+            }
+            return result;
+        }
+
+    private:
+        FalloutProofPortraitPose mPose;
+        unsigned int mHeadCount = 0;
+        unsigned int mLeftHandCount = 0;
+        unsigned int mRightHandCount = 0;
+    };
+
+    FalloutProofPortraitPose resolveFalloutProofPortraitPose(const MWWorld::Ptr& actor)
+    {
+        if (actor.isEmpty() || actor.getRefData().getBaseNode() == nullptr)
+            return {};
+        FalloutProofPortraitPoseVisitor visitor;
+        actor.getRefData().getBaseNode()->accept(visitor);
+        return visitor.getPose();
+    }
+
     template <typename T>
     ESM::RefId findEsm4EditorId(const MWWorld::ESMStore& store, std::string_view editorId)
     {
@@ -2536,6 +2624,11 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
     static bool worldViewerNonStaticStartCameraSettled = false;
     static bool fnvFlatStartupCameraSettled = false;
     static bool proofScreenshotWaitLogged = false;
+    static int proofPortraitClearFrames = 0;
+    static bool proofPortraitPreviousHeadResolved = false;
+    static osg::Vec3d proofPortraitPreviousHead;
+    static osg::Vec3d proofPortraitPreviousForward;
+    static int proofPortraitLastRejectLogFrame = -1000000;
     static int proofWorldReadyFrames = 0;
     static bool worldViewerTelemetryLogged = false;
     static unsigned int worldViewerTelemetryLastFrame = 0;
@@ -3981,6 +4074,150 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
         && frameNumber >= static_cast<unsigned>(proofActorCameraAlignedFrame + proofActorAlignedScreenshotDelay)
         && (proofActorAlignedScreenshotMinFrame < 0
             || frameNumber >= static_cast<unsigned>(proofActorAlignedScreenshotMinFrame));
+    const bool proofPortraitClearRequired
+        = std::getenv("OPENMW_WORLD_VIEWER_REQUIRE_PORTRAIT_CLEAR") != nullptr;
+    const bool proofPortraitCapturePending
+        = proofScreenshotFrameReached || proofScreenshotReadyFramesReached || proofActorAlignedScreenshotReached;
+    bool proofPortraitClear = !proofPortraitClearRequired;
+    std::string proofPortraitRejectReason;
+    FalloutProofPortraitPose proofPortraitPose;
+    float proofPortraitHeadX = -1.f;
+    float proofPortraitHeadY = -1.f;
+    float proofPortraitLeftHandOffsetZ = std::numeric_limits<float>::quiet_NaN();
+    float proofPortraitRightHandOffsetZ = std::numeric_limits<float>::quiet_NaN();
+    float proofPortraitHeadMotion = std::numeric_limits<float>::quiet_NaN();
+    float proofPortraitForwardDot = std::numeric_limits<float>::quiet_NaN();
+    if (proofPortraitClearRequired && proofPortraitCapturePending && mWorld != nullptr && mViewer != nullptr)
+    {
+        const char* actorRefText = std::getenv("OPENMW_WORLD_VIEWER_START_CAMERA_FOLLOW_REF");
+        MWWorld::Ptr portraitActor;
+        if (actorRefText != nullptr && *actorRefText != '\0')
+        {
+            const ESM::RefId actorRef = makeProofRefId(actorRefText);
+            portraitActor = mWorld->searchPtr(actorRef, true, false);
+            if (portraitActor.isEmpty())
+            {
+                if (const ESM::FormId* formId = actorRef.getIf<ESM::FormId>())
+                    portraitActor = MWBase::Environment::get().getWorldModel()->getPtr(*formId);
+            }
+        }
+        proofPortraitPose = resolveFalloutProofPortraitPose(portraitActor);
+
+        bool frameClear = true;
+        if (!proofPortraitPose.mHeadResolved)
+        {
+            frameClear = false;
+            proofPortraitRejectReason = "head-unresolved";
+        }
+
+        const osg::Camera* renderCamera = mViewer->getCamera();
+        const osg::Viewport* viewport = renderCamera != nullptr ? renderCamera->getViewport() : nullptr;
+        if (frameClear && viewport != nullptr && viewport->width() > 0.0 && viewport->height() > 0.0)
+        {
+            const osg::Vec3d window = proofPortraitPose.mHeadCenter * renderCamera->getViewMatrix()
+                * renderCamera->getProjectionMatrix() * viewport->computeWindowMatrix();
+            proofPortraitHeadX = static_cast<float>((window.x() - viewport->x()) / viewport->width());
+            proofPortraitHeadY = static_cast<float>((window.y() - viewport->y()) / viewport->height());
+            const float minHeadX = readProofFloat("OPENMW_WORLD_VIEWER_PORTRAIT_MIN_HEAD_X", 0.30f);
+            const float maxHeadX = readProofFloat("OPENMW_WORLD_VIEWER_PORTRAIT_MAX_HEAD_X", 0.70f);
+            const float minHeadY = readProofFloat("OPENMW_WORLD_VIEWER_PORTRAIT_MIN_HEAD_Y", 0.38f);
+            const float maxHeadY = readProofFloat("OPENMW_WORLD_VIEWER_PORTRAIT_MAX_HEAD_Y", 0.72f);
+            if (proofPortraitHeadX < minHeadX || proofPortraitHeadX > maxHeadX
+                || proofPortraitHeadY < minHeadY || proofPortraitHeadY > maxHeadY)
+            {
+                frameClear = false;
+                proofPortraitRejectReason = "head-outside-portrait-safe-area";
+            }
+        }
+        else if (frameClear)
+        {
+            frameClear = false;
+            proofPortraitRejectReason = "viewport-unresolved";
+        }
+
+        const float maximumHandOffsetZ
+            = readProofFloat("OPENMW_WORLD_VIEWER_PORTRAIT_MAX_HAND_OFFSET_Z", -18.f);
+        if (proofPortraitPose.mLeftHandResolved)
+        {
+            proofPortraitLeftHandOffsetZ
+                = static_cast<float>(proofPortraitPose.mLeftHandCenter.z() - proofPortraitPose.mHeadCenter.z());
+            if (proofPortraitLeftHandOffsetZ > maximumHandOffsetZ)
+            {
+                frameClear = false;
+                proofPortraitRejectReason = "left-hand-near-face";
+            }
+        }
+        else
+        {
+            frameClear = false;
+            proofPortraitRejectReason = "left-hand-unresolved";
+        }
+        if (proofPortraitPose.mRightHandResolved)
+        {
+            proofPortraitRightHandOffsetZ
+                = static_cast<float>(proofPortraitPose.mRightHandCenter.z() - proofPortraitPose.mHeadCenter.z());
+            if (proofPortraitRightHandOffsetZ > maximumHandOffsetZ)
+            {
+                frameClear = false;
+                proofPortraitRejectReason = "right-hand-near-face";
+            }
+        }
+        else
+        {
+            frameClear = false;
+            proofPortraitRejectReason = "right-hand-unresolved";
+        }
+
+        if (proofPortraitPose.mHeadResolved && proofPortraitPreviousHeadResolved)
+        {
+            proofPortraitHeadMotion
+                = static_cast<float>((proofPortraitPose.mHeadCenter - proofPortraitPreviousHead).length());
+            proofPortraitForwardDot
+                = static_cast<float>(proofPortraitPose.mHeadForward * proofPortraitPreviousForward);
+            const float maximumHeadMotion
+                = readProofFloat("OPENMW_WORLD_VIEWER_PORTRAIT_MAX_HEAD_MOTION", 1.5f);
+            const float minimumForwardDot
+                = readProofFloat("OPENMW_WORLD_VIEWER_PORTRAIT_MIN_FORWARD_DOT", 0.995f);
+            if (proofPortraitHeadMotion > maximumHeadMotion || proofPortraitForwardDot < minimumForwardDot)
+            {
+                frameClear = false;
+                proofPortraitRejectReason = "head-pose-unstable";
+            }
+        }
+        else if (proofPortraitPose.mHeadResolved)
+        {
+            frameClear = false;
+            proofPortraitRejectReason = "head-stability-warmup";
+        }
+
+        if (proofPortraitPose.mHeadResolved)
+        {
+            proofPortraitPreviousHead = proofPortraitPose.mHeadCenter;
+            proofPortraitPreviousForward = proofPortraitPose.mHeadForward;
+            proofPortraitPreviousHeadResolved = true;
+        }
+        else
+            proofPortraitPreviousHeadResolved = false;
+
+        proofPortraitClearFrames = frameClear ? proofPortraitClearFrames + 1 : 0;
+        const int requiredClearFrames
+            = std::max(1, readProofInt("OPENMW_WORLD_VIEWER_PORTRAIT_CLEAR_FRAMES", 8));
+        proofPortraitClear = frameClear && proofPortraitClearFrames >= requiredClearFrames;
+        if (frameClear && !proofPortraitClear)
+            proofPortraitRejectReason = "clear-frame-settling";
+        if (!proofPortraitClear && (static_cast<int>(frameNumber) - proofPortraitLastRejectLogFrame >= 30
+            || proofPortraitClearFrames == requiredClearFrames - 1))
+        {
+            proofPortraitLastRejectLogFrame = static_cast<int>(frameNumber);
+            Log(Debug::Info) << "World viewer portrait acceptance: frame=" << frameNumber
+                             << " screenshotIndex=" << proofScreenshotFrameIndex << " headNormalized=("
+                             << proofPortraitHeadX << "," << proofPortraitHeadY << ") handOffsetZ=("
+                             << proofPortraitLeftHandOffsetZ << "," << proofPortraitRightHandOffsetZ
+                             << ") headMotion=" << proofPortraitHeadMotion << " forwardDot="
+                             << proofPortraitForwardDot << " clearFrames=" << proofPortraitClearFrames << "/"
+                             << requiredClearFrames << " status=reject reason=" << proofPortraitRejectReason;
+        }
+    }
     if ((proofScreenshotFrameReached || proofScreenshotReadyFramesReached || proofActorAlignedScreenshotReached)
         && mScreenCaptureHandler != nullptr)
     {
@@ -4029,6 +4266,16 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
             worldViewerTrace(frameNumber, "camera-wait-lua-finish.end");
             return true;
         }
+        if (!proofPortraitClear)
+        {
+            worldViewerTrace(frameNumber, "portrait-clear-wait-render.begin");
+            mViewer->renderingTraversals();
+            worldViewerTrace(frameNumber, "portrait-clear-wait-render.end");
+            worldViewerTrace(frameNumber, "portrait-clear-wait-lua-finish.begin");
+            mLuaWorker->finishUpdate(frameStart, frameNumber, *stats);
+            worldViewerTrace(frameNumber, "portrait-clear-wait-lua-finish.end");
+            return true;
+        }
 
         if (viewerTelemetryEnabled("OPENMW_WORLD_VIEWER_TELEMETRY") && mWorld != nullptr)
         {
@@ -4041,6 +4288,16 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
         }
 
         worldViewerTrace(frameNumber, "screenshot-queue.begin");
+        if (proofPortraitClearRequired)
+        {
+            Log(Debug::Info) << "World viewer portrait capture accepted: frame=" << frameNumber
+                             << " screenshotIndex=" << proofScreenshotFrameIndex << " headNormalized=("
+                             << proofPortraitHeadX << "," << proofPortraitHeadY << ") handOffsetZ=("
+                             << proofPortraitLeftHandOffsetZ << "," << proofPortraitRightHandOffsetZ
+                             << ") headMotion=" << proofPortraitHeadMotion << " forwardDot="
+                             << proofPortraitForwardDot << " clearFrames=" << proofPortraitClearFrames
+                             << " status=pass";
+        }
         Log(Debug::Info) << "FNV/ESM4 proof: queuing GUI-inclusive native screenshot at frame " << frameNumber
                          << " hour=" << mWorld->getTimeStamp().getHour()
                          << " weatherId=" << mWorld->getCurrentWeatherScriptId()
@@ -4053,6 +4310,8 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
             proofScreenshotReadyQueued = true;
         if (proofActorAlignedScreenshotReached)
             proofActorAlignedScreenshotQueued = true;
+        if (proofPortraitClearRequired)
+            proofPortraitClearFrames = 0;
         worldViewerTrace(frameNumber, "screenshot-queue.end");
     }
 
