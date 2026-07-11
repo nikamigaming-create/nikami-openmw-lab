@@ -9,6 +9,24 @@ namespace MWWorld
 {
     namespace
     {
+        TEST(MWWorldWeatherTest, samplesRetailFNVHighNoonToDayAfternoonSegment)
+        {
+            FalloutWeatherColorSamples ambient{};
+            ambient[1] = osg::Vec4f(87.f / 255.f, 105.f / 255.f, 138.f / 255.f, 1.f);
+            ambient[4] = osg::Vec4f(99.f / 255.f, 120.f / 255.f, 154.f / 255.f, 1.f);
+            TimeOfDaySettings settings{};
+            settings.mNightEnd = 6.f;
+            settings.mDayStart = 8.f;
+            settings.mDayEnd = 18.f;
+            settings.mNightStart = 20.f;
+
+            const osg::Vec4f sampled = sampleFalloutWeatherColor(ambient, 14.4118919f, settings);
+
+            EXPECT_NEAR(sampled.r(), 0.369318515f, 0.000001f);
+            EXPECT_NEAR(sampled.g(), 0.4469423f, 0.000001f);
+            EXPECT_NEAR(sampled.b(), 0.578699231f, 0.000001f);
+        }
+
         // MASSER PHASES
 
         TEST(MWWorldWeatherTest, masserPhasesFullToWaningGibbousAtCorrectTimes)

@@ -2,7 +2,9 @@
 #define GAME_MWWORLD_WEATHER_H
 
 #include <cstdint>
+#include <array>
 #include <map>
+#include <optional>
 #include <span>
 #include <string>
 
@@ -94,6 +96,11 @@ namespace MWWorld
         }
     };
 
+    using FalloutWeatherColorSamples = std::array<osg::Vec4f, 6>;
+
+    osg::Vec4f sampleFalloutWeatherColor(
+        const FalloutWeatherColorSamples& samples, float gameHour, const TimeOfDaySettings& timeSettings);
+
     /// Interpolates between 4 data points (sunrise, day, sunset, night) based on the time of day.
     /// The template value could be a floating point number, or a color.
     template <typename T>
@@ -149,6 +156,17 @@ namespace MWWorld
         TimeOfDayInterpolator<osg::Vec4f> mAmbientColor;
         // Sun (directional) lighting color
         TimeOfDayInterpolator<osg::Vec4f> mSunColor;
+
+        // FO3/FNV add high-noon (and, in FNV, serialized midnight) samples to
+        // the four legacy weather colors. The afternoon high-noon -> day
+        // segment is retail-measured; other segments retain the legacy path
+        // until a record supplies the extra sample.
+        std::optional<FalloutWeatherColorSamples> mFalloutSkyColors;
+        std::optional<FalloutWeatherColorSamples> mFalloutFogColors;
+        std::optional<FalloutWeatherColorSamples> mFalloutSkyLowerColors;
+        std::optional<FalloutWeatherColorSamples> mFalloutHorizonColors;
+        std::optional<FalloutWeatherColorSamples> mFalloutAmbientColors;
+        std::optional<FalloutWeatherColorSamples> mFalloutSunlightColors;
 
         // Fog depth/density
         TimeOfDayInterpolator<float> mLandFogDepth;
@@ -356,6 +374,7 @@ namespace MWWorld
         int getNextWeatherID() const { return mNextWeather; }
 
         void forceWeather(const int weatherID);
+        bool forceWeather(const ESM::RefId& weatherID);
 
         float getTransitionFactor() const { return mTransitionFactor; }
 
@@ -421,6 +440,8 @@ namespace MWWorld
 
         void addWeather(
             const std::string& name, float dlFactor, float dlOffset, const std::string& particleEffect = "");
+
+        void importFalloutWeather();
 
         void importRegions();
 

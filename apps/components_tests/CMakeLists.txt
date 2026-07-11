@@ -72,6 +72,7 @@ file(GLOB UNITTEST_SRC_FILES
     esm4/testlip.cpp
     esm4/testloadbehavior.cpp
     esm4/testloadweap.cpp
+    esm4/testloadweather.cpp
 
     fx/lexer.cpp
     fx/technique.cpp

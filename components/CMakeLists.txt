@@ -287,6 +287,7 @@ add_component_dir (esm4
     loadtree
     loadtxst
     loadweap
+    loadwthr
     loadwrld
     magiceffectid
     reader

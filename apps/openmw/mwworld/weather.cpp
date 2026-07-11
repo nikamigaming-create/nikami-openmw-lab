@@ -12,6 +12,7 @@
 #include <components/esm3/esmwriter.hpp>
 #include <components/esm3/loadregn.hpp>
 #include <components/esm3/weatherstate.hpp>
+#include <components/esm4/loadwthr.hpp>
 
 #include "../mwbase/environment.hpp"
 #include "../mwbase/soundmanager.hpp"
@@ -85,6 +86,35 @@ namespace MWWorld
                 getOptionalWeatherColour(weatherName, colourGroup, "Sunset", fallback.getSunsetValue()),
                 getOptionalWeatherColour(weatherName, colourGroup, "Night", fallback.getNightValue()));
         }
+
+        osg::Vec4f falloutColor(const ESM4::Weather::Color& value)
+        {
+            constexpr float byteToFloat = 1.f / 255.f;
+            return osg::Vec4f(value.r * byteToFloat, value.g * byteToFloat, value.b * byteToFloat, 1.f);
+        }
+
+        FalloutWeatherColorSamples falloutColorSamples(
+            const ESM4::Weather& weather, ESM4::Weather::ColorType type)
+        {
+            FalloutWeatherColorSamples result;
+            for (std::size_t i = 0; i < result.size(); ++i)
+                result[i] = falloutColor(weather.mColors[type][i]);
+            return result;
+        }
+    }
+
+    osg::Vec4f sampleFalloutWeatherColor(
+        const FalloutWeatherColorSamples& samples, float gameHour, const TimeOfDaySettings& timeSettings)
+    {
+        constexpr float highNoon = 12.f;
+        // xNVSE measured NVWastelandGS at 14.4118919 as the exact linear
+        // blend from High Noon to Day across 12:00 -> sunset begin 18:00.
+        // Callers deliberately use the legacy four-sample path outside this
+        // measured interval until each remaining retail segment is captured.
+        const float factor = timeSettings.mDayEnd > highNoon
+            ? std::clamp((gameHour - highNoon) / (timeSettings.mDayEnd - highNoon), 0.f, 1.f)
+            : 0.f;
+        return lerp(samples[ESM4::Weather::Time_HighNoon], samples[ESM4::Weather::Time_Day], factor);
     }
 
     template <typename T>
@@ -705,6 +735,8 @@ namespace MWWorld
             mRegions.insert(std::make_pair(it->mId, RegionWeather(*it)));
         }
 
+        importFalloutWeather();
+
         forceWeather(0);
     }
 
@@ -730,6 +762,15 @@ namespace MWWorld
             return &*it;
 
         return nullptr;
+    }
+
+    bool WeatherManager::forceWeather(const ESM::RefId& weatherID)
+    {
+        const Weather* weather = getWeather(weatherID);
+        if (weather == nullptr)
+            return false;
+        forceWeather(weather->mScriptId);
+        return true;
     }
 
     void WeatherManager::changeWeather(const ESM::RefId& regionID, const ESM::RefId& weatherID)
@@ -1187,6 +1228,65 @@ namespace MWWorld
         mWeatherSettings.push_back(std::move(weather));
     }
 
+    void WeatherManager::importFalloutWeather()
+    {
+        std::size_t imported = 0;
+        for (const ESM4::Weather& source : mStore.get<ESM4::Weather>())
+        {
+            const int scriptId = static_cast<int>(mWeatherSettings.size());
+            // Construct from the known-complete Clear defaults, then replace
+            // every FO3/FNV field currently consumed by the flat renderer.
+            Weather weather(source.mId, scriptId, "Clear", 1000.f, mRainSpeed, 1.f, 0.f, "");
+            weather.mName = source.mEditorId;
+            for (auto it = source.mCloudTextures.rbegin(); it != source.mCloudTextures.rend(); ++it)
+            {
+                if (!it->empty())
+                {
+                    weather.mCloudTexture = *it;
+                    break;
+                }
+            }
+            const FalloutWeatherColorSamples sky
+                = falloutColorSamples(source, ESM4::Weather::Color_SkyUpper);
+            const FalloutWeatherColorSamples fog = falloutColorSamples(source, ESM4::Weather::Color_Fog);
+            const FalloutWeatherColorSamples ambient
+                = falloutColorSamples(source, ESM4::Weather::Color_Ambient);
+            const FalloutWeatherColorSamples sunlight
+                = falloutColorSamples(source, ESM4::Weather::Color_Sunlight);
+            const FalloutWeatherColorSamples skyLower
+                = falloutColorSamples(source, ESM4::Weather::Color_SkyLower);
+            const FalloutWeatherColorSamples horizon
+                = falloutColorSamples(source, ESM4::Weather::Color_Horizon);
+            weather.mSkyColor = TimeOfDayInterpolator<osg::Vec4f>(sky[0], sky[1], sky[2], sky[3]);
+            weather.mFogColor = TimeOfDayInterpolator<osg::Vec4f>(fog[0], fog[1], fog[2], fog[3]);
+            weather.mAmbientColor = TimeOfDayInterpolator<osg::Vec4f>(ambient[0], ambient[1], ambient[2], ambient[3]);
+            weather.mSunColor
+                = TimeOfDayInterpolator<osg::Vec4f>(sunlight[0], sunlight[1], sunlight[2], sunlight[3]);
+            weather.mSkyLowerColor
+                = TimeOfDayInterpolator<osg::Vec4f>(skyLower[0], skyLower[1], skyLower[2], skyLower[3]);
+            weather.mSkyHorizonColor
+                = TimeOfDayInterpolator<osg::Vec4f>(horizon[0], horizon[1], horizon[2], horizon[3]);
+            const bool hasHighNoon = source.mImageSpaceModifiers[ESM4::Weather::Time_HighNoon].isSet()
+                || ambient[ESM4::Weather::Time_HighNoon] != osg::Vec4f(0.f, 0.f, 0.f, 1.f);
+            if (hasHighNoon)
+            {
+                weather.mFalloutSkyColors = sky;
+                weather.mFalloutFogColors = fog;
+                weather.mFalloutAmbientColors = ambient;
+                weather.mFalloutSunlightColors = sunlight;
+                weather.mFalloutSkyLowerColors = skyLower;
+                weather.mFalloutHorizonColors = horizon;
+            }
+            weather.mWindSpeed = static_cast<float>(source.mData.windSpeed) / 255.f;
+            weather.mCloudSpeed = static_cast<float>(source.mData.lowerCloudSpeed) / 255.f;
+            weather.mGlareView = static_cast<float>(source.mData.sunGlare) / 255.f;
+            mWeatherSettings.push_back(std::move(weather));
+            ++imported;
+        }
+        if (imported != 0)
+            Log(Debug::Info) << "FNV/ESM4: imported weather records count=" << imported;
+    }
+
     inline void WeatherManager::importRegions()
     {
         for (const ESM::Region& region : mStore.get<ESM::Region>())
@@ -1376,12 +1476,25 @@ namespace MWWorld
                 > mTimeSettings.mNightStart + mTimeSettings.mStarsPostSunsetStart - mTimeSettings.mStarsFadingDuration);
 
         mResult.mFogDepth = current.mLandFogDepth.getValue(gameHour, mTimeSettings, "Fog");
-        mResult.mFogColor = current.mFogColor.getValue(gameHour, mTimeSettings, "Fog");
-        mResult.mAmbientColor = current.mAmbientColor.getValue(gameHour, mTimeSettings, "Ambient");
-        mResult.mSunColor = current.mSunColor.getValue(gameHour, mTimeSettings, "Sun");
-        mResult.mSkyColor = current.mSkyColor.getValue(gameHour, mTimeSettings, "Sky");
-        mResult.mSkyLowerColor = current.mSkyLowerColor.getValue(gameHour, mTimeSettings, "Sky");
-        mResult.mSkyHorizonColor = current.mSkyHorizonColor.getValue(gameHour, mTimeSettings, "Sky");
+        const bool measuredFalloutAfternoon = gameHour >= 12.f && gameHour <= mTimeSettings.mDayEnd;
+        mResult.mFogColor = current.mFalloutFogColors && measuredFalloutAfternoon
+            ? sampleFalloutWeatherColor(*current.mFalloutFogColors, gameHour, mTimeSettings)
+            : current.mFogColor.getValue(gameHour, mTimeSettings, "Fog");
+        mResult.mAmbientColor = current.mFalloutAmbientColors && measuredFalloutAfternoon
+            ? sampleFalloutWeatherColor(*current.mFalloutAmbientColors, gameHour, mTimeSettings)
+            : current.mAmbientColor.getValue(gameHour, mTimeSettings, "Ambient");
+        mResult.mSunColor = current.mFalloutSunlightColors && measuredFalloutAfternoon
+            ? sampleFalloutWeatherColor(*current.mFalloutSunlightColors, gameHour, mTimeSettings)
+            : current.mSunColor.getValue(gameHour, mTimeSettings, "Sun");
+        mResult.mSkyColor = current.mFalloutSkyColors && measuredFalloutAfternoon
+            ? sampleFalloutWeatherColor(*current.mFalloutSkyColors, gameHour, mTimeSettings)
+            : current.mSkyColor.getValue(gameHour, mTimeSettings, "Sky");
+        mResult.mSkyLowerColor = current.mFalloutSkyLowerColors && measuredFalloutAfternoon
+            ? sampleFalloutWeatherColor(*current.mFalloutSkyLowerColors, gameHour, mTimeSettings)
+            : current.mSkyLowerColor.getValue(gameHour, mTimeSettings, "Sky");
+        mResult.mSkyHorizonColor = current.mFalloutHorizonColors && measuredFalloutAfternoon
+            ? sampleFalloutWeatherColor(*current.mFalloutHorizonColors, gameHour, mTimeSettings)
+            : current.mSkyHorizonColor.getValue(gameHour, mTimeSettings, "Sky");
         mResult.mNightFade = mNightFade.getValue(gameHour, mTimeSettings, "Stars");
         mResult.mDLFogFactor = current.mDL.FogFactor;
         mResult.mDLFogOffset = current.mDL.FogOffset;
