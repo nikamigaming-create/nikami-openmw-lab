@@ -3588,10 +3588,20 @@ namespace MWRender
 
             const std::string legacyPrefix = getFalloutHeadFrameSurfaceLegacyPrefix(model, headgearStaticPart);
             constexpr float degreesToRadians = 0.017453292519943295f;
+            // Retail FO3/FNV inserts the static FaceGen mouth, teeth, tongue, eye, brow,
+            // beard, and scalp-hair children beneath an identity BSFaceGenNiNodeBiped
+            // with this authored +90-degree Y basis. SceneUtil::attach consumes the
+            // original wrapper, so restore that measured child transform here. TES5
+            // actor-space face surfaces use a different path and keep their zero default.
+            const float defaultYDegrees = !headgearStaticPart && !legacyPrefix.empty()
+                    && !useTes5HeadFrameSurfacePrefix(model, headgearStaticPart)
+                ? 90.f
+                : 0.f;
             const float xDegrees
                 = readFalloutProofFloatWithLegacy(prefix + "_ROTATION_X", legacyPrefix + "_ROTATION_X", 0.f);
             const float yDegrees
-                = readFalloutProofFloatWithLegacy(prefix + "_ROTATION_Y", legacyPrefix + "_ROTATION_Y", 0.f);
+                = readFalloutProofFloatWithLegacy(
+                    prefix + "_ROTATION_Y", legacyPrefix + "_ROTATION_Y", defaultYDegrees);
             const float zDegrees
                 = readFalloutProofFloatWithLegacy(prefix + "_ROTATION_Z", legacyPrefix + "_ROTATION_Z", 0.f);
             const osg::Quat x(xDegrees * degreesToRadians, osg::Vec3f(1.f, 0.f, 0.f));
