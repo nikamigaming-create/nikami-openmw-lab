@@ -1050,6 +1050,8 @@ namespace
         return bestEye;
     }
 
+    bool resolveFalloutProofHeadPose(const MWWorld::Ptr& actor, osg::Vec3d& center, osg::Vec3d& forward);
+
     bool enforceWorldViewerStaticCamera(MWWorld::World& world, unsigned frameNumber)
     {
         if (!worldViewerStaticCameraRequested())
@@ -1106,6 +1108,22 @@ namespace
                     const float heading = followedPosition.rot[2];
                     eye.x() = followedPosition.pos[0] + std::sin(heading) * distance;
                     eye.y() = followedPosition.pos[1] + std::cos(heading) * distance;
+                }
+
+                if (std::getenv("OPENMW_WORLD_VIEWER_START_CAMERA_FOLLOW_HEAD") != nullptr)
+                {
+                    osg::Vec3d headCenter;
+                    osg::Vec3d headForward;
+                    if (resolveFalloutProofHeadPose(followed, headCenter, headForward))
+                    {
+                        const float focus
+                            = readProofFloat("OPENMW_WORLD_VIEWER_START_CAMERA_FOLLOW_HEAD_FOCUS", 4.f);
+                        const float distance
+                            = readProofFloat("OPENMW_WORLD_VIEWER_START_CAMERA_FOLLOW_HEAD_DISTANCE", 86.f);
+                        target = headCenter + headForward * focus;
+                        eye = target + headForward * distance;
+                        eye.z() += readProofFloat("OPENMW_WORLD_VIEWER_START_CAMERA_FOLLOW_HEAD_EYE_Z", 0.f);
+                    }
                 }
             }
         }
@@ -1321,8 +1339,12 @@ namespace
             if (lowerName == "bip01 head" || lowerName == "bip01 head_nub")
             {
                 const osg::Matrixd localToWorld = osg::computeLocalToWorld(getNodePath());
-                mHeadCenter += localToWorld.getTrans();
-                ++mHeadMatched;
+                mHeadBoneCenter += localToWorld.getTrans();
+                osg::Vec3d forward
+                    = osg::Matrixd::transform3x3(osg::Vec3d(0.0, 1.0, 0.0), localToWorld);
+                if (forward.normalize() > 1e-6)
+                    mHeadForward += forward;
+                ++mHeadBoneMatched;
             }
 
             if (isFalloutProofFaceNodeName(lowerName))
@@ -1358,11 +1380,21 @@ namespace
 
         const osg::BoundingBox& getBounds() const { return mBounds; }
         unsigned int getMatched() const { return mMatched; }
-        unsigned int getHeadMatched() const { return mHeadMatched; }
+        unsigned int getHeadMatched() const { return mHeadMatched + mHeadBoneMatched; }
+        unsigned int getHeadBoneMatched() const { return mHeadBoneMatched; }
         unsigned int getFeatureMatched() const { return mFeatureMatched; }
         osg::Vec3d getHeadCenter() const
         {
+            if (mHeadBoneMatched > 0)
+                return mHeadBoneCenter / static_cast<double>(mHeadBoneMatched);
             return mHeadMatched > 0 ? mHeadCenter / static_cast<double>(mHeadMatched) : osg::Vec3d();
+        }
+        osg::Vec3d getHeadForward() const
+        {
+            osg::Vec3d forward = mHeadForward;
+            if (forward.normalize() <= 1e-6)
+                return osg::Vec3d();
+            return forward;
         }
         osg::Vec3d getFeatureCenter() const
         {
@@ -1371,12 +1403,30 @@ namespace
 
     private:
         osg::BoundingBox mBounds;
+        osg::Vec3d mHeadBoneCenter;
+        osg::Vec3d mHeadForward;
         osg::Vec3d mHeadCenter;
         osg::Vec3d mFeatureCenter;
         unsigned int mMatched = 0;
+        unsigned int mHeadBoneMatched = 0;
         unsigned int mHeadMatched = 0;
         unsigned int mFeatureMatched = 0;
     };
+
+    bool resolveFalloutProofHeadPose(const MWWorld::Ptr& actor, osg::Vec3d& center, osg::Vec3d& forward)
+    {
+        if (actor.isEmpty() || actor.getRefData().getBaseNode() == nullptr)
+            return false;
+
+        FalloutProofFaceBoundsVisitor visitor;
+        actor.getRefData().getBaseNode()->accept(visitor);
+        if (visitor.getHeadBoneMatched() == 0)
+            return false;
+
+        center = visitor.getHeadCenter();
+        forward = visitor.getHeadForward();
+        return forward.length2() > 1e-6;
+    }
 
     template <typename T>
     ESM::RefId findEsm4EditorId(const MWWorld::ESMStore& store, std::string_view editorId)
@@ -3378,7 +3428,15 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                         const osg::Vec3d headCenter = faceBoundsVisitor.getHeadCenter();
                         const osg::Vec3d featureCenter = faceBoundsVisitor.getFeatureCenter();
                         const osg::Vec3d faceVector = featureCenter - headCenter;
-                        if (faceBoundsVisitor.getHeadMatched() > 0 && faceBoundsVisitor.getFeatureMatched() > 0)
+                        const osg::Vec3d headForward = faceBoundsVisitor.getHeadForward();
+                        if (faceBoundsVisitor.getHeadBoneMatched() > 0)
+                        {
+                            const float forwardFocus
+                                = readProofFloat("OPENMW_PROOF_ACTOR_VIEW_HEAD_FORWARD_FOCUS", 4.f);
+                            actorAim = headCenter + headForward * forwardFocus;
+                        }
+                        else if (faceBoundsVisitor.getHeadMatched() > 0
+                            && faceBoundsVisitor.getFeatureMatched() > 0)
                         {
                             const float featureFocus
                                 = readProofFloat("OPENMW_PROOF_ACTOR_VIEW_FEATURE_FOCUS", 0.3f);
@@ -3391,7 +3449,16 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                         cameraZ = actorAim.z() + (offsetZ - targetZ);
                         const double faceVectorPlanar
                             = std::sqrt(faceVector.x() * faceVector.x() + faceVector.y() * faceVector.y());
+                        const double headForwardPlanar
+                            = std::sqrt(headForward.x() * headForward.x() + headForward.y() * headForward.y());
                         if (std::getenv("OPENMW_PROOF_ACTOR_VIEW_USE_FACE_AXIS") != nullptr
+                            && faceBoundsVisitor.getHeadBoneMatched() > 0 && headForwardPlanar > 1e-3)
+                        {
+                            faceAxis.set(static_cast<float>(headForward.x() / headForwardPlanar),
+                                static_cast<float>(headForward.y() / headForwardPlanar));
+                            useFaceAxisCamera = true;
+                        }
+                        else if (std::getenv("OPENMW_PROOF_ACTOR_VIEW_USE_FACE_AXIS") != nullptr
                             && faceBoundsVisitor.getHeadMatched() > 0 && faceBoundsVisitor.getFeatureMatched() > 0
                             && faceVectorPlanar > 1e-3)
                         {
@@ -3406,10 +3473,13 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                                          << bounds.zMax() << ") focus=(" << actorAim.x() << "," << actorAim.y()
                                          << "," << actorAim.z() << ") cameraZ=" << cameraZ
                                          << " headMatched=" << faceBoundsVisitor.getHeadMatched()
+                                         << " headBoneMatched=" << faceBoundsVisitor.getHeadBoneMatched()
                                          << " featureMatched=" << faceBoundsVisitor.getFeatureMatched()
                                          << " headCenter=(" << headCenter.x() << "," << headCenter.y() << ","
                                          << headCenter.z() << ") featureCenter=(" << featureCenter.x() << ","
-                                         << featureCenter.y() << "," << featureCenter.z() << ") faceAxis=("
+                                         << featureCenter.y() << "," << featureCenter.z() << ") headForward=("
+                                         << headForward.x() << "," << headForward.y() << "," << headForward.z()
+                                         << ") faceAxis=("
                                          << faceAxis.x() << "," << faceAxis.y()
                                          << ") useFaceAxisCamera=" << useFaceAxisCamera;
                     }

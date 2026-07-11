@@ -491,6 +491,11 @@ namespace MWClass
             if (traits != nullptr && traits->mIsFONV)
                 Log(Debug::Info) << "FNV/ESM4 diag: native FNV NPC AI package movement disabled by proof env for "
                                  << traits->mEditorId;
+            // The proof switch is a stable terminal state for this actor.  Leaving the
+            // sequence uninitialised makes every update retry this function and floods
+            // the log once per actor per frame, which can prevent a frame-driven proof
+            // capture from ever reaching its requested frame before the wall timeout.
+            data.mFnvAiSequenceInitialised = true;
             return;
         }
 

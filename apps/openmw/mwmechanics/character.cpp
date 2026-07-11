@@ -980,7 +980,10 @@ namespace MWMechanics
 
         if (isFalloutActor(mPtr))
         {
-            if (mAnimation->hasAnimation("weaponpose") && !falloutFurnitureActive)
+            const bool hideEquippedWeaponForProof
+                = std::getenv("OPENMW_FNV_PROOF_HIDE_EQUIPPED_WEAPON") != nullptr;
+            if (mAnimation->hasAnimation("weaponpose") && !falloutFurnitureActive
+                && !hideEquippedWeaponForProof)
             {
                 MWRender::Animation::AnimPriority weaponPosePriority(Priority_Default);
                 weaponPosePriority[MWRender::BoneGroup_LeftArm] = Priority_Weapon;
@@ -997,10 +1000,12 @@ namespace MWMechanics
                 playBlendedAnimation("weaponpose", weaponPosePriority, weaponPoseMask, false, 1.0f, "start", "stop",
                     0.f, std::numeric_limits<uint32_t>::max(), true);
             }
-            else if (falloutFurnitureActive && mAnimation->isPlaying("weaponpose"))
+            else if ((falloutFurnitureActive || hideEquippedWeaponForProof)
+                && mAnimation->isPlaying("weaponpose"))
             {
-                Log(Debug::Info) << "FNV/ESM4 diag: suppressing standing weapon pose while furniture-seated for "
-                                 << mPtr.getCellRef().getRefId();
+                Log(Debug::Info) << "FNV/ESM4 diag: suppressing standing weapon pose for "
+                                 << mPtr.getCellRef().getRefId() << " reason="
+                                 << (falloutFurnitureActive ? "furniture-seated" : "proof-weapon-hidden");
                 mAnimation->disable("weaponpose");
             }
 
