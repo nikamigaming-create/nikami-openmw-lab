@@ -1073,6 +1073,13 @@ namespace
             readProofFloat("OPENMW_WORLD_VIEWER_START_CAMERA_POS_Y", position.pos[1] - 4096.f),
             readProofFloat("OPENMW_WORLD_VIEWER_START_CAMERA_POS_Z", position.pos[2] + 2048.f));
 
+        bool headFollowResolved = false;
+        std::string headFollowActor;
+        osg::Vec3d headFollowCenter;
+        osg::Vec3d headFollowForward;
+        float headFollowFocus = 0.f;
+        float headFollowDistance = 0.f;
+
         const char* followRefText = std::getenv("OPENMW_WORLD_VIEWER_START_CAMERA_FOLLOW_REF");
         if (followRefText != nullptr && *followRefText != '\0')
         {
@@ -1123,6 +1130,12 @@ namespace
                         target = headCenter + headForward * focus;
                         eye = target + headForward * distance;
                         eye.z() += readProofFloat("OPENMW_WORLD_VIEWER_START_CAMERA_FOLLOW_HEAD_EYE_Z", 0.f);
+                        headFollowResolved = true;
+                        headFollowActor = followRefText;
+                        headFollowCenter = headCenter;
+                        headFollowForward = headForward;
+                        headFollowFocus = focus;
+                        headFollowDistance = distance;
                     }
                 }
             }
@@ -1166,6 +1179,24 @@ namespace
         }
 
         applyWorldViewerStaticCamera(camera, resolvedEye, target);
+
+        if (headFollowResolved && frameNumber % 30 == 0)
+        {
+            const osg::Vec3d expectedTarget = headFollowCenter + headFollowForward * headFollowFocus;
+            const float targetError = static_cast<float>((target - expectedTarget).length());
+            const float eyeDistance = static_cast<float>((resolvedEye - target).length());
+            const bool framingPass = cameraSequenceIndex < 0 && targetError <= 0.01f
+                && std::abs(eyeDistance - headFollowDistance) <= 0.01f;
+            Log(Debug::Info) << "World viewer actor framing: frame=" << frameNumber << " actor=\""
+                             << headFollowActor << "\" head=(" << headFollowCenter.x() << ","
+                             << headFollowCenter.y() << "," << headFollowCenter.z() << ") forward=("
+                             << headFollowForward.x() << "," << headFollowForward.y() << ","
+                             << headFollowForward.z() << ") eye=(" << resolvedEye.x() << ","
+                             << resolvedEye.y() << "," << resolvedEye.z() << ") target=(" << target.x() << ","
+                             << target.y() << "," << target.z() << ") targetError=" << targetError
+                             << " eyeDistance=" << eyeDistance << " requestedDistance=" << headFollowDistance
+                             << " status=" << (framingPass ? "pass" : "fail");
+        }
 
         static bool logged = false;
         if (!logged)
