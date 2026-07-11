@@ -245,6 +245,12 @@ void ESM4::Cell::load(ESM4::Reader& reader)
                 else
                     reader.skipSubRecordData();
                 break;
+            case ESM::fourCC("XCIM"):
+                if (subHdr.dataSize == sizeof(ESM::FormId))
+                    reader.getFormId(mImageSpace);
+                else
+                    reader.skipSubRecordData();
+                break;
             case ESM::fourCC("TVDT"):
             case ESM::fourCC("XBPS"): // Starfield
             case ESM::fourCC("XCLA"): // Starfield
@@ -259,7 +265,6 @@ void ESM4::Cell::load(ESM4::Reader& reader)
             case ESM::fourCC("XWCS"):
             case ESM::fourCC("XWCU"):
             case ESM::fourCC("XWCN"):
-            case ESM::fourCC("XCIM"):
             case ESM::fourCC("XEZN"):
             case ESM::fourCC("XWEM"):
             case ESM::fourCC("XILL"):

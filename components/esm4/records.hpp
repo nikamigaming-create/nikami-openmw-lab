@@ -80,6 +80,8 @@
 #include <components/esm4/loadtxst.hpp>
 #include <components/esm4/loadweap.hpp>
 #include <components/esm4/loadwthr.hpp>
+#include <components/esm4/loadimgs.hpp>
+#include <components/esm4/loadimad.hpp>
 #include <components/esm4/loadwrld.hpp>
 
 #endif

@@ -185,6 +185,12 @@ void ESM4::World::load(ESM4::Reader& reader)
                 else
                     reader.skipSubRecordData();
                 break;
+            case ESM::fourCC("INAM"): // FO3/FNV exterior image space
+                if (subHdr.dataSize == sizeof(ESM::FormId))
+                    reader.getFormId(mImageSpace);
+                else
+                    reader.skipSubRecordData();
+                break;
             case ESM::fourCC("PNAM"):
                 if (subHdr.dataSize == sizeof(mParentUseFlags))
                     reader.get(mParentUseFlags);
@@ -235,7 +241,6 @@ void ESM4::World::load(ESM4::Reader& reader)
             case ESM::fourCC("MODC"):
             case ESM::fourCC("MODS"):
             case ESM::fourCC("MODF"): // Model data end
-            case ESM::fourCC("INAM"): // FO3
             case ESM::fourCC("NNAM"): // FO3
             case ESM::fourCC("XNAM"): // FO3
             case ESM::fourCC("IMPS"): // FO3 Anchorage

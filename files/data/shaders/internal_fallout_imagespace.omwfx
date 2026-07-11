@@ -1,0 +1,40 @@
+uniform_vec4 uFalloutCinematic {
+    default = vec4(1.0, 0.0, 1.0, 1.0);
+}
+
+uniform_vec4 uFalloutTint {
+    default = vec4(1.0, 1.0, 1.0, 0.0);
+}
+
+uniform_vec4 uFalloutFade {
+    default = vec4(0.0, 0.0, 0.0, 0.0);
+}
+
+fragment main {
+    omw_In vec2 omw_TexCoord;
+
+    void main()
+    {
+        vec4 source = omw_GetLastShader(omw_TexCoord);
+        vec3 color = source.rgb;
+
+        // ISHDRBLENDINSHADERCIN.pso, package 13: luminance/saturation,
+        // weighted tint, then brightness/contrast about average luminance.
+        float luminance = dot(color, vec3(0.299, 0.587, 0.114));
+        color = mix(vec3(luminance), color, uFalloutCinematic.x);
+        color = mix(color, vec3(luminance) * uFalloutTint.rgb, uFalloutTint.a);
+        color = ((color * uFalloutCinematic.w) - uFalloutCinematic.y)
+            * uFalloutCinematic.z + uFalloutCinematic.y;
+        color = mix(color, uFalloutFade.rgb, uFalloutFade.a);
+
+        omw_FragColor = vec4(color, source.a);
+    }
+}
+
+technique {
+    description = "Internal Fallout 3/New Vegas image-space cinematic stage";
+    version = "1.0";
+    author = "OpenMW Fallout compatibility overlay";
+    passes = main;
+    flags = hidden;
+}

@@ -11,6 +11,7 @@
 #include <osg/Vec4f>
 
 #include <components/esm/refid.hpp>
+#include <components/esm/formid.hpp>
 #include <components/fallback/fallback.hpp>
 
 #include "../mwbase/soundmanager.hpp"
@@ -167,6 +168,7 @@ namespace MWWorld
         std::optional<FalloutWeatherColorSamples> mFalloutHorizonColors;
         std::optional<FalloutWeatherColorSamples> mFalloutAmbientColors;
         std::optional<FalloutWeatherColorSamples> mFalloutSunlightColors;
+        std::array<ESM::FormId, 6> mFalloutImageSpaceModifiers{};
 
         // Fog depth/density
         TimeOfDayInterpolator<float> mLandFogDepth;
