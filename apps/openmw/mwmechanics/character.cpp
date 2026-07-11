@@ -897,8 +897,11 @@ namespace MWMechanics
 
         MWRender::Animation::AnimPriority priority = getIdlePriority(mIdleState);
         size_t numLoops = std::numeric_limits<uint32_t>::max();
-        const bool falloutFurnitureSeated
-            = mPtr.getType() == ESM::REC_NPC_4 && MWClass::ESM4Npc::isFurnitureSeated(mPtr);
+        const MWClass::FalloutFurnitureState falloutFurnitureState = mPtr.getType() == ESM::REC_NPC_4
+            ? MWClass::ESM4Npc::getFurnitureState(mPtr)
+            : MWClass::FalloutFurnitureState::None;
+        const bool falloutFurnitureSeated = falloutFurnitureState == MWClass::FalloutFurnitureState::Seated;
+        const bool falloutFurnitureActive = falloutFurnitureState != MWClass::FalloutFurnitureState::None;
 
         // Only play "idleswim" or "idlesneak" if they exist. Otherwise, fallback to
         // "idle"+weapon or "idle".
@@ -977,7 +980,7 @@ namespace MWMechanics
 
         if (isFalloutActor(mPtr))
         {
-            if (mAnimation->hasAnimation("weaponpose") && !falloutFurnitureSeated)
+            if (mAnimation->hasAnimation("weaponpose") && !falloutFurnitureActive)
             {
                 MWRender::Animation::AnimPriority weaponPosePriority(Priority_Default);
                 weaponPosePriority[MWRender::BoneGroup_LeftArm] = Priority_Weapon;
@@ -994,7 +997,7 @@ namespace MWMechanics
                 playBlendedAnimation("weaponpose", weaponPosePriority, weaponPoseMask, false, 1.0f, "start", "stop",
                     0.f, std::numeric_limits<uint32_t>::max(), true);
             }
-            else if (falloutFurnitureSeated && mAnimation->isPlaying("weaponpose"))
+            else if (falloutFurnitureActive && mAnimation->isPlaying("weaponpose"))
             {
                 Log(Debug::Info) << "FNV/ESM4 diag: suppressing standing weapon pose while furniture-seated for "
                                  << mPtr.getCellRef().getRefId();
@@ -1024,7 +1027,7 @@ namespace MWMechanics
 
         const bool hasFalloutSitTalk = isFalloutActor(mPtr) && mAnimation->hasAnimation("sitchairtalk")
             && std::getenv("OPENMW_FNV_DISABLE_SIT_TALK_OVERLAY") == nullptr;
-        if (isFalloutActor(mPtr) && (mCurrentIdle == "idle" || mCurrentIdle == "chairsit")
+        if (falloutFurnitureSeated && mCurrentIdle == "chairsit"
             && mAnimation->hasAnimation("sitchairlisten")
             && !hasFalloutSitTalk
             && std::getenv("OPENMW_FNV_ENABLE_SIT_LISTEN_OVERLAY") != nullptr)
@@ -1038,7 +1041,7 @@ namespace MWMechanics
                 listenPriority, MWRender::BlendMask_LeftArm | MWRender::BlendMask_RightArm, false, 1.0f, "start",
                 "stop", 0.f, numLoops, true);
         }
-        if (isFalloutActor(mPtr) && (mCurrentIdle == "idle" || mCurrentIdle == "chairsit") && hasFalloutSitTalk
+        if (falloutFurnitureSeated && mCurrentIdle == "chairsit" && hasFalloutSitTalk
             && std::getenv("OPENMW_FNV_ENABLE_SIT_LISTEN_OVERLAY") != nullptr)
         {
             MWRender::Animation::AnimPriority talkPriority(Priority_Default);
@@ -2717,31 +2720,61 @@ namespace MWMechanics
         osg::Vec3f movementFromAnimation
             = mAnimation->runAnimation(mSkipAnim && !isScriptedAnimPlaying() ? 0.f : duration);
 
-        if (mPtr.getClass().isActor() && !isScriptedAnimPlaying())
+        const MWClass::FalloutFurnitureState falloutFurnitureState = mPtr.getType() == ESM::REC_NPC_4
+            ? MWClass::ESM4Npc::getFurnitureState(mPtr)
+            : MWClass::FalloutFurnitureState::None;
+        const bool falloutFurnitureTransition
+            = falloutFurnitureState == MWClass::FalloutFurnitureState::Entering
+            || falloutFurnitureState == MWClass::FalloutFurnitureState::Exiting;
+        if (mPtr.getClass().isActor() && (!isScriptedAnimPlaying() || falloutFurnitureTransition))
         {
             if (isMovementAnimationControlled())
             {
                 if (duration != 0.f && movementFromAnimation != osg::Vec3f())
                 {
-                    movementFromAnimation /= duration;
-
-                    // Ensure we're moving in the right general direction.
-                    // In vanilla, all horizontal movement is taken from animations, even when moving diagonally (which
-                    // doesn't have a corresponding animation). So to achieve diagonal movement, we have to rotate the
-                    // movement taken from the animation to the intended direction.
-                    //
-                    // Note that while a complete movement animation cycle will have a well defined direction, no
-                    // individual frame will, and therefore we have to determine the direction based on the currently
-                    // playing cycle instead.
-                    if (speed > 0.f)
+                    if (falloutFurnitureTransition)
                     {
-                        float animMovementAngle = getAnimationMovementDirection();
-                        float targetMovementAngle = std::atan2(-movement.x(), movement.y());
-                        float diff = targetMovementAngle - animMovementAngle;
-                        movementFromAnimation = osg::Quat(diff, osg::Vec3f(0, 0, 1)) * movementFromAnimation;
+                        const float actorYaw = mPtr.getRefData().getPosition().rot[2];
+                        const osg::Vec3f localDelta = movementFromAnimation;
+                        const osg::Vec2f worldPlanarDelta = Misc::rotateVec2f(
+                            osg::Vec2f(localDelta.x(), localDelta.y()), -actorYaw);
+                        const ESM::Position& actorPosition = mPtr.getRefData().getPosition();
+                        world->moveObject(mPtr, osg::Vec3f(actorPosition.pos[0] + worldPlanarDelta.x(),
+                                                    actorPosition.pos[1] + worldPlanarDelta.y(),
+                                                    actorPosition.pos[2] + localDelta.z()));
+                        if (std::getenv("OPENMW_FNV_AUDIT_FURNITURE_ROOT_MOTION") != nullptr)
+                        {
+                            Log(Debug::Info) << "FNV/ESM4 furniture: root motion state="
+                                             << static_cast<int>(falloutFurnitureState) << " actor="
+                                             << mPtr.getCellRef().getRefId() << " duration=" << duration << " yaw="
+                                             << actorYaw << " localDelta=(" << localDelta.x() << "," << localDelta.y()
+                                             << "," << localDelta.z() << ") worldDelta=(" << worldPlanarDelta.x()
+                                             << "," << worldPlanarDelta.y() << "," << localDelta.z() << ")";
+                        }
+                        movement = osg::Vec3f();
                     }
+                    else
+                    {
+                        movementFromAnimation /= duration;
 
-                    movement = movementFromAnimation;
+                        // Ensure we're moving in the right general direction.
+                        // In vanilla, all horizontal movement is taken from animations, even when moving diagonally
+                        // (which doesn't have a corresponding animation). So to achieve diagonal movement, we have to
+                        // rotate the movement taken from the animation to the intended direction.
+                        //
+                        // Note that while a complete movement animation cycle will have a well defined direction, no
+                        // individual frame will, and therefore we have to determine the direction based on the currently
+                        // playing cycle instead.
+                        if (speed > 0.f)
+                        {
+                            float animMovementAngle = getAnimationMovementDirection();
+                            float targetMovementAngle = std::atan2(-movement.x(), movement.y());
+                            float diff = targetMovementAngle - animMovementAngle;
+                            movementFromAnimation = osg::Quat(diff, osg::Vec3f(0, 0, 1)) * movementFromAnimation;
+                        }
+
+                        movement = movementFromAnimation;
+                    }
                 }
                 else
                 {

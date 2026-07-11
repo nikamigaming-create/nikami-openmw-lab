@@ -24,7 +24,9 @@
 #include "../mwmechanics/creaturestats.hpp"
 #include "../mwmechanics/aitravel.hpp"
 #include "../mwmechanics/aiwander.hpp"
+#include "../mwmechanics/character.hpp"
 #include "../mwmechanics/movement.hpp"
+#include "../mwmechanics/typedaipackage.hpp"
 
 #include "../mwbase/environment.hpp"
 #include "../mwbase/world.hpp"
@@ -129,7 +131,8 @@ namespace MWClass
         std::vector<const ESM4::Clothing*> mEquippedClothing;
         const ESM4::Weapon* mEquippedWeapon = nullptr;
         bool mFnvAiSequenceInitialised = false;
-        bool mFurnitureSeated = false;
+        FalloutFurnitureState mFurnitureState = FalloutFurnitureState::None;
+        FalloutFurniturePlacement mFurniturePlacement;
 
         ESM4NpcCustomData();
         ESM4NpcCustomData(const ESM4NpcCustomData& other);
@@ -161,7 +164,8 @@ namespace MWClass
         , mEquippedClothing(other.mEquippedClothing)
         , mEquippedWeapon(other.mEquippedWeapon)
         , mFnvAiSequenceInitialised(other.mFnvAiSequenceInitialised)
-        , mFurnitureSeated(other.mFurnitureSeated)
+        , mFurnitureState(other.mFurnitureState)
+        , mFurniturePlacement(other.mFurniturePlacement)
     {
     }
 
@@ -331,12 +335,155 @@ namespace MWClass
         return type == 5 || type == 11 || type == 12;
     }
 
+    class FnvFurniturePackage final : public MWMechanics::TypedAiPackage<FnvFurniturePackage>
+    {
+    public:
+        FnvFurniturePackage(const FalloutFurniturePlacement& placement, std::string packageName)
+            : mTravel(placement.mEntryPosition.x(), placement.mEntryPosition.y(), placement.mEntryPosition.z(), false)
+            , mPlacement(placement)
+            , mPackageName(std::move(packageName))
+        {
+        }
+
+        static constexpr MWMechanics::AiPackageTypeId getTypeId()
+        {
+            return MWMechanics::AiPackageTypeId::Travel;
+        }
+
+        static constexpr Options makeDefaultOptions()
+        {
+            Options options;
+            options.mUseVariableSpeed = true;
+            options.mAlwaysActive = true;
+            return options;
+        }
+
+        bool execute(const MWWorld::Ptr& actor, MWMechanics::CharacterController& characterController,
+            MWMechanics::AiState& state, float duration) override
+        {
+            MWBase::World* world = MWBase::Environment::get().getWorld();
+            if (world == nullptr || !mPlacement.mValid)
+                return true;
+
+            auto stopMovement = [&] {
+                MWMechanics::Movement& movement = actor.getClass().getMovementSettings(actor);
+                movement.mPosition[0] = 0.f;
+                movement.mPosition[1] = 0.f;
+                movement.mPosition[2] = 0.f;
+                movement.mRotation[0] = 0.f;
+                movement.mRotation[1] = 0.f;
+                movement.mRotation[2] = 0.f;
+            };
+            auto place = [&](const osg::Vec3f& position, float yaw) {
+                world->moveObject(actor, position);
+                world->rotateObject(actor, osg::Vec3f(0.f, 0.f, yaw), MWBase::RotationFlag_none);
+            };
+
+            switch (mPhase)
+            {
+                case Phase::Approach:
+                    ESM4Npc::setFurnitureState(actor, FalloutFurnitureState::Approaching);
+                    if (!mTravel.execute(actor, characterController, state, duration))
+                        return false;
+                    stopMovement();
+                    place(mPlacement.mEntryPosition, mPlacement.mEntryYaw);
+                    ESM4Npc::setFurnitureState(actor, FalloutFurnitureState::Entering);
+                    if (mPlacement.mEnterGroup.empty()
+                        || !characterController.playGroup(mPlacement.mEnterGroup, 1, 0, true))
+                    {
+                        settle(actor, characterController, world);
+                        return false;
+                    }
+                    mPhase = Phase::Entering;
+                    Log(Debug::Info) << "FNV/ESM4 furniture: state=entering package=" << mPackageName
+                                     << " actor=" << actor.getCellRef().getRefId()
+                                     << " markerIndex=" << static_cast<unsigned int>(mPlacement.mMarkerIndex)
+                                     << " group=" << mPlacement.mEnterGroup << " pos=("
+                                     << actor.getRefData().getPosition().pos[0] << ","
+                                     << actor.getRefData().getPosition().pos[1] << ","
+                                     << actor.getRefData().getPosition().pos[2] << ") yaw="
+                                     << actor.getRefData().getPosition().rot[2];
+                    return false;
+
+                case Phase::Entering:
+                    stopMovement();
+                    if (characterController.isAnimPlaying(mPlacement.mEnterGroup))
+                        return false;
+                    settle(actor, characterController, world);
+                    return false;
+
+                case Phase::Seated:
+                    stopMovement();
+                    // Retail Easy Pete retains the furniture claim and seated state after both the package
+                    // schedule window expires and EvaluatePackage is requested. Schedule expiry alone is not
+                    // a retail furniture-release trigger, so remain seated until that trigger is implemented
+                    // from direct retail evidence.
+                    return false;
+
+            }
+            return true;
+        }
+
+        void fastForward(const MWWorld::Ptr& actor, MWMechanics::AiState& state) override
+        {
+            if (!mPlacement.mValid || MWBase::Environment::get().getWorld() == nullptr)
+                return;
+            MWBase::World* world = MWBase::Environment::get().getWorld();
+            world->moveObject(actor, mPlacement.mSettledPosition);
+            world->rotateObject(
+                actor, osg::Vec3f(0.f, 0.f, mPlacement.mSettledYaw), MWBase::RotationFlag_none);
+            ESM4Npc::setFurnitureState(actor, FalloutFurnitureState::Seated);
+            mPhase = Phase::Seated;
+        }
+
+    private:
+        enum class Phase
+        {
+            Approach,
+            Entering,
+            Seated
+        };
+
+        void settle(const MWWorld::Ptr& actor, MWMechanics::CharacterController& characterController,
+            MWBase::World* world)
+        {
+            const ESM::Position& runtimePosition = actor.getRefData().getPosition();
+            const osg::Vec3f settledPosition(
+                runtimePosition.pos[0], runtimePosition.pos[1], mPlacement.mSettledPosition.z());
+            world->moveObject(actor, settledPosition);
+            world->rotateObject(
+                actor, osg::Vec3f(0.f, 0.f, mPlacement.mSettledYaw), MWBase::RotationFlag_none);
+            characterController.clearAnimQueue(true);
+            ESM4Npc::setFurnitureState(actor, FalloutFurnitureState::Seated);
+            mPhase = Phase::Seated;
+            Log(Debug::Info) << "FNV/ESM4 furniture: state=seated package=" << mPackageName
+                             << " actor=" << actor.getCellRef().getRefId()
+                             << " markerIndex=" << static_cast<unsigned int>(mPlacement.mMarkerIndex)
+                             << " pos=(" << settledPosition.x() << "," << settledPosition.y() << ","
+                             << settledPosition.z() << ") rootDelta=("
+                             << settledPosition.x() - mPlacement.mEntryPosition.x() << ","
+                             << settledPosition.y() - mPlacement.mEntryPosition.y() << ","
+                             << settledPosition.z() - mPlacement.mEntryPosition.z() << ") modelOrigin=("
+                             << mPlacement.mSettledPosition.x() << "," << mPlacement.mSettledPosition.y() << ","
+                             << mPlacement.mSettledPosition.z() << ") yaw=" << mPlacement.mSettledYaw;
+        }
+
+        MWMechanics::AiTravel mTravel;
+        FalloutFurniturePlacement mPlacement;
+        std::string mPackageName;
+        Phase mPhase = Phase::Approach;
+    };
+
     static void initialiseFnvAiSequence(
         ESM4NpcCustomData& data, const MWWorld::Ptr& ptr, const std::vector<ESM::FormId>& packageIds)
     {
-        if (data.mFnvAiSequenceInitialised)
+        MWMechanics::AiSequence& sequence = data.mCreatureStats.getAiSequence();
+        if (!sequence.isEmpty())
+        {
+            data.mFnvAiSequenceInitialised = true;
             return;
-        data.mFnvAiSequenceInitialised = true;
+        }
+        data.mFnvAiSequenceInitialised = false;
 
         const ESM4::Npc* traits = data.mTraits;
         if (std::getenv("OPENMW_FNV_DISABLE_AI_PACKAGES") != nullptr)
@@ -355,10 +502,6 @@ namespace MWClass
         const float hour = getFnvPackageHour(usedHourOverride);
         const ESM4::AIPackage* package = selectFnvPackage(packageIds, hour);
         if (package == nullptr)
-            return;
-
-        MWMechanics::AiSequence& sequence = data.mCreatureStats.getAiSequence();
-        if (!sequence.isEmpty())
             return;
 
         const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
@@ -383,6 +526,22 @@ namespace MWClass
             const float dy = actorPos.pos[1] - target->mPos.pos[1];
             const float dz = actorPos.pos[2] - target->mPos.pos[2];
             const bool furnitureTarget = store->get<ESM4::Furniture>().search(target->mBaseObj) != nullptr;
+            if (furnitureTarget && data.mFurniturePlacement.mValid
+                && data.mFurniturePlacement.mFurnitureRef == target->mId)
+            {
+                FnvFurniturePackage furniture(data.mFurniturePlacement, package->mEditorId);
+                sequence.stack(furniture, ptr, true);
+                data.mFnvAiSequenceInitialised = true;
+                Log(Debug::Info) << "FNV/ESM4 diag: stacked runtime furniture package " << package->mEditorId
+                                 << " hour=" << hour << " override=" << usedHourOverride
+                                 << " targetRef=" << target->mEditorId
+                                 << " markerIndex="
+                                 << static_cast<unsigned int>(data.mFurniturePlacement.mMarkerIndex)
+                                 << " entryGroup=" << data.mFurniturePlacement.mEnterGroup
+                                 << " exitGroup=" << data.mFurniturePlacement.mExitGroup << " for "
+                                 << traits->mEditorId;
+                return;
+            }
             const float arrivalDistance = furnitureTarget ? 128.f : 8.f;
             if (dx * dx + dy * dy + dz * dz < arrivalDistance * arrivalDistance)
             {
@@ -396,6 +555,7 @@ namespace MWClass
 
             MWMechanics::AiTravel travel(target->mPos.pos[0], target->mPos.pos[1], target->mPos.pos[2], true);
             sequence.stack(travel, ptr, true);
+            data.mFnvAiSequenceInitialised = true;
             Log(Debug::Info) << "FNV/ESM4 diag: stacked native AI travel from FNV package " << package->mEditorId
                              << " type=" << getFnvPackageTypeName(package->mData.type) << " hour=" << hour
                              << " override=" << usedHourOverride << " targetRef=" << target->mEditorId << " pos=("
@@ -414,6 +574,7 @@ namespace MWClass
             std::vector<unsigned char> idles(8, 0);
             MWMechanics::AiWander wander(distance, duration, timeOfDay, idles, true);
             sequence.stack(wander, ptr, true);
+            data.mFnvAiSequenceInitialised = true;
             Log(Debug::Info) << "FNV/ESM4 diag: stacked native AI wander from FNV package " << package->mEditorId
                              << " type=" << getFnvPackageTypeName(package->mData.type) << " hour=" << hour
                              << " override=" << usedHourOverride << " distance=" << distance << " duration="
@@ -755,12 +916,33 @@ namespace MWClass
 
     bool ESM4Npc::isFurnitureSeated(const MWWorld::Ptr& ptr)
     {
-        return getCustomData(ptr).mFurnitureSeated;
+        return getCustomData(ptr).mFurnitureState == FalloutFurnitureState::Seated;
     }
 
     void ESM4Npc::setFurnitureSeated(const MWWorld::Ptr& ptr, bool seated)
     {
-        getCustomData(ptr).mFurnitureSeated = seated;
+        getCustomData(ptr).mFurnitureState = seated ? FalloutFurnitureState::Seated : FalloutFurnitureState::None;
+    }
+
+    FalloutFurnitureState ESM4Npc::getFurnitureState(const MWWorld::Ptr& ptr)
+    {
+        return getCustomData(ptr).mFurnitureState;
+    }
+
+    void ESM4Npc::setFurnitureState(const MWWorld::Ptr& ptr, FalloutFurnitureState state)
+    {
+        getCustomData(ptr).mFurnitureState = state;
+    }
+
+    FalloutFurniturePlacement ESM4Npc::getFurniturePlacement(const MWWorld::Ptr& ptr)
+    {
+        return getCustomData(ptr).mFurniturePlacement;
+    }
+
+    void ESM4Npc::setFurniturePlacement(
+        const MWWorld::Ptr& ptr, const FalloutFurniturePlacement& placement)
+    {
+        getCustomData(ptr).mFurniturePlacement = placement;
     }
 
     bool ESM4Npc::addEquippedArmor(const MWWorld::Ptr& ptr, const ESM4::Armor* armor)

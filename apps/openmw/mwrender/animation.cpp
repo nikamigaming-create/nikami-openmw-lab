@@ -4444,8 +4444,13 @@ namespace MWRender
 
         if (stem == "dynamicidle_chairsit")
             return "chairsit";
-        if (stem == "chair_forwardenter")
-            return "chairsitenter";
+        for (std::string_view direction : { "forward", "back", "left", "right" })
+        {
+            if (stem == "chair_" + std::string(direction) + "enter")
+                return "chair" + std::string(direction) + "enter";
+            if (stem == "chair_" + std::string(direction) + "exit")
+                return "chair" + std::string(direction) + "exit";
+        }
         if (stem == "dynamicidle_sit" || stem == "dynamicidle_sleep")
             return "idle";
         if (stem.find("sitchairlisten") != std::string::npos)
@@ -4725,12 +4730,14 @@ namespace MWRender
         }
         if (isFonvAnim)
         {
+            const bool isChairTransition = lowerKf.find("idleanims/chair_") != std::string::npos
+                && (lowerKf.find("enter.kf") != std::string::npos || lowerKf.find("exit.kf") != std::string::npos);
             const bool isProcedureIdle = falloutProcedureIdle && lowerKf.find("idleanims/") != std::string::npos
                 && (lowerKf.find("dynamicidle_sit") != std::string::npos
                     || lowerKf.find("dynamicidle_chairsit") != std::string::npos
                     || lowerKf.find("sitchair") != std::string::npos
                     || lowerKf.find("sittablechair") != std::string::npos
-                    || lowerKf.find("dynamicidle_sleep") != std::string::npos);
+                    || lowerKf.find("dynamicidle_sleep") != std::string::npos || isChairTransition);
             if (isProcedureIdle)
             {
                 const std::string group = getFalloutProcedureGroupFromKf(kfname);
@@ -4740,8 +4747,11 @@ namespace MWRender
                         = new SceneUtil::KeyframeHolder(*animsrc->mKeyframes, osg::CopyOp::SHALLOW_COPY);
                     const float stopTime = inferFalloutTextKeyStop(keyframes->mTextKeys, 4.f);
                     keyframes->mTextKeys.emplace(0.f, group + ": start");
-                    keyframes->mTextKeys.emplace(0.f, group + ": loop start");
-                    keyframes->mTextKeys.emplace(stopTime, group + ": loop stop");
+                    if (!isChairTransition)
+                    {
+                        keyframes->mTextKeys.emplace(0.f, group + ": loop start");
+                        keyframes->mTextKeys.emplace(stopTime, group + ": loop stop");
+                    }
                     keyframes->mTextKeys.emplace(stopTime, group + ": stop");
                     animsrc->mKeyframes = keyframes;
                     Log(Debug::Info) << "FNV/ESM4 diag: synthesized " << group

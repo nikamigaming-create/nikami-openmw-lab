@@ -1,10 +1,15 @@
 #ifndef GAME_MWCLASS_ESM4ACTOR_H
 #define GAME_MWCLASS_ESM4ACTOR_H
 
+#include <cstdint>
+#include <string>
+
 #include <components/esm4/loadcrea.hpp>
 #include <components/esm4/loadnpc.hpp>
 #include <components/esm4/loadweap.hpp>
 #include <components/vfs/pathutil.hpp>
+
+#include <osg/Vec3f>
 
 #include "../mwgui/tooltips.hpp"
 
@@ -20,6 +25,29 @@
 
 namespace MWClass
 {
+    enum class FalloutFurnitureState
+    {
+        None,
+        Approaching,
+        Entering,
+        Seated,
+        Exiting
+    };
+
+    struct FalloutFurniturePlacement
+    {
+        osg::Vec3f mEntryPosition;
+        osg::Vec3f mSettledPosition;
+        float mEntryYaw = 0.f;
+        float mSettledYaw = 0.f;
+        std::string mEnterGroup;
+        std::string mExitGroup;
+        ESM::FormId mFurnitureRef;
+        std::uint8_t mMarkerIndex = 0xff;
+        std::uint8_t mPositionRef = 0;
+        bool mValid = false;
+    };
+
     class ESM4Npc final : public MWWorld::RegisteredClass<ESM4Npc, Actor>
     {
     public:
@@ -98,6 +126,10 @@ namespace MWClass
         static const ESM4::Weapon* getEquippedWeapon(const MWWorld::Ptr& ptr);
         static bool isFurnitureSeated(const MWWorld::Ptr& ptr);
         static void setFurnitureSeated(const MWWorld::Ptr& ptr, bool seated);
+        static FalloutFurnitureState getFurnitureState(const MWWorld::Ptr& ptr);
+        static void setFurnitureState(const MWWorld::Ptr& ptr, FalloutFurnitureState state);
+        static FalloutFurniturePlacement getFurniturePlacement(const MWWorld::Ptr& ptr);
+        static void setFurniturePlacement(const MWWorld::Ptr& ptr, const FalloutFurniturePlacement& placement);
         static bool addEquippedArmor(const MWWorld::Ptr& ptr, const ESM4::Armor* armor);
         static std::string_view chooseEquipmentModel(const ESM4::Armor* rec, bool isFemale);
         static std::string_view chooseEquipmentModel(const ESM4::Clothing* rec, bool isFemale);

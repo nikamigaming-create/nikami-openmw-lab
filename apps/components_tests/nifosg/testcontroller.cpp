@@ -89,6 +89,10 @@ namespace
         };
 
         NifOsg::KeyframeController controller(&interpolator);
+        EXPECT_EQ(controller.getTranslation(0.f), osg::Vec3f(1.f, 2.f, 3.f));
+        EXPECT_EQ(controller.getTranslation(0.5f), osg::Vec3f(302.5f, 605.f, 907.5f));
+        EXPECT_EQ(controller.getTranslation(1.f), osg::Vec3f(10000.f, 20000.f, 30000.f));
+
         auto source = std::make_shared<ConstantControllerSource>(0.f);
         controller.setSource(source);
         auto transform = controller.getCurrentTransformation(nullptr);

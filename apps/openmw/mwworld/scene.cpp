@@ -177,6 +177,7 @@ namespace
         std::uint16_t mType = 0;
         std::uint16_t mEntryPoint = 0;
         std::uint8_t mPositionRef = 0;
+        std::uint8_t mMarkerIndex = 0xff;
         bool mLegacy = false;
         bool mFound = false;
     };
@@ -383,6 +384,7 @@ namespace
 
             for (std::size_t i = 0; i < markers.size(); ++i)
             {
+                markers[i].mMarkerIndex = static_cast<std::uint8_t>(std::min<std::size_t>(i, 0xff));
                 const FnvFurnitureMarkerPlacement& marker = markers[i];
                 Log(Debug::Info) << "FNV/ESM4 diag: furniture marker candidate index=" << i
                                  << " offset=(" << marker.mOffset.x() << "," << marker.mOffset.y() << ","
@@ -511,7 +513,8 @@ namespace
             return FnvPackagePrePlacement::None;
 
         const bool furnitureTarget = store->get<ESM4::Furniture>().search(target->mBaseObj) != nullptr;
-        MWClass::ESM4Npc::setFurnitureSeated(ptr, furnitureTarget);
+        MWClass::ESM4Npc::setFurnitureState(ptr, MWClass::FalloutFurnitureState::None);
+        MWClass::ESM4Npc::setFurniturePlacement(ptr, {});
 
         const ESM::RefId& currentCellId = ptr.getCell()->getCell()->getId();
         const bool sameCell = target->mParent == currentCellId;
@@ -535,13 +538,42 @@ namespace
             const osg::Vec3f proofOffset = transformFnvFurnitureMarkerOffsetForProof(marker.mOffset);
             const osg::Vec3f worldOffset = rotateFnvPackageOffset(proofOffset, target->mPos.rot[2]);
             const bool entryMarkerPlacement = envEnabled("OPENMW_FNV_FURNITURE_ENTRY_MARKER_PLACEMENT");
-            if (furnitureTarget && !entryMarkerPlacement)
+            if (furnitureTarget)
             {
-                // Retail uses this marker transform while state 3 waits for the enter animation,
-                // then accumulated root motion places a state-4 seated actor at the furniture
-                // origin/yaw while retaining the marker height. Loading an already scheduled NPC
-                // begins in the settled state rather than freezing it at the entry marker.
-                position.pos[2] += marker.mOffset.z();
+                MWClass::FalloutFurniturePlacement placement;
+                placement.mEntryPosition = osg::Vec3f(target->mPos.pos[0] + worldOffset.x(),
+                    target->mPos.pos[1] + worldOffset.y(), target->mPos.pos[2] + worldOffset.z());
+                placement.mSettledPosition = osg::Vec3f(
+                    target->mPos.pos[0], target->mPos.pos[1], target->mPos.pos[2] + marker.mOffset.z());
+                placement.mEntryYaw = applyFnvFurnitureMarkerHeading(target->mPos.rot[2], marker.mHeading);
+                placement.mSettledYaw = target->mPos.rot[2];
+                placement.mFurnitureRef = target->mId;
+                placement.mMarkerIndex = marker.mMarkerIndex;
+                placement.mPositionRef = marker.mPositionRef;
+                placement.mValid = true;
+
+                const bool alongY = std::abs(marker.mOffset.y()) >= std::abs(marker.mOffset.x());
+                const std::string_view direction = alongY ? (marker.mOffset.y() >= 0.f ? "forward" : "back")
+                                                          : (marker.mOffset.x() < 0.f ? "left" : "right");
+                placement.mEnterGroup = "chair" + std::string(direction) + "enter";
+                placement.mExitGroup = "chair" + std::string(direction) + "exit";
+                MWClass::ESM4Npc::setFurniturePlacement(ptr, placement);
+                MWClass::ESM4Npc::setFurnitureState(ptr, MWClass::FalloutFurnitureState::Approaching);
+
+                position.pos[0] = placement.mEntryPosition.x();
+                position.pos[1] = placement.mEntryPosition.y();
+                position.pos[2] = placement.mEntryPosition.z();
+                position.rot[2] = placement.mEntryYaw;
+
+                if (sameCell && !entryMarkerPlacement)
+                {
+                    Log(Debug::Info) << "FNV/ESM4 diag: deferred same-cell furniture placement to runtime package "
+                                     << selected->mEditorId << " targetRef=" << target->mEditorId
+                                     << " markerIndex=" << static_cast<unsigned int>(placement.mMarkerIndex)
+                                     << " enterGroup=" << placement.mEnterGroup
+                                     << " exitGroup=" << placement.mExitGroup << " for " << traits->mEditorId;
+                    return FnvPackagePrePlacement::None;
+                }
             }
             else
             {
@@ -559,7 +591,7 @@ namespace
                              << " type=" << marker.mType << " entryPoint=" << marker.mEntryPoint
                              << " positionRef=" << static_cast<int>(marker.mPositionRef)
                              << " legacy=" << marker.mLegacy
-                             << " state=" << (furnitureTarget && !entryMarkerPlacement ? "seated" : "entry")
+                             << " state=" << (furnitureTarget ? "entry" : "target")
                              << " finalPos=(" << position.pos[0] << "," << position.pos[1] << ","
                              << position.pos[2] << ") finalRotZ=" << position.rot[2] << " for "
                              << traits->mEditorId;

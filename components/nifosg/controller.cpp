@@ -676,6 +676,22 @@ namespace NifOsg
 
     osg::Vec3f KeyframeController::getTranslation(float time) const
     {
+        if (mBSplineTransform)
+        {
+            const BSplineTransform& data = *mBSplineTransform;
+            if (isValidBSplineHandle(data.mTranslationHandle))
+            {
+                return osg::Vec3f(
+                    sampleBSplineComponent(data, data.mTranslationHandle, 3, 0, time,
+                        data.mDefaultValue.mTranslation.x(), data.mTranslationOffset, data.mTranslationHalfRange),
+                    sampleBSplineComponent(data, data.mTranslationHandle, 3, 1, time,
+                        data.mDefaultValue.mTranslation.y(), data.mTranslationOffset, data.mTranslationHalfRange),
+                    sampleBSplineComponent(data, data.mTranslationHandle, 3, 2, time,
+                        data.mDefaultValue.mTranslation.z(), data.mTranslationOffset, data.mTranslationHalfRange));
+            }
+            if (mHasDefaultTranslation)
+                return data.mDefaultValue.mTranslation;
+        }
         if (!mTranslations.empty())
             return mTranslations.interpKey(time);
         return osg::Vec3f();

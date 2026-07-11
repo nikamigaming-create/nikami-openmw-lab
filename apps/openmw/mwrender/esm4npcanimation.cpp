@@ -3560,7 +3560,6 @@ namespace MWRender
             Misc::StringUtils::lowerCaseInPlace(lowered);
             const std::string prefix = getFalloutHeadFrameSurfacePrefix(model, headgearStaticPart);
             const std::string legacyPrefix = getFalloutHeadFrameSurfaceLegacyPrefix(model, headgearStaticPart);
-            const bool tes5Surface = prefix.find("OPENMW_WORLD_VIEWER_TES5_") == 0;
             const auto readAxis = [&](std::string_view suffix, float fallback) {
                 return readFalloutProofFloatWithLegacy(prefix + std::string(suffix), legacyPrefix + std::string(suffix), fallback);
             };
@@ -3568,19 +3567,16 @@ namespace MWRender
             if (headgearStaticPart)
                 return osg::Vec3f(readAxis("_OFFSET_X", 0.f), readAxis("_OFFSET_Y", 0.f), readAxis("_OFFSET_Z", 0.f));
             if (lowered.find("brow") != std::string::npos)
-                return osg::Vec3f(readAxis("_OFFSET_X", -0.12f), readAxis("_OFFSET_Y", 0.f), readAxis("_OFFSET_Z", 0.f));
+                return osg::Vec3f(readAxis("_OFFSET_X", 0.f), readAxis("_OFFSET_Y", 0.f), readAxis("_OFFSET_Z", 0.f));
             if (lowered.find("eye") != std::string::npos)
-                return osg::Vec3f(readAxis("_OFFSET_X", -0.18f), readAxis("_OFFSET_Y", 0.f), readAxis("_OFFSET_Z", 0.f));
+                return osg::Vec3f(readAxis("_OFFSET_X", 0.f), readAxis("_OFFSET_Y", 0.f), readAxis("_OFFSET_Z", 0.f));
             if (lowered.find("beard") != std::string::npos)
                 return osg::Vec3f(readAxis("_OFFSET_X", 0.f), readAxis("_OFFSET_Y", 0.f), readAxis("_OFFSET_Z", 0.f));
             if (isFalloutScalpHairModel(lowered))
                 return osg::Vec3f(readAxis("_OFFSET_X", 0.f), readAxis("_OFFSET_Y", 0.f), readAxis("_OFFSET_Z", 0.f));
             if (lowered.find("mouth") != std::string::npos || lowered.find("teeth") != std::string::npos
                 || lowered.find("tongue") != std::string::npos)
-            {
-                const float xFallback = tes5Surface ? 0.f : -0.35f;
-                return osg::Vec3f(readAxis("_OFFSET_X", xFallback), readAxis("_OFFSET_Y", 0.f), readAxis("_OFFSET_Z", 0.f));
-            }
+                return osg::Vec3f(readAxis("_OFFSET_X", 0.f), readAxis("_OFFSET_Y", 0.f), readAxis("_OFFSET_Z", 0.f));
             return osg::Vec3f();
         }
 
@@ -3596,11 +3592,8 @@ namespace MWRender
                 = readFalloutProofFloatWithLegacy(prefix + "_ROTATION_X", legacyPrefix + "_ROTATION_X", 0.f);
             const float yDegrees
                 = readFalloutProofFloatWithLegacy(prefix + "_ROTATION_Y", legacyPrefix + "_ROTATION_Y", 0.f);
-            const bool faceInternal = legacyPrefix == "OPENMW_FNV_EYE" || legacyPrefix == "OPENMW_FNV_MOUTH"
-                || legacyPrefix == "OPENMW_FNV_BEARD" || legacyPrefix == "OPENMW_FNV_BROW";
-            const float zFallback = (faceInternal || legacyPrefix == "OPENMW_FNV_HAIR") ? -90.f : 0.f;
             const float zDegrees
-                = readFalloutProofFloatWithLegacy(prefix + "_ROTATION_Z", legacyPrefix + "_ROTATION_Z", zFallback);
+                = readFalloutProofFloatWithLegacy(prefix + "_ROTATION_Z", legacyPrefix + "_ROTATION_Z", 0.f);
             const osg::Quat x(xDegrees * degreesToRadians, osg::Vec3f(1.f, 0.f, 0.f));
             const osg::Quat y(yDegrees * degreesToRadians, osg::Vec3f(0.f, 1.f, 0.f));
             const osg::Quat z(zDegrees * degreesToRadians, osg::Vec3f(0.f, 0.f, 1.f));
@@ -3887,7 +3880,9 @@ namespace MWRender
         {
             const char* mode = std::getenv("OPENMW_FNV_STATIC_HEAD_ATTACH_MODE");
             if (mode == nullptr || mode[0] == '\0')
-                return "animatedheadframe";
+                // Retail parents the biped face containers directly to Bip01 Head. Their NIF children own the
+                // authored local transforms; a synthetic frame applies that basis twice.
+                return "head";
             return mode;
         }
 
@@ -3895,7 +3890,9 @@ namespace MWRender
         {
             const char* mode = std::getenv("OPENMW_FNV_HEADGEAR_ROTATION_MODE");
             if (mode == nullptr || mode[0] == '\0')
-                return osg::Quat();
+                // Retail CowboyHat02's cowboyhat2:0 child has this +90-degree Y local rotation beneath the
+                // head-attached HAIR wrapper. SceneUtil::attach consumes the wrapper, so preserve its basis here.
+                return osg::Quat(1.57079632679489661923, osg::Vec3d(0.0, 1.0, 0.0));
 
             constexpr double halfPi = 1.57079632679489661923;
             if (Misc::StringUtils::ciEqual(mode, "x90"))
@@ -6899,6 +6896,22 @@ namespace MWRender
                 result.push_back(std::move(path));
         }
 
+        void addChairTransitionSources(std::vector<std::string>& result, const VFS::Manager& vfs)
+        {
+            static constexpr std::array<std::string_view, 8> paths{
+                "meshes/characters/_male/idleanims/chair_forwardenter.kf",
+                "meshes/characters/_male/idleanims/chair_forwardexit.kf",
+                "meshes/characters/_male/idleanims/chair_backenter.kf",
+                "meshes/characters/_male/idleanims/chair_backexit.kf",
+                "meshes/characters/_male/idleanims/chair_leftenter.kf",
+                "meshes/characters/_male/idleanims/chair_leftexit.kf",
+                "meshes/characters/_male/idleanims/chair_rightenter.kf",
+                "meshes/characters/_male/idleanims/chair_rightexit.kf",
+            };
+            for (std::string_view path : paths)
+                addProcedureSourceIfPresent(result, vfs, std::string(path));
+        }
+
         std::vector<std::string> collectFonvPackageProcedureAnimationSources(const MWWorld::Ptr& ptr,
             const MWWorld::ESMStore& store, Resource::ResourceSystem* resourceSystem, const ESM4::Npc& traits,
             const std::vector<ESM::FormId>& packageIds)
@@ -6955,24 +6968,23 @@ namespace MWRender
             const bool usesTableSeat = lowerFurniture.find("dinerbooth") != std::string::npos
                 || lowerFurniture.find("table") != std::string::npos;
             const bool usesChairSeat = lowerFurniture.find("chair") != std::string::npos || usesTableSeat;
-            const bool preferChairSitIdle = std::getenv("OPENMW_FNV_PREFER_CHAIRSIT_IDLE") != nullptr;
-
             switch (selected->mData.type)
             {
                 case 3: // Eat
+                    if (usesChairSeat)
+                        addChairTransitionSources(result, *vfs);
                     if (usesTableSeat)
                         addProcedureSourceIfPresent(
                             result, *vfs, "meshes/characters/_male/idleanims/sittablechaireata.kf");
                     else
                         addProcedureSourceIfPresent(
                             result, *vfs, "meshes/characters/_male/idleanims/sitchaireata.kf");
-                    if (usesChairSeat && !preferChairSitIdle)
+                    if (usesChairSeat)
                         addProcedureSourceIfPresent(
                             result, *vfs, "meshes/characters/_male/idleanims/dynamicidle_chairsit.kf");
-                    addProcedureSourceIfPresent(result, *vfs, "meshes/characters/_male/idleanims/dynamicidle_sit.kf");
-                    if (usesChairSeat && preferChairSitIdle)
+                    else
                         addProcedureSourceIfPresent(
-                            result, *vfs, "meshes/characters/_male/idleanims/dynamicidle_chairsit.kf");
+                            result, *vfs, "meshes/characters/_male/idleanims/dynamicidle_sit.kf");
                     break;
                 case 4: // Sleep
                     addProcedureSourceIfPresent(
@@ -6982,18 +6994,18 @@ namespace MWRender
                 case 8: // Use item at / furniture.
                     if (!furnitureModel.empty())
                     {
+                        if (usesChairSeat)
+                            addChairTransitionSources(result, *vfs);
                         addProcedureSourceIfPresent(
                             result, *vfs, "meshes/characters/_male/idleanims/sitchairlistena.kf");
                         addProcedureSourceIfPresent(
                             result, *vfs, "meshes/characters/_male/idleanims/sitchairtalktoplayera.kf");
-                        if (usesChairSeat && !preferChairSitIdle)
+                        if (usesChairSeat)
                             addProcedureSourceIfPresent(
                                 result, *vfs, "meshes/characters/_male/idleanims/dynamicidle_chairsit.kf");
-                        addProcedureSourceIfPresent(
-                            result, *vfs, "meshes/characters/_male/idleanims/dynamicidle_sit.kf");
-                        if (usesChairSeat && preferChairSitIdle)
+                        else
                             addProcedureSourceIfPresent(
-                                result, *vfs, "meshes/characters/_male/idleanims/dynamicidle_chairsit.kf");
+                                result, *vfs, "meshes/characters/_male/idleanims/dynamicidle_sit.kf");
                     }
                     break;
                 default:
@@ -7549,7 +7561,8 @@ namespace MWRender
             if (headgearStaticPart)
             {
                 const char* headgearMode = std::getenv("OPENMW_FNV_HEADGEAR_ATTACH_MODE");
-                if (headgearMode != nullptr && Misc::StringUtils::ciEqual(headgearMode, "head"))
+                if (headgearMode == nullptr || headgearMode[0] == '\0'
+                    || Misc::StringUtils::ciEqual(headgearMode, "head"))
                 {
                     if (osg::Group* head = findBestAttachmentNode(nodeMap, { "Bip01 Head", "bip01 head" }))
                         attachNode = head;
@@ -7630,7 +7643,8 @@ namespace MWRender
                              << " attachNode=" << attachNode->getName()
                              << " nodeMap=" << nodeMap.size();
         }
-        else if (!tes5StaticPart && isFalloutStaticFaceChildPart(model) && attachNode != nullptr)
+        else if (!tes5StaticPart && isFalloutStaticFaceChildPart(model) && attachNode != nullptr
+            && std::getenv("OPENMW_FNV_STATIC_FACE_FRAME_HELPER") != nullptr)
             attachNode = makeFalloutFaceSurfaceFrameHelper(*attachNode);
         else if (tes5StaticPart && isFalloutStaticFaceChildPart(model) && attachNode == mObjectRoot.get()
             && worldViewerNodeMapTelemetryEnabled())
