@@ -784,6 +784,8 @@ if(BUILD_OPENMW_VR)
         target_compile_options(components PUBLIC -DXR_USE_GRAPHICS_API_OPENGL -DXR_USE_PLATFORM_XLIB -DXR_USE_PLATFORM_EGL)
         target_link_libraries(components EGL)
     endif()
+else()
+    target_link_libraries(components openmw_openxr_headers)
 endif()
 
 if (USE_SYSTEM_TINYXML)
