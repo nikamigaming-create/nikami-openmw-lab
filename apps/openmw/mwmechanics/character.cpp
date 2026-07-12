@@ -791,7 +791,7 @@ namespace MWMechanics
                     !flyingMovement.empty())
                 {
                     if (isFalloutActor(mPtr))
-                        Log(Debug::Info) << "FNV/ESM4 diag: using '" << flyingMovement
+                        Log(Debug::Verbose) << "FNV/ESM4 diag: using '" << flyingMovement
                                          << "' as flying movement fallback for " << mPtr.getCellRef().getRefId()
                                          << " requested='" << movementAnimName << "'";
                     movementAnimName = std::string(flyingMovement);
@@ -800,15 +800,19 @@ namespace MWMechanics
 
             if (!mAnimation->hasAnimation(movementAnimName))
             {
-                if (isFalloutActor(mPtr))
+                if (isFalloutActor(mPtr) && mLastMissingMovementAnimation != movementAnimName)
+                {
                     Log(Debug::Warning) << "FNV/ESM4 diag: movement animation missing for "
                                         << mPtr.getCellRef().getRefId() << " group '" << movementAnimName << "'";
+                    mLastMissingMovementAnimation = movementAnimName;
+                }
                 if (!mCurrentMovement.empty())
                     resetCurrentIdleState();
                 resetCurrentMovementState();
                 return;
             }
         }
+        mLastMissingMovementAnimation.clear();
 
         // If we're playing the same animation, start it from the point it ended
         float startpoint = 0.f;
@@ -868,7 +872,7 @@ namespace MWMechanics
             if (!mCurrentIdle.empty())
                 clearStateAnimation(mCurrentIdle);
             resetCurrentIdleState();
-            Log(Debug::Info) << "FNV/ESM4 diag: Fallout bind-pose proof suppressed idle animation for "
+            Log(Debug::Verbose) << "FNV/ESM4 diag: Fallout bind-pose proof suppressed idle animation for "
                              << mPtr.getCellRef().getRefId();
             return;
         }
@@ -945,7 +949,7 @@ namespace MWMechanics
                 if (forced == "idle" || forced == "chairsit" || forced == "chairsitenter"
                     || forced == "sitchairlisten" || forced == "sitchairtalk" || forced == "sitchaireat")
                 {
-                    Log(Debug::Info) << "FNV/ESM4 diag: forcing idle group '" << forced << "' for "
+                    Log(Debug::Verbose) << "FNV/ESM4 diag: forcing idle group '" << forced << "' for "
                                      << mPtr.getCellRef().getRefId();
                     idleGroup = std::move(forced);
                 }
@@ -957,12 +961,16 @@ namespace MWMechanics
 
         if (!mAnimation->hasAnimation(idleGroup))
         {
-            if (isFalloutActor(mPtr))
+            if (isFalloutActor(mPtr) && mLastMissingIdleAnimation != idleGroup)
+            {
                 Log(Debug::Warning) << "FNV/ESM4 diag: idle animation missing for " << mPtr.getCellRef().getRefId()
                                     << " group '" << idleGroup << "'";
+                mLastMissingIdleAnimation = idleGroup;
+            }
             resetCurrentIdleState();
             return;
         }
+        mLastMissingIdleAnimation.clear();
 
         float startPoint = 0.f;
         // There is no need to restart anim if the new and old anims are the same.
@@ -973,7 +981,7 @@ namespace MWMechanics
         clearStateAnimation(mCurrentIdle);
         mCurrentIdle = std::move(idleGroup);
         if (isFalloutActor(mPtr))
-            Log(Debug::Info) << "FNV/ESM4 diag: CharacterController playing idle for "
+            Log(Debug::Verbose) << "FNV/ESM4 diag: CharacterController playing idle for "
                              << mPtr.getCellRef().getRefId() << " group '" << mCurrentIdle << "'";
         playBlendedAnimation(
             mCurrentIdle, priority, MWRender::BlendMask_All, false, 1.0f, "start", "stop", startPoint, numLoops, true);
@@ -990,7 +998,7 @@ namespace MWMechanics
                 weaponPosePriority[MWRender::BoneGroup_RightArm] = Priority_Weapon;
                 if (mAnimation->isPlaying("weaponpose"))
                     mAnimation->disable("weaponpose");
-                Log(Debug::Info) << "FNV/ESM4 diag: CharacterController layering retail weapon pose for "
+                Log(Debug::Verbose) << "FNV/ESM4 diag: CharacterController layering retail weapon pose for "
                                  << mPtr.getCellRef().getRefId();
                 // Live FNV blend telemetry gives locomotion priority 30 over aim 25 on the lower body, locomotion
                 // 31 over aim 30 on the torso/neck/head, aim 35 over locomotion 31 on both arm branches, and aim 45
@@ -1003,7 +1011,7 @@ namespace MWMechanics
             else if ((falloutFurnitureActive || hideEquippedWeaponForProof)
                 && mAnimation->isPlaying("weaponpose"))
             {
-                Log(Debug::Info) << "FNV/ESM4 diag: suppressing standing weapon pose for "
+                Log(Debug::Verbose) << "FNV/ESM4 diag: suppressing standing weapon pose for "
                                  << mPtr.getCellRef().getRefId() << " reason="
                                  << (falloutFurnitureActive ? "furniture-seated" : "proof-weapon-hidden");
                 mAnimation->disable("weaponpose");
@@ -1018,7 +1026,7 @@ namespace MWMechanics
                     {
                         MWRender::Animation::AnimPriority overlayPriority(Priority_Default);
                         overlayPriority[MWRender::BoneGroup_RightArm] = Priority_Weapon;
-                        Log(Debug::Info) << "FNV/ESM4 diag: CharacterController layering forced right-arm overlay group '"
+                        Log(Debug::Verbose) << "FNV/ESM4 diag: CharacterController layering forced right-arm overlay group '"
                                          << overlayGroup << "' for " << mPtr.getCellRef().getRefId();
                         playBlendedAnimation(overlayGroup, overlayPriority, MWRender::BlendMask_RightArm, false, 1.0f,
                             "start", "stop", 0.f, numLoops, true);
@@ -1040,7 +1048,7 @@ namespace MWMechanics
             MWRender::Animation::AnimPriority listenPriority(Priority_Default);
             listenPriority[MWRender::BoneGroup_LeftArm] = Priority_Weapon;
             listenPriority[MWRender::BoneGroup_RightArm] = Priority_Weapon;
-            Log(Debug::Info) << "FNV/ESM4 diag: CharacterController layering package sit/listen overlay for "
+            Log(Debug::Verbose) << "FNV/ESM4 diag: CharacterController layering package sit/listen overlay for "
                              << mPtr.getCellRef().getRefId();
             playBlendedAnimation("sitchairlisten",
                 listenPriority, MWRender::BlendMask_LeftArm | MWRender::BlendMask_RightArm, false, 1.0f, "start",
@@ -1063,7 +1071,7 @@ namespace MWMechanics
                 talkPriority[MWRender::BoneGroup_RightArm] = Priority_Weapon;
                 talkMask |= MWRender::BlendMask_LeftArm | MWRender::BlendMask_RightArm;
             }
-            Log(Debug::Info) << "FNV/ESM4 diag: CharacterController layering package sit/talk overlay for "
+            Log(Debug::Verbose) << "FNV/ESM4 diag: CharacterController layering package sit/talk overlay for "
                              << mPtr.getCellRef().getRefId();
             playBlendedAnimation("sitchairtalk",
                 talkPriority, talkMask, false, 1.0f, "start", "stop", 0.f, numLoops, true);

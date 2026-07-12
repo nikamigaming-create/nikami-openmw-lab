@@ -1098,7 +1098,11 @@ namespace NifOsg
         if (!mInterpolator.empty())
             return mInterpolator.interpKey(time);
 
-        if (mData->empty())
+        // Newer Bethesda NIFs can contain enabled NiVisControllers without
+        // either an interpolator or legacy key data. Treat those controllers
+        // as visible instead of dereferencing an empty data pointer during
+        // the update traversal.
+        if (!mData || mData->empty())
             return true;
 
         auto iter = std::upper_bound(mData->begin(), mData->end(), time,

@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <cctype>
+#include <functional>
 #include <string>
 
 #include <components/esm/attr.hpp>
@@ -18,6 +19,7 @@
 #include <components/esm4/loadrace.hpp>
 #include <components/esm4/loadrefr.hpp>
 #include <components/esm4/loadweap.hpp>
+#include <components/esm4/script.hpp>
 
 #include <components/misc/resourcehelpers.hpp>
 
@@ -34,6 +36,7 @@
 #include "../mwworld/containerstore.hpp"
 #include "../mwworld/customdata.hpp"
 #include "../mwworld/esmstore.hpp"
+#include "../mwworld/esm4questruntime.hpp"
 #include "../mwworld/actiontalk.hpp"
 #include "../mwworld/failedaction.hpp"
 
@@ -173,6 +176,8 @@ namespace MWClass
     {
         if (data.mTraits != nullptr && data.mTraits->mIsFONV)
             return "characters/_male/skeleton.nif";
+        if (data.mTraits != nullptr && data.mTraits->mIsStarfield)
+            return "actors/human/characterassets/skeleton.nif";
         return {};
     }
 
@@ -268,6 +273,32 @@ namespace MWClass
         return hour;
     }
 
+    static bool fnvPackageConditionsPass(const ESM4::AIPackage& package)
+    {
+        if (package.mConditions.empty())
+            return true;
+        MWBase::World* world = MWBase::Environment::get().getWorld();
+        if (world == nullptr)
+            return false;
+
+        std::vector<ESM4::TargetCondition> conditions;
+        conditions.reserve(package.mConditions.size());
+        for (const ESM4::AIPackage::CTDA& source : package.mConditions)
+        {
+            ESM4::TargetCondition target;
+            target.condition = static_cast<std::uint32_t>(source.condition)
+                | (static_cast<std::uint32_t>(source.unknown1) << 8)
+                | (static_cast<std::uint32_t>(source.unknown2) << 16)
+                | (static_cast<std::uint32_t>(source.unknown3) << 24);
+            target.comparison = source.compValue;
+            target.functionIndex = static_cast<std::uint32_t>(source.fnIndex);
+            target.param1 = source.param1;
+            target.param2 = source.param2;
+            conditions.push_back(target);
+        }
+        return world->getESM4QuestRuntime().evaluateConditions(conditions);
+    }
+
     static const ESM4::AIPackage* selectFnvPackage(const std::vector<ESM::FormId>& packageIds, float hour)
     {
         const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
@@ -280,6 +311,8 @@ namespace MWClass
         {
             const ESM4::AIPackage* package = packageStore.search(packageId);
             if (package == nullptr)
+                continue;
+            if (!fnvPackageConditionsPass(*package))
                 continue;
             if (fnvPackageCoversHour(*package, hour))
                 return package;
@@ -489,7 +522,7 @@ namespace MWClass
         if (std::getenv("OPENMW_FNV_DISABLE_AI_PACKAGES") != nullptr)
         {
             if (traits != nullptr && traits->mIsFONV)
-                Log(Debug::Info) << "FNV/ESM4 diag: native FNV NPC AI package movement disabled by proof env for "
+                Log(Debug::Verbose) << "FNV/ESM4 diag: native FNV NPC AI package movement disabled by proof env for "
                                  << traits->mEditorId;
             // The proof switch is a stable terminal state for this actor.  Leaving the
             // sequence uninitialised makes every update retry this function and floods
@@ -519,7 +552,7 @@ namespace MWClass
             const ESM4::Reference* target = resolveFnvPackageReference(*store, *package);
             if (target == nullptr || target->mParent != currentCellId)
             {
-                Log(Debug::Info) << "FNV/ESM4 diag: skipped native AI travel package " << package->mEditorId
+                Log(Debug::Verbose) << "FNV/ESM4 diag: skipped native AI travel package " << package->mEditorId
                                  << " type=" << getFnvPackageTypeName(package->mData.type)
                                  << " targetResolved=" << static_cast<bool>(target)
                                  << " currentCell=" << currentCellId << " for " << traits->mEditorId;
@@ -537,7 +570,7 @@ namespace MWClass
                 FnvFurniturePackage furniture(data.mFurniturePlacement, package->mEditorId);
                 sequence.stack(furniture, ptr, true);
                 data.mFnvAiSequenceInitialised = true;
-                Log(Debug::Info) << "FNV/ESM4 diag: stacked runtime furniture package " << package->mEditorId
+                Log(Debug::Verbose) << "FNV/ESM4 diag: stacked runtime furniture package " << package->mEditorId
                                  << " hour=" << hour << " override=" << usedHourOverride
                                  << " targetRef=" << target->mEditorId
                                  << " markerIndex="
@@ -550,7 +583,7 @@ namespace MWClass
             const float arrivalDistance = furnitureTarget ? 128.f : 8.f;
             if (dx * dx + dy * dy + dz * dz < arrivalDistance * arrivalDistance)
             {
-                Log(Debug::Info) << "FNV/ESM4 diag: skipped native AI travel package " << package->mEditorId
+                Log(Debug::Verbose) << "FNV/ESM4 diag: skipped native AI travel package " << package->mEditorId
                                  << " type=" << getFnvPackageTypeName(package->mData.type)
                                  << " because actor is already at targetRef=" << target->mEditorId
                                  << " furnitureTarget=" << furnitureTarget
@@ -561,7 +594,7 @@ namespace MWClass
             MWMechanics::AiTravel travel(target->mPos.pos[0], target->mPos.pos[1], target->mPos.pos[2], true);
             sequence.stack(travel, ptr, true);
             data.mFnvAiSequenceInitialised = true;
-            Log(Debug::Info) << "FNV/ESM4 diag: stacked native AI travel from FNV package " << package->mEditorId
+            Log(Debug::Verbose) << "FNV/ESM4 diag: stacked native AI travel from FNV package " << package->mEditorId
                              << " type=" << getFnvPackageTypeName(package->mData.type) << " hour=" << hour
                              << " override=" << usedHourOverride << " targetRef=" << target->mEditorId << " pos=("
                              << target->mPos.pos[0] << "," << target->mPos.pos[1] << "," << target->mPos.pos[2]
@@ -580,7 +613,7 @@ namespace MWClass
             MWMechanics::AiWander wander(distance, duration, timeOfDay, idles, true);
             sequence.stack(wander, ptr, true);
             data.mFnvAiSequenceInitialised = true;
-            Log(Debug::Info) << "FNV/ESM4 diag: stacked native AI wander from FNV package " << package->mEditorId
+            Log(Debug::Verbose) << "FNV/ESM4 diag: stacked native AI wander from FNV package " << package->mEditorId
                              << " type=" << getFnvPackageTypeName(package->mData.type) << " hour=" << hour
                              << " override=" << usedHourOverride << " distance=" << distance << " duration="
                              << duration << " for " << traits->mEditorId;
@@ -719,6 +752,7 @@ namespace MWClass
         const auto addArmor = [&](const ESM4::Armor* armor) {
             if (armor == nullptr)
                 return false;
+
             if (std::find(data->mEquippedArmor.begin(), data->mEquippedArmor.end(), armor)
                 != data->mEquippedArmor.end())
                 return false;
@@ -748,46 +782,75 @@ namespace MWClass
                              << " result=\"" << result << "\""
                              << " editor=\"" << editor << "\"";
         };
-        const auto equipInventoryItem = [&](ESM::FormId itemId, std::string_view source, const ESM4::Npc* owner) {
-            std::vector<const ESM4::Armor*> armors;
-            ESM4Impl::resolveLevelledAll<ESM4::LevelledItem, ESM4::Armor>(itemId, armors);
-            if (!armors.empty())
+        const ESM4::Npc* inventoryStats = chooseStatsRecord(*data);
+        const int inventoryLevel = inventoryStats != nullptr ? getLevel(*inventoryStats) : ESM4Impl::sDefaultLevel;
+        std::function<bool(ESM::FormId, std::string_view, const ESM4::Npc*, int)> equipInventoryItem;
+        equipInventoryItem = [&](ESM::FormId itemId, std::string_view source, const ESM4::Npc* owner,
+                                 int depth) {
+            if (depth > 16)
             {
-                bool usedAny = false;
-                for (const ESM4::Armor* armor : armors)
+                logInventoryItem(source, owner, itemId, "levelled-depth-limit", {});
+                return false;
+            }
+
+            // Skyrim outfits commonly contain one LVLI whose Use All flag deliberately composes a complete outfit
+            // (cuirass, boots, shield, and one nested helmet choice). Preserve the single-choice behavior below for
+            // ordinary lists; expanding those made Oblivion actors wear every mutually-exclusive random variant.
+            if (const ESM4::LevelledItem* levelled = store->get<ESM4::LevelledItem>().search(itemId);
+                levelled != nullptr && levelled->useAll())
+            {
+                if (worldViewerActorTelemetryEnabled())
                 {
-                    const bool added = addArmor(armor);
-                    logInventoryItem(source, owner, itemId, added ? "armor" : "armor-duplicate", armor->mEditorId);
-                    usedAny = added || usedAny;
+                    Log(Debug::Info) << "World viewer actor ledger: phase=npc-inventory-levelled"
+                                     << " ref=" << ptr.getCellRef().getRefNum().toString("FormId:")
+                                     << " base=" << ptr.getCellRef().getRefId().toDebugString()
+                                     << " source=\"" << source << "\""
+                                     << " owner=\"" << (owner != nullptr ? owner->mEditorId : std::string()) << "\""
+                                     << " list=" << ESM::RefId(itemId)
+                                     << " editor=\"" << levelled->mEditorId << "\""
+                                     << " useAll=1 entries=" << levelled->mLvlObject.size()
+                                     << " level=" << inventoryLevel;
+                }
+
+                bool usedAny = false;
+                for (const ESM4::LVLO& entry : levelled->mLvlObject)
+                {
+                    if (entry.level > inventoryLevel)
+                        continue;
+                    const ESM::FormId entryId = ESM::FormId::fromUint32(entry.item);
+                    if (entryId == itemId)
+                        continue;
+                    usedAny = equipInventoryItem(entryId, source, owner, depth + 1) || usedAny;
                 }
                 return usedAny;
             }
 
-            std::vector<const ESM4::Clothing*> clothes;
-            ESM4Impl::resolveLevelledAll<ESM4::LevelledItem, ESM4::Clothing>(itemId, clothes);
-            if (!clothes.empty())
+            // A normal Bethesda LVLI chooses one eligible entry. Expanding every eligible branch here made a
+            // single Oblivion outfit attach every mutually-exclusive shirt, shoe and trouser variant at once,
+            // consuming gigabytes and producing the stretched "cooked skin" actors seen in exterior cells.
+            if (const ESM4::Armor* armor
+                = ESM4Impl::resolveLevelled<ESM4::LevelledItem, ESM4::Armor>(itemId, inventoryLevel))
             {
-                bool usedAny = false;
-                for (const ESM4::Clothing* clothing : clothes)
-                {
-                    const bool added = addClothing(clothing);
-                    logInventoryItem(
-                        source, owner, itemId, added ? "clothing" : "clothing-duplicate", clothing->mEditorId);
-                    usedAny = added || usedAny;
-                }
-                return usedAny;
+                const bool added = addArmor(armor);
+                logInventoryItem(source, owner, itemId, added ? "armor" : "armor-duplicate", armor->mEditorId);
+                return added;
             }
 
-            std::vector<const ESM4::Weapon*> weapons;
-            ESM4Impl::resolveLevelledAll<ESM4::LevelledItem, ESM4::Weapon>(itemId, weapons);
-            if (!weapons.empty())
+            if (const ESM4::Weapon* weapon
+                = ESM4Impl::resolveLevelled<ESM4::LevelledItem, ESM4::Weapon>(itemId, inventoryLevel))
             {
-                for (const ESM4::Weapon* weapon : weapons)
-                {
-                    considerEquippedWeapon(*data, weapon);
-                    logInventoryItem(source, owner, itemId, "weapon", weapon->mEditorId);
-                }
+                considerEquippedWeapon(*data, weapon);
+                logInventoryItem(source, owner, itemId, "weapon", weapon->mEditorId);
                 return true;
+            }
+
+            if (const ESM4::Clothing* clothing
+                = ESM4Impl::resolveLevelled<ESM4::LevelledItem, ESM4::Clothing>(itemId, inventoryLevel))
+            {
+                const bool added = addClothing(clothing);
+                logInventoryItem(
+                    source, owner, itemId, added ? "clothing" : "clothing-duplicate", clothing->mEditorId);
+                return added;
             }
 
             logInventoryItem(source, owner, itemId, "unresolved", {});
@@ -818,7 +881,7 @@ namespace MWClass
 
             bool usedAny = false;
             for (ESM::FormId itemId : outfit->mInventory)
-                usedAny = equipInventoryItem(itemId, source, owner) || usedAny;
+                usedAny = equipInventoryItem(itemId, source, owner, 0) || usedAny;
             return usedAny;
         };
         const auto equipNpcInventory = [&](const ESM4::Npc* inv, std::string_view source) {
@@ -839,7 +902,7 @@ namespace MWClass
 
             bool usedAny = false;
             for (const ESM4::InventoryItem& item : inv->mInventory)
-                usedAny = equipInventoryItem(ESM::FormId::fromUint32(item.item), source, inv) || usedAny;
+                usedAny = equipInventoryItem(ESM::FormId::fromUint32(item.item), source, inv, 0) || usedAny;
             usedAny = equipOutfit(inv->mDefaultOutfit, source, inv) || usedAny;
             return usedAny;
         };
@@ -861,7 +924,7 @@ namespace MWClass
 
         initialiseActorStats(*data);
 
-        Log(Debug::Info) << "FNV/ESM4 diag: initialized actor shell for NPC \"" << base->mEditorId << "\" ("
+        Log(Debug::Verbose) << "FNV/ESM4 diag: initialized actor shell for NPC \"" << base->mEditorId << "\" ("
                          << ESM::RefId(base->mId) << ") level=" << data->mCreatureStats.getLevel()
                          << " health=" << data->mCreatureStats.getHealth().getModified()
                          << " race=" << (data->mTraits != nullptr ? ESM::RefId(data->mTraits->mRace) : ESM::RefId())
@@ -960,6 +1023,30 @@ namespace MWClass
             return false;
 
         equippedArmor.push_back(armor);
+        return true;
+    }
+
+    bool ESM4Npc::addEquippedArmorReplacingSlots(const MWWorld::Ptr& ptr, const ESM4::Armor* armor)
+    {
+        if (armor == nullptr)
+            return false;
+
+        ESM4NpcCustomData& data = getCustomData(ptr);
+        const std::uint32_t occupiedSlots = armor->mArmorFlags;
+        if (occupiedSlots != 0)
+        {
+            std::erase_if(data.mEquippedArmor, [&](const ESM4::Armor* equipped) {
+                return equipped != nullptr && equipped != armor && (equipped->mArmorFlags & occupiedSlots) != 0;
+            });
+            std::erase_if(data.mEquippedClothing, [&](const ESM4::Clothing* equipped) {
+                return equipped != nullptr && (equipped->mClothingFlags & occupiedSlots) != 0;
+            });
+        }
+
+        if (std::find(data.mEquippedArmor.begin(), data.mEquippedArmor.end(), armor) != data.mEquippedArmor.end())
+            return false;
+
+        data.mEquippedArmor.push_back(armor);
         return true;
     }
 

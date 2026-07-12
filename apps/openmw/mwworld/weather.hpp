@@ -9,6 +9,7 @@
 #include <string>
 
 #include <osg/Vec4f>
+#include <osg/Vec3f>
 
 #include <components/esm/refid.hpp>
 #include <components/esm/formid.hpp>
@@ -24,6 +25,11 @@ namespace ESM
     struct RegionWeatherState;
     class ESMWriter;
     class ESMReader;
+}
+
+namespace ESM4
+{
+    struct Climate;
 }
 
 namespace MWRender
@@ -101,6 +107,10 @@ namespace MWWorld
 
     osg::Vec4f sampleFalloutWeatherColor(
         const FalloutWeatherColorSamples& samples, float gameHour, const TimeOfDaySettings& timeSettings);
+    osg::Vec3f falloutSunPosition(float orbit);
+    MWRender::MoonState::Phase falloutMoonPhase(int gameDay, std::uint8_t encodedMoonInfo);
+    MWRender::MoonState falloutMoonState(
+        float gameHour, MWRender::MoonState::Phase phase, bool visible);
 
     /// Interpolates between 4 data points (sunrise, day, sunset, night) based on the time of day.
     /// The template value could be a floating point number, or a color.
@@ -416,6 +426,7 @@ namespace MWWorld
         TimeOfDayInterpolator<float> mUnderwaterFog;
 
         std::vector<Weather> mWeatherSettings;
+        const ESM4::Climate* mFalloutClimate;
         MoonModel mMasser;
         MoonModel mSecunda;
 

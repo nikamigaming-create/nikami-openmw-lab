@@ -131,6 +131,17 @@ namespace
         return false;
     }
 
+    bool hasSingleFalloutMoonContent(Resource::SceneManager& sceneManager)
+    {
+        const VFS::Manager* vfs = sceneManager.getVFS();
+        return vfs != nullptr
+            && vfs->exists(VFS::Path::NormalizedView("textures/sky/masser_full.dds"))
+            && vfs->exists(VFS::Path::NormalizedView("textures/sky/masser_one_wan.dds"))
+            && vfs->exists(VFS::Path::NormalizedView("textures/sky/masser_one_wax.dds"))
+            && vfs->exists(VFS::Path::NormalizedView("textures/sky/skymoonfull.dds"))
+            && !vfs->exists(VFS::Path::NormalizedView("textures/sky/secunda_full.dds"));
+    }
+
     struct DummyComputeBoundCallback : osg::Node::ComputeBoundingSphereCallback
     {
         osg::BoundingSphere computeBound(const osg::Node& node) const override { return osg::BoundingSphere(); }
@@ -587,9 +598,16 @@ namespace MWRender
         mOpacity = opacity;
     }
 
+    void CloudUpdater::setFalloutCloudShader(bool enabled)
+    {
+        mFalloutCloudShader = enabled;
+    }
+
     void CloudUpdater::setTextureCoord(float timer)
     {
-        mTexMat = osg::Matrixf::translate(osg::Vec3f(0.f, -timer, 0.f));
+        // FO3/FNV SKYCLOUDS.vso adds the WTHR accumulator to texture Y.
+        // Morrowind's cloud path historically scrolls in the opposite direction.
+        mTexMat = osg::Matrixf::translate(osg::Vec3f(0.f, mFalloutCloudShader ? timer : -timer, 0.f));
     }
 
     void CloudUpdater::setDefaults(osg::StateSet* stateset)
@@ -614,6 +632,7 @@ namespace MWRender
         stateset->setTextureAttribute(0, mTexture, osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
 
         stateset->addUniform(new osg::Uniform("opacity", 1.f));
+        stateset->addUniform(new osg::Uniform("useFalloutCloudShader", mFalloutCloudShader));
         stateset->addUniform(new osg::Uniform("pass", static_cast<int>(Pass::Clouds)));
     }
 
@@ -628,6 +647,7 @@ namespace MWRender
         texMat->setMatrix(mTexMat);
 
         stateset->getUniform("opacity")->set(mOpacity);
+        stateset->getUniform("useFalloutCloudShader")->set(mFalloutCloudShader);
     }
 
     class SkyStereoStatesetUpdater : public SceneUtil::StateSetUpdater
@@ -1035,6 +1055,11 @@ namespace MWRender
         , mUpdater(new MoonUpdater(*sceneManager.getImageManager()))
         , mFalloutSkyContent(hasNativeBethesdaSkyContent(sceneManager))
     {
+        if (mType == Type_Secunda && hasSingleFalloutMoonContent(sceneManager))
+        {
+            setAvailable(false);
+            Log(Debug::Info) << "FNV/ESM4: disabled legacy Secunda billboard; retail Fallout Sky::secundaMoon is null";
+        }
         setPhase(MoonState::Phase::Full);
         setVisible(true);
 

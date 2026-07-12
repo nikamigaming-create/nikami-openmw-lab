@@ -4,6 +4,7 @@
 #include <cctype>
 #include <cstdlib>
 #include <fstream>
+#include <string_view>
 #include <tuple>
 
 #include <components/debug/debuglog.hpp>
@@ -27,6 +28,50 @@
 
 namespace
 {
+    MWWorld::ESM4Game detectESM4Game(const std::filesystem::path& path)
+    {
+        std::string filename = path.filename().string();
+        std::transform(filename.begin(), filename.end(), filename.begin(), [](unsigned char value) {
+            return static_cast<char>(std::tolower(value));
+        });
+
+        if (filename == "oblivion.esm")
+            return MWWorld::ESM4Game::Oblivion;
+        if (filename == "fallout3.esm")
+            return MWWorld::ESM4Game::Fallout3;
+        if (filename == "falloutnv.esm")
+            return MWWorld::ESM4Game::FalloutNewVegas;
+        if (filename == "skyrim.esm" || filename == "skyrimvr.esm")
+            return MWWorld::ESM4Game::Skyrim;
+        if (filename == "fallout4.esm")
+            return MWWorld::ESM4Game::Fallout4;
+        if (filename == "starfield.esm")
+            return MWWorld::ESM4Game::Starfield;
+        return MWWorld::ESM4Game::Unknown;
+    }
+
+    std::string_view gameName(MWWorld::ESM4Game game)
+    {
+        switch (game)
+        {
+            case MWWorld::ESM4Game::Oblivion:
+                return "Oblivion";
+            case MWWorld::ESM4Game::Fallout3:
+                return "Fallout 3";
+            case MWWorld::ESM4Game::FalloutNewVegas:
+                return "Fallout: New Vegas";
+            case MWWorld::ESM4Game::Skyrim:
+                return "Skyrim";
+            case MWWorld::ESM4Game::Fallout4:
+                return "Fallout 4";
+            case MWWorld::ESM4Game::Starfield:
+                return "Starfield";
+            case MWWorld::ESM4Game::Unknown:
+                return "unknown";
+        }
+        return "unknown";
+    }
+
     struct Ref
     {
         ESM::RefNum mRefNum;
@@ -104,15 +149,34 @@ namespace
         return it != value.end();
     }
 
-    std::string_view chooseViewerPlayerSkeleton(const MWWorld::Store<ESM4::World>& worlds,
+    std::string_view chooseViewerPlayerSkeleton(bool hasStarfieldContent, const MWWorld::Store<ESM4::World>& worlds,
         const MWWorld::Store<ESM4::ArmorAddon>& armorAddons, const MWWorld::Store<ESM4::HeadPart>& headParts)
     {
+        if (hasStarfieldContent)
+            return "actors/human/characterassets/skeleton.nif";
+
         for (const ESM4::World& world : worlds)
         {
             if (containsAsciiNoCase(world.mEditorId, "Wasteland") || containsAsciiNoCase(world.mEditorId, "DCWorld"))
                 return "characters/_male/skeleton.nif";
             if (containsAsciiNoCase(world.mEditorId, "Commonwealth"))
                 return "actors/character/character assets/skeleton.nif";
+        }
+
+        // Starfield retained the record families used by Skyrim and Fallout 4, so the mere presence of
+        // ARMA/HDPT records cannot distinguish it from those games.  Its authored human parts do provide an
+        // unambiguous contract, however: they live below actors/human and bind to HumanExportRoot.  Select the
+        // shipped Starfield skeleton from that source data instead of falling through to Skyrim's Bip01 rig.
+        for (const ESM4::HeadPart& part : headParts)
+        {
+            if (containsAsciiNoCase(part.mModel, "actors/human/"))
+                return "actors/human/characterassets/skeleton.nif";
+        }
+        for (const ESM4::ArmorAddon& addon : armorAddons)
+        {
+            if (containsAsciiNoCase(addon.mModelMale, "actors/human/")
+                || containsAsciiNoCase(addon.mModelFemale, "actors/human/"))
+                return "actors/human/characterassets/skeleton.nif";
         }
 
         const bool hasTes5ActorParts = armorAddons.begin() != armorAddons.end() || headParts.begin() != headParts.end();
@@ -493,6 +557,13 @@ namespace MWWorld
         IDMap mIds;
         IDMap mStaticIds;
 
+        struct StarfieldPackIn
+        {
+            ESM::FormId mStorageCell;
+            std::string mEditorId;
+        };
+        std::unordered_map<ESM::FormId, StarfieldPackIn> mStarfieldPackIns;
+
         template <typename T>
         static void assignStoreToIndex(ESMStore& stores, Store<T>& store)
         {
@@ -556,6 +627,7 @@ namespace MWWorld
                 case ESM4::REC_MSTT:
                 case ESM4::REC_NPC_:
                 case ESM4::REC_OTFT:
+                case ESM4::REC_PKIN:
                 case ESM4::REC_RACE:
                 case ESM4::REC_REFR:
                 case ESM4::REC_STAT:
@@ -591,14 +663,63 @@ namespace MWWorld
             return true;
         }
 
+        static bool readStarfieldPackIn(ESM4::Reader& reader, ESMStore& store)
+        {
+            reader.getRecordData();
+            const ESM::FormId id = reader.getFormIdFromHeader();
+            const std::uint32_t flags = reader.hdr().record.flags;
+            StarfieldPackIn value;
+            while (reader.getSubRecordHeader())
+            {
+                const ESM4::SubRecordHeader& subHeader = reader.subRecordHeader();
+                switch (subHeader.typeId)
+                {
+                    case ESM::fourCC("EDID"):
+                        reader.getZString(value.mEditorId);
+                        break;
+                    case ESM::fourCC("CNAM"):
+                        reader.getFormId(value.mStorageCell);
+                        break;
+                    default:
+                        // PKIN owns component metadata in BETH/REFL blobs, but the authored default set-piece
+                        // composition is the CNAM storage cell. Preserve forward compatibility by ignoring the
+                        // remaining component payload here rather than pretending it is a legacy MODL record.
+                        reader.skipSubRecordData();
+                        break;
+                }
+            }
+
+            if (!value.mStorageCell.isZeroOrUnset())
+            {
+                store.mStoreImp->mStarfieldPackIns.insert_or_assign(id, value);
+                static int logged = 0;
+                if (logged < 120)
+                {
+                    Log(Debug::Info) << "World viewer: Starfield PKIN base=" << id
+                                     << " editor=\"" << value.mEditorId << "\" storageCell="
+                                     << value.mStorageCell << " flags=0x" << std::hex << flags << std::dec;
+                    ++logged;
+                }
+                else if (logged == 120)
+                {
+                    Log(Debug::Info) << "World viewer: further Starfield PKIN record logs suppressed";
+                    ++logged;
+                }
+            }
+            return true;
+        }
+
         static bool readRecord(ESM4::Reader& reader, ESMStore& store)
         {
             const auto recordType = static_cast<ESM4::RecordTypes>(reader.hdr().record.typeId);
             if (shouldSkipStarfieldViewerRecord(reader, recordType))
                 return false;
 
-            const bool result = std::apply(
-                [&reader](auto&... x) { return (typedReadRecordESM4(reader, x) || ...); }, store.mStoreImp->mStores);
+            const bool result = recordType == ESM4::REC_PKIN
+                ? readStarfieldPackIn(reader, store)
+                : std::apply(
+                    [&reader](auto&... x) { return (typedReadRecordESM4(reader, x) || ...); },
+                    store.mStoreImp->mStores);
             if (recordType == ESM4::REC_CELL || recordType == ESM4::REC_WRLD || recordType == ESM4::REC_REFR
                 || recordType == ESM4::REC_ACHR || recordType == ESM4::REC_ACRE || recordType == ESM4::REC_NPC_
                 || recordType == ESM4::REC_CREA || recordType == ESM4::REC_LVLI || recordType == ESM4::REC_LVLN
@@ -707,6 +828,7 @@ namespace MWWorld
             case ESM::REC_SOUN4:
             case ESM::REC_STAT4:
             case ESM::REC_TERM4:
+            case ESM::REC_TACT4:
             case ESM::REC_TREE4:
             case ESM::REC_WEAP4:
                 return true;
@@ -799,6 +921,23 @@ namespace MWWorld
 
     void ESMStore::loadESM4(ESM4::Reader& reader, Loading::Listener* listener)
     {
+        const ESM4Game detectedGame = detectESM4Game(reader.getFileName());
+        if (detectedGame != ESM4Game::Unknown && detectedGame != mESM4Game)
+        {
+            if (mESM4Game == ESM4Game::Unknown)
+            {
+                mESM4Game = detectedGame;
+                Log(Debug::Info) << "World viewer: session game=" << gameName(mESM4Game)
+                                 << " master=" << reader.getFileName().filename().string();
+            }
+            else
+            {
+                Log(Debug::Warning) << "World viewer: ignoring conflicting game master="
+                                    << reader.getFileName().filename().string() << " detected=" << gameName(detectedGame)
+                                    << " session=" << gameName(mESM4Game);
+            }
+        }
+        mHasStarfieldContent = mHasStarfieldContent || (reader.esmVersionF() >= 0.959f && reader.esmVersionF() <= 0.961f);
         if (listener != nullptr)
             listener->setProgressRange(::EsmLoader::fileProgress);
         int seenWorlds = 0;
@@ -892,7 +1031,26 @@ namespace MWWorld
                          << " globals=" << get<ESM4::GlobalVariable>().getSize()
                          << " formLists=" << get<ESM4::FormIdList>().getSize()
                          << " statics=" << get<ESM4::Static>().getSize()
-                         << " textureSets=" << get<ESM4::TextureSet>().getSize();
+                         << " textureSets=" << get<ESM4::TextureSet>().getSize()
+                         << " packIns=" << mStoreImp->mStarfieldPackIns.size();
+    }
+
+    std::optional<ESM::FormId> ESMStore::getStarfieldPackInStorageCell(ESM::FormId id) const
+    {
+        const auto found = mStoreImp->mStarfieldPackIns.find(id);
+        if (found != mStoreImp->mStarfieldPackIns.end())
+            return found->second.mStorageCell;
+
+        // Starfield's self-master FormIDs can arrive with the session content index while raw base records use
+        // local index zero. Mirror the existing placed-base fallback without weakening lookups for other games.
+        if (id.hasContentFile() && id.mContentFile != 0)
+        {
+            id.mContentFile = 0;
+            const auto local = mStoreImp->mStarfieldPackIns.find(id);
+            if (local != mStoreImp->mStarfieldPackIns.end())
+                return local->second.mStorageCell;
+        }
+        return std::nullopt;
     }
 
     void ESMStore::setIdType(const ESM::RefId& id, ESM::RecNameInts type)
@@ -1021,7 +1179,7 @@ namespace MWWorld
             ensureFalloutCharacterDefaults(getWritable<ESM::Class>(), getWritable<ESM::Race>(),
                 getWritable<ESM::Skill>(), getWritable<ESM::MagicEffect>(), getWritable<ESM::Dialogue>(), npcs,
                 getWritable<ESM::Weapon>(), getWritable<ESM::Potion>(), getWritable<ESM::Miscellaneous>(),
-                chooseViewerPlayerSkeleton(
+                chooseViewerPlayerSkeleton(mHasStarfieldContent,
                     getWritable<ESM4::World>(), getWritable<ESM4::ArmorAddon>(), getWritable<ESM4::HeadPart>()));
         rebuildIdsIndex();
         mStoreImp->mStaticIds = mStoreImp->mIds;
@@ -1071,7 +1229,7 @@ namespace MWWorld
             ensureFalloutCharacterDefaults(getWritable<ESM::Class>(), getWritable<ESM::Race>(),
                 getWritable<ESM::Skill>(), getWritable<ESM::MagicEffect>(), getWritable<ESM::Dialogue>(), npcs,
                 getWritable<ESM::Weapon>(), getWritable<ESM::Potion>(), getWritable<ESM::Miscellaneous>(),
-                chooseViewerPlayerSkeleton(
+                chooseViewerPlayerSkeleton(mHasStarfieldContent,
                     getWritable<ESM4::World>(), getWritable<ESM4::ArmorAddon>(), getWritable<ESM4::HeadPart>()));
         rebuildIdsIndex();
         auto& scripts = getWritable<ESM::Script>();

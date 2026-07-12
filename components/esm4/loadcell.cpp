@@ -176,19 +176,19 @@ void ESM4::Cell::load(ESM4::Reader& reader)
                 break;
             }
             case ESM::fourCC("XGLB"):
-                if (subHdr.dataSize == sizeof(ESM::FormId))
+                if (subHdr.dataSize == sizeof(ESM::FormId32))
                     reader.getFormId(mGlobal);
                 else
                     reader.skipSubRecordData();
                 break; // Oblivion only?
             case ESM::fourCC("XCCM"):
-                if (subHdr.dataSize == sizeof(ESM::FormId))
+                if (subHdr.dataSize == sizeof(ESM::FormId32))
                     reader.getFormId(mClimate);
                 else
                     reader.skipSubRecordData();
                 break;
             case ESM::fourCC("XCWT"):
-                if (subHdr.dataSize == sizeof(ESM::FormId))
+                if (subHdr.dataSize == sizeof(ESM::FormId32))
                     reader.getFormId(mWater);
                 else
                     reader.skipSubRecordData();
@@ -222,7 +222,7 @@ void ESM4::Cell::load(ESM4::Reader& reader)
                 reader.get(mMusicType);
                 break; // Oblivion only?
             case ESM::fourCC("LTMP"):
-                if (subHdr.dataSize == sizeof(ESM::FormId))
+                if (subHdr.dataSize == sizeof(ESM::FormId32))
                     reader.getFormId(mLightingTemplate);
                 else
                     reader.skipSubRecordData();
@@ -234,19 +234,19 @@ void ESM4::Cell::load(ESM4::Reader& reader)
                     reader.skipSubRecordData();
                 break; // seems to always follow LTMP
             case ESM::fourCC("XCMO"):
-                if (subHdr.dataSize == sizeof(ESM::FormId))
+                if (subHdr.dataSize == sizeof(ESM::FormId32))
                     reader.getFormId(mMusic);
                 else
                     reader.skipSubRecordData();
                 break;
             case ESM::fourCC("XCAS"):
-                if (subHdr.dataSize == sizeof(ESM::FormId))
+                if (subHdr.dataSize == sizeof(ESM::FormId32))
                     reader.getFormId(mAcousticSpace);
                 else
                     reader.skipSubRecordData();
                 break;
             case ESM::fourCC("XCIM"):
-                if (subHdr.dataSize == sizeof(ESM::FormId))
+                if (subHdr.dataSize == sizeof(ESM::FormId32))
                     reader.getFormId(mImageSpace);
                 else
                     reader.skipSubRecordData();

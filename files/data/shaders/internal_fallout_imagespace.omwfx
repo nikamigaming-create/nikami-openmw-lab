@@ -1,13 +1,16 @@
 uniform_vec4 uFalloutCinematic {
     default = vec4(1.0, 0.0, 1.0, 1.0);
+    static = false;
 }
 
 uniform_vec4 uFalloutTint {
     default = vec4(1.0, 1.0, 1.0, 0.0);
+    static = false;
 }
 
 uniform_vec4 uFalloutFade {
     default = vec4(0.0, 0.0, 0.0, 0.0);
+    static = false;
 }
 
 fragment main {

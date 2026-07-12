@@ -51,19 +51,19 @@ void ESM4::Activator::load(ESM4::Reader& reader)
                 reader.getZString(mModel);
                 break;
             case ESM::fourCC("SCRI"):
-                if (subHdr.dataSize == sizeof(ESM::FormId))
+                if (subHdr.dataSize == sizeof(ESM::FormId32))
                     reader.getFormId(mScriptId);
                 else
                     reader.skipSubRecordData();
                 break;
             case ESM::fourCC("SNAM"):
-                if (subHdr.dataSize == sizeof(ESM::FormId))
+                if (subHdr.dataSize == sizeof(ESM::FormId32))
                     reader.getFormId(mLoopingSound);
                 else
                     reader.skipSubRecordData();
                 break;
             case ESM::fourCC("VNAM"):
-                if (subHdr.dataSize == sizeof(ESM::FormId))
+                if (subHdr.dataSize == sizeof(ESM::FormId32))
                     reader.getFormId(mActivationSound);
                 else
                     reader.skipSubRecordData();
@@ -75,13 +75,13 @@ void ESM4::Activator::load(ESM4::Reader& reader)
                     reader.skipSubRecordData();
                 break;
             case ESM::fourCC("INAM"):
-                if (subHdr.dataSize == sizeof(ESM::FormId))
+                if (subHdr.dataSize == sizeof(ESM::FormId32))
                     reader.getFormId(mRadioTemplate);
                 else
                     reader.skipSubRecordData();
                 break; // FONV
             case ESM::fourCC("RNAM"):
-                if (subHdr.dataSize == sizeof(ESM::FormId))
+                if (subHdr.dataSize == sizeof(ESM::FormId32))
                     reader.getFormId(mRadioStation);
                 else
                     reader.skipSubRecordData();

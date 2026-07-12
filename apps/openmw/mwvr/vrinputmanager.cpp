@@ -340,8 +340,28 @@ namespace MWVR
         {
             bool guiMode = MWBase::Environment::get().getWindowManager()->isGuiMode();
             const bool retailSurfaceModal = MWVR::FNVXRLiveFrameSurface::instance().modalInputActive();
-            bool leftPointer = mPointerLeft || guiMode || retailSurfaceModal;
-            bool rightPointer = mPointerRight || guiMode || retailSurfaceModal;
+            auto& actionSet = mXRInput->getActionSet(MWActionSet::Actions);
+            const bool directLeftPointer = actionPressed(actionSet, {
+                "/user/hand/left/input/squeeze/value",
+                "/user/hand/left/input/squeeze/click",
+            });
+            const bool directRightPointer = actionPressed(actionSet, {
+                "/user/hand/right/input/squeeze/value",
+                "/user/hand/right/input/squeeze/click",
+            });
+            bool leftPointer = mPointerLeft || directLeftPointer || guiMode || retailSurfaceModal;
+            bool rightPointer = mPointerRight || directRightPointer || guiMode || retailSurfaceModal;
+
+            static bool sLastDirectLeftPointer = false;
+            static bool sLastDirectRightPointer = false;
+            if (directLeftPointer != sLastDirectLeftPointer || directRightPointer != sLastDirectRightPointer)
+            {
+                Log(Debug::Info) << "OpenMW VR pointer input leftSqueeze=" << directLeftPointer
+                                 << " rightSqueeze=" << directRightPointer
+                                 << " luaLeft=" << mPointerLeft << " luaRight=" << mPointerRight;
+                sLastDirectLeftPointer = directLeftPointer;
+                sLastDirectRightPointer = directRightPointer;
+            }
 
             if (!disableControls && !retailSurfaceModal)
                 MWBase::Environment::get().getWorld()->enableVRPointer(leftPointer, rightPointer);
@@ -372,7 +392,7 @@ namespace MWVR
 
         if (sourceName != mLastPointerSourceName || mPointerSourceLogFrames < 20 || (mPointerSourceLogFrames % 300) == 0)
         {
-            Log(Debug::Info) << "FNV/ESM4 diag: VR pointer source=" << sourceName
+            Log(Debug::Verbose) << "FNV/ESM4 diag: VR pointer source=" << sourceName
                              << " vr=" << VR::getVR()
                              << " leftPointer=" << mPointerLeft
                              << " rightPointer=" << mPointerRight
@@ -395,6 +415,8 @@ namespace MWVR
 
         if (mVRPointer)
         {
+            const bool pointerEnabled = sourceName != "DefaultReferenceSpaceView";
+            mVRPointer->setEnabled(pointerEnabled);
             mVRPointer->setSource(source);
             mVRPointer->setDebugSpaces(
                 mXRInput->getSpace(OpenXRInput::LeftHandAim), mXRInput->getSpace(OpenXRInput::RightHandAim));
@@ -650,7 +672,7 @@ namespace MWVR
         if ((active || mFallbackMovementActive) && mFallbackMovementLogCount < 32)
         {
             ++mFallbackMovementLogCount;
-            Log(Debug::Info) << "FNV/ESM4 diag: VR fallback movement"
+            Log(Debug::Verbose) << "FNV/ESM4 diag: VR fallback movement"
                              << " hand=" << hand << " side=" << side << " forward=" << movement
                              << " blocked=" << blocked << " active=" << active
                              << " settings=(" << movementSettings.mPosition[0] << ","

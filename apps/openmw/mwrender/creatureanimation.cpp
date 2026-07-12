@@ -89,7 +89,7 @@ namespace MWRender
 
                 if (logCandidates && logged < 24)
                 {
-                    Log(Debug::Info) << "FNV/ESM4 diag: creature KF candidate " << editorId << " path=" << name;
+                    Log(Debug::Verbose) << "FNV/ESM4 diag: creature KF candidate " << editorId << " path=" << name;
                     ++logged;
                 }
             }
@@ -106,7 +106,7 @@ namespace MWRender
 
                     if (logCandidates && logged < 24)
                     {
-                        Log(Debug::Info) << "FNV/ESM4 diag: creature KF global candidate " << editorId
+                        Log(Debug::Verbose) << "FNV/ESM4 diag: creature KF global candidate " << editorId
                                          << " path=" << name;
                         ++logged;
                     }
@@ -296,7 +296,7 @@ namespace MWRender
 
             const osg::Vec3f center = box.center();
             const osg::Vec3f extent = boundingBoxExtent(box);
-            Log(Debug::Info) << "FNV/ESM4 diag: creature " << label << " bounds for " << editorId
+            Log(Debug::Verbose) << "FNV/ESM4 diag: creature " << label << " bounds for " << editorId
                              << " path=" << path << " center=(" << center.x() << "," << center.y() << ","
                              << center.z() << ") extent=(" << extent.x() << "," << extent.y() << ","
                              << extent.z() << ")";
@@ -348,7 +348,7 @@ namespace MWRender
 
             ForceFalloutCreatureBodyVisibleVisitor visitor;
             bodyNode->accept(visitor);
-            Log(Debug::Info) << "FNV/ESM4 diag: forced creature body render mask for " << editorId
+            Log(Debug::Verbose) << "FNV/ESM4 diag: forced creature body render mask for " << editorId
                              << " path=" << bodyPath
                              << " rigged=" << visitor.mRigGeometryCount
                              << " static=" << visitor.mStaticGeometryCount
@@ -398,7 +398,7 @@ namespace MWRender
                     mObjectRoot->addChild(bodyNode);
                     if (std::getenv("OPENMW_FNV_CREATURE_BODY_DIAG") != nullptr)
                     {
-                        Log(Debug::Info) << "FNV/ESM4 diag: attached creature body nif "
+                        Log(Debug::Verbose) << "FNV/ESM4 diag: attached creature body nif "
                                          << ref->mBase->mEditorId << " effective=" << effective.mEditorId
                                          << " path=" << bodyPath;
                         logCreatureBounds("body", ref->mBase->mEditorId, bodyPath.value(), *bodyNode);
@@ -457,7 +457,7 @@ namespace MWRender
                                         << ref->mBase->mEditorId << " effective=" << effective.mEditorId
                                         << " model=" << model;
 
-                Log(Debug::Info) << "FNV/ESM4 diag: inserted creature animation for "
+                Log(Debug::Verbose) << "FNV/ESM4 diag: inserted creature animation for "
                                  << ref->mBase->mEditorId << " model=" << model
                                  << " animated=" << animated << " effective=" << effective.mEditorId
                                  << " kfCount=" << effective.mKf.size()

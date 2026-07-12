@@ -859,7 +859,7 @@ namespace MWGui
                         << "FNV/ESM4 proof: Fallout inventory mode opens all native panes map=1 items=1 aid=1 data=1";
                     loggedPipBoySurface = true;
                 }
-                Log(Debug::Info) << "FNV/ESM4 diag: Pip-Boy active pane index="
+                Log(Debug::Verbose) << "FNV/ESM4 diag: Pip-Boy active pane index="
                                  << activeIndex << " visibleMask=0x"
                                  << std::hex << eff << std::dec;
             }
@@ -1080,6 +1080,8 @@ namespace MWGui
 
     void WindowManager::messageBox(std::string_view message, enum MWGui::ShowInDialogueMode showInDialogueMode)
     {
+        if (std::getenv("OPENMW_FNV_INTERACTION_AUDIT") != nullptr)
+            Log(Debug::Info) << "FNV interaction audit: rendered notification text=\"" << message << "\"";
         if (getMode() == GM_Dialogue && showInDialogueMode != MWGui::ShowInDialogueMode_Never)
         {
             MyGUI::UString text = MyGUI::LanguageManager::getInstance().replaceTags(MyGUI::UString(message));
@@ -1244,7 +1246,7 @@ namespace MWGui
             {
                 if (activeWindow->mMainWidget != nullptr)
                     MyGUI::LayerManager::getInstance().upLayerItem(activeWindow->mMainWidget);
-                Log(Debug::Info) << "FNV/ESM4 diag: Pip-Boy tab raised pane index=" << activeIndex;
+                Log(Debug::Verbose) << "FNV/ESM4 diag: Pip-Boy tab raised pane index=" << activeIndex;
             }
             if (mInventoryTabsOverlay != nullptr && !VR::getVR())
             {

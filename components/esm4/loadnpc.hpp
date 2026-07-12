@@ -190,6 +190,7 @@ namespace ESM4
         bool mIsFO3 = false;
         bool mIsFONV = false;
         bool mIsFO4 = false;
+        bool mIsStarfield = false;
 
         std::string mEditorId;
         std::string mFullName;

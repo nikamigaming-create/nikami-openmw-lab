@@ -74,6 +74,8 @@ namespace ESM4
         std::vector<FloatKey> mDepthOfFieldStrength;
         std::vector<FloatKey> mDepthOfFieldDistance;
         std::vector<FloatKey> mDepthOfFieldRange;
+        std::vector<FloatKey> mVignetteRadius;
+        std::vector<FloatKey> mVignetteStrength;
         std::vector<FloatKey> mMotionBlurStrength;
         ESM::FormId mIntroSound;
         ESM::FormId mOutroSound;

@@ -15,6 +15,7 @@
 #include <components/esm4/loadwthr.hpp>
 #include <components/esm4/imagespacecomposition.hpp>
 #include <components/esm4/loadcell.hpp>
+#include <components/esm4/loadclmt.hpp>
 #include <components/esm4/loadimad.hpp>
 #include <components/esm4/loadimgs.hpp>
 #include <components/esm4/loadwrld.hpp>
@@ -36,6 +37,7 @@
 #include "player.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <string_view>
 
@@ -44,6 +46,35 @@ namespace MWWorld
     namespace
     {
         static const int invalidWeatherID = -1;
+
+        bool usesFallout3Weather(ESM4Game game)
+        {
+            return game == ESM4Game::Fallout3 || game == ESM4Game::FalloutNewVegas;
+        }
+
+        bool isFalloutWorld(const ESM4::World& world)
+        {
+            std::string editorId = world.mEditorId;
+            std::transform(editorId.begin(), editorId.end(), editorId.begin(), [](unsigned char value) {
+                return static_cast<char>(std::tolower(value));
+            });
+            return editorId.find("wasteland") != std::string::npos
+                || editorId.find("dcworld") != std::string::npos
+                || editorId.find("commonwealth") != std::string::npos;
+        }
+
+        const ESM4::Climate* findFalloutClimate(const MWWorld::ESMStore& store)
+        {
+            const auto& climates = store.get<ESM4::Climate>();
+            for (const ESM4::World& world : store.get<ESM4::World>())
+            {
+                if (!isFalloutWorld(world) || world.mClimate.isZeroOrUnset())
+                    continue;
+                if (const ESM4::Climate* climate = climates.search(world.mClimate))
+                    return climate;
+            }
+            return nullptr;
+        }
 
         // linear interpolate between x and y based on factor.
         float lerp(float x, float y, float factor)
@@ -128,6 +159,26 @@ namespace MWWorld
             ? std::clamp((gameHour - highNoon) / (timeSettings.mDayEnd - highNoon), 0.f, 1.f)
             : 0.f;
         return lerp(samples[ESM4::Weather::Time_HighNoon], samples[ESM4::Weather::Time_Day], factor);
+    }
+
+    osg::Vec3f falloutSunPosition(float orbit)
+    {
+        const float x = 800.f * orbit;
+        return osg::Vec3f(x, -100.f, 800.f - std::abs(x));
+    }
+
+    MWRender::MoonState::Phase falloutMoonPhase(int gameDay, std::uint8_t encodedMoonInfo)
+    {
+        const unsigned int phaseLength = encodedMoonInfo & 0x3f;
+        if (phaseLength == 0 || gameDay < 0)
+            return MWRender::MoonState::Phase::Full;
+        return static_cast<MWRender::MoonState::Phase>((static_cast<unsigned int>(gameDay) / phaseLength) % 8);
+    }
+
+    MWRender::MoonState falloutMoonState(
+        float gameHour, MWRender::MoonState::Phase phase, bool visible)
+    {
+        return { (gameHour - 18.f) * 15.f, 35.f, phase, 1.f, visible ? 1.f : 0.f };
     }
 
     template <typename T>
@@ -686,6 +737,7 @@ namespace MWWorld
               Fallback::Map::getFloat("Water_UnderwaterDayFog"), Fallback::Map::getFloat("Water_UnderwaterSunsetFog"),
               Fallback::Map::getFloat("Water_UnderwaterNightFog"))
         , mWeatherSettings()
+        , mFalloutClimate(usesFallout3Weather(store.getESM4Game()) ? findFalloutClimate(store) : nullptr)
         , mMasser("Masser")
         , mSecunda("Secunda")
         , mWindSpeed(0.f)
@@ -748,7 +800,10 @@ namespace MWWorld
             mRegions.insert(std::make_pair(it->mId, RegionWeather(*it)));
         }
 
-        importFalloutWeather();
+        // Parsing ESM4 WTHR records is shared, but interpreting them is game-specific. In
+        // particular, TES4/TES5/FO4/SF weather must never become resident Fallout state.
+        if (usesFallout3Weather(store.getESM4Game()))
+            importFalloutWeather();
 
         forceWeather(0);
     }
@@ -779,6 +834,28 @@ namespace MWWorld
 
     bool WeatherManager::forceWeather(const ESM::RefId& weatherID)
     {
+        if (mFalloutClimate != nullptr)
+        {
+            constexpr float climateTimeScale = 1.f / 6.f;
+            mSunriseTime = mFalloutClimate->mTiming.mSunriseBegin * climateTimeScale;
+            mSunriseDuration = (mFalloutClimate->mTiming.mSunriseEnd
+                                   - mFalloutClimate->mTiming.mSunriseBegin)
+                * climateTimeScale;
+            mSunsetTime = mFalloutClimate->mTiming.mSunsetBegin * climateTimeScale;
+            mSunsetDuration = (mFalloutClimate->mTiming.mSunsetEnd
+                                  - mFalloutClimate->mTiming.mSunsetBegin)
+                * climateTimeScale;
+            Log(Debug::Info) << "FNV/ESM4 climate " << mFalloutClimate->mEditorId
+                             << " sunrise=" << mSunriseTime << "-" << (mSunriseTime + mSunriseDuration)
+                             << " sunset=" << mSunsetTime << "-" << (mSunsetTime + mSunsetDuration)
+                             << " moonPhaseLength="
+                             << static_cast<unsigned int>(mFalloutClimate->mTiming.getMoonPhaseLength())
+                             << " masser=" << (mFalloutClimate->mTiming.hasMasser() ? 1 : 0)
+                             << " secunda=" << (mFalloutClimate->mTiming.hasSecunda() ? 1 : 0)
+                             << " sunTexture=" << mFalloutClimate->mSunTexture
+                             << " sunGlareTexture=" << mFalloutClimate->mSunGlareTexture;
+        }
+
         const Weather* weather = getWeather(weatherID);
         if (weather == nullptr)
             return false;
@@ -939,7 +1016,11 @@ namespace MWWorld
             imageSpaceId = ESM::RefId(cellImageSpaceId);
         }
 
-        if (const ESM4::ImageSpace* base = mStore.get<ESM4::ImageSpace>().search(imageSpaceId))
+        // This shader and its modifier-channel mapping are retail-derived from Fallout 3/New Vegas.
+        // Other Creation Engine games retain their parsed image-space records for their own adapters.
+        if (const ESM4::ImageSpace* base = usesFallout3Weather(mStore.getESM4Game())
+                ? mStore.get<ESM4::ImageSpace>().search(imageSpaceId)
+                : nullptr)
         {
             std::vector<ESM4::ImageSpaceModifierContribution> modifiers;
             const Weather& falloutWeather = mWeatherSettings[mCurrentWeather];
@@ -1073,29 +1154,35 @@ namespace MWWorld
                 orbit = 2.f * t - 1.f;
             }
 
-            // Hardcoded constant from Morrowind
-            const osg::Vec3f sunDir(-400.f * orbit, 75.f, -100.f);
-            if (std::getenv("OPENMW_FNV_PROOF_WEATHER_ID") != nullptr)
+            if (mFalloutClimate != nullptr)
             {
-                static int proofSunOrbitLogs = 0;
-                if (proofSunOrbitLogs < 12)
+                // Live FalloutNV.exe Sky::sun telemetry: X spans +800..-800 from
+                // sunrise to sunset (and back overnight), Y is -100, and
+                // Z = 800 - abs(X).
+                const osg::Vec3f sunPosition = falloutSunPosition(orbit);
+                if (std::getenv("OPENMW_FNV_PROOF_WEATHER_ID") != nullptr)
                 {
-                    osg::Vec3f skyPosition = -sunDir;
-                    skyPosition.z() = 400.f - std::abs(skyPosition.x());
-                    Log(Debug::Info) << "FNV/ESM4 proof: sun orbit hour=" << time.getHour()
-                                     << " sunrise=" << mSunriseTime
-                                     << " nightStart=" << mTimeSettings.mNightStart
-                                     << " dayDuration=" << dayDuration
-                                     << " nightDuration=" << nightDuration
-                                     << " orbit=" << orbit
-                                     << " isNight=" << (isNight ? 1 : 0)
-                                     << " rawDirection=(" << sunDir.x() << "," << sunDir.y() << "," << sunDir.z()
-                                     << ") expectedSkyPosition=(" << skyPosition.x() << "," << skyPosition.y() << ","
-                                     << skyPosition.z() << ")";
-                    ++proofSunOrbitLogs;
+                    static int proofFalloutSunOrbitLogs = 0;
+                    if (proofFalloutSunOrbitLogs < 12)
+                    {
+                        Log(Debug::Info) << "FNV/ESM4 proof: retail sun orbit hour=" << time.getHour()
+                                         << " sunrise=" << mSunriseTime
+                                         << " nightStart=" << mTimeSettings.mNightStart
+                                         << " orbit=" << orbit
+                                         << " isNight=" << (isNight ? 1 : 0)
+                                         << " position=(" << sunPosition.x() << "," << sunPosition.y() << ","
+                                         << sunPosition.z() << ")";
+                        ++proofFalloutSunOrbitLogs;
+                    }
                 }
+                mRendering.setSunPosition(sunPosition);
             }
-            mRendering.setSunDirection(sunDir);
+            else
+            {
+                // Hardcoded constants from Morrowind.
+                const osg::Vec3f sunDir(-400.f * orbit, 75.f, -100.f);
+                mRendering.setSunDirection(sunDir);
+            }
             mRendering.setNight(isNight);
         }
 
@@ -1112,8 +1199,46 @@ namespace MWWorld
 
         mRendering.getSkyManager()->setGlareTimeOfDayFade(glareFade);
 
-        mRendering.getSkyManager()->setMasserState(mMasser.calculateState(time));
-        mRendering.getSkyManager()->setSecundaState(mSecunda.calculateState(time));
+        if (mFalloutClimate != nullptr)
+        {
+            // FalloutNV.exe's Moon root is R_x((18 - hour) * 15 degrees) * R_z(35 degrees).
+            // Its authored child mesh lies on the opposite local axis from OpenMW's generated
+            // moon quad, so invert the root elevation when mapping it to MoonState.
+            // The live retail object is size 85 with one Masser phase set; secundaMoon is null.
+            const bool nightVisible
+                = time.getHour() >= mTimeSettings.mNightStart || time.getHour() <= mSunriseTime;
+            const bool visible = mFalloutClimate->mTiming.hasMasser() && nightVisible;
+            const MWRender::MoonState::Phase phase
+                = falloutMoonPhase(time.getDay(), mFalloutClimate->mTiming.mMoonInfo);
+            MWRender::MoonState masser = falloutMoonState(time.getHour(), phase, visible);
+            mRendering.getSkyManager()->setMasserState(masser);
+
+            MWRender::MoonState secunda = masser;
+            secunda.mMoonAlpha = mFalloutClimate->mTiming.hasSecunda() && nightVisible ? 1.f : 0.f;
+            mRendering.getSkyManager()->setSecundaState(secunda);
+            if (std::getenv("OPENMW_FNV_PROOF_WEATHER_ID") != nullptr)
+            {
+                static int proofMoonLogs = 0;
+                if (proofMoonLogs < 12)
+                {
+                    Log(Debug::Info) << "FNV/ESM4 proof: retail moon state hour=" << time.getHour()
+                                     << " rotationFromHorizon=" << masser.mRotationFromHorizon
+                                     << " rotationFromNorth=" << masser.mRotationFromNorth
+                                     << " alpha=" << masser.mMoonAlpha
+                                     << " phase=" << static_cast<unsigned int>(masser.mPhase)
+                                     << " phaseLength="
+                                     << static_cast<unsigned int>(mFalloutClimate->mTiming.getMoonPhaseLength())
+                                     << " secundaAvailable=" << (mFalloutClimate->mTiming.hasSecunda() ? 1 : 0)
+                                     << " size=85 speed=0.25";
+                    ++proofMoonLogs;
+                }
+            }
+        }
+        else
+        {
+            mRendering.getSkyManager()->setMasserState(mMasser.calculateState(time));
+            mRendering.getSkyManager()->setSecundaState(mSecunda.calculateState(time));
+        }
 
         mRendering.configureFog(
             mResult.mFogDepth, underwaterFog, mResult.mDLFogFactor, mResult.mDLFogOffset / 100.0f, mResult.mFogColor);
@@ -1376,10 +1501,17 @@ namespace MWWorld
             std::array<FalloutWeatherColorSamples, 4> cloudColors{};
             for (std::size_t layer = 0; layer < cloudSpeeds.size(); ++layer)
             {
-                // xEdit/fopdoc specifies that ONAM uint8 values are divided by 2550.
-                cloudSpeeds[layer] = static_cast<float>(source.mCloudSpeeds[layer]) / 2550.f;
+                // FO3/FNV ONAM values use the legacy unsigned scale. TES5+
+                // RNAM values are centred on 127 and cover roughly -0.1..0.1.
+                cloudSpeeds[layer] = source.mUsesExtendedCloudSpeeds
+                    ? (static_cast<float>(source.mCloudSpeeds[layer]) - 127.f) / 1270.f
+                    : static_cast<float>(source.mCloudSpeeds[layer]) / 2550.f;
                 for (std::size_t sample = 0; sample < cloudColors[layer].size(); ++sample)
+                {
                     cloudColors[layer][sample] = falloutCloudColor(source.mCloudColors[layer][sample]);
+                    if (source.mHasCloudAlphas)
+                        cloudColors[layer][sample].a() = std::clamp(source.mCloudAlphas[layer][sample], 0.f, 1.f);
+                }
             }
             weather.mFalloutCloudSpeeds = cloudSpeeds;
             weather.mFalloutCloudColors = cloudColors;

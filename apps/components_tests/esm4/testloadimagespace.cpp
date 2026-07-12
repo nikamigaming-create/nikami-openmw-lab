@@ -105,6 +105,39 @@ namespace
         EXPECT_FLOAT_EQ(imageSpace.mTraits[ESM4::ImageSpace::Trait_CinematicTintStrength], 0.330000013f);
     }
 
+    TEST(Esm4ImageSpaceTest, shouldKeepTes5SplitFieldsOutOfFalloutDnamTraits)
+    {
+        std::string payload;
+        std::array<float, 9> hdr{ 3.f, 7.f, 0.6f, 0.5f, 0.15f, 0.15f, 1.8f, 1.5f, 3.f };
+        std::array<float, 3> cinematic{ 0.9f, 1.5f, 1.1f };
+        std::array<float, 4> tint{ 0.25f, 0.2f, 0.4f, 0.6f };
+        ESM4::ImageSpace::DepthOfField depth;
+        depth.strength = 0.75f;
+        depth.distance = 1200.f;
+        depth.range = 300.f;
+        depth.skyBlurRadius = 16384;
+        appendSubRecord(payload, "HNAM", hdr);
+        appendSubRecord(payload, "CNAM", cinematic);
+        appendSubRecord(payload, "TNAM", tint);
+        appendSubRecord(payload, "DNAM",
+            std::string_view(reinterpret_cast<const char*>(&depth), 16));
+        appendSubRecord(payload, "TX00", std::string_view("textures/effects/test_lut.dds\0", 30));
+
+        auto reader = makeReader("IMGS", 0x1234, payload);
+        ESM4::ImageSpace imageSpace;
+        ASSERT_NO_THROW(imageSpace.load(*reader));
+
+        EXPECT_FLOAT_EQ(imageSpace.mHdr[6], 1.8f);
+        EXPECT_FLOAT_EQ(imageSpace.mCinematic[0], 0.9f);
+        EXPECT_FLOAT_EQ(imageSpace.mTint[3], 0.6f);
+        EXPECT_FLOAT_EQ(imageSpace.mDepthOfField.strength, 0.75f);
+        EXPECT_EQ(imageSpace.mDepthOfField.skyBlurRadius, 16384);
+        EXPECT_EQ(imageSpace.mLut, "textures/effects/test_lut.dds");
+        EXPECT_FLOAT_EQ(imageSpace.mTraits[ESM4::ImageSpace::Trait_SunlightDimmer], 1.8f);
+        EXPECT_FLOAT_EQ(imageSpace.mTraits[ESM4::ImageSpace::Trait_CinematicTintStrength], 0.25f);
+        EXPECT_FLOAT_EQ(imageSpace.mTraits[ESM4::ImageSpace::Trait_TargetLuminance], 0.f);
+    }
+
     TEST(Esm4ImageSpaceTest, shouldParseRetailFNVModifierKeys)
     {
         std::string payload;
@@ -124,6 +157,11 @@ namespace
         const std::array<ESM4::ImageSpaceModifier::ColorKey, 2> tint = { { { 0.f,
             { 1.f, 0.737254918f, 0.050980393f, 0.392156869f } }, { 1.f, { 1.f, 1.f, 1.f, 0.f } } } };
         appendSubRecord(payload, "TNAM", tint);
+        const std::array<ESM4::ImageSpaceModifier::FloatKey, 2> vignetteRadius
+            = { { { 0.f, 0.25f }, { 1.f, 0.75f } } };
+        const std::array<ESM4::ImageSpaceModifier::FloatKey, 1> vignetteStrength = { { { 0.f, 0.4f } } };
+        appendSubRecord(payload, "NAM5", vignetteRadius);
+        appendSubRecord(payload, "NAM6", vignetteStrength);
 
         auto reader = makeReader("IMAD", 0x0cee18, payload, 2);
         ESM4::ImageSpaceModifier modifier;
@@ -139,6 +177,10 @@ namespace
             modifier.mMultiply[ESM4::ImageSpaceModifier::Channel_CinematicBrightness][0].value, 1.3f);
         ASSERT_EQ(modifier.mTint.size(), 2);
         EXPECT_FLOAT_EQ(modifier.mTint[0].value[3], 0.392156869f);
+        ASSERT_EQ(modifier.mVignetteRadius.size(), 2);
+        EXPECT_FLOAT_EQ(modifier.mVignetteRadius[1].value, 0.75f);
+        ASSERT_EQ(modifier.mVignetteStrength.size(), 1);
+        EXPECT_FLOAT_EQ(modifier.mVignetteStrength[0].value, 0.4f);
     }
 
     TEST(Esm4ImageSpaceTest, shouldReproduceCapturedRetailFNVFinalConstants)

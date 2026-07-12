@@ -17,6 +17,7 @@
 #include <deque>
 #include <memory>
 #include <span>
+#include <string>
 #include <unordered_map>
 
 namespace osg
@@ -171,6 +172,7 @@ namespace MWRender
 
         const osg::Vec4f& getSunLightPosition() const { return mSunLight->getPosition(); }
         void setSunDirection(const osg::Vec3f& direction);
+        void setSunPosition(const osg::Vec3f& position);
         void setSunColour(const osg::Vec4f& diffuse, const osg::Vec4f& specular, float sunVis);
         void setNight(bool isNight) { mNight = isNight; }
 
@@ -369,6 +371,11 @@ namespace MWRender
         osg::ref_ptr<PostProcessor> mPostProcessor;
         std::unique_ptr<MWWorld::LiveCellRef<ESM4::Npc>> mFalloutPlayerVisualRef;
         osg::ref_ptr<Animation> mFalloutPlayerVisualAnimation;
+        std::string mFalloutPlayerVisualGroup;
+        float mFalloutPlayerVisualGroupElapsed = 0.f;
+        bool mFalloutPlayerVisualCycleLogged = false;
+        osg::Vec3f mFalloutPlayerVisualPreviousPosition;
+        bool mFalloutPlayerVisualPreviousPositionValid = false;
         osg::ref_ptr<NpcAnimation> mPlayerAnimation;
         osg::ref_ptr<SceneUtil::PositionAttitudeTransform> mPlayerNode;
         std::unique_ptr<Camera> mCamera;

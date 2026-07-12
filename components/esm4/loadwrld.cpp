@@ -69,7 +69,7 @@ void ESM4::World::load(ESM4::Reader& reader)
                     reader.skipSubRecordData();
                 break;
             case ESM::fourCC("WNAM"):
-                if (subHdr.dataSize == sizeof(ESM::FormId))
+                if (subHdr.dataSize == sizeof(ESM::FormId32))
                     reader.getFormId(mParent);
                 else
                     reader.skipSubRecordData();
@@ -84,13 +84,13 @@ void ESM4::World::load(ESM4::Reader& reader)
                 reader.getZString(mMapFile);
                 break;
             case ESM::fourCC("CNAM"):
-                if (subHdr.dataSize == sizeof(ESM::FormId))
+                if (subHdr.dataSize == sizeof(ESM::FormId32))
                     reader.getFormId(mClimate);
                 else
                     reader.skipSubRecordData();
                 break;
             case ESM::fourCC("NAM2"):
-                if (subHdr.dataSize == sizeof(ESM::FormId))
+                if (subHdr.dataSize == sizeof(ESM::FormId32))
                     reader.getFormId(mWater);
                 else
                     reader.skipSubRecordData();
@@ -180,13 +180,13 @@ void ESM4::World::load(ESM4::Reader& reader)
             // 00119D2E freeside\freeside_01.mp3 0012D94E FreesideFortWorld (Old Mormon Fort)
             // NOTE: FONV DefaultObjectManager has 00090908 "explore" as the default music
             case ESM::fourCC("ZNAM"):
-                if (subHdr.dataSize == sizeof(ESM::FormId))
+                if (subHdr.dataSize == sizeof(ESM::FormId32))
                     reader.getFormId(mMusic);
                 else
                     reader.skipSubRecordData();
                 break;
             case ESM::fourCC("INAM"): // FO3/FNV exterior image space
-                if (subHdr.dataSize == sizeof(ESM::FormId))
+                if (subHdr.dataSize == sizeof(ESM::FormId32))
                     reader.getFormId(mImageSpace);
                 else
                     reader.skipSubRecordData();

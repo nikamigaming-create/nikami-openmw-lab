@@ -137,7 +137,7 @@ namespace MWVR
                         const osg::Vec3f worldPosition = localToWorld.getTrans();
                         const osg::Quat worldAttitude = localToWorld.getRotate();
                         ++mLogCount;
-                        Log(Debug::Info) << "FNV/ESM4 diag: VR pointer XYZ axis label=" << mLabel
+                        Log(Debug::Verbose) << "FNV/ESM4 diag: VR pointer XYZ axis label=" << mLabel
                                          << " worldPosition=(" << worldPosition.x() << ","
                                          << worldPosition.y() << "," << worldPosition.z()
                                          << ") worldAttitude=(" << worldAttitude.x() << ","
@@ -239,7 +239,7 @@ namespace MWVR
             mRightAimAxisDebug->addUpdateCallback(new PointerAimAxisLogCallback("right-aim"));
             mRoot->addChild(mRightAimAxisDebug);
 
-            Log(Debug::Info) << "FNV/ESM4 diag: VR pointer XYZ axes attached to left/right aim spaces";
+            Log(Debug::Verbose) << "FNV/ESM4 diag: VR pointer XYZ axes attached to left/right aim spaces";
         }
     }
 
@@ -351,6 +351,19 @@ namespace MWVR
 
     void UserPointer::update()
     {
+        if (!mEnabled)
+        {
+            mPointerRay = {};
+            mPointerTarget = nullptr;
+            mDistanceToPointerTarget = -1.f;
+            mCanPlaceObject = false;
+            mCrosshair->setStretch(0.f);
+            mCrosshair->hide();
+            MWVR::FNVXRLiveFrameSurface::instance().updateFocus(nullptr, osg::Vec3(0, 0, 0));
+            MWVR::VRGUIManager::instance().updateFocus(nullptr, osg::Vec3(0, 0, 0));
+            return;
+        }
+
         auto pose = Util::getNodePose(mSpaceTransform);
         mDistanceToPointerTarget = Util::getPoseTarget(
             mPointerRay, pose, true, MWRender::Mask_3DGUI_NonIntersectable | MWRender::Mask_FirstPerson);
@@ -362,7 +375,7 @@ namespace MWVR
         {
             const bool guiMode = MWBase::Environment::get().getWindowManager()->isGuiMode();
             const bool showWorldPointer
-                = getPointerDebugEnvFloat("OPENMW_FNV_VR_POINTER_WORLD_VISUAL", 0.f) != 0.f;
+                = getPointerDebugEnvFloat("OPENMW_FNV_VR_POINTER_WORLD_VISUAL", 1.f) != 0.f;
             const bool showPointerVisual = guiMode || MWVR::FNVXRLiveFrameSurface::instance().modalInputActive()
                 || showWorldPointer;
 
@@ -396,11 +409,13 @@ namespace MWVR
         }
         else
         {
-            if (MWVR::FNVXRLiveFrameSurface::instance().modalInputActive())
+            const bool showWorldPointer
+                = getPointerDebugEnvFloat("OPENMW_FNV_VR_POINTER_WORLD_VISUAL", 1.f) != 0.f;
+            if (MWVR::FNVXRLiveFrameSurface::instance().modalInputActive() || showWorldPointer)
             {
-                mCrosshair->setStretch(getPointerDebugEnvFloat("OPENMW_FNV_VR_POINTER_FALLBACK_STRETCH", 8.f));
+                mCrosshair->setStretch(getPointerDebugEnvFloat("OPENMW_FNV_VR_POINTER_FALLBACK_STRETCH", 30.f));
                 mCrosshair->setWidth(getPointerDebugEnvFloat("OPENMW_FNV_VR_POINTER_VISUAL_WIDTH", 0.06f));
-                mCrosshair->setOffset(getPointerDebugEnvFloat("OPENMW_FNV_VR_POINTER_FALLBACK_OFFSET", 4.f));
+                mCrosshair->setOffset(getPointerDebugEnvFloat("OPENMW_FNV_VR_POINTER_FALLBACK_OFFSET", 15.f));
                 mCrosshair->show();
             }
             else

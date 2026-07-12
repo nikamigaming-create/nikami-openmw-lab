@@ -348,7 +348,7 @@ namespace MWSound
         const VFS::Path::NormalizedView remapped = getNewVegasFallbackMusic(*mVFS, filename);
         if (remapped != filename)
         {
-            Log(Debug::Info) << "FNV/ESM4 diag: remapped legacy music \"" << filename << "\" to \"" << remapped
+            Log(Debug::Verbose) << "FNV/ESM4 diag: remapped legacy music \"" << filename << "\" to \"" << remapped
                              << "\"";
             filename = remapped;
         }

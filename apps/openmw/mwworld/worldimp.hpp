@@ -196,6 +196,10 @@ namespace MWWorld
         WorldModel& getWorldModel() { return mWorldModel; }
         Scene& getWorldScene() { return *mWorldScene; }
 
+        // Explicit world-viewer compatibility hook. It is called only when the corresponding proof environment
+        // variable is present and does not alter normal OpenMW terrain loading.
+        void addWorldViewerFlatGround(float x, float y, float height);
+
         // FIXME
         void addContainerScripts(const Ptr& reference, CellStore* cell) override;
         void removeContainerScripts(const Ptr& reference) override;

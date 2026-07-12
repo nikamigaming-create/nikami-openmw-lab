@@ -965,7 +965,7 @@ namespace
 
         const osg::Vec3f size = maximum - minimum;
         const osg::Vec3f center = (minimum + maximum) * 0.5f;
-        Log(Debug::Info) << "FNV/ESM4 diag: skeleton bounds " << ptr.getCellRef().getRefId()
+        Log(Debug::Verbose) << "FNV/ESM4 diag: skeleton bounds " << ptr.getCellRef().getRefId()
                          << " points=" << pointCount
                          << " min=" << formatFalloutAuditVec3(minimum)
                          << " max=" << formatFalloutAuditVec3(maximum)
@@ -996,7 +996,7 @@ namespace
         const osg::Vec3f leftFoot = pointOrNaN({ "bip01 l foot" });
         const osg::Vec3f rightFoot = pointOrNaN({ "bip01 r foot" });
 
-        Log(Debug::Info) << "FNV/ESM4 diag: skeleton anchors " << ptr.getCellRef().getRefId()
+        Log(Debug::Verbose) << "FNV/ESM4 diag: skeleton anchors " << ptr.getCellRef().getRefId()
                          << " head=" << formatFalloutAuditVec3(head)
                          << " neck=" << formatFalloutAuditVec3(neck)
                          << " spine=" << formatFalloutAuditVec3(spine)
@@ -1014,7 +1014,7 @@ namespace
                          << " leftFoot=" << formatFalloutAuditVec3(leftFoot)
                          << " rightFoot=" << formatFalloutAuditVec3(rightFoot);
 
-        Log(Debug::Info) << "FNV/ESM4 diag: skeleton segments " << ptr.getCellRef().getRefId()
+        Log(Debug::Verbose) << "FNV/ESM4 diag: skeleton segments " << ptr.getCellRef().getRefId()
                          << " neckToHead=" << (head - neck).length()
                          << " spineToNeck=" << (neck - spine).length()
                          << " pelvisToSpine=" << (spine - pelvis).length()
@@ -3535,7 +3535,7 @@ namespace MWRender
         wrapper->setMatrix(wrapperMatrix);
         wrapper->addChild(objectRoot);
 
-        Log(Debug::Info) << "FNV/ESM4 diag: wrapped actor root for " << ptr.getCellRef().getRefId()
+        Log(Debug::Verbose) << "FNV/ESM4 diag: wrapped actor root for " << ptr.getCellRef().getRefId()
                          << " mode=" << env
                          << " child='" << objectRoot->getName() << "'"
                          << " pivotBip01=" << pivotBip01
@@ -4517,6 +4517,21 @@ namespace MWRender
 
         std::string lowerKf = Misc::StringUtils::lowerCase(kfname);
         std::string lowerBaseModel = Misc::StringUtils::lowerCase(baseModel);
+        // A legacy ESM3 player shell can still request Morrowind's xbase_anim.kf while the
+        // world-viewer has replaced its visual root with Starfield's native human skeleton.
+        // None of xbase_anim's Bip01 controllers can bind to that C_/L_/R_ skeleton, so adding
+        // the source only repeats warnings and leaves a useless animation source behind.
+        const bool starfieldHumanSkeleton
+            = lowerBaseModel.find("actors/human/characterassets/") != std::string::npos;
+        const bool morrowindBaseAnimation = Misc::StringUtils::ciEndsWith(lowerKf, "xbase_anim.kf");
+        if (starfieldHumanSkeleton && morrowindBaseAnimation)
+        {
+            static unsigned int sSkippedStarfieldMorrowindBaseAnimationLogs = 0;
+            if (sSkippedStarfieldMorrowindBaseAnimationLogs++ == 0)
+                Log(Debug::Verbose) << "World viewer: skipped incompatible Morrowind animation source " << kfname
+                                    << " for Starfield human skeleton " << baseModel;
+            return nullptr;
+        }
         const bool isFonvActorAnim = isFalloutNpcAnimationContext(mPtr)
             && (lowerKf.find("meshes/characters/_male/") != std::string::npos
                 || lowerKf.find("meshes\\characters\\_male\\") != std::string::npos
@@ -4539,7 +4554,7 @@ namespace MWRender
                     = new SceneUtil::KeyframeHolder(*animsrc->mKeyframes, osg::CopyOp::SHALLOW_COPY);
                 addSyntheticLoopingTextKeys(keyframes->mTextKeys, group);
                 animsrc->mKeyframes = keyframes;
-                Log(Debug::Info) << "FNV/ESM4 diag: synthesized creature KF text key group '" << group
+                Log(Debug::Verbose) << "FNV/ESM4 diag: synthesized creature KF text key group '" << group
                                  << "' for " << kfname;
             }
         }
@@ -4573,7 +4588,7 @@ namespace MWRender
                     = new SceneUtil::KeyframeHolder(*animsrc->mKeyframes, osg::CopyOp::SHALLOW_COPY);
                 addSyntheticLoopingTextKeys(keyframes->mTextKeys, group);
                 animsrc->mKeyframes = keyframes;
-                Log(Debug::Info) << "FNV/ESM4 diag: synthesized missing forced actor KF " << reason
+                Log(Debug::Verbose) << "FNV/ESM4 diag: synthesized missing forced actor KF " << reason
                                  << " text key group '" << group << "' for " << kfname;
             };
             if (forcedGroup != nullptr)
@@ -4588,7 +4603,7 @@ namespace MWRender
                     = new SceneUtil::KeyframeHolder(*animsrc->mKeyframes, osg::CopyOp::SHALLOW_COPY);
                 addSyntheticLoopingTextKeys(keyframes->mTextKeys, "weaponpose");
                 animsrc->mKeyframes = keyframes;
-                Log(Debug::Info) << "FNV/ESM4 diag: synthesized retail weapon overlay group 'weaponpose' for "
+                Log(Debug::Verbose) << "FNV/ESM4 diag: synthesized retail weapon overlay group 'weaponpose' for "
                                  << kfname;
             }
         }
@@ -4614,7 +4629,7 @@ namespace MWRender
             if (sFalloutActorControllerSourceLogs < 12)
             {
                 ++sFalloutActorControllerSourceLogs;
-                Log(Debug::Info) << "FNV/ESM4 diag: actor controller audit source=" << kfname
+                Log(Debug::Verbose) << "FNV/ESM4 diag: actor controller audit source=" << kfname
                                  << " baseModel=" << baseModel
                                  << " isActor=" << isFonvActorAnim
                                  << " isCreature=" << isFonvCreatureAnim
@@ -4632,14 +4647,18 @@ namespace MWRender
                 const std::string originalName = bonename;
                 found = findFonvAnimationBone(nodeMap, originalName, bonename);
                 if (found != nodeMap.end())
-                    Log(Debug::Info) << "FNV/ESM4 diag: aliased KF bone '" << originalName << "' to '" << bonename
+                    Log(Debug::Verbose) << "FNV/ESM4 diag: aliased KF bone '" << originalName << "' to '" << bonename
                                      << "' for " << kfname;
             }
             if (found == nodeMap.end())
             {
                 ++missingControllers;
-                Log(Debug::Warning) << "Warning: addAnimSource: can't find bone '" + bonename << "' in " << baseModel
-                                    << " (referenced by " << kfname << ")";
+                if (isFonvAnim)
+                    Log(Debug::Verbose) << "FNV/ESM4: animation controller bone '" << bonename
+                                        << "' is absent from " << baseModel << " (referenced by " << kfname << ")";
+                else
+                    Log(Debug::Warning) << "Warning: addAnimSource: can't find bone '" + bonename << "' in "
+                                        << baseModel << " (referenced by " << kfname << ")";
                 continue;
             }
             const std::string lowerResolvedBone = Misc::StringUtils::lowerCase(bonename);
@@ -4652,7 +4671,7 @@ namespace MWRender
                 if (sSkippedSyntheticAttachmentHelperLogs < 24)
                 {
                     ++sSkippedSyntheticAttachmentHelperLogs;
-                    Log(Debug::Info) << "FNV/ESM4 diag: skipped synthetic attachment helper controller bone="
+                    Log(Debug::Verbose) << "FNV/ESM4 diag: skipped synthetic attachment helper controller bone="
                                      << bonename << " source=" << kfname
                                      << " so carried parts inherit the live actor hand/body transform";
                 }
@@ -4704,7 +4723,7 @@ namespace MWRender
                     {
                         ++sFalloutBasisLogs;
                         ++falloutActorBasisAudited;
-                        Log(Debug::Info) << "FNV/ESM4 diag: enabled actor rotation basis for " << bonename
+                        Log(Debug::Verbose) << "FNV/ESM4 diag: enabled actor rotation basis for " << bonename
                                          << " source=" << kfname
                                          << " sourceType=" << typeid(*it->second).name()
                                          << " clonedType=" << typeid(*cloned).name();
@@ -4718,7 +4737,7 @@ namespace MWRender
                     {
                         ++sFalloutBasisMissLogs;
                         ++falloutActorBasisAudited;
-                        Log(Debug::Info) << "FNV/ESM4 diag: actor rotation basis skipped non-NifOsg controller bone="
+                        Log(Debug::Verbose) << "FNV/ESM4 diag: actor rotation basis skipped non-NifOsg controller bone="
                                          << bonename << " sourceType=" << typeid(*it->second).name()
                                          << " clonedType=" << typeid(*cloned).name() << " source=" << kfname;
                     }
@@ -4754,20 +4773,20 @@ namespace MWRender
                     }
                     keyframes->mTextKeys.emplace(stopTime, group + ": stop");
                     animsrc->mKeyframes = keyframes;
-                    Log(Debug::Info) << "FNV/ESM4 diag: synthesized " << group
+                    Log(Debug::Verbose) << "FNV/ESM4 diag: synthesized " << group
                                      << " text keys for procedure source " << kfname << " stopTime=" << stopTime;
                 }
-                Log(Debug::Info) << "FNV/ESM4 diag: procedure text keys source=" << kfname << " group=" << group
+                Log(Debug::Verbose) << "FNV/ESM4 diag: procedure text keys source=" << kfname << " group=" << group
                                  << " keys=[" << summarizeFalloutTextKeys(animsrc->getTextKeys()) << "]";
             }
             animsrc->mFalloutProcedureIdle = isProcedureIdle;
 
-            Log(Debug::Info) << "FNV/ESM4 diag: animation source " << kfname << " bound " << matchedControllers << "/"
+            Log(Debug::Verbose) << "FNV/ESM4 diag: animation source " << kfname << " bound " << matchedControllers << "/"
                              << controllerMap.size() << " controller(s) to " << baseModel << ", missing "
                              << missingControllers << ", skippedSyntheticAttachmentHelpers "
                              << skippedSyntheticAttachmentHelperControllers;
             if (auditFalloutActorControllers)
-                Log(Debug::Info) << "FNV/ESM4 diag: actor controller audit result source=" << kfname
+                Log(Debug::Verbose) << "FNV/ESM4 diag: actor controller audit result source=" << kfname
                                  << " basisApplied=" << falloutActorBasisApplied
                                  << " basisMissed=" << falloutActorBasisMissed
                                  << " matched=" << matchedControllers
@@ -4781,7 +4800,7 @@ namespace MWRender
                 groups << group;
                 ++groupCount;
             }
-            Log(Debug::Info) << "FNV/ESM4 diag: animation source " << kfname << " groups=[" << groups.str() << "]";
+            Log(Debug::Verbose) << "FNV/ESM4 diag: animation source " << kfname << " groups=[" << groups.str() << "]";
             if (!animsrc->mKeyframes->mFalloutHeadAnimTracks.empty())
             {
                 std::ostringstream headAnimSample;
@@ -4808,7 +4827,7 @@ namespace MWRender
                                    << " range=(" << minValue << "," << maxValue << ")}";
                     ++sampleCount;
                 }
-                Log(Debug::Info) << "FNV/ESM4 diag: animation source " << kfname << " headAnimTracks="
+                Log(Debug::Verbose) << "FNV/ESM4 diag: animation source " << kfname << " headAnimTracks="
                                  << animsrc->mKeyframes->mFalloutHeadAnimTracks.size() << " sample=["
                                  << headAnimSample.str() << "]";
             }
@@ -4994,7 +5013,7 @@ namespace MWRender
         float speedmult, std::string_view start, std::string_view stop, float startpoint, uint32_t loops,
         bool loopfallback)
     {
-        const bool falloutNpc = isFalloutActor(mPtr);
+        const bool falloutNpc = isFalloutNpcAnimationContext(mPtr);
         if (!mObjectRoot || mAnimSources.empty())
         {
             if (falloutNpc)
@@ -5005,7 +5024,7 @@ namespace MWRender
         }
 
         if (falloutNpc)
-            Log(Debug::Info) << "FNV/ESM4 diag: play request for " << mPtr.getCellRef().getRefId() << " group '"
+            Log(Debug::Verbose) << "FNV/ESM4 diag: play request for " << mPtr.getCellRef().getRefId() << " group '"
                              << groupname << "' sources=" << mAnimSources.size() << " blendMask=" << blendMask
                              << " start='" << start << "' stop='" << stop << "' loops=" << loops
                              << " startpoint=" << startpoint;
@@ -5034,7 +5053,7 @@ namespace MWRender
         if (foundstateiter != mStates.end())
         {
             if (falloutNpc)
-                Log(Debug::Info) << "FNV/ESM4 diag: play reused active group '" << groupname << "' for "
+                Log(Debug::Verbose) << "FNV/ESM4 diag: play reused active group '" << groupname << "' for "
                                  << mPtr.getCellRef().getRefId();
             resetActiveGroups();
             return;
@@ -5070,7 +5089,7 @@ namespace MWRender
                                 = std::min(state.mStartTime + idleSeedSeconds, state.mStopTime - 0.01f);
                             if (seededIdleTime > state.getTime())
                             {
-                                Log(Debug::Info) << "FNV/ESM4 diag: seeding Fallout idle pose for "
+                                Log(Debug::Verbose) << "FNV/ESM4 diag: seeding Fallout idle pose for "
                                                  << mPtr.getCellRef().getRefId() << " from=" << state.getTime()
                                                  << " to=" << seededIdleTime << " seconds=" << idleSeedSeconds;
                                 state.setTime(seededIdleTime);
@@ -5078,7 +5097,7 @@ namespace MWRender
                             }
                         }
                         else
-                            Log(Debug::Info) << "FNV/ESM4 diag: Fallout idle seed disabled for "
+                            Log(Debug::Verbose) << "FNV/ESM4 diag: Fallout idle seed disabled for "
                                              << mPtr.getCellRef().getRefId();
                     }
                     else if (isFalloutSeededLocomotionGroup(groupname))
@@ -5089,7 +5108,7 @@ namespace MWRender
                             = std::min(state.mStartTime + locomotionSeedSeconds, state.mStopTime - 0.01f);
                         if (seededLocomotionTime > state.getTime())
                         {
-                            Log(Debug::Info) << "FNV/ESM4 diag: seeding Fallout locomotion pose for "
+                            Log(Debug::Verbose) << "FNV/ESM4 diag: seeding Fallout locomotion pose for "
                                              << mPtr.getCellRef().getRefId() << " group '" << groupname
                                              << "' from=" << state.getTime() << " to=" << seededLocomotionTime
                                              << " seconds=" << locomotionSeedSeconds;
@@ -5107,7 +5126,7 @@ namespace MWRender
                         if (state.blendMaskContains(mask))
                             controllerCount += state.mSource->mControllerMap[mask].size();
 
-                    Log(Debug::Info) << "FNV/ESM4 diag: play matched " << mPtr.getCellRef().getRefId() << " group '"
+                    Log(Debug::Verbose) << "FNV/ESM4 diag: play matched " << mPtr.getCellRef().getRefId() << " group '"
                                      << groupname << "' source=" << state.mSource->mSourceName
                                      << " checkedSources=" << checkedSources << " controllers=" << controllerCount
                                      << " startTime=" << state.mStartTime
@@ -5412,7 +5431,7 @@ namespace MWRender
         if (logs < 8)
         {
             ++logs;
-            Log(Debug::Info) << "FNV/ESM4 diag: forced native update traversal for "
+            Log(Debug::Verbose) << "FNV/ESM4 diag: forced native update traversal for "
                              << mPtr.getCellRef().getRefId()
                              << " reason=" << reason
                              << " traversalNumber=" << traversalNumber
@@ -5507,7 +5526,11 @@ namespace MWRender
         const bool isPlayer = (mPtr == MWMechanics::getPlayer());
 
 //## VR_PATCH END
-        const bool falloutNpc = isFalloutNpc(mPtr);
+        // REC_NPC_4 is shared by Oblivion and the later Bethesda formats.  The
+        // accumulation reset, bone-LOD handling, native callback traversal, and
+        // direct (non-smoothed) controller path below reproduce FO3/FNV runtime
+        // semantics; applying them to TES4 corrupts Oblivion skeleton poses.
+        const bool falloutNpc = isFalloutNpcAnimationContext(mPtr);
         size_t falloutAddedControllers = 0;
         size_t falloutBoneLodSuppressedControllers = 0;
         bool accumResetAttached = false;
@@ -5637,7 +5660,7 @@ namespace MWRender
         }
 
         if (falloutNpc)
-            Log(Debug::Info) << "FNV/ESM4 diag: active animation group reset for " << mPtr.getCellRef().getRefId()
+            Log(Debug::Verbose) << "FNV/ESM4 diag: active animation group reset for " << mPtr.getCellRef().getRefId()
                              << " states=" << mStates.size() << " callbacks=" << falloutAddedControllers
                              << " boneLod=" << mBethesdaBoneLodLevel
                              << " boneLodSuppressed=" << falloutBoneLodSuppressedControllers
@@ -5842,8 +5865,9 @@ namespace MWRender
     osg::Vec3f Animation::runAnimation(float duration)
     {
         osg::Vec3f movement(0.f, 0.f, 0.f);
-        const bool falloutNpc = isFalloutNpc(mPtr);
-        const bool falloutActor = isFalloutActor(mPtr);
+        const bool esm4Npc = isFalloutNpc(mPtr);
+        const bool falloutNpc = isFalloutNpcAnimationContext(mPtr);
+        const bool falloutActor = falloutNpc || isFalloutCreature(mPtr);
         if (falloutNpc)
         {
             const int boneLodLevel = getBethesdaBoneLodLevel();
@@ -5935,7 +5959,7 @@ namespace MWRender
                     if (logs < 3)
                     {
                         ++logs;
-                        Log(Debug::Info) << "FNV/ESM4 diag: idle time advanced for " << mPtr.getCellRef().getRefId()
+                        Log(Debug::Verbose) << "FNV/ESM4 diag: idle time advanced for " << mPtr.getCellRef().getRefId()
                                          << " duration=" << duration << " from=" << previousStateTime
                                          << " to=" << state.getTime();
                     }
@@ -6440,7 +6464,7 @@ namespace MWRender
                 if (rootCorrectionLogs < 3)
                 {
                     ++rootCorrectionLogs;
-                    Log(Debug::Info) << "FNV/ESM4 diag: applied root up correction for "
+                    Log(Debug::Verbose) << "FNV/ESM4 diag: applied root up correction for "
                                      << mPtr.getCellRef().getRefId()
                                      << " mode=" << std::getenv("OPENMW_FNV_ROOT_UP_CORRECTION")
                                      << " roots=" << correctedRoots.size();
@@ -6486,7 +6510,7 @@ namespace MWRender
                     if (active->second.mSource)
                         activeGroups << " src=" << active->second.mSource->mSourceName;
                 }
-                Log(Debug::Info) << "FNV/ESM4 diag: manually applied " << appliedControllers
+                Log(Debug::Verbose) << "FNV/ESM4 diag: manually applied " << appliedControllers
                                  << " active keyframe controller(s) for " << mPtr.getCellRef().getRefId()
                                  << " bindPoseProofAudit=" << bindPoseProofAudit
                                  << " activeGroups=[" << activeGroups.str() << "]"
@@ -6527,7 +6551,7 @@ namespace MWRender
                                      << " maxNativeWorldMatrixDelta=" << maxNativeWorldMatrixDelta
                                      << " maxNativeWorldMatrixDeltaBone=" << maxNativeWorldMatrixDeltaBone;
                 }
-                Log(Debug::Info) << "FNV/ESM4 diag: semantic pose for " << mPtr.getCellRef().getRefId()
+                Log(Debug::Verbose) << "FNV/ESM4 diag: semantic pose for " << mPtr.getCellRef().getRefId()
                                  << " headDeg=" << poseSemantic.mHead
                                  << " spine2Deg=" << poseSemantic.mSpine2
                                  << " lUpperArmDeg=" << poseSemantic.mLeftUpperArm
@@ -6621,7 +6645,7 @@ namespace MWRender
                 std::unordered_map<std::string, std::vector<osg::MatrixTransform*>> runtimeTargets;
                 FalloutTransformTargetVisitor targetVisitor(runtimeTargets);
                 mObjectRoot->accept(targetVisitor);
-                Log(Debug::Info) << "FNV/ESM4 diag: skeleton animation state " << mPtr.getCellRef().getRefId()
+                Log(Debug::Verbose) << "FNV/ESM4 diag: skeleton animation state " << mPtr.getCellRef().getRefId()
                                  << " sample=" << samples
                                  << " activeGroups=[" << describeActiveFalloutAnimationStates() << "]";
                 auditFalloutSkeletonBounds(runtimeTargets, mPtr);
@@ -6692,7 +6716,7 @@ namespace MWRender
             }
         }
 
-        if (falloutNpc && mObjectRoot != nullptr
+        if (esm4Npc && mObjectRoot != nullptr
             && std::getenv("OPENMW_ESM4_TRANSFORM_ORACLE_OUTPUT") != nullptr)
         {
             std::unordered_map<std::string, std::vector<osg::MatrixTransform*>> runtimeTargets;

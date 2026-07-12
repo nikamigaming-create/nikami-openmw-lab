@@ -530,7 +530,7 @@ namespace MWGui
                 getWidget(healthFrame, "HealthFrame");
                 getWidget(magickaFrame, "MagickaFrame");
                 getWidget(fatigueFrame, "FatigueFrame");
-                Log(Debug::Info) << "FNV/ESM4 diag: wrist HUD widgets healthFrame=" << healthFrame->getVisible()
+                Log(Debug::Verbose) << "FNV/ESM4 diag: wrist HUD widgets healthFrame=" << healthFrame->getVisible()
                                  << " health=" << mHealth->getVisible()
                                  << " apFrame=" << magickaFrame->getVisible()
                                  << " ap=" << mMagicka->getVisible()
@@ -732,7 +732,7 @@ namespace MWGui
             if (!logged)
             {
                 logged = true;
-                Log(Debug::Info) << "FNV/ESM4 diag: keeping Fallout HUD health/AP visible despite hide request";
+                Log(Debug::Verbose) << "FNV/ESM4 diag: keeping Fallout HUD health/AP visible despite hide request";
             }
             visible = true;
         }
@@ -778,7 +778,7 @@ namespace MWGui
             if (!logged)
             {
                 logged = true;
-                Log(Debug::Info) << "FNV/ESM4 diag: keeping Fallout HUD compass/minimap visible despite hide request";
+                Log(Debug::Verbose) << "FNV/ESM4 diag: keeping Fallout HUD compass/minimap visible despite hide request";
             }
             visible = true;
         }

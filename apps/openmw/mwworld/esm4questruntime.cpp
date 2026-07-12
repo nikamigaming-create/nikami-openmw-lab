@@ -8,6 +8,7 @@
 #include <charconv>
 #include <sstream>
 #include <stdexcept>
+#include <utility>
 
 #include <components/debug/debuglog.hpp>
 #include <components/esm/refid.hpp>
@@ -17,6 +18,9 @@
 #include <components/esm4/loadqust.hpp>
 #include <components/esm4/loadscpt.hpp>
 #include <components/misc/strings/algorithm.hpp>
+
+#include "../mwbase/environment.hpp"
+#include "../mwbase/windowmanager.hpp"
 
 namespace
 {
@@ -192,6 +196,7 @@ namespace MWWorld
         if (state->mStageDone[stage->mIndex] && !repeatedStages)
             return true;
 
+        const bool wasRunning = (state->mFlags & ESM4QuestState::Flag_Running) != 0;
         state->mFlags |= ESM4QuestState::Flag_Running;
         state->mCurrentStage = stageIndex;
         state->mStageDone[stage->mIndex] = true;
@@ -220,6 +225,26 @@ namespace MWWorld
                          << " stage=" << static_cast<unsigned int>(stageIndex)
                          << " flags=" << static_cast<unsigned int>(state->mFlags)
                          << " done=" << state->mStageDone[stage->mIndex] << " entryExecuted=" << executedEntry;
+
+        if (MWBase::WindowManager* windowManager = MWBase::Environment::get().getWindowManager())
+        {
+            const std::string& title = quest->mQuestName.empty() ? quest->mEditorId : quest->mQuestName;
+            std::string notification = wasRunning ? "Quest Updated: " : "Quest Added: ";
+            notification += title;
+            for (const ESM4::QuestStageEntry& entry : stage->mEntries)
+            {
+                if (!entry.mLogEntry.empty() && evaluateConditions(entry.mConditions))
+                {
+                    notification += "\n";
+                    notification += entry.mLogEntry;
+                    break;
+                }
+            }
+            windowManager->scheduleMessageBox(std::move(notification), MWGui::ShowInDialogueMode_Never);
+            Log(Debug::Info) << "FNV/ESM4 behavior: queued quest notification quest=" << quest->mEditorId
+                             << " stage=" << static_cast<unsigned int>(stageIndex)
+                             << " mode=" << (wasRunning ? "updated" : "added");
+        }
         return true;
     }
 

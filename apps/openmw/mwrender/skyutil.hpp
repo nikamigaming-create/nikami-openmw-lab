@@ -188,6 +188,7 @@ namespace MWRender
         void setTexture(osg::ref_ptr<osg::Texture2D> texture);
         void setEmissionColor(const osg::Vec4f& emissionColor);
         void setOpacity(float opacity);
+        void setFalloutCloudShader(bool enabled);
         void setTextureCoord(float timer);
 
     protected:
@@ -198,6 +199,7 @@ namespace MWRender
         osg::ref_ptr<osg::Texture2D> mTexture;
         osg::Vec4f mEmissionColor;
         float mOpacity;
+        bool mFalloutCloudShader = false;
         osg::Matrixf mTexMat;
     };
 

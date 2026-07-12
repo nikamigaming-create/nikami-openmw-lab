@@ -87,6 +87,17 @@ namespace
                 && vfs->exists(Settings::models().mSkynight02.get()));
     }
 
+    bool hasSingleFalloutMoonContent(Resource::SceneManager& sceneManager)
+    {
+        const VFS::Manager* vfs = sceneManager.getVFS();
+        return vfs != nullptr
+            && vfs->exists(VFS::Path::NormalizedView("textures/sky/masser_full.dds"))
+            && vfs->exists(VFS::Path::NormalizedView("textures/sky/masser_one_wan.dds"))
+            && vfs->exists(VFS::Path::NormalizedView("textures/sky/masser_one_wax.dds"))
+            && vfs->exists(VFS::Path::NormalizedView("textures/sky/skymoonfull.dds"))
+            && !vfs->exists(VFS::Path::NormalizedView("textures/sky/secunda_full.dds"));
+    }
+
     void logInterpretedFalloutSkyMaterial(std::string_view label, VFS::Path::NormalizedView model,
         std::string_view skyPass, std::string_view vertexAlphaMode, std::string_view vertexColorRgbMode)
     {
@@ -395,7 +406,20 @@ namespace
             if (mLayer < mUpdaters.size())
             {
                 mUpdaters[mLayer] = new MWRender::CloudUpdater;
+                mUpdaters[mLayer]->setFalloutCloudShader(true);
                 mUpdaters[mLayer]->setOpacity(0.f);
+                // Fallout cloud layers are camera-relative sky geometry. The
+                // authored dome contains faces for both viewing directions;
+                // inheriting the NIF cull/depth state exposes a hard rotating
+                // wedge when the layer turns. Keep the layer transparent and
+                // visible from either side, behind ordinary world geometry.
+                osg::StateSet* stateset = drawable.getStateSet();
+                if (stateset == nullptr)
+                {
+                    stateset = drawable.getOrCreateStateSet();
+                }
+                stateset->setMode(GL_CULL_FACE, osg::StateAttribute::OFF | osg::StateAttribute::OVERRIDE);
+                stateset->setMode(GL_DEPTH_TEST, osg::StateAttribute::OFF | osg::StateAttribute::OVERRIDE);
                 drawable.addUpdateCallback(mUpdaters[mLayer]);
                 drawable.setNodeMask(0);
                 mNodes[mLayer] = &drawable;
@@ -874,6 +898,18 @@ namespace MWRender
                 ModVertexAlphaVisitor modStars(ModVertexAlphaVisitor::Stars);
                 atmosphereNight->accept(modStars);
             }
+            else
+            {
+                const VFS::Path::Normalized starsTexture = chooseExistingSkyTexture(mSceneManager->getVFS(),
+                    { "textures/sky/skystars.dds" }, "textures/sky/skystars.dds");
+                osg::ref_ptr<osg::Texture2D> starsTex
+                    = new osg::Texture2D(mSceneManager->getImageManager()->getImage(starsTexture));
+                starsTex->setWrap(osg::Texture::WRAP_S, osg::Texture::REPEAT);
+                starsTex->setWrap(osg::Texture::WRAP_T, osg::Texture::REPEAT);
+                atmosphereNight->getOrCreateStateSet()->setTextureAttributeAndModes(
+                    0, starsTex, osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
+                Log(Debug::Info) << "FNV/ESM4: bound native night atmosphere texture " << starsTexture.value();
+            }
             mAtmosphereNightUpdater = new AtmosphereNightUpdater(mSceneManager->getImageManager());
             atmosphereNight->addUpdateCallback(mAtmosphereNightUpdater);
             if (falloutNightAtmosphere)
@@ -883,8 +919,9 @@ namespace MWRender
 
         mSun = std::make_unique<Sun>(mEarlyRenderBinRoot, *mSceneManager);
         mSun->setSunglare(mSunglareEnabled);
-        mMasser = std::make_unique<Moon>(
-            mEarlyRenderBinRoot, *mSceneManager, Fallback::Map::getFloat("Moons_Masser_Size") / 125, Moon::Type_Masser);
+        const bool singleFalloutMoon = hasSingleFalloutMoonContent(*mSceneManager);
+        const float masserSize = singleFalloutMoon ? 85.f : Fallback::Map::getFloat("Moons_Masser_Size");
+        mMasser = std::make_unique<Moon>(mEarlyRenderBinRoot, *mSceneManager, masserSize / 125.f, Moon::Type_Masser);
         mSecunda = std::make_unique<Moon>(mEarlyRenderBinRoot, *mSceneManager,
             Fallback::Map::getFloat("Moons_Secunda_Size") / 125, Moon::Type_Secunda);
 
@@ -1440,11 +1477,22 @@ namespace MWRender
                             VFS::Path::toNormalized(cloud), mSceneManager->getVFS());
                         const VFS::Path::Normalized texture
                             = resolveWeatherCloudTexture(mSceneManager->getVFS(), requested);
-                        osg::ref_ptr<osg::Texture2D> cloudTex
-                            = new osg::Texture2D(mSceneManager->getImageManager()->getImage(texture));
+                        osg::ref_ptr<osg::Image> cloudImage = mSceneManager->getImageManager()->getImage(texture);
+                        osg::ref_ptr<osg::Texture2D> cloudTex = new osg::Texture2D(cloudImage);
                         cloudTex->setWrap(osg::Texture::WRAP_S, osg::Texture::REPEAT);
                         cloudTex->setWrap(osg::Texture::WRAP_T, osg::Texture::REPEAT);
                         updater->setTexture(std::move(cloudTex));
+                        if (std::getenv("OPENMW_FNV_PROOF_WEATHER_ID") != nullptr)
+                        {
+                            Log(Debug::Info) << "FNV/ESM4 proof: bound weather cloud texture layer=" << layer
+                                             << " requested=" << requested.value() << " resolved=" << texture.value()
+                                             << " image=" << static_cast<bool>(cloudImage)
+                                             << " width=" << (cloudImage ? cloudImage->s() : 0)
+                                             << " height=" << (cloudImage ? cloudImage->t() : 0)
+                                             << " pixelFormat=" << (cloudImage ? cloudImage->getPixelFormat() : 0)
+                                             << " internalFormat="
+                                             << (cloudImage ? cloudImage->getInternalTextureFormat() : 0);
+                        }
                     }
                 }
 

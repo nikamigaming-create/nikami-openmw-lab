@@ -2,6 +2,8 @@
 #include "magiceffects.hpp"
 
 #include <algorithm>
+#include <atomic>
+#include <cmath>
 #include <cstdlib>
 #include <fstream>
 #include <type_traits>
@@ -71,6 +73,8 @@
 #include <components/esm4/readerutils.hpp>
 
 #include <components/files/openfile.hpp>
+#include <components/misc/convert.hpp>
+#include <components/misc/mathutil.hpp>
 #include <components/misc/tuplehelpers.hpp>
 #include <components/resource/resourcesystem.hpp>
 
@@ -435,6 +439,52 @@ namespace MWWorld
             const char* value = std::getenv("OPENMW_WORLD_VIEWER_RENDER_DISABLED_ACTORS");
             return value != nullptr && value[0] != '\0' && value[0] != '0';
         }
+
+        ESM::Position composeStarfieldPackInPosition(
+            const ESM4::Reference& parent, const ESM4::Reference& child)
+        {
+            ESM::Position result = child.mPos;
+            osg::Quat parentRotation = Misc::Convert::makeOsgQuat(parent.mPos);
+            osg::Quat childRotation = Misc::Convert::makeOsgQuat(child.mPos);
+
+            const osg::Vec3f local = child.mPos.asVec3() * parent.mScale;
+            const osg::Vec3f world = parent.mPos.asVec3() + parentRotation * local;
+            result.pos[0] = world.x();
+            result.pos[1] = world.y();
+            result.pos[2] = world.z();
+
+            // ESM4 object rotations are Rz(-z) * Ry(-y) * Rx(-x). Compose in quaternion space, then invert that
+            // exact convention instead of adding Euler components (which breaks tilted Starfield pack-ins).
+            osg::Quat rotation = parentRotation * childRotation;
+            const double qx = rotation.x();
+            const double qy = rotation.y();
+            const double qz = rotation.z();
+            const double qw = rotation.w();
+            const double rx = std::atan2(2.0 * (qw * qx + qy * qz),
+                1.0 - 2.0 * (qx * qx + qy * qy));
+            const double sinY = std::clamp(2.0 * (qw * qy - qz * qx), -1.0, 1.0);
+            const double ry = std::asin(sinY);
+            const double rz = std::atan2(2.0 * (qw * qz + qx * qy),
+                1.0 - 2.0 * (qy * qy + qz * qz));
+            result.rot[0] = static_cast<float>(-rx);
+            result.rot[1] = static_cast<float>(-ry);
+            result.rot[2] = static_cast<float>(-rz);
+            return result;
+        }
+
+        ESM::FormId nextStarfieldPackInSyntheticRef()
+        {
+            static std::atomic<std::uint32_t> next{ 1 };
+            // ESM4::Reference is adapted through CellRef, which deliberately rejects OpenMW's negative
+            // generated-FormId namespace. Use the reserved final ESM4 content slot for runtime-only pack-in
+            // children instead. The playable profiles load only their master plus the Morrowind UI fallback,
+            // so 0xfe cannot alias authored content; a process-wide 24-bit counter keeps active cells unique.
+            constexpr std::uint32_t maxIndex = 0x00ffffff;
+            const std::uint32_t index = next.fetch_add(1);
+            if (index == 0 || index > maxIndex)
+                throw std::runtime_error("Starfield pack-in runtime reference namespace exhausted");
+            return ESM::FormId{ index, 0xfe };
+        }
     }
 
     struct CellStoreImp
@@ -563,7 +613,7 @@ namespace MWWorld
         }
         if constexpr (isESM4ActorRec(X::sRecordId))
         {
-            Log(Debug::Info) << "FNV/ESM4 diag: loaded placed actor ref " << ESM::RefId(ref.mId) << " editor '"
+            Log(Debug::Verbose) << "FNV/ESM4 diag: loaded placed actor ref " << ESM::RefId(ref.mId) << " editor '"
                              << ref.mEditorId << "' full '" << ref.mFullName << "' base " << ESM::RefId(ref.mBaseObj)
                              << " resolvedBase " << ESM::RefId(resolvedBase)
                              << " baseEditor '" << ptr->mEditorId << "' baseFull '" << ptr->mFullName << "' parent "
@@ -1078,6 +1128,13 @@ namespace MWWorld
     {
         const MWWorld::ESMStore& store = mStore;
 
+        if (const std::optional<ESM::FormId> storageCell = store.getStarfieldPackInStorageCell(ref.mBaseObj))
+        {
+            std::vector<ESM::FormId> stack;
+            loadStarfieldPackInReference(ref, *storageCell, 0, stack);
+            return;
+        }
+
         ESM::RecNameInts foundType = static_cast<ESM::RecNameInts>(store.find(ref.mBaseObj));
         if (foundType == 0)
         {
@@ -1090,6 +1147,64 @@ namespace MWWorld
         Misc::tupleForEach(this->mCellStoreImp->mRefLists, [&ref, &store, foundType](auto& x) {
             recNameSwitcher(x, foundType, [&ref, &store](auto& storeIn) { storeIn.load(ref, store); });
         });
+    }
+
+    void CellStore::loadStarfieldPackInReference(const ESM4::Reference& ref, ESM::FormId storageCell,
+        unsigned int depth, std::vector<ESM::FormId>& stack)
+    {
+        constexpr unsigned int maxDepth = 16;
+        if (depth >= maxDepth || std::find(stack.begin(), stack.end(), storageCell) != stack.end())
+        {
+            Log(Debug::Warning) << "World viewer: Starfield PKIN expansion stopped base=" << ref.mBaseObj
+                                << " storageCell=" << storageCell << " depth=" << depth
+                                << " reason=\"depth or cycle guard\"";
+            return;
+        }
+
+        stack.push_back(storageCell);
+        const auto children = mStore.get<ESM4::Reference>().getByCell(storageCell);
+        unsigned int emitted = 0;
+        unsigned int nested = 0;
+        for (const ESM4::Reference* source : children)
+        {
+            if (source == nullptr || source->mBaseObj.isZeroOrUnset())
+                continue;
+
+            ESM4::Reference child = *source;
+            child.mId = nextStarfieldPackInSyntheticRef();
+            child.mParent = ref.mParent;
+            child.mPos = composeStarfieldPackInPosition(ref, *source);
+            child.mScale = ref.mScale * source->mScale;
+            if ((ref.mFlags & ESM4::Rec_Disabled) != 0)
+                child.mFlags |= ESM4::Rec_Disabled;
+            if (child.mEsp.parent.isZeroOrUnset() && !ref.mEsp.parent.isZeroOrUnset())
+                child.mEsp = ref.mEsp;
+
+            if (const std::optional<ESM::FormId> nestedCell
+                = mStore.getStarfieldPackInStorageCell(child.mBaseObj))
+            {
+                ++nested;
+                loadStarfieldPackInReference(child, *nestedCell, depth + 1, stack);
+            }
+            else
+            {
+                ++emitted;
+                loadRef(child);
+            }
+        }
+        stack.pop_back();
+
+        static std::atomic<unsigned int> logged{ 0 };
+        const unsigned int logIndex = logged.fetch_add(1);
+        if (logIndex < 240)
+        {
+            Log(Debug::Info) << "World viewer: Starfield PKIN expanded base=" << ref.mBaseObj
+                             << " ref=" << ref.mId << " storageCell=" << storageCell
+                             << " sourceChildren=" << children.size() << " emitted=" << emitted
+                             << " nested=" << nested << " depth=" << depth << " parentCell=" << ref.mParent;
+        }
+        else if (logIndex == 240)
+            Log(Debug::Info) << "World viewer: further Starfield PKIN expansion logs suppressed";
     }
 
     void CellStore::loadRef(const ESM4::ActorCharacter& ref)

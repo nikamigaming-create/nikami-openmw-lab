@@ -7,6 +7,7 @@
 #include <vector>
 
 #include <osg/Group>
+#include <osg/Array>
 #include <osg/Stats>
 #include <osg/Timer>
 
@@ -495,6 +496,14 @@ namespace MWPhysics
     {
         mHeightFields[std::make_pair(x, y)]
             = std::make_unique<HeightField>(heights, x, y, size, verts, minH, maxH, holdObject, mTaskScheduler.get());
+    }
+
+    void PhysicsSystem::addFlatHeightField(int x, int y, int size, float height)
+    {
+        osg::ref_ptr<osg::FloatArray> heights = new osg::FloatArray;
+        heights->resize(4);
+        std::fill(heights->begin(), heights->end(), height);
+        addHeightField(&(*heights)[0], x, y, size, 2, height - 1.f, height + 1.f, heights.get());
     }
 
     void PhysicsSystem::removeHeightField(int x, int y)

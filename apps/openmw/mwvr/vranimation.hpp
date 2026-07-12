@@ -92,7 +92,7 @@ namespace MWVR
         void onInteractionProfileActiveChanged(XrPath topLevelPath, bool isActive) override;
 
         void updateTrackingControllers();
-        void clearFalloutVrHandSurfaces(bool force = false);
+        void clearFalloutVrHandSurfaces();
         void attachFalloutVrHandSurfaces();
         void updateFalloutVrHandSurfaceVisibility();
 

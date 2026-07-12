@@ -135,7 +135,13 @@ namespace MWRender
         if (nodepaths.empty())
             return;
         mTrackedWorldMatrix = osg::computeLocalToWorld(nodepaths[0]);
-        if (mMode != Mode::FirstPerson && mMode != Mode::VR)
+        if (mMode == Mode::FirstPerson && mFirstPersonUsesTrackingRoot)
+        {
+            osg::Vec3d trans = mTrackedWorldMatrix.getTrans();
+            trans.z() += mHeight * mHeightScale;
+            mTrackedWorldMatrix.setTrans(trans);
+        }
+        else if (mMode != Mode::FirstPerson && mMode != Mode::VR)
         {
             osg::Vec3d trans = mTrackedWorldMatrix.getTrans();
             trans.z() += mHeight * mHeightScale;
@@ -249,11 +255,12 @@ namespace MWRender
     osg::Vec3d Camera::calculateFirstPersonPosition(const osg::Vec3d& trackedPosition) const
     {
         osg::Vec3d res = trackedPosition;
+        const osg::Vec3f totalOffset = mFirstPersonOffset + mFirstPersonProfileOffset;
         osg::Vec2f horizontalOffset
-            = Misc::rotateVec2f(osg::Vec2f(mFirstPersonOffset.x(), mFirstPersonOffset.y()), mYaw);
+            = Misc::rotateVec2f(osg::Vec2f(totalOffset.x(), totalOffset.y()), mYaw);
         res.x() += horizontalOffset.x();
         res.y() += horizontalOffset.y();
-        res.z() += mFirstPersonOffset.z();
+        res.z() += totalOffset.z();
         return res;
     }
 
@@ -475,6 +482,7 @@ namespace MWRender
 
     void Camera::processViewChange()
     {
+        mFirstPersonUsesTrackingRoot = false;
 //## VR_PATCH BEGIN
         if (mMode == Mode::VR)
         {
@@ -498,6 +506,11 @@ namespace MWRender
             mTrackingNode = mAnimation->getNode("Camera");
             if (!mTrackingNode)
                 mTrackingNode = mAnimation->getNode("Head");
+            if (!mTrackingNode)
+            {
+                mTrackingNode = mTrackingPtr.getRefData().getBaseNode();
+                mFirstPersonUsesTrackingRoot = mTrackingNode != nullptr;
+            }
             mHeightScale = 1.f;
         }
         else

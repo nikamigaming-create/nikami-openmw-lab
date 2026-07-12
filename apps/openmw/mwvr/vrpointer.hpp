@@ -62,6 +62,7 @@ namespace MWVR
         const MWRender::RayResult& getPointerRay() const;
         bool canPlaceObject() const;
         void setSource(std::shared_ptr<VR::Space> space);
+        void setEnabled(bool enabled) { mEnabled = enabled; }
         void setDebugSpaces(std::shared_ptr<VR::Space> leftAim, std::shared_ptr<VR::Space> rightAim);
         // bool enabled() const { return !!mSource; };
         float distanceToPointerTarget() const { return mDistanceToPointerTarget; }
@@ -81,6 +82,7 @@ namespace MWVR
         osg::ref_ptr<osg::Node> mPointerTarget;
         float mDistanceToPointerTarget = -1.f;
         bool mCanPlaceObject = false;
+        bool mEnabled = false;
         //bool mLeftHandEnabled = true;
         //bool mRightHandEnabled = true;
         std::unique_ptr<Crosshair> mCrosshair;

@@ -10,6 +10,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <future>
+#include <functional>
 #include <limits>
 #include <memory>
 #include <optional>
@@ -76,11 +77,14 @@
 #include <components/esm3/loadcell.hpp>
 #include <components/esm3/loadskil.hpp>
 #include <components/esm4/loadalch.hpp>
+#include <components/esm4/loadacti.hpp>
 #include <components/esm4/loadammo.hpp>
 #include <components/esm4/loadarmo.hpp>
 #include <components/esm4/loadbook.hpp>
 #include <components/esm4/loadclot.hpp>
 #include <components/esm4/loadmisc.hpp>
+#include <components/esm4/loadsoun.hpp>
+#include <components/esm4/loadtact.hpp>
 #include <components/esm4/loadweap.hpp>
 
 #include <components/stereo/stereomanager.hpp>
@@ -123,10 +127,12 @@
 #include "mwsound/soundmanagerimp.hpp"
 
 #include "mwworld/class.hpp"
+#include "mwworld/action.hpp"
 #include "mwworld/cellstore.hpp"
 #include "mwworld/containerstore.hpp"
 #include "mwworld/datetimemanager.hpp"
 #include "mwworld/esmstore.hpp"
+#include "mwworld/esm4questruntime.hpp"
 #include "mwworld/manualref.hpp"
 #include "mwworld/worldimp.hpp"
 #include "mwworld/worldmodel.hpp"
@@ -146,6 +152,7 @@
 
 #include "mwmechanics/mechanicsmanagerimp.hpp"
 #include "mwmechanics/actorutil.hpp"
+#include "mwmechanics/movement.hpp"
 #include "mwmechanics/stat.hpp"
 
 #include "mwstate/statemanagerimp.hpp"
@@ -724,7 +731,8 @@ namespace
     bool selectProofActorCameraByOrbitRays(MWWorld::World& world, const MWWorld::Ptr& actor, const char* target,
         const osg::Vec3f& focus, osg::Vec3f& targetPos)
     {
-        if (!proofEnvEnabled("OPENMW_PROOF_ACTOR_VIEW_ORBIT_RAYCAST"))
+        if (!proofEnvEnabled("OPENMW_PROOF_ACTOR_VIEW_ORBIT_RAYCAST")
+            && !proofEnvEnabled("OPENMW_PLAYABLE_SESSION_PORTRAIT_RENDER_RAYCAST"))
             return false;
 
         const osg::Vec3f seedOffset = targetPos - focus;
@@ -1307,6 +1315,8 @@ namespace
 
     bool isFalloutProofFaceNodeName(std::string_view lowerName)
     {
+        if (lowerName.find("starfield generated face ") != std::string_view::npos)
+            return true;
         if (lowerName.find("fnv part ") == std::string_view::npos)
             return false;
 
@@ -1330,10 +1340,11 @@ namespace
 
     bool isFalloutProofFaceHeadNodeName(std::string_view lowerName)
     {
-        return lowerName.find("fnv part ") != std::string_view::npos
+        return lowerName.find("starfield generated face ") != std::string_view::npos
+            || (lowerName.find("fnv part ") != std::string_view::npos
             && (lowerName.find("characters/head/head") != std::string_view::npos
                 || lowerName.find("actors/human/characterassets/male/malehead") != std::string_view::npos
-                || lowerName.find("actors/human/characterassets/female/femalehead") != std::string_view::npos);
+                || lowerName.find("actors/human/characterassets/female/femalehead") != std::string_view::npos));
     }
 
     bool isFalloutProofFaceFeatureNodeName(std::string_view lowerName)
@@ -1685,14 +1696,14 @@ namespace
         stats.setBaseDisposition(50);
 
         const std::pair<ESM::RefId, float> attributes[] = {
-            { ESM::Attribute::Strength, 6.f },
-            { ESM::Attribute::Intelligence, 6.f },
-            { ESM::Attribute::Willpower, 5.f },
-            { ESM::Attribute::Agility, 6.f },
-            { ESM::Attribute::Speed, 5.f },
-            { ESM::Attribute::Endurance, 6.f },
-            { ESM::Attribute::Personality, 5.f },
-            { ESM::Attribute::Luck, 6.f },
+            { ESM::Attribute::Strength, 60.f },
+            { ESM::Attribute::Intelligence, 60.f },
+            { ESM::Attribute::Willpower, 50.f },
+            { ESM::Attribute::Agility, 60.f },
+            { ESM::Attribute::Speed, 50.f },
+            { ESM::Attribute::Endurance, 60.f },
+            { ESM::Attribute::Personality, 50.f },
+            { ESM::Attribute::Luck, 60.f },
         };
         for (const auto& [id, value] : attributes)
             stats.setAttribute(id, value);
@@ -1840,7 +1851,7 @@ namespace
         camera->updateCamera();
 
         const osg::Vec3d cameraPos = camera->getPosition();
-        Log(Debug::Info) << "FNV/ESM4 diag: settled flat startup camera via zoom-cycle equivalent"
+        Log(Debug::Verbose) << "FNV/ESM4 diag: settled flat startup camera via zoom-cycle equivalent"
                          << " mode=" << static_cast<int>(camera->getMode()) << " playerPos=(" << pos.pos[0] << ","
                          << pos.pos[1] << "," << pos.pos[2] << ") playerRotZ=" << pos.rot[2] << " cameraPos=("
                          << cameraPos.x() << "," << cameraPos.y() << "," << cameraPos.z()
@@ -2633,6 +2644,60 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
     static bool worldViewerTelemetryLogged = false;
     static unsigned int worldViewerTelemetryLastFrame = 0;
     static bool worldViewerCameraWaitLogged = false;
+    static bool playableSessionStarted = false;
+    static bool playableSessionFinished = false;
+    static bool playableSessionEndTelemetryPending = false;
+    static bool playableSessionCameraSwitched = false;
+    static bool playableSessionStartScreenshotPending = false;
+    static bool playableSessionMidpointScreenshotPending = false;
+    static bool playableSessionEndScreenshotPending = false;
+    static bool playableSessionQuitRequested = false;
+    static bool playableSessionActorAiStabilized = false;
+    static unsigned int playableSessionExitFrame = 0;
+    static int playableSessionOrbitScreenshotIndex = 0;
+    static unsigned int playableSessionOrbitNextFrame = 0;
+    static float playableSessionElapsed = 0.f;
+    static float playableSessionFirstPersonCameraDistance = std::numeric_limits<float>::quiet_NaN();
+    static osg::Vec3f playableSessionPlayerStart;
+    static osg::Vec3f playableSessionCameraSwitchPosition;
+    static osg::Vec3f playableSessionActorStart;
+    static float playableSessionActorStartDistance = std::numeric_limits<float>::quiet_NaN();
+    static MWWorld::Ptr playableSessionActor;
+    static int playableSessionActorCombatSuppressions = 0;
+    static int fnvInteractionPhase = 0;
+    static unsigned int fnvInteractionPhaseFrame = 0;
+    static osg::Timer_t fnvInteractionPhaseStartTime = 0;
+    static bool fnvInteractionGreetingAudioSeen = false;
+    static bool fnvInteractionTopicAudioSeen = false;
+    static bool fnvInteractionActorPass = false;
+    static bool fnvInteractionDialoguePass = false;
+    static bool fnvInteractionQuestPass = false;
+    static bool fnvInteractionDoorInPass = false;
+    static bool fnvInteractionInteriorActorsPass = false;
+    static bool fnvInteractionRadioPass = false;
+    static bool fnvInteractionDoorOutPass = false;
+    static MWWorld::Ptr fnvInteractionActor;
+    static osg::Vec3f fnvInteractionActorSettledPosition;
+    static MWWorld::Ptr fnvInteractionRadio;
+    static ESM::RefId fnvInteractionRadioSound;
+    static bool fnvInteractionQuestCaptureQueued = false;
+    static bool fnvInteractionRadioCaptureQueued = false;
+    static int authoredInteractionPhase = 0;
+    static unsigned int authoredInteractionPhaseFrame = 0;
+    static osg::Timer_t authoredInteractionPhaseStartTime = 0;
+    static bool authoredInteractionGreetingAudioSeen = false;
+    static bool authoredInteractionTopicAudioSeen = false;
+    static bool authoredInteractionActorPass = false;
+    static bool authoredInteractionDialoguePass = false;
+    static bool authoredInteractionDoorInPass = false;
+    static bool authoredInteractionInteriorActorsPass = false;
+    static bool authoredInteractionRadioPass = false;
+    static bool authoredInteractionDoorOutPass = false;
+    static MWWorld::Ptr authoredInteractionActor;
+    static osg::Vec3f authoredInteractionActorSettledPosition;
+    static MWWorld::Ptr authoredInteractionRadio;
+    static ESM::RefId authoredInteractionRadioSound;
+    static bool authoredInteractionRadioCaptureQueued = false;
     const auto parseProofFormId = [](std::string_view value) -> std::optional<ESM::FormId> {
         while (!value.empty() && std::isspace(static_cast<unsigned char>(value.front()))) value.remove_prefix(1);
         while (!value.empty() && std::isspace(static_cast<unsigned char>(value.back()))) value.remove_suffix(1);
@@ -2853,6 +2918,7 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
     const osg::Timer_t frameStart = mViewer->getStartTick();
     const osg::Timer* const timer = osg::Timer::instance();
     osg::Stats* const stats = mViewer->getViewerStats();
+    std::function<void(int)> setPlayableSessionFrontPortraitCamera;
 
     worldViewerTrace(frameNumber, "frame.begin");
     mEnvironment.setFrameDuration(frametime);
@@ -2879,17 +2945,27 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
             static bool loggedHiddenVrWindow = false;
             if (!mWindowManager->isWindowVisible() && VR::getVR() && !loggedHiddenVrWindow)
             {
-                Log(Debug::Info) << "FNV/ESM4 diag: VR mirror window hidden; keeping world simulation running";
+                Log(Debug::Verbose) << "FNV/ESM4 diag: VR mirror window hidden; keeping world simulation running";
                 loggedHiddenVrWindow = true;
             }
 
-            if (!mWindowManager->isWindowVisible() && !VR::getVR())
+            const bool backgroundPlayableSession = proofEnvEnabled("OPENMW_PLAYABLE_SESSION_BACKGROUND");
+            if (!mWindowManager->isWindowVisible() && !VR::getVR() && !backgroundPlayableSession)
             {
                 mSoundManager->pausePlayback();
                 return false;
             }
             else
                 mSoundManager->resumePlayback();
+
+            static bool backgroundPlayableSessionLogged = false;
+            if (!mWindowManager->isWindowVisible() && !VR::getVR() && backgroundPlayableSession
+                && !backgroundPlayableSessionLogged)
+            {
+                backgroundPlayableSessionLogged = true;
+                Log(Debug::Info) << "Playable session: minimized/hidden window detected; keeping simulation and native "
+                                    "capture active without foreground input";
+            }
 
             // sound
             if (mUseSound)
@@ -2946,6 +3022,392 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
         }
         worldViewerTrace(frameNumber, "script.end");
 
+        const bool playableSessionRequested = proofEnvEnabled("OPENMW_PLAYABLE_SESSION");
+        const int playableSessionSettleFrames
+            = std::max(1, readProofInt("OPENMW_PLAYABLE_SESSION_SETTLE_FRAMES", 120));
+        const bool playableSessionReady = playableSessionRequested && mWorld != nullptr
+            && mStateManager->getState() == MWBase::StateManager::State_Running && !paused
+            && proofWorldReadyFrames >= playableSessionSettleFrames;
+        const auto setPlayableSessionCamera = [&](MWRender::Camera::Mode mode) {
+            MWWorld::Ptr player = mWorld->getPlayerPtr();
+            MWRender::Camera* camera = mWorld->getCamera();
+            if (player.isEmpty() || camera == nullptr)
+                return;
+
+            const float distance = mode == MWRender::Camera::Mode::FirstPerson
+                ? 0.f
+                : readProofFloat("OPENMW_PLAYABLE_SESSION_CAMERA_DISTANCE", 192.f);
+            camera->attachTo(player);
+            camera->setMode(mode, true);
+            camera->setPreferredCameraDistance(distance);
+            camera->processViewChange();
+            camera->update(0.f, false);
+            camera->instantTransition();
+            camera->updateCamera();
+        };
+        setPlayableSessionFrontPortraitCamera = [&](int orbitIndex) {
+            MWWorld::Ptr player = mWorld->getPlayerPtr();
+            MWRender::Camera* camera = mWorld->getCamera();
+            if (player.isEmpty() || camera == nullptr)
+                return;
+
+            const bool closeup = orbitIndex >= 4;
+            MWWorld::Ptr focalActor = player;
+            if (closeup && orbitIndex == 5 && !playableSessionActor.isEmpty())
+                focalActor = playableSessionActor;
+
+            const auto resolveRenderedFaceCenter = [](const MWWorld::Ptr& actor, osg::Vec3f& center) {
+                if (actor.isEmpty() || actor.getRefData().getBaseNode() == nullptr)
+                    return false;
+                FalloutProofFaceBoundsVisitor visitor;
+                actor.getRefData().getBaseNode()->accept(visitor);
+                if (visitor.getHeadMatched() == 0)
+                    return false;
+                const osg::Vec3d head = visitor.getHeadCenter();
+                if (!std::isfinite(head.x()) || !std::isfinite(head.y()) || !std::isfinite(head.z()))
+                    return false;
+                center.set(static_cast<float>(head.x()), static_cast<float>(head.y()), static_cast<float>(head.z()));
+                return true;
+            };
+
+            osg::Vec3f focal;
+            osg::Vec3f focalFace;
+            const bool focalFaceResolved = resolveRenderedFaceCenter(focalActor, focalFace);
+            std::string_view focalSource = "reference-height";
+            if (closeup && focalFaceResolved)
+            {
+                focal = focalFace;
+                focalSource = "rendered-face";
+            }
+            else if (!closeup && proofEnvEnabled("OPENMW_PLAYABLE_SESSION_PORTRAIT_CENTER_ACTOR_GROUP")
+                && !playableSessionActor.isEmpty())
+            {
+                osg::Vec3f playerFace;
+                osg::Vec3f actorFace;
+                const bool playerFaceResolved = resolveRenderedFaceCenter(player, playerFace);
+                const bool actorFaceResolved = resolveRenderedFaceCenter(playableSessionActor, actorFace);
+                if (playerFaceResolved && actorFaceResolved)
+                {
+                    focal = (playerFace + actorFace) * 0.5f;
+                    focalSource = "rendered-face-group";
+                }
+                else
+                {
+                    const osg::Vec3f playerPosition = player.getRefData().getPosition().asVec3();
+                    const osg::Vec3f actorPosition = playableSessionActor.getRefData().getPosition().asVec3();
+                    focal = (playerPosition + actorPosition) * 0.5f
+                        + osg::Vec3f(0.f, 0.f,
+                            readProofFloat("OPENMW_PLAYABLE_SESSION_PORTRAIT_FOCAL_HEIGHT", 112.f));
+                    focalSource = "reference-height-group";
+                }
+            }
+            else
+            {
+                const char* closeupFocalHeightEnv = orbitIndex == 4
+                    ? "OPENMW_PLAYABLE_SESSION_PLAYER_CLOSEUP_FOCAL_HEIGHT"
+                    : "OPENMW_PLAYABLE_SESSION_ACTOR_CLOSEUP_FOCAL_HEIGHT";
+                const float focalHeight = closeup
+                    ? readProofFloat(closeupFocalHeightEnv,
+                        readProofFloat("OPENMW_PLAYABLE_SESSION_CLOSEUP_FOCAL_HEIGHT", 100.f))
+                    : readProofFloat("OPENMW_PLAYABLE_SESSION_PORTRAIT_FOCAL_HEIGHT", 112.f);
+                focal = focalActor.getRefData().getPosition().asVec3() + osg::Vec3f(0.f, 0.f, focalHeight);
+            }
+            const float defaultDistance
+                = readProofFloat("OPENMW_PLAYABLE_SESSION_PORTRAIT_DISTANCE", 112.f);
+            osg::Vec3f offset(
+                readProofFloat("OPENMW_PLAYABLE_SESSION_PORTRAIT_OFFSET_X", 0.f),
+                readProofFloat("OPENMW_PLAYABLE_SESSION_PORTRAIT_OFFSET_Y", defaultDistance),
+                readProofFloat("OPENMW_PLAYABLE_SESSION_PORTRAIT_OFFSET_Z", 0.f));
+            if (closeup)
+            {
+                const float frontSign = offset.y() < 0.f ? -1.f : 1.f;
+                const char* closeupDistanceEnv = orbitIndex == 4
+                    ? "OPENMW_PLAYABLE_SESSION_PLAYER_CLOSEUP_DISTANCE"
+                    : "OPENMW_PLAYABLE_SESSION_ACTOR_CLOSEUP_DISTANCE";
+                const char* closeupOffsetZEnv = orbitIndex == 4
+                    ? "OPENMW_PLAYABLE_SESSION_PLAYER_CLOSEUP_OFFSET_Z"
+                    : "OPENMW_PLAYABLE_SESSION_ACTOR_CLOSEUP_OFFSET_Z";
+                const float closeupDistance = readProofFloat(closeupDistanceEnv,
+                    readProofFloat("OPENMW_PLAYABLE_SESSION_CLOSEUP_DISTANCE", 90.f));
+                const float facing = focalActor.getRefData().getPosition().rot[2];
+                // Actor transforms rotate their local +Y axis around -Z. Put the
+                // proof camera on that authored forward axis so a close-up is a
+                // real face check instead of an accidental rear/side view.
+                offset.set(-frontSign * closeupDistance * std::sin(facing),
+                    -frontSign * closeupDistance * std::cos(facing),
+                    readProofFloat(closeupOffsetZEnv,
+                        readProofFloat("OPENMW_PLAYABLE_SESSION_CLOSEUP_OFFSET_Z", 4.f)));
+                const char* closeupYawOffsetEnv = orbitIndex == 4
+                    ? "OPENMW_PLAYABLE_SESSION_PLAYER_CLOSEUP_YAW_OFFSET_DEGREES"
+                    : "OPENMW_PLAYABLE_SESSION_ACTOR_CLOSEUP_YAW_OFFSET_DEGREES";
+                const float yawOffset = osg::DegreesToRadians(readProofFloat(closeupYawOffsetEnv, 0.f));
+                if (std::abs(yawOffset) > 0.0001f)
+                {
+                    const float originalX = offset.x();
+                    const float originalY = offset.y();
+                    offset.x() = originalX * std::cos(yawOffset) - originalY * std::sin(yawOffset);
+                    offset.y() = originalX * std::sin(yawOffset) + originalY * std::cos(yawOffset);
+                }
+            }
+            else if (orbitIndex > 0)
+            {
+                const float planarDistance = std::max(defaultDistance,
+                    std::sqrt(offset.x() * offset.x() + offset.y() * offset.y()));
+                const float frontSign = offset.y() < 0.f ? -1.f : 1.f;
+                if (orbitIndex == 1)
+                    offset.x() = -offset.x();
+                else if (orbitIndex == 2)
+                    offset.set(0.f, frontSign * planarDistance, offset.z());
+                else
+                    offset.set(0.f, -frontSign * planarDistance, offset.z());
+            }
+            osg::Vec3f cameraPosition = focal + offset;
+            if (closeup && proofEnvEnabled("OPENMW_PLAYABLE_SESSION_PORTRAIT_RENDER_RAYCAST"))
+            {
+                const char* target = orbitIndex == 4 ? "level-one player"
+                                                     : std::getenv("OPENMW_PLAYABLE_SESSION_ACTOR");
+                selectProofActorCameraByOrbitRays(*mWorld, focalActor, target, focal, cameraPosition);
+            }
+            if (!closeup && proofEnvEnabled("OPENMW_PLAYABLE_SESSION_PORTRAIT_RAYCAST"))
+            {
+                // The imported worlds frequently place foliage, signs, shields, or architecture between a
+                // mathematically valid proof camera and its subjects. Reuse the rendering/ground ray sampler
+                // used by source-driven world-viewer starts so native evidence selects a clear authored angle.
+                const osg::Vec3d resolved = resolveWorldViewerOrbitCamera(
+                    *mWorld, osg::Vec3d(cameraPosition), osg::Vec3d(focal));
+                cameraPosition.set(static_cast<float>(resolved.x()), static_cast<float>(resolved.y()),
+                    static_cast<float>(resolved.z()));
+            }
+            osg::Vec3f direction = focal - cameraPosition;
+            if (direction.length2() <= 0.0001f)
+                direction.set(0.f, -1.f, 0.f);
+            direction.normalize();
+            const float horizontal = std::sqrt(
+                direction.x() * direction.x() + direction.y() * direction.y());
+            const float yaw = std::atan2(-direction.x(), direction.y());
+            const float pitch = std::atan2(direction.z(), horizontal);
+
+            camera->attachTo(player);
+            camera->setMode(MWRender::Camera::Mode::Static, true);
+            camera->setStaticPosition(cameraPosition);
+            camera->setYaw(yaw, true);
+            camera->setPitch(pitch, true);
+            camera->processViewChange();
+            camera->update(0.f, false);
+            camera->instantTransition();
+            camera->updateCamera();
+            float focalScreenX = std::numeric_limits<float>::quiet_NaN();
+            float focalScreenY = std::numeric_limits<float>::quiet_NaN();
+            if (const osg::Camera* renderCamera = mViewer != nullptr ? mViewer->getCamera() : nullptr)
+            {
+                if (const osg::Viewport* viewport = renderCamera->getViewport();
+                    viewport != nullptr && viewport->width() > 0.0 && viewport->height() > 0.0)
+                {
+                    const osg::Vec3d window = osg::Vec3d(focal) * renderCamera->getViewMatrix()
+                        * renderCamera->getProjectionMatrix() * viewport->computeWindowMatrix();
+                    focalScreenX = static_cast<float>((window.x() - viewport->x()) / viewport->width());
+                    focalScreenY = static_cast<float>((window.y() - viewport->y()) / viewport->height());
+                }
+            }
+            Log(Debug::Info) << "Playable session: framed native portrait camera orbitIndex=" << orbitIndex
+                             << " mode=static pos=("
+                             << cameraPosition.x() << "," << cameraPosition.y() << "," << cameraPosition.z()
+                             << ") focal=(" << focal.x() << "," << focal.y() << "," << focal.z()
+                             << ") yaw=" << camera->getYaw() << " pitch=" << camera->getPitch()
+                             << " focalActorRotZ=" << focalActor.getRefData().getPosition().rot[2]
+                             << " focalSource=" << focalSource << " faceResolved=" << focalFaceResolved
+                             << " focalScreen=(" << focalScreenX << "," << focalScreenY << ")";
+        };
+        const auto setPlayableSessionMovement
+            = [&](const MWWorld::Ptr& player, float side, float forward, bool run) {
+                  MWMechanics::Movement& movement = player.getClass().getMovementSettings(player);
+                  movement.mPosition[0] = side;
+                  movement.mPosition[1] = forward;
+                  movement.mPosition[2] = 0.f;
+                  player.getClass().getCreatureStats(player).setMovementFlag(
+                      MWMechanics::CreatureStats::Flag_Run, run);
+                  player.getClass().getCreatureStats(player).setMovementFlag(
+                      MWMechanics::CreatureStats::Flag_Sneak, false);
+
+                  if (MWBase::LuaManager::ActorControls* controls = mLuaManager->getActorControls(player))
+                  {
+                      controls->mDisableAI = false;
+                      controls->mMovement = forward;
+                      controls->mSideMovement = side;
+                      controls->mJump = false;
+                      controls->mRun = run;
+                      controls->mSneak = false;
+                      controls->mChanged = true;
+                  }
+              };
+        const auto resolvePlayableSessionActor = [&]() {
+            const char* target = std::getenv("OPENMW_PLAYABLE_SESSION_ACTOR");
+            if (target != nullptr && *target != '\0')
+                return resolveProofActor(target);
+
+            MWWorld::Ptr player = mWorld->getPlayerPtr();
+            MWWorld::Ptr nearest;
+            float nearestDistance2 = std::numeric_limits<float>::max();
+            for (MWWorld::CellStore* cellstore : mWorld->getWorldScene().getActiveCells())
+            {
+                if (cellstore == nullptr)
+                    continue;
+                cellstore->forEach([&](const MWWorld::Ptr& ptr) {
+                    if (ptr.isEmpty() || ptr == player || !ptr.getClass().isActor())
+                        return true;
+                    const float distance2 = (ptr.getRefData().getPosition().asVec3()
+                                                - player.getRefData().getPosition().asVec3())
+                                                .length2();
+                    if (distance2 < nearestDistance2)
+                    {
+                        nearestDistance2 = distance2;
+                        nearest = ptr;
+                    }
+                    return true;
+                });
+            }
+            return nearest;
+        };
+        const auto applyPlayableSessionSafeActorState = [&]() {
+            if (playableSessionActor.isEmpty()
+                || !proofEnvEnabled("OPENMW_PLAYABLE_SESSION_NEUTRALIZE_ACTOR"))
+                return;
+
+            MWMechanics::CreatureStats& actorStats
+                = playableSessionActor.getClass().getCreatureStats(playableSessionActor);
+            actorStats.setAiSetting(MWMechanics::AiSetting::Fight, 0);
+            if (actorStats.getAiSequence().isInCombat())
+            {
+                actorStats.getAiSequence().stopCombat();
+                actorStats.setAttackingOrSpell(false);
+                ++playableSessionActorCombatSuppressions;
+                Log(Debug::Info) << "Playable session: suppressed false safe-start combat package actor="
+                                 << playableSessionActor.toString() << " count="
+                                 << playableSessionActorCombatSuppressions;
+            }
+        };
+
+        if (playableSessionReady && !playableSessionStarted)
+        {
+            playableSessionStarted = true;
+            playableSessionOrbitScreenshotIndex = 0;
+            playableSessionOrbitNextFrame = 0;
+            MWWorld::Ptr player = mWorld->getPlayerPtr();
+            if (proofEnvEnabled("OPENMW_PLAYABLE_SESSION_FORCE_LEVEL_ONE"))
+            {
+                player.getClass().getCreatureStats(player).setLevel(1);
+                if (player.getClass().isNpc())
+                    player.getClass().getNpcStats(player).setLevelProgress(0);
+            }
+
+            playableSessionPlayerStart = player.getRefData().getPosition().asVec3();
+            playableSessionCameraSwitchPosition = playableSessionPlayerStart;
+            playableSessionActor = resolvePlayableSessionActor();
+            logProofActorRenderBounds(player, "Player", "playable-session-start");
+            if (!playableSessionActor.isEmpty())
+            {
+                const char* actorTarget = std::getenv("OPENMW_PLAYABLE_SESSION_ACTOR");
+                logProofActorRenderBounds(playableSessionActor,
+                    actorTarget != nullptr ? actorTarget : "nearest", "playable-session-start");
+                playableSessionActorStart = playableSessionActor.getRefData().getPosition().asVec3();
+                playableSessionActorStartDistance
+                    = (playableSessionActorStart - playableSessionPlayerStart).length();
+                if (proofEnvEnabled("OPENMW_PLAYABLE_SESSION_NEUTRALIZE_ACTOR"))
+                {
+                    applyPlayableSessionSafeActorState();
+                    Log(Debug::Info) << "Playable session: enabled safe-start hostility guard without freezing actor="
+                                     << playableSessionActor.toString();
+                }
+            }
+
+            setPlayableSessionCamera(MWRender::Camera::Mode::ThirdPerson);
+            playableSessionStartScreenshotPending
+                = proofEnvEnabled("OPENMW_PLAYABLE_SESSION_CAPTURE_SCREENSHOTS");
+            const MWRender::Camera* camera = mWorld->getCamera();
+            osg::Vec3f cameraPosition;
+            if (camera != nullptr)
+            {
+                const osg::Vec3d position = camera->getPosition();
+                cameraPosition.set(
+                    static_cast<float>(position.x()), static_cast<float>(position.y()), static_cast<float>(position.z()));
+            }
+            const float cameraDistance = camera != nullptr
+                ? (cameraPosition - playableSessionPlayerStart).length()
+                : std::numeric_limits<float>::quiet_NaN();
+            const int level = player.getClass().getCreatureStats(player).getLevel();
+            const char* sessionId = std::getenv("OPENMW_PLAYABLE_SESSION_ID");
+            Log(Debug::Info) << "Playable session telemetry: phase=start id=\""
+                             << (sessionId != nullptr ? sessionId : "default") << "\" frame=" << frameNumber
+                             << " level=" << level << " playerPos=(" << playableSessionPlayerStart.x() << ","
+                             << playableSessionPlayerStart.y() << "," << playableSessionPlayerStart.z()
+                             << ") cameraMode=" << (camera != nullptr ? static_cast<int>(camera->getMode()) : -1)
+                             << " cameraDistance=" << cameraDistance << " actorResolved="
+                             << (!playableSessionActor.isEmpty() ? 1 : 0) << " actor=\""
+                             << (!playableSessionActor.isEmpty() ? playableSessionActor.toString() : std::string())
+                             << "\" actorDistance=" << playableSessionActorStartDistance;
+        }
+
+        if (playableSessionStarted && !playableSessionFinished && !playableSessionEndTelemetryPending)
+        {
+            MWWorld::Ptr player = mWorld->getPlayerPtr();
+            const float duration
+                = std::max(0.25f, readProofFloat("OPENMW_PLAYABLE_SESSION_DURATION_SECONDS", 4.f));
+            const bool validateCameras = proofEnvEnabled("OPENMW_PLAYABLE_SESSION_VALIDATE_CAMERAS");
+            if (validateCameras && !playableSessionCameraSwitched && playableSessionElapsed >= duration * 0.5f)
+            {
+                playableSessionCameraSwitched = true;
+                playableSessionCameraSwitchPosition = player.getRefData().getPosition().asVec3();
+                setPlayableSessionCamera(MWRender::Camera::Mode::FirstPerson);
+                if (const MWRender::Camera* camera = mWorld->getCamera())
+                {
+                    const osg::Vec3f cameraPosition = camera->getPosition();
+                    playableSessionFirstPersonCameraDistance
+                        = (cameraPosition - playableSessionCameraSwitchPosition).length();
+                }
+                playableSessionMidpointScreenshotPending
+                    = proofEnvEnabled("OPENMW_PLAYABLE_SESSION_CAPTURE_SCREENSHOTS");
+                Log(Debug::Info) << "Playable session telemetry: phase=camera-switch frame=" << frameNumber
+                                 << " mode=first-person playerPos=(" << playableSessionCameraSwitchPosition.x()
+                                 << "," << playableSessionCameraSwitchPosition.y() << ","
+                                 << playableSessionCameraSwitchPosition.z() << ") cameraDistance="
+                                 << playableSessionFirstPersonCameraDistance;
+            }
+
+            if (playableSessionElapsed < duration)
+            {
+                setPlayableSessionMovement(player,
+                    readProofFloat("OPENMW_PLAYABLE_SESSION_STRAFE", 0.f),
+                    readProofFloat("OPENMW_PLAYABLE_SESSION_FORWARD", 1.f),
+                    proofEnvEnabled("OPENMW_PLAYABLE_SESSION_RUN"));
+                playableSessionElapsed += std::clamp(frametime, 0.f, 0.1f);
+            }
+            else
+            {
+                setPlayableSessionMovement(player, 0.f, 0.f, false);
+                if (validateCameras)
+                {
+                    if (proofEnvEnabled("OPENMW_PLAYABLE_SESSION_FRONT_PORTRAIT"))
+                        setPlayableSessionFrontPortraitCamera(0);
+                    else
+                        setPlayableSessionCamera(MWRender::Camera::Mode::ThirdPerson);
+                }
+                playableSessionEndTelemetryPending = true;
+            }
+        }
+
+        if (!playableSessionActorAiStabilized
+            && proofEnvEnabled("OPENMW_PLAYABLE_SESSION_STABILIZE_ACTOR_AI")
+            && mStateManager->getState() == MWBase::StateManager::State_Running)
+        {
+            playableSessionActorAiStabilized = true;
+            const bool wasActive = mMechanicsManager->isAIActive();
+            if (wasActive)
+                mMechanicsManager->toggleAI();
+            Log(Debug::Info) << "Playable session: stabilized nearby actors by disabling autonomous AI"
+                             << " previousActive=" << wasActive
+                             << " currentActive=" << mMechanicsManager->isAIActive();
+        }
+
         // update mechanics
         {
             worldViewerTrace(frameNumber, "mechanics.begin");
@@ -2964,6 +3426,8 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
             }
         }
         worldViewerTrace(frameNumber, "mechanics.end");
+
+        applyPlayableSessionSafeActorState();
 
         // update physics
         {
@@ -3076,10 +3540,20 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
         VR::Session::instance().updateSpaces();
     }
 
-    // if there is a separate Lua thread, it starts the update now
-    worldViewerTrace(frameNumber, "lua-worker-allow.begin");
-    mLuaWorker->allowUpdate(frameStart, frameNumber, *stats);
-    worldViewerTrace(frameNumber, "lua-worker-allow.end");
+    // Stock OpenMW releases Lua here because the remaining stock work is render-only.  The
+    // background proof paths below also perform controlled scene/camera mutations, so defer
+    // their Lua update until immediately before rendering.  Lua then overlaps only the cull
+    // traversal, matching the worker's threading contract.
+    const bool deferProofLuaWorker = proofEnvEnabled("OPENMW_FNV_INTERACTION_AUDIT")
+        || proofEnvEnabled("OPENMW_AUTHORED_INTERACTION_AUDIT")
+        || proofEnvEnabled("OPENMW_PLAYABLE_SESSION_BACKGROUND")
+        || proofEnvEnabled("OPENMW_PROOF_DELAY_STARTUP_SCRIPT");
+    if (!deferProofLuaWorker)
+    {
+        worldViewerTrace(frameNumber, "lua-worker-allow.begin");
+        mLuaWorker->allowUpdate(frameStart, frameNumber, *stats);
+        worldViewerTrace(frameNumber, "lua-worker-allow.end");
+    }
 
     if (proofEnvEnabled("OPENMW_PROOF_HIDE_FIRST_PERSON"))
     {
@@ -3213,16 +3687,129 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
         worldViewerTrace(frameNumber, "periodic-telemetry.end");
     }
 
+    if (playableSessionEndTelemetryPending && mWorld != nullptr)
+    {
+        MWWorld::Ptr player = mWorld->getPlayerPtr();
+        const osg::Vec3f endPosition = player.getRefData().getPosition().asVec3();
+        const auto horizontalDistance = [](const osg::Vec3f& lhs, const osg::Vec3f& rhs) {
+            const float x = lhs.x() - rhs.x();
+            const float y = lhs.y() - rhs.y();
+            return std::sqrt(x * x + y * y);
+        };
+        const float totalDistance = horizontalDistance(endPosition, playableSessionPlayerStart);
+        const float thirdPersonDistance = playableSessionCameraSwitched
+            ? horizontalDistance(playableSessionCameraSwitchPosition, playableSessionPlayerStart)
+            : totalDistance;
+        const float firstPersonDistance = playableSessionCameraSwitched
+            ? horizontalDistance(endPosition, playableSessionCameraSwitchPosition)
+            : 0.f;
+        const float verticalDrift = std::abs(endPosition.z() - playableSessionPlayerStart.z());
+        const float averageSpeed = playableSessionElapsed > 0.f ? totalDistance / playableSessionElapsed : 0.f;
+
+        float actorDrift = std::numeric_limits<float>::quiet_NaN();
+        float actorEndDistance = std::numeric_limits<float>::quiet_NaN();
+        bool actorInCombat = false;
+        if (!playableSessionActor.isEmpty())
+        {
+            const osg::Vec3f actorEnd = playableSessionActor.getRefData().getPosition().asVec3();
+            actorDrift = (actorEnd - playableSessionActorStart).length();
+            actorEndDistance = (actorEnd - endPosition).length();
+            actorInCombat = playableSessionActor.getClass()
+                                .getCreatureStats(playableSessionActor)
+                                .getAiSequence()
+                                .isInCombat();
+        }
+
+        const MWRender::Camera* camera = mWorld->getCamera();
+        osg::Vec3f cameraEndPosition;
+        if (camera != nullptr)
+        {
+            const osg::Vec3d position = camera->getPosition();
+            cameraEndPosition.set(
+                static_cast<float>(position.x()), static_cast<float>(position.y()), static_cast<float>(position.z()));
+        }
+        const float cameraEndDistance = camera != nullptr
+            ? (cameraEndPosition - endPosition).length()
+            : std::numeric_limits<float>::quiet_NaN();
+        const int level = player.getClass().getCreatureStats(player).getLevel();
+        const bool validateCameras = proofEnvEnabled("OPENMW_PLAYABLE_SESSION_VALIDATE_CAMERAS");
+        const bool requireActor = proofEnvEnabled("OPENMW_PLAYABLE_SESSION_REQUIRE_ACTOR");
+        const float minimumDistance
+            = std::max(0.f, readProofFloat("OPENMW_PLAYABLE_SESSION_MIN_DISTANCE", 64.f));
+        const float minimumSegmentDistance
+            = std::max(0.f, readProofFloat("OPENMW_PLAYABLE_SESSION_MIN_CAMERA_SEGMENT_DISTANCE", 24.f));
+        const float minimumSpeed
+            = std::max(0.f, readProofFloat("OPENMW_PLAYABLE_SESSION_MIN_SPEED", 20.f));
+        const float maximumSpeed
+            = std::max(minimumSpeed, readProofFloat("OPENMW_PLAYABLE_SESSION_MAX_SPEED", 600.f));
+        const float maximumVerticalDrift
+            = std::max(0.f, readProofFloat("OPENMW_PLAYABLE_SESSION_MAX_VERTICAL_DRIFT", 512.f));
+        const float maximumFirstPersonCameraDistance = std::max(
+            0.f, readProofFloat("OPENMW_PLAYABLE_SESSION_MAX_FIRST_PERSON_CAMERA_DISTANCE", 512.f));
+        const float maximumActorDrift
+            = std::max(0.f, readProofFloat("OPENMW_PLAYABLE_SESSION_MAX_ACTOR_DRIFT", 256.f));
+        const float maximumActorDistance
+            = std::max(0.f, readProofFloat("OPENMW_PLAYABLE_SESSION_MAX_ACTOR_DISTANCE", 3072.f));
+        const bool levelPass = level == 1;
+        const bool movementPass = totalDistance >= minimumDistance && averageSpeed >= minimumSpeed
+            && averageSpeed <= maximumSpeed && verticalDrift <= maximumVerticalDrift;
+        const bool cameraPass = !validateCameras
+            || (playableSessionCameraSwitched && thirdPersonDistance >= minimumSegmentDistance
+                && firstPersonDistance >= minimumSegmentDistance
+                && std::isfinite(playableSessionFirstPersonCameraDistance)
+                && playableSessionFirstPersonCameraDistance <= maximumFirstPersonCameraDistance);
+        const bool actorResolvedPass = !requireActor || !playableSessionActor.isEmpty();
+        const bool actorStabilityPass = !requireActor
+            || (!playableSessionActor.isEmpty() && std::isfinite(actorDrift)
+                && actorDrift <= maximumActorDrift && actorEndDistance <= maximumActorDistance && !actorInCombat);
+        const bool sessionPass
+            = levelPass && movementPass && cameraPass && actorResolvedPass && actorStabilityPass;
+
+        const char* sessionId = std::getenv("OPENMW_PLAYABLE_SESSION_ID");
+        Log(Debug::Info) << "Playable session telemetry: phase=end id=\""
+                         << (sessionId != nullptr ? sessionId : "default") << "\" frame=" << frameNumber
+                         << " elapsed=" << playableSessionElapsed << " level=" << level << " playerStart=("
+                         << playableSessionPlayerStart.x() << "," << playableSessionPlayerStart.y() << ","
+                         << playableSessionPlayerStart.z() << ") playerEnd=(" << endPosition.x() << ","
+                         << endPosition.y() << "," << endPosition.z() << ") distance=" << totalDistance
+                         << " averageSpeed=" << averageSpeed << " verticalDrift=" << verticalDrift
+                         << " thirdPersonDistance=" << thirdPersonDistance << " firstPersonDistance="
+                         << firstPersonDistance << " firstPersonCameraDistance="
+                         << playableSessionFirstPersonCameraDistance << " cameraEndMode="
+                         << (camera != nullptr ? static_cast<int>(camera->getMode()) : -1)
+                         << " cameraEndDistance=" << cameraEndDistance << " actorResolved="
+                         << (!playableSessionActor.isEmpty() ? 1 : 0) << " actorStartDistance="
+                         << playableSessionActorStartDistance << " actorEndDistance=" << actorEndDistance
+                         << " actorDrift=" << actorDrift << " actorInCombat=" << (actorInCombat ? 1 : 0)
+                         << " actorCombatSuppressions=" << playableSessionActorCombatSuppressions
+                         << " levelPass=" << (levelPass ? 1 : 0) << " movementPass="
+                         << (movementPass ? 1 : 0) << " cameraPass=" << (cameraPass ? 1 : 0)
+                         << " actorResolvedPass=" << (actorResolvedPass ? 1 : 0) << " actorStabilityPass="
+                         << (actorStabilityPass ? 1 : 0) << " result=" << (sessionPass ? "pass" : "fail");
+
+        playableSessionEndTelemetryPending = false;
+        playableSessionFinished = true;
+        playableSessionEndScreenshotPending
+            = proofEnvEnabled("OPENMW_PLAYABLE_SESSION_CAPTURE_SCREENSHOTS");
+        if (!playableSessionEndScreenshotPending)
+            playableSessionExitFrame = frameNumber + 2;
+    }
+
     if (!proofDelayedStartupScriptExecuted && std::getenv("OPENMW_PROOF_DELAY_STARTUP_SCRIPT") != nullptr
         && !mStartupScript.empty() && proofWorldReady)
     {
+        // The console script can change cells and rebuild the active-object lists.  At this
+        // point in the frame the Lua worker has already been released, so mutating the scene
+        // concurrently with nearby.* list iteration races the worker (and can recurse through
+        // sol/Lua error handling until the worker stack overflows).  Finish this frame's Lua
+        // update before executing the one-shot world mutation.
+        mLuaWorker->finishUpdate(frameStart, frameNumber, *stats);
         Log(Debug::Info) << "FNV/ESM4 proof: executing delayed startup script after world load";
         mWindowManager->executeInConsole(mStartupScript);
         proofDelayedStartupScriptExecuted = true;
     }
 
-    const bool proofFNVBootstrapProfile = hasFalloutNvContent(mContentFiles)
-        || std::getenv("OPENMW_FNV_BOOTSTRAP_LEVEL1_COURIER") != nullptr;
+    const bool proofFNVBootstrapProfile = std::getenv("OPENMW_FNV_BOOTSTRAP_LEVEL1_COURIER") != nullptr;
     const bool proofFNVBootstrapOutside = std::getenv("OPENMW_FNV_BOOTSTRAP_DOC_SENT") != nullptr;
     if (!proofFNVBootstrapApplied && proofRunning && (proofFNVBootstrapProfile || proofFNVBootstrapOutside))
     {
@@ -4045,6 +4632,872 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
     executeProofTimedScript(proofTimedScript1Frame, "OPENMW_PROOF_TIMED_SCRIPT_1", proofTimedScript1Executed);
     executeProofTimedScript(proofTimedScript2Frame, "OPENMW_PROOF_TIMED_SCRIPT_2", proofTimedScript2Executed);
 
+    const bool fnvInteractionRequested = proofEnvEnabled("OPENMW_FNV_INTERACTION_AUDIT");
+    if (fnvInteractionRequested && fnvInteractionPhase >= 0 && proofRunning && mWorld != nullptr
+        && mWindowManager != nullptr)
+    {
+        // The native audit deliberately activates actors and crosses cell doors after the Lua
+        // worker is normally released for the frame.  Serialize only this opt-in audit path so
+        // those scene mutations cannot invalidate the worker's shared nearby-object lists.
+        mLuaWorker->finishUpdate(frameStart, frameNumber, *stats);
+        const auto interactionGateSummary = [&]() {
+            std::ostringstream stream;
+            stream << "actor=" << (fnvInteractionActorPass ? 1 : 0)
+                   << " dialogue=" << (fnvInteractionDialoguePass ? 1 : 0)
+                   << " quest=" << (fnvInteractionQuestPass ? 1 : 0)
+                   << " doorIn=" << (fnvInteractionDoorInPass ? 1 : 0)
+                   << " interiorActors=" << (fnvInteractionInteriorActorsPass ? 1 : 0)
+                   << " radio=" << (fnvInteractionRadioPass ? 1 : 0)
+                   << " doorOut=" << (fnvInteractionDoorOutPass ? 1 : 0);
+            return stream.str();
+        };
+        const auto finishInteraction = [&](bool pass, std::string_view reason) {
+            Log(pass ? Debug::Info : Debug::Error)
+                << "FNV interaction audit: result=" << (pass ? "pass" : "fail")
+                << " reason=\"" << reason << "\" " << interactionGateSummary()
+                << " frame=" << frameNumber;
+            fnvInteractionPhase = -1;
+            mStateManager->requestQuit();
+        };
+        const auto advanceInteraction = [&](int phase) {
+            fnvInteractionPhase = phase;
+            fnvInteractionPhaseFrame = frameNumber;
+            fnvInteractionPhaseStartTime = frameStart;
+            Log(Debug::Info) << "FNV interaction audit: phase=" << phase << " frame=" << frameNumber;
+        };
+        const auto queueInteractionCapture = [&](std::string_view label) {
+            if (mScreenCaptureHandler == nullptr)
+                return;
+            Log(Debug::Info) << "FNV interaction audit: queuing native capture label=" << label
+                             << " frame=" << frameNumber;
+            mScreenCaptureHandler->setFramesToCapture(1);
+            mScreenCaptureHandler->captureNextFrame(*mViewer);
+        };
+        const auto findActiveRef = [&](std::uint32_t rawFormId) {
+            const ESM::FormId formId = ESM::FormId::fromUint32(rawFormId);
+            MWWorld::Ptr found;
+            for (MWWorld::CellStore* cellstore : mWorld->getWorldScene().getActiveCells())
+            {
+                if (cellstore == nullptr)
+                    continue;
+                cellstore->forEach([&](const MWWorld::Ptr& ptr) {
+                    if (!ptr.isEmpty() && ptr.getCellRef().getRefNum() == formId)
+                    {
+                        found = ptr;
+                        return false;
+                    }
+                    return true;
+                });
+                if (!found.isEmpty())
+                    break;
+            }
+            return found;
+        };
+        const auto countActiveRef = [&](std::uint32_t rawFormId) {
+            const ESM::FormId formId = ESM::FormId::fromUint32(rawFormId);
+            int count = 0;
+            for (MWWorld::CellStore* cellstore : mWorld->getWorldScene().getActiveCells())
+            {
+                if (cellstore == nullptr)
+                    continue;
+                cellstore->forEach([&](const MWWorld::Ptr& ptr) {
+                    if (!ptr.isEmpty() && ptr.getCellRef().getRefNum() == formId)
+                        ++count;
+                    return true;
+                });
+            }
+            return count;
+        };
+        const auto activateInteractionTarget = [&](const MWWorld::Ptr& target, std::string_view label) {
+            if (target.isEmpty())
+            {
+                Log(Debug::Error) << "FNV interaction audit: activation target missing label=" << label;
+                return false;
+            }
+            MWWorld::Ptr player = mWorld->getPlayerPtr();
+            std::unique_ptr<MWWorld::Action> action = target.getClass().activate(target, player);
+            const bool actionable = action != nullptr && !action->isNullAction();
+            Log(actionable ? Debug::Info : Debug::Error)
+                << "FNV interaction audit: activate label=" << label << " target=" << target.toString()
+                << " type=" << target.getTypeDescription() << " actionable=" << (actionable ? 1 : 0);
+            if (actionable)
+                action->execute(player);
+            return actionable;
+        };
+        const auto playerCellId = [&]() {
+            MWWorld::Ptr player = mWorld->getPlayerPtr();
+            if (player.isEmpty() || player.getCell() == nullptr || player.getCell()->getCell() == nullptr)
+                return ESM::RefId();
+            return player.getCell()->getCell()->getId();
+        };
+        const auto aimInteractionCameraAt = [&](const MWWorld::Ptr& target, std::string_view label,
+                                                    float aimOffsetZ) {
+            MWRender::Camera* camera = mWorld->getCamera();
+            if (camera == nullptr || target.isEmpty())
+                return false;
+
+            const osg::Vec3d cameraPosition = camera->getPosition();
+            osg::Vec3d aimPosition = target.getRefData().getPosition().asVec3();
+            aimPosition.z() += aimOffsetZ;
+            const osg::Vec3d delta = aimPosition - cameraPosition;
+            const double horizontal = std::sqrt(delta.x() * delta.x() + delta.y() * delta.y());
+            if (horizontal < 1.0)
+                return false;
+
+            const float pitch = static_cast<float>(std::atan2(delta.z(), horizontal));
+            const float yaw = -static_cast<float>(std::atan2(delta.x(), delta.y()));
+            camera->setPitch(pitch, true);
+            camera->setYaw(yaw, true);
+            camera->setRoll(0.f);
+            camera->instantTransition();
+            camera->updateCamera();
+            Log(Debug::Info) << "FNV interaction audit: aim label=" << label
+                             << " cameraPos=(" << cameraPosition.x() << "," << cameraPosition.y() << ","
+                             << cameraPosition.z() << ") targetPos=(" << aimPosition.x() << ","
+                             << aimPosition.y() << "," << aimPosition.z() << ") pitch=" << pitch
+                             << " yaw=" << yaw;
+            return true;
+        };
+        const unsigned int phaseFrames = frameNumber - fnvInteractionPhaseFrame;
+        const double phaseSeconds = fnvInteractionPhaseStartTime != 0
+            ? timer->delta_s(fnvInteractionPhaseStartTime, frameStart)
+            : 0.0;
+        const double phaseTimeoutSeconds
+            = std::max(5.f, readProofFloat("OPENMW_FNV_INTERACTION_PHASE_TIMEOUT_SECONDS", 45.f));
+
+        if (fnvInteractionPhase == 0 && proofWorldReady
+            && proofWorldReadyFrames
+                >= std::max(1, readProofInt("OPENMW_FNV_INTERACTION_SETTLE_FRAMES", 900)))
+        {
+            MWWorld::Ptr player = mWorld->getPlayerPtr();
+            const int level = player.getClass().getCreatureStats(player).getLevel();
+            fnvInteractionActor = findActiveRef(0x1104c80);
+            if (fnvInteractionActor.isEmpty())
+            {
+                finishInteraction(false, "Easy Pete authored reference is not active outside Goodsprings");
+            }
+            else
+            {
+                const osg::Vec3f actorPosition = fnvInteractionActor.getRefData().getPosition().asVec3();
+                const osg::Vec3f retailChair(-67966.9297f, 3447.8076f, 8387.3105f);
+                const float chairDistance = (actorPosition - retailChair).length();
+                const bool inCombat = fnvInteractionActor.getClass()
+                                          .getCreatureStats(fnvInteractionActor)
+                                          .getAiSequence()
+                                          .isInCombat();
+                const int activeCopies = countActiveRef(0x1104c80);
+                fnvInteractionActorSettledPosition = actorPosition;
+                fnvInteractionActorPass
+                    = level == 1 && activeCopies == 1 && chairDistance <= 192.f && !inCombat;
+                Log(fnvInteractionActorPass ? Debug::Info : Debug::Error)
+                    << "FNV interaction audit: actor settle level=" << level << " refCopies=" << activeCopies
+                    << " pos=(" << actorPosition.x() << "," << actorPosition.y() << "," << actorPosition.z()
+                    << ") retailChairDistance=" << chairDistance << " inCombat=" << (inCombat ? 1 : 0)
+                    << " result=" << (fnvInteractionActorPass ? "pass" : "fail");
+                aimInteractionCameraAt(fnvInteractionActor, "outside-easy-pete-settled",
+                    readProofFloat("OPENMW_FNV_INTERACTION_ACTOR_AIM_Z", 96.f));
+                queueInteractionCapture("outside-easy-pete-settled");
+                advanceInteraction(std::getenv("OPENMW_FNV_INTERACTION_DOOR_ONLY") != nullptr ? 3 : 8);
+            }
+        }
+        else if (fnvInteractionPhase == 8 && phaseFrames >= 8)
+        {
+            if (!activateInteractionTarget(fnvInteractionActor, "easy-pete-dialogue"))
+                finishInteraction(false, "Easy Pete activation returned a null action");
+            else
+                advanceInteraction(1);
+        }
+        else if (fnvInteractionPhase == 1)
+        {
+            const bool dialogueOpen = mWindowManager->containsMode(MWGui::GM_Dialogue);
+            const bool voiceActive = mSoundManager != nullptr && mSoundManager->sayActive(fnvInteractionActor);
+            fnvInteractionGreetingAudioSeen = fnvInteractionGreetingAudioSeen || voiceActive;
+            if (dialogueOpen && fnvInteractionGreetingAudioSeen && !voiceActive && phaseFrames >= 5)
+            {
+                struct InteractionDialogueCallback final : MWBase::DialogueManager::ResponseCallback
+                {
+                    bool mHadText = false;
+                    void addResponse(std::string_view title, std::string_view text) override
+                    {
+                        mHadText = mHadText || !text.empty();
+                        Log(Debug::Info) << "FNV interaction audit: dialogue response title=\"" << title
+                                         << "\" text=\"" << text << "\"";
+                    }
+                } callback;
+                constexpr std::string_view topic = "Why are you called Easy Pete?";
+                mDialogueManager->keywordSelected(topic, &callback);
+                fnvInteractionDialoguePass = dialogueOpen && callback.mHadText;
+                queueInteractionCapture("easy-pete-authored-topic");
+                advanceInteraction(2);
+            }
+            else if (phaseSeconds > phaseTimeoutSeconds)
+                finishInteraction(false, "Easy Pete greeting GUI or authored voice did not complete");
+        }
+        else if (fnvInteractionPhase == 2)
+        {
+            const bool voiceActive = mSoundManager != nullptr && mSoundManager->sayActive(fnvInteractionActor);
+            fnvInteractionTopicAudioSeen = fnvInteractionTopicAudioSeen || voiceActive;
+            if (fnvInteractionTopicAudioSeen && !voiceActive && phaseFrames >= 5)
+            {
+                fnvInteractionDialoguePass = fnvInteractionDialoguePass && fnvInteractionGreetingAudioSeen
+                    && fnvInteractionTopicAudioSeen;
+                mDialogueManager->goodbyeSelected();
+                mWindowManager->removeGuiMode(MWGui::GM_Dialogue);
+                const bool stageSet = mWorld->getESM4QuestRuntime().setStage("VCG02", 5);
+                const MWWorld::ESM4QuestState* quest = mWorld->getESM4QuestRuntime().search("VCG02");
+                fnvInteractionQuestPass = stageSet && quest != nullptr && quest->mCurrentStage == 5
+                    && quest->mStageDone.contains(5) && quest->mStageDone.at(5);
+                Log(fnvInteractionQuestPass ? Debug::Info : Debug::Error)
+                    << "FNV interaction audit: quest VCG02 stage=5 state="
+                    << (quest != nullptr ? static_cast<int>(quest->mCurrentStage) : -1)
+                    << " notificationQueued=" << (fnvInteractionQuestPass ? 1 : 0)
+                    << " result=" << (fnvInteractionQuestPass ? "pass" : "fail");
+                advanceInteraction(3);
+            }
+            else if (phaseSeconds > phaseTimeoutSeconds)
+                finishInteraction(false, "Easy Pete authored topic voice did not complete");
+        }
+        else if (fnvInteractionPhase == 3)
+        {
+            if (!fnvInteractionQuestCaptureQueued && phaseFrames >= 10)
+            {
+                fnvInteractionQuestCaptureQueued = true;
+                queueInteractionCapture("quest-notification");
+            }
+            if (phaseFrames >= 90)
+            {
+                MWWorld::Ptr door = findActiveRef(0x110636f);
+                const ESM::RefId expectedInterior(ESM::FormId::fromUint32(0x1106185));
+                const bool authoredPair = !door.isEmpty() && door.getClass().isDoor()
+                    && door.getCellRef().getTeleport() && door.getCellRef().getDestCell() == expectedInterior;
+                fnvInteractionDoorInPass
+                    = authoredPair && activateInteractionTarget(door, "prospector-saloon-front-door");
+                Log(fnvInteractionDoorInPass ? Debug::Info : Debug::Error)
+                    << "FNV interaction audit: exterior door sourceRef=FormId:0x110636f expectedCell="
+                    << expectedInterior.toDebugString() << " authoredPair=" << (authoredPair ? 1 : 0)
+                    << " result=" << (fnvInteractionDoorInPass ? "pass" : "fail");
+                if (!fnvInteractionDoorInPass)
+                    finishInteraction(false, "Prospector Saloon exterior XTEL action failed");
+                else
+                    advanceInteraction(4);
+            }
+        }
+        else if (fnvInteractionPhase == 4)
+        {
+            const ESM::RefId expectedInterior(ESM::FormId::fromUint32(0x1106185));
+            if (playerCellId() == expectedInterior && phaseFrames >= 180)
+            {
+                int actorCount = 0;
+                for (MWWorld::CellStore* cellstore : mWorld->getWorldScene().getActiveCells())
+                {
+                    if (cellstore == nullptr)
+                        continue;
+                    cellstore->forEach([&](const MWWorld::Ptr& ptr) {
+                        if (!ptr.isEmpty() && ptr.getClass().isActor())
+                            ++actorCount;
+                        return true;
+                    });
+                }
+                const bool sunny = !findActiveRef(0x1104e85).isEmpty();
+                const bool trudy = !findActiveRef(0x1104c6d).isEmpty();
+                const bool cheyenne = !findActiveRef(0x110588e).isEmpty();
+                fnvInteractionInteriorActorsPass = actorCount >= 2 && (sunny || trudy) && cheyenne;
+                Log(fnvInteractionInteriorActorsPass ? Debug::Info : Debug::Error)
+                    << "FNV interaction audit: saloon interior cell=" << playerCellId().toDebugString()
+                    << " actors=" << actorCount << " Sunny=" << (sunny ? 1 : 0)
+                    << " Trudy=" << (trudy ? 1 : 0) << " Cheyenne=" << (cheyenne ? 1 : 0)
+                    << " result=" << (fnvInteractionInteriorActorsPass ? "pass" : "fail");
+                MWWorld::Ptr interiorProofActor = findActiveRef(0x110588e);
+                if (interiorProofActor.isEmpty())
+                    interiorProofActor = !findActiveRef(0x1104e85).isEmpty() ? findActiveRef(0x1104e85)
+                                                                          : findActiveRef(0x1104c6d);
+                aimInteractionCameraAt(interiorProofActor, "saloon-interior-actors",
+                    readProofFloat("OPENMW_FNV_INTERACTION_ACTOR_AIM_Z", 96.f));
+                queueInteractionCapture("saloon-interior-actors");
+
+                fnvInteractionRadio = findActiveRef(0x1109087);
+                fnvInteractionRadioSound = {};
+                if (!fnvInteractionRadio.isEmpty() && fnvInteractionRadio.getType() == ESM4::Activator::sRecordId)
+                {
+                    const ESM4::Activator& activator = *fnvInteractionRadio.get<ESM4::Activator>()->mBase;
+                    ESM::FormId broadcast = activator.mLoopingSound;
+                    if (broadcast.isZeroOrUnset())
+                        broadcast = activator.mRadioTemplate;
+                    if (broadcast.isZeroOrUnset() && !activator.mRadioStation.isZeroOrUnset())
+                    {
+                        const ESM4::TalkingActivator* station = mWorld->getStore()
+                            .get<ESM4::TalkingActivator>()
+                            .search(ESM::RefId(activator.mRadioStation));
+                        if (station != nullptr)
+                            broadcast = !station->mLoopSound.isZeroOrUnset() ? station->mLoopSound
+                                                                            : station->mRadioTemplate;
+                    }
+                    fnvInteractionRadioSound = ESM::RefId(broadcast);
+                }
+                const bool radioAction = activateInteractionTarget(fnvInteractionRadio, "goodsprings-radio");
+                const bool radioPlaying = radioAction && mUseSound && mSoundManager != nullptr
+                    && !fnvInteractionRadioSound.empty()
+                    && mSoundManager->getSoundPlaying(fnvInteractionRadio, fnvInteractionRadioSound);
+                fnvInteractionRadioPass = radioPlaying;
+                Log(fnvInteractionRadioPass ? Debug::Info : Debug::Error)
+                    << "FNV interaction audit: radio sourceRef=FormId:0x1109087 sound="
+                    << fnvInteractionRadioSound.toDebugString() << " soundEnabled=" << (mUseSound ? 1 : 0)
+                    << " playing=" << (radioPlaying ? 1 : 0)
+                    << " result=" << (fnvInteractionRadioPass ? "pass" : "fail");
+                advanceInteraction(5);
+            }
+            else if (phaseSeconds > phaseTimeoutSeconds)
+                finishInteraction(false, "Prospector Saloon interior did not become active");
+        }
+        else if (fnvInteractionPhase == 5)
+        {
+            const bool radioStillPlaying = mSoundManager != nullptr && !fnvInteractionRadio.isEmpty()
+                && !fnvInteractionRadioSound.empty()
+                && mSoundManager->getSoundPlaying(fnvInteractionRadio, fnvInteractionRadioSound);
+            fnvInteractionRadioPass = fnvInteractionRadioPass && radioStillPlaying;
+            if (!fnvInteractionRadioCaptureQueued && phaseFrames >= 45)
+            {
+                fnvInteractionRadioCaptureQueued = true;
+                aimInteractionCameraAt(fnvInteractionRadio, "goodsprings-radio-on",
+                    readProofFloat("OPENMW_FNV_INTERACTION_RADIO_AIM_Z", 24.f));
+                queueInteractionCapture("goodsprings-radio-on");
+            }
+            if (fnvInteractionRadioCaptureQueued && phaseFrames >= 53)
+            {
+                MWWorld::Ptr exitDoor = findActiveRef(0x110618e);
+                const bool authoredExit = !exitDoor.isEmpty() && exitDoor.getClass().isDoor()
+                    && exitDoor.getCellRef().getTeleport();
+                fnvInteractionDoorOutPass
+                    = authoredExit && activateInteractionTarget(exitDoor, "prospector-saloon-exit-door");
+                Log(fnvInteractionDoorOutPass ? Debug::Info : Debug::Error)
+                    << "FNV interaction audit: interior exit sourceRef=FormId:0x110618e authoredPair="
+                    << (authoredExit ? 1 : 0) << " radioStillPlaying=" << (radioStillPlaying ? 1 : 0)
+                    << " result=" << (fnvInteractionDoorOutPass ? "pass" : "fail");
+                if (!fnvInteractionDoorOutPass)
+                    finishInteraction(false, "Prospector Saloon interior XTEL action failed");
+                else
+                    advanceInteraction(6);
+            }
+        }
+        else if (fnvInteractionPhase == 6)
+        {
+            MWWorld::Ptr player = mWorld->getPlayerPtr();
+            const bool outside = !player.isEmpty() && player.getCell() != nullptr && player.getCell()->isExterior();
+            if (outside && phaseFrames >= 180)
+            {
+                MWWorld::Ptr peteAfterReturn = findActiveRef(0x1104c80);
+                const int activeCopies = countActiveRef(0x1104c80);
+                float actorDrift = std::numeric_limits<float>::infinity();
+                bool actorInCombat = true;
+                if (!peteAfterReturn.isEmpty())
+                {
+                    actorDrift = (peteAfterReturn.getRefData().getPosition().asVec3()
+                                     - fnvInteractionActorSettledPosition)
+                                     .length();
+                    actorInCombat = peteAfterReturn.getClass()
+                                        .getCreatureStats(peteAfterReturn)
+                                        .getAiSequence()
+                                        .isInCombat();
+                }
+                fnvInteractionActorPass = fnvInteractionActorPass && activeCopies == 1
+                    && actorDrift <= 256.f && !actorInCombat;
+                Log(fnvInteractionActorPass ? Debug::Info : Debug::Error)
+                    << "FNV interaction audit: exterior return cell=" << playerCellId().toDebugString()
+                    << " EasyPeteCopies=" << activeCopies << " actorDrift=" << actorDrift
+                    << " actorInCombat=" << (actorInCombat ? 1 : 0)
+                    << " weather=" << mWorld->getCurrentWeatherScriptId()
+                    << " weatherTransition=" << mWorld->getWeatherTransition()
+                    << " result=" << (fnvInteractionActorPass ? "pass" : "fail");
+                aimInteractionCameraAt(peteAfterReturn, "outside-return-weather-actor",
+                    readProofFloat("OPENMW_FNV_INTERACTION_ACTOR_AIM_Z", 96.f));
+                queueInteractionCapture("outside-return-weather-actor");
+                advanceInteraction(7);
+            }
+            else if (phaseSeconds > phaseTimeoutSeconds)
+                finishInteraction(false, "Prospector Saloon exit did not return to the exterior");
+        }
+        else if (fnvInteractionPhase == 7 && phaseFrames >= 8)
+        {
+            const bool pass = fnvInteractionActorPass && fnvInteractionDialoguePass
+                && fnvInteractionQuestPass && fnvInteractionDoorInPass
+                && fnvInteractionInteriorActorsPass && fnvInteractionRadioPass
+                && fnvInteractionDoorOutPass;
+            finishInteraction(pass, pass ? "complete authored interaction circuit"
+                                         : "one or more authored interaction gates failed");
+        }
+    }
+
+    const bool authoredInteractionRequested = proofEnvEnabled("OPENMW_AUTHORED_INTERACTION_AUDIT");
+    if (authoredInteractionRequested && authoredInteractionPhase >= 0 && proofRunning && mWorld != nullptr
+        && mWindowManager != nullptr)
+    {
+        // This audit uses only normal activation actions, but it deliberately crosses cells and
+        // repositions the player between authored interaction points. Keep those mutations on the
+        // main thread and outside the Lua worker's nearby-object traversal window.
+        mLuaWorker->finishUpdate(frameStart, frameNumber, *stats);
+        const auto envText = [](const char* name) -> std::string_view {
+            const char* value = std::getenv(name);
+            return value != nullptr ? std::string_view(value) : std::string_view();
+        };
+        const auto formIdFromEnv = [&](const char* name) {
+            const std::string_view value = envText(name);
+            const std::optional<ESM::FormId> parsed = parseProofFormId(value);
+            return parsed.value_or(ESM::FormId());
+        };
+        const std::string_view auditLabel = [&]() {
+            const std::string_view configured = envText("OPENMW_AUTHORED_INTERACTION_LABEL");
+            return configured.empty() ? std::string_view("unnamed") : configured;
+        }();
+        const ESM::FormId actorFormId = formIdFromEnv("OPENMW_AUTHORED_INTERACTION_ACTOR_REF");
+        const ESM::FormId doorInFormId = formIdFromEnv("OPENMW_AUTHORED_INTERACTION_DOOR_IN_REF");
+        const ESM::FormId interiorCellFormId
+            = formIdFromEnv("OPENMW_AUTHORED_INTERACTION_INTERIOR_CELL");
+        const ESM::FormId interiorActorFormId
+            = formIdFromEnv("OPENMW_AUTHORED_INTERACTION_INTERIOR_ACTOR_REF");
+        const ESM::FormId radioFormId = formIdFromEnv("OPENMW_AUTHORED_INTERACTION_RADIO_REF");
+        const ESM::FormId doorOutFormId = formIdFromEnv("OPENMW_AUTHORED_INTERACTION_DOOR_OUT_REF");
+
+        const auto findActiveRef = [&](ESM::FormId formId) {
+            MWWorld::Ptr found;
+            if (formId.isZeroOrUnset())
+                return found;
+            for (MWWorld::CellStore* cellstore : mWorld->getWorldScene().getActiveCells())
+            {
+                if (cellstore == nullptr)
+                    continue;
+                cellstore->forEach([&](const MWWorld::Ptr& ptr) {
+                    if (!ptr.isEmpty() && ptr.getCellRef().getRefNum() == formId)
+                    {
+                        found = ptr;
+                        return false;
+                    }
+                    return true;
+                });
+                if (!found.isEmpty())
+                    break;
+            }
+            return found;
+        };
+        const auto countActiveRef = [&](ESM::FormId formId) {
+            int count = 0;
+            if (formId.isZeroOrUnset())
+                return count;
+            for (MWWorld::CellStore* cellstore : mWorld->getWorldScene().getActiveCells())
+            {
+                if (cellstore == nullptr)
+                    continue;
+                cellstore->forEach([&](const MWWorld::Ptr& ptr) {
+                    if (!ptr.isEmpty() && ptr.getCellRef().getRefNum() == formId)
+                        ++count;
+                    return true;
+                });
+            }
+            return count;
+        };
+        const auto playerCellId = [&]() {
+            MWWorld::Ptr player = mWorld->getPlayerPtr();
+            if (player.isEmpty() || player.getCell() == nullptr || player.getCell()->getCell() == nullptr)
+                return ESM::RefId();
+            return player.getCell()->getCell()->getId();
+        };
+        const auto queueCapture = [&](std::string_view label) {
+            if (mScreenCaptureHandler == nullptr)
+                return;
+            Log(Debug::Info) << "Authored interaction audit: label=" << auditLabel
+                             << " queueCapture=" << label << " frame=" << frameNumber;
+            mScreenCaptureHandler->setFramesToCapture(1);
+            mScreenCaptureHandler->captureNextFrame(*mViewer);
+        };
+        const auto activateTarget = [&](const MWWorld::Ptr& target, std::string_view label) {
+            if (target.isEmpty())
+                return false;
+            MWWorld::Ptr player = mWorld->getPlayerPtr();
+            std::unique_ptr<MWWorld::Action> action = target.getClass().activate(target, player);
+            const bool actionable = action != nullptr && !action->isNullAction();
+            Log(actionable ? Debug::Info : Debug::Error)
+                << "Authored interaction audit: label=" << auditLabel << " activate=" << label
+                << " target=" << target.toString() << " type=" << target.getTypeDescription()
+                << " actionable=" << (actionable ? 1 : 0);
+            if (actionable)
+                action->execute(player);
+            return actionable;
+        };
+        const auto aimCameraAt = [&](const MWWorld::Ptr& target, std::string_view label, float offsetZ) {
+            MWRender::Camera* camera = mWorld->getCamera();
+            if (camera == nullptr || target.isEmpty())
+                return false;
+            const osg::Vec3d cameraPosition = camera->getPosition();
+            osg::Vec3d aimPosition = target.getRefData().getPosition().asVec3();
+            aimPosition.z() += offsetZ;
+            const osg::Vec3d delta = aimPosition - cameraPosition;
+            const double horizontal = std::sqrt(delta.x() * delta.x() + delta.y() * delta.y());
+            if (horizontal < 1.0)
+                return false;
+            camera->setPitch(static_cast<float>(std::atan2(delta.z(), horizontal)), true);
+            camera->setYaw(-static_cast<float>(std::atan2(delta.x(), delta.y())), true);
+            camera->setRoll(0.f);
+            camera->instantTransition();
+            camera->updateCamera();
+            Log(Debug::Info) << "Authored interaction audit: label=" << auditLabel << " aim=" << label
+                             << " cameraPos=(" << cameraPosition.x() << "," << cameraPosition.y() << ","
+                             << cameraPosition.z() << ") targetPos=(" << aimPosition.x() << ","
+                             << aimPosition.y() << "," << aimPosition.z() << ")";
+            return true;
+        };
+        const auto gateSummary = [&]() {
+            std::ostringstream stream;
+            stream << "actor=" << (authoredInteractionActorPass ? 1 : 0)
+                   << " dialogue=" << (authoredInteractionDialoguePass ? 1 : 0)
+                   << " doorIn=" << (authoredInteractionDoorInPass ? 1 : 0)
+                   << " interiorActors=" << (authoredInteractionInteriorActorsPass ? 1 : 0)
+                   << " radio=" << (authoredInteractionRadioPass ? 1 : 0)
+                   << " doorOut=" << (authoredInteractionDoorOutPass ? 1 : 0);
+            return stream.str();
+        };
+        const auto finishAudit = [&](bool pass, std::string_view reason) {
+            Log(pass ? Debug::Info : Debug::Error)
+                << "Authored interaction audit: label=" << auditLabel
+                << " result=" << (pass ? "pass" : "fail") << " reason=\"" << reason << "\" "
+                << gateSummary() << " frame=" << frameNumber;
+            authoredInteractionPhase = -1;
+            mStateManager->requestQuit();
+        };
+        const auto advanceAudit = [&](int phase) {
+            authoredInteractionPhase = phase;
+            authoredInteractionPhaseFrame = frameNumber;
+            authoredInteractionPhaseStartTime = frameStart;
+            Log(Debug::Info) << "Authored interaction audit: label=" << auditLabel
+                             << " phase=" << phase << " frame=" << frameNumber;
+        };
+        const unsigned int phaseFrames = frameNumber - authoredInteractionPhaseFrame;
+        const double phaseSeconds = authoredInteractionPhaseStartTime != 0
+            ? timer->delta_s(authoredInteractionPhaseStartTime, frameStart)
+            : 0.0;
+        const double phaseTimeoutSeconds = std::max(
+            5.f, readProofFloat("OPENMW_AUTHORED_INTERACTION_PHASE_TIMEOUT_SECONDS", 45.f));
+
+        if (authoredInteractionPhase == 0 && proofWorldReady
+            && proofWorldReadyFrames
+                >= std::max(1, readProofInt("OPENMW_AUTHORED_INTERACTION_SETTLE_FRAMES", 240)))
+        {
+            MWWorld::Ptr player = mWorld->getPlayerPtr();
+            player.getClass().getCreatureStats(player).setLevel(1);
+            if (player.getClass().isNpc())
+                player.getClass().getNpcStats(player).setLevelProgress(0);
+            authoredInteractionActor = findActiveRef(actorFormId);
+            if (authoredInteractionActor.isEmpty())
+                finishAudit(false, "authored exterior actor is not active");
+            else
+            {
+                const osg::Vec3f playerPosition = player.getRefData().getPosition().asVec3();
+                const osg::Vec3f actorPosition
+                    = authoredInteractionActor.getRefData().getPosition().asVec3();
+                const float actorDistance = (actorPosition - playerPosition).length();
+                const bool actorInCombat = authoredInteractionActor.getClass()
+                                               .getCreatureStats(authoredInteractionActor)
+                                               .getAiSequence()
+                                               .isInCombat();
+                const int actorCopies = countActiveRef(actorFormId);
+                authoredInteractionActorSettledPosition = actorPosition;
+                authoredInteractionActorPass = actorCopies == 1 && !actorInCombat
+                    && actorDistance <= readProofFloat("OPENMW_AUTHORED_INTERACTION_MAX_ACTOR_DISTANCE", 1024.f);
+                Log(authoredInteractionActorPass ? Debug::Info : Debug::Error)
+                    << "Authored interaction audit: label=" << auditLabel << " actorSettle level="
+                    << player.getClass().getCreatureStats(player).getLevel() << " copies=" << actorCopies
+                    << " distance=" << actorDistance << " inCombat=" << (actorInCombat ? 1 : 0)
+                    << " pos=(" << actorPosition.x() << "," << actorPosition.y() << ","
+                    << actorPosition.z() << ") result="
+                    << (authoredInteractionActorPass ? "pass" : "fail");
+                if (MWRender::Camera* camera = mWorld->getCamera())
+                {
+                    camera->attachTo(player);
+                    camera->setMode(MWRender::Camera::Mode::FirstPerson, true);
+                    camera->setPreferredCameraDistance(0.f);
+                    camera->processViewChange();
+                    camera->update(0.f, false);
+                    camera->instantTransition();
+                    camera->updateCamera();
+                }
+                aimCameraAt(authoredInteractionActor, "exterior-actor",
+                    readProofFloat("OPENMW_AUTHORED_INTERACTION_ACTOR_AIM_Z", 96.f));
+                queueCapture("exterior-actor");
+                advanceAudit(1);
+            }
+        }
+        else if (authoredInteractionPhase == 1 && phaseFrames >= 8)
+        {
+            if (!activateTarget(authoredInteractionActor, "exterior-actor-dialogue"))
+                finishAudit(false, "exterior actor activation returned a null action");
+            else
+                advanceAudit(2);
+        }
+        else if (authoredInteractionPhase == 2)
+        {
+            const bool dialogueOpen = mWindowManager->containsMode(MWGui::GM_Dialogue);
+            const bool voiceActive
+                = mSoundManager != nullptr && mSoundManager->sayActive(authoredInteractionActor);
+            authoredInteractionGreetingAudioSeen
+                = authoredInteractionGreetingAudioSeen || voiceActive;
+            if (dialogueOpen && authoredInteractionGreetingAudioSeen && !voiceActive && phaseFrames >= 5)
+            {
+                struct AuthoredInteractionDialogueCallback final
+                    : MWBase::DialogueManager::ResponseCallback
+                {
+                    bool mHadText = false;
+                    void addResponse(std::string_view title, std::string_view text) override
+                    {
+                        mHadText = mHadText || !text.empty();
+                        Log(Debug::Info) << "Authored interaction audit: dialogueResponse title=\""
+                                         << title << "\" text=\"" << text << "\"";
+                    }
+                } callback;
+                const std::string_view topic = envText("OPENMW_AUTHORED_INTERACTION_DIALOGUE_TOPIC");
+                if (!topic.empty())
+                    mDialogueManager->keywordSelected(topic, &callback);
+                authoredInteractionDialoguePass = mUseSound && dialogueOpen
+                    && authoredInteractionGreetingAudioSeen && (topic.empty() || callback.mHadText);
+                queueCapture("authored-dialogue-topic");
+                if (topic.empty())
+                {
+                    mDialogueManager->goodbyeSelected();
+                    mWindowManager->removeGuiMode(MWGui::GM_Dialogue);
+                    authoredInteractionTopicAudioSeen = true;
+                }
+                advanceAudit(3);
+            }
+            else if (phaseSeconds > phaseTimeoutSeconds)
+                finishAudit(false, "authored greeting GUI or voice did not complete");
+        }
+        else if (authoredInteractionPhase == 3)
+        {
+            const std::string_view topic = envText("OPENMW_AUTHORED_INTERACTION_DIALOGUE_TOPIC");
+            const bool voiceActive
+                = mSoundManager != nullptr && mSoundManager->sayActive(authoredInteractionActor);
+            authoredInteractionTopicAudioSeen = authoredInteractionTopicAudioSeen || voiceActive;
+            if ((topic.empty() || (authoredInteractionTopicAudioSeen && !voiceActive)) && phaseFrames >= 5)
+            {
+                authoredInteractionDialoguePass = authoredInteractionDialoguePass
+                    && authoredInteractionTopicAudioSeen;
+                if (!topic.empty())
+                {
+                    mDialogueManager->goodbyeSelected();
+                    mWindowManager->removeGuiMode(MWGui::GM_Dialogue);
+                }
+                const std::string_view preDoorScript
+                    = envText("OPENMW_AUTHORED_INTERACTION_PRE_DOOR_SCRIPT");
+                if (!preDoorScript.empty())
+                {
+                    Log(Debug::Info) << "Authored interaction audit: label=" << auditLabel
+                                     << " executePreDoorScript=\"" << preDoorScript << "\"";
+                    mWindowManager->executeInConsole(std::filesystem::path(preDoorScript));
+                }
+                advanceAudit(4);
+            }
+            else if (phaseSeconds > phaseTimeoutSeconds)
+                finishAudit(false, "authored dialogue topic voice did not complete");
+        }
+        else if (authoredInteractionPhase == 4)
+        {
+            const unsigned int settleFrames = static_cast<unsigned int>(std::max(
+                8, readProofInt("OPENMW_AUTHORED_INTERACTION_PRE_DOOR_SETTLE_FRAMES", 180)));
+            if (phaseFrames >= settleFrames)
+            {
+                MWWorld::Ptr door = findActiveRef(doorInFormId);
+                const ESM::RefId expectedInterior(interiorCellFormId);
+                const bool authoredPair = !door.isEmpty() && door.getClass().isDoor()
+                    && door.getCellRef().getTeleport()
+                    && (interiorCellFormId.isZeroOrUnset()
+                        || door.getCellRef().getDestCell() == expectedInterior);
+                if (!door.isEmpty())
+                    aimCameraAt(door, "exterior-door", 48.f);
+                authoredInteractionDoorInPass = authoredPair && activateTarget(door, "exterior-door");
+                Log(authoredInteractionDoorInPass ? Debug::Info : Debug::Error)
+                    << "Authored interaction audit: label=" << auditLabel
+                    << " exteriorDoor=" << doorInFormId.toUint32()
+                    << " expectedInterior=" << expectedInterior.toDebugString()
+                    << " authoredPair=" << (authoredPair ? 1 : 0)
+                    << " result=" << (authoredInteractionDoorInPass ? "pass" : "fail");
+                if (!authoredInteractionDoorInPass)
+                    finishAudit(false, "authored exterior door action failed");
+                else
+                    advanceAudit(5);
+            }
+            else if (phaseSeconds > phaseTimeoutSeconds)
+                finishAudit(false, "authored exterior door did not become active");
+        }
+        else if (authoredInteractionPhase == 5)
+        {
+            const bool expectedCellActive = interiorCellFormId.isZeroOrUnset()
+                ? !mWorld->getPlayerPtr().getCell()->isExterior()
+                : playerCellId() == ESM::RefId(interiorCellFormId);
+            if (expectedCellActive && phaseFrames >= 180)
+            {
+                int actorCount = 0;
+                for (MWWorld::CellStore* cellstore : mWorld->getWorldScene().getActiveCells())
+                {
+                    if (cellstore == nullptr)
+                        continue;
+                    cellstore->forEach([&](const MWWorld::Ptr& ptr) {
+                        if (!ptr.isEmpty() && ptr.getClass().isActor())
+                            ++actorCount;
+                        return true;
+                    });
+                }
+                MWWorld::Ptr interiorActor = findActiveRef(interiorActorFormId);
+                const bool requiredActorPresent
+                    = interiorActorFormId.isZeroOrUnset() || !interiorActor.isEmpty();
+                authoredInteractionInteriorActorsPass = actorCount >= 1 && requiredActorPresent;
+                Log(authoredInteractionInteriorActorsPass ? Debug::Info : Debug::Error)
+                    << "Authored interaction audit: label=" << auditLabel
+                    << " interiorCell=" << playerCellId().toDebugString() << " actors=" << actorCount
+                    << " requiredActor=" << interiorActorFormId.toUint32()
+                    << " requiredActorPresent=" << (requiredActorPresent ? 1 : 0)
+                    << " result=" << (authoredInteractionInteriorActorsPass ? "pass" : "fail");
+                if (!interiorActor.isEmpty())
+                    aimCameraAt(interiorActor, "interior-actor",
+                        readProofFloat("OPENMW_AUTHORED_INTERACTION_ACTOR_AIM_Z", 96.f));
+                queueCapture("interior-actors");
+
+                authoredInteractionRadioPass = radioFormId.isZeroOrUnset();
+                if (!radioFormId.isZeroOrUnset())
+                {
+                    authoredInteractionRadio = findActiveRef(radioFormId);
+                    authoredInteractionRadioSound = {};
+                    if (!authoredInteractionRadio.isEmpty()
+                        && authoredInteractionRadio.getType() == ESM4::Activator::sRecordId)
+                    {
+                        const ESM4::Activator& activator
+                            = *authoredInteractionRadio.get<ESM4::Activator>()->mBase;
+                        ESM::FormId broadcast = activator.mLoopingSound;
+                        if (broadcast.isZeroOrUnset())
+                            broadcast = activator.mRadioTemplate;
+                        if (broadcast.isZeroOrUnset() && !activator.mRadioStation.isZeroOrUnset())
+                        {
+                            const ESM4::TalkingActivator* station = mWorld->getStore()
+                                .get<ESM4::TalkingActivator>()
+                                .search(ESM::RefId(activator.mRadioStation));
+                            if (station != nullptr)
+                                broadcast = !station->mLoopSound.isZeroOrUnset()
+                                    ? station->mLoopSound
+                                    : station->mRadioTemplate;
+                        }
+                        authoredInteractionRadioSound = ESM::RefId(broadcast);
+                    }
+                    const bool radioAction
+                        = activateTarget(authoredInteractionRadio, "interior-radio");
+                    const bool radioPlaying = mSoundManager != nullptr
+                        && ((!authoredInteractionRadioSound.empty()
+                                && mSoundManager->getSoundPlaying(
+                                    authoredInteractionRadio, authoredInteractionRadioSound))
+                            || mSoundManager->sayActive(authoredInteractionRadio));
+                    authoredInteractionRadioPass = radioAction && mUseSound && radioPlaying;
+                }
+                Log(authoredInteractionRadioPass ? Debug::Info : Debug::Error)
+                    << "Authored interaction audit: label=" << auditLabel
+                    << " radio=" << radioFormId.toUint32()
+                    << " sound=" << authoredInteractionRadioSound.toDebugString()
+                    << " soundEnabled=" << (mUseSound ? 1 : 0)
+                    << " result=" << (authoredInteractionRadioPass ? "pass" : "fail");
+                advanceAudit(6);
+            }
+            else if (phaseSeconds > phaseTimeoutSeconds)
+                finishAudit(false, "authored interior did not become active");
+        }
+        else if (authoredInteractionPhase == 6)
+        {
+            if (!radioFormId.isZeroOrUnset())
+            {
+                const bool radioStillPlaying = mSoundManager != nullptr
+                    && !authoredInteractionRadio.isEmpty()
+                    && ((!authoredInteractionRadioSound.empty()
+                            && mSoundManager->getSoundPlaying(
+                                authoredInteractionRadio, authoredInteractionRadioSound))
+                        || mSoundManager->sayActive(authoredInteractionRadio));
+                authoredInteractionRadioPass = authoredInteractionRadioPass && radioStillPlaying;
+                if (!authoredInteractionRadioCaptureQueued && phaseFrames >= 45)
+                {
+                    authoredInteractionRadioCaptureQueued = true;
+                    aimCameraAt(authoredInteractionRadio, "interior-radio",
+                        readProofFloat("OPENMW_AUTHORED_INTERACTION_RADIO_AIM_Z", 24.f));
+                    queueCapture("interior-radio-on");
+                }
+            }
+            else
+                authoredInteractionRadioCaptureQueued = true;
+
+            if (authoredInteractionRadioCaptureQueued && phaseFrames >= 53)
+            {
+                MWWorld::Ptr exitDoor = findActiveRef(doorOutFormId);
+                const bool authoredExit = !exitDoor.isEmpty() && exitDoor.getClass().isDoor()
+                    && exitDoor.getCellRef().getTeleport();
+                authoredInteractionDoorOutPass
+                    = authoredExit && activateTarget(exitDoor, "interior-exit-door");
+                Log(authoredInteractionDoorOutPass ? Debug::Info : Debug::Error)
+                    << "Authored interaction audit: label=" << auditLabel
+                    << " interiorExit=" << doorOutFormId.toUint32()
+                    << " authoredPair=" << (authoredExit ? 1 : 0)
+                    << " result=" << (authoredInteractionDoorOutPass ? "pass" : "fail");
+                if (!authoredInteractionDoorOutPass)
+                    finishAudit(false, "authored interior exit action failed");
+                else
+                    advanceAudit(7);
+            }
+        }
+        else if (authoredInteractionPhase == 7)
+        {
+            MWWorld::Ptr player = mWorld->getPlayerPtr();
+            const bool outside = !player.isEmpty() && player.getCell() != nullptr
+                && player.getCell()->isExterior();
+            if (outside && phaseFrames >= 180)
+            {
+                MWWorld::Ptr actorAfterReturn = findActiveRef(actorFormId);
+                const bool requireActorOnReturn
+                    = proofEnvEnabled("OPENMW_AUTHORED_INTERACTION_REQUIRE_ACTOR_ON_RETURN");
+                const int actorCopies = countActiveRef(actorFormId);
+                float actorDrift = std::numeric_limits<float>::infinity();
+                bool actorInCombat = false;
+                if (!actorAfterReturn.isEmpty())
+                {
+                    actorDrift = (actorAfterReturn.getRefData().getPosition().asVec3()
+                                     - authoredInteractionActorSettledPosition)
+                                     .length();
+                    actorInCombat = actorAfterReturn.getClass()
+                                        .getCreatureStats(actorAfterReturn)
+                                        .getAiSequence()
+                                        .isInCombat();
+                }
+                const bool actorReturnPass = requireActorOnReturn
+                    ? (!actorAfterReturn.isEmpty() && actorCopies == 1 && !actorInCombat
+                        && actorDrift
+                            <= readProofFloat("OPENMW_AUTHORED_INTERACTION_MAX_ACTOR_DRIFT", 512.f))
+                    : (actorAfterReturn.isEmpty() || (actorCopies == 1 && !actorInCombat));
+                authoredInteractionActorPass = authoredInteractionActorPass && actorReturnPass;
+                Log(authoredInteractionActorPass ? Debug::Info : Debug::Error)
+                    << "Authored interaction audit: label=" << auditLabel << " exteriorReturnCell="
+                    << playerCellId().toDebugString() << " actorCopies=" << actorCopies
+                    << " actorDrift=" << actorDrift << " actorInCombat=" << (actorInCombat ? 1 : 0)
+                    << " weather=" << mWorld->getCurrentWeatherScriptId()
+                    << " weatherTransition=" << mWorld->getWeatherTransition()
+                    << " result=" << (authoredInteractionActorPass ? "pass" : "fail");
+                if (!actorAfterReturn.isEmpty())
+                    aimCameraAt(actorAfterReturn, "exterior-return-actor",
+                        readProofFloat("OPENMW_AUTHORED_INTERACTION_ACTOR_AIM_Z", 96.f));
+                queueCapture("exterior-return");
+                advanceAudit(8);
+            }
+            else if (phaseSeconds > phaseTimeoutSeconds)
+                finishAudit(false, "authored exit did not return to an exterior");
+        }
+        else if (authoredInteractionPhase == 8 && phaseFrames >= 8)
+        {
+            const bool pass = authoredInteractionActorPass && authoredInteractionDialoguePass
+                && authoredInteractionDoorInPass && authoredInteractionInteriorActorsPass
+                && authoredInteractionRadioPass && authoredInteractionDoorOutPass;
+            finishAudit(pass, pass ? "complete authored interaction circuit"
+                                   : "one or more authored interaction gates failed");
+        }
+    }
+
     const bool proofScreenshotFrameReached = proofScreenshotFrameIndex < proofScreenshotFrames.size()
         && frameNumber >= static_cast<unsigned>(proofScreenshotFrames[proofScreenshotFrameIndex]);
     const bool proofScreenshotReadyFramesReached
@@ -4315,6 +5768,59 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
         worldViewerTrace(frameNumber, "screenshot-queue.end");
     }
 
+    if (playableSessionFinished && playableSessionOrbitNextFrame != 0
+        && frameNumber >= playableSessionOrbitNextFrame && !playableSessionEndScreenshotPending)
+    {
+        if (setPlayableSessionFrontPortraitCamera)
+            setPlayableSessionFrontPortraitCamera(playableSessionOrbitScreenshotIndex);
+        playableSessionEndScreenshotPending = true;
+        playableSessionOrbitNextFrame = 0;
+    }
+
+    const bool playableSessionScreenshotPending = playableSessionStartScreenshotPending
+        || playableSessionMidpointScreenshotPending || playableSessionEndScreenshotPending;
+    if (playableSessionScreenshotPending && proofWorldReady && mScreenCaptureHandler != nullptr)
+    {
+        const char* phase = playableSessionStartScreenshotPending
+            ? "start-third-person"
+            : (playableSessionMidpointScreenshotPending ? "midpoint-first-person" : "end-portrait");
+        Log(Debug::Info) << "Playable session: queuing native screenshot phase=" << phase
+                         << " frame=" << frameNumber;
+        mScreenCaptureHandler->setFramesToCapture(1);
+        mScreenCaptureHandler->captureNextFrame(*mViewer);
+        if (playableSessionStartScreenshotPending)
+            playableSessionStartScreenshotPending = false;
+        else if (playableSessionMidpointScreenshotPending)
+            playableSessionMidpointScreenshotPending = false;
+        else
+        {
+            playableSessionEndScreenshotPending = false;
+            const int portraitCount
+                = proofEnvEnabled("OPENMW_PLAYABLE_SESSION_PORTRAIT_CLOSEUPS") ? 6 : 4;
+            if (proofEnvEnabled("OPENMW_PLAYABLE_SESSION_PORTRAIT_ORBIT")
+                && playableSessionOrbitScreenshotIndex + 1 < portraitCount)
+            {
+                ++playableSessionOrbitScreenshotIndex;
+                const int portraitFrameGap
+                    = std::max(3, readProofInt("OPENMW_PLAYABLE_SESSION_PORTRAIT_FRAME_GAP", 3));
+                playableSessionOrbitNextFrame = frameNumber + portraitFrameGap;
+                Log(Debug::Info) << "Playable session: scheduled native portrait orbit index="
+                                 << playableSessionOrbitScreenshotIndex << " frame="
+                                 << playableSessionOrbitNextFrame << " frameGap=" << portraitFrameGap;
+            }
+            else
+                playableSessionExitFrame = frameNumber
+                    + std::max(3, readProofInt("OPENMW_PLAYABLE_SESSION_PORTRAIT_FRAME_GAP", 3));
+        }
+    }
+
+    if (deferProofLuaWorker)
+    {
+        worldViewerTrace(frameNumber, "lua-worker-deferred-allow.begin");
+        mLuaWorker->allowUpdate(frameStart, frameNumber, *stats);
+        worldViewerTrace(frameNumber, "lua-worker-deferred-allow.end");
+    }
+
     worldViewerTrace(frameNumber, "rendering-traversals.begin");
     mViewer->renderingTraversals();
     worldViewerTrace(frameNumber, "rendering-traversals.end");
@@ -4322,6 +5828,19 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
     worldViewerTrace(frameNumber, "lua-worker-finish.begin");
     mLuaWorker->finishUpdate(frameStart, frameNumber, *stats);
     worldViewerTrace(frameNumber, "lua-worker-finish.end");
+
+    if (!playableSessionQuitRequested && playableSessionFinished
+        && proofEnvEnabled("OPENMW_PLAYABLE_SESSION_EXIT_AFTER_COMPLETE")
+        && !playableSessionStartScreenshotPending && !playableSessionMidpointScreenshotPending
+        && !playableSessionEndScreenshotPending && playableSessionOrbitNextFrame == 0
+        && playableSessionExitFrame != 0
+        && frameNumber >= playableSessionExitFrame)
+    {
+        playableSessionQuitRequested = true;
+        Log(Debug::Info) << "Playable session: background validation complete; exiting cleanly at frame "
+                         << frameNumber;
+        mStateManager->requestQuit();
+    }
 
     worldViewerTrace(frameNumber, "frame.end");
     return true;
@@ -4501,6 +6020,7 @@ void OMW::Engine::createWindow()
     const int width = Settings::video().mResolutionX;
     const int height = Settings::video().mResolutionY;
     const Settings::WindowMode windowMode = Settings::video().mWindowMode;
+    const bool backgroundPlayableSession = proofEnvEnabled("OPENMW_PLAYABLE_SESSION_BACKGROUND");
     const bool windowBorder = Settings::video().mWindowBorder;
     const SDLUtil::VSyncMode vsync = Settings::video().mVsyncMode;
     unsigned antialiasing = static_cast<unsigned>(Settings::video().mAntialiasing);
@@ -4514,17 +6034,24 @@ void OMW::Engine::createWindow()
     // ## VR_PATCH END
 
 
-    if (windowMode == Settings::WindowMode::Fullscreen || windowMode == Settings::WindowMode::WindowedFullscreen)
+    if (!backgroundPlayableSession
+        && (windowMode == Settings::WindowMode::Fullscreen || windowMode == Settings::WindowMode::WindowedFullscreen))
     {
         posX = SDL_WINDOWPOS_UNDEFINED_DISPLAY(screen);
         posY = SDL_WINDOWPOS_UNDEFINED_DISPLAY(screen);
     }
 
-    Uint32 flags = SDL_WINDOW_OPENGL | SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI;
-    if (windowMode == Settings::WindowMode::Fullscreen)
+    Uint32 flags = SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI
+        | (backgroundPlayableSession ? SDL_WINDOW_HIDDEN : SDL_WINDOW_SHOWN);
+    if (!backgroundPlayableSession && windowMode == Settings::WindowMode::Fullscreen)
         flags |= SDL_WINDOW_FULLSCREEN;
-    else if (windowMode == Settings::WindowMode::WindowedFullscreen)
+    else if (!backgroundPlayableSession && windowMode == Settings::WindowMode::WindowedFullscreen)
         flags |= SDL_WINDOW_FULLSCREEN_DESKTOP;
+
+    if (backgroundPlayableSession)
+    {
+        Log(Debug::Info) << "Playable session: creating a hidden flat OpenGL window for background native capture";
+    }
 
     // Allows for Windows snapping features to properly work in borderless window
     SDL_SetHint("SDL_BORDERLESS_WINDOWED_STYLE", "1");
@@ -4896,19 +6423,19 @@ void OMW::Engine::prepareEngine()
             asyncListener.update();
         dataLoading.get();
     }
-    Log(Debug::Info) << "FNV/ESM4 diag: prepareEngine data load complete";
+    Log(Debug::Verbose) << "FNV/ESM4 diag: prepareEngine data load complete";
     listener->loadingOff();
 
-    Log(Debug::Info) << "FNV/ESM4 diag: prepareEngine world init begin";
+    Log(Debug::Verbose) << "FNV/ESM4 diag: prepareEngine world init begin";
     mWorld->init(mMaxRecastLogLevel, mViewer, std::move(rootNode), mWorkQueue.get(), *mUnrefQueue, std::move(camera));
-    Log(Debug::Info) << "FNV/ESM4 diag: prepareEngine world init complete";
+    Log(Debug::Verbose) << "FNV/ESM4 diag: prepareEngine world init complete";
     mEnvironment.setWorldScene(mWorld->getWorldScene());
-    Log(Debug::Info) << "FNV/ESM4 diag: prepareEngine world scene registered";
-    Log(Debug::Info) << "FNV/ESM4 diag: prepareEngine setupPlayer begin";
+    Log(Debug::Verbose) << "FNV/ESM4 diag: prepareEngine world scene registered";
+    Log(Debug::Verbose) << "FNV/ESM4 diag: prepareEngine setupPlayer begin";
     mWorld->setupPlayer();
-    Log(Debug::Info) << "FNV/ESM4 diag: prepareEngine setupPlayer complete";
+    Log(Debug::Verbose) << "FNV/ESM4 diag: prepareEngine setupPlayer complete";
     mWorld->setRandomSeed(mRandomSeed);
-    Log(Debug::Info) << "FNV/ESM4 diag: prepareEngine random seed set";
+    Log(Debug::Verbose) << "FNV/ESM4 diag: prepareEngine random seed set";
 
     // ## VR_PATCH BEGIN
     if (VR::getVR())
@@ -4918,7 +6445,7 @@ void OMW::Engine::prepareEngine()
     // ## VR_PATCH END
 
     const MWWorld::Store<ESM::GameSetting>* gmst = &mWorld->getStore().get<ESM::GameSetting>();
-    Log(Debug::Info) << "FNV/ESM4 diag: prepareEngine gmst loader begin";
+    Log(Debug::Verbose) << "FNV/ESM4 diag: prepareEngine gmst loader begin";
     mL10nManager->setGmstLoader(
         [gmst, misses = std::set<std::string, std::less<>>()](std::string_view gmstName) mutable {
             const ESM::GameSetting* res = gmst->search(gmstName);
@@ -4934,48 +6461,48 @@ void OMW::Engine::prepareEngine()
                 return std::string("GMST:") + std::string(gmstName);
             }
         });
-    Log(Debug::Info) << "FNV/ESM4 diag: prepareEngine gmst loader ready";
+    Log(Debug::Verbose) << "FNV/ESM4 diag: prepareEngine gmst loader ready";
 
-    Log(Debug::Info) << "FNV/ESM4 diag: prepareEngine window store begin";
+    Log(Debug::Verbose) << "FNV/ESM4 diag: prepareEngine window store begin";
     mWindowManager->setStore(mWorld->getStore());
-    Log(Debug::Info) << "FNV/ESM4 diag: prepareEngine window initUI begin";
+    Log(Debug::Verbose) << "FNV/ESM4 diag: prepareEngine window initUI begin";
     mWindowManager->initUI();
-    Log(Debug::Info) << "FNV/ESM4 diag: prepareEngine window initUI complete";
+    Log(Debug::Verbose) << "FNV/ESM4 diag: prepareEngine window initUI complete";
 
     // Load translation data
     mTranslationDataStorage.setEncoder(mEncoder.get());
-    Log(Debug::Info) << "FNV/ESM4 diag: prepareEngine translation load begin";
+    Log(Debug::Verbose) << "FNV/ESM4 diag: prepareEngine translation load begin";
     for (auto& mContentFile : mContentFiles)
         mTranslationDataStorage.loadTranslationData(mFileCollections, mContentFile);
-    Log(Debug::Info) << "FNV/ESM4 diag: prepareEngine translation load complete";
+    Log(Debug::Verbose) << "FNV/ESM4 diag: prepareEngine translation load complete";
 
-    Log(Debug::Info) << "FNV/ESM4 diag: prepareEngine compiler extensions begin";
+    Log(Debug::Verbose) << "FNV/ESM4 diag: prepareEngine compiler extensions begin";
     Compiler::registerExtensions(mExtensions);
-    Log(Debug::Info) << "FNV/ESM4 diag: prepareEngine compiler extensions complete";
+    Log(Debug::Verbose) << "FNV/ESM4 diag: prepareEngine compiler extensions complete";
 
     // Create script system
-    Log(Debug::Info) << "FNV/ESM4 diag: prepareEngine script system begin";
+    Log(Debug::Verbose) << "FNV/ESM4 diag: prepareEngine script system begin";
     mScriptContext = std::make_unique<MWScript::CompilerContext>(MWScript::CompilerContext::Type_Full);
     mScriptContext->setExtensions(&mExtensions);
 
     mScriptManager = std::make_unique<MWScript::ScriptManager>(mWorld->getStore(), *mScriptContext, mWarningsMode);
     mEnvironment.setScriptManager(*mScriptManager);
-    Log(Debug::Info) << "FNV/ESM4 diag: prepareEngine script system ready";
+    Log(Debug::Verbose) << "FNV/ESM4 diag: prepareEngine script system ready";
 
     // Create game mechanics system
-    Log(Debug::Info) << "FNV/ESM4 diag: prepareEngine mechanics begin";
+    Log(Debug::Verbose) << "FNV/ESM4 diag: prepareEngine mechanics begin";
     mMechanicsManager = std::make_unique<MWMechanics::MechanicsManager>();
     mEnvironment.setMechanicsManager(*mMechanicsManager);
-    Log(Debug::Info) << "FNV/ESM4 diag: prepareEngine mechanics ready";
+    Log(Debug::Verbose) << "FNV/ESM4 diag: prepareEngine mechanics ready";
 
     // Create dialog system
-    Log(Debug::Info) << "FNV/ESM4 diag: prepareEngine dialogue begin";
+    Log(Debug::Verbose) << "FNV/ESM4 diag: prepareEngine dialogue begin";
     mJournal = std::make_unique<MWDialogue::Journal>();
     mEnvironment.setJournal(*mJournal);
 
     mDialogueManager = std::make_unique<MWDialogue::DialogueManager>(mExtensions, mTranslationDataStorage);
     mEnvironment.setDialogueManager(*mDialogueManager);
-    Log(Debug::Info) << "FNV/ESM4 diag: prepareEngine dialogue ready";
+    Log(Debug::Verbose) << "FNV/ESM4 diag: prepareEngine dialogue ready";
 
     // scripts
     if (mCompileAll)
@@ -4993,15 +6520,15 @@ void OMW::Engine::prepareEngine()
                              << 100 * static_cast<double>(result.second) / result.first << "%)";
     }
 
-    Log(Debug::Info) << "FNV/ESM4 diag: prepareEngine lua permanent storage begin";
+    Log(Debug::Verbose) << "FNV/ESM4 diag: prepareEngine lua permanent storage begin";
     mLuaManager->loadPermanentStorage(mCfgMgr.getUserConfigPath());
-    Log(Debug::Info) << "FNV/ESM4 diag: prepareEngine lua init begin";
+    Log(Debug::Verbose) << "FNV/ESM4 diag: prepareEngine lua init begin";
     mLuaManager->init();
-    Log(Debug::Info) << "FNV/ESM4 diag: prepareEngine lua init complete";
+    Log(Debug::Verbose) << "FNV/ESM4 diag: prepareEngine lua init complete";
 
     // starts a separate lua thread if "lua num threads" > 0
     mLuaWorker = std::make_unique<MWLua::Worker>(*mLuaManager);
-    Log(Debug::Info) << "FNV/ESM4 diag: prepareEngine lua worker ready";
+    Log(Debug::Verbose) << "FNV/ESM4 diag: prepareEngine lua worker ready";
 }
 
 // Initialise and enter main loop.

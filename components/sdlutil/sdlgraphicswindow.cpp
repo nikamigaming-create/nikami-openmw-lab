@@ -1,5 +1,8 @@
 #include "sdlgraphicswindow.hpp"
 
+#include <cstdlib>
+#include <string_view>
+
 //## VR_PATCH BEGIN
 #include <osgViewer/Viewer>
 
@@ -184,7 +187,11 @@ namespace SDLUtil
         if (!mValid)
             return false;
 
-        SDL_ShowWindow(mWindow);
+        const char* backgroundSession = std::getenv("OPENMW_PLAYABLE_SESSION_BACKGROUND");
+        const bool keepHidden = backgroundSession != nullptr && *backgroundSession != '\0'
+            && std::string_view(backgroundSession) != "0";
+        if (!keepHidden)
+            SDL_ShowWindow(mWindow);
 
         getEventQueue()->syncWindowRectangleWithGraphicsContext();
 

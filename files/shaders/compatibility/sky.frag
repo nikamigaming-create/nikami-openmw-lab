@@ -6,6 +6,7 @@ uniform int pass;
 uniform sampler2D diffuseMap;
 uniform sampler2D maskMap;      // PASS_MOON
 uniform float opacity;          // PASS_CLOUDS, PASS_ATMOSPHERE_NIGHT
+uniform bool useFalloutCloudShader; // PASS_CLOUDS
 uniform vec4 moonBlend;         // PASS_MOON
 uniform vec4 atmosphereFade;    // PASS_MOON
 uniform int useFalloutAtmosphereGradientColors; // PASS_ATMOSPHERE
@@ -43,8 +44,12 @@ void paintClouds(inout vec4 color)
     color.a *= passColor.a * opacity;
     color.xyz = clamp(color.xyz * gl_FrontMaterial.emission.xyz, 0.0, 1.0);
 
-    // ease transition between clear color and atmosphere/clouds
-    color = mix(vec4(gl_Fog.color.xyz, color.a), color, passColor.a);
+    // Retail FO3/FNV SKYTEX*.pso multiplies the sampled texture directly by
+    // weather color and vertex color. The fog-color mix is Morrowind-specific;
+    // applying it to Fallout turns the dome's authored vertex-alpha rings into
+    // broad flat bands as the cloud texture scrolls.
+    if (!useFalloutCloudShader)
+        color = mix(vec4(gl_Fog.color.xyz, color.a), color, passColor.a);
 }
 
 void paintMoon(inout vec4 color)

@@ -82,7 +82,11 @@ namespace ESM4
         std::string mModel;
         std::array<std::uint8_t, sCloudLayerCount> mCloudSpeeds{};
         std::array<std::array<Color, sTimeCount>, sCloudLayerCount> mCloudColors{};
+        std::array<std::array<float, sTimeCount>, sCloudLayerCount> mCloudAlphas{};
+        bool mHasCloudAlphas = false;
+        bool mUsesExtendedCloudSpeeds = false;
         std::array<std::array<Color, sTimeCount>, sColorTypeCount> mColors{};
+        std::array<float, 32> mUnknownCloudLayerValues{};
         std::array<float, 6> mFogDistance{};
         Data mData;
         std::vector<Sound> mSounds;

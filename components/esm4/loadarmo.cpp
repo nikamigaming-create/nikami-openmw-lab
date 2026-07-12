@@ -175,7 +175,7 @@ void ESM4::Armor::load(ESM4::Reader& reader)
                 }
                 break;
             case ESM::fourCC("SCRI"):
-                if (subHdr.dataSize == sizeof(ESM::FormId))
+                if (subHdr.dataSize == sizeof(ESM::FormId32))
                     reader.getFormId(mScriptId);
                 else
                     reader.skipSubRecordData();
@@ -187,7 +187,7 @@ void ESM4::Armor::load(ESM4::Reader& reader)
                     reader.skipSubRecordData();
                 break;
             case ESM::fourCC("ENAM"):
-                if (subHdr.dataSize == sizeof(ESM::FormId))
+                if (subHdr.dataSize == sizeof(ESM::FormId32))
                     reader.getFormId(mEnchantment);
                 else
                     reader.skipSubRecordData();
@@ -202,13 +202,13 @@ void ESM4::Armor::load(ESM4::Reader& reader)
                 reader.getLocalizedString(mText);
                 break;
             case ESM::fourCC("YNAM"):
-                if (subHdr.dataSize == sizeof(ESM::FormId))
+                if (subHdr.dataSize == sizeof(ESM::FormId32))
                     reader.getFormId(mPickUpSound);
                 else
                     reader.skipSubRecordData();
                 break;
             case ESM::fourCC("ZNAM"):
-                if (subHdr.dataSize == sizeof(ESM::FormId))
+                if (subHdr.dataSize == sizeof(ESM::FormId32))
                     reader.getFormId(mDropSound);
                 else
                     reader.skipSubRecordData();

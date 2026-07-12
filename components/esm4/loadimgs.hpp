@@ -53,15 +53,35 @@ namespace ESM4
             Trait_CinematicTintStrength,
         };
 
+        struct DepthOfField
+        {
+            float strength = 0.f;
+            float distance = 0.f;
+            float range = 0.f;
+            std::uint16_t unused = 0;
+            std::uint16_t skyBlurRadius = 0;
+            float vignetteRadius = 0.f;
+            float vignetteStrength = 0.f;
+        };
+
         ESM::FormId mId;
         std::uint32_t mFlags = 0;
         std::string mEditorId;
         std::array<float, sTraitCount> mTraits{};
+        // TES5/FO4 split image-space records. Keep the authored values distinct from
+        // Fallout 3/New Vegas' monolithic DNAM trait array.
+        std::array<float, 9> mHdr{};
+        std::array<float, 3> mCinematic{};
+        std::array<float, 4> mTint{};
+        DepthOfField mDepthOfField;
+        std::string mLut;
 
         void load(Reader& reader);
 
         static constexpr ESM::RecNameInts sRecordId = ESM::RecNameInts::REC_IMGS4;
     };
+
+    static_assert(sizeof(ImageSpace::DepthOfField) == 24);
 }
 
 #endif

@@ -77,6 +77,8 @@ namespace SceneUtil
         bool isFalloutCharacterRig() const;
         void setFalloutFlagSkinning(bool enabled);
         void setFalloutCharacterSkinning(bool enabled);
+        void setSourceFrameSkinning(bool enabled);
+        void setInverseSkinToSkeletonMatrix(bool enabled);
         bool getFalloutFingerVertexWeights(
             std::vector<float>& thumb, std::vector<float>& index, std::vector<float>& grip) const;
         bool getFalloutFingerBoneVertexWeights(std::array<std::vector<float>, 15>& fingerBones) const;
@@ -147,7 +149,10 @@ namespace SceneUtil
         bool mFalloutUseSourceFallback{ false };
         bool mFalloutFlagSkinning{ false };
         bool mFalloutCharacterSkinning{ false };
+        bool mSourceFrameSkinning{ false };
+        bool mInverseSkinToSkeletonMatrix{ false };
         bool mLoggedFalloutFlagSkinning{ false };
+        bool mLoggedInvalidSkinningData{ false };
         mutable bool mFalloutCharacterRigComputed{ false };
         mutable bool mFalloutCharacterRig{ false };
         std::vector<osg::Matrixf> mFalloutMatrixBaseline;

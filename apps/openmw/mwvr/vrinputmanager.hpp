@@ -101,8 +101,8 @@ namespace MWVR
         std::unique_ptr<OpenXRInput> mXRInput;
         std::unique_ptr<RealisticCombat::StateMachine> mRealisticCombat;
         //bool mPointerActivation = false;
-        bool mPointerLeft = true;
-        bool mPointerRight = true;
+        bool mPointerLeft = false;
+        bool mPointerRight = false;
         bool mDelayedPointerActivate = false;
         bool mDelayedPointerActivateInjectMouseClickIfApplicable = false;
         float mDt = 0.f;

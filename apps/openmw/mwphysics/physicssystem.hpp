@@ -189,6 +189,10 @@ namespace MWPhysics
         void addHeightField(const float* heights, int x, int y, int size, int verts, float minH, float maxH,
             const osg::Object* holdObject);
 
+        // Compatibility-only terrain used by automated world-viewer proofs when a newer Bethesda format's
+        // authored collision has not been decoded yet. This is never installed during a normal game session.
+        void addFlatHeightField(int x, int y, int size, float height);
+
         void removeHeightField(int x, int y);
 
         const HeightField* getHeightField(int x, int y) const;

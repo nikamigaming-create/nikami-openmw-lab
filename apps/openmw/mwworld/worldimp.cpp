@@ -165,7 +165,9 @@ namespace MWWorld
 
         bool readViewerProofHour(float& hour)
         {
-            const char* value = std::getenv("OPENMW_FNV_BOOTSTRAP_HOUR");
+            const char* value = std::getenv("OPENMW_PLAYABLE_START_HOUR");
+            if (value == nullptr || *value == '\0')
+                value = std::getenv("OPENMW_FNV_BOOTSTRAP_HOUR");
             if (value == nullptr || *value == '\0')
                 return false;
 
@@ -322,12 +324,22 @@ namespace MWWorld
 
         void pinViewerStartAnchor(World& world, const ESM::Position& position)
         {
+            ESM::Position pinnedPosition = position;
+            float syntheticGroundZ = 0.f;
+            if (readViewerProofFloat("OPENMW_WORLD_VIEWER_SYNTHETIC_GROUND_Z", syntheticGroundZ))
+            {
+                world.addWorldViewerFlatGround(position.pos[0], position.pos[1], syntheticGroundZ);
+                pinnedPosition.pos[2] = syntheticGroundZ + 4.f;
+                Log(Debug::Warning) << "World viewer: installed proof-only flat ground at z=" << syntheticGroundZ
+                                    << " beneath explicit start anchor; authored collision remains unsupported";
+            }
+
             MWWorld::Ptr player = world.getPlayerPtr();
-            player = world.moveObject(player, position.asVec3(), true, true);
+            player = world.moveObject(player, pinnedPosition.asVec3(), true, true);
             if (viewerEnvEnabled("OPENMW_WORLD_VIEWER_START_DRY") && player.getCell() != nullptr)
                 player.getCell()->setWaterLevel(-200000.f);
-            world.rotateObject(player, position.asRotationVec3(), MWBase::RotationFlag_none);
-            settleViewerStartCamera(world.getCamera(), player, position);
+            world.rotateObject(player, pinnedPosition.asRotationVec3(), MWBase::RotationFlag_none);
+            settleViewerStartCamera(world.getCamera(), player, pinnedPosition);
             const ESM::Position& actual = player.getRefData().getPosition();
             const osg::Vec3d cameraPos = world.getCamera() != nullptr ? world.getCamera()->getPosition() : osg::Vec3d();
             Log(Debug::Info) << "World viewer: pinned explicit start anchor pos=(" << actual.pos[0] << ", "
@@ -715,6 +727,14 @@ namespace MWWorld
             mRendering->setSkyEnabled(false);
     }
 
+    void World::addWorldViewerFlatGround(float x, float y, float height)
+    {
+        constexpr int cellSize = 4096;
+        const int cellX = static_cast<int>(std::floor(x / static_cast<float>(cellSize)));
+        const int cellY = static_cast<int>(std::floor(y / static_cast<float>(cellSize)));
+        mPhysics->addFlatHeightField(cellX, cellY, cellSize, height);
+    }
+
     World::World(Resource::ResourceSystem* resourceSystem, int activationDistanceOverride, const std::string& startCell,
         const std::filesystem::path& userDataPath)
         : mResourceSystem(resourceSystem)
@@ -763,46 +783,46 @@ namespace MWWorld
     void World::init(Debug::Level maxRecastLogLevel, osgViewer::Viewer* viewer, osg::ref_ptr<osg::Group> rootNode,
         SceneUtil::WorkQueue* workQueue, SceneUtil::UnrefQueue& unrefQueue, std::unique_ptr<MWRender::Camera> camera)
     {
-        Log(Debug::Info) << "FNV/ESM4 diag: World::init begin";
+        Log(Debug::Verbose) << "FNV/ESM4 diag: World::init begin";
         mPhysics = std::make_unique<MWPhysics::PhysicsSystem>(mResourceSystem, rootNode);
-        Log(Debug::Info) << "FNV/ESM4 diag: World::init physics ready";
+        Log(Debug::Verbose) << "FNV/ESM4 diag: World::init physics ready";
 
         if (Settings::navigator().mEnable)
         {
             auto navigatorSettings = DetourNavigator::makeSettingsFromSettingsManager(maxRecastLogLevel);
             navigatorSettings.mRecast.mSwimHeightScale = mSwimHeightScale;
             mNavigator = DetourNavigator::makeNavigator(navigatorSettings, mUserDataPath);
-            Log(Debug::Info) << "FNV/ESM4 diag: World::init navigator ready";
+            Log(Debug::Verbose) << "FNV/ESM4 diag: World::init navigator ready";
         }
         else
         {
             mNavigator = DetourNavigator::makeNavigatorStub();
-            Log(Debug::Info) << "FNV/ESM4 diag: World::init navigator stub ready";
+            Log(Debug::Verbose) << "FNV/ESM4 diag: World::init navigator stub ready";
         }
 
-        Log(Debug::Info) << "FNV/ESM4 diag: World::init rendering begin";
+        Log(Debug::Verbose) << "FNV/ESM4 diag: World::init rendering begin";
         mRendering = std::make_unique<MWRender::RenderingManager>(
             // ## VR_PATCH BEGIN
             viewer, rootNode, mResourceSystem, workQueue, *mNavigator, mGroundcoverStore, unrefQueue,
             std::move(camera));
 
         // ## VR_PATCH END
-        Log(Debug::Info) << "FNV/ESM4 diag: World::init rendering ready";
-        Log(Debug::Info) << "FNV/ESM4 diag: World::init projectile manager begin";
+        Log(Debug::Verbose) << "FNV/ESM4 diag: World::init rendering ready";
+        Log(Debug::Verbose) << "FNV/ESM4 diag: World::init projectile manager begin";
         mProjectileManager = std::make_unique<ProjectileManager>(
             mRendering->getLightRoot()->asGroup(), mResourceSystem, mRendering.get(), mPhysics.get());
-        Log(Debug::Info) << "FNV/ESM4 diag: World::init projectile manager ready";
-        Log(Debug::Info) << "FNV/ESM4 diag: World::init preload common assets begin";
+        Log(Debug::Verbose) << "FNV/ESM4 diag: World::init projectile manager ready";
+        Log(Debug::Verbose) << "FNV/ESM4 diag: World::init preload common assets begin";
         mRendering->preloadCommonAssets();
-        Log(Debug::Info) << "FNV/ESM4 diag: World::init preload common assets queued";
+        Log(Debug::Verbose) << "FNV/ESM4 diag: World::init preload common assets queued";
 
-        Log(Debug::Info) << "FNV/ESM4 diag: World::init weather manager begin";
+        Log(Debug::Verbose) << "FNV/ESM4 diag: World::init weather manager begin";
         mWeatherManager = std::make_unique<MWWorld::WeatherManager>(*mRendering, mStore);
-        Log(Debug::Info) << "FNV/ESM4 diag: World::init weather manager ready";
+        Log(Debug::Verbose) << "FNV/ESM4 diag: World::init weather manager ready";
 
-        Log(Debug::Info) << "FNV/ESM4 diag: World::init world scene begin";
+        Log(Debug::Verbose) << "FNV/ESM4 diag: World::init world scene begin";
         mWorldScene = std::make_unique<Scene>(*this, *mRendering.get(), mPhysics.get(), *mNavigator);
-        Log(Debug::Info) << "FNV/ESM4 diag: World::init world scene ready";
+        Log(Debug::Verbose) << "FNV/ESM4 diag: World::init world scene ready";
     }
 
     void World::fillGlobalVariables()
@@ -814,7 +834,7 @@ namespace MWWorld
     void World::startNewGame(bool bypass)
     {
         viewerTrace("start-new-game.begin");
-        Log(Debug::Info) << "FNV/ESM4 diag: startNewGame bypass=" << bypass << " startCell='" << mStartCell << "'";
+        Log(Debug::Verbose) << "FNV/ESM4 diag: startNewGame bypass=" << bypass << " startCell='" << mStartCell << "'";
 
         mGoToJail = false;
         mESM4QuestRuntime.initialize(mStore, &mGlobalVariables);
@@ -835,7 +855,7 @@ namespace MWWorld
         {
             setGlobalFloat(Globals::sGameHour, proofHour);
             advanceTime(0.0, false);
-            Log(Debug::Info) << "World viewer: applied proof start hour " << proofHour;
+            Log(Debug::Info) << "OpenMW playable start hour=" << proofHour;
         }
 
         viewerTrace("render-player.begin");
@@ -875,7 +895,7 @@ namespace MWWorld
                                                 std::string_view source) {
                 if (hasExplicitAnchor)
                     resolvedPos = anchor;
-                Log(Debug::Info) << "FNV/ESM4 diag: start cell '" << mStartCell << "' resolved as exterior "
+                Log(Debug::Verbose) << "FNV/ESM4 diag: start cell '" << mStartCell << "' resolved as exterior "
                                  << resolvedCellId << " explicitAnchor=" << hasExplicitAnchor << " source=" << source;
                 Log(Debug::Info) << "World viewer: start cell exterior change begin cell=" << resolvedCellId << " pos=("
                                  << resolvedPos.pos[0] << ", " << resolvedPos.pos[1] << ", " << resolvedPos.pos[2]
@@ -935,7 +955,7 @@ namespace MWWorld
                     cellId = findInteriorPosition(mStartCell, pos);
                     if (hasExplicitAnchor)
                         pos = anchor;
-                    Log(Debug::Info) << "FNV/ESM4 diag: start cell '" << mStartCell << "' resolved as interior "
+                    Log(Debug::Verbose) << "FNV/ESM4 diag: start cell '" << mStartCell << "' resolved as interior "
                                      << cellId << " explicitAnchor=" << hasExplicitAnchor;
                     Log(Debug::Info) << "World viewer: start cell interior change begin cell=\"" << mStartCell
                                      << "\" pos=(" << pos.pos[0] << ", " << pos.pos[1] << ", " << pos.pos[2] << ")";

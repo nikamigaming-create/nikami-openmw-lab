@@ -12,6 +12,8 @@
 #include <components/esm3/loadgmst.hpp>
 #include <components/esm3/loadmgef.hpp>
 #include <components/esm3/stolenitems.hpp>
+#include <components/esm4/loadcrea.hpp>
+#include <components/esm4/loadnpc.hpp>
 
 #include <components/sceneutil/positionattitudetransform.hpp>
 
@@ -1887,11 +1889,21 @@ namespace MWMechanics
                     > 0))
             return false;
 
+        // Creation Engine aggression 0 means Unaggressive. It is categorical,
+        // not Morrowind's 0..100 Fight score, so disposition/distance biases
+        // must never promote it into spontaneous combat.
+        const bool isEsm4Actor
+            = ptr.getType() == ESM4::Npc::sRecordId || ptr.getType() == ESM4::Creature::sRecordId;
+        const int authoredFight
+            = ptr.getClass().getCreatureStats(ptr).getAiSetting(AiSetting::Fight).getModified();
+        if (isEsm4Actor && authoredFight <= 0)
+            return false;
+
         int disposition = 50;
         if (ptr.getClass().isNpc())
             disposition = getDerivedDisposition(ptr);
 
-        int fight = ptr.getClass().getCreatureStats(ptr).getAiSetting(AiSetting::Fight).getModified()
+        int fight = authoredFight
             + static_cast<int>(
                 getFightDistanceBias(ptr, target) + getFightDispositionBias(static_cast<float>(disposition)));
 

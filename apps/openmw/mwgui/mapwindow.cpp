@@ -691,7 +691,7 @@ namespace MWGui
                         static int loggedMisses = 0;
                         if (loggedMisses < 12)
                         {
-                            Log(Debug::Info) << "FNV/ESM4 diag: local map tile texture pending cell=("
+                            Log(Debug::Verbose) << "FNV/ESM4 diag: local map tile texture pending cell=("
                                              << entry.mCellX << "," << entry.mCellY << ") visible="
                                              << entry.mMapWidget->getVisible() << " localVisible="
                                              << mLocalMap->getVisible();

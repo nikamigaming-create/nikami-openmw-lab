@@ -94,17 +94,23 @@ void ESM4::ImageSpaceModifier::load(Reader& reader)
             case ESM::fourCC("YNAM"):
                 mDepthOfFieldRange = readKeys<FloatKey>(reader, subHdr.dataSize);
                 break;
+            case ESM::fourCC("NAM5"):
+                mVignetteRadius = readKeys<FloatKey>(reader, subHdr.dataSize);
+                break;
+            case ESM::fourCC("NAM6"):
+                mVignetteStrength = readKeys<FloatKey>(reader, subHdr.dataSize);
+                break;
             case ESM::fourCC("NAM4"):
                 mMotionBlurStrength = readKeys<FloatKey>(reader, subHdr.dataSize);
                 break;
             case ESM::fourCC("RDSD"):
-                if (subHdr.dataSize == sizeof(ESM::FormId))
+                if (subHdr.dataSize == sizeof(ESM::FormId32))
                     reader.getFormId(mIntroSound);
                 else
                     reader.skipSubRecordData();
                 break;
             case ESM::fourCC("RDSI"):
-                if (subHdr.dataSize == sizeof(ESM::FormId))
+                if (subHdr.dataSize == sizeof(ESM::FormId32))
                     reader.getFormId(mOutroSound);
                 else
                     reader.skipSubRecordData();

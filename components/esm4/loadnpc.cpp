@@ -90,7 +90,7 @@ namespace
             hex << std::hex << std::setw(2) << std::setfill('0') << static_cast<unsigned int>(bytes[i]);
         }
 
-        Log(Debug::Info) << "FNV/ESM4 diag: raw NPC face/tint candidate " << npc.mEditorId << " "
+        Log(Debug::Verbose) << "FNV/ESM4 diag: raw NPC face/tint candidate " << npc.mEditorId << " "
                          << ESM::printName(subHdr.typeId) << " size=" << subHdr.dataSize
                          << " firstBytes=" << hex.str();
     }
@@ -106,6 +106,7 @@ void ESM4::Npc::load(ESM4::Reader& reader)
     mIsFO3 = esmVer == ESM::VER_094
         && (lowerFilename(reader.getFileName()) == "fallout3.esm" || hasMasterNamed(reader, "fallout3.esm"));
     mIsFONV = mIsFO3 || esmVer == ESM::VER_132 || esmVer == ESM::VER_133 || esmVer == ESM::VER_134;
+    mIsStarfield = reader.esmVersionF() >= 0.959f && reader.esmVersionF() <= 0.961f;
     // mIsTES5 = esmVer == ESM::VER_094 || esmVer == ESM::VER_170; // WARN: FO3 is also VER_094
 
     while (reader.getSubRecordHeader())
