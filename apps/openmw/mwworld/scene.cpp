@@ -1141,6 +1141,8 @@ namespace MWWorld
         mLowestPoint = std::numeric_limits<float>::max();
 
         mPreloader->clear();
+        mTeleportDoorPreloadRequestsLogged.clear();
+        mTeleportDoorPreloadCompletionsLogged.clear();
     }
 
     osg::Vec4i Scene::gridCenterToBounds(const osg::Vec2i& centerCell) const
@@ -1790,23 +1792,44 @@ namespace MWWorld
 
     void Scene::preloadTeleportDoorDestinations(const osg::Vec3f& playerPos, const osg::Vec3f& predictedPos)
     {
-        std::vector<MWWorld::ConstPtr> teleportDoors;
+        struct TeleportDoorCandidate
+        {
+            MWWorld::ConstPtr mDoor;
+            std::string_view mFormat;
+        };
+
+        std::vector<TeleportDoorCandidate> teleportDoors;
         for (const MWWorld::CellStore* cellStore : mActiveCells)
         {
-            typedef MWWorld::CellRefList<ESM::Door>::List DoorList;
-            const DoorList& doors = cellStore->getReadOnlyDoors().mList;
-            for (auto& door : doors)
-            {
-                if (!door.mRef.getTeleport())
-                {
-                    continue;
-                }
-                teleportDoors.emplace_back(&door, cellStore);
-            }
+            const auto appendTeleportDoors = [&](const auto& doors, std::string_view format) {
+                forEachTeleportDoor(doors.mList, [&](const auto& door) {
+                    teleportDoors.push_back({ MWWorld::ConstPtr(&door, cellStore), format });
+                });
+            };
+            appendTeleportDoors(cellStore->getReadOnlyDoors(), "esm3");
+            appendTeleportDoors(cellStore->getReadOnlyEsm4Doors(), "esm4");
         }
 
-        for (const MWWorld::ConstPtr& door : teleportDoors)
+        const bool telemetryEnabled = [] {
+            const char* value = std::getenv("OPENMW_WORLD_VIEWER_DOOR_PRELOAD_TELEMETRY");
+            return value != nullptr && *value != '\0' && std::string_view(value) != "0";
+        }();
+        const auto preloadStateName = [](CellPreloader::PreloadState state) {
+            switch (state)
+            {
+                case CellPreloader::PreloadState::NotRequested:
+                    return "not-requested";
+                case CellPreloader::PreloadState::Pending:
+                    return "pending";
+                case CellPreloader::PreloadState::Complete:
+                    return "complete";
+            }
+            return "unknown";
+        };
+
+        for (const TeleportDoorCandidate& candidate : teleportDoors)
         {
+            const MWWorld::ConstPtr& door = candidate.mDoor;
             float sqrDistToPlayer = (playerPos - door.getRefData().getPosition().asVec3()).length2();
             sqrDistToPlayer
                 = std::min(sqrDistToPlayer, (predictedPos - door.getRefData().getPosition().asVec3()).length2());
@@ -1815,7 +1838,29 @@ namespace MWWorld
             {
                 try
                 {
-                    preloadCellWithSurroundings(mWorld.getWorldModel().getCell(door.getCellRef().getDestCell()));
+                    MWWorld::CellStore& destination = mWorld.getWorldModel().getCell(door.getCellRef().getDestCell());
+                    const CellPreloader::PreloadState stateBefore = mPreloader->getPreloadState(destination);
+                    preloadCellWithSurroundings(destination);
+                    const CellPreloader::PreloadState stateAfter = mPreloader->getPreloadState(destination);
+                    const ESM::RefNum doorId = door.getCellRef().getRefNum();
+
+                    if (telemetryEnabled && mTeleportDoorPreloadRequestsLogged.insert(doorId).second)
+                    {
+                        Log(Debug::Info) << "Teleport door preload telemetry: phase=requested format="
+                                         << candidate.mFormat << " door=" << ESM::RefId(doorId).toDebugString()
+                                         << " destCell=" << door.getCellRef().getDestCell().toDebugString()
+                                         << " distance=" << std::sqrt(sqrDistToPlayer)
+                                         << " stateBefore=" << preloadStateName(stateBefore)
+                                         << " stateAfter=" << preloadStateName(stateAfter);
+                    }
+                    if (telemetryEnabled && stateAfter == CellPreloader::PreloadState::Complete
+                        && mTeleportDoorPreloadCompletionsLogged.insert(doorId).second)
+                    {
+                        Log(Debug::Info) << "Teleport door preload telemetry: phase=complete format="
+                                         << candidate.mFormat << " door=" << ESM::RefId(doorId).toDebugString()
+                                         << " destCell=" << door.getCellRef().getDestCell().toDebugString()
+                                         << " distance=" << std::sqrt(sqrDistToPlayer);
+                    }
                 }
                 catch (const std::exception& e)
                 {

@@ -4633,6 +4633,7 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
     executeProofTimedScript(proofTimedScript2Frame, "OPENMW_PROOF_TIMED_SCRIPT_2", proofTimedScript2Executed);
 
     const bool fnvInteractionRequested = proofEnvEnabled("OPENMW_FNV_INTERACTION_AUDIT");
+    const bool fnvInteractionDoorOnly = proofEnvEnabled("OPENMW_FNV_INTERACTION_DOOR_ONLY");
     if (fnvInteractionRequested && fnvInteractionPhase >= 0 && proofRunning && mWorld != nullptr
         && mWindowManager != nullptr)
     {
@@ -4797,7 +4798,7 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                 aimInteractionCameraAt(fnvInteractionActor, "outside-easy-pete-settled",
                     readProofFloat("OPENMW_FNV_INTERACTION_ACTOR_AIM_Z", 96.f));
                 queueInteractionCapture("outside-easy-pete-settled");
-                advanceInteraction(std::getenv("OPENMW_FNV_INTERACTION_DOOR_ONLY") != nullptr ? 3 : 8);
+                advanceInteraction(fnvInteractionDoorOnly ? 3 : 8);
             }
         }
         else if (fnvInteractionPhase == 8 && phaseFrames >= 8)
@@ -4859,7 +4860,7 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
         }
         else if (fnvInteractionPhase == 3)
         {
-            if (!fnvInteractionQuestCaptureQueued && phaseFrames >= 10)
+            if (!fnvInteractionDoorOnly && !fnvInteractionQuestCaptureQueued && phaseFrames >= 10)
             {
                 fnvInteractionQuestCaptureQueued = true;
                 queueInteractionCapture("quest-notification");
@@ -5018,12 +5019,13 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
         }
         else if (fnvInteractionPhase == 7 && phaseFrames >= 8)
         {
-            const bool pass = fnvInteractionActorPass && fnvInteractionDialoguePass
-                && fnvInteractionQuestPass && fnvInteractionDoorInPass
-                && fnvInteractionInteriorActorsPass && fnvInteractionRadioPass
-                && fnvInteractionDoorOutPass;
-            finishInteraction(pass, pass ? "complete authored interaction circuit"
-                                         : "one or more authored interaction gates failed");
+            const bool pass = fnvInteractionActorPass && fnvInteractionDoorInPass
+                && fnvInteractionInteriorActorsPass && fnvInteractionRadioPass && fnvInteractionDoorOutPass
+                && (fnvInteractionDoorOnly || (fnvInteractionDialoguePass && fnvInteractionQuestPass));
+            finishInteraction(pass,
+                pass ? (fnvInteractionDoorOnly ? "complete authored door circuit"
+                                               : "complete authored interaction circuit")
+                     : "one or more authored interaction gates failed");
         }
     }
 
