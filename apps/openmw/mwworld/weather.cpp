@@ -1049,6 +1049,12 @@ namespace MWWorld
                 mResult.mSunColor[component] *= sunlightDimmer;
 
             mRendering.getPostProcessor()->setFalloutImageSpace(
+                osg::Vec4f(composed.mTraits[ESM4::ImageSpace::Trait_TargetLuminance],
+                    composed.mTraits[ESM4::ImageSpace::Trait_BrightScale],
+                    composed.mTraits[ESM4::ImageSpace::Trait_BrightClamp],
+                    player.getCell()->isExterior()
+                        ? composed.mTraits[ESM4::ImageSpace::Trait_BloomAlphaExterior]
+                        : composed.mTraits[ESM4::ImageSpace::Trait_BloomAlphaInterior]),
                 osg::Vec4f(composed.mTraits[ESM4::ImageSpace::Trait_CinematicSaturation],
                     composed.mTraits[ESM4::ImageSpace::Trait_CinematicContrastAverageLuminance],
                     composed.mTraits[ESM4::ImageSpace::Trait_CinematicContrast],

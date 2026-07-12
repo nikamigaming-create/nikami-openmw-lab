@@ -174,8 +174,8 @@ namespace MWRender
 
         void setUnderwaterFlag(bool underwater) { mUnderwater = underwater; }
 
-        void setFalloutImageSpace(
-            const osg::Vec4f& cinematic, const osg::Vec4f& tint, const osg::Vec4f& fade);
+        void setFalloutImageSpace(const osg::Vec4f& hdr, const osg::Vec4f& cinematic,
+            const osg::Vec4f& tint, const osg::Vec4f& fade);
 
         void toggleMode();
 

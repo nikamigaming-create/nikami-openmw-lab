@@ -287,8 +287,8 @@ namespace MWRender
         mRendering.getSkyManager()->setSunglare(true);
     }
 
-    void PostProcessor::setFalloutImageSpace(
-        const osg::Vec4f& cinematic, const osg::Vec4f& tint, const osg::Vec4f& fade)
+    void PostProcessor::setFalloutImageSpace(const osg::Vec4f& hdr, const osg::Vec4f& cinematic,
+        const osg::Vec4f& tint, const osg::Vec4f& fade)
     {
         if (!mFalloutImageSpaceTechnique)
         {
@@ -299,6 +299,7 @@ namespace MWRender
             enable();
         }
 
+        setUniform(mFalloutImageSpaceTechnique, "uFalloutHdr", hdr);
         setUniform(mFalloutImageSpaceTechnique, "uFalloutCinematic", cinematic);
         setUniform(mFalloutImageSpaceTechnique, "uFalloutTint", tint);
         setUniform(mFalloutImageSpaceTechnique, "uFalloutFade", fade);
