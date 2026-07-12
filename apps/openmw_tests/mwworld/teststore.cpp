@@ -18,6 +18,7 @@
 #include <components/esm4/common.hpp>
 #include <components/esm4/reader.hpp>
 #include <components/esm4/readerutils.hpp>
+#include <components/esm4/records.hpp>
 #include <components/files/configurationmanager.hpp>
 #include <components/files/conversion.hpp>
 #include <components/loadinglistener/loadinglistener.hpp>

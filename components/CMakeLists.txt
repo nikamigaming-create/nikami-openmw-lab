@@ -560,6 +560,10 @@ if(BUILD_OPENMW_VR)
         tracking
         typeconversion
     )
+else()
+    add_component_dir(vr
+        flat
+    )
 endif()
 
 add_component_dir(testing
