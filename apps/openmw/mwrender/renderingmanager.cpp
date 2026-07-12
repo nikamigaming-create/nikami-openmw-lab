@@ -88,6 +88,7 @@
 #include "../mwclass/esm4npc.hpp"
 
 #include "actorspaths.hpp"
+#include "playervisualpolicy.hpp"
 #include "camera.hpp"
 #include "esm4npcanimation.hpp"
 #include "effectmanager.hpp"
@@ -200,15 +201,13 @@ namespace MWRender
             return nullptr;
         }
 
-        void applyFalloutPlayerProxyProofOutfit(const MWWorld::Ptr& visualPtr, const char* context)
+        void applyFalloutPlayerProxyConfiguredEquipment(const MWWorld::Ptr& visualPtr, const char* context)
         {
-            const char* outfitEnv = std::getenv("OPENMW_ESM4_PLAYER_OUTFIT");
-            if (outfitEnv == nullptr || *outfitEnv == '\0')
-                outfitEnv = std::getenv("OPENMW_FNV_PLAYER_OUTFIT");
-            const bool useProofDefault = std::getenv("OPENMW_FNV_BOOTSTRAP_LEVEL1_COURIER") != nullptr;
-            const char* headgearEnv = std::getenv("OPENMW_ESM4_PLAYER_HEADGEAR");
-            if ((outfitEnv == nullptr || *outfitEnv == '\0') && !useProofDefault
-                && (headgearEnv == nullptr || *headgearEnv == '\0'))
+            const ESM4PlayerVisualEquipmentPolicy policy = resolveESM4PlayerVisualEquipmentPolicy(
+                std::getenv("OPENMW_ESM4_PLAYER_OUTFIT"), std::getenv("OPENMW_FNV_PLAYER_OUTFIT"),
+                std::getenv("OPENMW_ESM4_PLAYER_HEADGEAR"), std::getenv("OPENMW_FNV_PLAYER_HEADGEAR"),
+                std::getenv("OPENMW_FNV_BOOTSTRAP_LEVEL1_COURIER") != nullptr);
+            if (policy.mOutfit.empty() && policy.mHeadgear.empty())
                 return;
 
             const auto addArmor = [&](std::string_view editorId, std::string_view role) {
@@ -236,11 +235,8 @@ namespace MWRender
                                  << (clothingBefore - clothingAfter);
             };
 
-            addArmor(outfitEnv != nullptr && *outfitEnv != '\0' ? std::string_view(outfitEnv)
-                                                                  : std::string_view("OutfitRepublican02"),
-                "outfit");
-            if (headgearEnv != nullptr && *headgearEnv != '\0')
-                addArmor(headgearEnv, "headgear");
+            addArmor(policy.mOutfit, "outfit");
+            addArmor(policy.mHeadgear, "headgear");
         }
 
         uint32_t getFalloutActorCoveredBodySlots(const MWWorld::Ptr& ptr)
@@ -497,7 +493,7 @@ namespace MWRender
             MWWorld::LiveCellRef<ESM4::Npc> liveVisualRef(visualRef, visualRecord);
             liveVisualRef.mData.setPosition(player.getRefData().getPosition());
             MWWorld::Ptr visualPtr(&liveVisualRef, player.getCell());
-            applyFalloutPlayerProxyProofOutfit(visualPtr, "vr-hands-attach");
+            applyFalloutPlayerProxyConfiguredEquipment(visualPtr, "vr-hands-attach");
             std::vector<MWVR::VRAnimation::FalloutVrHandSurface> surfaces
                 = collectFalloutVrHandSurfaces(visualPtr, "fallout-visual-record", false);
             const bool rightPipBoyCalibration = [] {
@@ -551,7 +547,7 @@ namespace MWRender
             MWWorld::LiveCellRef<ESM4::Npc> liveVisualRef(visualRef, visualRecord);
             liveVisualRef.mData.setPosition(player.getRefData().getPosition());
             MWWorld::Ptr visualPtr(&liveVisualRef, player.getCell());
-            applyFalloutPlayerProxyProofOutfit(visualPtr, "vr-hands-diagnostic");
+            applyFalloutPlayerProxyConfiguredEquipment(visualPtr, "vr-hands-diagnostic");
             logFalloutVrHandSourceCandidates(visualPtr, "fallout-visual-record");
         }
     }
@@ -2068,7 +2064,7 @@ namespace MWRender
             mFalloutPlayerVisualRef = std::make_unique<MWWorld::LiveCellRef<ESM4::Npc>>(proxyRef, falloutPlayerVisual);
             mFalloutPlayerVisualRef->mData.setPosition(player.getRefData().getPosition());
             MWWorld::Ptr visualPtr(mFalloutPlayerVisualRef.get(), player.getCell());
-            applyFalloutPlayerProxyProofOutfit(visualPtr, "world");
+            applyFalloutPlayerProxyConfiguredEquipment(visualPtr, "world");
 
             Log(Debug::Info) << "ESM4 diag: using native player visual proxy "
                              << falloutPlayerVisual->mEditorId << " (" << ESM::RefId(falloutPlayerVisual->mId)

@@ -61,6 +61,7 @@
 #include "animation.hpp"
 #include "esm4npcanimation.hpp"
 #include "npcanimation.hpp"
+#include "playervisualpolicy.hpp"
 #include "util.hpp"
 #include "vismask.hpp"
 
@@ -129,26 +130,37 @@ namespace MWRender
             return isFalloutContentLoaded();
         }
 
-        void applyFalloutInventoryPlayerProxyProofOutfit(const MWWorld::Ptr& visualPtr)
+        void applyFalloutInventoryPlayerProxyConfiguredEquipment(const MWWorld::Ptr& visualPtr)
         {
-            const char* outfitEnv = std::getenv("OPENMW_FNV_PLAYER_OUTFIT");
-            const std::string_view outfitEditorId
-                = outfitEnv != nullptr && *outfitEnv != '\0' ? std::string_view(outfitEnv) : "OutfitRepublican02";
-            const ESM4::Armor* armor = findFalloutInventoryArmorByEditorId(outfitEditorId);
-            if (armor == nullptr)
-            {
-                Log(Debug::Warning) << "FNV/ESM4 proof: inventory player proxy outfit "
-                                    << outfitEditorId << " not found";
+            const ESM4PlayerVisualEquipmentPolicy policy = resolveESM4PlayerVisualEquipmentPolicy(
+                std::getenv("OPENMW_ESM4_PLAYER_OUTFIT"), std::getenv("OPENMW_FNV_PLAYER_OUTFIT"),
+                std::getenv("OPENMW_ESM4_PLAYER_HEADGEAR"), std::getenv("OPENMW_FNV_PLAYER_HEADGEAR"),
+                std::getenv("OPENMW_FNV_BOOTSTRAP_LEVEL1_COURIER") != nullptr);
+            if (policy.mOutfit.empty() && policy.mHeadgear.empty())
                 return;
-            }
 
             visualPtr.getRefData().setCustomData(nullptr);
-            const bool added = MWClass::ESM4Npc::addEquippedArmor(visualPtr, armor);
-            Log(Debug::Info) << "FNV/ESM4 proof: inventory player proxy outfit "
-                             << armor->mEditorId << " model="
-                             << MWClass::ESM4Npc::chooseEquipmentModel(
-                                    armor, MWClass::ESM4Npc::isFemale(visualPtr))
-                             << " added=" << added;
+            const auto addArmor = [&](std::string_view editorId, std::string_view role) {
+                if (editorId.empty())
+                    return;
+                const ESM4::Armor* armor = findFalloutInventoryArmorByEditorId(editorId);
+                if (armor == nullptr)
+                {
+                    Log(Debug::Warning) << "ESM4 player visual: inventory proxy " << role << " "
+                                        << editorId << " not found";
+                    return;
+                }
+
+                const bool added = MWClass::ESM4Npc::addEquippedArmorReplacingSlots(visualPtr, armor);
+                Log(Debug::Info) << "ESM4 player visual: inventory proxy " << role << " "
+                                 << armor->mEditorId << " model="
+                                 << MWClass::ESM4Npc::chooseEquipmentModel(
+                                        armor, MWClass::ESM4Npc::isFemale(visualPtr))
+                                 << " added=" << added;
+            };
+
+            addArmor(policy.mOutfit, "outfit");
+            addArmor(policy.mHeadgear, "headgear");
         }
 
         std::string trimFalloutPreviewText(const char* value)
@@ -954,7 +966,7 @@ namespace MWRender
                 mFalloutPreviewRef = std::make_unique<MWWorld::LiveCellRef<ESM4::Npc>>(proxyRef, falloutPlayerVisual);
                 MWWorld::Ptr visualPtr(mFalloutPreviewRef.get(), nullptr);
                 visualPtr.getRefData().setCustomData(std::unique_ptr<MWWorld::CustomData>());
-                applyFalloutInventoryPlayerProxyProofOutfit(visualPtr);
+                applyFalloutInventoryPlayerProxyConfiguredEquipment(visualPtr);
 
                 Log(Debug::Info) << "FNV/ESM4 proof: using Fallout inventory player visual proxy "
                                  << falloutPlayerVisual->mEditorId << " (" << ESM::RefId(falloutPlayerVisual->mId)
