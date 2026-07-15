@@ -979,6 +979,7 @@ namespace MWWorld
     {
         if (climate == nullptr)
             return;
+        const bool climateChanged = mFalloutClimate != climate;
         mFalloutClimate = climate;
         constexpr float climateTimeScale = 1.f / 6.f;
         mSunriseTime = climate->mTiming.mSunriseBegin * climateTimeScale;
@@ -990,14 +991,18 @@ namespace MWWorld
         mTimeSettings.mNightEnd = mSunriseTime;
         mTimeSettings.mDayStart = mSunriseTime + mSunriseDuration;
         mTimeSettings.mDayEnd = mSunsetTime;
-        Log(Debug::Info) << "FNV/ESM4 climate " << climate->mEditorId << " sunrise=" << mSunriseTime << "-"
-                         << (mSunriseTime + mSunriseDuration) << " sunset=" << mSunsetTime << "-"
-                         << (mSunsetTime + mSunsetDuration) << " moonPhaseLength="
-                         << static_cast<unsigned int>(climate->mTiming.getMoonPhaseLength())
-                         << " masser=" << (climate->mTiming.hasMasser() ? 1 : 0)
-                         << " secunda=" << (climate->mTiming.hasSecunda() ? 1 : 0)
-                         << " sunTexture=" << climate->mSunTexture << " sunGlareTexture=" << climate->mSunGlareTexture
-                         << " daytimeColorExtension=" << mFalloutDaytimeColorExtension;
+        if (climateChanged)
+        {
+            Log(Debug::Info) << "FNV/ESM4 climate " << climate->mEditorId << " sunrise=" << mSunriseTime << "-"
+                             << (mSunriseTime + mSunriseDuration) << " sunset=" << mSunsetTime << "-"
+                             << (mSunsetTime + mSunsetDuration) << " moonPhaseLength="
+                             << static_cast<unsigned int>(climate->mTiming.getMoonPhaseLength())
+                             << " masser=" << (climate->mTiming.hasMasser() ? 1 : 0)
+                             << " secunda=" << (climate->mTiming.hasSecunda() ? 1 : 0)
+                             << " sunTexture=" << climate->mSunTexture
+                             << " sunGlareTexture=" << climate->mSunGlareTexture
+                             << " daytimeColorExtension=" << mFalloutDaytimeColorExtension;
+        }
     }
 
     bool WeatherManager::forceWeather(const ESM::RefId& weatherID)

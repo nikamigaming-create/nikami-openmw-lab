@@ -550,6 +550,66 @@ namespace
                 osg::Vec3d(targetX[i], targetY[i], targetZ[i]) });
         return sequence;
     }
+
+    struct WorldViewerTimeKeyframe
+    {
+        int mFrame = 0;
+        float mHour = 0.f;
+    };
+
+    std::vector<WorldViewerTimeKeyframe> getWorldViewerTimeSequence()
+    {
+        const std::vector<int> frames = readWorldViewerIntList("OPENMW_WORLD_VIEWER_TIME_SEQUENCE_FRAMES");
+        const std::vector<float> hours = readWorldViewerFloatList("OPENMW_WORLD_VIEWER_TIME_SEQUENCE_HOURS");
+        const std::size_t count = std::min(frames.size(), hours.size());
+        if (count == 0)
+            return {};
+
+        std::vector<WorldViewerTimeKeyframe> sequence;
+        sequence.reserve(count);
+        for (std::size_t i = 0; i < count; ++i)
+        {
+            if (frames[i] >= 0 && std::isfinite(hours[i]))
+                sequence.push_back({ frames[i], hours[i] });
+        }
+        std::stable_sort(sequence.begin(), sequence.end(), [](const auto& left, const auto& right) {
+            return left.mFrame < right.mFrame;
+        });
+        return sequence;
+    }
+
+    struct WorldViewerCameraAngleKeyframe
+    {
+        int mFrame = 0;
+        float mPitch = 0.f;
+        float mYaw = 0.f;
+    };
+
+    std::vector<WorldViewerCameraAngleKeyframe> getWorldViewerCameraAngleSequence()
+    {
+        const std::vector<int> frames
+            = readWorldViewerIntList("OPENMW_WORLD_VIEWER_CAMERA_ANGLE_SEQUENCE_FRAMES");
+        const std::vector<float> pitches
+            = readWorldViewerFloatList("OPENMW_WORLD_VIEWER_CAMERA_ANGLE_SEQUENCE_PITCHES");
+        const std::vector<float> yaws
+            = readWorldViewerFloatList("OPENMW_WORLD_VIEWER_CAMERA_ANGLE_SEQUENCE_YAWS");
+        const std::size_t count = std::min({ frames.size(), pitches.size(), yaws.size() });
+        if (count == 0)
+            return {};
+
+        std::vector<WorldViewerCameraAngleKeyframe> sequence;
+        sequence.reserve(count);
+        for (std::size_t i = 0; i < count; ++i)
+        {
+            if (frames[i] >= 0 && std::isfinite(pitches[i]) && std::isfinite(yaws[i]))
+                sequence.push_back({ frames[i], pitches[i], yaws[i] });
+        }
+        std::stable_sort(sequence.begin(), sequence.end(), [](const auto& left, const auto& right) {
+            return left.mFrame < right.mFrame;
+        });
+        return sequence;
+    }
+
     bool proofEnvEnabled(const char* name)
     {
         const char* value = std::getenv(name);
@@ -3654,6 +3714,10 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
         return values;
     };
     static const std::vector<int> proofScreenshotFrames = getProofFrames("OPENMW_PROOF_SCREENSHOT_FRAME");
+    static const std::vector<WorldViewerTimeKeyframe> worldViewerTimeSequence
+        = getWorldViewerTimeSequence();
+    static const std::vector<WorldViewerCameraAngleKeyframe> worldViewerCameraAngleSequence
+        = getWorldViewerCameraAngleSequence();
     static const std::vector<float> proofActorViewOrbitDegrees
         = getProofFloats("OPENMW_PROOF_ACTOR_VIEW_ORBIT_DEGREES");
     static const std::vector<float> proofActorViewFrontDistances
@@ -3671,6 +3735,8 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
     static std::size_t proofScreenshotFrameIndex = 0;
     static std::size_t proofInventoryPaneFrameIndex = 0;
     static bool proofScreenshotReadyQueued = false;
+    static int worldViewerTimeSequenceIndex = -1;
+    static int worldViewerCameraAngleSequenceIndex = -1;
     static bool proofInventoryOpened = false;
     static bool proofQuickSaveQueued = false;
     static bool proofSayQueued = false;
@@ -4105,6 +4171,24 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
             }
         }
         worldViewerTrace(frameNumber, "script.end");
+
+        int requestedTimeSequenceIndex = -1;
+        for (std::size_t i = 0; i < worldViewerTimeSequence.size(); ++i)
+        {
+            if (frameNumber >= static_cast<unsigned>(worldViewerTimeSequence[i].mFrame))
+                requestedTimeSequenceIndex = static_cast<int>(i);
+        }
+        if (requestedTimeSequenceIndex >= 0 && requestedTimeSequenceIndex != worldViewerTimeSequenceIndex
+            && mWorld != nullptr && mStateManager->getState() == MWBase::StateManager::State_Running)
+        {
+            const WorldViewerTimeKeyframe& keyframe
+                = worldViewerTimeSequence[static_cast<std::size_t>(requestedTimeSequenceIndex)];
+            mWorld->setGlobalFloat(MWWorld::Globals::sGameHour, keyframe.mHour);
+            mWorld->advanceTime(0.0, false);
+            worldViewerTimeSequenceIndex = requestedTimeSequenceIndex;
+            Log(Debug::Info) << "World viewer sky sweep: applied time slot=" << requestedTimeSequenceIndex
+                             << " frame=" << frameNumber << " hour=" << keyframe.mHour;
+        }
 
         const bool playableSessionRequested = proofEnvEnabled("OPENMW_PLAYABLE_SESSION");
         const int playableSessionSettleFrames
@@ -5110,6 +5194,32 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
     {
         resetFNVProofCamera(*mWorld);
         proofFNVCameraResetApplied = true;
+    }
+
+    int requestedCameraAngleSequenceIndex = -1;
+    for (std::size_t i = 0; i < worldViewerCameraAngleSequence.size(); ++i)
+    {
+        if (frameNumber >= static_cast<unsigned>(worldViewerCameraAngleSequence[i].mFrame))
+            requestedCameraAngleSequenceIndex = static_cast<int>(i);
+    }
+    if (requestedCameraAngleSequenceIndex >= 0 && proofWorldReady && mWorld != nullptr && !VR::getVR())
+    {
+        if (MWRender::Camera* camera = mWorld->getCamera())
+        {
+            const WorldViewerCameraAngleKeyframe& keyframe
+                = worldViewerCameraAngleSequence[static_cast<std::size_t>(requestedCameraAngleSequenceIndex)];
+            camera->setPitch(keyframe.mPitch, true);
+            camera->setYaw(keyframe.mYaw, true);
+            camera->setRoll(0.f);
+            camera->updateCamera();
+            if (requestedCameraAngleSequenceIndex != worldViewerCameraAngleSequenceIndex)
+            {
+                worldViewerCameraAngleSequenceIndex = requestedCameraAngleSequenceIndex;
+                Log(Debug::Info) << "World viewer sky sweep: applied camera slot="
+                                 << requestedCameraAngleSequenceIndex << " frame=" << frameNumber
+                                 << " pitch=" << keyframe.mPitch << " yaw=" << keyframe.mYaw;
+            }
+        }
     }
 
     if (!proofInventoryOpened && proofInventoryFrame >= 0 && frameNumber >= static_cast<unsigned>(proofInventoryFrame)
