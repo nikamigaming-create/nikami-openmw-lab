@@ -907,6 +907,21 @@ namespace MWRender
         , mUpdater(new SunUpdater)
         , mFalloutSkyContent(hasNativeBethesdaSkyContent(sceneManager))
     {
+        if (mFalloutSkyContent)
+        {
+            // Retail's Sun.dds support quad is 1500x1500. Grow only the base
+            // disc geometry so the occlusion query and glare children retain
+            // their independently authored sizes.
+            if (auto* vertices = dynamic_cast<osg::Vec3Array*>(mGeom->getVertexArray()))
+            {
+                constexpr float falloutSunSupportScale = 1500.f / 450.f;
+                for (osg::Vec3f& vertex : *vertices)
+                    vertex *= falloutSunSupportScale;
+                vertices->dirty();
+                mGeom->dirtyBound();
+            }
+        }
+
         mTransform->addUpdateCallback(mUpdater);
 
         Resource::ImageManager& imageManager = *sceneManager.getImageManager();
@@ -929,6 +944,12 @@ namespace MWRender
         sunStateSet->setTextureAttributeAndModes(0, new SceneUtil::TextureType("diffuseMap"), osg::StateAttribute::ON);
         sunStateSet->addUniform(new osg::Uniform("pass", static_cast<int>(Pass::Sun)));
         setAlphaBlendedSkyBillboard(*sunStateSet);
+        if (mFalloutSkyContent)
+        {
+            sunStateSet->setAttributeAndModes(new osg::BlendFunc(osg::BlendFunc::SRC_ALPHA, osg::BlendFunc::ONE),
+                osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
+            sunStateSet->setMode(GL_BLEND, osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
+        }
         // Keep the validated compatibility sun path until the native Fallout
         // pass has its own isolated render-target gate. Enabling the native
         // additive path here changes the entire HDR target, not just the sun.
