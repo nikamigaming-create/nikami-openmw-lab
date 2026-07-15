@@ -948,7 +948,11 @@ namespace MWRender
         {
             sunStateSet->setAttributeAndModes(new osg::BlendFunc(osg::BlendFunc::SRC_ALPHA, osg::BlendFunc::ONE),
                 osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
+            sunStateSet->setAttributeAndModes(
+                new osg::ColorMask(true, true, true, false), osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
             sunStateSet->setMode(GL_BLEND, osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
+            sunStateSet->setRenderBinDetails(
+                RenderBin_Sky - 1, "RenderBin", osg::StateSet::OVERRIDE_RENDERBIN_DETAILS);
         }
         // Keep the validated compatibility sun path until the native Fallout
         // pass has its own isolated render-target gate. Enabling the native
@@ -1009,10 +1013,7 @@ namespace MWRender
     void Sun::setDirection(const osg::Vec3f& direction)
     {
         osg::Vec3f normalizedDirection = direction / direction.length();
-        // Keep the validated billboard at the celestial camera radius. Feeding
-        // Fallout's raw trajectory translation into this legacy billboard can
-        // move its support quad close enough to cover the full viewport.
-        mTransform->setPosition(normalizedDirection * mDistance);
+        mTransform->setPosition(mFalloutSkyContent ? direction : normalizedDirection * mDistance);
 
         osg::Quat quat;
         quat.makeRotate(osg::Vec3f(0.0f, 0.0f, 1.0f), normalizedDirection);
