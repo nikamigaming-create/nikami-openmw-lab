@@ -2066,25 +2066,19 @@ namespace MWWorld
         mResult.mParticleEffect = current.mParticleEffect;
         mResult.mRainEffect = current.mRainEffect;
 
-        const FalloutWeatherTimeBlend falloutTimeBlend
-            = getFalloutWeatherTimeBlend(gameHour, mTimeSettings, mFalloutDaytimeColorExtension);
-        const float falloutNightStrength
-            = getFalloutWeatherTimeStrength(falloutTimeBlend, ESM4::Weather::Time_Night);
+        // Star visibility has its own climate fade window. A non-zero Night
+        // contribution in the six-slot WTHR color blend does not mean that the
+        // star dome is still visible after sunrise.
+        mResult.mNight = (gameHour < mSunriseTime
+            || gameHour > mTimeSettings.mNightStart + mTimeSettings.mStarsPostSunsetStart
+                    - mTimeSettings.mStarsFadingDuration);
+        mResult.mNightFade = mNightFade.getValue(gameHour, mTimeSettings, "Stars");
         mResult.mHasFalloutCelestialColors = current.mFalloutSunDiscColors && current.mFalloutStarColors;
         if (mResult.mHasFalloutCelestialColors)
         {
-            mResult.mNight = falloutNightStrength > 0.f;
-            mResult.mNightFade = falloutNightStrength;
             mResult.mFalloutStarsColor = sampleFalloutWeatherColor(
                 *current.mFalloutStarColors, gameHour, mTimeSettings, mFalloutDaytimeColorExtension);
-            mResult.mFalloutStarsColor.a() = falloutNightStrength;
-        }
-        else
-        {
-            mResult.mNight = (gameHour < mSunriseTime
-                || gameHour > mTimeSettings.mNightStart + mTimeSettings.mStarsPostSunsetStart
-                        - mTimeSettings.mStarsFadingDuration);
-            mResult.mNightFade = mNightFade.getValue(gameHour, mTimeSettings, "Stars");
+            mResult.mFalloutStarsColor.a() = mResult.mNightFade;
         }
 
         mResult.mFogDepth = current.mLandFogDepth.getValue(gameHour, mTimeSettings, "Fog");
