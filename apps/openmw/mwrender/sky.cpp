@@ -1,5 +1,8 @@
 #include "sky.hpp"
 
+#include <osg/CopyOp>
+#include <osg/BlendFunc>
+#include <osg/ColorMask>
 #include <osg/Depth>
 #include <osg/Geode>
 #include <osg/Geometry>
@@ -40,6 +43,7 @@
 #include <components/nifosg/particle.hpp>
 
 #include "../mwworld/datetimemanager.hpp"
+#include "../mwworld/esmstore.hpp"
 #include "../mwworld/weather.hpp"
 
 #include "../mwbase/environment.hpp"
@@ -389,6 +393,16 @@ namespace
         SkyVertexColorStats mStats;
     };
 
+    // Retail draws the atmosphere first and the four source-alpha cloud layers afterward. OSG renders lower-numbered
+    // bins first, so preserve that order explicitly instead of relying on sibling StateSet sorting.
+    constexpr int sFalloutAtmosphereRenderBin = MWRender::RenderBin_Sky - 1;
+    constexpr int sFalloutCloudRenderBin = MWRender::RenderBin_Sky;
+    static_assert(sFalloutAtmosphereRenderBin < sFalloutCloudRenderBin);
+
+    constexpr std::array<std::string_view, MWRender::WeatherResult::sFalloutCloudLayerCount> sFalloutCloudLayerNames{
+        "CloudDome:0", "HorizonLayerClear:1", "HorizonLayerOvercast:1", "LowerLayer:0"
+    };
+
     class FalloutCloudLayerSetupVisitor : public osg::NodeVisitor
     {
     public:
@@ -401,38 +415,87 @@ namespace
         {
         }
 
-        void apply(osg::Drawable& drawable) override
+        void apply(osg::Drawable& sharedDrawable) override
         {
-            if (mLayer < mUpdaters.size())
+            const auto layerName
+                = std::find(sFalloutCloudLayerNames.begin(), sFalloutCloudLayerNames.end(), sharedDrawable.getName());
+            if (layerName == sFalloutCloudLayerNames.end())
+                return;
+
+            const std::size_t layer = static_cast<std::size_t>(layerName - sFalloutCloudLayerNames.begin());
+            if (mNodes[layer])
             {
-                mUpdaters[mLayer] = new MWRender::CloudUpdater;
-                mUpdaters[mLayer]->setFalloutCloudShader(true);
-                mUpdaters[mLayer]->setOpacity(0.f);
-                // Fallout cloud layers are camera-relative sky geometry. The
-                // authored dome contains faces for both viewing directions;
-                // inheriting the NIF cull/depth state exposes a hard rotating
-                // wedge when the layer turns. Keep the layer transparent and
-                // visible from either side, behind ordinary world geometry.
-                osg::StateSet* stateset = drawable.getStateSet();
-                if (stateset == nullptr)
-                {
-                    stateset = drawable.getOrCreateStateSet();
-                }
-                stateset->setMode(GL_CULL_FACE, osg::StateAttribute::OFF | osg::StateAttribute::OVERRIDE);
-                stateset->setMode(GL_DEPTH_TEST, osg::StateAttribute::OFF | osg::StateAttribute::OVERRIDE);
-                drawable.addUpdateCallback(mUpdaters[mLayer]);
-                drawable.setNodeMask(0);
-                mNodes[mLayer] = &drawable;
-                ++mLayer;
+                Log(Debug::Error) << "FNV/ESM4: duplicate Fallout cloud drawable '" << sharedDrawable.getName()
+                                  << "'";
+                return;
             }
+
+            // NIF geometry is attached directly as an osg::Drawable child, not wrapped in an osg::Geode. The
+            // SceneManager instance still shares that drawable and its StateSet with the cached model template.
+            // Replace only the parent on this visitor path with a private clone, leaving the cache and other
+            // instances untouched. Arrays and primitive sets stay shared because weather never edits geometry.
+            const osg::NodePath& path = getNodePath();
+            osg::Group* instanceParent
+                = path.size() >= 2 ? dynamic_cast<osg::Group*>(path[path.size() - 2]) : nullptr;
+            const osg::CopyOp copyOp(osg::CopyOp::DEEP_COPY_STATESETS | osg::CopyOp::DEEP_COPY_USERDATA);
+            osg::ref_ptr<osg::Drawable> drawable
+                = static_cast<osg::Drawable*>(sharedDrawable.clone(copyOp));
+            if (instanceParent == nullptr || drawable == nullptr || drawable == &sharedDrawable
+                || !instanceParent->replaceChild(&sharedDrawable, drawable)
+                || (sharedDrawable.getStateSet() != nullptr && drawable->getStateSet() == sharedDrawable.getStateSet()))
+            {
+                Log(Debug::Error) << "FNV/ESM4: failed to privately own Fallout cloud drawable '"
+                                  << sharedDrawable.getName() << "'";
+                return;
+            }
+
+            mUpdaters[layer] = new MWRender::CloudUpdater;
+            mUpdaters[layer]->setFalloutCloudShader(true);
+            mUpdaters[layer]->setOpacity(0.f);
+            // Keep the authored cull state. Retail telemetry uses Z test on, Z writes off, LEQUAL, and numeric
+            // D3DCULL_CW; the NIF/OSG coordinate conversion owns the corresponding OpenGL face convention.
+            // The camera-relative sky root supplies the depth contract shared by atmosphere and clouds.
+            osg::StateSet* stateset = drawable->getStateSet();
+            if (stateset == nullptr)
+                stateset = drawable->getOrCreateStateSet();
+            // clouds.nif leaves carry a NIF StateSetUpdater for their authored placeholder material. A second
+            // StateSetUpdater on the same leaf is explicitly unsupported: whichever callback runs last can restore
+            // that placeholder texture after WTHR has bound the live DDS. Retail makes WTHR the sole owner of cloud
+            // textures, colors and UV motion, so discard the cloned NIF callback chain before installing its updater.
+            drawable->setUpdateCallback(nullptr);
+            drawable->addUpdateCallback(mUpdaters[layer]);
+            drawable->setNodeMask(0);
+            mNodes[layer] = drawable.get();
+            ++mLayerCount;
         }
 
-        std::size_t getLayerCount() const { return mLayer; }
+        std::size_t getLayerCount() const { return mLayerCount; }
+
+        bool hasAllRetailLayers() const
+        {
+            return std::all_of(mNodes.begin(), mNodes.end(), [](const auto& node) { return node != nullptr; });
+        }
+
+        std::string missingRetailLayers() const
+        {
+            std::ostringstream stream;
+            bool first = true;
+            for (std::size_t layer = 0; layer < mNodes.size(); ++layer)
+            {
+                if (mNodes[layer])
+                    continue;
+                if (!first)
+                    stream << ',';
+                stream << sFalloutCloudLayerNames[layer];
+                first = false;
+            }
+            return stream.str();
+        }
 
     private:
         std::array<osg::ref_ptr<MWRender::CloudUpdater>, MWRender::WeatherResult::sFalloutCloudLayerCount>& mUpdaters;
         std::array<osg::ref_ptr<osg::Node>, MWRender::WeatherResult::sFalloutCloudLayerCount>& mNodes;
-        std::size_t mLayer = 0;
+        std::size_t mLayerCount = 0;
     };
 
     std::string formatVec4(const osg::Vec4f& value)
@@ -488,18 +551,20 @@ namespace
         return stats;
     }
 
-    osg::PositionAttitudeTransform* createFalloutSkyMeshRoot(osg::Group* parentNode, VFS::Path::NormalizedView model)
+    osg::PositionAttitudeTransform* createFalloutSkyMeshRoot(
+        osg::Group* parentNode, VFS::Path::NormalizedView model, int renderBin)
     {
         osg::ref_ptr<osg::PositionAttitudeTransform> root = new osg::PositionAttitudeTransform;
         root->setName(std::string("FNV camera-relative sky mesh: ") + std::string(model.value()));
         root->setCullingActive(false);
 
         osg::StateSet* stateset = root->getOrCreateStateSet();
-        osg::ref_ptr<osg::Depth> depth = new SceneUtil::AutoDepth(osg::Depth::ALWAYS, 0.0, 1.0, false);
+        // Captured FNV main-view and offscreen sky passes both use ZENABLE=1, ZWRITE=0, ZFUNC=LESSEQUAL.
+        osg::ref_ptr<osg::Depth> depth = new SceneUtil::AutoDepth(osg::Depth::LEQUAL, 0.0, 1.0, false);
         stateset->setAttributeAndModes(depth, osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
-        stateset->setMode(GL_DEPTH_TEST, osg::StateAttribute::OFF | osg::StateAttribute::OVERRIDE);
+        stateset->setMode(GL_DEPTH_TEST, osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
         stateset->setMode(GL_FOG, osg::StateAttribute::OFF | osg::StateAttribute::OVERRIDE);
-        stateset->setRenderBinDetails(MWRender::RenderBin_Sky, "RenderBin", osg::StateSet::OVERRIDE_RENDERBIN_DETAILS);
+        stateset->setRenderBinDetails(renderBin, "RenderBin", osg::StateSet::OVERRIDE_RENDERBIN_DETAILS);
         stateset->setNestRenderBins(false);
 
         parentNode->addChild(root);
@@ -526,7 +591,8 @@ namespace
     }
 
     osg::ref_ptr<osg::Node> getOptionalSkyInstance(Resource::SceneManager& sceneManager,
-        VFS::Path::NormalizedView model, osg::Group* parentNode, std::string_view label)
+        VFS::Path::NormalizedView model, osg::Group* parentNode, std::string_view label,
+        int falloutRenderBin = MWRender::RenderBin_Sky)
     {
         if (!sceneManager.getVFS()->exists(model))
         {
@@ -538,7 +604,8 @@ namespace
 
         if (isFalloutSkyMesh(model))
         {
-            osg::PositionAttitudeTransform* skyMeshRoot = createFalloutSkyMeshRoot(parentNode, model);
+            osg::PositionAttitudeTransform* skyMeshRoot
+                = createFalloutSkyMeshRoot(parentNode, model, falloutRenderBin);
             osg::ref_ptr<osg::Node> instance = sceneManager.getInstance(model, skyMeshRoot);
             const FalloutSkyMeshFit fit = fitFalloutSkyMeshToViewDistance(*skyMeshRoot, *instance);
             if (logMissingSkyAssets())
@@ -546,7 +613,8 @@ namespace
                 Log(Debug::Info) << "FNV/ESM4: wrapped sky mesh " << label << " (" << model.value()
                                  << ") radius=" << instance->getBound().radius() << " viewDistance="
                                  << fit.mViewDistance << " targetRadius=" << fit.mTargetRadius
-                                 << " scale=" << skyMeshRoot->getScale().x() << " fitApplied=" << fit.mApplied;
+                                 << " scale=" << skyMeshRoot->getScale().x() << " fitApplied=" << fit.mApplied
+                                 << " renderBin=" << falloutRenderBin;
                 logFalloutSkyVertexColorStats(label, model, *instance);
             }
             return instance;
@@ -844,7 +912,8 @@ namespace MWRender
         const bool useSkyShader = true;
 
         mAtmosphereDay = getOptionalSkyInstance(
-            *mSceneManager, Settings::models().mSkyatmosphere.get(), mEarlyRenderBinRoot, "day atmosphere");
+            *mSceneManager, Settings::models().mSkyatmosphere.get(), mEarlyRenderBinRoot, "day atmosphere",
+            sFalloutAtmosphereRenderBin);
         if (mAtmosphereDay)
         {
             const bool falloutAtmosphere = isFalloutSkyMesh(Settings::models().mSkyatmosphere.get());
@@ -881,12 +950,12 @@ namespace MWRender
         if (mSceneManager->getVFS()->exists(Settings::models().mSkynight02.get()))
         {
             nightAtmosphereModel = Settings::models().mSkynight02.get();
-            atmosphereNight
-                = getOptionalSkyInstance(*mSceneManager, nightAtmosphereModel, mAtmosphereNightNode, "night atmosphere");
+            atmosphereNight = getOptionalSkyInstance(*mSceneManager, nightAtmosphereModel, mAtmosphereNightNode,
+                "night atmosphere", sFalloutAtmosphereRenderBin);
         }
         else
-            atmosphereNight
-                = getOptionalSkyInstance(*mSceneManager, nightAtmosphereModel, mAtmosphereNightNode, "night atmosphere");
+            atmosphereNight = getOptionalSkyInstance(*mSceneManager, nightAtmosphereModel, mAtmosphereNightNode,
+                "night atmosphere", sFalloutAtmosphereRenderBin);
         if (atmosphereNight)
         {
             atmosphereNight->getOrCreateStateSet()->setAttributeAndModes(
@@ -928,62 +997,68 @@ namespace MWRender
         mCloudNode = new osg::Group;
         mEarlyRenderBinRoot->addChild(mCloudNode);
 
-        mCloudMesh = new osg::PositionAttitudeTransform;
-        osg::ref_ptr<osg::Node> cloudMeshChild
-            = getOptionalSkyInstance(*mSceneManager, Settings::models().mSkyclouds.get(), mCloudMesh, "clouds");
-        if (cloudMeshChild)
+        const VFS::Path::Normalized cloudModel = Settings::models().mSkyclouds.get();
+        const MWWorld::ESM4Game game = MWBase::Environment::get().getWorld()->getStore().getESM4Game();
+        const bool falloutClouds = isFalloutSkyMesh(cloudModel)
+            && (game == MWWorld::ESM4Game::Fallout3 || game == MWWorld::ESM4Game::FalloutNewVegas);
+        if (falloutClouds)
         {
-            mCloudUpdater = new CloudUpdater();
-            const bool falloutClouds = isFalloutSkyMesh(Settings::models().mSkyclouds.get());
-            mCloudUpdater->setOpacity(falloutClouds ? nativeSkyCloudOpacity() : 1.f);
-            cloudMeshChild->addUpdateCallback(mCloudUpdater);
-            if (falloutClouds)
+            // FO3/FNV WTHR already supplies all four live textures and colors on one clouds.nif object. Creating
+            // ordinary current/next clones as well leaves three shallow instances sharing the same drawables and
+            // lets updater state bleed between them. Keep one sky-owned instance and route its four named surfaces.
+            mFalloutCloudMesh = new osg::PositionAttitudeTransform;
+            osg::ref_ptr<osg::Node> falloutCloudMeshChild = getOptionalSkyInstance(*mSceneManager, cloudModel,
+                mFalloutCloudMesh, "Fallout cloud layers", sFalloutCloudRenderBin);
+            if (falloutCloudMeshChild)
             {
+                FalloutCloudLayerSetupVisitor setupVisitor(mFalloutCloudUpdaters, mFalloutCloudLayerNodes);
+                falloutCloudMeshChild->accept(setupVisitor);
+                attachSkyNodeIfUnattached(*mFalloutCloudMesh, *falloutCloudMeshChild);
                 logInterpretedFalloutSkyMaterial(
-                    "clouds", Settings::models().mSkyclouds.get(), "clouds", "texture-alpha", "not-used");
-                logFalloutSkyCloudUvMode("clouds", Settings::models().mSkyclouds.get());
+                    "Fallout cloud layers", cloudModel, "clouds", "texture-alpha", "not-used");
+                logFalloutSkyCloudUvMode("Fallout cloud layers", cloudModel);
+                if (!setupVisitor.hasAllRetailLayers())
+                {
+                    Log(Debug::Error) << "FNV/ESM4: incomplete Fallout cloud geometry missing="
+                                      << setupVisitor.missingRetailLayers();
+                }
+                Log(Debug::Info) << "FNV/ESM4: mapped Fallout cloud geometry layers="
+                                 << setupVisitor.getLayerCount()
+                                 << " routing=retail-name-exact ownership=private callbacks=weather-exclusive renderBin="
+                                 << sFalloutCloudRenderBin;
             }
-            attachSkyNodeIfUnattached(*mCloudMesh, *cloudMeshChild);
+            mFalloutCloudMesh->setNodeMask(0);
+            mCloudNode->addChild(mFalloutCloudMesh);
         }
-
-        mNextCloudMesh = new osg::PositionAttitudeTransform;
-        osg::ref_ptr<osg::Node> nextCloudMeshChild
-            = getOptionalSkyInstance(*mSceneManager, Settings::models().mSkyclouds.get(), mNextCloudMesh, "next clouds");
-        if (nextCloudMeshChild)
+        else
         {
-            mNextCloudUpdater = new CloudUpdater();
-            const bool falloutClouds = isFalloutSkyMesh(Settings::models().mSkyclouds.get());
-            mNextCloudUpdater->setOpacity(0.f);
-            nextCloudMeshChild->addUpdateCallback(mNextCloudUpdater);
-            if (falloutClouds)
+            mCloudMesh = new osg::PositionAttitudeTransform;
+            osg::ref_ptr<osg::Node> cloudMeshChild
+                = getOptionalSkyInstance(*mSceneManager, cloudModel, mCloudMesh, "clouds");
+            if (cloudMeshChild)
             {
-                logInterpretedFalloutSkyMaterial(
-                    "next clouds", Settings::models().mSkyclouds.get(), "clouds", "texture-alpha", "not-used");
-                logFalloutSkyCloudUvMode("next clouds", Settings::models().mSkyclouds.get());
+                mCloudUpdater = new CloudUpdater();
+                mCloudUpdater->setOpacity(1.f);
+                cloudMeshChild->addUpdateCallback(mCloudUpdater);
+                attachSkyNodeIfUnattached(*mCloudMesh, *cloudMeshChild);
             }
-            attachSkyNodeIfUnattached(*mNextCloudMesh, *nextCloudMeshChild);
-        }
-        mNextCloudMesh->setNodeMask(0);
 
-        mCloudNode->addChild(mCloudMesh);
-        mCloudNode->addChild(mNextCloudMesh);
+            mNextCloudMesh = new osg::PositionAttitudeTransform;
+            osg::ref_ptr<osg::Node> nextCloudMeshChild
+                = getOptionalSkyInstance(*mSceneManager, cloudModel, mNextCloudMesh, "next clouds");
+            if (nextCloudMeshChild)
+            {
+                mNextCloudUpdater = new CloudUpdater();
+                mNextCloudUpdater->setOpacity(0.f);
+                nextCloudMeshChild->addUpdateCallback(mNextCloudUpdater);
+                attachSkyNodeIfUnattached(*mNextCloudMesh, *nextCloudMeshChild);
+            }
+            mNextCloudMesh->setNodeMask(0);
 
-        mFalloutCloudMesh = new osg::PositionAttitudeTransform;
-        osg::ref_ptr<osg::Node> falloutCloudMeshChild = getOptionalSkyInstance(
-            *mSceneManager, Settings::models().mSkyclouds.get(), mFalloutCloudMesh, "Fallout cloud layers");
-        if (falloutCloudMeshChild)
-        {
-            FalloutCloudLayerSetupVisitor setupVisitor(mFalloutCloudUpdaters, mFalloutCloudLayerNodes);
-            falloutCloudMeshChild->accept(setupVisitor);
-            attachSkyNodeIfUnattached(*mFalloutCloudMesh, *falloutCloudMeshChild);
-            Log(Debug::Info) << "FNV/ESM4: mapped Fallout cloud geometry layers=" << setupVisitor.getLayerCount();
-        }
-        mFalloutCloudMesh->setNodeMask(0);
-        mCloudNode->addChild(mFalloutCloudMesh);
+            mCloudNode->addChild(mCloudMesh);
+            mCloudNode->addChild(mNextCloudMesh);
 
-        if (mCloudUpdater || mNextCloudUpdater)
-        {
-            if (!isFalloutSkyMesh(Settings::models().mSkyclouds.get()))
+            if (mCloudUpdater || mNextCloudUpdater)
             {
                 ModVertexAlphaVisitor modClouds(ModVertexAlphaVisitor::Clouds);
                 mCloudMesh->accept(modClouds);
@@ -1481,6 +1556,11 @@ namespace MWRender
                         osg::ref_ptr<osg::Texture2D> cloudTex = new osg::Texture2D(cloudImage);
                         cloudTex->setWrap(osg::Texture::WRAP_S, osg::Texture::REPEAT);
                         cloudTex->setWrap(osg::Texture::WRAP_T, osg::Texture::REPEAT);
+                        // Retail s0/s1: linear magnification, anisotropic minification, linear mip interpolation,
+                        // max anisotropy 15 in the main HDR pass.
+                        cloudTex->setFilter(osg::Texture::MAG_FILTER, osg::Texture::LINEAR);
+                        cloudTex->setFilter(osg::Texture::MIN_FILTER, osg::Texture::LINEAR_MIPMAP_LINEAR);
+                        cloudTex->setMaxAnisotropy(15.f);
                         updater->setTexture(std::move(cloudTex));
                         if (std::getenv("OPENMW_FNV_PROOF_WEATHER_ID") != nullptr)
                         {
@@ -1497,6 +1577,13 @@ namespace MWRender
                 }
 
                 mFalloutCloudSpeeds[layer] = weather.mFalloutCloudSpeeds[layer];
+                if (updater)
+                {
+                    updater->setFalloutSkyColors(weather.mSkyLowerColor, weather.mSkyColor);
+                    // SKYTEX Params.y is not layer alpha. Retail feeds the composed image-space
+                    // LuminanceRampNoTexture trait here and applies it to RGB only in the pixel shader.
+                    updater->setOpacity(weather.mFalloutCloudRgbMultiplier);
+                }
                 if (mFalloutCloudColours[layer] != weather.mFalloutCloudColors[layer])
                 {
                     mFalloutCloudColours[layer] = weather.mFalloutCloudColors[layer];
@@ -1507,7 +1594,6 @@ namespace MWRender
                         updater->setEmissionColor(emission);
                         // FO3/FNV PNAM serializes zero in the fourth color byte even for visible layers.
                         // Layer transparency comes from the authored cloud texture alpha.
-                        updater->setOpacity(nativeSkyCloudOpacity());
                     }
                 }
 
@@ -1529,7 +1615,8 @@ namespace MWRender
                                          << mFalloutClouds[layer] << " speed=" << mFalloutCloudSpeeds[layer]
                                          << " color=(" << formatVec4(mFalloutCloudColours[layer]) << ") visible="
                                          << (mFalloutCloudLayerNodes[layer]
-                                                && mFalloutCloudLayerNodes[layer]->getNodeMask());
+                                                && mFalloutCloudLayerNodes[layer]->getNodeMask())
+                                         << " rgbMultiplier=" << weather.mFalloutCloudRgbMultiplier;
                     }
                     loggedCloudLayers = true;
                 }
@@ -1684,6 +1771,7 @@ namespace MWRender
             mAtmosphereNightNode->setNodeMask(weather.mNight && (mAtmosphereNightUpdater || mNativeAtmosphereNight)
                     ? ~0u
                     : 0);
+
         mPrecipitationAlpha = weather.mPrecipitationAlpha;
     }
 

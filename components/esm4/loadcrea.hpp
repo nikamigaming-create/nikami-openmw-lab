@@ -44,6 +44,12 @@ namespace ESM4
 
     struct Creature
     {
+        // FO3/FNV actor template flags share the NPC_ bit assignments.
+        enum TemplateFlags : std::uint16_t
+        {
+            Template_UseModel = 0x0040,
+        };
+
         enum ACBS_TES4
         {
             TES4_Essential = 0x000002,
@@ -147,6 +153,18 @@ namespace ESM4
         // void blank();
         static constexpr ESM::RecNameInts sRecordId = ESM::RecNameInts::REC_CREA4;
     };
+
+    struct CreatureVisualTemplate
+    {
+        const Creature* mModel = nullptr;
+        const Creature* mNif = nullptr;
+        const Creature* mKf = nullptr;
+        const Creature* mBodyParts = nullptr;
+    };
+
+    // Records must be ordered from the placed/base creature toward its TPLT ancestors.
+    // Each visual field is selected independently because partial CREA overrides are valid.
+    CreatureVisualTemplate resolveCreatureVisualTemplate(const std::vector<const Creature*>& records);
 }
 
 #endif // ESM4_CREA_H

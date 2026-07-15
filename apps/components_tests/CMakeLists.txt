@@ -71,9 +71,12 @@ file(GLOB UNITTEST_SRC_FILES
     esm4/includes.cpp
     esm4/testlip.cpp
     esm4/testloadbehavior.cpp
+    esm4/testloadcreature.cpp
+    esm4/testloadarmor.cpp
     esm4/testloadweap.cpp
     esm4/testloadweather.cpp
     esm4/testloadimagespace.cpp
+    esm4/testloadregion.cpp
 
     fx/lexer.cpp
     fx/technique.cpp
@@ -86,6 +89,7 @@ file(GLOB UNITTEST_SRC_FILES
 
     nifosg/testnifloader.cpp
     nifosg/testcontroller.cpp
+    nifosg/testparticle.cpp
 
     esmterrain/testgridsampling.cpp
 
@@ -95,6 +99,7 @@ file(GLOB UNITTEST_SRC_FILES
     vfs/testpathutil.cpp
 
     sceneutil/osgacontroller.cpp
+    sceneutil/visitor.cpp
 
     bsa/testbsafile.cpp
     bsa/testcompressedbsafile.cpp

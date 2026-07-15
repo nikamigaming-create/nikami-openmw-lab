@@ -25,6 +25,7 @@
 #include <components/nif/niffile.hpp>
 #include <components/nif/controller.hpp>
 #include <components/nif/data.hpp>
+#include <components/nif/particle.hpp>
 #include <components/nifosg/matrixtransform.hpp>
 #include <components/nifosg/nifloader.hpp>
 #include <components/sceneutil/keyframe.hpp>
@@ -690,6 +691,37 @@ int runFnvGeometryDump(const std::filesystem::path& meshPath, const std::filesys
             continue;
 
         const std::vector<osg::Vec3f>& vertices = geometry->mData->mVertices;
+        const auto* triBased = dynamic_cast<const Nif::NiTriBasedGeomData*>(geometry->mData.getPtr());
+        const auto* triShape = dynamic_cast<const Nif::NiTriShapeData*>(geometry->mData.getPtr());
+        const auto* triStrips = dynamic_cast<const Nif::NiTriStripsData*>(geometry->mData.getPtr());
+        std::size_t stripIndexCount = 0;
+        if (triStrips != nullptr)
+            for (const auto& strip : triStrips->mStrips)
+                stripIndexCount += strip.size();
+
+        osg::Vec2f uvMin(std::numeric_limits<float>::max(), std::numeric_limits<float>::max());
+        osg::Vec2f uvMax(std::numeric_limits<float>::lowest(), std::numeric_limits<float>::lowest());
+        if (!geometry->mData->mUVList.empty())
+            for (const osg::Vec2f& uv : geometry->mData->mUVList.front())
+            {
+                uvMin.x() = std::min(uvMin.x(), uv.x());
+                uvMin.y() = std::min(uvMin.y(), uv.y());
+                uvMax.x() = std::max(uvMax.x(), uv.x());
+                uvMax.y() = std::max(uvMax.y(), uv.y());
+            }
+
+        osg::Vec4f colorMin(std::numeric_limits<float>::max(), std::numeric_limits<float>::max(),
+            std::numeric_limits<float>::max(), std::numeric_limits<float>::max());
+        osg::Vec4f colorMax(std::numeric_limits<float>::lowest(), std::numeric_limits<float>::lowest(),
+            std::numeric_limits<float>::lowest(), std::numeric_limits<float>::lowest());
+        for (const osg::Vec4f& color : geometry->mData->mColors)
+        {
+            for (int component = 0; component < 4; ++component)
+            {
+                colorMin[component] = std::min(colorMin[component], color[component]);
+                colorMax[component] = std::max(colorMax[component], color[component]);
+            }
+        }
         osg::BoundingBox box;
         osg::BoundingBox worldBox;
         for (const osg::Vec3f& vertex : vertices)
@@ -702,9 +734,64 @@ int runFnvGeometryDump(const std::filesystem::path& meshPath, const std::filesys
             out << ",";
         firstGeometry = false;
 
+        const Nif::NiAlphaProperty* alphaProperty = geometry->mAlphaProperty.empty()
+            ? nullptr
+            : geometry->mAlphaProperty.getPtr();
+        const Nif::BSShaderProperty* shaderProperty = geometry->mShaderProperty.empty()
+            ? nullptr
+            : geometry->mShaderProperty.getPtr();
+        for (const auto& property : geometry->mProperties)
+        {
+            if (property.empty())
+                continue;
+            if (property->recType == Nif::RC_NiAlphaProperty)
+                alphaProperty = static_cast<const Nif::NiAlphaProperty*>(property.getPtr());
+            if (const auto* shader = dynamic_cast<const Nif::BSShaderProperty*>(property.getPtr()))
+                shaderProperty = shader;
+        }
+
         out << "\n    {\"name\":\"" << jsonEscape(geometry->mName) << "\""
+            << ",\"avFlags\":" << geometry->mFlags
+            << ",\"hidden\":" << (geometry->isHidden() ? "true" : "false")
             << ",\"vertexCount\":" << vertices.size()
+            << ",\"dataRecordType\":" << geometry->mData->recType
+            << ",\"authoredTriangleCount\":" << (triBased == nullptr ? 0 : triBased->mNumTriangles)
+            << ",\"triangleIndexCount\":" << (triShape == nullptr ? 0 : triShape->mTriangles.size())
+            << ",\"stripCount\":" << (triStrips == nullptr ? 0 : triStrips->mStrips.size())
+            << ",\"stripIndexCount\":" << stripIndexCount
             << ",\"hasSkin\":" << (!geometry->mSkin.empty() ? "true" : "false")
+            << ",\"uvSets\":" << geometry->mData->mUVList.size()
+            << ",\"uv0Count\":"
+            << (geometry->mData->mUVList.empty() ? 0 : geometry->mData->mUVList.front().size())
+            << ",\"uv0Min\":["
+            << (geometry->mData->mUVList.empty() ? 0.f : uvMin.x()) << ","
+            << (geometry->mData->mUVList.empty() ? 0.f : uvMin.y()) << "]"
+            << ",\"uv0Max\":["
+            << (geometry->mData->mUVList.empty() ? 0.f : uvMax.x()) << ","
+            << (geometry->mData->mUVList.empty() ? 0.f : uvMax.y()) << "]"
+            << ",\"vertexColors\":" << geometry->mData->mColors.size()
+            << ",\"vertexColorMin\":["
+            << (geometry->mData->mColors.empty() ? 0.f : colorMin.r()) << ","
+            << (geometry->mData->mColors.empty() ? 0.f : colorMin.g()) << ","
+            << (geometry->mData->mColors.empty() ? 0.f : colorMin.b()) << ","
+            << (geometry->mData->mColors.empty() ? 0.f : colorMin.a()) << "]"
+            << ",\"vertexColorMax\":["
+            << (geometry->mData->mColors.empty() ? 0.f : colorMax.r()) << ","
+            << (geometry->mData->mColors.empty() ? 0.f : colorMax.g()) << ","
+            << (geometry->mData->mColors.empty() ? 0.f : colorMax.b()) << ","
+            << (geometry->mData->mColors.empty() ? 0.f : colorMax.a()) << "]"
+            << ",\"alphaFlags\":" << (alphaProperty == nullptr ? -1 : alphaProperty->mFlags)
+            << ",\"alphaBlend\":"
+            << (alphaProperty != nullptr && alphaProperty->useAlphaBlending() ? "true" : "false")
+            << ",\"alphaSource\":" << (alphaProperty == nullptr ? -1 : alphaProperty->sourceBlendMode())
+            << ",\"alphaDestination\":"
+            << (alphaProperty == nullptr ? -1 : alphaProperty->destinationBlendMode())
+            << ",\"shaderFlags1\":" << (shaderProperty == nullptr ? 0u : shaderProperty->mShaderFlags1)
+            << ",\"shaderFlags2\":" << (shaderProperty == nullptr ? 0u : shaderProperty->mShaderFlags2)
+            << ",\"shaderDepthTest\":"
+            << (shaderProperty != nullptr && shaderProperty->depthTest() ? "true" : "false")
+            << ",\"shaderDepthWrite\":"
+            << (shaderProperty != nullptr && shaderProperty->depthWrite() ? "true" : "false")
             << ",\"extent\":" << formatVec3Json(fnvAuditExtent(box))
             << ",\"worldExtent\":" << formatVec3Json(fnvAuditExtent(worldBox))
             << ",\"localTransform\":" << formatMatrixJson(geometry->mTransform.toMatrix())
@@ -722,6 +809,47 @@ int runFnvGeometryDump(const std::filesystem::path& meshPath, const std::filesys
             if (i != 0)
                 out << ",";
             out << formatVec3Json(vertices[i] * info.mWorldTransform);
+        }
+        out << "],\"uv0\":[";
+        if (!geometry->mData->mUVList.empty())
+        {
+            const auto& uvSet = geometry->mData->mUVList.front();
+            for (std::size_t i = 0; i < uvSet.size(); ++i)
+            {
+                if (i != 0)
+                    out << ",";
+                out << "[" << uvSet[i].x() << "," << uvSet[i].y() << "]";
+            }
+        }
+        out << "],\"vertexColorAlpha\":[";
+        for (std::size_t i = 0; i < geometry->mData->mColors.size(); ++i)
+        {
+            if (i != 0)
+                out << ",";
+            out << geometry->mData->mColors[i].a();
+        }
+        out << "],\"triangleIndices\":[";
+        if (triShape != nullptr)
+        {
+            for (std::size_t i = 0; i < triShape->mTriangles.size(); ++i)
+            {
+                if (i != 0)
+                    out << ",";
+                out << triShape->mTriangles[i];
+            }
+        }
+        out << "],\"stripIndices\":[";
+        if (triStrips != nullptr)
+        {
+            bool firstIndex = true;
+            for (const auto& strip : triStrips->mStrips)
+                for (const unsigned short index : strip)
+                {
+                    if (!firstIndex)
+                        out << ",";
+                    firstIndex = false;
+                    out << index;
+                }
         }
         out << "]";
 
@@ -815,6 +943,254 @@ int runFnvGeometryDump(const std::filesystem::path& meshPath, const std::filesys
 
     out << "\n  ]\n";
     out << "}\n";
+    return 0;
+}
+
+int runFnvParticleDump(const std::filesystem::path& meshPath, const std::filesystem::path& outPath)
+{
+    Nif::Reader::setLoadUnsupportedFiles(true);
+
+    std::unique_ptr<Nif::NIFFile> meshFile = readNifFile(meshPath);
+    std::ofstream out(outPath);
+    if (!out)
+        throw std::runtime_error("failed to open output path");
+
+    out << std::setprecision(9);
+    out << "{\n  \"mesh\": \"" << jsonEscape(Files::pathToUnicodeString(meshPath))
+        << "\",\n  \"systems\": [";
+
+    bool firstSystem = true;
+    for (const std::unique_ptr<Nif::Record>& record : meshFile->mRecords)
+    {
+        const auto* system = dynamic_cast<const Nif::NiParticleSystem*>(record.get());
+        if (system == nullptr)
+            continue;
+
+        if (!firstSystem)
+            out << ',';
+        firstSystem = false;
+
+        const auto* data = system->mData.empty()
+            ? nullptr
+            : dynamic_cast<const Nif::NiParticlesData*>(system->mData.getPtr());
+        out << "\n    {\"name\":\"" << jsonEscape(system->mName) << "\""
+            << ",\"flags\":" << system->mFlags
+            << ",\"worldSpace\":" << (system->mWorldSpace ? "true" : "false")
+            << ",\"numParticles\":" << (data == nullptr ? 0 : data->mNumParticles)
+            << ",\"activeCount\":" << (data == nullptr ? 0 : data->mActiveCount)
+            << ",\"aspectRatio\":" << (data == nullptr ? 0.f : data->mAspectRatio)
+            << ",\"modifiers\":[";
+
+        bool firstModifier = true;
+        for (const Nif::NiPSysModifierPtr& modifierPtr : system->mModifiers)
+        {
+            if (modifierPtr.empty())
+                continue;
+            const Nif::NiPSysModifier* modifier = modifierPtr.getPtr();
+            if (!firstModifier)
+                out << ',';
+            firstModifier = false;
+            out << "{\"type\":\"" << jsonEscape(modifier->recName) << "\""
+                << ",\"name\":\"" << jsonEscape(modifier->mName) << "\""
+                << ",\"active\":" << (modifier->mActive ? "true" : "false")
+                << ",\"order\":" << static_cast<uint32_t>(modifier->mOrder);
+
+            if (const auto* emitter = dynamic_cast<const Nif::NiPSysEmitter*>(modifier))
+            {
+                out << ",\"speed\":" << emitter->mSpeed
+                    << ",\"speedVariation\":" << emitter->mSpeedVariation
+                    << ",\"declination\":" << emitter->mDeclination
+                    << ",\"declinationVariation\":" << emitter->mDeclinationVariation
+                    << ",\"planarAngle\":" << emitter->mPlanarAngle
+                    << ",\"planarAngleVariation\":" << emitter->mPlanarAngleVariation
+                    << ",\"initialColor\":[" << emitter->mInitialColor.r() << ','
+                    << emitter->mInitialColor.g() << ',' << emitter->mInitialColor.b() << ','
+                    << emitter->mInitialColor.a() << ']'
+                    << ",\"initialRadius\":" << emitter->mInitialRadius
+                    << ",\"radiusVariation\":" << emitter->mRadiusVariation
+                    << ",\"lifespan\":" << emitter->mLifespan
+                    << ",\"lifespanVariation\":" << emitter->mLifespanVariation;
+
+                if (const auto* box = dynamic_cast<const Nif::NiPSysBoxEmitter*>(emitter))
+                    out << ",\"box\":[" << box->mWidth << ',' << box->mDepth << ',' << box->mHeight << ']';
+                else if (const auto* cylinder = dynamic_cast<const Nif::NiPSysCylinderEmitter*>(emitter))
+                    out << ",\"cylinder\":[" << cylinder->mRadius << ',' << cylinder->mHeight << ']';
+                else if (const auto* sphere = dynamic_cast<const Nif::NiPSysSphereEmitter*>(emitter))
+                    out << ",\"sphereRadius\":" << sphere->mRadius;
+                else if (const auto* mesh = dynamic_cast<const Nif::NiPSysMeshEmitter*>(emitter))
+                    out << ",\"meshCount\":" << mesh->mEmitterMeshes.size()
+                        << ",\"initialVelocityType\":" << mesh->mInitialVelocityType
+                        << ",\"emissionType\":" << mesh->mEmissionType
+                        << ",\"emissionAxis\":" << formatVec3Json(mesh->mEmissionAxis);
+            }
+            else if (const auto* growFade = dynamic_cast<const Nif::NiPSysGrowFadeModifier*>(modifier))
+            {
+                out << ",\"growTime\":" << growFade->mGrowTime
+                    << ",\"fadeTime\":" << growFade->mFadeTime
+                    << ",\"baseScale\":" << growFade->mBaseScale;
+            }
+            else if (const auto* bomb = dynamic_cast<const Nif::NiPSysBombModifier*>(modifier))
+            {
+                out << ",\"axis\":" << formatVec3Json(bomb->mBombAxis)
+                    << ",\"range\":" << bomb->mRange
+                    << ",\"strength\":" << bomb->mStrength
+                    << ",\"decayType\":" << static_cast<uint32_t>(bomb->mDecayType)
+                    << ",\"symmetryType\":" << static_cast<uint32_t>(bomb->mSymmetryType)
+                    << ",\"object\":\""
+                    << jsonEscape(bomb->mBombObject.empty() ? std::string() : bomb->mBombObject->mName) << "\"";
+            }
+            else if (const auto* gravity = dynamic_cast<const Nif::NiPSysGravityModifier*>(modifier))
+            {
+                out << ",\"axis\":" << formatVec3Json(gravity->mGravityAxis)
+                    << ",\"decay\":" << gravity->mDecay
+                    << ",\"strength\":" << gravity->mStrength
+                    << ",\"forceType\":" << static_cast<uint32_t>(gravity->mForceType)
+                    << ",\"turbulence\":" << gravity->mTurbulence
+                    << ",\"turbulenceScale\":" << gravity->mTurbulenceScale
+                    << ",\"worldAligned\":" << (gravity->mWorldAligned ? "true" : "false")
+                    << ",\"object\":\""
+                    << jsonEscape(gravity->mGravityObject.empty() ? std::string() : gravity->mGravityObject->mName)
+                    << "\"";
+            }
+            else if (const auto* scale = dynamic_cast<const Nif::BSPSysScaleModifier*>(modifier))
+            {
+                out << ",\"scales\":[";
+                for (std::size_t i = 0; i < scale->mScales.size(); ++i)
+                {
+                    if (i != 0)
+                        out << ',';
+                    out << scale->mScales[i];
+                }
+                out << ']';
+            }
+            else if (const auto* simpleColor = dynamic_cast<const Nif::BSPSysSimpleColorModifier*>(modifier))
+            {
+                out << ",\"fadeInPercent\":" << simpleColor->mFadeInPercent
+                    << ",\"fadeOutPercent\":" << simpleColor->mFadeOutPercent
+                    << ",\"color1EndPercent\":" << simpleColor->mColor1EndPercent
+                    << ",\"color1StartPercent\":" << simpleColor->mColor1StartPercent
+                    << ",\"color2EndPercent\":" << simpleColor->mColor2EndPercent
+                    << ",\"color2StartPercent\":" << simpleColor->mColor2StartPercent
+                    << ",\"colors\":[";
+                for (std::size_t i = 0; i < simpleColor->mColors.size(); ++i)
+                {
+                    if (i != 0)
+                        out << ',';
+                    const osg::Vec4f& color = simpleColor->mColors[i];
+                    out << '[' << color.r() << ',' << color.g() << ',' << color.b() << ',' << color.a() << ']';
+                }
+                out << ']';
+            }
+            out << '}';
+        }
+        out << "],\"controllers\":[";
+        bool firstController = true;
+        for (Nif::NiTimeControllerPtr controllerPtr = system->mController; !controllerPtr.empty();
+             controllerPtr = controllerPtr->mNext)
+        {
+            const Nif::NiTimeController* controller = controllerPtr.getPtr();
+            if (!firstController)
+                out << ',';
+            firstController = false;
+            out << "{\"type\":\"" << jsonEscape(controller->recName) << "\""
+                << ",\"flags\":" << controller->mFlags
+                << ",\"frequency\":" << controller->mFrequency
+                << ",\"phase\":" << controller->mPhase
+                << ",\"start\":" << controller->mTimeStart
+                << ",\"stop\":" << controller->mTimeStop;
+            if (const auto* emitterController = dynamic_cast<const Nif::NiPSysEmitterCtlr*>(controller))
+            {
+                out << ",\"modifierName\":\"" << jsonEscape(emitterController->mModifierName) << "\"";
+                if (!emitterController->mInterpolator.empty())
+                {
+                    out << ",\"interpolatorType\":\""
+                        << jsonEscape(emitterController->mInterpolator->recName) << "\"";
+                    if (const auto* value = dynamic_cast<const Nif::NiFloatInterpolator*>(
+                            emitterController->mInterpolator.getPtr()))
+                        out << ",\"defaultRate\":" << value->mDefaultValue;
+                    else if (const auto* blend = dynamic_cast<const Nif::NiBlendFloatInterpolator*>(
+                                 emitterController->mInterpolator.getPtr()))
+                    {
+                        out << ",\"blendValue\":" << blend->mValue << ",\"blendItems\":[";
+                        for (std::size_t i = 0; i < blend->mItems.size(); ++i)
+                        {
+                            if (i != 0)
+                                out << ',';
+                            out << "{\"weight\":" << blend->mItems[i].mWeight;
+                            if (!blend->mItems[i].mInterpolator.empty())
+                            {
+                                out << ",\"type\":\""
+                                    << jsonEscape(blend->mItems[i].mInterpolator->recName) << "\"";
+                                if (const auto* value = dynamic_cast<const Nif::NiFloatInterpolator*>(
+                                        blend->mItems[i].mInterpolator.getPtr()))
+                                    out << ",\"value\":" << value->mDefaultValue;
+                            }
+                            out << '}';
+                        }
+                        out << ']';
+                    }
+                }
+            }
+            out << '}';
+        }
+        out << "]}";
+    }
+    out << "\n  ],\n  \"controllerSequences\": [";
+    bool firstSequence = true;
+    for (const std::unique_ptr<Nif::Record>& record : meshFile->mRecords)
+    {
+        const auto* sequence = dynamic_cast<const Nif::NiControllerSequence*>(record.get());
+        if (sequence == nullptr)
+            continue;
+
+        if (!firstSequence)
+            out << ',';
+        firstSequence = false;
+        out << "\n    {\"name\":\"" << jsonEscape(sequence->mName) << "\""
+            << ",\"frequency\":" << sequence->mFrequency
+            << ",\"phase\":" << sequence->mPhase
+            << ",\"start\":" << sequence->mStartTime
+            << ",\"stop\":" << sequence->mStopTime
+            << ",\"blocks\":[";
+        bool firstBlock = true;
+        for (const Nif::ControlledBlock& block : sequence->mControlledBlocks)
+        {
+            if (!firstBlock)
+                out << ',';
+            firstBlock = false;
+            out << "{\"target\":\"" << jsonEscape(resolveNifControlledBlockTargetName(*sequence, block)) << "\""
+                << ",\"controllerType\":\"" << jsonEscape(block.mControllerType) << "\""
+                << ",\"controllerId\":\"" << jsonEscape(block.mControllerId) << "\""
+                << ",\"interpolatorId\":\"" << jsonEscape(block.mInterpolatorId) << "\"";
+            if (!block.mInterpolator.empty())
+            {
+                out << ",\"interpolatorType\":\"" << jsonEscape(block.mInterpolator->recName) << "\"";
+                if (const auto* value = dynamic_cast<const Nif::NiFloatInterpolator*>(block.mInterpolator.getPtr()))
+                {
+                    out << ",\"defaultValue\":" << value->mDefaultValue;
+                    if (!value->mData.empty() && value->mData->mKeyList)
+                    {
+                        out << ",\"keys\":[";
+                        bool firstKey = true;
+                        for (const auto& [time, key] : value->mData->mKeyList->mKeys)
+                        {
+                            if (!firstKey)
+                                out << ',';
+                            firstKey = false;
+                            out << '[' << time << ',' << key.mValue << ']';
+                        }
+                        out << ']';
+                    }
+                }
+                else if (const auto* value
+                    = dynamic_cast<const Nif::NiBoolInterpolator*>(block.mInterpolator.getPtr()))
+                    out << ",\"defaultValue\":" << (value->mDefaultValue ? "true" : "false");
+            }
+            out << '}';
+        }
+        out << "]}";
+    }
+    out << "\n  ]\n}\n";
     return 0;
 }
 
@@ -1656,6 +2032,19 @@ Allowed options)");
 
 int main(int argc, char** argv)
 {
+    if (argc == 4 && std::string_view(argv[1]) == "--fnv-particle-dump")
+    {
+        try
+        {
+            return runFnvParticleDump(argv[2], argv[3]);
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "FNV particle dump failed: " << e.what() << std::endl;
+            return 2;
+        }
+    }
+
     if (argc == 4 && std::string_view(argv[1]) == "--fnv-geometry-dump")
     {
         try

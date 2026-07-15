@@ -93,7 +93,9 @@ namespace
         {
             const ESM4::Creature* creature = ptr.get<ESM4::Creature>()->mBase;
             if (creature->mBoundRadius > 1.f)
-                radius = creature->mBoundRadius * std::max(creature->mBaseScale, 0.1f);
+                // Class::adjustScale applies CREA BNAM uniformly when Actor builds its collision extents.
+                // Keep the synthetic source extent unscaled here so the base scale is applied exactly once.
+                radius = creature->mBoundRadius;
             halfHeight = std::max(halfHeight, radius);
         }
 

@@ -117,6 +117,11 @@ namespace Shader
 
             bool mSoftParticles;
 
+            // Shader properties live on an ancestor transform while the final Program is also installed on
+            // descendant drawables. Carry the selected family through the requirement stack so a child program
+            // cannot silently fall back to the generic "objects" shader and override its authored parent.
+            std::string mShaderPrefix;
+
             // the Node that requested these requirements
             osg::Node* mNode;
         };

@@ -2,8 +2,12 @@
 
 #include <algorithm>
 #include <array>
+#include <cstdlib>
 #include <cstring>
 #include <iterator>
+#include <set>
+#include <sstream>
+#include <string_view>
 
 #include <osg/BufferIndexBinding>
 #include <osg/BufferObject>
@@ -63,6 +67,28 @@ namespace
         mat(1, 3) = l;
         mat(2, 3) = q;
         mat(3, 3) = r;
+    }
+
+    bool fnvProofLightTraceEnabled()
+    {
+        static const bool enabled = std::getenv("OPENMW_FNV_PROOF_LIGHT_TRACE") != nullptr;
+        return enabled;
+    }
+
+    std::string describeNodePath(const osg::NodePath& path)
+    {
+        std::ostringstream stream;
+        for (std::size_t i = 0; i < path.size(); ++i)
+        {
+            if (i != 0)
+                stream << " > ";
+            const osg::Node* node = path[i];
+            stream << node->className();
+            const std::string& name = node->getName();
+            if (!name.empty())
+                stream << "('" << name << "')";
+        }
+        return stream.str();
     }
 }
 
@@ -593,6 +619,26 @@ namespace SceneUtil
 
             mLightManager->addLight(
                 static_cast<LightSource*>(node), osg::computeLocalToWorld(nv->getNodePath()), nv->getTraversalNumber());
+
+            if (fnvProofLightTraceEnabled())
+            {
+                LightSource* source = static_cast<LightSource*>(node);
+                static std::set<std::pair<unsigned int, int>> logged;
+                const unsigned int frame = nv->getTraversalNumber();
+                const int id = source->getId();
+                if (logged.insert({ frame, id }).second)
+                {
+                    const osg::Matrixf world = osg::computeLocalToWorld(nv->getNodePath());
+                    const osg::Vec3f pos = world.getTrans();
+                    const osg::Light* light = source->getLight(frame);
+                    Log(Debug::Info) << "FNV proof light trace: frame=" << frame << " id=" << id
+                                     << " pos=(" << pos.x() << "," << pos.y() << "," << pos.z() << ")"
+                                     << " radius=" << source->getRadius() << " diffuse=(" << light->getDiffuse().x()
+                                     << "," << light->getDiffuse().y() << "," << light->getDiffuse().z() << ","
+                                     << light->getDiffuse().w() << ") path=\"" << describeNodePath(nv->getNodePath())
+                                     << "\"";
+                }
+            }
 
             traverse(node, nv);
         }
@@ -1365,6 +1411,73 @@ namespace SceneUtil
                     });
 
                 mLightList.resize(maxLights);
+            }
+
+            const char* parityAudit = std::getenv("OPENMW_FNV_PARITY_LIGHT_AUDIT");
+            std::string actorEditorId;
+            const bool actorTagged = node->getUserValue("OpenMW.ActorEditorId", actorEditorId);
+            const char* targetEditorId = std::getenv("OPENMW_FNV_PARITY_LIGHT_TARGET_EDITOR_ID");
+            const bool targetMatches = actorTagged && targetEditorId != nullptr
+                && std::string_view(actorEditorId) == std::string_view(targetEditorId);
+            unsigned long requestedFrame = 0;
+            if (const char* requestedFrameText = std::getenv("OPENMW_FNV_PARITY_LIGHT_CAPTURE_FRAME"))
+            {
+                char* end = nullptr;
+                requestedFrame = std::strtoul(requestedFrameText, &end, 10);
+                if (end == requestedFrameText)
+                    requestedFrame = 0;
+            }
+            if (!mParityLightSnapshotLogged && parityAudit != nullptr && parityAudit[0] != '\0'
+                && targetMatches && mLastFrameNumber >= requestedFrame)
+            {
+                mParityLightSnapshotLogged = true;
+                std::ostringstream snapshot;
+                snapshot << "FNV parity light snapshot: frame=" << requestedFrame
+                         << " traversal=" << mLastFrameNumber << " actor=\"" << actorEditorId << "\""
+                         << " node=\"" << node->getName() << "\""
+                         << " nodeBoundView=(" << nodeBound.center().x() << "," << nodeBound.center().y() << ","
+                         << nodeBound.center().z() << "," << nodeBound.radius() << ")";
+                if (osg::Light* sun = mLightManager->getSunlight())
+                {
+                    const osg::Vec4 sunPosition = sun->getPosition();
+                    const osg::Vec4 sunDiffuse = sun->getDiffuse();
+                    const osg::Vec4 sunAmbient = sun->getAmbient();
+                    const osg::Vec4 sunSpecular = sun->getSpecular();
+                    snapshot << " sun={position:(" << sunPosition.x() << "," << sunPosition.y() << ","
+                             << sunPosition.z() << "," << sunPosition.w() << "),diffuse:(" << sunDiffuse.r() << ","
+                             << sunDiffuse.g() << "," << sunDiffuse.b() << "," << sunDiffuse.a() << "),ambient:("
+                             << sunAmbient.r() << "," << sunAmbient.g() << "," << sunAmbient.b() << ","
+                             << sunAmbient.a() << "),specular:(" << sunSpecular.r() << "," << sunSpecular.g() << ","
+                             << sunSpecular.b() << "," << sunSpecular.a() << ")}";
+                }
+                snapshot << " selectedCount=" << mLightList.size() << " selected=[";
+                for (std::size_t i = 0; i < mLightList.size(); ++i)
+                {
+                    const LightManager::LightSourceViewBound& selected = *mLightList[i];
+                    LightSource* source = selected.mLightSource;
+                    const osg::Light* light = source->getLight(mLastFrameNumber);
+                    const osg::Vec4 position = light->getPosition();
+                    const osg::Vec4 viewPosition = position * viewMatrix;
+                    const osg::Vec4 diffuse = light->getDiffuse();
+                    const osg::Vec4 ambient = light->getAmbient();
+                    const osg::Vec4 specular = light->getSpecular();
+                    if (i != 0)
+                        snapshot << ";";
+                    snapshot << "{index:" << i << ",id:" << source->getId() << ",position:(" << position.x() << ","
+                             << position.y() << "," << position.z() << "," << position.w() << "),viewPosition:("
+                             << viewPosition.x() << "," << viewPosition.y() << "," << viewPosition.z() << ","
+                             << viewPosition.w() << "),diffuse:(" << diffuse.r() << "," << diffuse.g() << ","
+                             << diffuse.b() << "," << diffuse.a() << "),ambient:(" << ambient.r() << ","
+                             << ambient.g() << "," << ambient.b() << "," << ambient.a() << "),specular:("
+                             << specular.r() << "," << specular.g() << "," << specular.b() << "," << specular.a()
+                             << "),attenuation:(" << light->getConstantAttenuation() << ","
+                             << light->getLinearAttenuation() << "," << light->getQuadraticAttenuation() << "),radius:"
+                             << source->getRadius() << ",actorFade:" << source->getActorFade() << ",viewBound:("
+                             << selected.mViewBound.center().x() << "," << selected.mViewBound.center().y() << ","
+                             << selected.mViewBound.center().z() << "," << selected.mViewBound.radius() << ")}";
+                }
+                snapshot << "]";
+                Log(Debug::Info) << snapshot.str();
             }
         }
 

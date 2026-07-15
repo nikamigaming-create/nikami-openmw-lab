@@ -187,6 +187,7 @@ namespace
     {
         ESM4::ImageSpace base;
         base.mTraits[ESM4::ImageSpace::Trait_TargetLuminance] = 1.4f;
+        base.mTraits[ESM4::ImageSpace::Trait_LuminanceRampNoTexture] = 1.1f;
         base.mTraits[ESM4::ImageSpace::Trait_SunlightDimmer] = 1.1f;
         base.mTraits[ESM4::ImageSpace::Trait_SkinDimmer] = 0.55f;
         base.mTraits[ESM4::ImageSpace::Trait_CinematicSaturation] = 1.1f;
@@ -200,6 +201,7 @@ namespace
 
         ESM4::ImageSpaceModifier modifier;
         modifier.mMultiply[ESM4::ImageSpaceModifier::Channel_SkinDimmer].push_back({ 0.f, 0.35f });
+        modifier.mMultiply[ESM4::ImageSpaceModifier::Channel_LuminanceRampNoTexture].push_back({ 0.f, 0.8f });
         modifier.mMultiply[ESM4::ImageSpaceModifier::Channel_SunlightDimmer].push_back({ 0.f, 1.1f });
         modifier.mMultiply[ESM4::ImageSpaceModifier::Channel_CinematicSaturation].push_back({ 0.f, 1.f });
         modifier.mMultiply[ESM4::ImageSpaceModifier::Channel_CinematicContrast].push_back({ 0.f, 1.f });
@@ -213,6 +215,7 @@ namespace
             { { &modifier, 0.f, 0.401982009f }, { &modifier, 0.f, 0.598017991f } });
 
         EXPECT_NEAR(result.mTraits[ESM4::ImageSpace::Trait_SkinDimmer], 0.1925f, 1e-6f);
+        EXPECT_NEAR(result.mTraits[ESM4::ImageSpace::Trait_LuminanceRampNoTexture], 0.88f, 1e-6f);
         EXPECT_NEAR(result.mTraits[ESM4::ImageSpace::Trait_SunlightDimmer], 1.21f, 1e-6f);
         EXPECT_NEAR(result.mTraits[ESM4::ImageSpace::Trait_CinematicBrightness], 1.3f, 1e-6f);
         EXPECT_NEAR(result.mTint[0], 0.992831886f, 1e-6f);

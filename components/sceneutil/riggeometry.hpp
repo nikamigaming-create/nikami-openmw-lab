@@ -6,6 +6,7 @@
 #include <osg/NodeVisitor>
 
 #include <array>
+#include <atomic>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -86,6 +87,11 @@ namespace SceneUtil
         osg::ref_ptr<osg::Geometry> getSourceGeometry() const;
         osg::Geometry* getRenderGeometry(unsigned int index) const;
         osg::Geometry* getLastFrameGeometry() const;
+        unsigned int getLastCullTraversalNumber() const
+        {
+            return mLastCullTraversalNumber.load(std::memory_order_acquire);
+        }
+        bool hasResolvedParentSkeleton() const { return mSkeleton != nullptr; }
         bool computeCurrentFalloutSkinningBounds(osg::NodeVisitor* nv, osg::BoundingBox& box);
         void forceNextUpdate();
         bool refreshFalloutSkinningForCurrentPose();
@@ -133,6 +139,11 @@ namespace SceneUtil
         std::vector<Bone*> mNodes;
 
         unsigned int mLastFrameNumber{ 0 };
+        // mLastFrameNumber is also reset by forceNextUpdate() so the double-buffered
+        // geometry is refreshed after an animation/IK change.  Keep actual cull
+        // evidence separate; otherwise a proof gate sampled during the following
+        // update traversal observes zero even though this drawable was rendered.
+        std::atomic_uint mLastCullTraversalNumber{ 0 };
         bool mBoundsFirstFrame{ true };
         bool mLoggedFalloutRigInit{ false };
         bool mLoggedFalloutCullTraversal{ false };

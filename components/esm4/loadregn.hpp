@@ -70,6 +70,19 @@ namespace ESM4
         };
 #pragma pack(pop)
 
+        struct RegionWeather
+        {
+            ESM::FormId mWeather;
+            std::uint32_t mChance = 0;
+            ESM::FormId mGlobal;
+        };
+
+        struct RegionWeatherBlock
+        {
+            RegionData mData{};
+            std::vector<RegionWeather> mEntries;
+        };
+
         ESM::FormId mId; // from the header
         std::uint32_t mFlags; // from the header, see enum type RecordFlag for details
 
@@ -83,8 +96,9 @@ namespace ESM4
         std::uint32_t mEdgeFalloff;
         std::vector<std::uint32_t> mRPLD; // unknown, point data?
 
-        RegionData mData;
+        RegionData mData{};
         std::vector<RegionSound> mSounds;
+        std::vector<RegionWeatherBlock> mWeather;
 
         void load(ESM4::Reader& reader);
         // void save(ESM4::Writer& writer) const;

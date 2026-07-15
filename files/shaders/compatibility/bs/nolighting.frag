@@ -22,6 +22,10 @@ varying float passFalloff;
 
 uniform vec2 screenRes;
 uniform bool useFalloff;
+uniform bool useNoLightingEmission;
+uniform bool useNoLightingVertexColor;
+uniform bool creatureScreenDebugSolidColor;
+uniform float emissiveMult;
 uniform float far;
 uniform float near;
 uniform float alphaRef;
@@ -44,6 +48,15 @@ uniform float softFalloffDepth;
 
 void main()
 {
+    // This opt-in diagnostic must bypass texture sampling, alpha rejection, fog, and
+    // material state so a missing result unambiguously means the screen geometry did
+    // not reach this fragment program.
+    if (creatureScreenDebugSolidColor)
+    {
+        gl_FragData[0] = vec4(1.0, 0.0, 1.0, 1.0);
+        return;
+    }
+
 #if @diffuseMap
     gl_FragData[0] = texture2D(diffuseMap, diffuseMapUV);
     gl_FragData[0].a *= coveragePreservingAlphaScale(diffuseMap, diffuseMapUV);
@@ -51,7 +64,16 @@ void main()
     gl_FragData[0] = vec4(1.0);
 #endif
 
-    gl_FragData[0] *= getDiffuseColor();
+    vec4 diffuseColor = getDiffuseColor();
+    if (useNoLightingEmission)
+    {
+        gl_FragData[0].rgb *= gl_FrontMaterial.emission.rgb * emissiveMult;
+        gl_FragData[0].a *= gl_FrontMaterial.diffuse.a;
+        if (useNoLightingVertexColor)
+            gl_FragData[0] *= passColor;
+    }
+    else
+        gl_FragData[0] *= diffuseColor;
 
     if (useFalloff)
         gl_FragData[0].a *= passFalloff;

@@ -178,6 +178,7 @@ namespace ESM4
         ESM::FormId mEnchantment;
 
         std::vector<ESM::FormId> mAddOns; // TES5 ARMA
+        ESM::FormId mBipedModelList{}; // FO3/FNV BIPL -> FLST of ARMA records
         Data mData;
 
         void load(ESM4::Reader& reader);

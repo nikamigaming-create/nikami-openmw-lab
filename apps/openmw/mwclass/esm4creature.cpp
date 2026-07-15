@@ -121,6 +121,26 @@ namespace MWClass
         return *current;
     }
 
+    static std::vector<const ESM4::Creature*> getCreatureTemplateChain(const ESM4::Creature& creature)
+    {
+        std::vector<const ESM4::Creature*> records;
+        const ESM4::Creature* current = &creature;
+        for (int depth = 0; current != nullptr && depth < 16; ++depth)
+        {
+            if (std::find(records.begin(), records.end(), current) != records.end())
+                break;
+            records.push_back(current);
+            if (current->mBaseTemplate.isZeroOrUnset())
+                break;
+
+            const ESM4::Creature* templated = searchCreatureTemplate(current->mBaseTemplate);
+            if (templated == nullptr || templated == current)
+                break;
+            current = templated;
+        }
+        return records;
+    }
+
     static bool fnvPackageHasExplicitTime(const ESM4::AIPackage& package)
     {
         return package.mSchedule.time != 0xff && package.mSchedule.duration != 0;
@@ -400,11 +420,13 @@ namespace MWClass
 
     std::string_view ESM4Creature::getModel(const MWWorld::ConstPtr& ptr) const
     {
-        const ESM4::Creature& creature = getEffectiveCreature(*ptr.get<ESM4::Creature>()->mBase);
-        if (!creature.mModel.empty())
-            return creature.mModel;
-        if (!creature.mNif.empty())
-            return creature.mNif.front();
+        const std::vector<const ESM4::Creature*> records
+            = getCreatureTemplateChain(*ptr.get<ESM4::Creature>()->mBase);
+        const ESM4::CreatureVisualTemplate visual = ESM4::resolveCreatureVisualTemplate(records);
+        if (visual.mModel != nullptr)
+            return visual.mModel->mModel;
+        if (visual.mNif != nullptr && !visual.mNif->mNif.empty())
+            return visual.mNif->mNif.front();
         return {};
     }
 
@@ -510,5 +532,16 @@ namespace MWClass
         return (getEffectiveCreature(*ptr.get<ESM4::Creature>()->mBase).mBaseConfig.fo3.flags
                    & ESM4::Creature::FO3_CanWalk)
             != 0;
+    }
+
+    void ESM4Creature::adjustScale(
+        const MWWorld::ConstPtr& ptr, osg::Vec3f& scale, bool /* rendering */) const
+    {
+        // Fallout's CREA BNAM is an actor-base scale, independent of the placed ACHR/ACRE XSCL.  Physics
+        // already used it while the render root only received the placed-reference scale, which made ravens
+        // 1/2.5 size, mantises 2x size, and every other non-1.0 creature disagree with retail.  Apply the same
+        // multiplicative class-scale contract used by native ESM3 creatures to both render and collision.
+        const ESM4::Creature& creature = getEffectiveCreature(*ptr.get<ESM4::Creature>()->mBase);
+        scale *= creature.mBaseScale;
     }
 }

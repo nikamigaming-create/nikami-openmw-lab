@@ -13,6 +13,34 @@
 namespace SceneUtil
 {
 
+    enum class NodeNameMatchKind
+    {
+        None,
+        Exact,
+        Canonical,
+        Semantic,
+        NumericEquivalent,
+        NumericReversed,
+        DefaultIndex,
+    };
+
+    struct NodeNameMatch
+    {
+        NodeNameMatchKind mKind = NodeNameMatchKind::None;
+        int mScore = 0;
+
+        explicit operator bool() const { return mKind != NodeNameMatchKind::None; }
+    };
+
+    /// Compare an external animation/attachment target with a scene-graph node name.
+    ///
+    /// Bethesda assets use several exporter spellings for the same authored node: separators can disappear,
+    /// geometry can gain a ':0' suffix, skeletal nodes can be exposed with a BipXX prefix or a Root suffix, and
+    /// numeric suffixes can be zero-padded.  This matcher is deliberately actor-agnostic and returns a score so a
+    /// caller can require a unique best candidate rather than silently binding an ambiguous node.
+    NodeNameMatch matchNodeName(std::string_view requested, std::string_view candidate);
+    std::string_view getNodeNameMatchKindName(NodeNameMatchKind kind);
+
     // Find a Group by name, case-insensitive
     // If not found, mFoundNode will be nullptr
     class FindByNameVisitor : public osg::NodeVisitor

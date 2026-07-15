@@ -29,5 +29,10 @@ namespace SceneUtil
         , mRadius(light.mData.radius)
 
     {
+        // FO3/FNV LIGH FNAM is the HDR multiplier used by retail for the
+        // light's RGB shader constants. Keep the Vec4 alpha unchanged.
+        mColor.x() *= light.mFade;
+        mColor.y() *= light.mFade;
+        mColor.z() *= light.mFade;
     }
 }

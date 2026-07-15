@@ -756,6 +756,23 @@ namespace MWClass
             if (std::find(data->mEquippedArmor.begin(), data->mEquippedArmor.end(), armor)
                 != data->mEquippedArmor.end())
                 return false;
+
+            // Bethesda biped slots are mutually exclusive. Keeping every ARMO/CLOT
+            // found in CNTO and OTFT made several complete bodies occupy the same
+            // skin at once (and made alpha-tested outfits look transparent). Items
+            // are considered in inventory order and the default outfit is considered
+            // last, so replacing an occupied slot also gives the authored OTFT the
+            // final say over loose inventory.
+            const std::uint32_t occupiedSlots = armor->mArmorFlags;
+            if (occupiedSlots != 0)
+            {
+                std::erase_if(data->mEquippedArmor, [&](const ESM4::Armor* equipped) {
+                    return equipped != nullptr && (equipped->mArmorFlags & occupiedSlots) != 0;
+                });
+                std::erase_if(data->mEquippedClothing, [&](const ESM4::Clothing* equipped) {
+                    return equipped != nullptr && (equipped->mClothingFlags & occupiedSlots) != 0;
+                });
+            }
             data->mEquippedArmor.push_back(armor);
             return true;
         };
@@ -765,6 +782,17 @@ namespace MWClass
             if (std::find(data->mEquippedClothing.begin(), data->mEquippedClothing.end(), clothing)
                 != data->mEquippedClothing.end())
                 return false;
+
+            const std::uint32_t occupiedSlots = clothing->mClothingFlags;
+            if (occupiedSlots != 0)
+            {
+                std::erase_if(data->mEquippedArmor, [&](const ESM4::Armor* equipped) {
+                    return equipped != nullptr && (equipped->mArmorFlags & occupiedSlots) != 0;
+                });
+                std::erase_if(data->mEquippedClothing, [&](const ESM4::Clothing* equipped) {
+                    return equipped != nullptr && (equipped->mClothingFlags & occupiedSlots) != 0;
+                });
+            }
             data->mEquippedClothing.push_back(clothing);
             return true;
         };

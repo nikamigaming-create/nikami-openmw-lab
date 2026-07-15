@@ -8,42 +8,36 @@
     #extension GL_EXT_gpu_shader4: require
 #endif
 
-#define PER_PIXEL_LIGHTING 1
-
 #include "lib/core/vertex.h.glsl"
 
 #if @diffuseMap
 varying vec2 diffuseMapUV;
 #endif
 
-#if @emissiveMap
-varying vec2 emissiveMapUV;
-#endif
-
 #if @normalMap
 varying vec2 normalMapUV;
-varying vec4 passTangent;
 #endif
 
-#if @envMap
-varying vec2 envMapUV;
+#if @skinAuxMap
+varying vec2 skinAuxMapUV;
 #endif
 
-#if @glossMap
-varying vec2 glossMapUV;
+#if @faceGenMap0
+varying vec2 faceGenMap0UV;
+#endif
+
+#if @faceGenMap1
+varying vec2 faceGenMap1UV;
 #endif
 
 varying float euclideanDepth;
 varying float linearDepth;
-
 varying vec3 passViewPos;
 varying vec3 passNormal;
 
-#include "lib/light/lighting.glsl"
 #include "lib/view/depth.glsl"
-
+#include "lib/light/lighting_util.glsl"
 #include "compatibility/vertexcolors.glsl"
-#include "compatibility/shadows_vertex.glsl"
 #include "compatibility/normals.glsl"
 
 void main(void)
@@ -61,34 +55,22 @@ void main(void)
 
 #if @normalMap
     normalToViewMatrix *= generateTangentSpace(gl_MultiTexCoord7.xyzw, passNormal);
-#endif
-
-#if @envMap
-    vec3 envViewNormal = normalize(gl_NormalMatrix * passNormal);
-    vec3 viewVec = normalize(viewPos.xyz);
-    vec3 r = reflect(viewVec, envViewNormal);
-    float m = 2.0 * sqrt(r.x * r.x + r.y * r.y + (r.z + 1.0) * (r.z + 1.0));
-    envMapUV = vec2(r.x / m + 0.5, r.y / m + 0.5);
+    normalMapUV = (gl_TextureMatrix[@normalMapUV] * gl_MultiTexCoord@normalMapUV).xy;
 #endif
 
 #if @diffuseMap
     diffuseMapUV = (gl_TextureMatrix[@diffuseMapUV] * gl_MultiTexCoord@diffuseMapUV).xy;
 #endif
 
-#if @emissiveMap
-    emissiveMapUV = (gl_TextureMatrix[@emissiveMapUV] * gl_MultiTexCoord@emissiveMapUV).xy;
+#if @skinAuxMap
+    skinAuxMapUV = (gl_TextureMatrix[@skinAuxMapUV] * gl_MultiTexCoord@skinAuxMapUV).xy;
 #endif
 
-#if @normalMap
-    normalMapUV = (gl_TextureMatrix[@normalMapUV] * gl_MultiTexCoord@normalMapUV).xy;
+#if @faceGenMap0
+    faceGenMap0UV = (gl_TextureMatrix[@faceGenMap0UV] * gl_MultiTexCoord@faceGenMap0UV).xy;
 #endif
 
-#if @glossMap
-    glossMapUV = (gl_TextureMatrix[@glossMapUV] * gl_MultiTexCoord@glossMapUV).xy;
-#endif
-
-#if @shadows_enabled
-    vec3 viewNormal = normalize(gl_NormalMatrix * passNormal);
-    setupShadowCoords(viewPos, viewNormal);
+#if @faceGenMap1
+    faceGenMap1UV = (gl_TextureMatrix[@faceGenMap1UV] * gl_MultiTexCoord@faceGenMap1UV).xy;
 #endif
 }

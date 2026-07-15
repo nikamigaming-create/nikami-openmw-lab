@@ -61,6 +61,8 @@ set(SHADER_FILES
     compatibility/fullscreen_tri.frag
     compatibility/bs/default.vert
     compatibility/bs/default.frag
+    compatibility/bs/skin.vert
+    compatibility/bs/skin.frag
     compatibility/bs/nolighting.vert
     compatibility/bs/nolighting.frag
     compatibility/luminance/resolve.frag

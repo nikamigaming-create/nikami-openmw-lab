@@ -2,24 +2,30 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cerrno>
 #include <charconv>
 #include <chrono>
 #include <cctype>
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <fstream>
 #include <future>
 #include <functional>
+#include <iomanip>
 #include <limits>
 #include <memory>
 #include <optional>
+#include <sstream>
 #include <span>
 #include <stdexcept>
 #include <string>
 #include <string_view>
 #include <system_error>
 #include <typeinfo>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -30,6 +36,8 @@
 #include <osg/ComputeBoundsVisitor>
 #include <osg/Geometry>
 #include <osg/Image>
+#include <osg/MatrixTransform>
+#include <osg/NodeCallback>
 #include <osg/NodeVisitor>
 #include <osg/StateSet>
 #include <osg/Texture2D>
@@ -107,6 +115,8 @@
 #include <components/sceneutil/color.hpp>
 #include <components/sceneutil/depth.hpp>
 #include <components/sceneutil/screencapture.hpp>
+#include <components/sceneutil/riggeometry.hpp>
+#include <components/sceneutil/skeleton.hpp>
 #include <components/sceneutil/unrefqueue.hpp>
 #include <components/sceneutil/util.hpp>
 
@@ -327,6 +337,93 @@ namespace
         return parsed;
     }
 
+    bool parseProofFloatBits(std::string_view text, std::uint32_t& bits)
+    {
+        while (!text.empty() && std::isspace(static_cast<unsigned char>(text.front())))
+            text.remove_prefix(1);
+        while (!text.empty() && std::isspace(static_cast<unsigned char>(text.back())))
+            text.remove_suffix(1);
+        if (text.size() > 2 && text[0] == '0' && (text[1] == 'x' || text[1] == 'X'))
+            text.remove_prefix(2);
+        if (text.empty())
+            return false;
+
+        const auto parsed = std::from_chars(text.data(), text.data() + text.size(), bits, 16);
+        return parsed.ec == std::errc() && parsed.ptr == text.data() + text.size();
+    }
+
+    float proofFloatFromBits(std::uint32_t bits)
+    {
+        return std::bit_cast<float>(bits);
+    }
+
+    std::string formatProofFloatBits(std::span<const std::uint32_t> bits)
+    {
+        std::ostringstream stream;
+        stream << "[";
+        for (std::size_t index = 0; index < bits.size(); ++index)
+        {
+            if (index != 0)
+                stream << ",";
+            stream << "0x" << std::hex << std::setw(8) << std::setfill('0') << std::uppercase << bits[index]
+                   << std::dec;
+        }
+        stream << "]";
+        return stream.str();
+    }
+
+    constexpr std::array<std::uint32_t, 16> FalloutRetailD3DProjectionBits = {
+        0x3F8B02BE, 0x00000000, 0x00000000, 0x00000000,
+        0x00000000, 0x3FDE6AC9, 0x00000000, 0x00000000,
+        0x00000000, 0x00000000, 0x3F800077, 0x3F800000,
+        0x00000000, 0x00000000, 0xC0A00094, 0x00000000,
+    };
+
+    // D3D9 uses a [0,1] left-handed depth clip while OSG/OpenGL uses a [-1,1]
+    // right-handed clip. These are the exact float words produced by applying
+    // that coordinate conversion to the captured retail D3D9 matrix, not a
+    // second trigonometric reconstruction of the same nominal FOV.
+    constexpr std::array<std::uint32_t, 16> FalloutRetailOpenGLProjectionBits = {
+        0x3F8B02BE, 0x00000000, 0x00000000, 0x00000000,
+        0x00000000, 0x3FDE6AC9, 0x00000000, 0x00000000,
+        0x00000000, 0x00000000, 0xBF8000EE, 0xBF800000,
+        0x00000000, 0x00000000, 0xC1200094, 0x00000000,
+    };
+
+    constexpr std::uint32_t FalloutRetailVerticalFovBits = 0x426F5C9D;
+    constexpr std::uint32_t FalloutRetailNearClipBits = 0x40A00000;
+    constexpr std::uint32_t FalloutRetailFarClipBits = 0x48ACC600;
+    constexpr std::array<std::uint32_t, 1> FalloutRetailVerticalFovBitArray = {
+        FalloutRetailVerticalFovBits,
+    };
+    constexpr std::array<std::uint32_t, 2> FalloutRetailNearFarBits = {
+        FalloutRetailNearClipBits,
+        FalloutRetailFarClipBits,
+    };
+
+    osg::Matrixf makeFalloutRetailProjectionMatrix()
+    {
+        osg::Matrixf matrix;
+        for (std::size_t row = 0; row < 4; ++row)
+        {
+            for (std::size_t column = 0; column < 4; ++column)
+                matrix(row, column) = proofFloatFromBits(FalloutRetailOpenGLProjectionBits[row * 4 + column]);
+        }
+        return matrix;
+    }
+
+    std::array<std::uint32_t, 16> getProofMatrixBits(const osg::Matrixd& matrix)
+    {
+        std::array<std::uint32_t, 16> bits{};
+        for (std::size_t row = 0; row < 4; ++row)
+        {
+            for (std::size_t column = 0; column < 4; ++column)
+                bits[row * 4 + column]
+                    = std::bit_cast<std::uint32_t>(static_cast<float>(matrix(row, column)));
+        }
+        return bits;
+    }
+
     std::vector<float> readWorldViewerFloatList(const char* name)
     {
         std::vector<float> values;
@@ -388,6 +485,31 @@ namespace
             remaining.remove_prefix(comma + 1);
         }
 
+        return values;
+    }
+
+    std::vector<std::string> readWorldViewerStringList(const char* name)
+    {
+        std::vector<std::string> values;
+        const char* env = std::getenv(name);
+        if (env == nullptr || *env == '\0')
+            return values;
+
+        std::string_view remaining(env);
+        while (!remaining.empty())
+        {
+            const std::size_t comma = remaining.find(',');
+            std::string_view token = remaining.substr(0, comma);
+            while (!token.empty() && std::isspace(static_cast<unsigned char>(token.front())))
+                token.remove_prefix(1);
+            while (!token.empty() && std::isspace(static_cast<unsigned char>(token.back())))
+                token.remove_suffix(1);
+            if (!token.empty())
+                values.emplace_back(token);
+            if (comma == std::string_view::npos)
+                break;
+            remaining.remove_prefix(comma + 1);
+        }
         return values;
     }
 
@@ -465,7 +587,8 @@ namespace
     std::string safeWorldViewerPtrType(const MWWorld::Ptr& ptr);
     std::string safeWorldViewerPtrName(const MWWorld::Ptr& ptr);
 
-    bool snapProofActorToRenderGround(MWWorld::World& world, MWWorld::Ptr& actor, const char* target)
+    bool snapProofActorToRenderGround(
+        MWWorld::World& world, MWWorld::Ptr& actor, const char* target, bool& freshBoundsLatched)
     {
         if (actor.isEmpty())
             return false;
@@ -480,7 +603,60 @@ namespace
             bounds = boundsVisitor.getBoundingBox();
         }
 
-        const float visualBottom = bounds.valid() ? bounds.zMin() : current.pos[2];
+        if (!bounds.valid())
+        {
+            freshBoundsLatched = false;
+            Log(Debug::Info) << "FNV/ESM4 proof: render-ground snap waiting for valid actor bounds target=\""
+                             << (target != nullptr ? target : "") << "\" actor=" << actor.toString();
+            return false;
+        }
+        const osg::Vec3f boundsSize(
+            bounds.xMax() - bounds.xMin(), bounds.yMax() - bounds.yMin(), bounds.zMax() - bounds.zMin());
+        const osg::Vec3f actorPosition(current.pos[0], current.pos[1], current.pos[2]);
+        const float boundsCenterDistance = (bounds.center() - actorPosition).length();
+        const float boundsDiagonal = boundsSize.length();
+        const float maxBoundsCenterDistance
+            = readProofFloat("OPENMW_PROOF_RENDER_GROUND_MAX_BOUNDS_CENTER_DISTANCE", 1000.f);
+        const float maxBoundsCenterDiagonals
+            = readProofFloat("OPENMW_PROOF_RENDER_GROUND_MAX_BOUNDS_CENTER_DIAGONALS", 2.f);
+        const float minRelativeAllowance
+            = readProofFloat("OPENMW_PROOF_RENDER_GROUND_MIN_RELATIVE_BOUNDS_ALLOWANCE", 64.f);
+        const float relativeBoundsAllowance
+            = std::max(minRelativeAllowance, boundsDiagonal * maxBoundsCenterDiagonals);
+        const float allowedBoundsCenterDistance
+            = std::min(maxBoundsCenterDistance, relativeBoundsAllowance);
+        const float maxBoundsExtent = readProofFloat("OPENMW_PROOF_RENDER_GROUND_MAX_BOUNDS_EXTENT", 1000.f);
+        if (boundsCenterDistance > allowedBoundsCenterDistance || boundsSize.x() > maxBoundsExtent
+            || boundsSize.y() > maxBoundsExtent || boundsSize.z() > maxBoundsExtent)
+        {
+            freshBoundsLatched = false;
+            Log(Debug::Info) << "FNV/ESM4 proof: render-ground snap waiting for settled actor bounds target=\""
+                             << (target != nullptr ? target : "") << "\" actor=" << actor.toString()
+                             << " centerDistance=" << boundsCenterDistance << " size=(" << boundsSize.x() << ","
+                             << boundsSize.y() << "," << boundsSize.z() << ") maxCenterDistance="
+                             << maxBoundsCenterDistance << " boundsDiagonal=" << boundsDiagonal
+                             << " maxCenterDiagonals=" << maxBoundsCenterDiagonals
+                             << " allowedCenterDistance=" << allowedBoundsCenterDistance
+                             << " maxExtent=" << maxBoundsExtent;
+            return false;
+        }
+
+        // A staged reference and its render node do not become coherent in the same update.  Seeing one
+        // plausible box is not enough: it can be the previous actor's final cull result translated through a
+        // just-moved root.  Latch one fresh observation and require the following proof update to agree before
+        // using the visual bottom to move the reference.  This is completion driven (not a capture-window
+        // delay), and the relative-diagonal test above resets the latch whenever the node falls out of sync.
+        if (!freshBoundsLatched)
+        {
+            freshBoundsLatched = true;
+            Log(Debug::Info) << "FNV/ESM4 proof: render-ground snap latched fresh actor bounds; waiting for next update target=\""
+                             << (target != nullptr ? target : "") << "\" actor=" << actor.toString()
+                             << " centerDistance=" << boundsCenterDistance << " boundsDiagonal="
+                             << boundsDiagonal << " allowedCenterDistance=" << allowedBoundsCenterDistance;
+            return false;
+        }
+
+        const float visualBottom = bounds.zMin();
         const float rayUp = readProofFloat("OPENMW_PROOF_RENDER_GROUND_RAY_UP", 512.f);
         const float rayDown = readProofFloat("OPENMW_PROOF_RENDER_GROUND_RAY_DOWN", 4096.f);
         const float offset = readProofFloat("OPENMW_PROOF_RENDER_GROUND_OFFSET_Z", 0.f);
@@ -629,7 +805,16 @@ namespace
             readProofFloat("OPENMW_PROOF_ACTOR_STAGE_ROT_X", current.rot[0]),
             readProofFloat("OPENMW_PROOF_ACTOR_STAGE_ROT_Y", current.rot[1]),
             readProofFloat("OPENMW_PROOF_ACTOR_STAGE_ROT_Z", current.rot[2]));
-        actor = world.moveObject(actor, stagedPos, true, true);
+        // The position-only overload derives a destination worldspace from
+        // the actor's source cell.  That leaves authored interior references
+        // (and actors from another worldspace) in an inactive cell even when
+        // moveToActive is requested.  A one-session proof sweep must stage
+        // every exact authored reference in the same active render cell.
+        MWWorld::Ptr player = MWMechanics::getPlayer();
+        if (!player.isEmpty() && player.isInCell())
+            actor = world.moveObject(actor, player.getCell(), stagedPos, true, true);
+        else
+            actor = world.moveObject(actor, stagedPos, true, true);
         world.rotateObject(actor, stagedRot);
         Log(Debug::Info) << "FNV/ESM4 proof: staged actor target=\""
                          << (target != nullptr ? target : "") << "\" oldPos=(" << current.pos[0] << ","
@@ -726,6 +911,93 @@ namespace
                          << safeWorldViewerPtrText(renderRay.mHitObject);
         targetPos = adjusted;
         return true;
+    }
+
+    int raiseProofActorCameraForClearVisibility(MWWorld::World& world, const MWWorld::Ptr& actor,
+        const char* target, const osg::BoundingBox& bounds, osg::Vec3f& targetPos)
+    {
+        if (!proofEnvEnabled("OPENMW_PROOF_ACTOR_VIEW_VISIBILITY_RAYCAST") || !bounds.valid())
+            return -1;
+
+        const float boundsHeight = std::max(bounds.zMax() - bounds.zMin(), 1.f);
+        const osg::Vec3f center = bounds.center();
+        const float stagedGroundZ = actor.isEmpty()
+            ? bounds.zMin()
+            : actor.getRefData().getPosition().pos[2];
+        std::vector<osg::Vec3f> samples;
+        samples.reserve(7);
+        // Animated/collision helper bounds may extend below the staged ground plane.  A ray to that hidden
+        // mathematical corner necessarily intersects terrain and would reject a retail camera even though all
+        // renderable actor pixels are visible.  Clamp the low visibility sample to just above the actor's exact
+        // staged ground while retaining the full AABB for the projection/containment gate.
+        samples.emplace_back(center.x(), center.y(),
+            std::max(bounds.zMin() + boundsHeight * 0.08f, stagedGroundZ + 1.f));
+        samples.emplace_back(center.x(), center.y(), bounds.zMin() + boundsHeight * 0.45f);
+        samples.emplace_back(center.x(), center.y(), bounds.zMin() + boundsHeight * 0.82f);
+        samples.emplace_back(bounds.xMin(), center.y(), center.z());
+        samples.emplace_back(bounds.xMax(), center.y(), center.z());
+        samples.emplace_back(center.x(), bounds.yMin(), center.z());
+        samples.emplace_back(center.x(), bounds.yMax(), center.z());
+
+        const float hitTolerance
+            = readProofFloat("OPENMW_PROOF_ACTOR_VIEW_VISIBILITY_RAYCAST_HIT_TOLERANCE", 0.75f);
+        const float heightStep = std::max(
+            readProofFloat("OPENMW_PROOF_ACTOR_VIEW_VISIBILITY_RAYCAST_MIN_HEIGHT_STEP", 16.f),
+            boundsHeight
+                * readProofFloat("OPENMW_PROOF_ACTOR_VIEW_VISIBILITY_RAYCAST_HEIGHT_STEP_FACTOR", 0.25f));
+        const int steps = proofEnvEnabled("OPENMW_PROOF_ACTOR_VIEW_VISIBILITY_RAYCAST_GATE_ONLY")
+            ? 0
+            : std::max(0, readProofInt("OPENMW_PROOF_ACTOR_VIEW_VISIBILITY_RAYCAST_STEPS", 6));
+        const auto countBlockers = [&](const osg::Vec3f& candidate) {
+            int blockers = 0;
+            for (const osg::Vec3f& sample : samples)
+            {
+                const float sampleDistance = (sample - candidate).length();
+                if (sampleDistance <= 1e-3f)
+                    continue;
+                MWPhysics::RayCastingResult renderRay {};
+                world.castRenderingRay(
+                    renderRay, candidate, sample, true, true, std::span<const MWWorld::Ptr> { &actor, 1 });
+                if (!renderRay.mHit)
+                    continue;
+                const float hitDistance = (renderRay.mHitPos - candidate).length();
+                if (hitDistance + hitTolerance < sampleDistance)
+                    ++blockers;
+            }
+            return blockers;
+        };
+
+        osg::Vec3f best = targetPos;
+        int bestBlockers = std::numeric_limits<int>::max();
+        int bestStep = 0;
+        for (int step = 0; step <= steps; ++step)
+        {
+            osg::Vec3f candidate = targetPos;
+            candidate.z() += heightStep * static_cast<float>(step);
+            const int blockers = countBlockers(candidate);
+            Log(Debug::Info) << "FNV/ESM4 proof: actor visibility camera candidate target=\""
+                             << (target != nullptr ? target : "") << "\" step=" << step << " pos=("
+                             << candidate.x() << "," << candidate.y() << "," << candidate.z()
+                             << ") blockers=" << blockers << " samples=" << samples.size();
+            if (blockers < bestBlockers)
+            {
+                best = candidate;
+                bestBlockers = blockers;
+                bestStep = step;
+            }
+            if (blockers == 0)
+                break;
+        }
+
+        if (bestStep != 0)
+        {
+            Log(Debug::Info) << "FNV/ESM4 proof: actor visibility camera raised target=\""
+                             << (target != nullptr ? target : "") << "\" fromZ=" << targetPos.z()
+                             << " toZ=" << best.z() << " step=" << bestStep
+                             << " blockers=" << bestBlockers;
+            targetPos = best;
+        }
+        return bestBlockers;
     }
 
     bool selectProofActorCameraByOrbitRays(MWWorld::World& world, const MWWorld::Ptr& actor, const char* target,
@@ -1136,7 +1408,29 @@ namespace
                         const float distance
                             = readProofFloat("OPENMW_WORLD_VIEWER_START_CAMERA_FOLLOW_HEAD_DISTANCE", 86.f);
                         target = headCenter + headForward * focus;
-                        eye = target + headForward * distance;
+                        osg::Vec3d cameraDirection = headForward;
+                        if (std::getenv("OPENMW_WORLD_VIEWER_START_CAMERA_FOLLOW_HEAD_ORBIT_DEG") != nullptr)
+                        {
+                            const double radians
+                                = osg::DegreesToRadians(readProofFloat(
+                                    "OPENMW_WORLD_VIEWER_START_CAMERA_FOLLOW_HEAD_ORBIT_DEG", 0.f));
+                            const double c = std::cos(radians);
+                            const double s = std::sin(radians);
+                            cameraDirection.set(
+                                headForward.x() * c - headForward.y() * s,
+                                headForward.x() * s + headForward.y() * c,
+                                headForward.z());
+                            const double planarLength = std::sqrt(cameraDirection.x() * cameraDirection.x()
+                                + cameraDirection.y() * cameraDirection.y());
+                            if (planarLength > 1e-6)
+                            {
+                                const double originalPlanarLength
+                                    = std::sqrt(headForward.x() * headForward.x() + headForward.y() * headForward.y());
+                                cameraDirection.x() *= originalPlanarLength / planarLength;
+                                cameraDirection.y() *= originalPlanarLength / planarLength;
+                            }
+                        }
+                        eye = target + cameraDirection * distance;
                         eye.z() += readProofFloat("OPENMW_WORLD_VIEWER_START_CAMERA_FOLLOW_HEAD_EYE_Z", 0.f);
                         headFollowResolved = true;
                         headFollowActor = followRefText;
@@ -1378,15 +1672,87 @@ namespace
         void apply(osg::Node& node) override
         {
             const std::string lowerName = Misc::StringUtils::lowerCase(node.getName());
+            std::string_view semanticName(lowerName);
+            const bool bip01Semantic = semanticName.rfind("bip01 ", 0) == 0;
+            if (bip01Semantic)
+                semanticName.remove_prefix(6);
+            const bool explicitCreatureSemantic = bip01Semantic
+                || semanticName == "head" || semanticName.rfind("head ", 0) == 0
+                || semanticName.rfind("righead", 0) == 0 || semanticName.rfind("neck", 0) == 0
+                || semanticName.rfind("rigneck", 0) == 0 || semanticName.rfind("pelvis", 0) == 0
+                || semanticName.rfind("rigpelvis", 0) == 0 || semanticName.rfind("gaster", 0) == 0
+                || semanticName.rfind("abdomen", 0) == 0 || semanticName == "root"
+                || semanticName.rfind("torso", 0) == 0 || semanticName.rfind("rigtorso", 0) == 0
+                || semanticName.rfind("spine", 0) == 0 || semanticName.rfind("rigspine", 0) == 0
+                || semanticName == "tail" || semanticName.rfind("rigtail01", 0) == 0;
+            if (explicitCreatureSemantic)
+            {
+                // Fallout creature rigs do not share the humanoid Bip01 Head convention.  For example,
+                // ravens use RigHead/RigTail, mantises use Head/Gaster, and radscorpions expose Neck1/Pelvis.
+                // Preserve those authored semantic anchors so the proof camera can derive the creature's
+                // longitudinal axis instead of assuming that actor yaw is also the mesh's front axis.
+                const osg::Vec3d center = osg::computeLocalToWorld(getNodePath()).getTrans();
+                const SemanticAnchor anchor{ node.getName(), center };
+                if (semanticName.find("head") != std::string_view::npos
+                    && semanticName.find("brain") == std::string_view::npos
+                    && semanticName.find("nub") == std::string_view::npos)
+                    mCreatureFrontAnchors.push_back(anchor);
+                else if (semanticName.find("neck") != std::string_view::npos)
+                    mCreatureNeckAnchors.push_back(anchor);
+
+                if (semanticName.rfind("pelvis", 0) == 0 || semanticName.rfind("rigpelvis", 0) == 0
+                    || semanticName.rfind("gaster", 0) == 0 || semanticName.rfind("abdomen", 0) == 0
+                    || semanticName == "root" || semanticName.rfind("torso", 0) == 0
+                    || semanticName.rfind("rigtorso", 0) == 0 || semanticName.rfind("spine", 0) == 0
+                    || semanticName.rfind("rigspine", 0) == 0 || semanticName == "tail"
+                    || semanticName.rfind("rigtail01", 0) == 0)
+                    mCreatureRearAnchors.push_back(anchor);
+            }
+            if (lowerName.rfind("screen01", 0) == 0
+                || lowerName.rfind("screenreflection01", 0) == 0)
+            {
+                const osg::Matrixd localToWorld = osg::computeLocalToWorld(getNodePath());
+                osg::Vec3d screenForward
+                    = osg::Matrixd::transform3x3(osg::Vec3d(0.0, 1.0, 0.0), localToWorld);
+                if (screenForward.normalize() > 1e-6)
+                    mScreenForward += screenForward;
+
+                osg::Vec3d screenCenter = localToWorld.getTrans();
+                const osg::BoundingSphere bound = node.getBound();
+                if (bound.valid())
+                {
+                    osg::NodePath parentPath = getNodePath();
+                    if (!parentPath.empty())
+                        parentPath.pop_back();
+                    screenCenter = bound.center() * osg::computeLocalToWorld(parentPath);
+                }
+                mScreenCenter += screenCenter;
+                ++mScreenMatched;
+            }
             if (lowerName == "bip01 head" || lowerName == "bip01 head_nub")
             {
                 const osg::Matrixd localToWorld = osg::computeLocalToWorld(getNodePath());
-                mHeadBoneCenter += localToWorld.getTrans();
                 osg::Vec3d forward
                     = osg::Matrixd::transform3x3(osg::Vec3d(0.0, 1.0, 0.0), localToWorld);
-                if (forward.normalize() > 1e-6)
-                    mHeadForward += forward;
-                ++mHeadBoneMatched;
+                forward.normalize();
+                if (lowerName == "bip01 head")
+                {
+                    mHeadBoneCenter += localToWorld.getTrans();
+                    if (forward.length2() > 1e-12)
+                        mHeadForward += forward;
+                    ++mHeadBoneMatched;
+                }
+                else
+                {
+                    // The retail oracle records Bip01 Head, not its child Head_Nub.
+                    // Keep the nub only as a fallback; averaging both shifted the
+                    // reported Easy Pete head by four world units and polluted the
+                    // orientation gate even when the rendered head was unchanged.
+                    mHeadFallbackCenter += localToWorld.getTrans();
+                    if (forward.length2() > 1e-12)
+                        mHeadFallbackForward += forward;
+                    ++mHeadFallbackMatched;
+                }
             }
 
             if (isFalloutProofFaceNodeName(lowerName))
@@ -1423,17 +1789,45 @@ namespace
         const osg::BoundingBox& getBounds() const { return mBounds; }
         unsigned int getMatched() const { return mMatched; }
         unsigned int getHeadMatched() const { return mHeadMatched + mHeadBoneMatched; }
-        unsigned int getHeadBoneMatched() const { return mHeadBoneMatched; }
+        unsigned int getHeadBoneMatched() const { return mHeadBoneMatched + mHeadFallbackMatched; }
         unsigned int getFeatureMatched() const { return mFeatureMatched; }
+        unsigned int getScreenMatched() const { return mScreenMatched; }
+        osg::Vec3d getScreenCenter() const
+        {
+            return mScreenMatched > 0 ? mScreenCenter / static_cast<double>(mScreenMatched) : osg::Vec3d();
+        }
+        osg::Vec3d getScreenForward(const osg::Vec3d& actorOrigin) const
+        {
+            if (mScreenMatched == 0)
+                return osg::Vec3d();
+
+            // A screen normal has two possible signs, and NIFs do not use one universal local winding/axis
+            // convention for every actor add-on. Pick the authored normal's outward hemisphere from geometry:
+            // the screen center must lie away from the actor origin in the same direction as the portrait camera.
+            // This also remains correct when coordinate conversion changes handedness or an add-on is mirrored.
+            osg::Vec3d radial = getScreenCenter() - actorOrigin;
+            radial.z() = 0.0;
+            const bool hasRadial = radial.normalize() > 1e-6;
+
+            osg::Vec3d forward = mScreenForward;
+            forward.z() = 0.0;
+            if (forward.normalize() <= 1e-6)
+                return hasRadial ? radial : osg::Vec3d();
+            if (hasRadial && forward * radial < 0.0)
+                forward = -forward;
+            return forward;
+        }
         osg::Vec3d getHeadCenter() const
         {
             if (mHeadBoneMatched > 0)
                 return mHeadBoneCenter / static_cast<double>(mHeadBoneMatched);
+            if (mHeadFallbackMatched > 0)
+                return mHeadFallbackCenter / static_cast<double>(mHeadFallbackMatched);
             return mHeadMatched > 0 ? mHeadCenter / static_cast<double>(mHeadMatched) : osg::Vec3d();
         }
         osg::Vec3d getHeadForward() const
         {
-            osg::Vec3d forward = mHeadForward;
+            osg::Vec3d forward = mHeadBoneMatched > 0 ? mHeadForward : mHeadFallbackForward;
             if (forward.normalize() <= 1e-6)
                 return osg::Vec3d();
             return forward;
@@ -1442,17 +1836,123 @@ namespace
         {
             return mFeatureMatched > 0 ? mFeatureCenter / static_cast<double>(mFeatureMatched) : osg::Vec3d();
         }
+        bool getCreatureAxis(
+            osg::Vec3d& center, osg::Vec3d& forward, std::string& frontName, std::string& rearName) const
+        {
+            const std::vector<SemanticAnchor>& frontAnchors
+                = !mCreatureFrontAnchors.empty() ? mCreatureFrontAnchors : mCreatureNeckAnchors;
+            if (frontAnchors.empty() || mCreatureRearAnchors.empty())
+                return false;
+
+            // Prefer the semantic pair with the greatest planar separation.  This picks Head/Gaster for
+            // insects and RigHead/RigTail for birds, while a curled scorpion tail naturally loses to
+            // Neck/Pelvis.  Requiring a real planar baseline rejects vertical head/pelvis pairs that do not
+            // encode which way a standing creature faces.
+            const SemanticAnchor* bestFront = nullptr;
+            const SemanticAnchor* bestRear = nullptr;
+            double bestPlanarLength2 = 1.0;
+            for (const SemanticAnchor& candidateFront : frontAnchors)
+            {
+                for (const SemanticAnchor& candidateRear : mCreatureRearAnchors)
+                {
+                    const double dx = candidateFront.mCenter.x() - candidateRear.mCenter.x();
+                    const double dy = candidateFront.mCenter.y() - candidateRear.mCenter.y();
+                    const double planarLength2 = dx * dx + dy * dy;
+                    if (planarLength2 > bestPlanarLength2)
+                    {
+                        bestPlanarLength2 = planarLength2;
+                        bestFront = &candidateFront;
+                        bestRear = &candidateRear;
+                    }
+                }
+            }
+            if (bestFront == nullptr || bestRear == nullptr)
+                return false;
+
+            center = bestFront->mCenter;
+            forward = bestFront->mCenter - bestRear->mCenter;
+            forward.z() = 0.0;
+            if (forward.normalize() <= 1e-6)
+                return false;
+            frontName = bestFront->mName;
+            rearName = bestRear->mName;
+            return true;
+        }
 
     private:
+        struct SemanticAnchor
+        {
+            std::string mName;
+            osg::Vec3d mCenter;
+        };
+
         osg::BoundingBox mBounds;
+        osg::Vec3d mScreenCenter;
+        osg::Vec3d mScreenForward;
         osg::Vec3d mHeadBoneCenter;
         osg::Vec3d mHeadForward;
+        osg::Vec3d mHeadFallbackCenter;
+        osg::Vec3d mHeadFallbackForward;
         osg::Vec3d mHeadCenter;
         osg::Vec3d mFeatureCenter;
         unsigned int mMatched = 0;
+        unsigned int mScreenMatched = 0;
         unsigned int mHeadBoneMatched = 0;
+        unsigned int mHeadFallbackMatched = 0;
         unsigned int mHeadMatched = 0;
         unsigned int mFeatureMatched = 0;
+        std::vector<SemanticAnchor> mCreatureFrontAnchors;
+        std::vector<SemanticAnchor> mCreatureNeckAnchors;
+        std::vector<SemanticAnchor> mCreatureRearAnchors;
+    };
+
+    class FalloutProofDrawableCullVisitor final : public osg::NodeVisitor
+    {
+    public:
+        explicit FalloutProofDrawableCullVisitor(unsigned int minimumCullTraversal)
+            : osg::NodeVisitor(osg::NodeVisitor::TRAVERSE_ALL_CHILDREN)
+            , mMinimumCullTraversal(minimumCullTraversal)
+        {
+            setNodeMaskOverride(~0u);
+            setTraversalMask(~0u);
+        }
+
+        void apply(osg::Drawable& drawable) override
+        {
+            bool visiblePath = drawable.getNodeMask() != 0;
+            for (osg::Node* node : getNodePath())
+            {
+                if (node != nullptr && node->getNodeMask() == 0)
+                {
+                    visiblePath = false;
+                    break;
+                }
+            }
+            if (!visiblePath)
+                return;
+
+            ++mVisibleDrawables;
+            auto* rig = dynamic_cast<SceneUtil::RigGeometry*>(&drawable);
+            if (rig == nullptr)
+                return;
+
+            ++mVisibleRigs;
+            if (rig->hasResolvedParentSkeleton())
+                ++mResolvedRigs;
+            const unsigned int traversal = rig->getLastCullTraversalNumber();
+            mMaximumCullTraversal = std::max(mMaximumCullTraversal, traversal);
+            if (traversal >= mMinimumCullTraversal)
+                ++mCullReadyRigs;
+        }
+
+        unsigned int mVisibleDrawables = 0;
+        unsigned int mVisibleRigs = 0;
+        unsigned int mResolvedRigs = 0;
+        unsigned int mCullReadyRigs = 0;
+        unsigned int mMaximumCullTraversal = 0;
+
+    private:
+        unsigned int mMinimumCullTraversal = 0;
     };
 
     bool resolveFalloutProofHeadPose(const MWWorld::Ptr& actor, osg::Vec3d& center, osg::Vec3d& forward)
@@ -1462,6 +1962,38 @@ namespace
 
         FalloutProofFaceBoundsVisitor visitor;
         actor.getRefData().getBaseNode()->accept(visitor);
+        if (visitor.getScreenMatched() > 0)
+        {
+            const ESM::Position& actorPosition = actor.getRefData().getPosition();
+            const osg::Vec3d actorOrigin(
+                actorPosition.pos[0], actorPosition.pos[1], actorPosition.pos[2]);
+            center = visitor.getScreenCenter();
+            forward = visitor.getScreenForward(actorOrigin);
+            if (forward.length2() > 1e-6)
+                return true;
+        }
+        if (actor.getType() == ESM::REC_CREA4)
+        {
+            std::string frontName;
+            std::string rearName;
+            if (visitor.getCreatureAxis(center, forward, frontName, rearName))
+            {
+                const osg::Vec3d sceneForward = forward;
+                // The imported Fallout skeleton path is reflected across the engine/world Y basis.  The node
+                // pair therefore supplies the right semantic longitudinal axis but its scene-space Y sign is
+                // opposite the authored actor/camera transform recorded by retail.  Convert the direction at
+                // the proof-camera boundary; X and Z already share the world basis.
+                forward.y() = -forward.y();
+                forward.normalize();
+                Log(Debug::Info) << "FNV/ESM4 proof: creature semantic camera axis actor=" << actor.toString()
+                                 << " frontNode=\"" << frontName << "\" rearNode=\"" << rearName
+                                 << "\" frontCenter=(" << center.x() << "," << center.y() << "," << center.z()
+                                 << ") sceneForward=(" << sceneForward.x() << "," << sceneForward.y() << ","
+                                 << sceneForward.z() << ") retailWorldForward=(" << forward.x() << ","
+                                 << forward.y() << "," << forward.z() << ")";
+                return true;
+            }
+        }
         if (visitor.getHeadBoneMatched() == 0)
             return false;
 
@@ -1474,11 +2006,17 @@ namespace
     {
         osg::Vec3d mHeadCenter;
         osg::Vec3d mHeadForward;
+        osg::Vec3d mPelvisCenter;
         osg::Vec3d mLeftHandCenter;
         osg::Vec3d mRightHandCenter;
+        osg::Vec3d mLeftFootCenter;
+        osg::Vec3d mRightFootCenter;
         bool mHeadResolved = false;
+        bool mPelvisResolved = false;
         bool mLeftHandResolved = false;
         bool mRightHandResolved = false;
+        bool mLeftFootResolved = false;
+        bool mRightFootResolved = false;
     };
 
     class FalloutProofPortraitPoseVisitor : public osg::NodeVisitor
@@ -1494,7 +2032,9 @@ namespace
         {
             const std::string lowerName = Misc::StringUtils::lowerCase(node.getName());
             if (lowerName == "bip01 head" || lowerName == "bip01 head_nub"
-                || lowerName == "bip01 l hand" || lowerName == "bip01 r hand")
+                || lowerName == "bip01 pelvis" || lowerName == "bip01 l hand"
+                || lowerName == "bip01 r hand" || lowerName == "bip01 l foot"
+                || lowerName == "bip01 r foot")
             {
                 const osg::Matrixd localToWorld = osg::computeLocalToWorld(getNodePath());
                 const osg::Vec3d center = localToWorld.getTrans();
@@ -1507,15 +2047,30 @@ namespace
                         mPose.mHeadForward += forward;
                     ++mHeadCount;
                 }
+                else if (lowerName == "bip01 pelvis")
+                {
+                    mPose.mPelvisCenter += center;
+                    ++mPelvisCount;
+                }
                 else if (lowerName == "bip01 l hand")
                 {
                     mPose.mLeftHandCenter += center;
                     ++mLeftHandCount;
                 }
-                else
+                else if (lowerName == "bip01 r hand")
                 {
                     mPose.mRightHandCenter += center;
                     ++mRightHandCount;
+                }
+                else if (lowerName == "bip01 l foot")
+                {
+                    mPose.mLeftFootCenter += center;
+                    ++mLeftFootCount;
+                }
+                else
+                {
+                    mPose.mRightFootCenter += center;
+                    ++mRightFootCount;
                 }
             }
             traverse(node);
@@ -1529,6 +2084,11 @@ namespace
                 result.mHeadCenter /= static_cast<double>(mHeadCount);
                 result.mHeadResolved = result.mHeadForward.normalize() > 1e-6;
             }
+            if (mPelvisCount > 0)
+            {
+                result.mPelvisCenter /= static_cast<double>(mPelvisCount);
+                result.mPelvisResolved = true;
+            }
             if (mLeftHandCount > 0)
             {
                 result.mLeftHandCenter /= static_cast<double>(mLeftHandCount);
@@ -1539,14 +2099,27 @@ namespace
                 result.mRightHandCenter /= static_cast<double>(mRightHandCount);
                 result.mRightHandResolved = true;
             }
+            if (mLeftFootCount > 0)
+            {
+                result.mLeftFootCenter /= static_cast<double>(mLeftFootCount);
+                result.mLeftFootResolved = true;
+            }
+            if (mRightFootCount > 0)
+            {
+                result.mRightFootCenter /= static_cast<double>(mRightFootCount);
+                result.mRightFootResolved = true;
+            }
             return result;
         }
 
     private:
         FalloutProofPortraitPose mPose;
         unsigned int mHeadCount = 0;
+        unsigned int mPelvisCount = 0;
         unsigned int mLeftHandCount = 0;
         unsigned int mRightHandCount = 0;
+        unsigned int mLeftFootCount = 0;
+        unsigned int mRightFootCount = 0;
     };
 
     FalloutProofPortraitPose resolveFalloutProofPortraitPose(const MWWorld::Ptr& actor)
@@ -1557,6 +2130,501 @@ namespace
         actor.getRefData().getBaseNode()->accept(visitor);
         return visitor.getPose();
     }
+
+    constexpr std::size_t FalloutRetailTransformComponentCount = 13;
+    constexpr std::size_t FalloutRetailMatrixComponentCount = 12;
+
+    struct FalloutRetailPoseNode
+    {
+        std::string mName;
+        std::string mParent;
+        std::array<std::uint32_t, FalloutRetailTransformComponentCount> mLocalBits{};
+        std::array<std::uint32_t, FalloutRetailTransformComponentCount> mWorldBits{};
+        osg::Matrixd mLocalMatrix;
+        osg::Matrixd mWorldMatrix;
+    };
+
+    struct FalloutRetailPoseSnapshot
+    {
+        std::string mPath;
+        std::array<std::uint32_t, 6> mRootBits{};
+        std::vector<FalloutRetailPoseNode> mNodes;
+        std::unordered_map<std::string, std::size_t> mNodeByLowerName;
+    };
+
+    osg::Matrixd makeFalloutRetailPoseMatrix(
+        const std::array<std::uint32_t, FalloutRetailTransformComponentCount>& bits)
+    {
+        osg::Matrixd matrix;
+        matrix.makeIdentity();
+        const double scale = static_cast<double>(proofFloatFromBits(bits[12]));
+        for (std::size_t row = 0; row < 3; ++row)
+        {
+            for (std::size_t column = 0; column < 3; ++column)
+            {
+                matrix(row, column)
+                    = static_cast<double>(proofFloatFromBits(bits[column * 3 + row])) * scale;
+            }
+        }
+        matrix(3, 0) = proofFloatFromBits(bits[9]);
+        matrix(3, 1) = proofFloatFromBits(bits[10]);
+        matrix(3, 2) = proofFloatFromBits(bits[11]);
+        return matrix;
+    }
+
+    std::array<std::uint32_t, FalloutRetailMatrixComponentCount> getFalloutRetailMatrixBits(
+        const osg::Matrixd& matrix)
+    {
+        std::array<std::uint32_t, FalloutRetailMatrixComponentCount> result{};
+        for (std::size_t row = 0; row < 3; ++row)
+        {
+            for (std::size_t column = 0; column < 3; ++column)
+                result[row * 3 + column] = std::bit_cast<std::uint32_t>(static_cast<float>(matrix(row, column)));
+        }
+        const osg::Vec3d translation = matrix.getTrans();
+        result[9] = std::bit_cast<std::uint32_t>(static_cast<float>(translation.x()));
+        result[10] = std::bit_cast<std::uint32_t>(static_cast<float>(translation.y()));
+        result[11] = std::bit_cast<std::uint32_t>(static_cast<float>(translation.z()));
+        return result;
+    }
+
+    bool isFalloutRetailPoseSnapshotRoot(std::string_view lowerName)
+    {
+        return lowerName == "scene root";
+    }
+
+    std::size_t getFalloutRetailPoseReplayNodeCount(const FalloutRetailPoseSnapshot& snapshot)
+    {
+        return std::count_if(snapshot.mNodes.begin(), snapshot.mNodes.end(), [](const FalloutRetailPoseNode& node) {
+            return !isFalloutRetailPoseSnapshotRoot(Misc::StringUtils::lowerCase(node.mName));
+        });
+    }
+
+    osg::Matrixd getFalloutRetailPoseAdapterLocal(
+        const FalloutRetailPoseNode& node, const osg::NodePath& nodePath)
+    {
+        osg::NodePath parentPath = nodePath;
+        if (!parentPath.empty())
+            parentPath.pop_back();
+        const osg::Matrixd parentWorld = osg::computeLocalToWorld(parentPath);
+        return node.mWorldMatrix * osg::Matrixd::inverse(parentWorld);
+    }
+
+    float falloutRetailFloatMultiply(float left, float right)
+    {
+        volatile float rounded = left * right;
+        return rounded;
+    }
+
+    float falloutRetailFloatAdd(float left, float right)
+    {
+        volatile float rounded = left + right;
+        return rounded;
+    }
+
+    float falloutRetailFloatDot3(float left0, float right0, float left1, float right1, float left2, float right2)
+    {
+        float result = falloutRetailFloatMultiply(left0, right0);
+        result = falloutRetailFloatAdd(result, falloutRetailFloatMultiply(left1, right1));
+        return falloutRetailFloatAdd(result, falloutRetailFloatMultiply(left2, right2));
+    }
+
+    std::array<std::uint32_t, FalloutRetailTransformComponentCount> composeFalloutRetailTransformBits(
+        const std::array<std::uint32_t, FalloutRetailTransformComponentCount>& parent,
+        const std::array<std::uint32_t, FalloutRetailTransformComponentCount>& local)
+    {
+        std::array<std::uint32_t, FalloutRetailTransformComponentCount> result{};
+        std::array<float, FalloutRetailTransformComponentCount> parentValues{};
+        std::array<float, FalloutRetailTransformComponentCount> localValues{};
+        for (std::size_t component = 0; component < FalloutRetailTransformComponentCount; ++component)
+        {
+            parentValues[component] = proofFloatFromBits(parent[component]);
+            localValues[component] = proofFloatFromBits(local[component]);
+        }
+
+        for (std::size_t row = 0; row < 3; ++row)
+        {
+            for (std::size_t column = 0; column < 3; ++column)
+            {
+                const float value = falloutRetailFloatDot3(parentValues[row * 3], localValues[column],
+                    parentValues[row * 3 + 1], localValues[3 + column], parentValues[row * 3 + 2],
+                    localValues[6 + column]);
+                result[row * 3 + column] = std::bit_cast<std::uint32_t>(value);
+            }
+
+            const float rotatedTranslation = falloutRetailFloatDot3(parentValues[row * 3], localValues[9],
+                parentValues[row * 3 + 1], localValues[10], parentValues[row * 3 + 2], localValues[11]);
+            const float scaledTranslation = falloutRetailFloatMultiply(rotatedTranslation, parentValues[12]);
+            result[9 + row]
+                = std::bit_cast<std::uint32_t>(falloutRetailFloatAdd(scaledTranslation, parentValues[9 + row]));
+        }
+        result[12]
+            = std::bit_cast<std::uint32_t>(falloutRetailFloatMultiply(parentValues[12], localValues[12]));
+        return result;
+    }
+
+    void auditFalloutRetailPoseSource(const FalloutRetailPoseSnapshot& snapshot)
+    {
+        std::vector<std::array<std::uint32_t, FalloutRetailTransformComponentCount>> calculated;
+        calculated.reserve(snapshot.mNodes.size());
+        std::size_t mismatchedNodes = 0;
+        std::size_t mismatchedWords = 0;
+        for (std::size_t index = 0; index < snapshot.mNodes.size(); ++index)
+        {
+            const FalloutRetailPoseNode& node = snapshot.mNodes[index];
+            std::array<std::uint32_t, FalloutRetailTransformComponentCount> world = node.mLocalBits;
+            if (Misc::StringUtils::lowerCase(node.mParent) != "none")
+            {
+                const auto parent = snapshot.mNodeByLowerName.find(Misc::StringUtils::lowerCase(node.mParent));
+                if (parent == snapshot.mNodeByLowerName.end() || parent->second >= index)
+                    throw std::runtime_error("retail pose parent missing or out of order for node " + node.mName);
+                world = composeFalloutRetailTransformBits(calculated[parent->second], node.mLocalBits);
+            }
+            calculated.push_back(world);
+
+            bool nodeMismatch = false;
+            for (std::size_t component = 0; component < FalloutRetailTransformComponentCount; ++component)
+            {
+                if (world[component] == node.mWorldBits[component])
+                    continue;
+                nodeMismatch = true;
+                ++mismatchedWords;
+            }
+            mismatchedNodes += nodeMismatch ? 1 : 0;
+        }
+
+        const std::size_t words = snapshot.mNodes.size() * FalloutRetailTransformComponentCount;
+        const bool pass = mismatchedNodes == 0;
+        Log(pass ? Debug::Info : Debug::Error)
+            << "FNV/ESM4 retail pose source audit: snapshot=\"" << snapshot.mPath << "\" nodes="
+            << snapshot.mNodes.size() << " transformWords=" << words << " mismatchedNodes=" << mismatchedNodes
+            << " mismatchedWords=" << mismatchedWords << " arithmetic=parent-times-local-round-every-float32-op status="
+            << (pass ? "pass" : "fail");
+        if (!pass)
+            throw std::runtime_error("retail pose source arithmetic audit failed: " + snapshot.mPath);
+    }
+
+    std::shared_ptr<FalloutRetailPoseSnapshot> loadFalloutRetailPoseSnapshot(const std::string& path)
+    {
+        std::ifstream input(path);
+        if (!input)
+            throw std::runtime_error("failed to open retail pose snapshot: " + path);
+
+        std::string line;
+        if (!std::getline(input, line) || line != "NIKAMI_RETAIL_POSE_SNAPSHOT_V1")
+            throw std::runtime_error("unsupported retail pose snapshot schema: " + path);
+
+        auto snapshot = std::make_shared<FalloutRetailPoseSnapshot>();
+        snapshot->mPath = path;
+        bool foundRoot = false;
+        while (std::getline(input, line))
+        {
+            if (line.empty())
+                continue;
+            std::istringstream row(line);
+            std::string kind;
+            row >> kind;
+            if (kind == "source")
+                continue;
+            if (kind == "root")
+            {
+                for (std::uint32_t& bits : snapshot->mRootBits)
+                {
+                    std::string token;
+                    if (!(row >> token) || !parseProofFloatBits(token, bits))
+                        throw std::runtime_error("invalid root float bits in retail pose snapshot: " + path);
+                }
+                foundRoot = true;
+                continue;
+            }
+            if (kind != "node")
+                throw std::runtime_error("unknown retail pose snapshot row: " + kind);
+
+            FalloutRetailPoseNode node;
+            std::string parentToken;
+            std::string localToken;
+            std::string worldToken;
+            if (!(row >> std::quoted(node.mName) >> parentToken >> std::quoted(node.mParent) >> localToken)
+                || parentToken != "parent" || localToken != "local")
+            {
+                throw std::runtime_error("invalid node header in retail pose snapshot: " + path);
+            }
+            for (std::uint32_t& bits : node.mLocalBits)
+            {
+                std::string token;
+                if (!(row >> token) || !parseProofFloatBits(token, bits))
+                    throw std::runtime_error("invalid local float bits for retail pose node " + node.mName);
+            }
+            if (!(row >> worldToken) || worldToken != "world")
+                throw std::runtime_error("missing world transform for retail pose node " + node.mName);
+            for (std::uint32_t& bits : node.mWorldBits)
+            {
+                std::string token;
+                if (!(row >> token) || !parseProofFloatBits(token, bits))
+                    throw std::runtime_error("invalid world float bits for retail pose node " + node.mName);
+            }
+            node.mLocalMatrix = makeFalloutRetailPoseMatrix(node.mLocalBits);
+            node.mWorldMatrix = makeFalloutRetailPoseMatrix(node.mWorldBits);
+            snapshot->mNodes.push_back(std::move(node));
+        }
+
+        if (!foundRoot || snapshot->mNodes.empty())
+            throw std::runtime_error("retail pose snapshot has no root or nodes: " + path);
+        for (std::size_t index = 0; index < snapshot->mNodes.size(); ++index)
+        {
+            const std::string lower = Misc::StringUtils::lowerCase(snapshot->mNodes[index].mName);
+            if (!snapshot->mNodeByLowerName.emplace(lower, index).second)
+                throw std::runtime_error("duplicate retail pose node: " + snapshot->mNodes[index].mName);
+        }
+        auditFalloutRetailPoseSource(*snapshot);
+        return snapshot;
+    }
+
+    struct FalloutRetailPoseAuditResult
+    {
+        std::size_t mMatched = 0;
+        std::size_t mDuplicates = 0;
+        std::size_t mLocalMismatches = 0;
+        std::size_t mWorldMismatches = 0;
+        std::vector<std::string> mDetails;
+    };
+
+    class FalloutRetailPoseAuditVisitor final : public osg::NodeVisitor
+    {
+    public:
+        explicit FalloutRetailPoseAuditVisitor(const FalloutRetailPoseSnapshot& snapshot)
+            : osg::NodeVisitor(osg::NodeVisitor::TRAVERSE_ALL_CHILDREN)
+            , mSnapshot(snapshot)
+            , mSeen(snapshot.mNodes.size(), 0)
+        {
+        }
+
+        void apply(osg::Node& node) override
+        {
+            const std::string lowerName = Misc::StringUtils::lowerCase(node.getName());
+            const auto found = mSnapshot.mNodeByLowerName.find(lowerName);
+            const auto* transform = dynamic_cast<const osg::MatrixTransform*>(&node);
+            if (found != mSnapshot.mNodeByLowerName.end() && transform != nullptr
+                && !isFalloutRetailPoseSnapshotRoot(lowerName))
+            {
+                const std::size_t index = found->second;
+                const FalloutRetailPoseNode& expected = mSnapshot.mNodes[index];
+                ++mResult.mMatched;
+                if (++mSeen[index] > 1)
+                    ++mResult.mDuplicates;
+
+                const auto localBits = getFalloutRetailMatrixBits(transform->getMatrix());
+                const auto worldBits = getFalloutRetailMatrixBits(osg::computeLocalToWorld(getNodePath()));
+                const auto expectedLocalBits
+                    = getFalloutRetailMatrixBits(getFalloutRetailPoseAdapterLocal(expected, getNodePath()));
+                const auto expectedWorldBits = getFalloutRetailMatrixBits(expected.mWorldMatrix);
+                bool localMismatch = false;
+                bool worldMismatch = false;
+                for (std::size_t component = 0; component < FalloutRetailMatrixComponentCount; ++component)
+                {
+                    localMismatch = localMismatch || localBits[component] != expectedLocalBits[component];
+                    worldMismatch = worldMismatch || worldBits[component] != expectedWorldBits[component];
+                }
+                mResult.mLocalMismatches += localMismatch ? 1 : 0;
+                mResult.mWorldMismatches += worldMismatch ? 1 : 0;
+                if ((localMismatch || worldMismatch) && mResult.mDetails.size() < 24)
+                {
+                    std::ostringstream detail;
+                    detail << "node=\"" << expected.mName << "\" localMismatch=" << localMismatch
+                           << " worldMismatch=" << worldMismatch << " localExpected="
+                           << formatProofFloatBits(expectedLocalBits)
+                           << " localActual=" << formatProofFloatBits(localBits) << " worldExpected="
+                           << formatProofFloatBits(expectedWorldBits)
+                           << " worldActual=" << formatProofFloatBits(worldBits);
+                    mResult.mDetails.push_back(detail.str());
+                }
+            }
+            traverse(node);
+        }
+
+        FalloutRetailPoseAuditResult finish()
+        {
+            for (std::size_t index = 0; index < mSnapshot.mNodes.size(); ++index)
+            {
+                if (isFalloutRetailPoseSnapshotRoot(Misc::StringUtils::lowerCase(mSnapshot.mNodes[index].mName)))
+                    continue;
+                if (mSeen[index] == 0 && mResult.mDetails.size() < 24)
+                    mResult.mDetails.push_back("missingNode=\"" + mSnapshot.mNodes[index].mName + "\"");
+            }
+            return std::move(mResult);
+        }
+
+    private:
+        const FalloutRetailPoseSnapshot& mSnapshot;
+        std::vector<unsigned int> mSeen;
+        FalloutRetailPoseAuditResult mResult;
+    };
+
+    class FalloutRetailPoseApplyVisitor final : public osg::NodeVisitor
+    {
+    public:
+        explicit FalloutRetailPoseApplyVisitor(const FalloutRetailPoseSnapshot& snapshot)
+            : osg::NodeVisitor(osg::NodeVisitor::TRAVERSE_ALL_CHILDREN)
+            , mSnapshot(snapshot)
+        {
+        }
+
+        void apply(osg::Node& node) override
+        {
+            const std::string lowerName = Misc::StringUtils::lowerCase(node.getName());
+            const auto found = mSnapshot.mNodeByLowerName.find(lowerName);
+            auto* transform = dynamic_cast<osg::MatrixTransform*>(&node);
+            if (found != mSnapshot.mNodeByLowerName.end() && transform != nullptr
+                && !isFalloutRetailPoseSnapshotRoot(lowerName))
+            {
+                transform->setMatrix(
+                    getFalloutRetailPoseAdapterLocal(mSnapshot.mNodes[found->second], getNodePath()));
+                ++mApplied;
+            }
+            traverse(node);
+        }
+
+        std::size_t getApplied() const { return mApplied; }
+
+    private:
+        const FalloutRetailPoseSnapshot& mSnapshot;
+        std::size_t mApplied = 0;
+    };
+
+    class FalloutRetailPoseSkeletonRefreshVisitor final : public osg::NodeVisitor
+    {
+    public:
+        explicit FalloutRetailPoseSkeletonRefreshVisitor(unsigned int traversalNumber)
+            : osg::NodeVisitor(osg::NodeVisitor::TRAVERSE_ALL_CHILDREN)
+            , mTraversalNumber(traversalNumber)
+        {
+        }
+
+        void apply(osg::Group& group) override
+        {
+            if (auto* skeleton = dynamic_cast<SceneUtil::Skeleton*>(&group))
+            {
+                skeleton->markBoneMatriceDirty();
+                skeleton->updateBoneMatrices(mTraversalNumber);
+                ++mSkeletons;
+            }
+            traverse(group);
+        }
+
+        std::size_t getSkeletons() const { return mSkeletons; }
+
+    private:
+        unsigned int mTraversalNumber = 0;
+        std::size_t mSkeletons = 0;
+    };
+
+    class FalloutRetailPoseRigRefreshVisitor final : public osg::NodeVisitor
+    {
+    public:
+        FalloutRetailPoseRigRefreshVisitor()
+            : osg::NodeVisitor(osg::NodeVisitor::TRAVERSE_ALL_CHILDREN)
+        {
+        }
+
+        void apply(osg::Geode& geode) override
+        {
+            for (unsigned int index = 0; index < geode.getNumDrawables(); ++index)
+                refresh(geode.getDrawable(index));
+            traverse(geode);
+        }
+
+        void apply(osg::Drawable& drawable) override { refresh(&drawable); }
+
+        std::size_t getRefreshed() const { return mRefreshed; }
+        std::size_t getVisited() const { return mVisited; }
+
+    private:
+        void refresh(osg::Drawable* drawable)
+        {
+            auto* rig = dynamic_cast<SceneUtil::RigGeometry*>(drawable);
+            if (rig == nullptr || !rig->isFalloutCharacterRig())
+                return;
+            ++mVisited;
+            rig->forceNextUpdate();
+            if (rig->refreshFalloutSkinningForCurrentPose())
+                ++mRefreshed;
+        }
+
+        std::size_t mVisited = 0;
+        std::size_t mRefreshed = 0;
+    };
+
+    class FalloutRetailPoseReplayCallback final : public osg::NodeCallback
+    {
+    public:
+        FalloutRetailPoseReplayCallback(
+            std::shared_ptr<const FalloutRetailPoseSnapshot> snapshot, int applyFrame, int auditFrame)
+            : mSnapshot(std::move(snapshot))
+            , mApplyFrame(applyFrame)
+            , mAuditFrame(auditFrame)
+        {
+        }
+
+        void operator()(osg::Node* node, osg::NodeVisitor* visitor) override
+        {
+            traverse(node, visitor);
+            if (node == nullptr || visitor == nullptr || visitor->getFrameStamp() == nullptr)
+                return;
+            const unsigned int frame = visitor->getFrameStamp()->getFrameNumber();
+            if (frame < static_cast<unsigned int>(std::max(0, mApplyFrame)))
+                return;
+
+            if (static_cast<int>(frame) == mAuditFrame)
+                audit(*node, frame, "pre-replay");
+
+            FalloutRetailPoseApplyVisitor applyVisitor(*mSnapshot);
+            node->accept(applyVisitor);
+            FalloutRetailPoseSkeletonRefreshVisitor skeletonRefresh(visitor->getTraversalNumber());
+            node->accept(skeletonRefresh);
+            FalloutRetailPoseRigRefreshVisitor rigRefresh;
+            node->accept(rigRefresh);
+            if (!mApplyLogged)
+            {
+                mApplyLogged = true;
+                Log(Debug::Info) << "FNV/ESM4 retail pose replay: frame=" << frame << " snapshot=\""
+                                 << mSnapshot->mPath << "\" expectedNodes="
+                                 << getFalloutRetailPoseReplayNodeCount(*mSnapshot)
+                                  << " appliedNodes=" << applyVisitor.getApplied()
+                                  << " refreshedSkeletons=" << skeletonRefresh.getSkeletons()
+                                  << " visitedRigs=" << rigRefresh.getVisited()
+                                  << " refreshedRigs=" << rigRefresh.getRefreshed();
+            }
+
+            if (static_cast<int>(frame) == mAuditFrame)
+                audit(*node, frame, "post-replay");
+        }
+
+    private:
+        void audit(osg::Node& root, unsigned int frame, std::string_view stage)
+        {
+            FalloutRetailPoseAuditVisitor visitor(*mSnapshot);
+            root.accept(visitor);
+            FalloutRetailPoseAuditResult result = visitor.finish();
+            const std::size_t expected = getFalloutRetailPoseReplayNodeCount(*mSnapshot);
+            const std::size_t missing = result.mMatched < expected ? expected - result.mMatched : 0;
+            const bool pass = missing == 0 && result.mDuplicates == 0 && result.mLocalMismatches == 0
+                && result.mWorldMismatches == 0;
+            Log(pass ? Debug::Info : Debug::Error)
+                << "FNV/ESM4 retail pose audit: frame=" << frame << " stage=" << stage
+                << " expectedNodes=" << expected << " matchedNodes=" << result.mMatched << " missingNodes="
+                << missing << " duplicateNodes=" << result.mDuplicates << " localMismatchNodes="
+                << result.mLocalMismatches << " worldMismatchNodes=" << result.mWorldMismatches
+                << " status=" << (pass ? "pass" : "fail");
+            for (const std::string& detail : result.mDetails)
+                Log(Debug::Error) << "FNV/ESM4 retail pose mismatch: frame=" << frame << " stage=" << stage
+                                  << " " << detail;
+        }
+
+        std::shared_ptr<const FalloutRetailPoseSnapshot> mSnapshot;
+        int mApplyFrame = 0;
+        int mAuditFrame = -1;
+        bool mApplyLogged = false;
+    };
 
     template <typename T>
     ESM::RefId findEsm4EditorId(const MWWorld::ESMStore& store, std::string_view editorId)
@@ -2588,12 +3656,16 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
     static const std::vector<int> proofScreenshotFrames = getProofFrames("OPENMW_PROOF_SCREENSHOT_FRAME");
     static const std::vector<float> proofActorViewOrbitDegrees
         = getProofFloats("OPENMW_PROOF_ACTOR_VIEW_ORBIT_DEGREES");
+    static const std::vector<float> proofActorViewFrontDistances
+        = getProofFloats("OPENMW_PROOF_ACTOR_VIEW_FRONT_DISTANCES");
     static const int proofScreenshotReadyFrames = getProofFrame("OPENMW_PROOF_SCREENSHOT_READY_FRAMES");
     static const int proofInventoryFrame = getProofFrame("OPENMW_PROOF_INVENTORY_FRAME");
     static const std::vector<int> proofInventoryPaneFrames = getProofFrames("OPENMW_PROOF_INVENTORY_PANE_FRAME");
     static const std::vector<int> proofInventoryPaneIndices = getProofFrames("OPENMW_PROOF_INVENTORY_PANE_INDEX");
     static const int proofQuickSaveFrame = getProofFrame("OPENMW_PROOF_QUICKSAVE_FRAME");
     static const int proofSayFrame = getProofFrame("OPENMW_PROOF_SAY_FRAME");
+    static const std::vector<std::string> proofActorBatchTargets
+        = readWorldViewerStringList("OPENMW_PROOF_SAY_ACTORS");
     static const int proofTimedScript1Frame = getProofFrame("OPENMW_PROOF_TIMED_SCRIPT_1_FRAME");
     static const int proofTimedScript2Frame = getProofFrame("OPENMW_PROOF_TIMED_SCRIPT_2_FRAME");
     static std::size_t proofScreenshotFrameIndex = 0;
@@ -2609,8 +3681,18 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
     static int proofActorCameraAlignedFrame = -1;
     static std::size_t proofActorCameraAlignedScreenshotIndex = static_cast<std::size_t>(-1);
     static bool proofActorAlignedScreenshotQueued = false;
+    static bool proofActorNeutralizedForCamera = false;
     static bool proofActorStagedForCamera = false;
     static bool proofActorSnappedToRenderGround = false;
+    static bool proofActorRenderGroundFreshBoundsLatched = false;
+    static int proofActorStagedFrame = -1;
+    static int proofActorSnappedFrame = -1;
+    static MWWorld::Ptr proofPinnedStagedActor;
+    static osg::Vec3f proofPinnedStagedActorPosition;
+    static osg::Vec3f proofPinnedStagedActorRotation;
+    static int proofPinnedStagedActorLastLogFrame = -1000000;
+    static std::size_t proofActorBatchIndex = static_cast<std::size_t>(-1);
+    static MWWorld::Ptr proofActorBatchPrevious;
     static bool proofActorScreenshotWaitLogged = false;
     static int proofActorScreenshotLastResolveFrame = -1;
     static bool proofNeutralActorPreviewAttempted = false;
@@ -2632,6 +3714,8 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
     static bool proofDelayedStartupScriptExecuted = false;
     static bool proofFNVBootstrapApplied = false;
     static bool proofFNVCameraResetApplied = false;
+    static bool proofRetailProjectionApplied = false;
+    static bool proofRetailProjectionAudited = false;
     static bool worldViewerNonStaticStartCameraSettled = false;
     static bool fnvFlatStartupCameraSettled = false;
     static bool proofScreenshotWaitLogged = false;
@@ -3453,6 +4537,116 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
         }
         worldViewerTrace(frameNumber, "world-update.end");
 
+        if (proofEnvEnabled("OPENMW_FNV_RETAIL_POSE_REPLAY") && mWorld != nullptr
+            && mStateManager->getState() != MWBase::StateManager::State_NoGame)
+        {
+            const char* snapshotPathEnv = std::getenv("OPENMW_FNV_RETAIL_POSE_SNAPSHOT");
+            const char* targetRefEnv = std::getenv("OPENMW_FNV_RETAIL_POSE_TARGET_REF");
+            static std::string loadedSnapshotPath;
+            static std::string failedSnapshotPath;
+            static std::shared_ptr<FalloutRetailPoseSnapshot> snapshot;
+            static bool actorMissingLogged = false;
+            static bool rootApplyLogged = false;
+
+            const std::string snapshotPath = snapshotPathEnv != nullptr ? snapshotPathEnv : "";
+            if (!snapshotPath.empty() && snapshotPath != loadedSnapshotPath && snapshotPath != failedSnapshotPath)
+            {
+                try
+                {
+                    snapshot = loadFalloutRetailPoseSnapshot(snapshotPath);
+                    loadedSnapshotPath = snapshotPath;
+                    failedSnapshotPath.clear();
+                    actorMissingLogged = false;
+                    rootApplyLogged = false;
+                    Log(Debug::Info) << "FNV/ESM4 retail pose snapshot loaded: path=\"" << snapshotPath
+                                     << "\" nodes=" << snapshot->mNodes.size() << " rootBits="
+                                     << formatProofFloatBits(snapshot->mRootBits);
+                }
+                catch (const std::exception& e)
+                {
+                    snapshot.reset();
+                    failedSnapshotPath = snapshotPath;
+                    Log(Debug::Error) << "FNV/ESM4 retail pose snapshot load failed: path=\"" << snapshotPath
+                                      << "\" error=\"" << e.what() << "\"";
+                }
+            }
+
+            if (snapshot != nullptr && targetRefEnv != nullptr && *targetRefEnv != '\0')
+            {
+                MWWorld::Ptr actor = resolveProofActor(targetRefEnv);
+                if (actor.isEmpty() || actor.getRefData().getBaseNode() == nullptr)
+                {
+                    if (!actorMissingLogged)
+                    {
+                        actorMissingLogged = true;
+                        Log(Debug::Error) << "FNV/ESM4 retail pose replay target unresolved: target=\""
+                                          << targetRefEnv << "\"";
+                    }
+                }
+                else
+                {
+                    actorMissingLogged = false;
+                    osg::Node* actorRoot = actor.getRefData().getBaseNode();
+                    std::string attachedSnapshotPath;
+                    if (!actorRoot->getUserValue("fnvRetailPoseSnapshotPath", attachedSnapshotPath)
+                        || attachedSnapshotPath != snapshot->mPath)
+                    {
+                        const int applyFrame = readProofInt("OPENMW_FNV_RETAIL_POSE_APPLY_FRAME", 0);
+                        const int auditFrame = readProofInt("OPENMW_FNV_RETAIL_POSE_AUDIT_FRAME", -1);
+                        actorRoot->addUpdateCallback(
+                            new FalloutRetailPoseReplayCallback(snapshot, applyFrame, auditFrame));
+                        actorRoot->setUserValue("fnvRetailPoseSnapshotPath", snapshot->mPath);
+                        Log(Debug::Info) << "FNV/ESM4 retail pose replay attached: target=\"" << targetRefEnv
+                                         << "\" applyFrame=" << applyFrame << " auditFrame=" << auditFrame;
+                    }
+
+                    const int applyFrame = readProofInt("OPENMW_FNV_RETAIL_POSE_APPLY_FRAME", 0);
+                    if (frameNumber >= static_cast<unsigned int>(std::max(0, applyFrame)))
+                    {
+                        const osg::Vec3f expectedPosition(proofFloatFromBits(snapshot->mRootBits[0]),
+                            proofFloatFromBits(snapshot->mRootBits[1]), proofFloatFromBits(snapshot->mRootBits[2]));
+                        const osg::Vec3f expectedRotation(proofFloatFromBits(snapshot->mRootBits[3]),
+                            proofFloatFromBits(snapshot->mRootBits[4]), proofFloatFromBits(snapshot->mRootBits[5]));
+                        const ESM::Position before = actor.getRefData().getPosition();
+                        std::array<std::uint32_t, 6> beforeBits = {
+                            std::bit_cast<std::uint32_t>(before.pos[0]), std::bit_cast<std::uint32_t>(before.pos[1]),
+                            std::bit_cast<std::uint32_t>(before.pos[2]), std::bit_cast<std::uint32_t>(before.rot[0]),
+                            std::bit_cast<std::uint32_t>(before.rot[1]), std::bit_cast<std::uint32_t>(before.rot[2])
+                        };
+                        if (beforeBits[0] != snapshot->mRootBits[0] || beforeBits[1] != snapshot->mRootBits[1]
+                            || beforeBits[2] != snapshot->mRootBits[2])
+                        {
+                            actor = mWorld->moveObject(actor, expectedPosition);
+                        }
+                        if (beforeBits[3] != snapshot->mRootBits[3] || beforeBits[4] != snapshot->mRootBits[4]
+                            || beforeBits[5] != snapshot->mRootBits[5])
+                        {
+                            mWorld->rotateObject(actor, expectedRotation);
+                        }
+
+                        const ESM::Position& after = actor.getRefData().getPosition();
+                        const std::array<std::uint32_t, 6> afterBits = {
+                            std::bit_cast<std::uint32_t>(after.pos[0]), std::bit_cast<std::uint32_t>(after.pos[1]),
+                            std::bit_cast<std::uint32_t>(after.pos[2]), std::bit_cast<std::uint32_t>(after.rot[0]),
+                            std::bit_cast<std::uint32_t>(after.rot[1]), std::bit_cast<std::uint32_t>(after.rot[2])
+                        };
+                        const int auditFrame = readProofInt("OPENMW_FNV_RETAIL_POSE_AUDIT_FRAME", -1);
+                        if (!rootApplyLogged || static_cast<int>(frameNumber) == auditFrame)
+                        {
+                            rootApplyLogged = true;
+                            const bool pass = afterBits == snapshot->mRootBits;
+                            Log(pass ? Debug::Info : Debug::Error)
+                                << "FNV/ESM4 retail root replay: frame=" << frameNumber << " target=\""
+                                << targetRefEnv << "\" beforeBits=" << formatProofFloatBits(beforeBits)
+                                << " expectedBits=" << formatProofFloatBits(snapshot->mRootBits)
+                                << " afterBits=" << formatProofFloatBits(afterBits)
+                                << " status=" << (pass ? "pass" : "fail");
+                        }
+                    }
+                }
+            }
+        }
+
         // update GUI
         {
             worldViewerTrace(frameNumber, "gui.begin");
@@ -3642,6 +4836,74 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
     else
         proofWorldReadyFrames = 0;
 
+    if (proofWorldReady && mWorld != nullptr && std::getenv("OPENMW_FNV_RETAIL_PROJECTION_REPLAY") != nullptr)
+    {
+        const osg::Matrixf retailProjection = makeFalloutRetailProjectionMatrix();
+        mWorld->getRenderingManager()->overrideProjectionMatrix(retailProjection,
+            proofFloatFromBits(FalloutRetailVerticalFovBits), proofFloatFromBits(FalloutRetailNearClipBits),
+            proofFloatFromBits(FalloutRetailFarClipBits));
+        if (!proofRetailProjectionApplied)
+        {
+            proofRetailProjectionApplied = true;
+            Log(Debug::Info) << "FNV/ESM4 retail projection replay: applied source=retail-d3d9-draw-sequences-938-939"
+                             << " viewport=2048x1280 baseHorizontalFov=75"
+                             << " verticalFovBits="
+                             << formatProofFloatBits(FalloutRetailVerticalFovBitArray)
+                             << " nearFarBits=" << formatProofFloatBits(FalloutRetailNearFarBits)
+                             << " retailD3DBits=" << formatProofFloatBits(FalloutRetailD3DProjectionBits)
+                             << " expectedOpenGLBits=" << formatProofFloatBits(FalloutRetailOpenGLProjectionBits);
+        }
+    }
+
+    if (proofEnvEnabled("OPENMW_PROOF_HIDE_WORLD_OCCLUDERS"))
+    {
+        static bool proofWorldOccludersHidden = false;
+        const uint32_t occluderMask
+            = MWRender::Mask_Static | MWRender::Mask_Object | MWRender::Mask_Groundcover;
+        const uint32_t mask = mViewer->getCamera()->getCullMask() & ~occluderMask;
+        mViewer->getCamera()->setCullMask(mask);
+        mViewer->getCamera()->setCullMaskLeft(mask);
+        mViewer->getCamera()->setCullMaskRight(mask);
+        if (!proofWorldOccludersHidden)
+        {
+            proofWorldOccludersHidden = true;
+            Log(Debug::Info) << "FNV/ESM4 proof: hidden static/object/groundcover occluders while preserving terrain, sky, lighting, and actors";
+        }
+    }
+
+    const int proofRetailProjectionAuditFrame
+        = readProofInt("OPENMW_FNV_RETAIL_PROJECTION_AUDIT_FRAME", 420);
+    if (!proofRetailProjectionAudited && proofRetailProjectionApplied
+        && static_cast<int>(frameNumber) >= proofRetailProjectionAuditFrame)
+    {
+        proofRetailProjectionAudited = true;
+        const std::array<std::uint32_t, 16> actualBits
+            = getProofMatrixBits(mViewer->getCamera()->getProjectionMatrix());
+        const osg::Viewport* viewport = mViewer->getCamera()->getViewport();
+        const int viewportWidth = viewport != nullptr ? static_cast<int>(viewport->width()) : 0;
+        const int viewportHeight = viewport != nullptr ? static_cast<int>(viewport->height()) : 0;
+        const auto* renderingManager = mWorld->getRenderingManager();
+        const std::uint32_t actualFovBits
+            = std::bit_cast<std::uint32_t>(renderingManager->getFieldOfView());
+        const std::uint32_t actualNearBits
+            = std::bit_cast<std::uint32_t>(renderingManager->getNearClipDistance());
+        const std::uint32_t actualFarBits
+            = std::bit_cast<std::uint32_t>(renderingManager->getViewDistance());
+        const std::array<std::uint32_t, 1> actualFovBitArray = { actualFovBits };
+        const std::array<std::uint32_t, 2> actualNearFarBits = { actualNearBits, actualFarBits };
+        const bool passed = viewportWidth == 2048 && viewportHeight == 1280
+            && actualBits == FalloutRetailOpenGLProjectionBits && actualFovBits == FalloutRetailVerticalFovBits
+            && actualNearBits == FalloutRetailNearClipBits && actualFarBits == FalloutRetailFarClipBits;
+        Log(passed ? Debug::Info : Debug::Error)
+            << "FNV/ESM4 retail projection audit: frame=" << frameNumber
+            << " viewport=" << viewportWidth << "x" << viewportHeight
+            << " fovBits=" << formatProofFloatBits(actualFovBitArray)
+            << " nearFarBits=" << formatProofFloatBits(actualNearFarBits)
+            << " expectedOpenGLBits=" << formatProofFloatBits(FalloutRetailOpenGLProjectionBits)
+            << " actualOpenGLBits=" << formatProofFloatBits(actualBits)
+            << " status=" << (passed ? "pass" : "fail");
+    }
+
     worldViewerTrace(frameNumber, "proof-world-ready-evaluated");
     if (proofWorldReady && mWorld != nullptr)
     {
@@ -3829,7 +5091,7 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
     const bool worldViewerStaticStartCamera
         = worldViewerStartCameraMode != nullptr && std::string(worldViewerStartCameraMode) == "static";
     if (!worldViewerNonStaticStartCameraSettled && proofWorldReady && proofWorldReadyFrames >= 2 && !VR::getVR()
-        && worldViewerNonStaticStartCameraRequested() && mWorld != nullptr)
+        && worldViewerNonStaticStartCameraRequested() && mWorld != nullptr && !proofActorStaticCameraOwnsView)
     {
         worldViewerNonStaticStartCameraSettled = settleWorldViewerNonStaticStartCamera(*mWorld);
     }
@@ -3837,7 +5099,8 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
     const bool worldViewerExplicitNonStaticStartCamera = worldViewerNonStaticStartCameraRequested();
     if (!fnvFlatStartupCameraSettled && proofWorldReady && proofWorldReadyFrames >= 2 && !VR::getVR()
         && hasFalloutNvContent(mContentFiles) && !worldViewerStaticStartCamera
-        && !worldViewerExplicitNonStaticStartCamera)
+        && !worldViewerExplicitNonStaticStartCamera && !proofActorStaticCameraOwnsView
+        && std::getenv("OPENMW_FNV_PROOF_RESET_CAMERA") == nullptr)
     {
         settleFNVFlatStartupCamera(*mWorld);
         fnvFlatStartupCameraSettled = true;
@@ -3891,6 +5154,55 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
     }
 
     const bool proofRequiresActorForScreenshot = std::getenv("OPENMW_PROOF_REQUIRE_ACTOR_FOR_SCREENSHOT") != nullptr;
+    const bool proofActorBatchActive = !proofActorBatchTargets.empty()
+        && proofScreenshotFrameIndex < proofActorBatchTargets.size();
+    // Native capture is asynchronous. Do not change the staged scene immediately after
+    // arming it; advance only when the next target enters its warmup window.
+    const int proofActorBatchWarmupFramesEnv = getProofFrame("OPENMW_PROOF_ACTOR_BATCH_WARMUP_FRAMES");
+    const int proofActorBatchWarmupFrames
+        = proofActorBatchWarmupFramesEnv >= 0 ? proofActorBatchWarmupFramesEnv : 30;
+    const bool proofActorBatchTransitionReady = proofActorBatchIndex == static_cast<std::size_t>(-1)
+        || proofScreenshotFrameIndex == 0 || proofScreenshotFrameIndex >= proofScreenshotFrames.size()
+        || static_cast<int>(frameNumber) + proofActorBatchWarmupFrames
+            >= proofScreenshotFrames[proofScreenshotFrameIndex];
+    if (proofActorBatchActive && proofActorBatchIndex != proofScreenshotFrameIndex
+        && proofActorBatchTransitionReady)
+    {
+        if (!proofActorBatchPrevious.isEmpty() && mWorld != nullptr)
+        {
+            try
+            {
+                mWorld->disable(proofActorBatchPrevious);
+            }
+            catch (const std::exception& e)
+            {
+                Log(Debug::Warning) << "FNV/ESM4 proof batch: failed to retire previous actor: " << e.what();
+            }
+        }
+        proofActorBatchPrevious = MWWorld::Ptr();
+        proofActorBatchIndex = proofScreenshotFrameIndex;
+        proofSayQueued = false;
+        proofActorCameraAligned = false;
+        proofActorCameraAlignedFrame = -1;
+        proofActorCameraAlignedScreenshotIndex = static_cast<std::size_t>(-1);
+        proofActorAlignedScreenshotQueued = false;
+        proofActorNeutralizedForCamera = false;
+        proofActorStagedForCamera = false;
+        proofActorSnappedToRenderGround = false;
+        proofActorRenderGroundFreshBoundsLatched = false;
+        proofActorStagedFrame = -1;
+        proofActorSnappedFrame = -1;
+        proofPinnedStagedActor = MWWorld::Ptr();
+        proofPinnedStagedActorLastLogFrame = -1000000;
+        proofActorScreenshotWaitLogged = false;
+        proofActorScreenshotLastResolveFrame = -1;
+        proofPinnedPlayerToActorView = false;
+        Log(Debug::Info) << "FNV/ESM4 proof batch: selected actor index=" << proofActorBatchIndex
+                         << " target=\"" << proofActorBatchTargets[proofActorBatchIndex] << "\"";
+    }
+    const char* proofSayActor = proofActorBatchActive
+        ? proofActorBatchTargets[std::min(proofActorBatchIndex, proofActorBatchTargets.size() - 1)].c_str()
+        : std::getenv("OPENMW_PROOF_SAY_ACTOR");
     const int proofActorResolveRetryFramesEnv = getProofFrame("OPENMW_PROOF_ACTOR_RESOLVE_RETRY_FRAMES");
     const int proofActorResolveRetryFrames = proofActorResolveRetryFramesEnv >= 0 ? proofActorResolveRetryFramesEnv : 30;
     const bool proofOrbitBurstPending = proofScreenshotFrameIndex < proofScreenshotFrames.size()
@@ -3907,36 +5219,133 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
     const bool proofOrbitBurstAlignReached = proofOrbitBurstPending
         && frameNumber >= static_cast<unsigned>(proofScreenshotFrames[proofScreenshotFrameIndex])
         && (!proofRequiresActorForScreenshot || proofActorScreenshotNeedsResolve);
+    const bool proofActorCameraAlignmentWindowOpen = !proofActorBatchActive
+        || proofScreenshotFrameIndex >= proofScreenshotFrames.size()
+        || frameNumber >= static_cast<unsigned>(proofScreenshotFrames[proofScreenshotFrameIndex]);
+    if (proofEnvEnabled("OPENMW_PROOF_PIN_STAGED_ACTOR") && !proofPinnedStagedActor.isEmpty()
+        && mWorld != nullptr)
+    {
+        try
+        {
+            const ESM::Position& current = proofPinnedStagedActor.getRefData().getPosition();
+            const osg::Vec3f currentPosition(current.pos[0], current.pos[1], current.pos[2]);
+            const osg::Vec3f currentRotation(current.rot[0], current.rot[1], current.rot[2]);
+            const float positionDrift = (currentPosition - proofPinnedStagedActorPosition).length();
+            const float rotationDrift = (currentRotation - proofPinnedStagedActorRotation).length();
+            if (positionDrift > 0.001f)
+            {
+                proofPinnedStagedActor = mWorld->moveObject(proofPinnedStagedActor,
+                    proofPinnedStagedActor.getCell(), proofPinnedStagedActorPosition, true, true);
+            }
+            if (rotationDrift > 0.00001f)
+                mWorld->rotateObject(proofPinnedStagedActor, proofPinnedStagedActorRotation);
+            if ((positionDrift > 0.001f || rotationDrift > 0.00001f)
+                && static_cast<int>(frameNumber) - proofPinnedStagedActorLastLogFrame >= 30)
+            {
+                proofPinnedStagedActorLastLogFrame = static_cast<int>(frameNumber);
+                Log(Debug::Info) << "FNV/ESM4 proof: restored pinned staged actor transform target=\""
+                                 << (proofSayActor != nullptr ? proofSayActor : "") << "\" frame=" << frameNumber
+                                 << " positionDrift=" << positionDrift << " rotationDrift=" << rotationDrift
+                                 << " pos=(" << proofPinnedStagedActorPosition.x() << ","
+                                 << proofPinnedStagedActorPosition.y() << "," << proofPinnedStagedActorPosition.z()
+                                 << ") rot=(" << proofPinnedStagedActorRotation.x() << ","
+                                 << proofPinnedStagedActorRotation.y() << ","
+                                 << proofPinnedStagedActorRotation.z() << ")";
+            }
+        }
+        catch (const std::exception& e)
+        {
+            Log(Debug::Warning) << "FNV/ESM4 proof: failed to restore pinned staged actor transform: "
+                                << e.what();
+        }
+    }
     if ((!proofSayQueued || proofOrbitBurstAlignReached || proofActorScreenshotNeedsResolve) && proofSayFrame >= 0
         && frameNumber >= static_cast<unsigned>(proofSayFrame))
     {
         const char* proofSayFile = std::getenv("OPENMW_PROOF_SAY_FILE");
-        const char* proofSayActor = std::getenv("OPENMW_PROOF_SAY_ACTOR");
         const char* proofSayTopic = std::getenv("OPENMW_PROOF_SAY_TOPIC");
         MWWorld::Ptr proofActor;
         if (proofSayActor != nullptr && *proofSayActor != '\0')
         {
             proofActor = resolveProofActor(proofSayActor);
+            if (proofActorBatchActive && !proofActor.isEmpty() && !proofActor.getRefData().isEnabled()
+                && mWorld != nullptr)
+                mWorld->enable(proofActor);
             if (proofActorScreenshotNeedsResolve)
                 proofActorScreenshotLastResolveFrame = static_cast<int>(frameNumber);
             Log(Debug::Info) << "FNV/ESM4 proof: resolved proof say actor \"" << proofSayActor
                              << "\" -> " << proofActor.toString();
-            if (!proofActor.isEmpty() && std::getenv("OPENMW_PROOF_SUPPRESS_ACTOR_AI") != nullptr)
+            if (!proofActor.isEmpty() && std::getenv("OPENMW_PROOF_SUPPRESS_ACTOR_AI") != nullptr
+                && !proofActorNeutralizedForCamera)
             {
                 try
                 {
                     MWMechanics::CreatureStats& proofActorStats = proofActor.getClass().getCreatureStats(proofActor);
-                    proofActorStats.getAiSequence().stopCombat();
+                    // A Fallout package can leave a scripted furniture animation running after the actor is moved.
+                    // The capture copy must start from a deterministic neutral state; ordinary world actors keep
+                    // their authored packages and animations because this path is proof-only.
+                    proofActorStats.getAiSequence().clear();
                     proofActorStats.setAttackingOrSpell(false);
                     proofActorStats.setAiSetting(MWMechanics::AiSetting::Fight, 0);
                     proofActorStats.setAiSetting(MWMechanics::AiSetting::Flee, 0);
                     proofActorStats.setAiSetting(MWMechanics::AiSetting::Alarm, 0);
                     proofActorStats.setMovementFlag(MWMechanics::CreatureStats::Flag_Run, false);
                     proofActorStats.setMovementFlag(MWMechanics::CreatureStats::Flag_ForceRun, false);
+                    MWMechanics::Movement& proofMovement = proofActor.getClass().getMovementSettings(proofActor);
+                    proofMovement.mPosition[0] = 0.f;
+                    proofMovement.mPosition[1] = 0.f;
+                    proofMovement.mPosition[2] = 0.f;
+                    proofMovement.mRotation[0] = 0.f;
+                    proofMovement.mRotation[1] = 0.f;
+                    proofMovement.mRotation[2] = 0.f;
+                    if (proofActor.getType() == ESM4::Npc::sRecordId)
+                    {
+                        MWClass::ESM4Npc::setFurnitureState(
+                            proofActor, MWClass::FalloutFurnitureState::None);
+                        MWClass::ESM4Npc::setFurniturePlacement(
+                            proofActor, MWClass::FalloutFurniturePlacement {});
+
+                        // Canonical actor proofs must stage the weapon authored for
+                        // this exact NPC, not merely attach it in the renderer while
+                        // leaving the mechanics state holstered. Conversely, an NPC
+                        // with no authored equipped weapon must stay unarmed.
+                        const ESM4::Weapon* equippedWeapon = MWClass::ESM4Npc::getEquippedWeapon(proofActor);
+                        proofActorStats.setDrawState(equippedWeapon != nullptr
+                                ? MWMechanics::DrawState::Weapon
+                                : MWMechanics::DrawState::Nothing);
+                    }
+                    if (mMechanicsManager != nullptr)
+                    {
+                        mMechanicsManager->clearAnimationQueue(proofActor, true);
+                        mMechanicsManager->forceStateUpdate(proofActor);
+                    }
                     if (std::getenv("OPENMW_PROOF_DISABLE_ACTOR_COLLISION") != nullptr && mWorld != nullptr)
                         mWorld->setActorCollisionMode(proofActor, false, false);
-                    Log(Debug::Info) << "FNV/ESM4 proof: suppressed proof actor AI target=\"" << proofSayActor
-                                     << "\" ptr=" << proofActor.toString();
+                    Log(Debug::Info) << "FNV/ESM4 proof: suppressed proof actor AI and reset staged animation target=\""
+                                     << proofSayActor << "\" ptr=" << proofActor.toString();
+                    if (proofActor.getType() == ESM4::Npc::sRecordId)
+                    {
+                        const ESM4::Npc* npc = proofActor.get<ESM4::Npc>()->mBase;
+                        const ESM4::Weapon* equippedWeapon = MWClass::ESM4Npc::getEquippedWeapon(proofActor);
+                        const MWMechanics::DrawState terminalDrawState = proofActorStats.getDrawState();
+                        Log(Debug::Info) << "FNV/ESM4 proof: phase=canonical-actor-terminal-identity"
+                                         << " target=\"" << proofSayActor << "\""
+                                         << " ref=" << proofActor.getCellRef().getRefNum().toString("FormId:")
+                                         << " base=" << proofActor.getCellRef().getRefId().toDebugString()
+                                         << " npc=\"" << (npc != nullptr ? npc->mEditorId : std::string()) << "\""
+                                         << " npcForm=" << (npc != nullptr ? ESM::RefId(npc->mId) : ESM::RefId())
+                                         << " equippedWeapon=" << (equippedWeapon != nullptr)
+                                         << " weapon=\""
+                                         << (equippedWeapon != nullptr ? equippedWeapon->mEditorId : std::string())
+                                         << "\" weaponForm="
+                                         << (equippedWeapon != nullptr ? ESM::RefId(equippedWeapon->mId) : ESM::RefId())
+                                         << " terminalDrawState="
+                                         << (terminalDrawState == MWMechanics::DrawState::Weapon
+                                                 ? "Weapon"
+                                                 : (terminalDrawState == MWMechanics::DrawState::Spell ? "Spell"
+                                                                                                      : "Nothing"));
+                    }
+                    proofActorNeutralizedForCamera = true;
                 }
                 catch (const std::exception& e)
                 {
@@ -3950,6 +5359,22 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                 try
                 {
                     proofActorStagedForCamera = stageProofActorForCamera(*mWorld, proofActor, proofSayActor);
+                    if (proofActorStagedForCamera)
+                    {
+                        proofActorStagedFrame = static_cast<int>(frameNumber);
+                        if (proofEnvEnabled("OPENMW_PROOF_PIN_STAGED_ACTOR"))
+                        {
+                            proofPinnedStagedActor = proofActor;
+                            const ESM::Position& staged = proofActor.getRefData().getPosition();
+                            proofPinnedStagedActorPosition.set(staged.pos[0], staged.pos[1], staged.pos[2]);
+                            proofPinnedStagedActorRotation.set(staged.rot[0], staged.rot[1], staged.rot[2]);
+                            Log(Debug::Info) << "FNV/ESM4 proof: pinned staged actor transform target=\""
+                                             << proofSayActor << "\" pos=(" << staged.pos[0] << ","
+                                             << staged.pos[1] << "," << staged.pos[2] << ") rot=("
+                                             << staged.rot[0] << "," << staged.rot[1] << "," << staged.rot[2]
+                                             << ") refScale=" << proofActor.getCellRef().getScale();
+                        }
+                    }
                 }
                 catch (const std::exception& e)
                 {
@@ -3958,23 +5383,38 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                     proofActorStagedForCamera = true;
                 }
             }
+            const bool proofActorStageRenderUpdateReady = !proofActorStagedForCamera
+                || proofActorStagedFrame < 0 || static_cast<int>(frameNumber) > proofActorStagedFrame;
             if (!proofActor.isEmpty() && std::getenv("OPENMW_PROOF_SNAP_ACTOR_TO_RENDER_GROUND") != nullptr
-                && !proofActorSnappedToRenderGround && mWorld != nullptr)
+                && !proofActorSnappedToRenderGround && mWorld != nullptr && proofActorStageRenderUpdateReady)
             {
                 try
                 {
-                    proofActorSnappedToRenderGround
-                        = snapProofActorToRenderGround(*mWorld, proofActor, proofSayActor);
+                    proofActorSnappedToRenderGround = snapProofActorToRenderGround(*mWorld, proofActor,
+                        proofSayActor, proofActorRenderGroundFreshBoundsLatched);
+                    if (proofActorSnappedToRenderGround)
+                        proofActorSnappedFrame = static_cast<int>(frameNumber);
                 }
                 catch (const std::exception& e)
                 {
                     Log(Debug::Warning) << "FNV/ESM4 proof: render-ground snap failed target=\""
                                         << proofSayActor << "\": " << e.what();
                     proofActorSnappedToRenderGround = true;
+                    proofActorSnappedFrame = static_cast<int>(frameNumber);
                 }
+            }
+            else if (!proofActor.isEmpty()
+                && std::getenv("OPENMW_PROOF_SNAP_ACTOR_TO_RENDER_GROUND") != nullptr
+                && !proofActorSnappedToRenderGround && !proofActorStageRenderUpdateReady)
+            {
+                Log(Debug::Info) << "FNV/ESM4 proof: render-ground snap waiting for post-stage render update target=\""
+                                 << proofSayActor << "\" stagedFrame=" << proofActorStagedFrame
+                                 << " frame=" << frameNumber;
             }
             if (!proofActor.isEmpty())
                 logProofActorRenderBounds(proofActor, proofSayActor, "post-stage-snap");
+            if (proofActorBatchActive && !proofActor.isEmpty())
+                proofActorBatchPrevious = proofActor;
 
             const bool proofNeutralActorPreviewRequested = proofEnvEnabled("OPENMW_PROOF_NEUTRAL_ACTOR_PREVIEW")
                 || proofEnvEnabled("OPENMW_FNV_NEUTRAL_ACTOR_PREVIEW");
@@ -4066,7 +5506,20 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                                  << " terrain=hidden runtime=runtime-supported gate=runtime-neutral-actor-preview";
             }
 
-            if (!proofActor.isEmpty() && !proofNeutralActorPreviewReady
+            const bool proofActorRenderGroundReady
+                = std::getenv("OPENMW_PROOF_SNAP_ACTOR_TO_RENDER_GROUND") == nullptr
+                || (proofActorSnappedToRenderGround && proofActorSnappedFrame >= 0
+                    && static_cast<int>(frameNumber) > proofActorSnappedFrame);
+            if (!proofActor.isEmpty() && !proofNeutralActorPreviewReady && proofActorCameraAlignmentWindowOpen
+                && !proofActorRenderGroundReady
+                && std::getenv("OPENMW_PROOF_ALIGN_PLAYER_TO_ACTOR") != nullptr)
+            {
+                Log(Debug::Info) << "FNV/ESM4 proof: actor camera waiting for coherent render-ground state target=\""
+                                 << proofSayActor << "\" snapped=" << proofActorSnappedToRenderGround
+                                 << " snappedFrame=" << proofActorSnappedFrame << " frame=" << frameNumber;
+            }
+            if (!proofActor.isEmpty() && !proofNeutralActorPreviewReady && proofActorCameraAlignmentWindowOpen
+                && proofActorRenderGroundReady
                 && std::getenv("OPENMW_PROOF_ALIGN_PLAYER_TO_ACTOR") != nullptr)
             {
                 const ESM::Position& actorPos = proofActor.getRefData().getPosition();
@@ -4077,6 +5530,8 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                 const float cameraDistance = readProofFloat("OPENMW_PROOF_ACTOR_VIEW_CAMERA_DISTANCE", 0.f);
                 const float cameraPitch = readProofFloat("OPENMW_PROOF_ACTOR_VIEW_PITCH", 0.f);
                 const bool staticDialogueCamera = std::getenv("OPENMW_PROOF_ACTOR_VIEW_STATIC_CAMERA") != nullptr;
+                const bool replayRetailAbsoluteCamera
+                    = proofEnvEnabled("OPENMW_PROOF_ACTOR_VIEW_REPLAY_RETAIL_ABSOLUTE_CAMERA");
                 const bool requireActorForScreenshot = std::getenv("OPENMW_PROOF_REQUIRE_ACTOR_FOR_SCREENSHOT") != nullptr;
                 bool useFaceAxisCamera = false;
                 osg::Vec2f faceAxis(0.f, 0.f);
@@ -4084,22 +5539,41 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                 double cameraZ = actorPos.pos[2] + offsetZ;
                 const bool useRenderBounds = std::getenv("OPENMW_PROOF_ACTOR_VIEW_USE_RENDER_BOUNDS") != nullptr;
                 const bool useFaceBounds = std::getenv("OPENMW_PROOF_ACTOR_VIEW_USE_FACE_BOUNDS") != nullptr;
+                const bool fullBodyView = std::getenv("OPENMW_PROOF_ACTOR_VIEW_FULL_BODY") != nullptr;
                 bool actorViewBoundsAccepted = false;
+                bool actorViewScaleAccepted = true;
+                osg::BoundingBox actorViewRenderBounds;
+                int actorViewVisibilityBlockers = -1;
                 const auto isProofBoundsNearActor = [&](const osg::BoundingBox& bounds, const char* label) {
                     const double dx = bounds.center().x() - actorPos.pos[0];
                     const double dy = bounds.center().y() - actorPos.pos[1];
                     const double dz = bounds.center().z() - actorPos.pos[2];
                     const double centerDistance = std::sqrt(dx * dx + dy * dy + dz * dz);
+                    const osg::Vec3d boundsSize(bounds.xMax() - bounds.xMin(), bounds.yMax() - bounds.yMin(),
+                        bounds.zMax() - bounds.zMin());
+                    const double boundsDiagonal = boundsSize.length();
                     const float maxCenterDistance
                         = readProofFloat("OPENMW_PROOF_ACTOR_VIEW_MAX_BOUNDS_CENTER_DISTANCE", 1000.f);
-                    if (centerDistance <= maxCenterDistance)
+                    const float maxCenterDiagonals
+                        = readProofFloat("OPENMW_PROOF_ACTOR_VIEW_MAX_BOUNDS_CENTER_DIAGONALS", 2.f);
+                    const float minRelativeAllowance
+                        = readProofFloat("OPENMW_PROOF_ACTOR_VIEW_MIN_RELATIVE_BOUNDS_ALLOWANCE", 64.f);
+                    const double relativeAllowance
+                        = std::max(static_cast<double>(minRelativeAllowance), boundsDiagonal * maxCenterDiagonals);
+                    const double allowedCenterDistance
+                        = std::min(static_cast<double>(maxCenterDistance), relativeAllowance);
+                    if (centerDistance <= allowedCenterDistance)
                         return true;
                     Log(Debug::Warning) << "FNV/ESM4 proof: actor " << label
                                         << " bounds rejected as stale/far target=\"" << proofSayActor
                                         << "\" center=(" << bounds.center().x() << "," << bounds.center().y()
                                         << "," << bounds.center().z() << ") actorPos=(" << actorPos.pos[0] << ","
                                         << actorPos.pos[1] << "," << actorPos.pos[2] << ") distance="
-                                        << centerDistance << " max=" << maxCenterDistance;
+                                        << centerDistance << " boundsSize=(" << boundsSize.x() << ","
+                                        << boundsSize.y() << "," << boundsSize.z() << ") boundsDiagonal="
+                                        << boundsDiagonal << " maxCenterDiagonals=" << maxCenterDiagonals
+                                        << " absoluteMax=" << maxCenterDistance << " allowed="
+                                        << allowedCenterDistance;
                     return false;
                 };
                 if (useRenderBounds && proofActor.getRefData().getBaseNode() != nullptr)
@@ -4110,11 +5584,24 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                     const osg::BoundingBox bounds = boundsVisitor.getBoundingBox();
                     if (bounds.valid() && isProofBoundsNearActor(bounds, "render"))
                     {
-                        const float focusPercent = readProofFloat("OPENMW_PROOF_ACTOR_VIEW_BOUNDS_FOCUS", 0.72f);
+                        const float focusPercent = readProofFloat(
+                            "OPENMW_PROOF_ACTOR_VIEW_BOUNDS_FOCUS", fullBodyView ? 0.5f : 0.72f);
                         const double focusZ = bounds.zMin() + (bounds.zMax() - bounds.zMin()) * focusPercent;
                         actorAim = osg::Vec3d(bounds.center().x(), bounds.center().y(), focusZ);
                         cameraZ = focusZ + (offsetZ - targetZ);
                         actorViewBoundsAccepted = true;
+                        actorViewRenderBounds = bounds;
+                        const float refScale = proofActor.getCellRef().getScale();
+                        osg::Vec3f expectedRenderRootScale(refScale, refScale, refScale);
+                        proofActor.getClass().adjustScale(proofActor, expectedRenderRootScale, true);
+                        const osg::Vec3f renderRootScale
+                            = proofActor.getRefData().getBaseNode()->getScale();
+                        const float scaleTolerance
+                            = readProofFloat("OPENMW_PROOF_ACTOR_VIEW_SCALE_TOLERANCE", 0.001f);
+                        actorViewScaleAccepted
+                            = std::abs(renderRootScale.x() - expectedRenderRootScale.x()) <= scaleTolerance
+                            && std::abs(renderRootScale.y() - expectedRenderRootScale.y()) <= scaleTolerance
+                            && std::abs(renderRootScale.z() - expectedRenderRootScale.z()) <= scaleTolerance;
                         Log(Debug::Info) << "FNV/ESM4 proof: actor render bounds target=\"" << proofSayActor
                                          << "\" min=(" << bounds.xMin() << "," << bounds.yMin() << ","
                                          << bounds.zMin() << ") max=(" << bounds.xMax() << "," << bounds.yMax()
@@ -4122,6 +5609,13 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                                          << actorAim.y() << "," << actorAim.z() << ") size=("
                                          << bounds.xMax() - bounds.xMin() << "," << bounds.yMax() - bounds.yMin()
                                          << "," << bounds.zMax() - bounds.zMin() << ") cameraZ=" << cameraZ;
+                        Log(actorViewScaleAccepted ? Debug::Info : Debug::Error)
+                            << "FNV/ESM4 proof: actor assembled scale gate target=\"" << proofSayActor
+                            << "\" refScale=" << refScale << " expectedRenderRootScale=("
+                            << expectedRenderRootScale.x() << "," << expectedRenderRootScale.y() << ","
+                            << expectedRenderRootScale.z() << ") renderRootScale=(" << renderRootScale.x() << ","
+                            << renderRootScale.y() << "," << renderRootScale.z() << ") tolerance=" << scaleTolerance
+                            << " accepted=" << actorViewScaleAccepted;
                     }
                     else
                         Log(Debug::Warning) << "FNV/ESM4 proof: actor render bounds invalid target=\""
@@ -4129,6 +5623,9 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                 }
                 if (useFaceBounds && proofActor.getRefData().getBaseNode() != nullptr)
                 {
+                    const osg::Vec3d renderBoundsAim = actorAim;
+                    const double renderBoundsCameraZ = cameraZ;
+                    const bool renderBoundsAccepted = actorViewBoundsAccepted;
                     FalloutProofFaceBoundsVisitor faceBoundsVisitor;
                     proofActor.getRefData().getBaseNode()->accept(faceBoundsVisitor);
                     const osg::BoundingBox bounds = faceBoundsVisitor.getBounds();
@@ -4193,15 +5690,162 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                                          << ") faceAxis=("
                                          << faceAxis.x() << "," << faceAxis.y()
                                          << ") useFaceAxisCamera=" << useFaceAxisCamera;
+                        if (fullBodyView && renderBoundsAccepted)
+                        {
+                            actorAim = renderBoundsAim;
+                            cameraZ = renderBoundsCameraZ;
+                            actorViewBoundsAccepted = true;
+                        }
                     }
                     else
                         Log(Debug::Warning) << "FNV/ESM4 proof: actor face bounds invalid target=\""
                                             << proofSayActor << "\" matched="
                                             << faceBoundsVisitor.getMatched();
                 }
+                if (!useFaceAxisCamera
+                    && std::getenv("OPENMW_PROOF_ACTOR_VIEW_USE_HEAD_POSE_AXIS") != nullptr)
+                {
+                    osg::Vec3d headCenter;
+                    osg::Vec3d headForward;
+                    if (resolveFalloutProofHeadPose(proofActor, headCenter, headForward))
+                    {
+                        const double headForwardPlanar
+                            = std::sqrt(headForward.x() * headForward.x() + headForward.y() * headForward.y());
+                        bool credibleHeadPose = true;
+                        // A humanoid head must sit in the upper half of the assembled
+                        // bounds.  Creature rigs are not required to follow that
+                        // convention: robots commonly expose a useful authored view
+                        // axis on a screen/wheel anchor below the visual midpoint.
+                        // Rejecting that anchor made the camera fall back to actor yaw
+                        // and photographed the back of otherwise valid creature rigs.
+                        if (fullBodyView && actorViewRenderBounds.valid()
+                            && proofActor.getType() == ESM4::Npc::sRecordId)
+                        {
+                            const double boundsHeight
+                                = actorViewRenderBounds.zMax() - actorViewRenderBounds.zMin();
+                            const double minimumHeadFraction = readProofFloat(
+                                "OPENMW_PROOF_ACTOR_VIEW_MIN_HEAD_HEIGHT_FRACTION", 0.5f);
+                            const double minimumHeadZ
+                                = actorViewRenderBounds.zMin() + boundsHeight * minimumHeadFraction;
+                            credibleHeadPose = headCenter.z() >= minimumHeadZ;
+                            if (!credibleHeadPose)
+                            {
+                                Log(Debug::Warning) << "FNV/ESM4 proof: rejected implausible head-pose camera axis target=\""
+                                                    << proofSayActor << "\" headZ=" << headCenter.z()
+                                                    << " minimumHeadZ=" << minimumHeadZ
+                                                    << " boundsZ=(" << actorViewRenderBounds.zMin() << ","
+                                                    << actorViewRenderBounds.zMax() << ")";
+                            }
+                        }
+                        if (credibleHeadPose && headForwardPlanar > 1e-3)
+                        {
+                            const float forwardFocus
+                                = readProofFloat("OPENMW_PROOF_ACTOR_VIEW_HEAD_FORWARD_FOCUS", 4.f);
+                            if (!fullBodyView || !actorViewBoundsAccepted)
+                            {
+                                actorAim = headCenter + headForward * forwardFocus;
+                                cameraZ = actorAim.z() + (offsetZ - targetZ);
+                            }
+                            faceAxis.set(static_cast<float>(headForward.x() / headForwardPlanar),
+                                static_cast<float>(headForward.y() / headForwardPlanar));
+                            useFaceAxisCamera = true;
+                            if (!fullBodyView || actorViewRenderBounds.valid())
+                                actorViewBoundsAccepted = true;
+                            Log(Debug::Info) << "FNV/ESM4 proof: actor head-pose camera axis target=\""
+                                             << proofSayActor << "\" headCenter=(" << headCenter.x() << ","
+                                             << headCenter.y() << "," << headCenter.z() << ") headForward=("
+                                             << headForward.x() << "," << headForward.y() << ","
+                                             << headForward.z() << ") faceAxis=(" << faceAxis.x() << ","
+                                             << faceAxis.y() << ")";
+                        }
+                    }
+                }
+                if (fullBodyView && actorViewRenderBounds.valid())
+                {
+                    // Retail does not put the eye on the visual centerline of a low creature.  Keep the aim
+                    // tied to the assembled box, but give the camera a small ground-relative elevation so the
+                    // road/terrain cannot erase the lower half of the actor.  Tall NPCs and robots naturally
+                    // retain their bounds-center eye because their center already exceeds this floor.
+                    const double groundZ = actorPos.pos[2];
+                    const double minimumAimZ = groundZ
+                        + readProofFloat("OPENMW_PROOF_ACTOR_VIEW_LOW_RIG_AIM_ABOVE_GROUND", 16.f);
+                    const double minimumCameraZ = groundZ
+                        + readProofFloat("OPENMW_PROOF_ACTOR_VIEW_LOW_RIG_CAMERA_ABOVE_GROUND", 48.f);
+                    actorAim.z() = std::max<double>(actorViewRenderBounds.center().z(), minimumAimZ);
+                    cameraZ = std::max(actorAim.z(), minimumCameraZ);
+                    Log(Debug::Info) << "FNV/ESM4 proof: actor full-body ground-relative vertical fit target=\""
+                                     << proofSayActor << "\" groundZ=" << groundZ
+                                     << " boundsCenterZ=" << actorViewRenderBounds.center().z()
+                                     << " minimumAimZ=" << minimumAimZ << " minimumCameraZ=" << minimumCameraZ
+                                     << " actorAimZ=" << actorAim.z() << " cameraZ=" << cameraZ;
+                }
                 if (std::getenv("OPENMW_PROOF_ACTOR_VIEW_USE_ACTOR_FACING") != nullptr)
                 {
                     float frontDistance = readProofFloat("OPENMW_PROOF_ACTOR_VIEW_FRONT_DISTANCE", 0.f);
+                    if (!proofActorViewFrontDistances.empty())
+                    {
+                        const std::size_t distanceIndex = std::min(
+                            proofScreenshotFrameIndex, proofActorViewFrontDistances.size() - 1);
+                        frontDistance = proofActorViewFrontDistances[distanceIndex];
+                    }
+                    if (fullBodyView && actorViewRenderBounds.valid())
+                    {
+                        const float boundsHeight = actorViewRenderBounds.zMax() - actorViewRenderBounds.zMin();
+                        const float boundsDistanceScale
+                            = readProofFloat("OPENMW_PROOF_ACTOR_VIEW_FULL_BODY_DISTANCE_SCALE", 1.35f);
+                        frontDistance = std::max(frontDistance, boundsHeight * boundsDistanceScale);
+
+                        // Height alone cannot fit broad or long creatures.  A bark scorpion is only about
+                        // 156 units tall but its animated box is roughly 376x353, so the old 220-unit camera
+                        // landed inside that box.  Fit the sphere enclosing every bounds corner against the
+                        // active projection's tighter FOV (including the requested screen margin).  This is
+                        // orientation independent and therefore remains safe while the semantic front axis is
+                        // changing from one creature skeleton convention to another.
+                        const double radiusX = std::max(
+                            std::abs(actorViewRenderBounds.xMin() - actorAim.x()),
+                            std::abs(actorViewRenderBounds.xMax() - actorAim.x()));
+                        const double radiusY = std::max(
+                            std::abs(actorViewRenderBounds.yMin() - actorAim.y()),
+                            std::abs(actorViewRenderBounds.yMax() - actorAim.y()));
+                        const double radiusZ = std::max(
+                            std::abs(actorViewRenderBounds.zMin() - actorAim.z()),
+                            std::abs(actorViewRenderBounds.zMax() - actorAim.z()));
+                        const double boundsRadius
+                            = std::sqrt(radiusX * radiusX + radiusY * radiusY + radiusZ * radiusZ);
+                        const float fullBodyMargin
+                            = readProofFloat("OPENMW_PROOF_ACTOR_VIEW_FULL_BODY_MARGIN", 0.03f);
+                        const double ndcLimit = std::clamp(1.0 - 2.0 * static_cast<double>(fullBodyMargin), 0.1, 1.0);
+                        double effectiveTangent = 0.0;
+                        if (mViewer != nullptr && mViewer->getCamera() != nullptr)
+                        {
+                            const osg::Matrixd projection = mViewer->getCamera()->getProjectionMatrix();
+                            const double projectionX = std::abs(projection(0, 0));
+                            const double projectionY = std::abs(projection(1, 1));
+                            if (projectionX > 1e-6 && projectionY > 1e-6)
+                                effectiveTangent = std::min(1.0 / projectionX, 1.0 / projectionY) * ndcLimit;
+                        }
+                        const double fitFactor = effectiveTangent > 1e-6
+                            ? std::sqrt(1.0 + 1.0 / (effectiveTangent * effectiveTangent))
+                            : 2.2;
+                        const double fitPadding
+                            = readProofFloat("OPENMW_PROOF_ACTOR_VIEW_FULL_BODY_FIT_PADDING", 1.02f);
+                        const float fittedDistance
+                            = static_cast<float>(boundsRadius * fitFactor * fitPadding);
+                        const float requestedDistance = frontDistance;
+                        const bool creatureAutoFit
+                            = proofActor.getType() == ESM::REC_CREA4
+                            && proofEnvEnabled("OPENMW_PROOF_ACTOR_VIEW_CREATURE_AUTO_FIT");
+                        frontDistance = creatureAutoFit
+                            ? fittedDistance
+                            : std::max(frontDistance, fittedDistance);
+                        Log(Debug::Info) << "FNV/ESM4 proof: actor full-body distance fit target=\""
+                                         << proofSayActor << "\" boundsRadius=" << boundsRadius
+                                         << " effectiveTangent=" << effectiveTangent
+                                         << " fitFactor=" << fitFactor << " fittedDistance=" << fittedDistance
+                                         << " requestedDistance=" << requestedDistance
+                                         << " creatureAutoFit=" << creatureAutoFit
+                                         << " selectedDistance=" << frontDistance;
+                    }
                     if (frontDistance <= 0.f)
                     {
                         frontDistance = std::sqrt(offsetX * offsetX + offsetY * offsetY);
@@ -4209,7 +5853,17 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                             frontDistance = 220.f;
                     }
                     const float actorYaw = actorPos.rot[2];
-                    const float frontSign = std::getenv("OPENMW_PROOF_ACTOR_VIEW_FALLOUT_FRONT") != nullptr ? -1.f : 1.f;
+                    // Fallout creature skeletons that do not expose a usable
+                    // face/head axis are authored facing the opposite planar
+                    // direction from the humanoid actor convention.  Prefer
+                    // geometry-derived face axes; only invert the fallback.
+                    const bool falloutCreatureFacingFallback
+                        = !useFaceAxisCamera && proofActor.getType() == ESM::REC_CREA4;
+                    const float frontSign
+                        = (std::getenv("OPENMW_PROOF_ACTOR_VIEW_FALLOUT_FRONT") != nullptr
+                              || falloutCreatureFacingFallback)
+                        ? -1.f
+                        : 1.f;
                     if (useFaceAxisCamera)
                     {
                         offsetX = faceAxis.x() * frontDistance;
@@ -4260,7 +5914,19 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                 osg::Vec3f targetPos(
                     static_cast<float>(actorAim.x() + offsetX), static_cast<float>(actorAim.y() + offsetY),
                     static_cast<float>(cameraZ));
-                if (std::getenv("OPENMW_PROOF_ACTOR_VIEW_RAYCAST_BACKOFF") != nullptr)
+                if (replayRetailAbsoluteCamera)
+                {
+                    targetPos.set(readProofFloat("OPENMW_PROOF_ACTOR_VIEW_RETAIL_CAMERA_X", targetPos.x()),
+                        readProofFloat("OPENMW_PROOF_ACTOR_VIEW_RETAIL_CAMERA_Y", targetPos.y()),
+                        readProofFloat("OPENMW_PROOF_ACTOR_VIEW_RETAIL_CAMERA_Z", targetPos.z()));
+                    cameraZ = targetPos.z();
+                    Log(Debug::Info) << "FNV/ESM4 proof: replaying retail absolute actor camera target=\""
+                                     << proofSayActor << "\" pos=(" << targetPos.x() << "," << targetPos.y()
+                                     << "," << targetPos.z() << ") aim=(" << actorAim.x() << "," << actorAim.y()
+                                     << "," << actorAim.z() << ")";
+                }
+                if (!replayRetailAbsoluteCamera
+                    && std::getenv("OPENMW_PROOF_ACTOR_VIEW_RAYCAST_BACKOFF") != nullptr)
                 {
                     const MWPhysics::RayCastingInterface* rayCasting = mWorld->getRayCasting();
                     if (rayCasting != nullptr)
@@ -4310,10 +5976,19 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                         }
                     }
                 }
-                if (selectProofActorCameraByOrbitRays(*mWorld, proofActor, proofSayActor, actorAim, targetPos))
+                if (!replayRetailAbsoluteCamera)
+                {
+                    if (selectProofActorCameraByOrbitRays(*mWorld, proofActor, proofSayActor, actorAim, targetPos))
+                        cameraZ = targetPos.z();
+                    if (adjustProofActorCameraByRenderRay(*mWorld, proofActor, proofSayActor, actorAim, targetPos))
+                        cameraZ = targetPos.z();
+                }
+                if (fullBodyView && actorViewRenderBounds.valid())
+                {
+                    actorViewVisibilityBlockers = raiseProofActorCameraForClearVisibility(
+                        *mWorld, proofActor, proofSayActor, actorViewRenderBounds, targetPos);
                     cameraZ = targetPos.z();
-                if (adjustProofActorCameraByRenderRay(*mWorld, proofActor, proofSayActor, actorAim, targetPos))
-                    cameraZ = targetPos.z();
+                }
                 osg::Vec3f playerTargetPos(targetPos);
                 const bool pinPlayerToActorView = std::getenv("OPENMW_PROOF_PIN_PLAYER_TO_ACTOR_VIEW") != nullptr;
                 if (!staticDialogueCamera || pinPlayerToActorView)
@@ -4410,6 +6085,177 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                                 && screenPointY <= 0.98;
                             if ((useRenderBounds || useFaceBounds) && !actorViewBoundsAccepted)
                                 actorFocusInFrame = false;
+                            if (!actorViewScaleAccepted)
+                                actorFocusInFrame = false;
+                            if (fullBodyView && !actorViewRenderBounds.valid())
+                            {
+                                actorFocusInFrame = false;
+                                Log(Debug::Warning)
+                                    << "FNV/ESM4 proof: actor full-body screen gate rejected missing current render bounds target=\""
+                                    << proofSayActor << "\"";
+                            }
+                            if (fullBodyView
+                                && proofEnvEnabled("OPENMW_PROOF_ACTOR_VIEW_VISIBILITY_RAYCAST")
+                                && actorViewVisibilityBlockers != 0)
+                            {
+                                actorFocusInFrame = false;
+                                Log(Debug::Warning)
+                                    << "FNV/ESM4 proof: actor full-body visibility gate rejected blocked camera target=\""
+                                    << proofSayActor << "\" blockers=" << actorViewVisibilityBlockers;
+                            }
+                            if (fullBodyView && actorViewRenderBounds.valid())
+                            {
+                                double minScreenX = 1.0;
+                                double maxScreenX = 0.0;
+                                double minScreenY = 1.0;
+                                double maxScreenY = 0.0;
+                                bool allBoundsCornersInFront = true;
+                                for (int corner = 0; corner < 8; ++corner)
+                                {
+                                    const osg::Vec3d point(
+                                        (corner & 1) != 0 ? actorViewRenderBounds.xMax() : actorViewRenderBounds.xMin(),
+                                        (corner & 2) != 0 ? actorViewRenderBounds.yMax() : actorViewRenderBounds.yMin(),
+                                        (corner & 4) != 0 ? actorViewRenderBounds.zMax() : actorViewRenderBounds.zMin());
+                                    const osg::Vec4d clip = osg::Vec4d(point, 1.0) * viewProj;
+                                    if (clip.w() <= 0.0)
+                                    {
+                                        allBoundsCornersInFront = false;
+                                        break;
+                                    }
+                                    const double x = (clip.x() / clip.w() + 1.0) * 0.5;
+                                    const double y = (clip.y() / clip.w() - 1.0) * -0.5;
+                                    minScreenX = std::min(minScreenX, x);
+                                    maxScreenX = std::max(maxScreenX, x);
+                                    minScreenY = std::min(minScreenY, y);
+                                    maxScreenY = std::max(maxScreenY, y);
+                                }
+                                const float fullBodyMargin
+                                    = readProofFloat("OPENMW_PROOF_ACTOR_VIEW_FULL_BODY_MARGIN", 0.03f);
+                                const double projectedWidth = maxScreenX - minScreenX;
+                                const double projectedHeight = maxScreenY - minScreenY;
+                                const double projectedArea = projectedWidth * projectedHeight;
+                                const double visibleWidth
+                                    = std::max(0.0, std::min(maxScreenX, 1.0) - std::max(minScreenX, 0.0));
+                                const double visibleHeight
+                                    = std::max(0.0, std::min(maxScreenY, 1.0) - std::max(minScreenY, 0.0));
+                                const double visibleArea = visibleWidth * visibleHeight;
+                                const float minimumProjectedWidth = readProofFloat(
+                                    "OPENMW_PROOF_ACTOR_VIEW_MIN_FULL_BODY_SCREEN_WIDTH", 0.f);
+                                const float minimumProjectedHeight = readProofFloat(
+                                    "OPENMW_PROOF_ACTOR_VIEW_MIN_FULL_BODY_SCREEN_HEIGHT", 0.f);
+                                const float minimumProjectedArea = readProofFloat(
+                                    "OPENMW_PROOF_ACTOR_VIEW_MIN_FULL_BODY_SCREEN_AREA", 0.f);
+                                const bool diagnosticFullBodyInFrame = allBoundsCornersInFront
+                                    && minScreenX >= fullBodyMargin && maxScreenX <= 1.0 - fullBodyMargin
+                                    && minScreenY >= fullBodyMargin && maxScreenY <= 1.0 - fullBodyMargin
+                                    && projectedWidth >= minimumProjectedWidth
+                                    && projectedHeight >= minimumProjectedHeight
+                                    && projectedArea >= minimumProjectedArea;
+                                // The canonical parity camera is an oracle transform, not a framing suggestion.
+                                // Retail intentionally crops some scaled creature boxes (notably the 2.5x raven),
+                                // so moving that camera to satisfy diagnostic containment destroys 1:1 pairing.
+                                // In replay mode retain the hard current-bounds/scale/visibility gates and require
+                                // a meaningful viewport intersection; dynamic proof cameras still require every
+                                // bounds corner inside the requested margin.
+                                const bool retailReplayBoundsVisible = allBoundsCornersInFront
+                                    && visibleWidth >= minimumProjectedWidth
+                                    && visibleHeight >= minimumProjectedHeight
+                                    && visibleArea >= minimumProjectedArea;
+                                const bool fullBodyInFrame = replayRetailAbsoluteCamera
+                                    ? retailReplayBoundsVisible
+                                    : diagnosticFullBodyInFrame;
+                                actorFocusInFrame = actorFocusInFrame && fullBodyInFrame;
+                                Log(Debug::Info) << "FNV/ESM4 proof: actor full-body screen gate target=\""
+                                                 << proofSayActor << "\" screenMin=(" << minScreenX << ","
+                                                 << minScreenY << ") screenMax=(" << maxScreenX << ","
+                                                 << maxScreenY << ") margin=" << fullBodyMargin
+                                                 << " projectedSize=(" << projectedWidth << ","
+                                                 << projectedHeight << ") projectedArea=" << projectedArea
+                                                 << " visibleSize=(" << visibleWidth << "," << visibleHeight
+                                                 << ") visibleArea=" << visibleArea
+                                                 << " minimumProjectedSize=(" << minimumProjectedWidth << ","
+                                                 << minimumProjectedHeight << ") minimumProjectedArea="
+                                                 << minimumProjectedArea
+                                                 << " policy="
+                                                 << (replayRetailAbsoluteCamera ? "retail-viewport-intersection"
+                                                                               : "diagnostic-full-containment")
+                                                 << " allCornersInFront=" << allBoundsCornersInFront
+                                                 << " inFrame=" << fullBodyInFrame;
+                            }
+                            if (proofEnvEnabled("OPENMW_PROOF_ACTOR_VIEW_REQUIRE_HUMAN_POSE"))
+                            {
+                                std::string actorModel;
+                                try
+                                {
+                                    actorModel = Misc::StringUtils::lowerCase(
+                                        std::string(proofActor.getClass().getModel(proofActor)));
+                                }
+                                catch (const std::exception&)
+                                {
+                                }
+                                std::replace(actorModel.begin(), actorModel.end(), '\\', '/');
+                                const bool humanSkeleton
+                                    = actorModel.find("characters/_male/skeleton.nif") != std::string::npos;
+                                if (humanSkeleton)
+                                {
+                                    const FalloutProofPortraitPose pose
+                                        = resolveFalloutProofPortraitPose(proofActor);
+                                    const bool allBonesResolved = pose.mHeadResolved && pose.mPelvisResolved
+                                        && pose.mLeftHandResolved && pose.mRightHandResolved
+                                        && pose.mLeftFootResolved && pose.mRightFootResolved;
+                                    const double footZ = allBonesResolved
+                                        ? (pose.mLeftFootCenter.z() + pose.mRightFootCenter.z()) * 0.5
+                                        : 0.0;
+                                    const float minHeadAbovePelvis = readProofFloat(
+                                        "OPENMW_PROOF_ACTOR_VIEW_MIN_HEAD_ABOVE_PELVIS", 20.f);
+                                    const float minPelvisAboveFeet = readProofFloat(
+                                        "OPENMW_PROOF_ACTOR_VIEW_MIN_PELVIS_ABOVE_FEET", 20.f);
+                                    const float maxFootDeltaZ = readProofFloat(
+                                        "OPENMW_PROOF_ACTOR_VIEW_MAX_FOOT_DELTA_Z", 30.f);
+                                    const bool upright = allBonesResolved
+                                        && pose.mHeadCenter.z() - pose.mPelvisCenter.z() >= minHeadAbovePelvis
+                                        && pose.mPelvisCenter.z() - footZ >= minPelvisAboveFeet
+                                        && std::abs(pose.mLeftFootCenter.z() - pose.mRightFootCenter.z())
+                                            <= maxFootDeltaZ;
+                                    const float poseMargin = readProofFloat(
+                                        "OPENMW_PROOF_ACTOR_VIEW_POSE_MARGIN", 0.02f);
+                                    bool poseInFrame = allBonesResolved;
+                                    const auto projectPosePoint = [&](const osg::Vec3d& point) {
+                                        const osg::Vec4d clip = osg::Vec4d(point, 1.0) * viewProj;
+                                        if (clip.w() <= 0.0)
+                                            return false;
+                                        const double x = (clip.x() / clip.w() + 1.0) * 0.5;
+                                        const double y = (clip.y() / clip.w() - 1.0) * -0.5;
+                                        return x >= poseMargin && x <= 1.0 - poseMargin
+                                            && y >= poseMargin && y <= 1.0 - poseMargin;
+                                    };
+                                    if (poseInFrame)
+                                    {
+                                        poseInFrame = projectPosePoint(pose.mHeadCenter)
+                                            && projectPosePoint(pose.mPelvisCenter)
+                                            && projectPosePoint(pose.mLeftHandCenter)
+                                            && projectPosePoint(pose.mRightHandCenter)
+                                            && projectPosePoint(pose.mLeftFootCenter)
+                                            && projectPosePoint(pose.mRightFootCenter);
+                                    }
+                                    actorFocusInFrame
+                                        = actorFocusInFrame && allBonesResolved && upright && poseInFrame;
+                                    Log(Debug::Info) << "FNV/ESM4 proof: actor human-pose gate target=\""
+                                                     << proofSayActor << "\" model=\"" << actorModel
+                                                     << "\" resolved=(head=" << pose.mHeadResolved
+                                                     << ",pelvis=" << pose.mPelvisResolved
+                                                     << ",leftHand=" << pose.mLeftHandResolved
+                                                     << ",rightHand=" << pose.mRightHandResolved
+                                                     << ",leftFoot=" << pose.mLeftFootResolved
+                                                     << ",rightFoot=" << pose.mRightFootResolved
+                                                     << ") z=(head=" << pose.mHeadCenter.z()
+                                                     << ",pelvis=" << pose.mPelvisCenter.z()
+                                                     << ",leftFoot=" << pose.mLeftFootCenter.z()
+                                                     << ",rightFoot=" << pose.mRightFootCenter.z()
+                                                     << ") upright=" << upright << " inFrame=" << poseInFrame
+                                                     << " accepted=" << actorFocusInFrame;
+                                }
+                            }
                             const float maxCameraDrift
                                 = readProofFloat("OPENMW_PROOF_ACTOR_VIEW_MAX_CAMERA_DRIFT", 4.f);
                             if (requestedDeltaDistance > maxCameraDrift)
@@ -5533,6 +7379,40 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
         = std::getenv("OPENMW_WORLD_VIEWER_REQUIRE_PORTRAIT_CLEAR") != nullptr;
     const bool proofPortraitCapturePending
         = proofScreenshotFrameReached || proofScreenshotReadyFramesReached || proofActorAlignedScreenshotReached;
+    bool proofActorVisualReady = true;
+    unsigned int proofActorVisibleDrawables = 0;
+    unsigned int proofActorVisibleRigs = 0;
+    unsigned int proofActorResolvedRigs = 0;
+    unsigned int proofActorCullReadyRigs = 0;
+    unsigned int proofActorMaximumCullTraversal = 0;
+    unsigned int proofActorRootParents = 0;
+    unsigned int proofActorRootMask = 0;
+    if (proofRequiresActorForScreenshot && proofActorCameraAligned && proofPortraitCapturePending)
+    {
+        MWWorld::Ptr proofVisualActor;
+        if (proofSayActor != nullptr && *proofSayActor != '\0')
+            proofVisualActor = resolveProofActor(proofSayActor);
+        osg::Node* proofVisualRoot
+            = proofVisualActor.isEmpty() ? nullptr : proofVisualActor.getRefData().getBaseNode();
+        if (proofVisualRoot != nullptr)
+        {
+            proofActorRootParents = proofVisualRoot->getNumParents();
+            proofActorRootMask = proofVisualRoot->getNodeMask();
+            FalloutProofDrawableCullVisitor visitor(
+                static_cast<unsigned int>(std::max(0, proofActorCameraAlignedFrame)));
+            proofVisualRoot->accept(visitor);
+            proofActorVisibleDrawables = visitor.mVisibleDrawables;
+            proofActorVisibleRigs = visitor.mVisibleRigs;
+            proofActorResolvedRigs = visitor.mResolvedRigs;
+            proofActorCullReadyRigs = visitor.mCullReadyRigs;
+            proofActorMaximumCullTraversal = visitor.mMaximumCullTraversal;
+        }
+        proofActorVisualReady = !proofVisualActor.isEmpty() && proofVisualActor.getRefData().isEnabled()
+            && proofVisualRoot != nullptr && proofActorRootParents > 0 && proofActorRootMask != 0
+            && proofActorVisibleDrawables > 0
+            && (proofActorVisibleRigs == 0
+                || (proofActorResolvedRigs > 0 && proofActorCullReadyRigs > 0));
+    }
     bool proofPortraitClear = !proofPortraitClearRequired;
     std::string proofPortraitRejectReason;
     FalloutProofPortraitPose proofPortraitPose;
@@ -5719,6 +7599,31 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
             worldViewerTrace(frameNumber, "camera-wait-lua-finish.begin");
             mLuaWorker->finishUpdate(frameStart, frameNumber, *stats);
             worldViewerTrace(frameNumber, "camera-wait-lua-finish.end");
+            return true;
+        }
+        if (!proofActorVisualReady)
+        {
+            static int proofActorVisualLastWaitLogFrame = -1000000;
+            if (static_cast<int>(frameNumber) - proofActorVisualLastWaitLogFrame >= 30
+                || frameNumber == static_cast<unsigned int>(std::max(0, proofActorCameraAlignedFrame)))
+            {
+                proofActorVisualLastWaitLogFrame = static_cast<int>(frameNumber);
+                Log(Debug::Info) << "FNV/ESM4 proof: waiting for target draw traversal target=\""
+                                 << (proofSayActor != nullptr ? proofSayActor : "") << "\" frame=" << frameNumber
+                                 << " alignedFrame=" << proofActorCameraAlignedFrame
+                                 << " rootParents=" << proofActorRootParents << " rootMask=0x" << std::hex
+                                 << proofActorRootMask << std::dec << " visibleDrawables="
+                                 << proofActorVisibleDrawables << " visibleRigs=" << proofActorVisibleRigs
+                                 << " resolvedRigs=" << proofActorResolvedRigs << " cullReadyRigs="
+                                 << proofActorCullReadyRigs << " maximumCullTraversal="
+                                 << proofActorMaximumCullTraversal;
+            }
+            worldViewerTrace(frameNumber, "actor-draw-wait-render.begin");
+            mViewer->renderingTraversals();
+            worldViewerTrace(frameNumber, "actor-draw-wait-render.end");
+            worldViewerTrace(frameNumber, "actor-draw-wait-lua-finish.begin");
+            mLuaWorker->finishUpdate(frameStart, frameNumber, *stats);
+            worldViewerTrace(frameNumber, "actor-draw-wait-lua-finish.end");
             return true;
         }
         if (!proofPortraitClear)

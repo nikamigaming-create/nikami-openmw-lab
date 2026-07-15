@@ -787,6 +787,7 @@ namespace MWRender
         , mViewDistance(Settings::camera().mViewingDistance)
         , mFieldOfViewOverridden(false)
         , mFieldOfViewOverride(0.f)
+        , mProjectionMatrixOverridden(false)
         , mFieldOfView(Settings::camera().mFieldOfView)
         , mFirstPersonFieldOfView(Settings::camera().mFirstPersonFieldOfView)
         , mGroundCoverStore(groundcoverStore)
@@ -1253,9 +1254,14 @@ namespace MWRender
 
     void RenderingManager::setSunPosition(const osg::Vec3f& position)
     {
-        mSunLight->setPosition(osg::Vec4f(position, 0.f));
-        mSky->setSunDirection(position);
-        mPostProcessor->getStateUpdater()->setSunPos(osg::Vec4f(position, 0.f), mNight);
+        setSunPosition(position, position);
+    }
+
+    void RenderingManager::setSunPosition(const osg::Vec3f& skyPosition, const osg::Vec3f& lightingPosition)
+    {
+        mSunLight->setPosition(osg::Vec4f(lightingPosition, 0.f));
+        mSky->setSunDirection(skyPosition);
+        mPostProcessor->getStateUpdater()->setSunPos(osg::Vec4f(skyPosition, 0.f), mNight);
     }
 
     void RenderingManager::addCell(const MWWorld::CellStore* store)
@@ -2173,15 +2179,23 @@ namespace MWRender
         if (mFieldOfViewOverridden)
             fov = mFieldOfViewOverride;
 
-        mViewer->getCamera()->setProjectionMatrixAsPerspective(fov, aspect, mNearClip, mViewDistance);
-
-        if (SceneUtil::AutoDepth::isReversed())
+        if (mProjectionMatrixOverridden)
         {
-            mPerViewUniformStateUpdater->setProjectionMatrix(
-                SceneUtil::getReversedZProjectionMatrixAsPerspective(fov, aspect, mNearClip, mViewDistance));
+            mViewer->getCamera()->setProjectionMatrix(mProjectionMatrixOverride);
+            mPerViewUniformStateUpdater->setProjectionMatrix(mProjectionMatrixOverride);
         }
         else
-            mPerViewUniformStateUpdater->setProjectionMatrix(mViewer->getCamera()->getProjectionMatrix());
+        {
+            mViewer->getCamera()->setProjectionMatrixAsPerspective(fov, aspect, mNearClip, mViewDistance);
+
+            if (SceneUtil::AutoDepth::isReversed())
+            {
+                mPerViewUniformStateUpdater->setProjectionMatrix(
+                    SceneUtil::getReversedZProjectionMatrixAsPerspective(fov, aspect, mNearClip, mViewDistance));
+            }
+            else
+                mPerViewUniformStateUpdater->setProjectionMatrix(mViewer->getCamera()->getProjectionMatrix());
+        }
 
         mSharedUniformStateUpdater->setNear(mNearClip);
         mSharedUniformStateUpdater->setFar(mViewDistance);
@@ -2455,6 +2469,33 @@ namespace MWRender
         }
     }
 
+    void RenderingManager::overrideProjectionMatrix(
+        const osg::Matrixf& matrix, float fieldOfView, float nearClip, float farClip)
+    {
+        if (!(fieldOfView > 0.f) || !(nearClip > 0.f) || !(farClip > nearClip))
+            throw std::runtime_error("Invalid explicit projection override contract");
+
+        const bool changed = !mProjectionMatrixOverridden || mProjectionMatrixOverride != matrix
+            || !mFieldOfViewOverridden || mFieldOfViewOverride != fieldOfView || mNearClip != nearClip
+            || mViewDistance != farClip;
+        mProjectionMatrixOverridden = true;
+        mProjectionMatrixOverride = matrix;
+        mFieldOfViewOverridden = true;
+        mFieldOfViewOverride = fieldOfView;
+        mNearClip = nearClip;
+        mViewDistance = farClip;
+        if (changed)
+            updateProjectionMatrix();
+    }
+
+    void RenderingManager::resetProjectionMatrixOverride()
+    {
+        if (!mProjectionMatrixOverridden)
+            return;
+        mProjectionMatrixOverridden = false;
+        updateProjectionMatrix();
+    }
+
     void RenderingManager::setFieldOfView(float val)
     {
         mFieldOfView = val;
@@ -2463,7 +2504,7 @@ namespace MWRender
 
     float RenderingManager::getFieldOfView() const
     {
-        return mFieldOfViewOverridden ? mFieldOfViewOverridden : mFieldOfView;
+        return mFieldOfViewOverridden ? mFieldOfViewOverride : mFieldOfView;
     }
 
     osg::Vec3f RenderingManager::getHalfExtents(const MWWorld::ConstPtr& object) const

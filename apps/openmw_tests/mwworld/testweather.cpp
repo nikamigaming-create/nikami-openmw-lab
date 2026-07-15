@@ -27,6 +27,33 @@ namespace MWWorld
             EXPECT_NEAR(sampled.b(), 0.578699231f, 0.000001f);
         }
 
+        TEST(MWWorldWeatherTest, samplesAllRetailFNVTimeSlotsAndStrictBoundaries)
+        {
+            FalloutWeatherColorSamples samples{};
+            for (std::size_t slot = 0; slot < samples.size(); ++slot)
+                samples[slot] = osg::Vec4f(static_cast<float>(slot), 0.f, 0.f, 1.f);
+            TimeOfDaySettings settings{};
+            settings.mNightEnd = 6.f;
+            settings.mDayStart = 8.f;
+            settings.mDayEnd = 18.f;
+            settings.mNightStart = 20.f;
+
+            EXPECT_FLOAT_EQ(sampleFalloutWeatherColor(samples, 2.f, settings).r(), 3.f); // Night
+            EXPECT_FLOAT_EQ(sampleFalloutWeatherColor(samples, 5.5f, settings).r(), 3.f); // inclusive Night edge
+            EXPECT_FLOAT_EQ(sampleFalloutWeatherColor(samples, 6.125f, settings).r(), 1.5f); // Night/Sunrise
+            EXPECT_FLOAT_EQ(sampleFalloutWeatherColor(samples, 6.75f, settings).r(), 0.f); // Sunrise apex
+            EXPECT_FLOAT_EQ(sampleFalloutWeatherColor(samples, 7.375f, settings).r(), 0.5f); // Sunrise/Day
+            EXPECT_FLOAT_EQ(sampleFalloutWeatherColor(samples, 8.f, settings).r(), 1.f); // strict Day boundary
+            EXPECT_FLOAT_EQ(sampleFalloutWeatherColor(samples, 10.f, settings).r(), 2.5f); // Day/HighNoon
+            EXPECT_FLOAT_EQ(sampleFalloutWeatherColor(samples, 12.f, settings).r(), 1.f); // strict Day boundary
+            EXPECT_FLOAT_EQ(sampleFalloutWeatherColor(samples, 15.f, settings).r(), 2.5f); // HighNoon/Day
+            EXPECT_FLOAT_EQ(sampleFalloutWeatherColor(samples, 18.f, settings).r(), 1.f); // strict Day boundary
+            EXPECT_FLOAT_EQ(sampleFalloutWeatherColor(samples, 18.625f, settings).r(), 1.5f); // Day/Sunset
+            EXPECT_FLOAT_EQ(sampleFalloutWeatherColor(samples, 19.25f, settings).r(), 2.f); // Sunset apex
+            EXPECT_FLOAT_EQ(sampleFalloutWeatherColor(samples, 19.875f, settings).r(), 2.5f); // Sunset/Night
+            EXPECT_FLOAT_EQ(sampleFalloutWeatherColor(samples, 20.5f, settings).r(), 3.f); // inclusive Night edge
+        }
+
         TEST(MWWorldWeatherTest, mapsRetailFalloutSunOrbit)
         {
             const osg::Vec3f highNoon = falloutSunPosition(0.f);

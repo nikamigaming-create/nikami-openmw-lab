@@ -72,9 +72,18 @@ namespace
 {
     using MWWorld::RotationOrder;
 
-    osg::Quat makeActorOsgQuat(const ESM::Position& position)
+    osg::Quat makeActorOsgQuat(const MWWorld::Ptr& ptr)
     {
-        return osg::Quat(position.rot[2], osg::Vec3(0, 0, -1));
+        const ESM::Position& position = ptr.getRefData().getPosition();
+        float yaw = position.rot[2];
+        if (ptr.getType() == ESM::REC_NPC_4 || ptr.getType() == ESM::REC_CREA4)
+        {
+            // TES3 actors and the imported Fallout/TES4-family actor skeletons use different local forward axes.
+            // Retail transform telemetry requires a quarter-turn relative to the TES3 actor convention. Keep the
+            // gameplay yaw unchanged and convert only the rendered/physics model basis here.
+            yaw += osg::PI_2;
+        }
+        return osg::Quat(yaw, osg::Vec3(0, 0, -1));
     }
 
     osg::Quat makeInversedOrderObjectOsgQuat(const ESM::Position& position)
@@ -90,13 +99,13 @@ namespace
     osg::Quat makeInverseNodeRotation(const MWWorld::Ptr& ptr)
     {
         const auto& pos = ptr.getRefData().getPosition();
-        return ptr.getClass().isActor() ? makeActorOsgQuat(pos) : makeInversedOrderObjectOsgQuat(pos);
+        return ptr.getClass().isActor() ? makeActorOsgQuat(ptr) : makeInversedOrderObjectOsgQuat(pos);
     }
 
     osg::Quat makeDirectNodeRotation(const MWWorld::Ptr& ptr)
     {
         const auto& pos = ptr.getRefData().getPosition();
-        return ptr.getClass().isActor() ? makeActorOsgQuat(pos) : Misc::Convert::makeOsgQuat(pos);
+        return ptr.getClass().isActor() ? makeActorOsgQuat(ptr) : Misc::Convert::makeOsgQuat(pos);
     }
 
     osg::Quat makeNodeRotation(const MWWorld::Ptr& ptr, RotationOrder order)

@@ -271,6 +271,7 @@ namespace MWRender
          * in the AnimationState to the corresponding nodes.
          */
         void resetActiveGroups();
+        void detachActiveControllers();
 
         int getBethesdaBoneLodLevel() const;
         bool isBethesdaBoneLodSuppressed(const osg::Node* node) const;
@@ -315,10 +316,11 @@ namespace MWRender
          * animation.
          * @param model The file to add the keyframes for. Note that the .nif file extension will be replaced with .kf.
          * @param baseModel The filename of the mObjectRoot, only used for error messages.
+         * @param controllerOverlayKf Optional KF whose controllers replace same-named controllers in the source.
          */
         virtual void addAnimSource(std::string_view model, const std::string& baseModel);
-        std::shared_ptr<AnimSource> addSingleAnimSource(
-            const std::string& model, const std::string& baseModel, bool falloutProcedureIdle = false);
+        std::shared_ptr<AnimSource> addSingleAnimSource(const std::string& model, const std::string& baseModel,
+            bool falloutProcedureIdle = false, std::string_view controllerOverlayKf = {});
 
         /** Adds an additional light to the given node using the specified ESM record. */
         void addExtraLight(osg::ref_ptr<osg::Group> parent, const SceneUtil::LightCommon& light);

@@ -1605,6 +1605,15 @@ namespace MWWorld
 
     void World::advanceTime(double hours, bool incremental)
     {
+        if (incremental && std::getenv("OPENMW_FNV_PROOF_FREEZE_TIME") != nullptr)
+        {
+            static int proofFreezeLogs = 0;
+            if (proofFreezeLogs++ < 8)
+                Log(Debug::Info) << "FNV/ESM4 proof: froze incremental game time advance hours=" << hours
+                                 << " currentHour=" << mTimeManager->getTimeStamp().getHour();
+            return;
+        }
+
         if (!incremental)
         {
             // When we fast-forward time, we should recharge magic items

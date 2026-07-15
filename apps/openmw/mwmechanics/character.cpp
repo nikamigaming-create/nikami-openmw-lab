@@ -990,7 +990,9 @@ namespace MWMechanics
         {
             const bool hideEquippedWeaponForProof
                 = std::getenv("OPENMW_FNV_PROOF_HIDE_EQUIPPED_WEAPON") != nullptr;
-            if (mAnimation->hasAnimation("weaponpose") && !falloutFurnitureActive
+            const DrawState drawState = mPtr.getClass().getCreatureStats(mPtr).getDrawState();
+            const bool weaponDrawn = drawState == DrawState::Weapon;
+            if (mAnimation->hasAnimation("weaponpose") && weaponDrawn && !falloutFurnitureActive
                 && !hideEquippedWeaponForProof)
             {
                 MWRender::Animation::AnimPriority weaponPosePriority(Priority_Default);
@@ -1008,12 +1010,14 @@ namespace MWMechanics
                 playBlendedAnimation("weaponpose", weaponPosePriority, weaponPoseMask, false, 1.0f, "start", "stop",
                     0.f, std::numeric_limits<uint32_t>::max(), true);
             }
-            else if ((falloutFurnitureActive || hideEquippedWeaponForProof)
+            else if ((!weaponDrawn || falloutFurnitureActive || hideEquippedWeaponForProof)
                 && mAnimation->isPlaying("weaponpose"))
             {
                 Log(Debug::Verbose) << "FNV/ESM4 diag: suppressing standing weapon pose for "
                                  << mPtr.getCellRef().getRefId() << " reason="
-                                 << (falloutFurnitureActive ? "furniture-seated" : "proof-weapon-hidden");
+                                 << (!weaponDrawn ? "weapon-holstered"
+                                                 : (falloutFurnitureActive ? "furniture-seated"
+                                                                           : "proof-weapon-hidden"));
                 mAnimation->disable("weaponpose");
             }
 
@@ -1025,11 +1029,28 @@ namespace MWMechanics
                     if (mAnimation->hasAnimation(overlayGroup))
                     {
                         MWRender::Animation::AnimPriority overlayPriority(Priority_Default);
-                        overlayPriority[MWRender::BoneGroup_RightArm] = Priority_Weapon;
-                        Log(Debug::Verbose) << "FNV/ESM4 diag: CharacterController layering forced right-arm overlay group '"
+                        int overlayMask = MWRender::BlendMask_RightArm;
+                        const bool fullBodyOverlay
+                            = std::getenv("OPENMW_FNV_FORCED_OVERLAY_FULL_BODY") != nullptr;
+                        if (fullBodyOverlay && (!falloutFurnitureSeated || mCurrentIdle != "chairsit"))
+                        {
+                            Log(Debug::Verbose) << "FNV/ESM4 diag: deferring forced full-body overlay group '"
+                                             << overlayGroup << "' until seated chairsit for "
+                                             << mPtr.getCellRef().getRefId();
+                            return;
+                        }
+                        if (fullBodyOverlay)
+                        {
+                            overlayPriority = Priority_Weapon;
+                            overlayMask = MWRender::BlendMask_All;
+                        }
+                        else
+                            overlayPriority[MWRender::BoneGroup_RightArm] = Priority_Weapon;
+                        Log(Debug::Verbose) << "FNV/ESM4 diag: CharacterController layering forced "
+                                         << (fullBodyOverlay ? "full-body" : "right-arm") << " overlay group '"
                                          << overlayGroup << "' for " << mPtr.getCellRef().getRefId();
-                        playBlendedAnimation(overlayGroup, overlayPriority, MWRender::BlendMask_RightArm, false, 1.0f,
-                            "start", "stop", 0.f, numLoops, true);
+                        playBlendedAnimation(overlayGroup, overlayPriority, overlayMask, false, 1.0f, "start", "stop",
+                            0.f, numLoops, true);
                     }
                     else
                         Log(Debug::Warning) << "FNV/ESM4 diag: forced overlay group missing for "
@@ -3431,6 +3452,13 @@ namespace MWMechanics
 
     void CharacterController::updateHeadTracking(float duration)
     {
+        if (isFalloutActor(mPtr) && std::getenv("OPENMW_FNV_PROOF_DISABLE_HEAD_TRACKING") != nullptr)
+        {
+            mAnimation->setHeadPitch(0.f);
+            mAnimation->setHeadYaw(0.f);
+            return;
+        }
+
         const osg::Node* head = mAnimation->getNode("Bip01 Head");
         if (!head)
             return;

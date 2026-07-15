@@ -75,6 +75,7 @@ namespace MWClass
         bool canFly(const MWWorld::ConstPtr& ptr) const override;
         bool canSwim(const MWWorld::ConstPtr& ptr) const override;
         bool canWalk(const MWWorld::ConstPtr& ptr) const override;
+        void adjustScale(const MWWorld::ConstPtr& ptr, osg::Vec3f& scale, bool rendering) const override;
 
     private:
         static class ESM4CreatureCustomData& getCustomData(const MWWorld::ConstPtr& ptr);

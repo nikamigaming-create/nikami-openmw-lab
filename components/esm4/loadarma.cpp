@@ -37,6 +37,10 @@ void ESM4::ArmorAddon::load(ESM4::Reader& reader)
     mFlags = reader.hdr().record.flags;
 
     std::uint32_t esmVer = reader.esmVersion();
+    const bool isFo3OrFonv = (esmVer == ESM::VER_094 && !reader.hasFormVersion())
+        || esmVer == ESM::VER_132 || esmVer == ESM::VER_133 || esmVer == ESM::VER_134;
+    const bool isTes5 = reader.hasFormVersion()
+        && (esmVer == ESM::VER_094 || esmVer == ESM::VER_170 || esmVer == ESM::VER_171);
 
     while (reader.getSubRecordHeader())
     {
@@ -47,16 +51,25 @@ void ESM4::ArmorAddon::load(ESM4::Reader& reader)
                 reader.getZString(mEditorId);
                 break;
             case ESM::fourCC("MOD2"):
-                reader.getZString(mModelMale);
+                // TES5 uses MOD2 as the male biped model. FO3/FNV first
+                // declare that model in MODL and use MOD2 for the world model.
+                if (isFo3OrFonv)
+                    reader.getZString(mModelMaleWorld);
+                else
+                    reader.getZString(mModelMale);
                 break;
             case ESM::fourCC("MOD3"):
                 reader.getZString(mModelFemale);
                 break;
             case ESM::fourCC("MOD4"):
+            {
+                reader.getZString(mModelFemaleWorld);
+                break;
+            }
             case ESM::fourCC("MOD5"):
             {
-                std::string model;
-                reader.getZString(model);
+                std::string unusedModel;
+                reader.getZString(unusedModel);
                 break;
             }
             case ESM::fourCC("NAM0"):
@@ -69,10 +82,10 @@ void ESM4::ArmorAddon::load(ESM4::Reader& reader)
                 reader.getFormId(mRacePrimary);
                 break;
             case ESM::fourCC("MODL"):
-                if ((esmVer == ESM::VER_094 || esmVer == ESM::VER_170) && subHdr.dataSize == 4) // TES5
+                if (isTes5 && subHdr.dataSize == sizeof(ESM::FormId32))
                     reader.getFormId(mRaces.emplace_back());
                 else
-                    reader.skipSubRecordData(); // FIXME: this should be mModelMale for FO3/FONV
+                    reader.getZString(mModelMale); // FO3/FNV male biped model
 
                 break;
             case ESM::fourCC("BODT"): // body template
@@ -111,6 +124,21 @@ void ESM4::ArmorAddon::load(ESM4::Reader& reader)
                 else
                     reader.skipSubRecordData();
                 break;
+            case ESM::fourCC("BMDT"): // FO3/FNV body slots + flags
+                if (subHdr.dataSize == 8)
+                {
+                    std::uint32_t flags = 0;
+                    reader.get(mBodyTemplate.bodyPart);
+                    reader.get(flags);
+                    mBodyTemplate.flags = static_cast<std::uint8_t>(flags & 0xff);
+                    mBodyTemplate.unknown1 = 0;
+                    mBodyTemplate.unknown2 = 0;
+                    mBodyTemplate.unknown3 = 0;
+                    mBodyTemplate.type = 0;
+                }
+                else
+                    reader.skipSubRecordData();
+                break;
             case ESM::fourCC("MO2T"): // FIXME: should group with MOD2
             case ESM::fourCC("MO2S"): // FIXME: should group with MOD2
             case ESM::fourCC("MO2C"): // FIXME: should group with MOD2
@@ -131,7 +159,6 @@ void ESM4::ArmorAddon::load(ESM4::Reader& reader)
             case ESM::fourCC("NAM2"): // txst formid male
             case ESM::fourCC("NAM3"): // txst formid female
             case ESM::fourCC("SNDD"): // footset sound formid
-            case ESM::fourCC("BMDT"): // FO3
             case ESM::fourCC("DATA"): // FO3
             case ESM::fourCC("ETYP"): // FO3
             case ESM::fourCC("FULL"): // FO3

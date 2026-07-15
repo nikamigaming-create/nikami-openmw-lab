@@ -18,6 +18,7 @@ file(GLOB UNITTEST_SRC_FILES
 
     mwgui/tooltips.cpp
 
+    mwrender/testfalloutweaponanimation.cpp
     mwrender/testplayervisualpolicy.cpp
 
     mwscript/testscripts.cpp

@@ -1,4 +1,5 @@
 #include "animation.hpp"
+#include "falloutweaponanimation.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -3321,24 +3322,44 @@ namespace MWRender
     }
 
     Animation::NodeMap::const_iterator findNodeMapBone(
-        const Animation::NodeMap& nodeMap, const std::string& name, std::string& resolvedName)
+        const Animation::NodeMap& nodeMap, const std::string& name, std::string& resolvedName,
+        SceneUtil::NodeNameMatch* resolvedMatch = nullptr)
     {
         Animation::NodeMap::const_iterator found = nodeMap.find(name);
         if (found != nodeMap.end())
         {
             resolvedName = found->first;
+            if (resolvedMatch != nullptr)
+                *resolvedMatch = { SceneUtil::NodeNameMatchKind::Exact, 900 };
             return found;
         }
 
+        Animation::NodeMap::const_iterator best = nodeMap.end();
+        SceneUtil::NodeNameMatch bestMatch;
+        bool ambiguous = false;
         for (Animation::NodeMap::const_iterator it = nodeMap.begin(); it != nodeMap.end(); ++it)
         {
-            if (Misc::StringUtils::ciEqual(it->first, name))
+            const SceneUtil::NodeNameMatch match = SceneUtil::matchNodeName(name, it->first);
+            if (match.mScore > bestMatch.mScore)
             {
-                resolvedName = it->first;
-                return it;
+                best = it;
+                bestMatch = match;
+                ambiguous = false;
             }
+            else if (match.mScore != 0 && match.mScore == bestMatch.mScore && best != nodeMap.end()
+                && best->second.get() != it->second.get())
+                ambiguous = true;
         }
 
+        if (best != nodeMap.end() && !ambiguous)
+        {
+            resolvedName = best->first;
+            if (resolvedMatch != nullptr)
+                *resolvedMatch = bestMatch;
+            return best;
+        }
+        if (resolvedMatch != nullptr)
+            *resolvedMatch = {};
         return nodeMap.end();
     }
 
@@ -3546,10 +3567,26 @@ namespace MWRender
     }
 
 
-    float getFalloutIdleSeedSeconds()
+    float getFalloutIdleSeedSeconds(std::string_view groupname)
     {
         if (std::getenv("OPENMW_FNV_DISABLE_IDLE_SEED") != nullptr)
             return -1.f;
+
+        const char* layerSpecificEnv = nullptr;
+        if (groupname == "idle")
+            layerSpecificEnv = std::getenv("OPENMW_FNV_OVERLAY_IDLE_SEED_SECONDS");
+        else if (const char* forcedGroup = std::getenv("OPENMW_FNV_FORCE_IDLE_GROUP"))
+        {
+            if (groupname == forcedGroup)
+                layerSpecificEnv = std::getenv("OPENMW_FNV_BASE_IDLE_SEED_SECONDS");
+        }
+        if (layerSpecificEnv != nullptr)
+        {
+            char* end = nullptr;
+            const float value = std::strtof(layerSpecificEnv, &end);
+            if (end != layerSpecificEnv && std::isfinite(value) && value >= 0.f)
+                return value;
+        }
 
         if (const char* env = std::getenv("OPENMW_FNV_IDLE_SEED_SECONDS"))
         {
@@ -4505,8 +4542,8 @@ namespace MWRender
         textkeys.emplace(stop, group + ": stop");
     }
 
-    std::shared_ptr<Animation::AnimSource> Animation::addSingleAnimSource(
-        const std::string& kfname, const std::string& baseModel, bool falloutProcedureIdle)
+    std::shared_ptr<Animation::AnimSource> Animation::addSingleAnimSource(const std::string& kfname,
+        const std::string& baseModel, bool falloutProcedureIdle, std::string_view controllerOverlayKf)
     {
         if (!mResourceSystem->getVFS()->exists(kfname))
             return nullptr;
@@ -4514,6 +4551,25 @@ namespace MWRender
         auto animsrc = std::make_shared<AnimSource>();
         animsrc->mKeyframes = mResourceSystem->getKeyframeManager()->get(VFS::Path::toNormalized(kfname));
         animsrc->mSourceName = kfname;
+
+        if (!controllerOverlayKf.empty())
+        {
+            const std::string overlayPath(controllerOverlayKf);
+            if (mResourceSystem->getVFS()->exists(overlayPath))
+            {
+                const osg::ref_ptr<const SceneUtil::KeyframeHolder> overlay
+                    = mResourceSystem->getKeyframeManager()->get(VFS::Path::toNormalized(overlayPath));
+                if (animsrc->mKeyframes != nullptr && overlay != nullptr
+                    && !overlay->mKeyframeControllers.empty())
+                {
+                    animsrc->mKeyframes = mergeFonvWeaponControllerOverlay(*animsrc->mKeyframes, *overlay);
+                    Log(Debug::Verbose) << "FNV/ESM4 diag: merged " << overlay->mKeyframeControllers.size()
+                                        << " hand-grip controller(s) from " << overlayPath << " over " << kfname;
+                }
+            }
+            else
+                Log(Debug::Warning) << "FNV/ESM4: weapon hand-grip overlay is absent: " << overlayPath;
+        }
 
         std::string lowerKf = Misc::StringUtils::lowerCase(kfname);
         std::string lowerBaseModel = Misc::StringUtils::lowerCase(baseModel);
@@ -4640,8 +4696,23 @@ namespace MWRender
              it != controllerMap.end(); ++it)
         {
             std::string bonename = Misc::StringUtils::lowerCase(it->first);
-            NodeMap::const_iterator found = isFonvAnim ? findNodeMapBone(nodeMap, bonename, bonename)
+            const std::string authoredBonename = bonename;
+            SceneUtil::NodeNameMatch nodeNameMatch;
+            NodeMap::const_iterator found = isFonvAnim ? findNodeMapBone(nodeMap, bonename, bonename, &nodeNameMatch)
                                                        : nodeMap.find(bonename);
+            if (found != nodeMap.end() && isFonvAnim
+                && nodeNameMatch.mKind != SceneUtil::NodeNameMatchKind::Exact)
+            {
+                static unsigned int sNormalizedNodeMatchLogs = 0;
+                if (sNormalizedNodeMatchLogs < 96)
+                {
+                    ++sNormalizedNodeMatchLogs;
+                    Log(Debug::Verbose) << "FNV/ESM4 diag: normalized KF target '" << authoredBonename << "' to '"
+                                     << bonename << "' match="
+                                     << SceneUtil::getNodeNameMatchKindName(nodeNameMatch.mKind)
+                                     << " score=" << nodeNameMatch.mScore << " for " << kfname;
+                }
+            }
             if (found == nodeMap.end() && isFonvAnim)
             {
                 const std::string originalName = bonename;
@@ -4901,6 +4972,9 @@ namespace MWRender
 
     void Animation::clearAnimSources()
     {
+        // Property-bearing KF callbacks retain the pre-animation StateSet so it can be
+        // restored. Detach them before releasing their time/source ownership.
+        detachActiveControllers();
         mStates.clear();
 
         for (size_t i = 0; i < sNumBlendMasks; i++)
@@ -5082,7 +5156,7 @@ namespace MWRender
                 {
                     if (isFalloutSeededIdleGroup(groupname))
                     {
-                        const float idleSeedSeconds = getFalloutIdleSeedSeconds();
+                        const float idleSeedSeconds = getFalloutIdleSeedSeconds(groupname);
                         if (idleSeedSeconds >= 0.f)
                         {
                             const float seededIdleTime
@@ -5520,6 +5594,26 @@ namespace MWRender
         });
     }
 
+    void Animation::detachActiveControllers()
+    {
+        // State overrides are stacked in callback attachment order; unwind them LIFO
+        // so an aliased target cannot restore another external controller's snapshot.
+        for (auto active = mActiveControllers.rbegin(); active != mActiveControllers.rend(); ++active)
+        {
+            const auto& [node, callback] = *active;
+            if (node == nullptr || callback == nullptr)
+                continue;
+            if (auto* controller = dynamic_cast<NifOsg::KeyframeController*>(callback.get());
+                controller != nullptr && controller->hasPropertyChannels())
+            {
+                controller->restorePropertyState();
+            }
+            node->removeUpdateCallback(callback);
+            callback->setNestedCallback(nullptr);
+        }
+        mActiveControllers.clear();
+    }
+
     void Animation::resetActiveGroups()
     {
 //## VR_PATCH BEGIN
@@ -5537,17 +5631,9 @@ namespace MWRender
         const int requestedBoneLodLevel = falloutNpc ? getBethesdaBoneLodLevel() : 0;
         if (mBethesdaBoneLodLevel < 0 || !shouldDeferBethesdaBoneLodChange())
             mBethesdaBoneLodLevel = requestedBoneLodLevel;
-        // remove all previous external controllers from the scene graph
-        for (auto it = mActiveControllers.begin(); it != mActiveControllers.end(); ++it)
-        {
-            osg::Node* node = it->first;
-            node->removeUpdateCallback(it->second);
-
-            // Should be no longer needed with OSG 3.4
-            it->second->setNestedCallback(nullptr);
-        }
-
-        mActiveControllers.clear();
+        // Remove all previous external controllers from the scene graph and restore
+        // any StateSet that an external KF property track temporarily replaced.
+        detachActiveControllers();
 
         mAccumCtrl = nullptr;
         if (mObjectRoot)
@@ -5593,7 +5679,14 @@ namespace MWRender
                     const bool useSmoothAnims = !falloutNpc && useSmoothAnimationTransitions();
 
                     osg::Callback* callback = it->second->getAsCallback();
-                    if (useSmoothAnims)
+                    auto* nifKeyframeController = dynamic_cast<NifOsg::KeyframeController*>(it->second.get());
+                    const bool propertyController
+                        = nifKeyframeController != nullptr && nifKeyframeController->hasPropertyChannels();
+                    const bool transformController
+                        = nifKeyframeController == nullptr || nifKeyframeController->hasTransformChannels();
+                    // A compound Fallout KF controller owns its transform and render-property channels atomically.
+                    // Feeding it into a transform-only blender would discard material/UV animation.
+                    if (useSmoothAnims && !propertyController)
                     {
                         if (dynamic_cast<NifOsg::MatrixTransform*>(node.get()))
                         {
@@ -5610,7 +5703,8 @@ namespace MWRender
                     // Some bones need to be still and do nothing in VR
                     // I'm SURE we'll TOTALLY make a cleaner solution for this before the end of 2090
                     node->setDataVariance(osg::Object::DYNAMIC);
-                    const bool addSceneGraphCallback = (!falloutNpc || shouldUseNativeFalloutAnimationCallbacks())
+                    const bool addSceneGraphCallback
+                        = (propertyController || !falloutNpc || shouldUseNativeFalloutAnimationCallbacks())
                         && (!isPlayer || !vrOverride(active->first, it->first));
                     if (addSceneGraphCallback)
 //## VR_PATCH END
@@ -5621,7 +5715,7 @@ namespace MWRender
                             ++falloutAddedControllers;
                     }
 
-                    if (blendMask == 0 && node == mAccumRoot)
+                    if (transformController && blendMask == 0 && node == mAccumRoot)
                     {
                         mAccumCtrl = it->second;
 
@@ -5820,6 +5914,9 @@ namespace MWRender
         const AnimSource::ControllerMap& ctrls = (*animsrc)->mControllerMap[0];
         for (AnimSource::ControllerMap::const_iterator it = ctrls.begin(); it != ctrls.end(); ++it)
         {
+            const auto* controller = dynamic_cast<const NifOsg::KeyframeController*>(it->second.get());
+            if (controller != nullptr && !controller->hasTransformChannels())
+                continue;
             if (Misc::StringUtils::ciEqual(it->first, mAccumRoot->getName()))
             {
                 velocity = calcAnimVelocity(keys, it->second, mAccumulate, groupname);
@@ -5841,6 +5938,9 @@ namespace MWRender
                 const AnimSource::ControllerMap& ctrls2 = (*animiter)->mControllerMap[0];
                 for (AnimSource::ControllerMap::const_iterator it = ctrls2.begin(); it != ctrls2.end(); ++it)
                 {
+                    const auto* controller = dynamic_cast<const NifOsg::KeyframeController*>(it->second.get());
+                    if (controller != nullptr && !controller->hasTransformChannels())
+                        continue;
                     if (Misc::StringUtils::ciEqual(it->first, mAccumRoot->getName()))
                     {
                         velocity = calcAnimVelocity(keys2, it->second, mAccumulate, groupname);
@@ -6009,9 +6109,13 @@ namespace MWRender
             std::string maxNativeWorldMatrixDeltaBone;
             const std::string refIdText = mPtr.getCellRef().getRefId().serializeText();
             const bool actorBasisAudit = std::getenv("OPENMW_FNV_ACTOR_BASIS_AUDIT") != nullptr;
-            const bool matrixAudit = actorBasisAudit || (std::getenv("OPENMW_FNV_MATRIX_AUDIT") != nullptr
-                                         || std::getenv("OPENMW_FNV_PART_MATRIX_AUDIT") != nullptr)
-                && (refIdText.find("4104c7f") != std::string::npos || refIdText == "player");
+            const bool matrixAuditRequested = std::getenv("OPENMW_FNV_MATRIX_AUDIT") != nullptr
+                || std::getenv("OPENMW_FNV_PART_MATRIX_AUDIT") != nullptr;
+            bool matrixAuditTarget
+                = refIdText.find("4104c7f") != std::string::npos || refIdText == "player";
+            if (const char* requestedRef = std::getenv("OPENMW_FNV_MATRIX_AUDIT_TARGET_REF"))
+                matrixAuditTarget = Misc::StringUtils::ciEqual(refIdText, requestedRef);
+            const bool matrixAudit = actorBasisAudit || (matrixAuditRequested && matrixAuditTarget);
             unsigned int matrixAuditLines = 0;
             constexpr unsigned int matrixAuditLineLimit = 96;
             for (size_t blendMask = 0; blendMask < sNumBlendMasks; ++blendMask)
@@ -6035,6 +6139,11 @@ namespace MWRender
                 for (AnimSource::ControllerMap::const_iterator it = animsrc->mControllerMap[blendMask].begin();
                      it != animsrc->mControllerMap[blendMask].end(); ++it)
                 {
+                    const auto* nifController = dynamic_cast<const NifOsg::KeyframeController*>(it->second.get());
+                    // Property-bearing compound controllers stay on the native callback path even when the legacy
+                    // manual Fallout transform path is selected, so their StateSet is composed exactly once.
+                    if (nifController != nullptr && nifController->hasPropertyChannels())
+                        continue;
                     auto nodeIt = getNodeMap().find(it->first);
                     if (nodeIt == getNodeMap().end())
                         continue;
@@ -6839,6 +6948,7 @@ namespace MWRender
         osg::ref_ptr<osg::StateSet> previousStateset;
         if (mObjectRoot)
         {
+            detachActiveControllers();
             if (mLightListCallback)
                 mObjectRoot->removeCullCallback(mLightListCallback);
             if (mTransparencyUpdater)
@@ -6851,7 +6961,6 @@ namespace MWRender
 
         mNodeMap.clear();
         mNodeMapCreated = false;
-        mActiveControllers.clear();
         mAccumRoot = nullptr;
         mAccumCtrl = nullptr;
 
@@ -7178,8 +7287,14 @@ namespace MWRender
 
     const osg::Node* Animation::getNode(std::string_view name) const
     {
-        NodeMap::const_iterator found = getNodeMap().find(name);
-        if (found == getNodeMap().end())
+        const NodeMap& nodeMap = getNodeMap();
+        NodeMap::const_iterator found = nodeMap.find(name);
+        if (found == nodeMap.end() && isFalloutActor(mPtr))
+        {
+            std::string resolvedName;
+            found = findNodeMapBone(nodeMap, std::string(name), resolvedName);
+        }
+        if (found == nodeMap.end())
             return nullptr;
         else
             return found->second;
@@ -7328,15 +7443,7 @@ namespace MWRender
         // Detach them while both the scene nodes and controller sources are still alive.  Leaving an upper-body
         // overlay callback on the skeleton until member destruction can make OSG tear the callback chain down after
         // its AnimationTime source has already gone away (observed as a ucrtbase FAST_FAIL_INVALID_ARG on shutdown).
-        for (const auto& [node, callback] : mActiveControllers)
-        {
-            if (node != nullptr && callback != nullptr)
-            {
-                node->removeUpdateCallback(callback);
-                callback->setNestedCallback(nullptr);
-            }
-        }
-        mActiveControllers.clear();
+        detachActiveControllers();
 
         if (mGlowLight != nullptr)
             mInsert->removeChild(mGlowLight);

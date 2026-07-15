@@ -106,7 +106,8 @@ namespace MWWorld
     using FalloutWeatherColorSamples = std::array<osg::Vec4f, 6>;
 
     osg::Vec4f sampleFalloutWeatherColor(
-        const FalloutWeatherColorSamples& samples, float gameHour, const TimeOfDaySettings& timeSettings);
+        const FalloutWeatherColorSamples& samples, float gameHour, const TimeOfDaySettings& timeSettings,
+        float daytimeColorExtension = 0.5f);
     osg::Vec3f falloutSunPosition(float orbit);
     MWRender::MoonState::Phase falloutMoonPhase(int gameDay, std::uint8_t encodedMoonInfo);
     MWRender::MoonState falloutMoonState(
@@ -168,16 +169,16 @@ namespace MWWorld
         // Sun (directional) lighting color
         TimeOfDayInterpolator<osg::Vec4f> mSunColor;
 
-        // FO3/FNV add high-noon (and, in FNV, serialized midnight) samples to
-        // the four legacy weather colors. The afternoon high-noon -> day
-        // segment is retail-measured; other segments retain the legacy path
-        // until a record supplies the extra sample.
+        // FO3/FNV add high-noon (and, in FNV, serialized midnight) samples to the four legacy weather colors. FNV's
+        // executable uses one shared six-slot scheduler for every WTHR color and image-space modifier row.
         std::optional<FalloutWeatherColorSamples> mFalloutSkyColors;
         std::optional<FalloutWeatherColorSamples> mFalloutFogColors;
         std::optional<FalloutWeatherColorSamples> mFalloutSkyLowerColors;
         std::optional<FalloutWeatherColorSamples> mFalloutHorizonColors;
         std::optional<FalloutWeatherColorSamples> mFalloutAmbientColors;
         std::optional<FalloutWeatherColorSamples> mFalloutSunlightColors;
+        std::optional<FalloutWeatherColorSamples> mFalloutSunDiscColors;
+        std::optional<FalloutWeatherColorSamples> mFalloutStarColors;
         std::array<ESM::FormId, 6> mFalloutImageSpaceModifiers{};
         std::optional<std::array<std::string, 4>> mFalloutCloudTextures;
         std::optional<std::array<float, 4>> mFalloutCloudSpeeds;
@@ -427,6 +428,10 @@ namespace MWWorld
 
         std::vector<Weather> mWeatherSettings;
         const ESM4::Climate* mFalloutClimate;
+        float mFalloutDaytimeColorExtension;
+        std::size_t mFalloutWeatherStart;
+        bool mFalloutWeatherInitialized;
+        ESM::RefId mFalloutWeatherSource;
         MoonModel mMasser;
         MoonModel mSecunda;
 
@@ -458,6 +463,7 @@ namespace MWWorld
             const std::string& name, float dlFactor, float dlOffset, const std::string& particleEffect = "");
 
         void importFalloutWeather();
+        void applyFalloutClimate(const ESM4::Climate* climate);
 
         void importRegions();
 

@@ -1665,4 +1665,5 @@ namespace MWWorld
 
         return Ptr();
     }
+
 }

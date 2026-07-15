@@ -10,6 +10,7 @@
 #include <components/vfs/pathutil.hpp>
 
 #include <osg/Light>
+#include <osg/Matrixf>
 #include <osg/ref_ptr>
 
 #include <osgUtil/IncrementalCompileOperation>
@@ -173,6 +174,7 @@ namespace MWRender
         const osg::Vec4f& getSunLightPosition() const { return mSunLight->getPosition(); }
         void setSunDirection(const osg::Vec3f& direction);
         void setSunPosition(const osg::Vec3f& position);
+        void setSunPosition(const osg::Vec3f& skyPosition, const osg::Vec3f& lightingPosition);
         void setSunColour(const osg::Vec4f& diffuse, const osg::Vec4f& specular, float sunVis);
         void setNight(bool isNight) { mNight = isNight; }
 
@@ -263,6 +265,11 @@ namespace MWRender
 
         /// temporarily override the field of view with given value.
         void overrideFieldOfView(float val);
+        /// Temporarily override the complete projection contract. This is used when a source engine's
+        /// clip-space matrix is the oracle and recomputing it through another API would change float words.
+        void overrideProjectionMatrix(
+            const osg::Matrixf& matrix, float fieldOfView, float nearClip, float farClip);
+        void resetProjectionMatrixOverride();
         void setFieldOfView(float val);
         float getFieldOfView() const;
         /// reset a previous overrideFieldOfView() call, i.e. revert to field of view specified in the settings file.
@@ -392,6 +399,8 @@ namespace MWRender
         float mViewDistance;
         bool mFieldOfViewOverridden;
         float mFieldOfViewOverride;
+        bool mProjectionMatrixOverridden;
+        osg::Matrixf mProjectionMatrixOverride;
         float mFieldOfView;
         float mFirstPersonFieldOfView;
         bool mUpdateProjectionMatrix = false;

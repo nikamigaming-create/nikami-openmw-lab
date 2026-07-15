@@ -299,6 +299,23 @@ namespace MWRender
             enable();
         }
 
+        if (std::getenv("OPENMW_FNV_PROOF_IMAGE_SPACE_ID") != nullptr)
+        {
+            static int falloutImageSpaceLogs = 0;
+            if (falloutImageSpaceLogs++ < 12)
+            {
+                Log(Debug::Info) << "FNV/ESM4 proof: fallout post technique status valid="
+                                 << (mFalloutImageSpaceTechnique->isValid() ? 1 : 0)
+                                 << " enabled=" << (isTechniqueEnabled(mFalloutImageSpaceTechnique) ? 1 : 0)
+                                 << " internalCount=" << mInternalTechniques.size()
+                                 << " chainCount=" << mTechniques.size()
+                                 << " passes=" << mFalloutImageSpaceTechnique->getPasses().size()
+                                 << " hdr=" << (mFalloutImageSpaceTechnique->getHDR() ? 1 : 0)
+                                 << " status=" << static_cast<int>(mFalloutImageSpaceTechnique->getStatus())
+                                 << " error=\"" << mFalloutImageSpaceTechnique->getLastError() << "\"";
+            }
+        }
+
         setUniform(mFalloutImageSpaceTechnique, "uFalloutHdr", hdr);
         setUniform(mFalloutImageSpaceTechnique, "uFalloutCinematic", cinematic);
         setUniform(mFalloutImageSpaceTechnique, "uFalloutTint", tint);
@@ -862,6 +879,23 @@ namespace MWRender
         }
 
         dirtyTechniques();
+
+        if (std::getenv("OPENMW_FNV_PROOF_IMAGE_SPACE_ID") != nullptr && mFalloutImageSpaceTechnique)
+        {
+            static int falloutImageSpaceChainLogs = 0;
+            if (falloutImageSpaceChainLogs++ < 12)
+            {
+                Log(Debug::Info) << "FNV/ESM4 proof: fallout post chain rebuilt valid="
+                                 << (mFalloutImageSpaceTechnique->isValid() ? 1 : 0)
+                                 << " enabled=" << (isTechniqueEnabled(mFalloutImageSpaceTechnique) ? 1 : 0)
+                                 << " internalCount=" << mInternalTechniques.size()
+                                 << " chainCount=" << mTechniques.size()
+                                 << " passes=" << mFalloutImageSpaceTechnique->getPasses().size()
+                                 << " hdrEnabled=" << (mHDR ? 1 : 0)
+                                 << " status=" << static_cast<int>(mFalloutImageSpaceTechnique->getStatus())
+                                 << " error=\"" << mFalloutImageSpaceTechnique->getLastError() << "\"";
+            }
+        }
     }
 
     void PostProcessor::saveChain()

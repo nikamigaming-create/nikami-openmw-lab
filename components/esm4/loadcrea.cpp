@@ -198,6 +198,36 @@ void ESM4::Creature::load(ESM4::Reader& reader)
     }
 }
 
+ESM4::CreatureVisualTemplate ESM4::resolveCreatureVisualTemplate(
+    const std::vector<const ESM4::Creature*>& records)
+{
+    CreatureVisualTemplate result;
+    for (std::size_t index = 0; index < records.size(); ++index)
+    {
+        const Creature* record = records[index];
+        if (record == nullptr)
+            continue;
+
+        const bool hasTemplate = index + 1 < records.size() && !record->mBaseTemplate.isZeroOrUnset();
+        const bool delegatesModel
+            = hasTemplate && (record->mBaseConfig.fo3.templateFlags & Creature::Template_UseModel) != 0;
+        if (delegatesModel)
+            continue;
+
+        // Empty fields do not claim the category. This is deliberately independent:
+        // a concrete record can own MODL while inheriting NIFZ or PNAM farther up TPLT.
+        if (result.mModel == nullptr && !record->mModel.empty())
+            result.mModel = record;
+        if (result.mNif == nullptr && !record->mNif.empty())
+            result.mNif = record;
+        if (result.mKf == nullptr && !record->mKf.empty())
+            result.mKf = record;
+        if (result.mBodyParts == nullptr && !record->mBodyParts.empty())
+            result.mBodyParts = record;
+    }
+    return result;
+}
+
 // void ESM4::Creature::save(ESM4::Writer& writer) const
 //{
 // }

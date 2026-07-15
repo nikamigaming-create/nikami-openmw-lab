@@ -358,6 +358,12 @@ namespace MWWorld
 
 MWWorld::Ptr MWWorld::WorldModel::getPtrByRefId(const ESM::RefId& name)
 {
+    if (const ESM::FormId* formId = name.getIf<ESM::FormId>())
+    {
+        if (Ptr ptr = mPtrRegistry.getOrEmpty(*formId); !ptr.isEmpty())
+            return ptr;
+    }
+
     for (const auto& [cachedId, cellStore] : mIdCache)
     {
         if (cachedId != name || cellStore == nullptr)
@@ -381,6 +387,41 @@ MWWorld::Ptr MWWorld::WorldModel::getPtrByRefId(const ESM::RefId& name)
     {
         Ptr ptr = getPtrAndCache(name, *iter->second);
         if (!ptr.isEmpty())
+            return ptr;
+    }
+
+    // ESM4 placed references live in dedicated REFR/ACHR/ACRE stores rather
+    // than in the ESM3 cell record stream below.  Use the reference record to
+    // locate and load its owning cell before falling back to the legacy full
+    // cell scan.  Without this, an authored ESM4 reference can only be found
+    // when its cell happened to have been loaded already.
+    if (const ESM::FormId* formId = name.getIf<ESM::FormId>())
+    {
+        const auto findEsm4PlacedRef = [&](const auto& store) -> Ptr {
+            const auto* ref = store.search(*formId);
+            if (ref == nullptr || ref->mParent.empty())
+                return {};
+
+            CellStore* cellStore = findCell(ref->mParent, true);
+            if (cellStore == nullptr)
+                return {};
+            Ptr ptr;
+            cellStore->forEach([&](const Ptr& candidate) {
+                if (candidate.getCellRef().getRefNum() != *formId)
+                    return true;
+                ptr = candidate;
+                return false;
+            });
+            if (!ptr.isEmpty())
+                registerPtr(ptr);
+            return ptr;
+        };
+
+        if (Ptr ptr = findEsm4PlacedRef(mStore.get<ESM4::Reference>()); !ptr.isEmpty())
+            return ptr;
+        if (Ptr ptr = findEsm4PlacedRef(mStore.get<ESM4::ActorCharacter>()); !ptr.isEmpty())
+            return ptr;
+        if (Ptr ptr = findEsm4PlacedRef(mStore.get<ESM4::ActorCreature>()); !ptr.isEmpty())
             return ptr;
     }
 

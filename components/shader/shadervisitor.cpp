@@ -291,7 +291,7 @@ namespace Shader
     // shader defines. Normal maps and normal height maps both get sent to the shader as a normal map, so the latter
     // must be detected separately.
     const char* defaultTextures[] = { "diffuseMap", "normalMap", "emissiveMap", "darkMap", "detailMap", "envMap",
-        "specularMap", "decalMap", "bumpMap", "glossMap" };
+        "specularMap", "decalMap", "bumpMap", "glossMap", "skinAuxMap", "faceGenMap0", "faceGenMap1" };
     bool isTextureNameRecognized(std::string_view name)
     {
         if (std::find(std::begin(defaultTextures), std::end(defaultTextures), name) != std::end(defaultTextures))
@@ -597,6 +597,10 @@ namespace Shader
         else
             mRequirements.push_back(mRequirements.back());
         mRequirements.back().mNode = &node;
+
+        std::string shaderPrefix;
+        if (node.getUserValue("shaderPrefix", shaderPrefix))
+            mRequirements.back().mShaderPrefix = std::move(shaderPrefix);
     }
 
     void ShaderVisitor::popRequirements()
@@ -766,10 +770,8 @@ namespace Shader
 
         Stereo::shaderStereoDefines(defineMap);
 
-        std::string shaderPrefix;
-        if (!node.getUserValue("shaderPrefix", shaderPrefix))
-            shaderPrefix = mDefaultShaderPrefix;
-
+        const std::string& shaderPrefix
+            = reqs.mShaderPrefix.empty() ? mDefaultShaderPrefix : reqs.mShaderPrefix;
         auto program = mShaderManager.getProgram(shaderPrefix, defineMap, mProgramTemplate);
         writableStateSet->setAttributeAndModes(program, osg::StateAttribute::ON);
         addedState->setAttributeAndModes(std::move(program));
@@ -925,11 +927,20 @@ namespace Shader
 
             if (generateTangents)
             {
-                osg::ref_ptr<osgUtil::TangentSpaceGenerator> generator(new osgUtil::TangentSpaceGenerator);
-                generator->generate(&sourceGeometry, reqs.mTexStageRequiringTangents);
+                const osg::Vec4Array* authoredTangents
+                    = dynamic_cast<const osg::Vec4Array*>(sourceGeometry.getTexCoordArray(7));
+                const osg::Array* vertices = sourceGeometry.getVertexArray();
+                const bool validAuthoredTangents = authoredTangents != nullptr && vertices != nullptr
+                    && authoredTangents->getBinding() == osg::Array::BIND_PER_VERTEX
+                    && authoredTangents->getNumElements() == vertices->getNumElements();
+                if (!validAuthoredTangents)
+                {
+                    osg::ref_ptr<osgUtil::TangentSpaceGenerator> generator(new osgUtil::TangentSpaceGenerator);
+                    generator->generate(&sourceGeometry, reqs.mTexStageRequiringTangents);
 
-                sourceGeometry.setTexCoordArray(7, generator->getTangentArray(), osg::Array::BIND_PER_VERTEX);
-                changed = true;
+                    sourceGeometry.setTexCoordArray(7, generator->getTangentArray(), osg::Array::BIND_PER_VERTEX);
+                    changed = true;
+                }
             }
         }
         return changed;

@@ -1,7 +1,9 @@
 #ifndef OPENMW_COMPONENTS_NIFOSG_PARTICLE_H
 #define OPENMW_COMPONENTS_NIFOSG_PARTICLE_H
 
+#include <array>
 #include <optional>
+#include <vector>
 
 #include <osgParticle/Counter>
 #include <osgParticle/Emitter>
@@ -36,11 +38,14 @@ namespace NifOsg
         osgParticle::Particle* createParticle(const osgParticle::Particle* ptemplate) override;
 
         void setQuota(int quota);
+        void setGlobalAlpha(float alpha) { mGlobalAlpha = alpha; }
+        float getGlobalAlpha() const { return mGlobalAlpha; }
 
         void drawImplementation(osg::RenderInfo& renderInfo) const override;
 
     private:
         int mQuota;
+        float mGlobalAlpha{ 1.f };
         osg::ref_ptr<osg::Vec3Array> mNormalArray;
     };
 
@@ -175,10 +180,40 @@ namespace NifOsg
         Vec4Interpolator mData;
     };
 
+    class BethesdaParticleColorAffector : public osgParticle::Operator
+    {
+    public:
+        BethesdaParticleColorAffector(const Nif::BSPSysSimpleColorModifier* modifier);
+        BethesdaParticleColorAffector() = default;
+        BethesdaParticleColorAffector(
+            const BethesdaParticleColorAffector& copy, const osg::CopyOp& copyop = osg::CopyOp::SHALLOW_COPY);
+
+        BethesdaParticleColorAffector& operator=(const BethesdaParticleColorAffector&) = delete;
+
+        META_Object(NifOsg, BethesdaParticleColorAffector)
+
+        void beginOperate(osgParticle::Program* program) override;
+        void operate(osgParticle::Particle* particle, double dt) override;
+        osg::Vec4f evaluate(float normalizedAge) const;
+
+    private:
+        float mFadeInPercent{ 0.f };
+        float mFadeOutPercent{ 1.f };
+        float mColor1EndPercent{ 0.f };
+        float mColor1StartPercent{ 0.f };
+        float mColor2EndPercent{ 0.f };
+        float mColor2StartPercent{ 0.f };
+        std::array<osg::Vec4f, 3> mColors{ osg::Vec4f(1.f, 1.f, 1.f, 1.f),
+            osg::Vec4f(1.f, 1.f, 1.f, 1.f), osg::Vec4f(1.f, 1.f, 1.f, 1.f) };
+        float mGlobalAlpha{ 1.f };
+    };
+
     class GravityAffector : public osgParticle::Operator
     {
     public:
         GravityAffector(const Nif::NiGravity* gravity);
+        GravityAffector(float force, Nif::ForceType type, const osg::Vec3f& position,
+            const osg::Vec3f& direction, float decay);
         GravityAffector() = default;
         GravityAffector(const GravityAffector& copy, const osg::CopyOp& copyop = osg::CopyOp::SHALLOW_COPY);
 
@@ -203,6 +238,8 @@ namespace NifOsg
     {
     public:
         ParticleBomb(const Nif::NiParticleBomb* bomb);
+        ParticleBomb(float range, float strength, Nif::DecayType decayType, Nif::SymmetryType symmetryType,
+            const osg::Vec3f& position, const osg::Vec3f& direction);
         ParticleBomb() = default;
         ParticleBomb(const ParticleBomb& copy, const osg::CopyOp& copyop = osg::CopyOp::SHALLOW_COPY);
 
@@ -265,8 +302,20 @@ namespace NifOsg
         void setCounter(osgParticle::Counter* counter) { mCounter = counter; }
         void setGeometryEmitterTarget(std::optional<int> recIndex) { mGeometryEmitterTarget = recIndex; }
         void setFlags(int flags) { mFlags = flags; }
+        void setEmissionRate(float rate);
+        void setParticleRadius(float radius, float variation);
+        void setModernMeshEmission(uint32_t velocityType, uint32_t emissionType, const osg::Vec3f& emissionAxis);
 
     private:
+        struct Triangle
+        {
+            osg::Vec3f mA;
+            osg::Vec3f mB;
+            osg::Vec3f mC;
+            osg::Vec3f mNormal;
+            float mCumulativeArea{ 0.f };
+        };
+
         // NIF Record indices
         std::vector<int> mTargets;
 
@@ -276,8 +325,45 @@ namespace NifOsg
 
         int mFlags;
 
+        float mParticleRadius{ 0.f };
+        float mParticleRadiusVariation{ 0.f };
+        int mVelocityType{ -1 };
+        int mEmissionType{ -1 };
+        osg::Vec3f mEmissionAxis{ 0.f, 0.f, 1.f };
+
         std::optional<int> mGeometryEmitterTarget;
         osg::observer_ptr<osg::Vec3Array> mCachedGeometryEmitter;
+        std::vector<Triangle> mCachedTriangles;
+        float mCachedTriangleArea{ 0.f };
+    };
+
+    class ModernParticleController : public SceneUtil::NodeCallback<ModernParticleController, osg::Node*>
+    {
+    public:
+        ModernParticleController(Emitter* emitter, ParticleSystem* particleSystem,
+            const Nif::NiControllerSequence* rateSequence, const Nif::NiFloatInterpolator* rateInterpolator,
+            const Nif::NiControllerSequence* activeSequence, const Nif::NiBoolInterpolator* activeInterpolator,
+            const Nif::NiControllerSequence* alphaSequence, const Nif::NiFloatInterpolator* alphaInterpolator);
+        ModernParticleController() = default;
+        ModernParticleController(
+            const ModernParticleController& copy, const osg::CopyOp& copyop = osg::CopyOp::SHALLOW_COPY);
+
+        META_Object(NifOsg, ModernParticleController)
+
+        void operator()(osg::Node* node, osg::NodeVisitor* nv);
+
+    private:
+        osg::observer_ptr<Emitter> mEmitter;
+        osg::observer_ptr<ParticleSystem> mParticleSystem;
+        FloatInterpolator mRate;
+        BoolInterpolator mActive;
+        FloatInterpolator mAlpha;
+        std::shared_ptr<ControllerFunction> mRateFunction;
+        std::shared_ptr<ControllerFunction> mActiveFunction;
+        std::shared_ptr<ControllerFunction> mAlphaFunction;
+        bool mHasRate{ false };
+        bool mHasActive{ false };
+        bool mHasAlpha{ false };
     };
 
 }

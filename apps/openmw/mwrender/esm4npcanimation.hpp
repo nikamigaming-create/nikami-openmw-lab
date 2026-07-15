@@ -12,6 +12,7 @@
 namespace ESM4
 {
     struct Npc;
+    struct Race;
 }
 
 namespace MWRender
@@ -22,6 +23,8 @@ namespace MWRender
         ESM4NpcAnimation(
             const MWWorld::Ptr& ptr, osg::ref_ptr<osg::Group> parentNode, Resource::ResourceSystem* resourceSystem);
         osg::Vec3f runAnimation(float duration) override;
+        bool getWeaponsShown() const override { return mFalloutWeaponsShown; }
+        void showWeapons(bool showWeapon) override;
         bool supportsProceduralHumanoidLocomotion() const;
         bool applyProceduralHumanoidLocomotion(std::string_view group, float elapsed);
 
@@ -37,14 +40,22 @@ namespace MWRender
         std::string mFo4ProceduralGroup;
         bool mFo4ProceduralAdvancedLogged = false;
 
+        osg::ref_ptr<osg::Node> mFalloutWeaponPart;
+        std::string mFalloutWeaponDrawBone = "Weapon";
+        std::string mFalloutWeaponHolsterBone;
+        bool mFalloutWeaponsShown = false;
+
         osg::ref_ptr<osg::Node> insertPart(
             std::string_view model, const osg::Vec4f* tint = nullptr, std::string_view diffuseTexture = {},
             std::string_view preferredBone = {});
-        osg::ref_ptr<osg::Node> insertAttachedPart(std::string_view model, std::string_view preferredBone);
+        osg::ref_ptr<osg::Node> insertAttachedPart(std::string_view model, std::string_view preferredBone,
+            std::string* authoredParent = nullptr);
 
         // Works for FO3/FONV/TES5
         unsigned int insertHeadParts(const ESM4::Npc& traits, const std::vector<ESM::FormId>& partIds,
-            std::set<uint32_t>& usedHeadPartTypes, std::set<uint32_t>* attachedHeadPartTypes = nullptr);
+            std::set<uint32_t>& usedHeadPartTypes, std::set<uint32_t>* attachedHeadPartTypes = nullptr,
+            unsigned int* attachedRequestedPartCount = nullptr, const ESM4::Race* faceGenRace = nullptr,
+            bool faceGenFemale = false);
 
         void updateParts();
         void updatePartsTES4(const ESM4::Npc& traits);
