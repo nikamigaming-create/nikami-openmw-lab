@@ -1209,7 +1209,7 @@ namespace MWRender
 
     void Moon::adjustTransparency(const float ratio)
     {
-        if (!mAvailable)
+        if (!mAvailable || mFalloutSkyContent)
             return;
         mUpdater->mTransparency *= ratio;
     }
