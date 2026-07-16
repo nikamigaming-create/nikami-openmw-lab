@@ -26,6 +26,7 @@
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <tuple>
 #include <typeinfo>
 #include <unordered_map>
 #include <utility>
@@ -127,6 +128,7 @@
 #include <components/sceneutil/screencapture.hpp>
 #include <components/sceneutil/riggeometry.hpp>
 #include <components/sceneutil/skeleton.hpp>
+#include <components/sceneutil/texturetype.hpp>
 #include <components/sceneutil/unrefqueue.hpp>
 #include <components/sceneutil/util.hpp>
 
@@ -2128,6 +2130,466 @@ namespace
         unsigned int mMinimumCullTraversal = 0;
     };
 
+    enum class FalloutProofSkinRole : std::size_t
+    {
+        Head,
+        LeftHand,
+        RightHand,
+        Body,
+        ExposedEquipment,
+        Count,
+    };
+
+    constexpr std::array<std::string_view, static_cast<std::size_t>(FalloutProofSkinRole::Count)>
+        sFalloutProofSkinRoleNames = { "head", "leftHand", "rightHand", "body", "exposed-equipment" };
+
+    struct FalloutProofSkinTexture
+    {
+        std::string mSemantic;
+        std::string mPath;
+        unsigned int mUnit = 0;
+        int mWidth = 0;
+        int mHeight = 0;
+    };
+
+    struct FalloutProofSkinRoleSummary
+    {
+        unsigned int mDrawables = 0;
+        unsigned int mMissingFaceGen0 = 0;
+        unsigned int mMissingFaceGen1 = 0;
+        unsigned int mNeutralFaceGenBindings = 0;
+        std::vector<FalloutProofSkinTexture> mTextures;
+    };
+
+    struct FalloutProofSkinState
+    {
+        bool mAvailable = false;
+        bool mPass = false;
+        bool mOwnershipMetadataPresent = false;
+        bool mOwnershipMatches = true;
+        unsigned int mSampleFrame = 0;
+        std::size_t mActorIndex = static_cast<std::size_t>(-1);
+        unsigned int mVisibleDrawables = 0;
+        unsigned int mVisibleSkinDrawables = 0;
+        std::string mActorRef;
+        std::string mActorBase;
+        std::string mExpectedOwner;
+        std::vector<std::string> mObservedOwners;
+        std::array<FalloutProofSkinRoleSummary, static_cast<std::size_t>(FalloutProofSkinRole::Count)> mRoles;
+        std::vector<std::string> mFailures;
+    };
+
+    std::string normalizeFalloutProofTexturePath(std::string value, bool lower)
+    {
+        std::replace(value.begin(), value.end(), '\\', '/');
+        if (lower)
+            Misc::StringUtils::lowerCaseInPlace(value);
+        return value;
+    }
+
+    bool isFalloutProofFaceGenSemantic(std::string_view semantic, unsigned int index)
+    {
+        return index == 0 ? Misc::StringUtils::ciEqual(semantic, "faceGenMap0")
+                          : Misc::StringUtils::ciEqual(semantic, "faceGenMap1");
+    }
+
+    bool isFalloutProofNeutralFaceGenPath(std::string_view path)
+    {
+        std::string normalized = normalizeFalloutProofTexturePath(std::string(path), true);
+        return normalized.rfind("runtime/fallout/neutral-facegen", 0) == 0;
+    }
+
+    bool falloutProofDescriptorContainsAny(
+        std::string_view descriptor, std::initializer_list<std::string_view> values)
+    {
+        return std::any_of(values.begin(), values.end(), [&](std::string_view value) {
+            return descriptor.find(value) != std::string_view::npos;
+        });
+    }
+
+    FalloutProofSkinRole classifyFalloutProofSkinRole(const osg::NodePath& path, const osg::Drawable& drawable,
+        const osg::Geometry* renderGeometry, const std::vector<FalloutProofSkinTexture>& textures)
+    {
+        std::string pathDescriptor;
+        std::string surfaceDescriptor;
+        const auto append = [](std::string& destination, std::string_view value) {
+            if (value.empty())
+                return;
+            if (!destination.empty())
+                destination.push_back('|');
+            destination.append(value);
+        };
+        for (const osg::Node* node : path)
+        {
+            if (node == nullptr || node->getName().empty())
+                continue;
+            const std::string name = Misc::StringUtils::lowerCase(node->getName());
+            append(pathDescriptor, name);
+            if (!Misc::StringUtils::ciStartsWith(name, "bip01")
+                && !Misc::StringUtils::ciEqual(name, "scene root"))
+                append(surfaceDescriptor, name);
+        }
+        append(surfaceDescriptor, Misc::StringUtils::lowerCase(drawable.getName()));
+        if (renderGeometry != nullptr && renderGeometry != &drawable)
+            append(surfaceDescriptor, Misc::StringUtils::lowerCase(renderGeometry->getName()));
+        for (const FalloutProofSkinTexture& texture : textures)
+            append(surfaceDescriptor, normalizeFalloutProofTexturePath(texture.mPath, true));
+
+        const std::string handDescriptor = surfaceDescriptor + '|' + pathDescriptor;
+        if (falloutProofDescriptorContainsAny(handDescriptor,
+                { "lefthand", "left hand", "l hand", "lhand", "hand_l", "handleft" }))
+            return FalloutProofSkinRole::LeftHand;
+        if (falloutProofDescriptorContainsAny(handDescriptor,
+                { "righthand", "right hand", "r hand", "rhand", "hand_r", "handright" }))
+            return FalloutProofSkinRole::RightHand;
+        if (falloutProofDescriptorContainsAny(surfaceDescriptor,
+                { "headhuman", "humanhead", "femalehead", "malehead", "headfemale", "headmale",
+                    "faceskin", "facegen", "head_human" }))
+            return FalloutProofSkinRole::Head;
+        if (falloutProofDescriptorContainsAny(surfaceDescriptor,
+                { "upperbody", "upper body", "nakedbody", "bodymale", "bodyfemale", "maleupper",
+                    "femaleupper", "skinbody", "torso" }))
+            return FalloutProofSkinRole::Body;
+        return FalloutProofSkinRole::ExposedEquipment;
+    }
+
+    class FalloutProofSkinStateVisitor final : public osg::NodeVisitor
+    {
+    public:
+        explicit FalloutProofSkinStateVisitor(std::string expectedOwner)
+            : osg::NodeVisitor(osg::NodeVisitor::TRAVERSE_ACTIVE_CHILDREN)
+            , mExpectedOwner(std::move(expectedOwner))
+        {
+            setTraversalMask(~0u);
+        }
+
+        void apply(osg::Drawable& drawable) override
+        {
+            ++mResult.mVisibleDrawables;
+
+            std::vector<const osg::StateSet*> stateSets;
+            stateSets.reserve(getNodePath().size() + 1);
+            bool skinShader = false;
+            for (const osg::Node* node : getNodePath())
+            {
+                if (node == nullptr)
+                    continue;
+                if (const osg::StateSet* stateSet = node->getStateSet())
+                    stateSets.push_back(stateSet);
+                gatherOwner(*node);
+                std::string shaderPrefix;
+                if (node->getUserValue("shaderPrefix", shaderPrefix)
+                    && Misc::StringUtils::ciEqual(shaderPrefix, "bs/skin"))
+                    skinShader = true;
+            }
+
+            if (const osg::StateSet* stateSet = drawable.getStateSet())
+                stateSets.push_back(stateSet);
+            gatherOwner(drawable);
+            std::string drawableShaderPrefix;
+            if (drawable.getUserValue("shaderPrefix", drawableShaderPrefix)
+                && Misc::StringUtils::ciEqual(drawableShaderPrefix, "bs/skin"))
+                skinShader = true;
+
+            const osg::Geometry* renderGeometry = dynamic_cast<const osg::Geometry*>(&drawable);
+            if (const auto* rig = dynamic_cast<const SceneUtil::RigGeometry*>(&drawable))
+                renderGeometry = rig->getLastFrameGeometry();
+            if (renderGeometry != nullptr && renderGeometry != &drawable)
+            {
+                if (const osg::StateSet* stateSet = renderGeometry->getStateSet())
+                    stateSets.push_back(stateSet);
+                gatherOwner(*renderGeometry);
+                std::string shaderPrefix;
+                if (renderGeometry->getUserValue("shaderPrefix", shaderPrefix)
+                    && Misc::StringUtils::ciEqual(shaderPrefix, "bs/skin"))
+                    skinShader = true;
+            }
+
+            unsigned int textureUnits = 0;
+            bool localFaceGenSemantic = false;
+            bool actorLocalFaceGen = false;
+            for (const osg::StateSet* stateSet : stateSets)
+            {
+                if (stateSet == nullptr)
+                    continue;
+                textureUnits = std::max(textureUnits, stateSet->getNumTextureAttributeLists());
+                actorLocalFaceGen = actorLocalFaceGen
+                    || stateSet->getDefinePair("FALLOUT_ACTOR_LOCAL_FACEGEN") != nullptr;
+                for (unsigned int unit = 0; unit < stateSet->getNumTextureAttributeLists(); ++unit)
+                {
+                    const auto* pair
+                        = stateSet->getTextureAttributePair(unit, SceneUtil::TextureType::AttributeType);
+                    const auto* type = pair == nullptr ? nullptr
+                        : dynamic_cast<const SceneUtil::TextureType*>(pair->first.get());
+                    localFaceGenSemantic = localFaceGenSemantic || (type != nullptr
+                        && (isFalloutProofFaceGenSemantic(type->getName(), 0)
+                            || isFalloutProofFaceGenSemantic(type->getName(), 1)));
+                }
+            }
+
+            std::vector<FalloutProofSkinTexture> textures;
+            textures.reserve(textureUnits);
+            bool hasFaceGen0 = false;
+            bool hasFaceGen1 = false;
+            for (unsigned int unit = 0; unit < textureUnits; ++unit)
+            {
+                const EffectiveAttribute textureAttribute
+                    = resolveEffectiveAttribute(stateSets, unit, osg::StateAttribute::TEXTURE);
+                const EffectiveAttribute typeAttribute
+                    = resolveEffectiveAttribute(stateSets, unit, SceneUtil::TextureType::AttributeType);
+                const auto* texture
+                    = dynamic_cast<const osg::Texture2D*>(textureAttribute.mAttribute);
+                const auto* type
+                    = dynamic_cast<const SceneUtil::TextureType*>(typeAttribute.mAttribute);
+                if (texture == nullptr && type == nullptr)
+                    continue;
+
+                FalloutProofSkinTexture binding;
+                binding.mUnit = unit;
+                if (type != nullptr)
+                    binding.mSemantic = type->getName();
+                const osg::Image* image = texture != nullptr ? texture->getImage() : nullptr;
+                if (image != nullptr)
+                {
+                    binding.mPath = normalizeFalloutProofTexturePath(image->getFileName(), false);
+                    binding.mWidth = image->s();
+                    binding.mHeight = image->t();
+                }
+                else if (texture != nullptr)
+                {
+                    binding.mPath = normalizeFalloutProofTexturePath(texture->getName(), false);
+                    binding.mWidth = texture->getTextureWidth();
+                    binding.mHeight = texture->getTextureHeight();
+                }
+                hasFaceGen0 = hasFaceGen0
+                    || (type != nullptr && isFalloutProofFaceGenSemantic(type->getName(), 0));
+                hasFaceGen1 = hasFaceGen1
+                    || (type != nullptr && isFalloutProofFaceGenSemantic(type->getName(), 1));
+                textures.push_back(std::move(binding));
+            }
+
+            const bool skinDrawable
+                = skinShader || actorLocalFaceGen || localFaceGenSemantic || hasFaceGen0 || hasFaceGen1;
+            if (!skinDrawable)
+                return;
+
+            ++mResult.mVisibleSkinDrawables;
+            const FalloutProofSkinRole role
+                = classifyFalloutProofSkinRole(getNodePath(), drawable, renderGeometry, textures);
+            FalloutProofSkinRoleSummary& summary = mResult.mRoles[static_cast<std::size_t>(role)];
+            ++summary.mDrawables;
+            if (!hasFaceGen0)
+                ++summary.mMissingFaceGen0;
+            if (!hasFaceGen1)
+                ++summary.mMissingFaceGen1;
+            for (const FalloutProofSkinTexture& texture : textures)
+            {
+                if (isFalloutProofNeutralFaceGenPath(texture.mPath))
+                    ++summary.mNeutralFaceGenBindings;
+                summary.mTextures.push_back(texture);
+            }
+        }
+
+        FalloutProofSkinState finish(FalloutProofSkinState result)
+        {
+            result.mVisibleDrawables = mResult.mVisibleDrawables;
+            result.mVisibleSkinDrawables = mResult.mVisibleSkinDrawables;
+            result.mRoles = std::move(mResult.mRoles);
+            result.mExpectedOwner = mExpectedOwner;
+            result.mObservedOwners = std::move(mObservedOwners);
+            std::sort(result.mObservedOwners.begin(), result.mObservedOwners.end());
+            result.mObservedOwners.erase(
+                std::unique(result.mObservedOwners.begin(), result.mObservedOwners.end()),
+                result.mObservedOwners.end());
+            result.mOwnershipMetadataPresent = !result.mObservedOwners.empty();
+            result.mOwnershipMatches = !result.mOwnershipMetadataPresent
+                || std::all_of(result.mObservedOwners.begin(), result.mObservedOwners.end(),
+                    [&](std::string_view owner) { return Misc::StringUtils::ciEqual(owner, mExpectedOwner); });
+
+            bool missingFaceGen0 = false;
+            bool missingFaceGen1 = false;
+            bool neutralNonHead = false;
+            for (std::size_t index = 0; index < result.mRoles.size(); ++index)
+            {
+                FalloutProofSkinRoleSummary& summary = result.mRoles[index];
+                missingFaceGen0 = missingFaceGen0 || summary.mMissingFaceGen0 != 0;
+                missingFaceGen1 = missingFaceGen1 || summary.mMissingFaceGen1 != 0;
+                neutralNonHead = neutralNonHead
+                    || (index != static_cast<std::size_t>(FalloutProofSkinRole::Head)
+                        && summary.mNeutralFaceGenBindings != 0);
+                std::sort(summary.mTextures.begin(), summary.mTextures.end(), [](const auto& left, const auto& right) {
+                    return std::tie(left.mSemantic, left.mUnit, left.mPath, left.mWidth, left.mHeight)
+                        < std::tie(right.mSemantic, right.mUnit, right.mPath, right.mWidth, right.mHeight);
+                });
+                summary.mTextures.erase(std::unique(summary.mTextures.begin(), summary.mTextures.end(),
+                                            [](const auto& left, const auto& right) {
+                                                return std::tie(left.mSemantic, left.mUnit, left.mPath, left.mWidth,
+                                                           left.mHeight)
+                                                    == std::tie(right.mSemantic, right.mUnit, right.mPath,
+                                                        right.mWidth, right.mHeight);
+                                            }),
+                    summary.mTextures.end());
+            }
+            if (result.mVisibleDrawables == 0)
+                result.mFailures.emplace_back("visible-drawable-state-empty");
+            if (!result.mOwnershipMatches)
+                result.mFailures.emplace_back("actor-ownership-mismatch");
+            if (missingFaceGen0)
+                result.mFailures.emplace_back("missing-facegen0-semantic");
+            if (missingFaceGen1)
+                result.mFailures.emplace_back("missing-facegen1-semantic");
+            if (neutralNonHead)
+                result.mFailures.emplace_back("neutral-facegen-visible-nonhead");
+            result.mPass = result.mFailures.empty();
+            return result;
+        }
+
+    private:
+        struct EffectiveAttribute
+        {
+            const osg::StateAttribute* mAttribute = nullptr;
+            osg::StateAttribute::OverrideValue mFlags{};
+        };
+
+        static EffectiveAttribute resolveEffectiveAttribute(const std::vector<const osg::StateSet*>& stateSets,
+            unsigned int unit, osg::StateAttribute::Type type)
+        {
+            EffectiveAttribute result;
+            for (const osg::StateSet* stateSet : stateSets)
+            {
+                if (stateSet == nullptr)
+                    continue;
+                const osg::StateSet::RefAttributePair* candidate
+                    = stateSet->getTextureAttributePair(unit, type);
+                if (candidate == nullptr || candidate->first == nullptr)
+                    continue;
+                if (result.mAttribute != nullptr
+                    && (result.mFlags & osg::StateAttribute::OVERRIDE) != 0
+                    && (candidate->second & osg::StateAttribute::PROTECTED) == 0)
+                    continue;
+                result.mAttribute = candidate->first.get();
+                result.mFlags = candidate->second;
+            }
+            return result;
+        }
+
+        void gatherOwner(const osg::Object& object)
+        {
+            std::string owner;
+            if (object.getUserValue("OpenMW.ActorEditorId", owner) && !owner.empty())
+                mObservedOwners.push_back(std::move(owner));
+        }
+
+        std::string mExpectedOwner;
+        FalloutProofSkinState mResult;
+        std::vector<std::string> mObservedOwners;
+    };
+
+    FalloutProofSkinState inspectFalloutProofSkinState(
+        const MWWorld::Ptr& actor, std::size_t actorIndex, unsigned int frameNumber)
+    {
+        FalloutProofSkinState result;
+        result.mSampleFrame = frameNumber;
+        result.mActorIndex = actorIndex;
+        if (actor.isEmpty() || actor.getType() != ESM4::Npc::sRecordId)
+        {
+            result.mFailures.emplace_back("staged-fnv-npc-unavailable");
+            return result;
+        }
+
+        const ESM4::Npc* traits = MWClass::ESM4Npc::getTraitsRecord(actor);
+        if (traits == nullptr || !traits->mIsFONV)
+        {
+            result.mFailures.emplace_back("staged-actor-not-fnv-npc");
+            return result;
+        }
+
+        result.mAvailable = true;
+        result.mActorRef = actor.getCellRef().getRefNum().toString("FormId:");
+        result.mActorBase = actor.getCellRef().getRefId().toDebugString();
+        result.mExpectedOwner = traits->mEditorId;
+        osg::Node* root = actor.getRefData().getBaseNode();
+        if (root == nullptr)
+        {
+            result.mFailures.emplace_back("actor-root-missing");
+            return result;
+        }
+
+        FalloutProofSkinStateVisitor visitor(traits->mEditorId);
+        root->accept(visitor);
+        return visitor.finish(std::move(result));
+    }
+
+    void writeFalloutProofSkinStateJson(std::ostream& out, const FalloutProofSkinState& state)
+    {
+        out << "{\"schema\":\"nikami-fnv-openmw-skin-state/v1\",\"samplePhase\":\"post-render\""
+            << ",\"cameraIndependent\":true"
+            << ",\"sampleFrame\":" << state.mSampleFrame << ",\"available\":"
+            << (state.mAvailable ? "true" : "false") << ",\"actorIndex\":";
+        if (state.mActorIndex == static_cast<std::size_t>(-1))
+            out << "null";
+        else
+            out << state.mActorIndex;
+        out << ",\"actor\":{\"ref\":";
+        writeProofJsonString(out, state.mActorRef);
+        out << ",\"base\":";
+        writeProofJsonString(out, state.mActorBase);
+        out << "},\"ownership\":{\"expected\":";
+        writeProofJsonString(out, state.mExpectedOwner);
+        out << ",\"metadataPresent\":" << (state.mOwnershipMetadataPresent ? "true" : "false")
+            << ",\"matches\":" << (state.mOwnershipMatches ? "true" : "false") << ",\"observed\":[";
+        for (std::size_t index = 0; index < state.mObservedOwners.size(); ++index)
+        {
+            if (index != 0)
+                out << ',';
+            writeProofJsonString(out, state.mObservedOwners[index]);
+        }
+        out << "]},\"counts\":{\"visibleDrawables\":" << state.mVisibleDrawables
+            << ",\"visibleSkinDrawables\":" << state.mVisibleSkinDrawables << "},\"roles\":[";
+        for (std::size_t roleIndex = 0; roleIndex < state.mRoles.size(); ++roleIndex)
+        {
+            if (roleIndex != 0)
+                out << ',';
+            const FalloutProofSkinRoleSummary& role = state.mRoles[roleIndex];
+            out << "{\"role\":";
+            writeProofJsonString(out, sFalloutProofSkinRoleNames[roleIndex]);
+            out << ",\"drawables\":" << role.mDrawables << ",\"missingFaceGen0\":"
+                << role.mMissingFaceGen0 << ",\"missingFaceGen1\":" << role.mMissingFaceGen1
+                << ",\"neutralFaceGenBindings\":" << role.mNeutralFaceGenBindings << ",\"textures\":[";
+            for (std::size_t textureIndex = 0; textureIndex < role.mTextures.size(); ++textureIndex)
+            {
+                if (textureIndex != 0)
+                    out << ',';
+                const FalloutProofSkinTexture& texture = role.mTextures[textureIndex];
+                out << "{\"unit\":" << texture.mUnit << ",\"semantic\":";
+                if (texture.mSemantic.empty())
+                    out << "null";
+                else
+                    writeProofJsonString(out, texture.mSemantic);
+                out << ",\"path\":";
+                if (texture.mPath.empty())
+                    out << "null";
+                else
+                    writeProofJsonString(out, texture.mPath);
+                out << ",\"dimensions\":";
+                if (texture.mWidth > 0 && texture.mHeight > 0)
+                    out << '[' << texture.mWidth << ',' << texture.mHeight << ']';
+                else
+                    out << "null";
+                out << '}';
+            }
+            out << "]}";
+        }
+        out << "],\"status\":\"" << (state.mPass ? "pass" : "fail") << "\",\"failures\":[";
+        for (std::size_t index = 0; index < state.mFailures.size(); ++index)
+        {
+            if (index != 0)
+                out << ',';
+            writeProofJsonString(out, state.mFailures[index]);
+        }
+        out << "]}";
+    }
+
     bool resolveFalloutProofHeadPose(const MWWorld::Ptr& actor, osg::Vec3d& center, osg::Vec3d& forward)
     {
         if (actor.isEmpty() || actor.getRefData().getBaseNode() == nullptr)
@@ -4001,6 +4463,8 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
     static int proofSidecarScreenshotStableFrames = 0;
     static bool proofSidecarCompletionPublished = false;
     static bool proofSidecarPeerErrorLogged = false;
+    static FalloutProofSkinState proofActorSkinState;
+    static std::string proofActorSkinStateLastLogKey;
     static int proofActorBatchCompleteFrame = -1;
     static bool proofActorBatchCompletionLogged = false;
     static bool proofActorBatchQuitRequested = false;
@@ -6202,6 +6666,7 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
         proofActorRenderGroundFreshBoundsLatched = false;
         proofActorStagedFrame = -1;
         proofActorSnappedFrame = -1;
+        proofActorSkinState = {};
         proofPinnedStagedActor = MWWorld::Ptr();
         proofPinnedStagedActorLastLogFrame = -1000000;
         proofActorScreenshotWaitLogged = false;
@@ -7613,6 +8078,37 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                 }
             }
             out << '}';
+
+            FalloutProofSkinState payloadSkinState = proofActorSkinState;
+            const std::string currentActorRef = proofActorBatchPrevious.isEmpty()
+                ? std::string()
+                : proofActorBatchPrevious.getCellRef().getRefNum().toString("FormId:");
+            const std::string currentActorBase = proofActorBatchPrevious.isEmpty()
+                ? std::string()
+                : proofActorBatchPrevious.getCellRef().getRefId().toDebugString();
+            const bool skinSampleMatches = payloadSkinState.mAvailable
+                && payloadSkinState.mActorIndex == action.mActorIndex
+                && payloadSkinState.mActorRef == currentActorRef
+                && payloadSkinState.mActorBase == currentActorBase;
+            if (!skinSampleMatches)
+            {
+                const unsigned int previousSampleFrame = payloadSkinState.mSampleFrame;
+                payloadSkinState = {};
+                payloadSkinState.mSampleFrame = previousSampleFrame;
+                payloadSkinState.mActorIndex = action.mActorIndex;
+                payloadSkinState.mActorRef = currentActorRef;
+                payloadSkinState.mActorBase = currentActorBase;
+                if (!proofActorBatchPrevious.isEmpty()
+                    && proofActorBatchPrevious.getType() == ESM4::Npc::sRecordId)
+                {
+                    if (const ESM4::Npc* traits
+                        = MWClass::ESM4Npc::getTraitsRecord(proofActorBatchPrevious))
+                        payloadSkinState.mExpectedOwner = traits->mEditorId;
+                }
+                payloadSkinState.mFailures.emplace_back("post-render-skin-sample-unavailable-or-stale");
+            }
+            out << ",\"skinState\":";
+            writeFalloutProofSkinStateJson(out, payloadSkinState);
 
             osg::Camera* camera = mViewer != nullptr ? mViewer->getCamera() : nullptr;
             out << ",\"camera\":{\"available\":" << (camera != nullptr ? "true" : "false");
@@ -9367,6 +9863,34 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
     worldViewerTrace(frameNumber, "rendering-traversals.begin");
     mViewer->renderingTraversals();
     worldViewerTrace(frameNumber, "rendering-traversals.end");
+
+    if (proofActorStagedForCamera && !proofActorBatchPrevious.isEmpty()
+        && proofActorBatchPrevious.getType() == ESM4::Npc::sRecordId)
+    {
+        const ESM4::Npc* traits = MWClass::ESM4Npc::getTraitsRecord(proofActorBatchPrevious);
+        if (traits != nullptr && traits->mIsFONV)
+        {
+            worldViewerTrace(frameNumber, "actor-skin-state.begin");
+            FalloutProofSkinState sampledSkinState
+                = inspectFalloutProofSkinState(proofActorBatchPrevious, proofActorBatchIndex, frameNumber);
+            proofActorSkinState = sampledSkinState;
+
+            FalloutProofSkinState stableSample = sampledSkinState;
+            stableSample.mSampleFrame = 0;
+            std::ostringstream stableKey;
+            stableKey << (proofSidecarEnabled ? proofSidecarGeneration : 0) << '|';
+            writeFalloutProofSkinStateJson(stableKey, stableSample);
+            if (proofActorSkinStateLastLogKey != stableKey.str())
+            {
+                proofActorSkinStateLastLogKey = stableKey.str();
+                std::ostringstream payload;
+                writeFalloutProofSkinStateJson(payload, sampledSkinState);
+                Log(sampledSkinState.mPass ? Debug::Info : Debug::Warning)
+                    << "FNV/ESM4 actor skin state gate: " << payload.str();
+            }
+            worldViewerTrace(frameNumber, "actor-skin-state.end");
+        }
+    }
 
     worldViewerTrace(frameNumber, "lua-worker-finish.begin");
     mLuaWorker->finishUpdate(frameStart, frameNumber, *stats);
