@@ -66,7 +66,6 @@
 #include <algorithm>
 #include <cstdlib>
 #include <cstdint>
-#include <iterator>
 #include <istream>
 #include <limits>
 #include <map>
@@ -8104,34 +8103,6 @@ namespace MWRender
             return result;
         }
 
-        std::string findFonvWeaponFamilySource(const VFS::Manager& vfs, std::string_view directory,
-            std::string_view prefix, std::string_view semantic, std::initializer_list<std::string_view> suffixes)
-        {
-            if (prefix.empty())
-                return {};
-
-            // Weapon animation families are immutable after the VFS index is built. Cache the one retail source for
-            // each representative semantic because an actor sweep can construct thousands of NPCs per family.
-            const std::string cacheKey
-                = std::string(directory) + ':' + std::string(prefix) + ':' + std::string(semantic);
-            static std::map<std::string, std::string> cache;
-            if (const auto found = cache.find(cacheKey); found != cache.end())
-                return found->second;
-
-            std::string result;
-            for (std::string_view suffix : suffixes)
-            {
-                const std::string path = std::string(directory) + std::string(prefix) + std::string(suffix);
-                if (vfs.exists(VFS::Path::Normalized(path)))
-                {
-                    result = path;
-                    break;
-                }
-            }
-
-            const auto inserted = cache.emplace(cacheKey, result);
-            return inserted.first->second;
-        }
     }
 
     ESM4NpcAnimation::ESM4NpcAnimation(
@@ -8339,38 +8310,12 @@ namespace MWRender
 
             bool addedAnimationSource = false;
             std::vector<std::string> procedureIdleSources;
-            std::map<std::string, std::shared_ptr<AnimSource>> loadedFonvAnimationSources;
             const auto addFonvAnimationSource = [&](const std::string& kfPath, std::string_view reason,
                                                    bool countsAsPrimary = true,
                                                    bool falloutProcedureIdle = false,
-                                                   std::string_view controllerOverlayKf = {},
-                                                   bool promoteExisting = false) {
+                                                   std::string_view controllerOverlayKf = {}) {
                 if (kfPath.empty())
                     return;
-                std::string sourceKey = VFS::Path::normalizeFilename(kfPath);
-                sourceKey += falloutProcedureIdle ? "\nprocedure:" : "\nregular:";
-                sourceKey += VFS::Path::normalizeFilename(controllerOverlayKf);
-                if (const auto loaded = loadedFonvAnimationSources.find(sourceKey);
-                    loaded != loadedFonvAnimationSources.end())
-                {
-                    // Animation::play searches sources in reverse. A representative proof may need the already
-                    // loaded source promoted, but it never needs a second copy competing for source priority.
-                    if (promoteExisting)
-                    {
-                        const auto source = std::find(mAnimSources.begin(), mAnimSources.end(), loaded->second);
-                        if (source != mAnimSources.end() && std::next(source) != mAnimSources.end())
-                        {
-                            std::shared_ptr<AnimSource> promoted = *source;
-                            mAnimSources.erase(source);
-                            mAnimSources.push_back(std::move(promoted));
-                        }
-                    }
-                    Log(Debug::Verbose) << "FNV/ESM4 diag: "
-                                     << (promoteExisting ? "promoted" : "skipped") << " duplicate FONV NPC "
-                                     << reason << " animation source " << kfPath << " for " << traits->mEditorId;
-                    addedAnimationSource = addedAnimationSource || countsAsPrimary;
-                    return;
-                }
                 Log(Debug::Verbose) << "FNV/ESM4 diag: adding FONV NPC " << reason << " animation source " << kfPath
                                  << " for " << traits->mEditorId;
                 auto source = addSingleAnimSource(kfPath, skeletonModel, falloutProcedureIdle, controllerOverlayKf);
@@ -8389,10 +8334,7 @@ namespace MWRender
                     logWorldViewerActorLedger(mPtr, "animation-source", details.str());
                 }
                 if (source != nullptr)
-                {
-                    loadedFonvAnimationSources.emplace(std::move(sourceKey), source);
                     addedAnimationSource = addedAnimationSource || countsAsPrimary;
-                }
             };
 
             const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
@@ -8443,15 +8385,16 @@ namespace MWRender
                 Log(Debug::Warning) << "FNV/ESM4 diag: no FONV NPC KFFZ animation list for " << traits->mEditorId
                                     << " animationRecord=" << animationRecord->mEditorId;
 
-            const bool isFemale = MWClass::ESM4Npc::isFemale(mPtr);
-            const std::string locomotionDir
-                = isFemale ? "meshes/characters/_male/locomotion/female/" : "meshes/characters/_male/locomotion/male/";
-            const ESM4::Weapon* mainWeapon = MWClass::ESM4Npc::getEquippedWeapon(mPtr);
-            const std::string_view weaponPrefix
-                = mainWeapon != nullptr ? getFonvWeaponAnimationPrefix(mainWeapon->mData.animationType) : "h2h";
-
             if (!addedAnimationSource)
             {
+                const bool isFemale = MWClass::ESM4Npc::isFemale(mPtr);
+                const std::string locomotionDir
+                    = isFemale ? "meshes/characters/_male/locomotion/female/" : "meshes/characters/_male/locomotion/male/";
+
+                addFonvAnimationSource("meshes/characters/_male/locomotion/mtidle.kf", "fallback");
+                // Do not use the talking idle as the neutral fallback. It drives helper/twist bones that are not
+                // present in the base FNV skeleton path yet and visibly mangles skinned actors.
+                addFonvAnimationSource(locomotionDir + "mtforward.kf", "fallback");
                 addFonvAnimationSource(locomotionDir + "mtbackward.kf", "fallback");
                 addFonvAnimationSource(locomotionDir + "mtleft.kf", "fallback");
                 addFonvAnimationSource(locomotionDir + "mtright.kf", "fallback");
@@ -8462,22 +8405,24 @@ namespace MWRender
                 addFonvAnimationSource("meshes/characters/_male/locomotion/mtturnleft.kf", "fallback");
                 addFonvAnimationSource("meshes/characters/_male/locomotion/mtturnright.kf", "fallback");
 
-                if (!weaponPrefix.empty())
+                if (const ESM4::Weapon* weapon = MWClass::ESM4Npc::getEquippedWeapon(mPtr))
                 {
-                    // Add the non-representative family directions. The single family walk-forward source is added
-                    // by the representative pass below so it has the same ordering for KFFZ and fallback actors.
-                    constexpr std::array<std::string_view, 9> suffixes{ "backward", "left", "right", "fastforward",
-                        "fastbackward", "fastleft", "fastright", "turnleft", "turnright" };
-                    for (std::string_view suffix : suffixes)
+                    const std::string_view prefix = getFonvWeaponAnimationPrefix(weapon->mData.animationType);
+                    if (!prefix.empty())
                     {
-                        addFonvAnimationSource("meshes/characters/_male/locomotion/" + std::string(weaponPrefix)
-                                + std::string(suffix) + ".kf",
-                            "retail weapon-family locomotion", false);
+                        // Retail FNV resolves locomotion through the equipped weapon family. Some families author
+                        // only a subset (for example 2ha has a walk-forward plus four fast directions), so add the
+                        // complete candidate set and let the VFS-backed source loader ignore absent files.
+                        constexpr std::array<std::string_view, 10> suffixes{ "forward", "backward", "left", "right",
+                            "fastforward", "fastbackward", "fastleft", "fastright", "turnleft", "turnright" };
+                        for (std::string_view suffix : suffixes)
+                        {
+                            addFonvAnimationSource("meshes/characters/_male/locomotion/" + std::string(prefix)
+                                    + std::string(suffix) + ".kf",
+                                "retail weapon-family locomotion", false);
+                        }
                     }
-                }
 
-                if (mainWeapon != nullptr)
-                {
                     const char* esm4WeaponPose = std::getenv("OPENMW_ESM4_ENABLE_WEAPON_IDLE_POSE");
                     const char* fnvWeaponPose = std::getenv("OPENMW_FNV_ENABLE_WEAPON_IDLE_POSE");
                     const bool useWeaponIdlePose = esm4WeaponPose != nullptr
@@ -8485,64 +8430,29 @@ namespace MWRender
                         : (fnvWeaponPose != nullptr ? std::string_view(fnvWeaponPose) != "0" : true);
                     if (useWeaponIdlePose)
                     {
-                        const std::string weaponPose = getFonvWeaponIdlePoseKf(mainWeapon);
+                        const std::string weaponPose = getFonvWeaponIdlePoseKf(weapon);
                         const std::optional<unsigned int> handGrip
-                            = getFonvWeaponHandGripIndex(mainWeapon->mData.handGrip);
+                            = getFonvWeaponHandGripIndex(weapon->mData.handGrip);
                         if (!handGrip)
                         {
                             Log(Debug::Warning) << "FNV/ESM4: invalid weapon hand-grip selector "
-                                                << static_cast<unsigned int>(mainWeapon->mData.handGrip) << " for "
-                                                << mainWeapon->mEditorId;
+                                                << static_cast<unsigned int>(weapon->mData.handGrip) << " for "
+                                                << weapon->mEditorId;
                         }
                         const std::string handGripKf
-                            = getFonvWeaponHandGripKf(mainWeapon->mData.animationType, mainWeapon->mData.handGrip);
+                            = getFonvWeaponHandGripKf(weapon->mData.animationType, weapon->mData.handGrip);
                         addFonvAnimationSource(weaponPose, "weapon idle pose", false, false, handGripKf);
                     }
                     else
                         Log(Debug::Verbose) << "FNV/ESM4 diag: keeping ambient neutral idle for " << traits->mEditorId
-                                         << " despite equipped weapon=" << mainWeapon->mEditorId;
+                                         << " despite equipped weapon=" << weapon->mEditorId;
                 }
             }
-
-            std::string walkForwardSource = findFonvWeaponFamilySource(*vfs,
-                "meshes/characters/_male/locomotion/", weaponPrefix, "walkforward", { "forward.kf" });
-            if (walkForwardSource.empty())
-                walkForwardSource = locomotionDir + "mtforward.kf";
-            const std::string attack2Source = findFonvWeaponFamilySource(*vfs, "meshes/characters/_male/",
-                weaponPrefix, "attack2", { "attackright.kf", "attackright_a.kf" });
-
-            // Every FNV human gets exactly one retail KF for each representative semantic, even when its NPC record
-            // already supplied a valid KFFZ list. Promote an earlier identical binding instead of adding a duplicate,
-            // making selection independent of whether the record needed the general fallback above.
-            const auto addRepresentativeSources = [&](bool promoteExisting) {
-                addFonvAnimationSource("meshes/characters/_male/idleanims/2hrcrouch.kf", "representative kneel",
-                    false, false, {}, promoteExisting);
-                addFonvAnimationSource("meshes/characters/_male/idleanims/floorsleepdynamicidle.kf",
-                    "representative prone", false, false, {}, promoteExisting);
-                addFonvAnimationSource(
-                    walkForwardSource, "representative walkforward", false, false, {}, promoteExisting);
-                addFonvAnimationSource("meshes/characters/_male/idleanims/talk_handsatside_moving.kf",
-                    "representative talk", false, false, {}, promoteExisting);
-                addFonvAnimationSource(
-                    attack2Source, "representative attack2", false, false, {}, promoteExisting);
-                addFonvAnimationSource("meshes/characters/_male/idleanims/wavehello.kf", "representative wave",
-                    false, false, {}, promoteExisting);
-                // Special-idle/action KFs can also advertise a generic idle group. Keep the neutral retail idle last
-                // so those auxiliary text keys cannot steal the representative idle in reverse-priority lookup.
-                addFonvAnimationSource("meshes/characters/_male/locomotion/mtidle.kf", "representative idle", false,
-                    false, {}, promoteExisting);
-            };
-            addRepresentativeSources(true);
 
             // Add scheduled package procedure sources last because Animation::play resolves sources in reverse order.
             // These are narrow candidates such as Easy Pete's chair/eat package and should beat neutral mTIdle.
             for (const std::string& kfPath : procedureIdleSources)
                 addFonvAnimationSource(kfPath, "scheduled package procedure", false, true);
-
-            // The representative sweep explicitly asks for neutral/action examples, not the NPC's scheduled package
-            // idle. Re-promote the same source objects after procedure sources without binding any KF twice.
-            if (std::getenv("OPENMW_PROOF_ACTOR_REPRESENTATIVE_POSES") != nullptr)
-                addRepresentativeSources(true);
 
             if (const char* forcedKfs = std::getenv("OPENMW_FNV_FORCED_KF_SOURCE"))
             {
