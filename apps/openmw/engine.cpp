@@ -5397,6 +5397,35 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
     }
 
     if (!proofActorBaseRosterExpanded && proofWorldReady && mWorld != nullptr
+        && !proofActorBatchTargets.empty() && !proofEnvEnabled("OPENMW_PROOF_ACTOR_BATCH_ALL_LOADED"))
+    {
+        if (proofEnvEnabled("OPENMW_PROOF_ACTOR_BATCH_AUTO_FRAMES"))
+        {
+            const int configuredFirst = getProofFrame("OPENMW_PROOF_ACTOR_BATCH_FIRST_FRAME");
+            const int configuredStep = getProofFrame("OPENMW_PROOF_ACTOR_BATCH_FRAMES_PER_ACTOR");
+            const int poseFramesEnv = getProofFrame("OPENMW_PROOF_ACTOR_POSE_FRAMES");
+            const int poseFrames = poseFramesEnv >= 1 ? poseFramesEnv : 12;
+            const int poseWindow = static_cast<int>(proofActorPoseGroups.size() + 2) * poseFrames;
+            const int firstFrame = configuredFirst >= 0
+                ? configuredFirst
+                : std::max<int>(static_cast<int>(frameNumber) + 60, std::max(0, proofSayFrame) + poseWindow + 60);
+            const int framesPerActor = configuredStep >= 1 ? configuredStep : std::max(90, poseWindow + 60);
+            proofScreenshotFrames.clear();
+            proofScreenshotFrames.reserve(proofActorBatchTargets.size());
+            for (std::size_t index = 0; index < proofActorBatchTargets.size(); ++index)
+            {
+                const std::uint64_t requested = static_cast<std::uint64_t>(firstFrame)
+                    + static_cast<std::uint64_t>(index) * static_cast<std::uint64_t>(framesPerActor);
+                proofScreenshotFrames.push_back(static_cast<int>(
+                    std::min<std::uint64_t>(requested, static_cast<std::uint64_t>(std::numeric_limits<int>::max()))));
+            }
+        }
+        proofActorBaseRosterExpanded = true;
+        Log(Debug::Info) << "FNV/ESM4 actor batch: explicit roster ready selected="
+                         << proofActorBatchTargets.size() << " screenshotFrames=" << proofScreenshotFrames.size();
+    }
+
+    if (!proofActorBaseRosterExpanded && proofWorldReady && mWorld != nullptr
         && proofEnvEnabled("OPENMW_PROOF_ACTOR_BATCH_ALL_LOADED"))
     {
         struct LoadedActorBase
@@ -7154,8 +7183,6 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                     candidates.insert(candidates.end(), { "idle", "idle2" });
                 else if (requestedGroup == "kneel")
                     candidates.insert(candidates.end(), { "2hrcrouch" });
-                else if (requestedGroup == "prone")
-                    candidates.insert(candidates.end(), { "floorsleepdynamicidle" });
                 else if (requestedGroup == "walk")
                     candidates.insert(candidates.end(), { "walkforward", "forward" });
                 else if (requestedGroup == "talk")
@@ -7164,6 +7191,22 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                     candidates.insert(candidates.end(), { "attack2", "attack1", "attack3" });
                 else if (requestedGroup == "wave" || requestedGroup == "gesture")
                     candidates.insert(candidates.end(), { "wavehello", "idle2" });
+
+                if (proofActorBatchPrevious.getType() == ESM4::Npc::sRecordId)
+                {
+                    const bool weaponPose = requestedGroup == "walk" || requestedGroup == "shoot";
+                    const ESM4::Weapon* mainWeapon = MWClass::ESM4Npc::getEquippedWeapon(proofActorBatchPrevious);
+                    const MWMechanics::DrawState drawState = weaponPose && mainWeapon != nullptr
+                        ? MWMechanics::DrawState::Weapon
+                        : MWMechanics::DrawState::Nothing;
+                    proofActorBatchPrevious.getClass().getCreatureStats(proofActorBatchPrevious)
+                        .setDrawState(drawState);
+                    Log(Debug::Info) << "FNV/ESM4 actor pose draw state: actorIndex=" << proofActorBatchIndex
+                                     << " target=\"" << proofActorBatchTargets[proofActorBatchIndex]
+                                     << "\" group=\"" << requestedGroup << "\" weaponPose=" << weaponPose
+                                     << " weaponAvailable=" << (mainWeapon != nullptr) << " drawState="
+                                     << (drawState == MWMechanics::DrawState::Weapon ? "weapon" : "nothing");
+                }
 
                 std::string group;
                 if (animation != nullptr)
@@ -7195,6 +7238,9 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
             }
             else if (!proofActorPoseReturnedToIdle)
             {
+                if (proofActorBatchPrevious.getType() == ESM4::Npc::sRecordId)
+                    proofActorBatchPrevious.getClass().getCreatureStats(proofActorBatchPrevious)
+                        .setDrawState(MWMechanics::DrawState::Nothing);
                 const bool available = animation != nullptr && animation->hasAnimation("idle");
                 const bool played = available
                     && mMechanicsManager->playAnimationGroup(proofActorBatchPrevious, "idle", 1, 1, true);
