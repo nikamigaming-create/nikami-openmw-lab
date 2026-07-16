@@ -485,12 +485,18 @@ namespace OMW::FNVSidecar
         if (!enabled() || !mImpl->lock())
             return false;
         SharedHeader& header = mImpl->mBlock->mHeader;
-        header.mErrorCode = static_cast<std::uint32_t>(code);
-        header.mFlags |= ErrorFlag;
-        header.mState = static_cast<std::uint32_t>(State::Error);
-        const std::size_t length = std::min(message.size(), sizeof(header.mErrorMessage) - 1);
-        std::memcpy(header.mErrorMessage, message.data(), length);
-        header.mErrorMessage[length] = '\0';
+        const bool errorAlreadyActive = (header.mFlags & ErrorFlag) != 0
+            || header.mState == static_cast<std::uint32_t>(State::Error)
+            || header.mErrorCode != static_cast<std::uint32_t>(ErrorCode::None);
+        if (!errorAlreadyActive)
+        {
+            header.mErrorCode = static_cast<std::uint32_t>(code);
+            header.mFlags |= ErrorFlag;
+            header.mState = static_cast<std::uint32_t>(State::Error);
+            const std::size_t length = std::min(message.size(), sizeof(header.mErrorMessage) - 1);
+            std::memcpy(header.mErrorMessage, message.data(), length);
+            header.mErrorMessage[length] = '\0';
+        }
         mImpl->unlock();
         SetEvent(mImpl->mErrorEvent);
         return true;

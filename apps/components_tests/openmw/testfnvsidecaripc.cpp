@@ -176,6 +176,19 @@ TEST(FNVSidecarIpc, DrivesReadyCaptureAckAndCompleteTransitions)
         EXPECT_NE(block->mHeader.mFlags & OMW::FNVSidecar::OpenMwCompleteFlag, 0u);
         EXPECT_EQ(block->mHeader.mState,
             static_cast<std::uint32_t>(OMW::FNVSidecar::State::Complete));
+
+        ASSERT_TRUE(client.setError(OMW::FNVSidecar::ErrorCode::InvalidPlan, "first-error"));
+        EXPECT_EQ(block->mHeader.mErrorCode,
+            static_cast<std::uint32_t>(OMW::FNVSidecar::ErrorCode::InvalidPlan));
+        EXPECT_STREQ(block->mHeader.mErrorMessage, "first-error");
+        EXPECT_EQ(block->mHeader.mState,
+            static_cast<std::uint32_t>(OMW::FNVSidecar::State::Error));
+        EXPECT_EQ(WaitForSingleObject(error, 0), WAIT_OBJECT_0);
+
+        ASSERT_TRUE(client.setError(OMW::FNVSidecar::ErrorCode::InternalFault, "later-error"));
+        EXPECT_EQ(block->mHeader.mErrorCode,
+            static_cast<std::uint32_t>(OMW::FNVSidecar::ErrorCode::InvalidPlan));
+        EXPECT_STREQ(block->mHeader.mErrorMessage, "first-error");
     }
     EXPECT_EQ(_putenv_s("OPENMW_FNV_SIDECAR_SHARED_MEMORY_NAME", ""), 0);
     UnmapViewOfFile(block);
