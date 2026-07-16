@@ -3982,7 +3982,9 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
     static bool proofActorPoseRestoringNativeState = false;
     static bool proofActorPoseCycleComplete = false;
     static bool proofActorPoseInventoryLogged = false;
+    static std::unordered_map<std::string, unsigned int> proofActorNativeGroupMasks;
     static std::size_t proofActorPosePlayed = 0;
+    static std::size_t proofActorPoseDeferred = 0;
     static std::size_t proofActorPoseSkipped = 0;
     static bool proofActorPhaseTimedOut = false;
     static std::string proofActorPhaseTimeoutReason;
@@ -6183,7 +6185,9 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
             : proofActorPoseGroups;
         proofActorPoseCycleComplete = !proofActorPoseSweepEnabled;
         proofActorPoseInventoryLogged = false;
+        proofActorNativeGroupMasks.clear();
         proofActorPosePlayed = 0;
+        proofActorPoseDeferred = 0;
         proofActorPoseSkipped = 0;
         proofActorPhaseTimedOut = false;
         proofActorPhaseTimeoutReason.clear();
@@ -7806,6 +7810,14 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
         {
             const std::vector<std::string> availableGroups = animation->getAnimationGroups();
             proofActorActivePoseGroups = proofActorPoseAllAvailable ? availableGroups : proofActorPoseGroups;
+            proofActorNativeGroupMasks.clear();
+            for (unsigned int boneGroup = 0; boneGroup < MWRender::sNumBlendMasks; ++boneGroup)
+            {
+                const std::string activeGroup(
+                    animation->getActiveGroup(static_cast<MWRender::BoneGroup>(boneGroup)));
+                if (!activeGroup.empty())
+                    proofActorNativeGroupMasks[activeGroup] |= 1u << boneGroup;
+            }
             std::ostringstream inventory;
             for (std::size_t index = 0; index < availableGroups.size(); ++index)
             {
@@ -7847,18 +7859,38 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
             {
                 const std::string& group = proofActorActivePoseGroups[proofActorPoseIndex];
                 const bool available = animation != nullptr && animation->hasAnimation(group);
-                const bool played = available
+                const unsigned int controllerMask
+                    = available ? animation->getAnimationGroupControllerMask(group) : 0;
+                const auto nativeActive = proofActorNativeGroupMasks.find(group);
+                const unsigned int activeMask
+                    = nativeActive != proofActorNativeGroupMasks.end() ? nativeActive->second : 0;
+                const float groupStart = available ? animation->getStartTime(group) : -1.f;
+                const float groupStop = available ? animation->getTextKeyTime(group + ": stop") : -1.f;
+                const bool nonPlayableSpan = available && (groupStart < 0.f || groupStop < 0.f
+                    || groupStop <= groupStart + std::numeric_limits<float>::epsilon());
+                const unsigned int npcStandaloneMask = (1u << MWRender::BoneGroup_LowerBody)
+                    | (1u << MWRender::BoneGroup_Torso);
+                const bool compositeOnly = available
+                    && proofActorBatchPrevious.getType() == ESM4::Npc::sRecordId
+                    && (nonPlayableSpan || (activeMask != 0 && (activeMask & npcStandaloneMask) != npcStandaloneMask)
+                        || (controllerMask & npcStandaloneMask) != npcStandaloneMask);
+                const bool played = available && !compositeOnly
                     && mMechanicsManager->playAnimationGroup(proofActorBatchPrevious, group, 1, 1, true);
                 if (played)
                     ++proofActorPosePlayed;
+                else if (compositeOnly)
+                    ++proofActorPoseDeferred;
                 else
                     ++proofActorPoseSkipped;
-                Log(played ? Debug::Info : Debug::Warning)
+                const bool accepted = played || compositeOnly;
+                Log(accepted ? Debug::Info : Debug::Warning)
                      << "FNV/ESM4 actor pose transport gate: actorIndex=" << proofActorBatchIndex << " target=\""
                      << proofActorBatchTargets[proofActorBatchIndex] << "\" poseIndex=" << proofActorPoseIndex
                      << " group=\"" << group << "\" resolvedGroup=\"" << group
-                     << "\" available=" << available << " played=" << played
-                     << " exact=1 gate=transport-only status=" << (played ? "pass" : "fail");
+                     << "\" available=" << available << " played=" << played << " controllerMask=0x" << std::hex
+                     << controllerMask << " activeMask=0x" << activeMask << std::dec << " start=" << groupStart
+                     << " stop=" << groupStop << " role=" << (compositeOnly ? "composite-only" : "standalone")
+                     << " exact=1 gate=transport-only status=" << (accepted ? "pass" : "fail");
                 ++proofActorPoseIndex;
                 proofActorPoseNextFrame = static_cast<int>(frameNumber) + poseFrames;
             }
@@ -7943,7 +7975,8 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                 Log(Debug::Info) << "FNV/ESM4 actor pose cycle: actorIndex=" << proofActorBatchIndex
                                  << " target=\"" << proofActorBatchTargets[proofActorBatchIndex]
                                  << "\" requested=" << proofActorActivePoseGroups.size() << " played="
-                                 << proofActorPosePlayed << " skipped=" << proofActorPoseSkipped
+                                 << proofActorPosePlayed << " deferred=" << proofActorPoseDeferred
+                                 << " skipped=" << proofActorPoseSkipped
                                  << " selectedFrame=" << proofActorBatchSelectedFrame << " completeFrame="
                                  << frameNumber << " status=complete";
             }
@@ -7983,7 +8016,8 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                                 << "\" selectedFrame=" << proofActorBatchSelectedFrame << " frame=" << frameNumber
                                 << " timeoutFrames=" << timeoutFrames << " poseIndex=" << proofActorPoseIndex
                                 << " requested=" << proofActorActivePoseGroups.size() << " played="
-                                << proofActorPosePlayed << " skipped=" << proofActorPoseSkipped
+                                << proofActorPosePlayed << " deferred=" << proofActorPoseDeferred
+                                << " skipped=" << proofActorPoseSkipped
                                 << " status=fail reason=" << proofActorPhaseTimeoutReason;
         }
     }

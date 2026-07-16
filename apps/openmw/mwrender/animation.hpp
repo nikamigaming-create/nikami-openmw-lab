@@ -402,6 +402,10 @@ namespace MWRender
         /// deterministic pose inventory without depending on animation-source order.
         std::vector<std::string> getAnimationGroups() const;
 
+        /// Return the bone-group controller coverage of the same highest-priority source that play() would select.
+        /// This lets diagnostics distinguish complete actions from overlays/metadata without naming either one.
+        unsigned int getAnimationGroupControllerMask(std::string_view group) const;
+
         bool isLoopingAnimation(std::string_view group) const;
 
         // Specifies the axis' to accumulate on. Non-accumulated axis will just

@@ -5076,6 +5076,25 @@ namespace MWRender
         return result;
     }
 
+    unsigned int Animation::getAnimationGroupControllerMask(std::string_view group) const
+    {
+        // Match play(): the last inserted source containing the requested group wins.
+        for (AnimSourceList::const_reverse_iterator source = mAnimSources.rbegin(); source != mAnimSources.rend(); ++source)
+        {
+            if (!(*source)->getTextKeys().hasGroupStart(group))
+                continue;
+
+            unsigned int mask = 0;
+            for (std::size_t boneGroup = 0; boneGroup < sNumBlendMasks; ++boneGroup)
+            {
+                if (!(*source)->mControllerMap[boneGroup].empty())
+                    mask |= 1u << boneGroup;
+            }
+            return mask;
+        }
+        return 0;
+    }
+
     bool Animation::isLoopingAnimation(std::string_view group) const
     {
         // In Morrowind, a some animation groups are always considered looping, regardless
