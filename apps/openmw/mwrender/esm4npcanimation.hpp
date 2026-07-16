@@ -3,8 +3,11 @@
 
 #include "animation.hpp"
 
+#include <components/nifosg/matrixtransform.hpp>
+
 #include <osg/MatrixTransform>
 
+#include <array>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -20,11 +23,26 @@ namespace MWRender
     class ESM4NpcAnimation : public Animation
     {
     public:
+        struct WeaponAttachmentState
+        {
+            bool mApplied = false;
+            bool mAttached = false;
+            bool mVisible = false;
+            std::string mFrameName;
+            std::string mParentName;
+            std::array<float, 9> mRotation{};
+            std::array<float, 3> mTranslation{};
+            float mScale = 0.f;
+        };
+
         ESM4NpcAnimation(
             const MWWorld::Ptr& ptr, osg::ref_ptr<osg::Group> parentNode, Resource::ResourceSystem* resourceSystem);
         osg::Vec3f runAnimation(float duration) override;
         bool getWeaponsShown() const override { return mFalloutWeaponsShown; }
         void showWeapons(bool showWeapon) override;
+        bool setWeaponHolsterAttachment(std::string_view frameName, std::string_view parentName,
+            const std::array<float, 9>& rotation, const std::array<float, 3>& translation, float scale);
+        WeaponAttachmentState getWeaponHolsterAttachmentState() const;
         bool supportsProceduralHumanoidLocomotion() const;
         bool applyProceduralHumanoidLocomotion(std::string_view group, float elapsed);
 
@@ -41,6 +59,7 @@ namespace MWRender
         bool mFo4ProceduralAdvancedLogged = false;
 
         osg::ref_ptr<osg::Node> mFalloutWeaponPart;
+        osg::ref_ptr<NifOsg::MatrixTransform> mFalloutWeaponHolsterFrame;
         std::string mFalloutWeaponDrawBone = "Weapon";
         std::string mFalloutWeaponHolsterBone;
         bool mFalloutWeaponsShown = false;

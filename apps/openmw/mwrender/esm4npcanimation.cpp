@@ -8319,6 +8319,99 @@ namespace MWRender
         }
     }
 
+    bool ESM4NpcAnimation::setWeaponHolsterAttachment(std::string_view frameName,
+        std::string_view parentName, const std::array<float, 9>& rotation,
+        const std::array<float, 3>& translation, float scale)
+    {
+        if (mFalloutWeaponHolsterFrame != nullptr)
+        {
+            while (mFalloutWeaponHolsterFrame->getNumParents() > 0)
+            {
+                osg::Group* parent = mFalloutWeaponHolsterFrame->getParent(0);
+                if (parent == nullptr || !parent->removeChild(mFalloutWeaponHolsterFrame.get()))
+                    break;
+            }
+        }
+        mFalloutWeaponHolsterFrame = nullptr;
+        mFalloutWeaponHolsterBone.clear();
+
+        bool transformFinite = std::isfinite(scale) && scale > 0.f && scale < 1000.f;
+        for (float component : rotation)
+            transformFinite = transformFinite && std::isfinite(component) && std::abs(component) <= 2.f;
+        for (float component : translation)
+            transformFinite = transformFinite && std::isfinite(component) && std::abs(component) <= 1000000.f;
+
+        const auto found = getNodeMap().find(parentName);
+        osg::Group* parent = found != getNodeMap().end() ? found->second.get() : nullptr;
+        if (frameName.empty() || parentName.empty() || parent == nullptr || !transformFinite)
+        {
+            if (mFalloutWeaponPart != nullptr && !mFalloutWeaponsShown)
+                mFalloutWeaponPart->setNodeMask(0);
+            Log(Debug::Warning) << "FNV/ESM4 actor completeness: rejected retail weapon holster for "
+                                << mPtr.getCellRef().getRefId() << " frame=\"" << frameName
+                                << "\" parent=\"" << parentName
+                                << "\" gate=retail-holster-parent-unavailable";
+            return false;
+        }
+
+        Nif::NiTransform transform;
+        for (std::size_t row = 0; row < 3; ++row)
+            for (std::size_t column = 0; column < 3; ++column)
+                transform.mRotation.mValues[row][column] = rotation[row * 3 + column];
+        transform.mTranslation = osg::Vec3f(translation[0], translation[1], translation[2]);
+        transform.mScale = scale;
+
+        mFalloutWeaponHolsterFrame = new NifOsg::MatrixTransform(transform);
+        mFalloutWeaponHolsterFrame->setName(std::string(frameName));
+        mFalloutWeaponHolsterFrame->setNodeMask(~0u);
+        parent->addChild(mFalloutWeaponHolsterFrame.get());
+        parent->dirtyBound();
+        mFalloutWeaponHolsterBone = std::string(parentName);
+        showWeapons(mFalloutWeaponsShown);
+        return true;
+    }
+
+    ESM4NpcAnimation::WeaponAttachmentState ESM4NpcAnimation::getWeaponHolsterAttachmentState() const
+    {
+        WeaponAttachmentState state;
+        if (mFalloutWeaponHolsterFrame == nullptr)
+            return state;
+
+        state.mFrameName = mFalloutWeaponHolsterFrame->getName();
+        if (mFalloutWeaponHolsterFrame->getNumParents() > 0)
+        {
+            const osg::Group* parent = mFalloutWeaponHolsterFrame->getParent(0);
+            if (parent != nullptr)
+            {
+                state.mApplied = true;
+                state.mParentName = parent->getName();
+            }
+        }
+        for (std::size_t row = 0; row < 3; ++row)
+            for (std::size_t column = 0; column < 3; ++column)
+                state.mRotation[row * 3 + column]
+                    = mFalloutWeaponHolsterFrame->mRotationScale.mValues[row][column];
+        const osg::Vec3f translation = mFalloutWeaponHolsterFrame->getMatrix().getTrans();
+        state.mTranslation = { translation.x(), translation.y(), translation.z() };
+        state.mScale = mFalloutWeaponHolsterFrame->mScale;
+
+        if (mFalloutWeaponPart != nullptr)
+        {
+            for (unsigned int index = 0; index < mFalloutWeaponPart->getNumParents(); ++index)
+            {
+                if (mFalloutWeaponPart->getParent(index) == mFalloutWeaponHolsterFrame.get())
+                {
+                    state.mAttached = true;
+                    break;
+                }
+            }
+            state.mVisible = state.mAttached && mFalloutWeaponHolsterFrame->getNodeMask() != 0
+                && mFalloutWeaponPart->getNodeMask() != 0
+                && actorPartHasRenderableGeometry(mFalloutWeaponPart.get());
+        }
+        return state;
+    }
+
     void ESM4NpcAnimation::showWeapons(bool showWeapon)
     {
         mFalloutWeaponsShown = showWeapon;
@@ -8327,14 +8420,29 @@ namespace MWRender
 
         if (!showWeapon)
         {
-            // The retail skeleton exposes no authored SideWeapon/BackWeapon
-            // target. Until that separate runtime holster contract is decoded,
-            // fail closed instead of fabricating a transform and showing a gun
-            // through the hip, head, or torso.
-            mFalloutWeaponPart->setNodeMask(0);
-            Log(Debug::Info) << "FNV/ESM4 actor completeness: hid equipped weapon for "
-                             << mPtr.getCellRef().getRefId()
-                             << " target=none gate=missing-authored-holster";
+            if (mFalloutWeaponHolsterFrame == nullptr)
+            {
+                mFalloutWeaponPart->setNodeMask(0);
+                Log(Debug::Info) << "FNV/ESM4 actor completeness: hid equipped weapon for "
+                                 << mPtr.getCellRef().getRefId()
+                                 << " target=none gate=missing-retail-holster-contract";
+                return;
+            }
+
+            while (mFalloutWeaponPart->getNumParents() > 0)
+            {
+                osg::Group* parent = mFalloutWeaponPart->getParent(0);
+                if (parent == nullptr || !parent->removeChild(mFalloutWeaponPart.get()))
+                    break;
+            }
+            mFalloutWeaponHolsterFrame->addChild(mFalloutWeaponPart.get());
+            mFalloutWeaponPart->setNodeMask(~0u);
+            mFalloutWeaponHolsterFrame->dirtyBound();
+            Log(Debug::Info) << "FNV/ESM4 actor completeness: moved equipped weapon for "
+                             << mPtr.getCellRef().getRefId() << " drawn=0 frame=\""
+                             << mFalloutWeaponHolsterFrame->getName() << "\" parent=\""
+                             << mFalloutWeaponHolsterBone
+                             << "\" gate=retail-holster-attachment";
             return;
         }
 
@@ -9866,7 +9974,17 @@ namespace MWRender
 
     void ESM4NpcAnimation::updatePartsFONV(const ESM4::Npc& traits)
     {
+        if (mFalloutWeaponHolsterFrame != nullptr)
+        {
+            while (mFalloutWeaponHolsterFrame->getNumParents() > 0)
+            {
+                osg::Group* parent = mFalloutWeaponHolsterFrame->getParent(0);
+                if (parent == nullptr || !parent->removeChild(mFalloutWeaponHolsterFrame.get()))
+                    break;
+            }
+        }
         mFalloutWeaponPart = nullptr;
+        mFalloutWeaponHolsterFrame = nullptr;
         mFalloutWeaponDrawBone = "Weapon";
         mFalloutWeaponHolsterBone.clear();
         mFalloutWeaponsShown = false;

@@ -164,6 +164,7 @@
 
 #include "mwrender/characterpreview.hpp"
 #include "mwrender/animation.hpp"
+#include "mwrender/esm4npcanimation.hpp"
 #include "mwrender/vismask.hpp"
 
 #include "mwclass/classes.hpp"
@@ -7422,6 +7423,21 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                 .setDrawState(weaponDrawn && action.mRequestedWeaponForm != 0
                         ? MWMechanics::DrawState::Weapon : MWMechanics::DrawState::Nothing);
         };
+        const auto applyWeaponAttachment = [&](const FNVSidecar::RetailAction& source) {
+            if (source.mRequestedWeaponForm == 0 || source.mWeaponDrawn)
+                return true;
+            if (!source.mWeaponAttachment || proofActorBatchPrevious.isEmpty() || mWorld == nullptr)
+                return false;
+            MWRender::Animation* animation = mWorld->getAnimation(proofActorBatchPrevious);
+            auto* esm4Animation = dynamic_cast<MWRender::ESM4NpcAnimation*>(animation);
+            if (esm4Animation == nullptr)
+                return false;
+            const FNVSidecar::RetailAction::WeaponAttachment& attachment
+                = *source.mWeaponAttachment;
+            return esm4Animation->setWeaponHolsterAttachment(attachment.mFrameName,
+                attachment.mParentName, attachment.mRotation, attachment.mTranslation,
+                attachment.mScale);
+        };
         const auto buildOpenMwTelemetry = [&](const FNVSidecarScreenshot* screenshot) {
             std::ostringstream out;
             out << std::setprecision(9)
@@ -7467,7 +7483,64 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                 << ",\"openMwEditorId\":";
             writeProofJsonString(out,
                 weapon != nullptr ? std::string_view(weapon->mEditorId) : std::string_view{});
-            out << ",\"exactBySourceForm\":" << (exactWeapon() ? "true" : "false") << '}';
+            out << ",\"exactBySourceForm\":" << (exactWeapon() ? "true" : "false")
+                << ",\"attachment\":{\"consumed\":";
+            const auto writeAttachmentBasisFields = [&](std::string_view frameName,
+                                                  std::string_view parentName,
+                                                  const std::array<float, 9>& rotation,
+                                                  const std::array<float, 3>& translation,
+                                                  float scale) {
+                out << "\"frameName\":";
+                writeProofJsonString(out, frameName);
+                out << ",\"parentName\":";
+                writeProofJsonString(out, parentName);
+                out << ",\"rotationBits\":[";
+                for (std::size_t index = 0; index < rotation.size(); ++index)
+                {
+                    if (index != 0)
+                        out << ',';
+                    out << std::bit_cast<std::uint32_t>(rotation[index]);
+                }
+                out << "],\"translationBits\":[";
+                for (std::size_t index = 0; index < translation.size(); ++index)
+                {
+                    if (index != 0)
+                        out << ',';
+                    out << std::bit_cast<std::uint32_t>(translation[index]);
+                }
+                out << "],\"scaleBits\":" << std::bit_cast<std::uint32_t>(scale);
+            };
+            if (action.mWeaponAttachment)
+            {
+                const auto& attachment = *action.mWeaponAttachment;
+                out << "{\"available\":true,\"sourceForm\":" << attachment.mSourceForm << ',';
+                out << "\"evaluatedSlot\":" << attachment.mEvaluatedSlot
+                    << ",\"evaluatedState\":" << attachment.mEvaluatedState
+                    << ",\"modelRootName\":";
+                writeProofJsonString(out, attachment.mModelRootName);
+                out << ',';
+                writeAttachmentBasisFields(attachment.mFrameName, attachment.mParentName,
+                    attachment.mRotation, attachment.mTranslation, attachment.mScale);
+                out << '}';
+            }
+            else
+                out << "{\"available\":false}";
+
+            MWRender::ESM4NpcAnimation::WeaponAttachmentState observedAttachment;
+            if (!proofActorBatchPrevious.isEmpty() && mWorld != nullptr)
+            {
+                if (auto* esm4Animation = dynamic_cast<MWRender::ESM4NpcAnimation*>(
+                        mWorld->getAnimation(proofActorBatchPrevious)))
+                    observedAttachment = esm4Animation->getWeaponHolsterAttachmentState();
+            }
+            out << ",\"observed\":{\"applied\":"
+                << (observedAttachment.mApplied ? "true" : "false")
+                << ",\"attached\":" << (observedAttachment.mAttached ? "true" : "false")
+                << ",\"visible\":" << (observedAttachment.mVisible ? "true" : "false") << ',';
+            writeAttachmentBasisFields(observedAttachment.mFrameName, observedAttachment.mParentName,
+                observedAttachment.mRotation, observedAttachment.mTranslation,
+                observedAttachment.mScale);
+            out << "}}}";
 
             out << ",\"equipment\":{";
             if (!proofActorBatchPrevious.isEmpty()
@@ -7554,6 +7627,9 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
             if (!exactWeapon())
                 failFNVSidecar(FNVSidecar::ErrorCode::WeaponPolicyFailed,
                     "openmw-retail-exact-weapon-mismatch");
+            else if (!applyWeaponAttachment(action))
+                failFNVSidecar(FNVSidecar::ErrorCode::WeaponPolicyFailed,
+                    "openmw-retail-holster-attachment-rejected");
             else if (animation == nullptr || !animation->hasAnimation(requestedGroup))
                 failFNVSidecar(FNVSidecar::ErrorCode::ActionRejected,
                     "openmw-animation-group-unavailable-" + requestedGroup);
@@ -7613,9 +7689,13 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                 || capturedAction->mRequestedFrames != action.mRequestedFrames
                 || capturedAction->mRequestedWeaponForm != action.mRequestedWeaponForm)
                 failFNVSidecar(FNVSidecar::ErrorCode::InvalidPlan, "retail-captured-state-identity-changed");
+            else if (!applyWeaponAttachment(*capturedAction))
+                failFNVSidecar(FNVSidecar::ErrorCode::WeaponPolicyFailed,
+                    "openmw-retail-captured-holster-attachment-rejected");
             else
             {
                 proofSidecarAction->mWeaponDrawn = capturedAction->mWeaponDrawn;
+                proofSidecarAction->mWeaponAttachment = capturedAction->mWeaponAttachment;
                 applyWeaponDrawState(capturedAction->mWeaponDrawn);
                 proofSidecarCaptureStateStartFrame = static_cast<int>(frameNumber);
                 proofSidecarPhase = FNVSidecarOpenMwPhase::SettlingCaptureState;

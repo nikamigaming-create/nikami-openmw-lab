@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <charconv>
+#include <cmath>
 #include <cstdlib>
 #include <cstring>
 #include <limits>
@@ -163,6 +164,56 @@ namespace OMW::FNVSidecar
             if (json.substr(position, 5) == "false" && terminated(position + 5))
                 return false;
             return std::nullopt;
+        }
+
+        template <std::size_t Size>
+        std::optional<std::array<std::uint32_t, Size>> jsonUnsignedArray(
+            std::string_view json, std::string_view key)
+        {
+            const std::string marker = "\"" + std::string(key) + "\"";
+            std::size_t position = json.find(marker);
+            if (position == std::string_view::npos)
+                return std::nullopt;
+            position = json.find(':', position + marker.size());
+            if (position == std::string_view::npos)
+                return std::nullopt;
+            position = json.find_first_not_of(" \t\r\n", position + 1);
+            if (position == std::string_view::npos || json[position] != '[')
+                return std::nullopt;
+            ++position;
+
+            std::array<std::uint32_t, Size> result{};
+            for (std::size_t index = 0; index < Size; ++index)
+            {
+                position = json.find_first_not_of(" \t\r\n", position);
+                if (position == std::string_view::npos)
+                    return std::nullopt;
+                const char* first = json.data() + position;
+                const char* last = json.data() + json.size();
+                std::uint64_t value = 0;
+                const auto parsed = std::from_chars(first, last, value, 10);
+                if (parsed.ec != std::errc() || parsed.ptr == first
+                    || value > std::numeric_limits<std::uint32_t>::max())
+                    return std::nullopt;
+                result[index] = static_cast<std::uint32_t>(value);
+                position = static_cast<std::size_t>(parsed.ptr - json.data());
+                position = json.find_first_not_of(" \t\r\n", position);
+                if (position == std::string_view::npos)
+                    return std::nullopt;
+                const char expected = index + 1 == Size ? ']' : ',';
+                if (json[position] != expected)
+                    return std::nullopt;
+                ++position;
+            }
+            return result;
+        }
+
+        float floatFromBits(std::uint32_t bits)
+        {
+            float value = 0.f;
+            static_assert(sizeof(value) == sizeof(bits));
+            std::memcpy(&value, &bits, sizeof(value));
+            return value;
         }
 
 #ifdef _WIN32
@@ -587,6 +638,79 @@ namespace OMW::FNVSidecar
         result.mRequestedFrames = static_cast<std::uint32_t>(*requestedFrames);
         result.mRequestedWeaponForm = static_cast<std::uint32_t>(*requestedWeapon);
         result.mWeaponDrawn = *weaponDrawn;
+
+        const auto attachmentObject = jsonObject(*weapon, "attachment");
+        const auto attachmentAvailable = attachmentObject
+            ? jsonBoolean(*attachmentObject, "available") : std::optional<bool>{};
+        if (result.mRequestedWeaponForm != 0 && !result.mWeaponDrawn
+            && (!attachmentObject || !attachmentAvailable || !*attachmentAvailable))
+        {
+            error = "retail-payload-holster-attachment-missing";
+            return std::nullopt;
+        }
+        if (attachmentObject && attachmentAvailable && *attachmentAvailable)
+        {
+            const auto sourceForm = jsonUnsigned(*attachmentObject, "sourceForm");
+            const auto evaluatedSlot = jsonUnsigned(*attachmentObject, "evaluatedSlot");
+            const auto evaluatedState = jsonUnsigned(*attachmentObject, "evaluatedState");
+            const auto modelRootName = jsonString(*attachmentObject, "modelRootName");
+            const auto frameName = jsonString(*attachmentObject, "frameName");
+            const auto parentName = jsonString(*attachmentObject, "parentName");
+            if (!sourceForm || !evaluatedSlot || !evaluatedState || !modelRootName || !frameName
+                || !parentName || *sourceForm > std::numeric_limits<std::uint32_t>::max()
+                || *evaluatedSlot >= 20 || *evaluatedState > std::numeric_limits<std::uint32_t>::max()
+                || static_cast<std::uint32_t>(*sourceForm) != result.mRequestedWeaponForm
+                || modelRootName->empty() || frameName->empty() || parentName->empty()
+                || modelRootName->size() > 255 || frameName->size() > 127 || parentName->size() > 127)
+            {
+                error = "retail-payload-holster-attachment-identity-invalid";
+                return std::nullopt;
+            }
+
+            const auto rotationBits = jsonUnsignedArray<9>(*attachmentObject, "rotationBits");
+            const auto translationBits = jsonUnsignedArray<3>(*attachmentObject, "translationBits");
+            const auto scaleBits = jsonUnsigned(*attachmentObject, "scaleBits");
+            if (!rotationBits || !translationBits || !scaleBits
+                || *scaleBits > std::numeric_limits<std::uint32_t>::max())
+            {
+                error = "retail-payload-holster-attachment-transform-invalid";
+                return std::nullopt;
+            }
+
+            RetailAction::WeaponAttachment attachment;
+            attachment.mSourceForm = static_cast<std::uint32_t>(*sourceForm);
+            attachment.mEvaluatedSlot = static_cast<std::uint32_t>(*evaluatedSlot);
+            attachment.mEvaluatedState = static_cast<std::uint32_t>(*evaluatedState);
+            attachment.mModelRootName = *modelRootName;
+            attachment.mFrameName = *frameName;
+            attachment.mParentName = *parentName;
+            attachment.mRotationBits = *rotationBits;
+            attachment.mTranslationBits = *translationBits;
+            attachment.mScaleBits = static_cast<std::uint32_t>(*scaleBits);
+            bool transformValid = true;
+            for (std::size_t index = 0; index < attachment.mRotation.size(); ++index)
+            {
+                attachment.mRotation[index] = floatFromBits(attachment.mRotationBits[index]);
+                transformValid = transformValid && std::isfinite(attachment.mRotation[index])
+                    && std::abs(attachment.mRotation[index]) <= 2.f;
+            }
+            for (std::size_t index = 0; index < attachment.mTranslation.size(); ++index)
+            {
+                attachment.mTranslation[index]
+                    = floatFromBits(attachment.mTranslationBits[index]);
+                transformValid = transformValid && std::isfinite(attachment.mTranslation[index])
+                    && std::abs(attachment.mTranslation[index]) <= 1000000.f;
+            }
+            attachment.mScale = floatFromBits(attachment.mScaleBits);
+            transformValid = transformValid && std::isfinite(attachment.mScale)
+                && attachment.mScale > 0.f && attachment.mScale < 1000.f;
+            if (!transformValid)
+            {
+                error = "retail-payload-holster-attachment-transform-invalid";
+                return std::nullopt;
+            }
+            result.mWeaponAttachment = std::move(attachment);
+        }
         return result;
     }
 

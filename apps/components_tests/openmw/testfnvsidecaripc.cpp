@@ -24,7 +24,7 @@ namespace
         snapshot.mActionCount = 7;
         snapshot.mGeneration = 27;
         snapshot.mSequenceId = "all-actors-v1";
-        snapshot.mRetailPayload = R"({
+        snapshot.mRetailPayload = R"json({
             "schema":"nikami-fnv-sidecar-retail/v1",
             "sequenceId":"all-actors-v1",
             "key":{"sequenceId":"all-actors-v1","actorIndex":3,"actionIndex":5},
@@ -32,9 +32,39 @@ namespace
             "actor":{"refForm":123,"baseForm":1060484,"spawned":false},
             "action":{"id":"shoot","retailPlayGroup":"AttackRight","requestedFrames":24,"elapsedFrames":24,"accepted":true},
             "animation":{"weaponOut":false,"aiming":false},
-            "weaponPolicy":{"requestedForm":518692,"equippedForm":518692,"exact":true}
-        })";
+            "weaponPolicy":{
+                "requestedForm":518692,"equippedForm":518692,"exact":true,
+                "attachment":{
+                    "available":true,"sourceForm":518692,"evaluatedSlot":5,"evaluatedState":0,
+                    "modelRootName":"Weapon  (0007EA24)","frameName":"Weapon","parentName":"Bip01 Spine2",
+                    "rotationBits":[3210826934,3203525720,1026989424,3189668151,1045015346,3212302068,1055242061,3210471966,3195822950],
+                    "translationBits":[1100293858,3239811472,3235687431],"scaleBits":1065353219
+                }
+            }
+        })json";
         return snapshot;
+    }
+
+    void removeAttachment(OMW::FNVSidecar::Snapshot& snapshot)
+    {
+        const std::string marker = "\"attachment\"";
+        const std::size_t markerOffset = snapshot.mRetailPayload.find(marker);
+        ASSERT_NE(markerOffset, std::string::npos);
+        const std::size_t begin = snapshot.mRetailPayload.rfind(',', markerOffset);
+        const std::size_t objectBegin = snapshot.mRetailPayload.find('{', markerOffset + marker.size());
+        ASSERT_NE(begin, std::string::npos);
+        ASSERT_NE(objectBegin, std::string::npos);
+        std::size_t end = objectBegin;
+        unsigned int depth = 0;
+        for (; end < snapshot.mRetailPayload.size(); ++end)
+        {
+            if (snapshot.mRetailPayload[end] == '{')
+                ++depth;
+            else if (snapshot.mRetailPayload[end] == '}' && --depth == 0)
+                break;
+        }
+        ASSERT_LT(end, snapshot.mRetailPayload.size());
+        snapshot.mRetailPayload.erase(begin, end + 1 - begin);
     }
 
     std::uint32_t crc32(std::string_view bytes)
@@ -73,6 +103,16 @@ TEST(FNVSidecarIpc, ParsesAndCrossChecksRetailAction)
     EXPECT_EQ(action->mRequestedFrames, 24u);
     EXPECT_EQ(action->mRequestedWeaponForm, 518692u);
     EXPECT_FALSE(action->mWeaponDrawn);
+    ASSERT_TRUE(action->mWeaponAttachment.has_value());
+    EXPECT_EQ(action->mWeaponAttachment->mSourceForm, 518692u);
+    EXPECT_EQ(action->mWeaponAttachment->mEvaluatedSlot, 5u);
+    EXPECT_EQ(action->mWeaponAttachment->mFrameName, "Weapon");
+    EXPECT_EQ(action->mWeaponAttachment->mParentName, "Bip01 Spine2");
+    EXPECT_EQ(action->mWeaponAttachment->mRotationBits[0], 3210826934u);
+    EXPECT_EQ(action->mWeaponAttachment->mTranslationBits[0], 1100293858u);
+    EXPECT_FLOAT_EQ(action->mWeaponAttachment->mTranslation[0], 18.6439857f);
+    EXPECT_FLOAT_EQ(action->mWeaponAttachment->mTranslation[1], -9.72499084f);
+    EXPECT_FLOAT_EQ(action->mWeaponAttachment->mScale, 1.00000036f);
 }
 
 TEST(FNVSidecarIpc, ParsesDrawnWeaponState)
@@ -86,6 +126,53 @@ TEST(FNVSidecarIpc, ParsesDrawnWeaponState)
     const auto action = OMW::FNVSidecar::parseRetailAction(snapshot, error);
     ASSERT_TRUE(action.has_value()) << error;
     EXPECT_TRUE(action->mWeaponDrawn);
+}
+
+TEST(FNVSidecarIpc, RejectsHolsteredWeaponWithoutAttachment)
+{
+    OMW::FNVSidecar::Snapshot snapshot = makeSnapshot();
+    removeAttachment(snapshot);
+    std::string error;
+    EXPECT_FALSE(OMW::FNVSidecar::parseRetailAction(snapshot, error).has_value());
+    EXPECT_EQ(error, "retail-payload-holster-attachment-missing");
+}
+
+TEST(FNVSidecarIpc, RejectsHolsterAttachmentWithWrongSourceForm)
+{
+    OMW::FNVSidecar::Snapshot snapshot = makeSnapshot();
+    const std::string expected = "\"sourceForm\":518692";
+    const std::size_t offset = snapshot.mRetailPayload.find(expected);
+    ASSERT_NE(offset, std::string::npos);
+    snapshot.mRetailPayload.replace(offset, expected.size(), "\"sourceForm\":518691");
+    std::string error;
+    EXPECT_FALSE(OMW::FNVSidecar::parseRetailAction(snapshot, error).has_value());
+    EXPECT_EQ(error, "retail-payload-holster-attachment-identity-invalid");
+}
+
+TEST(FNVSidecarIpc, RejectsHolsterAttachmentWithInvalidTransformBits)
+{
+    OMW::FNVSidecar::Snapshot snapshot = makeSnapshot();
+    const std::string expected = "\"scaleBits\":1065353219";
+    const std::size_t offset = snapshot.mRetailPayload.find(expected);
+    ASSERT_NE(offset, std::string::npos);
+    snapshot.mRetailPayload.replace(offset, expected.size(), "\"scaleBits\":0");
+    std::string error;
+    EXPECT_FALSE(OMW::FNVSidecar::parseRetailAction(snapshot, error).has_value());
+    EXPECT_EQ(error, "retail-payload-holster-attachment-transform-invalid");
+}
+
+TEST(FNVSidecarIpc, AllowsMissingAttachmentWhenWeaponIsDrawn)
+{
+    OMW::FNVSidecar::Snapshot snapshot = makeSnapshot();
+    const std::string holstered = "\"weaponOut\":false";
+    const std::size_t drawOffset = snapshot.mRetailPayload.find(holstered);
+    ASSERT_NE(drawOffset, std::string::npos);
+    snapshot.mRetailPayload.replace(drawOffset, holstered.size(), "\"weaponOut\":true");
+    removeAttachment(snapshot);
+    std::string error;
+    const auto action = OMW::FNVSidecar::parseRetailAction(snapshot, error);
+    ASSERT_TRUE(action.has_value()) << error;
+    EXPECT_FALSE(action->mWeaponAttachment.has_value());
 }
 
 TEST(FNVSidecarIpc, RejectsMissingWeaponDrawState)

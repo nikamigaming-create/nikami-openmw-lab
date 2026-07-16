@@ -1,6 +1,7 @@
 #ifndef OPENMW_APPS_OPENMW_FNVSIDECARIPC_H
 #define OPENMW_APPS_OPENMW_FNVSIDECARIPC_H
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -128,6 +129,22 @@ namespace OMW::FNVSidecar
 
     struct RetailAction
     {
+        struct WeaponAttachment
+        {
+            std::uint32_t mSourceForm = 0;
+            std::uint32_t mEvaluatedSlot = 0;
+            std::uint32_t mEvaluatedState = 0;
+            std::string mModelRootName;
+            std::string mFrameName;
+            std::string mParentName;
+            std::array<std::uint32_t, 9> mRotationBits{};
+            std::array<std::uint32_t, 3> mTranslationBits{};
+            std::uint32_t mScaleBits = 0;
+            std::array<float, 9> mRotation{};
+            std::array<float, 3> mTranslation{};
+            float mScale = 1.f;
+        };
+
         std::string mSchema;
         std::string mSequenceId;
         std::uint32_t mActorIndex = 0;
@@ -138,6 +155,7 @@ namespace OMW::FNVSidecar
         std::uint32_t mRequestedFrames = 0;
         std::uint32_t mRequestedWeaponForm = 0;
         bool mWeaponDrawn = false;
+        std::optional<WeaponAttachment> mWeaponAttachment;
     };
 
     // Strictly decode the identity and requested state that OpenMW must consume.
