@@ -3979,10 +3979,13 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
     static std::size_t proofActorPoseBatchIndex = static_cast<std::size_t>(-1);
     static std::size_t proofActorPoseIndex = 0;
     static int proofActorPoseNextFrame = -1;
+    static bool proofActorPoseRestoringNativeState = false;
     static bool proofActorPoseCycleComplete = false;
     static bool proofActorPoseInventoryLogged = false;
     static std::size_t proofActorPosePlayed = 0;
     static std::size_t proofActorPoseSkipped = 0;
+    static bool proofActorPhaseTimedOut = false;
+    static std::string proofActorPhaseTimeoutReason;
     static FNVSidecarOpenMwPhase proofSidecarPhase = FNVSidecarOpenMwPhase::WaitingRetail;
     static std::optional<FNVSidecar::RetailAction> proofSidecarAction;
     static std::uint64_t proofSidecarGeneration = 0;
@@ -5863,6 +5866,19 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
         }
         else
             selectionPool = loadedActorBases;
+        const bool priorityOrder = proofEnvEnabled("OPENMW_PROOF_ACTOR_BATCH_PRIORITY_ORDER");
+        if (priorityOrder)
+        {
+            std::stable_sort(selectionPool.begin(), selectionPool.end(), [](const auto& left, const auto& right) {
+                if (left.mRepresentativeOfCount != right.mRepresentativeOfCount)
+                    return left.mRepresentativeOfCount > right.mRepresentativeOfCount;
+                if (left.mRepresentativeScore != right.mRepresentativeScore)
+                    return left.mRepresentativeScore > right.mRepresentativeScore;
+                if (left.mType != right.mType)
+                    return left.mType == "NPC_";
+                return left.mId.toUint32() < right.mId.toUint32();
+            });
+        }
         const std::size_t distinctVisualTypes = selectionPool.size();
         const int configuredOffset = getProofFrame("OPENMW_PROOF_ACTOR_BATCH_OFFSET");
         const int configuredLimit = getProofFrame("OPENMW_PROOF_ACTOR_BATCH_LIMIT");
@@ -5942,6 +5958,7 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                            << "  \"totalCreatures\": " << totalCreatures << ",\n"
                            << "  \"representativeVisualTypes\": "
                            << (representativeVisualTypes ? "true" : "false") << ",\n"
+                           << "  \"priorityOrdered\": " << (priorityOrder ? "true" : "false") << ",\n"
                            << "  \"distinctVisualTypes\": " << distinctVisualTypes << ",\n"
                            << "  \"offset\": " << offset << ",\n"
                            << "  \"selectedCount\": " << selected.size() << ",\n"
@@ -5963,6 +5980,10 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                          writeJsonString(roster, actor.mSelectedWeapon);
                          roster << ", \"representativeOfCount\": " << actor.mRepresentativeOfCount
                                 << ", \"representativeScore\": " << actor.mRepresentativeScore
+                                << ", \"priorityRank\": " << (priorityOrder ? offset + index + 1 : 0)
+                                << ", \"priorityScore\": "
+                                << (static_cast<std::int64_t>(actor.mRepresentativeOfCount) * 1000000
+                                    + actor.mRepresentativeScore)
                                 << ", \"flags\": " << actor.mFlags << "}";
                         if (index + 1 != selected.size())
                             roster << ',';
@@ -5988,6 +6009,7 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
         Log(Debug::Info) << "FNV/ESM4 actor batch: loaded roster ready totalAvailable=" << totalAvailable
                           << " npcs=" << totalNpcs << " creatures=" << totalCreatures
                           << " representativeVisualTypes=" << representativeVisualTypes
+                          << " priorityOrdered=" << priorityOrder
                           << " distinctVisualTypes=" << distinctVisualTypes << " offset=" << offset
                           << " selected=" << selected.size()
                          << " screenshotFrames=" << proofScreenshotFrames.size();
@@ -6155,6 +6177,7 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
         proofActorPoseBatchIndex = proofActorBatchIndex;
         proofActorPoseIndex = 0;
         proofActorPoseNextFrame = -1;
+        proofActorPoseRestoringNativeState = false;
         proofActorActivePoseGroups = proofActorPoseAllAvailable
             ? std::vector<std::string>()
             : proofActorPoseGroups;
@@ -6162,6 +6185,8 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
         proofActorPoseInventoryLogged = false;
         proofActorPosePlayed = 0;
         proofActorPoseSkipped = 0;
+        proofActorPhaseTimedOut = false;
+        proofActorPhaseTimeoutReason.clear();
         proofSayQueued = false;
         proofActorCameraAligned = false;
         proofActorCameraAlignedFrame = -1;
@@ -7829,16 +7854,91 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                 else
                     ++proofActorPoseSkipped;
                 Log(played ? Debug::Info : Debug::Warning)
-                     << "FNV/ESM4 actor pose gate: actorIndex=" << proofActorBatchIndex << " target=\""
+                     << "FNV/ESM4 actor pose transport gate: actorIndex=" << proofActorBatchIndex << " target=\""
                      << proofActorBatchTargets[proofActorBatchIndex] << "\" poseIndex=" << proofActorPoseIndex
                      << " group=\"" << group << "\" resolvedGroup=\"" << group
                      << "\" available=" << available << " played=" << played
-                     << " exact=1 status=" << (played ? "pass" : "fail");
+                     << " exact=1 gate=transport-only status=" << (played ? "pass" : "fail");
                 ++proofActorPoseIndex;
                 proofActorPoseNextFrame = static_cast<int>(frameNumber) + poseFrames;
             }
+            else if (!proofActorPoseRestoringNativeState)
+            {
+                // Exact authored groups include overlays and metadata sequences that are only valid as one layer
+                // of the native controller state. End the diagnostic sweep by removing its scripted queue and let
+                // CharacterController reconstruct the actor's real data-driven idle/movement/weapon composite.
+                // Do not choose or inject an animation group here.
+                mMechanicsManager->clearAnimationQueue(proofActorBatchPrevious, true);
+                mMechanicsManager->forceStateUpdate(proofActorBatchPrevious);
+                proofActorPoseRestoringNativeState = true;
+                const int neutralFramesEnv = getProofFrame("OPENMW_PROOF_ACTOR_POSE_NEUTRAL_FRAMES");
+                const int neutralFrames = neutralFramesEnv >= 1 ? neutralFramesEnv : poseFrames;
+                proofActorPoseNextFrame = static_cast<int>(frameNumber) + neutralFrames;
+                Log(Debug::Info) << "FNV/ESM4 actor pose restore: actorIndex=" << proofActorBatchIndex
+                                 << " target=\"" << proofActorBatchTargets[proofActorBatchIndex]
+                                 << "\" phase=native-state-rebuild clearScripted=1 injectedGroup=0 waitFrames="
+                                 << neutralFrames << " status=pending";
+            }
             else
             {
+                const std::string lowerGroup(animation != nullptr
+                        ? animation->getActiveGroup(MWRender::BoneGroup_LowerBody)
+                        : std::string_view());
+                const std::string torsoGroup(animation != nullptr
+                        ? animation->getActiveGroup(MWRender::BoneGroup_Torso)
+                        : std::string_view());
+                const std::string leftArmGroup(animation != nullptr
+                        ? animation->getActiveGroup(MWRender::BoneGroup_LeftArm)
+                        : std::string_view());
+                const std::string rightArmGroup(animation != nullptr
+                        ? animation->getActiveGroup(MWRender::BoneGroup_RightArm)
+                        : std::string_view());
+                const bool npc = proofActorBatchPrevious.getType() == ESM4::Npc::sRecordId;
+                const bool nativeBaseLayerReady = animation != nullptr && (!npc || (!lowerGroup.empty()
+                    && !torsoGroup.empty()));
+
+                osg::Node* actorRoot = proofActorBatchPrevious.getRefData().getBaseNode();
+                FalloutProofDrawableCullVisitor drawableVisitor(0);
+                if (actorRoot != nullptr)
+                    actorRoot->accept(drawableVisitor);
+                const bool topologyReady = actorRoot != nullptr && drawableVisitor.mVisibleDrawables > 0
+                    && (drawableVisitor.mVisibleRigs == 0 || drawableVisitor.mResolvedRigs > 0);
+
+                const FalloutProofPortraitPose nativePose
+                    = resolveFalloutProofPortraitPose(proofActorBatchPrevious);
+                const auto finiteVec = [](const osg::Vec3d& value) {
+                    return std::isfinite(value.x()) && std::isfinite(value.y()) && std::isfinite(value.z());
+                };
+                const bool bonesResolved = !npc || (nativePose.mHeadResolved && nativePose.mPelvisResolved
+                    && nativePose.mLeftHandResolved && nativePose.mRightHandResolved
+                    && nativePose.mLeftFootResolved && nativePose.mRightFootResolved);
+                const bool bonesFinite = !npc || (finiteVec(nativePose.mHeadCenter)
+                    && finiteVec(nativePose.mPelvisCenter) && finiteVec(nativePose.mLeftHandCenter)
+                    && finiteVec(nativePose.mRightHandCenter) && finiteVec(nativePose.mLeftFootCenter)
+                    && finiteVec(nativePose.mRightFootCenter));
+                const osg::Vec3d torsoAxis = nativePose.mHeadCenter - nativePose.mPelvisCenter;
+                const double torsoLength = torsoAxis.length();
+                const double uprightRatio = npc && torsoLength > 1e-6 ? torsoAxis.z() / torsoLength : 1.0;
+                const bool upright = !npc || (uprightRatio > 0.55
+                    && nativePose.mLeftFootCenter.z() < nativePose.mPelvisCenter.z() + 5.0
+                    && nativePose.mRightFootCenter.z() < nativePose.mPelvisCenter.z() + 5.0);
+                const bool nativeStatePass
+                    = nativeBaseLayerReady && topologyReady && bonesResolved && bonesFinite && upright;
+                const char* nativeStateReason = !nativeBaseLayerReady ? "base-layer-missing"
+                    : (!topologyReady ? "topology-unresolved"
+                                      : (!bonesResolved ? "bones-unresolved"
+                                          : (!bonesFinite ? "bone-nonfinite"
+                                                          : (!upright ? "posture-folded" : "none"))));
+                Log(nativeStatePass ? Debug::Info : Debug::Warning)
+                    << "FNV/ESM4 actor native state gate: actorIndex=" << proofActorBatchIndex << " target=\""
+                    << proofActorBatchTargets[proofActorBatchIndex] << "\" type="
+                    << (npc ? "NPC_" : "CREA") << " lower=\"" << lowerGroup << "\" torso=\"" << torsoGroup
+                    << "\" leftArm=\"" << leftArmGroup << "\" rightArm=\"" << rightArmGroup
+                    << "\" visibleDrawables=" << drawableVisitor.mVisibleDrawables << " visibleRigs="
+                    << drawableVisitor.mVisibleRigs << " resolvedRigs=" << drawableVisitor.mResolvedRigs
+                    << " bonesResolved=" << bonesResolved << " bonesFinite=" << bonesFinite
+                    << " uprightRatio=" << uprightRatio << " status=" << (nativeStatePass ? "pass" : "fail")
+                    << " reason=" << nativeStateReason;
                 proofActorPoseCycleComplete = true;
                 Log(Debug::Info) << "FNV/ESM4 actor pose cycle: actorIndex=" << proofActorBatchIndex
                                  << " target=\"" << proofActorBatchTargets[proofActorBatchIndex]
@@ -7847,6 +7947,44 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                                  << " selectedFrame=" << proofActorBatchSelectedFrame << " completeFrame="
                                  << frameNumber << " status=complete";
             }
+        }
+    }
+
+    if (!proofSidecarEnabled && proofActorBatchActive && !proofActorPhaseTimedOut
+        && proofActorBatchSelectedFrame >= 0)
+    {
+        const int timeoutFramesEnv = getProofFrame("OPENMW_PROOF_ACTOR_PHASE_TIMEOUT_FRAMES");
+        const int timeoutFrames = timeoutFramesEnv >= 1 ? timeoutFramesEnv : 1200;
+        if (static_cast<int>(frameNumber) - proofActorBatchSelectedFrame >= timeoutFrames)
+        {
+            if (proofActorBatchPrevious.isEmpty())
+                proofActorPhaseTimeoutReason = "actor-unresolved-timeout";
+            else if (proofActorPoseSweepEnabled && !proofActorPoseInventoryLogged)
+                proofActorPhaseTimeoutReason = "animation-unresolved-timeout";
+            else if (!proofActorStagedForCamera || !proofActorCameraAligned)
+                proofActorPhaseTimeoutReason = "camera-timeout";
+            else if (proofActorPoseSweepEnabled && !proofActorPoseCycleComplete)
+                proofActorPhaseTimeoutReason = "action-cycle-timeout";
+            else
+                proofActorPhaseTimeoutReason = "visual-readiness-timeout";
+
+            proofActorPhaseTimedOut = true;
+            proofActorPoseCycleComplete = true;
+            // A failed representative must not hold the persistent census process forever. Preserve whatever
+            // diagnostic scene is available and let the scheduled capture advance to the next actor.
+            if (!proofActorCameraAligned)
+            {
+                proofActorCameraAligned = true;
+                proofActorCameraAlignedFrame = static_cast<int>(frameNumber);
+                proofActorCameraAlignedScreenshotIndex = proofScreenshotFrameIndex;
+            }
+            Log(Debug::Warning) << "FNV/ESM4 actor phase gate: actorIndex=" << proofActorBatchIndex
+                                << " target=\"" << proofActorBatchTargets[proofActorBatchIndex]
+                                << "\" selectedFrame=" << proofActorBatchSelectedFrame << " frame=" << frameNumber
+                                << " timeoutFrames=" << timeoutFrames << " poseIndex=" << proofActorPoseIndex
+                                << " requested=" << proofActorActivePoseGroups.size() << " played="
+                                << proofActorPosePlayed << " skipped=" << proofActorPoseSkipped
+                                << " status=fail reason=" << proofActorPhaseTimeoutReason;
         }
     }
 
@@ -8852,11 +8990,12 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
             proofActorCullReadyRigs = visitor.mCullReadyRigs;
             proofActorMaximumCullTraversal = visitor.mMaximumCullTraversal;
         }
-        proofActorVisualReady = !proofVisualActor.isEmpty() && proofVisualActor.getRefData().isEnabled()
-            && proofVisualRoot != nullptr && proofActorRootParents > 0 && proofActorRootMask != 0
-            && proofActorVisibleDrawables > 0
-            && (proofActorVisibleRigs == 0
-                || (proofActorResolvedRigs > 0 && proofActorCullReadyRigs > 0));
+        proofActorVisualReady = proofActorPhaseTimedOut
+            || (!proofVisualActor.isEmpty() && proofVisualActor.getRefData().isEnabled()
+                && proofVisualRoot != nullptr && proofActorRootParents > 0 && proofActorRootMask != 0
+                && proofActorVisibleDrawables > 0
+                && (proofActorVisibleRigs == 0
+                    || (proofActorResolvedRigs > 0 && proofActorCullReadyRigs > 0)));
     }
     bool proofPortraitClear = !proofPortraitClearRequired;
     std::string proofPortraitRejectReason;
