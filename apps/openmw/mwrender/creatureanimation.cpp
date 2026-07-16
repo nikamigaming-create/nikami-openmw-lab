@@ -102,55 +102,6 @@ namespace MWRender
             return true;
         }
 
-        struct FalloutCreatureRepresentativePoseSource
-        {
-            std::string_view mGroup;
-            std::string_view mRelativeKf;
-        };
-
-        using FalloutCreatureRepresentativePoseSources
-            = std::array<FalloutCreatureRepresentativePoseSource, 7>;
-
-        // Keep stand last. Some special-idle KFs also advertise a generic idle group, and animation sources added
-        // later win. Loading mtidle last preserves the neutral gameplay idle while each selected KF still owns its
-        // explicit proof-facing semantic alias.
-        constexpr FalloutCreatureRepresentativePoseSources sSuperMutantRepresentativePoseSources = { {
-            { "kneel", "idleanims/specialidle_sitcycle.kf" },
-            { "prone", "idleanims/specialidle_sleepcycle.kf" },
-            { "walk", "locomotion/mtforward.kf" },
-            { "talk", "talking.kf" },
-            { "shoot", "2hrattack3.kf" },
-            { "wave", "idleanims/specialidle_mtponder.kf" },
-            { "stand", "mtidle.kf" },
-        } };
-
-        constexpr FalloutCreatureRepresentativePoseSources sProtectronRepresentativePoseSources = { {
-            { "kneel", "idleanims/mtspecialidle_deactivateloop.kf" },
-            { "prone", "idleanims/mtspecialidle_knockdownfacedown.kf" },
-            { "walk", "locomotion/mtforward.kf" },
-            { "talk", "talking.kf" },
-            { "shoot", "specialanims/1hpattackright.kf" },
-            { "wave", "idleanims/specialidle_salutes.kf" },
-            { "stand", "mtidle.kf" },
-        } };
-
-        const FalloutCreatureRepresentativePoseSources* getFalloutCreatureRepresentativePoseSources(
-            std::string_view directory)
-        {
-            std::string normalizedDirectory(directory);
-            VFS::Path::normalizeFilenameInPlace(normalizedDirectory);
-            if (!normalizedDirectory.ends_with('/'))
-                normalizedDirectory.push_back('/');
-
-            // Exact directory equality is intentional. Fallout creature KFs are skeleton-specific even when their
-            // filenames are identical, so never borrow a pose source from another creature/robot rig.
-            if (normalizedDirectory == "meshes/creatures/smspinebreaker/")
-                return &sSuperMutantRepresentativePoseSources;
-            if (normalizedDirectory == "meshes/creatures/protectron/")
-                return &sProtectronRepresentativePoseSources;
-            return nullptr;
-        }
-
         std::vector<std::string> collectDiscoveredCreatureKfs(
             const VFS::Manager& vfs, std::string_view directory, std::string_view probeToken, const std::string& editorId)
         {
@@ -1702,32 +1653,8 @@ void main()
                 std::string animationDirectory = actorModel;
                 const std::size_t slash = animationDirectory.find_last_of("/\\");
                 animationDirectory = slash == std::string::npos ? std::string() : animationDirectory.substr(0, slash + 1);
-                std::string normalizedDirectory = animationDirectory;
-                VFS::Path::normalizeFilenameInPlace(normalizedDirectory);
                 unsigned int attachedBodyNifs = 0;
                 const VFS::Manager* vfs = resourceSystem->getVFS();
-                std::vector<std::pair<std::string, std::string>> representativePoseKfs;
-                if (const FalloutCreatureRepresentativePoseSources* poseSources
-                    = getFalloutCreatureRepresentativePoseSources(normalizedDirectory))
-                {
-                    representativePoseKfs.reserve(poseSources->size());
-                    for (const FalloutCreatureRepresentativePoseSource& pose : *poseSources)
-                    {
-                        std::string normalizedPath;
-                        const std::string path = normalizedDirectory + std::string(pose.mRelativeKf);
-                        if (findCreatureKf(*vfs, path, normalizedPath))
-                            representativePoseKfs.emplace_back(pose.mGroup, std::move(normalizedPath));
-                        else
-                            Log(Debug::Warning) << "FNV/ESM4 diag: selected same-rig creature pose KF missing"
-                                                << " editor=" << ref->mBase->mEditorId << " group=" << pose.mGroup
-                                                << " path=" << path << " skeleton=" << actorModel;
-                    }
-                }
-                const auto isRepresentativePoseKf = [&](std::string_view path) {
-                    const VFS::Path::Normalized normalized(path);
-                    return std::any_of(representativePoseKfs.begin(), representativePoseKfs.end(),
-                        [&](const auto& pose) { return pose.second == normalized.value(); });
-                };
                 const std::vector<std::string> authoredNifs = creatureVisuals.mNif == nullptr
                     ? std::vector<std::string>()
                     : resolveCreatureRelativePaths(creatureVisuals.mNif->mNif, actorModel);
@@ -1827,12 +1754,11 @@ void main()
                     logCreatureBounds("root", ref->mBase->mEditorId, actorModel, *mObjectRoot);
                 unsigned int fallbackKfs = 0;
                 unsigned int discoveredKfs = 0;
-                unsigned int selectedPoseKfs = 0;
                 if (!markerCreatureRoot)
                 {
                     for (const std::string& kf : authoredKfs)
                     {
-                        if (!kf.empty() && !isRepresentativePoseKf(kf))
+                        if (!kf.empty())
                             addAnimSource(kf, actorModel);
                     }
 
@@ -1855,39 +1781,21 @@ void main()
                         std::string normalizedPath;
                         if (findCreatureKf(*vfs, path, normalizedPath))
                         {
-                            if (!isRepresentativePoseKf(normalizedPath))
-                            {
-                                addAnimSource(normalizedPath, actorModel);
-                                ++fallbackKfs;
-                            }
+                            addAnimSource(normalizedPath, actorModel);
+                            ++fallbackKfs;
                         }
                     }
 
+                    std::string normalizedDirectory = animationDirectory;
+                    VFS::Path::normalizeFilenameInPlace(normalizedDirectory);
                     std::string probeToken = normalizedDirectory;
                     if (probeToken.ends_with('/'))
                         probeToken.pop_back();
                     const std::vector<std::string> discoveredKfPaths
                         = collectDiscoveredCreatureKfs(*vfs, normalizedDirectory, probeToken, ref->mBase->mEditorId);
+                    discoveredKfs = static_cast<unsigned int>(discoveredKfPaths.size());
                     for (const std::string& path : discoveredKfPaths)
-                    {
-                        if (isRepresentativePoseKf(path))
-                            continue;
                         addAnimSource(path, actorModel);
-                        ++discoveredKfs;
-                    }
-
-                    // Add exactly one selected same-rig KF for each representative semantic after recursive
-                    // discovery. Later sources win, so transitions remain available under their authored groups
-                    // without being able to steal stand/kneel/prone/walk/talk/shoot/wave from these exact assets.
-                    for (const auto& [group, path] : representativePoseKfs)
-                    {
-                        if (addSingleAnimSource(path, actorModel, false, {}, group) != nullptr)
-                            ++selectedPoseKfs;
-                        else
-                            Log(Debug::Warning) << "FNV/ESM4 diag: selected same-rig creature pose KF did not bind"
-                                                << " editor=" << ref->mBase->mEditorId << " group=" << group
-                                                << " path=" << path << " skeleton=" << actorModel;
-                    }
                 }
                 else
                     Log(Debug::Warning) << "FNV/ESM4 diag: skipped marker-creature animation binding for "
@@ -1923,8 +1831,7 @@ void main()
                                  << " bodyPartCount=" << authoredBodyParts.size()
                                  << " attachedBodyNifs=" << attachedBodyNifs
                                  << " fallbackKfs=" << fallbackKfs
-                                 << " discoveredKfs=" << discoveredKfs
-                                 << " selectedPoseKfs=" << selectedPoseKfs;
+                                 << " discoveredKfs=" << discoveredKfs;
             }
         }
     }
