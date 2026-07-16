@@ -5059,132 +5059,6 @@ namespace MWRender
                 || text.find("minigun") != std::string::npos;
         }
 
-        bool seedFalloutWeaponAttachmentFromEquip(Resource::ResourceSystem* resourceSystem,
-            const ESM4::Weapon& weapon, NifOsg::MatrixTransform& target)
-        {
-            if (resourceSystem == nullptr || resourceSystem->getVFS() == nullptr)
-                return false;
-
-            const std::string equipKf = getFonvWeaponAnimationKf(weapon.mData.animationType, "equip");
-            if (equipKf.empty() || !resourceSystem->getVFS()->exists(equipKf))
-                return false;
-
-            const osg::ref_ptr<const SceneUtil::KeyframeHolder> keyframes
-                = resourceSystem->getKeyframeManager()->get(VFS::Path::toNormalized(equipKf));
-            if (keyframes == nullptr)
-                return false;
-            const std::optional<SceneUtil::KeyframeController::KfTransform> endpoint
-                = sampleFonvWeaponAttachmentEndpoint(*keyframes);
-            if (!endpoint)
-                return false;
-
-            if (endpoint->mTranslation)
-                target.setTranslation(*endpoint->mTranslation);
-            if (endpoint->mRotation)
-                target.setRotation(*endpoint->mRotation);
-            if (endpoint->mScale)
-                target.setScale(*endpoint->mScale);
-
-            const osg::Vec3f translation = target.getMatrix().getTrans();
-            Log(Debug::Verbose) << "FNV/ESM4 diag: seeded drawn Weapon helper from family equip endpoint family="
-                                << getFonvWeaponAnimationPrefix(weapon.mData.animationType) << " kf=" << equipKf
-                                << " weapon=" << weapon.mEditorId << " translation=(" << translation.x() << ","
-                                << translation.y() << "," << translation.z() << ")";
-            return true;
-        }
-
-        osg::ref_ptr<osg::MatrixTransform> makeFalloutAttachmentHelper(
-            osg::Group& parent, std::string_view name, Animation::NodeMap& nodeMap)
-        {
-            // These helpers are animation targets. NifOsg keyframe callbacks require a NifOsg::MatrixTransform;
-            // using a plain osg::MatrixTransform here makes the callback reinterpret the object as the larger NIF
-            // transform type and corrupt its matrix when a retail Weapon controller is active.
-            Nif::NiTransform bindTransform = Nif::NiTransform::getIdentity();
-            if (Misc::StringUtils::ciEqual(name, "Weapon"))
-            {
-                // FO3 and FNV ship the same empty Weapon node under Bip01 R Hand. The scene optimizer removes that
-                // empty node, so retain its authored local bind on the replacement animation target.
-                bindTransform.mTranslation = osg::Vec3f(6.171f, 1.989f, 0.759f);
-                bindTransform.mRotation.mValues[0][0] = 0.991f;
-                bindTransform.mRotation.mValues[0][1] = -0.051f;
-                bindTransform.mRotation.mValues[0][2] = -0.123f;
-                bindTransform.mRotation.mValues[1][0] = 0.125f;
-                bindTransform.mRotation.mValues[1][1] = 0.035f;
-                bindTransform.mRotation.mValues[1][2] = 0.992f;
-                bindTransform.mRotation.mValues[2][0] = -0.046f;
-                bindTransform.mRotation.mValues[2][1] = -0.998f;
-                bindTransform.mRotation.mValues[2][2] = 0.041f;
-            }
-            else if (Misc::StringUtils::ciEqual(name, "BackWeapon"))
-            {
-                // Retail reparents holstered long guns to Bip01 Spine2 with this stable local transform. The source
-                // skeleton has no BackWeapon node, so an identity synthetic helper sends the rifle through the head.
-                bindTransform.mTranslation = osg::Vec3f(18.6439857f, -9.72499084f, -6.89599943f);
-                bindTransform.mRotation.mValues[0][0] = -0.880198836f;
-                bindTransform.mRotation.mValues[0][1] = -0.472506285f;
-                bindTransform.mRotation.mValues[0][2] = 0.0445837379f;
-                bindTransform.mRotation.mValues[1][0] = -0.154759273f;
-                bindTransform.mRotation.mValues[1][1] = 0.196942121f;
-                bindTransform.mRotation.mValues[1][2] = -0.968123674f;
-                bindTransform.mRotation.mValues[2][0] = 0.448664099f;
-                bindTransform.mRotation.mValues[2][1] = -0.859041095f;
-                bindTransform.mRotation.mValues[2][2] = -0.246472925f;
-            }
-            else if (Misc::StringUtils::ciEqual(name, "SideWeapon"))
-            {
-                // Retail reparents holstered pistols to Bip01 Pelvis with this local transform and leaves the weapon
-                // model itself at identity. Keep the holster basis on the helper so it is applied exactly once.
-                bindTransform.mTranslation = osg::Vec3f(1.69025195f, -2.47579265f, -15.4961691f);
-                bindTransform.mRotation.mValues[0][0] = -0.774917603f;
-                bindTransform.mRotation.mValues[0][1] = -0.632059038f;
-                bindTransform.mRotation.mValues[0][2] = -0.00198709499f;
-                bindTransform.mRotation.mValues[1][0] = -0.631791651f;
-                bindTransform.mRotation.mValues[1][1] = 0.774490297f;
-                bindTransform.mRotation.mValues[1][2] = 0.0316864438f;
-                bindTransform.mRotation.mValues[2][0] = -0.0184887163f;
-                bindTransform.mRotation.mValues[2][1] = 0.0258098152f;
-                bindTransform.mRotation.mValues[2][2] = -0.999495804f;
-            }
-
-            osg::ref_ptr<NifOsg::MatrixTransform> helper = new NifOsg::MatrixTransform(bindTransform);
-            helper->setName(std::string(name));
-            helper->setDataVariance(osg::Object::DYNAMIC);
-            helper->setUserValue("esm4SyntheticAttachmentHelper", 1);
-            if (Misc::StringUtils::ciEqual(name, "Weapon"))
-            {
-                const bool overrideBind = std::getenv("OPENMW_FNV_WEAPON_OFFSET_X") != nullptr
-                    || std::getenv("OPENMW_FNV_WEAPON_OFFSET_Y") != nullptr
-                    || std::getenv("OPENMW_FNV_WEAPON_OFFSET_Z") != nullptr
-                    || std::getenv("OPENMW_FNV_WEAPON_ROTATION_X") != nullptr
-                    || std::getenv("OPENMW_FNV_WEAPON_ROTATION_Y") != nullptr
-                    || std::getenv("OPENMW_FNV_WEAPON_ROTATION_Z") != nullptr;
-                if (overrideBind)
-                {
-                    const osg::Vec3f offset(readFalloutProofFloat("OPENMW_FNV_WEAPON_OFFSET_X", 6.171f),
-                        readFalloutProofFloat("OPENMW_FNV_WEAPON_OFFSET_Y", 1.989f),
-                        readFalloutProofFloat("OPENMW_FNV_WEAPON_OFFSET_Z", 0.759f));
-                    constexpr float degreesToRadians = 0.017453292519943295f;
-                    const float xDegrees = readFalloutProofFloat("OPENMW_FNV_WEAPON_ROTATION_X", -87.648f);
-                    const float yDegrees = readFalloutProofFloat("OPENMW_FNV_WEAPON_ROTATION_Y", 2.636f);
-                    const float zDegrees = readFalloutProofFloat("OPENMW_FNV_WEAPON_ROTATION_Z", 7.187f);
-                    const osg::Quat x(xDegrees * degreesToRadians, osg::Vec3f(1.f, 0.f, 0.f));
-                    const osg::Quat y(yDegrees * degreesToRadians, osg::Vec3f(0.f, 1.f, 0.f));
-                    const osg::Quat z(zDegrees * degreesToRadians, osg::Vec3f(0.f, 0.f, 1.f));
-                    const osg::Quat rotation = z * y * x;
-                    helper->setRotation(rotation);
-                    helper->setTranslation(offset);
-                    Log(Debug::Verbose) << "FNV/ESM4 diag: weapon helper override offset=(" << offset.x() << ","
-                                     << offset.y() << "," << offset.z() << ") rotation=(" << xDegrees << ","
-                                     << yDegrees << "," << zDegrees << ")";
-                }
-                else
-                    Log(Debug::Verbose) << "FNV/ESM4 diag: weapon helper uses retail FO3/FNV bind transform";
-            }
-            parent.addChild(helper);
-            nodeMap.emplace(std::string(name), helper);
-            return helper;
-        }
-
         struct WorldViewerWeaponIkSolve
         {
             osg::Vec3f mMid;
@@ -8231,36 +8105,11 @@ namespace MWRender
         if (traits != nullptr && isFallout3OrNewVegas(*traits))
         {
             const NodeMap& currentNodeMap = getNodeMap();
-            const auto ensureHelper = [&](std::string_view name, std::initializer_list<std::string_view> parents) {
-                if (findBestAttachmentNode(currentNodeMap, { name }) != nullptr)
-                    return;
-                osg::Group* parent = findBestAttachmentNode(currentNodeMap, parents);
-                if (parent == nullptr)
-                    parent = mObjectRoot.get();
-                makeFalloutAttachmentHelper(*parent, name, mNodeMap);
-                Log(Debug::Verbose) << "FNV/ESM4 diag: inserted attachment helper '" << name << "' under "
-                                 << parent->getName() << " for " << traits->mEditorId;
-            };
-
-            ensureHelper("Weapon", { "Bip01 R Hand", "bip01 r hand", "Bip01", "bip01" });
-            ensureHelper("Torch", { "Bip01 L Hand", "bip01 l hand" });
-            ensureHelper("SideWeapon", { "Bip01 Pelvis", "bip01 pelvis", "Bip01 R Thigh", "bip01 r thigh" });
-            ensureHelper("BackWeapon", { "Bip01 Spine2", "bip01 spine2", "Bip01 Spine1", "bip01 spine1" });
-            ensureHelper("Quiver", { "Bip01 Spine2", "bip01 spine2", "Bip01 Spine1", "bip01 spine1" });
-
-            if (const ESM4::Weapon* weapon = MWClass::ESM4Npc::getEquippedWeapon(mPtr))
-            {
-                osg::Group* weaponNode = findBestAttachmentNode(currentNodeMap, { "Weapon" });
-                auto* weaponTransform = dynamic_cast<NifOsg::MatrixTransform*>(weaponNode);
-                if (weaponTransform == nullptr
-                    || !seedFalloutWeaponAttachmentFromEquip(mResourceSystem, *weapon, *weaponTransform))
-                {
-                    Log(Debug::Warning) << "FNV/ESM4: kept skeleton Weapon bind because the family equip endpoint "
-                                           "could not be resolved for "
-                                        << weapon->mEditorId << " animationType="
-                                        << static_cast<unsigned int>(weapon->mData.animationType);
-                }
-            }
+            osg::Group* weaponNode = findBestAttachmentNode(currentNodeMap, { "Weapon" });
+            Log(weaponNode != nullptr ? Debug::Info : Debug::Warning)
+                << "FNV/ESM4 authored weapon target: actor=" << traits->mEditorId
+                << " target=Weapon present=" << (weaponNode != nullptr)
+                << " synthetic=0";
         }
         updateParts();
 
@@ -8476,6 +8325,19 @@ namespace MWRender
         if (mFalloutWeaponPart == nullptr)
             return;
 
+        if (!showWeapon)
+        {
+            // The retail skeleton exposes no authored SideWeapon/BackWeapon
+            // target. Until that separate runtime holster contract is decoded,
+            // fail closed instead of fabricating a transform and showing a gun
+            // through the hip, head, or torso.
+            mFalloutWeaponPart->setNodeMask(0);
+            Log(Debug::Info) << "FNV/ESM4 actor completeness: hid equipped weapon for "
+                             << mPtr.getCellRef().getRefId()
+                             << " target=none gate=missing-authored-holster";
+            return;
+        }
+
         osg::Group* target = nullptr;
         std::string_view targetName;
         if (showWeapon)
@@ -8490,12 +8352,6 @@ namespace MWRender
                     getNodeMap(), { "Weapon", "weapon", "Bip01 Weapon", "Bip01 R Hand", "bip01 r hand" });
             }
         }
-        else
-        {
-            targetName = mFalloutWeaponHolsterBone;
-            target = findBestAttachmentNode(getNodeMap(), { targetName });
-        }
-
         if (target == nullptr)
         {
             Log(Debug::Warning) << "FNV/ESM4 actor completeness: cannot move equipped weapon for "
@@ -8511,6 +8367,7 @@ namespace MWRender
                 break;
         }
         target->addChild(mFalloutWeaponPart.get());
+        mFalloutWeaponPart->setNodeMask(~0u);
         target->dirtyBound();
 
         Log(Debug::Info) << "FNV/ESM4 actor completeness: moved equipped weapon for "
@@ -9689,20 +9546,18 @@ namespace MWRender
 
         const NodeMap& nodeMap = getNodeMap();
         osg::Group* attachNode = nullptr;
-        const std::string_view requestedBone = !preferredBone.empty() ? preferredBone : std::string_view(nifPrn);
+        const std::string_view requestedBone = !preferredBone.empty()
+            ? preferredBone
+            : (!nifPrn.empty() ? std::string_view(nifPrn) : std::string_view("Weapon"));
         if (!requestedBone.empty())
             attachNode = findBestAttachmentNode(nodeMap, { requestedBone });
         if (attachNode == nullptr)
-            attachNode = findBestAttachmentNode(
-                nodeMap, { "Bip01 Weapon", "Weapon", "weapon", "Weapon Bone", "weapon bone", "Bip01 R Hand" });
-        if (attachNode == nullptr)
         {
-            const auto root = nodeMap.find("Bip01");
-            if (root != nodeMap.end())
-                attachNode = root->second.get();
+            Log(Debug::Warning) << "FNV/ESM4 actor completeness: rejected carried model " << correctedModel.value()
+                                << " because authored target \"" << requestedBone << "\" is absent for "
+                                << mPtr.getCellRef().getRefId() << " gate=exact-weapon-parent";
+            return nullptr;
         }
-        if (attachNode == nullptr)
-            attachNode = mObjectRoot.get();
 
         Log(Debug::Verbose) << "FNV/ESM4 diag: attaching NPC carried model " << correctedModel.value() << " to "
                          << mPtr.getCellRef().getRefId() << " at " << attachNode->getName();
@@ -10526,9 +10381,8 @@ namespace MWRender
             const MWMechanics::DrawState drawState = mPtr.getClass().getCreatureStats(mPtr).getDrawState();
             const bool weaponDrawn = drawState == MWMechanics::DrawState::Weapon;
             mFalloutWeaponsShown = weaponDrawn;
-            mFalloutWeaponHolsterBone = isFalloutLongGunWeapon(*weapon) ? "BackWeapon" : "SideWeapon";
-            const std::string_view preferredBone
-                = weaponDrawn ? std::string_view("Weapon") : std::string_view(mFalloutWeaponHolsterBone);
+            mFalloutWeaponHolsterBone.clear();
+            const std::string_view preferredBone = "Weapon";
             if (proofTargetActor && std::getenv("OPENMW_FNV_PROOF_HIDE_EQUIPPED_WEAPON") != nullptr)
             {
                 weaponIntentionallyHidden = true;
@@ -10539,14 +10393,15 @@ namespace MWRender
             if (!weaponIntentionallyHidden)
             {
                 std::string authoredParent;
-                // A drawn weapon's root NIF Prn is the retail attachment contract.
-                // Holstered weapons deliberately use the skeleton's Side/BackWeapon
-                // frame, while retaining Prn for the next draw-state transition.
-                attached = insertAttachedPart(
-                    weapon->mModel, weaponDrawn ? std::string_view() : preferredBone, &authoredParent);
+                // Resolve the model's Prn when present, otherwise the canonical
+                // authored skeleton Weapon target. Never invent a hand, hip,
+                // back, or actor-root fallback.
+                attached = insertAttachedPart(weapon->mModel, {}, &authoredParent);
                 if (!authoredParent.empty())
                     mFalloutWeaponDrawBone = authoredParent;
                 mFalloutWeaponPart = attached;
+                if (attached != nullptr && !weaponDrawn)
+                    attached->setNodeMask(0);
             }
             const bool renderable = actorPartHasRenderableGeometry(attached.get());
             if (renderable)

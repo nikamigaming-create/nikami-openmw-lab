@@ -3028,6 +3028,8 @@ namespace NifOsg
                     dataVariance = osg::Object::DYNAMIC;
                     break;
                 default:
+                    const bool authoredAttachmentTarget
+                        = Misc::StringUtils::ciEqual(nifNode->mName, "Weapon");
                     bool hasAuthoredParent = false;
                     if (nifNode->mParents.empty())
                     {
@@ -3052,8 +3054,13 @@ namespace NifOsg
                         && !hasAuthoredParent)
                         node = new osg::Group;
 
-                    dataVariance
-                        = nifNode->mIsBone || hasAuthoredParent ? osg::Object::DYNAMIC : osg::Object::STATIC;
+                    // FO3/FNV animate the empty Weapon node under Bip01 R Hand.
+                    // Keeping the authored node dynamic prevents the optimizer
+                    // from folding it away and removes the need for a synthetic
+                    // replacement transform in actor assembly.
+                    dataVariance = nifNode->mIsBone || hasAuthoredParent || authoredAttachmentTarget
+                        ? osg::Object::DYNAMIC
+                        : osg::Object::STATIC;
 
                     break;
             }
