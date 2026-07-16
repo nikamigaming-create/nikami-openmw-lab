@@ -3932,6 +3932,11 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
         = readWorldViewerStringList("OPENMW_PROOF_SAY_ACTORS");
     static const std::vector<std::string> proofActorPoseGroups
         = readWorldViewerStringList("OPENMW_PROOF_ACTOR_POSE_GROUPS");
+    static const bool proofActorPoseAllAvailable
+        = proofEnvEnabled("OPENMW_PROOF_ACTOR_POSE_ALL_AVAILABLE");
+    static const bool proofActorPoseSweepEnabled
+        = proofActorPoseAllAvailable || !proofActorPoseGroups.empty();
+    static std::vector<std::string> proofActorActivePoseGroups = proofActorPoseGroups;
     static const std::vector<std::string> proofSidecarActionIds
         = readWorldViewerStringList("OPENMW_FNV_SIDECAR_ACTION_IDS");
     static FNVSidecar::Client proofSidecarClient;
@@ -3972,7 +3977,6 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
     static std::size_t proofActorPoseBatchIndex = static_cast<std::size_t>(-1);
     static std::size_t proofActorPoseIndex = 0;
     static int proofActorPoseNextFrame = -1;
-    static bool proofActorPoseReturnedToIdle = false;
     static bool proofActorPoseCycleComplete = false;
     static bool proofActorPoseInventoryLogged = false;
     static std::size_t proofActorPosePlayed = 0;
@@ -6147,8 +6151,10 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
         proofActorPoseBatchIndex = proofActorBatchIndex;
         proofActorPoseIndex = 0;
         proofActorPoseNextFrame = -1;
-        proofActorPoseReturnedToIdle = false;
-        proofActorPoseCycleComplete = proofActorPoseGroups.empty();
+        proofActorActivePoseGroups = proofActorPoseAllAvailable
+            ? std::vector<std::string>()
+            : proofActorPoseGroups;
+        proofActorPoseCycleComplete = !proofActorPoseSweepEnabled;
         proofActorPoseInventoryLogged = false;
         proofActorPosePlayed = 0;
         proofActorPoseSkipped = 0;
@@ -7643,39 +7649,41 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
     }
 
     if (!proofSidecarEnabled && proofActorBatchActive && proofActorPoseBatchIndex == proofActorBatchIndex
-        && !proofActorPoseGroups.empty() && !proofActorBatchPrevious.isEmpty() && proofActorStagedForCamera
+        && proofActorPoseSweepEnabled && !proofActorBatchPrevious.isEmpty() && proofActorStagedForCamera
         && proofActorCameraAligned && mWorld != nullptr && mMechanicsManager != nullptr)
     {
         MWRender::Animation* animation = mWorld->getAnimation(proofActorBatchPrevious);
         if (!proofActorPoseInventoryLogged && animation != nullptr)
         {
             const std::vector<std::string> availableGroups = animation->getAnimationGroups();
+            proofActorActivePoseGroups = proofActorPoseAllAvailable ? availableGroups : proofActorPoseGroups;
             std::ostringstream inventory;
-            const std::size_t inventoryLimit = std::min<std::size_t>(availableGroups.size(), 128);
-            for (std::size_t index = 0; index < inventoryLimit; ++index)
+            for (std::size_t index = 0; index < availableGroups.size(); ++index)
             {
                 if (index != 0)
                     inventory << ',';
                 inventory << availableGroups[index];
             }
-            if (inventoryLimit != availableGroups.size())
-                inventory << ",...";
             Log(Debug::Info) << "FNV/ESM4 actor pose inventory: actorIndex=" << proofActorBatchIndex
                              << " target=\"" << proofActorBatchTargets[proofActorBatchIndex]
                              << "\" availableCount=" << availableGroups.size() << " groups=[" << inventory.str()
-                             << "]";
+                             << "] sweep=" << (proofActorPoseAllAvailable ? "all-available" : "exact-requested")
+                             << " sweepCount=" << proofActorActivePoseGroups.size();
             if (proofActorBatchPrevious.getType() == ESM4::Npc::sRecordId)
             {
                 const ESM4::Weapon* mainWeapon = MWClass::ESM4Npc::getEquippedWeapon(proofActorBatchPrevious);
-                if (mainWeapon != nullptr)
-                    proofActorBatchPrevious.getClass().getCreatureStats(proofActorBatchPrevious)
-                        .setDrawState(MWMechanics::DrawState::Weapon);
-                Log(Debug::Info) << "FNV/ESM4 actor representative weapon: actorIndex=" << proofActorBatchIndex
+                const MWMechanics::DrawState drawState
+                    = proofActorBatchPrevious.getClass().getCreatureStats(proofActorBatchPrevious).getDrawState();
+                Log(Debug::Info) << "FNV/ESM4 actor authored weapon state: actorIndex=" << proofActorBatchIndex
                                  << " target=\"" << proofActorBatchTargets[proofActorBatchIndex]
                                  << "\" selectedCount=" << (mainWeapon != nullptr ? 1 : 0) << " editor=\""
-                                 << (mainWeapon != nullptr ? mainWeapon->mEditorId : std::string()) << "\"";
+                                 << (mainWeapon != nullptr ? mainWeapon->mEditorId : std::string()) << "\" drawState="
+                                 << (drawState == MWMechanics::DrawState::Weapon
+                                         ? "weapon"
+                                         : (drawState == MWMechanics::DrawState::Spell ? "spell" : "nothing"));
             }
             proofActorPoseInventoryLogged = true;
+            proofActorPoseCycleComplete = proofActorActivePoseGroups.empty();
             const int startDelayEnv = getProofFrame("OPENMW_PROOF_ACTOR_POSE_START_DELAY_FRAMES");
             const int startDelay = startDelayEnv >= 0 ? startDelayEnv : 12;
             proofActorPoseNextFrame = static_cast<int>(frameNumber) + startDelay;
@@ -7686,52 +7694,10 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
         {
             const int poseFramesEnv = getProofFrame("OPENMW_PROOF_ACTOR_POSE_FRAMES");
             const int poseFrames = poseFramesEnv >= 1 ? poseFramesEnv : 12;
-            if (proofActorPoseIndex < proofActorPoseGroups.size())
+            if (proofActorPoseIndex < proofActorActivePoseGroups.size())
             {
-                const std::string& requestedGroup = proofActorPoseGroups[proofActorPoseIndex];
-                std::vector<std::string_view> candidates{ requestedGroup };
-                if (requestedGroup == "stand")
-                    candidates.insert(candidates.end(), { "idle", "idle2" });
-                else if (requestedGroup == "kneel")
-                    candidates.insert(candidates.end(), { "2hrcrouch" });
-                else if (requestedGroup == "walk")
-                    candidates.insert(candidates.end(), { "walkforward", "forward" });
-                else if (requestedGroup == "talk")
-                    candidates.insert(candidates.end(), { "talk_handsatside_moving", "sitchairtalk", "idle2" });
-                else if (requestedGroup == "shoot")
-                    candidates.insert(candidates.end(), { "attack2", "attack1", "attack3" });
-                else if (requestedGroup == "wave" || requestedGroup == "gesture")
-                    candidates.insert(candidates.end(), { "wavehello", "idle2" });
-
-                if (proofActorBatchPrevious.getType() == ESM4::Npc::sRecordId)
-                {
-                    const bool weaponPose = requestedGroup == "walk" || requestedGroup == "shoot";
-                    const ESM4::Weapon* mainWeapon = MWClass::ESM4Npc::getEquippedWeapon(proofActorBatchPrevious);
-                    const MWMechanics::DrawState drawState = weaponPose && mainWeapon != nullptr
-                        ? MWMechanics::DrawState::Weapon
-                        : MWMechanics::DrawState::Nothing;
-                    proofActorBatchPrevious.getClass().getCreatureStats(proofActorBatchPrevious)
-                        .setDrawState(drawState);
-                    Log(Debug::Info) << "FNV/ESM4 actor pose draw state: actorIndex=" << proofActorBatchIndex
-                                     << " target=\"" << proofActorBatchTargets[proofActorBatchIndex]
-                                     << "\" group=\"" << requestedGroup << "\" weaponPose=" << weaponPose
-                                     << " weaponAvailable=" << (mainWeapon != nullptr) << " drawState="
-                                     << (drawState == MWMechanics::DrawState::Weapon ? "weapon" : "nothing");
-                }
-
-                std::string group;
-                if (animation != nullptr)
-                {
-                    for (std::string_view candidate : candidates)
-                    {
-                        if (animation->hasAnimation(candidate))
-                        {
-                            group = candidate;
-                            break;
-                        }
-                    }
-                }
-                const bool available = !group.empty();
+                const std::string& group = proofActorActivePoseGroups[proofActorPoseIndex];
+                const bool available = animation != nullptr && animation->hasAnimation(group);
                 const bool played = available
                     && mMechanicsManager->playAnimationGroup(proofActorBatchPrevious, group, 1, 1, true);
                 if (played)
@@ -7739,38 +7705,20 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                 else
                     ++proofActorPoseSkipped;
                 Log(played ? Debug::Info : Debug::Warning)
-                    << "FNV/ESM4 actor pose gate: actorIndex=" << proofActorBatchIndex << " target=\""
-                    << proofActorBatchTargets[proofActorBatchIndex] << "\" poseIndex=" << proofActorPoseIndex
-                    << " group=\"" << requestedGroup << "\" resolvedGroup=\"" << group
-                    << "\" available=" << available << " played=" << played
-                    << " status=" << (played ? "pass" : "skip");
+                     << "FNV/ESM4 actor pose gate: actorIndex=" << proofActorBatchIndex << " target=\""
+                     << proofActorBatchTargets[proofActorBatchIndex] << "\" poseIndex=" << proofActorPoseIndex
+                     << " group=\"" << group << "\" resolvedGroup=\"" << group
+                     << "\" available=" << available << " played=" << played
+                     << " exact=1 status=" << (played ? "pass" : "fail");
                 ++proofActorPoseIndex;
                 proofActorPoseNextFrame = static_cast<int>(frameNumber) + poseFrames;
-            }
-            else if (!proofActorPoseReturnedToIdle)
-            {
-                if (proofActorBatchPrevious.getType() == ESM4::Npc::sRecordId)
-                    proofActorBatchPrevious.getClass().getCreatureStats(proofActorBatchPrevious)
-                        .setDrawState(MWMechanics::DrawState::Nothing);
-                const bool available = animation != nullptr && animation->hasAnimation("idle");
-                const bool played = available
-                    && mMechanicsManager->playAnimationGroup(proofActorBatchPrevious, "idle", 1, 1, true);
-                Log(played ? Debug::Info : Debug::Warning)
-                    << "FNV/ESM4 actor pose gate: actorIndex=" << proofActorBatchIndex << " target=\""
-                    << proofActorBatchTargets[proofActorBatchIndex]
-                    << "\" group=\"idle\" phase=return-neutral available=" << available << " played=" << played
-                    << " status=" << (played ? "pass" : "skip");
-                proofActorPoseReturnedToIdle = true;
-                const int neutralFramesEnv = getProofFrame("OPENMW_PROOF_ACTOR_POSE_NEUTRAL_FRAMES");
-                proofActorPoseNextFrame
-                    = static_cast<int>(frameNumber) + (neutralFramesEnv >= 1 ? neutralFramesEnv : poseFrames);
             }
             else
             {
                 proofActorPoseCycleComplete = true;
                 Log(Debug::Info) << "FNV/ESM4 actor pose cycle: actorIndex=" << proofActorBatchIndex
                                  << " target=\"" << proofActorBatchTargets[proofActorBatchIndex]
-                                 << "\" requested=" << proofActorPoseGroups.size() << " played="
+                                 << "\" requested=" << proofActorActivePoseGroups.size() << " played="
                                  << proofActorPosePlayed << " skipped=" << proofActorPoseSkipped
                                  << " selectedFrame=" << proofActorBatchSelectedFrame << " completeFrame="
                                  << frameNumber << " status=complete";
@@ -8751,7 +8699,7 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
     const bool proofPortraitCapturePending
         = proofScreenshotFrameReached || proofScreenshotReadyFramesReached || proofActorAlignedScreenshotReached;
     bool proofActorVisualReady = true;
-    const bool proofActorPoseReadyForScreenshot = proofSidecarEnabled || !proofActorBatchActive || proofActorPoseGroups.empty()
+    const bool proofActorPoseReadyForScreenshot = proofSidecarEnabled || !proofActorBatchActive || !proofActorPoseSweepEnabled
         || (proofActorPoseBatchIndex == proofActorBatchIndex && proofActorPoseCycleComplete);
     unsigned int proofActorVisibleDrawables = 0;
     unsigned int proofActorVisibleRigs = 0;
@@ -9007,8 +8955,7 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                 proofActorPoseLastWaitLogFrame = static_cast<int>(frameNumber);
                 Log(Debug::Info) << "FNV/ESM4 actor pose gate: waiting before baseline screenshot actorIndex="
                                  << proofActorBatchIndex << " poseIndex=" << proofActorPoseIndex << "/"
-                                 << proofActorPoseGroups.size() << " returnedToIdle="
-                                 << proofActorPoseReturnedToIdle << " frame=" << frameNumber;
+                                 << proofActorActivePoseGroups.size() << " frame=" << frameNumber;
             }
             worldViewerTrace(frameNumber, "actor-pose-wait-render.begin");
             mViewer->renderingTraversals();
