@@ -143,6 +143,28 @@ namespace OMW::FNVSidecar
             return value;
         }
 
+        std::optional<bool> jsonBoolean(std::string_view json, std::string_view key)
+        {
+            const std::string marker = "\"" + std::string(key) + "\"";
+            std::size_t position = json.find(marker);
+            if (position == std::string_view::npos)
+                return std::nullopt;
+            position = json.find(':', position + marker.size());
+            if (position == std::string_view::npos)
+                return std::nullopt;
+            position = json.find_first_not_of(" \t\r\n", position + 1);
+            if (position == std::string_view::npos)
+                return std::nullopt;
+            const auto terminated = [&](std::size_t end) {
+                return end == json.size() || json.find_first_of(" \t\r\n,}", end) == end;
+            };
+            if (json.substr(position, 4) == "true" && terminated(position + 4))
+                return true;
+            if (json.substr(position, 5) == "false" && terminated(position + 5))
+                return false;
+            return std::nullopt;
+        }
+
 #ifdef _WIN32
         std::wstring utf8ToWide(std::string_view text)
         {
@@ -520,8 +542,9 @@ namespace OMW::FNVSidecar
         const auto key = jsonObject(snapshot.mRetailPayload, "key");
         const auto actor = jsonObject(snapshot.mRetailPayload, "actor");
         const auto action = jsonObject(snapshot.mRetailPayload, "action");
+        const auto animation = jsonObject(snapshot.mRetailPayload, "animation");
         const auto weapon = jsonObject(snapshot.mRetailPayload, "weaponPolicy");
-        if (!schema || !sequence || !key || !actor || !action || !weapon)
+        if (!schema || !sequence || !key || !actor || !action || !animation || !weapon)
         {
             error = "retail-payload-required-object-missing";
             return std::nullopt;
@@ -533,9 +556,11 @@ namespace OMW::FNVSidecar
         const auto baseForm = jsonUnsigned(*actor, "baseForm");
         const auto actionId = jsonString(*action, "id");
         const auto requestedFrames = jsonUnsigned(*action, "requestedFrames");
+        const auto weaponDrawn = jsonBoolean(*animation, "weaponOut");
         const auto requestedWeapon = jsonUnsigned(*weapon, "requestedForm");
         if (!keySequence || !actorIndex || !actionIndex || !generation || !baseForm || !actionId
-            || !requestedFrames || !requestedWeapon || *actorIndex > std::numeric_limits<std::uint32_t>::max()
+            || !requestedFrames || !weaponDrawn || !requestedWeapon
+            || *actorIndex > std::numeric_limits<std::uint32_t>::max()
             || *actionIndex > std::numeric_limits<std::uint32_t>::max()
             || *baseForm > std::numeric_limits<std::uint32_t>::max()
             || *requestedFrames > std::numeric_limits<std::uint32_t>::max()
@@ -561,6 +586,7 @@ namespace OMW::FNVSidecar
         result.mActionId = *actionId;
         result.mRequestedFrames = static_cast<std::uint32_t>(*requestedFrames);
         result.mRequestedWeaponForm = static_cast<std::uint32_t>(*requestedWeapon);
+        result.mWeaponDrawn = *weaponDrawn;
         return result;
     }
 

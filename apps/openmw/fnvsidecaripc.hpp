@@ -137,6 +137,7 @@ namespace OMW::FNVSidecar
         std::string mActionId;
         std::uint32_t mRequestedFrames = 0;
         std::uint32_t mRequestedWeaponForm = 0;
+        bool mWeaponDrawn = false;
     };
 
     // Strictly decode the identity and requested state that OpenMW must consume.

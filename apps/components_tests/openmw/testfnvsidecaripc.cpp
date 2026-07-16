@@ -31,6 +31,7 @@ namespace
             "generation":27,
             "actor":{"refForm":123,"baseForm":1060484,"spawned":false},
             "action":{"id":"shoot","retailPlayGroup":"AttackRight","requestedFrames":24,"elapsedFrames":24,"accepted":true},
+            "animation":{"weaponOut":false,"aiming":false},
             "weaponPolicy":{"requestedForm":518692,"equippedForm":518692,"exact":true}
         })";
         return snapshot;
@@ -71,6 +72,32 @@ TEST(FNVSidecarIpc, ParsesAndCrossChecksRetailAction)
     EXPECT_EQ(action->mActionId, "shoot");
     EXPECT_EQ(action->mRequestedFrames, 24u);
     EXPECT_EQ(action->mRequestedWeaponForm, 518692u);
+    EXPECT_FALSE(action->mWeaponDrawn);
+}
+
+TEST(FNVSidecarIpc, ParsesDrawnWeaponState)
+{
+    OMW::FNVSidecar::Snapshot snapshot = makeSnapshot();
+    const std::string holstered = "\"weaponOut\":false";
+    const std::size_t offset = snapshot.mRetailPayload.find(holstered);
+    ASSERT_NE(offset, std::string::npos);
+    snapshot.mRetailPayload.replace(offset, holstered.size(), "\"weaponOut\":true");
+    std::string error;
+    const auto action = OMW::FNVSidecar::parseRetailAction(snapshot, error);
+    ASSERT_TRUE(action.has_value()) << error;
+    EXPECT_TRUE(action->mWeaponDrawn);
+}
+
+TEST(FNVSidecarIpc, RejectsMissingWeaponDrawState)
+{
+    OMW::FNVSidecar::Snapshot snapshot = makeSnapshot();
+    const std::string animation = "\"animation\":{\"weaponOut\":false,\"aiming\":false}";
+    const std::size_t offset = snapshot.mRetailPayload.find(animation);
+    ASSERT_NE(offset, std::string::npos);
+    snapshot.mRetailPayload.replace(offset, animation.size(), "\"animation\":{}");
+    std::string error;
+    EXPECT_FALSE(OMW::FNVSidecar::parseRetailAction(snapshot, error).has_value());
+    EXPECT_EQ(error, "retail-payload-required-value-invalid");
 }
 
 TEST(FNVSidecarIpc, RejectsHeaderPayloadIdentityMismatch)

@@ -378,6 +378,7 @@ namespace
         Staging,
         Settling,
         Ready,
+        SettlingCaptureState,
         Capturing,
         WaitingAdvance,
         Complete,
@@ -3987,6 +3988,7 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
     static std::uint32_t proofSidecarPreviousActor = 0;
     static std::uint32_t proofSidecarPreviousAction = 0;
     static int proofSidecarActionStartFrame = -1;
+    static int proofSidecarCaptureStateStartFrame = -1;
     static bool proofSidecarActionPlayed = false;
     static FNVSidecarScreenshot proofSidecarScreenshotBaseline;
     static FNVSidecarScreenshot proofSidecarScreenshotCandidate;
@@ -6060,6 +6062,7 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                     proofSidecarPreviousActor = action->mActorIndex;
                     proofSidecarPreviousAction = action->mActionIndex;
                     proofSidecarActionStartFrame = -1;
+                    proofSidecarCaptureStateStartFrame = -1;
                     proofSidecarActionPlayed = false;
                     proofSidecarScreenshotBaseline = {};
                     proofSidecarScreenshotCandidate = {};
@@ -7411,6 +7414,14 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                 && (weapon->mId.toUint32() & 0x00FFFFFFu)
                     == (action.mRequestedWeaponForm & 0x00FFFFFFu);
         };
+        const auto applyWeaponDrawState = [&](bool weaponDrawn) {
+            if (proofActorBatchPrevious.isEmpty()
+                || proofActorBatchPrevious.getType() != ESM4::Npc::sRecordId)
+                return;
+            proofActorBatchPrevious.getClass().getCreatureStats(proofActorBatchPrevious)
+                .setDrawState(weaponDrawn && action.mRequestedWeaponForm != 0
+                        ? MWMechanics::DrawState::Weapon : MWMechanics::DrawState::Nothing);
+        };
         const auto buildOpenMwTelemetry = [&](const FNVSidecarScreenshot* screenshot) {
             std::ostringstream out;
             out << std::setprecision(9)
@@ -7442,6 +7453,13 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                 << (proofSidecarActionStartFrame >= 0
                         ? static_cast<int>(frameNumber) - proofSidecarActionStartFrame : 0)
                 << ",\"accepted\":" << (proofSidecarActionPlayed ? "true" : "false") << '}';
+
+            const bool openMwWeaponDrawn = !proofActorBatchPrevious.isEmpty()
+                && proofActorBatchPrevious.getType() == ESM4::Npc::sRecordId
+                && proofActorBatchPrevious.getClass().getCreatureStats(proofActorBatchPrevious).getDrawState()
+                    == MWMechanics::DrawState::Weapon;
+            out << ",\"animation\":{\"retailWeaponOut\":" << (action.mWeaponDrawn ? "true" : "false")
+                << ",\"weaponOut\":" << (openMwWeaponDrawn ? "true" : "false") << '}';
 
             const ESM4::Weapon* weapon = localWeapon();
             out << ",\"weaponPolicy\":{\"retailRequestedForm\":" << action.mRequestedWeaponForm
@@ -7541,12 +7559,7 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                     "openmw-animation-group-unavailable-" + requestedGroup);
             else
             {
-                if (proofActorBatchPrevious.getType() == ESM4::Npc::sRecordId)
-                {
-                    proofActorBatchPrevious.getClass().getCreatureStats(proofActorBatchPrevious)
-                        .setDrawState(action.mRequestedWeaponForm != 0
-                                ? MWMechanics::DrawState::Weapon : MWMechanics::DrawState::Nothing);
-                }
+                applyWeaponDrawState(action.mWeaponDrawn);
                 mMechanicsManager->clearAnimationQueue(proofActorBatchPrevious, true);
                 proofSidecarActionPlayed = mMechanicsManager->playAnimationGroup(
                     proofActorBatchPrevious, requestedGroup, 1, 1, true);
@@ -7584,7 +7597,38 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
         }
 
         if (proofSidecarPhase == FNVSidecarOpenMwPhase::Ready
-            && proofSidecarSnapshot.mState == FNVSidecar::State::CaptureIssued)
+            && (proofSidecarSnapshot.mFlags & FNVSidecar::RetailCapturedFlag) != 0)
+        {
+            std::string parseError;
+            const std::optional<FNVSidecar::RetailAction> capturedAction
+                = FNVSidecar::parseRetailAction(proofSidecarSnapshot, parseError);
+            if (!capturedAction)
+                failFNVSidecar(FNVSidecar::ErrorCode::InvalidPlan,
+                    "retail-captured-state-invalid-" + parseError);
+            else if (capturedAction->mGeneration != action.mGeneration
+                || capturedAction->mActorIndex != action.mActorIndex
+                || capturedAction->mActionIndex != action.mActionIndex
+                || capturedAction->mRetailBaseForm != action.mRetailBaseForm
+                || capturedAction->mActionId != action.mActionId
+                || capturedAction->mRequestedFrames != action.mRequestedFrames
+                || capturedAction->mRequestedWeaponForm != action.mRequestedWeaponForm)
+                failFNVSidecar(FNVSidecar::ErrorCode::InvalidPlan, "retail-captured-state-identity-changed");
+            else
+            {
+                proofSidecarAction->mWeaponDrawn = capturedAction->mWeaponDrawn;
+                applyWeaponDrawState(capturedAction->mWeaponDrawn);
+                proofSidecarCaptureStateStartFrame = static_cast<int>(frameNumber);
+                proofSidecarPhase = FNVSidecarOpenMwPhase::SettlingCaptureState;
+                Log(Debug::Info) << "FNV sidecar OpenMW: consumed retail captured state generation="
+                                 << action.mGeneration << " weaponOut=" << capturedAction->mWeaponDrawn
+                                 << " frame=" << frameNumber;
+            }
+        }
+
+        constexpr int captureStateSettleFrames = 2;
+        if (proofSidecarPhase == FNVSidecarOpenMwPhase::SettlingCaptureState
+            && proofSidecarCaptureStateStartFrame >= 0
+            && static_cast<int>(frameNumber) - proofSidecarCaptureStateStartFrame >= captureStateSettleFrames)
         {
             if (mScreenCaptureHandler == nullptr)
                 failFNVSidecar(FNVSidecar::ErrorCode::ScreenshotTimeout, "screen-capture-handler-unavailable");
