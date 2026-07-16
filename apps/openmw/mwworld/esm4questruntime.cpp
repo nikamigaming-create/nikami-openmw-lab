@@ -226,7 +226,7 @@ namespace MWWorld
                          << " flags=" << static_cast<unsigned int>(state->mFlags)
                          << " done=" << state->mStageDone[stage->mIndex] << " entryExecuted=" << executedEntry;
 
-        if (MWBase::WindowManager* windowManager = MWBase::Environment::get().getWindowManager())
+        if (MWBase::WindowManager* windowManager = MWBase::Environment::tryGetWindowManager())
         {
             const std::string& title = quest->mQuestName.empty() ? quest->mEditorId : quest->mQuestName;
             std::string notification = wasRunning ? "Quest Updated: " : "Quest Added: ";
