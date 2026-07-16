@@ -1,5 +1,6 @@
 set(OPENMW_SOURCES
     engine.cpp
+    fnvsidecaripc.cpp
     options.cpp
 )
 
@@ -11,6 +12,7 @@ set(OPENMW_RESOURCES
 set(OPENMW_HEADERS
     doc.hpp
     engine.hpp
+    fnvsidecaripc.hpp
     options.hpp
     profile.hpp
 )

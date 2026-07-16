@@ -1,4 +1,5 @@
 #include "engine.hpp"
+#include "fnvsidecaripc.hpp"
 
 #include <algorithm>
 #include <array>
@@ -11,6 +12,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
 #include <fstream>
 #include <future>
 #include <functional>
@@ -283,6 +285,103 @@ namespace
     struct IgnoreString
     {
         void operator()(std::string) const {}
+    };
+
+    void writeProofJsonString(std::ostream& stream, std::string_view value)
+    {
+        stream << '"';
+        for (const unsigned char ch : value)
+        {
+            switch (ch)
+            {
+                case '"': stream << "\\\""; break;
+                case '\\': stream << "\\\\"; break;
+                case '\b': stream << "\\b"; break;
+                case '\f': stream << "\\f"; break;
+                case '\n': stream << "\\n"; break;
+                case '\r': stream << "\\r"; break;
+                case '\t': stream << "\\t"; break;
+                default:
+                    if (ch < 0x20)
+                        stream << "\\u" << std::hex << std::setw(4) << std::setfill('0')
+                               << static_cast<unsigned int>(ch) << std::dec << std::setfill(' ');
+                    else
+                        stream << static_cast<char>(ch);
+                    break;
+            }
+        }
+        stream << '"';
+    }
+
+    struct FNVSidecarScreenshot
+    {
+        std::filesystem::path mPath;
+        std::filesystem::file_time_type mWriteTime{};
+        std::uintmax_t mSize = 0;
+        bool mValid = false;
+    };
+
+    FNVSidecarScreenshot newestSidecarScreenshot(const std::filesystem::path& directory)
+    {
+        FNVSidecarScreenshot result;
+        std::error_code error;
+        if (!std::filesystem::is_directory(directory, error) || error)
+            return result;
+        for (const std::filesystem::directory_entry& entry : std::filesystem::directory_iterator(directory, error))
+        {
+            if (error)
+                return {};
+            if (!entry.is_regular_file(error) || error)
+            {
+                error.clear();
+                continue;
+            }
+            const std::string fileName = entry.path().filename().string();
+            if (fileName.rfind("screenshot", 0) != 0)
+                continue;
+            const std::filesystem::file_time_type writeTime = entry.last_write_time(error);
+            if (error)
+            {
+                error.clear();
+                continue;
+            }
+            const std::uintmax_t size = entry.file_size(error);
+            if (error)
+            {
+                error.clear();
+                continue;
+            }
+            if (!result.mValid || writeTime > result.mWriteTime
+                || (writeTime == result.mWriteTime && entry.path().native() > result.mPath.native()))
+            {
+                result.mPath = entry.path();
+                result.mWriteTime = writeTime;
+                result.mSize = size;
+                result.mValid = true;
+            }
+        }
+        return result;
+    }
+
+    bool isNewSidecarScreenshot(const FNVSidecarScreenshot& baseline, const FNVSidecarScreenshot& candidate)
+    {
+        if (!candidate.mValid || candidate.mSize == 0)
+            return false;
+        if (!baseline.mValid)
+            return true;
+        return candidate.mPath != baseline.mPath && candidate.mWriteTime >= baseline.mWriteTime;
+    }
+
+    enum class FNVSidecarOpenMwPhase
+    {
+        WaitingRetail,
+        Staging,
+        Settling,
+        Ready,
+        Capturing,
+        WaitingAdvance,
+        Complete,
+        Failed,
     };
 
     class IdentifyOpenGLOperation : public osg::GraphicsOperation
@@ -3833,6 +3932,12 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
         = readWorldViewerStringList("OPENMW_PROOF_SAY_ACTORS");
     static const std::vector<std::string> proofActorPoseGroups
         = readWorldViewerStringList("OPENMW_PROOF_ACTOR_POSE_GROUPS");
+    static const std::vector<std::string> proofSidecarActionIds
+        = readWorldViewerStringList("OPENMW_FNV_SIDECAR_ACTION_IDS");
+    static FNVSidecar::Client proofSidecarClient;
+    const bool proofSidecarEnabled = proofSidecarClient.enabled();
+    const FNVSidecar::Snapshot proofSidecarSnapshot
+        = proofSidecarEnabled ? proofSidecarClient.snapshot() : FNVSidecar::Snapshot{};
     static const int proofTimedScript1Frame = getProofFrame("OPENMW_PROOF_TIMED_SCRIPT_1_FRAME");
     static const int proofTimedScript2Frame = getProofFrame("OPENMW_PROOF_TIMED_SCRIPT_2_FRAME");
     static std::size_t proofScreenshotFrameIndex = 0;
@@ -3872,6 +3977,18 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
     static bool proofActorPoseInventoryLogged = false;
     static std::size_t proofActorPosePlayed = 0;
     static std::size_t proofActorPoseSkipped = 0;
+    static FNVSidecarOpenMwPhase proofSidecarPhase = FNVSidecarOpenMwPhase::WaitingRetail;
+    static std::optional<FNVSidecar::RetailAction> proofSidecarAction;
+    static std::uint64_t proofSidecarGeneration = 0;
+    static std::uint32_t proofSidecarPreviousActor = 0;
+    static std::uint32_t proofSidecarPreviousAction = 0;
+    static int proofSidecarActionStartFrame = -1;
+    static bool proofSidecarActionPlayed = false;
+    static FNVSidecarScreenshot proofSidecarScreenshotBaseline;
+    static FNVSidecarScreenshot proofSidecarScreenshotCandidate;
+    static int proofSidecarScreenshotStableFrames = 0;
+    static bool proofSidecarCompletionPublished = false;
+    static bool proofSidecarPeerErrorLogged = false;
     static int proofActorBatchCompleteFrame = -1;
     static bool proofActorBatchCompletionLogged = false;
     static bool proofActorBatchQuitRequested = false;
@@ -4196,6 +4313,15 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
             }
         }
         return found;
+    };
+
+    const auto failFNVSidecar = [&](FNVSidecar::ErrorCode code, std::string message) {
+        if (!proofSidecarEnabled || proofSidecarPhase == FNVSidecarOpenMwPhase::Failed)
+            return;
+        proofSidecarClient.setError(code, message);
+        proofSidecarPhase = FNVSidecarOpenMwPhase::Failed;
+        Log(Debug::Error) << "FNV sidecar OpenMW: fail-closed code=" << static_cast<std::uint32_t>(code)
+                          << " message=\"" << message << "\" frame=" << frameNumber;
     };
 
     const osg::Timer_t frameStart = mViewer->getStartTick();
@@ -5861,15 +5987,143 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
         proofActorBaseRosterExpanded = true;
     }
 
+    if (proofSidecarEnabled && proofSidecarPhase != FNVSidecarOpenMwPhase::Failed)
+    {
+        if (!proofSidecarSnapshot.mValid)
+            failFNVSidecar(FNVSidecar::ErrorCode::SharedMemoryFault, "retail-payload-crc-or-length-invalid");
+        else if ((proofSidecarSnapshot.mFlags & FNVSidecar::ErrorFlag) != 0
+            || proofSidecarSnapshot.mState == FNVSidecar::State::Error)
+        {
+            proofSidecarPhase = FNVSidecarOpenMwPhase::Failed;
+            if (!proofSidecarPeerErrorLogged)
+            {
+                proofSidecarPeerErrorLogged = true;
+                Log(Debug::Error) << "FNV sidecar OpenMW: peer error code="
+                                  << static_cast<std::uint32_t>(proofSidecarSnapshot.mErrorCode)
+                                  << " message=\"" << proofSidecarSnapshot.mErrorMessage << "\"";
+            }
+        }
+        else if (proofActorBaseRosterExpanded && proofSidecarSnapshot.mGeneration > proofSidecarGeneration)
+        {
+            std::string parseError;
+            const std::optional<FNVSidecar::RetailAction> action
+                = FNVSidecar::parseRetailAction(proofSidecarSnapshot, parseError);
+            if (!action && (proofSidecarSnapshot.mFlags & FNVSidecar::RetailReadyFlag) != 0)
+                failFNVSidecar(FNVSidecar::ErrorCode::InvalidPlan, parseError);
+            else if (!action)
+            {
+                // Retail increments generation before replacing its payload. A
+                // frame may observe that intentional publication window; the
+                // retail-ready flag is the fail-closed validation boundary.
+            }
+            else if (proofSidecarSnapshot.mGeneration != proofSidecarGeneration + 1)
+                failFNVSidecar(FNVSidecar::ErrorCode::InvalidPlan, "noncontiguous-generation");
+            else if (action->mActorIndex >= proofActorBatchTargets.size())
+                failFNVSidecar(FNVSidecar::ErrorCode::InvalidPlan, "actor-index-out-of-openmw-roster");
+            else if (proofSidecarSnapshot.mActionCount != proofActorPoseGroups.size()
+                || action->mActionIndex >= proofActorPoseGroups.size())
+                failFNVSidecar(FNVSidecar::ErrorCode::InvalidPlan, "action-count-or-index-mismatch");
+            else
+            {
+                const std::string& expectedActionId = proofSidecarActionIds.empty()
+                    ? proofActorPoseGroups[action->mActionIndex]
+                    : proofSidecarActionIds[action->mActionIndex];
+                const bool actionIdListValid = proofSidecarActionIds.empty()
+                    || proofSidecarActionIds.size() == proofActorPoseGroups.size();
+                const bool sequenceValid = proofSidecarGeneration == 0
+                    ? action->mActorIndex == 0 && action->mActionIndex == 0
+                    : ((action->mActorIndex == proofSidecarPreviousActor
+                           && action->mActionIndex == proofSidecarPreviousAction + 1)
+                        || (action->mActorIndex == proofSidecarPreviousActor + 1
+                            && action->mActionIndex == 0));
+                const std::optional<ESM::FormId> localBase
+                    = parseProofFormId(proofActorBatchTargets[action->mActorIndex]);
+                const bool baseMatches = localBase.has_value()
+                    && (localBase->toUint32() & 0x00FFFFFFu)
+                        == (action->mRetailBaseForm & 0x00FFFFFFu);
+                if (!actionIdListValid)
+                    failFNVSidecar(FNVSidecar::ErrorCode::InvalidPlan, "openmw-action-id-count-mismatch");
+                else if (action->mActionId != expectedActionId)
+                    failFNVSidecar(FNVSidecar::ErrorCode::InvalidPlan, "retail-openmw-action-id-mismatch");
+                else if (!sequenceValid)
+                    failFNVSidecar(FNVSidecar::ErrorCode::InvalidPlan, "actor-action-sequence-mismatch");
+                else if (!baseMatches)
+                    failFNVSidecar(FNVSidecar::ErrorCode::ActorUnavailable, "retail-openmw-base-form-mismatch");
+                else
+                {
+                    proofSidecarAction = action;
+                    proofSidecarGeneration = action->mGeneration;
+                    proofSidecarPreviousActor = action->mActorIndex;
+                    proofSidecarPreviousAction = action->mActionIndex;
+                    proofSidecarActionStartFrame = -1;
+                    proofSidecarActionPlayed = false;
+                    proofSidecarScreenshotBaseline = {};
+                    proofSidecarScreenshotCandidate = {};
+                    proofSidecarScreenshotStableFrames = 0;
+                    proofSidecarPhase = FNVSidecarOpenMwPhase::Staging;
+                    proofScreenshotFrameIndex = action->mActorIndex;
+                    Log(Debug::Info) << "FNV sidecar OpenMW: consumed retail action generation="
+                                     << action->mGeneration << " actorIndex=" << action->mActorIndex
+                                     << " actionIndex=" << action->mActionIndex << " actionId=\""
+                                     << action->mActionId << "\" group=\""
+                                     << proofActorPoseGroups[action->mActionIndex] << "\" requestedFrames="
+                                     << action->mRequestedFrames << " requestedWeaponForm="
+                                     << action->mRequestedWeaponForm;
+                }
+            }
+        }
+        else if (proofSidecarGeneration != 0 && proofSidecarSnapshot.mGeneration == proofSidecarGeneration
+            && (proofSidecarSnapshot.mActorIndex != proofSidecarPreviousActor
+                || proofSidecarSnapshot.mActionIndex != proofSidecarPreviousAction))
+            failFNVSidecar(FNVSidecar::ErrorCode::SharedMemoryFault, "stable-generation-identity-changed");
+
+        if (proofSidecarPhase != FNVSidecarOpenMwPhase::Failed
+            && proofSidecarSnapshot.mDeadlineTickMs != 0 && proofSidecarGeneration != 0
+            && proofSidecarSnapshot.mGeneration == proofSidecarGeneration
+            && FNVSidecar::monotonicTickMilliseconds() > proofSidecarSnapshot.mDeadlineTickMs
+            && (proofSidecarSnapshot.mFlags & FNVSidecar::CaptureAckFlag) == 0)
+        {
+            const FNVSidecar::ErrorCode code = proofSidecarPhase == FNVSidecarOpenMwPhase::Capturing
+                ? FNVSidecar::ErrorCode::ScreenshotTimeout
+                : (proofSidecarPhase == FNVSidecarOpenMwPhase::WaitingAdvance
+                        ? FNVSidecar::ErrorCode::CaptureAckTimeout
+                        : FNVSidecar::ErrorCode::OpenMwReadyTimeout);
+            failFNVSidecar(code, "shared-deadline-expired");
+        }
+
+        if (!proofSidecarCompletionPublished
+            && (proofSidecarSnapshot.mFlags & FNVSidecar::RetailCompleteFlag) != 0
+            && proofSidecarPhase == FNVSidecarOpenMwPhase::WaitingAdvance)
+        {
+            if (proofSidecarClient.markComplete(frameNumber))
+            {
+                proofSidecarCompletionPublished = true;
+                proofSidecarPhase = FNVSidecarOpenMwPhase::Complete;
+                proofActorBatchCompletionLogged = true;
+                proofActorBatchCompleteFrame = static_cast<int>(frameNumber);
+                Log(Debug::Info) << "FNV sidecar OpenMW: sequence complete generation="
+                                 << proofSidecarGeneration << " frame=" << frameNumber;
+            }
+            else
+                failFNVSidecar(FNVSidecar::ErrorCode::SharedMemoryFault, "openmw-complete-publish-failed");
+        }
+    }
+
     const bool proofRequiresActorForScreenshot = std::getenv("OPENMW_PROOF_REQUIRE_ACTOR_FOR_SCREENSHOT") != nullptr;
+    const bool proofSidecarActorRequested = !proofSidecarEnabled
+        || (proofSidecarAction.has_value()
+            && proofSidecarPhase != FNVSidecarOpenMwPhase::WaitingRetail
+            && proofSidecarPhase != FNVSidecarOpenMwPhase::Failed
+            && proofSidecarPhase != FNVSidecarOpenMwPhase::Complete);
     const bool proofActorBatchActive = !proofActorBatchTargets.empty()
-        && proofScreenshotFrameIndex < proofActorBatchTargets.size();
+        && proofScreenshotFrameIndex < proofActorBatchTargets.size() && proofSidecarActorRequested;
     // Native capture is asynchronous. Do not change the staged scene immediately after
     // arming it; advance only when the next target enters its warmup window.
     const int proofActorBatchWarmupFramesEnv = getProofFrame("OPENMW_PROOF_ACTOR_BATCH_WARMUP_FRAMES");
     const int proofActorBatchWarmupFrames
         = proofActorBatchWarmupFramesEnv >= 0 ? proofActorBatchWarmupFramesEnv : 30;
-    const bool proofActorBatchTransitionReady = proofActorBatchIndex == static_cast<std::size_t>(-1)
+    const bool proofActorBatchTransitionReady = proofSidecarEnabled
+        || proofActorBatchIndex == static_cast<std::size_t>(-1)
         || proofScreenshotFrameIndex == 0 || proofScreenshotFrameIndex >= proofScreenshotFrames.size()
         || static_cast<int>(frameNumber) + proofActorBatchWarmupFrames
             >= proofScreenshotFrames[proofScreenshotFrameIndex];
@@ -5938,7 +6192,7 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
         && (!proofRequiresActorForScreenshot || proofActorScreenshotNeedsResolve);
     const bool proofEarlyActorAlignmentPending = proofActorBatchActive
         && proofEnvEnabled("OPENMW_PROOF_ACTOR_VIEW_EARLY_ALIGN") && !proofActorCameraAligned;
-    const bool proofActorCameraAlignmentWindowOpen = proofEarlyActorAlignmentPending || !proofActorBatchActive
+    const bool proofActorCameraAlignmentWindowOpen = proofSidecarEnabled || proofEarlyActorAlignmentPending || !proofActorBatchActive
         || proofScreenshotFrameIndex >= proofScreenshotFrames.size()
         || frameNumber >= static_cast<unsigned>(proofScreenshotFrames[proofScreenshotFrameIndex]);
     if (proofEnvEnabled("OPENMW_PROOF_PIN_STAGED_ACTOR") && !proofPinnedStagedActor.isEmpty()
@@ -5980,8 +6234,8 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
     }
     if ((!proofSayQueued || proofOrbitBurstAlignReached || proofActorScreenshotNeedsResolve
             || proofEarlyActorAlignmentPending)
-        && proofSayFrame >= 0
-        && frameNumber >= static_cast<unsigned>(proofSayFrame))
+        && (proofSidecarEnabled
+            || (proofSayFrame >= 0 && frameNumber >= static_cast<unsigned>(proofSayFrame))))
     {
         const char* proofSayFile = std::getenv("OPENMW_PROOF_SAY_FILE");
         const char* proofSayTopic = std::getenv("OPENMW_PROOF_SAY_TOPIC");
@@ -7131,7 +7385,264 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
         proofSayQueued = true;
     }
 
-    if (proofActorBatchActive && proofActorPoseBatchIndex == proofActorBatchIndex
+    if (proofSidecarEnabled && proofSidecarAction.has_value()
+        && proofSidecarPhase != FNVSidecarOpenMwPhase::Failed
+        && proofSidecarPhase != FNVSidecarOpenMwPhase::Complete)
+    {
+        const FNVSidecar::RetailAction& action = *proofSidecarAction;
+        const std::string& requestedGroup = proofActorPoseGroups[action.mActionIndex];
+        const auto localWeapon = [&]() -> const ESM4::Weapon* {
+            if (proofActorBatchPrevious.isEmpty()
+                || proofActorBatchPrevious.getType() != ESM4::Npc::sRecordId)
+                return nullptr;
+            return MWClass::ESM4Npc::getEquippedWeapon(proofActorBatchPrevious);
+        };
+        const auto exactWeapon = [&]() {
+            const ESM4::Weapon* weapon = localWeapon();
+            if (action.mRequestedWeaponForm == 0)
+                return weapon == nullptr;
+            return weapon != nullptr
+                && (weapon->mId.toUint32() & 0x00FFFFFFu)
+                    == (action.mRequestedWeaponForm & 0x00FFFFFFu);
+        };
+        const auto buildOpenMwTelemetry = [&](const FNVSidecarScreenshot* screenshot) {
+            std::ostringstream out;
+            out << std::setprecision(9)
+                << "{\"schema\":\"nikami-fnv-sidecar-openmw/v1\",\"sequenceId\":";
+            writeProofJsonString(out, action.mSequenceId);
+            out << ",\"key\":{\"sequenceId\":";
+            writeProofJsonString(out, action.mSequenceId);
+            out << ",\"actorIndex\":" << action.mActorIndex << ",\"actionIndex\":"
+                << action.mActionIndex << "},\"generation\":" << action.mGeneration
+                << ",\"frame\":" << frameNumber << ",\"actor\":{";
+            if (!proofActorBatchPrevious.isEmpty())
+            {
+                const ESM::Position& position = proofActorBatchPrevious.getRefData().getPosition();
+                out << "\"ref\":";
+                writeProofJsonString(out,
+                    proofActorBatchPrevious.getCellRef().getRefNum().toString("FormId:"));
+                out << ",\"base\":";
+                writeProofJsonString(out,
+                    proofActorBatchPrevious.getCellRef().getRefId().toDebugString());
+                out << ",\"position\":[" << position.pos[0] << ',' << position.pos[1] << ','
+                    << position.pos[2] << "],\"rotation\":[" << position.rot[0] << ',' << position.rot[1]
+                    << ',' << position.rot[2] << ']';
+            }
+            out << "},\"action\":{\"id\":";
+            writeProofJsonString(out, action.mActionId);
+            out << ",\"openMwGroup\":";
+            writeProofJsonString(out, requestedGroup);
+            out << ",\"requestedFrames\":" << action.mRequestedFrames << ",\"elapsedFrames\":"
+                << (proofSidecarActionStartFrame >= 0
+                        ? static_cast<int>(frameNumber) - proofSidecarActionStartFrame : 0)
+                << ",\"accepted\":" << (proofSidecarActionPlayed ? "true" : "false") << '}';
+
+            const ESM4::Weapon* weapon = localWeapon();
+            out << ",\"weaponPolicy\":{\"retailRequestedForm\":" << action.mRequestedWeaponForm
+                << ",\"openMwEquippedForm\":" << (weapon != nullptr ? weapon->mId.toUint32() : 0)
+                << ",\"openMwEditorId\":";
+            writeProofJsonString(out,
+                weapon != nullptr ? std::string_view(weapon->mEditorId) : std::string_view{});
+            out << ",\"exactBySourceForm\":" << (exactWeapon() ? "true" : "false") << '}';
+
+            out << ",\"equipment\":{";
+            if (!proofActorBatchPrevious.isEmpty()
+                && proofActorBatchPrevious.getType() == ESM4::Npc::sRecordId)
+            {
+                const std::vector<const ESM4::Armor*>& armor
+                    = MWClass::ESM4Npc::getEquippedArmor(proofActorBatchPrevious);
+                const std::vector<const ESM4::Clothing*>& clothing
+                    = MWClass::ESM4Npc::getEquippedClothing(proofActorBatchPrevious);
+                out << "\"armorForms\":[";
+                for (std::size_t index = 0; index < armor.size(); ++index)
+                {
+                    if (index != 0)
+                        out << ',';
+                    out << (armor[index] != nullptr ? armor[index]->mId.toUint32() : 0);
+                }
+                out << "],\"clothingForms\":[";
+                for (std::size_t index = 0; index < clothing.size(); ++index)
+                {
+                    if (index != 0)
+                        out << ',';
+                    out << (clothing[index] != nullptr ? clothing[index]->mId.toUint32() : 0);
+                }
+                out << ']';
+                if (const ESM4::Npc* npc = proofActorBatchPrevious.get<ESM4::Npc>()->mBase)
+                {
+                    out << ",\"npc\":{\"form\":" << npc->mId.toUint32() << ",\"race\":"
+                        << npc->mRace.toUint32() << ",\"hair\":" << npc->mHair.toUint32()
+                        << ",\"eyes\":" << npc->mEyes.toUint32() << ",\"hairColor\":["
+                        << static_cast<unsigned int>(npc->mHairColour.red) << ','
+                        << static_cast<unsigned int>(npc->mHairColour.green) << ','
+                        << static_cast<unsigned int>(npc->mHairColour.blue) << ','
+                        << static_cast<unsigned int>(npc->mHairColour.custom) << "],\"headParts\":[";
+                    for (std::size_t index = 0; index < npc->mHeadParts.size(); ++index)
+                    {
+                        if (index != 0)
+                            out << ',';
+                        out << npc->mHeadParts[index].toUint32();
+                    }
+                    out << "]}";
+                }
+            }
+            out << '}';
+
+            osg::Camera* camera = mViewer != nullptr ? mViewer->getCamera() : nullptr;
+            out << ",\"camera\":{\"available\":" << (camera != nullptr ? "true" : "false");
+            if (camera != nullptr)
+            {
+                const auto writeMatrix = [&](std::string_view name, const osg::Matrixd& matrix) {
+                    out << ",\"" << name << "\":[";
+                    for (std::size_t row = 0; row < 4; ++row)
+                    {
+                        for (std::size_t column = 0; column < 4; ++column)
+                        {
+                            if (row != 0 || column != 0)
+                                out << ',';
+                            out << matrix(row, column);
+                        }
+                    }
+                    out << ']';
+                };
+                writeMatrix("view", camera->getViewMatrix());
+                writeMatrix("projection", camera->getProjectionMatrix());
+            }
+            out << '}';
+            out << ",\"screenshot\":{\"exists\":"
+                << (screenshot != nullptr && screenshot->mValid ? "true" : "false");
+            if (screenshot != nullptr && screenshot->mValid)
+            {
+                out << ",\"path\":";
+                writeProofJsonString(out, screenshot->mPath.generic_string());
+                out << ",\"bytes\":" << screenshot->mSize;
+            }
+            out << "}}";
+            return out.str();
+        };
+
+        if (proofSidecarPhase == FNVSidecarOpenMwPhase::Staging
+            && proofActorBatchIndex == action.mActorIndex && !proofActorBatchPrevious.isEmpty()
+            && proofActorStagedForCamera && proofActorCameraAligned && mWorld != nullptr
+            && mMechanicsManager != nullptr)
+        {
+            MWRender::Animation* animation = mWorld->getAnimation(proofActorBatchPrevious);
+            if (!exactWeapon())
+                failFNVSidecar(FNVSidecar::ErrorCode::WeaponPolicyFailed,
+                    "openmw-retail-exact-weapon-mismatch");
+            else if (animation == nullptr || !animation->hasAnimation(requestedGroup))
+                failFNVSidecar(FNVSidecar::ErrorCode::ActionRejected,
+                    "openmw-animation-group-unavailable-" + requestedGroup);
+            else
+            {
+                if (proofActorBatchPrevious.getType() == ESM4::Npc::sRecordId)
+                {
+                    proofActorBatchPrevious.getClass().getCreatureStats(proofActorBatchPrevious)
+                        .setDrawState(action.mRequestedWeaponForm != 0
+                                ? MWMechanics::DrawState::Weapon : MWMechanics::DrawState::Nothing);
+                }
+                mMechanicsManager->clearAnimationQueue(proofActorBatchPrevious, true);
+                proofSidecarActionPlayed = mMechanicsManager->playAnimationGroup(
+                    proofActorBatchPrevious, requestedGroup, 1, 1, true);
+                if (!proofSidecarActionPlayed)
+                    failFNVSidecar(FNVSidecar::ErrorCode::ActionRejected,
+                        "openmw-animation-group-rejected-" + requestedGroup);
+                else
+                {
+                    proofSidecarActionStartFrame = static_cast<int>(frameNumber);
+                    proofSidecarPhase = FNVSidecarOpenMwPhase::Settling;
+                    Log(Debug::Info) << "FNV sidecar OpenMW: action staged generation="
+                                     << action.mGeneration << " actorIndex=" << action.mActorIndex
+                                     << " actionIndex=" << action.mActionIndex << " group=\""
+                                     << requestedGroup << "\" frame=" << frameNumber;
+                }
+            }
+        }
+
+        if (proofSidecarPhase == FNVSidecarOpenMwPhase::Settling
+            && proofSidecarActionStartFrame >= 0
+            && static_cast<std::uint64_t>(static_cast<int>(frameNumber) - proofSidecarActionStartFrame)
+                >= action.mRequestedFrames
+            && (proofSidecarSnapshot.mFlags & FNVSidecar::RetailReadyFlag) != 0)
+        {
+            const std::string telemetry = buildOpenMwTelemetry(nullptr);
+            if (proofSidecarClient.publishReady(proofSidecarSnapshot, frameNumber, telemetry))
+            {
+                proofSidecarPhase = FNVSidecarOpenMwPhase::Ready;
+                Log(Debug::Info) << "FNV sidecar OpenMW: both-ready publication generation="
+                                 << action.mGeneration << " actorIndex=" << action.mActorIndex
+                                 << " actionIndex=" << action.mActionIndex << " frame=" << frameNumber;
+            }
+            else
+                failFNVSidecar(FNVSidecar::ErrorCode::SharedMemoryFault, "openmw-ready-publish-failed");
+        }
+
+        if (proofSidecarPhase == FNVSidecarOpenMwPhase::Ready
+            && proofSidecarSnapshot.mState == FNVSidecar::State::CaptureIssued)
+        {
+            if (mScreenCaptureHandler == nullptr)
+                failFNVSidecar(FNVSidecar::ErrorCode::ScreenshotTimeout, "screen-capture-handler-unavailable");
+            else
+            {
+                proofSidecarScreenshotBaseline = newestSidecarScreenshot(mCfgMgr.getScreenshotPath());
+                proofSidecarScreenshotCandidate = {};
+                proofSidecarScreenshotStableFrames = 0;
+                mScreenCaptureHandler->setFramesToCapture(1);
+                mScreenCaptureHandler->captureNextFrame(*mViewer);
+                proofSidecarPhase = FNVSidecarOpenMwPhase::Capturing;
+                Log(Debug::Info) << "FNV sidecar OpenMW: capture issued generation="
+                                 << action.mGeneration << " actorIndex=" << action.mActorIndex
+                                 << " actionIndex=" << action.mActionIndex << " frame=" << frameNumber;
+            }
+        }
+
+        if (proofSidecarPhase == FNVSidecarOpenMwPhase::Capturing)
+        {
+            const FNVSidecarScreenshot candidate = newestSidecarScreenshot(mCfgMgr.getScreenshotPath());
+            if (isNewSidecarScreenshot(proofSidecarScreenshotBaseline, candidate))
+            {
+                if (proofSidecarScreenshotCandidate.mValid
+                    && proofSidecarScreenshotCandidate.mPath == candidate.mPath
+                    && proofSidecarScreenshotCandidate.mSize == candidate.mSize)
+                    ++proofSidecarScreenshotStableFrames;
+                else
+                {
+                    proofSidecarScreenshotCandidate = candidate;
+                    proofSidecarScreenshotStableFrames = 1;
+                }
+            }
+            if (proofSidecarScreenshotStableFrames >= 2)
+            {
+                const std::string telemetry = buildOpenMwTelemetry(&proofSidecarScreenshotCandidate);
+                if (proofSidecarClient.markCaptured(action.mGeneration, action.mActorIndex,
+                        action.mActionIndex, frameNumber, telemetry))
+                {
+                    proofSidecarPhase = FNVSidecarOpenMwPhase::WaitingAdvance;
+                    Log(Debug::Info) << "FNV sidecar OpenMW: capture file proven generation="
+                                     << action.mGeneration << " actorIndex=" << action.mActorIndex
+                                     << " actionIndex=" << action.mActionIndex << " path=\""
+                                     << proofSidecarScreenshotCandidate.mPath.string() << "\" bytes="
+                                     << proofSidecarScreenshotCandidate.mSize << " frame=" << frameNumber;
+                }
+                else
+                    failFNVSidecar(FNVSidecar::ErrorCode::SharedMemoryFault,
+                        "openmw-captured-publish-failed");
+            }
+        }
+
+        if (proofSidecarPhase == FNVSidecarOpenMwPhase::WaitingAdvance
+            && proofSidecarSnapshot.mGeneration == action.mGeneration
+            && (proofSidecarSnapshot.mFlags & FNVSidecar::RetailCapturedFlag) != 0
+            && (proofSidecarSnapshot.mFlags & FNVSidecar::OpenMwCapturedFlag) != 0
+            && (proofSidecarSnapshot.mFlags & FNVSidecar::CaptureAckFlag) == 0)
+        {
+            if (!proofSidecarClient.acknowledgeCapture(
+                    action.mGeneration, action.mActorIndex, action.mActionIndex))
+                failFNVSidecar(FNVSidecar::ErrorCode::SharedMemoryFault, "capture-ack-publish-failed");
+        }
+    }
+
+    if (!proofSidecarEnabled && proofActorBatchActive && proofActorPoseBatchIndex == proofActorBatchIndex
         && !proofActorPoseGroups.empty() && !proofActorBatchPrevious.isEmpty() && proofActorStagedForCamera
         && proofActorCameraAligned && mWorld != nullptr && mMechanicsManager != nullptr)
     {
@@ -8203,10 +8714,12 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
         }
     }
 
-    const bool proofScreenshotFrameReached = proofScreenshotFrameIndex < proofScreenshotFrames.size()
+    const bool proofScreenshotFrameReached = !proofSidecarEnabled
+        && proofScreenshotFrameIndex < proofScreenshotFrames.size()
         && frameNumber >= static_cast<unsigned>(proofScreenshotFrames[proofScreenshotFrameIndex]);
     const bool proofScreenshotReadyFramesReached
-        = !proofScreenshotReadyQueued && proofScreenshotReadyFrames >= 0 && proofWorldReadyFrames >= proofScreenshotReadyFrames;
+        = !proofSidecarEnabled && !proofScreenshotReadyQueued && proofScreenshotReadyFrames >= 0
+        && proofWorldReadyFrames >= proofScreenshotReadyFrames;
     bool worldViewerCameraReadyForScreenshot = true;
     if (!worldViewerStaticStartCamera && std::getenv("OPENMW_WORLD_VIEWER_REQUIRE_CAMERA_SETTLED") != nullptr
         && std::getenv("OPENMW_WORLD_VIEWER_START_POS_X") != nullptr && mWorld != nullptr)
@@ -8227,7 +8740,8 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
     }
     const int proofActorAlignedScreenshotDelay = getProofFrame("OPENMW_PROOF_ACTOR_ALIGNED_SCREENSHOT_DELAY");
     const int proofActorAlignedScreenshotMinFrame = getProofFrame("OPENMW_PROOF_ACTOR_ALIGNED_SCREENSHOT_MIN_FRAME");
-    const bool proofActorAlignedScreenshotReached = !proofActorAlignedScreenshotQueued && proofActorCameraAligned
+    const bool proofActorAlignedScreenshotReached = !proofSidecarEnabled
+        && !proofActorAlignedScreenshotQueued && proofActorCameraAligned
         && proofActorAlignedScreenshotDelay >= 0 && proofActorCameraAlignedFrame >= 0
         && frameNumber >= static_cast<unsigned>(proofActorCameraAlignedFrame + proofActorAlignedScreenshotDelay)
         && (proofActorAlignedScreenshotMinFrame < 0
@@ -8237,7 +8751,7 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
     const bool proofPortraitCapturePending
         = proofScreenshotFrameReached || proofScreenshotReadyFramesReached || proofActorAlignedScreenshotReached;
     bool proofActorVisualReady = true;
-    const bool proofActorPoseReadyForScreenshot = !proofActorBatchActive || proofActorPoseGroups.empty()
+    const bool proofActorPoseReadyForScreenshot = proofSidecarEnabled || !proofActorBatchActive || proofActorPoseGroups.empty()
         || (proofActorPoseBatchIndex == proofActorBatchIndex && proofActorPoseCycleComplete);
     unsigned int proofActorVisibleDrawables = 0;
     unsigned int proofActorVisibleRigs = 0;
