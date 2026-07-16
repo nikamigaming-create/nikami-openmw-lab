@@ -33,6 +33,7 @@
 
 #include <components/debug/debuglog.hpp>
 #include <components/esm4/loadarmo.hpp>
+#include <components/esm4/loadweap.hpp>
 #include <components/fallback/fallback.hpp>
 #include <components/misc/strings/algorithm.hpp>
 #include <components/resource/resourcesystem.hpp>
@@ -54,6 +55,7 @@
 #include "../mwbase/world.hpp"
 
 #include "../mwmechanics/actorutil.hpp"
+#include "../mwmechanics/creaturestats.hpp"
 #include "../mwmechanics/weapontype.hpp"
 
 #include "../mwclass/esm4npc.hpp"
@@ -107,6 +109,21 @@ namespace MWRender
             return nullptr;
         }
 
+        const ESM4::Weapon* findFalloutInventoryWeaponByEditorId(const std::string_view editorId)
+        {
+            const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
+            if (store == nullptr || editorId.empty())
+                return nullptr;
+
+            for (const ESM4::Weapon& weapon : store->get<ESM4::Weapon>())
+            {
+                if (Misc::StringUtils::ciEqual(weapon.mEditorId, editorId))
+                    return &weapon;
+            }
+
+            return nullptr;
+        }
+
         bool isFalloutContentLoaded()
         {
             const MWBase::World* world = MWBase::Environment::get().getWorld();
@@ -135,8 +152,9 @@ namespace MWRender
             const ESM4PlayerVisualEquipmentPolicy policy = resolveESM4PlayerVisualEquipmentPolicy(
                 std::getenv("OPENMW_ESM4_PLAYER_OUTFIT"), std::getenv("OPENMW_FNV_PLAYER_OUTFIT"),
                 std::getenv("OPENMW_ESM4_PLAYER_HEADGEAR"), std::getenv("OPENMW_FNV_PLAYER_HEADGEAR"),
+                std::getenv("OPENMW_ESM4_PLAYER_WEAPON"), std::getenv("OPENMW_FNV_PLAYER_WEAPON"),
                 std::getenv("OPENMW_FNV_BOOTSTRAP_LEVEL1_COURIER") != nullptr);
-            if (policy.mOutfit.empty() && policy.mHeadgear.empty())
+            if (policy.mOutfit.empty() && policy.mHeadgear.empty() && policy.mWeapon.empty())
                 return;
 
             visualPtr.getRefData().setCustomData(nullptr);
@@ -161,6 +179,22 @@ namespace MWRender
 
             addArmor(policy.mOutfit, "outfit");
             addArmor(policy.mHeadgear, "headgear");
+            if (!policy.mWeapon.empty())
+            {
+                const ESM4::Weapon* weapon = findFalloutInventoryWeaponByEditorId(policy.mWeapon);
+                if (weapon == nullptr)
+                {
+                    Log(Debug::Warning) << "ESM4 player visual: inventory proxy weapon "
+                                        << policy.mWeapon << " not found";
+                }
+                else
+                {
+                    const bool changed = MWClass::ESM4Npc::setEquippedWeapon(visualPtr, weapon);
+                    visualPtr.getClass().getCreatureStats(visualPtr).setDrawState(MWMechanics::DrawState::Weapon);
+                    Log(Debug::Info) << "ESM4 player visual: inventory proxy weapon " << weapon->mEditorId
+                                     << " model=" << weapon->mModel << " changed=" << changed << " drawn=1";
+                }
+            }
         }
 
         std::string trimFalloutPreviewText(const char* value)

@@ -1078,6 +1078,16 @@ namespace MWClass
         return true;
     }
 
+    bool ESM4Npc::setEquippedWeapon(const MWWorld::Ptr& ptr, const ESM4::Weapon* weapon)
+    {
+        ESM4NpcCustomData& data = getCustomData(ptr);
+        if (data.mEquippedWeapon == weapon)
+            return false;
+
+        data.mEquippedWeapon = weapon;
+        return true;
+    }
+
     const ESM4::Npc* ESM4Npc::getTraitsRecord(const MWWorld::Ptr& ptr)
     {
         return getCustomData(ptr).mTraits;

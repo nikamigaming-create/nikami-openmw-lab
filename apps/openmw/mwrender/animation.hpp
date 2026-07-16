@@ -317,10 +317,12 @@ namespace MWRender
          * @param model The file to add the keyframes for. Note that the .nif file extension will be replaced with .kf.
          * @param baseModel The filename of the mObjectRoot, only used for error messages.
          * @param controllerOverlayKf Optional KF whose controllers replace same-named controllers in the source.
+         * @param falloutSemanticGroup Optional semantic alias synthesized for a selected Fallout creature source.
          */
         virtual void addAnimSource(std::string_view model, const std::string& baseModel);
         std::shared_ptr<AnimSource> addSingleAnimSource(const std::string& model, const std::string& baseModel,
-            bool falloutProcedureIdle = false, std::string_view controllerOverlayKf = {});
+            bool falloutProcedureIdle = false, std::string_view controllerOverlayKf = {},
+            std::string_view falloutSemanticGroup = {});
 
         /** Adds an additional light to the given node using the specified ESM record. */
         void addExtraLight(osg::ref_ptr<osg::Group> parent, const SceneUtil::LightCommon& light);
@@ -394,6 +396,11 @@ namespace MWRender
         virtual void updatePtr(const MWWorld::Ptr& ptr);
 
         bool hasAnimation(std::string_view anim) const;
+
+        /// Return every animation group currently bound to this assembled object.
+        /// The result is copied and sorted so proof/telemetry callers can build a
+        /// deterministic pose inventory without depending on animation-source order.
+        std::vector<std::string> getAnimationGroups() const;
 
         bool isLoopingAnimation(std::string_view group) const;
 

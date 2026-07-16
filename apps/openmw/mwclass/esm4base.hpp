@@ -2,9 +2,11 @@
 #define GAME_MWCLASS_ESM4BASE_H
 
 #include <algorithm>
+#include <cstdint>
 #include <memory>
 #include <stdexcept>
 #include <string_view>
+#include <type_traits>
 #include <vector>
 
 #include <components/esm4/inventory.hpp>
@@ -35,6 +37,7 @@
 #include "../mwworld/failedaction.hpp"
 #include "../mwworld/class.hpp"
 #include "../mwworld/esmstore.hpp"
+#include "../mwworld/inventorystore.hpp"
 #include "../mwworld/registeredclass.hpp"
 
 #include "classmodel.hpp"
@@ -364,6 +367,35 @@ namespace MWClass
         const std::string& getInventoryIcon(const MWWorld::ConstPtr& ptr) const override
         {
             return ESM4Impl::InventoryIcon<Record>::get(*ptr.get<Record>()->mBase);
+        }
+
+        std::pair<std::vector<int>, bool> getEquipmentSlots(const MWWorld::ConstPtr& ptr) const override
+        {
+            if constexpr (std::is_same_v<Record, ESM4::Weapon>)
+                return { { MWWorld::InventoryStore::Slot_CarriedRight }, false };
+            else if constexpr (std::is_same_v<Record, ESM4::Ammunition>)
+                return { { MWWorld::InventoryStore::Slot_Ammunition }, true };
+            else if constexpr (std::is_same_v<Record, ESM4::Armor>)
+            {
+                const std::uint32_t flags = ptr.get<ESM4::Armor>()->mBase->mArmorFlags;
+                constexpr std::uint32_t head = ESM4::Armor::FO3_Head | ESM4::Armor::FO3_Hair
+                    | ESM4::Armor::FO3_Headband | ESM4::Armor::FO3_Hat | ESM4::Armor::FO3_EyeGlasses
+                    | ESM4::Armor::FO3_NoseRing | ESM4::Armor::FO3_Earrings | ESM4::Armor::FO3_Mask
+                    | ESM4::Armor::FO3_MouthObject;
+                if ((flags & ESM4::Armor::FO3_UpperBody) != 0)
+                    return { { MWWorld::InventoryStore::Slot_Robe }, false };
+                if ((flags & head) != 0)
+                    return { { MWWorld::InventoryStore::Slot_Helmet }, false };
+                if ((flags & (ESM4::Armor::FO3_Necklace | ESM4::Armor::FO3_Choker)) != 0)
+                    return { { MWWorld::InventoryStore::Slot_Amulet }, false };
+                if ((flags & ESM4::Armor::FO3_LeftHand) != 0)
+                    return { { MWWorld::InventoryStore::Slot_LeftGauntlet }, false };
+                if ((flags & ESM4::Armor::FO3_RightHand) != 0)
+                    return { { MWWorld::InventoryStore::Slot_RightGauntlet }, false };
+                return { { MWWorld::InventoryStore::Slot_Cuirass }, false };
+            }
+            else
+                return {};
         }
 
         bool hasToolTip(const MWWorld::ConstPtr& ptr) const override { return !getName(ptr).empty(); }

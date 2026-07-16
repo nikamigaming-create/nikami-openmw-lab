@@ -1030,7 +1030,7 @@ void MWWorld::ContainerStore::writeState(ESM::InventoryState& state) const
     storeStates(repairs, state, index);
     storeStates(weapons, state, index, true);
     storeStates(lights, state, index, true);
-    storeStates(esm4Ammunition, state, index);
+    storeStates(esm4Ammunition, state, index, true);
     storeStates(esm4Armors, state, index, true);
     storeStates(esm4MiscItems, state, index);
     storeStates(esm4Weapons, state, index, true);
@@ -1088,7 +1088,7 @@ void MWWorld::ContainerStore::readState(const ESM::InventoryState& inventory)
                 readEquipmentState(getState(lights, state), thisIndex, inventory);
                 break;
             case ESM::REC_AMMO4:
-                getState(esm4Ammunition, state);
+                readEquipmentState(getState(esm4Ammunition, state), thisIndex, inventory);
                 break;
             case ESM::REC_ARMO4:
                 readEquipmentState(getState(esm4Armors, state), thisIndex, inventory);

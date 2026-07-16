@@ -81,6 +81,7 @@
 #include <components/compiler/extensions0.hpp>
 
 #include <components/esm/position.hpp>
+#include <components/esm/esmcommon.hpp>
 #include <components/esm/util.hpp>
 #include <components/esm3/loadcell.hpp>
 #include <components/esm3/loadskil.hpp>
@@ -89,8 +90,15 @@
 #include <components/esm4/loadammo.hpp>
 #include <components/esm4/loadarmo.hpp>
 #include <components/esm4/loadbook.hpp>
+#include <components/esm4/loadbptd.hpp>
 #include <components/esm4/loadclot.hpp>
+#include <components/esm4/loadcrea.hpp>
 #include <components/esm4/loadmisc.hpp>
+#include <components/esm4/loadlvlc.hpp>
+#include <components/esm4/loadlvli.hpp>
+#include <components/esm4/loadlvln.hpp>
+#include <components/esm4/loadnpc.hpp>
+#include <components/esm4/loadotft.hpp>
 #include <components/esm4/loadsoun.hpp>
 #include <components/esm4/loadtact.hpp>
 #include <components/esm4/loadweap.hpp>
@@ -138,11 +146,13 @@
 
 #include "mwworld/class.hpp"
 #include "mwworld/action.hpp"
+#include "mwworld/actionequip.hpp"
 #include "mwworld/cellstore.hpp"
 #include "mwworld/containerstore.hpp"
 #include "mwworld/datetimemanager.hpp"
 #include "mwworld/esmstore.hpp"
 #include "mwworld/esm4questruntime.hpp"
+#include "mwworld/inventorystore.hpp"
 #include "mwworld/manualref.hpp"
 #include "mwworld/worldimp.hpp"
 #include "mwworld/worldmodel.hpp"
@@ -151,9 +161,11 @@
 #include "mwphysics/raycasting.hpp"
 
 #include "mwrender/characterpreview.hpp"
+#include "mwrender/animation.hpp"
 #include "mwrender/vismask.hpp"
 
 #include "mwclass/classes.hpp"
+#include "mwclass/esm4base.hpp"
 #include "mwclass/esm4npc.hpp"
 
 #include "mwdialogue/dialoguemanagerimp.hpp"
@@ -2709,9 +2721,13 @@ namespace
 
         try
         {
-            inventory.add(id, count, false);
-            Log(Debug::Info) << "FNV/ESM4 proof: starter inventory added " << editorId << " x" << count << " id="
-                             << id.toDebugString();
+            const int existing = inventory.count(id);
+            const int missing = std::max(0, count - existing);
+            if (missing > 0)
+                inventory.add(id, missing, false);
+            Log(Debug::Info) << "FNV/ESM4 proof: starter inventory " << (missing > 0 ? "added " : "retained ")
+                             << editorId << " x" << count << " id=" << id.toDebugString()
+                             << " previous=" << existing << " inserted=" << missing;
             return true;
         }
         catch (const std::exception& e)
@@ -2727,13 +2743,59 @@ namespace
         const ESM::RefId refId = ESM::RefId::stringRefId(id);
         try
         {
-            inventory.add(refId, count, false);
-            Log(Debug::Info) << "FNV/ESM4 proof: starter proof inventory added " << id << " x" << count;
+            const int existing = inventory.count(refId);
+            const int missing = std::max(0, count - existing);
+            if (missing > 0)
+                inventory.add(refId, missing, false);
+            Log(Debug::Info) << "FNV/ESM4 proof: starter proof inventory "
+                             << (missing > 0 ? "added " : "retained ") << id << " x" << count
+                             << " previous=" << existing << " inserted=" << missing;
             return true;
         }
         catch (const std::exception& e)
         {
             Log(Debug::Warning) << "FNV/ESM4 proof: starter proof inventory failed " << id << ": " << e.what();
+            return false;
+        }
+    }
+
+    template <typename T>
+    bool isFNVEditorItemEquipped(
+        MWWorld::InventoryStore& inventory, const MWWorld::ESMStore& store, std::string_view editorId)
+    {
+        const ESM::RefId id = findEsm4EditorId<T>(store, editorId);
+        return !id.empty() && inventory.isEquipped(id);
+    }
+
+    template <typename T>
+    bool equipFNVEditorItem(const MWWorld::Ptr& player, MWWorld::InventoryStore& inventory,
+        const MWWorld::ESMStore& store, std::string_view editorId)
+    {
+        const ESM::RefId id = findEsm4EditorId<T>(store, editorId);
+        if (id.empty())
+            return false;
+
+        try
+        {
+            const MWWorld::Ptr item = inventory.search(id);
+            if (item.isEmpty())
+            {
+                Log(Debug::Warning) << "FNV/ESM4 proof: starter equipment missing from inventory " << editorId
+                                    << " id=" << id.toDebugString();
+                return false;
+            }
+
+            MWWorld::ActionEquip(item, true).execute(player);
+            const bool equipped = inventory.isEquipped(id);
+            Log(equipped ? Debug::Info : Debug::Warning)
+                << "FNV/ESM4 proof: starter equipment " << editorId << " id=" << id.toDebugString()
+                << " equipped=" << equipped;
+            return equipped;
+        }
+        catch (const std::exception& e)
+        {
+            Log(Debug::Warning) << "FNV/ESM4 proof: starter equipment failed " << editorId << " id="
+                                << id.toDebugString() << ": " << e.what();
             return false;
         }
     }
@@ -2848,50 +2910,89 @@ namespace
         stats.setMagicka(MWMechanics::DynamicStat<float>(60.f, 60.f, 60.f));
         stats.setFatigue(MWMechanics::DynamicStat<float>(220.f, 220.f, 220.f));
 
-        MWWorld::ContainerStore& inventory = player.getClass().getContainerStore(player);
+        MWWorld::InventoryStore& inventory = player.getClass().getInventoryStore(player);
         const MWWorld::ESMStore& store = world.getStore();
         int added = 0;
-        added += addFNVEditorItem<ESM4::Weapon>(inventory, store, "WeapNV9mmPistol", 1) ? 1 : 0;
-        added += addFNVEditorItem<ESM4::Weapon>(inventory, store, "WeapNVVarmintRifle", 1) ? 1 : 0;
-        added += addFNVEditorItem<ESM4::Ammunition>(inventory, store, "Ammo9mm", 60) ? 1 : 0;
-        added += addFNVEditorItem<ESM4::Potion>(inventory, store, "Stimpak", 5) ? 1 : 0;
-        added += addFNVEditorItem<ESM4::MiscItem>(inventory, store, "BobbyPin", 5) ? 1 : 0;
-        added += addFNVEditorItem<ESM4::MiscItem>(inventory, store, "Caps001", 75) ? 1 : 0;
-        int proofAdded = 0;
-        proofAdded += addProofInventoryItem(inventory, "FNV_PROOF_9MM_PISTOL", 1) ? 1 : 0;
-        proofAdded += addProofInventoryItem(inventory, "FNV_PROOF_VARMINT_RIFLE", 1) ? 1 : 0;
-        proofAdded += addProofInventoryItem(inventory, "FNV_PROOF_9MM_AMMO", 60) ? 1 : 0;
-        proofAdded += addProofInventoryItem(inventory, "FNV_PROOF_STIMPAK", 5) ? 1 : 0;
-        proofAdded += addProofInventoryItem(inventory, "FNV_PROOF_BOBBY_PIN", 5) ? 1 : 0;
-        proofAdded += addProofInventoryItem(inventory, "FNV_PROOF_CAPS", 75) ? 1 : 0;
-
-        const ESM::RefId proofOutfitId = findEsm4EditorId<ESM4::Armor>(store, "OutfitRepublican02");
-        if (!proofOutfitId.empty())
+        const bool pistolAdded
+            = addFNVEditorItem<ESM4::Weapon>(inventory, store, "WeapNV9mmPistol", 1);
+        const bool rifleAdded
+            = addFNVEditorItem<ESM4::Weapon>(inventory, store, "WeapNVVarmintRifle", 1);
+        const bool ammo9mmAdded
+            = addFNVEditorItem<ESM4::Ammunition>(inventory, store, "Ammo9mm", 60);
+        const bool ammo556Added
+            = addFNVEditorItem<ESM4::Ammunition>(inventory, store, "Ammo556mm", 60);
+        const bool stimpakAdded = addFNVEditorItem<ESM4::Potion>(inventory, store, "Stimpak", 5);
+        const bool bobbyPinAdded = addFNVEditorItem<ESM4::MiscItem>(inventory, store, "BobbyPin", 5);
+        const bool capsAdded = addFNVEditorItem<ESM4::MiscItem>(inventory, store, "Caps001", 75);
+        const bool outfitAdded = addFNVEditorItem<ESM4::Armor>(inventory, store, "VaultSuit21", 1);
+        const bool headgearAdded = addFNVEditorItem<ESM4::Armor>(inventory, store, "CowboyHat02", 1);
+        for (const bool present : { pistolAdded, rifleAdded, ammo9mmAdded, ammo556Added, stimpakAdded,
+                 bobbyPinAdded, capsAdded, outfitAdded, headgearAdded })
         {
-            if (const ESM4::Armor* proofOutfit = store.get<ESM4::Armor>().search(proofOutfitId))
-            {
-                try
-                {
-                    const bool equipped = MWClass::ESM4Npc::addEquippedArmor(player, proofOutfit);
-                    Log(Debug::Info) << "FNV/ESM4 proof: level-1 Courier visual outfit "
-                                     << proofOutfit->mEditorId << " form=" << proofOutfitId.toDebugString()
-                                     << " model=" << MWClass::ESM4Npc::chooseEquipmentModel(
-                                                        proofOutfit, MWClass::ESM4Npc::isFemale(player))
-                                     << " added=" << equipped;
-                }
-                catch (const std::exception& e)
-                {
-                    Log(Debug::Warning) << "FNV/ESM4 proof: level-1 Courier visual outfit "
-                                        << proofOutfit->mEditorId << " skipped: " << e.what();
-                }
-            }
+            added += present ? 1 : 0;
         }
-        else
-            Log(Debug::Warning) << "FNV/ESM4 proof: level-1 Courier visual outfit OutfitRepublican02 not found";
+
+        // Audit the loaded save before the idempotent equip pass below. On a fresh bootstrap these flags are
+        // expected to be false; on a reload they prove the equipped InventoryStore slots survived serialization.
+        const bool outfitPreviouslyEquipped
+            = isFNVEditorItemEquipped<ESM4::Armor>(inventory, store, "VaultSuit21");
+        const bool headgearPreviouslyEquipped
+            = isFNVEditorItemEquipped<ESM4::Armor>(inventory, store, "CowboyHat02");
+        const bool weaponPreviouslyEquipped
+            = isFNVEditorItemEquipped<ESM4::Weapon>(inventory, store, "WeapNVVarmintRifle");
+        const bool ammunitionPreviouslyEquipped
+            = isFNVEditorItemEquipped<ESM4::Ammunition>(inventory, store, "Ammo556mm");
+
+        const bool outfitEquipped
+            = outfitAdded && equipFNVEditorItem<ESM4::Armor>(player, inventory, store, "VaultSuit21");
+        const bool headgearEquipped
+            = headgearAdded && equipFNVEditorItem<ESM4::Armor>(player, inventory, store, "CowboyHat02");
+        const bool weaponEquipped
+            = rifleAdded && equipFNVEditorItem<ESM4::Weapon>(player, inventory, store, "WeapNVVarmintRifle");
+        const bool ammunitionEquipped
+            = ammo556Added && equipFNVEditorItem<ESM4::Ammunition>(player, inventory, store, "Ammo556mm");
+        player.getClass().getCreatureStats(player).setDrawState(MWMechanics::DrawState::Weapon);
+
+        // Fallback records keep the save usable if a partial content stack omits one of the core retail records.
+        // Never add both representations: a complete FalloutNV.esm load receives only the authored items above.
+        int proofAdded = 0;
+        if (!pistolAdded)
+            proofAdded += addProofInventoryItem(inventory, "FNV_PROOF_9MM_PISTOL", 1) ? 1 : 0;
+        if (!rifleAdded)
+            proofAdded += addProofInventoryItem(inventory, "FNV_PROOF_VARMINT_RIFLE", 1) ? 1 : 0;
+        if (!ammo9mmAdded)
+            proofAdded += addProofInventoryItem(inventory, "FNV_PROOF_9MM_AMMO", 60) ? 1 : 0;
+        if (!stimpakAdded)
+            proofAdded += addProofInventoryItem(inventory, "FNV_PROOF_STIMPAK", 5) ? 1 : 0;
+        if (!bobbyPinAdded)
+            proofAdded += addProofInventoryItem(inventory, "FNV_PROOF_BOBBY_PIN", 5) ? 1 : 0;
+        if (!capsAdded)
+            proofAdded += addProofInventoryItem(inventory, "FNV_PROOF_CAPS", 75) ? 1 : 0;
 
         Log(Debug::Info) << "FNV/ESM4 proof: level-1 Courier profile applied level=" << stats.getLevel()
                          << " attributes=8 skills=" << ESM::Skill::Length << " starterItemKinds=" << added
-                         << " proofStarterItemKinds=" << proofAdded;
+                         << " proofStarterItemKinds=" << proofAdded
+                         << " visualOutfit=VaultSuit21 visualHeadgear=CowboyHat02"
+                         << " visualWeapon=WeapNVVarmintRifle"
+                         << " inventoryCounts={VaultSuit21:" << inventory.count(findEsm4EditorId<ESM4::Armor>(
+                                store, "VaultSuit21"))
+                         << ",CowboyHat02:" << inventory.count(findEsm4EditorId<ESM4::Armor>(store, "CowboyHat02"))
+                         << ",WeapNV9mmPistol:"
+                         << inventory.count(findEsm4EditorId<ESM4::Weapon>(store, "WeapNV9mmPistol"))
+                         << ",WeapNVVarmintRifle:"
+                         << inventory.count(findEsm4EditorId<ESM4::Weapon>(store, "WeapNVVarmintRifle"))
+                         << ",Ammo9mm:"
+                         << inventory.count(findEsm4EditorId<ESM4::Ammunition>(store, "Ammo9mm"))
+                         << ",Ammo556mm:"
+                          << inventory.count(findEsm4EditorId<ESM4::Ammunition>(store, "Ammo556mm")) << "}"
+                          << " preexistingEquipped={outfit:" << outfitPreviouslyEquipped
+                          << ",headgear:" << headgearPreviouslyEquipped << ",weapon:"
+                          << weaponPreviouslyEquipped << ",ammunition:" << ammunitionPreviouslyEquipped << "}"
+                          << " equipped={outfit:" << outfitEquipped << ",headgear:" << headgearEquipped
+                         << ",weapon:" << weaponEquipped << ",ammunition:" << ammunitionEquipped << "}"
+                         << " status="
+                         << (outfitEquipped && headgearEquipped && weaponEquipped && ammunitionEquipped ? "pass"
+                                                                                                     : "fail");
     }
 
     void resetFNVProofCamera(MWBase::World& world)
@@ -3713,7 +3814,7 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
 
         return values;
     };
-    static const std::vector<int> proofScreenshotFrames = getProofFrames("OPENMW_PROOF_SCREENSHOT_FRAME");
+    static std::vector<int> proofScreenshotFrames = getProofFrames("OPENMW_PROOF_SCREENSHOT_FRAME");
     static const std::vector<WorldViewerTimeKeyframe> worldViewerTimeSequence
         = getWorldViewerTimeSequence();
     static const std::vector<WorldViewerCameraAngleKeyframe> worldViewerCameraAngleSequence
@@ -3728,8 +3829,10 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
     static const std::vector<int> proofInventoryPaneIndices = getProofFrames("OPENMW_PROOF_INVENTORY_PANE_INDEX");
     static const int proofQuickSaveFrame = getProofFrame("OPENMW_PROOF_QUICKSAVE_FRAME");
     static const int proofSayFrame = getProofFrame("OPENMW_PROOF_SAY_FRAME");
-    static const std::vector<std::string> proofActorBatchTargets
+    static std::vector<std::string> proofActorBatchTargets
         = readWorldViewerStringList("OPENMW_PROOF_SAY_ACTORS");
+    static const std::vector<std::string> proofActorPoseGroups
+        = readWorldViewerStringList("OPENMW_PROOF_ACTOR_POSE_GROUPS");
     static const int proofTimedScript1Frame = getProofFrame("OPENMW_PROOF_TIMED_SCRIPT_1_FRAME");
     static const int proofTimedScript2Frame = getProofFrame("OPENMW_PROOF_TIMED_SCRIPT_2_FRAME");
     static std::size_t proofScreenshotFrameIndex = 0;
@@ -3759,6 +3862,19 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
     static int proofPinnedStagedActorLastLogFrame = -1000000;
     static std::size_t proofActorBatchIndex = static_cast<std::size_t>(-1);
     static MWWorld::Ptr proofActorBatchPrevious;
+    static bool proofActorBaseRosterExpanded = false;
+    static int proofActorBatchSelectedFrame = -1;
+    static std::size_t proofActorPoseBatchIndex = static_cast<std::size_t>(-1);
+    static std::size_t proofActorPoseIndex = 0;
+    static int proofActorPoseNextFrame = -1;
+    static bool proofActorPoseReturnedToIdle = false;
+    static bool proofActorPoseCycleComplete = false;
+    static bool proofActorPoseInventoryLogged = false;
+    static std::size_t proofActorPosePlayed = 0;
+    static std::size_t proofActorPoseSkipped = 0;
+    static int proofActorBatchCompleteFrame = -1;
+    static bool proofActorBatchCompletionLogged = false;
+    static bool proofActorBatchQuitRequested = false;
     static bool proofActorScreenshotWaitLogged = false;
     static int proofActorScreenshotLastResolveFrame = -1;
     static bool proofNeutralActorPreviewAttempted = false;
@@ -3889,13 +4005,25 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
         return compact;
     };
     const auto resolveProofActor = [&](const char* value) {
-        MWWorld::Ptr actor = mWorld->searchPtr(makeProofRefId(value), false, false);
-        if (!actor.isEmpty())
-            return actor;
-
         const std::string_view target(value);
         const ESM::RefId targetRefId = makeProofRefId(value);
         const std::optional<ESM::FormId> targetFormId = parseProofFormId(target);
+        const bool targetIsActorBase = mWorld->getStore().get<ESM4::Npc>().search(targetRefId) != nullptr
+            || mWorld->getStore().get<ESM4::Creature>().search(targetRefId) != nullptr;
+        const bool forceBaseSpawn = targetIsActorBase
+            && proofEnvEnabled("OPENMW_PROOF_ACTOR_BATCH_FORCE_BASE_SPAWN");
+        if (forceBaseSpawn && !proofActorBatchPrevious.isEmpty()
+            && proofActorBatchPrevious.getCellRef().getRefId() == targetRefId)
+        {
+            return proofActorBatchPrevious;
+        }
+
+        MWWorld::Ptr actor;
+        if (!forceBaseSpawn)
+            actor = mWorld->searchPtr(targetRefId, false, false);
+        if (!actor.isEmpty())
+            return actor;
+
         const std::string targetCompact = compactProofToken(target);
         const bool logActors = std::getenv("OPENMW_PROOF_LOG_ACTORS") != nullptr;
         int scanned = 0;
@@ -3904,6 +4032,8 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
 
         for (MWWorld::CellStore* cellstore : mWorld->getWorldScene().getActiveCells())
         {
+            if (forceBaseSpawn)
+                break;
             if (cellstore == nullptr)
                 continue;
 
@@ -3968,8 +4098,11 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
 
         if (found.isEmpty())
         {
-            Log(Debug::Warning) << "FNV/ESM4 proof: active-cell actor lookup failed for \"" << value
-                                << "\" scanned=" << scanned << " actors=" << actors;
+            if (forceBaseSpawn)
+                Log(Debug::Info) << "FNV/ESM4 proof: forcing isolated base-record spawn for \"" << value << "\"";
+            else
+                Log(Debug::Warning) << "FNV/ESM4 proof: active-cell actor lookup failed for \"" << value
+                                    << "\" scanned=" << scanned << " actors=" << actors;
 
             if (std::getenv("OPENMW_PROOF_PLACE_ACTOR_IF_MISSING") != nullptr)
             {
@@ -5263,6 +5396,442 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
         Log(Debug::Info) << "FNV/ESM4 proof: enabled god mode for deterministic proof capture";
     }
 
+    if (!proofActorBaseRosterExpanded && proofWorldReady && mWorld != nullptr
+        && proofEnvEnabled("OPENMW_PROOF_ACTOR_BATCH_ALL_LOADED"))
+    {
+        struct LoadedActorBase
+        {
+            ESM::FormId mId;
+            std::string mType;
+            std::string mEditorId;
+            std::string mName;
+            std::string mVisualSignature;
+            std::string mSelectedWeapon;
+            std::uint32_t mFlags = 0;
+            int mRepresentativeScore = 0;
+            std::size_t mRepresentativeOfCount = 1;
+        };
+
+        const auto npcTemplateChain = [](const ESM4::Npc& base) {
+            std::vector<const ESM4::Npc*> records;
+            const ESM4::Npc* current = &base;
+            for (int depth = 0; current != nullptr && depth < 16; ++depth)
+            {
+                if (std::find(records.begin(), records.end(), current) != records.end())
+                    break;
+                records.push_back(current);
+                if (current->mBaseTemplate.isZeroOrUnset())
+                    break;
+                const ESM4::Npc* next = MWClass::ESM4Impl::resolveLevelled<ESM4::LevelledNpc, ESM4::Npc>(
+                    ESM::RefId(current->mBaseTemplate), 1);
+                if (next == nullptr || next == current)
+                    break;
+                current = next;
+            }
+            return records;
+        };
+        const auto chooseNpcTemplate = [](const std::vector<const ESM4::Npc*>& records, std::uint16_t flag) {
+            for (const ESM4::Npc* record : records)
+            {
+                if (record == nullptr)
+                    continue;
+                if (record->mIsTES4)
+                    return record;
+                if (record->mIsFONV && (record->mBaseConfig.fo3.templateFlags & flag) == 0)
+                    return record;
+                if (record->mIsFO4 && (record->mBaseConfig.fo4.templateFlags & flag) == 0)
+                    return record;
+                if (!record->mIsFONV && !record->mIsFO4
+                    && (record->mBaseConfig.tes5.templateFlags & flag) == 0)
+                    return record;
+            }
+            return static_cast<const ESM4::Npc*>(nullptr);
+        };
+        const auto makeNpcVisualSignature = [&](const ESM4::Npc& npc, std::string& selectedWeapon) {
+            const std::vector<const ESM4::Npc*> records = npcTemplateChain(npc);
+            const ESM4::Npc* traits = chooseNpcTemplate(records, ESM4::Npc::Template_UseTraits);
+            const ESM4::Npc* model = chooseNpcTemplate(records, ESM4::Npc::Template_UseModel);
+            const ESM4::Npc* inventory = chooseNpcTemplate(records, ESM4::Npc::Template_UseInventory);
+            if (traits == nullptr)
+                traits = &npc;
+            if (model == nullptr)
+                model = traits;
+
+            const bool female = traits->mIsFONV
+                ? (traits->mBaseConfig.fo3.flags & ESM4::Npc::FO3_Female) != 0
+                : (traits->mBaseConfig.tes5.flags & ESM4::Npc::TES5_Female) != 0;
+            const ESM4::Armor* dominantArmor = nullptr;
+            const ESM4::Clothing* dominantClothing = nullptr;
+            const ESM4::Weapon* mainWeapon = nullptr;
+            std::function<void(ESM::FormId, int)> addVisualItem;
+            addVisualItem = [&](ESM::FormId itemId, int depth) {
+                if (itemId.isZeroOrUnset() || depth > 16)
+                    return;
+                if (const ESM4::LevelledItem* levelled
+                    = mWorld->getStore().get<ESM4::LevelledItem>().search(ESM::RefId(itemId));
+                    levelled != nullptr && levelled->useAll())
+                {
+                    for (const ESM4::LVLO& entry : levelled->mLvlObject)
+                    {
+                        if (entry.level <= 1 && entry.item != 0)
+                            addVisualItem(ESM::FormId::fromUint32(entry.item), depth + 1);
+                    }
+                    return;
+                }
+
+                if (const ESM4::Armor* armor
+                    = MWClass::ESM4Impl::resolveLevelled<ESM4::LevelledItem, ESM4::Armor>(ESM::RefId(itemId), 1))
+                {
+                    if ((armor->mArmorFlags & ESM4::Armor::FO3_UpperBody) != 0)
+                    {
+                        dominantArmor = armor;
+                        dominantClothing = nullptr;
+                    }
+                    return;
+                }
+                if (const ESM4::Weapon* weapon
+                    = MWClass::ESM4Impl::resolveLevelled<ESM4::LevelledItem, ESM4::Weapon>(ESM::RefId(itemId), 1))
+                {
+                    if (!weapon->mModel.empty()
+                        && (mainWeapon == nullptr || weapon->mData.damage > mainWeapon->mData.damage))
+                        mainWeapon = weapon;
+                    return;
+                }
+                if (const ESM4::Clothing* clothing
+                    = MWClass::ESM4Impl::resolveLevelled<ESM4::LevelledItem, ESM4::Clothing>(ESM::RefId(itemId), 1))
+                {
+                    if ((clothing->mClothingFlags & ESM4::Armor::FO3_UpperBody) != 0)
+                    {
+                        dominantClothing = clothing;
+                        dominantArmor = nullptr;
+                    }
+                }
+            };
+
+            if (inventory != nullptr)
+            {
+                for (const ESM4::InventoryItem& item : inventory->mInventory)
+                    addVisualItem(ESM::FormId::fromUint32(item.item), 0);
+                if (const ESM4::Outfit* outfit
+                    = mWorld->getStore().get<ESM4::Outfit>().search(ESM::RefId(inventory->mDefaultOutfit)))
+                {
+                    for (ESM::FormId itemId : outfit->mInventory)
+                        addVisualItem(itemId, 0);
+                }
+            }
+            selectedWeapon = mainWeapon != nullptr ? mainWeapon->mEditorId : std::string();
+
+            const auto normalizedPath = [](std::string_view value) {
+                std::string result(value);
+                std::replace(result.begin(), result.end(), '\\', '/');
+                Misc::StringUtils::lowerCaseInPlace(result);
+                return result;
+            };
+            std::ostringstream signature;
+            signature << "NPC_";
+            if (dominantArmor != nullptr)
+            {
+                std::string bodyModel = normalizedPath(MWClass::ESM4Npc::chooseEquipmentModel(dominantArmor, female));
+                if (bodyModel.empty())
+                    bodyModel = Misc::StringUtils::lowerCase(dominantArmor->mEditorId);
+                signature << "|body=armor:" << bodyModel << "|powerArmor="
+                          << ((dominantArmor->mGeneralFlags & ESM4::Armor::FO3_PowerArmor) != 0);
+            }
+            else if (dominantClothing != nullptr)
+            {
+                std::string bodyModel
+                    = normalizedPath(MWClass::ESM4Npc::chooseEquipmentModel(dominantClothing, female));
+                if (bodyModel.empty())
+                    bodyModel = Misc::StringUtils::lowerCase(dominantClothing->mEditorId);
+                signature << "|body=clothing:" << bodyModel << "|powerArmor=0";
+            }
+            else
+                signature << "|body=naked|race=" << ESM::RefId(traits->mRace).toDebugString()
+                          << "|female=" << female << "|powerArmor=0";
+            return signature.str();
+        };
+        const auto creatureTemplateChain = [](const ESM4::Creature& base) {
+            std::vector<const ESM4::Creature*> records;
+            const ESM4::Creature* current = &base;
+            for (int depth = 0; current != nullptr && depth < 16; ++depth)
+            {
+                if (std::find(records.begin(), records.end(), current) != records.end())
+                    break;
+                records.push_back(current);
+                if (current->mBaseTemplate.isZeroOrUnset())
+                    break;
+                const ESM4::Creature* next
+                    = MWClass::ESM4Impl::resolveLevelled<ESM4::LevelledCreature, ESM4::Creature>(
+                        ESM::RefId(current->mBaseTemplate), 1);
+                if (next == nullptr || next == current)
+                    break;
+                current = next;
+            }
+            return records;
+        };
+        const auto makeCreatureVisualSignature = [&](const ESM4::Creature& creature) {
+            const std::vector<const ESM4::Creature*> records = creatureTemplateChain(creature);
+            const ESM4::CreatureVisualTemplate visual = ESM4::resolveCreatureVisualTemplate(records);
+            const auto normalizedPath = [](std::string_view value) {
+                std::string result(value);
+                std::replace(result.begin(), result.end(), '\\', '/');
+                Misc::StringUtils::lowerCaseInPlace(result);
+                return result;
+            };
+            std::vector<std::string> meshes;
+            if (visual.mModel != nullptr && !visual.mModel->mModel.empty())
+                meshes.push_back(normalizedPath(visual.mModel->mModel));
+            if (visual.mNif != nullptr)
+            {
+                for (const std::string& nif : visual.mNif->mNif)
+                    meshes.push_back(normalizedPath(nif));
+            }
+            if (meshes.empty())
+                return std::string();
+            if (visual.mBodyParts != nullptr)
+            {
+                for (ESM::FormId bodyPartId : visual.mBodyParts->mBodyParts)
+                {
+                    if (const ESM4::BodyPartData* bodyPart
+                        = mWorld->getStore().get<ESM4::BodyPartData>().search(ESM::RefId(bodyPartId));
+                        bodyPart != nullptr && !bodyPart->mModel.empty())
+                        meshes.push_back(normalizedPath(bodyPart->mModel));
+                }
+            }
+            std::sort(meshes.begin(), meshes.end());
+            meshes.erase(std::unique(meshes.begin(), meshes.end()), meshes.end());
+            std::ostringstream signature;
+            signature << "CREA";
+            for (const std::string& mesh : meshes)
+                signature << "|mesh=" << mesh;
+            return signature.str();
+        };
+        const auto representativeScore = [](std::string_view editorId, std::string_view name, std::uint32_t flags,
+                                             bool armed, bool unique) {
+            std::string label(editorId);
+            label.push_back(' ');
+            label.append(name);
+            Misc::StringUtils::lowerCaseInPlace(label);
+            int score = 0;
+            static constexpr std::array<std::string_view, 9> templateMarkers{
+                "dead", "corpse", "template", "test", "audio", "preset", "dummy", "leveled", "lvl"
+            };
+            for (std::string_view marker : templateMarkers)
+            {
+                if (label.find(marker) != std::string::npos)
+                    score -= 10000;
+            }
+            score += armed ? 200 : 0;
+            score += !name.empty() ? 100 : 0;
+            score += !editorId.empty() ? 25 : 0;
+            score += (flags & ESM::FLAG_Persistent) != 0 ? 50 : 0;
+            score += unique ? 50 : 0;
+            return score;
+        };
+
+        std::vector<LoadedActorBase> loadedActorBases;
+        const auto appendNpc = [&](const ESM4::Npc& npc) {
+            if (npc.mId.isZeroOrUnset() || (npc.mFlags & ESM::FLAG_Deleted) != 0)
+                return;
+            if (proofEnvEnabled("OPENMW_PROOF_ACTOR_BATCH_EXCLUDE_RAW_PLAYER_BASE")
+                && (npc.mId.toUint32() == 0x00000007u || npc.mEditorId == "Player"))
+                return;
+            std::string selectedWeapon;
+            const std::string signature = makeNpcVisualSignature(npc, selectedWeapon);
+            LoadedActorBase actor{
+                npc.mId, "NPC_", npc.mEditorId, npc.mFullName, signature, selectedWeapon, npc.mFlags
+            };
+            actor.mRepresentativeScore = representativeScore(npc.mEditorId, npc.mFullName, npc.mFlags,
+                !selectedWeapon.empty(), (npc.mBaseConfig.fo3.flags & 0x00000020u) != 0);
+            loadedActorBases.push_back(std::move(actor));
+        };
+        const auto appendCreature = [&](const ESM4::Creature& creature) {
+            if (creature.mId.isZeroOrUnset() || (creature.mFlags & ESM::FLAG_Deleted) != 0)
+                return;
+            const std::string signature = makeCreatureVisualSignature(creature);
+            if (signature.empty())
+                return;
+            LoadedActorBase actor{
+                creature.mId, "CREA", creature.mEditorId, creature.mFullName, signature, {}, creature.mFlags
+            };
+            actor.mRepresentativeScore
+                = representativeScore(creature.mEditorId, creature.mFullName, creature.mFlags, false, false);
+            loadedActorBases.push_back(std::move(actor));
+        };
+        for (const ESM4::Npc& npc : mWorld->getStore().get<ESM4::Npc>())
+            appendNpc(npc);
+        for (const ESM4::Creature& creature : mWorld->getStore().get<ESM4::Creature>())
+            appendCreature(creature);
+        std::stable_sort(loadedActorBases.begin(), loadedActorBases.end(), [](const auto& left, const auto& right) {
+            if (left.mType != right.mType)
+                return left.mType == "NPC_";
+            return left.mId.toUint32() < right.mId.toUint32();
+        });
+
+        const std::size_t totalAvailable = loadedActorBases.size();
+        const std::size_t totalNpcs = static_cast<std::size_t>(std::count_if(
+            loadedActorBases.begin(), loadedActorBases.end(), [](const LoadedActorBase& actor) {
+                return actor.mType == "NPC_";
+            }));
+        const std::size_t totalCreatures = totalAvailable - totalNpcs;
+        const bool representativeVisualTypes
+            = proofEnvEnabled("OPENMW_PROOF_ACTOR_BATCH_REPRESENTATIVE_VISUAL_TYPES");
+        std::vector<LoadedActorBase> selectionPool;
+        if (representativeVisualTypes)
+        {
+            std::unordered_map<std::string, std::size_t> signatureIndices;
+            selectionPool.reserve(loadedActorBases.size());
+            for (const LoadedActorBase& actor : loadedActorBases)
+            {
+                const auto [it, inserted]
+                    = signatureIndices.emplace(actor.mVisualSignature, selectionPool.size());
+                if (inserted)
+                    selectionPool.push_back(actor);
+                else
+                {
+                    LoadedActorBase& current = selectionPool[it->second];
+                    const std::size_t groupCount = current.mRepresentativeOfCount + 1;
+                    if (actor.mRepresentativeScore > current.mRepresentativeScore
+                        || (actor.mRepresentativeScore == current.mRepresentativeScore
+                            && actor.mId.toUint32() < current.mId.toUint32()))
+                        current = actor;
+                    current.mRepresentativeOfCount = groupCount;
+                }
+            }
+        }
+        else
+            selectionPool = loadedActorBases;
+        const std::size_t distinctVisualTypes = selectionPool.size();
+        const int configuredOffset = getProofFrame("OPENMW_PROOF_ACTOR_BATCH_OFFSET");
+        const int configuredLimit = getProofFrame("OPENMW_PROOF_ACTOR_BATCH_LIMIT");
+        const std::size_t offset = std::min<std::size_t>(
+            configuredOffset >= 0 ? static_cast<std::size_t>(configuredOffset) : 0, selectionPool.size());
+        const std::size_t remaining = selectionPool.size() - offset;
+        const std::size_t selectedCount = configuredLimit > 0
+            ? std::min<std::size_t>(static_cast<std::size_t>(configuredLimit), remaining)
+            : remaining;
+
+        std::vector<LoadedActorBase> selected;
+        selected.reserve(selectedCount);
+        selected.insert(selected.end(), selectionPool.begin() + offset, selectionPool.begin() + offset + selectedCount);
+        proofActorBatchTargets.clear();
+        proofActorBatchTargets.reserve(selected.size());
+        for (const LoadedActorBase& actor : selected)
+            proofActorBatchTargets.push_back(ESM::RefId(actor.mId).toDebugString());
+
+        if (proofEnvEnabled("OPENMW_PROOF_ACTOR_BATCH_AUTO_FRAMES"))
+        {
+            const int configuredFirst = getProofFrame("OPENMW_PROOF_ACTOR_BATCH_FIRST_FRAME");
+            const int configuredStep = getProofFrame("OPENMW_PROOF_ACTOR_BATCH_FRAMES_PER_ACTOR");
+            const int poseFramesEnv = getProofFrame("OPENMW_PROOF_ACTOR_POSE_FRAMES");
+            const int poseFrames = poseFramesEnv >= 1 ? poseFramesEnv : 12;
+            const int poseWindow = static_cast<int>(proofActorPoseGroups.size() + 2) * poseFrames;
+            const int firstFrame = configuredFirst >= 0
+                ? configuredFirst
+                : std::max<int>(static_cast<int>(frameNumber) + 60, std::max(0, proofSayFrame) + poseWindow + 60);
+            const int framesPerActor = configuredStep >= 1 ? configuredStep : std::max(90, poseWindow + 60);
+            proofScreenshotFrames.clear();
+            proofScreenshotFrames.reserve(selected.size());
+            for (std::size_t index = 0; index < selected.size(); ++index)
+            {
+                const std::uint64_t requested = static_cast<std::uint64_t>(firstFrame)
+                    + static_cast<std::uint64_t>(index) * static_cast<std::uint64_t>(framesPerActor);
+                proofScreenshotFrames.push_back(static_cast<int>(
+                    std::min<std::uint64_t>(requested, static_cast<std::uint64_t>(std::numeric_limits<int>::max()))));
+            }
+        }
+
+        const auto writeJsonString = [](std::ostream& stream, std::string_view value) {
+            stream << '"';
+            for (unsigned char ch : value)
+            {
+                switch (ch)
+                {
+                    case '"': stream << "\\\""; break;
+                    case '\\': stream << "\\\\"; break;
+                    case '\b': stream << "\\b"; break;
+                    case '\f': stream << "\\f"; break;
+                    case '\n': stream << "\\n"; break;
+                    case '\r': stream << "\\r"; break;
+                    case '\t': stream << "\\t"; break;
+                    default:
+                        if (ch < 0x20)
+                            stream << "\\u" << std::hex << std::setw(4) << std::setfill('0')
+                                   << static_cast<unsigned int>(ch) << std::dec << std::setfill(' ');
+                        else
+                            stream << static_cast<char>(ch);
+                        break;
+                }
+            }
+            stream << '"';
+        };
+        if (const char* rosterPath = std::getenv("OPENMW_PROOF_ACTOR_ROSTER_JSON"))
+        {
+            if (*rosterPath != '\0')
+            {
+                std::ofstream roster(rosterPath, std::ios::trunc);
+                if (!roster)
+                    Log(Debug::Error) << "FNV/ESM4 actor batch: failed to open roster path " << rosterPath;
+                else
+                {
+                    roster << "{\n  \"schema\": \"nikami-fnv-loaded-actor-roster/v1\",\n"
+                           << "  \"totalAvailable\": " << totalAvailable << ",\n"
+                           << "  \"totalNpcs\": " << totalNpcs << ",\n"
+                           << "  \"totalCreatures\": " << totalCreatures << ",\n"
+                           << "  \"representativeVisualTypes\": "
+                           << (representativeVisualTypes ? "true" : "false") << ",\n"
+                           << "  \"distinctVisualTypes\": " << distinctVisualTypes << ",\n"
+                           << "  \"offset\": " << offset << ",\n"
+                           << "  \"selectedCount\": " << selected.size() << ",\n"
+                           << "  \"actors\": [\n";
+                    for (std::size_t index = 0; index < selected.size(); ++index)
+                    {
+                        const LoadedActorBase& actor = selected[index];
+                        roster << "    {\"index\": " << index << ", \"type\": ";
+                        writeJsonString(roster, actor.mType);
+                        roster << ", \"form\": ";
+                        writeJsonString(roster, ESM::RefId(actor.mId).toDebugString());
+                        roster << ", \"editorId\": ";
+                        writeJsonString(roster, actor.mEditorId);
+                        roster << ", \"name\": ";
+                         writeJsonString(roster, actor.mName);
+                         roster << ", \"visualSignature\": ";
+                         writeJsonString(roster, actor.mVisualSignature);
+                         roster << ", \"selectedWeapon\": ";
+                         writeJsonString(roster, actor.mSelectedWeapon);
+                         roster << ", \"representativeOfCount\": " << actor.mRepresentativeOfCount
+                                << ", \"representativeScore\": " << actor.mRepresentativeScore
+                                << ", \"flags\": " << actor.mFlags << "}";
+                        if (index + 1 != selected.size())
+                            roster << ',';
+                        roster << '\n';
+                    }
+                    roster << "  ]\n}\n";
+                    Log(Debug::Info) << "FNV/ESM4 actor batch: wrote deterministic loaded roster path="
+                                     << rosterPath << " count=" << selected.size();
+                }
+            }
+        }
+
+        for (std::size_t index = 0; index < selected.size(); ++index)
+        {
+            const LoadedActorBase& actor = selected[index];
+            Log(Debug::Info) << "FNV/ESM4 actor roster: index=" << index << " type=" << actor.mType
+                             << " form=" << ESM::RefId(actor.mId).toDebugString() << " editor=\""
+                             << actor.mEditorId << "\" name=\"" << actor.mName << "\" selectedWeapon=\""
+                             << actor.mSelectedWeapon << "\" representativeOfCount=" << actor.mRepresentativeOfCount
+                             << " representativeScore=" << actor.mRepresentativeScore << " flags=0x" << std::hex
+                             << actor.mFlags << std::dec;
+        }
+        Log(Debug::Info) << "FNV/ESM4 actor batch: loaded roster ready totalAvailable=" << totalAvailable
+                          << " npcs=" << totalNpcs << " creatures=" << totalCreatures
+                          << " representativeVisualTypes=" << representativeVisualTypes
+                          << " distinctVisualTypes=" << distinctVisualTypes << " offset=" << offset
+                          << " selected=" << selected.size()
+                         << " screenshotFrames=" << proofScreenshotFrames.size();
+        proofActorBaseRosterExpanded = true;
+    }
+
     const bool proofRequiresActorForScreenshot = std::getenv("OPENMW_PROOF_REQUIRE_ACTOR_FOR_SCREENSHOT") != nullptr;
     const bool proofActorBatchActive = !proofActorBatchTargets.empty()
         && proofScreenshotFrameIndex < proofActorBatchTargets.size();
@@ -5291,6 +5860,15 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
         }
         proofActorBatchPrevious = MWWorld::Ptr();
         proofActorBatchIndex = proofScreenshotFrameIndex;
+        proofActorBatchSelectedFrame = static_cast<int>(frameNumber);
+        proofActorPoseBatchIndex = proofActorBatchIndex;
+        proofActorPoseIndex = 0;
+        proofActorPoseNextFrame = -1;
+        proofActorPoseReturnedToIdle = false;
+        proofActorPoseCycleComplete = proofActorPoseGroups.empty();
+        proofActorPoseInventoryLogged = false;
+        proofActorPosePlayed = 0;
+        proofActorPoseSkipped = 0;
         proofSayQueued = false;
         proofActorCameraAligned = false;
         proofActorCameraAlignedFrame = -1;
@@ -5329,7 +5907,9 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
     const bool proofOrbitBurstAlignReached = proofOrbitBurstPending
         && frameNumber >= static_cast<unsigned>(proofScreenshotFrames[proofScreenshotFrameIndex])
         && (!proofRequiresActorForScreenshot || proofActorScreenshotNeedsResolve);
-    const bool proofActorCameraAlignmentWindowOpen = !proofActorBatchActive
+    const bool proofEarlyActorAlignmentPending = proofActorBatchActive
+        && proofEnvEnabled("OPENMW_PROOF_ACTOR_VIEW_EARLY_ALIGN") && !proofActorCameraAligned;
+    const bool proofActorCameraAlignmentWindowOpen = proofEarlyActorAlignmentPending || !proofActorBatchActive
         || proofScreenshotFrameIndex >= proofScreenshotFrames.size()
         || frameNumber >= static_cast<unsigned>(proofScreenshotFrames[proofScreenshotFrameIndex]);
     if (proofEnvEnabled("OPENMW_PROOF_PIN_STAGED_ACTOR") && !proofPinnedStagedActor.isEmpty()
@@ -5369,7 +5949,9 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                                 << e.what();
         }
     }
-    if ((!proofSayQueued || proofOrbitBurstAlignReached || proofActorScreenshotNeedsResolve) && proofSayFrame >= 0
+    if ((!proofSayQueued || proofOrbitBurstAlignReached || proofActorScreenshotNeedsResolve
+            || proofEarlyActorAlignmentPending)
+        && proofSayFrame >= 0
         && frameNumber >= static_cast<unsigned>(proofSayFrame))
     {
         const char* proofSayFile = std::getenv("OPENMW_PROOF_SAY_FILE");
@@ -6520,6 +7102,125 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
         proofSayQueued = true;
     }
 
+    if (proofActorBatchActive && proofActorPoseBatchIndex == proofActorBatchIndex
+        && !proofActorPoseGroups.empty() && !proofActorBatchPrevious.isEmpty() && proofActorStagedForCamera
+        && proofActorCameraAligned && mWorld != nullptr && mMechanicsManager != nullptr)
+    {
+        MWRender::Animation* animation = mWorld->getAnimation(proofActorBatchPrevious);
+        if (!proofActorPoseInventoryLogged && animation != nullptr)
+        {
+            const std::vector<std::string> availableGroups = animation->getAnimationGroups();
+            std::ostringstream inventory;
+            const std::size_t inventoryLimit = std::min<std::size_t>(availableGroups.size(), 128);
+            for (std::size_t index = 0; index < inventoryLimit; ++index)
+            {
+                if (index != 0)
+                    inventory << ',';
+                inventory << availableGroups[index];
+            }
+            if (inventoryLimit != availableGroups.size())
+                inventory << ",...";
+            Log(Debug::Info) << "FNV/ESM4 actor pose inventory: actorIndex=" << proofActorBatchIndex
+                             << " target=\"" << proofActorBatchTargets[proofActorBatchIndex]
+                             << "\" availableCount=" << availableGroups.size() << " groups=[" << inventory.str()
+                             << "]";
+            if (proofActorBatchPrevious.getType() == ESM4::Npc::sRecordId)
+            {
+                const ESM4::Weapon* mainWeapon = MWClass::ESM4Npc::getEquippedWeapon(proofActorBatchPrevious);
+                if (mainWeapon != nullptr)
+                    proofActorBatchPrevious.getClass().getCreatureStats(proofActorBatchPrevious)
+                        .setDrawState(MWMechanics::DrawState::Weapon);
+                Log(Debug::Info) << "FNV/ESM4 actor representative weapon: actorIndex=" << proofActorBatchIndex
+                                 << " target=\"" << proofActorBatchTargets[proofActorBatchIndex]
+                                 << "\" selectedCount=" << (mainWeapon != nullptr ? 1 : 0) << " editor=\""
+                                 << (mainWeapon != nullptr ? mainWeapon->mEditorId : std::string()) << "\"";
+            }
+            proofActorPoseInventoryLogged = true;
+            const int startDelayEnv = getProofFrame("OPENMW_PROOF_ACTOR_POSE_START_DELAY_FRAMES");
+            const int startDelay = startDelayEnv >= 0 ? startDelayEnv : 12;
+            proofActorPoseNextFrame = static_cast<int>(frameNumber) + startDelay;
+        }
+
+        if (proofActorPoseInventoryLogged && !proofActorPoseCycleComplete && proofActorPoseNextFrame >= 0
+            && frameNumber >= static_cast<unsigned int>(proofActorPoseNextFrame))
+        {
+            const int poseFramesEnv = getProofFrame("OPENMW_PROOF_ACTOR_POSE_FRAMES");
+            const int poseFrames = poseFramesEnv >= 1 ? poseFramesEnv : 12;
+            if (proofActorPoseIndex < proofActorPoseGroups.size())
+            {
+                const std::string& requestedGroup = proofActorPoseGroups[proofActorPoseIndex];
+                std::vector<std::string_view> candidates{ requestedGroup };
+                if (requestedGroup == "stand")
+                    candidates.insert(candidates.end(), { "idle", "idle2" });
+                else if (requestedGroup == "kneel")
+                    candidates.insert(candidates.end(), { "2hrcrouch" });
+                else if (requestedGroup == "prone")
+                    candidates.insert(candidates.end(), { "floorsleepdynamicidle" });
+                else if (requestedGroup == "walk")
+                    candidates.insert(candidates.end(), { "walkforward", "forward" });
+                else if (requestedGroup == "talk")
+                    candidates.insert(candidates.end(), { "talk_handsatside_moving", "sitchairtalk", "idle2" });
+                else if (requestedGroup == "shoot")
+                    candidates.insert(candidates.end(), { "attack2", "attack1", "attack3" });
+                else if (requestedGroup == "wave" || requestedGroup == "gesture")
+                    candidates.insert(candidates.end(), { "wavehello", "idle2" });
+
+                std::string group;
+                if (animation != nullptr)
+                {
+                    for (std::string_view candidate : candidates)
+                    {
+                        if (animation->hasAnimation(candidate))
+                        {
+                            group = candidate;
+                            break;
+                        }
+                    }
+                }
+                const bool available = !group.empty();
+                const bool played = available
+                    && mMechanicsManager->playAnimationGroup(proofActorBatchPrevious, group, 1, 1, true);
+                if (played)
+                    ++proofActorPosePlayed;
+                else
+                    ++proofActorPoseSkipped;
+                Log(played ? Debug::Info : Debug::Warning)
+                    << "FNV/ESM4 actor pose gate: actorIndex=" << proofActorBatchIndex << " target=\""
+                    << proofActorBatchTargets[proofActorBatchIndex] << "\" poseIndex=" << proofActorPoseIndex
+                    << " group=\"" << requestedGroup << "\" resolvedGroup=\"" << group
+                    << "\" available=" << available << " played=" << played
+                    << " status=" << (played ? "pass" : "skip");
+                ++proofActorPoseIndex;
+                proofActorPoseNextFrame = static_cast<int>(frameNumber) + poseFrames;
+            }
+            else if (!proofActorPoseReturnedToIdle)
+            {
+                const bool available = animation != nullptr && animation->hasAnimation("idle");
+                const bool played = available
+                    && mMechanicsManager->playAnimationGroup(proofActorBatchPrevious, "idle", 1, 1, true);
+                Log(played ? Debug::Info : Debug::Warning)
+                    << "FNV/ESM4 actor pose gate: actorIndex=" << proofActorBatchIndex << " target=\""
+                    << proofActorBatchTargets[proofActorBatchIndex]
+                    << "\" group=\"idle\" phase=return-neutral available=" << available << " played=" << played
+                    << " status=" << (played ? "pass" : "skip");
+                proofActorPoseReturnedToIdle = true;
+                const int neutralFramesEnv = getProofFrame("OPENMW_PROOF_ACTOR_POSE_NEUTRAL_FRAMES");
+                proofActorPoseNextFrame
+                    = static_cast<int>(frameNumber) + (neutralFramesEnv >= 1 ? neutralFramesEnv : poseFrames);
+            }
+            else
+            {
+                proofActorPoseCycleComplete = true;
+                Log(Debug::Info) << "FNV/ESM4 actor pose cycle: actorIndex=" << proofActorBatchIndex
+                                 << " target=\"" << proofActorBatchTargets[proofActorBatchIndex]
+                                 << "\" requested=" << proofActorPoseGroups.size() << " played="
+                                 << proofActorPosePlayed << " skipped=" << proofActorPoseSkipped
+                                 << " selectedFrame=" << proofActorBatchSelectedFrame << " completeFrame="
+                                 << frameNumber << " status=complete";
+            }
+        }
+    }
+
     const char* proofDialogueTopic = std::getenv("OPENMW_PROOF_DIALOGUE_TOPIC");
     const int proofDialogueTopicDelay = std::max(1, getProofFrame("OPENMW_PROOF_DIALOGUE_TOPIC_DELAY"));
     if (!proofDialogueTopicQueued && proofSayQueued && proofDialogueTopic != nullptr && *proofDialogueTopic != '\0'
@@ -7490,6 +8191,8 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
     const bool proofPortraitCapturePending
         = proofScreenshotFrameReached || proofScreenshotReadyFramesReached || proofActorAlignedScreenshotReached;
     bool proofActorVisualReady = true;
+    const bool proofActorPoseReadyForScreenshot = !proofActorBatchActive || proofActorPoseGroups.empty()
+        || (proofActorPoseBatchIndex == proofActorBatchIndex && proofActorPoseCycleComplete);
     unsigned int proofActorVisibleDrawables = 0;
     unsigned int proofActorVisibleRigs = 0;
     unsigned int proofActorResolvedRigs = 0;
@@ -7736,6 +8439,25 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
             worldViewerTrace(frameNumber, "actor-draw-wait-lua-finish.end");
             return true;
         }
+        if (!proofActorPoseReadyForScreenshot)
+        {
+            static int proofActorPoseLastWaitLogFrame = -1000000;
+            if (static_cast<int>(frameNumber) - proofActorPoseLastWaitLogFrame >= 30)
+            {
+                proofActorPoseLastWaitLogFrame = static_cast<int>(frameNumber);
+                Log(Debug::Info) << "FNV/ESM4 actor pose gate: waiting before baseline screenshot actorIndex="
+                                 << proofActorBatchIndex << " poseIndex=" << proofActorPoseIndex << "/"
+                                 << proofActorPoseGroups.size() << " returnedToIdle="
+                                 << proofActorPoseReturnedToIdle << " frame=" << frameNumber;
+            }
+            worldViewerTrace(frameNumber, "actor-pose-wait-render.begin");
+            mViewer->renderingTraversals();
+            worldViewerTrace(frameNumber, "actor-pose-wait-render.end");
+            worldViewerTrace(frameNumber, "actor-pose-wait-lua-finish.begin");
+            mLuaWorker->finishUpdate(frameStart, frameNumber, *stats);
+            worldViewerTrace(frameNumber, "actor-pose-wait-lua-finish.end");
+            return true;
+        }
         if (!proofPortraitClear)
         {
             worldViewerTrace(frameNumber, "portrait-clear-wait-render.begin");
@@ -7845,6 +8567,28 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
     worldViewerTrace(frameNumber, "lua-worker-finish.begin");
     mLuaWorker->finishUpdate(frameStart, frameNumber, *stats);
     worldViewerTrace(frameNumber, "lua-worker-finish.end");
+
+    if (proofActorBaseRosterExpanded && !proofActorBatchCompletionLogged
+        && proofScreenshotFrameIndex >= proofActorBatchTargets.size())
+    {
+        proofActorBatchCompletionLogged = true;
+        proofActorBatchCompleteFrame = static_cast<int>(frameNumber);
+        Log(Debug::Info) << "FNV/ESM4 actor batch: complete actors=" << proofActorBatchTargets.size()
+                         << " screenshots=" << proofScreenshotFrameIndex << " frame=" << frameNumber;
+    }
+    if (!proofActorBatchQuitRequested && proofActorBatchCompletionLogged
+        && proofEnvEnabled("OPENMW_PROOF_ACTOR_BATCH_EXIT_AFTER_COMPLETE") && proofActorBatchCompleteFrame >= 0)
+    {
+        const int exitDelayEnv = getProofFrame("OPENMW_PROOF_ACTOR_BATCH_EXIT_DELAY_FRAMES");
+        const int exitDelay = exitDelayEnv >= 1 ? exitDelayEnv : 30;
+        if (static_cast<int>(frameNumber) >= proofActorBatchCompleteFrame + exitDelay)
+        {
+            proofActorBatchQuitRequested = true;
+            Log(Debug::Info) << "FNV/ESM4 actor batch: native captures flushed; exiting cleanly frame="
+                             << frameNumber;
+            mStateManager->requestQuit();
+        }
+    }
 
     if (!playableSessionQuitRequested && playableSessionFinished
         && proofEnvEnabled("OPENMW_PLAYABLE_SESSION_EXIT_AFTER_COMPLETE")

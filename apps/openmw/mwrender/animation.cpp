@@ -4417,6 +4417,36 @@ namespace MWRender
             stem.resize(dot);
         Misc::StringUtils::lowerCaseInPlace(stem);
 
+        if (stem.find("unequip") != std::string::npos)
+            return "unequip";
+        if (stem.find("equip") != std::string::npos)
+            return "equip";
+        if (stem.find("reload") != std::string::npos)
+            return "reload";
+        if (stem.find("attack") != std::string::npos)
+        {
+            if (stem.find("attackright") != std::string::npos)
+                return "attack2";
+            if (stem.find("attack3") != std::string::npos || stem.find("attack4") != std::string::npos
+                || stem.find("attack5") != std::string::npos || stem.find("attack6") != std::string::npos
+                || stem.find("attack7") != std::string::npos || stem.find("attack8") != std::string::npos
+                || stem.find("attack9") != std::string::npos)
+                return "attack3";
+            return "attack1";
+        }
+        if (stem.find("aim") != std::string::npos)
+            return "weaponpose";
+        if (stem.find("crouch") != std::string::npos || stem.find("kneel") != std::string::npos
+            || stem == "specialidle_sitcycle" || stem == "mtspecialidle_deactivateloop")
+            return "kneel";
+        if (stem.find("floorsleep") != std::string::npos || stem.find("prone") != std::string::npos
+            || stem == "specialidle_sleepcycle" || stem == "mtspecialidle_knockdownfacedown")
+            return "prone";
+        if (stem == "talking" || stem.starts_with("talk") || stem.find("_talk") != std::string::npos)
+            return "talk";
+        if (stem.find("wave") != std::string::npos || stem.find("gesture") != std::string::npos
+            || stem == "specialidle_mtponder" || stem == "specialidle_salutes")
+            return "wave";
         if (stem == "swimidle")
             return "swimidle";
         if (stem.find("flyaway") != std::string::npos)
@@ -4453,9 +4483,6 @@ namespace MWRender
             return "walkleft";
         if (Misc::StringUtils::ciEndsWith(stem, "right") || Misc::StringUtils::ciEndsWith(stem, "walkright"))
             return "walkright";
-        if (stem.find("attack") != std::string::npos)
-            return "attack1";
-
         return {};
     }
 
@@ -4542,8 +4569,26 @@ namespace MWRender
         textkeys.emplace(stop, group + ": stop");
     }
 
+    void addSyntheticOneShotTextKeys(SceneUtil::TextKeyMap& textkeys, const std::string& group)
+    {
+        constexpr float start = 0.f;
+        const float stop = inferFalloutTextKeyStop(textkeys, 1.f);
+        textkeys.emplace(start, group + ": start");
+        textkeys.emplace(stop, group + ": stop");
+    }
+
+    bool isSyntheticFalloutLoopingGroup(std::string_view group)
+    {
+        return group == "idle" || group == "idle2" || group == "stand" || group == "weaponpose"
+            || group == "swimidle" || group == "kneel" || group == "prone" || group == "walk"
+            || group == "talk" || group == "flyforward"
+            || group.starts_with("walk") || group.starts_with("run")
+            || group.starts_with("turn") || group.starts_with("sneak");
+    }
+
     std::shared_ptr<Animation::AnimSource> Animation::addSingleAnimSource(const std::string& kfname,
-        const std::string& baseModel, bool falloutProcedureIdle, std::string_view controllerOverlayKf)
+        const std::string& baseModel, bool falloutProcedureIdle, std::string_view controllerOverlayKf,
+        std::string_view falloutSemanticGroup)
     {
         if (!mResourceSystem->getVFS()->exists(kfname))
             return nullptr;
@@ -4600,19 +4645,40 @@ namespace MWRender
             || lowerBaseModel.find("meshes/creatures/") != std::string::npos;
         const bool isFonvAnim = isFonvActorAnim || isFonvCreatureAnim;
 
-        if (animsrc->mKeyframes && animsrc->mKeyframes->mTextKeys.empty()
-            && !animsrc->mKeyframes->mKeyframeControllers.empty() && isFonvCreatureAnim)
+        if (animsrc->mKeyframes && !animsrc->mKeyframes->mKeyframeControllers.empty() && isFonvAnim)
         {
             const std::string group = getFalloutSyntheticGroupFromKf(kfname);
-            if (!group.empty())
+            if (!group.empty() && !animsrc->mKeyframes->mTextKeys.hasGroupStart(group))
             {
                 osg::ref_ptr<SceneUtil::KeyframeHolder> keyframes
                     = new SceneUtil::KeyframeHolder(*animsrc->mKeyframes, osg::CopyOp::SHALLOW_COPY);
-                addSyntheticLoopingTextKeys(keyframes->mTextKeys, group);
+                if (isSyntheticFalloutLoopingGroup(group))
+                    addSyntheticLoopingTextKeys(keyframes->mTextKeys, group);
+                else
+                    addSyntheticOneShotTextKeys(keyframes->mTextKeys, group);
                 animsrc->mKeyframes = keyframes;
-                Log(Debug::Verbose) << "FNV/ESM4 diag: synthesized creature KF text key group '" << group
-                                 << "' for " << kfname;
+                Log(Debug::Verbose) << "FNV/ESM4 diag: synthesized "
+                                    << (isSyntheticFalloutLoopingGroup(group) ? "looping" : "one-shot")
+                                    << " KF text key group '" << group << "' for " << kfname;
             }
+        }
+        if (animsrc->mKeyframes && !animsrc->mKeyframes->mKeyframeControllers.empty()
+            && isFonvCreatureAnim && !falloutSemanticGroup.empty()
+            && !animsrc->mKeyframes->mTextKeys.hasGroupStart(falloutSemanticGroup))
+        {
+            // Creature directories contain many transitions and special idles which can expose the same retail
+            // groups. A caller that selected one exact same-rig KF gives it a proof-facing semantic alias, making
+            // source choice independent of recursive VFS iteration and of unrelated transition filenames.
+            osg::ref_ptr<SceneUtil::KeyframeHolder> keyframes
+                = new SceneUtil::KeyframeHolder(*animsrc->mKeyframes, osg::CopyOp::SHALLOW_COPY);
+            const std::string group(falloutSemanticGroup);
+            if (isSyntheticFalloutLoopingGroup(group))
+                addSyntheticLoopingTextKeys(keyframes->mTextKeys, group);
+            else
+                addSyntheticOneShotTextKeys(keyframes->mTextKeys, group);
+            animsrc->mKeyframes = keyframes;
+            Log(Debug::Verbose) << "FNV/ESM4 diag: aliased selected creature KF " << kfname
+                                << " to semantic group '" << group << "'";
         }
         if (animsrc->mKeyframes && !animsrc->mKeyframes->mKeyframeControllers.empty() && isFonvActorAnim)
         {
@@ -4752,7 +4818,13 @@ namespace MWRender
 
             osg::Node* node = found->second;
 
-            size_t blendMask = detectBlendMask(node, it->second->getName());
+            // FO3/FNV author the held-weapon transform as a root-level "Weapon" KF target. The scene-node match
+            // can resolve through a synthetic attachment helper, so the authored controller-map key is the stable
+            // retail contract here. Keep that track in the right-arm aim overlay; otherwise arms-only weaponpose
+            // playback silently drops the weapon transform while locomotion continues to drive the lower body.
+            const size_t blendMask = isFonvActorAnim && authoredBonename == "weapon"
+                ? BoneGroup_RightArm
+                : detectBlendMask(node, it->second->getName());
 
             // clone the controller, because each Animation needs its own ControllerSource
             osg::ref_ptr<SceneUtil::KeyframeController> cloned
@@ -4992,6 +5064,16 @@ namespace MWRender
     bool Animation::hasAnimation(std::string_view anim) const
     {
         return mSupportedAnimations.find(anim) != mSupportedAnimations.end();
+    }
+
+    std::vector<std::string> Animation::getAnimationGroups() const
+    {
+        std::vector<std::string> result;
+        result.reserve(mSupportedAnimations.size());
+        for (std::string_view group : mSupportedAnimations)
+            result.emplace_back(group);
+        std::sort(result.begin(), result.end());
+        return result;
     }
 
     bool Animation::isLoopingAnimation(std::string_view group) const

@@ -1929,8 +1929,23 @@ namespace
             groups.emplace_back("idle2");
             groups.emplace_back("idle");
         }
-        else if (stem == "mtidle" || stem == "pamtidle" || stem == "talk_handsatside_moving"
-            || stem == "talk_handsatside_still2" || stem == "2hrloiter" || stem == "2hrloiteronehanded"
+        else if (stem == "2hrcrouch")
+            groups.emplace_back("kneel");
+        else if (stem == "floorsleepdynamicidle")
+            groups.emplace_back("prone");
+        else if (stem == "talk_handsatside_moving")
+            groups.emplace_back("talk");
+        else if (stem == "wavehello")
+            groups.emplace_back("wave");
+        // Directional words on action clips describe the action variant, not locomotion. In particular,
+        // 2hrattackleft/right were being exposed as walkleft/right and, because later animation sources win,
+        // stealing the actor's authored locomotion source. The animation layer synthesizes the semantic attack,
+        // reload, equip, and unequip groups for these clips; do not also infer a looping movement group here.
+        else if (stem.find("attack") != std::string::npos || stem.find("reload") != std::string::npos
+            || stem.find("equip") != std::string::npos)
+            return;
+        else if (stem == "mtidle" || stem == "pamtidle" || stem == "talk_handsatside_still2"
+            || stem == "2hrloiter" || stem == "2hrloiteronehanded"
             || stem == "3rdp_specialidle_1hmidlela" || stem == "3rdp_specialidle_1hmidlelb"
             || stem == "dlcanch1hpistolpose" || Misc::StringUtils::ciEndsWith(stem, "idle"))
             groups.emplace_back("idle");
