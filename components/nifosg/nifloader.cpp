@@ -142,11 +142,12 @@ namespace
         return Misc::StringUtils::ciStartsWith(shapeName, "Tri ");
     }
 
-    bool isFalloutDismemberCapPartition(std::uint32_t bodyPart)
+    bool isFalloutConditionalDismemberCapPartition(std::uint32_t bodyPart)
     {
-        // FNV outfit meshes can use high body-part ids for intact clothing partitions. MeatCap shapes are
-        // still filtered by name; keep this broad high-id skip as an opt-in diagnostic only.
-        return std::getenv("OPENMW_FNV_SKIP_HIGH_DISMEMBER_PARTITIONS") != nullptr && bodyPart >= 100;
+        // Fallout 3/New Vegas BSDismember partitions reserve 101..113 for section caps and 201..213 for
+        // torso caps. They are conditional severed-limb surfaces and must not be drawn on an intact actor.
+        // Intact body sections use ids such as 1000..13000, so a broad high-id test corrupts normal clothing.
+        return (bodyPart >= 101 && bodyPart <= 113) || (bodyPart >= 201 && bodyPart <= 213);
     }
 
     bool containsAny(std::string_view value, std::initializer_list<std::string_view> needles)
@@ -4588,7 +4589,7 @@ namespace NifOsg
                                                  << partitions->mPartitions[partitionIndex].mTrueStrips.size()
                                                  << " in " << mFilename << " shape " << nifNode->mName;
                             if (isFalloutDismemberCapShape(nifNode->mName)
-                                || isFalloutDismemberCapPartition(part.mType))
+                                || isFalloutConditionalDismemberCapPartition(part.mType))
                             {
                                 Log(Debug::Verbose) << "FNV/ESM4 diag: skipped Fallout dismember cap shape "
                                                  << nifNode->mName << " partition type=" << part.mType

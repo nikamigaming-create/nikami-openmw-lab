@@ -5,6 +5,7 @@
 #include <components/nifosg/nifloader.hpp>
 #include <components/resource/bgsmfilemanager.hpp>
 #include <components/resource/imagemanager.hpp>
+#include <components/sceneutil/riggeometry.hpp>
 #include <components/sceneutil/serialize.hpp>
 #include <components/vfs/manager.hpp>
 
@@ -85,6 +86,29 @@ namespace
         unsigned int mCount = 0;
     };
 
+    struct PrimitiveSetCountVisitor : osg::NodeVisitor
+    {
+        PrimitiveSetCountVisitor()
+            : osg::NodeVisitor(TRAVERSE_ALL_CHILDREN)
+        {
+        }
+
+        void apply(osg::Node& node) override { traverse(node); }
+
+        void apply(osg::Drawable& drawable) override
+        {
+            if (const auto* geometry = dynamic_cast<const osg::Geometry*>(&drawable))
+                mCount += geometry->getNumPrimitiveSets();
+            else if (const auto* rig = dynamic_cast<const SceneUtil::RigGeometry*>(&drawable))
+            {
+                if (const osg::ref_ptr<osg::Geometry> source = rig->getSourceGeometry())
+                    mCount += source->getNumPrimitiveSets();
+            }
+        }
+
+        unsigned int mCount = 0;
+    };
+
     struct FalloutMaterialOnlyGeometry
     {
         explicit FalloutMaterialOnlyGeometry(std::string_view name)
@@ -119,6 +143,45 @@ namespace
         Nif::NiTriShapeData mData;
         Nif::NiMaterialProperty mMaterial;
         Nif::NiAlphaProperty mAlpha;
+    };
+
+    struct FalloutDismemberGeometry
+    {
+        FalloutDismemberGeometry()
+        {
+            init(mGeometry);
+            mGeometry.mName = "Object03:0";
+            mGeometry.mShaderProperty = Nif::BSShaderPropertyPtr(nullptr);
+            mGeometry.mAlphaProperty = Nif::NiAlphaPropertyPtr(nullptr);
+
+            mData.recType = Nif::RC_NiTriShapeData;
+            mData.mVertices = { osg::Vec3f(0.f, 0.f, 0.f), osg::Vec3f(1.f, 0.f, 0.f),
+                osg::Vec3f(0.f, 1.f, 0.f) };
+            mGeometry.mData = Nif::NiGeometryDataPtr(&mData);
+
+            init(static_cast<Nif::NiSkinInstance&>(mSkin));
+            mSkin.recType = Nif::RC_BSDismemberSkinInstance;
+            mSkin.mData = Nif::NiSkinDataPtr(&mSkinData);
+            mSkin.mPartitions = Nif::NiSkinPartitionPtr(&mPartitions);
+            mGeometry.mSkin = Nif::NiSkinInstancePtr(&mSkin);
+
+            init(mSkinData.mTransform);
+            constexpr std::array<std::uint16_t, 4> bodyPartTypes{ 0, 7000, 107, 205 };
+            for (std::uint16_t type : bodyPartTypes)
+            {
+                Nif::NiSkinPartition::Partition partition{};
+                partition.mTrueTriangles = { 0, 1, 2 };
+                mPartitions.mPartitions.push_back(std::move(partition));
+                mSkin.mParts.push_back({ type == 0 || type == 7000 ? std::uint16_t{ 257 } : std::uint16_t{ 256 },
+                    type });
+            }
+        }
+
+        Nif::NiTriShape mGeometry;
+        Nif::NiTriShapeData mData;
+        Nif::BSDismemberSkinInstance mSkin;
+        Nif::NiSkinData mSkinData;
+        Nif::NiSkinPartition mPartitions;
     };
 
     struct FindNamedNodeStateSetVisitor : osg::NodeVisitor
@@ -267,6 +330,23 @@ osg::Group {
                       VFS::Path::NormalizedView("meshes/architecture/test/world.nif"), mImageManager,
                       mMaterialManager),
             1u);
+    }
+
+    TEST_F(NifOsgLoaderTest, shouldHideOnlyConditionalFalloutDismemberCapPartitionsForIntactActors)
+    {
+        FalloutDismemberGeometry fixture;
+        Nif::NIFFile file(VFS::Path::NormalizedView("meshes/armor/test/generic-object-name.nif"));
+        file.mVersion = Nif::NIFFile::NIFVersion::VER_BGS;
+        file.mUserVersion = 11;
+        file.mBethVersion = Nif::NIFFile::BethVersion::BETHVER_FO3;
+        file.mRoots.push_back(&fixture.mGeometry);
+
+        osg::ref_ptr<osg::Node> result = Loader::load(file, &mImageManager, &mMaterialManager);
+        ASSERT_NE(result, nullptr);
+
+        PrimitiveSetCountVisitor visitor;
+        result->accept(visitor);
+        EXPECT_EQ(visitor.mCount, 2u);
     }
 
     TEST_F(NifOsgLoaderTest, shouldProtectAuthoredNonstandardNiAlphaBlendFromAncestorOverride)
