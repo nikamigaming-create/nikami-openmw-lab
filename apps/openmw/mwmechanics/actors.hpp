@@ -178,8 +178,13 @@ namespace MWMechanics
         float mTimerUpdateHello = 0;
         float mSneakTimer = 0; // Times update of sneak icon
         float mSneakSkillTimer = 0; // Times sneak skill progress from "avoid notice"
+        int mDialogueFacingActorId = -1;
 
         void updateVisibility(const MWWorld::Ptr& ptr, CharacterController& ctrl) const;
+
+        MWWorld::Ptr getDialogueActorForFacing(const MWWorld::Ptr& player) const;
+        void updateDialogueFacing(
+            const MWWorld::Ptr& player, const MWWorld::Ptr& dialogueActor, bool allowBodyTurn);
 
         void adjustMagicEffects(const MWWorld::Ptr& creature, float duration) const;
 

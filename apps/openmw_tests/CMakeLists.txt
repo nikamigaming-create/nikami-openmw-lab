@@ -23,6 +23,7 @@ file(GLOB UNITTEST_SRC_FILES
     mwrender/testplayervisualpolicy.cpp
 
     mwmechanics/testfalloutcombat.cpp
+    mwmechanics/testdialoguefacing.cpp
 
     mwscript/testscripts.cpp
 )

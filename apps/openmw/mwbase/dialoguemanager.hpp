@@ -55,6 +55,10 @@ namespace MWBase
 
         virtual bool startDialogue(const MWWorld::Ptr& actor, ResponseCallback* callback) = 0;
 
+        /// Return the actor selected by the most recent successful startDialogue call.
+        /// Callers interested in direct dialogue must also check that GM_Dialogue is the active GUI mode.
+        virtual const MWWorld::Ptr& getActor() const = 0;
+
         virtual bool inJournal(const ESM::RefId& topicId, const ESM::RefId& infoId) const = 0;
 
         virtual void addTopic(const ESM::RefId& topic) = 0;

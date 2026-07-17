@@ -40,6 +40,8 @@
 #include "../mwbase/windowmanager.hpp"
 #include "../mwbase/world.hpp"
 
+#include "../mwclass/esm4npc.hpp"
+
 #include "../mwmechanics/aibreathe.hpp"
 
 #include "../mwrender/vismask.hpp"
@@ -57,6 +59,7 @@
 #include "attacktype.hpp"
 #include "character.hpp"
 #include "creaturestats.hpp"
+#include "dialoguefacing.hpp"
 #include "greetingstate.hpp"
 #include "movement.hpp"
 #include "npcstats.hpp"
@@ -1518,9 +1521,97 @@ namespace MWMechanics
         }
     }
 
+    MWWorld::Ptr Actors::getDialogueActorForFacing(const MWWorld::Ptr& player) const
+    {
+        MWBase::WindowManager* const windowManager = MWBase::Environment::get().getWindowManager();
+        MWBase::DialogueManager* const dialogueManager = MWBase::Environment::get().getDialogueManager();
+        const bool dialogueModeActive
+            = windowManager != nullptr && windowManager->getMode() == MWGui::GM_Dialogue;
+
+        MWWorld::Ptr actor;
+        if (dialogueManager != nullptr)
+            actor = dialogueManager->getActor();
+
+        const bool actorAvailable = !actor.isEmpty() && actor.isInCell() && actor.getCellRef().getCount() > 0
+            && !actor.mRef->isDeleted();
+        const bool actorInPlayerCell
+            = actorAvailable && player.isInCell() && actor.getCell() == player.getCell();
+        if (!makeDialogueFacingPolicy(dialogueModeActive, actorAvailable, actorInPlayerCell, false).mTrackHead)
+            return {};
+
+        const auto registered = std::ranges::find_if(mActors,
+            [&](const Actor& candidate) { return !candidate.isInvalid() && candidate.getPtr() == actor; });
+        if (registered == mActors.end()
+            || registered->getPtr().getClass().getCreatureStats(registered->getPtr()).isDead())
+            return {};
+
+        return registered->getPtr();
+    }
+
+    void Actors::updateDialogueFacing(
+        const MWWorld::Ptr& player, const MWWorld::Ptr& dialogueActor, bool allowBodyTurn)
+    {
+        int activeActorId = -1;
+        if (!dialogueActor.isEmpty())
+            activeActorId = dialogueActor.getClass().getCreatureStats(dialogueActor).getActorId();
+
+        for (Actor& actor : mActors)
+        {
+            if (actor.isInvalid() || actor.getPtr() == player)
+                continue;
+
+            const MWWorld::Ptr& ptr = actor.getPtr();
+            const int actorId = ptr.getClass().getCreatureStats(ptr).getActorId();
+            CharacterController& controller = actor.getCharacterController();
+            const bool isDialogueActor = activeActorId >= 0 && actorId == activeActorId;
+
+            if (!isDialogueActor)
+            {
+                if (shouldClearDialogueFacing(actorId, activeActorId, mDialogueFacingActorId))
+                    controller.setHeadTrackTarget({});
+                continue;
+            }
+
+            const bool furnitureConstrained = ptr.getType() == ESM::REC_NPC_4
+                && MWClass::ESM4Npc::getFurnitureState(ptr) != MWClass::FalloutFurnitureState::None;
+            const DialogueFacingPolicy policy
+                = makeDialogueFacingPolicy(true, true, true, furnitureConstrained);
+            if (policy.mTrackHead)
+                controller.setHeadTrackTarget(player);
+
+            if (policy.mStopMovement)
+            {
+                Movement& movement = ptr.getClass().getMovementSettings(ptr);
+                movement.mPosition[0] = 0.f;
+                movement.mPosition[1] = 0.f;
+                movement.mPosition[2] = 0.f;
+                movement.mRotation[0] = 0.f;
+                movement.mRotation[1] = 0.f;
+                movement.mRotation[2] = 0.f;
+            }
+
+            if (allowBodyTurn && policy.mTurnBody)
+            {
+                const osg::Vec3f direction
+                    = player.getRefData().getPosition().asVec3() - ptr.getRefData().getPosition().asVec3();
+                if (direction.x() != 0.f || direction.y() != 0.f)
+                    zTurn(ptr, std::atan2(direction.x(), direction.y()), osg::DegreesToRadians(5.f));
+            }
+        }
+
+        mDialogueFacingActorId = activeActorId;
+    }
+
     void Actors::update(float duration, bool paused)
     {
-        if (!paused)
+        const MWWorld::Ptr player = getPlayer();
+        const MWWorld::Ptr dialogueActor = getDialogueActorForFacing(player);
+        if (paused)
+        {
+            updateDialogueFacing(player, dialogueActor, false);
+            return;
+        }
+
         {
             const float updateEquippedLightInterval = 1.0f;
 
@@ -1540,7 +1631,6 @@ namespace MWMechanics
             MWBase::World* const world = MWBase::Environment::get().getWorld();
             const bool showTorches = world->useTorches();
 
-            const MWWorld::Ptr player = getPlayer();
             const osg::Vec3f playerPos = player.getRefData().getPosition().asVec3();
 
             /// \todo move update logic to Actor class where appropriate
@@ -1673,6 +1763,9 @@ namespace MWMechanics
 
             if (Settings::game().mNPCsAvoidCollisions)
                 predictAndAvoidCollisions(duration);
+
+            // Dialogue is authoritative over AI, Lua controls, and collision avoidance for the active speaker.
+            updateDialogueFacing(player, dialogueActor, true);
 
             mTimerUpdateHeadTrack += duration;
             mTimerUpdateEquippedLight += duration;
@@ -2357,6 +2450,7 @@ namespace MWMechanics
         mIndex.clear();
         mActors.clear();
         mDeathCount.clear();
+        mDialogueFacingActorId = -1;
     }
 
     void Actors::updateMagicEffects(const MWWorld::Ptr& ptr) const

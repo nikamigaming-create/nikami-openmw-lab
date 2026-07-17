@@ -105,6 +105,7 @@ namespace MWDialogue
         bool isInChoice() const override;
 
         bool startDialogue(const MWWorld::Ptr& actor, ResponseCallback* callback) override;
+        const MWWorld::Ptr& getActor() const override { return mActor; }
 
         std::list<std::string> getAvailableTopics() override;
         int getTopicFlag(const ESM::RefId& topicId) const override;
