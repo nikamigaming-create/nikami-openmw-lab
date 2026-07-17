@@ -255,6 +255,9 @@ namespace
             case ESM::VER_100:
                 return far;
             case ESM::VER_094:
+            case ESM::VER_132:
+            case ESM::VER_133:
+            case ESM::VER_134:
             case ESM::VER_170:
                 return lod;
             default:
