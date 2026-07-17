@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cmath>
 #include <cstdint>
 #include <initializer_list>
@@ -47,6 +48,60 @@ namespace MWRender
     };
 
     inline constexpr std::uint32_t FonvPowerArmorGeneralFlag = 0x0020;
+
+    struct FonvRetailHolsterContract
+    {
+        std::uint8_t mAnimationType = 0xff;
+        std::uint32_t mSourceForm = 0;
+        std::uint32_t mEvaluatedSlot = 0;
+        std::uint32_t mEvaluatedState = 0;
+        std::string_view mFrameName;
+        std::string_view mParentName;
+        std::array<std::uint32_t, 9> mRotationBits{};
+        std::array<std::uint32_t, 3> mTranslationBits{};
+        std::uint32_t mScaleBits = 0;
+        std::string_view mCaptureSequence;
+    };
+
+    // These are the unmodified IEEE-754 words emitted by the xNVSE retail oracle. A weapon receives a contract only
+    // through its authored TESObjectWEAP::EWeaponType byte; uncaptured families fail closed instead of borrowing a
+    // nearby-looking transform.
+    inline constexpr std::array<FonvRetailHolsterContract, 3> FonvRetailHolsterContracts{ {
+        { 3, 0x000e3778, 5, 0, "Weapon", "Bip01 Pelvis",
+            { 3209060608, 3206663839, 3137485292, 3206659353, 1061569791, 1023527333, 3164042662,
+                1020489499, 3212828405 },
+            { 1071143469, 3223221091, 3245862991 }, 1065353218,
+            "ringo-sidearm-idle-smoke" },
+        { 5, 0x0007ea24, 5, 0, "Weapon", "Bip01 Spine2",
+            { 3210826934, 3203525720, 1026989424, 3189668151, 1045015346, 3212302068, 1055242061,
+                3210471966, 3195822950 },
+            { 1100293858, 3239811472, 3235687431 }, 1065353217,
+            "sunny-smiles-idle-smoke" },
+        { 6, 0x000e9c3b, 5, 0, "Weapon", "Bip01 Spine2",
+            { 1065318487, 1027137190, 3174802633, 3175280776, 1025547984, 3212804936, 3174115547,
+                1065323204, 1026102809 },
+            { 1088343032, 1074830907, 1068977381 }, 1065353218,
+            "trooper-automatic-holster-capture-20260717" },
+    } };
+
+    inline const FonvRetailHolsterContract* getFonvRetailHolsterContract(std::uint8_t animationType)
+    {
+        const auto found = std::find_if(FonvRetailHolsterContracts.begin(), FonvRetailHolsterContracts.end(),
+            [animationType](const FonvRetailHolsterContract& contract) {
+                return contract.mAnimationType == animationType;
+            });
+        return found == FonvRetailHolsterContracts.end() ? nullptr : &*found;
+    }
+
+    template <std::size_t Size>
+    constexpr std::array<float, Size> decodeFonvRetailFloatBits(
+        const std::array<std::uint32_t, Size>& bits)
+    {
+        std::array<float, Size> result{};
+        for (std::size_t index = 0; index < Size; ++index)
+            result[index] = std::bit_cast<float>(bits[index]);
+        return result;
+    }
 
     inline bool hasFonvPowerArmorGeneralFlag(std::uint32_t generalFlags)
     {

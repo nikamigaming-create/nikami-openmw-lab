@@ -8697,6 +8697,36 @@ namespace MWRender
                          << " target=\"" << targetName << "\" gate=weapon-draw-state-attachment";
     }
 
+    bool ESM4NpcAnimation::applyRetailWeaponHolsterContract(const ESM4::Weapon& weapon)
+    {
+        const FonvRetailHolsterContract* contract
+            = getFonvRetailHolsterContract(weapon.mData.animationType);
+        if (contract == nullptr)
+        {
+            Log(Debug::Error) << "FNV/ESM4 exact weapon-family attachment: actor=" << mPtr.toString()
+                              << " weapon=" << weapon.mEditorId
+                              << " animationType=" << static_cast<unsigned int>(weapon.mData.animationType)
+                              << " gate=missing-retail-holster-family-contract";
+            return false;
+        }
+
+        const std::array<float, 9> rotation = decodeFonvRetailFloatBits(contract->mRotationBits);
+        const std::array<float, 3> translation = decodeFonvRetailFloatBits(contract->mTranslationBits);
+        const float scale = std::bit_cast<float>(contract->mScaleBits);
+        const bool applied = setWeaponHolsterAttachment(
+            contract->mFrameName, contract->mParentName, rotation, translation, scale);
+        Log(applied ? Debug::Info : Debug::Error)
+            << "FNV/ESM4 exact weapon-family attachment: actor=" << mPtr.toString()
+            << " weapon=" << weapon.mEditorId
+            << " animationType=" << static_cast<unsigned int>(weapon.mData.animationType)
+            << " sourceForm=0x" << std::hex << contract->mSourceForm << std::dec
+            << " slot=" << contract->mEvaluatedSlot << " state=" << contract->mEvaluatedState
+            << " frame=\"" << contract->mFrameName << "\" parent=\"" << contract->mParentName
+            << "\" capture=\"" << contract->mCaptureSequence << "\" applied=" << applied
+            << " gate=retail-holster-family-contract";
+        return applied;
+    }
+
     bool ESM4NpcAnimation::refreshFalloutWeaponPart()
     {
         if (mFalloutWeaponPart != nullptr)
@@ -8736,8 +8766,13 @@ namespace MWRender
 
         mFalloutWeaponsShown
             = mPtr.getClass().getCreatureStats(mPtr).getDrawState() == MWMechanics::DrawState::Weapon;
-        if (mFalloutWeaponPart != nullptr && !mFalloutWeaponsShown)
-            mFalloutWeaponPart->setNodeMask(0);
+        if (mFalloutWeaponPart != nullptr)
+        {
+            if (mFalloutWeaponsShown)
+                showWeapons(true);
+            else if (!applyRetailWeaponHolsterContract(*mFalloutActionWeapon))
+                mFalloutWeaponPart->setNodeMask(0);
+        }
 
         const bool renderable = actorPartHasRenderableGeometry(mFalloutWeaponPart.get());
         Log(renderable ? Debug::Info : Debug::Error)
@@ -10868,8 +10903,13 @@ namespace MWRender
                 if (!authoredParent.empty())
                     mFalloutWeaponDrawBone = authoredParent;
                 mFalloutWeaponPart = attached;
-                if (attached != nullptr && !weaponDrawn)
-                    attached->setNodeMask(0);
+                if (attached != nullptr)
+                {
+                    if (weaponDrawn)
+                        showWeapons(true);
+                    else if (!applyRetailWeaponHolsterContract(*weapon))
+                        attached->setNodeMask(0);
+                }
             }
             const bool renderable = actorPartHasRenderableGeometry(attached.get());
             if (renderable)

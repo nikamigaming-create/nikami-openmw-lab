@@ -10,6 +10,7 @@
 #include <components/esm4/loadarmo.hpp>
 #include <components/esm3/loadweap.hpp>
 
+#include <bit>
 #include <memory>
 
 namespace MWRender
@@ -184,6 +185,57 @@ namespace MWRender
         EXPECT_FALSE(getFonvWeaponActionSource(0xff, 0, FonvWeaponAction::PrimaryAttack).has_value());
         EXPECT_FALSE(getFonvWeaponActionSource(1, 0, FonvWeaponAction::Reload).has_value());
         EXPECT_FALSE(getFonvWeaponActionSource(3, 23, FonvWeaponAction::Reload).has_value());
+    }
+
+    TEST(FalloutWeaponAnimationTest, preservesMeasuredRetailHolsterContractsBitExactlyWithoutFallback)
+    {
+        struct ExpectedContract
+        {
+            std::uint8_t mAnimationType;
+            std::uint32_t mSourceForm;
+            std::string_view mParentName;
+            std::array<std::uint32_t, 9> mRotationBits;
+            std::array<std::uint32_t, 3> mTranslationBits;
+            std::uint32_t mScaleBits;
+        };
+        static constexpr std::array<ExpectedContract, 3> expected{ {
+            { 3, 0x000e3778, "Bip01 Pelvis",
+                { 3209060608, 3206663839, 3137485292, 3206659353, 1061569791, 1023527333,
+                    3164042662, 1020489499, 3212828405 },
+                { 1071143469, 3223221091, 3245862991 }, 1065353218 },
+            { 5, 0x0007ea24, "Bip01 Spine2",
+                { 3210826934, 3203525720, 1026989424, 3189668151, 1045015346, 3212302068,
+                    1055242061, 3210471966, 3195822950 },
+                { 1100293858, 3239811472, 3235687431 }, 1065353217 },
+            { 6, 0x000e9c3b, "Bip01 Spine2",
+                { 1065318487, 1027137190, 3174802633, 3175280776, 1025547984, 3212804936,
+                    3174115547, 1065323204, 1026102809 },
+                { 1088343032, 1074830907, 1068977381 }, 1065353218 },
+        } };
+
+        for (const ExpectedContract& expectedContract : expected)
+        {
+            const FonvRetailHolsterContract* actual
+                = getFonvRetailHolsterContract(expectedContract.mAnimationType);
+            ASSERT_NE(actual, nullptr) << static_cast<unsigned int>(expectedContract.mAnimationType);
+            EXPECT_EQ(actual->mAnimationType, expectedContract.mAnimationType);
+            EXPECT_EQ(actual->mSourceForm, expectedContract.mSourceForm);
+            EXPECT_EQ(actual->mEvaluatedSlot, 5u);
+            EXPECT_EQ(actual->mEvaluatedState, 0u);
+            EXPECT_EQ(actual->mFrameName, "Weapon");
+            EXPECT_EQ(actual->mParentName, expectedContract.mParentName);
+            EXPECT_EQ(actual->mRotationBits, expectedContract.mRotationBits);
+            EXPECT_EQ(actual->mTranslationBits, expectedContract.mTranslationBits);
+            EXPECT_EQ(actual->mScaleBits, expectedContract.mScaleBits);
+            for (std::uint32_t bits : actual->mRotationBits)
+                EXPECT_EQ(std::bit_cast<std::uint32_t>(std::bit_cast<float>(bits)), bits);
+            for (std::uint32_t bits : actual->mTranslationBits)
+                EXPECT_EQ(std::bit_cast<std::uint32_t>(std::bit_cast<float>(bits)), bits);
+            EXPECT_EQ(std::bit_cast<std::uint32_t>(std::bit_cast<float>(actual->mScaleBits)), actual->mScaleBits);
+        }
+
+        for (std::uint8_t animationType : { 0, 1, 2, 4, 7, 8, 9, 10, 11, 12, 13, 0xff })
+            EXPECT_EQ(getFonvRetailHolsterContract(animationType), nullptr);
     }
 
     TEST(FalloutWeaponAnimationTest, preservesEveryDnamTypeAcrossTheMechanicsEncoding)

@@ -81,6 +81,7 @@ namespace MWRender
             bool faceGenFemale = false);
 
         void updateParts();
+        bool applyRetailWeaponHolsterContract(const ESM4::Weapon& weapon);
         bool refreshFalloutWeaponPart();
         void updatePartsTES4(const ESM4::Npc& traits);
         void updatePartsFONV(const ESM4::Npc& traits);
