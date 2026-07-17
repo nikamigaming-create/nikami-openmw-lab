@@ -5,13 +5,22 @@
 #include <cstdlib>
 #include <cctype>
 #include <functional>
+#include <limits>
 #include <string>
 
 #include <components/esm/attr.hpp>
+#include <components/esm4/loadalch.hpp>
+#include <components/esm4/loadammo.hpp>
 #include <components/esm4/loadarmo.hpp>
+#include <components/esm4/loadbook.hpp>
 #include <components/esm4/loadclot.hpp>
+#include <components/esm4/loadimod.hpp>
+#include <components/esm4/loadingr.hpp>
+#include <components/esm4/loadkeym.hpp>
+#include <components/esm4/loadligh.hpp>
 #include <components/esm4/loadlvli.hpp>
 #include <components/esm4/loadlvln.hpp>
+#include <components/esm4/loadmisc.hpp>
 #include <components/esm4/loadfurn.hpp>
 #include <components/esm4/loadnpc.hpp>
 #include <components/esm4/loadotft.hpp>
@@ -37,6 +46,7 @@
 #include "../mwworld/customdata.hpp"
 #include "../mwworld/esmstore.hpp"
 #include "../mwworld/esm4questruntime.hpp"
+#include "../mwworld/worldmodel.hpp"
 #include "../mwworld/actiontalk.hpp"
 #include "../mwworld/failedaction.hpp"
 
@@ -113,6 +123,43 @@ namespace MWClass
         return nullptr;
     }
 
+    class ESM4NpcContainerStore final : public MWWorld::ContainerStore
+    {
+    public:
+        template <class Record>
+        bool addInitialRecord(const Record& record, int count)
+        {
+            if (count <= 0)
+                return false;
+
+            ESM::CellRef cellRef = ESM::makeBlankCellRef();
+            cellRef.mRefID = ESM::RefId::formIdRefId(record.mId);
+            MWWorld::LiveCellRef<Record> liveRef(cellRef, &record);
+            const MWWorld::ConstPtr ptr(&liveRef);
+            const int type = getType(ptr);
+            for (MWWorld::ContainerStoreIterator item = begin(type); item != end(); ++item)
+            {
+                if (item->getCellRef().getRefId() != cellRef.mRefID)
+                    continue;
+                item->getCellRef().setCount(addItems(item->getCellRef().getCount(false), count));
+                flagAsModified();
+                return true;
+            }
+
+            addNewStack(ptr, count);
+            return true;
+        }
+
+        std::unique_ptr<ESM4NpcContainerStore> cloneForNpc() const
+        {
+            auto result = std::make_unique<ESM4NpcContainerStore>(*this);
+            result->updateRefNums();
+            return result;
+        }
+
+        std::unique_ptr<MWWorld::ContainerStore> clone() override { return cloneForNpc(); }
+    };
+
     class ESM4NpcCustomData : public MWWorld::TypedCustomData<ESM4NpcCustomData>
     {
     public:
@@ -127,7 +174,8 @@ namespace MWClass
         bool mIsFemale = false;
         MWMechanics::CreatureStats mCreatureStats;
         MWMechanics::Movement mMovement;
-        std::unique_ptr<MWWorld::ContainerStore> mContainerStore;
+        std::unique_ptr<ESM4NpcContainerStore> mContainerStore;
+        bool mContainerItemsRegistered = false;
 
         // TODO: Use InventoryStore instead (currently doesn't support ESM4 objects)
         std::vector<const ESM4::Armor*> mEquippedArmor;
@@ -145,7 +193,7 @@ namespace MWClass
     };
 
     ESM4NpcCustomData::ESM4NpcCustomData()
-        : mContainerStore(std::make_unique<MWWorld::ContainerStore>())
+        : mContainerStore(std::make_unique<ESM4NpcContainerStore>())
     {
     }
 
@@ -161,8 +209,8 @@ namespace MWClass
         , mIsFemale(other.mIsFemale)
         , mCreatureStats(other.mCreatureStats)
         , mMovement(other.mMovement)
-        , mContainerStore(other.mContainerStore ? other.mContainerStore->clone()
-                                                : std::make_unique<MWWorld::ContainerStore>())
+        , mContainerStore(other.mContainerStore ? other.mContainerStore->cloneForNpc()
+                                                : std::make_unique<ESM4NpcContainerStore>())
         , mEquippedArmor(other.mEquippedArmor)
         , mEquippedClothing(other.mEquippedClothing)
         , mEquippedWeapon(other.mEquippedWeapon)
@@ -797,7 +845,7 @@ namespace MWClass
             return true;
         };
         const auto logInventoryItem = [&](std::string_view source, const ESM4::Npc* owner, ESM::FormId itemId,
-                                      std::string_view result, std::string_view editor) {
+                                      std::int64_t count, std::string_view result, std::string_view editor) {
             if (!worldViewerActorTelemetryEnabled())
                 return;
 
@@ -807,17 +855,29 @@ namespace MWClass
                              << " source=\"" << source << "\""
                              << " owner=\"" << (owner != nullptr ? owner->mEditorId : std::string()) << "\""
                              << " item=" << ESM::RefId(itemId)
+                             << " count=" << count
                              << " result=\"" << result << "\""
                              << " editor=\"" << editor << "\"";
         };
+        const auto storeInventoryRecord = [&](const auto* record, int count) {
+            if (record == nullptr || count <= 0)
+                return false;
+
+            return data->mContainerStore->addInitialRecord(*record, count);
+        };
         const ESM4::Npc* inventoryStats = chooseStatsRecord(*data);
         const int inventoryLevel = inventoryStats != nullptr ? getLevel(*inventoryStats) : ESM4Impl::sDefaultLevel;
-        std::function<bool(ESM::FormId, std::string_view, const ESM4::Npc*, int)> equipInventoryItem;
-        equipInventoryItem = [&](ESM::FormId itemId, std::string_view source, const ESM4::Npc* owner,
+        std::function<bool(ESM::FormId, int, std::string_view, const ESM4::Npc*, int)> equipInventoryItem;
+        equipInventoryItem = [&](ESM::FormId itemId, int count, std::string_view source, const ESM4::Npc* owner,
                                  int depth) {
+            if (count <= 0)
+            {
+                logInventoryItem(source, owner, itemId, count, "invalid-count", {});
+                return false;
+            }
             if (depth > 16)
             {
-                logInventoryItem(source, owner, itemId, "levelled-depth-limit", {});
+                logInventoryItem(source, owner, itemId, count, "levelled-depth-limit", {});
                 return false;
             }
 
@@ -848,7 +908,19 @@ namespace MWClass
                     const ESM::FormId entryId = ESM::FormId::fromUint32(entry.item);
                     if (entryId == itemId)
                         continue;
-                    usedAny = equipInventoryItem(entryId, source, owner, depth + 1) || usedAny;
+                    if (entry.count <= 0)
+                    {
+                        logInventoryItem(source, owner, entryId, entry.count, "invalid-levelled-count", {});
+                        continue;
+                    }
+                    const std::int64_t nestedCount = static_cast<std::int64_t>(count) * entry.count;
+                    if (nestedCount > std::numeric_limits<int>::max())
+                    {
+                        logInventoryItem(source, owner, entryId, nestedCount, "levelled-count-overflow", {});
+                        continue;
+                    }
+                    usedAny = equipInventoryItem(entryId, static_cast<int>(nestedCount), source, owner, depth + 1)
+                        || usedAny;
                 }
                 return usedAny;
             }
@@ -859,29 +931,97 @@ namespace MWClass
             if (const ESM4::Armor* armor
                 = ESM4Impl::resolveLevelled<ESM4::LevelledItem, ESM4::Armor>(itemId, inventoryLevel))
             {
+                const bool stored = storeInventoryRecord(armor, count);
                 const bool added = addArmor(armor);
-                logInventoryItem(source, owner, itemId, added ? "armor" : "armor-duplicate", armor->mEditorId);
-                return added;
+                logInventoryItem(
+                    source, owner, itemId, count, added ? "armor" : "armor-duplicate", armor->mEditorId);
+                return stored || added;
             }
 
             if (const ESM4::Weapon* weapon
                 = ESM4Impl::resolveLevelled<ESM4::LevelledItem, ESM4::Weapon>(itemId, inventoryLevel))
             {
+                const bool stored = storeInventoryRecord(weapon, count);
                 considerEquippedWeapon(*data, weapon);
-                logInventoryItem(source, owner, itemId, "weapon", weapon->mEditorId);
-                return true;
+                logInventoryItem(source, owner, itemId, count, "weapon", weapon->mEditorId);
+                return stored;
             }
 
             if (const ESM4::Clothing* clothing
                 = ESM4Impl::resolveLevelled<ESM4::LevelledItem, ESM4::Clothing>(itemId, inventoryLevel))
             {
+                const bool stored = storeInventoryRecord(clothing, count);
                 const bool added = addClothing(clothing);
-                logInventoryItem(
-                    source, owner, itemId, added ? "clothing" : "clothing-duplicate", clothing->mEditorId);
-                return added;
+                logInventoryItem(source, owner, itemId, count, added ? "clothing" : "clothing-duplicate",
+                    clothing->mEditorId);
+                return stored || added;
             }
 
-            logInventoryItem(source, owner, itemId, "unresolved", {});
+            if (const ESM4::Ammunition* ammunition
+                = ESM4Impl::resolveLevelled<ESM4::LevelledItem, ESM4::Ammunition>(itemId, inventoryLevel))
+            {
+                const bool stored = storeInventoryRecord(ammunition, count);
+                logInventoryItem(source, owner, itemId, count, "ammunition", ammunition->mEditorId);
+                return stored;
+            }
+
+            if (const ESM4::Potion* potion
+                = ESM4Impl::resolveLevelled<ESM4::LevelledItem, ESM4::Potion>(itemId, inventoryLevel))
+            {
+                const bool stored = storeInventoryRecord(potion, count);
+                logInventoryItem(source, owner, itemId, count, "potion", potion->mEditorId);
+                return stored;
+            }
+
+            if (const ESM4::Book* book
+                = ESM4Impl::resolveLevelled<ESM4::LevelledItem, ESM4::Book>(itemId, inventoryLevel))
+            {
+                const bool stored = storeInventoryRecord(book, count);
+                logInventoryItem(source, owner, itemId, count, "book", book->mEditorId);
+                return stored;
+            }
+
+            if (const ESM4::Ingredient* ingredient
+                = ESM4Impl::resolveLevelled<ESM4::LevelledItem, ESM4::Ingredient>(itemId, inventoryLevel))
+            {
+                const bool stored = storeInventoryRecord(ingredient, count);
+                logInventoryItem(source, owner, itemId, count, "ingredient", ingredient->mEditorId);
+                return stored;
+            }
+
+            if (const ESM4::ItemMod* itemMod
+                = ESM4Impl::resolveLevelled<ESM4::LevelledItem, ESM4::ItemMod>(itemId, inventoryLevel))
+            {
+                const bool stored = storeInventoryRecord(itemMod, count);
+                logInventoryItem(source, owner, itemId, count, "item-mod", itemMod->mEditorId);
+                return stored;
+            }
+
+            if (const ESM4::Key* key
+                = ESM4Impl::resolveLevelled<ESM4::LevelledItem, ESM4::Key>(itemId, inventoryLevel))
+            {
+                const bool stored = storeInventoryRecord(key, count);
+                logInventoryItem(source, owner, itemId, count, "key", key->mEditorId);
+                return stored;
+            }
+
+            if (const ESM4::Light* light
+                = ESM4Impl::resolveLevelled<ESM4::LevelledItem, ESM4::Light>(itemId, inventoryLevel))
+            {
+                const bool stored = storeInventoryRecord(light, count);
+                logInventoryItem(source, owner, itemId, count, "light", light->mEditorId);
+                return stored;
+            }
+
+            if (const ESM4::MiscItem* miscellaneous
+                = ESM4Impl::resolveLevelled<ESM4::LevelledItem, ESM4::MiscItem>(itemId, inventoryLevel))
+            {
+                const bool stored = storeInventoryRecord(miscellaneous, count);
+                logInventoryItem(source, owner, itemId, count, "miscellaneous", miscellaneous->mEditorId);
+                return stored;
+            }
+
+            logInventoryItem(source, owner, itemId, count, "unresolved", {});
             return false;
         };
         const auto equipOutfit = [&](ESM::FormId outfitId, std::string_view source, const ESM4::Npc* owner) {
@@ -909,7 +1049,7 @@ namespace MWClass
 
             bool usedAny = false;
             for (ESM::FormId itemId : outfit->mInventory)
-                usedAny = equipInventoryItem(itemId, source, owner, 0) || usedAny;
+                usedAny = equipInventoryItem(itemId, 1, source, owner, 0) || usedAny;
             return usedAny;
         };
         const auto equipNpcInventory = [&](const ESM4::Npc* inv, std::string_view source) {
@@ -930,7 +1070,15 @@ namespace MWClass
 
             bool usedAny = false;
             for (const ESM4::InventoryItem& item : inv->mInventory)
-                usedAny = equipInventoryItem(ESM::FormId::fromUint32(item.item), source, inv, 0) || usedAny;
+            {
+                const ESM::FormId itemId = ESM::FormId::fromUint32(item.item);
+                if (item.count == 0 || item.count > static_cast<std::uint32_t>(std::numeric_limits<int>::max()))
+                {
+                    logInventoryItem(source, inv, itemId, item.count, "invalid-container-count", {});
+                    continue;
+                }
+                usedAny = equipInventoryItem(itemId, static_cast<int>(item.count), source, inv, 0) || usedAny;
+            }
             usedAny = equipOutfit(inv->mDefaultOutfit, source, inv) || usedAny;
             return usedAny;
         };
@@ -948,6 +1096,14 @@ namespace MWClass
                 if (equipNpcInventory(candidate, "fallback-template"))
                     break;
             }
+        }
+
+        std::size_t inventoryStacks = 0;
+        std::int64_t inventoryCount = 0;
+        for (const MWWorld::ConstPtr item : *data->mContainerStore)
+        {
+            ++inventoryStacks;
+            inventoryCount += item.getCellRef().getCount();
         }
 
         initialiseActorStats(*data);
@@ -984,6 +1140,8 @@ namespace MWClass
                              << " female=" << data->mIsFemale
                              << " armor=" << data->mEquippedArmor.size()
                              << " clothing=" << data->mEquippedClothing.size()
+                             << " inventoryStacks=" << inventoryStacks
+                             << " inventoryCount=" << inventoryCount
                              << " weapon=\""
                              << (data->mEquippedWeapon != nullptr ? data->mEquippedWeapon->mEditorId : std::string())
                              << "\""
@@ -1204,8 +1362,15 @@ namespace MWClass
 
     MWWorld::ContainerStore& ESM4Npc::getContainerStore(const MWWorld::Ptr& ptr) const
     {
-        MWWorld::ContainerStore& store = *getCustomData(ptr).mContainerStore;
+        ESM4NpcCustomData& data = getCustomData(ptr);
+        MWWorld::ContainerStore& store = *data.mContainerStore;
         store.setPtr(ptr);
+        if (!data.mContainerItemsRegistered)
+        {
+            for (const MWWorld::Ptr item : store)
+                MWBase::Environment::get().getWorldModel()->registerPtr(item);
+            data.mContainerItemsRegistered = true;
+        }
         return store;
     }
 
