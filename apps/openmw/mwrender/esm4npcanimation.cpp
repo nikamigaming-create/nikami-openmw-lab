@@ -1469,6 +1469,32 @@ namespace MWRender
             return image;
         }
 
+        osg::ref_ptr<osg::Image> makeMeasuredFonvSkinFaceGen0(const ESM4::Npc& traits)
+        {
+            if (!traits.mIsFONV)
+                return nullptr;
+
+            // Retail's SKIN2000 hand draw binds a generated 32x32 A8R8G8B8
+            // FaceGenMap0 at D3D sampler s2. Every texel in all six mip levels is
+            // BGRA (103,104,102,127), whose complete mip-chain FNV-1a32 is
+            // 0x86EE2541. OSG samples GL_RGBA, so write the decoded channel order
+            // RGBA (102,104,103,127). This is the measured shared skin input, not
+            // an NPC-specific complexion texture; heads continue to use their
+            // authored facemod FaceGenMap0.
+            constexpr std::array<unsigned char, 4> rgba = { 102, 104, 103, 127 };
+            constexpr std::array<unsigned int, 5> mipOffsets = { 4096, 5120, 5376, 5440, 5456 };
+            constexpr std::size_t pixelCount = 32 * 32 + 16 * 16 + 8 * 8 + 4 * 4 + 2 * 2 + 1;
+            auto* data = new unsigned char[pixelCount * rgba.size()];
+            for (std::size_t pixel = 0; pixel < pixelCount; ++pixel)
+                std::copy(rgba.begin(), rgba.end(), data + pixel * rgba.size());
+
+            osg::ref_ptr<osg::Image> image = new osg::Image;
+            image->setImage(32, 32, 1, GL_RGBA, GL_RGBA, GL_UNSIGNED_BYTE, data, osg::Image::USE_NEW_DELETE);
+            image->setMipmapLevels(osg::Image::MipmapDataType(mipOffsets.begin(), mipOffsets.end()));
+            image->setFileName("runtime/falloutnv/generated-skin-facegen0/d3d9-86ee2541");
+            return image;
+        }
+
         std::string findFonvNpcBodyNormalTexture(
             Resource::ResourceSystem* resourceSystem, const ESM4::Npc& traits, bool isFemale)
         {
@@ -1681,13 +1707,19 @@ namespace MWRender
             resourceSystem->getSceneManager()->applyShaders(node);
         }
 
-        void overrideFalloutPartFaceGenTextures(std::string_view faceGen0, std::string_view faceGen1,
-            osg::Image* generatedFaceGen1, Resource::ResourceSystem* resourceSystem, osg::Node& node)
+        void overrideFalloutPartFaceGenTextures(std::string_view faceGen0, osg::Image* generatedFaceGen0,
+            std::string_view faceGen1, osg::Image* generatedFaceGen1,
+            Resource::ResourceSystem* resourceSystem, osg::Node& node)
         {
             bool changed = false;
             if (!faceGen0.empty())
             {
                 overrideFalloutPartTexture(faceGen0, "faceGenMap0", 4, resourceSystem, node);
+                changed = true;
+            }
+            else if (generatedFaceGen0 != nullptr)
+            {
+                overrideFalloutPartTexture(generatedFaceGen0, "faceGenMap0", 4, resourceSystem, node);
                 changed = true;
             }
             if (generatedFaceGen1 != nullptr)
@@ -2882,7 +2914,10 @@ namespace MWRender
                 traverse(geode);
             }
 
-            void apply(osg::Drawable& drawable) override
+            void apply(osg::Drawable& drawable) override { applyDrawable(drawable); }
+
+        private:
+            void applyDrawable(osg::Drawable& drawable)
             {
                 drawable.setCullingActive(false);
                 drawable.dirtyBound();
@@ -7379,15 +7414,40 @@ namespace MWRender
         {
         public:
             FalloutEquipmentSkinTextureVisitor(Resource::ResourceSystem* resourceSystem, std::string_view bodyTexture,
-                std::string_view faceTexture)
+                std::string_view faceTexture, std::string_view faceDetailTexture,
+                osg::Image* generatedSkinFaceGen0, std::string_view bodyDetailTexture,
+                osg::Image* generatedFaceGen1)
                 : osg::NodeVisitor(TRAVERSE_ALL_CHILDREN)
                 , mResourceSystem(resourceSystem)
                 , mBodyTexture(bodyTexture)
                 , mFaceTexture(faceTexture)
+                , mFaceDetailTexture(faceDetailTexture)
+                , mGeneratedSkinFaceGen0(generatedSkinFaceGen0)
+                , mBodyDetailTexture(bodyDetailTexture)
+                , mGeneratedFaceGen1(generatedFaceGen1)
             {
             }
 
-            void apply(osg::Drawable& drawable) override
+            void apply(osg::Node& node) override { traverse(node); }
+
+            void apply(osg::Geode& geode) override
+            {
+                for (unsigned int i = 0; i < geode.getNumDrawables(); ++i)
+                {
+                    if (osg::Drawable* drawable = geode.getDrawable(i))
+                        applyDrawable(*drawable);
+                }
+                // RigGeometry drawables are not dispatched by every supported
+                // OSG traversal path. They were handled explicitly above; do
+                // not traverse the Geode and apply the actor-local state twice.
+            }
+
+            void apply(osg::Drawable& drawable) override { applyDrawable(drawable); }
+
+            unsigned int mOverridden = 0;
+
+        private:
+            void applyDrawable(osg::Drawable& drawable)
             {
                 std::string name = drawable.getName();
                 for (unsigned int i = 0; i < drawable.getNumParents(); ++i)
@@ -7399,6 +7459,15 @@ namespace MWRender
                     }
                 }
 
+                bool skinShader = false;
+                const auto gatherShaderPrefix = [&](const osg::Object* object) {
+                    std::string shaderPrefix;
+                    if (object != nullptr && object->getUserValue("shaderPrefix", shaderPrefix)
+                        && Misc::StringUtils::ciEqual(shaderPrefix, "bs/skin"))
+                        skinShader = true;
+                };
+                gatherShaderPrefix(&drawable);
+
                 osg::StateSet* sourceStateSet = nullptr;
                 if (const SceneUtil::RigGeometry* rig = dynamic_cast<const SceneUtil::RigGeometry*>(&drawable))
                 {
@@ -7408,7 +7477,18 @@ namespace MWRender
                         name += " ";
                         name += source->getName();
                         sourceStateSet = source->getStateSet();
+                        gatherShaderPrefix(source.get());
                     }
+                }
+                for (unsigned int i = 0; i < drawable.getNumParents(); ++i)
+                    gatherShaderPrefix(drawable.getParent(i));
+                for (osg::Node* pathNode : getNodePath())
+                {
+                    if (pathNode == nullptr)
+                        continue;
+                    gatherShaderPrefix(pathNode);
+                    name += " ";
+                    name += pathNode->getName();
                 }
                 Misc::StringUtils::lowerCaseInPlace(name);
                 if (name.find("meatcap") != std::string::npos)
@@ -7419,41 +7499,59 @@ namespace MWRender
                     textureName = getDiffuseTextureName(sourceStateSet);
                 for (unsigned int i = 0; textureName.empty() && i < drawable.getNumParents(); ++i)
                     textureName = getDiffuseTextureName(drawable.getParent(i)->getStateSet());
+                for (osg::Node* pathNode : getNodePath())
+                {
+                    if (!textureName.empty())
+                        break;
+                    if (pathNode != nullptr)
+                        textureName = getDiffuseTextureName(pathNode->getStateSet());
+                }
+                Misc::StringUtils::lowerCaseInPlace(textureName);
 
                 const bool skinTexture = looksLikeFalloutSkinTexture(textureName);
                 const bool exposedSkinShape = looksLikeFalloutExposedSkinShape(name);
-                if (!skinTexture && !exposedSkinShape)
+                if (!skinShader && !(skinTexture && exposedSkinShape))
                     return;
 
                 const bool faceSurface = name.find("head") != std::string::npos
                     || textureName.find("facemods") != std::string::npos
                     || textureName.find("characters/head") != std::string::npos
                     || textureName.find("characters\\head") != std::string::npos;
-                const std::string_view texture = faceSurface && !mFaceTexture.empty() ? mFaceTexture : mBodyTexture;
-                if (texture.empty())
-                    return;
+                osg::ref_ptr<osg::StateSet> localStateSet;
+                if (const osg::StateSet* existing = drawable.getStateSet())
+                    localStateSet = new osg::StateSet(*existing, osg::CopyOp::SHALLOW_COPY);
+                else
+                    localStateSet = new osg::StateSet;
 
-                overrideTextureSlot(texture, "diffuseMap", 0, mResourceSystem, *drawable.getOrCreateStateSet());
-                if (SceneUtil::RigGeometry* rig = dynamic_cast<SceneUtil::RigGeometry*>(&drawable))
+                const std::string_view diffuseTexture
+                    = faceSurface && !mFaceTexture.empty() ? mFaceTexture : mBodyTexture;
+                if (!diffuseTexture.empty())
+                    overrideTextureSlot(diffuseTexture, "diffuseMap", 0, mResourceSystem, *localStateSet);
+
+                if (faceSurface && !mFaceDetailTexture.empty())
+                    overrideTextureSlot(mFaceDetailTexture, "faceGenMap0", 4, mResourceSystem, *localStateSet);
+                else if (mGeneratedSkinFaceGen0 != nullptr)
+                    overrideTextureSlot(mGeneratedSkinFaceGen0.get(), "faceGenMap0", 4, mResourceSystem, *localStateSet);
+
+                if (mGeneratedFaceGen1 != nullptr)
+                    overrideTextureSlot(mGeneratedFaceGen1.get(), "faceGenMap1", 5, mResourceSystem, *localStateSet);
+                else if (!mBodyDetailTexture.empty())
                 {
-                    if (osg::Geometry* source = rig->getSourceGeometry())
-                        overrideTextureSlot(texture, "diffuseMap", 0, mResourceSystem, *source->getOrCreateStateSet());
-                    for (unsigned int i = 0; i < 2; ++i)
-                    {
-                        if (osg::Geometry* geometry = rig->getRenderGeometry(i))
-                            overrideTextureSlot(
-                                texture, "diffuseMap", 0, mResourceSystem, *geometry->getOrCreateStateSet());
-                    }
+                    overrideTextureSlot(mBodyDetailTexture, "faceGenMap1", 5, mResourceSystem, *localStateSet);
                 }
+                localStateSet->setDefine("FALLOUT_ACTOR_LOCAL_FACEGEN", "1",
+                    osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
+                drawable.setStateSet(localStateSet);
                 ++mOverridden;
             }
 
-            unsigned int mOverridden = 0;
-
-        private:
             Resource::ResourceSystem* mResourceSystem;
             std::string_view mBodyTexture;
             std::string_view mFaceTexture;
+            std::string_view mFaceDetailTexture;
+            osg::ref_ptr<osg::Image> mGeneratedSkinFaceGen0;
+            std::string_view mBodyDetailTexture;
+            osg::ref_ptr<osg::Image> mGeneratedFaceGen1;
         };
 
         void forceFalloutActorPartVisible(osg::Node* attached, std::string_view model, const ESM4::Npc& traits)
@@ -7482,45 +7580,22 @@ namespace MWRender
                                  << " static=" << traits.mIsStarfield;
         }
 
-        void neutralizeFalloutSkinMaterial(osg::Node* attached, std::string_view model, const ESM4::Npc& traits)
-        {
-            if (attached == nullptr)
-                return;
-
-            TintMaterialVisitor visitor(osg::Vec4f(1.f, 1.f, 1.f, 1.f));
-            attached->accept(visitor);
-            Log(Debug::Verbose) << "FNV/ESM4 diag: neutralized skin material color on " << model << " for "
-                             << traits.mEditorId << " vertexColorArrays=" << visitor.mNeutralizedVertexColorArrays;
-        }
-
-        void tintFalloutSkinMaterial(
-            osg::Node* attached, std::string_view model, const ESM4::Npc& traits, const osg::Vec4f& tint)
-        {
-            if (attached == nullptr)
-                return;
-
-            TintMaterialVisitor visitor(tint);
-            attached->accept(visitor);
-            Log(Debug::Verbose) << "FNV/ESM4 diag: applied skin material tint (" << tint.x() << ", " << tint.y()
-                             << ", " << tint.z() << ") on " << model << " for " << traits.mEditorId
-                             << " vertexColorArrays=" << visitor.mNeutralizedVertexColorArrays;
-        }
-
         void overrideFalloutEquipmentSkinTextures(osg::Node* attached, std::string_view model, const ESM4::Npc& traits,
-            Resource::ResourceSystem* resourceSystem, std::string_view bodyTexture, std::string_view faceTexture)
+            Resource::ResourceSystem* resourceSystem, std::string_view bodyTexture, std::string_view faceTexture,
+            std::string_view faceDetailTexture, osg::Image* generatedSkinFaceGen0,
+            std::string_view bodyDetailTexture, osg::Image* generatedFaceGen1)
         {
-            if (attached == nullptr || (bodyTexture.empty() && faceTexture.empty()))
+            if (attached == nullptr || (bodyTexture.empty() && faceTexture.empty() && faceDetailTexture.empty()
+                    && generatedSkinFaceGen0 == nullptr && bodyDetailTexture.empty() && generatedFaceGen1 == nullptr))
                 return;
 
-            FalloutEquipmentSkinTextureVisitor visitor(resourceSystem, bodyTexture, faceTexture);
+            FalloutEquipmentSkinTextureVisitor visitor(resourceSystem, bodyTexture, faceTexture, faceDetailTexture,
+                generatedSkinFaceGen0, bodyDetailTexture, generatedFaceGen1);
             attached->accept(visitor);
             if (visitor.mOverridden > 0)
-            {
-                Log(Debug::Verbose) << "FNV/ESM4 diag: overrode " << visitor.mOverridden
-                                 << " equipment skin drawable texture(s) on " << model << " for "
+                Log(Debug::Info) << "FNV/ESM4 actor skin: bound retail FaceGen layers on " << visitor.mOverridden
+                                 << " actor-local equipment skin drawable(s) on " << model << " for "
                                  << traits.mEditorId;
-                neutralizeFalloutSkinMaterial(attached, model, traits);
-            }
         }
 
         std::string formatFalloutWeaponSoundRefs(const ESM4::Weapon& weapon)
@@ -10046,6 +10121,7 @@ namespace MWRender
             && npcBodyTintWidth <= 16 && npcBodyTintHeight <= 16;
         osg::ref_ptr<osg::Image> npcGeneratedFaceGen1
             = npcBodyDetailIsTinyTint ? makeMeasuredFonvFaceGen1(traits) : nullptr;
+        osg::ref_ptr<osg::Image> npcGeneratedSkinFaceGen0 = makeMeasuredFonvSkinFaceGen0(traits);
         if (!npcFaceTexture.empty())
             Log(Debug::Verbose) << "FNV/ESM4 diag: using baked NPC face texture " << npcFaceTexture << " for "
                              << traits.mEditorId;
@@ -10068,6 +10144,10 @@ namespace MWRender
                              << npcBodyMaterialTint.z() << "); preserving race body material for " << traits.mEditorId;
         if (npcGeneratedFaceGen1 != nullptr)
             Log(Debug::Info) << "FNV/ESM4 diag: binding retail-measured generated FaceGen1 for "
+                             << traits.mEditorId;
+        if (npcGeneratedSkinFaceGen0 != nullptr)
+            Log(Debug::Info) << "FNV/ESM4 actor skin: binding retail-measured generated skin FaceGen0 "
+                             << "rgba=(102,104,103,127) fullMipD3D9FNV1a32=0x86EE2541 for "
                              << traits.mEditorId;
         if (!npcBodyNormalTexture.empty())
             Log(Debug::Verbose) << "FNV/ESM4 diag: using baked NPC body normal texture " << npcBodyNormalTexture
@@ -10158,14 +10238,14 @@ namespace MWRender
             if (attached != nullptr && isFonvRaceSkinSurface(bodyPart.mesh))
             {
                 forceFalloutActorPartVisible(attached.get(), bodyPart.mesh, traits);
-                if (!npcBodyDetailTexture.empty())
+                if (npcGeneratedSkinFaceGen0 != nullptr || !npcBodyDetailTexture.empty())
                 {
-                    Log(Debug::Verbose) << "FNV/ESM4 diag: binding "
+                    Log(Debug::Verbose) << "FNV/ESM4 actor skin: binding generated FaceGen0 and "
                                      << (npcGeneratedFaceGen1 != nullptr ? "generated" : "raw NPC bodymod")
                                      << " FaceGen1 " << npcBodyDetailTexture << " on " << bodyPart.mesh
                                      << " for " << traits.mEditorId;
-                    overrideFalloutPartFaceGenTextures({}, npcBodyDetailTexture, npcGeneratedFaceGen1.get(),
-                        mResourceSystem, *attached);
+                    overrideFalloutPartFaceGenTextures({}, npcGeneratedSkinFaceGen0.get(), npcBodyDetailTexture,
+                        npcGeneratedFaceGen1.get(), mResourceSystem, *attached);
                 }
                 if (!npcBodyNormalTexture.empty())
                 {
@@ -10236,7 +10316,7 @@ namespace MWRender
                                      << (npcGeneratedFaceGen1 != nullptr ? "generated" : "raw NPC bodymod")
                                      << " FaceGen1 " << npcBodyDetailTexture << " on " << headPart.mesh
                                      << " for " << traits.mEditorId;
-                overrideFalloutPartFaceGenTextures(npcFaceDetailTexture, npcBodyDetailTexture,
+                overrideFalloutPartFaceGenTextures(npcFaceDetailTexture, nullptr, npcBodyDetailTexture,
                     npcGeneratedFaceGen1.get(), mResourceSystem, *attached);
                 if (!npcFaceNormalTexture.empty())
                 {
@@ -10390,11 +10470,13 @@ namespace MWRender
 
             osg::ref_ptr<osg::Node> attached = insertPart(model);
             forceFalloutActorPartVisible(attached.get(), model, traits);
-            overrideFalloutEquipmentSkinTextures(
-                attached.get(), model, traits, mResourceSystem, npcBodyTexture, npcFaceTexture);
+            overrideFalloutEquipmentSkinTextures(attached.get(), model, traits, mResourceSystem, npcBodyTexture,
+                npcFaceTexture, npcFaceDetailTexture, npcGeneratedSkinFaceGen0.get(), npcBodyDetailTexture,
+                npcGeneratedFaceGen1.get());
             applyFaceGenEgmMorph(mResourceSystem, attached.get(), model, traits, {}, race, isFemale);
-            overrideFalloutEquipmentSkinTextures(
-                attached.get(), model, traits, mResourceSystem, npcBodyTexture, npcFaceTexture);
+            overrideFalloutEquipmentSkinTextures(attached.get(), model, traits, mResourceSystem, npcBodyTexture,
+                npcFaceTexture, npcFaceDetailTexture, npcGeneratedSkinFaceGen0.get(), npcBodyDetailTexture,
+                npcGeneratedFaceGen1.get());
             attachedEquipmentModels.emplace(std::move(key), attached);
             return std::make_pair(attached, true);
         };
