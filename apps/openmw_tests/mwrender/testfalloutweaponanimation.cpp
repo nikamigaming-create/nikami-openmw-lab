@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include "apps/openmw/mwrender/falloutanimationtargets.hpp"
 #include "apps/openmw/mwrender/falloutweaponanimation.hpp"
 
 #include <components/nif/controller.hpp>
@@ -84,6 +85,34 @@ namespace MWRender
         EXPECT_EQ(getFonvWeaponHandGripKf(3, 0xe6), "meshes/characters/_male/1hphandgrip1.kf");
         EXPECT_EQ(getFonvWeaponHandGripKf(5, 0xeb), "meshes/characters/_male/2hrhandgrip6.kf");
         EXPECT_TRUE(getFonvWeaponHandGripKf(3, 0xff).empty());
+    }
+
+    TEST(FalloutWeaponAnimationTest, distinguishesRequiredSkeletonTargetsFromOptionalVisualTargets)
+    {
+        EXPECT_TRUE(isFonvRequiredSkeletonControllerTarget("bip01"));
+        EXPECT_TRUE(isFonvRequiredSkeletonControllerTarget("bip01 l hand"));
+        EXPECT_TRUE(isFonvRequiredSkeletonControllerTarget("bip01_laser01"));
+        EXPECT_TRUE(isFonvRequiredSkeletonControllerTarget("weapon"));
+
+        EXPECT_FALSE(isFonvRequiredSkeletonControllerTarget("##357trigger"));
+        EXPECT_FALSE(isFonvRequiredSkeletonControllerTarget("eyesoneblue"));
+        EXPECT_FALSE(isFonvRequiredSkeletonControllerTarget("projectilenode_sonicbark"));
+        EXPECT_FALSE(isFonvRequiredSkeletonControllerTarget("screenstatic:0"));
+        EXPECT_FALSE(isFonvRequiredSkeletonControllerTarget("voicebox_talk:0"));
+        EXPECT_FALSE(isFonvRequiredSkeletonControllerTarget("assualtcarbine"));
+        EXPECT_FALSE(isFonvRequiredSkeletonControllerTarget("dome"));
+        EXPECT_FALSE(isFonvRequiredSkeletonControllerTarget("buzzsawblad"));
+
+        // Missing targets are fail-closed unless retail evidence placed them in
+        // the explicit optional-visual set.
+        EXPECT_TRUE(isFonvRequiredSkeletonControllerTarget("unknown_future_rig_target"));
+    }
+
+    TEST(FalloutWeaponAnimationTest, classifiesSecuritronSpin1AsAnExactAuthoredDuplicate)
+    {
+        EXPECT_EQ(getFonvExactDuplicateControllerTarget("bip01 spin1"), "bip01 spine1");
+        EXPECT_TRUE(getFonvExactDuplicateControllerTarget("bip01 spin01").empty());
+        EXPECT_TRUE(getFonvExactDuplicateControllerTarget("bip01 spine1").empty());
     }
 
     TEST(FalloutWeaponAnimationTest, handGripOverlayPreservesTwoHandAimWeaponController)

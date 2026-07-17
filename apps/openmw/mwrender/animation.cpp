@@ -1,4 +1,5 @@
 #include "animation.hpp"
+#include "falloutanimationtargets.hpp"
 #include "falloutweaponanimation.hpp"
 
 #include <algorithm>
@@ -3309,8 +3310,6 @@ namespace MWRender
             return { "bip01 luparmtwist", "bip01 l uparmtwist" };
         if (name == "bip01 r upperarmtwist")
             return { "bip01 ruparmtwist", "bip01 r uparmtwist" };
-        if (name == "bip01 spin1")
-            return { "bip01 spin01" };
         if (name == "screen01" || name == "screen01root")
             return { "bip01 screen01", "screen01root" };
         if (name == "screenstatic" || name == "screenstaticroot")
@@ -3321,56 +3320,19 @@ namespace MWRender
         return {};
     }
 
-    Animation::NodeMap::const_iterator findNodeMapBone(
-        const Animation::NodeMap& nodeMap, const std::string& name, std::string& resolvedName,
-        SceneUtil::NodeNameMatch* resolvedMatch = nullptr)
-    {
-        Animation::NodeMap::const_iterator found = nodeMap.find(name);
-        if (found != nodeMap.end())
-        {
-            resolvedName = found->first;
-            if (resolvedMatch != nullptr)
-                *resolvedMatch = { SceneUtil::NodeNameMatchKind::Exact, 900 };
-            return found;
-        }
-
-        Animation::NodeMap::const_iterator best = nodeMap.end();
-        SceneUtil::NodeNameMatch bestMatch;
-        bool ambiguous = false;
-        for (Animation::NodeMap::const_iterator it = nodeMap.begin(); it != nodeMap.end(); ++it)
-        {
-            const SceneUtil::NodeNameMatch match = SceneUtil::matchNodeName(name, it->first);
-            if (match.mScore > bestMatch.mScore)
-            {
-                best = it;
-                bestMatch = match;
-                ambiguous = false;
-            }
-            else if (match.mScore != 0 && match.mScore == bestMatch.mScore && best != nodeMap.end()
-                && best->second.get() != it->second.get())
-                ambiguous = true;
-        }
-
-        if (best != nodeMap.end() && !ambiguous)
-        {
-            resolvedName = best->first;
-            if (resolvedMatch != nullptr)
-                *resolvedMatch = bestMatch;
-            return best;
-        }
-        if (resolvedMatch != nullptr)
-            *resolvedMatch = {};
-        return nodeMap.end();
-    }
-
     Animation::NodeMap::const_iterator findFonvAnimationBone(
         const Animation::NodeMap& nodeMap, const std::string& name, std::string& resolvedName)
     {
         for (const std::string& alias : getFonvBoneAliases(name))
         {
-            Animation::NodeMap::const_iterator found = findNodeMapBone(nodeMap, alias, resolvedName);
+            // The alias table describes an explicit skeleton-dialect conversion. Keep this lookup exact so a
+            // broader numeric/semantic match cannot redirect an authored thumb segment onto an unrelated finger.
+            Animation::NodeMap::const_iterator found = nodeMap.find(alias);
             if (found != nodeMap.end())
+            {
+                resolvedName = found->first;
                 return found;
+            }
         }
 
         return nodeMap.end();
@@ -4737,11 +4699,19 @@ namespace MWRender
         const NodeMap& nodeMap = getNodeMap();
         const auto& controllerMap = animsrc->mKeyframes->mKeyframeControllers;
         unsigned int matchedControllers = 0;
-        unsigned int missingControllers = 0;
+        unsigned int missingRequiredControllers = 0;
+        unsigned int controllerCollisions = 0;
+        unsigned int exactControllers = 0;
+        unsigned int aliasedControllers = 0;
+        unsigned int deferredVisualControllers = 0;
+        unsigned int skippedExactDuplicateControllers = 0;
         unsigned int skippedSyntheticAttachmentHelperControllers = 0;
         unsigned int falloutActorBasisApplied = 0;
         unsigned int falloutActorBasisMissed = 0;
         unsigned int falloutActorBasisAudited = 0;
+        std::map<std::pair<std::size_t, std::string>, std::string> resolvedControllerAuthors;
+        const bool auditFalloutControllerTargets
+            = isFonvAnim && std::getenv("OPENMW_FNV_CONTROLLER_TARGET_AUDIT") != nullptr;
         const bool auditFalloutActorControllers = isFonvActorAnim
             && (lowerKf.find("locomotion/mtidle.kf") != std::string::npos
                 || lowerKf.find("locomotion\\mtidle.kf") != std::string::npos);
@@ -4763,39 +4733,87 @@ namespace MWRender
         {
             std::string bonename = Misc::StringUtils::lowerCase(it->first);
             const std::string authoredBonename = bonename;
-            SceneUtil::NodeNameMatch nodeNameMatch;
-            NodeMap::const_iterator found = isFonvAnim ? findNodeMapBone(nodeMap, bonename, bonename, &nodeNameMatch)
-                                                       : nodeMap.find(bonename);
-            if (found != nodeMap.end() && isFonvAnim
-                && nodeNameMatch.mKind != SceneUtil::NodeNameMatchKind::Exact)
+            const std::string_view duplicateOf = isFonvAnim
+                ? getFonvExactDuplicateControllerTarget(authoredBonename)
+                : std::string_view{};
+            if (!duplicateOf.empty())
             {
-                static unsigned int sNormalizedNodeMatchLogs = 0;
-                if (sNormalizedNodeMatchLogs < 96)
+                const bool canonicalTrackIsAuthored = std::any_of(controllerMap.begin(), controllerMap.end(),
+                    [duplicateOf](const auto& controller) {
+                        return Misc::StringUtils::lowerCase(controller.first) == duplicateOf;
+                    });
+                if (canonicalTrackIsAuthored)
                 {
-                    ++sNormalizedNodeMatchLogs;
-                    Log(Debug::Verbose) << "FNV/ESM4 diag: normalized KF target '" << authoredBonename << "' to '"
-                                     << bonename << "' match="
-                                     << SceneUtil::getNodeNameMatchKindName(nodeNameMatch.mKind)
-                                     << " score=" << nodeNameMatch.mScore << " for " << kfname;
+                    ++skippedExactDuplicateControllers;
+                    if (auditFalloutControllerTargets)
+                        Log(Debug::Info) << "FNV/ESM4 CONTROLLER TARGET AUDIT source=" << kfname << " authored='"
+                                         << authoredBonename << "' resolution=exact-authored-duplicate canonical='"
+                                         << duplicateOf << "'";
+                    Log(Debug::Verbose) << "FNV/ESM4: skipped exact authored duplicate controller target '"
+                                        << authoredBonename << "' because canonical target '" << duplicateOf
+                                        << "' is present in " << kfname;
+                    continue;
                 }
+            }
+            const std::vector<std::string> explicitAliases
+                = isFonvAnim ? getFonvBoneAliases(authoredBonename) : std::vector<std::string>{};
+            std::string resolutionKind = "missing";
+            NodeMap::const_iterator found = nodeMap.find(bonename);
+            if (found != nodeMap.end())
+            {
+                bonename = found->first;
+                resolutionKind = "exact";
+                ++exactControllers;
             }
             if (found == nodeMap.end() && isFonvAnim)
             {
-                const std::string originalName = bonename;
-                found = findFonvAnimationBone(nodeMap, originalName, bonename);
+                found = findFonvAnimationBone(nodeMap, authoredBonename, bonename);
                 if (found != nodeMap.end())
-                    Log(Debug::Verbose) << "FNV/ESM4 diag: aliased KF bone '" << originalName << "' to '" << bonename
-                                     << "' for " << kfname;
+                {
+                    resolutionKind = "explicit-alias";
+                    ++aliasedControllers;
+                    Log(Debug::Verbose) << "FNV/ESM4 diag: aliased KF bone '" << authoredBonename << "' to '"
+                                     << bonename << "' for " << kfname;
+                }
+            }
+            const bool requiredSkeletonTarget
+                = !isFonvAnim || isFonvRequiredSkeletonControllerTarget(authoredBonename);
+            if (found == nodeMap.end() && !requiredSkeletonTarget)
+                resolutionKind = "deferred-visual";
+            if (auditFalloutControllerTargets)
+            {
+                std::ostringstream aliases;
+                for (std::size_t aliasIndex = 0; aliasIndex < explicitAliases.size(); ++aliasIndex)
+                {
+                    if (aliasIndex != 0)
+                        aliases << ',';
+                    aliases << explicitAliases[aliasIndex];
+                }
+                Log(found != nodeMap.end() ? Debug::Info : Debug::Warning)
+                    << "FNV/ESM4 CONTROLLER TARGET AUDIT source=" << kfname << " authored='" << authoredBonename
+                    << "' resolution=" << resolutionKind << " resolved='"
+                    << (found != nodeMap.end() ? bonename : std::string("<none>")) << "' explicitAliases=["
+                    << aliases.str() << ']';
             }
             if (found == nodeMap.end())
             {
-                ++missingControllers;
-                if (isFonvAnim)
-                    Log(Debug::Verbose) << "FNV/ESM4: animation controller bone '" << bonename
-                                        << "' is absent from " << baseModel << " (referenced by " << kfname << ")";
+                if (isFonvAnim && !requiredSkeletonTarget)
+                {
+                    ++deferredVisualControllers;
+                    Log(Debug::Verbose) << "FNV/ESM4: deferred optional visual controller target '"
+                                        << authoredBonename << "' absent from assembled actor graph " << baseModel
+                                        << " (referenced by " << kfname << ")";
+                }
                 else
-                    Log(Debug::Warning) << "Warning: addAnimSource: can't find bone '" + bonename << "' in "
-                                        << baseModel << " (referenced by " << kfname << ")";
+                {
+                    ++missingRequiredControllers;
+                    if (isFonvAnim)
+                        Log(Debug::Verbose) << "FNV/ESM4: animation controller bone '" << bonename
+                                            << "' is absent from " << baseModel << " (referenced by " << kfname << ")";
+                    else
+                        Log(Debug::Warning) << "Warning: addAnimSource: can't find bone '" + bonename << "' in "
+                                            << baseModel << " (referenced by " << kfname << ")";
+                }
                 continue;
             }
             const std::string lowerResolvedBone = Misc::StringUtils::lowerCase(bonename);
@@ -4814,8 +4832,6 @@ namespace MWRender
                 }
                 continue;
             }
-            ++matchedControllers;
-
             osg::Node* node = found->second;
 
             // FO3/FNV author the held-weapon transform as a root-level "Weapon" KF target. The scene-node match
@@ -4888,7 +4904,31 @@ namespace MWRender
             }
             cloned->setSource(mAnimationTimePtr[blendMask]);
 
-            animsrc->mControllerMap[blendMask].insert(std::make_pair(bonename, cloned));
+            const bool didInsert
+                = animsrc->mControllerMap[blendMask].insert(std::make_pair(bonename, cloned)).second;
+            if (!didInsert)
+            {
+                ++controllerCollisions;
+                const auto author = resolvedControllerAuthors.find(std::make_pair(blendMask, bonename));
+                Log(isFonvAnim ? Debug::Error : Debug::Warning)
+                    << "Animation controller target collision in " << kfname << ": authored target '"
+                    << authoredBonename << "' and earlier target '"
+                    << (author != resolvedControllerAuthors.end() ? author->second : std::string("<unknown>"))
+                    << "' both resolved to '" << bonename << "' in blend mask " << blendMask
+                    << "; ignoring the later controller";
+                continue;
+            }
+            resolvedControllerAuthors.emplace(std::make_pair(blendMask, bonename), authoredBonename);
+            ++matchedControllers;
+        }
+        if (isFonvAnim && (missingRequiredControllers != 0 || controllerCollisions != 0))
+        {
+            Log(Debug::Error) << "FNV/ESM4 rejected partial animation source " << kfname << " for " << baseModel
+                              << ": exact=" << exactControllers << " explicitAliases=" << aliasedControllers
+                              << " missingRequired=" << missingRequiredControllers << " deferredVisual="
+                              << deferredVisualControllers << " collisions=" << controllerCollisions
+                              << ". Fallout controller targets must bind by exact authored name or exact explicit alias.";
+            return nullptr;
         }
         if (isFonvAnim)
         {
@@ -4926,14 +4966,17 @@ namespace MWRender
 
             Log(Debug::Verbose) << "FNV/ESM4 diag: animation source " << kfname << " bound " << matchedControllers << "/"
                              << controllerMap.size() << " controller(s) to " << baseModel << ", missing "
-                             << missingControllers << ", skippedSyntheticAttachmentHelpers "
-                             << skippedSyntheticAttachmentHelperControllers;
+                             << missingRequiredControllers << ", skippedSyntheticAttachmentHelpers "
+                             << skippedSyntheticAttachmentHelperControllers << ", collisions "
+                             << controllerCollisions << ", exact " << exactControllers << ", explicitAliases "
+                             << aliasedControllers << ", deferredVisual " << deferredVisualControllers
+                             << ", skippedExactDuplicates " << skippedExactDuplicateControllers;
             if (auditFalloutActorControllers)
                 Log(Debug::Verbose) << "FNV/ESM4 diag: actor controller audit result source=" << kfname
                                  << " basisApplied=" << falloutActorBasisApplied
                                  << " basisMissed=" << falloutActorBasisMissed
                                  << " matched=" << matchedControllers
-                                 << " missing=" << missingControllers;
+                                 << " missing=" << missingRequiredControllers;
             std::ostringstream groups;
             unsigned int groupCount = 0;
             for (const std::string& group : animsrc->getTextKeys().getGroups())
@@ -6651,8 +6694,7 @@ namespace MWRender
                     applyFalloutRootUpCorrection(root, correction);
                 };
 
-                std::string resolvedRoot;
-                Animation::NodeMap::const_iterator rootIt = findNodeMapBone(getNodeMap(), "bip01", resolvedRoot);
+                Animation::NodeMap::const_iterator rootIt = getNodeMap().find("bip01");
                 if (rootIt != getNodeMap().end())
                     correctRoot(rootIt->second.get());
                 if (mSkeleton != nullptr)
@@ -7393,7 +7435,8 @@ namespace MWRender
         if (found == nodeMap.end() && isFalloutActor(mPtr))
         {
             std::string resolvedName;
-            found = findNodeMapBone(nodeMap, std::string(name), resolvedName);
+            found = findFonvAnimationBone(
+                nodeMap, Misc::StringUtils::lowerCase(std::string(name)), resolvedName);
         }
         if (found == nodeMap.end())
             return nullptr;
