@@ -479,6 +479,8 @@ namespace MWDialogue
         for (ESM::FormId addedTopic : info->mAddTopics)
             mEsm4AddedTopics.insert(addedTopic);
 
+        std::vector<VFS::Path::Normalized> voices;
+        voices.reserve(orderedResponses.size());
         for (std::size_t i = 0; i < orderedResponses.size(); ++i)
         {
             const ESM4::DialogResponse& item = *orderedResponses[i];
@@ -489,9 +491,10 @@ namespace MWDialogue
                              << " response="
                              << (item.mData.responseNo != 0 ? item.mData.responseNo : i + 1)
                              << " path=\"" << voice << "\"";
-            MWBase::Environment::get().getSoundManager()->say(mActor, VFS::Path::Normalized(voice));
-            break;
+            voices.emplace_back(voice);
         }
+        if (!voices.empty())
+            MWBase::Environment::get().getSoundManager()->saySequence(mActor, voices);
 
         mChoices.clear();
         mEsm4ChoiceTopics.clear();

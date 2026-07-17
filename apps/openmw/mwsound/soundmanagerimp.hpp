@@ -3,9 +3,11 @@
 
 #include <map>
 #include <memory>
+#include <span>
 #include <string>
 #include <unordered_map>
 #include <utility>
+#include <vector>
 
 #include <components/fallback/fallback.hpp>
 #include <components/esm4/lip.hpp>
@@ -16,6 +18,7 @@
 #include "../mwbase/soundmanager.hpp"
 
 #include "regionsoundselector.hpp"
+#include "saysequence.hpp"
 #include "soundbuffer.hpp"
 #include "type.hpp"
 #include "watersoundupdater.hpp"
@@ -84,6 +87,15 @@ namespace MWSound
         SaySoundMap mSaySoundsQueue;
         SaySoundMap mActiveSaySounds;
 
+        struct ActorSaySequence
+        {
+            const MWWorld::CellStore* mCell = nullptr;
+            SaySequence mVoices;
+        };
+
+        typedef std::map<const MWWorld::LiveCellRefBase*, ActorSaySequence> SaySequenceMap;
+        SaySequenceMap mSaySequences;
+
         typedef std::vector<StreamPtr> TrackList;
         TrackList mActiveTracks;
 
@@ -116,6 +128,9 @@ namespace MWSound
 
         // returns a decoder to start streaming, or nullptr if the sound was not found
         DecoderPtr loadVoice(VFS::Path::NormalizedView voicefile);
+
+        bool startSay(const MWWorld::ConstPtr& reference, VFS::Path::NormalizedView filename, bool replace);
+        bool startNextSaySequence(const MWWorld::ConstPtr& reference);
 
         SoundPtr getSoundRef();
         StreamPtr getStreamRef();
@@ -186,6 +201,10 @@ namespace MWSound
         void say(const MWWorld::ConstPtr& reference, VFS::Path::NormalizedView filename) override;
         ///< Make an actor say some text.
         /// \param filename name of a sound file in the VFS
+
+        void saySequence(
+            const MWWorld::ConstPtr& reference, std::span<const VFS::Path::Normalized> filenames) override;
+        ///< Replace the actor's speech with an authored sequence of voice files.
 
         void say(VFS::Path::NormalizedView filename) override;
         ///< Say some text, without an actor ref
