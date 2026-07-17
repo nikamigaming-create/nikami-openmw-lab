@@ -6701,6 +6701,11 @@ namespace MWRender
         bool applyFalloutIdleArmRelaxIk(const Animation::NodeMap& nodeMap, SceneUtil::Skeleton* skeleton,
             const MWWorld::Ptr& ptr, const ESM4::Npc& traits)
         {
+            // This solver is a diagnostic for malformed source poses. Normal gameplay must preserve the matrices
+            // sampled from the actor's authored KF stack exactly; opt in explicitly when investigating a rig.
+            if (!worldViewerEnvEnabled("OPENMW_FNV_IDLE_ARM_RELAX_IK")
+                && !worldViewerEnvEnabled("OPENMW_ESM4_IDLE_ARM_RELAX_IK"))
+                return false;
             if (!traits.mIsFO3 && !traits.mIsFONV && !traits.mIsFO4)
                 return false;
 
