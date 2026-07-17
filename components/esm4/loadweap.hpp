@@ -68,6 +68,25 @@ namespace ESM4
             std::uint8_t ammoUse;
             std::uint8_t reloadAnim;
 
+            // FO3/FNV WEAP.DNAM ballistic contract. These fields are stored directly after the animation
+            // selectors above and are consumed by the retail firing path. Keep the serialized values intact;
+            // gameplay code must not invent a range, projectile count, or fire cadence when the contract is absent.
+            float minSpread;
+            float spread;
+            float sightFov;
+            ESM::FormId projectile;
+            std::uint8_t baseVatsChance;
+            std::uint8_t attackAnim;
+            std::uint8_t numProjectiles;
+            std::uint8_t embedWeaponActorValue;
+            float minRange;
+            float maxRange;
+            std::uint32_t onHit;
+            std::uint32_t flags2;
+            float animAttackMult;
+            float fireRate;
+            bool hasBallistics;
+
             Data()
                 : type(0)
                 , speed(0.f)
@@ -82,6 +101,20 @@ namespace ESM4
                 , handGrip(0xff)
                 , ammoUse(0)
                 , reloadAnim(0)
+                , minSpread(0.f)
+                , spread(0.f)
+                , sightFov(0.f)
+                , baseVatsChance(0)
+                , attackAnim(0)
+                , numProjectiles(0)
+                , embedWeaponActorValue(0)
+                , minRange(0.f)
+                , maxRange(0.f)
+                , onHit(0)
+                , flags2(0)
+                , animAttackMult(0.f)
+                , fireRate(0.f)
+                , hasBallistics(false)
             {
             }
         };
@@ -131,7 +164,8 @@ namespace ESM4
         static constexpr ESM::RecNameInts sRecordId = ESM::RecNameInts::REC_WEAP4;
     };
 
-    // Parse the stable 16-byte FO3/FNV prefix of WEAP.DNAM. Later games reuse DNAM with incompatible layouts.
+    // Parse the stable FO3/FNV WEAP.DNAM prefix. The first 16 bytes contain the animation selectors and the
+    // 68-byte prefix contains the complete primary ballistic contract. Later games reuse DNAM incompatibly.
     [[nodiscard]] bool loadFalloutWeaponDnam(std::span<const std::uint8_t> dnam, Weapon::Data& data);
 }
 

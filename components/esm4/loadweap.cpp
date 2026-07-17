@@ -27,7 +27,9 @@
 #include "loadweap.hpp"
 
 #include <array>
+#include <cstring>
 #include <stdexcept>
+#include <vector>
 
 #include "reader.hpp"
 //#include "writer.hpp"
@@ -41,6 +43,36 @@ bool ESM4::loadFalloutWeaponDnam(std::span<const std::uint8_t> dnam, Weapon::Dat
     data.handGrip = dnam[13];
     data.ammoUse = dnam[14];
     data.reloadAnim = dnam[15];
+
+    if (dnam.size() < 68)
+        return true;
+
+    const auto readFloat = [&](std::size_t offset) {
+        float value = 0.f;
+        std::memcpy(&value, dnam.data() + offset, sizeof(value));
+        return value;
+    };
+    const auto readUint32 = [&](std::size_t offset) {
+        std::uint32_t value = 0;
+        std::memcpy(&value, dnam.data() + offset, sizeof(value));
+        return value;
+    };
+
+    data.minSpread = readFloat(16);
+    data.spread = readFloat(20);
+    data.sightFov = readFloat(28);
+    data.projectile = ESM::FormId::fromUint32(readUint32(36));
+    data.baseVatsChance = dnam[40];
+    data.attackAnim = dnam[41];
+    data.numProjectiles = dnam[42];
+    data.embedWeaponActorValue = dnam[43];
+    data.minRange = readFloat(44);
+    data.maxRange = readFloat(48);
+    data.onHit = readUint32(52);
+    data.flags2 = readUint32(56);
+    data.animAttackMult = readFloat(60);
+    data.fireRate = readFloat(64);
+    data.hasBallistics = true;
     return true;
 }
 
@@ -139,13 +171,11 @@ void ESM4::Weapon::load(ESM4::Reader& reader)
             case ESM::fourCC("DNAM"):
                 if (isFalloutWeapon && subHdr.dataSize >= 16)
                 {
-                    // FO3/FNV DNAM begins with the runtime TESObjectWEAP animation fields documented by xNVSE:
-                    // type, three padding bytes, animation multiplier, reach, flags, hand grip, ammo use, reload.
-                    std::array<std::uint8_t, 16> dnam{};
+                    // FO3/FNV DNAM begins with the runtime TESObjectWEAP fields documented by xNVSE. Preserve the
+                    // whole serialized record so the firing path receives range/projectile/cadence bytes too.
+                    std::vector<std::uint8_t> dnam(subHdr.dataSize);
                     reader.get(dnam.data(), dnam.size());
                     loadFalloutWeaponDnam(dnam, mData);
-                    if (subHdr.dataSize > 16)
-                        reader.skipSubRecordData(subHdr.dataSize - 16);
                 }
                 else
                     reader.skipSubRecordData();
