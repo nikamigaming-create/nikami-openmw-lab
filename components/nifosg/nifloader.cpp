@@ -79,6 +79,7 @@
 #include <components/sceneutil/skeleton.hpp>
 #include <components/sceneutil/texturetype.hpp>
 
+#include "controller.hpp"
 #include "fog.hpp"
 #include "matrixtransform.hpp"
 #include "particle.hpp"
@@ -2119,6 +2120,8 @@ namespace NifOsg
         std::unordered_map<std::string, osg::Node*> mNodesByName;
         std::unordered_map<std::string, unsigned int> mBethesdaBoneLodGroups;
         std::vector<const Nif::NiControllerManager*> mControllerManagers;
+        std::unordered_map<const Nif::NiMaterialColorController*, std::vector<osg::ref_ptr<MaterialColorController>>>
+            mMaterialColorControllers;
 
         void collectBethesdaBoneLodGroups(const Nif::NiAVObject* object)
         {
@@ -2126,7 +2129,7 @@ namespace NifOsg
                 return;
 
             for (Nif::NiTimeControllerPtr controller = object->mController; !controller.empty();
-                 controller = controller->mNext)
+                controller = controller->mNext)
             {
                 const auto* boneLod = dynamic_cast<const Nif::NiBoneLODController*>(controller.getPtr());
                 if (boneLod == nullptr)
@@ -2819,22 +2822,61 @@ namespace NifOsg
                             blockKey += Misc::StringUtils::lowerCase(resolveControlledBlockTargetName(sequence, block));
                             if (std::getenv("OPENMW_FNV_FLAG_CONTROLLER_AUDIT") != nullptr)
                             {
-                                Log(Debug::Info) << "FNV/ESM4 flag audit: sequence='" << sequence->mName
-                                                 << "' target='" << block.mTargetName << "' node='"
-                                                 << block.mNodeName << "' controller='" << block.mControllerId
-                                                 << "' interpolator='" << block.mInterpolatorId << "' resolved='"
-                                                 << resolveControlledBlockTargetName(sequence, block) << "' in "
-                                                 << mFilename;
+                                Log(Debug::Info)
+                                    << "FNV/ESM4 flag audit: sequence='" << sequence->mName << "' target='"
+                                    << block.mTargetName << "' node='" << block.mNodeName << "' controller='"
+                                    << block.mControllerId << "' interpolator='" << block.mInterpolatorId
+                                    << "' resolved='" << resolveControlledBlockTargetName(sequence, block) << "' in "
+                                    << mFilename;
                             }
                             if (containsAny(blockKey,
                                     { "rootbone", "bip01 root", "root bone", "pole", "staff", "flagpole", "marker",
                                         "base" }))
                             {
                                 Log(Debug::Verbose)
-                                    << "FNV/ESM4 diag: skipped Fallout flag anchor controller '"
+                                    << "FNV/ESM4 diag: skipped Fallout flag anchor controller '" << sequence->mName
+                                    << "' block '" << block.mNodeName << "' in " << mFilename;
+                                continue;
+                            }
+                        }
+
+                        const std::string propertyType = resolveControlledBlockString(
+                            sequence, block, block.mPropertyType, &Nif::ControlledBlock::mPropertyTypeOffset);
+                        const std::string controllerType = resolveControlledBlockString(
+                            sequence, block, block.mControllerType, &Nif::ControlledBlock::mControllerTypeOffset);
+                        const std::string controllerId = resolveControlledBlockString(
+                            sequence, block, block.mControllerId, &Nif::ControlledBlock::mControllerIdOffset);
+                        if (Misc::StringUtils::ciEqual(propertyType, "NiMaterialProperty")
+                            && Misc::StringUtils::ciEqual(controllerType, "NiMaterialColorController"))
+                        {
+                            const auto targetColor = parseExternalMaterialColorControllerId(controllerId);
+                            if (!targetColor || block.mController.empty()
+                                || block.mController->recType != Nif::RC_NiMaterialColorController)
+                            {
+                                Log(Debug::Warning) << "Unsupported embedded NiMaterialColorController route id='"
+                                                    << controllerId << "' in " << mFilename;
+                                continue;
+                            }
+
+                            const auto* sourceController
+                                = static_cast<const Nif::NiMaterialColorController*>(block.mController.getPtr());
+                            const auto registered = mMaterialColorControllers.find(sourceController);
+                            if (registered == mMaterialColorControllers.end())
+                            {
+                                Log(Debug::Verbose)
+                                    << "FNV/ESM4 diag: unable to bind embedded NiMaterialColorController '"
                                     << sequence->mName << "' block '" << block.mNodeName << "' in " << mFilename;
                                 continue;
                             }
+
+                            for (const osg::ref_ptr<MaterialColorController>& callback : registered->second)
+                            {
+                                if (!callback->setInterpolator(*targetColor, block.mInterpolator.getPtr()))
+                                    continue;
+                                setupController(sequence, callback, true);
+                                ++attached;
+                            }
+                            continue;
                         }
 
                         osg::Node* node = findControllerSequenceTarget(manager, block);
@@ -2851,9 +2893,9 @@ namespace NifOsg
                             auto* transform = dynamic_cast<NifOsg::MatrixTransform*>(node);
                             if (!transform)
                             {
-                                Log(Debug::Verbose) << "FNV/ESM4 diag: unable to attach transform NiControllerSequence '"
-                                                 << sequence->mName << "' block '" << block.mNodeName << "' in "
-                                                 << mFilename;
+                                Log(Debug::Verbose)
+                                    << "FNV/ESM4 diag: unable to attach transform NiControllerSequence '"
+                                    << sequence->mName << "' block '" << block.mNodeName << "' in " << mFilename;
                                 continue;
                             }
 
@@ -2867,8 +2909,10 @@ namespace NifOsg
                         }
                         else if (block.mInterpolator->recType == Nif::RC_NiBoolInterpolator)
                         {
-                            const auto* interp = static_cast<const Nif::NiBoolInterpolator*>(block.mInterpolator.getPtr());
-                            osg::ref_ptr<VisController> callback = new VisController(interp, Loader::getHiddenNodeMask());
+                            const auto* interp
+                                = static_cast<const Nif::NiBoolInterpolator*>(block.mInterpolator.getPtr());
+                            osg::ref_ptr<VisController> callback
+                                = new VisController(interp, Loader::getHiddenNodeMask());
                             setupController(sequence, callback, true);
                             node->addUpdateCallback(callback);
                             node->setDataVariance(osg::Object::DYNAMIC);
@@ -2880,7 +2924,7 @@ namespace NifOsg
                 if (attached > 0)
                 {
                     Log(Debug::Verbose) << "FNV/ESM4 diag: attached " << attached
-                                     << " embedded NiControllerSequence transform controller(s) in " << mFilename;
+                                        << " embedded NiControllerSequence controller(s) in " << mFilename;
                 }
             }
         }
@@ -3530,7 +3574,7 @@ namespace NifOsg
         }
 
         void handleMaterialControllers(const Nif::NiProperty* materialProperty,
-            SceneUtil::CompositeStateSetUpdater* composite, int animflags, const osg::Material* baseMaterial) const
+            SceneUtil::CompositeStateSetUpdater* composite, int animflags, const osg::Material* baseMaterial)
         {
             for (Nif::NiTimeControllerPtr ctrl = materialProperty->mController; !ctrl.empty(); ctrl = ctrl->mNext)
             {
@@ -3572,7 +3616,13 @@ namespace NifOsg
                         continue;
                     }
                     osg::ref_ptr<MaterialColorController> osgctrl = new MaterialColorController(matctrl, baseMaterial);
-                    setupController(matctrl, osgctrl, animflags);
+                    const bool managerControlled = !interp.empty()
+                        && interp->recType == Nif::RC_NiBlendPoint3Interpolator
+                        && (static_cast<const Nif::NiBlendPoint3Interpolator*>(interp.getPtr())->mFlags
+                            & Nif::NiBlendInterpolator::Flag_ManagerControlled);
+                    if (!managerControlled)
+                        setupController(matctrl, osgctrl, animflags);
+                    mMaterialColorControllers[matctrl].push_back(osgctrl);
                     composite->addController(osgctrl);
                 }
                 else if (ctrl->recType == Nif::RC_BSMaterialEmittanceMultController)
@@ -6556,11 +6606,10 @@ namespace NifOsg
 
         void handleTextureSet(const Nif::BSShaderTextureSet* textureSet, bool wrapS, bool wrapT, float envMapScale,
             const std::string& nodeName, osg::StateSet* stateset, std::vector<unsigned int>& boundTextures,
-            bool skinShader) const
+            bool skinShader, bool environmentMappingEnabled) const
         {
             const unsigned int uvSet = 0;
-            const bool worldViewerActorMesh
-                = worldViewerMeshLoadTelemetryEnabled()
+            const bool worldViewerActorMesh = worldViewerMeshLoadTelemetryEnabled()
                 && isWorldViewerActorMeshPath(Misc::StringUtils::lowerCase(mFilename.generic_string()));
 
             for (size_t i = 0; i < textureSet->mTextures.size(); ++i)
@@ -6580,11 +6629,11 @@ namespace NifOsg
                     case Nif::BSShaderTextureSet::TextureType::Glow:
                         if (skinShader && isSkinAuxTexture(textureSet->mTextures[i]))
                         {
-                            attachExternalTexture("skinAuxMap", textureSet->mTextures[i], wrapS, wrapT, uvSet,
-                                stateset, boundTextures);
+                            attachExternalTexture(
+                                "skinAuxMap", textureSet->mTextures[i], wrapS, wrapT, uvSet, stateset, boundTextures);
                             if (worldViewerActorMesh)
-                                Log(Debug::Info) << "World viewer texture ledger: file=\""
-                                                 << mFilename.generic_string() << "\" role=\"skinAuxMap\""
+                                Log(Debug::Info) << "World viewer texture ledger: file=\"" << mFilename.generic_string()
+                                                 << "\" role=\"skinAuxMap\""
                                                  << " path=\"" << textureSet->mTextures[i] << "\""
                                                  << " skippedAsEmissive=1";
                             break;
@@ -6593,14 +6642,18 @@ namespace NifOsg
                             "emissiveMap", textureSet->mTextures[i], wrapS, wrapT, uvSet, stateset, boundTextures);
                         break;
                     case Nif::BSShaderTextureSet::TextureType::Environment:
+                        if (!environmentMappingEnabled)
+                            break;
                         attachExternalTexture(
                             "envMap", textureSet->mTextures[i], wrapS, wrapT, uvSet, stateset, boundTextures);
                         if (envMapScale <= 0.f)
                             envMapScale = 1.f;
-                        stateset->addUniform(new osg::Uniform(
-                            "envMapColor", osg::Vec4f(envMapScale, envMapScale, envMapScale, 1.f)));
+                        stateset->addUniform(
+                            new osg::Uniform("envMapColor", osg::Vec4f(envMapScale, envMapScale, envMapScale, 1.f)));
                         break;
                     case Nif::BSShaderTextureSet::TextureType::EnvironmentMask:
+                        if (!environmentMappingEnabled)
+                            break;
                         attachExternalTexture(
                             "glossMap", textureSet->mTextures[i], wrapS, wrapT, uvSet, stateset, boundTextures);
                         break;
@@ -6620,10 +6673,8 @@ namespace NifOsg
                 // and bind mathematically neutral float texels until the NPC-specific textures replace them.
                 // Without these typed slots the late textures exist in OSG state but SKIN2002 is compiled without
                 // either sampling instruction, which is the pale/gold "layer held up but never applied" failure.
-                attachTextureAtUnit(
-                    "faceGenMap0", getNeutralFaceGenImage(false), 4, uvSet, stateset, boundTextures);
-                attachTextureAtUnit(
-                    "faceGenMap1", getNeutralFaceGenImage(true), 5, uvSet, stateset, boundTextures);
+                attachTextureAtUnit("faceGenMap0", getNeutralFaceGenImage(false), 4, uvSet, stateset, boundTextures);
+                attachTextureAtUnit("faceGenMap1", getNeutralFaceGenImage(true), 5, uvSet, stateset, boundTextures);
             }
         }
 
@@ -6779,9 +6830,9 @@ namespace NifOsg
                     clearBoundTextures(stateset, boundTextures);
                     if (!texprop->mTextureSet.empty())
                         handleTextureSet(texprop->mTextureSet.getPtr(), texprop->wrapS(), texprop->wrapT(),
-                            texprop->mEnvMapScale,
-                            node->getName(), stateset, boundTextures,
-                            texprop->mType == static_cast<unsigned int>(Nif::BSShaderType::ShaderType_Skin));
+                            texprop->mEnvMapScale, node->getName(), stateset, boundTextures,
+                            texprop->mType == static_cast<unsigned int>(Nif::BSShaderType::ShaderType_Skin),
+                            texprop->environmentMapping() || texprop->windowEnvironmentMapping());
                     handleTextureControllers(texprop, composite, stateset, animflags);
                     // BSShaderPPLightingProperty carries the same authored depth-test/depth-write bits as the other
                     // Bethesda shader properties. Omitting them makes transparent overlays write depth by default,
@@ -6830,8 +6881,8 @@ namespace NifOsg
                     {
                         const unsigned int uvSet = 0;
                         const std::string texture = remapFalloutSkyTexture(texprop->mFilename);
-                        attachExternalTexture("diffuseMap", texture, texprop->wrapS(), texprop->wrapT(), uvSet,
-                            stateset, boundTextures);
+                        attachExternalTexture(
+                            "diffuseMap", texture, texprop->wrapS(), texprop->wrapT(), uvSet, stateset, boundTextures);
                     }
                     handleTextureControllers(texprop, composite, stateset, animflags);
                     stateset->setMode(GL_DEPTH_TEST, osg::StateAttribute::OFF);
@@ -6880,8 +6931,7 @@ namespace NifOsg
                     }
                     if (!texprop->mTextureSet.empty())
                         handleTextureSet(texprop->mTextureSet.getPtr(), texprop->wrapS(), texprop->wrapT(),
-                            texprop->mEnvMapScale,
-                            node->getName(), stateset, boundTextures, false);
+                            texprop->mEnvMapScale, node->getName(), stateset, boundTextures, false, true);
                     handleTextureControllers(texprop, composite, stateset, animflags);
                     if (texprop->doubleSided())
                         stateset->setMode(GL_CULL_FACE, osg::StateAttribute::OFF);
@@ -7034,6 +7084,7 @@ namespace NifOsg
             int bsLightingType = -1;
             int bsShaderType = -1;
             bool hasNoLightingShader = false;
+            bool needsPPLightingAlphaBlend = false;
             std::string shaderMaterialName;
             int shaderMaterialType = -1;
 
@@ -7132,6 +7183,8 @@ namespace NifOsg
                         auto shaderprop = static_cast<const Nif::BSShaderPPLightingProperty*>(property);
                         bsShaderType = static_cast<int>(shaderprop->mType);
                         specEnabled = shaderprop->specular();
+                        needsPPLightingAlphaBlend = needsPPLightingAlphaBlend || shaderprop->alphaTexture()
+                            || shaderprop->windowEnvironmentMapping();
                         break;
                     }
                     case Nif::RC_BSShaderNoLightingProperty:
@@ -7176,8 +7229,7 @@ namespace NifOsg
                                 || mBethVersion == Nif::NIFFile::BethVersion::BETHVER_SSE)
                             && shaderprop->mType
                                 == static_cast<unsigned int>(Nif::BSLightingShaderType::ShaderType_SkinTint)
-                            && isWorldViewerActorMeshPath(
-                                Misc::StringUtils::lowerCase(mFilename.generic_string())))
+                            && isWorldViewerActorMeshPath(Misc::StringUtils::lowerCase(mFilename.generic_string())))
                         {
                             // Skyrim's skin shader uses its gloss/specular data with a dedicated skin-lighting
                             // model. Feeding those values into OpenMW's generic Blinn-Phong path produces the
@@ -7215,6 +7267,12 @@ namespace NifOsg
                 }
             }
 
+            // Fallout's window and alpha-texture shaders use diffuse alpha even when the NIF omits a separate
+            // NiAlphaProperty.  Apply the standard authored blend contract only as a fallback: an explicit
+            // NiAlphaProperty (including additive or multiplicative blending) remains authoritative.
+            if (needsPPLightingAlphaBlend && niAlphaProperties == 0)
+                handleAlphaBlending(true, 6, 7, true, hasSortAlpha, *node);
+
             if (hasNoLightingShader)
             {
                 // Retail NOLIGHTTEX consumes MaterialColor independently of vertex color. For FO3/FNV that
@@ -7229,12 +7287,11 @@ namespace NifOsg
             {
                 // SKIN2002's Toggles.x selects the authored vertex RGB multiplication. Keep that
                 // input separate from AmbientColor: the retail shader consumes both independently.
-                node->getOrCreateStateSet()->addUniform(
-                    new osg::Uniform("falloutSkinUseVertexColor", hasVertexColors));
+                node->getOrCreateStateSet()->addUniform(new osg::Uniform("falloutSkinUseVertexColor", hasVertexColors));
             }
 
-            const bool falloutNvActorMaterial = mVersion == Nif::NIFFile::NIFVersion::VER_BGS
-                && mUserVersion == 11 && mBethVersion == Nif::NIFFile::BethVersion::BETHVER_FO3
+            const bool falloutNvActorMaterial = mVersion == Nif::NIFFile::NIFVersion::VER_BGS && mUserVersion == 11
+                && mBethVersion == Nif::NIFFile::BethVersion::BETHVER_FO3
                 && isWorldViewerActorMeshPath(Misc::StringUtils::lowerCase(mFilename.generic_string()));
             if (falloutNvActorMaterial && specEnabled
                 && bsShaderType != static_cast<int>(Nif::BSShaderType::ShaderType_Skin))

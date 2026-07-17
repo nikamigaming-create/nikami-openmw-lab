@@ -504,6 +504,9 @@ namespace NifOsg
 
         META_Object(NifOsg, MaterialColorController)
 
+        bool setInterpolator(
+            Nif::NiMaterialColorController::TargetColor target, const Nif::NiInterpolator* interpolator);
+
         void setDefaults(osg::StateSet* stateset) override;
 
         void apply(osg::StateSet* stateset, osg::NodeVisitor* nv) override;

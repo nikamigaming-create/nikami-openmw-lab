@@ -434,4 +434,32 @@ namespace
         controller->restorePropertyState();
         EXPECT_EQ(node->getStateSet(), nullptr);
     }
+
+    TEST(NifOsgControllerTest, shouldIgnoreInvalidManagerControlledMaterialPlaceholder)
+    {
+        const float invalidColor = -std::numeric_limits<float>::max();
+        Nif::NiBlendPoint3Interpolator interpolator;
+        interpolator.recType = Nif::RC_NiBlendPoint3Interpolator;
+        interpolator.mFlags = Nif::NiBlendInterpolator::Flag_ManagerControlled;
+        interpolator.mValue = osg::Vec3f(invalidColor, invalidColor, invalidColor);
+
+        Nif::NiMaterialColorController nifController;
+        nifController.mTargetColor = Nif::NiMaterialColorController::TargetColor::Emissive;
+        nifController.mInterpolator = Nif::NiInterpolatorPtr(&interpolator);
+        nifController.mData = Nif::NiPosDataPtr(nullptr);
+
+        osg::ref_ptr<osg::Material> baseMaterial = new osg::Material;
+        const osg::Vec4f baseEmission(0.1f, 0.2f, 0.3f, 1.f);
+        baseMaterial->setEmission(osg::Material::FRONT_AND_BACK, baseEmission);
+        NifOsg::MaterialColorController controller(&nifController, baseMaterial);
+        controller.setSource(std::make_shared<ConstantControllerSource>(0.f));
+
+        osg::ref_ptr<osg::StateSet> stateSet = new osg::StateSet;
+        controller.setDefaults(stateSet);
+        controller.apply(stateSet, nullptr);
+        const auto* material
+            = dynamic_cast<const osg::Material*>(stateSet->getAttribute(osg::StateAttribute::MATERIAL));
+        ASSERT_NE(material, nullptr);
+        EXPECT_EQ(material->getEmission(osg::Material::FRONT_AND_BACK), baseEmission);
+    }
 }
