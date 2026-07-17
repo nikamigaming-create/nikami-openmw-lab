@@ -227,6 +227,7 @@ namespace MWMechanics
         bool updateWeaponState();
         bool updateFalloutWeaponState(int requestedWeaponType, bool weaponChanged,
             const ESM4::Weapon* requestedWeapon, const MWRender::AnimPriority& priorityWeapon);
+        bool fireFalloutWeapon();
         void updateIdleStormState(bool inwater) const;
 
         std::string chooseRandomAttackAnimation() const;

@@ -176,6 +176,8 @@ void ESM4::Weapon::load(ESM4::Reader& reader)
                     std::vector<std::uint8_t> dnam(subHdr.dataSize);
                     reader.get(dnam.data(), dnam.size());
                     loadFalloutWeaponDnam(dnam, mData);
+                    if (mData.hasBallistics)
+                        reader.adjustFormId(mData.projectile);
                 }
                 else
                     reader.skipSubRecordData();

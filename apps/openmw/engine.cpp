@@ -6798,7 +6798,7 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                         mMechanicsManager->clearAnimationQueue(proofActor, true);
                         mMechanicsManager->forceStateUpdate(proofActor);
                     }
-                    if (std::getenv("OPENMW_PROOF_DISABLE_ACTOR_COLLISION") != nullptr && mWorld != nullptr)
+                    if (proofEnvEnabled("OPENMW_PROOF_DISABLE_ACTOR_COLLISION") && mWorld != nullptr)
                         mWorld->setActorCollisionMode(proofActor, false, false);
                     Log(Debug::Info) << "FNV/ESM4 proof: suppressed proof actor AI and reset staged animation target=\""
                                      << proofSayActor << "\" ptr=" << proofActor.toString();

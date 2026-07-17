@@ -24,11 +24,15 @@
 #include <cstdlib>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include <components/esm/records.hpp>
 #include <components/esm/defs.hpp>
 #include <components/esm4/loadarmo.hpp>
+#include <components/esm4/loadammo.hpp>
 #include <components/esm4/loadcrea.hpp>
+#include <components/esm4/loadflst.hpp>
+#include <components/esm4/loadproj.hpp>
 #include <components/esm4/loadweap.hpp>
 #include <components/debug/debuglog.hpp>
 #include <components/misc/mathutil.hpp>
@@ -62,9 +66,14 @@
 #include "../mwworld/player.hpp"
 #include "../mwworld/spellcaststate.hpp"
 
+#include "../mwphysics/collisiontype.hpp"
+#include "../mwphysics/raycasting.hpp"
+
 #include "actorutil.hpp"
 #include "aicombataction.hpp"
 #include "creaturestats.hpp"
+#include "damagesourcetype.hpp"
+#include "falloutcombat.hpp"
 #include "movement.hpp"
 #include "npcstats.hpp"
 #include "security.hpp"
@@ -1885,8 +1894,7 @@ namespace MWMechanics
 
             if (playFalloutWeaponAction(mWeaponType, MWRender::FonvWeaponAction::PrimaryAttack, priorityWeapon))
             {
-                // The exact visual action completes as one authored unit. Native FNV damage/projectiles are wired in
-                // the next stateful slice; this path intentionally never calls Morrowind melee or arrow code.
+                fireFalloutWeapon();
                 mUpperBodyState = UpperBodyState::AttackEnd;
             }
             else
@@ -1898,6 +1906,112 @@ namespace MWMechanics
 
         updateAiming();
         return forceStateUpdate;
+    }
+
+    bool CharacterController::fireFalloutWeapon()
+    {
+        const auto fail = [&](std::string_view reason) {
+            Log(Debug::Error) << "FNV combat shot rejected: actor=" << mPtr.toString()
+                              << " weapon="
+                              << (mFalloutWeapon != nullptr ? ESM::RefId::formIdRefId(mFalloutWeapon->mId).toDebugString()
+                                                            : std::string("none"))
+                              << " reason=" << reason << " exact=1";
+            return false;
+        };
+
+        if (mFalloutWeapon == nullptr)
+            return fail("missing-weapon");
+
+        MWBase::World* world = MWBase::Environment::get().getWorld();
+        const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
+        if (world == nullptr || store == nullptr)
+            return fail("missing-world-store");
+
+        std::vector<ESM::FormId> ammoCandidates;
+        if (store->get<ESM4::Ammunition>().search(mFalloutWeapon->mAmmo) != nullptr)
+            ammoCandidates.push_back(mFalloutWeapon->mAmmo);
+        else if (const ESM4::FormIdList* list = store->get<ESM4::FormIdList>().search(mFalloutWeapon->mAmmo))
+        {
+            ammoCandidates = list->mObjects;
+        }
+        else
+            return fail("invalid-ammo-reference");
+
+        MWWorld::ContainerStore& inventory = mPtr.getClass().getContainerStore(mPtr);
+        const auto ammo = selectAuthoredFalloutAmmo(ammoCandidates, mFalloutWeapon->mData.ammoUse,
+            [&](ESM::FormId candidate) {
+                return store->get<ESM4::Ammunition>().search(candidate) != nullptr;
+            },
+            [&](ESM::FormId candidate) {
+                return inventory.count(ESM::RefId::formIdRefId(candidate));
+            });
+        if (!ammo)
+            return fail("insufficient-authored-ammo");
+
+        const ESM4::Projectile* projectile = store->get<ESM4::Projectile>().search(mFalloutWeapon->mData.projectile);
+        if (projectile == nullptr)
+            return fail("missing-projectile-record");
+
+        FalloutShotFailure contractFailure = FalloutShotFailure::None;
+        const std::optional<FalloutShotContract> contract
+            = buildFalloutHitscanContract(*mFalloutWeapon, *projectile, *ammo, contractFailure);
+        if (!contract)
+            return fail(getFalloutShotFailureName(contractFailure));
+
+        const osg::Vec3f origin = world->getActorHeadTransform(mPtr).getTrans();
+        std::vector<MWWorld::Ptr> targetActors;
+        if (mPtr != getPlayer())
+            mPtr.getClass().getCreatureStats(mPtr).getAiSequence().getCombatTargets(targetActors);
+
+        osg::Vec3f direction;
+        if (!targetActors.empty())
+            direction = world->getActorHeadTransform(targetActors.front()).getTrans() - origin;
+        else
+        {
+            const ESM::Position& position = mPtr.getRefData().getPosition();
+            const osg::Quat orientation = osg::Quat(position.rot[0], osg::Vec3f(-1.f, 0.f, 0.f))
+                * osg::Quat(position.rot[2], osg::Vec3f(0.f, 0.f, -1.f));
+            direction = orientation * osg::Vec3f(0.f, 1.f, 0.f);
+        }
+        if (direction.normalize() == 0.f)
+            return fail("zero-shot-direction");
+
+        const osg::Vec3f destination = origin + direction * contract->mProjectileRange;
+        const MWPhysics::RayCastingInterface* rayCasting = world->getRayCasting();
+        if (rayCasting == nullptr)
+            return fail("missing-ray-caster");
+
+        const ESM::RefId ammoRefId = ESM::RefId::formIdRefId(contract->mAmmo);
+        const int ammoBefore = inventory.count(ammoRefId);
+        const int removed = inventory.remove(ammoRefId, contract->mAmmoUse);
+        const int ammoAfter = inventory.count(ammoRefId);
+        if (removed != contract->mAmmoUse || ammoBefore - ammoAfter != contract->mAmmoUse)
+            return fail("ammo-transaction-mismatch");
+
+        const MWPhysics::RayCastingResult result = rayCasting->castRay(origin, destination, { mPtr }, targetActors,
+            MWPhysics::CollisionType_Default, MWPhysics::CollisionType_Projectile);
+
+        float healthBefore = -1.f;
+        float healthAfter = -1.f;
+        bool actorHit = false;
+        if (result.mHit && !result.mHitObject.isEmpty() && result.mHitObject.getClass().isActor())
+        {
+            actorHit = true;
+            healthBefore = result.mHitObject.getClass().getCreatureStats(result.mHitObject).getHealth().getCurrent();
+            result.mHitObject.getClass().onHit(result.mHitObject, { { "health", contract->mDamage } },
+                ESM::RefId::formIdRefId(mFalloutWeapon->mId), mPtr, true, DamageSourceType::Ranged);
+            healthAfter = result.mHitObject.getClass().getCreatureStats(result.mHitObject).getHealth().getCurrent();
+        }
+
+        Log(Debug::Info) << "FNV combat shot: actor=" << mPtr.toString()
+                         << " weapon=" << ESM::RefId::formIdRefId(mFalloutWeapon->mId)
+                         << " ammo=" << ammoRefId << " ammoBefore=" << ammoBefore << " ammoAfter=" << ammoAfter
+                         << " projectile=" << ESM::RefId::formIdRefId(contract->mProjectile)
+                         << " projectileRange=" << contract->mProjectileRange << " damage=" << contract->mDamage
+                         << " rayHit=" << result.mHit << " actorHit=" << actorHit
+                         << " hitObject=" << (result.mHitObject.isEmpty() ? std::string("none") : result.mHitObject.toString())
+                         << " healthBefore=" << healthBefore << " healthAfter=" << healthAfter << " exact=1 status=pass";
+        return true;
     }
 
     bool CharacterController::updateWeaponState()

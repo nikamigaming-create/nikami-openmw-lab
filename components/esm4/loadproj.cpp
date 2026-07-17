@@ -86,6 +86,13 @@ void ESM4::Projectile::load(Reader& reader)
                 reader.get(bytes.data(), bytes.size());
                 if (!loadFalloutProjectileData(bytes, mData))
                     throw std::runtime_error("ESM4::Projectile::load - unsupported DATA layout");
+                reader.adjustFormId(mData.projectileLight);
+                reader.adjustFormId(mData.muzzleFlashLight);
+                reader.adjustFormId(mData.explosion);
+                reader.adjustFormId(mData.sound);
+                reader.adjustFormId(mData.countdownSound);
+                reader.adjustFormId(mData.disableSound);
+                reader.adjustFormId(mData.defaultWeapon);
                 break;
             }
             case ESM::fourCC("OBND"):

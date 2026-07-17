@@ -22,6 +22,8 @@ file(GLOB UNITTEST_SRC_FILES
     mwrender/testfalloutweaponanimation.cpp
     mwrender/testplayervisualpolicy.cpp
 
+    mwmechanics/testfalloutcombat.cpp
+
     mwscript/testscripts.cpp
 )
 
