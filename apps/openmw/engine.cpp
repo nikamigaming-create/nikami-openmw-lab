@@ -4557,6 +4557,23 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
     static MWWorld::Ptr authoredInteractionRadio;
     static ESM::RefId authoredInteractionRadioSound;
     static bool authoredInteractionRadioCaptureQueued = false;
+    static const bool fnvStripSniperCinematicEnabled
+        = proofEnvEnabled("OPENMW_FNV_STRIP_SNIPER_CINEMATIC");
+    static MWWorld::Ptr fnvStripSniperTarget;
+    static osg::Vec3f fnvStripSniperTargetPosition;
+    static osg::Vec3f fnvStripSniperTargetRotation;
+    static ESM::RefId fnvStripSniperAmmoId;
+    static bool fnvStripSniperSetupComplete = false;
+    static bool fnvStripSniperCombatArmed = false;
+    static bool fnvStripSniperCombatStopped = false;
+    static bool fnvStripSniperSlowTimeApplied = false;
+    static bool fnvStripSniperResultLogged = false;
+    static int fnvStripSniperTriggerFrame = -1;
+    static int fnvStripSniperReactionFrame = -1;
+    static bool fnvStripSniperReactionComplete = false;
+    static int fnvStripSniperLastTriggerWaitLogFrame = -1000000;
+    static int fnvStripSniperAmmoBefore = -1;
+    static float fnvStripSniperHealthBefore = std::numeric_limits<float>::quiet_NaN();
     const auto parseProofFormId = [](std::string_view value) -> std::optional<ESM::FormId> {
         while (!value.empty() && std::isspace(static_cast<unsigned char>(value.front()))) value.remove_prefix(1);
         while (!value.empty() && std::isspace(static_cast<unsigned char>(value.back()))) value.remove_suffix(1);
@@ -8294,6 +8311,300 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
             if (!proofSidecarClient.acknowledgeCapture(
                     action.mGeneration, action.mActorIndex, action.mActionIndex))
                 failFNVSidecar(FNVSidecar::ErrorCode::SharedMemoryFault, "capture-ack-publish-failed");
+        }
+    }
+
+    if (fnvStripSniperCinematicEnabled && !fnvStripSniperSetupComplete
+        && !proofActorBatchPrevious.isEmpty() && proofActorBatchPrevious.getType() == ESM4::Npc::sRecordId
+        && mWorld != nullptr && mMechanicsManager != nullptr)
+    {
+        try
+        {
+            const char* targetText = std::getenv("OPENMW_FNV_STRIP_SNIPER_TARGET");
+            if (targetText == nullptr || *targetText == '\0')
+                targetText = "V03FiendShooter";
+
+            fnvStripSniperTarget = resolveProofActor(targetText);
+            if (!fnvStripSniperTarget.isEmpty())
+            {
+                if (!fnvStripSniperTarget.getRefData().isEnabled())
+                    mWorld->enable(fnvStripSniperTarget);
+
+                const ESM::Position& shooterPose = proofActorBatchPrevious.getRefData().getPosition();
+                const osg::Vec3f requestedTargetPosition(
+                    readProofFloat("OPENMW_FNV_STRIP_SNIPER_TARGET_X", shooterPose.pos[0]),
+                    readProofFloat("OPENMW_FNV_STRIP_SNIPER_TARGET_Y", shooterPose.pos[1] + 320.f),
+                    readProofFloat("OPENMW_FNV_STRIP_SNIPER_TARGET_Z", shooterPose.pos[2]));
+                const osg::Vec3f requestedTargetRotation(
+                    readProofFloat("OPENMW_FNV_STRIP_SNIPER_TARGET_ROT_X", 0.f),
+                    readProofFloat("OPENMW_FNV_STRIP_SNIPER_TARGET_ROT_Y", 0.f),
+                    readProofFloat("OPENMW_FNV_STRIP_SNIPER_TARGET_ROT_Z", 3.14159265f));
+                MWWorld::Ptr player = MWMechanics::getPlayer();
+                if (!player.isEmpty() && player.isInCell())
+                    fnvStripSniperTarget = mWorld->moveObject(
+                        fnvStripSniperTarget, player.getCell(), requestedTargetPosition, true, true);
+                else
+                    fnvStripSniperTarget
+                        = mWorld->moveObject(fnvStripSniperTarget, requestedTargetPosition, true, true);
+                mWorld->rotateObject(fnvStripSniperTarget, requestedTargetRotation);
+                fnvStripSniperTarget.getClass().adjustPosition(fnvStripSniperTarget, true);
+
+                const ESM::Position& settledTargetPose = fnvStripSniperTarget.getRefData().getPosition();
+                fnvStripSniperTargetPosition.set(
+                    settledTargetPose.pos[0], settledTargetPose.pos[1], settledTargetPose.pos[2]);
+                fnvStripSniperTargetRotation.set(
+                    settledTargetPose.rot[0], settledTargetPose.rot[1], settledTargetPose.rot[2]);
+
+                MWMechanics::CreatureStats& targetStats
+                    = fnvStripSniperTarget.getClass().getCreatureStats(fnvStripSniperTarget);
+                targetStats.getAiSequence().clear();
+                targetStats.setAttackingOrSpell(false);
+                targetStats.setAiSetting(MWMechanics::AiSetting::Fight, 0);
+                targetStats.setAiSetting(MWMechanics::AiSetting::Flee, 0);
+                targetStats.setMovementFlag(MWMechanics::CreatureStats::Flag_Run, false);
+                targetStats.setMovementFlag(MWMechanics::CreatureStats::Flag_ForceRun, false);
+                const float targetHealth
+                    = readProofFloat("OPENMW_FNV_STRIP_SNIPER_TARGET_HEALTH", 250.f);
+                targetStats.setHealth(MWMechanics::DynamicStat<float>(targetHealth, targetHealth, targetHealth));
+                MWMechanics::Movement& targetMovement
+                    = fnvStripSniperTarget.getClass().getMovementSettings(fnvStripSniperTarget);
+                targetMovement.mPosition[0] = 0.f;
+                targetMovement.mPosition[1] = 0.f;
+                targetMovement.mPosition[2] = 0.f;
+                targetMovement.mRotation[0] = 0.f;
+                targetMovement.mRotation[1] = 0.f;
+                targetMovement.mRotation[2] = 0.f;
+                mWorld->setActorCollisionMode(fnvStripSniperTarget, true, false);
+
+                const MWWorld::ESMStore& store = mWorld->getStore();
+                const ESM::RefId rifleId
+                    = findEsm4EditorId<ESM4::Weapon>(store, "WeapNVAntiMaterielRifle");
+                fnvStripSniperAmmoId = findEsm4EditorId<ESM4::Ammunition>(store, "Ammo50MG");
+                const ESM4::Weapon* rifle
+                    = rifleId.empty() ? nullptr : store.get<ESM4::Weapon>().search(rifleId);
+                MWWorld::ContainerStore& inventory
+                    = proofActorBatchPrevious.getClass().getContainerStore(proofActorBatchPrevious);
+                const bool rifleAdded
+                    = addFNVEditorItem<ESM4::Weapon>(inventory, store, "WeapNVAntiMaterielRifle", 1);
+                const bool ammoAdded = addFNVEditorItem<ESM4::Ammunition>(
+                    inventory, store, "Ammo50MG", readProofInt("OPENMW_FNV_STRIP_SNIPER_AMMO", 8));
+                if (rifle != nullptr)
+                    MWClass::ESM4Npc::setEquippedWeapon(proofActorBatchPrevious, rifle);
+
+                MWMechanics::CreatureStats& shooterStats
+                    = proofActorBatchPrevious.getClass().getCreatureStats(proofActorBatchPrevious);
+                shooterStats.getAiSequence().clear();
+                shooterStats.setAttackingOrSpell(false);
+                shooterStats.setDrawState(MWMechanics::DrawState::Weapon);
+                mWorld->setActorCollisionMode(proofActorBatchPrevious, true, false);
+                mMechanicsManager->clearAnimationQueue(proofActorBatchPrevious, true);
+                mMechanicsManager->forceStateUpdate(proofActorBatchPrevious);
+
+                const bool rifleEquipped
+                    = rifle != nullptr && MWClass::ESM4Npc::getEquippedWeapon(proofActorBatchPrevious) == rifle;
+                fnvStripSniperAmmoBefore
+                    = fnvStripSniperAmmoId.empty() ? -1 : inventory.count(fnvStripSniperAmmoId);
+                fnvStripSniperHealthBefore = targetStats.getHealth().getCurrent();
+                fnvStripSniperSetupComplete = rifleAdded && ammoAdded && rifleEquipped
+                    && !fnvStripSniperAmmoId.empty() && fnvStripSniperAmmoBefore > 0
+                    && std::isfinite(fnvStripSniperHealthBefore);
+                Log(fnvStripSniperSetupComplete ? Debug::Info : Debug::Error)
+                    << "FNV Strip sniper cinematic setup: shooter=" << proofActorBatchPrevious.toString()
+                    << " target=" << fnvStripSniperTarget.toString() << " targetBase=\"" << targetText
+                    << "\" weapon=WeapNVAntiMaterielRifle weaponForm=" << rifleId
+                    << " ammo=Ammo50MG ammoForm=" << fnvStripSniperAmmoId
+                    << " ammoBefore=" << fnvStripSniperAmmoBefore
+                    << " targetHealth=" << fnvStripSniperHealthBefore << " targetPos=("
+                    << fnvStripSniperTargetPosition.x() << "," << fnvStripSniperTargetPosition.y() << ","
+                    << fnvStripSniperTargetPosition.z() << ") exact=1 status="
+                    << (fnvStripSniperSetupComplete ? "pass" : "fail");
+            }
+        }
+        catch (const std::exception& e)
+        {
+            Log(Debug::Error) << "FNV Strip sniper cinematic setup: exact=1 status=fail reason=\""
+                              << e.what() << "\"";
+        }
+    }
+
+    if (fnvStripSniperSetupComplete && !fnvStripSniperTarget.isEmpty() && mWorld != nullptr)
+    {
+        if (!fnvStripSniperCombatArmed)
+        {
+            const ESM::Position& current = fnvStripSniperTarget.getRefData().getPosition();
+            const osg::Vec3f currentPosition(current.pos[0], current.pos[1], current.pos[2]);
+            const osg::Vec3f currentRotation(current.rot[0], current.rot[1], current.rot[2]);
+            if ((currentPosition - fnvStripSniperTargetPosition).length() > 0.001f)
+            {
+                fnvStripSniperTarget = mWorld->moveObject(fnvStripSniperTarget,
+                    fnvStripSniperTarget.getCell(), fnvStripSniperTargetPosition, true, true);
+            }
+            if ((currentRotation - fnvStripSniperTargetRotation).length() > 0.00001f)
+                mWorld->rotateObject(fnvStripSniperTarget, fnvStripSniperTargetRotation);
+        }
+
+        if (fnvStripSniperReactionFrame >= 0 && !fnvStripSniperReactionComplete)
+        {
+            const int elapsed = static_cast<int>(frameNumber) - fnvStripSniperReactionFrame;
+            const int riseFrames
+                = std::max(1, readProofInt("OPENMW_FNV_STRIP_SNIPER_REACTION_RISE_FRAMES", 12));
+            const int durationFrames = std::max(riseFrames + 1,
+                readProofInt("OPENMW_FNV_STRIP_SNIPER_REACTION_DURATION_FRAMES", 54));
+            float amount = 0.f;
+            if (elapsed >= 0 && elapsed < riseFrames)
+                amount = static_cast<float>(elapsed) / static_cast<float>(riseFrames);
+            else if (elapsed < durationFrames)
+            {
+                amount = 1.f - static_cast<float>(elapsed - riseFrames)
+                    / static_cast<float>(durationFrames - riseFrames);
+            }
+
+            const ESM::Position& shooterPose = proofActorBatchPrevious.getRefData().getPosition();
+            osg::Vec3f recoilDirection(fnvStripSniperTargetPosition.x() - shooterPose.pos[0],
+                fnvStripSniperTargetPosition.y() - shooterPose.pos[1], 0.f);
+            if (recoilDirection.normalize() == 0.f)
+                recoilDirection.set(0.f, 1.f, 0.f);
+            const float recoilDistance
+                = std::max(0.f, readProofFloat("OPENMW_FNV_STRIP_SNIPER_REACTION_DISTANCE", 48.f));
+            const float recoilLift
+                = std::max(0.f, readProofFloat("OPENMW_FNV_STRIP_SNIPER_REACTION_LIFT", 0.f));
+            const float recoilRadians
+                = readProofFloat("OPENMW_FNV_STRIP_SNIPER_REACTION_RADIANS", 0.35f);
+            osg::Vec3f reactedPosition
+                = fnvStripSniperTargetPosition + recoilDirection * (recoilDistance * amount);
+            reactedPosition.z() += recoilLift * amount;
+            osg::Vec3f reactedRotation = fnvStripSniperTargetRotation;
+            reactedRotation.x() += recoilRadians * amount;
+            fnvStripSniperTarget = mWorld->moveObject(fnvStripSniperTarget,
+                fnvStripSniperTarget.getCell(), reactedPosition, true, true);
+            mWorld->rotateObject(fnvStripSniperTarget, reactedRotation);
+
+            if (elapsed >= durationFrames)
+            {
+                fnvStripSniperReactionComplete = true;
+                Log(Debug::Info) << "FNV Strip sniper cinematic reaction: target="
+                                 << fnvStripSniperTarget.toString() << " frame=" << frameNumber
+                                 << " displacement=" << recoilDistance << " lift=" << recoilLift
+                                 << " leanRadians=" << recoilRadians
+                                 << " control=damage-driven-transform exact=1 status=pass";
+            }
+        }
+
+        if (fnvStripSniperSlowTimeApplied && fnvStripSniperTriggerFrame >= 0)
+        {
+            const int slowFrames = std::max(1, readProofInt("OPENMW_FNV_STRIP_SNIPER_SLOW_FRAMES", 120));
+            if (static_cast<int>(frameNumber) - fnvStripSniperTriggerFrame >= slowFrames)
+            {
+                mWorld->getTimeManager()->setSimulationTimeScale(1.f);
+                fnvStripSniperSlowTimeApplied = false;
+                Log(Debug::Info) << "FNV Strip sniper cinematic slow time: frame=" << frameNumber
+                                 << " scale=1 phase=restored status=pass";
+            }
+        }
+
+        const int requestedTriggerFrame
+            = std::max(0, readProofInt("OPENMW_FNV_STRIP_SNIPER_TRIGGER_FRAME", 300));
+        if (!fnvStripSniperCombatArmed && static_cast<int>(frameNumber) >= requestedTriggerFrame
+            && !proofActorBatchPrevious.isEmpty() && mMechanicsManager != nullptr)
+        {
+            MWRender::Animation* animation = mWorld->getAnimation(proofActorBatchPrevious);
+            const ESM4::Weapon* weapon = proofActorBatchPrevious.getType() == ESM4::Npc::sRecordId
+                ? MWClass::ESM4Npc::getEquippedWeapon(proofActorBatchPrevious)
+                : nullptr;
+            constexpr std::string_view semanticGroup = "attack3";
+            MWMechanics::CreatureStats& shooterStats
+                = proofActorBatchPrevious.getClass().getCreatureStats(proofActorBatchPrevious);
+            const MWMechanics::DrawState drawState = shooterStats.getDrawState();
+            const bool transitionPlaying = animation != nullptr
+                && (animation->isPlaying("equip") || animation->isPlaying("unequip"));
+            const bool semanticAvailable = animation != nullptr && animation->hasAnimation(semanticGroup);
+            const bool eligible = weapon != nullptr && semanticAvailable
+                && drawState == MWMechanics::DrawState::Weapon && !transitionPlaying;
+            if (eligible)
+            {
+                mMechanicsManager->startCombat(proofActorBatchPrevious, fnvStripSniperTarget, nullptr);
+                const float slowScale
+                    = std::clamp(readProofFloat("OPENMW_FNV_STRIP_SNIPER_SLOW_SCALE", 0.2f), 0.01f, 1.f);
+                mWorld->getTimeManager()->setSimulationTimeScale(slowScale);
+                shooterStats.setAttackingOrSpell(true);
+                fnvStripSniperCombatArmed = true;
+                fnvStripSniperSlowTimeApplied = true;
+                fnvStripSniperTriggerFrame = static_cast<int>(frameNumber);
+                Log(Debug::Info) << "FNV Strip sniper cinematic combat: shooter="
+                                 << proofActorBatchPrevious.toString() << " target="
+                                 << fnvStripSniperTarget.toString() << " frame=" << frameNumber
+                                 << " slowScale=" << slowScale << " semantic=" << semanticGroup
+                                 << " control=production-character-controller directGroupInjection=0 exact=1 status=armed";
+            }
+            else if (static_cast<int>(frameNumber) - fnvStripSniperLastTriggerWaitLogFrame >= 30)
+            {
+                fnvStripSniperLastTriggerWaitLogFrame = static_cast<int>(frameNumber);
+                Log(Debug::Info) << "FNV Strip sniper cinematic trigger: frame=" << frameNumber
+                                 << " requestedFrame=" << requestedTriggerFrame << " weapon=" << (weapon != nullptr)
+                                 << " animation=" << (animation != nullptr) << " semanticAvailable=" << semanticAvailable
+                                 << " drawState=" << static_cast<unsigned int>(drawState)
+                                 << " transition=" << transitionPlaying << " status=waiting";
+            }
+        }
+
+        if (fnvStripSniperCombatArmed && !fnvStripSniperCombatStopped
+            && static_cast<int>(frameNumber) > fnvStripSniperTriggerFrame && mMechanicsManager != nullptr
+            && !fnvStripSniperAmmoId.empty())
+        {
+            MWWorld::ContainerStore& inventory
+                = proofActorBatchPrevious.getClass().getContainerStore(proofActorBatchPrevious);
+            const int ammoNow = inventory.count(fnvStripSniperAmmoId);
+            const bool roundConsumed = fnvStripSniperAmmoBefore - ammoNow >= 1;
+            const int elapsed = static_cast<int>(frameNumber) - fnvStripSniperTriggerFrame;
+            const int maximumHoldFrames
+                = std::max(2, readProofInt("OPENMW_FNV_STRIP_SNIPER_MAX_HOLD_FRAMES", 180));
+            if (roundConsumed || elapsed >= maximumHoldFrames)
+            {
+                proofActorBatchPrevious.getClass().getCreatureStats(proofActorBatchPrevious)
+                    .setAttackingOrSpell(false);
+                mMechanicsManager->stopCombat(proofActorBatchPrevious);
+                fnvStripSniperCombatStopped = true;
+                Log(roundConsumed ? Debug::Info : Debug::Error)
+                    << "FNV Strip sniper cinematic combat: frame=" << frameNumber
+                    << " phase=single-shot-stop ammoBefore=" << fnvStripSniperAmmoBefore
+                    << " ammoNow=" << ammoNow << " holdFrames=" << elapsed
+                    << " exact=1 status=" << (roundConsumed ? "pass" : "fail");
+            }
+        }
+
+        if (fnvStripSniperCombatArmed && !fnvStripSniperResultLogged && !fnvStripSniperAmmoId.empty())
+        {
+            MWWorld::ContainerStore& inventory
+                = proofActorBatchPrevious.getClass().getContainerStore(proofActorBatchPrevious);
+            const int ammoAfter = inventory.count(fnvStripSniperAmmoId);
+            MWMechanics::CreatureStats& targetStats
+                = fnvStripSniperTarget.getClass().getCreatureStats(fnvStripSniperTarget);
+            const float healthAfter = targetStats.getHealth().getCurrent();
+            const bool pass = fnvStripSniperAmmoBefore - ammoAfter == 1
+                && std::isfinite(fnvStripSniperHealthBefore) && std::isfinite(healthAfter)
+                && healthAfter < fnvStripSniperHealthBefore;
+            const int elapsed = static_cast<int>(frameNumber) - fnvStripSniperTriggerFrame;
+            const int timeout
+                = std::max(2, readProofInt("OPENMW_FNV_STRIP_SNIPER_RESULT_TIMEOUT_FRAMES", 180));
+            if (pass || elapsed >= timeout)
+            {
+                Log(pass ? Debug::Info : Debug::Error)
+                    << "FNV Strip sniper cinematic gate: shooter=" << proofActorBatchPrevious.toString()
+                    << " target=" << fnvStripSniperTarget.toString() << " weapon=WeapNVAntiMaterielRifle"
+                    << " ammoBefore=" << fnvStripSniperAmmoBefore << " ammoAfter=" << ammoAfter
+                    << " healthBefore=" << fnvStripSniperHealthBefore << " healthAfter=" << healthAfter
+                    << " frame=" << frameNumber << " exact=1 status=" << (pass ? "pass" : "fail");
+                fnvStripSniperResultLogged = true;
+                if (pass)
+                {
+                    targetStats.setHitRecovery(true);
+                    mMechanicsManager->forceStateUpdate(fnvStripSniperTarget);
+                    fnvStripSniperReactionFrame = static_cast<int>(frameNumber);
+                    Log(Debug::Info) << "FNV Strip sniper cinematic reaction: target="
+                                     << fnvStripSniperTarget.toString() << " frame=" << frameNumber
+                                     << " phase=armed source=health-drop exact=1 status=pass";
+                }
+            }
         }
     }
 
