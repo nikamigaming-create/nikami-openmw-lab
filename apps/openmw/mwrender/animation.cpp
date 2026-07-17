@@ -4609,7 +4609,11 @@ namespace MWRender
 
         if (animsrc->mKeyframes && !animsrc->mKeyframes->mKeyframeControllers.empty() && isFonvAnim)
         {
-            const std::string group = getFalloutSyntheticGroupFromKf(kfname);
+            // Callers that selected an exact retail action manifest provide the semantic group explicitly. Filename
+            // inference remains for legacy locomotion/creature sources, but never overrides an authored manifest.
+            const std::string group = falloutSemanticGroup.empty()
+                ? getFalloutSyntheticGroupFromKf(kfname)
+                : std::string(falloutSemanticGroup);
             if (!group.empty() && !animsrc->mKeyframes->mTextKeys.hasGroupStart(group))
             {
                 osg::ref_ptr<SceneUtil::KeyframeHolder> keyframes

@@ -87,6 +87,45 @@ namespace MWRender
         EXPECT_TRUE(getFonvWeaponHandGripKf(3, 0xff).empty());
     }
 
+    TEST(FalloutWeaponAnimationTest, resolvesExactRetailWeaponActionManifestsFromDnam)
+    {
+        const std::vector<FonvWeaponActionSource> melee = getFonvWeaponActionManifest(1, 0);
+        ASSERT_EQ(melee.size(), 3u);
+        EXPECT_EQ(melee[0].mPath, "meshes/characters/_male/1hmattackright_a.kf");
+        EXPECT_EQ(melee[0].mSemanticGroup, "attack2");
+        EXPECT_EQ(melee[1].mPath, "meshes/characters/_male/1hmequip.kf");
+        EXPECT_EQ(melee[1].mSemanticGroup, "equip");
+        EXPECT_EQ(melee[2].mPath, "meshes/characters/_male/1hmunequip.kf");
+        EXPECT_EQ(melee[2].mSemanticGroup, "unequip");
+
+        // Retail WeapNVAssaultCarbine DNAM is type=6 (2ha), reload=5 (ReloadF/JamF).
+        const std::vector<FonvWeaponActionSource> automatic = getFonvWeaponActionManifest(6, 5);
+        ASSERT_EQ(automatic.size(), 5u);
+        EXPECT_EQ(automatic[0].mPath, "meshes/characters/_male/2haattackloop.kf");
+        EXPECT_EQ(automatic[0].mSemanticGroup, "attack1");
+        EXPECT_EQ(automatic[1].mPath, "meshes/characters/_male/2haequip.kf");
+        EXPECT_EQ(automatic[2].mPath, "meshes/characters/_male/2hareloadf.kf");
+        EXPECT_EQ(automatic[2].mSemanticGroup, "reload");
+        EXPECT_TRUE(automatic[2].mRequired);
+        EXPECT_EQ(automatic[3].mPath, "meshes/characters/_male/2hajamf.kf");
+        EXPECT_EQ(automatic[3].mSemanticGroup, "jam");
+        EXPECT_FALSE(automatic[3].mRequired);
+        EXPECT_EQ(automatic[4].mPath, "meshes/characters/_male/2haunequip.kf");
+
+        const std::vector<FonvWeaponActionSource> mine = getFonvWeaponActionManifest(11, 0);
+        ASSERT_EQ(mine.size(), 3u);
+        EXPECT_EQ(mine[0].mPath, "meshes/characters/_male/1mdplacemine.kf");
+        EXPECT_EQ(mine[0].mSemanticGroup, "attack1");
+
+        EXPECT_EQ(getFonvWeaponReloadAnimationLetter(0), 'a');
+        EXPECT_EQ(getFonvWeaponReloadAnimationLetter(18), 's');
+        EXPECT_EQ(getFonvWeaponReloadAnimationLetter(19), 'w');
+        EXPECT_EQ(getFonvWeaponReloadAnimationLetter(20), 'x');
+        EXPECT_EQ(getFonvWeaponReloadAnimationLetter(22), 'z');
+        EXPECT_FALSE(getFonvWeaponReloadAnimationLetter(23).has_value());
+        EXPECT_TRUE(getFonvWeaponActionManifest(0xff, 0).empty());
+    }
+
     TEST(FalloutWeaponAnimationTest, distinguishesRequiredSkeletonTargetsFromOptionalVisualTargets)
     {
         EXPECT_TRUE(isFonvRequiredSkeletonControllerTarget("bip01"));

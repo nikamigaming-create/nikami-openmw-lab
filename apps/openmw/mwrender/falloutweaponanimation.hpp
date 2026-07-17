@@ -8,6 +8,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include <osg/CopyOp>
 #include <osg/ref_ptr>
@@ -18,6 +19,13 @@
 
 namespace MWRender
 {
+    struct FonvWeaponActionSource
+    {
+        std::string mPath;
+        std::string_view mSemanticGroup;
+        bool mRequired = true;
+    };
+
     inline std::string_view getFonvWeaponAnimationPrefix(std::uint8_t animationType)
     {
         // TESObjectWEAP::EWeaponType, verified against xNVSE's runtime layout and retail sequence telemetry.
@@ -60,6 +68,91 @@ namespace MWRender
         if (prefix.empty())
             return {};
         return "meshes/characters/_male/" + std::string(prefix) + std::string(suffix) + ".kf";
+    }
+
+    inline std::optional<char> getFonvWeaponReloadAnimationLetter(std::uint8_t rawReloadAnimation)
+    {
+        // TESObjectWEAP::ReloadAnim is non-contiguous alphabetically: A..S, W, X, Y, Z. Values 19..22 must not
+        // be interpreted as T..W (for example the .357 revolver authors selector 20, which is ReloadX).
+        if (rawReloadAnimation <= 18)
+            return static_cast<char>('a' + rawReloadAnimation);
+        switch (rawReloadAnimation)
+        {
+            case 19:
+                return 'w';
+            case 20:
+                return 'x';
+            case 21:
+                return 'y';
+            case 22:
+                return 'z';
+            default:
+                return std::nullopt;
+        }
+    }
+
+    inline std::vector<FonvWeaponActionSource> getFonvWeaponActionManifest(
+        std::uint8_t animationType, std::uint8_t reloadAnimation)
+    {
+        const std::string_view prefix = getFonvWeaponAnimationPrefix(animationType);
+        if (prefix.empty())
+            return {};
+
+        std::string_view primarySuffix;
+        std::string_view primaryGroup;
+        switch (animationType)
+        {
+            case 0: // HandToHand
+            case 1: // OneHandMelee
+            case 2: // TwoHandMelee
+                primarySuffix = "attackright_a";
+                primaryGroup = "attack2";
+                break;
+            case 3: // OneHandPistol
+            case 4: // OneHandPistolEnergy
+            case 5: // TwoHandRifle
+            case 7: // TwoHandRifleEnergy
+            case 9: // TwoHandLauncher
+                primarySuffix = "attack3";
+                primaryGroup = "attack3";
+                break;
+            case 6: // TwoHandAutomatic
+            case 8: // TwoHandHandle
+                primarySuffix = "attackloop";
+                primaryGroup = "attack1";
+                break;
+            case 10: // OneHandGrenade
+            case 13: // OneHandThrown
+                primarySuffix = "attackthrow";
+                primaryGroup = "attack1";
+                break;
+            case 11: // OneHandMine
+            case 12: // OneHandLandMine
+                primarySuffix = "placemine";
+                primaryGroup = "attack1";
+                break;
+            default:
+                return {};
+        }
+
+        std::vector<FonvWeaponActionSource> result;
+        result.reserve(5);
+        result.push_back({ getFonvWeaponAnimationKf(animationType, primarySuffix), primaryGroup, true });
+        result.push_back({ getFonvWeaponAnimationKf(animationType, "equip"), "equip", true });
+
+        // Only firearm/launcher families consume the WEAP.DNAM reload selector. Jam uses the same retail suffix.
+        if (animationType >= 3 && animationType <= 9)
+        {
+            if (const std::optional<char> letter = getFonvWeaponReloadAnimationLetter(reloadAnimation))
+            {
+                const std::string suffix(1, *letter);
+                result.push_back({ getFonvWeaponAnimationKf(animationType, "reload" + suffix), "reload", true });
+                result.push_back({ getFonvWeaponAnimationKf(animationType, "jam" + suffix), "jam", false });
+            }
+        }
+
+        result.push_back({ getFonvWeaponAnimationKf(animationType, "unequip"), "unequip", true });
+        return result;
     }
 
     inline std::optional<unsigned int> getFonvWeaponHandGripIndex(std::uint8_t rawHandGrip)

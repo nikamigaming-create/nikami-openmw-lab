@@ -8242,12 +8242,14 @@ namespace MWRender
             const auto addFonvAnimationSource = [&](const std::string& kfPath, std::string_view reason,
                                                    bool countsAsPrimary = true,
                                                    bool falloutProcedureIdle = false,
-                                                   std::string_view controllerOverlayKf = {}) {
+                                                   std::string_view controllerOverlayKf = {},
+                                                   std::string_view falloutSemanticGroup = {}) {
                 if (kfPath.empty())
-                    return;
+                    return false;
                 Log(Debug::Verbose) << "FNV/ESM4 diag: adding FONV NPC " << reason << " animation source " << kfPath
                                  << " for " << traits->mEditorId;
-                auto source = addSingleAnimSource(kfPath, skeletonModel, falloutProcedureIdle, controllerOverlayKf);
+                auto source = addSingleAnimSource(
+                    kfPath, skeletonModel, falloutProcedureIdle, controllerOverlayKf, falloutSemanticGroup);
                 if (worldViewerActorTelemetryEnabled())
                 {
                     std::ostringstream details;
@@ -8259,11 +8261,13 @@ namespace MWRender
                             << " bound=" << (source != nullptr)
                             << " primary=" << countsAsPrimary
                             << " procedureIdle=" << falloutProcedureIdle
-                            << " controllerOverlay=\"" << controllerOverlayKf << "\"";
+                            << " controllerOverlay=\"" << controllerOverlayKf << "\""
+                            << " semanticGroup=\"" << falloutSemanticGroup << "\"";
                     logWorldViewerActorLedger(mPtr, "animation-source", details.str());
                 }
                 if (source != nullptr)
                     addedAnimationSource = addedAnimationSource || countsAsPrimary;
+                return source != nullptr;
             };
 
             const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
@@ -8375,6 +8379,40 @@ namespace MWRender
                     else
                         Log(Debug::Verbose) << "FNV/ESM4 diag: keeping ambient neutral idle for " << traits->mEditorId
                                          << " despite equipped weapon=" << weapon->mEditorId;
+                }
+            }
+
+            if (const ESM4::Weapon* weapon = MWClass::ESM4Npc::getEquippedWeapon(mPtr))
+            {
+                const std::vector<FonvWeaponActionSource> actionManifest
+                    = getFonvWeaponActionManifest(weapon->mData.animationType, weapon->mData.reloadAnim);
+                if (actionManifest.empty())
+                {
+                    Log(Debug::Error) << "FNV/ESM4: no exact weapon action manifest for " << weapon->mEditorId
+                                      << " animationType="
+                                      << static_cast<unsigned int>(weapon->mData.animationType);
+                }
+                else
+                {
+                    for (const FonvWeaponActionSource& action : actionManifest)
+                    {
+                        const bool bound = addFonvAnimationSource(action.mPath, "retail weapon-family action", false,
+                            false, {}, action.mSemanticGroup);
+                        if (!bound && action.mRequired)
+                        {
+                            Log(Debug::Error) << "FNV/ESM4: required retail weapon action is unavailable for "
+                                              << weapon->mEditorId << ": group=" << action.mSemanticGroup
+                                              << " path=" << action.mPath;
+                        }
+                    }
+                }
+
+                if (weapon->mData.animationType >= 3 && weapon->mData.animationType <= 9
+                    && !getFonvWeaponReloadAnimationLetter(weapon->mData.reloadAnim))
+                {
+                    Log(Debug::Error) << "FNV/ESM4: invalid reload animation selector "
+                                      << static_cast<unsigned int>(weapon->mData.reloadAnim) << " for "
+                                      << weapon->mEditorId;
                 }
             }
 
