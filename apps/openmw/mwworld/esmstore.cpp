@@ -809,6 +809,7 @@ namespace MWWorld
             case ESM::REC_ARMA4:
             case ESM::REC_ARMO4:
             case ESM::REC_BOOK4:
+            case ESM::REC_CLOT4:
             case ESM::REC_CONT4:
             case ESM::REC_CREA4:
             case ESM::REC_DOOR4:
@@ -816,6 +817,7 @@ namespace MWWorld
             case ESM::REC_FURN4:
             case ESM::REC_IMOD4:
             case ESM::REC_INGR4:
+            case ESM::REC_KEYM4:
             case ESM::REC_LIGH4:
             case ESM::REC_LVLI4:
             case ESM::REC_LVLC4:

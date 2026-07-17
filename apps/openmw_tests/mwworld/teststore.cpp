@@ -869,4 +869,28 @@ namespace
         ASSERT_NE(dialogue, nullptr);
         EXPECT_THAT(dialogue->mInfo, ElementsAre(HasIdEqualTo("info0"), HasIdEqualTo("info2")));
     }
+
+    TEST(MWWorldStoreTest, shouldIndexEsm4ClothingAndKeys)
+    {
+        ESM4::Clothing clothing;
+        clothing.mId = ESM::FormId::fromUint32(0x01000001);
+
+        ESM4::Key key;
+        key.mId = ESM::FormId::fromUint32(0x01000002);
+
+        MWWorld::ESMStore store;
+        auto& clothingStore = const_cast<MWWorld::Store<ESM4::Clothing>&>(store.get<ESM4::Clothing>());
+        auto& keyStore = const_cast<MWWorld::Store<ESM4::Key>&>(store.get<ESM4::Key>());
+        clothingStore.insertStatic(clothing);
+        keyStore.insertStatic(key);
+        store.setUp();
+
+        const ESM::RefId clothingId = ESM::RefId::formIdRefId(clothing.mId);
+        const ESM::RefId keyId = ESM::RefId::formIdRefId(key.mId);
+
+        EXPECT_EQ(store.find(clothingId), ESM::REC_CLOT4);
+        EXPECT_EQ(store.findStatic(clothingId), ESM::REC_CLOT4);
+        EXPECT_EQ(store.find(keyId), ESM::REC_KEYM4);
+        EXPECT_EQ(store.findStatic(keyId), ESM::REC_KEYM4);
+    }
 }
