@@ -7,6 +7,7 @@
 #include <components/nif/controller.hpp>
 #include <components/nif/data.hpp>
 #include <components/nifosg/controller.hpp>
+#include <components/esm4/loadarmo.hpp>
 #include <components/esm3/loadweap.hpp>
 
 #include <memory>
@@ -213,9 +214,112 @@ namespace MWRender
         ASSERT_EQ(pistol->mSemanticGroup, rifle->mSemanticGroup);
         ASSERT_NE(pistol->mPath, rifle->mPath);
 
-        EXPECT_TRUE(matchesFonvWeaponActionSource(*pistol, "attack3", pistol->mPath));
-        EXPECT_FALSE(matchesFonvWeaponActionSource(*pistol, "attack3", rifle->mPath));
-        EXPECT_FALSE(matchesFonvWeaponActionSource(*pistol, "attack2", pistol->mPath));
+        EXPECT_TRUE(matchesFonvWeaponActionSource(*pistol, "attack3", pistol->mPath, pistol->mPath));
+        EXPECT_FALSE(matchesFonvWeaponActionSource(*pistol, "attack3", rifle->mPath, pistol->mPath));
+        EXPECT_FALSE(matchesFonvWeaponActionSource(*pistol, "attack2", pistol->mPath, pistol->mPath));
+    }
+
+    TEST(FalloutWeaponAnimationTest, derivesPowerArmorSiblingsWithoutHeuristics)
+    {
+        EXPECT_EQ(getFonvPowerArmorAnimationKf("mtidle.kf"), "pamtidle.kf");
+        EXPECT_EQ(getFonvPowerArmorAnimationKf("meshes/characters/_male/2hraim.kf"),
+            "meshes/characters/_male/pa2hraim.kf");
+        EXPECT_EQ(getFonvPowerArmorAnimationKf("meshes\\characters\\_male\\2hrequip.kf"),
+            "meshes\\characters\\_male\\pa2hrequip.kf");
+        EXPECT_EQ(getFonvPowerArmorAnimationKf("meshes/characters/_male/pamtidle.kf"),
+            "meshes/characters/_male/pamtidle.kf");
+
+        static_assert(FonvPowerArmorGeneralFlag == ESM4::Armor::FO3_PowerArmor);
+        EXPECT_TRUE(hasFonvPowerArmorGeneralFlag(
+            ESM4::Armor::TYPE_FO3 | ESM4::Armor::FO3_HeavyArmor | ESM4::Armor::FO3_PowerArmor));
+        EXPECT_FALSE(hasFonvPowerArmorGeneralFlag(ESM4::Armor::TYPE_FO3 | ESM4::Armor::FO3_HeavyArmor));
+    }
+
+    TEST(FalloutWeaponAnimationTest, resolvesEveryPowerArmorCandidateBeforeAnyGenericFallback)
+    {
+        const std::vector<std::string> candidates{ "meshes/characters/_male/locomotion/2hrforward.kf",
+            "meshes/characters/_male/locomotion/male/mtforward.kf" };
+        const std::vector<std::string> available{ "meshes/characters/_male/locomotion/2hrforward.kf",
+            "meshes/characters/_male/locomotion/male/pamtforward.kf" };
+        const auto exists = [&available](std::string_view path) {
+            return std::find(available.begin(), available.end(), path) != available.end();
+        };
+
+        const FonvAnimationFamilyResolution normal = resolveFonvAnimationFamily(candidates, false, exists);
+        EXPECT_EQ(normal.mPath, candidates[0]);
+        EXPECT_EQ(normal.mSelection, FonvAnimationFamilySelection::Generic);
+
+        const FonvAnimationFamilyResolution armored = resolveFonvAnimationFamily(candidates, true, exists);
+        EXPECT_EQ(armored.mPath, available[1]);
+        EXPECT_EQ(armored.mSelection, FonvAnimationFamilySelection::PowerArmor);
+    }
+
+    TEST(FalloutWeaponAnimationTest, resolvesPowerArmorAimActionsAndExplicitGenericFallbacks)
+    {
+        const std::vector<std::string> available{ "meshes/characters/_male/pa2hraim.kf",
+            "meshes/characters/_male/pa2hrequip.kf", "meshes/characters/_male/pa2hrunequip.kf",
+            "meshes/characters/_male/pa2haattackloop.kf", "meshes/characters/_male/2hrattack3.kf" };
+        const auto exists = [&available](std::string_view path) {
+            return std::find(available.begin(), available.end(), path) != available.end();
+        };
+
+        for (const std::string& path : { "meshes/characters/_male/2hraim.kf",
+                 "meshes/characters/_male/2hrequip.kf", "meshes/characters/_male/2hrunequip.kf",
+                 "meshes/characters/_male/2haattackloop.kf" })
+        {
+            const FonvAnimationFamilyResolution result = resolveFonvAnimationFamily({ path }, true, exists);
+            ASSERT_EQ(result.mSelection, FonvAnimationFamilySelection::PowerArmor) << path;
+            EXPECT_EQ(result.mPath, getFonvPowerArmorAnimationKf(path));
+        }
+
+        const FonvAnimationFamilyResolution fallback
+            = resolveFonvAnimationFamily({ "meshes/characters/_male/2hrattack3.kf" }, true, exists);
+        EXPECT_EQ(fallback.mPath, "meshes/characters/_male/2hrattack3.kf");
+        EXPECT_EQ(fallback.mSelection, FonvAnimationFamilySelection::GenericFallback);
+
+        const FonvAnimationFamilyResolution missing
+            = resolveFonvAnimationFamily({ "meshes/characters/_male/2hrreloadz.kf" }, true, exists);
+        EXPECT_TRUE(missing.mPath.empty());
+        EXPECT_EQ(missing.mSelection, FonvAnimationFamilySelection::Missing);
+    }
+
+    TEST(FalloutWeaponAnimationTest, validatesWeaponActionsAgainstTheResolvedArmorFamily)
+    {
+        const std::optional<FonvWeaponActionSource> rifle
+            = getFonvWeaponActionSource(5, 0, FonvWeaponAction::Equip);
+        ASSERT_TRUE(rifle.has_value());
+        const std::string powerArmorPath = getFonvPowerArmorAnimationKf(rifle->mPath);
+
+        EXPECT_TRUE(matchesFonvWeaponActionSource(*rifle, "equip", rifle->mPath, rifle->mPath));
+        EXPECT_FALSE(matchesFonvWeaponActionSource(*rifle, "equip", powerArmorPath, rifle->mPath));
+        EXPECT_TRUE(matchesFonvWeaponActionSource(*rifle, "equip", rifle->mPath, rifle->mPath));
+        EXPECT_TRUE(matchesFonvWeaponActionSource(*rifle, "equip", powerArmorPath, powerArmorPath));
+        EXPECT_FALSE(matchesFonvWeaponActionSource(
+            *rifle, "equip", "meshes/characters/_male/pa2haequip.kf", powerArmorPath));
+        EXPECT_FALSE(matchesFonvWeaponActionSource(*rifle, "attack3", powerArmorPath, powerArmorPath));
+        EXPECT_FALSE(matchesFonvWeaponActionSource(*rifle, "equip", powerArmorPath, {}));
+    }
+
+    TEST(FalloutWeaponAnimationTest, preservesPreFillSemanticsWhenEarlierSourcesExposeMoreGroups)
+    {
+        std::vector<std::string> liveSemantics{ "walkforward" };
+        const FonvAnimationSemanticSnapshot baseline({ "walkforward", "runforward" },
+            [&liveSemantics](std::string_view semantic) {
+                return std::find(liveSemantics.begin(), liveSemantics.end(), semantic) != liveSemantics.end();
+            });
+
+        // Loading mtforward exposes runforward too, but it was not authoritative at the KFFZ/IDLE baseline.
+        liveSemantics.emplace_back("runforward");
+        EXPECT_TRUE(baseline.wasPresent("walkforward"));
+        EXPECT_FALSE(baseline.wasPresent("runforward"));
+
+        const std::vector<std::string> available{ "meshes/characters/_male/locomotion/2hrfastforward.kf",
+            "meshes/characters/_male/locomotion/male/mtforward.kf" };
+        const FonvAnimationFamilyResolution run = resolveFonvAnimationFamily(available, false,
+            [&available](std::string_view path) {
+                return std::find(available.begin(), available.end(), path) != available.end();
+            });
+        EXPECT_EQ(run.mPath, "meshes/characters/_male/locomotion/2hrfastforward.kf");
     }
 
     TEST(FalloutWeaponAnimationTest, routesEverySyntheticFalloutTypeThroughTheExactStateMachine)

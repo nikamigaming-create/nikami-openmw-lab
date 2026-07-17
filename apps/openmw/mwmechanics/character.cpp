@@ -27,6 +27,7 @@
 
 #include <components/esm/records.hpp>
 #include <components/esm/defs.hpp>
+#include <components/esm4/loadarmo.hpp>
 #include <components/esm4/loadcrea.hpp>
 #include <components/esm4/loadweap.hpp>
 #include <components/debug/debuglog.hpp>
@@ -35,10 +36,13 @@
 #include <components/misc/rng.hpp>
 #include <components/misc/strings/algorithm.hpp>
 #include <components/misc/strings/conversion.hpp>
+#include <components/resource/resourcesystem.hpp>
 
 #include <components/settings/values.hpp>
 
 #include <components/sceneutil/positionattitudetransform.hpp>
+#include <components/vfs/manager.hpp>
+#include <components/vfs/pathutil.hpp>
 
 #include "../mwrender/animation.hpp"
 #include "../mwrender/falloutweaponanimation.hpp"
@@ -110,6 +114,17 @@ namespace
     bool isFalloutActor(const MWWorld::Ptr& ptr)
     {
         return ptr.getType() == ESM::REC_NPC_4 || ptr.getType() == ESM4::Creature::sRecordId;
+    }
+
+    bool usesFonvPowerArmorAnimationFamily(const MWWorld::Ptr& ptr)
+    {
+        if (ptr.getType() != ESM::REC_NPC_4)
+            return false;
+        static_assert(MWRender::FonvPowerArmorGeneralFlag == ESM4::Armor::FO3_PowerArmor);
+        const std::vector<const ESM4::Armor*>& armor = MWClass::ESM4Npc::getEquippedArmor(ptr);
+        return std::any_of(armor.begin(), armor.end(), [](const ESM4::Armor* item) {
+            return item != nullptr && MWRender::hasFonvPowerArmorGeneralFlag(item->mGeneralFlags);
+        });
     }
 
     std::optional<int> getFalloutNpcActiveWeaponType(const MWWorld::Ptr& ptr)
@@ -745,13 +760,22 @@ namespace MWMechanics
             return {};
         }
         const std::string selectedSource = mAnimation->getAnimationSourceName(source->mSemanticGroup);
-        if (!MWRender::matchesFonvWeaponActionSource(*source, source->mSemanticGroup, selectedSource))
+        const bool powerArmor = usesFonvPowerArmorAnimationFamily(mPtr);
+        const VFS::Manager* vfs = MWBase::Environment::get().getResourceSystem()->getVFS();
+        const MWRender::FonvAnimationFamilyResolution resolution = MWRender::resolveFonvAnimationFamily(
+            { source->mPath }, powerArmor, [vfs](std::string_view path) {
+                return vfs != nullptr && vfs->exists(VFS::Path::toNormalized(path));
+            });
+        if (!MWRender::matchesFonvWeaponActionSource(
+                *source, source->mSemanticGroup, selectedSource, resolution.mPath))
         {
             Log(Debug::Error) << "FNV mechanics rejected stale or foreign action source: animationType="
                               << static_cast<unsigned int>(*animationType)
                               << " action=" << static_cast<unsigned int>(action)
-                              << " group=" << source->mSemanticGroup << " expectedPath=" << source->mPath
-                              << " selectedPath=" << selectedSource;
+                               << " group=" << source->mSemanticGroup << " expectedPath=" << source->mPath
+                               << " selectedPath=" << selectedSource << " resolvedPath=" << resolution.mPath
+                               << " selection=" << MWRender::getFonvAnimationFamilySelectionName(resolution.mSelection)
+                               << " powerArmor=" << powerArmor;
             return {};
         }
         return source->mSemanticGroup;

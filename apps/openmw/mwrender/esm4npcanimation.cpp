@@ -7648,6 +7648,29 @@ namespace MWRender
                 stream << ESM::printName(ref.mType) << "=" << ESM::RefId(ref.mSound) << ":"
                        << (file.empty() ? std::string_view("<unresolved>") : std::string_view(file));
             }
+        bool actorUsesFonvPowerArmor(const MWWorld::Ptr& ptr)
+        {
+            static_assert(FonvPowerArmorGeneralFlag == ESM4::Armor::FO3_PowerArmor);
+            const std::vector<const ESM4::Armor*>& armor = MWClass::ESM4Npc::getEquippedArmor(ptr);
+            return std::any_of(armor.begin(), armor.end(), [](const ESM4::Armor* item) {
+                return item != nullptr && hasFonvPowerArmorGeneralFlag(item->mGeneralFlags);
+            });
+        }
+
+        std::string formatFonvAnimationCandidates(const std::vector<std::string>& candidates, bool powerArmor)
+        {
+            std::ostringstream stream;
+            for (std::size_t index = 0; index < candidates.size(); ++index)
+            {
+                if (index != 0)
+                    stream << ',';
+                if (powerArmor)
+                    stream << getFonvPowerArmorAnimationKf(candidates[index]) << '|';
+                stream << candidates[index];
+            }
+            return stream.str();
+        }
+
             return stream.str();
         }
 
@@ -8237,7 +8260,6 @@ namespace MWRender
             if (animationRecord == nullptr)
                 animationRecord = traits;
 
-            bool addedAnimationSource = false;
             std::vector<std::string> procedureIdleSources;
             const auto addFonvAnimationSource = [&](const std::string& kfPath, std::string_view reason,
                                                    bool countsAsPrimary = true,
@@ -8246,6 +8268,54 @@ namespace MWRender
                                                    std::string_view falloutSemanticGroup = {}) {
                 if (kfPath.empty())
                     return false;
+            const bool powerArmor = actorUsesFonvPowerArmor(mPtr);
+            const VFS::Manager* animationVfs = mResourceSystem != nullptr ? mResourceSystem->getVFS() : nullptr;
+            const auto animationExists = [animationVfs](std::string_view path) {
+                return animationVfs != nullptr && animationVfs->exists(VFS::Path::toNormalized(path));
+            };
+            const auto addResolvedFonvAnimationSource = [&](const std::vector<std::string>& candidates,
+                                                            std::string_view semanticGroup,
+                                                            std::string_view reason,
+                                                            bool countsAsPrimary,
+                                                            std::string_view controllerOverlayKf,
+                                                            bool required) {
+                const FonvAnimationFamilyResolution resolution
+                    = resolveFonvAnimationFamily(candidates, powerArmor, animationExists);
+                const bool bound = !resolution.mPath.empty()
+                    && addFonvAnimationSource(resolution.mPath, reason, countsAsPrimary, false,
+                        controllerOverlayKf, semanticGroup);
+                const std::string selected
+                    = semanticGroup.empty() ? std::string() : getAnimationSourceName(semanticGroup);
+                const bool selectedExactly = bound && (semanticGroup.empty() || selected == resolution.mPath);
+                const bool passed = selectedExactly || (!required && resolution.mPath.empty());
+
+                Log(passed ? Debug::Info : Debug::Error)
+                    << "FNV/ESM4 animation-family-resolution: actor=" << traits->mEditorId
+                    << " powerArmor=" << powerArmor << " semantic=" << semanticGroup
+                    << " candidates=[" << formatFonvAnimationCandidates(candidates, powerArmor) << ']'
+                    << " selection=" << getFonvAnimationFamilySelectionName(resolution.mSelection)
+                    << " selectedPath=" << resolution.mPath << " bound=" << bound
+                    << " finalSource=" << selected << " required=" << required
+                    << " status=" << (passed ? "pass" : "fail");
+                if (worldViewerActorTelemetryEnabled())
+                {
+                    std::ostringstream details;
+                    details << "game=" << worldViewerNpcGameTag(*traits)
+                            << " npc=\"" << traits->mEditorId << "\""
+                            << " powerArmor=" << powerArmor
+                            << " semantic=\"" << semanticGroup << "\""
+                            << " candidates=\"" << formatFonvAnimationCandidates(candidates, powerArmor) << "\""
+                            << " selection=" << getFonvAnimationFamilySelectionName(resolution.mSelection)
+                            << " selectedPath=\"" << resolution.mPath << "\""
+                            << " bound=" << bound
+                            << " finalSource=\"" << selected << "\""
+                            << " required=" << required
+                            << " status=" << (passed ? "pass" : "fail");
+                    logWorldViewerActorLedger(mPtr, "animation-family-resolution", details.str());
+                }
+                return passed;
+            };
+
                 Log(Debug::Verbose) << "FNV/ESM4 diag: adding FONV NPC " << reason << " animation source " << kfPath
                                  << " for " << traits->mEditorId;
                 auto source = addSingleAnimSource(
@@ -8265,8 +8335,6 @@ namespace MWRender
                             << " semanticGroup=\"" << falloutSemanticGroup << "\"";
                     logWorldViewerActorLedger(mPtr, "animation-source", details.str());
                 }
-                if (source != nullptr)
-                    addedAnimationSource = addedAnimationSource || countsAsPrimary;
                 return source != nullptr;
             };
 
@@ -8318,67 +8386,89 @@ namespace MWRender
                 Log(Debug::Warning) << "FNV/ESM4 diag: no FONV NPC KFFZ animation list for " << traits->mEditorId
                                     << " animationRecord=" << animationRecord->mEditorId;
 
-            if (!addedAnimationSource)
-            {
-                const bool isFemale = MWClass::ESM4Npc::isFemale(mPtr);
-                const std::string locomotionDir
-                    = isFemale ? "meshes/characters/_male/locomotion/female/" : "meshes/characters/_male/locomotion/male/";
-
-                addFonvAnimationSource("meshes/characters/_male/locomotion/mtidle.kf", "fallback");
-                // Do not use the talking idle as the neutral fallback. It drives helper/twist bones that are not
-                // present in the base FNV skeleton path yet and visibly mangles skinned actors.
-                addFonvAnimationSource(locomotionDir + "mtforward.kf", "fallback");
-                addFonvAnimationSource(locomotionDir + "mtbackward.kf", "fallback");
-                addFonvAnimationSource(locomotionDir + "mtleft.kf", "fallback");
-                addFonvAnimationSource(locomotionDir + "mtright.kf", "fallback");
-                Log(Debug::Verbose) << "FNV/ESM4 diag: suppressing Fallout fast locomotion fallback KFs for "
-                                 << traits->mEditorId
-                                 << " because offline anatomy sweep rejects mtfast* under the current pose path; "
-                                    "mt* walk sources synthesize run groups instead";
-                addFonvAnimationSource("meshes/characters/_male/locomotion/mtturnleft.kf", "fallback");
-                addFonvAnimationSource("meshes/characters/_male/locomotion/mtturnright.kf", "fallback");
-
-                if (const ESM4::Weapon* weapon = MWClass::ESM4Npc::getEquippedWeapon(mPtr))
+            const bool isFemale = MWClass::ESM4Npc::isFemale(mPtr);
+            const std::string locomotionDir
+                = isFemale ? "meshes/characters/_male/locomotion/female/" : "meshes/characters/_male/locomotion/male/";
+            const ESM4::Weapon* familyWeapon = MWClass::ESM4Npc::getEquippedWeapon(mPtr);
+            const std::string weaponPrefix = familyWeapon != nullptr
+                ? std::string(getFonvWeaponAnimationPrefix(familyWeapon->mData.animationType))
+                : std::string();
+            const FonvAnimationSemanticSnapshot preFamilySemantics(
+                { "idle", "walkforward", "walkback", "walkleft", "walkright", "runforward", "runback",
+                    "runleft", "runright", "turnleft", "turnright", "weaponpose" },
+                [this](std::string_view semantic) { return hasAnimation(semantic); });
+            const auto fillMissingSemantic = [&](std::string_view semantic, std::vector<std::string> candidates,
+                                                 std::string_view reason, std::string_view controllerOverlayKf = {}) {
+                // A loaded KF may synthesize several semantic groups. Decide authority from the KFFZ/IDLE baseline,
+                // not from groups exposed by an earlier family fill; otherwise mtforward suppresses 2hrfastforward.
+                if (preFamilySemantics.wasPresent(semantic))
+                    return true;
+                return addResolvedFonvAnimationSource(
+                    candidates, semantic, reason, true, controllerOverlayKf, true);
+            };
+            const auto locomotionCandidates = [&](std::string_view weaponSuffix, std::string neutralPath) {
+                std::vector<std::string> candidates;
+                if (!weaponPrefix.empty())
                 {
-                    const std::string_view prefix = getFonvWeaponAnimationPrefix(weapon->mData.animationType);
-                    if (!prefix.empty())
-                    {
-                        // Retail FNV resolves locomotion through the equipped weapon family. Some families author
-                        // only a subset (for example 2ha has a walk-forward plus four fast directions), so add the
-                        // complete candidate set and let the VFS-backed source loader ignore absent files.
-                        constexpr std::array<std::string_view, 10> suffixes{ "forward", "backward", "left", "right",
-                            "fastforward", "fastbackward", "fastleft", "fastright", "turnleft", "turnright" };
-                        for (std::string_view suffix : suffixes)
-                        {
-                            addFonvAnimationSource("meshes/characters/_male/locomotion/" + std::string(prefix)
-                                    + std::string(suffix) + ".kf",
-                                "retail weapon-family locomotion", false);
-                        }
-                    }
+                    candidates.push_back("meshes/characters/_male/locomotion/" + weaponPrefix
+                        + std::string(weaponSuffix) + ".kf");
+                }
+                candidates.push_back(std::move(neutralPath));
+                return candidates;
+            };
 
-                    const char* esm4WeaponPose = std::getenv("OPENMW_ESM4_ENABLE_WEAPON_IDLE_POSE");
-                    const char* fnvWeaponPose = std::getenv("OPENMW_FNV_ENABLE_WEAPON_IDLE_POSE");
-                    const bool useWeaponIdlePose = esm4WeaponPose != nullptr
-                        ? std::string_view(esm4WeaponPose) != "0"
-                        : (fnvWeaponPose != nullptr ? std::string_view(fnvWeaponPose) != "0" : true);
-                    if (useWeaponIdlePose)
+            // Fill each retail semantic independently. An authored KFFZ/IDLE that supplies one group must not
+            // suppress unrelated locomotion groups, and an authored group remains authoritative for that group.
+            fillMissingSemantic("idle", { "meshes/characters/_male/locomotion/mtidle.kf" }, "retail idle family");
+            fillMissingSemantic("walkforward", locomotionCandidates("forward", locomotionDir + "mtforward.kf"),
+                "retail walk family");
+            fillMissingSemantic("walkback", locomotionCandidates("backward", locomotionDir + "mtbackward.kf"),
+                "retail walk family");
+            fillMissingSemantic("walkleft", locomotionCandidates("left", locomotionDir + "mtleft.kf"),
+                "retail walk family");
+            fillMissingSemantic("walkright", locomotionCandidates("right", locomotionDir + "mtright.kf"),
+                "retail walk family");
+            // Retail archives do not provide a complete neutral mtfast set. The neutral mt directional KFs author
+            // both walk and run groups and are therefore the exact last fallback for a missing weapon-fast sibling.
+            fillMissingSemantic("runforward", locomotionCandidates("fastforward", locomotionDir + "mtforward.kf"),
+                "retail run family");
+            fillMissingSemantic("runback", locomotionCandidates("fastbackward", locomotionDir + "mtbackward.kf"),
+                "retail run family");
+            fillMissingSemantic("runleft", locomotionCandidates("fastleft", locomotionDir + "mtleft.kf"),
+                "retail run family");
+            fillMissingSemantic("runright", locomotionCandidates("fastright", locomotionDir + "mtright.kf"),
+                "retail run family");
+            fillMissingSemantic("turnleft", locomotionCandidates("turnleft",
+                "meshes/characters/_male/locomotion/mtturnleft.kf"), "retail turn family");
+            fillMissingSemantic("turnright", locomotionCandidates("turnright",
+                "meshes/characters/_male/locomotion/mtturnright.kf"), "retail turn family");
+
+            if (familyWeapon != nullptr)
+            {
+                const char* esm4WeaponPose = std::getenv("OPENMW_ESM4_ENABLE_WEAPON_IDLE_POSE");
+                const char* fnvWeaponPose = std::getenv("OPENMW_FNV_ENABLE_WEAPON_IDLE_POSE");
+                const bool useWeaponIdlePose = esm4WeaponPose != nullptr
+                    ? std::string_view(esm4WeaponPose) != "0"
+                    : (fnvWeaponPose != nullptr ? std::string_view(fnvWeaponPose) != "0" : true);
+                if (useWeaponIdlePose && !preFamilySemantics.wasPresent("weaponpose"))
+                {
+                    const std::optional<unsigned int> handGrip
+                        = getFonvWeaponHandGripIndex(familyWeapon->mData.handGrip);
+                    if (!handGrip)
                     {
-                        const std::string weaponPose = getFonvWeaponIdlePoseKf(weapon);
-                        const std::optional<unsigned int> handGrip
-                            = getFonvWeaponHandGripIndex(weapon->mData.handGrip);
-                        if (!handGrip)
-                        {
-                            Log(Debug::Warning) << "FNV/ESM4: invalid weapon hand-grip selector "
-                                                << static_cast<unsigned int>(weapon->mData.handGrip) << " for "
-                                                << weapon->mEditorId;
-                        }
-                        const std::string handGripKf
-                            = getFonvWeaponHandGripKf(weapon->mData.animationType, weapon->mData.handGrip);
-                        addFonvAnimationSource(weaponPose, "weapon idle pose", false, false, handGripKf);
+                        Log(Debug::Warning) << "FNV/ESM4: invalid weapon hand-grip selector "
+                                            << static_cast<unsigned int>(familyWeapon->mData.handGrip) << " for "
+                                            << familyWeapon->mEditorId;
                     }
-                    else
-                        Log(Debug::Verbose) << "FNV/ESM4 diag: keeping ambient neutral idle for " << traits->mEditorId
-                                         << " despite equipped weapon=" << weapon->mEditorId;
+                    const std::string handGripKf
+                        = getFonvWeaponHandGripKf(familyWeapon->mData.animationType, familyWeapon->mData.handGrip);
+                    fillMissingSemantic("weaponpose", { getFonvWeaponIdlePoseKf(familyWeapon) },
+                        "retail weapon-pose family", handGripKf);
+                }
+                else if (!useWeaponIdlePose)
+                {
+                    Log(Debug::Verbose) << "FNV/ESM4 diag: keeping ambient neutral idle for " << traits->mEditorId
+                                        << " despite equipped weapon=" << familyWeapon->mEditorId;
                 }
             }
 
@@ -8401,9 +8491,9 @@ namespace MWRender
             {
                 for (const FonvWeaponActionSource& action : actionManifest)
                 {
-                    const bool bound = addFonvAnimationSource(action.mPath, "retail weapon-family action", false,
-                        false, {}, action.mSemanticGroup);
-                    if (!bound && action.mRequired)
+                    const bool resolved = addResolvedFonvAnimationSource({ action.mPath }, action.mSemanticGroup,
+                        "retail weapon-action family", false, {}, action.mRequired);
+                    if (!resolved && action.mRequired)
                     {
                         Log(Debug::Error) << "FNV/ESM4: required retail weapon action is unavailable for "
                                           << (actionWeapon != nullptr ? actionWeapon->mEditorId
@@ -8670,7 +8760,68 @@ namespace MWRender
             && (action == FonvWeaponAction::Equip || action == FonvWeaponAction::PrimaryAttack);
         if (refreshForSelectedFamily && !refreshFalloutWeaponPart())
             return false;
-        return Animation::prepareFalloutWeaponAnimation(animationType, reloadAnimation, action);
+
+        const std::vector<FonvWeaponActionSource> manifest
+            = getFonvWeaponActionManifest(animationType, reloadAnimation);
+        if (manifest.empty())
+        {
+            Log(Debug::Error) << "FNV/ESM4 animation has no exact action manifest: actor=" << mPtr.toString()
+                              << " animationType=" << static_cast<unsigned int>(animationType)
+                              << " reloadAnimation=" << static_cast<unsigned int>(reloadAnimation);
+            return false;
+        }
+
+        const bool powerArmor = actorUsesFonvPowerArmor(mPtr);
+        const VFS::Manager* vfs = mResourceSystem != nullptr ? mResourceSystem->getVFS() : nullptr;
+        const auto exists = [vfs](std::string_view path) {
+            return vfs != nullptr && vfs->exists(VFS::Path::toNormalized(path));
+        };
+        const std::string baseModel = mPtr.getClass().getCorrectedModel(mPtr);
+        bool requiredSourcesAvailable = true;
+        for (const FonvWeaponActionSource& source : manifest)
+        {
+            const FonvAnimationFamilyResolution resolution
+                = resolveFonvAnimationFamily({ source.mPath }, powerArmor, exists);
+            if (resolution.mPath.empty())
+            {
+                if (source.mRequired)
+                    requiredSourcesAvailable = false;
+                Log(source.mRequired ? Debug::Error : Debug::Verbose)
+                    << "FNV/ESM4 dynamic animation-family-resolution: actor=" << mPtr.toString()
+                    << " powerArmor=" << powerArmor << " semantic=" << source.mSemanticGroup
+                    << " candidates=[" << formatFonvAnimationCandidates({ source.mPath }, powerArmor) << ']'
+                    << " selection=missing required=" << source.mRequired
+                    << " status=" << (source.mRequired ? "fail" : "optional-missing");
+                continue;
+            }
+
+            if (getAnimationSourceName(source.mSemanticGroup) != resolution.mPath)
+            {
+                const std::shared_ptr<AnimSource> bound = addSingleAnimSource(
+                    resolution.mPath, baseModel, false, {}, source.mSemanticGroup);
+                if (bound == nullptr)
+                {
+                    if (source.mRequired)
+                        requiredSourcesAvailable = false;
+                    Log(source.mRequired ? Debug::Error : Debug::Warning)
+                        << "FNV/ESM4 dynamic family source failed to bind: actor=" << mPtr.toString()
+                        << " semantic=" << source.mSemanticGroup << " path=" << resolution.mPath
+                        << " required=" << source.mRequired;
+                    continue;
+                }
+            }
+
+            const std::string selected = getAnimationSourceName(source.mSemanticGroup);
+            const bool exact = selected == resolution.mPath;
+            requiredSourcesAvailable = requiredSourcesAvailable && (exact || !source.mRequired);
+            Log(exact ? Debug::Info : (source.mRequired ? Debug::Error : Debug::Warning))
+                << "FNV/ESM4 dynamic animation-family-resolution: actor=" << mPtr.toString()
+                << " powerArmor=" << powerArmor << " semantic=" << source.mSemanticGroup
+                << " selection=" << getFonvAnimationFamilySelectionName(resolution.mSelection)
+                << " selectedPath=" << resolution.mPath << " finalSource=" << selected
+                << " required=" << source.mRequired << " status=" << (exact ? "pass" : "fail");
+        }
+        return requiredSourcesAvailable;
     }
 
     bool ESM4NpcAnimation::supportsProceduralHumanoidLocomotion() const

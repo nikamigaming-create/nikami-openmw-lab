@@ -5,6 +5,7 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <initializer_list>
 #include <memory>
 #include <optional>
 #include <string>
@@ -44,6 +45,113 @@ namespace MWRender
         std::string_view mSemanticGroup;
         bool mRequired = true;
     };
+
+    inline constexpr std::uint32_t FonvPowerArmorGeneralFlag = 0x0020;
+
+    inline bool hasFonvPowerArmorGeneralFlag(std::uint32_t generalFlags)
+    {
+        return (generalFlags & FonvPowerArmorGeneralFlag) != 0;
+    }
+
+    enum class FonvAnimationFamilySelection : std::uint8_t
+    {
+        Missing,
+        Generic,
+        PowerArmor,
+        GenericFallback,
+    };
+
+    struct FonvAnimationFamilyResolution
+    {
+        std::string mPath;
+        FonvAnimationFamilySelection mSelection = FonvAnimationFamilySelection::Missing;
+    };
+
+    class FonvAnimationSemanticSnapshot
+    {
+    public:
+        template <class HasAnimation>
+        FonvAnimationSemanticSnapshot(
+            std::initializer_list<std::string_view> semantics, HasAnimation&& hasAnimation)
+        {
+            for (const std::string_view semantic : semantics)
+            {
+                if (hasAnimation(semantic))
+                    mPresent.emplace_back(semantic);
+            }
+        }
+
+        bool wasPresent(std::string_view semantic) const
+        {
+            return std::any_of(mPresent.begin(), mPresent.end(), [semantic](const std::string& present) {
+                return present == semantic;
+            });
+        }
+
+    private:
+        std::vector<std::string> mPresent;
+    };
+
+    inline std::string getFonvPowerArmorAnimationKf(std::string_view genericPath)
+    {
+        if (genericPath.empty())
+            return {};
+
+        const std::size_t slash = genericPath.find_last_of("/\\");
+        const std::size_t filename = slash == std::string_view::npos ? 0 : slash + 1;
+        if (Misc::StringUtils::ciStartsWith(genericPath.substr(filename), "pa"))
+            return std::string(genericPath);
+
+        std::string result(genericPath);
+        result.insert(filename, "pa");
+        return result;
+    }
+
+    inline std::string_view getFonvAnimationFamilySelectionName(FonvAnimationFamilySelection selection)
+    {
+        switch (selection)
+        {
+            case FonvAnimationFamilySelection::Generic:
+                return "generic";
+            case FonvAnimationFamilySelection::PowerArmor:
+                return "power-armor";
+            case FonvAnimationFamilySelection::GenericFallback:
+                return "generic-fallback";
+            case FonvAnimationFamilySelection::Missing:
+                return "missing";
+        }
+        return "missing";
+    }
+
+    template <class Exists>
+    FonvAnimationFamilyResolution resolveFonvAnimationFamily(
+        const std::vector<std::string>& genericCandidates, bool powerArmor, Exists&& exists)
+    {
+        if (powerArmor)
+        {
+            // Retail resolves the family before it resolves candidate precedence. Scan every PA sibling first so a
+            // generic weapon-direction source cannot beat a later PA-neutral source (for example 2hrforward versus
+            // pamtforward).
+            for (const std::string& generic : genericCandidates)
+            {
+                const std::string powerArmorPath = getFonvPowerArmorAnimationKf(generic);
+                if (!powerArmorPath.empty() && exists(powerArmorPath))
+                {
+                    return { powerArmorPath, FonvAnimationFamilySelection::PowerArmor };
+                }
+            }
+        }
+
+        for (const std::string& generic : genericCandidates)
+        {
+            if (!generic.empty() && exists(generic))
+            {
+                return { generic, powerArmor ? FonvAnimationFamilySelection::GenericFallback
+                                             : FonvAnimationFamilySelection::Generic };
+            }
+        }
+        return {};
+    }
 
     inline std::string_view getFonvWeaponAnimationPrefix(std::uint8_t animationType)
     {
@@ -198,9 +306,9 @@ namespace MWRender
     }
 
     inline bool matchesFonvWeaponActionSource(const FonvWeaponActionSource& expected,
-        std::string_view selectedGroup, std::string_view selectedPath)
+        std::string_view selectedGroup, std::string_view selectedPath, std::string_view resolvedPath)
     {
-        return selectedGroup == expected.mSemanticGroup && selectedPath == expected.mPath;
+        return selectedGroup == expected.mSemanticGroup && !resolvedPath.empty() && selectedPath == resolvedPath;
     }
 
     inline FonvWeaponActionProgress getFonvWeaponActionProgress(bool stateExists, float completion)
