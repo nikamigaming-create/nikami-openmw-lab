@@ -63,6 +63,10 @@ namespace MWRender
         osg::Vec4f mFalloutStarsColor = osg::Vec4f(0.f, 0.f, 0.f, 0.f);
 
         float mFogDepth;
+        bool mHasFalloutFog = false;
+        float mFalloutFogNear = 0.f;
+        float mFalloutFogFar = 0.f;
+        float mFalloutFogPower = 1.f;
 
         float mDLFogFactor;
         float mDLFogOffset;

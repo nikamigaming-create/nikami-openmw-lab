@@ -54,6 +54,85 @@ namespace MWWorld
             EXPECT_FLOAT_EQ(sampleFalloutWeatherColor(samples, 20.5f, settings).r(), 3.f); // inclusive Night edge
         }
 
+        TEST(MWWorldWeatherTest, samplesRetailFalloutFogAcrossExtendedDayNightRanges)
+        {
+            const FalloutWeatherFogSamples samples{
+                { 10.f, 120000.f, 0.25f },
+                { -7500.f, 150000.f, 1.f },
+            };
+            TimeOfDaySettings settings{};
+            settings.mNightEnd = 6.f;
+            settings.mDayStart = 8.f;
+            settings.mDayEnd = 18.f;
+            settings.mNightStart = 20.f;
+
+            const FalloutWeatherFog night = sampleFalloutWeatherFog(samples, 5.5f, settings);
+            EXPECT_FLOAT_EQ(night.mNear, -7500.f);
+            EXPECT_FLOAT_EQ(night.mFar, 150000.f);
+            EXPECT_FLOAT_EQ(night.mPower, 1.f);
+
+            const FalloutWeatherFog sunriseMidpoint = sampleFalloutWeatherFog(samples, 6.75f, settings);
+            EXPECT_FLOAT_EQ(sunriseMidpoint.mNear, -3745.f);
+            EXPECT_FLOAT_EQ(sunriseMidpoint.mFar, 135000.f);
+            EXPECT_FLOAT_EQ(sunriseMidpoint.mPower, 0.625f);
+
+            const FalloutWeatherFog day = sampleFalloutWeatherFog(samples, 8.f, settings);
+            EXPECT_FLOAT_EQ(day.mNear, 10.f);
+            EXPECT_FLOAT_EQ(day.mFar, 120000.f);
+            EXPECT_FLOAT_EQ(day.mPower, 0.25f);
+            EXPECT_EQ(sampleFalloutWeatherFog(samples, 18.f, settings).mFar, day.mFar);
+
+            const FalloutWeatherFog sunsetMidpoint = sampleFalloutWeatherFog(samples, 19.25f, settings);
+            EXPECT_FLOAT_EQ(sunsetMidpoint.mNear, sunriseMidpoint.mNear);
+            EXPECT_FLOAT_EQ(sunsetMidpoint.mFar, sunriseMidpoint.mFar);
+            EXPECT_FLOAT_EQ(sunsetMidpoint.mPower, sunriseMidpoint.mPower);
+
+            const FalloutWeatherFog lateNight = sampleFalloutWeatherFog(samples, 20.5f, settings);
+            EXPECT_FLOAT_EQ(lateNight.mNear, night.mNear);
+            EXPECT_FLOAT_EQ(lateNight.mFar, night.mFar);
+            EXPECT_FLOAT_EQ(lateNight.mPower, night.mPower);
+        }
+
+        TEST(MWWorldWeatherTest, reproducesCapturedGoodspringsFogParameters)
+        {
+            const FalloutWeatherFogSamples samples{
+                { 10.f, 120000.f, 0.5f },
+                { 0.f, 150000.f, 0.5f },
+            };
+            TimeOfDaySettings settings{};
+            settings.mNightEnd = 6.f;
+            settings.mDayStart = 8.f;
+            settings.mDayEnd = 18.f;
+            settings.mNightStart = 20.f;
+
+            const FalloutWeatherFog morning = sampleFalloutWeatherFog(samples, 6.00486183f, settings);
+            EXPECT_NEAR(morning.mFar, 143941.672f, 0.05f);
+            EXPECT_NEAR(morning.mFar - morning.mNear, 143939.656f, 0.05f);
+            EXPECT_FLOAT_EQ(morning.mPower, 0.5f);
+
+            const FalloutWeatherFog noon = sampleFalloutWeatherFog(samples, 12.0011663f, settings);
+            EXPECT_FLOAT_EQ(noon.mFar, 120000.f);
+            EXPECT_FLOAT_EQ(noon.mFar - noon.mNear, 119990.f);
+            EXPECT_FLOAT_EQ(noon.mPower, 0.5f);
+
+            const FalloutWeatherFog evening = sampleFalloutWeatherFog(samples, 18.0045681f, settings);
+            EXPECT_NEAR(evening.mFar, 120054.82f, 0.05f);
+            EXPECT_NEAR(evening.mFar - evening.mNear, 120044.836f, 0.05f);
+            EXPECT_FLOAT_EQ(evening.mPower, 0.5f);
+        }
+
+        TEST(MWWorldWeatherTest, interpolatesAllFalloutFogParametersAcrossWeatherTransition)
+        {
+            const FalloutWeatherFog current{ -250.f, 120000.f, 0.25f };
+            const FalloutWeatherFog next{ 750.f, 200000.f, 1.f };
+
+            const FalloutWeatherFog result = interpolateFalloutWeatherFog(current, next, 0.25f);
+
+            EXPECT_FLOAT_EQ(result.mNear, 0.f);
+            EXPECT_FLOAT_EQ(result.mFar, 140000.f);
+            EXPECT_FLOAT_EQ(result.mPower, 0.4375f);
+        }
+
         TEST(MWWorldWeatherTest, mapsRetailFalloutSunOrbit)
         {
             const osg::Vec3f highNoon = falloutSunPosition(0.f);

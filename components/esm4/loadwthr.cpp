@@ -121,13 +121,14 @@ namespace
         }
     }
 
-    void readFogDistances(ESM4::Reader& reader, const ESM4::SubRecordHeader& header,
+    bool readFogDistances(ESM4::Reader& reader, const ESM4::SubRecordHeader& header,
         std::array<float, 6>& output)
     {
         const std::vector<float> values = readPodArray<float>(reader, header);
         if (values.size() < output.size())
-            return;
+            return false;
         std::copy_n(values.begin(), output.size(), output.begin());
+        return true;
     }
 
     void readWeatherData(ESM4::Reader& reader, const ESM4::SubRecordHeader& header, ESM4::Weather::Data& output)
@@ -224,7 +225,8 @@ void ESM4::Weather::load(Reader& reader)
                 readFixedOrSkip(reader, subHdr, mUnknownCloudLayerValues);
                 break;
             case ESM::fourCC("FNAM"):
-                readFogDistances(reader, subHdr, mFogDistance);
+                if (readFogDistances(reader, subHdr, mFogDistance))
+                    mHasFogDistance = true;
                 break;
             case ESM::fourCC("DATA"):
                 readWeatherData(reader, subHdr, mData);

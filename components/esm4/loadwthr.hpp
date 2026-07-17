@@ -88,6 +88,7 @@ namespace ESM4
         std::array<std::array<Color, sTimeCount>, sColorTypeCount> mColors{};
         std::array<float, 32> mUnknownCloudLayerValues{};
         std::array<float, 6> mFogDistance{};
+        bool mHasFogDistance = false;
         Data mData;
         std::vector<Sound> mSounds;
 
