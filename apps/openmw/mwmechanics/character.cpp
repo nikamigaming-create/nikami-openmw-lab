@@ -28,6 +28,8 @@
 #include <components/esm/records.hpp>
 #include <components/esm/defs.hpp>
 #include <components/esm4/loadcrea.hpp>
+#include <components/esm4/loadweap.hpp>
+#include <components/debug/debuglog.hpp>
 #include <components/misc/mathutil.hpp>
 #include <components/misc/resourcehelpers.hpp>
 #include <components/misc/rng.hpp>
@@ -39,6 +41,7 @@
 #include <components/sceneutil/positionattitudetransform.hpp>
 
 #include "../mwrender/animation.hpp"
+#include "../mwrender/falloutweaponanimation.hpp"
 
 #include "../mwbase/environment.hpp"
 #include "../mwbase/luamanager.hpp"
@@ -107,6 +110,27 @@ namespace
     bool isFalloutActor(const MWWorld::Ptr& ptr)
     {
         return ptr.getType() == ESM::REC_NPC_4 || ptr.getType() == ESM4::Creature::sRecordId;
+    }
+
+    std::optional<int> getFalloutNpcActiveWeaponType(const MWWorld::Ptr& ptr)
+    {
+        if (ptr.getType() != ESM::REC_NPC_4)
+            return std::nullopt;
+
+        const ESM4::Npc* traits = MWClass::ESM4Npc::getTraitsRecord(ptr);
+        if (traits == nullptr || (!traits->mIsFO3 && !traits->mIsFONV))
+            return std::nullopt;
+
+        const MWMechanics::DrawState drawState = ptr.getClass().getCreatureStats(ptr).getDrawState();
+        if (drawState == MWMechanics::DrawState::Spell)
+            return ESM::Weapon::Spell;
+        if (drawState != MWMechanics::DrawState::Weapon)
+            return ESM::Weapon::None;
+
+        const ESM4::Weapon* weapon = MWClass::ESM4Npc::getEquippedWeapon(ptr);
+        if (weapon == nullptr)
+            return MWMechanics::getFalloutWeaponType(0).value();
+        return MWMechanics::getFalloutWeaponType(weapon->mData.animationType).value_or(ESM::Weapon::None);
     }
 
     std::string_view getFalloutFlyingMovementFallback(const MWWorld::Ptr& ptr, const MWRender::Animation& animation)
@@ -657,8 +681,11 @@ namespace MWMechanics
         }
     }
 
-    std::string_view CharacterController::getWeaponAnimation(int weaponType) const
+    std::string_view CharacterController::getWeaponAnimation(int weaponType)
     {
+        if (isFalloutWeaponType(weaponType))
+            return getFalloutWeaponActionGroup(weaponType, MWRender::FonvWeaponAction::PrimaryAttack);
+
         std::string_view weaponGroup = getWeaponType(weaponType)->mLongGroup;
         if (isRealWeapon(weaponType) && !mAnimation->hasAnimation(weaponGroup))
         {
@@ -679,6 +706,103 @@ namespace MWMechanics
         return weaponGroup;
     }
 
+    std::string_view CharacterController::getFalloutWeaponActionGroup(
+        int weaponType, MWRender::FonvWeaponAction action)
+    {
+        const std::optional<std::uint8_t> animationType = getFalloutWeaponAnimationType(weaponType);
+        if (!animationType)
+        {
+            Log(Debug::Error) << "FNV mechanics rejected non-Fallout weapon type " << weaponType
+                              << " for semantic action " << static_cast<unsigned int>(action);
+            return {};
+        }
+
+        std::uint8_t reloadAnimation = 0;
+        if (!mWeapon.isEmpty() && mWeapon.getType() == ESM4::Weapon::sRecordId)
+            reloadAnimation = mWeapon.get<ESM4::Weapon>()->mBase->mData.reloadAnim;
+        else if (mPtr.getType() == ESM::REC_NPC_4)
+        {
+            if (const ESM4::Weapon* weapon = MWClass::ESM4Npc::getEquippedWeapon(mPtr))
+                reloadAnimation = weapon->mData.reloadAnim;
+        }
+        const std::optional<MWRender::FonvWeaponActionSource> source
+            = MWRender::getFonvWeaponActionSource(*animationType, reloadAnimation, action);
+        if (!source)
+        {
+            Log(Debug::Error) << "FNV mechanics has no exact DNAM action mapping: animationType="
+                              << static_cast<unsigned int>(*animationType)
+                              << " action=" << static_cast<unsigned int>(action);
+            return {};
+        }
+        if (!mAnimation->prepareFalloutWeaponAnimation(*animationType, reloadAnimation, action))
+            return {};
+        if (!mAnimation->hasAnimation(source->mSemanticGroup))
+        {
+            Log(Debug::Error) << "FNV mechanics required action group is not loaded: animationType="
+                              << static_cast<unsigned int>(*animationType)
+                              << " action=" << static_cast<unsigned int>(action)
+                              << " group=" << source->mSemanticGroup << " path=" << source->mPath;
+            return {};
+        }
+        const std::string selectedSource = mAnimation->getAnimationSourceName(source->mSemanticGroup);
+        if (!MWRender::matchesFonvWeaponActionSource(*source, source->mSemanticGroup, selectedSource))
+        {
+            Log(Debug::Error) << "FNV mechanics rejected stale or foreign action source: animationType="
+                              << static_cast<unsigned int>(*animationType)
+                              << " action=" << static_cast<unsigned int>(action)
+                              << " group=" << source->mSemanticGroup << " expectedPath=" << source->mPath
+                              << " selectedPath=" << selectedSource;
+            return {};
+        }
+        return source->mSemanticGroup;
+    }
+
+    bool CharacterController::playFalloutWeaponAction(
+        int weaponType, MWRender::FonvWeaponAction action, const MWRender::AnimPriority& priorityWeapon)
+    {
+        const std::string_view group = getFalloutWeaponActionGroup(weaponType, action);
+        if (group.empty())
+            return false;
+
+        if (!mCurrentWeapon.empty() && mCurrentWeapon != group)
+            mAnimation->disable(mCurrentWeapon);
+        mCurrentWeapon = group;
+        const bool relativeDuration = getWeaponType(weaponType)->mWeaponClass == ESM::WeaponType::Ranged;
+        mAnimation->setWeaponGroup(mCurrentWeapon, relativeDuration);
+        playBlendedAnimation(
+            mCurrentWeapon, priorityWeapon, MWRender::BlendMask_All, false, 1.f, "start", "stop", 0.f, 0);
+        const bool playing = mAnimation->isPlaying(mCurrentWeapon);
+        const char* telemetry = std::getenv("OPENMW_WORLD_VIEWER_ACTOR_TELEMETRY");
+        if (telemetry != nullptr && std::string_view(telemetry) != "0")
+        {
+            const std::optional<std::uint8_t> animationType = getFalloutWeaponAnimationType(weaponType);
+            Log(playing ? Debug::Info : Debug::Error)
+                << "FNV mechanics exact weapon action: actor=" << mPtr.toString()
+                << " animationType="
+                << (animationType ? std::to_string(static_cast<unsigned int>(*animationType)) : "invalid")
+                << " action=" << static_cast<unsigned int>(action) << " group=" << mCurrentWeapon
+                << " exact=1 status=" << (playing ? "pass" : "fail");
+        }
+        return playing;
+    }
+
+    bool CharacterController::restoreFalloutPrimaryWeaponGroup(int weaponType)
+    {
+        const std::string_view primary
+            = getFalloutWeaponActionGroup(weaponType, MWRender::FonvWeaponAction::PrimaryAttack);
+        if (primary.empty())
+        {
+            mCurrentWeapon.clear();
+            mAnimation->setWeaponGroup({}, false);
+            return false;
+        }
+
+        mCurrentWeapon = primary;
+        const bool relativeDuration = getWeaponType(weaponType)->mWeaponClass == ESM::WeaponType::Ranged;
+        mAnimation->setWeaponGroup(mCurrentWeapon, relativeDuration);
+        return true;
+    }
+
     std::string_view CharacterController::getWeaponShortGroup(int weaponType) const
     {
         if (weaponType == ESM::Weapon::HandToHand && !mPtr.getClass().isBipedal(mPtr))
@@ -689,6 +813,9 @@ namespace MWMechanics
     std::string CharacterController::fallbackShortWeaponGroup(
         const std::string& baseGroupName, MWRender::Animation::BlendMask* blendMask) const
     {
+        if (isFalloutWeaponType(mWeaponType))
+            return baseGroupName;
+
         if (!isRealWeapon(mWeaponType))
         {
             if (blendMask != nullptr)
@@ -1191,13 +1318,56 @@ namespace MWMechanics
              * handle knockout and death which moves the character down. */
             mAnimation->setAccumulation(osg::Vec3f(1.0f, 1.0f, 0.0f));
 
-            if (cls.hasInventoryStore(mPtr))
+            if (const std::optional<int> falloutWeaponType = getFalloutNpcActiveWeaponType(mPtr))
             {
-                getActiveWeapon(mPtr, &mWeaponType);
+                mFalloutWeapon = MWClass::ESM4Npc::getEquippedWeapon(mPtr);
+                mWeaponType = *falloutWeaponType;
                 if (mWeaponType != ESM::Weapon::None)
                 {
                     mUpperBodyState = UpperBodyState::WeaponEquipped;
                     mCurrentWeapon = getWeaponAnimation(mWeaponType);
+                }
+
+                if (isFalloutWeaponType(mWeaponType))
+                {
+                    if (mCurrentWeapon.empty())
+                    {
+                        mAnimation->showWeapons(false);
+                        mWeaponType = ESM::Weapon::None;
+                        mUpperBodyState = UpperBodyState::None;
+                        mAnimation->setWeaponGroup({}, false);
+                    }
+                    else
+                    {
+                        mAnimation->showWeapons(true);
+                        const bool useRelativeDuration
+                            = getWeaponType(mWeaponType)->mWeaponClass == ESM::WeaponType::Ranged;
+                        mAnimation->setWeaponGroup(mCurrentWeapon, useRelativeDuration);
+                    }
+                }
+            }
+            else if (cls.hasInventoryStore(mPtr))
+            {
+                MWWorld::InventoryStore& inventory = cls.getInventoryStore(mPtr);
+                MWWorld::ContainerStoreIterator weapon = getActiveWeapon(mPtr, &mWeaponType);
+                if (weapon != inventory.end())
+                {
+                    mWeapon = *weapon;
+                    if (mWeapon.getType() == ESM4::Weapon::sRecordId)
+                        mFalloutWeapon = mWeapon.get<ESM4::Weapon>()->mBase;
+                }
+                if (mWeaponType != ESM::Weapon::None)
+                {
+                    mUpperBodyState = UpperBodyState::WeaponEquipped;
+                    mCurrentWeapon = getWeaponAnimation(mWeaponType);
+                }
+
+                if (isFalloutWeaponType(mWeaponType) && mCurrentWeapon.empty())
+                {
+                    mAnimation->showWeapons(false);
+                    mWeaponType = ESM::Weapon::None;
+                    mUpperBodyState = UpperBodyState::None;
+                    mAnimation->setWeaponGroup({}, false);
                 }
 
                 if (mWeaponType != ESM::Weapon::None && mWeaponType != ESM::Weapon::Spell
@@ -1381,7 +1551,7 @@ namespace MWMechanics
                 mReadyToHit = false;
             }
         }
-        else if (isRandomAttackAnimation(groupname) && action == "start")
+        else if (isLegacyRandomAttackAnimation(groupname) && action == "start")
         {
             std::multimap<float, std::string>::const_iterator hitKey = key;
 
@@ -1504,7 +1674,7 @@ namespace MWMechanics
     float CharacterController::calculateWindUp() const
     {
         if (!mAnimation || mCurrentWeapon.empty() || mWeaponType == ESM::Weapon::PickProbe
-            || isRandomAttackAnimation(mCurrentWeapon))
+            || isLegacyRandomAttackAnimation(mCurrentWeapon))
             return -1.f;
 
         float minAttackTime = mAnimation->getTextKeyTime(mCurrentWeapon + ": " + mAttackType + " min attack");
@@ -1544,6 +1714,168 @@ namespace MWMechanics
         mReadyToHit = true;
     }
 
+    bool CharacterController::updateFalloutWeaponState(int requestedWeaponType, bool weaponChanged,
+        const ESM4::Weapon* requestedWeapon, const MWRender::AnimPriority& priorityWeapon)
+    {
+        bool forceStateUpdate = false;
+        const auto failVisualClosed = [&]() {
+            mAnimation->showWeapons(false);
+            mUpperBodyState = UpperBodyState::None;
+            mWeaponType = ESM::Weapon::None;
+            mFalloutWeapon = nullptr;
+            mCurrentWeapon.clear();
+            mAnimation->setWeaponGroup(std::string{}, false);
+        };
+        const auto updateAiming = [&]() {
+            const bool actionPlaying = mUpperBodyState == UpperBodyState::AttackEnd;
+            const bool ranged = isFalloutWeaponType(mWeaponType)
+                && (getWeaponType(mWeaponType)->mWeaponClass == ESM::WeaponType::Ranged
+                    || getWeaponType(mWeaponType)->mWeaponClass == ESM::WeaponType::Thrown);
+            mAnimation->setPitchFactor(actionPlaying && ranged ? 1.f : 0.f);
+            mAnimation->setAccurateAiming(actionPlaying && ranged);
+        };
+
+        const bool semanticActionPlaying = mUpperBodyState == UpperBodyState::Equipping
+            || mUpperBodyState == UpperBodyState::Unequipping || mUpperBodyState == UpperBodyState::AttackEnd;
+        float complete = 0.f;
+        const bool actionStateExists
+            = semanticActionPlaying && !mCurrentWeapon.empty() && mAnimation->getInfo(mCurrentWeapon, &complete);
+        const MWRender::FonvWeaponActionProgress actionProgress
+            = MWRender::getFonvWeaponActionProgress(actionStateExists, complete);
+        if (semanticActionPlaying && actionProgress == MWRender::FonvWeaponActionProgress::Running)
+        {
+            updateAiming();
+            return false;
+        }
+
+        if (semanticActionPlaying)
+        {
+            if (actionProgress == MWRender::FonvWeaponActionProgress::Interrupted)
+            {
+                Log(Debug::Error) << "FNV mechanics exact weapon action was interrupted: actor=" << mPtr.toString()
+                                  << " group=" << mCurrentWeapon;
+                failVisualClosed();
+                updateAiming();
+                return true;
+            }
+            mAnimation->disable(mCurrentWeapon);
+            switch (mUpperBodyState)
+            {
+                case UpperBodyState::Equipping:
+                    mAnimation->showWeapons(true);
+                    mUpperBodyState = UpperBodyState::WeaponEquipped;
+                    if (!restoreFalloutPrimaryWeaponGroup(mWeaponType))
+                    {
+                        failVisualClosed();
+                        updateAiming();
+                        return true;
+                    }
+                    break;
+                case UpperBodyState::Unequipping:
+                    failVisualClosed();
+                    break;
+                case UpperBodyState::AttackEnd:
+                    mUpperBodyState = UpperBodyState::WeaponEquipped;
+                    if (!restoreFalloutPrimaryWeaponGroup(mWeaponType))
+                    {
+                        failVisualClosed();
+                        updateAiming();
+                        return true;
+                    }
+                    break;
+                default:
+                    break;
+            }
+            forceStateUpdate = true;
+        }
+
+        bool currentIsFalloutWeapon = isFalloutWeaponType(mWeaponType);
+        const bool requestedIsFalloutWeapon = isFalloutWeaponType(requestedWeaponType);
+
+        // Controllers created by an older build can still hold a legacy attack state. Normalize it before making an
+        // exact transition; never let a Fallout attack group fall through to Morrowind's random-melee state machine.
+        if (currentIsFalloutWeapon && mUpperBodyState != UpperBodyState::WeaponEquipped)
+        {
+            if (!mCurrentWeapon.empty())
+                mAnimation->disable(mCurrentWeapon);
+            mUpperBodyState = UpperBodyState::WeaponEquipped;
+            if (!restoreFalloutPrimaryWeaponGroup(mWeaponType))
+            {
+                failVisualClosed();
+                updateAiming();
+                return true;
+            }
+            forceStateUpdate = true;
+        }
+
+        if (currentIsFalloutWeapon
+            && shouldTransitionFalloutWeaponState(requestedWeaponType, mWeaponType, weaponChanged))
+        {
+            setAttackingOrSpell(false);
+            if (playFalloutWeaponAction(mWeaponType, MWRender::FonvWeaponAction::Unequip, priorityWeapon))
+                mUpperBodyState = UpperBodyState::Unequipping;
+            else
+            {
+                // Missing exact data fails the visual action closed; it never selects another family or attack group.
+                failVisualClosed();
+            }
+            updateAiming();
+            return true;
+        }
+
+        currentIsFalloutWeapon = isFalloutWeaponType(mWeaponType);
+        if (!currentIsFalloutWeapon && requestedIsFalloutWeapon)
+        {
+            if (!mCurrentWeapon.empty())
+                mAnimation->disable(mCurrentWeapon);
+            mWeaponType = requestedWeaponType;
+            mFalloutWeapon = requestedWeapon;
+            mAnimation->showWeapons(false);
+            if (playFalloutWeaponAction(mWeaponType, MWRender::FonvWeaponAction::Equip, priorityWeapon))
+                mUpperBodyState = UpperBodyState::Equipping;
+            else
+            {
+                // Do not replace or skip a missing exact equip action. Keeping the weapon hidden makes bad data
+                // observable without substituting another family or silently presenting an impossible pose.
+                failVisualClosed();
+            }
+            updateAiming();
+            return true;
+        }
+
+        if (!currentIsFalloutWeapon)
+        {
+            updateAiming();
+            return forceStateUpdate;
+        }
+
+        if (getAttackingOrSpell() && mUpperBodyState == UpperBodyState::WeaponEquipped
+            && (mHitState == CharState_None || mHitState == CharState_Block))
+        {
+            mAttackStrength = -1.f;
+            mReadyToHit = false;
+            mAttackSuccess = false;
+            mAttackVictim = MWWorld::Ptr();
+            mAttackHitPos = osg::Vec3f();
+            MWBase::Environment::get().getWorld()->breakInvisibility(mPtr);
+
+            if (playFalloutWeaponAction(mWeaponType, MWRender::FonvWeaponAction::PrimaryAttack, priorityWeapon))
+            {
+                // The exact visual action completes as one authored unit. Native FNV damage/projectiles are wired in
+                // the next stateful slice; this path intentionally never calls Morrowind melee or arrow code.
+                mUpperBodyState = UpperBodyState::AttackEnd;
+            }
+            else
+                setAttackingOrSpell(false);
+
+            if (mIdleState != CharState_IdleSneak && mIdleState != CharState_IdleSwim)
+                resetCurrentIdleState();
+        }
+
+        updateAiming();
+        return forceStateUpdate;
+    }
+
     bool CharacterController::updateWeaponState()
     {
         // If the current animation is scripted, we can't do anything here.
@@ -1566,9 +1898,17 @@ namespace MWMechanics
 
         const ESM::RefId* downSoundId = nullptr;
         bool weaponChanged = false;
+        const ESM4::Weapon* requestedFalloutWeapon = nullptr;
         bool ammunition = true;
         float weapSpeed = 1.f;
-        if (cls.hasInventoryStore(mPtr))
+        const std::optional<int> falloutWeaponType = getFalloutNpcActiveWeaponType(mPtr);
+        if (falloutWeaponType)
+        {
+            weaptype = *falloutWeaponType;
+            requestedFalloutWeapon = MWClass::ESM4Npc::getEquippedWeapon(mPtr);
+            weaponChanged = requestedFalloutWeapon != mFalloutWeapon;
+        }
+        else if (cls.hasInventoryStore(mPtr))
         {
             MWWorld::InventoryStore& inv = cls.getInventoryStore(mPtr);
             MWWorld::ContainerStoreIterator weapon = getActiveWeapon(mPtr, &weaptype);
@@ -1591,6 +1931,9 @@ namespace MWMechanics
                 mWeapon = newWeapon;
                 weaponChanged = true;
             }
+
+            if (!mWeapon.isEmpty() && mWeapon.getType() == ESM4::Weapon::sRecordId)
+                requestedFalloutWeapon = mWeapon.get<ESM4::Weapon>()->mBase;
 
             if (stats.getDrawState() == DrawState::Weapon && !mWeapon.isEmpty()
                 && mWeapon.getType() == ESM::Weapon::sRecordId)
@@ -1635,6 +1978,13 @@ namespace MWMechanics
             // For non-bipeds, movement takes priority
             priorityWeapon = Priority_Weapon;
             priorityWeapon[MWRender::BoneGroup_LowerBody] = Priority_WeaponLowerBody;
+        }
+
+        if (shouldUseFalloutWeaponState(weaptype, mWeaponType))
+        {
+            if (!MWRender::canAdvanceFonvWeaponState(isKnockedOut(), isKnockedDown(), isRecovery()))
+                return false;
+            return updateFalloutWeaponState(weaptype, weaponChanged, requestedFalloutWeapon, priorityWeapon);
         }
 
         bool forcestateupdate = false;
@@ -1807,7 +2157,7 @@ namespace MWMechanics
 
                 // Randomize attacks for non-bipedal creatures
                 if (!cls.isBipedal(mPtr)
-                    && (!mAnimation->hasAnimation(mCurrentWeapon) || isRandomAttackAnimation(mCurrentWeapon)))
+                    && (!mAnimation->hasAnimation(mCurrentWeapon) || isLegacyRandomAttackAnimation(mCurrentWeapon)))
                 {
                     mCurrentWeapon = chooseRandomAttackAnimation();
                 }
@@ -1904,7 +2254,7 @@ namespace MWMechanics
 
                             std::string startKey;
                             std::string stopKey;
-                            if (isRandomAttackAnimation(mCurrentWeapon))
+                            if (isLegacyRandomAttackAnimation(mCurrentWeapon))
                             {
                                 startKey = "start";
                                 stopKey = "stop";
@@ -1957,7 +2307,7 @@ namespace MWMechanics
                         = MWBase::Environment::get().getLuaManager()->getActorControls(mPtr);
                     const bool aiInactive
                         = actorControls->mDisableAI || !MWBase::Environment::get().getMechanicsManager()->isAIActive();
-                    if (mWeaponType != ESM::Weapon::PickProbe && !isRandomAttackAnimation(mCurrentWeapon))
+                    if (mWeaponType != ESM::Weapon::PickProbe && !isLegacyRandomAttackAnimation(mCurrentWeapon))
                     {
                         if (weapclass == ESM::WeaponType::Ranged || weapclass == ESM::WeaponType::Thrown)
                             mAttackType = "shoot";
@@ -2016,7 +2366,7 @@ namespace MWMechanics
         // Random attack and pick/probe animations never have wind up and are played to their end.
         // Other animations must be released when the attack state is unset.
         if (mUpperBodyState == UpperBodyState::AttackWindUp
-            && (mWeaponType == ESM::Weapon::PickProbe || isRandomAttackAnimation(mCurrentWeapon)
+            && (mWeaponType == ESM::Weapon::PickProbe || isLegacyRandomAttackAnimation(mCurrentWeapon)
                 || !getAttackingOrSpell()))
         {
             mUpperBodyState = UpperBodyState::AttackRelease;
@@ -2047,7 +2397,7 @@ namespace MWMechanics
                 prepareHit();
             }
 
-            if (mWeaponType == ESM::Weapon::PickProbe || isRandomAttackAnimation(mCurrentWeapon))
+            if (mWeaponType == ESM::Weapon::PickProbe || isLegacyRandomAttackAnimation(mCurrentWeapon))
                 mUpperBodyState = UpperBodyState::AttackEnd;
         }
 
@@ -2145,7 +2495,7 @@ namespace MWMechanics
 
             // A smooth transition can be provided if a pre-wind-up section is defined. Random attack animations never
             // have one.
-            if (mUpperBodyState == UpperBodyState::AttackWindUp && !isRandomAttackAnimation(mCurrentWeapon))
+            if (mUpperBodyState == UpperBodyState::AttackWindUp && !isLegacyRandomAttackAnimation(mCurrentWeapon))
             {
                 float currentTime = mAnimation->getCurrentTime(mCurrentWeapon);
                 float minAttackTime = mAnimation->getTextKeyTime(mCurrentWeapon + ": " + mAttackType + " min attack");
@@ -3267,6 +3617,11 @@ namespace MWMechanics
     {
         return (group == "attack1" || group == "swimattack1" || group == "attack2" || group == "swimattack2"
             || group == "attack3" || group == "swimattack3");
+    }
+
+    bool CharacterController::isLegacyRandomAttackAnimation(std::string_view group) const
+    {
+        return !isFalloutWeaponType(mWeaponType) && isRandomAttackAnimation(group);
     }
 
     bool CharacterController::isAttackPreparing() const

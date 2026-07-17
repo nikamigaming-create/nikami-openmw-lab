@@ -2,12 +2,14 @@
 #define GAME_RENDER_FALLOUTWEAPONANIMATION_H
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include <osg/CopyOp>
@@ -19,8 +21,25 @@
 
 namespace MWRender
 {
+    enum class FonvWeaponAction : std::uint8_t
+    {
+        PrimaryAttack,
+        Equip,
+        Reload,
+        Jam,
+        Unequip,
+    };
+
+    enum class FonvWeaponActionProgress : std::uint8_t
+    {
+        Running,
+        Completed,
+        Interrupted,
+    };
+
     struct FonvWeaponActionSource
     {
+        FonvWeaponAction mAction;
         std::string mPath;
         std::string_view mSemanticGroup;
         bool mRequired = true;
@@ -91,68 +110,114 @@ namespace MWRender
         }
     }
 
-    inline std::vector<FonvWeaponActionSource> getFonvWeaponActionManifest(
-        std::uint8_t animationType, std::uint8_t reloadAnimation)
+    inline std::optional<FonvWeaponActionSource> getFonvWeaponActionSource(
+        std::uint8_t animationType, std::uint8_t reloadAnimation, FonvWeaponAction action)
     {
         const std::string_view prefix = getFonvWeaponAnimationPrefix(animationType);
         if (prefix.empty())
-            return {};
+            return std::nullopt;
 
-        std::string_view primarySuffix;
-        std::string_view primaryGroup;
+        if (action == FonvWeaponAction::Equip)
+            return FonvWeaponActionSource{ action, getFonvWeaponAnimationKf(animationType, "equip"), "equip", true };
+        if (action == FonvWeaponAction::Unequip)
+        {
+            return FonvWeaponActionSource{
+                action, getFonvWeaponAnimationKf(animationType, "unequip"), "unequip", true };
+        }
+
+        if (action == FonvWeaponAction::Reload || action == FonvWeaponAction::Jam)
+        {
+            if (animationType < 3 || animationType > 9)
+                return std::nullopt;
+            const std::optional<char> letter = getFonvWeaponReloadAnimationLetter(reloadAnimation);
+            if (!letter)
+                return std::nullopt;
+            const bool jam = action == FonvWeaponAction::Jam;
+            const std::string suffix = std::string(jam ? "jam" : "reload") + *letter;
+            return FonvWeaponActionSource{ action, getFonvWeaponAnimationKf(animationType, suffix),
+                jam ? std::string_view("jam") : std::string_view("reload"), !jam };
+        }
+
+        std::string_view suffix;
+        std::string_view group;
         switch (animationType)
         {
             case 0: // HandToHand
             case 1: // OneHandMelee
             case 2: // TwoHandMelee
-                primarySuffix = "attackright_a";
-                primaryGroup = "attack2";
+                suffix = "attackright_a";
+                group = "attack2";
                 break;
             case 3: // OneHandPistol
             case 4: // OneHandPistolEnergy
             case 5: // TwoHandRifle
             case 7: // TwoHandRifleEnergy
             case 9: // TwoHandLauncher
-                primarySuffix = "attack3";
-                primaryGroup = "attack3";
+                suffix = "attack3";
+                group = "attack3";
                 break;
             case 6: // TwoHandAutomatic
             case 8: // TwoHandHandle
-                primarySuffix = "attackloop";
-                primaryGroup = "attack1";
+                suffix = "attackloop";
+                group = "attack1";
                 break;
             case 10: // OneHandGrenade
             case 13: // OneHandThrown
-                primarySuffix = "attackthrow";
-                primaryGroup = "attack1";
+                suffix = "attackthrow";
+                group = "attack1";
                 break;
             case 11: // OneHandMine
             case 12: // OneHandLandMine
-                primarySuffix = "placemine";
-                primaryGroup = "attack1";
+                suffix = "placemine";
+                group = "attack1";
                 break;
             default:
-                return {};
+                return std::nullopt;
         }
+        return FonvWeaponActionSource{ action, getFonvWeaponAnimationKf(animationType, suffix), group, true };
+    }
+
+    inline std::vector<FonvWeaponActionSource> getFonvWeaponActionManifest(
+        std::uint8_t animationType, std::uint8_t reloadAnimation)
+    {
+        static constexpr std::array<FonvWeaponAction, 5> actions{ FonvWeaponAction::PrimaryAttack,
+            FonvWeaponAction::Equip, FonvWeaponAction::Reload, FonvWeaponAction::Jam,
+            FonvWeaponAction::Unequip };
 
         std::vector<FonvWeaponActionSource> result;
-        result.reserve(5);
-        result.push_back({ getFonvWeaponAnimationKf(animationType, primarySuffix), primaryGroup, true });
-        result.push_back({ getFonvWeaponAnimationKf(animationType, "equip"), "equip", true });
-
-        // Only firearm/launcher families consume the WEAP.DNAM reload selector. Jam uses the same retail suffix.
-        if (animationType >= 3 && animationType <= 9)
+        result.reserve(actions.size());
+        for (FonvWeaponAction action : actions)
         {
-            if (const std::optional<char> letter = getFonvWeaponReloadAnimationLetter(reloadAnimation))
+            if (std::optional<FonvWeaponActionSource> source
+                = getFonvWeaponActionSource(animationType, reloadAnimation, action))
             {
-                const std::string suffix(1, *letter);
-                result.push_back({ getFonvWeaponAnimationKf(animationType, "reload" + suffix), "reload", true });
-                result.push_back({ getFonvWeaponAnimationKf(animationType, "jam" + suffix), "jam", false });
+                result.push_back(std::move(*source));
             }
         }
-
-        result.push_back({ getFonvWeaponAnimationKf(animationType, "unequip"), "unequip", true });
         return result;
+    }
+
+    inline bool matchesFonvWeaponActionSource(const FonvWeaponActionSource& expected,
+        std::string_view selectedGroup, std::string_view selectedPath)
+    {
+        return selectedGroup == expected.mSemanticGroup && selectedPath == expected.mPath;
+    }
+
+    inline FonvWeaponActionProgress getFonvWeaponActionProgress(bool stateExists, float completion)
+    {
+        if (!stateExists)
+            return FonvWeaponActionProgress::Interrupted;
+        return completion < 1.f ? FonvWeaponActionProgress::Running : FonvWeaponActionProgress::Completed;
+    }
+
+    inline bool canAdvanceFonvWeaponState(bool knockedOut, bool knockedDown, bool recovering)
+    {
+        return !knockedOut && !knockedDown && !recovering;
+    }
+
+    inline bool shouldSynthesizeFonvSemanticAlias(bool falloutActorContext, std::string_view semanticGroup)
+    {
+        return falloutActorContext || !semanticGroup.empty();
     }
 
     inline std::optional<unsigned int> getFonvWeaponHandGripIndex(std::uint8_t rawHandGrip)

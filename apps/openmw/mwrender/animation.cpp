@@ -4595,7 +4595,8 @@ namespace MWRender
                                     << " for Starfield human skeleton " << baseModel;
             return nullptr;
         }
-        const bool isFonvActorAnim = isFalloutNpcAnimationContext(mPtr)
+        const bool isFonvActorAnim
+            = shouldSynthesizeFonvSemanticAlias(isFalloutNpcAnimationContext(mPtr), falloutSemanticGroup)
             && (lowerKf.find("meshes/characters/_male/") != std::string::npos
                 || lowerKf.find("meshes\\characters\\_male\\") != std::string::npos
                 || lowerKf.find("characters/_male/") != std::string::npos
@@ -5111,6 +5112,51 @@ namespace MWRender
     bool Animation::hasAnimation(std::string_view anim) const
     {
         return mSupportedAnimations.find(anim) != mSupportedAnimations.end();
+    }
+
+    std::string Animation::getAnimationSourceName(std::string_view anim) const
+    {
+        // Match play(): the last inserted source containing the requested group wins.
+        for (AnimSourceList::const_reverse_iterator source = mAnimSources.rbegin(); source != mAnimSources.rend();
+             ++source)
+        {
+            if ((*source)->getTextKeys().hasGroupStart(anim))
+                return (*source)->mSourceName;
+        }
+        return {};
+    }
+
+    bool Animation::prepareFalloutWeaponAnimation(
+        std::uint8_t animationType, std::uint8_t reloadAnimation, FonvWeaponAction)
+    {
+        const std::vector<FonvWeaponActionSource> manifest
+            = getFonvWeaponActionManifest(animationType, reloadAnimation);
+        if (manifest.empty())
+        {
+            Log(Debug::Error) << "FNV animation has no exact action manifest: animationType="
+                              << static_cast<unsigned int>(animationType)
+                              << " reloadAnimation=" << static_cast<unsigned int>(reloadAnimation);
+            return false;
+        }
+
+        const std::string baseModel = mPtr.getClass().getCorrectedModel(mPtr);
+        bool requiredSourcesAvailable = true;
+        for (const FonvWeaponActionSource& action : manifest)
+        {
+            if (getAnimationSourceName(action.mSemanticGroup) == action.mPath)
+                continue;
+
+            const std::shared_ptr<AnimSource> source
+                = addSingleAnimSource(action.mPath, baseModel, false, {}, action.mSemanticGroup);
+            if (source == nullptr && action.mRequired)
+            {
+                requiredSourcesAvailable = false;
+                Log(Debug::Error) << "FNV animation required exact action source is unavailable: animationType="
+                                  << static_cast<unsigned int>(animationType)
+                                  << " group=" << action.mSemanticGroup << " path=" << action.mPath;
+            }
+        }
+        return requiredSourcesAvailable;
     }
 
     std::vector<std::string> Animation::getAnimationGroups() const

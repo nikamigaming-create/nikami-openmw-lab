@@ -47,6 +47,8 @@ namespace SceneUtil
 
 namespace MWRender
 {
+    enum class FonvWeaponAction : std::uint8_t;
+
 
     class ResetAccumRootCallback;
     class RotateController;
@@ -396,6 +398,16 @@ namespace MWRender
         virtual void updatePtr(const MWWorld::Ptr& ptr);
 
         bool hasAnimation(std::string_view anim) const;
+
+        /// Return the source selected by play() for this group. An empty string means the group has no source.
+        /// Fallout mechanics uses this to reject a same-named action inherited from another weapon family.
+        std::string getAnimationSourceName(std::string_view anim) const;
+
+        /// Bind the exact action sources selected by a Fallout weapon's DNAM fields.
+        /// Sources are added on demand so weapon-family changes and inventory-backed players cannot retain a stale
+        /// action manifest. Returns false when any required authored source is unavailable.
+        virtual bool prepareFalloutWeaponAnimation(
+            std::uint8_t animationType, std::uint8_t reloadAnimation, FonvWeaponAction action);
 
         /// Return every animation group currently bound to this assembled object.
         /// The result is copied and sorted so proof/telemetry callers can build a

@@ -2,10 +2,12 @@
 
 #include "apps/openmw/mwrender/falloutanimationtargets.hpp"
 #include "apps/openmw/mwrender/falloutweaponanimation.hpp"
+#include "apps/openmw/mwmechanics/weapontype.hpp"
 
 #include <components/nif/controller.hpp>
 #include <components/nif/data.hpp>
 #include <components/nifosg/controller.hpp>
+#include <components/esm3/loadweap.hpp>
 
 #include <memory>
 
@@ -91,25 +93,33 @@ namespace MWRender
     {
         const std::vector<FonvWeaponActionSource> melee = getFonvWeaponActionManifest(1, 0);
         ASSERT_EQ(melee.size(), 3u);
+        EXPECT_EQ(melee[0].mAction, FonvWeaponAction::PrimaryAttack);
         EXPECT_EQ(melee[0].mPath, "meshes/characters/_male/1hmattackright_a.kf");
         EXPECT_EQ(melee[0].mSemanticGroup, "attack2");
+        EXPECT_EQ(melee[1].mAction, FonvWeaponAction::Equip);
         EXPECT_EQ(melee[1].mPath, "meshes/characters/_male/1hmequip.kf");
         EXPECT_EQ(melee[1].mSemanticGroup, "equip");
+        EXPECT_EQ(melee[2].mAction, FonvWeaponAction::Unequip);
         EXPECT_EQ(melee[2].mPath, "meshes/characters/_male/1hmunequip.kf");
         EXPECT_EQ(melee[2].mSemanticGroup, "unequip");
 
         // Retail WeapNVAssaultCarbine DNAM is type=6 (2ha), reload=5 (ReloadF/JamF).
         const std::vector<FonvWeaponActionSource> automatic = getFonvWeaponActionManifest(6, 5);
         ASSERT_EQ(automatic.size(), 5u);
+        EXPECT_EQ(automatic[0].mAction, FonvWeaponAction::PrimaryAttack);
         EXPECT_EQ(automatic[0].mPath, "meshes/characters/_male/2haattackloop.kf");
         EXPECT_EQ(automatic[0].mSemanticGroup, "attack1");
+        EXPECT_EQ(automatic[1].mAction, FonvWeaponAction::Equip);
         EXPECT_EQ(automatic[1].mPath, "meshes/characters/_male/2haequip.kf");
+        EXPECT_EQ(automatic[2].mAction, FonvWeaponAction::Reload);
         EXPECT_EQ(automatic[2].mPath, "meshes/characters/_male/2hareloadf.kf");
         EXPECT_EQ(automatic[2].mSemanticGroup, "reload");
         EXPECT_TRUE(automatic[2].mRequired);
+        EXPECT_EQ(automatic[3].mAction, FonvWeaponAction::Jam);
         EXPECT_EQ(automatic[3].mPath, "meshes/characters/_male/2hajamf.kf");
         EXPECT_EQ(automatic[3].mSemanticGroup, "jam");
         EXPECT_FALSE(automatic[3].mRequired);
+        EXPECT_EQ(automatic[4].mAction, FonvWeaponAction::Unequip);
         EXPECT_EQ(automatic[4].mPath, "meshes/characters/_male/2haunequip.kf");
 
         const std::vector<FonvWeaponActionSource> mine = getFonvWeaponActionManifest(11, 0);
@@ -124,6 +134,132 @@ namespace MWRender
         EXPECT_EQ(getFonvWeaponReloadAnimationLetter(22), 'z');
         EXPECT_FALSE(getFonvWeaponReloadAnimationLetter(23).has_value());
         EXPECT_TRUE(getFonvWeaponActionManifest(0xff, 0).empty());
+    }
+
+    TEST(FalloutWeaponAnimationTest, mapsEveryRetailDnamWeaponTypeWithoutFallback)
+    {
+        struct ExpectedPrimary
+        {
+            std::uint8_t mAnimationType;
+            std::string_view mPath;
+            std::string_view mGroup;
+        };
+        static constexpr std::array<ExpectedPrimary, 14> expected{ {
+            { 0, "meshes/characters/_male/h2hattackright_a.kf", "attack2" },
+            { 1, "meshes/characters/_male/1hmattackright_a.kf", "attack2" },
+            { 2, "meshes/characters/_male/2hmattackright_a.kf", "attack2" },
+            { 3, "meshes/characters/_male/1hpattack3.kf", "attack3" },
+            { 4, "meshes/characters/_male/1hpattack3.kf", "attack3" },
+            { 5, "meshes/characters/_male/2hrattack3.kf", "attack3" },
+            { 6, "meshes/characters/_male/2haattackloop.kf", "attack1" },
+            { 7, "meshes/characters/_male/2hrattack3.kf", "attack3" },
+            { 8, "meshes/characters/_male/2hhattackloop.kf", "attack1" },
+            { 9, "meshes/characters/_male/2hlattack3.kf", "attack3" },
+            { 10, "meshes/characters/_male/1gtattackthrow.kf", "attack1" },
+            { 11, "meshes/characters/_male/1mdplacemine.kf", "attack1" },
+            { 12, "meshes/characters/_male/1lmplacemine.kf", "attack1" },
+            { 13, "meshes/characters/_male/1gtattackthrow.kf", "attack1" },
+        } };
+
+        for (const ExpectedPrimary& expectedAction : expected)
+        {
+            const std::optional<FonvWeaponActionSource> primary = getFonvWeaponActionSource(
+                expectedAction.mAnimationType, 0, FonvWeaponAction::PrimaryAttack);
+            ASSERT_TRUE(primary.has_value()) << static_cast<unsigned int>(expectedAction.mAnimationType);
+            EXPECT_EQ(primary->mAction, FonvWeaponAction::PrimaryAttack);
+            EXPECT_EQ(primary->mPath, expectedAction.mPath);
+            EXPECT_EQ(primary->mSemanticGroup, expectedAction.mGroup);
+
+            const std::optional<FonvWeaponActionSource> equip
+                = getFonvWeaponActionSource(expectedAction.mAnimationType, 0, FonvWeaponAction::Equip);
+            const std::optional<FonvWeaponActionSource> unequip
+                = getFonvWeaponActionSource(expectedAction.mAnimationType, 0, FonvWeaponAction::Unequip);
+            ASSERT_TRUE(equip.has_value());
+            ASSERT_TRUE(unequip.has_value());
+            EXPECT_EQ(equip->mSemanticGroup, "equip");
+            EXPECT_EQ(unequip->mSemanticGroup, "unequip");
+        }
+
+        EXPECT_FALSE(getFonvWeaponActionSource(0xff, 0, FonvWeaponAction::PrimaryAttack).has_value());
+        EXPECT_FALSE(getFonvWeaponActionSource(1, 0, FonvWeaponAction::Reload).has_value());
+        EXPECT_FALSE(getFonvWeaponActionSource(3, 23, FonvWeaponAction::Reload).has_value());
+    }
+
+    TEST(FalloutWeaponAnimationTest, preservesEveryDnamTypeAcrossTheMechanicsEncoding)
+    {
+        for (std::uint8_t animationType = 0; animationType < 14; ++animationType)
+        {
+            const std::optional<int> weaponType = MWMechanics::getFalloutWeaponType(animationType);
+            ASSERT_TRUE(weaponType.has_value());
+            EXPECT_TRUE(MWMechanics::isFalloutWeaponType(*weaponType));
+            const std::optional<std::uint8_t> decoded = MWMechanics::getFalloutWeaponAnimationType(*weaponType);
+            ASSERT_TRUE(decoded.has_value());
+            EXPECT_EQ(*decoded, animationType);
+        }
+
+        EXPECT_FALSE(MWMechanics::getFalloutWeaponType(14).has_value());
+        EXPECT_FALSE(MWMechanics::getFalloutWeaponAnimationType(ESM::Weapon::HandToHand).has_value());
+        EXPECT_FALSE(MWMechanics::getFalloutWeaponAnimationType(0x10e).has_value());
+    }
+
+    TEST(FalloutWeaponAnimationTest, rejectsSameNamedActionsFromAnotherWeaponFamily)
+    {
+        const std::optional<FonvWeaponActionSource> pistol
+            = getFonvWeaponActionSource(3, 0, FonvWeaponAction::PrimaryAttack);
+        const std::optional<FonvWeaponActionSource> rifle
+            = getFonvWeaponActionSource(5, 0, FonvWeaponAction::PrimaryAttack);
+        ASSERT_TRUE(pistol.has_value());
+        ASSERT_TRUE(rifle.has_value());
+        ASSERT_EQ(pistol->mSemanticGroup, rifle->mSemanticGroup);
+        ASSERT_NE(pistol->mPath, rifle->mPath);
+
+        EXPECT_TRUE(matchesFonvWeaponActionSource(*pistol, "attack3", pistol->mPath));
+        EXPECT_FALSE(matchesFonvWeaponActionSource(*pistol, "attack3", rifle->mPath));
+        EXPECT_FALSE(matchesFonvWeaponActionSource(*pistol, "attack2", pistol->mPath));
+    }
+
+    TEST(FalloutWeaponAnimationTest, routesEverySyntheticFalloutTypeThroughTheExactStateMachine)
+    {
+        for (std::uint8_t animationType = 0; animationType < 14; ++animationType)
+        {
+            const int weaponType = *MWMechanics::getFalloutWeaponType(animationType);
+            EXPECT_TRUE(MWMechanics::shouldUseFalloutWeaponState(weaponType, ESM::Weapon::None));
+            EXPECT_TRUE(MWMechanics::shouldUseFalloutWeaponState(ESM::Weapon::None, weaponType));
+        }
+        EXPECT_FALSE(MWMechanics::shouldUseFalloutWeaponState(
+            ESM::Weapon::LongBladeOneHand, ESM::Weapon::None));
+    }
+
+    TEST(FalloutWeaponAnimationTest, transitionsWhenWeaponIdentityChangesWithinOneDnamFamily)
+    {
+        const int pistol = *MWMechanics::getFalloutWeaponType(3);
+        const int rifle = *MWMechanics::getFalloutWeaponType(5);
+        EXPECT_FALSE(MWMechanics::shouldTransitionFalloutWeaponState(pistol, pistol, false));
+        EXPECT_TRUE(MWMechanics::shouldTransitionFalloutWeaponState(pistol, pistol, true));
+        EXPECT_TRUE(MWMechanics::shouldTransitionFalloutWeaponState(rifle, pistol, false));
+    }
+
+    TEST(FalloutWeaponAnimationTest, distinguishesCompletionFromInterruptedActionState)
+    {
+        EXPECT_EQ(getFonvWeaponActionProgress(true, 0.f), FonvWeaponActionProgress::Running);
+        EXPECT_EQ(getFonvWeaponActionProgress(true, 0.999f), FonvWeaponActionProgress::Running);
+        EXPECT_EQ(getFonvWeaponActionProgress(true, 1.f), FonvWeaponActionProgress::Completed);
+        EXPECT_EQ(getFonvWeaponActionProgress(false, 1.f), FonvWeaponActionProgress::Interrupted);
+    }
+
+    TEST(FalloutWeaponAnimationTest, blocksSemanticTransitionsDuringHitStateRecovery)
+    {
+        EXPECT_TRUE(canAdvanceFonvWeaponState(false, false, false));
+        EXPECT_FALSE(canAdvanceFonvWeaponState(true, false, false));
+        EXPECT_FALSE(canAdvanceFonvWeaponState(false, true, false));
+        EXPECT_FALSE(canAdvanceFonvWeaponState(false, false, true));
+    }
+
+    TEST(FalloutWeaponAnimationTest, explicitSemanticAliasIncludesLegacyPlayerRenderer)
+    {
+        EXPECT_TRUE(shouldSynthesizeFonvSemanticAlias(true, {}));
+        EXPECT_TRUE(shouldSynthesizeFonvSemanticAlias(false, "attack3"));
+        EXPECT_FALSE(shouldSynthesizeFonvSemanticAlias(false, {}));
     }
 
     TEST(FalloutWeaponAnimationTest, distinguishesRequiredSkeletonTargetsFromOptionalVisualTargets)

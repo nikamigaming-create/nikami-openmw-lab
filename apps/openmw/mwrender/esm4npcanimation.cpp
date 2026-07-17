@@ -8382,38 +8382,44 @@ namespace MWRender
                 }
             }
 
-            if (const ESM4::Weapon* weapon = MWClass::ESM4Npc::getEquippedWeapon(mPtr))
+            const ESM4::Weapon* actionWeapon = MWClass::ESM4Npc::getEquippedWeapon(mPtr);
+            const std::uint8_t actionAnimationType = actionWeapon != nullptr
+                ? actionWeapon->mData.animationType
+                : std::uint8_t{ 0 };
+            const std::uint8_t actionReloadAnimation = actionWeapon != nullptr
+                ? actionWeapon->mData.reloadAnim
+                : std::uint8_t{ 0 };
+            const std::vector<FonvWeaponActionSource> actionManifest
+                = getFonvWeaponActionManifest(actionAnimationType, actionReloadAnimation);
+            if (actionManifest.empty())
             {
-                const std::vector<FonvWeaponActionSource> actionManifest
-                    = getFonvWeaponActionManifest(weapon->mData.animationType, weapon->mData.reloadAnim);
-                if (actionManifest.empty())
+                Log(Debug::Error) << "FNV/ESM4: no exact weapon action manifest for "
+                                  << (actionWeapon != nullptr ? actionWeapon->mEditorId : std::string("unarmed"))
+                                  << " animationType=" << static_cast<unsigned int>(actionAnimationType);
+            }
+            else
+            {
+                for (const FonvWeaponActionSource& action : actionManifest)
                 {
-                    Log(Debug::Error) << "FNV/ESM4: no exact weapon action manifest for " << weapon->mEditorId
-                                      << " animationType="
-                                      << static_cast<unsigned int>(weapon->mData.animationType);
-                }
-                else
-                {
-                    for (const FonvWeaponActionSource& action : actionManifest)
+                    const bool bound = addFonvAnimationSource(action.mPath, "retail weapon-family action", false,
+                        false, {}, action.mSemanticGroup);
+                    if (!bound && action.mRequired)
                     {
-                        const bool bound = addFonvAnimationSource(action.mPath, "retail weapon-family action", false,
-                            false, {}, action.mSemanticGroup);
-                        if (!bound && action.mRequired)
-                        {
-                            Log(Debug::Error) << "FNV/ESM4: required retail weapon action is unavailable for "
-                                              << weapon->mEditorId << ": group=" << action.mSemanticGroup
-                                              << " path=" << action.mPath;
-                        }
+                        Log(Debug::Error) << "FNV/ESM4: required retail weapon action is unavailable for "
+                                          << (actionWeapon != nullptr ? actionWeapon->mEditorId
+                                                                      : std::string("unarmed"))
+                                          << ": group=" << action.mSemanticGroup << " path=" << action.mPath;
                     }
                 }
+            }
 
-                if (weapon->mData.animationType >= 3 && weapon->mData.animationType <= 9
-                    && !getFonvWeaponReloadAnimationLetter(weapon->mData.reloadAnim))
-                {
-                    Log(Debug::Error) << "FNV/ESM4: invalid reload animation selector "
-                                      << static_cast<unsigned int>(weapon->mData.reloadAnim) << " for "
-                                      << weapon->mEditorId;
-                }
+            if (actionWeapon != nullptr && actionWeapon->mData.animationType >= 3
+                && actionWeapon->mData.animationType <= 9
+                && !getFonvWeaponReloadAnimationLetter(actionWeapon->mData.reloadAnim))
+            {
+                Log(Debug::Error) << "FNV/ESM4: invalid reload animation selector "
+                                  << static_cast<unsigned int>(actionWeapon->mData.reloadAnim) << " for "
+                                  << actionWeapon->mEditorId;
             }
 
             // Add scheduled package procedure sources last because Animation::play resolves sources in reverse order.
@@ -8599,6 +8605,72 @@ namespace MWRender
         Log(Debug::Info) << "FNV/ESM4 actor completeness: moved equipped weapon for "
                          << mPtr.getCellRef().getRefId() << " drawn=" << showWeapon
                          << " target=\"" << targetName << "\" gate=weapon-draw-state-attachment";
+    }
+
+    bool ESM4NpcAnimation::refreshFalloutWeaponPart()
+    {
+        if (mFalloutWeaponPart != nullptr)
+        {
+            while (mFalloutWeaponPart->getNumParents() > 0)
+            {
+                osg::Group* parent = mFalloutWeaponPart->getParent(0);
+                if (parent == nullptr || !parent->removeChild(mFalloutWeaponPart.get()))
+                    break;
+            }
+        }
+        if (mFalloutWeaponHolsterFrame != nullptr)
+        {
+            while (mFalloutWeaponHolsterFrame->getNumParents() > 0)
+            {
+                osg::Group* parent = mFalloutWeaponHolsterFrame->getParent(0);
+                if (parent == nullptr || !parent->removeChild(mFalloutWeaponHolsterFrame.get()))
+                    break;
+            }
+        }
+
+        mFalloutWeaponPart = nullptr;
+        mFalloutWeaponHolsterFrame = nullptr;
+        mFalloutWeaponDrawBone = "Weapon";
+        mFalloutWeaponHolsterBone.clear();
+        mFalloutActionWeapon = MWClass::ESM4Npc::getEquippedWeapon(mPtr);
+        if (mFalloutActionWeapon == nullptr)
+        {
+            mFalloutWeaponsShown = false;
+            return true;
+        }
+
+        std::string authoredParent;
+        mFalloutWeaponPart = insertAttachedPart(mFalloutActionWeapon->mModel, {}, &authoredParent);
+        if (!authoredParent.empty())
+            mFalloutWeaponDrawBone = authoredParent;
+
+        mFalloutWeaponsShown
+            = mPtr.getClass().getCreatureStats(mPtr).getDrawState() == MWMechanics::DrawState::Weapon;
+        if (mFalloutWeaponPart != nullptr && !mFalloutWeaponsShown)
+            mFalloutWeaponPart->setNodeMask(0);
+
+        const bool renderable = actorPartHasRenderableGeometry(mFalloutWeaponPart.get());
+        Log(renderable ? Debug::Info : Debug::Error)
+            << "FNV/ESM4 exact weapon-family attachment: actor=" << mPtr.toString()
+            << " weapon=" << mFalloutActionWeapon->mEditorId
+            << " animationType=" << static_cast<unsigned int>(mFalloutActionWeapon->mData.animationType)
+            << " model=" << mFalloutActionWeapon->mModel << " attached=" << (mFalloutWeaponPart != nullptr)
+            << " renderable=" << renderable << " gate=dynamic-weapon-family";
+        return renderable;
+    }
+
+    bool ESM4NpcAnimation::prepareFalloutWeaponAnimation(
+        std::uint8_t animationType, std::uint8_t reloadAnimation, FonvWeaponAction action)
+    {
+        const ESM4::Weapon* equipped = MWClass::ESM4Npc::getEquippedWeapon(mPtr);
+        const bool selectedFamilyMatches = equipped != nullptr
+            ? equipped->mData.animationType == animationType
+            : animationType == std::uint8_t{ 0 };
+        const bool refreshForSelectedFamily = selectedFamilyMatches && equipped != mFalloutActionWeapon
+            && (action == FonvWeaponAction::Equip || action == FonvWeaponAction::PrimaryAttack);
+        if (refreshForSelectedFamily && !refreshFalloutWeaponPart())
+            return false;
+        return Animation::prepareFalloutWeaponAnimation(animationType, reloadAnimation, action);
     }
 
     bool ESM4NpcAnimation::supportsProceduralHumanoidLocomotion() const
@@ -10106,6 +10178,7 @@ namespace MWRender
         mFalloutWeaponDrawBone = "Weapon";
         mFalloutWeaponHolsterBone.clear();
         mFalloutWeaponsShown = false;
+        mFalloutActionWeapon = nullptr;
 
         if (std::getenv("OPENMW_FNV_HIDE_PLAYER_PROOF_PARTS") != nullptr
             && mPtr.getCell() != nullptr
@@ -10620,6 +10693,7 @@ namespace MWRender
 
         if (const ESM4::Weapon* weapon = MWClass::ESM4Npc::getEquippedWeapon(mPtr))
         {
+            mFalloutActionWeapon = weapon;
             ++requiredWeaponParts;
             const MWMechanics::DrawState drawState = mPtr.getClass().getCreatureStats(mPtr).getDrawState();
             const bool weaponDrawn = drawState == MWMechanics::DrawState::Weapon;

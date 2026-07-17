@@ -16,6 +16,7 @@ namespace ESM4
 {
     struct Npc;
     struct Race;
+    struct Weapon;
 }
 
 namespace MWRender
@@ -40,6 +41,8 @@ namespace MWRender
         osg::Vec3f runAnimation(float duration) override;
         bool getWeaponsShown() const override { return mFalloutWeaponsShown; }
         void showWeapons(bool showWeapon) override;
+        bool prepareFalloutWeaponAnimation(
+            std::uint8_t animationType, std::uint8_t reloadAnimation, FonvWeaponAction action) override;
         bool setWeaponHolsterAttachment(std::string_view frameName, std::string_view parentName,
             const std::array<float, 9>& rotation, const std::array<float, 3>& translation, float scale);
         WeaponAttachmentState getWeaponHolsterAttachmentState() const;
@@ -63,6 +66,7 @@ namespace MWRender
         std::string mFalloutWeaponDrawBone = "Weapon";
         std::string mFalloutWeaponHolsterBone;
         bool mFalloutWeaponsShown = false;
+        const ESM4::Weapon* mFalloutActionWeapon = nullptr;
 
         osg::ref_ptr<osg::Node> insertPart(
             std::string_view model, const osg::Vec4f* tint = nullptr, std::string_view diffuseTexture = {},
@@ -77,6 +81,7 @@ namespace MWRender
             bool faceGenFemale = false);
 
         void updateParts();
+        bool refreshFalloutWeaponPart();
         void updatePartsTES4(const ESM4::Npc& traits);
         void updatePartsFONV(const ESM4::Npc& traits);
         void updatePartsTES5(const ESM4::Npc& traits);
