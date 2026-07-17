@@ -13,6 +13,7 @@
 #include <components/esm4/loadfurn.hpp>
 #include <components/esm4/loadimod.hpp>
 #include <components/esm4/loadingr.hpp>
+#include <components/esm4/loadkeym.hpp>
 #include <components/esm4/loadligh.hpp>
 #include <components/esm4/loadmisc.hpp>
 #include <components/esm4/loadmstt.hpp>
@@ -89,6 +90,7 @@ namespace MWClass
         ESM4Named<ESM4::Furniture>::registerSelf();
         ESM4Named<ESM4::Ingredient>::registerSelf();
         ESM4Named<ESM4::ItemMod>::registerSelf();
+        ESM4Named<ESM4::Key>::registerSelf();
         ESM4Light::registerSelf();
         ESM4Named<ESM4::MiscItem>::registerSelf();
         ESM4Named<ESM4::MovableStatic>::registerSelf();
