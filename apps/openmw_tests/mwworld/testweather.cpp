@@ -1,7 +1,13 @@
 #include <gtest/gtest.h>
 
 #include <cmath>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
+#include <limits>
+#include <string>
 
+#include "apps/openmw/mwrender/fogmanager.hpp"
 #include "apps/openmw/mwworld/timestamp.hpp"
 #include "apps/openmw/mwworld/weather.hpp"
 
@@ -131,6 +137,75 @@ namespace MWWorld
             EXPECT_FLOAT_EQ(result.mNear, 0.f);
             EXPECT_FLOAT_EQ(result.mFar, 140000.f);
             EXPECT_FLOAT_EQ(result.mPower, 0.4375f);
+        }
+
+        TEST(MWWorldWeatherTest, appliesRetailFalloutFogCurve)
+        {
+            constexpr float fogNear = 10.f;
+            constexpr float fogFar = 120000.f;
+            constexpr float power = 0.5f;
+
+            EXPECT_FLOAT_EQ(MWRender::calculateFalloutFogFactor(-100.f, fogNear, fogFar, power), 0.f);
+            EXPECT_FLOAT_EQ(MWRender::calculateFalloutFogFactor(fogNear, fogNear, fogFar, power), 0.f);
+            EXPECT_NEAR(MWRender::calculateFalloutFogFactor((fogNear + fogFar) * 0.5f, fogNear, fogFar, power),
+                std::sqrt(0.5f), 0.000001f);
+            EXPECT_FLOAT_EQ(MWRender::calculateFalloutFogFactor(fogFar, fogNear, fogFar, power), 1.f);
+            EXPECT_FLOAT_EQ(MWRender::calculateFalloutFogFactor(200000.f, fogNear, fogFar, power), 1.f);
+        }
+
+        TEST(MWWorldWeatherTest, acceptsRetailFalloutFogStepsAndRejectsUnsafeRanges)
+        {
+            EXPECT_TRUE(MWRender::isUsableFalloutFog(true, -7500.f, 150000.f, 0.5f));
+            EXPECT_TRUE(MWRender::isUsableFalloutFog(true, 0.f, 0.f, 1.f));
+            EXPECT_TRUE(MWRender::isUsableFalloutFog(true, 200.f, 200.f, 0.5f));
+            EXPECT_FALSE(MWRender::isUsableFalloutFog(false, 10.f, 120000.f, 0.5f));
+            EXPECT_FALSE(MWRender::isUsableFalloutFog(true, 120000.f, 10.f, 0.5f));
+            EXPECT_FALSE(MWRender::isUsableFalloutFog(true, 10.f, 120000.f, 0.f));
+            EXPECT_FALSE(MWRender::isUsableFalloutFog(
+                true, std::numeric_limits<float>::quiet_NaN(), 120000.f, 0.5f));
+            EXPECT_FALSE(MWRender::isUsableFalloutFog(
+                true, 10.f, std::numeric_limits<float>::infinity(), 0.5f));
+
+            EXPECT_FLOAT_EQ(MWRender::calculateFalloutFogFactor(0.f, 0.f, 0.f, 1.f), 0.f);
+            EXPECT_FLOAT_EQ(MWRender::calculateFalloutFogFactor(1.f, 0.f, 0.f, 1.f), 1.f);
+            EXPECT_FLOAT_EQ(MWRender::calculateFalloutFogFactor(199.f, 200.f, 200.f, 0.5f), 0.f);
+            EXPECT_FLOAT_EQ(MWRender::calculateFalloutFogFactor(200.f, 200.f, 200.f, 0.5f), 0.f);
+            EXPECT_FLOAT_EQ(MWRender::calculateFalloutFogFactor(201.f, 200.f, 200.f, 0.5f), 1.f);
+        }
+
+        TEST(MWWorldWeatherTest, shaderContractsGuardEqualRangesAndSupplyWaterDistance)
+        {
+            const std::filesystem::path sourceRoot(OPENMW_PROJECT_SOURCE_DIR);
+            std::ifstream fogInput(sourceRoot / "files/shaders/compatibility/fog.glsl", std::ios::binary);
+            std::ifstream waterInput(sourceRoot / "files/shaders/compatibility/water.frag", std::ios::binary);
+            std::ifstream postProcessInput(sourceRoot / "components/fx/pass.cpp", std::ios::binary);
+            ASSERT_TRUE(fogInput.is_open());
+            ASSERT_TRUE(waterInput.is_open());
+            ASSERT_TRUE(postProcessInput.is_open());
+
+            const std::string fogSource{
+                std::istreambuf_iterator<char>(fogInput), std::istreambuf_iterator<char>() };
+            const std::string waterSource{
+                std::istreambuf_iterator<char>(waterInput), std::istreambuf_iterator<char>() };
+            const std::string postProcessSource{
+                std::istreambuf_iterator<char>(postProcessInput), std::istreambuf_iterator<char>() };
+
+            const std::size_t fogStep = fogSource.find("if (falloutFogStep)");
+            const std::size_t fogDivide = fogSource.find("(gl_Fog.end - gl_Fog.start)");
+            ASSERT_NE(fogStep, std::string::npos);
+            ASSERT_NE(fogDivide, std::string::npos);
+            EXPECT_LT(fogStep, fogDivide);
+            EXPECT_NE(fogSource.find("pow(normalizedDistance, falloutFogPower)"), std::string::npos);
+
+            EXPECT_NE(waterSource.find("float radialDepth = distance(position.xyz, cameraPos);"), std::string::npos);
+            EXPECT_EQ(waterSource.find("float radialDepth = 0.0;"), std::string::npos);
+
+            const std::size_t postProcessStep = postProcessSource.find("if (omw.falloutFogStep)");
+            const std::size_t postProcessDivide
+                = postProcessSource.find("(omw.fogFar - omw.fogNear)", postProcessStep);
+            ASSERT_NE(postProcessStep, std::string::npos);
+            ASSERT_NE(postProcessDivide, std::string::npos);
+            EXPECT_LT(postProcessStep, postProcessDivide);
         }
 
         TEST(MWWorldWeatherTest, mapsRetailFalloutSunOrbit)

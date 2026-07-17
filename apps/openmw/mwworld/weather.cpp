@@ -1616,7 +1616,8 @@ namespace MWWorld
         }
 
         mRendering.configureFog(
-            mResult.mFogDepth, underwaterFog, mResult.mDLFogFactor, mResult.mDLFogOffset / 100.0f, mResult.mFogColor);
+            mResult.mFogDepth, underwaterFog, mResult.mDLFogFactor, mResult.mDLFogOffset / 100.0f, mResult.mFogColor,
+            mResult.mHasFalloutFog, mResult.mFalloutFogNear, mResult.mFalloutFogFar, mResult.mFalloutFogPower);
         mRendering.setAmbientColour(mResult.mAmbientColor);
         mRendering.setSunColour(mResult.mSunColor, mResult.mSunColor, mResult.mGlareView * glareFade);
 

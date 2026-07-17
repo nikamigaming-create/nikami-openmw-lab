@@ -63,6 +63,13 @@ namespace Fx
             mData.get<FogFar>() = far;
         }
 
+        void setFalloutFog(bool enabled, float power, bool step)
+        {
+            mData.get<FalloutFogEnabled>() = enabled;
+            mData.get<FalloutFogPower>() = enabled ? power : 1.f;
+            mData.get<FalloutFogStep>() = enabled && step;
+        }
+
         void setNearFar(float near, float far)
         {
             mData.get<Near>() = near;
@@ -270,11 +277,27 @@ namespace Fx
             static constexpr std::string_view sName = "isInterior";
         };
 
+        struct FalloutFogPower : std140::Float
+        {
+            static constexpr std::string_view sName = "falloutFogPower";
+        };
+
+        struct FalloutFogEnabled : std140::Bool
+        {
+            static constexpr std::string_view sName = "falloutFogEnabled";
+        };
+
+        struct FalloutFogStep : std140::Bool
+        {
+            static constexpr std::string_view sName = "falloutFogStep";
+        };
+
         using UniformData
             = std140::UBO<ProjectionMatrix, InvProjectionMatrix, ViewMatrix, PrevViewMatrix, InvViewMatrix, EyePos,
                 EyeVec, FogColor, AmbientColor, SkyColor, SunColor, SunPos, Resolution, RcpResolution, FogNear, FogFar,
                 Near, Far, Fov, GameHour, SunVis, WaterHeight, IsWaterEnabled, SimulationTime, DeltaSimulationTime,
-                FrameNumber, WindSpeed, WeatherTransition, WeatherID, NextWeatherID, IsUnderwater, IsInterior>;
+                FrameNumber, WindSpeed, WeatherTransition, WeatherID, NextWeatherID, IsUnderwater, IsInterior,
+                FalloutFogPower, FalloutFogEnabled, FalloutFogStep>;
 
         UniformData mData;
         bool mUseUBO;
