@@ -5,11 +5,15 @@
 #include <cstdlib>
 #include <iomanip>
 #include <limits>
+#include <map>
 #include <memory>
+#include <set>
+#include <type_traits>
 
 #include <components/debug/debuglog.hpp>
 #include <components/esm/attr.hpp>
 #include <components/esm/defs.hpp>
+#include <components/esm3/creaturestate.hpp>
 #include <components/esm4/loadalch.hpp>
 #include <components/esm4/loadammo.hpp>
 #include <components/esm4/loadarmo.hpp>
@@ -619,6 +623,7 @@ namespace MWClass
         stats.setHealth(health);
         stats.setMagicka(0.f);
         stats.setFatigue(fatigue);
+        stats.getSpells().setSpells(ESM::RefId(baseCreature.mId), ESM::REC_CREA4);
 
         int aggression = 0;
         int confidence = 0;
@@ -661,31 +666,384 @@ namespace MWClass
         return result;
     }
 
+    namespace
+    {
+        bool isFinitePosition(const ESM::Position& position)
+        {
+            for (int i = 0; i < 3; ++i)
+            {
+                if (!std::isfinite(position.pos[i]) || !std::isfinite(position.rot[i]))
+                    return false;
+            }
+            return true;
+        }
+
+        bool isFiniteObjectState(const ESM::ObjectState& state)
+        {
+            if (!std::isfinite(state.mRef.mScale) || !std::isfinite(state.mRef.mChargeIntRemainder)
+                || !std::isfinite(state.mRef.mEnchantmentCharge) || !isFinitePosition(state.mRef.mPos)
+                || !isFinitePosition(state.mPosition) || state.mHasLocals > 1 || state.mEnabled > 1)
+                return false;
+            for (const ESM::AnimationState::ScriptedAnimation& animation : state.mAnimationState.mScriptedAnims)
+            {
+                if (!std::isfinite(animation.mTime))
+                    return false;
+            }
+            for (const ESM::LuaScript& script : state.mLuaScripts.mScripts)
+            {
+                for (const ESM::LuaTimer& timer : script.mTimers)
+                {
+                    if (!std::isfinite(timer.mTime))
+                        return false;
+                }
+            }
+            return true;
+        }
+
+        template <class T>
+        bool isFiniteStat(const ESM::StatState<T>& state)
+        {
+            if constexpr (std::is_floating_point_v<T>)
+            {
+                if (!std::isfinite(state.mBase) || !std::isfinite(state.mMod) || !std::isfinite(state.mCurrent))
+                    return false;
+            }
+            return std::isfinite(state.mDamage) && std::isfinite(state.mProgress);
+        }
+
+        bool isSupportedFnvInventoryType(int type)
+        {
+            switch (type)
+            {
+                case ESM::REC_AMMO4:
+                case ESM::REC_ARMO4:
+                case ESM::REC_MISC4:
+                case ESM::REC_WEAP4:
+                case ESM::REC_ALCH4:
+                case ESM::REC_BOOK4:
+                case ESM::REC_CLOT4:
+                case ESM::REC_INGR4:
+                case ESM::REC_IMOD4:
+                case ESM::REC_KEYM4:
+                case ESM::REC_LIGH4:
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        bool validateCreatureStats(const ESM::CreatureStats& stats, std::string& error)
+        {
+            for (const auto& attribute : stats.mAttributes)
+            {
+                if (!isFiniteStat(attribute))
+                {
+                    error = "non-finite attribute state";
+                    return false;
+                }
+            }
+            for (const auto& dynamic : stats.mDynamic)
+            {
+                if (!isFiniteStat(dynamic))
+                {
+                    error = "non-finite dynamic state";
+                    return false;
+                }
+            }
+            for (const auto& setting : stats.mAiSettings)
+            {
+                if (!isFiniteStat(setting))
+                {
+                    error = "non-finite AI setting state";
+                    return false;
+                }
+            }
+            if (!std::isfinite(stats.mTradeTime.mHour) || !std::isfinite(stats.mTimeOfDeath.mHour)
+                || !std::isfinite(stats.mFallHeight))
+            {
+                error = "non-finite creature time/fall state";
+                return false;
+            }
+            if (stats.mDrawState < 0 || stats.mDrawState > 2)
+            {
+                error = "invalid draw state";
+                return false;
+            }
+            if (stats.mMissingACDT || stats.mRecalcDynamicStats)
+            {
+                // Current FNV CreatureState writers always persist the complete compatibility shell and never ask
+                // the ESM3 loader to recalculate magicka from unrelated Morrowind GMSTs.
+                error = "unsupported legacy creature-stat state";
+                return false;
+            }
+            for (const auto& [effect, values] : stats.mMagicEffects.mEffects)
+            {
+                (void)effect;
+                if (!std::isfinite(values.second))
+                {
+                    error = "non-finite magic-effect state";
+                    return false;
+                }
+            }
+            const auto validateActiveSpells = [&](const auto& spells) {
+                for (const auto& spell : spells)
+                {
+                    if (spell.mWorsenings >= 0 && !std::isfinite(spell.mNextWorsening.mHour))
+                        return false;
+                    for (const auto& effect : spell.mEffects)
+                    {
+                        if (!std::isfinite(effect.mMagnitude) || !std::isfinite(effect.mMinMagnitude)
+                            || !std::isfinite(effect.mMaxMagnitude) || !std::isfinite(effect.mDuration)
+                            || !std::isfinite(effect.mTimeLeft))
+                            return false;
+                    }
+                }
+                return true;
+            };
+            if (!validateActiveSpells(stats.mActiveSpells.mSpells)
+                || !validateActiveSpells(stats.mActiveSpells.mQueue))
+            {
+                error = "non-finite active-spell state";
+                return false;
+            }
+            for (const auto& [id, timestamp] : stats.mSpells.mUsedPowers)
+            {
+                (void)id;
+                if (!std::isfinite(timestamp.mHour))
+                {
+                    error = "non-finite used-power time";
+                    return false;
+                }
+            }
+            for (const auto& [id, parameters] : stats.mSpells.mSpellParams)
+            {
+                (void)id;
+                for (const auto& [effect, magnitude] : parameters.mEffectRands)
+                {
+                    (void)effect;
+                    if (!std::isfinite(magnitude))
+                    {
+                        error = "non-finite spell random state";
+                        return false;
+                    }
+                }
+            }
+            for (const auto& package : stats.mAiSequence.mPackages)
+            {
+                if (package.mPackage == nullptr)
+                {
+                    error = "missing AI package payload";
+                    return false;
+                }
+                switch (package.mType)
+                {
+                    case ESM::AiSequence::Ai_Wander:
+                    {
+                        const auto* value = dynamic_cast<const ESM::AiSequence::AiWander*>(package.mPackage.get());
+                        if (value == nullptr || !std::isfinite(value->mDurationData.mRemainingDuration)
+                            || (value->mStoredInitialActorPosition
+                                && (!std::isfinite(value->mInitialActorPosition.mValues[0])
+                                    || !std::isfinite(value->mInitialActorPosition.mValues[1])
+                                    || !std::isfinite(value->mInitialActorPosition.mValues[2]))))
+                        {
+                            error = "invalid wander AI package state";
+                            return false;
+                        }
+                        break;
+                    }
+                    case ESM::AiSequence::Ai_Travel:
+                    {
+                        const auto* value = dynamic_cast<const ESM::AiSequence::AiTravel*>(package.mPackage.get());
+                        if (value == nullptr || !std::isfinite(value->mData.mX) || !std::isfinite(value->mData.mY)
+                            || !std::isfinite(value->mData.mZ))
+                        {
+                            error = "invalid travel AI package state";
+                            return false;
+                        }
+                        break;
+                    }
+                    case ESM::AiSequence::Ai_Escort:
+                    {
+                        const auto* value = dynamic_cast<const ESM::AiSequence::AiEscort*>(package.mPackage.get());
+                        if (value == nullptr || !std::isfinite(value->mData.mX) || !std::isfinite(value->mData.mY)
+                            || !std::isfinite(value->mData.mZ) || !std::isfinite(value->mRemainingDuration))
+                        {
+                            error = "invalid escort AI package state";
+                            return false;
+                        }
+                        break;
+                    }
+                    case ESM::AiSequence::Ai_Follow:
+                    {
+                        const auto* value = dynamic_cast<const ESM::AiSequence::AiFollow*>(package.mPackage.get());
+                        if (value == nullptr || !std::isfinite(value->mData.mX) || !std::isfinite(value->mData.mY)
+                            || !std::isfinite(value->mData.mZ) || !std::isfinite(value->mRemainingDuration))
+                        {
+                            error = "invalid follow AI package state";
+                            return false;
+                        }
+                        break;
+                    }
+                    case ESM::AiSequence::Ai_Activate:
+                        if (dynamic_cast<const ESM::AiSequence::AiActivate*>(package.mPackage.get()) == nullptr)
+                        {
+                            error = "invalid activate AI package state";
+                            return false;
+                        }
+                        break;
+                    case ESM::AiSequence::Ai_Combat:
+                        if (dynamic_cast<const ESM::AiSequence::AiCombat*>(package.mPackage.get()) == nullptr)
+                        {
+                            error = "invalid combat AI package state";
+                            return false;
+                        }
+                        break;
+                    case ESM::AiSequence::Ai_Pursue:
+                        if (dynamic_cast<const ESM::AiSequence::AiPursue*>(package.mPackage.get()) == nullptr)
+                        {
+                            error = "invalid pursue AI package state";
+                            return false;
+                        }
+                        break;
+                    default:
+                        error = "unknown AI package discriminator";
+                        return false;
+                }
+            }
+            if (stats.mAiSequence.mLastAiPackage < -1 || stats.mAiSequence.mLastAiPackage > 11)
+            {
+                error = "invalid last AI package type";
+                return false;
+            }
+            return true;
+        }
+
+        std::unique_ptr<ESM4CreatureCustomData> makeCreatureCustomData(const ESM4::Creature& creature)
+        {
+            auto data = std::make_unique<ESM4CreatureCustomData>();
+            if (creature.mIsFONV)
+                data->mTemplates = ESM4::resolveCreatureTemplateCategories(getCreatureTemplateChain(creature));
+            else
+                data->mTemplates = makeSingleCreatureCategories(&getEffectiveCreature(creature));
+
+            initialiseActorStats(*data, data->mTemplates.mStats, data->mTemplates.mAIData, creature);
+            if (creature.mIsFONV && data->mTemplates.mInventory != nullptr)
+            {
+                const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
+                if (store != nullptr)
+                    static_cast<ESM4CreatureContainerStore&>(*data->mContainerStore)
+                        .fill(*data->mTemplates.mInventory, *store);
+                else
+                    Log(Debug::Warning) << "Unable to initialize fixed FNV creature inventory for "
+                                        << ESM::RefId(creature.mId) << ": ESM store is unavailable";
+            }
+            return data;
+        }
+    }
+
+    bool ESM4Creature::validateState(const ESM4::Creature& creature, const ESM::CreatureState& state,
+        const MWWorld::ESMStore& store, std::string& error)
+    {
+        if (!isFiniteObjectState(state))
+        {
+            error = "non-finite or invalid outer object state";
+            return false;
+        }
+        if (state.mRef.mCount < 0)
+        {
+            // Zero is the normal saved deletion state. Negative counts are ESM3 restocking semantics and are not a
+            // valid placed FNV actor state.
+            error = "negative outer actor count";
+            return false;
+        }
+        if (!state.mRef.mRefNum.isSet())
+        {
+            error = "unset outer creature reference number";
+            return false;
+        }
+        if (!creature.mIsFONV)
+        {
+            error = "CreatureState is only supported for Fallout: New Vegas CREA";
+            return false;
+        }
+        if (!state.mHasCustomState)
+            return true;
+        if (!validateCreatureStats(state.mCreatureStats, error))
+            return false;
+
+        std::set<ESM::RefNum> refNums;
+        std::map<ESM::RefId, std::int64_t> counts;
+        for (const ESM::ObjectState& item : state.mInventory.mItems)
+        {
+            if (!isFiniteObjectState(item) || item.mRef.mCount <= 0)
+            {
+                error = "invalid inventory object state";
+                return false;
+            }
+            if (item.mRef.mRefNum.isSet())
+            {
+                if (item.mRef.mRefNum == state.mRef.mRefNum || !refNums.insert(item.mRef.mRefNum).second)
+                {
+                    error = "duplicate inventory reference number";
+                    return false;
+                }
+            }
+
+            const int type = store.find(item.mRef.mRefID);
+            if (type == 0)
+                continue; // Missing/remapped-away content is consumed and dropped by ContainerStore::readState.
+            if (!isSupportedFnvInventoryType(type))
+            {
+                error = "unsupported FNV creature inventory record type";
+                return false;
+            }
+            std::int64_t& total = counts[item.mRef.mRefID];
+            total += item.mRef.mCount;
+            if (total > std::numeric_limits<int>::max())
+            {
+                error = "inventory count overflow";
+                return false;
+            }
+        }
+        for (const auto& [index, slot] : state.mInventory.mEquipmentSlots)
+        {
+            (void)slot;
+            if (index >= state.mInventory.mItems.size())
+            {
+                error = "invalid equipment-state item index";
+                return false;
+            }
+        }
+        if (state.mInventory.mSelectedEnchantItem
+            && *state.mInventory.mSelectedEnchantItem >= state.mInventory.mItems.size())
+        {
+            error = "invalid selected-enchantment item index";
+            return false;
+        }
+        for (const auto& [id, effects] : state.mInventory.mPermanentMagicEffectMagnitudes)
+        {
+            (void)id;
+            for (const auto& [magnitude, multiplier] : effects)
+            {
+                if (!std::isfinite(magnitude) || !std::isfinite(multiplier))
+                {
+                    error = "non-finite permanent inventory effect";
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
     ESM4CreatureCustomData& ESM4Creature::getCustomData(const MWWorld::ConstPtr& ptr)
     {
         MWWorld::RefData& refData = const_cast<MWWorld::RefData&>(ptr.getRefData());
         if (MWWorld::CustomData* customData = refData.getCustomData())
             return *dynamic_cast<ESM4CreatureCustomData*>(customData);
 
-        auto data = std::make_unique<ESM4CreatureCustomData>();
-        ESM4CreatureCustomData& result = *data;
         const ESM4::Creature* creature = ptr.get<ESM4::Creature>()->mBase;
-        if (creature->mIsFONV)
-            result.mTemplates = ESM4::resolveCreatureTemplateCategories(getCreatureTemplateChain(*creature));
-        else
-            result.mTemplates = makeSingleCreatureCategories(&getEffectiveCreature(*creature));
-
-        initialiseActorStats(result, result.mTemplates.mStats, result.mTemplates.mAIData, *creature);
-        if (creature->mIsFONV && result.mTemplates.mInventory != nullptr)
-        {
-            const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
-            if (store != nullptr)
-                static_cast<ESM4CreatureContainerStore&>(*result.mContainerStore)
-                    .fill(*result.mTemplates.mInventory, *store);
-            else
-                Log(Debug::Warning) << "Unable to initialize fixed FNV creature inventory for "
-                                    << ESM::RefId(creature->mId) << ": ESM store is unavailable";
-        }
+        auto data = makeCreatureCustomData(*creature);
+        ESM4CreatureCustomData& result = *data;
         refData.setCustomData(std::move(data));
 
         const ESM4::Creature* model = result.mTemplates.mModel;
@@ -774,6 +1132,53 @@ namespace MWClass
             }
         }
         return store;
+    }
+
+    void ESM4Creature::readAdditionalState(const MWWorld::Ptr& ptr, const ESM::ObjectState& state) const
+    {
+        if (!state.mHasCustomState)
+            return;
+
+        const ESM4::Creature* creature = ptr.get<ESM4::Creature>()->mBase;
+        if (creature == nullptr || !creature->mIsFONV)
+            return;
+
+        // CellStore validates the complete CreatureState before LiveCellRef applies either its CellRef/RefData or this
+        // payload. Build the replacement off-reference so the old CustomData remains intact until both stores load.
+        const ESM::CreatureState& creatureState = state.asCreatureState();
+        auto data = makeCreatureCustomData(*creature);
+        // Explicit CreatureState is the complete mutable inventory. Do not clear an authored baseline through a
+        // detached candidate store; replace it with an empty store and load the saved stacks directly.
+        data->mContainerStore = std::make_unique<ESM4CreatureContainerStore>();
+        data->mContainerStore->setPtr(ptr);
+        data->mContainerStore->readState(creatureState.mInventory);
+        data->mCreatureStats.readState(creatureState.mCreatureStats);
+        data->mContainerItemsRegistered = true; // ContainerStore::readState registered each retained saved item.
+        data->mFnvAiSequenceInitialised = true;
+        ptr.getRefData().setCustomData(std::move(data));
+    }
+
+    void ESM4Creature::writeAdditionalState(const MWWorld::ConstPtr& ptr, ESM::ObjectState& state) const
+    {
+        const ESM4::Creature* creature = ptr.get<ESM4::Creature>()->mBase;
+        const MWWorld::CustomData* customData = ptr.getRefData().getCustomData();
+        if (creature == nullptr || !creature->mIsFONV || customData == nullptr)
+        {
+            state.mHasCustomState = false;
+            return;
+        }
+
+        const auto* data = dynamic_cast<const ESM4CreatureCustomData*>(customData);
+        if (data == nullptr)
+        {
+            state.mHasCustomState = false;
+            return;
+        }
+
+        ESM::CreatureState& creatureState = state.asCreatureState();
+        data->mContainerStore->writeState(creatureState.mInventory);
+        data->mCreatureStats.writeState(creatureState.mCreatureStats);
+        state.mHasCustomState = true;
     }
 
     MWMechanics::Movement& ESM4Creature::getMovementSettings(const MWWorld::Ptr& ptr) const

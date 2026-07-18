@@ -16,6 +16,16 @@
 #include "actor.hpp"
 #include "esm4base.hpp"
 
+namespace ESM
+{
+    struct CreatureState;
+}
+
+namespace MWWorld
+{
+    class ESMStore;
+}
+
 namespace MWClass
 {
     class ESM4Creature final : public MWWorld::RegisteredClass<ESM4Creature, Actor>
@@ -76,6 +86,13 @@ namespace MWClass
         bool canSwim(const MWWorld::ConstPtr& ptr) const override;
         bool canWalk(const MWWorld::ConstPtr& ptr) const override;
         void adjustScale(const MWWorld::ConstPtr& ptr, osg::Vec3f& scale, bool rendering) const override;
+
+        void readAdditionalState(const MWWorld::Ptr& ptr, const ESM::ObjectState& state) const override;
+        void writeAdditionalState(const MWWorld::ConstPtr& ptr, ESM::ObjectState& state) const override;
+
+        /// Validate all fallible FNV creature payload data before LiveCellRef applies the enclosing CellRef/RefData.
+        static bool validateState(const ESM4::Creature& creature, const ESM::CreatureState& state,
+            const MWWorld::ESMStore& store, std::string& error);
 
     private:
         static class ESM4CreatureCustomData& getCustomData(const MWWorld::ConstPtr& ptr);

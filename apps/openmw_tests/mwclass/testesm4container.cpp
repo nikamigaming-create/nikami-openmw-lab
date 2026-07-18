@@ -1,10 +1,14 @@
 #include <gtest/gtest.h>
 
 #include <components/esm/format.hpp>
+#include <components/esm3/cellstate.hpp>
 #include <components/esm3/containerstate.hpp>
+#include <components/esm3/creaturestate.hpp>
 #include <components/esm3/esmreader.hpp>
 #include <components/esm3/esmwriter.hpp>
 #include <components/esm3/readerscache.hpp>
+#include <components/esm4/loadachr.hpp>
+#include <components/esm4/loadcell.hpp>
 #include <components/esm4/loadcrea.hpp>
 #include <components/esm4/loadkeym.hpp>
 #include <components/esm4/loadlvli.hpp>
@@ -18,13 +22,19 @@
 #include "apps/openmw/mwclass/esm4container.hpp"
 #include "apps/openmw/mwclass/esm4creature.hpp"
 
+#include "apps/openmw/mwmechanics/creaturestats.hpp"
+
 #include "apps/openmw/mwworld/actionopen.hpp"
 #include "apps/openmw/mwworld/esmstore.hpp"
 #include "apps/openmw/mwworld/failedaction.hpp"
 #include "apps/openmw/mwworld/livecellref.hpp"
 #include "apps/openmw/mwworld/worldmodel.hpp"
 
+#include <components/loadinglistener/loadinglistener.hpp>
+
+#include <cmath>
 #include <limits>
+#include <map>
 #include <sstream>
 
 namespace
@@ -41,6 +51,9 @@ namespace
     constexpr std::uint32_t sMissingItemBase = 0x01103b23;
     constexpr std::uint32_t sLevelledItemBase = 0x01103b24;
     constexpr std::uint32_t sUnsupportedStaticBase = 0x01103b25;
+    constexpr std::uint32_t sCreatureCell = 0x01104c10;
+    constexpr std::uint32_t sNonFnvCreatureBase = 0x01103b26;
+    constexpr std::uint32_t sNonFnvCreatureRef = 0x01108741;
 
     class TestLuaManager final : public MWBase::LuaManager
     {
@@ -182,6 +195,112 @@ namespace
             reference.mCount = 1;
             return reference;
         }
+
+        static ESM4::Cell makeCreatureCell()
+        {
+            ESM4::Cell cell{};
+            cell.mId = ESM::RefId(ESM::FormId::fromUint32(sCreatureCell));
+            cell.mEditorId = "GoodspringsCreatureStateCell";
+            cell.mFullName = "Goodsprings Creature State Cell";
+            cell.mCellFlags = ESM4::CELL_Interior;
+            return cell;
+        }
+
+        static ESM4::ActorCreature makePlacedCreature()
+        {
+            ESM4::ActorCreature actor{};
+            actor.mId = ESM::FormId::fromUint32(sCreatureRef);
+            actor.mParent = ESM::RefId(ESM::FormId::fromUint32(sCreatureCell));
+            actor.mBaseObj = ESM::FormId::fromUint32(sCreatureBase);
+            actor.mEditorId = "GoodspringsCreatureStateRef";
+            actor.mCount = 1;
+            actor.mScale = 1.f;
+            return actor;
+        }
+
+        static void populateCreatureWorldStore(MWWorld::ESMStore& store)
+        {
+            ESM4::MiscItem bottle{};
+            bottle.mId = ESM::FormId::fromUint32(sSaloonBottleBase);
+            bottle.mEditorId = "GSProspectorSaloonBottle";
+            bottle.mFullName = "Bottle";
+            store.overrideRecord(bottle);
+
+            ESM4::Key key{};
+            key.mId = ESM::FormId::fromUint32(sSaloonKeyBase);
+            key.mEditorId = "GSProspectorSaloonKey";
+            key.mFullName = "Prospector Saloon Key";
+            store.overrideRecord(key);
+
+            ESM4::Creature creature = makeCreature();
+            creature.mInventory.push_back(ESM4::InventoryItem{ sSaloonBottleBase, 6 });
+            store.overrideRecord(creature);
+            store.overrideRecord(makeCreatureCell());
+            const_cast<MWWorld::Store<ESM4::ActorCreature>&>(store.get<ESM4::ActorCreature>())
+                .insertStatic(makePlacedCreature());
+            store.setUp();
+        }
+
+        static MWWorld::Ptr findPlacedCreature(MWWorld::CellStore& cell)
+        {
+            MWWorld::Ptr result;
+            cell.forEachType<ESM4::Creature>([&](const MWWorld::Ptr& ptr) {
+                if (ptr.getCellRef().getRefNum() == ESM::FormId::fromUint32(sCreatureRef))
+                {
+                    result = ptr;
+                    return false;
+                }
+                return true;
+            });
+            return result;
+        }
+
+        static std::unique_ptr<std::stringstream> writeWorldState(MWWorld::WorldModel& worldModel)
+        {
+            auto stream = std::make_unique<std::stringstream>();
+            ESM::ESMWriter writer;
+            writer.setFormatVersion(ESM::CurrentSaveGameFormatVersion);
+            writer.save(*stream);
+            Loading::Listener progress;
+            worldModel.write(writer, progress);
+            return stream;
+        }
+
+        static std::unique_ptr<std::stringstream> writeCreatureStates(
+            std::initializer_list<const ESM::CreatureState*> states)
+        {
+            auto stream = std::make_unique<std::stringstream>();
+            ESM::ESMWriter writer;
+            writer.setFormatVersion(ESM::CurrentSaveGameFormatVersion);
+            writer.save(*stream);
+            writer.startRecord(ESM::REC_CSTA);
+            writer.writeCellId(ESM::RefId(ESM::FormId::fromUint32(sCreatureCell)));
+            ESM::CellState cellState{};
+            cellState.mId = ESM::RefId(ESM::FormId::fromUint32(sCreatureCell));
+            cellState.mIsInterior = true;
+            cellState.save(writer);
+            for (const ESM::CreatureState* state : states)
+            {
+                writer.writeHNT("OBJE", ESM::REC_CREA4);
+                state->save(writer);
+            }
+            writer.endRecord(ESM::REC_CSTA);
+            return stream;
+        }
+
+        static void readWorldState(std::unique_ptr<std::stringstream> stream, MWWorld::WorldModel& worldModel,
+            const std::map<int, int>* contentFileMapping = nullptr)
+        {
+            ESM::ESMReader reader;
+            reader.open(std::move(stream), "fnv-creature-csta-save");
+            reader.setContentFileMapping(contentFileMapping);
+            while (reader.hasMoreRecs())
+            {
+                const std::uint32_t type = reader.getRecName().toInt();
+                reader.getRecHeader();
+                ASSERT_TRUE(worldModel.readRecord(reader, type));
+            }
+        }
     };
 
     TEST_F(ESM4ContainerTest, CreatureInitializesDirectFixedInventoryOnceAndMergesDuplicateStacks)
@@ -304,6 +423,367 @@ namespace
         ASSERT_EQ(clonedStore.remove(bottleId, 2, false, false), 2);
         EXPECT_EQ(clonedStore.count(bottleId), 4);
         EXPECT_EQ(sourceStore.count(bottleId), 6);
+    }
+
+    TEST_F(ESM4ContainerTest, CreatureCellStateOmitsUnaccessedFnvAndRejectsNonFnvWriteAndRead)
+    {
+        {
+            MWWorld::ESMStore store;
+            populateCreatureWorldStore(store);
+            ESM::ReadersCache readers;
+            MWWorld::WorldModel worldModel(store, readers);
+            mEnvironment.setESMStore(store);
+            mEnvironment.setWorldModel(worldModel);
+
+            MWWorld::CellStore* cell
+                = worldModel.findCell(ESM::RefId(ESM::FormId::fromUint32(sCreatureCell)), false);
+            ASSERT_NE(cell, nullptr);
+            ASSERT_EQ(cell->getState(), MWWorld::CellStore::State_Unloaded);
+            cell->load();
+            cell->setWaterLevel(11.f); // Save the cell without ever constructing creature CustomData.
+            ASSERT_EQ(cell->count(), 1u);
+
+            auto stream = writeWorldState(worldModel);
+            ESM::ESMReader reader;
+            reader.open(std::move(stream), "unaccessed-fnv-creature-omission");
+            ASSERT_TRUE(reader.hasMoreRecs());
+            ASSERT_EQ(reader.getRecName().toInt(), ESM::REC_CSTA);
+            reader.getRecHeader();
+            EXPECT_EQ(reader.getCellId(), ESM::RefId(ESM::FormId::fromUint32(sCreatureCell)));
+            ESM::CellState state{};
+            state.load(reader);
+            EXPECT_FALSE(reader.isNextSub("OBJE"));
+        }
+
+        MWWorld::ESMStore store;
+        ESM4::Creature creature = makeCreature(sNonFnvCreatureBase);
+        creature.mIsFONV = false;
+        creature.mEditorId = "OblivionCreatureStateMustRemainOmitted";
+        store.overrideRecord(creature);
+        store.overrideRecord(makeCreatureCell());
+        ESM4::ActorCreature actor = makePlacedCreature();
+        actor.mId = ESM::FormId::fromUint32(sNonFnvCreatureRef);
+        actor.mBaseObj = ESM::FormId::fromUint32(sNonFnvCreatureBase);
+        const_cast<MWWorld::Store<ESM4::ActorCreature>&>(store.get<ESM4::ActorCreature>()).insertStatic(actor);
+        store.setUp();
+
+        ESM::ReadersCache readers;
+        MWWorld::WorldModel sourceModel(store, readers);
+        mEnvironment.setESMStore(store);
+        mEnvironment.setWorldModel(sourceModel);
+        MWWorld::CellStore* sourceCell
+            = sourceModel.findCell(ESM::RefId(ESM::FormId::fromUint32(sCreatureCell)), false);
+        ASSERT_NE(sourceCell, nullptr);
+        ASSERT_EQ(sourceCell->getState(), MWWorld::CellStore::State_Unloaded);
+        sourceCell->load();
+        MWWorld::Ptr source;
+        sourceCell->forEachType<ESM4::Creature>([&](const MWWorld::Ptr& ptr) {
+            source = ptr;
+            return false;
+        });
+        ASSERT_FALSE(source.isEmpty());
+        source.getCellRef().setCount(9);
+
+        auto omitted = writeWorldState(sourceModel);
+        {
+            ESM::ESMReader reader;
+            reader.open(std::move(omitted), "non-fnv-creature-omission");
+            ASSERT_TRUE(reader.hasMoreRecs());
+            ASSERT_EQ(reader.getRecName().toInt(), ESM::REC_CSTA);
+            reader.getRecHeader();
+            EXPECT_EQ(reader.getCellId(), ESM::RefId(ESM::FormId::fromUint32(sCreatureCell)));
+            ESM::CellState state{};
+            state.load(reader);
+            EXPECT_FALSE(reader.isNextSub("OBJE"));
+        }
+
+        ESM::CreatureState crafted;
+        source.get<ESM4::Creature>()->save(crafted);
+        ASSERT_FALSE(crafted.mHasCustomState);
+        crafted.mRef.mCount = 17;
+
+        MWWorld::WorldModel restoredModel(store, readers);
+        mEnvironment.setWorldModel(restoredModel);
+        MWWorld::CellStore* restoredCell
+            = restoredModel.findCell(ESM::RefId(ESM::FormId::fromUint32(sCreatureCell)), false);
+        ASSERT_NE(restoredCell, nullptr);
+        ASSERT_EQ(restoredCell->getState(), MWWorld::CellStore::State_Unloaded);
+        readWorldState(writeCreatureStates({ &crafted }), restoredModel);
+        MWWorld::Ptr restored;
+        restoredCell->forEachType<ESM4::Creature>([&](const MWWorld::Ptr& ptr) {
+            restored = ptr;
+            return false;
+        });
+        ASSERT_FALSE(restored.isEmpty());
+        EXPECT_EQ(restored.getCellRef().getCount(false), 1);
+        EXPECT_EQ(restored.getRefData().getCustomData(), nullptr);
+    }
+
+    TEST_F(ESM4ContainerTest, CreatureCstaRoundTripFromUnloadedCellsRetainsMutableInventoryHealthAndDeath)
+    {
+        MWWorld::ESMStore store;
+        populateCreatureWorldStore(store);
+        ESM::ReadersCache readers;
+        MWWorld::WorldModel sourceModel(store, readers);
+        mEnvironment.setESMStore(store);
+        mEnvironment.setWorldModel(sourceModel);
+
+        const ESM::RefId cellId(ESM::FormId::fromUint32(sCreatureCell));
+        const ESM::RefNum creatureRef = ESM::FormId::fromUint32(sCreatureRef);
+        const ESM::RefId bottleId(ESM::FormId::fromUint32(sSaloonBottleBase));
+        MWWorld::CellStore* sourceCell = sourceModel.findCell(cellId, false);
+        ASSERT_NE(sourceCell, nullptr);
+        ASSERT_EQ(sourceCell->getState(), MWWorld::CellStore::State_Unloaded);
+        EXPECT_TRUE(sourceModel.getPtr(creatureRef).isEmpty());
+
+        sourceCell->load();
+        MWWorld::Ptr source = findPlacedCreature(*sourceCell);
+        ASSERT_FALSE(source.isEmpty());
+        sourceModel.registerPtr(source);
+        MWWorld::ContainerStore& sourceStore = source.getClass().getContainerStore(source);
+        ASSERT_EQ(sourceStore.remove(bottleId, 2, false, false), 2);
+
+        MWMechanics::CreatureStats& stats = source.getClass().getCreatureStats(source);
+        ESM::CreatureStats deadState;
+        stats.writeState(deadState);
+        deadState.mDynamic[0].mCurrent = 0.f;
+        deadState.mDead = true;
+        deadState.mDied = true;
+        stats.readState(deadState);
+        ASSERT_TRUE(stats.isDead());
+        ASSERT_TRUE(stats.hasDied());
+
+        auto stream = writeWorldState(sourceModel);
+        MWWorld::WorldModel restoredModel(store, readers);
+        mEnvironment.setWorldModel(restoredModel);
+        MWWorld::CellStore* restoredCell = restoredModel.findCell(cellId, false);
+        ASSERT_NE(restoredCell, nullptr);
+        ASSERT_EQ(restoredCell->getState(), MWWorld::CellStore::State_Unloaded);
+        EXPECT_TRUE(restoredModel.getPtr(creatureRef).isEmpty());
+
+        readWorldState(std::move(stream), restoredModel);
+        EXPECT_EQ(restoredCell->getState(), MWWorld::CellStore::State_Loaded);
+        MWWorld::Ptr restored = restoredModel.getPtr(creatureRef);
+        ASSERT_FALSE(restored.isEmpty());
+        MWWorld::ContainerStore& restoredStore = restored.getClass().getContainerStore(restored);
+        EXPECT_EQ(restoredStore.count(bottleId), 4);
+        const MWMechanics::CreatureStats& restoredStats = restored.getClass().getCreatureStats(restored);
+        EXPECT_FLOAT_EQ(restoredStats.getHealth().getCurrent(), 0.f);
+        EXPECT_TRUE(restoredStats.isDead());
+        EXPECT_TRUE(restoredStats.hasDied());
+        EXPECT_EQ(restored.getCellRef().getRefNum(), creatureRef);
+    }
+
+    TEST_F(ESM4ContainerTest, CreatureStateDropsItemsWhoseContentFileWasRemoved)
+    {
+        MWWorld::ESMStore store;
+        populateCreatureWorldStore(store);
+        ESM::ReadersCache readers;
+        MWWorld::WorldModel sourceModel(store, readers);
+        mEnvironment.setESMStore(store);
+        mEnvironment.setWorldModel(sourceModel);
+        const ESM::RefId cellId(ESM::FormId::fromUint32(sCreatureCell));
+        MWWorld::CellStore* sourceCell = sourceModel.findCell(cellId, false);
+        ASSERT_NE(sourceCell, nullptr);
+        sourceCell->load();
+        MWWorld::Ptr source = findPlacedCreature(*sourceCell);
+        ASSERT_FALSE(source.isEmpty());
+        sourceModel.registerPtr(source);
+        source.getClass().getContainerStore(source);
+
+        ESM::CreatureState state;
+        source.get<ESM4::Creature>()->save(state);
+        ESM::ObjectState missing;
+        missing.blank();
+        missing.mEnabled = 1;
+        missing.mRef = ESM::makeBlankCellRef();
+        missing.mRef.mRefID = ESM::RefId(ESM::FormId{ 0x00cafe, 2 });
+        missing.mRef.mRefNum = ESM::FormId{ 0x00babe, 2 };
+        missing.mRef.mCount = 1;
+        missing.mPosition = missing.mRef.mPos;
+        state.mInventory.mItems.push_back(std::move(missing));
+
+        MWWorld::WorldModel restoredModel(store, readers);
+        mEnvironment.setWorldModel(restoredModel);
+        MWWorld::CellStore* restoredCell = restoredModel.findCell(cellId, false);
+        ASSERT_NE(restoredCell, nullptr);
+        ASSERT_EQ(restoredCell->getState(), MWWorld::CellStore::State_Unloaded);
+        const std::map<int, int> contentFileMapping{ { 1, 1 } };
+        readWorldState(writeCreatureStates({ &state }), restoredModel, &contentFileMapping);
+
+        MWWorld::Ptr restored = restoredModel.getPtr(ESM::FormId::fromUint32(sCreatureRef));
+        ASSERT_FALSE(restored.isEmpty());
+        MWWorld::ContainerStore& restoredStore = restored.getClass().getContainerStore(restored);
+        EXPECT_EQ(restoredStore.count(ESM::RefId(ESM::FormId::fromUint32(sSaloonBottleBase))), 6);
+        std::size_t stacks = 0;
+        for (const MWWorld::ConstPtr item : restoredStore)
+        {
+            ++stacks;
+            EXPECT_FALSE(item.getCellRef().getRefId().empty());
+        }
+        EXPECT_EQ(stacks, 1u);
+        EXPECT_TRUE(restoredModel.getPtr(ESM::FormId{ 0x00babe, 2 }).isEmpty());
+    }
+
+    TEST_F(ESM4ContainerTest, MalformedCreatureStateCannotPartiallyMutateLiveReferenceOrCustomData)
+    {
+        MWWorld::ESMStore store;
+        populateCreatureWorldStore(store);
+        ESM::ReadersCache readers;
+        MWWorld::WorldModel worldModel(store, readers);
+        mEnvironment.setESMStore(store);
+        mEnvironment.setWorldModel(worldModel);
+        const ESM::RefId cellId(ESM::FormId::fromUint32(sCreatureCell));
+        const ESM::RefId bottleId(ESM::FormId::fromUint32(sSaloonBottleBase));
+        MWWorld::CellStore* cell = worldModel.findCell(cellId, false);
+        ASSERT_NE(cell, nullptr);
+        cell->load();
+        MWWorld::Ptr target = findPlacedCreature(*cell);
+        ASSERT_FALSE(target.isEmpty());
+        worldModel.registerPtr(target);
+        MWWorld::ContainerStore& inventory = target.getClass().getContainerStore(target);
+        ASSERT_EQ(inventory.count(bottleId), 6);
+        MWMechanics::CreatureStats& stats = target.getClass().getCreatureStats(target);
+        auto health = stats.getHealth();
+        health.setCurrent(55.f);
+        stats.setHealth(health);
+
+        ESM::Position sentinel{};
+        sentinel.pos[0] = 111.f;
+        sentinel.pos[1] = 222.f;
+        sentinel.pos[2] = 333.f;
+        sentinel.rot[2] = 0.75f;
+        target.getCellRef().setCount(7);
+        target.getCellRef().setScale(1.25f);
+        target.getCellRef().setPosition(sentinel);
+        target.getRefData().setPosition(sentinel);
+        target.getRefData().disable();
+        const bool refWasChanged = target.getCellRef().hasChanged();
+        const bool dataWasChanged = target.getRefData().hasChanged();
+        const ESM::RefNum generatedBefore = worldModel.getLastGeneratedRefNum();
+
+        ESM::CreatureState nanState;
+        target.get<ESM4::Creature>()->save(nanState);
+        nanState.mRef.mCount = 2;
+        nanState.mRef.mScale = std::numeric_limits<float>::quiet_NaN();
+        nanState.mEnabled = 1;
+        nanState.mPosition.pos[0] = -900.f;
+        ASSERT_FALSE(nanState.mInventory.mItems.empty());
+        nanState.mInventory.mItems.front().mRef.mCount = 1;
+        nanState.mCreatureStats.mDynamic[0].mCurrent = 4.f;
+        readWorldState(writeCreatureStates({ &nanState }), worldModel);
+
+        EXPECT_EQ(target.getCellRef().getCount(false), 7);
+        EXPECT_FLOAT_EQ(target.getCellRef().getScale(), 1.25f);
+        EXPECT_EQ(target.getCellRef().getPosition(), sentinel);
+        EXPECT_EQ(target.getRefData().getPosition(), sentinel);
+        EXPECT_FALSE(target.getRefData().isEnabled());
+        EXPECT_EQ(target.getClass().getContainerStore(target).count(bottleId), 6);
+        EXPECT_FLOAT_EQ(target.getClass().getCreatureStats(target).getHealth().getCurrent(), 55.f);
+        EXPECT_EQ(target.getCellRef().hasChanged(), refWasChanged);
+        EXPECT_EQ(target.getRefData().hasChanged(), dataWasChanged);
+        EXPECT_EQ(worldModel.getLastGeneratedRefNum(), generatedBefore);
+
+        ESM::CreatureState negativeCountState;
+        target.get<ESM4::Creature>()->save(negativeCountState);
+        negativeCountState.mRef.mCount = -3;
+        negativeCountState.mEnabled = 1;
+        negativeCountState.mPosition.pos[0] = -700.f;
+        readWorldState(writeCreatureStates({ &negativeCountState }), worldModel);
+        EXPECT_EQ(target.getCellRef().getCount(false), 7);
+        EXPECT_EQ(target.getRefData().getPosition(), sentinel);
+        EXPECT_FALSE(target.getRefData().isEnabled());
+        EXPECT_EQ(target.getClass().getContainerStore(target).count(bottleId), 6);
+        EXPECT_FLOAT_EQ(target.getClass().getCreatureStats(target).getHealth().getCurrent(), 55.f);
+        EXPECT_EQ(worldModel.getLastGeneratedRefNum(), generatedBefore);
+
+        std::string validationError;
+        negativeCountState.mRef.mCount = 1;
+        negativeCountState.mRef.mRefNum = {};
+        EXPECT_FALSE(MWClass::ESM4Creature::validateState(
+            *target.get<ESM4::Creature>()->mBase, negativeCountState, store, validationError));
+
+        negativeCountState.mRef.mRefNum = ESM::FormId::fromUint32(sCreatureRef);
+        ESM::AnimationState::ScriptedAnimation animation;
+        animation.mTime = std::numeric_limits<float>::quiet_NaN();
+        negativeCountState.mAnimationState.mScriptedAnims.push_back(animation);
+        EXPECT_FALSE(MWClass::ESM4Creature::validateState(
+            *target.get<ESM4::Creature>()->mBase, negativeCountState, store, validationError));
+        negativeCountState.mAnimationState.mScriptedAnims.clear();
+
+        ESM::LuaScript luaScript;
+        ESM::LuaTimer timer{};
+        timer.mType = ESM::LuaTimer::Type::SIMULATION_TIME;
+        timer.mTime = std::numeric_limits<double>::quiet_NaN();
+        luaScript.mTimers.push_back(timer);
+        negativeCountState.mLuaScripts.mScripts.push_back(luaScript);
+        EXPECT_FALSE(MWClass::ESM4Creature::validateState(
+            *target.get<ESM4::Creature>()->mBase, negativeCountState, store, validationError));
+        negativeCountState.mLuaScripts.mScripts.clear();
+
+        negativeCountState.mCreatureStats.mAiSequence.mLastAiPackage = 99;
+        EXPECT_FALSE(MWClass::ESM4Creature::validateState(
+            *target.get<ESM4::Creature>()->mBase, negativeCountState, store, validationError));
+        negativeCountState.mCreatureStats.mAiSequence.mLastAiPackage = -1;
+        ESM::AiSequence::AiPackageContainer aiPackage;
+        aiPackage.mType = ESM::AiSequence::Ai_Travel;
+        auto travel = std::make_unique<ESM::AiSequence::AiTravel>();
+        travel->mData.mX = std::numeric_limits<float>::quiet_NaN();
+        travel->mData.mY = 0.f;
+        travel->mData.mZ = 0.f;
+        aiPackage.mPackage = std::move(travel);
+        negativeCountState.mCreatureStats.mAiSequence.mPackages.push_back(std::move(aiPackage));
+        EXPECT_FALSE(MWClass::ESM4Creature::validateState(
+            *target.get<ESM4::Creature>()->mBase, negativeCountState, store, validationError));
+    }
+
+    TEST_F(ESM4ContainerTest, DuplicateCreatureObjectsUseFirstFullyValidatedStateWithoutAllocatingSecond)
+    {
+        MWWorld::ESMStore store;
+        populateCreatureWorldStore(store);
+        ESM::ReadersCache readers;
+        MWWorld::WorldModel sourceModel(store, readers);
+        mEnvironment.setESMStore(store);
+        mEnvironment.setWorldModel(sourceModel);
+        const ESM::RefId cellId(ESM::FormId::fromUint32(sCreatureCell));
+        const ESM::RefId bottleId(ESM::FormId::fromUint32(sSaloonBottleBase));
+        MWWorld::CellStore* sourceCell = sourceModel.findCell(cellId, false);
+        ASSERT_NE(sourceCell, nullptr);
+        sourceCell->load();
+        MWWorld::Ptr source = findPlacedCreature(*sourceCell);
+        ASSERT_FALSE(source.isEmpty());
+        sourceModel.registerPtr(source);
+        MWWorld::ContainerStore& inventory = source.getClass().getContainerStore(source);
+        ASSERT_EQ(inventory.remove(bottleId, 4, false, false), 4);
+        MWMechanics::CreatureStats& stats = source.getClass().getCreatureStats(source);
+        auto health = stats.getHealth();
+        health.setCurrent(60.f);
+        stats.setHealth(health);
+        ESM::CreatureState first;
+        source.get<ESM4::Creature>()->save(first);
+
+        MWWorld::Ptr secondBottleState = inventory.search(bottleId);
+        ASSERT_FALSE(secondBottleState.isEmpty());
+        secondBottleState.getCellRef().setCount(5);
+        health = stats.getHealth();
+        health.setCurrent(20.f);
+        stats.setHealth(health);
+        ESM::CreatureState second;
+        source.get<ESM4::Creature>()->save(second);
+
+        MWWorld::WorldModel restoredModel(store, readers);
+        mEnvironment.setWorldModel(restoredModel);
+        MWWorld::CellStore* restoredCell = restoredModel.findCell(cellId, false);
+        ASSERT_NE(restoredCell, nullptr);
+        ASSERT_EQ(restoredCell->getState(), MWWorld::CellStore::State_Unloaded);
+        const std::size_t revisionBefore = restoredModel.getPtrRegistryRevision();
+        readWorldState(writeCreatureStates({ &first, &second }), restoredModel);
+        MWWorld::Ptr restored = restoredModel.getPtr(ESM::FormId::fromUint32(sCreatureRef));
+        ASSERT_FALSE(restored.isEmpty());
+        EXPECT_EQ(restored.getClass().getContainerStore(restored).count(bottleId), 2);
+        EXPECT_FLOAT_EQ(restored.getClass().getCreatureStats(restored).getHealth().getCurrent(), 60.f);
+        // One outer creature and one retained inventory stack are registered; the duplicate performs no registration.
+        EXPECT_EQ(restoredModel.getPtrRegistryRevision(), revisionBefore + 2);
     }
 
     TEST_F(ESM4ContainerTest, InitializesAuthoredFixedContentsOnlyOnce)
