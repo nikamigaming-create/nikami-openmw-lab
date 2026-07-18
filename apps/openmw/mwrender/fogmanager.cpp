@@ -60,6 +60,12 @@ namespace MWRender
         osg::Vec4f color = SceneUtil::colourFromRGB(cell.getMood().mFogColor);
 
         const float fogDensity = cell.getMood().mFogDensity;
+        if (cell.getMood().mHasFalloutFog)
+        {
+            configure(viewDistance, fogDensity, mUnderwaterIndoorFog, 1.f, 0.f, color, true,
+                cell.getMood().mFogNear, cell.getMood().mFogFar, cell.getMood().mFogPower);
+            return;
+        }
         if (Settings::fog().mUseDistantFog)
         {
             float density = std::max(0.2f, fogDensity);

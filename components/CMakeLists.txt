@@ -298,6 +298,7 @@ add_component_dir (esm4
     loadimgs
     loadimad
     imagespacecomposition
+    lightingcomposition
     loadwrld
     magiceffectid
     reader

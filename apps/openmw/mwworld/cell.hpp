@@ -29,6 +29,11 @@ namespace MWWorld
             uint32_t mDirectionalColor;
             uint32_t mFogColor;
             float mFogDensity;
+            bool mHasFalloutFog;
+            float mFogNear;
+            float mFogFar;
+            float mFogClipDistance;
+            float mFogPower;
         };
 
     public:

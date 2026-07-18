@@ -1375,6 +1375,7 @@ template class MWWorld::TypedDynamicStore<ESM4::LevelledCreature>;
 template class MWWorld::TypedDynamicStore<ESM4::LevelledItem>;
 template class MWWorld::TypedDynamicStore<ESM4::LevelledNpc>;
 template class MWWorld::TypedDynamicStore<ESM4::Light>;
+template class MWWorld::TypedDynamicStore<ESM4::LightingTemplate>;
 template class MWWorld::TypedDynamicStore<ESM4::MiscItem>;
 template class MWWorld::TypedDynamicStore<ESM4::MovableStatic>;
 template class MWWorld::TypedDynamicStore<ESM4::Npc>;

@@ -4,11 +4,16 @@
 #include "loadimad.hpp"
 #include "loadimgs.hpp"
 
+#include <components/esm/formid.hpp>
+
 #include <array>
 #include <vector>
 
 namespace ESM4
 {
+    struct Cell;
+    struct World;
+
     struct ImageSpaceModifierContribution
     {
         const ImageSpaceModifier* mModifier = nullptr;
@@ -27,6 +32,10 @@ namespace ESM4
     /// A multiplier contributes (value - 1) * strength and an additive channel contributes value * strength.
     ComposedImageSpace composeImageSpace(
         const ImageSpace& base, const std::vector<ImageSpaceModifierContribution>& modifiers);
+
+    /// Resolve the authored base image space for the current cell. Interior CELL XCIM is authoritative;
+    /// only exterior cells without XCIM inherit the parent WRLD image space.
+    ESM::FormId resolveCellImageSpace(const Cell& cell, const World* parentWorld);
 }
 
 #endif
