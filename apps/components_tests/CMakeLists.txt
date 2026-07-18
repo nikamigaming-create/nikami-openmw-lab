@@ -12,6 +12,7 @@ file(GLOB UNITTEST_SRC_FILES
     esm/variant.cpp
 
     lua/testasync.cpp
+    lua/testactivationhandlers.cpp
     lua/testconfiguration.cpp
     lua/testinputactions.cpp
     lua/testl10n.cpp

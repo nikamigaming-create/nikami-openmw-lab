@@ -1701,6 +1701,31 @@ namespace
         EXPECT_TRUE(wrongKeyDoor.getCellRef().isLocked());
     }
 
+    TEST_F(ESM4ContainerTest, UnlockedEsm4TeleportAndOrdinaryDoorsUseNativeActions)
+    {
+        ESM4::Door door = makeDoor();
+
+        ESM4::Reference teleportReference = makeLockedDoorReference(true);
+        teleportReference.mIsLocked = false;
+        teleportReference.mLockLevel = -50;
+        MWWorld::LiveCellRef<ESM4::Door> teleportRef(teleportReference, &door);
+        MWWorld::Ptr teleportDoor(&teleportRef);
+        std::unique_ptr<MWWorld::Action> teleport = teleportDoor.getClass().activate(teleportDoor, {});
+        EXPECT_NE(dynamic_cast<MWWorld::ActionTeleport*>(teleport.get()), nullptr);
+        EXPECT_FALSE(teleportDoor.getCellRef().isLocked());
+        EXPECT_EQ(teleportDoor.getCellRef().getLockLevel(), -50);
+
+        ESM4::Reference ordinaryReference = makeLockedDoorReference(false);
+        ordinaryReference.mIsLocked = false;
+        ordinaryReference.mLockLevel = -50;
+        MWWorld::LiveCellRef<ESM4::Door> ordinaryRef(ordinaryReference, &door);
+        MWWorld::Ptr ordinaryDoor(&ordinaryRef);
+        std::unique_ptr<MWWorld::Action> open = ordinaryDoor.getClass().activate(ordinaryDoor, {});
+        EXPECT_NE(dynamic_cast<MWWorld::ActionDoor*>(open.get()), nullptr);
+        EXPECT_FALSE(ordinaryDoor.getCellRef().isLocked());
+        EXPECT_EQ(ordinaryDoor.getCellRef().getLockLevel(), -50);
+    }
+
     TEST_F(ESM4ContainerTest, DoorCellStateOmitsUnchangedAuthoredReference)
     {
         MWWorld::ESMStore store;

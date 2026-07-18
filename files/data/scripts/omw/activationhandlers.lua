@@ -1,21 +1,5 @@
-local core = require('openmw.core')
 local types = require('openmw.types')
 local world = require('openmw.world')
-
-local function ESM4DoorActivation(door, actor)
-    -- TODO: Implement lockpicking minigame
-    local Door4 = types.ESM4Door
-    if Door4.isTeleport(door) then
-        core.sound.playSound3d(Door4.record(door).openSound, actor)
-        actor:teleport(Door4.destCell(door), Door4.destPosition(door), Door4.destRotation(door))
-    else
-        local record = Door4.record(door)
-        local sound = Door4.isOpen(door) and record.closeSound or record.openSound
-        core.sound.playSound3d(sound, door)
-        Door4.activateDoor(door)
-    end
-    return false -- disable activation handling in C++ mwmechanics code
-end
 
 local function ESM4BookActivation(book, actor)
     if actor.type == types.Player then
@@ -27,7 +11,6 @@ local handlersPerObject = {}
 local handlersPerType = {}
 
 handlersPerType[types.ESM4Book] = { ESM4BookActivation }
-handlersPerType[types.ESM4Door] = { ESM4DoorActivation }
 
 local function onActivate(obj, actor)
     if world.isWorldPaused() then
