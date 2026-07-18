@@ -100,6 +100,7 @@ namespace ESM4
     struct DialogInfo;
     struct Door;
     struct Eyes;
+    struct Faction;
     struct Flora;
     struct FormIdList;
     struct Furniture;
@@ -199,7 +200,7 @@ namespace MWWorld
 
             // StoreTuple is an ABI-like compile-time ordinal shared by inline get<T>() call sites.
             // New stores must be appended so an incremental build can never reinterpret an existing slot.
-            Store<ESM4::Projectile>, Store<ESM4::ActorValueInformation>>;
+            Store<ESM4::Projectile>, Store<ESM4::ActorValueInformation>, Store<ESM4::Faction>>;
 
     private:
         template <typename T>
