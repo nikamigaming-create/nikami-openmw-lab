@@ -81,10 +81,10 @@ add_openmw_dir (mwsound
 add_openmw_dir (mwworld
     refdata worldimp scene globals class action nullaction actionteleport
     containerstore actiontalk actiontake manualref player cellvisitors failedaction
-    worldmodel localscripts customdata inventorystore ptr actionopen actionread actionharvest actionesm4radio
+    worldmodel localscripts customdata inventorystore ptr actionopen actionread actionharvest actionesm4radio actionesm4terminal
     actionequip timestamp actionalchemy cellstore actionapply actioneat
     store esmstore fallback actionrepair actionsoulgem livecellref actiondoor
-    esm4questruntime fnvplayerstate fnvplayerruntimestate
+    esm4questruntime fnvplayerstate fnvplayerruntimestate fnvterminalruntime
     contentloader esmloader actiontrap cellreflist cellref weather projectilemanager
     cellpreloader datetimemanager groundcoverstore magiceffects cell ptrregistry
     positioncellgrid
@@ -99,7 +99,7 @@ add_openmw_dir (mwphysics
 add_openmw_dir (mwclass
     classes activator creature npc weapon armor potion apparatus book clothing container door
     ingredient creaturelevlist itemlevlist light lockpick misc probe repair static actor bodypart
-    esm4base esm4activator esm4container esm4creature esm4npc esm4talkingactivator light4
+    esm4base esm4activator esm4container esm4creature esm4npc esm4talkingactivator esm4terminal light4
     )
 
 add_openmw_dir (mwmechanics

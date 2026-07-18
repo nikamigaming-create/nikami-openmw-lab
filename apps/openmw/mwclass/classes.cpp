@@ -53,6 +53,7 @@
 #include "esm4creature.hpp"
 #include "esm4npc.hpp"
 #include "esm4talkingactivator.hpp"
+#include "esm4terminal.hpp"
 #include "light4.hpp"
 
 namespace MWClass
@@ -101,7 +102,7 @@ namespace MWClass
         ESM4Named<ESM4::Potion>::registerSelf();
         ESM4Static::registerSelf();
         ESM4Named<ESM4::StaticCollection>::registerSelf();
-        ESM4Named<ESM4::Terminal>::registerSelf();
+        ESM4Terminal::registerSelf();
         ESM4TalkingActivator::registerSelf();
         ESM4Tree::registerSelf();
         ESM4Named<ESM4::Weapon>::registerSelf();
