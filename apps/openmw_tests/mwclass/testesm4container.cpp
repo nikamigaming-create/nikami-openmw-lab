@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include <components/esm/format.hpp>
+#include <components/esm3/aisequence.hpp>
 #include <components/esm3/cellstate.hpp>
 #include <components/esm3/containerstate.hpp>
 #include <components/esm3/creaturestate.hpp>
@@ -15,6 +16,7 @@
 #include <components/esm4/loadlvli.hpp>
 #include <components/esm4/loadmisc.hpp>
 #include <components/esm4/loadnpc.hpp>
+#include <components/esm4/loadpack.hpp>
 #include <components/esm4/loadrace.hpp>
 #include <components/esm4/loadstat.hpp>
 
@@ -25,6 +27,7 @@
 #include "apps/openmw/mwclass/esm4container.hpp"
 #include "apps/openmw/mwclass/esm4creature.hpp"
 
+#include "apps/openmw/mwmechanics/aiwander.hpp"
 #include "apps/openmw/mwmechanics/creaturestats.hpp"
 
 #include "apps/openmw/mwworld/actionopen.hpp"
@@ -83,6 +86,25 @@ namespace
         EXPECT_FALSE(MWClass::fnvAmbientFlyerRetainsAuthoredPosition(ESM4::Creature::FO3_CanWalk, 12));
         EXPECT_FALSE(MWClass::fnvAmbientFlyerRetainsAuthoredPosition(flyAndWalk, 5));
         EXPECT_FALSE(MWClass::fnvAmbientFlyerRetainsAuthoredPosition(flyAndWalk, 6));
+    }
+
+    TEST(FnvCreatureAiPolicyTest, ZeroSavedToleranceKeepsLegacyArrivalDistance)
+    {
+        ESM::AiSequence::AiWander saved{};
+        saved.mData.mDistance = 64;
+        saved.mData.mDuration = 5;
+        saved.mDurationData.mRemainingDuration = 5;
+
+        MWMechanics::AiWander legacy(&saved);
+        EXPECT_EQ(legacy.getDestinationTolerance(), MWMechanics::AiWander::sDefaultDestinationTolerance);
+
+        saved.mDurationData.mDestinationTolerance = 8;
+        MWMechanics::AiWander fnv(&saved);
+        EXPECT_EQ(fnv.getDestinationTolerance(), 8u);
+
+        saved.mDurationData.mDestinationTolerance = std::numeric_limits<std::uint32_t>::max();
+        MWMechanics::AiWander malformed(&saved);
+        EXPECT_LT(malformed.getDestinationTolerance(), static_cast<unsigned>(saved.mData.mDistance));
     }
 
     class TestLuaManager final : public MWBase::LuaManager
@@ -539,6 +561,60 @@ namespace
             }
         }
     };
+
+    TEST_F(ESM4ContainerTest, CreatureFallsThroughUnsupportedPatrolToSmallRadiusSandbox)
+    {
+        constexpr std::uint32_t patrolId = 0x01105000;
+        constexpr std::uint32_t sandboxId = 0x01105001;
+
+        MWWorld::ESMStore store;
+
+        ESM4::AIPackage patrol{};
+        patrol.mId = ESM::FormId::fromUint32(patrolId);
+        patrol.mEditorId = "SyntheticUnsupportedPatrol";
+        patrol.mData.type = 13;
+        patrol.mSchedule.time = 0xff;
+        store.overrideRecord(patrol);
+
+        ESM4::AIPackage sandbox{};
+        sandbox.mId = ESM::FormId::fromUint32(sandboxId);
+        sandbox.mEditorId = "SyntheticSandboxEditorLocation16";
+        sandbox.mData.type = 12;
+        sandbox.mSchedule.time = 0xff;
+        sandbox.mLocation.type = 3;
+        sandbox.mLocation.radius = 16;
+        store.overrideRecord(sandbox);
+
+        ESM4::Creature creature = makeCreature();
+        creature.mBaseConfig.fo3.levelOrMult = 1;
+        creature.mAIPackages = { ESM::FormId::fromUint32(patrolId), ESM::FormId::fromUint32(sandboxId) };
+        store.overrideRecord(creature);
+        store.overrideRecord(makeCreatureCell());
+        const_cast<MWWorld::Store<ESM4::ActorCreature>&>(store.get<ESM4::ActorCreature>())
+            .insertStatic(makePlacedCreature());
+        store.setUp();
+
+        ESM::ReadersCache readers;
+        MWWorld::WorldModel worldModel(store, readers);
+        mEnvironment.setESMStore(store);
+        mEnvironment.setWorldModel(worldModel);
+        MWWorld::CellStore* cell
+            = worldModel.findCell(ESM::RefId(ESM::FormId::fromUint32(sCreatureCell)), false);
+        ASSERT_NE(cell, nullptr);
+        cell->load();
+        MWWorld::Ptr ptr = findPlacedCreature(*cell);
+        ASSERT_FALSE(ptr.isEmpty());
+
+        MWMechanics::AiSequence& sequence = ptr.getClass().getCreatureStats(ptr).getAiSequence();
+        ASSERT_FALSE(sequence.isEmpty());
+        EXPECT_EQ(sequence.getTypeId(), MWMechanics::AiPackageTypeId::Wander);
+        const auto* wander = dynamic_cast<const MWMechanics::AiWander*>(&sequence.getActivePackage());
+        ASSERT_NE(wander, nullptr);
+        ASSERT_TRUE(wander->getDistance().has_value());
+        EXPECT_EQ(*wander->getDistance(), 64);
+        EXPECT_EQ(wander->getDestinationTolerance(), 8u);
+        EXPECT_LT(wander->getDestinationTolerance(), static_cast<unsigned>(*wander->getDistance()));
+    }
 
     TEST_F(ESM4ContainerTest, CreatureInitializesDirectFixedInventoryOnceAndMergesDuplicateStacks)
     {

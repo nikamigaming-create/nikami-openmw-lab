@@ -1,6 +1,7 @@
 #ifndef GAME_MWCLASS_ESM4CREATURE_H
 #define GAME_MWCLASS_ESM4CREATURE_H
 
+#include <algorithm>
 #include <cstdint>
 
 #include <components/esm4/loadcrea.hpp>
@@ -30,6 +31,19 @@ namespace MWWorld
 
 namespace MWClass
 {
+    [[nodiscard]] constexpr bool fnvCreatureAiPackageProcedureSupported(std::int32_t packageType) noexcept
+    {
+        return packageType == 3 || packageType == 4 || packageType == 5 || packageType == 6 || packageType == 8
+            || packageType == 11 || packageType == 12;
+    }
+
+    [[nodiscard]] constexpr unsigned fnvCreatureWanderDestinationTolerance(unsigned distance) noexcept
+    {
+        constexpr unsigned sLegacyTolerance = 64;
+        const unsigned scaledTolerance = distance / 8;
+        return std::max(1u, std::min(sLegacyTolerance, scaledTolerance));
+    }
+
     // Fallout package procedure types 11 and 12 are the two sandbox variants. A creature that can both fly and
     // walk cannot be treated as OpenMW's "pure flying" kind, so mapping its ambient sandbox to AiWander makes it
     // choose a land path and leave an authored perch. Preserve that placement until combat, script, or a directed

@@ -47,11 +47,8 @@ namespace MWMechanics
         constexpr int countBeforeReset = 10;
         constexpr float idlePositionCheckInterval = 1.5f;
 
-        // to prevent overcrowding
-        constexpr unsigned destinationTolerance = 64;
-
         // distance must be long enough that NPC will need to move to get there.
-        constexpr unsigned minimumWanderDistance = destinationTolerance * 2;
+        constexpr unsigned minimumWanderDistance = AiWander::sDefaultDestinationTolerance * 2;
 
         constexpr std::size_t maxIdleSize = 8;
 
@@ -154,9 +151,11 @@ namespace MWMechanics
     {
     }
 
-    AiWander::AiWander(int distance, int duration, int timeOfDay, const std::vector<unsigned char>& idle, bool repeat)
+    AiWander::AiWander(int distance, int duration, int timeOfDay, const std::vector<unsigned char>& idle, bool repeat,
+        unsigned destinationTolerance)
         : TypedAiPackage<AiWander>(repeat)
         , mDistance(static_cast<unsigned>(std::max(0, distance)))
+        , mDestinationTolerance(sanitizeDestinationTolerance(mDistance, destinationTolerance))
         , mDuration(static_cast<unsigned>(std::max(0, duration)))
         , mRemainingDuration(duration)
         , mTimeOfDay(timeOfDay)
@@ -552,7 +551,7 @@ namespace MWMechanics
         // Is there no destination or are we there yet?
         if ((!mPathFinder.isPathConstructed())
             || pathTo(actor, osg::Vec3f(mPathFinder.getPath().back()), duration, supportedMovementDirections,
-                destinationTolerance))
+                mDestinationTolerance))
         {
             stopWalking(actor);
             storage.setState(AiWanderStorage::Wander_ChooseAction);
@@ -975,6 +974,8 @@ namespace MWMechanics
         wander->mData.mDuration = mDuration;
         wander->mData.mTimeOfDay = mTimeOfDay;
         wander->mDurationData.mRemainingDuration = remainingDuration;
+        wander->mDurationData.mDestinationTolerance
+            = mDestinationTolerance == sDefaultDestinationTolerance ? 0 : mDestinationTolerance;
         assert(mIdle.size() == 8);
         for (int i = 0; i < 8; ++i)
             wander->mData.mIdle[i] = mIdle[i];
@@ -992,6 +993,8 @@ namespace MWMechanics
     AiWander::AiWander(const ESM::AiSequence::AiWander* wander)
         : TypedAiPackage<AiWander>(makeDefaultOptions().withRepeat(wander->mData.mShouldRepeat != 0))
         , mDistance(static_cast<unsigned>(std::max(static_cast<short>(0), wander->mData.mDistance)))
+        , mDestinationTolerance(
+              sanitizeDestinationTolerance(mDistance, wander->mDurationData.mDestinationTolerance))
         , mDuration(static_cast<unsigned>(std::max(static_cast<short>(0), wander->mData.mDuration)))
         , mRemainingDuration(wander->mDurationData.mRemainingDuration)
         , mTimeOfDay(wander->mData.mTimeOfDay)

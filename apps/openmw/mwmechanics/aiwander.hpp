@@ -76,13 +76,28 @@ namespace MWMechanics
     class AiWander final : public TypedAiPackage<AiWander>
     {
     public:
+        static constexpr unsigned sDefaultDestinationTolerance = 64;
+
+        static constexpr unsigned sanitizeDestinationTolerance(unsigned distance, unsigned tolerance) noexcept
+        {
+            if (tolerance == 0)
+                return sDefaultDestinationTolerance;
+
+            unsigned result = tolerance > sDefaultDestinationTolerance ? sDefaultDestinationTolerance : tolerance;
+            if (distance > 1 && result >= distance)
+                result = distance - 1;
+            return result;
+        }
+
         /// Constructor
         /** \param distance Max distance the ACtor will wander
             \param duration Time, in hours, that this package will be preformed
             \param timeOfDay Currently unimplemented. Not functional in the original engine.
             \param idle Chances of each idle to play (9 in total)
-            \param repeat Repeat wander or not **/
-        AiWander(int distance, int duration, int timeOfDay, const std::vector<unsigned char>& idle, bool repeat);
+            \param repeat Repeat wander or not
+            \param destinationTolerance Arrival distance, or zero for the legacy 64-unit distance **/
+        AiWander(int distance, int duration, int timeOfDay, const std::vector<unsigned char>& idle, bool repeat,
+            unsigned destinationTolerance = 0);
 
         explicit AiWander(const ESM::AiSequence::AiWander* wander);
 
@@ -115,6 +130,8 @@ namespace MWMechanics
         bool isStationary() const { return mDistance == 0; }
 
         std::optional<int> getDistance() const override { return mDistance; }
+
+        unsigned getDestinationTolerance() const { return mDestinationTolerance; }
 
         std::optional<float> getDuration() const override { return static_cast<float>(mDuration); }
 
@@ -150,6 +167,7 @@ namespace MWMechanics
 
         // how far the actor can wander from the spawn point
         const unsigned mDistance;
+        const unsigned mDestinationTolerance;
         const unsigned mDuration;
         float mRemainingDuration;
         const int mTimeOfDay;

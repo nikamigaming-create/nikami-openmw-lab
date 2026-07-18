@@ -762,6 +762,12 @@ namespace MWClass
             const ESM4::AIPackage* package = packageStore.search(packageId);
             if (package == nullptr)
                 continue;
+            if (!fnvCreatureAiPackageProcedureSupported(package->mData.type))
+            {
+                Log(Debug::Verbose) << "FNV/ESM4 diag: skipped unsupported native creature AI package "
+                                    << package->mEditorId << " procedureType=" << package->mData.type;
+                continue;
+            }
             if (!fnvPackageConditionsPass(*package))
                 continue;
             if (fnvPackageCoversHour(*package, hour))
@@ -906,13 +912,16 @@ namespace MWClass
                 ? static_cast<int>(std::min<std::uint32_t>(package->mSchedule.duration, 24))
                 : 5;
             const int timeOfDay = package->mSchedule.time != 0xff ? package->mSchedule.time : 0;
+            const unsigned destinationTolerance
+                = fnvCreatureWanderDestinationTolerance(static_cast<unsigned>(distance));
             std::vector<unsigned char> idles(8, 0);
-            MWMechanics::AiWander wander(distance, duration, timeOfDay, idles, true);
+            MWMechanics::AiWander wander(distance, duration, timeOfDay, idles, true, destinationTolerance);
             sequence.stack(wander, ptr, true);
             Log(Debug::Verbose) << "FNV/ESM4 diag: stacked native creature AI wander from FNV package "
                              << package->mEditorId << " type=" << getFnvPackageTypeName(package->mData.type)
                              << " hour=" << hour << " override=" << usedHourOverride << " distance=" << distance
-                             << " duration=" << duration << " for " << creature.mEditorId;
+                             << " destinationTolerance=" << destinationTolerance << " duration=" << duration
+                             << " for " << creature.mEditorId;
         }
     }
 

@@ -48,6 +48,8 @@ namespace ESM
         struct AiWanderDuration
         {
             float mRemainingDuration;
+            // Reuses the reserved word in STAR. Zero keeps legacy wander arrival behaviour.
+            std::uint32_t mDestinationTolerance = 0;
         };
 
         struct AiTravelData
