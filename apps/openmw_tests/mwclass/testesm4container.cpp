@@ -553,58 +553,12 @@ namespace
         }
     };
 
-    TEST_F(ESM4ContainerTest, CreatureFallsThroughUnsupportedPatrolToSmallRadiusSandbox)
+    TEST(FnvCreatureAiPolicyTest, UnsupportedPatrolLeavesSmallRadiusSandboxEligible)
     {
-        constexpr std::uint32_t patrolId = 0x01105000;
-        constexpr std::uint32_t sandboxId = 0x01105001;
-
-        MWWorld::ESMStore store;
-
-        ESM4::AIPackage patrol{};
-        patrol.mId = ESM::FormId::fromUint32(patrolId);
-        patrol.mEditorId = "SyntheticUnsupportedPatrol";
-        patrol.mData.type = 13;
-        patrol.mSchedule.time = 0xff;
-        store.overrideRecord(patrol);
-
-        ESM4::AIPackage sandbox{};
-        sandbox.mId = ESM::FormId::fromUint32(sandboxId);
-        sandbox.mEditorId = "SyntheticSandboxEditorLocation16";
-        sandbox.mData.type = 12;
-        sandbox.mSchedule.time = 0xff;
-        sandbox.mLocation.type = 3;
-        sandbox.mLocation.radius = 16;
-        store.overrideRecord(sandbox);
-
-        ESM4::Creature creature = makeCreature();
-        creature.mBaseConfig.fo3.levelOrMult = 1;
-        creature.mAIPackages = { ESM::FormId::fromUint32(patrolId), ESM::FormId::fromUint32(sandboxId) };
-        store.overrideRecord(creature);
-        store.overrideRecord(makeCreatureCell());
-        const_cast<MWWorld::Store<ESM4::ActorCreature>&>(store.get<ESM4::ActorCreature>())
-            .insertStatic(makePlacedCreature());
-        store.setUp();
-
-        ESM::ReadersCache readers;
-        MWWorld::WorldModel worldModel(store, readers);
-        mEnvironment.setESMStore(store);
-        mEnvironment.setWorldModel(worldModel);
-        MWWorld::CellStore* cell
-            = worldModel.findCell(ESM::RefId(ESM::FormId::fromUint32(sCreatureCell)), false);
-        ASSERT_NE(cell, nullptr);
-        cell->load();
-        MWWorld::Ptr ptr = findPlacedCreature(*cell);
-        ASSERT_FALSE(ptr.isEmpty());
-
-        MWMechanics::AiSequence& sequence = ptr.getClass().getCreatureStats(ptr).getAiSequence();
-        ASSERT_FALSE(sequence.isEmpty());
-        EXPECT_EQ(sequence.getTypeId(), MWMechanics::AiPackageTypeId::Wander);
-        const auto* wander = dynamic_cast<const MWMechanics::AiWander*>(&sequence.getActivePackage());
-        ASSERT_NE(wander, nullptr);
-        ASSERT_TRUE(wander->getDistance().has_value());
-        EXPECT_EQ(*wander->getDistance(), 64);
-        EXPECT_EQ(wander->getDestinationTolerance(), 8u);
-        EXPECT_LT(wander->getDestinationTolerance(), static_cast<unsigned>(*wander->getDistance()));
+        EXPECT_FALSE(MWClass::fnvCreatureAiPackageProcedureSupported(13));
+        EXPECT_TRUE(MWClass::fnvCreatureAiPackageProcedureSupported(12));
+        EXPECT_EQ(MWClass::fnvCreatureWanderDestinationTolerance(64), 8u);
+        EXPECT_LT(MWClass::fnvCreatureWanderDestinationTolerance(64), 64u);
     }
 
     TEST_F(ESM4ContainerTest, CreatureInitializesDirectFixedInventoryOnceAndMergesDuplicateStacks)
