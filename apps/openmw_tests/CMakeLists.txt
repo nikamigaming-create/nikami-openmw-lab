@@ -40,7 +40,6 @@ file(GLOB UNITTEST_SRC_FILES
 
     mwrender/testfalloutweaponanimation.cpp
     mwrender/testfalloutcloudtransition.cpp
-    mwrender/testfalloutlodselection.cpp
     mwrender/testobjectpaging.cpp
     mwrender/testplayervisualpolicy.cpp
 

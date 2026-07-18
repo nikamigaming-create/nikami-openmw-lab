@@ -1,8 +1,5 @@
 #include "objectpaging.hpp"
 
-#include <atomic>
-#include <cstdlib>
-#include <string_view>
 #include <unordered_map>
 #include <vector>
 
@@ -23,7 +20,6 @@
 #include <components/esm3/loaddoor.hpp>
 #include <components/esm3/loadstat.hpp>
 #include <components/esm3/readerscache.hpp>
-#include <components/esm4/common.hpp>
 #include <components/esm4/loadacti.hpp>
 #include <components/esm4/loadcont.hpp>
 #include <components/esm4/loaddoor.hpp>
@@ -50,7 +46,6 @@
 #include "apps/openmw/mwclass/esm4base.hpp"
 #include "apps/openmw/mwworld/esmstore.hpp"
 
-#include "falloutlodselection.hpp"
 #include "vismask.hpp"
 
 namespace MWRender
@@ -64,57 +59,6 @@ namespace MWRender
 
     namespace
     {
-        constexpr std::uint32_t sFalloutLodTelemetryLimit = 256;
-
-        bool isFalloutLodTelemetryEnabled()
-        {
-            static const bool enabled = [] {
-                const char* value = std::getenv("OPENMW_FNV_LOD_TELEMETRY");
-                return value != nullptr && value[0] != '\0' && std::string_view(value) != "0";
-            }();
-            return enabled;
-        }
-
-        const char* getFalloutDistantReferenceSelectionName(FalloutDistantReferenceSelection selection)
-        {
-            switch (selection)
-            {
-                case FalloutDistantReferenceSelection::Skip:
-                    return "skip";
-                case FalloutDistantReferenceSelection::FullModel:
-                    return "full-model";
-                case FalloutDistantReferenceSelection::DistantModel:
-                    return "distant-model";
-            }
-            return "unknown";
-        }
-
-        void logFalloutDistantReferenceSelection(ESM::RefNum refNum, ESM::RefId baseId, std::uint32_t recordFlags,
-            unsigned char lod, FalloutDistantReferenceSelection selection, VFS::Path::NormalizedView baseModel,
-            VFS::Path::NormalizedView selectedModel)
-        {
-            if (!isFalloutLodTelemetryEnabled())
-                return;
-
-            static std::atomic_uint32_t count{ 0 };
-            const std::uint32_t index = count.fetch_add(1, std::memory_order_relaxed);
-            if (index > sFalloutLodTelemetryLimit)
-                return;
-            if (index == sFalloutLodTelemetryLimit)
-            {
-                Log(Debug::Info) << "FNV distant-reference selection telemetry reached limit="
-                                 << sFalloutLodTelemetryLimit;
-                return;
-            }
-
-            Log(Debug::Info) << "FNV distant-reference selection: ref=" << refNum.toString("FormId:")
-                             << " base=" << baseId.toDebugString() << " flags=" << recordFlags
-                             << " visibleDistant=" << ((recordFlags & ESM4::Rec_VisDistant) != 0)
-                             << " lod=" << static_cast<unsigned int>(lod)
-                             << " selection=" << getFalloutDistantReferenceSelectionName(selection)
-                             << " baseModel=" << baseModel.value() << " selectedModel=" << selectedModel.value();
-        }
-
         bool typeFilter(int type, bool far)
         {
             switch (type)
@@ -606,7 +550,6 @@ namespace MWRender
         {
             ESM::RefId mRefId;
             ESM::RefNum mRefNum;
-            std::uint32_t mRecordFlags;
             osg::Vec3f mPosition;
             osg::Vec3f mRotation;
             float mScale;
@@ -617,7 +560,6 @@ namespace MWRender
             return PagedCellRef{
                 .mRefId = value.mRefID,
                 .mRefNum = value.mRefNum,
-                .mRecordFlags = 0,
                 .mPosition = value.mPos.asVec3(),
                 .mRotation = value.mPos.asRotationVec3(),
                 .mScale = value.mScale,
@@ -629,7 +571,6 @@ namespace MWRender
             return PagedCellRef{
                 .mRefId = value.mBaseObj,
                 .mRefNum = value.mId,
-                .mRecordFlags = value.mFlags,
                 .mPosition = value.mPos.asVec3(),
                 .mRotation = value.mPos.asRotationVec3(),
                 .mScale = value.mScale,
@@ -719,7 +660,7 @@ namespace MWRender
                         continue;
                     for (const ESM4::Reference* ref4 : store.get<ESM4::Reference>().getByCell(cell->mId))
                     {
-                        if (!isEsm4ReferenceEnabledForPaging(ref4->mFlags))
+                        if (ref4->mFlags & ESM4::Rec_Disabled)
                             continue;
                         int type = store.findStatic(ref4->mBaseObj);
                         if (!typeFilter(type, size >= 2))
@@ -851,45 +792,17 @@ namespace MWRender
 
             if (!activeGrid)
             {
-                const int esmVersion = world.getESMVersions()[refNum.mContentFile];
-                const bool falloutNewVegas = isFalloutNewVegasVersion(esmVersion);
-                const VFS::Path::Normalized baseModel = model;
-
-                if (falloutNewVegas)
-                {
-                    const FalloutDistantReferenceSelection selection
-                        = selectFalloutNewVegasDistantReference(ref.mRecordFlags, activeGrid, false);
-                    if (selection == FalloutDistantReferenceSelection::Skip)
-                    {
-                        logFalloutDistantReferenceSelection(
-                            refNum, ref.mRefId, ref.mRecordFlags, lod, selection, baseModel, baseModel);
-                        continue;
-                    }
-                }
-
-                {
-                    std::lock_guard<std::mutex> lock(mLODNameCacheMutex);
-                    LODNameCacheKey key{ model, lod };
-                    LODNameCache::const_iterator found = mLODNameCache.lower_bound(key);
-                    if (found != mLODNameCache.end() && found->first == key)
-                        model = found->second;
-                    else
-                        model = mLODNameCache
-                                    .emplace_hint(found, std::move(key),
-                                        Misc::ResourceHelpers::getLODMeshName(
-                                            esmVersion, model, *mSceneManager->getVFS(), lod))
-                                    ->second;
-                }
-
-                if (falloutNewVegas)
-                {
-                    const FalloutDistantReferenceSelection selection
-                        = selectFalloutNewVegasDistantReference(ref.mRecordFlags, activeGrid, model != baseModel);
-                    if (selection == FalloutDistantReferenceSelection::FullModel)
-                        model = baseModel;
-                    logFalloutDistantReferenceSelection(
-                        refNum, ref.mRefId, ref.mRecordFlags, lod, selection, baseModel, model);
-                }
+                std::lock_guard<std::mutex> lock(mLODNameCacheMutex);
+                LODNameCacheKey key{ model, lod };
+                LODNameCache::const_iterator found = mLODNameCache.lower_bound(key);
+                if (found != mLODNameCache.end() && found->first == key)
+                    model = found->second;
+                else
+                    model = mLODNameCache
+                                .emplace_hint(found, std::move(key),
+                                    Misc::ResourceHelpers::getLODMeshName(world.getESMVersions()[refNum.mContentFile],
+                                        model, *mSceneManager->getVFS(), lod))
+                                ->second;
             }
 
             osg::ref_ptr<const osg::Node> cnode = mSceneManager->getTemplate(model, false);
