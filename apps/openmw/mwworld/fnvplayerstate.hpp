@@ -112,7 +112,8 @@ namespace MWWorld
         explicit operator bool() const { return mState.has_value(); }
     };
 
-    FalloutPlayerStateResolution resolveFalloutPlayerState(const Store<ESM4::Npc>& npcs);
+    FalloutPlayerStateResolution resolveFalloutPlayerState(
+        const Store<ESM4::Npc>& npcs, ESM::FormId normalizedPlayerFormId);
 
     // Seed only fields that have an explicit same-unit shared representation. The ESM3 proxy remains a
     // compatibility carrier: its 0-100 attributes and 27 skills must retain their existing compatibility values.

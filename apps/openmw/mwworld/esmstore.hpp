@@ -1,6 +1,7 @@
 #ifndef OPENMW_MWWORLD_ESMSTORE_H
 #define OPENMW_MWWORLD_ESMSTORE_H
 
+#include <cstdint>
 #include <filesystem>
 #include <memory>
 #include <optional>
@@ -250,6 +251,7 @@ namespace MWWorld
         bool mIsSetUpDone = false;
         bool mHasStarfieldContent = false;
         ESM4Game mESM4Game = ESM4Game::Unknown;
+        std::optional<std::uint32_t> mESM4GameMasterIndex;
         std::optional<FalloutPlayerState> mFalloutPlayerState;
 
     public:

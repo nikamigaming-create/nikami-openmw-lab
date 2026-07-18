@@ -281,6 +281,7 @@ namespace ESM4
         // The object setting up this reader needs to supply the file's load order index
         // so that the formId's in this file can be adjusted with the file (i.e. mod) index.
         void setModIndex(std::uint32_t index) { mCtx.modIndex = index; }
+        std::uint32_t getModIndex() const { return mCtx.modIndex; }
         void updateModIndices(const std::map<std::string, int>& fileToModIndex);
 
         // Maybe should throw an exception if called when not valid?

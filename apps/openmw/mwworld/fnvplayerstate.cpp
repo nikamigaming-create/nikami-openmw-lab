@@ -14,8 +14,6 @@
 
 namespace
 {
-    constexpr ESM::FormId sFnvPlayerFormId{ 7, 0 };
-
     struct CategoryResolution
     {
         const ESM4::Npc* mRecord = nullptr;
@@ -121,11 +119,15 @@ namespace MWWorld
         return std::nullopt;
     }
 
-    FalloutPlayerStateResolution resolveFalloutPlayerState(const Store<ESM4::Npc>& npcs)
+    FalloutPlayerStateResolution resolveFalloutPlayerState(
+        const Store<ESM4::Npc>& npcs, ESM::FormId normalizedPlayerFormId)
     {
-        const ESM4::Npc* player = npcs.search(ESM::RefId(sFnvPlayerFormId));
+        const ESM4::Npc* player = npcs.search(ESM::RefId(normalizedPlayerFormId));
         if (player == nullptr)
-            return failure("missing winning FalloutNV.esm Player NPC_ FormID 0x00000007");
+        {
+            return failure("missing winning FalloutNV.esm Player NPC_ FormID 0x00000007 at normalized "
+                + normalizedPlayerFormId.toString());
+        }
         if (!player->mIsFONV)
             return failure("winning NPC_ FormID 0x00000007 is not an FNV record");
         if (player->mEditorId != "Player")

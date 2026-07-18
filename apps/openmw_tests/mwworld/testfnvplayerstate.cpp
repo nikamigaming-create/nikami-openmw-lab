@@ -66,12 +66,18 @@ namespace
         return result;
     }
 
+    MWWorld::FalloutPlayerStateResolution resolvePlayer(
+        const MWWorld::Store<ESM4::Npc>& npcs, std::int32_t contentFile = 0)
+    {
+        return MWWorld::resolveFalloutPlayerState(npcs, ESM::FormId{ 7, contentFile });
+    }
+
     TEST(FalloutPlayerStateTest, resolvesExactOfficialPlayerIdentityStateAndActorValueComponents)
     {
         MWWorld::Store<ESM4::Npc> npcs;
         npcs.insertStatic(makeCompletePlayer());
 
-        const MWWorld::FalloutPlayerStateResolution resolution = MWWorld::resolveFalloutPlayerState(npcs);
+        const MWWorld::FalloutPlayerStateResolution resolution = resolvePlayer(npcs);
         ASSERT_TRUE(resolution) << resolution.mError;
         const MWWorld::FalloutPlayerState& state = *resolution.mState;
 
@@ -112,6 +118,27 @@ namespace
         EXPECT_FALSE(state.getActorValueComponents(46).has_value());
     }
 
+    TEST(FalloutPlayerStateTest, resolvesRetailPlayerAfterBuiltinContentShiftsTheMasterIndex)
+    {
+        MWWorld::Store<ESM4::Npc> npcs;
+        ESM4::Npc wrongIndex = makeCompletePlayer();
+        wrongIndex.mEditorId = "NotTheRetailPlayer";
+        npcs.insertStatic(wrongIndex);
+
+        ESM4::Npc player = makeCompletePlayer(ESM::FormId{ 7, 1 });
+        player.mFNVData.health = 177;
+        npcs.insertStatic(player);
+
+        const MWWorld::FalloutPlayerStateResolution wrongResolution = resolvePlayer(npcs);
+        EXPECT_FALSE(wrongResolution);
+        EXPECT_THAT(wrongResolution.mError, HasSubstr("does not have EDID Player"));
+
+        const MWWorld::FalloutPlayerStateResolution resolution = resolvePlayer(npcs, 1);
+        ASSERT_TRUE(resolution) << resolution.mError;
+        EXPECT_EQ(resolution.mState->mBaseRecord, (ESM::FormId{ 7, 1 }));
+        EXPECT_EQ(resolution.mState->mHealth, 177);
+    }
+
     TEST(FalloutPlayerStateTest, winningOverrideIsAuthoritativeAndMalformedOverrideDoesNotFallBack)
     {
         MWWorld::Store<ESM4::Npc> npcs;
@@ -124,7 +151,7 @@ namespace
         winning.mFNVSkills.offsets.speech = 0xfe;
         npcs.insert(winning);
 
-        MWWorld::FalloutPlayerStateResolution resolution = MWWorld::resolveFalloutPlayerState(npcs);
+        MWWorld::FalloutPlayerStateResolution resolution = resolvePlayer(npcs);
         ASSERT_TRUE(resolution) << resolution.mError;
         EXPECT_EQ(resolution.mState->mHealth, 222);
         EXPECT_EQ(resolution.mState->getSpecial(MWWorld::FalloutSpecial::Luck), 9);
@@ -133,7 +160,7 @@ namespace
 
         winning.mHasFNVSkills = false;
         npcs.insert(winning);
-        resolution = MWWorld::resolveFalloutPlayerState(npcs);
+        resolution = resolvePlayer(npcs);
         EXPECT_FALSE(resolution);
         EXPECT_THAT(resolution.mError, HasSubstr("lacks exact 28-byte DNAM"));
     }
@@ -162,7 +189,7 @@ namespace
         npcs.insertStatic(player);
         npcs.insertStatic(templated);
 
-        const MWWorld::FalloutPlayerStateResolution resolution = MWWorld::resolveFalloutPlayerState(npcs);
+        const MWWorld::FalloutPlayerStateResolution resolution = resolvePlayer(npcs);
         ASSERT_TRUE(resolution) << resolution.mError;
         EXPECT_EQ(resolution.mState->mBaseRecord, form(7));
         EXPECT_EQ(resolution.mState->mTraitsRecord, templateId);
@@ -189,7 +216,7 @@ namespace
         cycleNpcs.insertStatic(player);
         cycleNpcs.insertStatic(templated);
 
-        MWWorld::FalloutPlayerStateResolution resolution = MWWorld::resolveFalloutPlayerState(cycleNpcs);
+        MWWorld::FalloutPlayerStateResolution resolution = resolvePlayer(cycleNpcs);
         EXPECT_FALSE(resolution);
         EXPECT_THAT(resolution.mError, HasSubstr("template cycle while resolving stats"));
 
@@ -198,7 +225,7 @@ namespace
         player.mBaseConfig.fo3.templateFlags = ESM4::Npc::Template_UseAIData;
         player.mBaseTemplate = form(0xdead);
         missingNpcs.insertStatic(player);
-        resolution = MWWorld::resolveFalloutPlayerState(missingNpcs);
+        resolution = resolvePlayer(missingNpcs);
         EXPECT_FALSE(resolution);
         EXPECT_THAT(resolution.mError, HasSubstr("unresolved TPLT while resolving AI data"));
     }
@@ -206,20 +233,20 @@ namespace
     TEST(FalloutPlayerStateTest, missingOfficialRecordAndRequiredPayloadsFailClosed)
     {
         MWWorld::Store<ESM4::Npc> emptyNpcs;
-        MWWorld::FalloutPlayerStateResolution resolution = MWWorld::resolveFalloutPlayerState(emptyNpcs);
+        MWWorld::FalloutPlayerStateResolution resolution = resolvePlayer(emptyNpcs);
         EXPECT_FALSE(resolution);
         EXPECT_THAT(resolution.mError, HasSubstr("FormID 0x00000007"));
 
         MWWorld::Store<ESM4::Npc> wrongIdNpcs;
         wrongIdNpcs.insertStatic(makeCompletePlayer(form(8)));
-        resolution = MWWorld::resolveFalloutPlayerState(wrongIdNpcs);
+        resolution = resolvePlayer(wrongIdNpcs);
         EXPECT_FALSE(resolution);
 
         MWWorld::Store<ESM4::Npc> missingAcbsNpcs;
         ESM4::Npc player = makeCompletePlayer();
         player.mHasFNVBaseConfig = false;
         missingAcbsNpcs.insertStatic(player);
-        resolution = MWWorld::resolveFalloutPlayerState(missingAcbsNpcs);
+        resolution = resolvePlayer(missingAcbsNpcs);
         EXPECT_FALSE(resolution);
         EXPECT_THAT(resolution.mError, HasSubstr("missing exact 24-byte ACBS"));
 
@@ -227,7 +254,7 @@ namespace
         player = makeCompletePlayer();
         player.mHasFNVData = false;
         missingDataNpcs.insertStatic(player);
-        resolution = MWWorld::resolveFalloutPlayerState(missingDataNpcs);
+        resolution = resolvePlayer(missingDataNpcs);
         EXPECT_FALSE(resolution);
         EXPECT_THAT(resolution.mError, HasSubstr("lacks exact 11-byte DATA"));
 
@@ -235,7 +262,7 @@ namespace
         player = makeCompletePlayer();
         player.mHasFNVAIData = false;
         missingAiNpcs.insertStatic(player);
-        resolution = MWWorld::resolveFalloutPlayerState(missingAiNpcs);
+        resolution = resolvePlayer(missingAiNpcs);
         EXPECT_FALSE(resolution);
         EXPECT_THAT(resolution.mError, HasSubstr("lacks exact 20-byte AIDT"));
     }
@@ -244,7 +271,7 @@ namespace
     {
         MWWorld::Store<ESM4::Npc> npcs;
         npcs.insertStatic(makeCompletePlayer());
-        const MWWorld::FalloutPlayerStateResolution resolution = MWWorld::resolveFalloutPlayerState(npcs);
+        const MWWorld::FalloutPlayerStateResolution resolution = resolvePlayer(npcs);
         ASSERT_TRUE(resolution) << resolution.mError;
 
         ESM::NPC proxy;

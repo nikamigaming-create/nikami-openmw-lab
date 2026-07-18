@@ -939,8 +939,10 @@ namespace MWWorld
             if (mESM4Game == ESM4Game::Unknown)
             {
                 mESM4Game = detectedGame;
+                mESM4GameMasterIndex = reader.getModIndex();
                 Log(Debug::Info) << "World viewer: session game=" << gameName(mESM4Game)
-                                 << " master=" << reader.getFileName().filename().string();
+                                 << " master=" << reader.getFileName().filename().string()
+                                 << " loadOrderIndex=" << *mESM4GameMasterIndex;
             }
             else
             {
@@ -1188,7 +1190,11 @@ namespace MWWorld
         auto& npcs = getWritable<ESM::NPC>();
         if (mESM4Game == ESM4Game::FalloutNewVegas)
         {
-            FalloutPlayerStateResolution resolution = resolveFalloutPlayerState(getWritable<ESM4::Npc>());
+            if (!mESM4GameMasterIndex)
+                throw std::runtime_error("Cannot resolve native FNV Player state: missing FalloutNV.esm load-order index");
+            const ESM::FormId normalizedPlayerFormId{ 7, static_cast<std::int32_t>(*mESM4GameMasterIndex) };
+            FalloutPlayerStateResolution resolution
+                = resolveFalloutPlayerState(getWritable<ESM4::Npc>(), normalizedPlayerFormId);
             if (!resolution)
                 throw std::runtime_error("Cannot resolve native FNV Player state: " + resolution.mError);
             mFalloutPlayerState = std::move(resolution.mState);
