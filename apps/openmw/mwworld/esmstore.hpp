@@ -80,6 +80,7 @@ namespace ESM4
 {
     class Reader;
     struct Activator;
+    struct ActorValueInformation;
     struct ActorCharacter;
     struct ActorCreature;
     struct Ammunition;
@@ -198,7 +199,7 @@ namespace MWWorld
 
             // StoreTuple is an ABI-like compile-time ordinal shared by inline get<T>() call sites.
             // New stores must be appended so an incremental build can never reinterpret an existing slot.
-            Store<ESM4::Projectile>>;
+            Store<ESM4::Projectile>, Store<ESM4::ActorValueInformation>>;
 
     private:
         template <typename T>

@@ -715,6 +715,11 @@ namespace MWWorld
             if (shouldSkipStarfieldViewerRecord(reader, recordType))
                 return false;
 
+            // AVIF is not a cross-game schema. This slice implements the exact
+            // Fallout: New Vegas contract and must not consume later-game AVIFs.
+            if (recordType == ESM4::REC_AVIF && store.mESM4Game != ESM4Game::FalloutNewVegas)
+                return false;
+
             const bool result = recordType == ESM4::REC_PKIN
                 ? readStarfieldPackIn(reader, store)
                 : std::apply(

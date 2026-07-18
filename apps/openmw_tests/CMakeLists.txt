@@ -8,6 +8,7 @@ file(GLOB UNITTEST_SRC_FILES
 
     mwworld/teststore.cpp
     mwworld/testesm4questruntime.cpp
+    mwworld/testesm4actorvaluestore.cpp
     mwworld/testduration.cpp
     mwworld/testtimestamp.cpp
     mwworld/testptr.cpp

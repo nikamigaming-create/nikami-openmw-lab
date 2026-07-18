@@ -219,6 +219,7 @@ add_component_dir (esm4
     loadarma
     loadarmo
     loadaspc
+    loadavif
     loadbook
     loadbptd
     loadcell
