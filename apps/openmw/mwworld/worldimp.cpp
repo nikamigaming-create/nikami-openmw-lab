@@ -775,6 +775,7 @@ namespace MWWorld
         mStore.setUp();
         mESM4QuestRuntime.initialize(mStore, &mGlobalVariables);
         mStore.validateRecords(mReaders);
+        mFalloutPlayerRuntimeState.initialize(mStore.getFalloutPlayerState());
         mStore.movePlayerRecord();
 
         mSwimHeightScale = mStore.get<ESM::GameSetting>().find("fSwimHeightScale")->mValue.getFloat();
@@ -838,6 +839,7 @@ namespace MWWorld
 
         mGoToJail = false;
         mESM4QuestRuntime.initialize(mStore, &mGlobalVariables);
+        mFalloutPlayerRuntimeState.initialize(mStore.getFalloutPlayerState());
         mLevitationEnabled = true;
         mTeleportEnabled = true;
 
@@ -1121,13 +1123,15 @@ namespace MWWorld
 
         fillGlobalVariables();
         mESM4QuestRuntime.initialize(mStore, &mGlobalVariables);
+        mFalloutPlayerRuntimeState.initialize(mStore.getFalloutPlayerState());
     }
 
     int World::countSavedGameRecords() const
     {
         return mWorldModel.countSavedGameRecords() + mStore.countSavedGameRecords()
             + mGlobalVariables.countSavedGameRecords() + mProjectileManager->countSavedGameRecords()
-            + mESM4QuestRuntime.countSavedGameRecords() + 1 // player record
+            + mESM4QuestRuntime.countSavedGameRecords() + mFalloutPlayerRuntimeState.countSavedGameRecords()
+            + 1 // player record
             + 1 // weather record
             + 1 // actorId counter
             + 1 // levitation/teleport enabled state
@@ -1160,6 +1164,7 @@ namespace MWWorld
         mPlayer->write(writer, progress);
         mGlobalVariables.write(writer, progress);
         mESM4QuestRuntime.write(writer);
+        mFalloutPlayerRuntimeState.write(writer);
         mWeatherManager->write(writer, progress);
         mProjectileManager->write(writer, progress);
 
@@ -1192,6 +1197,9 @@ namespace MWWorld
             break;
             case ESM::REC_FQST:
                 mESM4QuestRuntime.readRecord(reader);
+                break;
+            case ESM::REC_FPLR:
+                mFalloutPlayerRuntimeState.readRecord(reader);
                 break;
             case ESM::REC_PLAY:
                 if (reader.getFormatVersion() <= ESM::MaxPlayerBeforeCellDataFormatVersion && !mIdsRebuilt)

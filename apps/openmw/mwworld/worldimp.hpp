@@ -17,6 +17,7 @@
 #include "contentloader.hpp"
 #include "esm4questruntime.hpp"
 #include "esmstore.hpp"
+#include "fnvplayerruntimestate.hpp"
 #include "globals.hpp"
 #include "groundcoverstore.hpp"
 #include "localscripts.hpp"
@@ -96,6 +97,7 @@ namespace MWWorld
         LocalScripts mLocalScripts;
         MWWorld::Globals mGlobalVariables;
         MWWorld::ESM4QuestRuntime mESM4QuestRuntime;
+        MWWorld::FalloutPlayerRuntimeState mFalloutPlayerRuntimeState;
         Misc::Rng::Generator mPrng;
         WorldModel mWorldModel;
         std::vector<int> mESMVersions; // the versions of esm files
