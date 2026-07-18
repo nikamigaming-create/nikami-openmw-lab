@@ -483,22 +483,7 @@ namespace
     {
         if (package.mConditions.empty())
             return true;
-        std::vector<ESM4::TargetCondition> conditions;
-        conditions.reserve(package.mConditions.size());
-        for (const ESM4::AIPackage::CTDA& source : package.mConditions)
-        {
-            ESM4::TargetCondition target;
-            target.condition = static_cast<std::uint32_t>(source.condition)
-                | (static_cast<std::uint32_t>(source.unknown1) << 8)
-                | (static_cast<std::uint32_t>(source.unknown2) << 16)
-                | (static_cast<std::uint32_t>(source.unknown3) << 24);
-            target.comparison = source.compValue;
-            target.functionIndex = static_cast<std::uint32_t>(source.fnIndex);
-            target.param1 = source.param1;
-            target.param2 = source.param2;
-            conditions.push_back(target);
-        }
-        return MWBase::Environment::get().getWorld()->getESM4QuestRuntime().evaluateConditions(conditions);
+        return MWBase::Environment::get().getWorld()->getESM4QuestRuntime().evaluateConditions(package.mConditions);
     }
 
     FnvPackagePrePlacement applyFnvPackagePrePlacement(const MWWorld::Ptr& ptr, const MWWorld::World& world)

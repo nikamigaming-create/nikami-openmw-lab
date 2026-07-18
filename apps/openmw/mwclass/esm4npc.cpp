@@ -331,23 +331,7 @@ namespace MWClass
         MWBase::World* world = MWBase::Environment::get().getWorld();
         if (world == nullptr)
             return false;
-
-        std::vector<ESM4::TargetCondition> conditions;
-        conditions.reserve(package.mConditions.size());
-        for (const ESM4::AIPackage::CTDA& source : package.mConditions)
-        {
-            ESM4::TargetCondition target;
-            target.condition = static_cast<std::uint32_t>(source.condition)
-                | (static_cast<std::uint32_t>(source.unknown1) << 8)
-                | (static_cast<std::uint32_t>(source.unknown2) << 16)
-                | (static_cast<std::uint32_t>(source.unknown3) << 24);
-            target.comparison = source.compValue;
-            target.functionIndex = static_cast<std::uint32_t>(source.fnIndex);
-            target.param1 = source.param1;
-            target.param2 = source.param2;
-            conditions.push_back(target);
-        }
-        return world->getESM4QuestRuntime().evaluateConditions(conditions);
+        return world->getESM4QuestRuntime().evaluateConditions(package.mConditions);
     }
 
     static const ESM4::AIPackage* selectFnvPackage(const std::vector<ESM::FormId>& packageIds, float hour)
@@ -606,15 +590,27 @@ namespace MWClass
             return;
         }
 
-        if (traits == nullptr || !traits->mIsFONV || packageIds.empty() || ptr.getCell() == nullptr
-            || ptr.getCell()->getCell() == nullptr)
+        if (traits == nullptr || !traits->mIsFONV || packageIds.empty())
+        {
+            data.mFnvAiSequenceInitialised = true;
+            return;
+        }
+
+        // A missing cell or store is transient while a reference is being
+        // inserted.  Leave those cases retryable, but make every resolved
+        // package outcome below terminal so getCreatureStats() cannot turn an
+        // unsupported package into a once-per-frame retry/log loop.
+        if (ptr.getCell() == nullptr || ptr.getCell()->getCell() == nullptr)
             return;
 
         bool usedHourOverride = false;
         const float hour = getFnvPackageHour(usedHourOverride);
         const ESM4::AIPackage* package = selectFnvPackage(packageIds, hour);
         if (package == nullptr)
+        {
+            data.mFnvAiSequenceInitialised = true;
             return;
+        }
 
         const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
         if (store == nullptr)
@@ -626,6 +622,7 @@ namespace MWClass
             const ESM4::Reference* target = resolveFnvPackageReference(*store, *package);
             if (target == nullptr || target->mParent != currentCellId)
             {
+                data.mFnvAiSequenceInitialised = true;
                 Log(Debug::Verbose) << "FNV/ESM4 diag: skipped native AI travel package " << package->mEditorId
                                  << " type=" << getFnvPackageTypeName(package->mData.type)
                                  << " targetResolved=" << static_cast<bool>(target)
@@ -657,6 +654,7 @@ namespace MWClass
             const float arrivalDistance = furnitureTarget ? 128.f : 8.f;
             if (dx * dx + dy * dy + dz * dz < arrivalDistance * arrivalDistance)
             {
+                data.mFnvAiSequenceInitialised = true;
                 Log(Debug::Verbose) << "FNV/ESM4 diag: skipped native AI travel package " << package->mEditorId
                                  << " type=" << getFnvPackageTypeName(package->mData.type)
                                  << " because actor is already at targetRef=" << target->mEditorId
@@ -691,7 +689,12 @@ namespace MWClass
                              << " type=" << getFnvPackageTypeName(package->mData.type) << " hour=" << hour
                              << " override=" << usedHourOverride << " distance=" << distance << " duration="
                              << duration << " for " << traits->mEditorId;
+            return;
         }
+
+        // Unknown procedure types are not made more actionable by checking
+        // them again on every CreatureStats access.
+        data.mFnvAiSequenceInitialised = true;
     }
 
     static void considerEquippedWeapon(ESM4NpcCustomData& data, const ESM4::Weapon* weapon)

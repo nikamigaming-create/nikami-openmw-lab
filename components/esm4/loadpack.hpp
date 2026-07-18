@@ -34,6 +34,8 @@
 #include <components/esm/defs.hpp>
 #include <components/esm/formid.hpp>
 
+#include "script.hpp"
+
 namespace ESM4
 {
     class Reader;
@@ -72,20 +74,6 @@ namespace ESM4
             std::int32_t distance;
         };
 
-        // NOTE: param1/param2 can be FormId or number, but assume FormId so that adjustFormId
-        // can be called
-        struct CTDA
-        {
-            std::uint8_t condition;
-            std::uint8_t unknown1; // probably padding
-            std::uint8_t unknown2; // probably padding
-            std::uint8_t unknown3; // probably padding
-            float compValue;
-            std::int32_t fnIndex;
-            ESM::FormId32 param1;
-            ESM::FormId32 param2;
-            std::uint32_t unknown4; // probably padding
-        };
 #pragma pack(pop)
 
         ESM::FormId mId; // from the header
@@ -100,7 +88,7 @@ namespace ESM4
         std::vector<PLDT> mExtraLocations;
         std::vector<PTDT> mExtraTargets;
         std::vector<float> mExtraTargetUnknowns;
-        std::vector<CTDA> mConditions;
+        std::vector<TargetCondition> mConditions;
         std::uint32_t mFo3PackageFlags = 0;
         std::uint16_t mFo3ProcedureFlags = 0;
         std::uint16_t mFo3TypeSpecificFlags = 0;

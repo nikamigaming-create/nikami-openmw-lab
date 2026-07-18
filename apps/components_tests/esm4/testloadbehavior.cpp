@@ -1,6 +1,7 @@
 #include <components/esm4/loaddial.hpp>
 #include <components/esm4/loadinfo.hpp>
 #include <components/esm4/loadnpc.hpp>
+#include <components/esm4/loadpack.hpp>
 #include <components/esm4/loadqust.hpp>
 #include <components/esm4/reader.hpp>
 
@@ -336,6 +337,36 @@ namespace
         EXPECT_EQ(quest.mObjectives[0].mTargets[0].mTarget, ESM::FormId::fromUint32(targetForm));
         ASSERT_EQ(quest.mObjectives[0].mTargets[0].mConditions.size(), 1);
         EXPECT_EQ(quest.mObjectives[0].mTargets[0].mConditions[0].functionIndex, 72);
+    }
+
+    TEST(Esm4BehaviorRecordTest, shouldPreserveCurrentFalloutPackageConditions)
+    {
+        ESM4::TargetCondition packageCondition = condition(ESM4::FUN_GetQuestVariable, 0x200);
+        packageCondition.condition = ESM4::CTF_EqualTo | ESM4::CTF_Combine;
+        packageCondition.param2 = 9;
+        packageCondition.runOn = 2;
+        packageCondition.reference = 0x300;
+
+        std::string payload;
+        appendSubRecord(payload, "EDID", zString("ConditionalGoodspringsPackage"));
+        appendSubRecord(payload, "CTDA", packageCondition);
+
+        constexpr std::uint32_t modIndex = 7;
+        auto reader = makeReader("PACK", 0x1021, payload, modIndex);
+        ESM4::AIPackage package;
+        package.load(*reader);
+
+        ASSERT_EQ(package.mConditions.size(), 1);
+        const ESM4::TargetCondition& loaded = package.mConditions.front();
+        EXPECT_EQ(loaded.condition, packageCondition.condition);
+        EXPECT_FLOAT_EQ(loaded.comparison, packageCondition.comparison);
+        EXPECT_EQ(loaded.functionIndex, ESM4::FUN_GetQuestVariable);
+        EXPECT_EQ(ESM::FormId::fromUint32(loaded.param1),
+            (ESM::FormId{ .mIndex = 0x200, .mContentFile = static_cast<std::int32_t>(modIndex) }));
+        EXPECT_EQ(loaded.param2, 9u);
+        EXPECT_EQ(loaded.runOn, 2u);
+        EXPECT_EQ(ESM::FormId::fromUint32(loaded.reference),
+            (ESM::FormId{ .mIndex = 0x300, .mContentFile = static_cast<std::int32_t>(modIndex) }));
     }
 
     TEST(Esm4BehaviorRecordTest, shouldPreserveAllInfoResponsesConditionsLinksAndResultScripts)

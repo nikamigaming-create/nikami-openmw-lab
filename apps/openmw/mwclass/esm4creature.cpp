@@ -746,23 +746,7 @@ namespace MWClass
         MWBase::World* world = MWBase::Environment::get().getWorld();
         if (world == nullptr)
             return false;
-
-        std::vector<ESM4::TargetCondition> conditions;
-        conditions.reserve(package.mConditions.size());
-        for (const ESM4::AIPackage::CTDA& source : package.mConditions)
-        {
-            ESM4::TargetCondition target;
-            target.condition = static_cast<std::uint32_t>(source.condition)
-                | (static_cast<std::uint32_t>(source.unknown1) << 8)
-                | (static_cast<std::uint32_t>(source.unknown2) << 16)
-                | (static_cast<std::uint32_t>(source.unknown3) << 24);
-            target.comparison = source.compValue;
-            target.functionIndex = static_cast<std::uint32_t>(source.fnIndex);
-            target.param1 = source.param1;
-            target.param2 = source.param2;
-            conditions.push_back(target);
-        }
-        return world->getESM4QuestRuntime().evaluateConditions(conditions);
+        return world->getESM4QuestRuntime().evaluateConditions(package.mConditions);
     }
 
     static const ESM4::AIPackage* selectFnvPackage(const std::vector<ESM::FormId>& packageIds, float hour)
