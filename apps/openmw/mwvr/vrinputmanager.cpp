@@ -404,10 +404,11 @@ namespace MWVR
         }
         ++mPointerSourceLogFrames;
 
-        // Menus disable world controls, but their 3D panels still require the VR
-        // pointer. Construct it as soon as the VR viewer exists instead of waiting
-        // for the first gameplay frame.
-        if (!mVRPointer && VR::getVR() && SceneUtil::ShadowManager::exists())
+        // Attach the pointer to the final gameplay scene root. Constructing it
+        // during loading can leave it attached to a transient root, while the
+        // retail surface still needs a pointer before normal controls resume.
+        if (!mVRPointer && VR::getVR() && SceneUtil::ShadowManager::exists()
+            && (!disableControls || MWVR::FNVXRLiveFrameSurface::instance().modalInputActive()))
         {
             osg::ref_ptr<osgViewer::Viewer> viewer;
             mOSGViewer.lock(viewer);
@@ -453,8 +454,16 @@ namespace MWVR
             if (mDirectPointerClickLogCount < 24)
             {
                 ++mDirectPointerClickLogCount;
+                const MWRender::RayResult& ray = mVRPointer->getPointerRay();
                 Log(Debug::Info) << "OpenMW VR pointer trigger edge guiFocus="
-                                 << MWVR::VRGUIManager::instance().hasFocus();
+                                 << MWVR::VRGUIManager::instance().hasFocus()
+                                 << " guiMode="
+                                 << MWBase::Environment::get().getWindowManager()->isGuiMode()
+                                 << " source=" << mLastPointerSourceName
+                                 << " rayHit=" << ray.mHit
+                                 << " rayDistance=" << mVRPointer->distanceToPointerTarget()
+                                 << " rayNode="
+                                 << (ray.mHitNode ? ray.mHitNode->getName() : std::string("<none>"));
             }
             pointerActivate(true);
         }

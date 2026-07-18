@@ -329,9 +329,17 @@ namespace MWGui
                 Gui::ImageButton* button = mButtonBox->createWidget<Gui::ImageButton>(
                     "ImageBox", MyGUI::IntCoord(0, curH, 0, 0), MyGUI::Align::Default);
                 const std::string& buttonId = mButtons.emplace(id, button).first->first;
-                button->setProperty("ImageHighlighted", "textures\\menu_" + buttonId + "_over.dds");
-                button->setProperty("ImageNormal", "textures\\menu_" + buttonId + ".dds");
-                button->setProperty("ImagePushed", "textures\\menu_" + buttonId + "_pressed.dds");
+                const std::string normal = "textures\\menu_" + buttonId + ".dds";
+                const auto stateTextureOrNormal = [&](std::string texture) -> std::string {
+                    if (mVFS->exists(VFS::Path::Normalized(texture)))
+                        return texture;
+                    return normal;
+                };
+                button->setProperty(
+                    "ImageHighlighted", stateTextureOrNormal("textures\\menu_" + buttonId + "_over.dds"));
+                button->setProperty("ImageNormal", normal);
+                button->setProperty(
+                    "ImagePushed", stateTextureOrNormal("textures\\menu_" + buttonId + "_pressed.dds"));
                 button->eventMouseButtonClick += MyGUI::newDelegate(this, &MainMenu::onButtonClicked);
                 button->setUserData(buttonId);
             }

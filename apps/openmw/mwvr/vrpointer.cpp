@@ -18,9 +18,11 @@
 #include <components/debug/debuglog.hpp>
 #include <components/resource/resourcesystem.hpp>
 #include <components/resource/scenemanager.hpp>
+#include <components/shader/shadermanager.hpp>
 
 #include <components/sceneutil/positionattitudetransform.hpp>
 #include <components/sceneutil/shadow.hpp>
+#include <components/stereo/stereomanager.hpp>
 
 #include <components/vr/trackingmanager.hpp>
 #include <components/vr/viewer.hpp>
@@ -566,7 +568,19 @@ namespace MWVR
         stateset->addUniform(new osg::Uniform("sky", skyTextureSlot));
         stateset->addUniform(new osg::Uniform("emissiveMult", 1.f));
 
-        MWBase::Environment::get().getResourceSystem()->getSceneManager()->recreateShaders(geometry, "objects", true);
+        // Pointer geometry is UI, not a world material. Running it through the
+        // generic object shader makes its visibility depend on the active game
+        // material pipeline (and broke the beam for Fallout's shaders).
+        Shader::ShaderManager::DefineMap defineMap;
+        Stereo::shaderStereoDefines(defineMap);
+        auto& shaderManager
+            = MWBase::Environment::get().getResourceSystem()->getSceneManager()->getShaderManager();
+        osg::ref_ptr<osg::Shader> vertexShader
+            = shaderManager.getShader("vrpointer_vertex.glsl", defineMap, osg::Shader::VERTEX);
+        osg::ref_ptr<osg::Shader> fragmentShader
+            = shaderManager.getShader("vrpointer_fragment.glsl", defineMap, osg::Shader::FRAGMENT);
+        if (vertexShader && fragmentShader)
+            stateset->setAttributeAndModes(shaderManager.getProgram(vertexShader, fragmentShader));
 
         return geometry;
     }

@@ -186,46 +186,17 @@ local function uiAllowed()
     return Player.getControlSwitch(self, Player.CONTROL_SWITCH.Controls) and not uiControlsOverridden
 end
 
-local function isFalloutContentLoaded()
-    return core.contentFiles and core.contentFiles.has and core.contentFiles.has('FalloutNV.esm')
-end
-
-local falloutInventoryDiagCount = 0
 input.registerTriggerHandler('Inventory', async:callback(function()
-    if isFalloutContentLoaded() then
-        if falloutInventoryDiagCount < 12 then
-            falloutInventoryDiagCount = falloutInventoryDiagCount + 1
-            print('Fallout VR diag: OpenMW Inventory trigger suppressed while Fallout retail surface is authoritative')
-        end
-        return
-    end
-
-    local allowed = uiAllowed()
-    if isFalloutContentLoaded() and falloutInventoryDiagCount < 12 then
-        falloutInventoryDiagCount = falloutInventoryDiagCount + 1
-        print(string.format(
-            'Fallout VR diag: Inventory trigger fired allowed=%s beforeMode=%s',
-            tostring(allowed),
-            tostring(I.UI.getMode())))
-    end
-
-    if not allowed then return end
+    if not uiAllowed() then return end
 
     if I.UI.getMode() == nil then
         I.UI.setMode(I.UI.MODE.Interface)
     elseif I.UI.getMode() == I.UI.MODE.Interface or I.UI.getMode() == I.UI.MODE.Container then
         I.UI.removeMode(I.UI.getMode())
     end
-
-    if isFalloutContentLoaded() and falloutInventoryDiagCount < 12 then
-        print(string.format(
-            'Fallout VR diag: Inventory trigger completed afterMode=%s',
-            tostring(I.UI.getMode())))
-    end
 end))
 
 input.registerTriggerHandler('Journal', async:callback(function()
-    if isFalloutContentLoaded() then return end
     if not uiAllowed() then return end
 
     if I.UI.getMode() == I.UI.MODE.Journal then
@@ -236,7 +207,6 @@ input.registerTriggerHandler('Journal', async:callback(function()
 end))
 
 input.registerTriggerHandler('QuickKeysMenu', async:callback(function()
-    if isFalloutContentLoaded() then return end
     if not uiAllowed() then return end
 
     if I.UI.getMode() == I.UI.MODE.QuickKeysMenu then
