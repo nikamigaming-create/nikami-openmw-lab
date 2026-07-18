@@ -1762,7 +1762,16 @@ namespace NifOsg
         , mBaseMaterial(baseMaterial)
     {
         if (!ctrl->mInterpolator.empty())
-            setInterpolator(ctrl->mTargetColor, ctrl->mInterpolator.getPtr());
+        {
+            if (ctrl->mInterpolator->recType == Nif::RC_NiPoint3Interpolator)
+                mData = Vec3Interpolator(static_cast<const Nif::NiPoint3Interpolator*>(ctrl->mInterpolator.getPtr()));
+            else if (ctrl->mInterpolator->recType == Nif::RC_NiBlendPoint3Interpolator)
+            {
+                const auto* interpolator
+                    = static_cast<const Nif::NiBlendPoint3Interpolator*>(ctrl->mInterpolator.getPtr());
+                mData = Vec3Interpolator(nullptr, interpolator->mValue);
+            }
+        }
         else if (!ctrl->mData.empty())
             mData = Vec3Interpolator(ctrl->mData->mKeyList, osg::Vec3f(1, 1, 1));
     }
@@ -1776,28 +1785,6 @@ namespace NifOsg
     {
     }
 
-    bool MaterialColorController::setInterpolator(
-        Nif::NiMaterialColorController::TargetColor target, const Nif::NiInterpolator* interpolator)
-    {
-        if (interpolator == nullptr)
-            return false;
-
-        Vec3Interpolator data;
-        if (interpolator->recType == Nif::RC_NiPoint3Interpolator)
-            data = Vec3Interpolator(static_cast<const Nif::NiPoint3Interpolator*>(interpolator));
-        else if (interpolator->recType == Nif::RC_NiBlendPoint3Interpolator)
-        {
-            const auto* blend = static_cast<const Nif::NiBlendPoint3Interpolator*>(interpolator);
-            data = Vec3Interpolator(nullptr, blend->mValue);
-        }
-        else
-            return false;
-
-        mTargetColor = target;
-        mData = std::move(data);
-        return true;
-    }
-
     void MaterialColorController::setDefaults(osg::StateSet* stateset)
     {
         stateset->setAttribute(
@@ -1809,8 +1796,6 @@ namespace NifOsg
         if (hasInput())
         {
             osg::Vec3f value = mData.interpKey(getInputValue(nv));
-            if (!isReasonableVec3(value, 1000000.f))
-                return;
             osg::Material* mat = static_cast<osg::Material*>(stateset->getAttribute(osg::StateAttribute::MATERIAL));
             using TargetColor = Nif::NiMaterialColorController::TargetColor;
             switch (mTargetColor)

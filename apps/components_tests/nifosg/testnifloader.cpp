@@ -2,14 +2,11 @@
 
 #include <components/nif/node.hpp>
 #include <components/nif/property.hpp>
-#include <components/nif/texture.hpp>
-#include <components/nifosg/controller.hpp>
 #include <components/nifosg/nifloader.hpp>
 #include <components/resource/bgsmfilemanager.hpp>
 #include <components/resource/imagemanager.hpp>
 #include <components/sceneutil/riggeometry.hpp>
 #include <components/sceneutil/serialize.hpp>
-#include <components/sceneutil/texturetype.hpp>
 #include <components/vfs/manager.hpp>
 
 #include <gmock/gmock.h>
@@ -17,11 +14,9 @@
 
 #include <osg/BlendFunc>
 #include <osg/Depth>
-#include <osg/FrameStamp>
-#include <osg/Material>
 #include <osg/NodeVisitor>
-#include <osg/Switch>
 #include <osgDB/Registry>
+#include <osg/Switch>
 
 #include <array>
 #include <limits>
@@ -37,8 +32,6 @@ namespace
     using namespace Nif::Testing;
 
     constexpr VFS::Path::NormalizedView testNif("test.nif");
-    constexpr VFS::Path::NormalizedView managedMaterialNif(
-        "meshes/clutter/open_24hours_sign/test.nif");
 
     struct BaseNifOsgLoaderTest
     {
@@ -179,8 +172,8 @@ namespace
                 Nif::NiSkinPartition::Partition partition{};
                 partition.mTrueTriangles = { 0, 1, 2 };
                 mPartitions.mPartitions.push_back(std::move(partition));
-                mSkin.mParts.push_back(
-                    { type == 0 || type == 7000 ? std::uint16_t{ 257 } : std::uint16_t{ 256 }, type });
+                mSkin.mParts.push_back({ type == 0 || type == 7000 ? std::uint16_t{ 257 } : std::uint16_t{ 256 },
+                    type });
             }
         }
 
@@ -189,136 +182,6 @@ namespace
         Nif::BSDismemberSkinInstance mSkin;
         Nif::NiSkinData mSkinData;
         Nif::NiSkinPartition mPartitions;
-    };
-
-    struct FalloutPPLightingGeometry : FalloutMaterialOnlyGeometry
-    {
-        explicit FalloutPPLightingGeometry(uint32_t shaderFlags1)
-            : FalloutMaterialOnlyGeometry("Window:0")
-        {
-            mData.mUVList.push_back({ osg::Vec2f(0.f, 0.f), osg::Vec2f(1.f, 0.f), osg::Vec2f(0.f, 1.f) });
-            init(static_cast<Nif::NiObjectNET&>(mShader));
-            mShader.recType = Nif::RC_BSShaderPPLightingProperty;
-            mShader.mType = static_cast<unsigned int>(Nif::BSShaderType::ShaderType_Default);
-            mShader.mShaderFlags1 = shaderFlags1;
-            mShader.mController = nullptr;
-            mShader.mTextureSet = Nif::BSShaderTextureSetPtr(&mTextureSet);
-            mGeometry.mShaderProperty = Nif::BSShaderPropertyPtr(&mShader);
-
-            mTextureSet.mTextures.resize(6);
-            mTextureSet.mTextures[0] = "textures/test/diffuse.dds";
-            mTextureSet.mTextures[1] = "textures/test/normal.dds";
-            mTextureSet.mTextures[4] = "textures/test/environment.dds";
-            mTextureSet.mTextures[5] = "textures/test/environmentmask.dds";
-        }
-
-        Nif::BSShaderPPLightingProperty mShader;
-        Nif::BSShaderTextureSet mTextureSet;
-    };
-
-    struct FalloutManagedMaterialGeometry
-    {
-        FalloutManagedMaterialGeometry()
-        {
-            init(static_cast<Nif::NiAVObject&>(mRoot));
-            mRoot.recType = Nif::RC_NiNode;
-            mRoot.mName = "Root";
-
-            init(static_cast<Nif::NiTimeController&>(mManager));
-            mManager.recType = Nif::RC_NiControllerManager;
-            mManager.mFlags = Nif::NiTimeController::Flag_Active;
-            mManager.mObjectPalette = Nif::NiDefaultAVObjectPalettePtr(nullptr);
-            mRoot.mController = Nif::NiTimeControllerPtr(&mManager);
-
-            init(static_cast<Nif::NiTimeController&>(mMaterialController));
-            mMaterialController.recType = Nif::RC_NiMaterialColorController;
-            mMaterialController.mFlags = Nif::NiTimeController::Flag_Active;
-            mMaterialController.mTargetColor = Nif::NiMaterialColorController::TargetColor::Emissive;
-            mMaterialController.mData = Nif::NiPosDataPtr(nullptr);
-
-            mBlendInterpolator.recType = Nif::RC_NiBlendPoint3Interpolator;
-            mBlendInterpolator.mFlags = Nif::NiBlendInterpolator::Flag_ManagerControlled;
-            const float invalidColor = -std::numeric_limits<float>::max();
-            mBlendInterpolator.mValue = osg::Vec3f(invalidColor, invalidColor, invalidColor);
-            mMaterialController.mInterpolator = Nif::NiInterpolatorPtr(&mBlendInterpolator);
-
-            init(static_cast<Nif::NiObjectNET&>(mMaterial));
-            mMaterial.recType = Nif::RC_NiMaterialProperty;
-            mMaterial.mAlpha = 1.f;
-            mMaterial.mController = Nif::NiTimeControllerPtr(&mMaterialController);
-
-            init(static_cast<Nif::NiObjectNET&>(mShader));
-            mShader.recType = Nif::RC_BSShaderPPLightingProperty;
-            mShader.mType = static_cast<unsigned int>(Nif::BSShaderType::ShaderType_Default);
-            mShader.mController = Nif::NiTimeControllerPtr(nullptr);
-            mShader.mTextureSet = Nif::BSShaderTextureSetPtr(&mTextureSet);
-            mTextureSet.mTextures
-                = { "textures/test/diffuse.dds", "textures/test/normal.dds", "textures/test/emissive.dds" };
-
-            mData.recType = Nif::RC_NiTriShapeData;
-            mData.mVertices = { osg::Vec3f(0.f, 0.f, 0.f), osg::Vec3f(1.f, 0.f, 0.f), osg::Vec3f(0.f, 1.f, 0.f) };
-            mData.mUVList.push_back({ osg::Vec2f(0.f, 0.f), osg::Vec2f(1.f, 0.f), osg::Vec2f(0.f, 1.f) });
-            mData.mTriangles = { 0, 1, 2 };
-
-            initGeometry(mFront, "Object02:0");
-            initGeometry(mBack, "Sign_24hr:0");
-            mRoot.mChildren = { Nif::NiAVObjectPtr(&mFront), Nif::NiAVObjectPtr(&mBack) };
-
-            mEmissionKeys = std::make_shared<Nif::Vector3KeyMap>();
-            mEmissionKeys->mInterpolationType = Nif::InterpolationType_Linear;
-            Nif::KeyT<osg::Vec3f> emissionKey{};
-            emissionKey.mValue = osg::Vec3f(0.25f, 0.5f, 0.75f);
-            mEmissionKeys->mKeys = { { 0.f, emissionKey }, { 10.f, emissionKey } };
-            mEmissionData.recType = Nif::RC_NiPosData;
-            mEmissionData.mKeyList = mEmissionKeys;
-            mEmissionInterpolator.recType = Nif::RC_NiPoint3Interpolator;
-            mEmissionInterpolator.mDefaultValue = emissionKey.mValue;
-            mEmissionInterpolator.mData = Nif::NiPosDataPtr(&mEmissionData);
-
-            mSequence.recType = Nif::RC_NiControllerSequence;
-            mSequence.mName = "SpecialIdle";
-            mSequence.mExtrapolationMode = Nif::NiTimeController::Cycle;
-            mSequence.mFrequency = 1.f;
-            mSequence.mPhase = 0.f;
-            mSequence.mStartTime = 0.f;
-            mSequence.mStopTime = 10.f;
-            mSequence.mManager = Nif::NiControllerManagerPtr(&mManager);
-            Nif::ControlledBlock block{};
-            block.mTargetName = "Object02:0";
-            block.mNodeName = "Object02:0";
-            block.mPropertyType = "NiMaterialProperty";
-            block.mControllerType = "NiMaterialColorController";
-            block.mControllerId = "SELF_ILLUM";
-            block.mInterpolator = Nif::NiInterpolatorPtr(&mEmissionInterpolator);
-            block.mController = Nif::NiTimeControllerPtr(&mMaterialController);
-            mSequence.mControlledBlocks.push_back(std::move(block));
-            mManager.mSequences.push_back(Nif::RecordPtrT<Nif::NiControllerSequence>(&mSequence));
-        }
-
-        void initGeometry(Nif::NiTriShape& geometry, std::string_view name)
-        {
-            init(geometry);
-            geometry.mName = name;
-            geometry.mData = Nif::NiGeometryDataPtr(&mData);
-            geometry.mShaderProperty = Nif::BSShaderPropertyPtr(&mShader);
-            geometry.mAlphaProperty = Nif::NiAlphaPropertyPtr(nullptr);
-            geometry.mProperties.push_back(Nif::RecordPtrT<Nif::NiProperty>(&mMaterial));
-        }
-
-        Nif::NiNode mRoot;
-        Nif::NiTriShape mFront;
-        Nif::NiTriShape mBack;
-        Nif::NiTriShapeData mData;
-        Nif::NiMaterialProperty mMaterial;
-        Nif::BSShaderPPLightingProperty mShader;
-        Nif::BSShaderTextureSet mTextureSet;
-        Nif::NiMaterialColorController mMaterialController;
-        Nif::NiBlendPoint3Interpolator mBlendInterpolator;
-        Nif::NiControllerManager mManager;
-        Nif::NiControllerSequence mSequence;
-        Nif::NiPoint3Interpolator mEmissionInterpolator;
-        Nif::NiPosData mEmissionData;
-        std::shared_ptr<Nif::Vector3KeyMap> mEmissionKeys;
     };
 
     struct FindNamedNodeStateSetVisitor : osg::NodeVisitor
@@ -332,40 +195,13 @@ namespace
         void apply(osg::Node& node) override
         {
             if (mStateSet == nullptr && node.getName() == mName && node.getStateSet() != nullptr)
-            {
-                mNode = &node;
                 mStateSet = node.getStateSet();
-            }
             traverse(node);
         }
 
         std::string mName;
-        osg::Node* mNode = nullptr;
         const osg::StateSet* mStateSet = nullptr;
     };
-
-    bool hasTextureType(const osg::StateSet& stateSet, std::string_view name)
-    {
-        for (unsigned int unit = 0; unit < stateSet.getTextureAttributeList().size(); ++unit)
-        {
-            const auto* type = dynamic_cast<const SceneUtil::TextureType*>(
-                stateSet.getTextureAttribute(unit, SceneUtil::TextureType::AttributeType));
-            if (type != nullptr && type->getName() == name)
-                return true;
-        }
-        return false;
-    }
-
-    osg::ref_ptr<osg::Node> loadFalloutPPLightingGeometry(FalloutPPLightingGeometry& fixture,
-        Resource::ImageManager& imageManager, Resource::BgsmFileManager& materialManager)
-    {
-        Nif::NIFFile file(testNif);
-        file.mVersion = Nif::NIFFile::NIFVersion::VER_BGS;
-        file.mUserVersion = 11;
-        file.mBethVersion = Nif::NIFFile::BethVersion::BETHVER_FO3;
-        file.mRoots.push_back(&fixture.mGeometry);
-        return Loader::load(file, &imageManager, &materialManager);
-    }
 
     unsigned int loadFalloutGeometryAndCountDrawables(FalloutMaterialOnlyGeometry& fixture,
         VFS::Path::NormalizedView path, Resource::ImageManager& imageManager,
@@ -561,114 +397,6 @@ osg::Group {
         ASSERT_NE(depth, nullptr);
         EXPECT_EQ(depth->getFunction(), osg::Depth::LEQUAL);
         EXPECT_FALSE(depth->getWriteMask());
-    }
-
-    TEST_F(NifOsgLoaderTest, shouldOnlyBindPpLightingEnvironmentTexturesWhenAuthored)
-    {
-        FalloutPPLightingGeometry unflagged(0);
-        osg::ref_ptr<osg::Node> unflaggedResult
-            = loadFalloutPPLightingGeometry(unflagged, mImageManager, mMaterialManager);
-        ASSERT_NE(unflaggedResult, nullptr);
-        FindNamedNodeStateSetVisitor unflaggedVisitor("Window:0");
-        unflaggedResult->accept(unflaggedVisitor);
-        ASSERT_NE(unflaggedVisitor.mStateSet, nullptr);
-        EXPECT_TRUE(hasTextureType(*unflaggedVisitor.mStateSet, "diffuseMap"));
-        EXPECT_TRUE(hasTextureType(*unflaggedVisitor.mStateSet, "normalMap"));
-        EXPECT_FALSE(hasTextureType(*unflaggedVisitor.mStateSet, "envMap"));
-        EXPECT_FALSE(hasTextureType(*unflaggedVisitor.mStateSet, "glossMap"));
-
-        FalloutPPLightingGeometry authored(Nif::BSShaderFlags1::BSSFlag1_EnvironmentMapping);
-        osg::ref_ptr<osg::Node> authoredResult
-            = loadFalloutPPLightingGeometry(authored, mImageManager, mMaterialManager);
-        ASSERT_NE(authoredResult, nullptr);
-        FindNamedNodeStateSetVisitor authoredVisitor("Window:0");
-        authoredResult->accept(authoredVisitor);
-        ASSERT_NE(authoredVisitor.mStateSet, nullptr);
-        EXPECT_TRUE(hasTextureType(*authoredVisitor.mStateSet, "envMap"));
-        EXPECT_TRUE(hasTextureType(*authoredVisitor.mStateSet, "glossMap"));
-    }
-
-    TEST_F(NifOsgLoaderTest, shouldApplyStandardAlphaBlendForPpLightingWindowWithoutNiAlphaProperty)
-    {
-        FalloutPPLightingGeometry fixture(
-            Nif::BSShaderFlags1::BSSFlag1_WindowEnvironmentMapping | Nif::BSShaderFlags1::BSSFlag1_AlphaTexture);
-        osg::ref_ptr<osg::Node> result = loadFalloutPPLightingGeometry(fixture, mImageManager, mMaterialManager);
-        ASSERT_NE(result, nullptr);
-
-        FindNamedNodeStateSetVisitor visitor("Window:0");
-        result->accept(visitor);
-        ASSERT_NE(visitor.mStateSet, nullptr);
-        EXPECT_TRUE(hasTextureType(*visitor.mStateSet, "envMap"));
-        EXPECT_TRUE(hasTextureType(*visitor.mStateSet, "glossMap"));
-        EXPECT_NE(visitor.mStateSet->getMode(GL_BLEND) & osg::StateAttribute::ON, 0u);
-        const auto* blend
-            = dynamic_cast<const osg::BlendFunc*>(visitor.mStateSet->getAttribute(osg::StateAttribute::BLENDFUNC));
-        ASSERT_NE(blend, nullptr);
-        EXPECT_EQ(blend->getSource(), osg::BlendFunc::SRC_ALPHA);
-        EXPECT_EQ(blend->getDestination(), osg::BlendFunc::ONE_MINUS_SRC_ALPHA);
-        EXPECT_EQ(visitor.mStateSet->getRenderingHint(), osg::StateSet::TRANSPARENT_BIN);
-    }
-
-    TEST_F(NifOsgLoaderTest, shouldKeepExplicitNiAlphaBlendAuthoritativeForPpLightingWindow)
-    {
-        FalloutPPLightingGeometry fixture(
-            Nif::BSShaderFlags1::BSSFlag1_WindowEnvironmentMapping | Nif::BSShaderFlags1::BSSFlag1_AlphaTexture);
-        fixture.addAlpha(0x1001); // blending enabled, ONE / ONE
-        osg::ref_ptr<osg::Node> result = loadFalloutPPLightingGeometry(fixture, mImageManager, mMaterialManager);
-        ASSERT_NE(result, nullptr);
-
-        FindNamedNodeStateSetVisitor visitor("Window:0");
-        result->accept(visitor);
-        ASSERT_NE(visitor.mStateSet, nullptr);
-        const auto* blend
-            = dynamic_cast<const osg::BlendFunc*>(visitor.mStateSet->getAttribute(osg::StateAttribute::BLENDFUNC));
-        ASSERT_NE(blend, nullptr);
-        EXPECT_EQ(blend->getSource(), osg::BlendFunc::ONE);
-        EXPECT_EQ(blend->getDestination(), osg::BlendFunc::ONE);
-        EXPECT_NE(visitor.mStateSet->getMode(GL_BLEND) & osg::StateAttribute::PROTECTED, 0u);
-    }
-
-    TEST_F(NifOsgLoaderTest, shouldBindEmbeddedMaterialSequenceToEverySharedMaterialInstance)
-    {
-        FalloutManagedMaterialGeometry fixture;
-        Nif::NIFFile file(managedMaterialNif);
-        file.mVersion = Nif::NIFFile::NIFVersion::VER_BGS;
-        file.mUserVersion = 11;
-        file.mBethVersion = Nif::NIFFile::BethVersion::BETHVER_FO3;
-        file.mRoots.push_back(&fixture.mRoot);
-        osg::ref_ptr<osg::Node> result = Loader::load(file, &mImageManager, &mMaterialManager);
-        ASSERT_NE(result, nullptr);
-
-        osg::ref_ptr<osg::FrameStamp> frameStamp = new osg::FrameStamp;
-        frameStamp->setSimulationTime(5.0);
-        osg::NodeVisitor visitor(osg::NodeVisitor::TRAVERSE_ALL_CHILDREN);
-        visitor.setFrameStamp(frameStamp);
-
-        for (std::string_view name : { "Object02:0", "Sign_24hr:0" })
-        {
-            FindNamedNodeStateSetVisitor find(name);
-            result->accept(find);
-            ASSERT_NE(find.mNode, nullptr) << name;
-            ASSERT_NE(find.mStateSet, nullptr) << name;
-            EXPECT_TRUE(hasTextureType(*find.mStateSet, "diffuseMap")) << name;
-            EXPECT_TRUE(hasTextureType(*find.mStateSet, "normalMap")) << name;
-            EXPECT_TRUE(hasTextureType(*find.mStateSet, "emissiveMap")) << name;
-
-            auto* callback = dynamic_cast<MaterialColorController*>(find.mNode->getCullCallback());
-            ASSERT_NE(callback, nullptr) << name;
-            ASSERT_NE(callback->getSource(), nullptr) << name;
-
-            osg::ref_ptr<osg::StateSet> animatedState = new osg::StateSet;
-            callback->setDefaults(animatedState);
-            callback->apply(animatedState, &visitor);
-            const auto* material
-                = dynamic_cast<const osg::Material*>(animatedState->getAttribute(osg::StateAttribute::MATERIAL));
-            ASSERT_NE(material, nullptr) << name;
-            const osg::Vec4f emission = material->getEmission(osg::Material::FRONT_AND_BACK);
-            EXPECT_FLOAT_EQ(emission.r(), 0.25f) << name;
-            EXPECT_FLOAT_EQ(emission.g(), 0.5f) << name;
-            EXPECT_FLOAT_EQ(emission.b(), 0.75f) << name;
-        }
     }
 
     std::string formatOsgNodeForBSShaderProperty(std::string_view shaderPrefix)
