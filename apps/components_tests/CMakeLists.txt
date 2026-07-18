@@ -83,6 +83,7 @@ file(GLOB UNITTEST_SRC_FILES
     esm4/testloadimagespace.cpp
     esm4/testloadlvli.cpp
     esm4/testloadperk.cpp
+    esm4/testloadterm.cpp
     esm4/testloadregion.cpp
 
     fx/lexer.cpp
