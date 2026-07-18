@@ -1,4 +1,5 @@
 #include "esm4npc.hpp"
+#include "fnvfurniturelifecycle.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -422,6 +423,7 @@ namespace MWClass
         FnvFurniturePackage(const FalloutFurniturePlacement& placement, std::string packageName)
             : mTravel(placement.mEntryPosition.x(), placement.mEntryPosition.y(), placement.mEntryPosition.z(), false)
             , mPlacement(placement)
+            , mSeatedAnchor(placement.mSettledPosition)
             , mPackageName(std::move(packageName))
         {
         }
@@ -459,23 +461,30 @@ namespace MWClass
                 world->moveObject(actor, position);
                 world->rotateObject(actor, osg::Vec3f(0.f, 0.f, yaw), MWBase::RotationFlag_none);
             };
+            auto reconcileLifecycle = [&](FalloutFurniturePackagePhase phase) {
+                const FalloutFurnitureLifecycleAction action
+                    = reconcileFalloutFurnitureLifecycle(phase, ESM4Npc::getFurnitureState(actor));
+                if (action.mPublishState)
+                    ESM4Npc::setFurnitureState(actor, action.mPublishedState);
+                return action;
+            };
 
             switch (mPhase)
             {
-                case Phase::Approach:
-                    ESM4Npc::setFurnitureState(actor, FalloutFurnitureState::Approaching);
+                case FalloutFurniturePackagePhase::Approach:
+                    reconcileLifecycle(mPhase);
                     if (!mTravel.execute(actor, characterController, state, duration))
                         return false;
                     stopMovement();
                     place(mPlacement.mEntryPosition, mPlacement.mEntryYaw);
-                    ESM4Npc::setFurnitureState(actor, FalloutFurnitureState::Entering);
+                    mPhase = FalloutFurniturePackagePhase::Entering;
+                    reconcileLifecycle(mPhase);
                     if (mPlacement.mEnterGroup.empty()
                         || !characterController.playGroup(mPlacement.mEnterGroup, 1, 0, true))
                     {
                         settle(actor, characterController, world);
                         return false;
                     }
-                    mPhase = Phase::Entering;
                     Log(Debug::Info) << "FNV/ESM4 furniture: state=entering package=" << mPackageName
                                      << " actor=" << actor.getCellRef().getRefId()
                                      << " markerIndex=" << static_cast<unsigned int>(mPlacement.mMarkerIndex)
@@ -486,20 +495,36 @@ namespace MWClass
                                      << actor.getRefData().getPosition().rot[2];
                     return false;
 
-                case Phase::Entering:
+                case FalloutFurniturePackagePhase::Entering:
+                    reconcileLifecycle(mPhase);
                     stopMovement();
                     if (characterController.isAnimPlaying(mPlacement.mEnterGroup))
                         return false;
                     settle(actor, characterController, world);
                     return false;
 
-                case Phase::Seated:
+                case FalloutFurniturePackagePhase::Seated:
+                {
+                    const FalloutFurnitureLifecycleAction lifecycle = reconcileLifecycle(mPhase);
                     stopMovement();
+                    const ESM::Position& position = actor.getRefData().getPosition();
+                    if (needsFalloutFurnitureAnchorRecovery(lifecycle, position.asVec3(), position.rot[2],
+                            mSeatedAnchor, mPlacement.mSettledYaw))
+                    {
+                        place(mSeatedAnchor, mPlacement.mSettledYaw);
+                        Log(Debug::Verbose) << "FNV/ESM4 furniture: recovered active seated lifecycle package="
+                                            << mPackageName << " actor=" << actor.getCellRef().getRefId()
+                                            << " publishedState="
+                                            << static_cast<int>(lifecycle.mPublishedState) << " anchor=("
+                                            << mSeatedAnchor.x() << "," << mSeatedAnchor.y() << ","
+                                            << mSeatedAnchor.z() << ") yaw=" << mPlacement.mSettledYaw;
+                    }
                     // Retail Easy Pete retains the furniture claim and seated state after both the package
                     // schedule window expires and EvaluatePackage is requested. Schedule expiry alone is not
                     // a retail furniture-release trigger, so remain seated until that trigger is implemented
                     // from direct retail evidence.
                     return false;
+                }
 
             }
             return true;
@@ -510,33 +535,28 @@ namespace MWClass
             if (!mPlacement.mValid || MWBase::Environment::get().getWorld() == nullptr)
                 return;
             MWBase::World* world = MWBase::Environment::get().getWorld();
+            mSeatedAnchor = mPlacement.mSettledPosition;
             world->moveObject(actor, mPlacement.mSettledPosition);
             world->rotateObject(
                 actor, osg::Vec3f(0.f, 0.f, mPlacement.mSettledYaw), MWBase::RotationFlag_none);
             ESM4Npc::setFurnitureState(actor, FalloutFurnitureState::Seated);
-            mPhase = Phase::Seated;
+            mPhase = FalloutFurniturePackagePhase::Seated;
         }
 
     private:
-        enum class Phase
-        {
-            Approach,
-            Entering,
-            Seated
-        };
-
         void settle(const MWWorld::Ptr& actor, MWMechanics::CharacterController& characterController,
             MWBase::World* world)
         {
             const ESM::Position& runtimePosition = actor.getRefData().getPosition();
             const osg::Vec3f settledPosition(
                 runtimePosition.pos[0], runtimePosition.pos[1], mPlacement.mSettledPosition.z());
+            mSeatedAnchor = settledPosition;
             world->moveObject(actor, settledPosition);
             world->rotateObject(
                 actor, osg::Vec3f(0.f, 0.f, mPlacement.mSettledYaw), MWBase::RotationFlag_none);
             characterController.clearAnimQueue(true);
             ESM4Npc::setFurnitureState(actor, FalloutFurnitureState::Seated);
-            mPhase = Phase::Seated;
+            mPhase = FalloutFurniturePackagePhase::Seated;
             Log(Debug::Info) << "FNV/ESM4 furniture: state=seated package=" << mPackageName
                              << " actor=" << actor.getCellRef().getRefId()
                              << " markerIndex=" << static_cast<unsigned int>(mPlacement.mMarkerIndex)
@@ -551,8 +571,9 @@ namespace MWClass
 
         MWMechanics::AiTravel mTravel;
         FalloutFurniturePlacement mPlacement;
+        osg::Vec3f mSeatedAnchor;
         std::string mPackageName;
-        Phase mPhase = Phase::Approach;
+        FalloutFurniturePackagePhase mPhase = FalloutFurniturePackagePhase::Approach;
     };
 
     static void initialiseFnvAiSequence(

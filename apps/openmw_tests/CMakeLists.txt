@@ -20,6 +20,7 @@ file(GLOB UNITTEST_SRC_FILES
     mwgui/tooltips.cpp
 
     mwclass/testesm4container.cpp
+    mwclass/testfnvfurniturelifecycle.cpp
 
     mwrender/testfalloutweaponanimation.cpp
     mwrender/testplayervisualpolicy.cpp
