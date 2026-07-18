@@ -83,6 +83,7 @@ namespace MWVR
 
     protected:
         void updateVRPointer(bool disableControls);
+        void updateDirectPointerClick();
         void updateRetailSurfaceGripRecenter(bool disableControls);
         void updateRetailSurfaceDirectClick(bool retailSurfaceReady);
         void updateRetailSurfaceXInput(bool retailSurfaceReady);
@@ -105,6 +106,9 @@ namespace MWVR
         bool mPointerRight = false;
         bool mDelayedPointerActivate = false;
         bool mDelayedPointerActivateInjectMouseClickIfApplicable = false;
+        bool mPointerActive = false;
+        bool mDirectPointerClickDown = false;
+        int mDirectPointerClickLogCount = 0;
         float mDt = 0.f;
         float mScrollSpeed = 0.f;
         float mScrollPoints = 0.f;

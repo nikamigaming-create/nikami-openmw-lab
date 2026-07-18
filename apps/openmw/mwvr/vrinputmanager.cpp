@@ -403,7 +403,10 @@ namespace MWVR
         }
         ++mPointerSourceLogFrames;
 
-        if (!mVRPointer && (!disableControls || MWVR::FNVXRLiveFrameSurface::instance().modalInputActive()))
+        // Menus disable world controls, but their 3D panels still require the VR
+        // pointer. Construct it as soon as the VR viewer exists instead of waiting
+        // for the first gameplay frame.
+        if (!mVRPointer && VR::getVR())
         {
             osg::ref_ptr<osgViewer::Viewer> viewer;
             mOSGViewer.lock(viewer);
@@ -416,12 +419,46 @@ namespace MWVR
         if (mVRPointer)
         {
             const bool pointerEnabled = sourceName != "DefaultReferenceSpaceView";
+            mPointerActive = pointerEnabled;
             mVRPointer->setEnabled(pointerEnabled);
             mVRPointer->setSource(source);
             mVRPointer->setDebugSpaces(
                 mXRInput->getSpace(OpenXRInput::LeftHandAim), mXRInput->getSpace(OpenXRInput::RightHandAim));
             mVRPointer->update();
         }
+        else
+            mPointerActive = false;
+    }
+
+    void VRInputManager::updateDirectPointerClick()
+    {
+        auto& retailSurface = MWVR::FNVXRLiveFrameSurface::instance();
+        if (!mPointerActive || retailSurface.visible())
+        {
+            mDirectPointerClickDown = false;
+            return;
+        }
+
+        auto& actionSet = mXRInput->getActionSet(MWActionSet::Actions);
+        const bool pressed = actionPressed(actionSet, {
+            "/user/hand/right/input/trigger/value",
+            "/user/hand/right/input/trigger/click",
+            "/user/hand/left/input/trigger/value",
+            "/user/hand/left/input/trigger/click",
+        });
+
+        if (pressed && !mDirectPointerClickDown)
+        {
+            if (mDirectPointerClickLogCount < 24)
+            {
+                ++mDirectPointerClickLogCount;
+                Log(Debug::Info) << "OpenMW VR pointer trigger edge guiFocus="
+                                 << MWVR::VRGUIManager::instance().hasFocus();
+            }
+            pointerActivate(true);
+        }
+
+        mDirectPointerClickDown = pressed;
     }
 
     void VRInputManager::updateRetailSurfaceDirectClick(bool retailSurfaceReady)
@@ -922,6 +959,7 @@ namespace MWVR
         updateVRPointer(disableControls);
         if (MWVR::FNVXRLiveFrameSurface::instance().visible())
             MWVR::FNVXRLiveFrameSurface::instance().updateAimPointer();
+        updateDirectPointerClick();
         updateRetailSurfaceDirectClick(retailSurfaceReady);
         updateRetailSurfaceXInput(retailSurfaceReady);
 

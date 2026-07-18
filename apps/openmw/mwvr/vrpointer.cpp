@@ -62,6 +62,14 @@ namespace MWVR
             return fallback;
         }
 
+        float getPointerVisualWidth()
+        {
+            // 0.06 world units is sub-millimetre thin at the Fallout scale and
+            // effectively disappears in a moving headset. Keep the calibration
+            // tunable while enforcing a readable minimum for menus and gameplay.
+            return std::max(getPointerDebugEnvFloat("OPENMW_FNV_VR_POINTER_VISUAL_WIDTH", 0.35f), 0.35f);
+        }
+
         osg::ref_ptr<osg::Geometry> createPointerAxisGeometry(float length)
         {
             osg::ref_ptr<osg::Geometry> geometry = new osg::Geometry;
@@ -391,7 +399,7 @@ namespace MWVR
                 const float offset = std::min(2.f * mDistanceToPointerTarget / 3.f,
                     getPointerDebugEnvFloat("OPENMW_FNV_VR_POINTER_MAX_OFFSET", 90.f));
                 mCrosshair->setStretch(stretch);
-                mCrosshair->setWidth(getPointerDebugEnvFloat("OPENMW_FNV_VR_POINTER_VISUAL_WIDTH", 0.06f));
+                mCrosshair->setWidth(getPointerVisualWidth());
                 mCrosshair->setOffset(offset);
                 mCrosshair->show();
             }
@@ -414,7 +422,7 @@ namespace MWVR
             if (MWVR::FNVXRLiveFrameSurface::instance().modalInputActive() || showWorldPointer)
             {
                 mCrosshair->setStretch(getPointerDebugEnvFloat("OPENMW_FNV_VR_POINTER_FALLBACK_STRETCH", 30.f));
-                mCrosshair->setWidth(getPointerDebugEnvFloat("OPENMW_FNV_VR_POINTER_VISUAL_WIDTH", 0.06f));
+                mCrosshair->setWidth(getPointerVisualWidth());
                 mCrosshair->setOffset(getPointerDebugEnvFloat("OPENMW_FNV_VR_POINTER_FALLBACK_OFFSET", 15.f));
                 mCrosshair->show();
             }
