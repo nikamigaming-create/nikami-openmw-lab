@@ -25,6 +25,7 @@
 #include <components/esm4/loaddoor.hpp>
 #include <components/esm4/loadfurn.hpp>
 #include <components/esm4/loadstat.hpp>
+#include <components/esm4/loadtact.hpp>
 #include <components/esm4/loadtree.hpp>
 #include <components/misc/pathhelpers.hpp>
 #include <components/misc/resourcehelpers.hpp>
@@ -67,6 +68,7 @@ namespace MWRender
                 case ESM::REC_ACTI4:
                 case ESM::REC_CONT4:
                 case ESM::REC_FURN4:
+                case ESM::REC_TACT4:
                     return !far;
 
                 default:
@@ -103,6 +105,8 @@ namespace MWRender
                     return getEsm4Model(store.get<ESM4::Tree>().searchStatic(id));
                 case ESM::REC_ACTI4:
                     return getEsm4Model(store.get<ESM4::Activator>().searchStatic(id));
+                case ESM::REC_TACT4:
+                    return getEsm4Model(store.get<ESM4::TalkingActivator>().searchStatic(id));
                 case ESM::REC_CONT4:
                     return getEsm4Model(store.get<ESM4::Container>().searchStatic(id));
                 case ESM::REC_FURN4:

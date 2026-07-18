@@ -13,6 +13,7 @@
 #include <components/esm4/loadmisc.hpp>
 #include <components/esm4/loadnpc.hpp>
 #include <components/esm4/loadstat.hpp>
+#include <components/esm4/loadtact.hpp>
 #include <components/esm4/loadweap.hpp>
 
 #include "esmstore.hpp"
@@ -90,6 +91,8 @@ namespace
                 return func(store.get<ESM::BodyPart>());
             case ESM::REC_STAT4:
                 return func(store.get<ESM4::Static>());
+            case ESM::REC_TACT4:
+                return func(store.get<ESM4::TalkingActivator>());
             case ESM::REC_TERM4:
                 return func(store.get<ESM4::Terminal>());
             case ESM::REC_ALCH4:

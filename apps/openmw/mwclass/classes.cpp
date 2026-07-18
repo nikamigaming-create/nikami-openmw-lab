@@ -21,6 +21,7 @@
 #include <components/esm4/loadscol.hpp>
 #include <components/esm4/loadstat.hpp>
 #include <components/esm4/loadterm.hpp>
+#include <components/esm4/loadtact.hpp>
 #include <components/esm4/loadtree.hpp>
 #include <components/esm4/loadweap.hpp>
 
@@ -51,6 +52,7 @@
 #include "esm4container.hpp"
 #include "esm4creature.hpp"
 #include "esm4npc.hpp"
+#include "esm4talkingactivator.hpp"
 #include "light4.hpp"
 
 namespace MWClass
@@ -100,6 +102,7 @@ namespace MWClass
         ESM4Static::registerSelf();
         ESM4Named<ESM4::StaticCollection>::registerSelf();
         ESM4Named<ESM4::Terminal>::registerSelf();
+        ESM4TalkingActivator::registerSelf();
         ESM4Tree::registerSelf();
         ESM4Named<ESM4::Weapon>::registerSelf();
     }

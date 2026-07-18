@@ -258,6 +258,12 @@ namespace MWWorld
 
         void setCount(int value);
 
+        const ESM4::RadioStationData* getEsm4RadioStationData() const
+        {
+            const ESM4::Reference* reference = std::get_if<ESM4::Reference>(&mCellRef.mVariant);
+            return reference != nullptr ? &reference->mRadio : nullptr;
+        }
+
         // Load mutable state without changing the underlying reference format.
         void loadState(const ESM::CellRef& state);
 

@@ -69,6 +69,7 @@
 #include <components/esm4/loadscol.hpp>
 #include <components/esm4/loadstat.hpp>
 #include <components/esm4/loadterm.hpp>
+#include <components/esm4/loadtact.hpp>
 #include <components/esm4/loadtree.hpp>
 #include <components/esm4/loadweap.hpp>
 #include <components/esm4/readerutils.hpp>
@@ -687,11 +688,42 @@ namespace MWWorld
         list.push_back(std::move(liveCellRef));
     }
 
+    bool isValidFnvTalkingActivatorReference(const ESM4::Reference& ref)
+    {
+        const auto finitePosition = [](const ESM::Position& position) {
+            for (const float value : position.pos)
+                if (!std::isfinite(value))
+                    return false;
+            for (const float value : position.rot)
+                if (!std::isfinite(value))
+                    return false;
+            return true;
+        };
+
+        return !ref.mId.isZeroOrUnset() && !ref.mBaseObj.isZeroOrUnset() && std::isfinite(ref.mScale)
+            && ref.mScale > 0.f && finitePosition(ref.mPos) && std::isfinite(ref.mRadio.rangeRadius)
+            && ref.mRadio.broadcastRange <= 4 && std::isfinite(ref.mRadio.staticPercentage);
+    }
+
     template <typename X>
     void CellRefList<X>::load(const ESM4::Reference& ref, const MWWorld::ESMStore& esmStore)
     {
         if constexpr (ESM::isESM4Rec(X::sRecordId) && !isESM4ActorRec(X::sRecordId))
+        {
+            if constexpr (std::is_same_v<X, ESM4::TalkingActivator>)
+            {
+                if (!isValidFnvTalkingActivatorReference(ref))
+                {
+                    Log(Debug::Warning) << "FNV/ESM4 TACT: dropping malformed placed reference "
+                                        << ESM::RefId(ref.mId) << " base=" << ESM::RefId(ref.mBaseObj)
+                                        << " scale=" << ref.mScale << " radioRange=" << ref.mRadio.rangeRadius
+                                        << " broadcastRange=" << ref.mRadio.broadcastRange
+                                        << " static=" << ref.mRadio.staticPercentage;
+                    return;
+                }
+            }
             loadImpl<X>(ref, esmStore, mList);
+        }
     }
     template <typename X>
     void CellRefList<X>::load(const ESM4::ActorCharacter& ref, const MWWorld::ESMStore& esmStore)
