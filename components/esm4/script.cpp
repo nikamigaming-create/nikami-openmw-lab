@@ -3,11 +3,106 @@
 #include "reader.hpp"
 
 #include <bit>
+#include <cstddef>
+#include <optional>
+#include <span>
 
 #include <components/esm/defs.hpp>
 
+namespace
+{
+    struct RawScriptBytecodeInstruction
+    {
+        std::uint16_t opcode = 0;
+        std::optional<std::uint16_t> callingReferenceIndex;
+        std::size_t argumentOffset = 0;
+        std::size_t argumentSize = 0;
+        std::size_t nextOffset = 0;
+    };
+
+    std::uint16_t readLittleEndianUint16(std::span<const std::uint8_t> bytes, std::size_t offset)
+    {
+        return static_cast<std::uint16_t>(bytes[offset])
+            | static_cast<std::uint16_t>(static_cast<std::uint16_t>(bytes[offset + 1]) << 8);
+    }
+
+    ESM4::ScriptBytecodeDecodeError decodeInstruction(
+        std::span<const std::uint8_t> bytecode, std::size_t offset, RawScriptBytecodeInstruction& instruction)
+    {
+        const std::size_t remaining = bytecode.size() - offset;
+        if (remaining < 4)
+            return ESM4::ScriptBytecodeDecodeError::TruncatedInstructionHeader;
+
+        const std::uint16_t outerOpcode = readLittleEndianUint16(bytecode, offset);
+        std::size_t headerSize = 4;
+        std::size_t lengthOffset = offset + 2;
+        instruction.callingReferenceIndex.reset();
+        instruction.opcode = outerOpcode;
+
+        if (outerOpcode == 0x001c)
+        {
+            if (remaining < 8)
+                return ESM4::ScriptBytecodeDecodeError::TruncatedReferenceInstructionHeader;
+            instruction.callingReferenceIndex = readLittleEndianUint16(bytecode, offset + 2);
+            instruction.opcode = readLittleEndianUint16(bytecode, offset + 4);
+            lengthOffset = offset + 6;
+            headerSize = 8;
+        }
+
+        const std::size_t argumentSize = readLittleEndianUint16(bytecode, lengthOffset);
+        const std::size_t argumentOffset = offset + headerSize;
+        if (argumentSize > bytecode.size() - argumentOffset)
+            return ESM4::ScriptBytecodeDecodeError::ArgumentPayloadOverrun;
+
+        instruction.argumentOffset = argumentOffset;
+        instruction.argumentSize = argumentSize;
+        instruction.nextOffset = argumentOffset + argumentSize;
+        return ESM4::ScriptBytecodeDecodeError::None;
+    }
+}
+
 namespace ESM4
 {
+    ScriptBytecodeDecodeResult decodeFalloutScriptBytecode(
+        std::span<const std::uint8_t> bytecode, std::vector<ScriptBytecodeInstruction>& instructions)
+    {
+        instructions.clear();
+
+        std::size_t offset = 0;
+        std::size_t instructionCount = 0;
+        while (offset < bytecode.size())
+        {
+            RawScriptBytecodeInstruction instruction;
+            const ScriptBytecodeDecodeError error = decodeInstruction(bytecode, offset, instruction);
+            if (error != ScriptBytecodeDecodeError::None)
+                return { error, offset, instructionCount };
+            offset = instruction.nextOffset;
+            ++instructionCount;
+        }
+
+        // The first pass proves the entire byte stream is framed and bounds the only allocation
+        // to exactly one view per instruction. It also prevents callers from observing a valid
+        // prefix when malformed trailing bytes are present.
+        instructions.reserve(instructionCount);
+        offset = 0;
+        while (offset < bytecode.size())
+        {
+            RawScriptBytecodeInstruction instruction;
+            const ScriptBytecodeDecodeError error = decodeInstruction(bytecode, offset, instruction);
+            if (error != ScriptBytecodeDecodeError::None)
+            {
+                const std::size_t decodedInstructions = instructions.size();
+                instructions.clear();
+                return { error, offset, decodedInstructions };
+            }
+            instructions.push_back({ offset, instruction.opcode, instruction.callingReferenceIndex,
+                bytecode.subspan(instruction.argumentOffset, instruction.argumentSize) });
+            offset = instruction.nextOffset;
+        }
+
+        return { ScriptBytecodeDecodeError::None, bytecode.size(), instructionCount };
+    }
+
     bool loadScriptSubRecord(Reader& reader, ScriptDefinition& script)
     {
         const SubRecordHeader& subRecord = reader.subRecordHeader();

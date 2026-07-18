@@ -29,7 +29,10 @@
 #ifndef ESM4_SCRIPT_H
 #define ESM4_SCRIPT_H
 
+#include <cstddef>
 #include <cstdint>
+#include <optional>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -385,6 +388,39 @@ namespace ESM4
         // SCRO per reference, so use references for execution and diagnostics.
         ESM::FormId globReference{};
     };
+
+    enum class ScriptBytecodeDecodeError
+    {
+        None,
+        TruncatedInstructionHeader,
+        TruncatedReferenceInstructionHeader,
+        ArgumentPayloadOverrun,
+    };
+
+    struct ScriptBytecodeInstruction
+    {
+        std::size_t offset = 0;
+        std::uint16_t opcode = 0;
+        std::optional<std::uint16_t> callingReferenceIndex;
+        std::span<const std::uint8_t> arguments;
+
+        [[nodiscard]] bool isReferenceFunction() const { return callingReferenceIndex.has_value(); }
+    };
+
+    struct ScriptBytecodeDecodeResult
+    {
+        ScriptBytecodeDecodeError error = ScriptBytecodeDecodeError::None;
+        std::size_t bytesConsumed = 0;
+        std::size_t instructionCount = 0;
+
+        [[nodiscard]] bool succeeded() const { return error == ScriptBytecodeDecodeError::None; }
+    };
+
+    // Decode FO3/FNV SCDA line framing without interpreting command semantics. Every framed
+    // opcode, including unsupported opcodes, is returned. The argument spans remain valid only
+    // while bytecode remains alive and unmodified. On malformed input instructions is empty.
+    [[nodiscard]] ScriptBytecodeDecodeResult decodeFalloutScriptBytecode(
+        std::span<const std::uint8_t> bytecode, std::vector<ScriptBytecodeInstruction>& instructions);
 
     // Load the current SCHR/SCDA/SCTX/SLSD/SCVR/SCRV/SCRO subrecord. Returns false
     // when the current subrecord does not belong to an embedded or standalone script.
