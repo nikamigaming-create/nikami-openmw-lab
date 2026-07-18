@@ -7084,7 +7084,7 @@ namespace NifOsg
             int bsLightingType = -1;
             int bsShaderType = -1;
             bool hasNoLightingShader = false;
-            bool needsPPLightingWindowAlphaBlend = false;
+            bool needsPPLightingAlphaBlend = false;
             std::string shaderMaterialName;
             int shaderMaterialType = -1;
 
@@ -7183,8 +7183,8 @@ namespace NifOsg
                         auto shaderprop = static_cast<const Nif::BSShaderPPLightingProperty*>(property);
                         bsShaderType = static_cast<int>(shaderprop->mType);
                         specEnabled = shaderprop->specular();
-                        needsPPLightingWindowAlphaBlend = needsPPLightingWindowAlphaBlend
-                            || (shaderprop->alphaTexture() && shaderprop->windowEnvironmentMapping());
+                        needsPPLightingAlphaBlend = needsPPLightingAlphaBlend || shaderprop->alphaTexture()
+                            || shaderprop->windowEnvironmentMapping();
                         break;
                     }
                     case Nif::RC_BSShaderNoLightingProperty:
@@ -7267,12 +7267,10 @@ namespace NifOsg
                 }
             }
 
-            // Fallout's window shaders use diffuse alpha when both the alpha-texture and window-environment-map
-            // flags are authored, even when the NIF omits a separate NiAlphaProperty. Apply the standard blend
-            // contract only as a fallback: an explicit NiAlphaProperty remains authoritative.
-            const bool isFallout3Generation = mVersion == Nif::NIFFile::NIFVersion::VER_BGS && mUserVersion == 11
-                && mBethVersion == Nif::NIFFile::BethVersion::BETHVER_FO3;
-            if (!isFallout3Generation && needsPPLightingWindowAlphaBlend && niAlphaProperties == 0)
+            // Fallout's window and alpha-texture shaders use diffuse alpha even when the NIF omits a separate
+            // NiAlphaProperty.  Apply the standard authored blend contract only as a fallback: an explicit
+            // NiAlphaProperty (including additive or multiplicative blending) remains authoritative.
+            if (needsPPLightingAlphaBlend && niAlphaProperties == 0)
                 handleAlphaBlending(true, 6, 7, true, hasSortAlpha, *node);
 
             if (hasNoLightingShader)
