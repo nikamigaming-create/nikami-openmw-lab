@@ -183,8 +183,8 @@ namespace MWMechanics
         void updateVisibility(const MWWorld::Ptr& ptr, CharacterController& ctrl) const;
 
         MWWorld::Ptr getDialogueActorForFacing(const MWWorld::Ptr& player) const;
-        void updateDialogueFacing(
-            const MWWorld::Ptr& player, const MWWorld::Ptr& dialogueActor, bool allowBodyTurn);
+        void updateDialogueFacing(const MWWorld::Ptr& player, const MWWorld::Ptr& dialogueActor, bool allowBodyTurn,
+            bool updatePausedHeadTracking = false);
 
         void adjustMagicEffects(const MWWorld::Ptr& creature, float duration) const;
 

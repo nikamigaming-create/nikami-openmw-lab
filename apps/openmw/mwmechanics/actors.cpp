@@ -1548,8 +1548,8 @@ namespace MWMechanics
         return registered->getPtr();
     }
 
-    void Actors::updateDialogueFacing(
-        const MWWorld::Ptr& player, const MWWorld::Ptr& dialogueActor, bool allowBodyTurn)
+    void Actors::updateDialogueFacing(const MWWorld::Ptr& player, const MWWorld::Ptr& dialogueActor,
+        bool allowBodyTurn, bool updatePausedHeadTracking)
     {
         int activeActorId = -1;
         if (!dialogueActor.isEmpty())
@@ -1597,6 +1597,11 @@ namespace MWMechanics
                 if (direction.x() != 0.f || direction.y() != 0.f)
                     zTurn(ptr, std::atan2(direction.x(), direction.y()), osg::DegreesToRadians(5.f));
             }
+
+            // Dialogue pauses the ordinary CharacterController update, so a
+            // target assigned above would otherwise never reach the skeleton.
+            if (updatePausedHeadTracking && policy.mTrackHead)
+                controller.updateDialogueHeadTracking(0.2f);
         }
 
         mDialogueFacingActorId = activeActorId;
@@ -1608,7 +1613,7 @@ namespace MWMechanics
         const MWWorld::Ptr dialogueActor = getDialogueActorForFacing(player);
         if (paused)
         {
-            updateDialogueFacing(player, dialogueActor, false);
+            updateDialogueFacing(player, dialogueActor, true, true);
             return;
         }
 

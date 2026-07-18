@@ -353,6 +353,9 @@ namespace MWMechanics
         /// Make this character turn its head towards \a target. To turn off head tracking, pass an empty Ptr.
         void setHeadTrackTarget(const MWWorld::ConstPtr& target);
 
+        /// Apply the current target while gameplay simulation is paused by dialogue.
+        void updateDialogueHeadTracking(float duration);
+
         void playSwishSound() const;
 
         float getAnimationMovementDirection() const;

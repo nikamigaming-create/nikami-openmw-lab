@@ -3905,6 +3905,11 @@ namespace MWMechanics
         mHeadTrackTarget = target;
     }
 
+    void CharacterController::updateDialogueHeadTracking(float duration)
+    {
+        updateHeadTracking(duration);
+    }
+
     void CharacterController::playSwishSound() const
     {
         static ESM::RefId weaponSwish = ESM::RefId::stringRefId("Weapon Swish");
