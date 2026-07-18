@@ -180,9 +180,8 @@ namespace MWRender
 
         void configureAmbient(const MWWorld::Cell& cell);
         void configureFog(const MWWorld::Cell& cell);
-        void configureFog(float fogDepth, float underwaterFog, float dlFactor, float dlOffset,
-            const osg::Vec4f& colour, bool hasFalloutFog, float falloutFogNear, float falloutFogFar,
-            float falloutFogPower);
+        void configureFog(
+            float fogDepth, float underwaterFog, float dlFactor, float dlOffset, const osg::Vec4f& colour);
 
         void addCell(const MWWorld::CellStore* store);
         void removeCell(const MWWorld::CellStore* store);

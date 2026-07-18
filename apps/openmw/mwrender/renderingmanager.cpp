@@ -710,9 +710,6 @@ namespace MWRender
         StateUpdater()
             : mFogStart(0.f)
             , mFogEnd(0.f)
-            , mFalloutFogPower(1.f)
-            , mFalloutFogEnabled(false)
-            , mFalloutFogStep(false)
             , mWireframe(false)
         {
         }
@@ -724,9 +721,6 @@ namespace MWRender
             osg::Fog* fog = new osg::Fog;
             fog->setMode(osg::Fog::LINEAR);
             stateset->setAttributeAndModes(fog, osg::StateAttribute::ON);
-            stateset->addUniform(new osg::Uniform("falloutFogPower", 1.f));
-            stateset->addUniform(new osg::Uniform("falloutFogEnabled", false));
-            stateset->addUniform(new osg::Uniform("falloutFogStep", false));
             if (mWireframe)
             {
                 osg::PolygonMode* polygonmode = new osg::PolygonMode;
@@ -746,9 +740,6 @@ namespace MWRender
             fog->setColor(mFogColor);
             fog->setStart(mFogStart);
             fog->setEnd(mFogEnd);
-            stateset->getUniform("falloutFogPower")->set(mFalloutFogPower);
-            stateset->getUniform("falloutFogEnabled")->set(mFalloutFogEnabled);
-            stateset->getUniform("falloutFogStep")->set(mFalloutFogStep);
         }
 
         void setAmbientColor(const osg::Vec4f& col) { mAmbientColor = col; }
@@ -758,13 +749,6 @@ namespace MWRender
         void setFogStart(float start) { mFogStart = start; }
 
         void setFogEnd(float end) { mFogEnd = end; }
-
-        void setFalloutFog(bool enabled, float power, bool step)
-        {
-            mFalloutFogEnabled = enabled;
-            mFalloutFogPower = enabled ? power : 1.f;
-            mFalloutFogStep = enabled && step;
-        }
 
         void setWireframe(bool wireframe)
         {
@@ -782,9 +766,6 @@ namespace MWRender
         osg::Vec4f mFogColor;
         float mFogStart;
         float mFogEnd;
-        float mFalloutFogPower;
-        bool mFalloutFogEnabled;
-        bool mFalloutFogStep;
         bool mWireframe;
     };
 
@@ -1431,11 +1412,10 @@ namespace MWRender
         mFog->configure(mViewDistance, cell);
     }
 
-    void RenderingManager::configureFog(float fogDepth, float underwaterFog, float dlFactor, float dlOffset,
-        const osg::Vec4f& color, bool hasFalloutFog, float falloutFogNear, float falloutFogFar, float falloutFogPower)
+    void RenderingManager::configureFog(
+        float fogDepth, float underwaterFog, float dlFactor, float dlOffset, const osg::Vec4f& color)
     {
-        mFog->configure(mViewDistance, fogDepth, underwaterFog, dlFactor, dlOffset, color, hasFalloutFog,
-            falloutFogNear, falloutFogFar, falloutFogPower);
+        mFog->configure(mViewDistance, fogDepth, underwaterFog, dlFactor, dlOffset, color);
     }
 
     SkyManager* RenderingManager::getSkyManager()
@@ -1588,20 +1568,15 @@ namespace MWRender
         float fogStart = mFog->getFogStart(isUnderwater);
         float fogEnd = mFog->getFogEnd(isUnderwater);
         osg::Vec4f fogColor = mFog->getFogColor(isUnderwater);
-        const bool hasFalloutFog = mFog->hasFalloutFog(isUnderwater);
-        const float falloutFogPower = mFog->getFalloutFogPower(isUnderwater);
-        const bool falloutFogStep = mFog->isFalloutFogStep(isUnderwater);
 
         mStateUpdater->setFogStart(fogStart);
         mStateUpdater->setFogEnd(fogEnd);
-        mStateUpdater->setFalloutFog(hasFalloutFog, falloutFogPower, falloutFogStep);
         setFogColor(fogColor);
 
         auto world = MWBase::Environment::get().getWorld();
         const auto& stateUpdater = mPostProcessor->getStateUpdater();
 
         stateUpdater->setFogRange(fogStart, fogEnd);
-        stateUpdater->setFalloutFog(hasFalloutFog, falloutFogPower, falloutFogStep);
         stateUpdater->setNearFar(mNearClip, mViewDistance);
         stateUpdater->setIsUnderwater(isUnderwater);
         stateUpdater->setFogColor(fogColor);

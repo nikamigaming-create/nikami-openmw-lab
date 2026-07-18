@@ -237,7 +237,11 @@ void main(void)
     gl_FragData[0].rgb = mix(rawRefraction, gl_FragData[0].rgb, shoreOffset);
 #endif
 
+#if @radialFog
     float radialDepth = distance(position.xyz, cameraPos);
+#else
+    float radialDepth = 0.0;
+#endif
 
     gl_FragData[0] = applyFogAtDist(gl_FragData[0], radialDepth, linearDepth, far);
 

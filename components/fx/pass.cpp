@@ -235,16 +235,6 @@ mat4 omw_InvProjectionMatrix()
 
 float omw_EstimateFogCoverageFromUV(vec2 uv)
     {
-        if (omw.falloutFogEnabled)
-        {
-            vec3 uvPos = omw_GetWorldPosFromUV(uv);
-            float dist = length(uvPos - omw.eyePos.xyz);
-            if (omw.falloutFogStep)
-                return dist > omw.fogNear ? 1.0 : 0.0;
-            float normalizedDistance = clamp((dist - omw.fogNear) / (omw.fogFar - omw.fogNear), 0.0, 1.0);
-            return pow(normalizedDistance, omw.falloutFogPower);
-        }
-
 #if OMW_RADIAL_FOG
         vec3 uvPos = omw_GetWorldPosFromUV(uv);
         float dist = length(uvPos - omw.eyePos.xyz);
