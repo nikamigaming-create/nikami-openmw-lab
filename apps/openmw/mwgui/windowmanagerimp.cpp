@@ -1183,10 +1183,14 @@ namespace MWGui
 
     void WindowManager::cycleActiveControllerWindow(bool next)
     {
-        if (!Settings::gui().mControllerMenus || mGuiModes.empty())
+        if (mGuiModes.empty())
             return;
 
         GuiMode mode = mGuiModes.back();
+        const bool falloutInventoryTabs = isFalloutContentLoaded() && mode == GM_Inventory;
+        if (!Settings::gui().mControllerMenus && !falloutInventoryTabs)
+            return;
+
         int winCount = mGuiModeStates[mode].mWindows.size();
 
         int activeIndex = 0;
@@ -1242,12 +1246,22 @@ namespace MWGui
         if (falloutInventoryTabs && !Settings::gui().mControllerMenus)
         {
             updateVisible();
+            for (int i = 0; i < winCount; ++i)
+            {
+                if (i != activeIndex)
+                    mGuiModeStates[mode].mWindows[i]->setActiveControllerWindow(false);
+            }
             if (WindowBase* activeWindow = mGuiModeStates[mode].mWindows[activeIndex])
             {
+                activeWindow->setActiveControllerWindow(true);
                 if (activeWindow->mMainWidget != nullptr)
                     MyGUI::LayerManager::getInstance().upLayerItem(activeWindow->mMainWidget);
                 Log(Debug::Verbose) << "FNV/ESM4 diag: Pip-Boy tab raised pane index=" << activeIndex;
             }
+            MWBase::Environment::get().getInputManager()->setGamepadGuiCursorEnabled(
+                mGuiModeStates[mode].mWindows[activeIndex]->isGamepadCursorAllowed());
+            updateControllerButtonsOverlay();
+            setCursorActive(false);
             if (mInventoryTabsOverlay != nullptr && !VR::getVR())
             {
                 mInventoryTabsOverlay->setVisible(true);
