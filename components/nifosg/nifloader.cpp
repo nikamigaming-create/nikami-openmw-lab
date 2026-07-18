@@ -6829,22 +6829,11 @@ namespace NifOsg
                     osg::StateSet* stateset = node->getOrCreateStateSet();
                     clearBoundTextures(stateset, boundTextures);
                     if (!texprop->mTextureSet.empty())
-                    {
-                        // The FO3/FNV environment-map path is disabled until its
-                        // material classification is proven not to contaminate
-                        // opaque scenery. Keep authored diffuse, normal, glow,
-                        // depth, and alpha handling active.
-                        const bool isFallout3Generation
-                            = mVersion == Nif::NIFFile::NIFVersion::VER_BGS && mUserVersion == 11
-                            && mBethVersion == Nif::NIFFile::BethVersion::BETHVER_FO3;
-                        const bool environmentMappingEnabled = !isFallout3Generation
-                            && (texprop->environmentMapping()
-                                || (texprop->windowEnvironmentMapping() && texprop->alphaTexture()));
                         handleTextureSet(texprop->mTextureSet.getPtr(), texprop->wrapS(), texprop->wrapT(),
                             texprop->mEnvMapScale, node->getName(), stateset, boundTextures,
                             texprop->mType == static_cast<unsigned int>(Nif::BSShaderType::ShaderType_Skin),
-                            environmentMappingEnabled);
-                    }
+                            texprop->environmentMapping()
+                                || (texprop->windowEnvironmentMapping() && texprop->alphaTexture()));
                     handleTextureControllers(texprop, composite, stateset, animflags);
                     // BSShaderPPLightingProperty carries the same authored depth-test/depth-write bits as the other
                     // Bethesda shader properties. Omitting them makes transparent overlays write depth by default,
