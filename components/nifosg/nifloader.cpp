@@ -7282,7 +7282,9 @@ namespace NifOsg
             // Fallout's window shaders use diffuse alpha when both the alpha-texture and window-environment-map
             // flags are authored, even when the NIF omits a separate NiAlphaProperty. Apply the standard blend
             // contract only as a fallback: an explicit NiAlphaProperty remains authoritative.
-            if (needsPPLightingWindowAlphaBlend && niAlphaProperties == 0)
+            const bool isFallout3Generation = mVersion == Nif::NIFFile::NIFVersion::VER_BGS && mUserVersion == 11
+                && mBethVersion == Nif::NIFFile::BethVersion::BETHVER_FO3;
+            if (!isFallout3Generation && needsPPLightingWindowAlphaBlend && niAlphaProperties == 0)
                 handleAlphaBlending(true, 6, 7, true, hasSortAlpha, *node);
 
             if (hasNoLightingShader)
