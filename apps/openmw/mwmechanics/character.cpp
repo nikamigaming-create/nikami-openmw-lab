@@ -49,6 +49,7 @@
 #include <components/vfs/pathutil.hpp>
 
 #include "../mwrender/animation.hpp"
+#include "../mwrender/fallouthitreaction.hpp"
 #include "../mwrender/falloutweaponanimation.hpp"
 
 #include "../mwbase/environment.hpp"
@@ -536,10 +537,22 @@ namespace MWMechanics
             resetCurrentIdleState();
         }
 
-        if (!mPtr.getClass().isNpc() && mUpperBodyState > UpperBodyState::WeaponEquipped)
+        if (mUpperBodyState > UpperBodyState::WeaponEquipped)
         {
-            recovery = false;
-            stats.setHitRecovery(false);
+            bool isFonvCreature = false;
+            if (mPtr.getType() == ESM4::Creature::sRecordId)
+            {
+                const auto* live = mPtr.get<ESM4::Creature>();
+                isFonvCreature = live != nullptr && live->mBase != nullptr && live->mBase->mIsFONV;
+            }
+            const bool hasBoundHitReaction = mAnimation != nullptr
+                && mAnimation->hasAnimation(MWRender::FonvCreatureHitReactionSemanticGroup);
+            if (MWRender::shouldClearHitRecoveryDuringActiveAction(
+                    charClass.isNpc(), isFonvCreature, hasBoundHitReaction))
+            {
+                recovery = false;
+                stats.setHitRecovery(false);
+            }
         }
 
         if (mHitState != CharState_None)

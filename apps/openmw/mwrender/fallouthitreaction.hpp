@@ -12,6 +12,12 @@ namespace MWRender
 {
     inline constexpr std::string_view FonvCreatureHitReactionSemanticGroup = "hit1";
 
+    inline bool shouldClearHitRecoveryDuringActiveAction(
+        bool isNpc, bool isFonvCreature, bool hasBoundHitReaction)
+    {
+        return !isNpc && (!isFonvCreature || !hasBoundHitReaction);
+    }
+
     inline std::string normalizeFonvCreatureAnimationDirectory(std::string_view animationDirectory)
     {
         std::string directory(animationDirectory);

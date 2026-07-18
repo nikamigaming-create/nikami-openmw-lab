@@ -69,6 +69,36 @@ namespace MWRender
         }
     }
 
+    TEST(FalloutHitReactionTest, preservesActiveActionRecoveryOnlyForFonvCreatureWithBoundHitSemantic)
+    {
+        struct Decision
+        {
+            bool mIsNpc;
+            bool mIsFonvCreature;
+            bool mHasBoundHitReaction;
+            bool mExpectedClear;
+        };
+        static constexpr std::array<Decision, 8> decisions = { {
+            { true, false, false, false },
+            { true, false, true, false },
+            { true, true, false, false },
+            { true, true, true, false },
+            { false, false, false, true },
+            { false, false, true, true },
+            { false, true, false, true },
+            { false, true, true, false },
+        } };
+
+        for (const Decision& decision : decisions)
+        {
+            EXPECT_EQ(shouldClearHitRecoveryDuringActiveAction(
+                          decision.mIsNpc, decision.mIsFonvCreature, decision.mHasBoundHitReaction),
+                decision.mExpectedClear)
+                << "isNpc=" << decision.mIsNpc << " isFonvCreature=" << decision.mIsFonvCreature
+                << " hasBoundHitReaction=" << decision.mHasBoundHitReaction;
+        }
+    }
+
     TEST(FalloutHitReactionTest, resolvesCanonicalRecoverySourceWithinEachGoodspringsCreatureRig)
     {
         struct ExpectedSource
