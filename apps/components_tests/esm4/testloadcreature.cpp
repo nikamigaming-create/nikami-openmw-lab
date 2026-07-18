@@ -153,6 +153,173 @@ namespace
         }
     }
 
+    ESM4::Creature falloutCreature(std::uint32_t id, std::uint32_t templateId, std::uint16_t templateFlags)
+    {
+        ESM4::Creature result;
+        result.mId = ESM::FormId::fromUint32(id);
+        result.mBaseTemplate = ESM::FormId::fromUint32(templateId);
+        result.mBaseConfig.fo3.templateFlags = templateFlags;
+        result.mIsFONV = true;
+        return result;
+    }
+
+    void expectAllCategoriesNull(const ESM4::CreatureTemplateCategories& categories)
+    {
+        EXPECT_EQ(categories.mTraits, nullptr);
+        EXPECT_EQ(categories.mStats, nullptr);
+        EXPECT_EQ(categories.mFactions, nullptr);
+        EXPECT_EQ(categories.mActorEffects, nullptr);
+        EXPECT_EQ(categories.mAIData, nullptr);
+        EXPECT_EQ(categories.mAIPackages, nullptr);
+        EXPECT_EQ(categories.mModel, nullptr);
+        EXPECT_EQ(categories.mBaseData, nullptr);
+        EXPECT_EQ(categories.mInventory, nullptr);
+        EXPECT_EQ(categories.mScript, nullptr);
+    }
+
+    TEST(Esm4CreatureTemplateCategoryTest, resolvesDirectCreatureCategoriesIndependently)
+    {
+        ESM4::Creature concrete = falloutCreature(0x100, 0x200,
+            ESM4::Creature::Template_UseStats | ESM4::Creature::Template_UseAIData
+                | ESM4::Creature::Template_UseModel);
+        ESM4::Creature templated = falloutCreature(0x200, 0, 0);
+
+        const ESM4::CreatureTemplateCategories result = ESM4::resolveCreatureTemplateCategories(
+            { { &concrete, {}, false }, { &templated, concrete.mBaseTemplate, false } });
+
+        EXPECT_EQ(result.mStats, &templated);
+        EXPECT_EQ(result.mAIData, &templated);
+        EXPECT_EQ(result.mModel, &templated);
+        EXPECT_EQ(result.mTraits, &concrete);
+        EXPECT_EQ(result.mFactions, &concrete);
+        EXPECT_EQ(result.mActorEffects, &concrete);
+        EXPECT_EQ(result.mAIPackages, &concrete);
+        EXPECT_EQ(result.mBaseData, &concrete);
+        EXPECT_EQ(result.mInventory, &concrete);
+        EXPECT_EQ(result.mScript, &concrete);
+    }
+
+    TEST(Esm4CreatureTemplateCategoryTest, ignoresDormantFlagsWithoutTemplate)
+    {
+        ESM4::Creature concrete = falloutCreature(0x100, 0, 0x03ff);
+
+        const ESM4::CreatureTemplateCategories result
+            = ESM4::resolveCreatureTemplateCategories({ { &concrete, {}, false } });
+
+        EXPECT_EQ(result.mTraits, &concrete);
+        EXPECT_EQ(result.mStats, &concrete);
+        EXPECT_EQ(result.mFactions, &concrete);
+        EXPECT_EQ(result.mActorEffects, &concrete);
+        EXPECT_EQ(result.mAIData, &concrete);
+        EXPECT_EQ(result.mAIPackages, &concrete);
+        EXPECT_EQ(result.mModel, &concrete);
+        EXPECT_EQ(result.mBaseData, &concrete);
+        EXPECT_EQ(result.mInventory, &concrete);
+        EXPECT_EQ(result.mScript, &concrete);
+    }
+
+    TEST(Esm4CreatureTemplateCategoryTest, resolvesFrozenBighornerLevelledBridgeByCategory)
+    {
+        // Frozen FalloutNV.esm chain. The first TPLT is LVLC 0x0015979f,
+        // whose current bounded level-1 bridge selects CREA 0x00159790.
+        ESM4::Creature spawned = falloutCreature(0x00168d03, 0x0015979f, 0x01df);
+        ESM4::Creature tier = falloutCreature(0x00159790, 0x00108020, 0x000d);
+        ESM4::Creature species = falloutCreature(0x00108020, 0, 0);
+        spawned.mEditorId = "VSpawnSpecialTier3BigHornerLargeGolfHerd";
+        tier.mEditorId = "VCrTier3BigHornerLarge";
+        species.mEditorId = "NVCrBigHorner";
+
+        const ESM4::CreatureTemplateCategories withoutBridge = ESM4::resolveCreatureTemplateCategories(
+            { { &spawned, {}, false }, { &tier, spawned.mBaseTemplate, false },
+                { &species, tier.mBaseTemplate, false } });
+        EXPECT_EQ(withoutBridge.mStats, nullptr);
+        EXPECT_EQ(withoutBridge.mAIPackages, &spawned);
+
+        const ESM4::CreatureTemplateCategories result = ESM4::resolveCreatureTemplateCategories(
+            { { &spawned, {}, false }, { &tier, spawned.mBaseTemplate, true },
+                { &species, tier.mBaseTemplate, false } });
+
+        EXPECT_EQ(result.mTraits, &species);
+        EXPECT_EQ(result.mStats, &tier);
+        EXPECT_EQ(result.mFactions, &species);
+        EXPECT_EQ(result.mActorEffects, &species);
+        EXPECT_EQ(result.mAIData, &tier);
+        EXPECT_EQ(result.mAIPackages, &spawned);
+        EXPECT_EQ(result.mModel, &tier);
+        EXPECT_EQ(result.mBaseData, &tier);
+        EXPECT_EQ(result.mInventory, &tier);
+        EXPECT_EQ(result.mScript, &spawned);
+    }
+
+    TEST(Esm4CreatureTemplateCategoryTest, rejectsMismatchedDirectEdge)
+    {
+        ESM4::Creature concrete
+            = falloutCreature(0x100, 0x200, ESM4::Creature::Template_UseStats);
+        ESM4::Creature unrelated = falloutCreature(0x201, 0, 0);
+
+        const ESM4::CreatureTemplateCategories result = ESM4::resolveCreatureTemplateCategories(
+            { { &concrete, {}, false }, { &unrelated, concrete.mBaseTemplate, false } });
+        EXPECT_EQ(result.mStats, nullptr);
+        EXPECT_EQ(result.mTraits, &concrete);
+    }
+
+    TEST(Esm4CreatureTemplateCategoryTest, failsClosedOnMissingProviderAndNonFalloutAncestor)
+    {
+        ESM4::Creature missing = falloutCreature(0x100, 0x200, 0x03ff);
+        expectAllCategoriesNull(ESM4::resolveCreatureTemplateCategories({ { &missing, {}, false } }));
+
+        ESM4::Creature concrete
+            = falloutCreature(0x300, 0x400, ESM4::Creature::Template_UseStats);
+        ESM4::Creature wrongGame = falloutCreature(0x400, 0, 0);
+        wrongGame.mIsFONV = false;
+        const ESM4::CreatureTemplateCategories mixed = ESM4::resolveCreatureTemplateCategories(
+            { { &concrete, {}, false }, { &wrongGame, concrete.mBaseTemplate, false } });
+        EXPECT_EQ(mixed.mStats, nullptr);
+        EXPECT_EQ(mixed.mTraits, &concrete);
+    }
+
+    TEST(Esm4CreatureTemplateCategoryTest, detectsCyclesByFormIdAcrossDistinctObjects)
+    {
+        ESM4::Creature first = falloutCreature(0x100, 0x200, 0x03ff);
+        ESM4::Creature second = falloutCreature(0x200, 0x100, 0x03ff);
+        ESM4::Creature duplicateFirst = falloutCreature(0x100, 0x200, 0);
+
+        expectAllCategoriesNull(ESM4::resolveCreatureTemplateCategories({ { &first, {}, false },
+            { &second, first.mBaseTemplate, false }, { &duplicateFirst, second.mBaseTemplate, false } }));
+    }
+
+    TEST(Esm4CreatureTemplateCategoryTest, failsClosedBeyondBoundedDepth)
+    {
+        std::array<ESM4::Creature, ESM4::sMaxCreatureTemplateDepth + 1> records;
+        ESM4::CreatureTemplateChain chain;
+        chain.reserve(records.size());
+        for (std::size_t index = 0; index < records.size(); ++index)
+        {
+            const std::uint32_t id = static_cast<std::uint32_t>(0x100 + index);
+            const std::uint32_t templateId = index + 1 < records.size() ? id + 1 : 0;
+            records[index] = falloutCreature(id, templateId, 0x03ff);
+            chain.push_back({ &records[index], index == 0 ? ESM::FormId{} : records[index - 1].mBaseTemplate, false });
+        }
+
+        expectAllCategoriesNull(ESM4::resolveCreatureTemplateCategories(chain));
+    }
+
+    TEST(Esm4CreatureTemplateCategoryTest, leavesNonFalloutRootOnLegacyPath)
+    {
+        ESM4::Creature legacy;
+        legacy.mId = ESM::FormId::fromUint32(0x100);
+        legacy.mBaseTemplate = ESM::FormId::fromUint32(0x200);
+        legacy.mBaseConfig.fo3.templateFlags = 0x03ff;
+        ESM4::Creature fallout = falloutCreature(0x200, 0, 0);
+
+        const ESM4::CreatureTemplateCategories result = ESM4::resolveCreatureTemplateCategories(
+            { { &legacy, {}, false }, { &fallout, legacy.mBaseTemplate, false } });
+        EXPECT_EQ(result.mTraits, &legacy);
+        EXPECT_EQ(result.mStats, &legacy);
+        EXPECT_EQ(result.mModel, &legacy);
+        EXPECT_EQ(result.mScript, &legacy);
+    }
+
     TEST(Esm4CreatureTemplateTest, resolvesPartialVisualFieldsIndependently)
     {
         ESM4::Creature concrete;

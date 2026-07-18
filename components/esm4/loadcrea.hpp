@@ -27,6 +27,7 @@
 #ifndef ESM4_CREA_H
 #define ESM4_CREA_H
 
+#include <cstddef>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -47,7 +48,16 @@ namespace ESM4
         // FO3/FNV actor template flags share the NPC_ bit assignments.
         enum TemplateFlags : std::uint16_t
         {
+            Template_UseTraits = 0x0001,
+            Template_UseStats = 0x0002,
+            Template_UseFactions = 0x0004,
+            Template_UseActorEffects = 0x0008,
+            Template_UseAIData = 0x0010,
+            Template_UseAIPackages = 0x0020,
             Template_UseModel = 0x0040,
+            Template_UseBaseData = 0x0080,
+            Template_UseInventory = 0x0100,
+            Template_UseScript = 0x0200,
         };
 
         enum ACBS_TES4
@@ -188,6 +198,40 @@ namespace ESM4
         const Creature* mKf = nullptr;
         const Creature* mBodyParts = nullptr;
     };
+
+    struct CreatureTemplateCategories
+    {
+        const Creature* mTraits = nullptr;
+        const Creature* mStats = nullptr;
+        const Creature* mFactions = nullptr;
+        const Creature* mActorEffects = nullptr;
+        const Creature* mAIData = nullptr;
+        const Creature* mAIPackages = nullptr;
+        const Creature* mModel = nullptr;
+        const Creature* mBaseData = nullptr;
+        const Creature* mInventory = nullptr;
+        const Creature* mScript = nullptr;
+    };
+
+    struct CreatureTemplateChainEntry
+    {
+        const Creature* mRecord = nullptr;
+        // TPLT requested by the preceding record. Unset on the root entry.
+        ESM::FormId mSourceTemplate;
+        // A LVLC bridge can legitimately select a CREA whose FormID differs
+        // from the requested TPLT FormID.
+        bool mThroughLevelledList = false;
+    };
+
+    using CreatureTemplateChain = std::vector<CreatureTemplateChainEntry>;
+
+    inline constexpr std::size_t sMaxCreatureTemplateDepth = 16;
+
+    // Records must be ordered from the placed/base creature toward its TPLT
+    // ancestors. A delegated category whose provider is absent, cyclic, or
+    // beyond the runtime bound resolves to null instead of using wrong local
+    // data. Template flags are dormant on a record without TPLT.
+    CreatureTemplateCategories resolveCreatureTemplateCategories(const CreatureTemplateChain& records);
 
     // Records must be ordered from the placed/base creature toward its TPLT ancestors.
     // Each visual field is selected independently because partial CREA overrides are valid.

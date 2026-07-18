@@ -274,6 +274,66 @@ ESM4::CreatureVisualTemplate ESM4::resolveCreatureVisualTemplate(
     return result;
 }
 
+namespace
+{
+    const ESM4::Creature* resolveCreatureTemplateCategory(
+        const ESM4::CreatureTemplateChain& records, ESM4::Creature::TemplateFlags flag)
+    {
+        if (records.empty() || records.front().mRecord == nullptr)
+            return nullptr;
+
+        // Category flags on non-Fallout roots retain their legacy meaning and
+        // are not interpreted by this Fallout resolver.
+        if (!records.front().mRecord->mIsFONV)
+            return records.front().mRecord;
+
+        const std::size_t count = std::min(records.size(), ESM4::sMaxCreatureTemplateDepth);
+        for (std::size_t index = 0; index < count; ++index)
+        {
+            const ESM4::Creature* record = records[index].mRecord;
+            if (record == nullptr || !record->mIsFONV || record->mId.isZeroOrUnset())
+                return nullptr;
+            for (std::size_t previous = 0; previous < index; ++previous)
+            {
+                const ESM4::Creature* previousRecord = records[previous].mRecord;
+                if (previousRecord != nullptr && previousRecord->mId == record->mId)
+                    return nullptr;
+            }
+
+            const bool delegates = (record->mBaseConfig.fo3.templateFlags & flag) != 0;
+            if (!delegates || record->mBaseTemplate.isZeroOrUnset())
+                return record;
+
+            if (index + 1 >= count)
+                return nullptr;
+
+            const ESM4::CreatureTemplateChainEntry& next = records[index + 1];
+            if (next.mRecord == nullptr || next.mSourceTemplate != record->mBaseTemplate)
+                return nullptr;
+            if (!next.mThroughLevelledList && next.mRecord->mId != record->mBaseTemplate)
+                return nullptr;
+        }
+        return nullptr;
+    }
+}
+
+ESM4::CreatureTemplateCategories ESM4::resolveCreatureTemplateCategories(
+    const ESM4::CreatureTemplateChain& records)
+{
+    CreatureTemplateCategories result;
+    result.mTraits = resolveCreatureTemplateCategory(records, Creature::Template_UseTraits);
+    result.mStats = resolveCreatureTemplateCategory(records, Creature::Template_UseStats);
+    result.mFactions = resolveCreatureTemplateCategory(records, Creature::Template_UseFactions);
+    result.mActorEffects = resolveCreatureTemplateCategory(records, Creature::Template_UseActorEffects);
+    result.mAIData = resolveCreatureTemplateCategory(records, Creature::Template_UseAIData);
+    result.mAIPackages = resolveCreatureTemplateCategory(records, Creature::Template_UseAIPackages);
+    result.mModel = resolveCreatureTemplateCategory(records, Creature::Template_UseModel);
+    result.mBaseData = resolveCreatureTemplateCategory(records, Creature::Template_UseBaseData);
+    result.mInventory = resolveCreatureTemplateCategory(records, Creature::Template_UseInventory);
+    result.mScript = resolveCreatureTemplateCategory(records, Creature::Template_UseScript);
+    return result;
+}
+
 // void ESM4::Creature::save(ESM4::Writer& writer) const
 //{
 // }

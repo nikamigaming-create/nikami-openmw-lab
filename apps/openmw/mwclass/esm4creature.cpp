@@ -35,6 +35,7 @@ namespace MWClass
     class ESM4CreatureCustomData : public MWWorld::TypedCustomData<ESM4CreatureCustomData>
     {
     public:
+        ESM4::CreatureTemplateCategories mTemplates;
         MWMechanics::CreatureStats mCreatureStats;
         MWMechanics::Movement mMovement;
         std::unique_ptr<MWWorld::ContainerStore> mContainerStore = std::make_unique<MWWorld::ContainerStore>();
@@ -42,7 +43,8 @@ namespace MWClass
 
         ESM4CreatureCustomData() = default;
         ESM4CreatureCustomData(const ESM4CreatureCustomData& other)
-            : mCreatureStats(other.mCreatureStats)
+            : mTemplates(other.mTemplates)
+            , mCreatureStats(other.mCreatureStats)
             , mMovement(other.mMovement)
             , mContainerStore(other.mContainerStore ? other.mContainerStore->clone()
                                                     : std::make_unique<MWWorld::ContainerStore>())
@@ -67,22 +69,29 @@ namespace MWClass
         return std::max<int>(creature.mBaseConfig.fo3.speedMultiplier, 1) / 100.f;
     }
 
-    static const ESM4::Creature* searchCreatureTemplate(ESM::FormId id, int depth = 0)
+    struct CreatureTemplateLookup
+    {
+        const ESM4::Creature* mRecord = nullptr;
+        bool mThroughLevelledList = false;
+    };
+
+    static CreatureTemplateLookup searchCreatureTemplate(
+        ESM::FormId id, int depth = 0, bool throughLevelledList = false)
     {
         const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
         if (store == nullptr || id.isZeroOrUnset() || depth > 8)
-            return nullptr;
+            return {};
 
         const ESM::RecNameInts foundType = static_cast<ESM::RecNameInts>(store->find(id));
         if (foundType == ESM::RecNameInts::REC_CREA4)
-            return store->get<ESM4::Creature>().search(id);
+            return { store->get<ESM4::Creature>().search(id), throughLevelledList };
 
         if (foundType != ESM::RecNameInts::REC_LVLC4)
-            return nullptr;
+            return {};
 
         const ESM4::LevelledCreature* list = store->get<ESM4::LevelledCreature>().search(id);
         if (list == nullptr || list->mLvlObject.empty())
-            return nullptr;
+            return {};
 
         const ESM4::LVLO* selected = nullptr;
         for (const ESM4::LVLO& entry : list->mLvlObject)
@@ -96,9 +105,11 @@ namespace MWClass
         }
 
         if (selected == nullptr)
-            return nullptr;
+            return {};
 
-        return searchCreatureTemplate(ESM::FormId::fromUint32(selected->item), depth + 1);
+        // Preserve the engine's existing deterministic level-1 bridge. Retail
+        // level, chance, and random selection remain a separate runtime slice.
+        return searchCreatureTemplate(ESM::FormId::fromUint32(selected->item), depth + 1, true);
     }
 
     static const ESM4::Creature& getEffectiveCreature(const ESM4::Creature& creature)
@@ -111,7 +122,7 @@ namespace MWClass
             if (current->mBaseTemplate.isZeroOrUnset())
                 return *current;
 
-            const ESM4::Creature* templated = searchCreatureTemplate(current->mBaseTemplate);
+            const ESM4::Creature* templated = searchCreatureTemplate(current->mBaseTemplate).mRecord;
             if (templated == nullptr || templated == current)
                 return *current;
 
@@ -121,23 +132,39 @@ namespace MWClass
         return *current;
     }
 
-    static std::vector<const ESM4::Creature*> getCreatureTemplateChain(const ESM4::Creature& creature)
+    static ESM4::CreatureTemplateChain getCreatureTemplateChain(const ESM4::Creature& creature)
     {
-        std::vector<const ESM4::Creature*> records;
+        ESM4::CreatureTemplateChain records;
         const ESM4::Creature* current = &creature;
-        for (int depth = 0; current != nullptr && depth < 16; ++depth)
+        records.push_back({ current, {}, false });
+        for (std::size_t depth = 1; depth < ESM4::sMaxCreatureTemplateDepth; ++depth)
         {
-            if (std::find(records.begin(), records.end(), current) != records.end())
-                break;
-            records.push_back(current);
             if (current->mBaseTemplate.isZeroOrUnset())
                 break;
 
-            const ESM4::Creature* templated = searchCreatureTemplate(current->mBaseTemplate);
-            if (templated == nullptr || templated == current)
+            const CreatureTemplateLookup templated = searchCreatureTemplate(current->mBaseTemplate);
+            if (templated.mRecord == nullptr)
                 break;
-            current = templated;
+
+            const auto duplicate = std::find_if(records.begin(), records.end(), [&](const auto& entry) {
+                return entry.mRecord != nullptr && entry.mRecord->mId == templated.mRecord->mId;
+            });
+            if (duplicate != records.end())
+                break;
+
+            records.push_back({ templated.mRecord, current->mBaseTemplate, templated.mThroughLevelledList });
+            current = templated.mRecord;
         }
+        return records;
+    }
+
+    static std::vector<const ESM4::Creature*> getLegacyCreatureTemplateRecords(const ESM4::Creature& creature)
+    {
+        const ESM4::CreatureTemplateChain chain = getCreatureTemplateChain(creature);
+        std::vector<const ESM4::Creature*> records;
+        records.reserve(chain.size());
+        for (const ESM4::CreatureTemplateChainEntry& entry : chain)
+            records.push_back(entry.mRecord);
         return records;
     }
 
@@ -363,15 +390,16 @@ namespace MWClass
         }
     }
 
-    static void initialiseActorStats(ESM4CreatureCustomData& data, const ESM4::Creature& creature)
+    static void initialiseActorStats(ESM4CreatureCustomData& data, const ESM4::Creature* statsRecord,
+        const ESM4::Creature* aiRecord, const ESM4::Creature& baseCreature)
     {
         MWMechanics::CreatureStats& stats = data.mCreatureStats;
-        stats.setLevel(getLevel(creature));
+        stats.setLevel(statsRecord != nullptr ? getLevel(*statsRecord) : 1);
 
         float health = 100.f;
-        if (creature.mIsFONV && creature.mHasFNVData)
+        if (statsRecord != nullptr && statsRecord->mIsFONV && statsRecord->mHasFNVData)
         {
-            const ESM4::Creature::FNVData& attributes = creature.mFNVData;
+            const ESM4::Creature::FNVData& attributes = statsRecord->mFNVData;
             stats.setAttribute(ESM::Attribute::Strength, attributes.strength);
             stats.setAttribute(ESM::Attribute::Intelligence, attributes.intelligence);
             // OpenMW's ESM3 stat shell has no Perception slot. Keep the same
@@ -386,9 +414,9 @@ namespace MWClass
             stats.setAttribute(ESM::Attribute::Luck, attributes.luck);
             health = static_cast<float>(attributes.health);
         }
-        else
+        else if (statsRecord != nullptr)
         {
-            const ESM4::AttributeValues& attributes = creature.mData.attribs;
+            const ESM4::AttributeValues& attributes = statsRecord->mData.attribs;
             stats.setAttribute(ESM::Attribute::Strength, attributes.strength ? attributes.strength : 50);
             stats.setAttribute(ESM::Attribute::Intelligence, attributes.intelligence ? attributes.intelligence : 25);
             stats.setAttribute(ESM::Attribute::Willpower, attributes.willpower ? attributes.willpower : 25);
@@ -397,20 +425,45 @@ namespace MWClass
             stats.setAttribute(ESM::Attribute::Endurance, attributes.endurance ? attributes.endurance : 50);
             stats.setAttribute(ESM::Attribute::Personality, attributes.personality ? attributes.personality : 25);
             stats.setAttribute(ESM::Attribute::Luck, attributes.luck ? attributes.luck : 50);
-            health = creature.mData.health > 0 ? static_cast<float>(creature.mData.health) : 100.f;
+            health = statsRecord->mData.health > 0 ? static_cast<float>(statsRecord->mData.health) : 100.f;
+        }
+        else
+        {
+            // A delegated category with no valid provider fails closed to a
+            // neutral shell instead of consuming the delegating record.
+            stats.setAttribute(ESM::Attribute::Strength, 50);
+            stats.setAttribute(ESM::Attribute::Intelligence, 25);
+            stats.setAttribute(ESM::Attribute::Willpower, 25);
+            stats.setAttribute(ESM::Attribute::Agility, 50);
+            stats.setAttribute(ESM::Attribute::Speed, 50);
+            stats.setAttribute(ESM::Attribute::Endurance, 50);
+            stats.setAttribute(ESM::Attribute::Personality, 25);
+            stats.setAttribute(ESM::Attribute::Luck, 50);
         }
 
+        const float fatigue
+            = statsRecord != nullptr && statsRecord->mIsFONV && statsRecord->mBaseConfig.fo3.fatigue > 0
+            ? static_cast<float>(statsRecord->mBaseConfig.fo3.fatigue)
+            : 100.f;
         stats.setHealth(health);
         stats.setMagicka(0.f);
-        stats.setFatigue(100.f);
+        stats.setFatigue(fatigue);
 
-        const int aggression
-            = creature.mIsFONV && creature.mHasFNVAIData ? creature.mFNVAIData.aggression : creature.mAIData.aggression;
-        const int confidence
-            = creature.mIsFONV && creature.mHasFNVAIData ? creature.mFNVAIData.confidence : creature.mAIData.confidence;
-        const int responsibility = creature.mIsFONV && creature.mHasFNVAIData
-            ? creature.mFNVAIData.responsibility
-            : creature.mAIData.responsibility;
+        int aggression = 0;
+        int confidence = 0;
+        int responsibility = 0;
+        if (aiRecord != nullptr && aiRecord->mIsFONV && aiRecord->mHasFNVAIData)
+        {
+            aggression = aiRecord->mFNVAIData.aggression;
+            confidence = aiRecord->mFNVAIData.confidence;
+            responsibility = aiRecord->mFNVAIData.responsibility;
+        }
+        else if (aiRecord != nullptr)
+        {
+            aggression = aiRecord->mAIData.aggression;
+            confidence = aiRecord->mAIData.confidence;
+            responsibility = aiRecord->mAIData.responsibility;
+        }
         stats.setAiSetting(MWMechanics::AiSetting::Hello, 30);
         stats.setAiSetting(MWMechanics::AiSetting::Fight,
             std::getenv("OPENMW_FNV_DISABLE_AI_PACKAGES") != nullptr ? 0 : aggression);
@@ -418,7 +471,23 @@ namespace MWClass
         stats.setAiSetting(MWMechanics::AiSetting::Alarm, responsibility);
 
         if (stats.isDead())
-            stats.setDeathAnimationFinished((creature.mFlags & ESM::FLAG_Persistent) != 0);
+            stats.setDeathAnimationFinished((baseCreature.mFlags & ESM::FLAG_Persistent) != 0);
+    }
+
+    static ESM4::CreatureTemplateCategories makeSingleCreatureCategories(const ESM4::Creature* record)
+    {
+        ESM4::CreatureTemplateCategories result;
+        result.mTraits = record;
+        result.mStats = record;
+        result.mFactions = record;
+        result.mActorEffects = record;
+        result.mAIData = record;
+        result.mAIPackages = record;
+        result.mModel = record;
+        result.mBaseData = record;
+        result.mInventory = record;
+        result.mScript = record;
+        return result;
     }
 
     ESM4CreatureCustomData& ESM4Creature::getCustomData(const MWWorld::ConstPtr& ptr)
@@ -430,38 +499,59 @@ namespace MWClass
         auto data = std::make_unique<ESM4CreatureCustomData>();
         ESM4CreatureCustomData& result = *data;
         const ESM4::Creature* creature = ptr.get<ESM4::Creature>()->mBase;
-        const ESM4::Creature& effective = getEffectiveCreature(*creature);
-        initialiseActorStats(result, effective);
+        if (creature->mIsFONV)
+            result.mTemplates = ESM4::resolveCreatureTemplateCategories(getCreatureTemplateChain(*creature));
+        else
+            result.mTemplates = makeSingleCreatureCategories(&getEffectiveCreature(*creature));
+
+        initialiseActorStats(result, result.mTemplates.mStats, result.mTemplates.mAIData, *creature);
         refData.setCustomData(std::move(data));
 
+        const ESM4::Creature* model = result.mTemplates.mModel;
+        const ESM4::Creature* traits = result.mTemplates.mTraits;
         Log(Debug::Verbose) << "FNV/ESM4 diag: initialized creature actor shell for \"" << creature->mEditorId << "\" ("
                          << ESM::RefId(creature->mId) << ") level=" << result.mCreatureStats.getLevel()
                          << " health=" << result.mCreatureStats.getHealth().getModified()
-                         << " model=" << effective.mModel << " kfCount=" << effective.mKf.size()
-                         << " baseFlags=0x" << std::hex << effective.mBaseConfig.fo3.flags << std::dec
-                         << " canWalk=" << ((effective.mBaseConfig.fo3.flags & ESM4::Creature::FO3_CanWalk) != 0)
-                         << " canSwim=" << ((effective.mBaseConfig.fo3.flags & ESM4::Creature::FO3_CanSwim) != 0)
-                         << " canFly=" << ((effective.mBaseConfig.fo3.flags & ESM4::Creature::FO3_CanFly) != 0)
-                         << " effective=" << effective.mEditorId << " effectiveId=" << ESM::RefId(effective.mId)
+                         << " model=" << (model != nullptr ? model->mModel : std::string{})
+                         << " kfCount=" << (model != nullptr ? model->mKf.size() : 0)
+                         << " modelResolved=" << static_cast<bool>(model)
+                         << " statsResolved=" << static_cast<bool>(result.mTemplates.mStats)
+                         << " aiResolved=" << static_cast<bool>(result.mTemplates.mAIData)
+                         << " traitsResolved=" << static_cast<bool>(traits)
                          << " template=" << ESM::RefId(creature->mBaseTemplate);
         return result;
     }
 
     std::string_view ESM4Creature::getModel(const MWWorld::ConstPtr& ptr) const
     {
-        const std::vector<const ESM4::Creature*> records
-            = getCreatureTemplateChain(*ptr.get<ESM4::Creature>()->mBase);
-        const ESM4::CreatureVisualTemplate visual = ESM4::resolveCreatureVisualTemplate(records);
-        if (visual.mModel != nullptr)
-            return visual.mModel->mModel;
-        if (visual.mNif != nullptr && !visual.mNif->mNif.empty())
-            return visual.mNif->mNif.front();
+        const ESM4::Creature* base = ptr.get<ESM4::Creature>()->mBase;
+        if (!base->mIsFONV)
+        {
+            const ESM4::CreatureVisualTemplate visual
+                = ESM4::resolveCreatureVisualTemplate(getLegacyCreatureTemplateRecords(*base));
+            if (visual.mModel != nullptr)
+                return visual.mModel->mModel;
+            if (visual.mNif != nullptr && !visual.mNif->mNif.empty())
+                return visual.mNif->mNif.front();
+            return {};
+        }
+
+        const ESM4::Creature* model = getCustomData(ptr).mTemplates.mModel;
+        if (model != nullptr && !model->mModel.empty())
+            return model->mModel;
+        if (model != nullptr && !model->mNif.empty())
+            return model->mNif.front();
         return {};
     }
 
     std::string_view ESM4Creature::getName(const MWWorld::ConstPtr& ptr) const
     {
         const ESM4::Creature* creature = ptr.get<ESM4::Creature>()->mBase;
+        if (creature->mIsFONV)
+        {
+            const ESM4::Creature* baseData = getCustomData(ptr).mTemplates.mBaseData;
+            return baseData != nullptr ? std::string_view(baseData->mFullName) : std::string_view{};
+        }
         if (!creature->mFullName.empty())
             return creature->mFullName;
         return getEffectiveCreature(*creature).mFullName;
@@ -480,7 +570,10 @@ namespace MWClass
     MWMechanics::CreatureStats& ESM4Creature::getCreatureStats(const MWWorld::Ptr& ptr) const
     {
         ESM4CreatureCustomData& data = getCustomData(ptr);
-        initialiseFnvAiSequence(data, ptr, getEffectiveCreature(*ptr.get<ESM4::Creature>()->mBase));
+        if (data.mTemplates.mAIPackages != nullptr)
+            initialiseFnvAiSequence(data, ptr, *data.mTemplates.mAIPackages);
+        else
+            data.mFnvAiSequenceInitialised = true;
         return data.mCreatureStats;
     }
 
@@ -498,10 +591,11 @@ namespace MWClass
 
     float ESM4Creature::getWalkSpeed(const MWWorld::Ptr& ptr) const
     {
-        const ESM4::Creature* creature = &getEffectiveCreature(*ptr.get<ESM4::Creature>()->mBase);
+        ESM4CreatureCustomData& data = getCustomData(ptr);
+        const ESM4::Creature* creature = data.mTemplates.mStats;
         return std::max(1.f,
-                   getCustomData(ptr).mCreatureStats.getAttribute(ESM::Attribute::Speed).getModified())
-            * 2.5f * getSpeedMultiplier(*creature);
+                   data.mCreatureStats.getAttribute(ESM::Attribute::Speed).getModified())
+            * 2.5f * (creature != nullptr ? getSpeedMultiplier(*creature) : 1.f);
     }
 
     float ESM4Creature::getRunSpeed(const MWWorld::Ptr& ptr) const
@@ -544,23 +638,26 @@ namespace MWClass
 
     bool ESM4Creature::canFly(const MWWorld::ConstPtr& ptr) const
     {
-        return (getEffectiveCreature(*ptr.get<ESM4::Creature>()->mBase).mBaseConfig.fo3.flags
-                   & ESM4::Creature::FO3_CanFly)
-            != 0;
+        const ESM4::Creature* base = ptr.get<ESM4::Creature>()->mBase;
+        const ESM4::Creature* model
+            = base->mIsFONV ? getCustomData(ptr).mTemplates.mModel : &getEffectiveCreature(*base);
+        return model != nullptr && (model->mBaseConfig.fo3.flags & ESM4::Creature::FO3_CanFly) != 0;
     }
 
     bool ESM4Creature::canSwim(const MWWorld::ConstPtr& ptr) const
     {
-        return (getEffectiveCreature(*ptr.get<ESM4::Creature>()->mBase).mBaseConfig.fo3.flags
-                   & ESM4::Creature::FO3_CanSwim)
-            != 0;
+        const ESM4::Creature* base = ptr.get<ESM4::Creature>()->mBase;
+        const ESM4::Creature* model
+            = base->mIsFONV ? getCustomData(ptr).mTemplates.mModel : &getEffectiveCreature(*base);
+        return model != nullptr && (model->mBaseConfig.fo3.flags & ESM4::Creature::FO3_CanSwim) != 0;
     }
 
     bool ESM4Creature::canWalk(const MWWorld::ConstPtr& ptr) const
     {
-        return (getEffectiveCreature(*ptr.get<ESM4::Creature>()->mBase).mBaseConfig.fo3.flags
-                   & ESM4::Creature::FO3_CanWalk)
-            != 0;
+        const ESM4::Creature* base = ptr.get<ESM4::Creature>()->mBase;
+        const ESM4::Creature* model
+            = base->mIsFONV ? getCustomData(ptr).mTemplates.mModel : &getEffectiveCreature(*base);
+        return model != nullptr && (model->mBaseConfig.fo3.flags & ESM4::Creature::FO3_CanWalk) != 0;
     }
 
     void ESM4Creature::adjustScale(
@@ -570,7 +667,10 @@ namespace MWClass
         // already used it while the render root only received the placed-reference scale, which made ravens
         // 1/2.5 size, mantises 2x size, and every other non-1.0 creature disagree with retail.  Apply the same
         // multiplicative class-scale contract used by native ESM3 creatures to both render and collision.
-        const ESM4::Creature& creature = getEffectiveCreature(*ptr.get<ESM4::Creature>()->mBase);
-        scale *= creature.mBaseScale;
+        const ESM4::Creature* base = ptr.get<ESM4::Creature>()->mBase;
+        const ESM4::Creature* stats
+            = base->mIsFONV ? getCustomData(ptr).mTemplates.mStats : &getEffectiveCreature(*base);
+        if (stats != nullptr)
+            scale *= stats->mBaseScale;
     }
 }
