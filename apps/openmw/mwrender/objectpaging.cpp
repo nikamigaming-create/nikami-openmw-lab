@@ -56,6 +56,12 @@
 namespace MWRender
 {
 
+    bool isObjectPagingChunkInsideActiveGrid(const osg::Vec2f& center, const osg::Vec4i& activeGrid)
+    {
+        return center.x() > activeGrid.x() && center.y() > activeGrid.y() && center.x() < activeGrid.z()
+            && center.y() < activeGrid.w();
+    }
+
     namespace
     {
         constexpr std::uint32_t sFalloutLodTelemetryLimit = 256;
@@ -1225,8 +1231,7 @@ namespace MWRender
                 if (!std::get<2>(chunkId))
                     return;
                 const osg::Vec2f& center = std::get<0>(chunkId);
-                const bool activeGrid = (center.x() > mActiveGrid.x() || center.y() > mActiveGrid.y()
-                    || center.x() < mActiveGrid.z() || center.y() < mActiveGrid.w());
+                const bool activeGrid = isObjectPagingChunkInsideActiveGrid(center, mActiveGrid);
                 if (!activeGrid)
                     return;
 

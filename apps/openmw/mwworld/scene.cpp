@@ -46,6 +46,7 @@
 #include "../mwbase/world.hpp"
 
 #include "../mwclass/esm4npc.hpp"
+#include "../mwclass/fnvfurniturelifecycle.hpp"
 
 #include "../mwrender/landmanager.hpp"
 #include "../mwrender/postprocessor.hpp"
@@ -530,8 +531,15 @@ namespace
             return FnvPackagePrePlacement::None;
 
         const bool furnitureTarget = store->get<ESM4::Furniture>().search(target->mBaseObj) != nullptr;
-        MWClass::ESM4Npc::setFurnitureState(ptr, MWClass::FalloutFurnitureState::None);
-        MWClass::ESM4Npc::setFurniturePlacement(ptr, {});
+        const MWClass::FalloutFurnitureState furnitureState = MWClass::ESM4Npc::getFurnitureState(ptr);
+        const MWClass::FalloutFurniturePlacement furniturePlacement = MWClass::ESM4Npc::getFurniturePlacement(ptr);
+        const bool retainFurnitureClaim = furnitureTarget && MWClass::shouldRetainFalloutFurnitureClaim(furnitureState,
+            furniturePlacement.mValid, furniturePlacement.mFurnitureRef == target->mId);
+        if (!retainFurnitureClaim)
+        {
+            MWClass::ESM4Npc::setFurnitureState(ptr, MWClass::FalloutFurnitureState::None);
+            MWClass::ESM4Npc::setFurniturePlacement(ptr, {});
+        }
 
         const ESM::RefId& currentCellId = ptr.getCell()->getCell()->getId();
         const bool sameCell = target->mParent == currentCellId;
@@ -540,6 +548,14 @@ namespace
                          << " targetRef=" << target->mEditorId << " targetParent=" << target->mParent
                          << " currentCell=" << currentCellId << " sameCell=" << sameCell << " for "
                          << traits->mEditorId;
+
+        if (retainFurnitureClaim)
+        {
+            Log(Debug::Verbose) << "FNV/ESM4 diag: retained active furniture claim package="
+                                << selected->mEditorId << " targetRef=" << target->mEditorId << " state="
+                                << static_cast<int>(furnitureState) << " for " << traits->mEditorId;
+            return FnvPackagePrePlacement::None;
+        }
 
         // A scheduled package describes an AI goal, not a license to teleport a
         // persistent actor into an unloaded interior while its exterior cell is

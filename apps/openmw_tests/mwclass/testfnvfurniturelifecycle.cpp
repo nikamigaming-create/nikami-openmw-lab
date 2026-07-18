@@ -50,4 +50,22 @@ namespace
         EXPECT_FALSE(MWClass::needsFalloutFurnitureAnchorRecovery(
             entering, osg::Vec3f(100.f, 200.f, 300.f), 2.f, anchor, 0.25f));
     }
+
+    TEST(FnvFurnitureLifecycleTest, FurnitureStateChangesInvalidateTheIdleAnimationCache)
+    {
+        EXPECT_FALSE(MWClass::needsFalloutFurnitureIdleRefresh(FalloutFurnitureState::None, "idle"));
+        EXPECT_TRUE(MWClass::needsFalloutFurnitureIdleRefresh(FalloutFurnitureState::Seated, "idle"));
+        EXPECT_FALSE(MWClass::needsFalloutFurnitureIdleRefresh(FalloutFurnitureState::Seated, "chairsit"));
+        EXPECT_TRUE(MWClass::needsFalloutFurnitureIdleRefresh(FalloutFurnitureState::Approaching, "chairsit"));
+        EXPECT_TRUE(MWClass::needsFalloutFurnitureIdleRefresh(FalloutFurnitureState::Exiting, "chairsit"));
+    }
+
+    TEST(FnvFurnitureLifecycleTest, SceneReloadRetainsOnlyTheMatchingActiveFurnitureClaim)
+    {
+        EXPECT_TRUE(MWClass::shouldRetainFalloutFurnitureClaim(FalloutFurnitureState::Seated, true, true));
+        EXPECT_TRUE(MWClass::shouldRetainFalloutFurnitureClaim(FalloutFurnitureState::Entering, true, true));
+        EXPECT_FALSE(MWClass::shouldRetainFalloutFurnitureClaim(FalloutFurnitureState::None, true, true));
+        EXPECT_FALSE(MWClass::shouldRetainFalloutFurnitureClaim(FalloutFurnitureState::Seated, false, true));
+        EXPECT_FALSE(MWClass::shouldRetainFalloutFurnitureClaim(FalloutFurnitureState::Seated, true, false));
+    }
 }

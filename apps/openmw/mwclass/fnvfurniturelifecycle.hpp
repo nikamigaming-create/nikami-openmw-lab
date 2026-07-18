@@ -2,6 +2,7 @@
 #define GAME_MWCLASS_FNVFURNITURELIFECYCLE_H
 
 #include <cmath>
+#include <string_view>
 #include <vector>
 
 #include "esm4npc.hpp"
@@ -48,6 +49,18 @@ namespace MWClass
             .mPublishState = publishedState != desiredState,
             .mMaintainAnchor = phase == FalloutFurniturePackagePhase::Seated,
         };
+    }
+
+    constexpr bool needsFalloutFurnitureIdleRefresh(
+        FalloutFurnitureState state, std::string_view currentIdle)
+    {
+        return (state == FalloutFurnitureState::Seated) != (currentIdle == "chairsit");
+    }
+
+    constexpr bool shouldRetainFalloutFurnitureClaim(
+        FalloutFurnitureState state, bool placementValid, bool sameFurniture)
+    {
+        return state != FalloutFurnitureState::None && placementValid && sameFurniture;
     }
 
     inline bool needsFalloutFurnitureAnchorRecovery(const FalloutFurnitureLifecycleAction& action,

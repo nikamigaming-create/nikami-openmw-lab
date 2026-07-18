@@ -60,6 +60,7 @@
 #include "../mwbase/world.hpp"
 
 #include "../mwclass/esm4npc.hpp"
+#include "../mwclass/fnvfurniturelifecycle.hpp"
 
 #include "../mwworld/class.hpp"
 #include "../mwworld/esmstore.hpp"
@@ -1059,7 +1060,13 @@ namespace MWMechanics
             return;
         }
 
-        if (!force && idle == mIdleState && (mAnimation->isPlaying(mCurrentIdle) || !mAnimQueue.empty()))
+        const MWClass::FalloutFurnitureState falloutFurnitureState = mPtr.getType() == ESM::REC_NPC_4
+            ? MWClass::ESM4Npc::getFurnitureState(mPtr)
+            : MWClass::FalloutFurnitureState::None;
+        const bool falloutFurnitureIdleRefresh
+            = MWClass::needsFalloutFurnitureIdleRefresh(falloutFurnitureState, mCurrentIdle);
+        if (!force && !falloutFurnitureIdleRefresh && idle == mIdleState
+            && (mAnimation->isPlaying(mCurrentIdle) || !mAnimQueue.empty()))
             return;
 
         mIdleState = idle;
@@ -1073,9 +1080,6 @@ namespace MWMechanics
 
         MWRender::Animation::AnimPriority priority = getIdlePriority(mIdleState);
         size_t numLoops = std::numeric_limits<uint32_t>::max();
-        const MWClass::FalloutFurnitureState falloutFurnitureState = mPtr.getType() == ESM::REC_NPC_4
-            ? MWClass::ESM4Npc::getFurnitureState(mPtr)
-            : MWClass::FalloutFurnitureState::None;
         const bool falloutFurnitureSeated = falloutFurnitureState == MWClass::FalloutFurnitureState::Seated;
         const bool falloutFurnitureActive = falloutFurnitureState != MWClass::FalloutFurnitureState::None;
 
