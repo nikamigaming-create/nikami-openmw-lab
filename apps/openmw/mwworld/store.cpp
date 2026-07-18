@@ -1384,6 +1384,8 @@ template class MWWorld::TypedDynamicStore<ESM4::Projectile>;
 template class MWWorld::TypedDynamicStore<ESM4::ActorValueInformation>;
 template class MWWorld::TypedDynamicStore<ESM4::Faction>;
 template class MWWorld::TypedDynamicStore<ESM4::Perk>;
+template class MWWorld::TypedDynamicStore<ESM4::RecipeCategory>;
+template class MWWorld::TypedDynamicStore<ESM4::Recipe>;
 template class MWWorld::TypedDynamicStore<ESM4::Quest>;
 template class MWWorld::TypedDynamicStore<ESM4::Race>;
 template class MWWorld::TypedDynamicStore<ESM4::Region>;

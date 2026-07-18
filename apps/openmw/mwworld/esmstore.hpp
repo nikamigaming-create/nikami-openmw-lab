@@ -128,6 +128,8 @@ namespace ESM4
     struct Projectile;
     struct Quest;
     struct Race;
+    struct Recipe;
+    struct RecipeCategory;
     struct Region;
     struct Reference;
     struct Script;
@@ -202,7 +204,8 @@ namespace MWWorld
 
             // StoreTuple is an ABI-like compile-time ordinal shared by inline get<T>() call sites.
             // New stores must be appended so an incremental build can never reinterpret an existing slot.
-            Store<ESM4::Projectile>, Store<ESM4::ActorValueInformation>, Store<ESM4::Faction>, Store<ESM4::Perk>>;
+            Store<ESM4::Projectile>, Store<ESM4::ActorValueInformation>, Store<ESM4::Faction>, Store<ESM4::Perk>,
+            Store<ESM4::RecipeCategory>, Store<ESM4::Recipe>>;
 
     private:
         template <typename T>

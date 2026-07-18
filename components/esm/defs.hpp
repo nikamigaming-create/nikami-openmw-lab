@@ -245,6 +245,8 @@ namespace ESM
         REC_PROJ4 = esm4Recname(ESM4::REC_PROJ), // Projectile
         REC_QUST4 = esm4Recname(ESM4::REC_QUST), // Quest
         REC_RACE4 = esm4Recname(ESM4::REC_RACE), // Race / Creature type
+        REC_RCCT4 = esm4Recname(ESM4::REC_RCCT), // Recipe Category
+        REC_RCPE4 = esm4Recname(ESM4::REC_RCPE), // Recipe
         REC_REFR4 = esm4Recname(ESM4::REC_REFR), // Object Reference
         REC_REGN4 = esm4Recname(ESM4::REC_REGN), // Region (Audio/Weather)
         REC_RELA4 = esm4Recname(ESM4::REC_RELA), // Relationship
