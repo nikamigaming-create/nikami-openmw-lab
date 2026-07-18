@@ -1,6 +1,5 @@
 #include "skyutil.hpp"
 
-#include <algorithm>
 #include <array>
 #include <cmath>
 #include <initializer_list>
@@ -12,7 +11,6 @@
 #include <osg/ColorMask>
 #include <osg/Depth>
 #include <osg/Geometry>
-#include <osg/Image>
 #include <osg/Material>
 #include <osg/OcclusionQueryNode>
 #include <osg/PositionAttitudeTransform>
@@ -172,32 +170,10 @@ namespace
 
         return VFS::Path::Normalized{ std::string(fallback) };
     }
-
-    osg::ref_ptr<osg::Texture2D> createEmptyFalloutCloudTexture()
-    {
-        osg::ref_ptr<osg::Image> image = new osg::Image;
-        image->allocateImage(1, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE);
-        std::fill_n(image->data(), 4, static_cast<unsigned char>(0));
-        image->setFileName("__openmw_empty_fallout_cloud__");
-
-        osg::ref_ptr<osg::Texture2D> texture = new osg::Texture2D(image);
-        texture->setFilter(osg::Texture::MAG_FILTER, osg::Texture::LINEAR);
-        texture->setFilter(osg::Texture::MIN_FILTER, osg::Texture::LINEAR);
-        return texture;
-    }
 }
 
 namespace MWRender
 {
-    bool hasVisibleFalloutCloudContribution(
-        const std::string& currentTexture, const std::string& nextTexture, float blendFactor)
-    {
-        if (!std::isfinite(blendFactor))
-            return false;
-        const float blend = std::clamp(blendFactor, 0.f, 1.f);
-        return (!currentTexture.empty() && blend < 1.f) || (!nextTexture.empty() && blend > 0.f);
-    }
-
     osg::ref_ptr<osg::Material> createUnlitMaterial(osg::Material::ColorMode colorMode)
     {
         osg::ref_ptr<osg::Material> mat = new osg::Material;
@@ -633,24 +609,13 @@ namespace MWRender
     }
 
     CloudUpdater::CloudUpdater()
-        : mEmptyTexture(createEmptyFalloutCloudTexture())
-        , mOpacity(0.f)
+        : mOpacity(0.f)
     {
     }
 
     void CloudUpdater::setTexture(osg::ref_ptr<osg::Texture2D> texture)
     {
         mTexture = texture;
-    }
-
-    void CloudUpdater::setBlendTexture(osg::ref_ptr<osg::Texture2D> texture)
-    {
-        mBlendTexture = texture;
-    }
-
-    void CloudUpdater::setBlendFactor(float factor)
-    {
-        mBlendFactor = std::isfinite(factor) ? std::clamp(factor, 0.f, 1.f) : 0.f;
     }
 
     void CloudUpdater::setEmissionColor(const osg::Vec4f& emissionColor)
@@ -703,19 +668,18 @@ namespace MWRender
         osg::ref_ptr<osg::TexMat> texmat = new osg::TexMat;
         stateset->setTextureAttributeAndModes(0, texmat);
 
-        osg::Texture2D* currentTexture = mTexture ? mTexture.get() : mEmptyTexture.get();
-        stateset->setTextureAttributeAndModes(0, currentTexture, sRetailLeafState);
+        stateset->setTextureAttributeAndModes(0, mTexture, sRetailLeafState);
         stateset->setTextureAttributeAndModes(0, new SceneUtil::TextureType("diffuseMap"),
             sRetailLeafState);
 
         if (mFalloutCloudShader)
         {
-            // Retail SKYTEX.pso always receives two cloud samplers. Explicit black textures represent an absent side
-            // of a transition, matching the shader's all-black sentinel without retaining a preceding WTHR binding.
+            // Retail SKYTEX.pso always receives two cloud samplers. Outside a weather transition both stages point
+            // at the same texture and Params.x is zero; preserving that contract also avoids depending on a stale
+            // sampler value left by a preceding sky draw.
             osg::ref_ptr<osg::TexMat> blendTexmat = new osg::TexMat;
             stateset->setTextureAttributeAndModes(1, blendTexmat, sRetailLeafState);
-            osg::Texture2D* blendTexture = mBlendTexture ? mBlendTexture.get() : mEmptyTexture.get();
-            stateset->setTextureAttributeAndModes(1, blendTexture, sRetailLeafState);
+            stateset->setTextureAttributeAndModes(1, mTexture, sRetailLeafState);
             stateset->setTextureAttributeAndModes(1, new SceneUtil::TextureType("falloutCloudBlendMap"),
                 sRetailLeafState);
             stateset->addUniform(new osg::Uniform("diffuseMap", 0), sRetailLeafState);
@@ -742,13 +706,9 @@ namespace MWRender
     {
         constexpr osg::StateAttribute::OverrideValue sRetailLeafState
             = osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE | osg::StateAttribute::PROTECTED;
-        osg::Texture2D* currentTexture = mTexture ? mTexture.get() : mEmptyTexture.get();
-        stateset->setTextureAttributeAndModes(0, currentTexture, sRetailLeafState);
+        stateset->setTextureAttributeAndModes(0, mTexture, sRetailLeafState);
         if (mFalloutCloudShader)
-        {
-            osg::Texture2D* blendTexture = mBlendTexture ? mBlendTexture.get() : mEmptyTexture.get();
-            stateset->setTextureAttributeAndModes(1, blendTexture, sRetailLeafState);
-        }
+            stateset->setTextureAttributeAndModes(1, mTexture, sRetailLeafState);
 
         osg::Material* mat = static_cast<osg::Material*>(stateset->getAttribute(osg::StateAttribute::MATERIAL));
         mat->setEmission(osg::Material::FRONT_AND_BACK, mEmissionColor);
@@ -760,7 +720,7 @@ namespace MWRender
             osg::TexMat* blendTexMat
                 = static_cast<osg::TexMat*>(stateset->getTextureAttribute(1, osg::StateAttribute::TEXMAT));
             blendTexMat->setMatrix(mTexMat);
-            stateset->getUniform("falloutCloudBlendFactor")->set(mBlendFactor);
+            stateset->getUniform("falloutCloudBlendFactor")->set(0.f);
             stateset->getUniform("falloutCloudColor")->set(mEmissionColor);
             stateset->getUniform("falloutCloudSkyLowerColor")->set(mFalloutSkyLowerColor);
             stateset->getUniform("falloutCloudSkyUpperColor")->set(mFalloutSkyUpperColor);
@@ -775,11 +735,9 @@ namespace MWRender
                                  << mTexture->getImage()->getFileName() << " size=" << mTexture->getImage()->s()
                                  << 'x' << mTexture->getImage()->t() << " diffuseUnit=" << diffuseUnit
                                  << " blendUnit=" << blendUnit << " unit0Object="
-                                 << (stateset->getTextureAttribute(0, osg::StateAttribute::TEXTURE) == currentTexture)
+                                 << (stateset->getTextureAttribute(0, osg::StateAttribute::TEXTURE) == mTexture)
                                  << " unit1Object="
-                                 << (stateset->getTextureAttribute(1, osg::StateAttribute::TEXTURE)
-                                        == (mBlendTexture ? mBlendTexture.get() : mEmptyTexture.get()))
-                                 << " blendFactor=" << mBlendFactor
+                                 << (stateset->getTextureAttribute(1, osg::StateAttribute::TEXTURE) == mTexture)
                                  << " callbacks=weather-exclusive";
                 mLoggedFalloutBinding = true;
             }

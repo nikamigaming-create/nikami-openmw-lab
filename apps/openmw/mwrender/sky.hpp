@@ -180,9 +180,7 @@ namespace MWRender
         std::string mClouds;
         std::string mNextClouds;
         std::array<std::string, WeatherResult::sFalloutCloudLayerCount> mFalloutClouds;
-        std::array<std::string, WeatherResult::sFalloutCloudLayerCount> mFalloutNextClouds;
         std::array<osg::Vec4f, WeatherResult::sFalloutCloudLayerCount> mFalloutCloudColours{};
-        float mFalloutCloudBlendFactor = 0.f;
         float mCloudBlendFactor;
         float mCloudSpeed;
         float mStarsOpacity;

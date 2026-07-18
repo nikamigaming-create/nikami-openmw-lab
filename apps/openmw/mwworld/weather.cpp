@@ -305,31 +305,6 @@ namespace MWWorld
             lerp(current.mPower, next.mPower, factor) };
     }
 
-    void interpolateFalloutCloudLayers(const MWRender::WeatherResult& current,
-        const MWRender::WeatherResult& next, float factor, MWRender::WeatherResult& result)
-    {
-        result.mHasFalloutCloudLayers = current.mHasFalloutCloudLayers && next.mHasFalloutCloudLayers;
-        result.mFalloutCloudTextures = {};
-        result.mFalloutNextCloudTextures = {};
-        result.mFalloutCloudSpeeds = {};
-        result.mFalloutCloudColors = {};
-        result.mFalloutCloudBlendFactor = 0.f;
-        if (!result.mHasFalloutCloudLayers)
-            return;
-
-        const float blend = std::isfinite(factor) ? std::clamp(factor, 0.f, 1.f) : 0.f;
-        result.mFalloutCloudTextures = current.mFalloutCloudTextures;
-        result.mFalloutNextCloudTextures = next.mFalloutCloudTextures;
-        result.mFalloutCloudBlendFactor = blend;
-        for (std::size_t layer = 0; layer < result.mFalloutCloudTextures.size(); ++layer)
-        {
-            result.mFalloutCloudSpeeds[layer]
-                = lerp(current.mFalloutCloudSpeeds[layer], next.mFalloutCloudSpeeds[layer], blend);
-            result.mFalloutCloudColors[layer]
-                = lerp(current.mFalloutCloudColors[layer], next.mFalloutCloudColors[layer], blend);
-        }
-    }
-
     FalloutWeatherFog sampleFalloutWeatherFog(const FalloutWeatherFogSamples& samples, float gameHour,
         const TimeOfDaySettings& timeSettings, float daytimeColorExtension)
     {
@@ -2111,17 +2086,11 @@ namespace MWWorld
 
         mResult.mCloudSpeed = current.mCloudSpeed;
         mResult.mFalloutCloudRgbMultiplier = 1.f;
-        mResult.mFalloutCloudTextures = {};
-        mResult.mFalloutNextCloudTextures = {};
-        mResult.mFalloutCloudSpeeds = {};
-        mResult.mFalloutCloudColors = {};
-        mResult.mFalloutCloudBlendFactor = 0.f;
         mResult.mHasFalloutCloudLayers = current.mFalloutCloudTextures && current.mFalloutCloudSpeeds
             && current.mFalloutCloudColors;
         if (mResult.mHasFalloutCloudLayers)
         {
             mResult.mFalloutCloudTextures = *current.mFalloutCloudTextures;
-            mResult.mFalloutNextCloudTextures = *current.mFalloutCloudTextures;
             mResult.mFalloutCloudSpeeds = *current.mFalloutCloudSpeeds;
             for (std::size_t layer = 0; layer < mResult.mFalloutCloudColors.size(); ++layer)
             {
@@ -2308,7 +2277,19 @@ namespace MWWorld
 
         mResult.mWindSpeed = lerp(mResult.mCurrentWindSpeed, mResult.mNextWindSpeed, factor);
         mResult.mCloudSpeed = lerp(current.mCloudSpeed, other.mCloudSpeed, factor);
-        interpolateFalloutCloudLayers(current, other, factor, mResult);
+        mResult.mHasFalloutCloudLayers = current.mHasFalloutCloudLayers && other.mHasFalloutCloudLayers;
+        if (mResult.mHasFalloutCloudLayers)
+        {
+            for (std::size_t layer = 0; layer < mResult.mFalloutCloudTextures.size(); ++layer)
+            {
+                mResult.mFalloutCloudTextures[layer] = factor < 0.5f ? current.mFalloutCloudTextures[layer]
+                                                                     : other.mFalloutCloudTextures[layer];
+                mResult.mFalloutCloudSpeeds[layer]
+                    = lerp(current.mFalloutCloudSpeeds[layer], other.mFalloutCloudSpeeds[layer], factor);
+                mResult.mFalloutCloudColors[layer]
+                    = lerp(current.mFalloutCloudColors[layer], other.mFalloutCloudColors[layer], factor);
+            }
+        }
         mResult.mGlareView = lerp(current.mGlareView, other.mGlareView, factor);
         mResult.mNightFade = lerp(current.mNightFade, other.mNightFade, factor);
 

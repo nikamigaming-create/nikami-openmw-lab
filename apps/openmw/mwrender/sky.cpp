@@ -1539,81 +1539,39 @@ namespace MWRender
 
         if (mHasFalloutCloudLayers)
         {
-            mFalloutCloudBlendFactor = std::isfinite(weather.mFalloutCloudBlendFactor)
-                ? std::clamp(weather.mFalloutCloudBlendFactor, 0.f, 1.f)
-                : 0.f;
             for (std::size_t layer = 0; layer < mFalloutClouds.size(); ++layer)
             {
                 const std::string& cloud = weather.mFalloutCloudTextures[layer];
-                const std::string& nextCloud = weather.mFalloutNextCloudTextures[layer];
                 osg::ref_ptr<CloudUpdater>& updater = mFalloutCloudUpdaters[layer];
                 if (mFalloutClouds[layer] != cloud)
                 {
                     mFalloutClouds[layer] = cloud;
-                    if (updater)
+                    if (!cloud.empty() && updater)
                     {
-                        if (cloud.empty())
-                            updater->setTexture(nullptr);
-                        else
+                        const VFS::Path::Normalized requested = Misc::ResourceHelpers::correctTexturePath(
+                            VFS::Path::toNormalized(cloud), mSceneManager->getVFS());
+                        const VFS::Path::Normalized texture
+                            = resolveWeatherCloudTexture(mSceneManager->getVFS(), requested);
+                        osg::ref_ptr<osg::Image> cloudImage = mSceneManager->getImageManager()->getImage(texture);
+                        osg::ref_ptr<osg::Texture2D> cloudTex = new osg::Texture2D(cloudImage);
+                        cloudTex->setWrap(osg::Texture::WRAP_S, osg::Texture::REPEAT);
+                        cloudTex->setWrap(osg::Texture::WRAP_T, osg::Texture::REPEAT);
+                        // Retail s0/s1: linear magnification, anisotropic minification, linear mip interpolation,
+                        // max anisotropy 15 in the main HDR pass.
+                        cloudTex->setFilter(osg::Texture::MAG_FILTER, osg::Texture::LINEAR);
+                        cloudTex->setFilter(osg::Texture::MIN_FILTER, osg::Texture::LINEAR_MIPMAP_LINEAR);
+                        cloudTex->setMaxAnisotropy(15.f);
+                        updater->setTexture(std::move(cloudTex));
+                        if (std::getenv("OPENMW_FNV_PROOF_WEATHER_ID") != nullptr)
                         {
-                            const VFS::Path::Normalized requested = Misc::ResourceHelpers::correctTexturePath(
-                                VFS::Path::toNormalized(cloud), mSceneManager->getVFS());
-                            const VFS::Path::Normalized texture
-                                = resolveWeatherCloudTexture(mSceneManager->getVFS(), requested);
-                            osg::ref_ptr<osg::Image> cloudImage = mSceneManager->getImageManager()->getImage(texture);
-                            osg::ref_ptr<osg::Texture2D> cloudTex = new osg::Texture2D(cloudImage);
-                            cloudTex->setWrap(osg::Texture::WRAP_S, osg::Texture::REPEAT);
-                            cloudTex->setWrap(osg::Texture::WRAP_T, osg::Texture::REPEAT);
-                            // Retail s0/s1: linear magnification, anisotropic minification, linear mip interpolation,
-                            // max anisotropy 15 in the main HDR pass.
-                            cloudTex->setFilter(osg::Texture::MAG_FILTER, osg::Texture::LINEAR);
-                            cloudTex->setFilter(osg::Texture::MIN_FILTER, osg::Texture::LINEAR_MIPMAP_LINEAR);
-                            cloudTex->setMaxAnisotropy(15.f);
-                            updater->setTexture(std::move(cloudTex));
-                            if (std::getenv("OPENMW_FNV_PROOF_WEATHER_ID") != nullptr)
-                            {
-                                Log(Debug::Info) << "FNV/ESM4 proof: bound current weather cloud texture layer="
-                                                 << layer << " requested=" << requested.value()
-                                                 << " resolved=" << texture.value()
-                                                 << " image=" << static_cast<bool>(cloudImage)
-                                                 << " width=" << (cloudImage ? cloudImage->s() : 0)
-                                                 << " height=" << (cloudImage ? cloudImage->t() : 0)
-                                                 << " pixelFormat=" << (cloudImage ? cloudImage->getPixelFormat() : 0)
-                                                 << " internalFormat="
-                                                 << (cloudImage ? cloudImage->getInternalTextureFormat() : 0);
-                            }
-                        }
-                    }
-                }
-
-                if (mFalloutNextClouds[layer] != nextCloud)
-                {
-                    mFalloutNextClouds[layer] = nextCloud;
-                    if (updater)
-                    {
-                        if (nextCloud.empty())
-                            updater->setBlendTexture(nullptr);
-                        else
-                        {
-                            const VFS::Path::Normalized requested = Misc::ResourceHelpers::correctTexturePath(
-                                VFS::Path::toNormalized(nextCloud), mSceneManager->getVFS());
-                            const VFS::Path::Normalized texture
-                                = resolveWeatherCloudTexture(mSceneManager->getVFS(), requested);
-                            osg::ref_ptr<osg::Image> cloudImage = mSceneManager->getImageManager()->getImage(texture);
-                            osg::ref_ptr<osg::Texture2D> cloudTex = new osg::Texture2D(cloudImage);
-                            cloudTex->setWrap(osg::Texture::WRAP_S, osg::Texture::REPEAT);
-                            cloudTex->setWrap(osg::Texture::WRAP_T, osg::Texture::REPEAT);
-                            cloudTex->setFilter(osg::Texture::MAG_FILTER, osg::Texture::LINEAR);
-                            cloudTex->setFilter(osg::Texture::MIN_FILTER, osg::Texture::LINEAR_MIPMAP_LINEAR);
-                            cloudTex->setMaxAnisotropy(15.f);
-                            updater->setBlendTexture(std::move(cloudTex));
-                            if (std::getenv("OPENMW_FNV_PROOF_WEATHER_ID") != nullptr)
-                            {
-                                Log(Debug::Info) << "FNV/ESM4 proof: bound next weather cloud texture layer=" << layer
-                                                 << " requested=" << requested.value()
-                                                 << " resolved=" << texture.value()
-                                                 << " image=" << static_cast<bool>(cloudImage);
-                            }
+                            Log(Debug::Info) << "FNV/ESM4 proof: bound weather cloud texture layer=" << layer
+                                             << " requested=" << requested.value() << " resolved=" << texture.value()
+                                             << " image=" << static_cast<bool>(cloudImage)
+                                             << " width=" << (cloudImage ? cloudImage->s() : 0)
+                                             << " height=" << (cloudImage ? cloudImage->t() : 0)
+                                             << " pixelFormat=" << (cloudImage ? cloudImage->getPixelFormat() : 0)
+                                             << " internalFormat="
+                                             << (cloudImage ? cloudImage->getInternalTextureFormat() : 0);
                         }
                     }
                 }
@@ -1621,7 +1579,6 @@ namespace MWRender
                 mFalloutCloudSpeeds[layer] = weather.mFalloutCloudSpeeds[layer];
                 if (updater)
                 {
-                    updater->setBlendFactor(mFalloutCloudBlendFactor);
                     updater->setFalloutSkyColors(weather.mSkyLowerColor, weather.mSkyColor);
                     // SKYTEX Params.y is not layer alpha. Retail feeds the composed image-space
                     // LuminanceRampNoTexture trait here and applies it to RGB only in the pixel shader.
@@ -1642,8 +1599,7 @@ namespace MWRender
 
                 if (mFalloutCloudLayerNodes[layer])
                 {
-                    const bool visible = updater
-                        && hasVisibleFalloutCloudContribution(cloud, nextCloud, mFalloutCloudBlendFactor);
+                    const bool visible = updater && !cloud.empty();
                     mFalloutCloudLayerNodes[layer]->setNodeMask(visible ? ~0u : 0u);
                 }
             }
@@ -1656,9 +1612,7 @@ namespace MWRender
                     for (std::size_t layer = 0; layer < mFalloutClouds.size(); ++layer)
                     {
                         Log(Debug::Info) << "FNV/ESM4 proof: weather cloud layer=" << layer << " texture="
-                                         << mFalloutClouds[layer] << " nextTexture=" << mFalloutNextClouds[layer]
-                                         << " blend=" << mFalloutCloudBlendFactor
-                                         << " speed=" << mFalloutCloudSpeeds[layer]
+                                         << mFalloutClouds[layer] << " speed=" << mFalloutCloudSpeeds[layer]
                                          << " color=(" << formatVec4(mFalloutCloudColours[layer]) << ") visible="
                                          << (mFalloutCloudLayerNodes[layer]
                                                 && mFalloutCloudLayerNodes[layer]->getNodeMask())

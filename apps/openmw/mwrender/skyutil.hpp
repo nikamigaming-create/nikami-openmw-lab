@@ -9,7 +9,6 @@
 #include <osg/Vec4f>
 
 #include <array>
-#include <string>
 
 #include <osgParticle/ConstantRateCounter>
 #include <osgParticle/Shooter>
@@ -81,8 +80,6 @@ namespace MWRender
 
         bool mHasFalloutCloudLayers = false;
         std::array<std::string, sFalloutCloudLayerCount> mFalloutCloudTextures;
-        std::array<std::string, sFalloutCloudLayerCount> mFalloutNextCloudTextures;
-        float mFalloutCloudBlendFactor = 0.f;
         std::array<float, sFalloutCloudLayerCount> mFalloutCloudSpeeds{};
         std::array<osg::Vec4f, sFalloutCloudLayerCount> mFalloutCloudColors{};
         // Fallout SKYTEX Params.y. This is the composed IMGS LuminanceRampNoTexture trait and multiplies both cloud
@@ -139,8 +136,6 @@ namespace MWRender
 
     osg::ref_ptr<osg::Material> createAlphaTrackingUnlitMaterial();
     osg::ref_ptr<osg::Material> createUnlitMaterial(osg::Material::ColorMode colorMode = osg::Material::OFF);
-    bool hasVisibleFalloutCloudContribution(
-        const std::string& currentTexture, const std::string& nextTexture, float blendFactor);
 
     class OcclusionCallback
     {
@@ -209,8 +204,6 @@ namespace MWRender
         CloudUpdater();
 
         void setTexture(osg::ref_ptr<osg::Texture2D> texture);
-        void setBlendTexture(osg::ref_ptr<osg::Texture2D> texture);
-        void setBlendFactor(float factor);
         void setEmissionColor(const osg::Vec4f& emissionColor);
         void setFalloutSkyColors(const osg::Vec4f& skyLowerColor, const osg::Vec4f& skyUpperColor);
         void setOpacity(float opacity);
@@ -223,13 +216,10 @@ namespace MWRender
 
     private:
         osg::ref_ptr<osg::Texture2D> mTexture;
-        osg::ref_ptr<osg::Texture2D> mBlendTexture;
-        osg::ref_ptr<osg::Texture2D> mEmptyTexture;
         osg::Vec4f mEmissionColor;
         osg::Vec4f mFalloutSkyLowerColor = osg::Vec4f(0.f, 0.f, 0.f, 1.f);
         osg::Vec4f mFalloutSkyUpperColor = osg::Vec4f(0.f, 0.f, 0.f, 1.f);
         float mOpacity;
-        float mBlendFactor = 0.f;
         bool mFalloutCloudShader = false;
         bool mLoggedFalloutBinding = false;
         osg::Matrixf mTexMat;
