@@ -72,6 +72,19 @@ namespace
     constexpr std::uint32_t sDoorDestRef = 0x01108745;
     constexpr std::uint32_t sDoorDestCell = 0x01104c11;
 
+    TEST(FnvCreatureAiPolicyTest, FlyAndWalkSandboxRetainsAuthoredPerch)
+    {
+        constexpr std::uint32_t flyAndWalk
+            = ESM4::Creature::FO3_CanFly | ESM4::Creature::FO3_CanWalk;
+
+        EXPECT_TRUE(MWClass::fnvAmbientFlyerRetainsAuthoredPosition(flyAndWalk, 11));
+        EXPECT_TRUE(MWClass::fnvAmbientFlyerRetainsAuthoredPosition(flyAndWalk, 12));
+        EXPECT_FALSE(MWClass::fnvAmbientFlyerRetainsAuthoredPosition(ESM4::Creature::FO3_CanFly, 12));
+        EXPECT_FALSE(MWClass::fnvAmbientFlyerRetainsAuthoredPosition(ESM4::Creature::FO3_CanWalk, 12));
+        EXPECT_FALSE(MWClass::fnvAmbientFlyerRetainsAuthoredPosition(flyAndWalk, 5));
+        EXPECT_FALSE(MWClass::fnvAmbientFlyerRetainsAuthoredPosition(flyAndWalk, 6));
+    }
+
     class TestLuaManager final : public MWBase::LuaManager
     {
     public:

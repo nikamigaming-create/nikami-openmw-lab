@@ -61,6 +61,18 @@ namespace NifBullet
             if (findBoundingBox(*node))
                 break;
 
+        // Bethesda actor skeletons commonly carry their collision dimensions in a root BSBound extra instead of
+        // a node named "Bounding Box". Keep the legacy named-node contract as the first choice, then consume the
+        // Bethesda representation before actor physics has to synthesize a much larger fallback capsule. Only
+        // inspect roots: a child-local BSBound would need its transform folded into a root-space AABB first.
+        if (nif.getBethVersion() >= Nif::NIFFile::BethVersion::BETHVER_FO3
+            && mShape->mCollisionBox.mExtents.length2() == 0.f)
+        {
+            for (const Nif::NiAVObject* node : roots)
+                if (findBSBound(*node))
+                    break;
+        }
+
         HandleNodeArgs args;
 
         // files with the name convention xmodel.nif usually have keyframes stored in a separate file xmodel.kf (see
@@ -102,6 +114,27 @@ namespace NifBullet
             for (const auto& child : ninode->mChildren)
                 if (!child.empty() && findBoundingBox(child.get()))
                     return true;
+
+        return false;
+    }
+
+    bool BulletNifLoader::findBSBound(const Nif::NiAVObject& node)
+    {
+        for (const auto& extra : node.getExtraList())
+        {
+            if (extra->recType != Nif::RC_BSBound)
+                continue;
+
+            const auto& bound = static_cast<const Nif::BSBound&>(extra.get());
+            if (std::ranges::all_of(bound.mExtents._v, [](float extent) { return extent > 0.f; }))
+            {
+                mShape->mCollisionBox.mExtents = bound.mExtents;
+                mShape->mCollisionBox.mCenter = bound.mCenter;
+            }
+            else
+                warn("Invalid BSBound extents in file " + mShape->mFileName.value());
+            return true;
+        }
 
         return false;
     }

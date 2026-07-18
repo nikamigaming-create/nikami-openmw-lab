@@ -1,6 +1,8 @@
 #ifndef GAME_MWCLASS_ESM4CREATURE_H
 #define GAME_MWCLASS_ESM4CREATURE_H
 
+#include <cstdint>
+
 #include <components/esm4/loadcrea.hpp>
 #include <components/vfs/pathutil.hpp>
 
@@ -28,6 +30,21 @@ namespace MWWorld
 
 namespace MWClass
 {
+    // Fallout package procedure types 11 and 12 are the two sandbox variants. A creature that can both fly and
+    // walk cannot be treated as OpenMW's "pure flying" kind, so mapping its ambient sandbox to AiWander makes it
+    // choose a land path and leave an authored perch. Preserve that placement until combat, script, or a directed
+    // package supplies an actual destination.
+    [[nodiscard]] constexpr bool fnvAmbientFlyerRetainsAuthoredPosition(
+        std::uint32_t creatureFlags, std::int32_t packageType) noexcept
+    {
+        constexpr std::int32_t sSandbox = 11;
+        constexpr std::int32_t sSandboxEditorLocation = 12;
+        constexpr std::uint32_t sFlyAndWalk
+            = ESM4::Creature::FO3_CanFly | ESM4::Creature::FO3_CanWalk;
+        return (creatureFlags & sFlyAndWalk) == sFlyAndWalk
+            && (packageType == sSandbox || packageType == sSandboxEditorLocation);
+    }
+
     class ESM4Creature final : public MWWorld::RegisteredClass<ESM4Creature, Actor>
     {
     public:

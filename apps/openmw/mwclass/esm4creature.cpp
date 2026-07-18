@@ -891,6 +891,16 @@ namespace MWClass
 
         if (isFnvPackageWanderLike(package->mData.type))
         {
+            const ESM4::Creature* model = data.mTemplates.mModel;
+            if (model != nullptr
+                && fnvAmbientFlyerRetainsAuthoredPosition(model->mBaseConfig.fo3.flags, package->mData.type))
+            {
+                Log(Debug::Verbose) << "FNV/ESM4 diag: retained authored position for ambient flying creature "
+                                 << creature.mEditorId << " package=" << package->mEditorId
+                                 << " type=" << getFnvPackageTypeName(package->mData.type);
+                return;
+            }
+
             const int distance = std::max(64, package->mLocation.radius > 0 ? package->mLocation.radius : 256);
             const int duration = package->mSchedule.duration > 0
                 ? static_cast<int>(std::min<std::uint32_t>(package->mSchedule.duration, 24))
