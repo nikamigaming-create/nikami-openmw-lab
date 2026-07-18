@@ -69,6 +69,7 @@
 #include "../mwclass/esm4npc.hpp"
 
 #include "filter.hpp"
+#include "esm4dialogueutils.hpp"
 #include "hypertextparser.hpp"
 
 namespace MWDialogue
@@ -119,7 +120,7 @@ namespace MWDialogue
         mEsm4Dialogue = false;
         mLastEsm4Topic = {};
         mEsm4TopicIds.clear();
-        mEsm4ChoiceTopics.clear();
+        mEsm4ChoiceSelections.clear();
         mEsm4SaidInfos.clear();
         mEsm4AddedTopics.clear();
         mEsm4VoicePaths.clear();
@@ -352,16 +353,15 @@ namespace MWDialogue
                 continue;
             if ((info.mInfoFlags & ESM4::INFO_SayOnce) != 0 && mEsm4SaidInfos.contains(info.mId))
                 continue;
-            // FormId::operator< compares the local object index first, which
-            // lets an arbitrary DLC INFO with a smaller local index outrank a
-            // base-game response.  Compare load-order first for a stable
-            // authored order until PNAM chains are indexed explicitly.
+            // The ESM4 store preserves physical topic-child order. Fallout
+            // uses that order as response priority when multiple INFOs pass;
+            // FormID order is unrelated and reverses real topics such as
+            // Chet's reputation-specific barter response and its fallback.
+            // Actor affinity remains an explicit override for shared/generic
+            // responses. Equal-affinity candidates retain authored order.
             const int affinity = getEsm4InfoActorAffinity(info);
             const int selectedAffinity = selected == nullptr ? -1 : getEsm4InfoActorAffinity(*selected);
-            if (selected == nullptr || affinity > selectedAffinity
-                || (affinity == selectedAffinity
-                    && std::tie(info.mId.mContentFile, info.mId.mIndex)
-                        < std::tie(selected->mId.mContentFile, selected->mId.mIndex)))
+            if (selected == nullptr || affinity > selectedAffinity)
                 selected = &info;
         }
         return selected;
@@ -381,10 +381,10 @@ namespace MWDialogue
             if (info == nullptr
                 || (getEsm4InfoActorAffinity(*info) == 0 && !mEsm4AddedTopics.contains(dialogue.mId)))
                 continue;
-            const std::string& title = dialogue.mTopicName.empty() ? dialogue.mEditorId : dialogue.mTopicName;
+            const std::string_view title = getEsm4DialoguePrompt(dialogue, *info);
             if (!title.empty())
             {
-                mEsm4TopicIds.emplace(title, dialogue.mId);
+                mEsm4TopicIds.emplace(std::string(title), dialogue.mId);
                 if (std::getenv("OPENMW_PROOF_DIALOGUE_TOPIC") != nullptr)
                     Log(Debug::Info) << "FNV/ESM4 dialogue: available topic=\"" << title << "\" form="
                                      << ESM::RefId(dialogue.mId) << " info=" << ESM::RefId(info->mId);
@@ -436,11 +436,12 @@ namespace MWDialogue
         return path;
     }
 
-    void DialogueManager::executeEsm4Topic(ESM::FormId topic, ResponseCallback* callback, bool greeting)
+    void DialogueManager::executeEsm4Topic(
+        ESM::FormId topic, ResponseCallback* callback, bool greeting, const ESM4::DialogInfo* retainedInfo)
     {
         const ESM4::Dialogue* dialogue
             = MWBase::Environment::get().getESMStore()->get<ESM4::Dialogue>().search(ESM::RefId(topic));
-        const ESM4::DialogInfo* info = selectEsm4Info(topic);
+        const ESM4::DialogInfo* info = retainedInfo != nullptr ? retainedInfo : selectEsm4Info(topic);
         if (dialogue == nullptr || info == nullptr)
             return;
 
@@ -471,7 +472,7 @@ namespace MWDialogue
         if (response.empty())
             response = info->mResponse;
 
-        callback->addResponse(greeting ? std::string_view{} : std::string_view(dialogue->mTopicName), response);
+        callback->addResponse(greeting ? std::string_view{} : getEsm4DialoguePrompt(*dialogue, *info), response);
         mLastEsm4Topic = topic;
         if ((info->mInfoFlags & ESM4::INFO_SayOnce) != 0)
             mEsm4SaidInfos.insert(info->mId);
@@ -497,17 +498,17 @@ namespace MWDialogue
             MWBase::Environment::get().getSoundManager()->saySequence(mActor, voices);
 
         mChoices.clear();
-        mEsm4ChoiceTopics.clear();
+        mEsm4ChoiceSelections.clear();
         for (ESM::FormId choice : info->mChoices)
         {
             const ESM4::Dialogue* choiceDialogue
                 = MWBase::Environment::get().getESMStore()->get<ESM4::Dialogue>().search(ESM::RefId(choice));
-            if (choiceDialogue == nullptr || selectEsm4Info(choice) == nullptr)
+            const ESM4::DialogInfo* choiceInfo = selectEsm4Info(choice);
+            if (choiceDialogue == nullptr || choiceInfo == nullptr)
                 continue;
-            const std::string& title
-                = choiceDialogue->mTopicName.empty() ? choiceDialogue->mEditorId : choiceDialogue->mTopicName;
-            mEsm4ChoiceTopics.push_back(choice);
-            mChoices.emplace_back(title, static_cast<int>(mEsm4ChoiceTopics.size() - 1));
+            const std::string_view title = getEsm4DialoguePrompt(*choiceDialogue, *choiceInfo);
+            mEsm4ChoiceSelections.emplace_back(choice, choiceInfo->mId);
+            mChoices.emplace_back(std::string(title), static_cast<int>(mEsm4ChoiceSelections.size() - 1));
         }
         mIsInChoice = !mChoices.empty();
         if ((info->mInfoFlags & ESM4::INFO_Goodbye) != 0)
@@ -618,7 +619,7 @@ namespace MWDialogue
         mEsm4Dialogue = actor.getType() == ESM4::Npc::sRecordId;
         mLastEsm4Topic = {};
         mEsm4TopicIds.clear();
-        mEsm4ChoiceTopics.clear();
+        mEsm4ChoiceSelections.clear();
         if (mEsm4Dialogue)
         {
             const auto& esm4Dialogues = MWBase::Environment::get().getESMStore()->get<ESM4::Dialogue>();
@@ -960,13 +961,16 @@ namespace MWDialogue
     {
         if (mEsm4Dialogue)
         {
-            if (answer >= 0 && static_cast<std::size_t>(answer) < mEsm4ChoiceTopics.size())
+            if (answer >= 0 && static_cast<std::size_t>(answer) < mEsm4ChoiceSelections.size())
             {
-                const ESM::FormId topic = mEsm4ChoiceTopics[answer];
+                const auto [topic, infoId] = mEsm4ChoiceSelections[answer];
+                const ESM4::DialogInfo* info
+                    = MWBase::Environment::get().getESMStore()->get<ESM4::DialogInfo>().search(ESM::RefId(infoId));
                 mChoices.clear();
-                mEsm4ChoiceTopics.clear();
+                mEsm4ChoiceSelections.clear();
                 mIsInChoice = false;
-                executeEsm4Topic(topic, callback);
+                if (info != nullptr && info->mTopic == topic)
+                    executeEsm4Topic(topic, callback, false, info);
             }
             updateEsm4Topics();
             return;

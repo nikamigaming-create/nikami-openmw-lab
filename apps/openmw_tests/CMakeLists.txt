@@ -28,6 +28,7 @@ file(GLOB UNITTEST_SRC_FILES
     mwworld/testweather.cpp
 
     mwdialogue/testkeywordsearch.cpp
+    mwdialogue/testesm4dialogueutils.cpp
 
     mwgui/tooltips.cpp
 

@@ -65,7 +65,7 @@ namespace MWDialogue
         bool mEsm4Dialogue = false;
         ESM::FormId mLastEsm4Topic{};
         std::map<std::string, ESM::FormId, Misc::StringUtils::CiComp> mEsm4TopicIds;
-        std::vector<ESM::FormId> mEsm4ChoiceTopics;
+        std::vector<std::pair<ESM::FormId, ESM::FormId>> mEsm4ChoiceSelections;
         std::set<ESM::FormId> mEsm4SaidInfos;
         std::set<ESM::FormId> mEsm4AddedTopics;
         std::map<std::pair<ESM::FormId, std::uint32_t>, std::string> mEsm4VoicePaths;
@@ -85,7 +85,8 @@ namespace MWDialogue
         void executeScript(const std::string& script, const MWWorld::Ptr& actor);
 
         void executeTopic(const ESM::RefId& topic, ResponseCallback* callback);
-        void executeEsm4Topic(ESM::FormId topic, ResponseCallback* callback, bool greeting = false);
+        void executeEsm4Topic(ESM::FormId topic, ResponseCallback* callback, bool greeting = false,
+            const ESM4::DialogInfo* retainedInfo = nullptr);
         const ESM4::DialogInfo* selectEsm4Info(ESM::FormId topic) const;
         bool matchesEsm4Info(const ESM4::DialogInfo& info) const;
         int getEsm4InfoActorAffinity(const ESM4::DialogInfo& info) const;
