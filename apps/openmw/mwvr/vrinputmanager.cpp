@@ -9,6 +9,7 @@
 #include "vrutil.hpp"
 
 #include <components/debug/debuglog.hpp>
+#include <components/sceneutil/shadow.hpp>
 #include <components/sceneutil/visitor.hpp>
 #include <components/sdlutil/sdlmappings.hpp>
 #include <components/vr/session.hpp>
@@ -406,7 +407,7 @@ namespace MWVR
         // Menus disable world controls, but their 3D panels still require the VR
         // pointer. Construct it as soon as the VR viewer exists instead of waiting
         // for the first gameplay frame.
-        if (!mVRPointer && VR::getVR())
+        if (!mVRPointer && VR::getVR() && SceneUtil::ShadowManager::exists())
         {
             osg::ref_ptr<osgViewer::Viewer> viewer;
             mOSGViewer.lock(viewer);

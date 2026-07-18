@@ -28,6 +28,7 @@ namespace SceneUtil
     public:
         static Shader::ShaderManager::DefineMap getShadowsDisabledDefines();
 
+        static bool exists();
         static const ShadowManager& instance();
 
         explicit ShadowManager(osg::ref_ptr<osg::Group> sceneRoot, osg::ref_ptr<osg::Group> rootNode,
