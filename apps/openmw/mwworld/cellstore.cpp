@@ -88,6 +88,7 @@
 #include "../mwmechanics/spellutil.hpp"
 
 #include "../mwclass/esm4creature.hpp"
+#include "../mwclass/fnvactorstate.hpp"
 
 #include "class.hpp"
 #include "containerstore.hpp"
@@ -141,6 +142,11 @@ namespace
         using StateType = ESM::CreatureState;
     };
     template <>
+    struct RecordToState<ESM4::Npc>
+    {
+        using StateType = ESM::CreatureState;
+    };
+    template <>
     struct RecordToState<ESM::CreatureLevList>
     {
         using StateType = ESM::CreatureLevListState;
@@ -190,7 +196,7 @@ namespace
         // references
         for (const MWWorld::LiveCellRef<T>& liveCellRef : collection.mList)
         {
-            if constexpr (std::is_same_v<T, ESM4::Creature>)
+            if constexpr (std::is_same_v<T, ESM4::Creature> || std::is_same_v<T, ESM4::Npc>)
             {
                 // CreatureState is an FNV compatibility contract. Other ESM4 games keep the historical omission
                 // until they have a format matching their own actor-value/inventory semantics.
@@ -198,7 +204,7 @@ namespace
                     continue;
             }
             if constexpr (ESM::isESM4Rec(T::sRecordId) && !std::is_same_v<T, ESM4::Container>
-                && !std::is_same_v<T, ESM4::Creature>)
+                && !std::is_same_v<T, ESM4::Creature> && !std::is_same_v<T, ESM4::Npc>)
             {
                 // TODO: Implement loading/saving of REFR4 and ACHR4 with ESM3 reader/writer.
                 continue;
@@ -267,7 +273,7 @@ namespace
     template <typename T>
     void readReferenceCollection(ESM::ESMReader& reader, MWWorld::CellRefList<T>& collection, const ESM::CellRef& cref,
         const MWWorld::ESMStore& esmStore, MWWorld::CellStore* cellstore,
-        std::set<ESM::RefNum>* acceptedFnvCreatureRefs = nullptr)
+        std::set<ESM::RefNum>* acceptedFnvActorRefs = nullptr)
     {
         using StateType = typename RecordToState<T>::StateType;
         StateType state;
@@ -286,30 +292,31 @@ namespace
         if (!record)
             return;
 
-        if constexpr (std::is_same_v<T, ESM4::Creature>)
+        if constexpr (std::is_same_v<T, ESM4::Creature> || std::is_same_v<T, ESM4::Npc>)
         {
             std::string error;
-            if (!MWClass::ESM4Creature::validateState(*record, state, esmStore, error))
+            constexpr std::string_view actorKind
+                = std::is_same_v<T, ESM4::Creature> ? std::string_view("CREA") : std::string_view("NPC_");
+            if (!MWClass::validateFnvActorState(record->mIsFONV, actorKind, state, esmStore, error))
             {
-                Log(Debug::Warning) << "Dropping invalid FNV creature state for " << state.mRef.mRefID << ": "
+                Log(Debug::Warning) << "Dropping invalid FNV actor state for " << state.mRef.mRefID << ": "
                                     << error;
                 return;
             }
-            if (acceptedFnvCreatureRefs != nullptr && acceptedFnvCreatureRefs->contains(state.mRef.mRefNum))
+            if (acceptedFnvActorRefs != nullptr && acceptedFnvActorRefs->contains(state.mRef.mRefNum))
             {
                 // The payload has already been fully parsed and semantically validated. First valid state wins;
                 // never allocate/register inventory references for duplicate OBJE records.
-                Log(Debug::Warning) << "Dropping duplicate FNV creature state for placement "
-                                    << state.mRef.mRefNum;
+                Log(Debug::Warning) << "Dropping duplicate FNV actor state for placement " << state.mRef.mRefNum;
                 return;
             }
         }
 
-        const auto markFnvCreatureAccepted = [&]() {
-            if constexpr (std::is_same_v<T, ESM4::Creature>)
+        const auto markFnvActorAccepted = [&]() {
+            if constexpr (std::is_same_v<T, ESM4::Creature> || std::is_same_v<T, ESM4::Npc>)
             {
-                if (acceptedFnvCreatureRefs != nullptr)
-                    acceptedFnvCreatureRefs->insert(state.mRef.mRefNum);
+                if (acceptedFnvActorRefs != nullptr)
+                    acceptedFnvActorRefs->insert(state.mRef.mRefNum);
             }
         };
 
@@ -359,7 +366,7 @@ namespace
                         MWBase::Environment::get().getWorld()->disable(ptr);
                     }
                     MWBase::Environment::get().getWorldModel()->registerPtr(ptr);
-                    markFnvCreatureAccepted();
+                    markFnvActorAccepted();
                     return;
                 }
 
@@ -384,7 +391,7 @@ namespace
 
         MWWorld::LiveCellRefBase* base = &collection.mList.back();
         MWBase::Environment::get().getWorldModel()->registerPtr(MWWorld::Ptr(base, cellstore));
-        markFnvCreatureAccepted();
+        markFnvActorAccepted();
     }
 
     // this function allows us to link a CellRefList<T> to the associated recNameInt, and apply a function
@@ -1388,12 +1395,12 @@ namespace MWWorld
     void CellStore::readReferences(ESM::ESMReader& reader, GetCellStoreCallback* callback)
     {
         mHasState = true;
-        std::set<ESM::RefNum> acceptedFnvCreatureRefs;
+        std::set<ESM::RefNum> acceptedFnvActorRefs;
 
         while (reader.isNextSub("OBJE"))
         {
-            unsigned int unused;
-            reader.getHT(unused);
+            unsigned int savedType;
+            reader.getHT(savedType);
 
             // load the RefID first so we know what type of object it is
             ESM::CellRef cref;
@@ -1412,16 +1419,31 @@ namespace MWWorld
                 continue;
             }
 
+            if ((type == ESM::REC_CREA4 || type == ESM::REC_NPC_4) && savedType != static_cast<unsigned int>(type))
+            {
+                Log(Debug::Warning) << "Dropping reference to " << cref.mRefID << " (OBJE type "
+                                    << ESM::getRecNameString(static_cast<ESM::RecNameInts>(savedType)).toStringView()
+                                    << " does not match base record type "
+                                    << ESM::getRecNameString(static_cast<ESM::RecNameInts>(type)).toStringView() << ")";
+                // Reject the wrong state variant before constructing/loading RecordToState<T>.
+                while (reader.hasMoreSubs() && !reader.peekNextSub("OBJE") && !reader.peekNextSub("MVRF"))
+                {
+                    reader.getSubName();
+                    reader.skipHSub();
+                }
+                continue;
+            }
+
             if (type != 0)
             {
                 bool foundCorrespondingStore = false;
                 Misc::tupleForEach(
                     this->mCellStoreImp->mRefLists,
-                    [&reader, this, &cref, &foundCorrespondingStore, &acceptedFnvCreatureRefs, type](auto&& x) {
+                    [&reader, this, &cref, &foundCorrespondingStore, &acceptedFnvActorRefs, type](auto&& x) {
                         recNameSwitcher(x, static_cast<ESM::RecNameInts>(type),
-                            [&reader, this, &cref, &foundCorrespondingStore, &acceptedFnvCreatureRefs](auto& store) {
+                            [&reader, this, &cref, &foundCorrespondingStore, &acceptedFnvActorRefs](auto& store) {
                                 foundCorrespondingStore = true;
-                                readReferenceCollection(reader, store, cref, mStore, this, &acceptedFnvCreatureRefs);
+                                readReferenceCollection(reader, store, cref, mStore, this, &acceptedFnvActorRefs);
                             });
                     });
 

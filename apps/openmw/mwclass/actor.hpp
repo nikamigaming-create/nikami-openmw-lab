@@ -57,6 +57,9 @@ namespace MWClass
 
         bool isActor() const override;
 
+        void readAdditionalState(const MWWorld::Ptr& ptr, const ESM::ObjectState& state) const override;
+        void writeAdditionalState(const MWWorld::ConstPtr& ptr, ESM::ObjectState& state) const override;
+
         /// Return current movement speed.
         float getCurrentSpeed(const MWWorld::Ptr& ptr) const override;
 

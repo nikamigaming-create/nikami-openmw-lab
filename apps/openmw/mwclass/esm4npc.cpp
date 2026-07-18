@@ -10,6 +10,7 @@
 #include <string>
 
 #include <components/esm/attr.hpp>
+#include <components/esm3/creaturestate.hpp>
 #include <components/esm4/loadalch.hpp>
 #include <components/esm4/loadammo.hpp>
 #include <components/esm4/loadarmo.hpp>
@@ -52,6 +53,7 @@
 #include "../mwworld/failedaction.hpp"
 
 #include "esm4base.hpp"
+#include "fnvactorstate.hpp"
 
 namespace MWClass
 {
@@ -579,6 +581,9 @@ namespace MWClass
     static void initialiseFnvAiSequence(
         ESM4NpcCustomData& data, const MWWorld::Ptr& ptr, const std::vector<ESM::FormId>& packageIds)
     {
+        if (data.mFnvAiSequenceInitialised)
+            return;
+
         MWMechanics::AiSequence& sequence = data.mCreatureStats.getAiSequence();
         if (!sequence.isEmpty())
         {
@@ -746,6 +751,7 @@ namespace MWClass
         stats.setHealth(health);
         stats.setMagicka(0.f);
         stats.setFatigue(fatigue);
+        stats.getSpells().setSpells(ESM::RefId(statsRecord->mId), ESM::REC_NPC_4);
 
         const ESM4::Npc* aiRecord = data.mAIData != nullptr ? data.mAIData : statsRecord;
         stats.setAiSetting(MWMechanics::AiSetting::Hello, 30);
@@ -766,18 +772,8 @@ namespace MWClass
             stats.setDeathAnimationFinished(data.mBaseData != nullptr && isPersistentRecord(*data.mBaseData));
     }
 
-    ESM4NpcCustomData& ESM4Npc::getCustomData(const MWWorld::ConstPtr& ptr)
+    static std::unique_ptr<ESM4NpcCustomData> makeNpcCustomData(const MWWorld::ConstPtr& ptr)
     {
-        // Note: the argument is ConstPtr because this function is used in `getModel` and `getName`
-        // which are virtual and work with ConstPtr. `getModel` and `getName` use custom data
-        // because they require a lot of work including levelled records resolving and it would be
-        // stupid to not to cache the results. Maybe we should stop using ConstPtr at all
-        // to avoid such workarounds.
-        MWWorld::RefData& refData = const_cast<MWWorld::RefData&>(ptr.getRefData());
-
-        if (auto* data = refData.getCustomData())
-            return data->asESM4NpcCustomData();
-
         auto data = std::make_unique<ESM4NpcCustomData>();
 
         const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
@@ -1195,9 +1191,70 @@ namespace MWClass
                              << " pos=(" << pos.pos[0] << "," << pos.pos[1] << "," << pos.pos[2] << ")";
         }
 
-        ESM4NpcCustomData& res = *data;
+        return data;
+    }
+
+    ESM4NpcCustomData& ESM4Npc::getCustomData(const MWWorld::ConstPtr& ptr)
+    {
+        // Note: the argument is ConstPtr because this function is used in `getModel` and `getName`
+        // which are virtual and work with ConstPtr. `getModel` and `getName` use custom data
+        // because they require a lot of work including levelled records resolving and it would be
+        // stupid to not to cache the results. Maybe we should stop using ConstPtr at all
+        // to avoid such workarounds.
+        MWWorld::RefData& refData = const_cast<MWWorld::RefData&>(ptr.getRefData());
+
+        if (auto* data = refData.getCustomData())
+            return data->asESM4NpcCustomData();
+
+        auto data = makeNpcCustomData(ptr);
+        ESM4NpcCustomData& result = *data;
         refData.setCustomData(std::move(data));
-        return res;
+        return result;
+    }
+
+    void readFnvNpcState(const MWWorld::Ptr& ptr, const ESM::ObjectState& state)
+    {
+        if (!state.mHasCustomState)
+            return;
+
+        const ESM4::Npc* npc = ptr.get<ESM4::Npc>()->mBase;
+        if (npc == nullptr || !npc->mIsFONV)
+            return;
+
+        // CellStore validates the entire CreatureState before LiveCellRef changes the enclosing CellRef/RefData.
+        // Load both mutable stores into a detached candidate so no partly loaded NPC CustomData can become visible.
+        const ESM::CreatureState& npcState = state.asCreatureState();
+        auto data = makeNpcCustomData(ptr);
+        data->mContainerStore = std::make_unique<ESM4NpcContainerStore>();
+        data->mContainerStore->setPtr(ptr);
+        data->mContainerStore->readState(npcState.mInventory);
+        data->mCreatureStats.readState(npcState.mCreatureStats);
+        data->mContainerItemsRegistered = true; // ContainerStore::readState registered every retained saved stack.
+        data->mFnvAiSequenceInitialised = true; // An explicitly empty saved sequence must remain explicitly empty.
+        ptr.getRefData().setCustomData(std::move(data));
+    }
+
+    void writeFnvNpcState(const MWWorld::ConstPtr& ptr, ESM::ObjectState& state)
+    {
+        const ESM4::Npc* npc = ptr.get<ESM4::Npc>()->mBase;
+        const MWWorld::CustomData* customData = ptr.getRefData().getCustomData();
+        if (npc == nullptr || !npc->mIsFONV || customData == nullptr)
+        {
+            state.mHasCustomState = false;
+            return;
+        }
+
+        const auto* data = dynamic_cast<const ESM4NpcCustomData*>(customData);
+        if (data == nullptr)
+        {
+            state.mHasCustomState = false;
+            return;
+        }
+
+        ESM::CreatureState& npcState = state.asCreatureState();
+        data->mContainerStore->writeState(npcState.mInventory);
+        data->mCreatureStats.writeState(npcState.mCreatureStats);
+        state.mHasCustomState = true;
     }
 
     const std::vector<const ESM4::Armor*>& ESM4Npc::getEquippedArmor(const MWWorld::Ptr& ptr)

@@ -51,6 +51,7 @@
 #include "../mwgui/tooltips.hpp"
 
 #include "esm4base.hpp"
+#include "fnvactorstate.hpp"
 
 namespace MWClass
 {
@@ -1297,7 +1298,7 @@ namespace MWClass
         }
     }
 
-    bool ESM4Creature::validateState(const ESM4::Creature& creature, const ESM::CreatureState& state,
+    bool validateFnvActorState(bool isFnv, std::string_view actorKind, const ESM::CreatureState& state,
         const MWWorld::ESMStore& store, std::string& error)
     {
         if (!isFiniteObjectState(state))
@@ -1314,12 +1315,12 @@ namespace MWClass
         }
         if (!state.mRef.mRefNum.isSet())
         {
-            error = "unset outer creature reference number";
+            error = "unset outer actor reference number";
             return false;
         }
-        if (!creature.mIsFONV)
+        if (!isFnv)
         {
-            error = "CreatureState is only supported for Fallout: New Vegas CREA";
+            error = "CreatureState is only supported for Fallout: New Vegas " + std::string(actorKind);
             return false;
         }
         if (!state.mHasCustomState)
@@ -1350,7 +1351,7 @@ namespace MWClass
                 continue; // Missing/remapped-away content is consumed and dropped by ContainerStore::readState.
             if (!isSupportedFnvInventoryType(type))
             {
-                error = "unsupported FNV creature inventory record type";
+                error = "unsupported FNV actor inventory record type";
                 return false;
             }
             std::int64_t& total = counts[item.mRef.mRefID];
@@ -1389,6 +1390,12 @@ namespace MWClass
             }
         }
         return true;
+    }
+
+    bool ESM4Creature::validateState(const ESM4::Creature& creature, const ESM::CreatureState& state,
+        const MWWorld::ESMStore& store, std::string& error)
+    {
+        return validateFnvActorState(creature.mIsFONV, "CREA", state, store, error);
     }
 
     ESM4CreatureCustomData& ESM4Creature::getCustomData(const MWWorld::ConstPtr& ptr)

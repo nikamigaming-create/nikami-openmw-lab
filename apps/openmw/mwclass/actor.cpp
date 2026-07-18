@@ -1,4 +1,5 @@
 #include "actor.hpp"
+#include "fnvactorstate.hpp"
 
 #include <map>
 #include <string>
@@ -69,6 +70,18 @@ namespace MWClass
     bool Actor::isActor() const
     {
         return true;
+    }
+
+    void Actor::readAdditionalState(const MWWorld::Ptr& ptr, const ESM::ObjectState& state) const
+    {
+        if (ptr.getType() == ESM::REC_NPC_4)
+            readFnvNpcState(ptr, state);
+    }
+
+    void Actor::writeAdditionalState(const MWWorld::ConstPtr& ptr, ESM::ObjectState& state) const
+    {
+        if (ptr.getType() == ESM::REC_NPC_4)
+            writeFnvNpcState(ptr, state);
     }
 
     float Actor::getCurrentSpeed(const MWWorld::Ptr& ptr) const

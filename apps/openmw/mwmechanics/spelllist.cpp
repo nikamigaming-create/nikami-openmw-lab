@@ -61,6 +61,7 @@ namespace MWMechanics
             case ESM::REC_NPC_:
                 return getSpellList<ESM::NPC>(mId);
             case ESM::REC_CREA4:
+            case ESM::REC_NPC_4:
                 // ESM4/FNV actor effects do not map to Morrowind Spell records. CreatureStats still requires a
                 // concrete SpellList for its versioned compatibility state, so expose an intentionally empty base.
                 return {};
