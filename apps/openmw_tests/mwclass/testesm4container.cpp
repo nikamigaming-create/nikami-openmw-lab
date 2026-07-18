@@ -54,6 +54,9 @@ namespace
     constexpr std::uint32_t sCreatureCell = 0x01104c10;
     constexpr std::uint32_t sNonFnvCreatureBase = 0x01103b26;
     constexpr std::uint32_t sNonFnvCreatureRef = 0x01108741;
+    constexpr std::uint32_t sUseAllLevelledItemBase = 0x01103b27;
+    constexpr std::uint32_t sNestedLevelledItemBase = 0x01103b28;
+    constexpr std::uint32_t sStatsTemplateBase = 0x01103b29;
 
     class TestLuaManager final : public MWBase::LuaManager
     {
@@ -186,6 +189,30 @@ namespace
             return creature;
         }
 
+        static ESM4::LVLO makeLevelledEntry(
+            std::int16_t level, std::uint32_t item, std::int16_t count = 1)
+        {
+            ESM4::LVLO result{};
+            result.level = level;
+            result.item = item;
+            result.count = count;
+            return result;
+        }
+
+        static ESM4::LevelledItem makeLevelledItem(std::uint32_t id, std::uint8_t flags,
+            std::initializer_list<ESM4::LVLO> entries, std::int8_t chanceNone = 0)
+        {
+            ESM4::LevelledItem result{};
+            result.mId = ESM::FormId::fromUint32(id);
+            result.mEditorId = "SyntheticDeterministicFnvLevelledItem";
+            result.mHasChanceNone = true;
+            result.mChanceNone = chanceNone;
+            result.mHasLvlItemFlags = true;
+            result.mLvlItemFlags = flags;
+            result.mLvlObject.assign(entries);
+            return result;
+        }
+
         static ESM4::Reference makeCreatureReference(
             std::uint32_t base = sCreatureBase, std::uint32_t ref = sCreatureRef)
         {
@@ -232,8 +259,13 @@ namespace
             key.mFullName = "Prospector Saloon Key";
             store.overrideRecord(key);
 
+            ESM4::LevelledItem levelled = makeLevelledItem(
+                sLevelledItemBase, 0, { makeLevelledEntry(1, sSaloonBottleBase, 3) });
+            store.overrideRecord(levelled);
+
             ESM4::Creature creature = makeCreature();
-            creature.mInventory.push_back(ESM4::InventoryItem{ sSaloonBottleBase, 6 });
+            creature.mBaseConfig.fo3.levelOrMult = 1;
+            creature.mInventory.push_back(ESM4::InventoryItem{ sLevelledItemBase, 2 });
             store.overrideRecord(creature);
             store.overrideRecord(makeCreatureCell());
             const_cast<MWWorld::Store<ESM4::ActorCreature>&>(store.get<ESM4::ActorCreature>())
@@ -397,6 +429,205 @@ namespace
                 ESM::RefId(ESM::FormId::fromUint32(sSaloonBottleBase)));
         }
         EXPECT_EQ(stacks, 1u);
+    }
+
+    TEST_F(ESM4ContainerTest, CreatureUsesResolvedFixedStatsLevelForUniqueHighestLevelledEntry)
+    {
+        ESM4::LevelledItem levelled = makeLevelledItem(sLevelledItemBase, 0,
+            { makeLevelledEntry(1, sSaloonBottleBase, 2), makeLevelledEntry(5, sSaloonKeyBase, 3),
+                makeLevelledEntry(6, sSaloonBottleBase, 7) });
+        mStore.overrideRecord(levelled);
+
+        ESM4::Creature statsTemplate = makeCreature(sStatsTemplateBase);
+        statsTemplate.mBaseConfig.fo3.levelOrMult = 5;
+        mStore.overrideRecord(statsTemplate);
+
+        ESM4::Creature creature = makeCreature();
+        creature.mBaseConfig.fo3.levelOrMult = 1;
+        creature.mBaseTemplate = ESM::FormId::fromUint32(sStatsTemplateBase);
+        creature.mBaseConfig.fo3.templateFlags |= ESM4::Creature::Template_UseStats;
+        creature.mInventory.push_back(ESM4::InventoryItem{ sLevelledItemBase, 2 });
+        ESM4::Reference reference = makeCreatureReference();
+        MWWorld::LiveCellRef<ESM4::Creature> liveRef(reference, &creature);
+        MWWorld::Ptr ptr(&liveRef);
+
+        MWWorld::ContainerStore& store = ptr.getClass().getContainerStore(ptr);
+        EXPECT_EQ(store.count(ESM::RefId(ESM::FormId::fromUint32(sSaloonBottleBase))), 0);
+        EXPECT_EQ(store.count(ESM::RefId(ESM::FormId::fromUint32(sSaloonKeyBase))), 6);
+    }
+
+    TEST_F(ESM4ContainerTest, CreatureExpandsUseAllAndUniqueCalculateEachListsWithoutRng)
+    {
+        ESM4::LevelledItem nested = makeLevelledItem(sNestedLevelledItemBase, 0x02,
+            { makeLevelledEntry(1, sSaloonBottleBase, 3) });
+        ESM4::LevelledItem useAll = makeLevelledItem(sUseAllLevelledItemBase, 0x04,
+            { makeLevelledEntry(1, sNestedLevelledItemBase, 4), makeLevelledEntry(1, sSaloonKeyBase, 2) });
+        mStore.overrideRecord(nested);
+        mStore.overrideRecord(useAll);
+
+        ESM4::Creature creature = makeCreature();
+        creature.mBaseConfig.fo3.levelOrMult = 1;
+        creature.mInventory.push_back(ESM4::InventoryItem{ sUseAllLevelledItemBase, 2 });
+        ESM4::Reference reference = makeCreatureReference();
+        MWWorld::LiveCellRef<ESM4::Creature> liveRef(reference, &creature);
+        MWWorld::Ptr ptr(&liveRef);
+
+        MWWorld::ContainerStore& store = ptr.getClass().getContainerStore(ptr);
+        EXPECT_EQ(store.count(ESM::RefId(ESM::FormId::fromUint32(sSaloonBottleBase))), 24);
+        EXPECT_EQ(store.count(ESM::RefId(ESM::FormId::fromUint32(sSaloonKeyBase))), 4);
+    }
+
+    TEST_F(ESM4ContainerTest, CreatureRejectsChanceGlobalCoedAmbiguityAndPcLevelMultWithoutPartialLoot)
+    {
+        constexpr std::uint32_t chanceListId = 0x01104020;
+        constexpr std::uint32_t globalListId = 0x01104021;
+        constexpr std::uint32_t coedListId = 0x01104022;
+        constexpr std::uint32_t ambiguousListId = 0x01104023;
+        constexpr std::uint32_t pcLevelListId = 0x01104024;
+        constexpr std::uint32_t unknownFlagsListId = 0x01104025;
+        constexpr std::uint32_t highestTieListId = 0x01104026;
+
+        ESM4::LevelledItem chance
+            = makeLevelledItem(chanceListId, 0, { makeLevelledEntry(1, sSaloonBottleBase) }, 25);
+        ESM4::LevelledItem global
+            = makeLevelledItem(globalListId, 0, { makeLevelledEntry(1, sSaloonBottleBase) });
+        global.mChanceGlobal = ESM::FormId::fromUint32(0x01104010);
+        ESM4::LevelledItem coed
+            = makeLevelledItem(coedListId, 0, { makeLevelledEntry(1, sSaloonBottleBase) });
+        coed.mLvlObjectExtra.resize(1);
+        coed.mLvlObjectExtra[0] = ESM4::LevelledItemExtraData{};
+        ESM4::LevelledItem ambiguous = makeLevelledItem(ambiguousListId, 0x01,
+            { makeLevelledEntry(1, sSaloonBottleBase), makeLevelledEntry(2, sSaloonKeyBase) });
+        ESM4::LevelledItem pcLevel
+            = makeLevelledItem(pcLevelListId, 0, { makeLevelledEntry(1, sSaloonBottleBase) });
+        ESM4::LevelledItem unknownFlags
+            = makeLevelledItem(unknownFlagsListId, 0x80, { makeLevelledEntry(1, sSaloonBottleBase) });
+        ESM4::LevelledItem highestTie = makeLevelledItem(highestTieListId, 0,
+            { makeLevelledEntry(3, sSaloonBottleBase), makeLevelledEntry(3, sSaloonKeyBase) });
+        mStore.overrideRecord(chance);
+        mStore.overrideRecord(global);
+        mStore.overrideRecord(coed);
+        mStore.overrideRecord(ambiguous);
+        mStore.overrideRecord(pcLevel);
+        mStore.overrideRecord(unknownFlags);
+        mStore.overrideRecord(highestTie);
+
+        ESM4::Creature creature = makeCreature();
+        creature.mBaseConfig.fo3.levelOrMult = 10;
+        creature.mInventory.push_back(ESM4::InventoryItem{ sSaloonKeyBase, 2 });
+        creature.mInventory.push_back(ESM4::InventoryItem{ chanceListId, 1 });
+        creature.mInventory.push_back(ESM4::InventoryItem{ globalListId, 1 });
+        creature.mInventory.push_back(ESM4::InventoryItem{ coedListId, 1 });
+        creature.mInventory.push_back(ESM4::InventoryItem{ ambiguousListId, 1 });
+        creature.mInventory.push_back(ESM4::InventoryItem{ unknownFlagsListId, 1 });
+        creature.mInventory.push_back(ESM4::InventoryItem{ highestTieListId, 1 });
+        ESM4::Reference reference = makeCreatureReference();
+        MWWorld::LiveCellRef<ESM4::Creature> liveRef(reference, &creature);
+        MWWorld::Ptr ptr(&liveRef);
+        MWWorld::ContainerStore& store = ptr.getClass().getContainerStore(ptr);
+        EXPECT_EQ(store.count(ESM::RefId(ESM::FormId::fromUint32(sSaloonBottleBase))), 0);
+        EXPECT_EQ(store.count(ESM::RefId(ESM::FormId::fromUint32(sSaloonKeyBase))), 2);
+
+        ESM4::Creature pcLevelCreature = makeCreature();
+        pcLevelCreature.mBaseConfig.fo3.flags |= ESM4::Creature::FO3_PCLevelMult;
+        pcLevelCreature.mBaseConfig.fo3.levelOrMult = 100;
+        pcLevelCreature.mInventory.push_back(ESM4::InventoryItem{ pcLevelListId, 1 });
+        MWWorld::LiveCellRef<ESM4::Creature> pcLevelRef(reference, &pcLevelCreature);
+        MWWorld::Ptr pcLevelPtr(&pcLevelRef);
+        EXPECT_EQ(pcLevelPtr.getClass().getContainerStore(pcLevelPtr)
+                      .count(ESM::RefId(ESM::FormId::fromUint32(sSaloonBottleBase))),
+            0);
+    }
+
+    TEST_F(ESM4ContainerTest, CreatureRejectsUnsupportedCyclesAndDepthPastSixteenButAcceptsBoundary)
+    {
+        constexpr std::uint32_t unsupportedListId = 0x01104100;
+        constexpr std::uint32_t cycleAId = 0x01104101;
+        constexpr std::uint32_t cycleBId = 0x01104102;
+        constexpr std::uint32_t acceptedChainBase = 0x01104200;
+        constexpr std::uint32_t rejectedChainBase = 0x01104300;
+
+        ESM4::Static unsupported{};
+        unsupported.mId = ESM::FormId::fromUint32(sUnsupportedStaticBase);
+        unsupported.mEditorId = "UnsupportedLevelledTerminal";
+        mStore.overrideRecord(unsupported);
+
+        mStore.overrideRecord(makeLevelledItem(unsupportedListId, 0x04,
+            { makeLevelledEntry(1, sSaloonBottleBase), makeLevelledEntry(1, sUnsupportedStaticBase) }));
+        mStore.overrideRecord(
+            makeLevelledItem(cycleAId, 0, { makeLevelledEntry(1, cycleBId) }));
+        mStore.overrideRecord(
+            makeLevelledItem(cycleBId, 0, { makeLevelledEntry(1, cycleAId) }));
+
+        const auto addChain = [&](std::uint32_t base, int listCount) {
+            for (int i = listCount - 1; i >= 0; --i)
+            {
+                const std::uint32_t terminal
+                    = i + 1 == listCount ? sSaloonBottleBase : base + static_cast<std::uint32_t>(i + 1);
+                mStore.overrideRecord(makeLevelledItem(
+                    base + static_cast<std::uint32_t>(i), 0, { makeLevelledEntry(1, terminal) }));
+            }
+        };
+        addChain(acceptedChainBase, 16);
+        addChain(rejectedChainBase, 17);
+
+        ESM4::Creature creature = makeCreature();
+        creature.mBaseConfig.fo3.levelOrMult = 1;
+        creature.mInventory.push_back(ESM4::InventoryItem{ unsupportedListId, 1 });
+        creature.mInventory.push_back(ESM4::InventoryItem{ cycleAId, 1 });
+        creature.mInventory.push_back(ESM4::InventoryItem{ acceptedChainBase, 1 });
+        creature.mInventory.push_back(ESM4::InventoryItem{ rejectedChainBase, 1 });
+        ESM4::Reference reference = makeCreatureReference();
+        MWWorld::LiveCellRef<ESM4::Creature> liveRef(reference, &creature);
+        MWWorld::Ptr ptr(&liveRef);
+
+        MWWorld::ContainerStore& store = ptr.getClass().getContainerStore(ptr);
+        EXPECT_EQ(store.count(ESM::RefId(ESM::FormId::fromUint32(sSaloonBottleBase))), 1);
+        EXPECT_EQ(store.count(ESM::RefId(ESM::FormId::fromUint32(sUnsupportedStaticBase))), 0);
+    }
+
+    TEST_F(ESM4ContainerTest, CreatureRejectsEveryLevelledCountOverflowBeforeMutation)
+    {
+        constexpr std::int16_t maxEntryCount = std::numeric_limits<std::int16_t>::max();
+        constexpr std::uint32_t innerId = 0x01104400;
+        constexpr std::uint32_t bigChildId = 0x01104401;
+        constexpr std::uint32_t recursiveOverflowId = 0x01104402;
+        constexpr std::uint32_t aggregateOverflowId = 0x01104403;
+        constexpr std::uint32_t outerOverflowId = 0x01104404;
+        constexpr std::uint32_t mergeOverflowId = 0x01104405;
+
+        mStore.overrideRecord(makeLevelledItem(
+            innerId, 0, { makeLevelledEntry(1, sSaloonBottleBase, maxEntryCount) }));
+        mStore.overrideRecord(
+            makeLevelledItem(bigChildId, 0, { makeLevelledEntry(1, innerId, maxEntryCount) }));
+        mStore.overrideRecord(makeLevelledItem(
+            recursiveOverflowId, 0, { makeLevelledEntry(1, bigChildId, 3) }));
+        mStore.overrideRecord(makeLevelledItem(aggregateOverflowId, 0x04,
+            { makeLevelledEntry(1, bigChildId), makeLevelledEntry(1, bigChildId),
+                makeLevelledEntry(1, bigChildId) }));
+        mStore.overrideRecord(makeLevelledItem(
+            outerOverflowId, 0, { makeLevelledEntry(1, sSaloonBottleBase, 2) }));
+        mStore.overrideRecord(makeLevelledItem(mergeOverflowId, 0x04,
+            { makeLevelledEntry(1, sSaloonBottleBase), makeLevelledEntry(1, sSaloonKeyBase) }));
+
+        ESM4::Creature creature = makeCreature();
+        creature.mBaseConfig.fo3.levelOrMult = 1;
+        creature.mInventory.push_back(ESM4::InventoryItem{
+            sSaloonBottleBase, static_cast<std::uint32_t>(std::numeric_limits<int>::max()) });
+        creature.mInventory.push_back(ESM4::InventoryItem{ recursiveOverflowId, 1 });
+        creature.mInventory.push_back(ESM4::InventoryItem{ aggregateOverflowId, 1 });
+        creature.mInventory.push_back(ESM4::InventoryItem{
+            outerOverflowId, static_cast<std::uint32_t>(std::numeric_limits<int>::max()) });
+        creature.mInventory.push_back(ESM4::InventoryItem{ mergeOverflowId, 1 });
+        creature.mInventory.push_back(ESM4::InventoryItem{ sSaloonKeyBase, 2 });
+        ESM4::Reference reference = makeCreatureReference();
+        MWWorld::LiveCellRef<ESM4::Creature> liveRef(reference, &creature);
+        MWWorld::Ptr ptr(&liveRef);
+
+        MWWorld::ContainerStore& store = ptr.getClass().getContainerStore(ptr);
+        EXPECT_EQ(store.count(ESM::RefId(ESM::FormId::fromUint32(sSaloonBottleBase))),
+            std::numeric_limits<int>::max());
+        EXPECT_EQ(store.count(ESM::RefId(ESM::FormId::fromUint32(sSaloonKeyBase))), 2);
     }
 
     TEST_F(ESM4ContainerTest, ClonedCreatureInventoryGetsFreshRefsAndMutationIsolation)

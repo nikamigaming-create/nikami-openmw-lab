@@ -7,8 +7,11 @@
 #include <limits>
 #include <map>
 #include <memory>
+#include <optional>
 #include <set>
+#include <string_view>
 #include <type_traits>
+#include <vector>
 
 #include <components/debug/debuglog.hpp>
 #include <components/esm/attr.hpp>
@@ -53,6 +56,10 @@ namespace MWClass
 {
     class ESM4CreatureContainerStore final : public MWWorld::ContainerStore
     {
+        using PlannedItems = std::map<ESM::RefId, int>;
+
+        static constexpr int sMaxLevelledItemDepth = 16;
+
         enum class AddResult
         {
             Stored,
@@ -60,6 +67,204 @@ namespace MWClass
             InvalidCount,
             Overflow,
         };
+
+        static bool checkedMultiply(int left, int right, int& result)
+        {
+            if (left < 0 || right <= 0 || left > std::numeric_limits<int>::max() / right)
+                return false;
+            result = left * right;
+            return true;
+        }
+
+        static bool addPlannedCount(
+            PlannedItems& items, const ESM::RefId& id, int count, std::string_view& failure)
+        {
+            if (count <= 0)
+            {
+                failure = "invalid-entry-count";
+                return false;
+            }
+
+            const auto [it, inserted] = items.emplace(id, count);
+            if (!inserted)
+            {
+                if (it->second > std::numeric_limits<int>::max() - count)
+                {
+                    failure = "aggregate-count-overflow";
+                    return false;
+                }
+                it->second += count;
+            }
+            return true;
+        }
+
+        static bool isSupportedLevelledTerminal(int recordType)
+        {
+            switch (recordType)
+            {
+                case ESM::REC_ALCH4:
+                case ESM::REC_AMMO4:
+                case ESM::REC_ARMO4:
+                case ESM::REC_BOOK4:
+                case ESM::REC_IMOD4:
+                case ESM::REC_KEYM4:
+                case ESM::REC_MISC4:
+                case ESM::REC_WEAP4:
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        static bool resolveLevelledItem(const MWWorld::ESMStore& store, const ESM::RefId& listId, int actorLevel,
+            int depth, std::set<ESM::RefId>& path, PlannedItems& result, std::string_view& failure)
+        {
+            if (depth > sMaxLevelledItemDepth)
+            {
+                failure = "maximum-depth-exceeded";
+                return false;
+            }
+            if (path.contains(listId))
+            {
+                failure = "cycle";
+                return false;
+            }
+
+            const ESM4::LevelledItem* list = store.get<ESM4::LevelledItem>().search(listId);
+            if (list == nullptr)
+            {
+                failure = "missing-levelled-list";
+                return false;
+            }
+            if (!list->mHasChanceNone || !list->mHasLvlItemFlags)
+            {
+                failure = "missing-required-lvld-or-lvlf";
+                return false;
+            }
+            if (list->chanceNone() != 0)
+            {
+                failure = "chance-none-requires-rng";
+                return false;
+            }
+            if (!list->mChanceGlobal.isZeroOrUnset())
+            {
+                failure = "chance-global-requires-runtime-evaluation";
+                return false;
+            }
+            if ((list->mLvlItemFlags & ~std::uint8_t{ 0x07 }) != 0
+                || (list->useAll() && (list->calcAllLvlLessThanPlayer() || list->calcEachItemInCount())))
+            {
+                failure = "unsupported-levelled-list-flags";
+                return false;
+            }
+            if (!list->mLvlObjectExtra.empty())
+            {
+                if (list->mLvlObjectExtra.size() != list->mLvlObject.size())
+                {
+                    failure = "malformed-entry-extra-data";
+                    return false;
+                }
+                if (std::any_of(list->mLvlObjectExtra.begin(), list->mLvlObjectExtra.end(),
+                        [](const auto& value) { return value.has_value(); }))
+                {
+                    failure = "entry-condition-requires-runtime-evaluation";
+                    return false;
+                }
+            }
+
+            std::vector<const ESM4::LVLO*> eligible;
+            if (list->useAll() || list->calcAllLvlLessThanPlayer())
+            {
+                for (const ESM4::LVLO& entry : list->mLvlObject)
+                {
+                    if (entry.level <= actorLevel)
+                        eligible.push_back(&entry);
+                }
+            }
+            else
+            {
+                std::optional<std::int16_t> highestLevel;
+                for (const ESM4::LVLO& entry : list->mLvlObject)
+                {
+                    if (entry.level <= actorLevel && (!highestLevel || entry.level > *highestLevel))
+                        highestLevel = entry.level;
+                }
+                if (highestLevel)
+                {
+                    for (const ESM4::LVLO& entry : list->mLvlObject)
+                    {
+                        if (entry.level == *highestLevel)
+                            eligible.push_back(&entry);
+                    }
+                }
+            }
+
+            if (!list->useAll() && eligible.size() > 1)
+            {
+                failure = "ambiguous-random-selection";
+                return false;
+            }
+            if (eligible.empty())
+                return true;
+
+            path.insert(listId);
+            bool resolved = true;
+            for (const ESM4::LVLO* entry : eligible)
+            {
+                if (entry->level <= 0 || entry->count <= 0 || entry->item == 0)
+                {
+                    failure = "invalid-levelled-list-entry";
+                    resolved = false;
+                    break;
+                }
+
+                const ESM::RefId itemId(ESM::FormId::fromUint32(entry->item));
+                PlannedItems child;
+                const int recordType = store.find(itemId);
+                if (recordType == ESM::REC_LVLI4)
+                {
+                    if (!resolveLevelledItem(store, itemId, actorLevel, depth + 1, path, child, failure))
+                    {
+                        resolved = false;
+                        break;
+                    }
+                }
+                else if (recordType == 0)
+                {
+                    failure = "missing-terminal-record";
+                    resolved = false;
+                    break;
+                }
+                else if (!isSupportedLevelledTerminal(recordType))
+                {
+                    failure = "unsupported-terminal-record";
+                    resolved = false;
+                    break;
+                }
+                else
+                    child.emplace(itemId, 1);
+
+                for (const auto& [childId, childCount] : child)
+                {
+                    int multiplied = 0;
+                    if (!checkedMultiply(childCount, entry->count, multiplied))
+                    {
+                        failure = "recursive-entry-count-overflow";
+                        resolved = false;
+                        break;
+                    }
+                    if (!addPlannedCount(result, childId, multiplied, failure))
+                    {
+                        resolved = false;
+                        break;
+                    }
+                }
+                if (!resolved)
+                    break;
+            }
+            path.erase(listId);
+            return resolved;
+        }
 
         template <class Record>
         AddResult addInitialRecord(const MWWorld::ESMStore& store, const ESM::RefId& id, int count)
@@ -93,6 +298,84 @@ namespace MWClass
             return AddResult::Stored;
         }
 
+        template <class Record>
+        AddResult validateInitialRecord(const MWWorld::ESMStore& store, const ESM::RefId& id, int count)
+        {
+            if (count <= 0)
+                return AddResult::InvalidCount;
+
+            const Record* record = store.get<Record>().search(id);
+            if (record == nullptr)
+                return AddResult::Missing;
+
+            ESM::CellRef cellRef = ESM::makeBlankCellRef();
+            cellRef.mRefID = ESM::RefId::formIdRefId(record->mId);
+            MWWorld::LiveCellRef<Record> liveRef(cellRef, record);
+            const MWWorld::ConstPtr ptr(&liveRef);
+            const int type = getType(ptr);
+            for (MWWorld::ContainerStoreIterator item = begin(type); item != end(); ++item)
+            {
+                if (item->getCellRef().getRefId() != cellRef.mRefID)
+                    continue;
+
+                const int oldCount = item->getCellRef().getCount(false);
+                if (oldCount < 0 || oldCount > std::numeric_limits<int>::max() - count)
+                    return AddResult::Overflow;
+                break;
+            }
+            return AddResult::Stored;
+        }
+
+        AddResult validatePlannedRecord(const MWWorld::ESMStore& store, const ESM::RefId& id, int count)
+        {
+            switch (store.find(id))
+            {
+                case ESM::REC_AMMO4:
+                    return validateInitialRecord<ESM4::Ammunition>(store, id, count);
+                case ESM::REC_ARMO4:
+                    return validateInitialRecord<ESM4::Armor>(store, id, count);
+                case ESM::REC_MISC4:
+                    return validateInitialRecord<ESM4::MiscItem>(store, id, count);
+                case ESM::REC_WEAP4:
+                    return validateInitialRecord<ESM4::Weapon>(store, id, count);
+                case ESM::REC_ALCH4:
+                    return validateInitialRecord<ESM4::Potion>(store, id, count);
+                case ESM::REC_BOOK4:
+                    return validateInitialRecord<ESM4::Book>(store, id, count);
+                case ESM::REC_IMOD4:
+                    return validateInitialRecord<ESM4::ItemMod>(store, id, count);
+                case ESM::REC_KEYM4:
+                    return validateInitialRecord<ESM4::Key>(store, id, count);
+                default:
+                    return AddResult::Missing;
+            }
+        }
+
+        AddResult addPlannedRecord(const MWWorld::ESMStore& store, const ESM::RefId& id, int count)
+        {
+            switch (store.find(id))
+            {
+                case ESM::REC_AMMO4:
+                    return addInitialRecord<ESM4::Ammunition>(store, id, count);
+                case ESM::REC_ARMO4:
+                    return addInitialRecord<ESM4::Armor>(store, id, count);
+                case ESM::REC_MISC4:
+                    return addInitialRecord<ESM4::MiscItem>(store, id, count);
+                case ESM::REC_WEAP4:
+                    return addInitialRecord<ESM4::Weapon>(store, id, count);
+                case ESM::REC_ALCH4:
+                    return addInitialRecord<ESM4::Potion>(store, id, count);
+                case ESM::REC_BOOK4:
+                    return addInitialRecord<ESM4::Book>(store, id, count);
+                case ESM::REC_IMOD4:
+                    return addInitialRecord<ESM4::ItemMod>(store, id, count);
+                case ESM::REC_KEYM4:
+                    return addInitialRecord<ESM4::Key>(store, id, count);
+                default:
+                    return AddResult::Missing;
+            }
+        }
+
         static std::string_view getAddFailure(AddResult result)
         {
             switch (result)
@@ -109,9 +392,48 @@ namespace MWClass
             return "stored";
         }
 
-    public:
-        void fill(const ESM4::Creature& creature, const MWWorld::ESMStore& store)
+        bool commitLevelledPlan(
+            const MWWorld::ESMStore& store, const PlannedItems& plan, std::string_view& failure)
         {
+            for (const auto& [id, count] : plan)
+            {
+                const AddResult result = validatePlannedRecord(store, id, count);
+                if (result != AddResult::Stored)
+                {
+                    failure = getAddFailure(result);
+                    return false;
+                }
+            }
+
+            for (const auto& [id, count] : plan)
+            {
+                const AddResult result = addPlannedRecord(store, id, count);
+                if (result != AddResult::Stored)
+                {
+                    // The complete plan was preflighted against this single-threaded store immediately above.
+                    // Reaching this branch would mean an internal mutation violated that precondition.
+                    failure = "commit-precondition-changed";
+                    return false;
+                }
+            }
+            return true;
+        }
+
+    public:
+        void fill(
+            const ESM4::Creature& creature, const ESM4::Creature* statsProvider, const MWWorld::ESMStore& store)
+        {
+            std::optional<int> fixedActorLevel;
+            std::string_view actorLevelFailure;
+            if (statsProvider == nullptr || !statsProvider->mIsFONV)
+                actorLevelFailure = "missing-fnv-stats-provider";
+            else if ((statsProvider->mBaseConfig.fo3.flags & ESM4::Creature::FO3_PCLevelMult) != 0)
+                actorLevelFailure = "pc-level-multiplier-is-unimplemented";
+            else if (statsProvider->mBaseConfig.fo3.levelOrMult <= 0)
+                actorLevelFailure = "invalid-fixed-actor-level";
+            else
+                fixedActorLevel = statsProvider->mBaseConfig.fo3.levelOrMult;
+
             for (const ESM4::InventoryItem& item : creature.mInventory)
             {
                 const ESM::RefId ownerId(creature.mId);
@@ -140,11 +462,45 @@ namespace MWClass
                 }
                 if (recordType == ESM::REC_LVLI4)
                 {
-                    // LVLI needs retail level, chance-none, count, use-all and random-selection semantics. Do not
-                    // turn a random list into deterministic loot merely to make it appear populated.
-                    Log(Debug::Warning) << "Skipping unresolved LVLI fixed FNV creature inventory item " << itemId
-                                        << " in " << ownerId
-                                        << "; retail level/chance/random selection is not implemented";
+                    std::string_view failure = actorLevelFailure;
+                    PlannedItems plan;
+                    if (!fixedActorLevel)
+                    {
+                        Log(Debug::Warning) << "Ignoring non-deterministic LVLI fixed FNV creature inventory item "
+                                            << itemId << " in " << ownerId << " reason=" << failure;
+                        continue;
+                    }
+
+                    std::set<ESM::RefId> path;
+                    if (!resolveLevelledItem(store, itemId, *fixedActorLevel, 1, path, plan, failure))
+                    {
+                        Log(Debug::Warning) << "Ignoring non-deterministic LVLI fixed FNV creature inventory item "
+                                            << itemId << " in " << ownerId << " reason=" << failure;
+                        continue;
+                    }
+
+                    PlannedItems scaledPlan;
+                    bool scaled = true;
+                    for (const auto& [resolvedId, resolvedCount] : plan)
+                    {
+                        int total = 0;
+                        if (!checkedMultiply(resolvedCount, static_cast<int>(item.count), total))
+                        {
+                            failure = "outer-inventory-count-overflow";
+                            scaled = false;
+                            break;
+                        }
+                        if (!addPlannedCount(scaledPlan, resolvedId, total, failure))
+                        {
+                            scaled = false;
+                            break;
+                        }
+                    }
+                    if (!scaled || !commitLevelledPlan(store, scaledPlan, failure))
+                    {
+                        Log(Debug::Warning) << "Ignoring non-deterministic LVLI fixed FNV creature inventory item "
+                                            << itemId << " in " << ownerId << " reason=" << failure;
+                    }
                     continue;
                 }
 
@@ -932,7 +1288,7 @@ namespace MWClass
                 const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
                 if (store != nullptr)
                     static_cast<ESM4CreatureContainerStore&>(*data->mContainerStore)
-                        .fill(*data->mTemplates.mInventory, *store);
+                        .fill(*data->mTemplates.mInventory, data->mTemplates.mStats, *store);
                 else
                     Log(Debug::Warning) << "Unable to initialize fixed FNV creature inventory for "
                                         << ESM::RefId(creature.mId) << ": ESM store is unavailable";
