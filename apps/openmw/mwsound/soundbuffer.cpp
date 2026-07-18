@@ -125,10 +125,27 @@ namespace MWSound
             const MWWorld::ESMStore* esmstore = MWBase::Environment::get().getESMStore();
             for (const ESM::Sound& sound : esmstore->get<ESM::Sound>())
                 insertSound(sound.mId, sound);
+
+            std::size_t soundEditorIdAliases = 0;
             for (const ESM4::Sound& sound : esmstore->get<ESM4::Sound>())
-                insertSound(sound.mId, sound);
+            {
+                SoundBuffer* const buffer = insertSound(sound.mId, sound);
+                if (buffer != nullptr && !sound.mEditorId.empty())
+                    soundEditorIdAliases
+                        += mBufferNameMap.emplace(ESM::RefId::stringRefId(sound.mEditorId), buffer).second;
+            }
+
+            std::size_t soundReferenceEditorIdAliases = 0;
             for (const ESM4::SoundReference& sound : esmstore->get<ESM4::SoundReference>())
-                insertSound(sound.mId, sound);
+            {
+                SoundBuffer* const buffer = insertSound(sound.mId, sound);
+                if (buffer != nullptr && !sound.mEditorId.empty())
+                    soundReferenceEditorIdAliases
+                        += mBufferNameMap.emplace(ESM::RefId::stringRefId(sound.mEditorId), buffer).second;
+            }
+
+            Log(Debug::Info) << "FNV/ESM4 sound: registered editor-id aliases sounds=" << soundEditorIdAliases
+                             << " references=" << soundReferenceEditorIdAliases;
         }
 
         SoundBuffer* sfx;
