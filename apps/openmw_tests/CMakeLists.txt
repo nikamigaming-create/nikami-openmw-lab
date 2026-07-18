@@ -36,6 +36,7 @@ file(GLOB UNITTEST_SRC_FILES
     mwclass/testesm4container.cpp
     mwclass/testesm4talkingactivator.cpp
     mwclass/testfnvfurniturelifecycle.cpp
+    mwclass/testfnvsandbox.cpp
 
     mwrender/testfalloutweaponanimation.cpp
     mwrender/testfalloutcloudtransition.cpp

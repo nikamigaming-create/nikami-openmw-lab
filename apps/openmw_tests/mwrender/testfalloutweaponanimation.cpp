@@ -430,6 +430,14 @@ namespace MWRender
         EXPECT_FALSE(hasFonvPowerArmorGeneralFlag(ESM4::Armor::TYPE_FO3 | ESM4::Armor::FO3_HeavyArmor));
     }
 
+    TEST(FalloutWeaponAnimationTest, usesNeutralLocomotionWhileWeaponIsHolstered)
+    {
+        EXPECT_FALSE(shouldUseFonvWeaponAnimationFamily(false, false));
+        EXPECT_FALSE(shouldUseFonvWeaponAnimationFamily(false, true));
+        EXPECT_FALSE(shouldUseFonvWeaponAnimationFamily(true, false));
+        EXPECT_TRUE(shouldUseFonvWeaponAnimationFamily(true, true));
+    }
+
     TEST(FalloutWeaponAnimationTest, resolvesEveryPowerArmorCandidateBeforeAnyGenericFallback)
     {
         const std::vector<std::string> candidates{ "meshes/characters/_male/locomotion/2hrforward.kf",

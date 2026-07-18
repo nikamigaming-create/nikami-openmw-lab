@@ -3505,6 +3505,17 @@ namespace MWMechanics
         return true;
     }
 
+    std::string CharacterController::getAnimationGroupFromSource(
+        std::string_view sourceName, std::string_view groupPrefix) const
+    {
+        return mAnimation != nullptr ? mAnimation->getAnimationGroupFromSource(sourceName, groupPrefix) : std::string();
+    }
+
+    bool CharacterController::setFalloutAnimatedObject(std::string_view model, std::string_view activeGroup)
+    {
+        return mAnimation != nullptr && mAnimation->setFalloutAnimatedObject(model, activeGroup);
+    }
+
     bool CharacterController::playGroupLua(std::string_view groupname, float speed, std::string_view startKey,
         std::string_view stopKey, uint32_t loops, bool forceLoop)
     {

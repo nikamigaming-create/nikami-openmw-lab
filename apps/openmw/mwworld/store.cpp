@@ -1341,6 +1341,7 @@ template class MWWorld::TypedDynamicStore<ESM4::ActorCharacter, ESM::FormId>;
 template class MWWorld::TypedDynamicStore<ESM4::ActorCreature, ESM::FormId>;
 
 template class MWWorld::TypedDynamicStore<ESM4::Activator>;
+template class MWWorld::TypedDynamicStore<ESM4::AnimObject>;
 template class MWWorld::TypedDynamicStore<ESM4::AIPackage>;
 template class MWWorld::TypedDynamicStore<ESM4::Ammunition>;
 template class MWWorld::TypedDynamicStore<ESM4::Armor>;

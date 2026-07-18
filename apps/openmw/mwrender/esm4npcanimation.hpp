@@ -43,6 +43,7 @@ namespace MWRender
         void showWeapons(bool showWeapon) override;
         bool prepareFalloutWeaponAnimation(
             std::uint8_t animationType, std::uint8_t reloadAnimation, FonvWeaponAction action) override;
+        bool setFalloutAnimatedObject(std::string_view model, std::string_view activeGroup) override;
         bool setWeaponHolsterAttachment(std::string_view frameName, std::string_view parentName,
             const std::array<float, 9>& rotation, const std::array<float, 3>& translation, float scale);
         WeaponAttachmentState getWeaponHolsterAttachmentState() const;
@@ -67,6 +68,9 @@ namespace MWRender
         std::string mFalloutWeaponHolsterBone;
         bool mFalloutWeaponsShown = false;
         const ESM4::Weapon* mFalloutActionWeapon = nullptr;
+        osg::ref_ptr<osg::Node> mFalloutAnimatedObjectPart;
+        std::string mFalloutAnimatedObjectModel;
+        std::string mFalloutAnimatedObjectGroup;
 
         osg::ref_ptr<osg::Node> insertPart(
             std::string_view model, const osg::Vec4f* tint = nullptr, std::string_view diffuseTexture = {},

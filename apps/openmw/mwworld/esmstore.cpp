@@ -1044,6 +1044,7 @@ namespace MWWorld
                          << " scripts=" << get<ESM4::Script>().getSize()
                          << " globals=" << get<ESM4::GlobalVariable>().getSize()
                          << " formLists=" << get<ESM4::FormIdList>().getSize()
+                         << " animatedObjects=" << get<ESM4::AnimObject>().getSize()
                          << " statics=" << get<ESM4::Static>().getSize()
                          << " textureSets=" << get<ESM4::TextureSet>().getSize()
                          << " packIns=" << mStoreImp->mStarfieldPackIns.size();

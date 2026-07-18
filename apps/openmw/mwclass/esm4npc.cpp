@@ -1,13 +1,16 @@
 #include "esm4npc.hpp"
 #include "fnvaipackage.hpp"
 #include "fnvfurniturelifecycle.hpp"
+#include "fnvsandbox.hpp"
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <cstdlib>
 #include <cctype>
 #include <functional>
 #include <limits>
+#include <optional>
 #include <string>
 
 #include <components/esm/attr.hpp>
@@ -186,6 +189,8 @@ namespace MWClass
         std::vector<const ESM4::Clothing*> mEquippedClothing;
         const ESM4::Weapon* mEquippedWeapon = nullptr;
         bool mFnvAiSequenceInitialised = false;
+        bool mFnvSandboxPackageNeedsReevaluation = false;
+        std::optional<FalloutSandboxSaveFallback> mFnvSandboxSaveFallback;
         FalloutFurnitureState mFurnitureState = FalloutFurnitureState::None;
         FalloutFurniturePlacement mFurniturePlacement;
 
@@ -219,6 +224,8 @@ namespace MWClass
         , mEquippedClothing(other.mEquippedClothing)
         , mEquippedWeapon(other.mEquippedWeapon)
         , mFnvAiSequenceInitialised(other.mFnvAiSequenceInitialised)
+        , mFnvSandboxPackageNeedsReevaluation(other.mFnvSandboxPackageNeedsReevaluation)
+        , mFnvSandboxSaveFallback(other.mFnvSandboxSaveFallback)
         , mFurnitureState(other.mFurnitureState)
         , mFurniturePlacement(other.mFurniturePlacement)
     {
@@ -592,6 +599,239 @@ namespace MWClass
         FalloutFurniturePackagePhase mPhase = FalloutFurniturePackagePhase::Approach;
     };
 
+    class FnvSandboxPackage final : public MWMechanics::TypedAiPackage<FnvSandboxPackage>
+    {
+    public:
+        FnvSandboxPackage(float radius, int duration, int timeOfDay, const osg::Vec3f& sandboxOrigin,
+            std::string packageName)
+            : MWMechanics::TypedAiPackage<FnvSandboxPackage>(true)
+            , mRadius(radius)
+            , mDuration(duration)
+            , mTimeOfDay(timeOfDay)
+            , mSandboxOrigin(sandboxOrigin)
+            , mPackageName(std::move(packageName))
+        {
+        }
+
+        // A sequence clone represents a fresh package cycle. Runtime marker claims and path state must not be
+        // duplicated, otherwise destroying either copy could release a marker still owned by the other actor cycle.
+        FnvSandboxPackage(const FnvSandboxPackage& other)
+            : MWMechanics::TypedAiPackage<FnvSandboxPackage>(true)
+            , mRadius(other.mRadius)
+            , mDuration(other.mDuration)
+            , mTimeOfDay(other.mTimeOfDay)
+            , mSandboxOrigin(other.mSandboxOrigin)
+            , mPackageName(other.mPackageName)
+        {
+        }
+
+        ~FnvSandboxPackage() override { releaseClaim(); }
+
+        static constexpr MWMechanics::AiPackageTypeId getTypeId()
+        {
+            return MWMechanics::AiPackageTypeId::Wander;
+        }
+
+        static constexpr Options makeDefaultOptions()
+        {
+            Options options;
+            options.mUseVariableSpeed = true;
+            return options;
+        }
+
+        void writeState(ESM::AiSequence::AiSequence& sequence) const override
+        {
+            writeFalloutSandboxFallback(sequence, mRadius, mDuration, mTimeOfDay, mSandboxOrigin);
+        }
+
+        bool execute(const MWWorld::Ptr& actor, MWMechanics::CharacterController& characterController,
+            MWMechanics::AiState& state, float duration) override
+        {
+            MWBase::World* world = MWBase::Environment::get().getWorld();
+            const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
+            if (world == nullptr || store == nullptr || actor.getCell() == nullptr
+                || actor.getCell()->getCell() == nullptr)
+            {
+                characterController.setFalloutAnimatedObject({}, {});
+                releaseClaim();
+                return false;
+            }
+
+            const ESM::RefId& currentCell = actor.getCell()->getCell()->getId();
+            if (mMarker && mMarker->mCell != currentCell)
+            {
+                characterController.clearAnimQueue(true);
+                characterController.setFalloutAnimatedObject({}, {});
+                releaseClaim();
+                return true;
+            }
+
+            if (!mMarker)
+            {
+                if (mAcquireCooldown > 0.f)
+                {
+                    mAcquireCooldown = std::max(0.f, mAcquireCooldown - std::max(duration, 0.f));
+                    return false;
+                }
+
+                const osg::Vec3f actorPosition = actor.getRefData().getPosition().asVec3();
+                const std::vector<FalloutSandboxMarker> markers
+                    = collectFalloutSandboxMarkers(*store, currentCell, mSandboxOrigin, mRadius);
+                const std::optional<std::size_t> selected = selectNearestFalloutSandboxMarker(
+                    markers, actorPosition, isFalloutSandboxMarkerClaimed);
+                if (!selected || !tryClaimFalloutSandboxMarker(markers[*selected].mReference))
+                {
+                    // Another sandbox actor may own every nearby marker. Retry at low frequency without turning the
+                    // global REFR index into a per-frame scan.
+                    mAcquireCooldown = 1.f;
+                    return false;
+                }
+
+                mMarker = markers[*selected];
+                mClaimedMarker = mMarker->mReference;
+                mTravel.emplace(mMarker->mPosition.x(), mMarker->mPosition.y(), mMarker->mPosition.z(), false);
+                Log(Debug::Verbose) << "FNV/ESM4 sandbox: acquired package=" << mPackageName
+                                    << " actor=" << actor.getCellRef().getRefId()
+                                    << " marker=" << mMarker->mReference << " base=" << mMarker->mBase
+                                    << " pos=(" << mMarker->mPosition.x() << "," << mMarker->mPosition.y() << ","
+                                    << mMarker->mPosition.z() << ")";
+            }
+
+            if (mPhase == Phase::Approach)
+            {
+                if (mTravel && !mTravel->execute(actor, characterController, state, duration))
+                    return false;
+
+                stopMovement(actor);
+                world->rotateObject(
+                    actor, osg::Vec3f(0.f, 0.f, mMarker->mYaw), MWBase::RotationFlag_none);
+                if (!beginIdle(actor, characterController))
+                {
+                    releaseClaim();
+                    mAcquireCooldown = 5.f;
+                    return false;
+                }
+                return false;
+            }
+
+            stopMovement(actor);
+            world->rotateObject(actor, osg::Vec3f(0.f, 0.f, mMarker->mYaw), MWBase::RotationFlag_none);
+            mIdleElapsed += std::max(duration, 0.f);
+            if (mIdleElapsed >= mMarker->mTimer)
+            {
+                characterController.clearAnimQueue(true);
+                characterController.setFalloutAnimatedObject({}, {});
+                Log(Debug::Verbose) << "FNV/ESM4 sandbox: completed package=" << mPackageName
+                                    << " actor=" << actor.getCellRef().getRefId()
+                                    << " marker=" << mMarker->mReference << " group=" << mGroup
+                                    << " elapsed=" << mIdleElapsed;
+                releaseClaim();
+                return true;
+            }
+
+            if (!characterController.isAnimPlaying(mGroup))
+            {
+                if (!characterController.playGroup(mGroup, 1, 1, true))
+                {
+                    characterController.setFalloutAnimatedObject({}, {});
+                    releaseClaim();
+                    mAcquireCooldown = 5.f;
+                    return false;
+                }
+                if (!mAnimatedObjectModel.empty())
+                    characterController.setFalloutAnimatedObject(mAnimatedObjectModel, mGroup);
+            }
+            return false;
+        }
+
+        osg::Vec3f getDestination(const MWWorld::Ptr& actor) const override
+        {
+            if (mMarker)
+                return mMarker->mPosition;
+            return actor.getRefData().getPosition().asVec3();
+        }
+
+    private:
+        enum class Phase
+        {
+            Approach,
+            Animating,
+        };
+
+        static void stopMovement(const MWWorld::Ptr& actor)
+        {
+            MWMechanics::Movement& movement = actor.getClass().getMovementSettings(actor);
+            movement.mPosition[0] = 0.f;
+            movement.mPosition[1] = 0.f;
+            movement.mPosition[2] = 0.f;
+            movement.mRotation[0] = 0.f;
+            movement.mRotation[1] = 0.f;
+            movement.mRotation[2] = 0.f;
+        }
+
+        bool beginIdle(
+            const MWWorld::Ptr& actor, MWMechanics::CharacterController& characterController)
+        {
+            if (!mMarker || mMarker->mIdles.empty())
+                return false;
+
+            const FalloutSandboxIdle& idle = mMarker->mIdles.front();
+            mGroup = characterController.getAnimationGroupFromSource(idle.mModel, "specialidle");
+            if (mGroup.empty())
+            {
+                Log(Debug::Error) << "FNV/ESM4 sandbox: authored idle source has no SpecialIdle group package="
+                                  << mPackageName << " actor=" << actor.getCellRef().getRefId()
+                                  << " idle=" << idle.mId << " source=" << idle.mModel;
+                return false;
+            }
+            if (!characterController.playGroup(mGroup, 1, 1, true))
+            {
+                Log(Debug::Error) << "FNV/ESM4 sandbox: failed to play authored idle package=" << mPackageName
+                                  << " actor=" << actor.getCellRef().getRefId() << " idle=" << idle.mId
+                                  << " source=" << idle.mModel << " group=" << mGroup;
+                return false;
+            }
+
+            mAnimatedObjectModel = idle.mAnimatedObjectModel;
+            if (!mAnimatedObjectModel.empty())
+                characterController.setFalloutAnimatedObject(mAnimatedObjectModel, mGroup);
+            mIdleElapsed = 0.f;
+            mPhase = Phase::Animating;
+            Log(Debug::Verbose) << "FNV/ESM4 sandbox: playing package=" << mPackageName
+                                << " actor=" << actor.getCellRef().getRefId() << " marker=" << mMarker->mReference
+                                << " idle=" << idle.mId << " source=" << idle.mModel << " group=" << mGroup
+                                << " animatedObject=" << mAnimatedObjectModel << " timer=" << mMarker->mTimer;
+            return true;
+        }
+
+        void releaseClaim()
+        {
+            if (!mClaimedMarker.isZeroOrUnset())
+                releaseFalloutSandboxMarker(mClaimedMarker);
+            mClaimedMarker = ESM::FormId();
+            mMarker.reset();
+            mTravel.reset();
+            mGroup.clear();
+            mAnimatedObjectModel.clear();
+            mIdleElapsed = 0.f;
+            mPhase = Phase::Approach;
+        }
+
+        float mRadius = 0.f;
+        int mDuration = 0;
+        int mTimeOfDay = 0;
+        osg::Vec3f mSandboxOrigin;
+        std::string mPackageName;
+        std::optional<FalloutSandboxMarker> mMarker;
+        std::optional<MWMechanics::AiTravel> mTravel;
+        ESM::FormId mClaimedMarker;
+        std::string mGroup;
+        std::string mAnimatedObjectModel;
+        float mIdleElapsed = 0.f;
+        float mAcquireCooldown = 0.f;
+        Phase mPhase = Phase::Approach;
+    };
+
     static void initialiseFnvAiSequence(
         ESM4NpcCustomData& data, const MWWorld::Ptr& ptr, const std::vector<ESM::FormId>& packageIds)
     {
@@ -601,6 +841,10 @@ namespace MWClass
         MWMechanics::AiSequence& sequence = data.mCreatureStats.getAiSequence();
         if (!sequence.isEmpty())
         {
+            // A tagged save fallback is deliberately omitted from the runtime sequence. Preserve any saved combat,
+            // pursuit, or travel ahead of it, then re-evaluate the authored sandbox package as soon as those finish.
+            if (data.mFnvSandboxPackageNeedsReevaluation)
+                return;
             data.mFnvAiSequenceInitialised = true;
             return;
         }
@@ -711,6 +955,24 @@ namespace MWClass
                 ? static_cast<int>(std::min<std::uint32_t>(package->mSchedule.duration, 24))
                 : 5;
             const int timeOfDay = package->mSchedule.time != 0xff ? package->mSchedule.time : 0;
+            const osg::Vec3f sandboxOrigin = data.mFnvSandboxSaveFallback
+                ? data.mFnvSandboxSaveFallback->mOrigin
+                : ptr.getRefData().getPosition().asVec3();
+            if ((package->mData.type == 11 || package->mData.type == 12)
+                && !collectFalloutSandboxMarkers(*store, currentCellId,
+                        sandboxOrigin, getFalloutSandboxRadius(*package))
+                        .empty())
+            {
+                FnvSandboxPackage sandbox(getFalloutSandboxRadius(*package), duration, timeOfDay,
+                    sandboxOrigin, package->mEditorId);
+                sequence.stack(sandbox, ptr, true);
+                data.mFnvAiSequenceInitialised = true;
+                Log(Debug::Verbose) << "FNV/ESM4 diag: stacked record-driven sandbox package "
+                                    << package->mEditorId << " hour=" << hour << " override=" << usedHourOverride
+                                    << " radius=" << getFalloutSandboxRadius(*package) << " for "
+                                    << traits->mEditorId;
+                return;
+            }
             std::vector<unsigned char> idles(8, 0);
             MWMechanics::AiWander wander(distance, duration, timeOfDay, idles, true);
             sequence.stack(wander, ptr, true);
@@ -1261,9 +1523,13 @@ namespace MWClass
         data->mContainerStore = std::make_unique<ESM4NpcContainerStore>();
         data->mContainerStore->setPtr(ptr);
         data->mContainerStore->readState(npcState.mInventory);
+        const std::optional<FalloutSandboxSaveFallback> sandboxFallback
+            = getFalloutSandboxSaveFallback(npcState.mCreatureStats.mAiSequence);
         data->mCreatureStats.readState(npcState.mCreatureStats);
         data->mContainerItemsRegistered = true; // ContainerStore::readState registered every retained saved stack.
-        data->mFnvAiSequenceInitialised = true; // An explicitly empty saved sequence must remain explicitly empty.
+        data->mFnvAiSequenceInitialised = !sandboxFallback.has_value();
+        data->mFnvSandboxPackageNeedsReevaluation = sandboxFallback.has_value();
+        data->mFnvSandboxSaveFallback = sandboxFallback;
         ptr.getRefData().setCustomData(std::move(data));
     }
 
@@ -1287,6 +1553,15 @@ namespace MWClass
         ESM::CreatureState& npcState = state.asCreatureState();
         data->mContainerStore->writeState(npcState.mInventory);
         data->mCreatureStats.writeState(npcState.mCreatureStats);
+        if (data->mFnvSandboxPackageNeedsReevaluation && data->mFnvSandboxSaveFallback
+            && !getFalloutSandboxSaveFallback(npcState.mCreatureStats.mAiSequence))
+        {
+            // A tagged fallback is omitted from the live sequence on load. Preserve it across a second save made
+            // while saved combat/travel is still ahead of package re-evaluation.
+            const FalloutSandboxSaveFallback& fallback = *data->mFnvSandboxSaveFallback;
+            writeFalloutSandboxFallback(npcState.mCreatureStats.mAiSequence, fallback.mRadius,
+                fallback.mDuration, fallback.mTimeOfDay, fallback.mOrigin);
+        }
         state.mHasCustomState = true;
     }
 
@@ -1489,6 +1764,11 @@ namespace MWClass
         const ESM4::Npc* packageRecord = data.mAIPackage != nullptr ? data.mAIPackage : data.mTraits;
         if (packageRecord != nullptr)
             initialiseFnvAiSequence(data, ptr, packageRecord->mAIPackages);
+        if (data.mFnvAiSequenceInitialised)
+        {
+            data.mFnvSandboxPackageNeedsReevaluation = false;
+            data.mFnvSandboxSaveFallback.reset();
+        }
         return data.mCreatureStats;
     }
 

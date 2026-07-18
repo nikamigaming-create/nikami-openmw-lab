@@ -77,6 +77,7 @@
 #include "../mwbase/soundmanager.hpp"
 #include "../mwbase/world.hpp"
 #include "../mwclass/esm4npc.hpp"
+#include "../mwclass/fnvsandbox.hpp"
 #include "../mwworld/cell.hpp"
 #include "../mwworld/esmstore.hpp"
 #include "../mwworld/timestamp.hpp"
@@ -8359,6 +8360,35 @@ namespace MWRender
                         Log(Debug::Info) << "FNV/ESM4 ASSET PROOF GSEasyPete: authored idle source=" << kfPath;
                     addFonvAnimationSource(kfPath, "authored IDLE", false);
                 }
+
+                float sandboxRadius = 0.f;
+                const auto& packageStore = store->get<ESM4::AIPackage>();
+                for (ESM::FormId packageId : packageIds)
+                {
+                    const ESM4::AIPackage* package = packageStore.search(packageId);
+                    if (package != nullptr && (package->mData.type == 11 || package->mData.type == 12))
+                        sandboxRadius = std::max(sandboxRadius, MWClass::getFalloutSandboxRadius(*package));
+                }
+                if (sandboxRadius > 0.f && mPtr.getCell() != nullptr && mPtr.getCell()->getCell() != nullptr)
+                {
+                    const ESM::Position& actorPosition = mPtr.getRefData().getPosition();
+                    const std::vector<MWClass::FalloutSandboxMarker> sandboxMarkers
+                        = MWClass::collectFalloutSandboxMarkers(*store, mPtr.getCell()->getCell()->getId(),
+                            osg::Vec3f(actorPosition.pos[0], actorPosition.pos[1], actorPosition.pos[2]),
+                            sandboxRadius);
+                    std::set<std::string> sandboxSources;
+                    for (const MWClass::FalloutSandboxMarker& marker : sandboxMarkers)
+                    {
+                        for (const MWClass::FalloutSandboxIdle& idle : marker.mIdles)
+                        {
+                            if (sandboxSources.insert(idle.mModel).second)
+                                addFonvAnimationSource(idle.mModel, "sandbox IDLM", false);
+                        }
+                    }
+                    Log(Debug::Verbose) << "FNV/ESM4 sandbox: actor=" << traits->mEditorId
+                                     << " radius=" << sandboxRadius << " markers=" << sandboxMarkers.size()
+                                     << " idleSources=" << sandboxSources.size();
+                }
                 procedureIdleSources
                     = collectFonvPackageProcedureAnimationSources(mPtr, *store, mResourceSystem, *traits, packageIds);
             }
@@ -8389,7 +8419,13 @@ namespace MWRender
             const bool isFemale = MWClass::ESM4Npc::isFemale(mPtr);
             const std::string locomotionDir
                 = isFemale ? "meshes/characters/_male/locomotion/female/" : "meshes/characters/_male/locomotion/male/";
-            const ESM4::Weapon* familyWeapon = MWClass::ESM4Npc::getEquippedWeapon(mPtr);
+            const ESM4::Weapon* equippedFamilyWeapon = MWClass::ESM4Npc::getEquippedWeapon(mPtr);
+            const bool weaponDrawn
+                = mPtr.getClass().getCreatureStats(mPtr).getDrawState() == MWMechanics::DrawState::Weapon;
+            const ESM4::Weapon* familyWeapon
+                = shouldUseFonvWeaponAnimationFamily(equippedFamilyWeapon != nullptr, weaponDrawn)
+                ? equippedFamilyWeapon
+                : nullptr;
             const std::string weaponPrefix = familyWeapon != nullptr
                 ? std::string(getFonvWeaponAnimationPrefix(familyWeapon->mData.animationType))
                 : std::string();
@@ -8695,6 +8731,46 @@ namespace MWRender
         Log(Debug::Info) << "FNV/ESM4 actor completeness: moved equipped weapon for "
                          << mPtr.getCellRef().getRefId() << " drawn=" << showWeapon
                          << " target=\"" << targetName << "\" gate=weapon-draw-state-attachment";
+    }
+
+    bool ESM4NpcAnimation::setFalloutAnimatedObject(std::string_view model, std::string_view activeGroup)
+    {
+        if (model == mFalloutAnimatedObjectModel && activeGroup == mFalloutAnimatedObjectGroup
+            && mFalloutAnimatedObjectPart != nullptr)
+            return true;
+
+        if (mFalloutAnimatedObjectPart != nullptr)
+        {
+            while (mFalloutAnimatedObjectPart->getNumParents() > 0)
+            {
+                osg::Group* parent = mFalloutAnimatedObjectPart->getParent(0);
+                if (parent == nullptr || !parent->removeChild(mFalloutAnimatedObjectPart.get()))
+                    break;
+            }
+        }
+        mFalloutAnimatedObjectPart = nullptr;
+        mFalloutAnimatedObjectModel.clear();
+        mFalloutAnimatedObjectGroup.clear();
+
+        if (model.empty())
+            return true;
+
+        std::string authoredParent;
+        mFalloutAnimatedObjectPart = insertAttachedPart(model, {}, &authoredParent);
+        if (mFalloutAnimatedObjectPart == nullptr)
+        {
+            Log(Debug::Error) << "FNV/ESM4 sandbox: failed to attach ANIO model=" << model
+                              << " group=" << activeGroup << " actor=" << mPtr.getCellRef().getRefId();
+            return false;
+        }
+
+        mFalloutAnimatedObjectModel = model;
+        mFalloutAnimatedObjectGroup = activeGroup;
+        mFalloutAnimatedObjectPart->setNodeMask(~0u);
+        Log(Debug::Verbose) << "FNV/ESM4 sandbox: attached ANIO model=" << model
+                         << " group=" << activeGroup << " parent=" << authoredParent
+                         << " actor=" << mPtr.getCellRef().getRefId();
+        return true;
     }
 
     bool ESM4NpcAnimation::applyRetailWeaponHolsterContract(const ESM4::Weapon& weapon)
@@ -9093,6 +9169,9 @@ namespace MWRender
     osg::Vec3f ESM4NpcAnimation::runAnimation(float duration)
     {
         osg::Vec3f movement = Animation::runAnimation(duration);
+        if (mFalloutAnimatedObjectPart != nullptr && !mFalloutAnimatedObjectGroup.empty()
+            && !isPlaying(mFalloutAnimatedObjectGroup))
+            setFalloutAnimatedObject({}, {});
         const ESM4::Npc* traits = MWClass::ESM4Npc::getTraitsRecord(mPtr);
         if (traits == nullptr || (!traits->mIsFO3 && !traits->mIsFONV && !traits->mIsFO4)
             || mObjectRoot == nullptr)

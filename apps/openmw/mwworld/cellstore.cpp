@@ -62,6 +62,7 @@
 #include <components/esm4/loadimod.hpp>
 #include <components/esm4/loadingr.hpp>
 #include <components/esm4/loadligh.hpp>
+#include <components/esm4/loadidlm.hpp>
 #include <components/esm4/loadmisc.hpp>
 #include <components/esm4/loadmstt.hpp>
 #include <components/esm4/loadnpc.hpp>
@@ -1246,6 +1247,16 @@ namespace MWWorld
         ESM::RecNameInts foundType = static_cast<ESM::RecNameInts>(store.find(ref.mBaseObj));
         if (foundType == 0)
         {
+            // IDLM references are authored, invisible AI interaction points. They stay in the
+            // ESM4 reference store for sandbox-package discovery and deliberately have no live
+            // render/physics object in the cell's reference lists.
+            if (store.get<ESM4::IdleMarker>().search(ref.mBaseObj) != nullptr)
+            {
+                Log(Debug::Verbose) << "FNV/ESM4 diag: retained invisible idle marker reference "
+                                    << ESM::RefId(ref.mId) << " base " << ESM::RefId(ref.mBaseObj)
+                                    << " in parent cell " << ref.mParent;
+                return;
+            }
             Log(Debug::Warning) << "FNV/ESM4 diag: unresolved object reference " << ESM::RefId(ref.mId)
                                 << " editor '" << ref.mEditorId << "' base " << ESM::RefId(ref.mBaseObj)
                                 << " in parent cell " << ref.mParent;

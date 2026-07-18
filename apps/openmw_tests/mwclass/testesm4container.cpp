@@ -90,21 +90,12 @@ namespace
 
     TEST(FnvCreatureAiPolicyTest, ZeroSavedToleranceKeepsLegacyArrivalDistance)
     {
-        ESM::AiSequence::AiWander saved{};
-        saved.mData.mDistance = 64;
-        saved.mData.mDuration = 5;
-        saved.mDurationData.mRemainingDuration = 5;
-
-        MWMechanics::AiWander legacy(&saved);
-        EXPECT_EQ(legacy.getDestinationTolerance(), MWMechanics::AiWander::sDefaultDestinationTolerance);
-
-        saved.mDurationData.mDestinationTolerance = 8;
-        MWMechanics::AiWander fnv(&saved);
-        EXPECT_EQ(fnv.getDestinationTolerance(), 8u);
-
-        saved.mDurationData.mDestinationTolerance = std::numeric_limits<std::uint32_t>::max();
-        MWMechanics::AiWander malformed(&saved);
-        EXPECT_LT(malformed.getDestinationTolerance(), static_cast<unsigned>(saved.mData.mDistance));
+        EXPECT_EQ(MWMechanics::AiWander::sanitizeDestinationTolerance(64, 0),
+            MWMechanics::AiWander::sDefaultDestinationTolerance);
+        EXPECT_EQ(MWMechanics::AiWander::sanitizeDestinationTolerance(64, 8), 8u);
+        EXPECT_LT(MWMechanics::AiWander::sanitizeDestinationTolerance(
+                      64, std::numeric_limits<std::uint32_t>::max()),
+            64u);
     }
 
     class TestLuaManager final : public MWBase::LuaManager

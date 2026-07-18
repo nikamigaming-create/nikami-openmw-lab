@@ -38,6 +38,7 @@
 #include <components/debug/debuglog.hpp>
 
 #include <components/esm/defs.hpp>
+#include <components/misc/strings/algorithm.hpp>
 
 #include <components/resource/animblendrulesmanager.hpp>
 #include <components/resource/keyframemanager.hpp>
@@ -5132,6 +5133,23 @@ namespace MWRender
         {
             if ((*source)->getTextKeys().hasGroupStart(anim))
                 return (*source)->mSourceName;
+        }
+        return {};
+    }
+
+    std::string Animation::getAnimationGroupFromSource(
+        std::string_view sourceName, std::string_view groupPrefix) const
+    {
+        for (AnimSourceList::const_reverse_iterator source = mAnimSources.rbegin(); source != mAnimSources.rend();
+             ++source)
+        {
+            if (!Misc::StringUtils::ciEqual((*source)->mSourceName, sourceName))
+                continue;
+            for (const std::string& group : (*source)->getTextKeys().getGroups())
+            {
+                if (groupPrefix.empty() || Misc::StringUtils::ciStartsWith(group, groupPrefix))
+                    return group;
+            }
         }
         return {};
     }

@@ -481,6 +481,7 @@ namespace ESM
             record.mDurationData.mRemainingDuration = 13;
             record.mDurationData.mDestinationTolerance = 14;
             record.mStoredInitialActorPosition = true;
+            record.mReevaluateFnvSandbox = true;
             constexpr float initialActorPosition[3] = { 15, 16, 17 };
             static_assert(std::size(initialActorPosition) == std::size(record.mInitialActorPosition.mValues));
             std::copy(
@@ -498,6 +499,23 @@ namespace ESM
             EXPECT_EQ(result.mDurationData.mDestinationTolerance, record.mDurationData.mDestinationTolerance);
             EXPECT_EQ(result.mStoredInitialActorPosition, record.mStoredInitialActorPosition);
             EXPECT_THAT(result.mInitialActorPosition.mValues, ElementsAreArray(record.mInitialActorPosition.mValues));
+            EXPECT_EQ(result.mReevaluateFnvSandbox, record.mReevaluateFnvSandbox);
+        }
+
+        TEST_P(Esm3SaveLoadRecordTest, aiSequenceAiWanderWithoutSandboxTagDefaultsFalse)
+        {
+            AiSequence::AiWander record{};
+            record.mData.mDistance = 64;
+            record.mData.mDuration = 5;
+            record.mDurationData.mRemainingDuration = 5.f;
+            ASSERT_FALSE(record.mReevaluateFnvSandbox);
+
+            AiSequence::AiWander result{};
+            saveAndLoadRecord(record, GetParam(), result);
+
+            EXPECT_FALSE(result.mReevaluateFnvSandbox);
+            EXPECT_EQ(result.mData.mDistance, record.mData.mDistance);
+            EXPECT_EQ(result.mData.mDuration, record.mData.mDuration);
         }
 
         TEST_P(Esm3SaveLoadRecordTest, aiSequenceAiTravelShouldNotChange)

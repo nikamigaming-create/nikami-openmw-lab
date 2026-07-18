@@ -71,6 +71,10 @@ namespace ESM
             bool mStoredInitialActorPosition;
             Vector3 mInitialActorPosition;
 
+            // An engine-private save placeholder for a record-driven FNV sandbox package. The mechanics loader
+            // omits this WAND and lets the owning FNV actor rebuild its PACK/IDLM/IDLE/ANIO pipeline.
+            bool mReevaluateFnvSandbox = false;
+
             /// \todo add more AiWander state
 
             void load(ESMReader& esm);

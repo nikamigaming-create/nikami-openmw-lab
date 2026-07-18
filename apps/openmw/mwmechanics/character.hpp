@@ -304,6 +304,9 @@ namespace MWMechanics
         bool playGroup(std::string_view groupname, int mode, uint32_t count, bool scripted = false);
         bool playGroupLua(std::string_view groupname, float speed, std::string_view startKey, std::string_view stopKey,
             uint32_t loops, bool forceLoop);
+        std::string getAnimationGroupFromSource(
+            std::string_view sourceName, std::string_view groupPrefix = {}) const;
+        bool setFalloutAnimatedObject(std::string_view model, std::string_view activeGroup);
         void enableLuaAnimations(bool enable);
         void skipAnim();
         bool isAnimPlaying(std::string_view groupName) const;

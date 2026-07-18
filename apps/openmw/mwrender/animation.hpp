@@ -403,6 +403,14 @@ namespace MWRender
         /// Fallout mechanics uses this to reject a same-named action inherited from another weapon family.
         std::string getAnimationSourceName(std::string_view anim) const;
 
+        /// Return the first group from a specific source whose name begins with the requested prefix.
+        /// This lets record-driven Fallout IDLE packages use the authored KF group without deriving it from EDID.
+        std::string getAnimationGroupFromSource(
+            std::string_view sourceName, std::string_view groupPrefix = {}) const;
+
+        /// Attach or clear a Fallout ANIO model for the duration of an authored idle group.
+        virtual bool setFalloutAnimatedObject(std::string_view model, std::string_view activeGroup) { return false; }
+
         /// Bind the exact action sources selected by a Fallout weapon's DNAM fields.
         /// Sources are added on demand so weapon-family changes and inventory-backed players cannot retain a stale
         /// action manifest. Returns false when any required authored source is unavailable.

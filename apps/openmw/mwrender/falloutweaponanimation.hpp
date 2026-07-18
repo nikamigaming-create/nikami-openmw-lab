@@ -108,6 +108,11 @@ namespace MWRender
         return (generalFlags & FonvPowerArmorGeneralFlag) != 0;
     }
 
+    inline constexpr bool shouldUseFonvWeaponAnimationFamily(bool weaponPresent, bool weaponDrawn)
+    {
+        return weaponPresent && weaponDrawn;
+    }
+
     enum class FonvAnimationFamilySelection : std::uint8_t
     {
         Missing,
