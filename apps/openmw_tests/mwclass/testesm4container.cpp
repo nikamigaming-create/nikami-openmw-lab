@@ -5,14 +5,18 @@
 #include <components/esm3/esmreader.hpp>
 #include <components/esm3/esmwriter.hpp>
 #include <components/esm3/readerscache.hpp>
+#include <components/esm4/loadcrea.hpp>
 #include <components/esm4/loadkeym.hpp>
+#include <components/esm4/loadlvli.hpp>
 #include <components/esm4/loadmisc.hpp>
+#include <components/esm4/loadstat.hpp>
 
 #include "apps/openmw/mwbase/environment.hpp"
 #include "apps/openmw/mwbase/luamanager.hpp"
 
 #include "apps/openmw/mwclass/classes.hpp"
 #include "apps/openmw/mwclass/esm4container.hpp"
+#include "apps/openmw/mwclass/esm4creature.hpp"
 
 #include "apps/openmw/mwworld/actionopen.hpp"
 #include "apps/openmw/mwworld/esmstore.hpp"
@@ -20,6 +24,7 @@
 #include "apps/openmw/mwworld/livecellref.hpp"
 #include "apps/openmw/mwworld/worldmodel.hpp"
 
+#include <limits>
 #include <sstream>
 
 namespace
@@ -30,6 +35,12 @@ namespace
     constexpr std::uint32_t sSaloonKeyBase = 0x01103b1f;
     constexpr std::uint32_t sKeyHolderBase = 0x01103b20;
     constexpr std::uint32_t sKeyHolderRef = 0x0110873f;
+    constexpr std::uint32_t sCreatureBase = 0x01103b21;
+    constexpr std::uint32_t sCreatureRef = 0x01108740;
+    constexpr std::uint32_t sCreatureTemplateBase = 0x01103b22;
+    constexpr std::uint32_t sMissingItemBase = 0x01103b23;
+    constexpr std::uint32_t sLevelledItemBase = 0x01103b24;
+    constexpr std::uint32_t sUnsupportedStaticBase = 0x01103b25;
 
     class TestLuaManager final : public MWBase::LuaManager
     {
@@ -91,6 +102,7 @@ namespace
             mEnvironment.setESMStore(mStore);
             mEnvironment.setWorldModel(mWorldModel);
             mEnvironment.setLuaManager(mLuaManager);
+            mStore.setUp();
             MWClass::registerClasses();
 
             ESM4::MiscItem bottle{};
@@ -146,7 +158,153 @@ namespace
             reference.mCount = 1;
             return reference;
         }
+
+        static ESM4::Creature makeCreature(std::uint32_t id = sCreatureBase)
+        {
+            ESM4::Creature creature{};
+            creature.mId = ESM::FormId::fromUint32(id);
+            creature.mEditorId = "GoodspringsCreatureInventoryTest";
+            creature.mFullName = "Goodsprings Creature";
+            creature.mIsFONV = true;
+            // Keep this inventory fixture independent from the full MWBase::World actor-stat service. A zeroed,
+            // present FNV DATA payload does not trigger CreatureStats' intelligence-derived magicka recalculation.
+            creature.mHasFNVData = true;
+            creature.mFNVData.health = 100;
+            return creature;
+        }
+
+        static ESM4::Reference makeCreatureReference(
+            std::uint32_t base = sCreatureBase, std::uint32_t ref = sCreatureRef)
+        {
+            ESM4::Reference reference{};
+            reference.mId = ESM::FormId::fromUint32(ref);
+            reference.mBaseObj = ESM::FormId::fromUint32(base);
+            reference.mCount = 1;
+            return reference;
+        }
     };
+
+    TEST_F(ESM4ContainerTest, CreatureInitializesDirectFixedInventoryOnceAndMergesDuplicateStacks)
+    {
+        ESM4::Creature creature = makeCreature();
+        creature.mInventory.push_back(ESM4::InventoryItem{ sSaloonBottleBase, 2 });
+        creature.mInventory.push_back(ESM4::InventoryItem{ sSaloonKeyBase, 1 });
+        creature.mInventory.push_back(ESM4::InventoryItem{ sSaloonBottleBase, 3 });
+        ESM4::Reference reference = makeCreatureReference();
+        MWWorld::LiveCellRef<ESM4::Creature> liveRef(reference, &creature);
+        MWWorld::Ptr ptr(&liveRef);
+        const ESM::RefId bottleId(ESM::FormId::fromUint32(sSaloonBottleBase));
+        const ESM::RefId keyId(ESM::FormId::fromUint32(sSaloonKeyBase));
+
+        MWWorld::ContainerStore& store = ptr.getClass().getContainerStore(ptr);
+        EXPECT_EQ(store.count(bottleId), 5);
+        EXPECT_EQ(store.count(keyId), 1);
+
+        std::size_t bottleStacks = 0;
+        for (const MWWorld::ConstPtr item : store)
+        {
+            if (item.getCellRef().getRefId() == bottleId)
+            {
+                ++bottleStacks;
+                EXPECT_EQ(item.getCellRef().getCount(), 5);
+            }
+        }
+        EXPECT_EQ(bottleStacks, 1u);
+
+        ASSERT_EQ(store.remove(bottleId, 2, false, false), 2);
+        EXPECT_EQ(ptr.getClass().getContainerStore(ptr).count(bottleId), 3);
+    }
+
+    TEST_F(ESM4ContainerTest, CreatureUsesResolvedInventoryTemplateCategoryInsteadOfDelegatingBase)
+    {
+        ESM4::Creature inventoryTemplate = makeCreature(sCreatureTemplateBase);
+        inventoryTemplate.mEditorId = "GoodspringsCreatureInventoryTemplate";
+        inventoryTemplate.mInventory.push_back(ESM4::InventoryItem{ sSaloonBottleBase, 7 });
+        mStore.overrideRecord(inventoryTemplate);
+
+        ESM4::Creature creature = makeCreature();
+        creature.mBaseTemplate = ESM::FormId::fromUint32(sCreatureTemplateBase);
+        creature.mBaseConfig.fo3.templateFlags |= ESM4::Creature::Template_UseInventory;
+        creature.mInventory.push_back(ESM4::InventoryItem{ sSaloonKeyBase, 9 });
+        ESM4::Reference reference = makeCreatureReference();
+        MWWorld::LiveCellRef<ESM4::Creature> liveRef(reference, &creature);
+        MWWorld::Ptr ptr(&liveRef);
+
+        MWWorld::ContainerStore& store = ptr.getClass().getContainerStore(ptr);
+        EXPECT_EQ(store.count(ESM::RefId(ESM::FormId::fromUint32(sSaloonBottleBase))), 7);
+        EXPECT_EQ(store.count(ESM::RefId(ESM::FormId::fromUint32(sSaloonKeyBase))), 0);
+    }
+
+    TEST_F(ESM4ContainerTest, CreatureRejectsInvalidMissingUnsupportedAndOverflowingFixedItems)
+    {
+        ESM4::LevelledItem levelled{};
+        levelled.mId = ESM::FormId::fromUint32(sLevelledItemBase);
+        levelled.mEditorId = "GoodspringsCreatureRandomLoot";
+        mStore.overrideRecord(levelled);
+
+        ESM4::Static unsupported{};
+        unsupported.mId = ESM::FormId::fromUint32(sUnsupportedStaticBase);
+        unsupported.mEditorId = "GoodspringsCreatureUnsupportedLoot";
+        mStore.overrideRecord(unsupported);
+
+        ESM4::Creature creature = makeCreature();
+        creature.mInventory.push_back(ESM4::InventoryItem{ 0, 1 });
+        creature.mInventory.push_back(ESM4::InventoryItem{ sSaloonKeyBase, 0 });
+        creature.mInventory.push_back(
+            ESM4::InventoryItem{ sSaloonKeyBase, std::numeric_limits<std::uint32_t>::max() });
+        creature.mInventory.push_back(ESM4::InventoryItem{ sMissingItemBase, 1 });
+        creature.mInventory.push_back(ESM4::InventoryItem{ sLevelledItemBase, 1 });
+        creature.mInventory.push_back(ESM4::InventoryItem{ sUnsupportedStaticBase, 1 });
+        creature.mInventory.push_back(ESM4::InventoryItem{
+            sSaloonBottleBase, static_cast<std::uint32_t>(std::numeric_limits<int>::max()) });
+        creature.mInventory.push_back(ESM4::InventoryItem{ sSaloonBottleBase, 1 });
+        ESM4::Reference reference = makeCreatureReference();
+        MWWorld::LiveCellRef<ESM4::Creature> liveRef(reference, &creature);
+        MWWorld::Ptr ptr(&liveRef);
+
+        MWWorld::ContainerStore& store = ptr.getClass().getContainerStore(ptr);
+        EXPECT_EQ(store.count(ESM::RefId(ESM::FormId::fromUint32(sSaloonBottleBase))),
+            std::numeric_limits<int>::max());
+        EXPECT_EQ(store.count(ESM::RefId(ESM::FormId::fromUint32(sSaloonKeyBase))), 0);
+        EXPECT_EQ(store.count(ESM::RefId(ESM::FormId::fromUint32(sMissingItemBase))), 0);
+        EXPECT_EQ(store.count(ESM::RefId(ESM::FormId::fromUint32(sLevelledItemBase))), 0);
+        EXPECT_EQ(store.count(ESM::RefId(ESM::FormId::fromUint32(sUnsupportedStaticBase))), 0);
+
+        std::size_t stacks = 0;
+        for (const MWWorld::ConstPtr item : store)
+        {
+            ++stacks;
+            EXPECT_EQ(item.getCellRef().getRefId(),
+                ESM::RefId(ESM::FormId::fromUint32(sSaloonBottleBase)));
+        }
+        EXPECT_EQ(stacks, 1u);
+    }
+
+    TEST_F(ESM4ContainerTest, ClonedCreatureInventoryGetsFreshRefsAndMutationIsolation)
+    {
+        ESM4::Creature creature = makeCreature();
+        creature.mInventory.push_back(ESM4::InventoryItem{ sSaloonBottleBase, 6 });
+        ESM4::Reference reference = makeCreatureReference();
+        MWWorld::LiveCellRef<ESM4::Creature> sourceRef(reference, &creature);
+        MWWorld::Ptr source(&sourceRef);
+        const ESM::RefId bottleId(ESM::FormId::fromUint32(sSaloonBottleBase));
+
+        MWWorld::ContainerStore& sourceStore = source.getClass().getContainerStore(source);
+        ASSERT_EQ(sourceStore.count(bottleId), 6);
+        ASSERT_NE(sourceStore.begin(), sourceStore.end());
+        const ESM::RefNum sourceItemRefNum = sourceStore.begin()->getCellRef().getRefNum();
+
+        MWWorld::LiveCellRef<ESM4::Creature> clonedRef(sourceRef);
+        MWWorld::Ptr cloned(&clonedRef);
+        MWWorld::ContainerStore& clonedStore = cloned.getClass().getContainerStore(cloned);
+        ASSERT_EQ(clonedStore.count(bottleId), 6);
+        ASSERT_NE(clonedStore.begin(), clonedStore.end());
+        EXPECT_NE(clonedStore.begin()->getCellRef().getRefNum(), sourceItemRefNum);
+
+        ASSERT_EQ(clonedStore.remove(bottleId, 2, false, false), 2);
+        EXPECT_EQ(clonedStore.count(bottleId), 4);
+        EXPECT_EQ(sourceStore.count(bottleId), 6);
+    }
 
     TEST_F(ESM4ContainerTest, InitializesAuthoredFixedContentsOnlyOnce)
     {

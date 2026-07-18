@@ -4,15 +4,28 @@
 #include <cmath>
 #include <cstdlib>
 #include <iomanip>
+#include <limits>
 #include <memory>
 
 #include <components/debug/debuglog.hpp>
 #include <components/esm/attr.hpp>
 #include <components/esm/defs.hpp>
+#include <components/esm4/loadalch.hpp>
+#include <components/esm4/loadammo.hpp>
+#include <components/esm4/loadarmo.hpp>
+#include <components/esm4/loadbook.hpp>
+#include <components/esm4/loadclot.hpp>
 #include <components/esm4/loadfurn.hpp>
+#include <components/esm4/loadimod.hpp>
+#include <components/esm4/loadingr.hpp>
+#include <components/esm4/loadkeym.hpp>
+#include <components/esm4/loadligh.hpp>
 #include <components/esm4/loadlvlc.hpp>
+#include <components/esm4/loadlvli.hpp>
+#include <components/esm4/loadmisc.hpp>
 #include <components/esm4/loadpack.hpp>
 #include <components/esm4/loadrefr.hpp>
+#include <components/esm4/loadweap.hpp>
 #include <components/esm4/script.hpp>
 
 #include "../mwbase/environment.hpp"
@@ -24,7 +37,9 @@
 
 #include "../mwworld/containerstore.hpp"
 #include "../mwworld/customdata.hpp"
+#include "../mwworld/esmstore.hpp"
 #include "../mwworld/esm4questruntime.hpp"
+#include "../mwworld/worldmodel.hpp"
 
 #include "../mwgui/tooltips.hpp"
 
@@ -32,13 +47,169 @@
 
 namespace MWClass
 {
+    class ESM4CreatureContainerStore final : public MWWorld::ContainerStore
+    {
+        enum class AddResult
+        {
+            Stored,
+            Missing,
+            InvalidCount,
+            Overflow,
+        };
+
+        template <class Record>
+        AddResult addInitialRecord(const MWWorld::ESMStore& store, const ESM::RefId& id, int count)
+        {
+            if (count <= 0)
+                return AddResult::InvalidCount;
+
+            const Record* record = store.get<Record>().search(id);
+            if (record == nullptr)
+                return AddResult::Missing;
+
+            ESM::CellRef cellRef = ESM::makeBlankCellRef();
+            cellRef.mRefID = ESM::RefId::formIdRefId(record->mId);
+            MWWorld::LiveCellRef<Record> liveRef(cellRef, record);
+            const MWWorld::ConstPtr ptr(&liveRef);
+            const int type = getType(ptr);
+            for (MWWorld::ContainerStoreIterator item = begin(type); item != end(); ++item)
+            {
+                if (item->getCellRef().getRefId() != cellRef.mRefID)
+                    continue;
+
+                const int oldCount = item->getCellRef().getCount(false);
+                if (oldCount < 0 || oldCount > std::numeric_limits<int>::max() - count)
+                    return AddResult::Overflow;
+                item->getCellRef().setCount(oldCount + count);
+                flagAsModified();
+                return AddResult::Stored;
+            }
+
+            addNewStack(ptr, count);
+            return AddResult::Stored;
+        }
+
+        static std::string_view getAddFailure(AddResult result)
+        {
+            switch (result)
+            {
+                case AddResult::Missing:
+                    return "missing-record";
+                case AddResult::InvalidCount:
+                    return "invalid-count";
+                case AddResult::Overflow:
+                    return "duplicate-count-overflow";
+                case AddResult::Stored:
+                    break;
+            }
+            return "stored";
+        }
+
+    public:
+        void fill(const ESM4::Creature& creature, const MWWorld::ESMStore& store)
+        {
+            for (const ESM4::InventoryItem& item : creature.mInventory)
+            {
+                const ESM::RefId ownerId(creature.mId);
+                if (item.item == 0)
+                {
+                    Log(Debug::Warning) << "Ignoring zero FormID in fixed FNV creature inventory for " << ownerId;
+                    continue;
+                }
+                if (item.count == 0 || item.count > static_cast<std::uint32_t>(std::numeric_limits<int>::max()))
+                {
+                    // CNTO stores the count as a signed 32-bit value on disk. The parser preserves its bits in
+                    // uint32_t, so values above INT_MAX also cover authored negative counts without narrowing.
+                    Log(Debug::Warning) << "Ignoring invalid fixed FNV creature inventory count " << item.count
+                                        << " for item " << ESM::RefId(ESM::FormId::fromUint32(item.item)) << " in "
+                                        << ownerId;
+                    continue;
+                }
+
+                const ESM::RefId itemId(ESM::FormId::fromUint32(item.item));
+                const int recordType = store.find(itemId);
+                if (recordType == 0)
+                {
+                    Log(Debug::Warning) << "Ignoring missing fixed FNV creature inventory item " << itemId << " in "
+                                        << ownerId;
+                    continue;
+                }
+                if (recordType == ESM::REC_LVLI4)
+                {
+                    // LVLI needs retail level, chance-none, count, use-all and random-selection semantics. Do not
+                    // turn a random list into deterministic loot merely to make it appear populated.
+                    Log(Debug::Warning) << "Skipping unresolved LVLI fixed FNV creature inventory item " << itemId
+                                        << " in " << ownerId
+                                        << "; retail level/chance/random selection is not implemented";
+                    continue;
+                }
+
+                const int count = static_cast<int>(item.count);
+                AddResult result = AddResult::Missing;
+                switch (recordType)
+                {
+                    case ESM::REC_AMMO4:
+                        result = addInitialRecord<ESM4::Ammunition>(store, itemId, count);
+                        break;
+                    case ESM::REC_ARMO4:
+                        result = addInitialRecord<ESM4::Armor>(store, itemId, count);
+                        break;
+                    case ESM::REC_MISC4:
+                        result = addInitialRecord<ESM4::MiscItem>(store, itemId, count);
+                        break;
+                    case ESM::REC_WEAP4:
+                        result = addInitialRecord<ESM4::Weapon>(store, itemId, count);
+                        break;
+                    case ESM::REC_ALCH4:
+                        result = addInitialRecord<ESM4::Potion>(store, itemId, count);
+                        break;
+                    case ESM::REC_BOOK4:
+                        result = addInitialRecord<ESM4::Book>(store, itemId, count);
+                        break;
+                    case ESM::REC_CLOT4:
+                        result = addInitialRecord<ESM4::Clothing>(store, itemId, count);
+                        break;
+                    case ESM::REC_INGR4:
+                        result = addInitialRecord<ESM4::Ingredient>(store, itemId, count);
+                        break;
+                    case ESM::REC_IMOD4:
+                        result = addInitialRecord<ESM4::ItemMod>(store, itemId, count);
+                        break;
+                    case ESM::REC_KEYM4:
+                        result = addInitialRecord<ESM4::Key>(store, itemId, count);
+                        break;
+                    case ESM::REC_LIGH4:
+                        result = addInitialRecord<ESM4::Light>(store, itemId, count);
+                        break;
+                    default:
+                        Log(Debug::Warning) << "Ignoring unsupported fixed FNV creature inventory item " << itemId
+                                            << " recordType=" << recordType << " in " << ownerId;
+                        continue;
+                }
+
+                if (result != AddResult::Stored)
+                    Log(Debug::Warning) << "Ignoring fixed FNV creature inventory item " << itemId << " count="
+                                        << count << " in " << ownerId << " reason=" << getAddFailure(result);
+            }
+        }
+
+        std::unique_ptr<MWWorld::ContainerStore> clone() override
+        {
+            auto result = std::make_unique<ESM4CreatureContainerStore>(*this);
+            result->updateRefNums();
+            return result;
+        }
+    };
+
     class ESM4CreatureCustomData : public MWWorld::TypedCustomData<ESM4CreatureCustomData>
     {
     public:
         ESM4::CreatureTemplateCategories mTemplates;
         MWMechanics::CreatureStats mCreatureStats;
         MWMechanics::Movement mMovement;
-        std::unique_ptr<MWWorld::ContainerStore> mContainerStore = std::make_unique<MWWorld::ContainerStore>();
+        std::unique_ptr<MWWorld::ContainerStore> mContainerStore
+            = std::make_unique<ESM4CreatureContainerStore>();
+        bool mContainerItemsRegistered = false;
         bool mFnvAiSequenceInitialised = false;
 
         ESM4CreatureCustomData() = default;
@@ -47,7 +218,7 @@ namespace MWClass
             , mCreatureStats(other.mCreatureStats)
             , mMovement(other.mMovement)
             , mContainerStore(other.mContainerStore ? other.mContainerStore->clone()
-                                                    : std::make_unique<MWWorld::ContainerStore>())
+                                                    : std::make_unique<ESM4CreatureContainerStore>())
             , mFnvAiSequenceInitialised(other.mFnvAiSequenceInitialised)
         {
         }
@@ -505,6 +676,16 @@ namespace MWClass
             result.mTemplates = makeSingleCreatureCategories(&getEffectiveCreature(*creature));
 
         initialiseActorStats(result, result.mTemplates.mStats, result.mTemplates.mAIData, *creature);
+        if (creature->mIsFONV && result.mTemplates.mInventory != nullptr)
+        {
+            const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
+            if (store != nullptr)
+                static_cast<ESM4CreatureContainerStore&>(*result.mContainerStore)
+                    .fill(*result.mTemplates.mInventory, *store);
+            else
+                Log(Debug::Warning) << "Unable to initialize fixed FNV creature inventory for "
+                                    << ESM::RefId(creature->mId) << ": ESM store is unavailable";
+        }
         refData.setCustomData(std::move(data));
 
         const ESM4::Creature* model = result.mTemplates.mModel;
@@ -579,8 +760,19 @@ namespace MWClass
 
     MWWorld::ContainerStore& ESM4Creature::getContainerStore(const MWWorld::Ptr& ptr) const
     {
-        MWWorld::ContainerStore& store = *getCustomData(ptr).mContainerStore;
+        ESM4CreatureCustomData& data = getCustomData(ptr);
+        MWWorld::ContainerStore& store = *data.mContainerStore;
         store.setPtr(ptr);
+        if (!data.mContainerItemsRegistered)
+        {
+            MWWorld::WorldModel* worldModel = MWBase::Environment::get().getWorldModel();
+            if (worldModel != nullptr)
+            {
+                for (const MWWorld::Ptr item : store)
+                    worldModel->registerPtr(item);
+                data.mContainerItemsRegistered = true;
+            }
+        }
         return store;
     }
 
