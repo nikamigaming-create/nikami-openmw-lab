@@ -14,6 +14,7 @@ file(GLOB UNITTEST_SRC_FILES
     mwworld/testesm4recipestore.cpp
     mwworld/testesm4notestore.cpp
     mwworld/testfnvcraftingruntime.cpp
+    mwworld/testfnvlockpickruntime.cpp
     mwworld/testactionfnvcrafting.cpp
     mwworld/testfnvradioprogram.cpp
     mwworld/testfnvterminalruntime.cpp
