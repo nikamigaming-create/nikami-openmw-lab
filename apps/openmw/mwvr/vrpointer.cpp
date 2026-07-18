@@ -4,25 +4,18 @@
 #include "vrutil.hpp"
 
 #include <osg/BlendFunc>
-#include <osg/Array>
 #include <osg/Drawable>
 #include <osg/Fog>
-#include <osg/Geode>
 #include <osg/LightModel>
-#include <osg/LineWidth>
 #include <osg/Material>
 #include <osg/MatrixTransform>
-#include <osg/Shape>
-#include <osg/ShapeDrawable>
 
 #include <components/debug/debuglog.hpp>
 #include <components/resource/resourcesystem.hpp>
 #include <components/resource/scenemanager.hpp>
-#include <components/shader/shadermanager.hpp>
 
 #include <components/sceneutil/positionattitudetransform.hpp>
 #include <components/sceneutil/shadow.hpp>
-#include <components/stereo/stereomanager.hpp>
 
 #include <components/vr/trackingmanager.hpp>
 #include <components/vr/viewer.hpp>
@@ -48,124 +41,11 @@
 #include "../mwworld/player.hpp"
 #include "../mwworld/inventorystore.hpp"
 
-#include <algorithm>
-#include <cstdlib>
+#include <iomanip>
 #include <string>
-#include <utility>
 
 namespace MWVR
 {
-    namespace
-    {
-        float getPointerDebugEnvFloat(const char* name, float fallback)
-        {
-            if (const char* value = std::getenv(name))
-                return std::atof(value);
-            return fallback;
-        }
-
-        float getPointerVisualWidth()
-        {
-            // 0.06 world units is sub-millimetre thin at the Fallout scale and
-            // effectively disappears in a moving headset. Keep the calibration
-            // tunable while enforcing a readable minimum for menus and gameplay.
-            return std::max(getPointerDebugEnvFloat("OPENMW_FNV_VR_POINTER_VISUAL_WIDTH", 0.35f), 0.35f);
-        }
-
-        osg::ref_ptr<osg::Geometry> createPointerAxisGeometry(float length)
-        {
-            osg::ref_ptr<osg::Geometry> geometry = new osg::Geometry;
-            osg::ref_ptr<osg::Vec3Array> vertices = new osg::Vec3Array;
-            const float negativeStub = -length * 0.25f;
-            vertices->push_back(osg::Vec3f(negativeStub, 0.f, 0.f));
-            vertices->push_back(osg::Vec3f(length, 0.f, 0.f));
-            vertices->push_back(osg::Vec3f(0.f, negativeStub, 0.f));
-            vertices->push_back(osg::Vec3f(0.f, length, 0.f));
-            vertices->push_back(osg::Vec3f(0.f, 0.f, negativeStub));
-            vertices->push_back(osg::Vec3f(0.f, 0.f, length));
-            geometry->setVertexArray(vertices);
-
-            osg::ref_ptr<osg::Vec4Array> colors = new osg::Vec4Array;
-            colors->push_back(osg::Vec4f(1.f, 0.f, 0.f, 1.f));
-            colors->push_back(osg::Vec4f(1.f, 0.f, 0.f, 1.f));
-            colors->push_back(osg::Vec4f(0.f, 1.f, 0.f, 1.f));
-            colors->push_back(osg::Vec4f(0.f, 1.f, 0.f, 1.f));
-            colors->push_back(osg::Vec4f(0.f, 0.4f, 1.f, 1.f));
-            colors->push_back(osg::Vec4f(0.f, 0.4f, 1.f, 1.f));
-            geometry->setColorArray(colors, osg::Array::BIND_PER_VERTEX);
-            geometry->addPrimitiveSet(new osg::DrawArrays(osg::PrimitiveSet::LINES, 0, vertices->size()));
-            geometry->setCullingActive(false);
-
-            osg::StateSet* stateset = geometry->getOrCreateStateSet();
-            stateset->setMode(GL_LIGHTING, osg::StateAttribute::OFF);
-            stateset->setMode(GL_DEPTH_TEST, osg::StateAttribute::OFF);
-            stateset->setAttributeAndModes(
-                new osg::LineWidth(getPointerDebugEnvFloat("OPENMW_FNV_VR_POINTER_AXIS_WIDTH",
-                    getPointerDebugEnvFloat("OPENMW_FNV_VR_DEBUG_AXIS_WIDTH", 10.f))),
-                osg::StateAttribute::ON);
-            return geometry;
-        }
-
-        osg::ref_ptr<osg::Geode> createPointerAimAxisNode(const std::string& label, const osg::Vec4f& originColor)
-        {
-            osg::ref_ptr<osg::Geode> geode = new osg::Geode;
-            geode->setName("VR Pointer Aim XYZ Axis " + label);
-            geode->setNodeMask(MWRender::Mask_Pointer);
-            geode->setCullingActive(false);
-
-            geode->addDrawable(createPointerAxisGeometry(
-                getPointerDebugEnvFloat("OPENMW_FNV_VR_POINTER_AXIS_LENGTH", 36.f)));
-
-            osg::ref_ptr<osg::ShapeDrawable> origin = new osg::ShapeDrawable(new osg::Sphere(osg::Vec3f(),
-                getPointerDebugEnvFloat("OPENMW_FNV_VR_POINTER_ORIGIN_RADIUS", 5.f)));
-            origin->setColor(originColor);
-            origin->setCullingActive(false);
-            osg::StateSet* originState = origin->getOrCreateStateSet();
-            originState->setMode(GL_LIGHTING, osg::StateAttribute::OFF);
-            originState->setMode(GL_DEPTH_TEST, osg::StateAttribute::OFF);
-            geode->addDrawable(origin);
-
-            return geode;
-        }
-
-        class PointerAimAxisLogCallback : public osg::NodeCallback
-        {
-        public:
-            PointerAimAxisLogCallback(std::string label)
-                : mLabel(std::move(label))
-            {
-            }
-
-            void operator()(osg::Node* node, osg::NodeVisitor* nv) override
-            {
-                if (mLogCount < 12 || (++mLogFrame % 300) == 0)
-                {
-                    const auto paths = node->getParentalNodePaths();
-                    if (!paths.empty())
-                    {
-                        const osg::Matrix localToWorld = osg::computeLocalToWorld(paths.front());
-                        const osg::Vec3f worldPosition = localToWorld.getTrans();
-                        const osg::Quat worldAttitude = localToWorld.getRotate();
-                        ++mLogCount;
-                        Log(Debug::Verbose) << "FNV/ESM4 diag: VR pointer XYZ axis label=" << mLabel
-                                         << " worldPosition=(" << worldPosition.x() << ","
-                                         << worldPosition.y() << "," << worldPosition.z()
-                                         << ") worldAttitude=(" << worldAttitude.x() << ","
-                                         << worldAttitude.y() << "," << worldAttitude.z() << ","
-                                         << worldAttitude.w() << ")";
-                    }
-                }
-
-                traverse(node, nv);
-            }
-
-        private:
-            std::string mLabel;
-            int mLogCount = 0;
-            int mLogFrame = 0;
-        };
-    }
-
     /**
      * Makes it possible to use ItemModel::moveItem to move an item from an inventory to the world.
      */
@@ -228,29 +108,8 @@ namespace MWVR
         mSpaceTransform->setNodeMask(MWRender::VisMask::Mask_Pointer);
         mSpaceTransform->setName("VR Pointer deformation");
         mCrosshair = std::make_unique<Crosshair>(mSpaceTransform, osg::Vec3f(1.f, 0.f, 0.f), 1.f, 0.f, true);
-        mCrosshair->hide();
+        mCrosshair->show();
         mRoot->addChild(mSpaceTransform);
-
-        if (getPointerDebugEnvFloat("OPENMW_FNV_VR_POINTER_DEBUG_AXES", 0.f) != 0.f)
-        {
-            mLeftAimAxisDebug = new VR::SpaceTransform();
-            mLeftAimAxisDebug->setNodeMask(MWRender::VisMask::Mask_Pointer);
-            mLeftAimAxisDebug->setName("VR Pointer Left Aim XYZ Axis Transform");
-            mLeftAimAxisDebug->setCullingActive(false);
-            mLeftAimAxisDebug->addChild(createPointerAimAxisNode("left-aim", osg::Vec4f(1.f, 0.7f, 0.f, 1.f)));
-            mLeftAimAxisDebug->addUpdateCallback(new PointerAimAxisLogCallback("left-aim"));
-            mRoot->addChild(mLeftAimAxisDebug);
-
-            mRightAimAxisDebug = new VR::SpaceTransform();
-            mRightAimAxisDebug->setNodeMask(MWRender::VisMask::Mask_Pointer);
-            mRightAimAxisDebug->setName("VR Pointer Right Aim XYZ Axis Transform");
-            mRightAimAxisDebug->setCullingActive(false);
-            mRightAimAxisDebug->addChild(createPointerAimAxisNode("right-aim", osg::Vec4f(1.f, 0.f, 1.f, 1.f)));
-            mRightAimAxisDebug->addUpdateCallback(new PointerAimAxisLogCallback("right-aim"));
-            mRoot->addChild(mRightAimAxisDebug);
-
-            Log(Debug::Verbose) << "FNV/ESM4 diag: VR pointer XYZ axes attached to left/right aim spaces";
-        }
     }
 
     UserPointer::~UserPointer() {}
@@ -259,14 +118,6 @@ namespace MWVR
     {
         mSpace = space;
         mSpaceTransform->setSpace(mSpace);
-    }
-
-    void UserPointer::setDebugSpaces(std::shared_ptr<VR::Space> leftAim, std::shared_ptr<VR::Space> rightAim)
-    {
-        if (mLeftAimAxisDebug)
-            mLeftAimAxisDebug->setSpace(leftAim);
-        if (mRightAimAxisDebug)
-            mRightAimAxisDebug->setSpace(rightAim);
     }
 
     void UserPointer::activate()
@@ -361,55 +212,27 @@ namespace MWVR
 
     void UserPointer::update()
     {
-        if (!mEnabled)
-        {
-            mPointerRay = {};
-            mPointerTarget = nullptr;
-            mDistanceToPointerTarget = -1.f;
-            mCanPlaceObject = false;
-            mCrosshair->setStretch(0.f);
-            mCrosshair->hide();
-            MWVR::FNVXRLiveFrameSurface::instance().updateFocus(nullptr, osg::Vec3(0, 0, 0));
-            MWVR::VRGUIManager::instance().updateFocus(nullptr, osg::Vec3(0, 0, 0));
-            return;
-        }
-
         auto pose = Util::getNodePose(mSpaceTransform);
-        mDistanceToPointerTarget = Util::getPoseTarget(
-            mPointerRay, pose, true, MWRender::Mask_3DGUI_NonIntersectable | MWRender::Mask_FirstPerson);
+        const bool guiMode = MWBase::Environment::get().getWindowManager()->isGuiMode();
+        unsigned int ignoreMask = MWRender::Mask_3DGUI_NonIntersectable | MWRender::Mask_FirstPerson;
+        if (guiMode || MWVR::FNVXRLiveFrameSurface::instance().modalInputActive())
+            ignoreMask |= MWRender::Mask_Scene;
+        mDistanceToPointerTarget = Util::getPoseTarget(mPointerRay, pose, true, ignoreMask);
         // Make a ref-counted copy of the target node to ensure the object's lifetime this frame.
         mPointerTarget = mPointerRay.mHitNode;
 
         mCanPlaceObject = false;
         if (mPointerRay.mHit && mDistanceToPointerTarget > 0.f)
         {
-            const bool guiMode = MWBase::Environment::get().getWindowManager()->isGuiMode();
-            const bool showWorldPointer
-                = getPointerDebugEnvFloat("OPENMW_FNV_VR_POINTER_WORLD_VISUAL", 1.f) != 0.f;
-            const bool showPointerVisual = guiMode || MWVR::FNVXRLiveFrameSurface::instance().modalInputActive()
-                || showWorldPointer;
-
             // check if the wanted position is on a flat surface, and not e.g. against a vertical wall
             mCanPlaceObject = !(
                 std::acos((mPointerRay.mHitNormalWorld / mPointerRay.mHitNormalWorld.length()) * osg::Vec3f(0, 0, 1))
                 >= osg::DegreesToRadians(30.f));
 
-            if (showPointerVisual)
-            {
-                const float stretch = std::min(mDistanceToPointerTarget / 3.f,
-                    getPointerDebugEnvFloat("OPENMW_FNV_VR_POINTER_MAX_STRETCH", 45.f));
-                const float offset = std::min(2.f * mDistanceToPointerTarget / 3.f,
-                    getPointerDebugEnvFloat("OPENMW_FNV_VR_POINTER_MAX_OFFSET", 90.f));
-                mCrosshair->setStretch(stretch);
-                mCrosshair->setWidth(getPointerVisualWidth());
-                mCrosshair->setOffset(offset);
-                mCrosshair->show();
-            }
-            else
-            {
-                mCrosshair->setStretch(0.f);
-                mCrosshair->hide();
-            }
+            mCrosshair->setStretch(mDistanceToPointerTarget / 3.f);
+            mCrosshair->setWidth(0.25f);
+            mCrosshair->setOffset(2.f * mDistanceToPointerTarget / 3.f);
+            mCrosshair->show();
 
             if (MWVR::FNVXRLiveFrameSurface::instance().updateFocus(mPointerRay.mHitNode, mPointerRay.mHitPointLocal)
                 || MWVR::FNVXRLiveFrameSurface::instance().modalInputActive())
@@ -419,23 +242,34 @@ namespace MWVR
         }
         else
         {
-            const bool showWorldPointer
-                = getPointerDebugEnvFloat("OPENMW_FNV_VR_POINTER_WORLD_VISUAL", 1.f) != 0.f;
-            if (MWVR::FNVXRLiveFrameSurface::instance().modalInputActive() || showWorldPointer)
-            {
-                mCrosshair->setStretch(getPointerDebugEnvFloat("OPENMW_FNV_VR_POINTER_FALLBACK_STRETCH", 30.f));
-                mCrosshair->setWidth(getPointerVisualWidth());
-                mCrosshair->setOffset(getPointerDebugEnvFloat("OPENMW_FNV_VR_POINTER_FALLBACK_OFFSET", 15.f));
-                mCrosshair->show();
-            }
-            else
-            {
-                mCrosshair->setStretch(0.f);
-                mCrosshair->hide();
-            }
+            mCrosshair->setStretch(0.f);
+            mCrosshair->hide();
 
             MWVR::FNVXRLiveFrameSurface::instance().updateFocus(nullptr, osg::Vec3(0, 0, 0));
             MWVR::VRGUIManager::instance().updateFocus(nullptr, osg::Vec3(0, 0, 0));
+        }
+
+        const bool guiFocus = MWVR::VRGUIManager::instance().hasFocus();
+        const bool visualVisible = mCrosshair->mVisible;
+        if (mVisualStateLogCount < 32
+            && (!mVisualStateInitialized || visualVisible != mLastVisualVisible || guiMode != mLastVisualGuiMode
+                || guiFocus != mLastVisualGuiFocus))
+        {
+            ++mVisualStateLogCount;
+            mVisualStateInitialized = true;
+            mLastVisualVisible = visualVisible;
+            mLastVisualGuiMode = guiMode;
+            mLastVisualGuiFocus = guiFocus;
+            Log(Debug::Info) << "OpenMW VR pointer visual visible=" << visualVisible << " guiMode=" << guiMode
+                             << " guiFocus=" << guiFocus << " rayHit=" << mPointerRay.mHit
+                             << " rayDistance=" << mDistanceToPointerTarget << " rayNode="
+                             << (mPointerRay.mHitNode ? mPointerRay.mHitNode->getName() : std::string("<none>"))
+                             << " stretch=" << mCrosshair->mStretch << " offset=" << mCrosshair->mOffset
+                             << " width=" << mCrosshair->mWidth
+                             << " beamParents=" << mCrosshair->mTransform->getNumParents()
+                             << " spaceParents=" << mSpaceTransform->getNumParents() << " beamMask=0x" << std::hex
+                             << mCrosshair->mTransform->getNodeMask() << " spaceMask=0x"
+                             << mSpaceTransform->getNodeMask() << std::dec;
         }
     }
 
@@ -537,10 +371,8 @@ namespace MWVR
         auto stateset = geometry->getOrCreateStateSet();
         stateset->setMode(GL_LIGHTING, osg::StateAttribute::OFF);
         stateset->setMode(GL_BLEND, osg::StateAttribute::ON);
-        stateset->setMode(GL_DEPTH_TEST, osg::StateAttribute::OFF | osg::StateAttribute::OVERRIDE);
         stateset->setAttributeAndModes(new osg::BlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA));
         stateset->setRenderingHint(osg::StateSet::TRANSPARENT_BIN);
-        stateset->setRenderBinDetails(10000, "RenderBin");
         osg::ref_ptr<osg::Fog> fog(new osg::Fog);
         fog->setStart(10000000);
         fog->setEnd(10000000);
@@ -568,19 +400,7 @@ namespace MWVR
         stateset->addUniform(new osg::Uniform("sky", skyTextureSlot));
         stateset->addUniform(new osg::Uniform("emissiveMult", 1.f));
 
-        // Pointer geometry is UI, not a world material. Running it through the
-        // generic object shader makes its visibility depend on the active game
-        // material pipeline (and broke the beam for Fallout's shaders).
-        Shader::ShaderManager::DefineMap defineMap;
-        Stereo::shaderStereoDefines(defineMap);
-        auto& shaderManager
-            = MWBase::Environment::get().getResourceSystem()->getSceneManager()->getShaderManager();
-        osg::ref_ptr<osg::Shader> vertexShader
-            = shaderManager.getShader("vrpointer_vertex.glsl", defineMap, osg::Shader::VERTEX);
-        osg::ref_ptr<osg::Shader> fragmentShader
-            = shaderManager.getShader("vrpointer_fragment.glsl", defineMap, osg::Shader::FRAGMENT);
-        if (vertexShader && fragmentShader)
-            stateset->setAttributeAndModes(shaderManager.getProgram(vertexShader, fragmentShader));
+        MWBase::Environment::get().getResourceSystem()->getSceneManager()->recreateShaders(geometry, "objects", true);
 
         return geometry;
     }

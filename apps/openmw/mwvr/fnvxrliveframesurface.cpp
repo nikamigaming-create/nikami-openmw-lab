@@ -1757,7 +1757,7 @@ namespace MWVR
         osg::ref_ptr<osg::Shader> vertexShader
             = shaderManager.getShader("3dgui_vertex.glsl", defineMap, osg::Shader::VERTEX);
         osg::ref_ptr<osg::Shader> fragmentShader
-            = shaderManager.getShader("3dgui_fragment.glsl", defineMap, osg::Shader::FRAGMENT);
+            = shaderManager.getShader("fnvxrliveframe_fragment.glsl", defineMap, osg::Shader::FRAGMENT);
         if (vertexShader && fragmentShader)
             mStateSet->setAttributeAndModes(shaderManager.getProgram(vertexShader, fragmentShader));
 

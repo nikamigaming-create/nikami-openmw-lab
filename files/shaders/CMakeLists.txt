@@ -30,8 +30,7 @@ set(SHADER_FILES
     lib/material/alpha.glsl
     compatibility/3dgui_vertex.glsl
     compatibility/3dgui_fragment.glsl
-    compatibility/vrpointer_vertex.glsl
-    compatibility/vrpointer_fragment.glsl
+    compatibility/fnvxrliveframe_fragment.glsl
     compatibility/ripples_blobber.frag
     compatibility/ripples_simulate.frag
     compatibility/fog.glsl

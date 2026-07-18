@@ -337,7 +337,7 @@ namespace MWVR
     {
         std::shared_ptr<VR::Space> source;
         std::string sourceName;
-        if (VR::getVR())
+        if (VR::getLeftControllerActive() || VR::getRightControllerActive())
         {
             bool guiMode = MWBase::Environment::get().getWindowManager()->isGuiMode();
             const bool retailSurfaceModal = MWVR::FNVXRLiveFrameSurface::instance().modalInputActive();
@@ -385,7 +385,7 @@ namespace MWVR
                 sourceName = "LeftHandAim";
             }
         }
-        if (!source)
+        else
         {
             source = mXRInput->getSpace(OpenXRInput::DefaultReferenceSpaceView);
             sourceName = "DefaultReferenceSpaceView";
@@ -404,11 +404,9 @@ namespace MWVR
         }
         ++mPointerSourceLogFrames;
 
-        // Attach the pointer to the final gameplay scene root. Constructing it
-        // during loading can leave it attached to a transient root, while the
-        // retail surface still needs a pointer before normal controls resume.
-        if (!mVRPointer && VR::getVR() && SceneUtil::ShadowManager::exists()
-            && (!disableControls || MWVR::FNVXRLiveFrameSurface::instance().modalInputActive()))
+        // Menus disable world controls, but their 3D panels still require the VR
+        // pointer. Construct it as soon as the final scene and shadow state exist.
+        if (!mVRPointer && VR::getVR() && SceneUtil::ShadowManager::exists())
         {
             osg::ref_ptr<osgViewer::Viewer> viewer;
             mOSGViewer.lock(viewer);
@@ -420,12 +418,8 @@ namespace MWVR
 
         if (mVRPointer)
         {
-            const bool pointerEnabled = sourceName != "DefaultReferenceSpaceView";
-            mPointerActive = pointerEnabled;
-            mVRPointer->setEnabled(pointerEnabled);
+            mPointerActive = source && sourceName != "DefaultReferenceSpaceView";
             mVRPointer->setSource(source);
-            mVRPointer->setDebugSpaces(
-                mXRInput->getSpace(OpenXRInput::LeftHandAim), mXRInput->getSpace(OpenXRInput::RightHandAim));
             mVRPointer->update();
         }
         else
