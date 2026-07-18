@@ -70,6 +70,7 @@ namespace
     constexpr std::uint32_t sDoorBase = 0x01103b2d;
     constexpr std::uint32_t sDoorRef = 0x01108744;
     constexpr std::uint32_t sDoorDestRef = 0x01108745;
+    constexpr std::uint32_t sDoorDestCell = 0x01104c11;
 
     class TestLuaManager final : public MWBase::LuaManager
     {
@@ -210,6 +211,16 @@ namespace
             if (teleport)
                 reference.mDoor.destDoor = ESM::FormId::fromUint32(sDoorDestRef);
             return reference;
+        }
+
+        static ESM4::Cell makeDoorDestinationCell()
+        {
+            ESM4::Cell cell{};
+            cell.mId = ESM::RefId(ESM::FormId::fromUint32(sDoorDestCell));
+            cell.mEditorId = "GoodspringsDoorDestinationCell";
+            cell.mFullName = "Goodsprings Door Destination Cell";
+            cell.mCellFlags = ESM4::CELL_Interior;
+            return cell;
         }
 
         static ESM4::Creature makeCreature(std::uint32_t id = sCreatureBase)
@@ -369,6 +380,38 @@ namespace
             store.setUp();
         }
 
+        static void populateDoorWorldStore(MWWorld::ESMStore& store)
+        {
+            ESM4::Key key{};
+            key.mId = ESM::FormId::fromUint32(sSaloonKeyBase);
+            key.mEditorId = "GSProspectorSaloonKey";
+            key.mFullName = "Prospector Saloon Key";
+            store.overrideRecord(key);
+
+            store.overrideRecord(makeNpcRace());
+            store.overrideRecord(makeNpc());
+            store.overrideRecord(makeDoor());
+            store.overrideRecord(makeCreatureCell());
+            store.overrideRecord(makeDoorDestinationCell());
+
+            ESM4::Reference source = makeLockedDoorReference(true);
+            source.mOwner = ESM::FormId::fromUint32(sNpcBase);
+            source.mDoor.destPos.pos[0] = 401.f;
+            source.mDoor.destPos.pos[1] = 402.f;
+            source.mDoor.destPos.pos[2] = 403.f;
+            ESM4::Reference destination = makeLockedDoorReference(false);
+            destination.mId = ESM::FormId::fromUint32(sDoorDestRef);
+            destination.mParent = ESM::RefId(ESM::FormId::fromUint32(sDoorDestCell));
+            destination.mIsLocked = false;
+            destination.mLockLevel = 0;
+            destination.mKey = {};
+
+            auto& references = const_cast<MWWorld::Store<ESM4::Reference>&>(store.get<ESM4::Reference>());
+            references.insertStatic(source);
+            references.insertStatic(destination);
+            store.setUp();
+        }
+
         static MWWorld::Ptr findPlacedCreature(MWWorld::CellStore& cell)
         {
             MWWorld::Ptr result;
@@ -397,6 +440,20 @@ namespace
             return result;
         }
 
+        static MWWorld::Ptr findPlacedDoor(MWWorld::CellStore& cell, std::uint32_t id = sDoorRef)
+        {
+            MWWorld::Ptr result;
+            cell.forEachType<ESM4::Door>([&](const MWWorld::Ptr& ptr) {
+                if (ptr.getCellRef().getRefNum() == ESM::FormId::fromUint32(id))
+                {
+                    result = ptr;
+                    return false;
+                }
+                return true;
+            });
+            return result;
+        }
+
         static std::unique_ptr<std::stringstream> writeWorldState(MWWorld::WorldModel& worldModel)
         {
             auto stream = std::make_unique<std::stringstream>();
@@ -408,8 +465,9 @@ namespace
             return stream;
         }
 
-        static std::unique_ptr<std::stringstream> writeActorStates(
-            std::initializer_list<const ESM::CreatureState*> states, ESM::RecNameInts objectType)
+        template <class State>
+        static std::unique_ptr<std::stringstream> writeStates(
+            std::initializer_list<const State*> states, ESM::RecNameInts objectType)
         {
             auto stream = std::make_unique<std::stringstream>();
             ESM::ESMWriter writer;
@@ -421,13 +479,25 @@ namespace
             cellState.mId = ESM::RefId(ESM::FormId::fromUint32(sCreatureCell));
             cellState.mIsInterior = true;
             cellState.save(writer);
-            for (const ESM::CreatureState* state : states)
+            for (const State* state : states)
             {
                 writer.writeHNT("OBJE", objectType);
                 state->save(writer);
             }
             writer.endRecord(ESM::REC_CSTA);
             return stream;
+        }
+
+        static std::unique_ptr<std::stringstream> writeActorStates(
+            std::initializer_list<const ESM::CreatureState*> states, ESM::RecNameInts objectType)
+        {
+            return writeStates(states, objectType);
+        }
+
+        static std::unique_ptr<std::stringstream> writeDoorStates(
+            std::initializer_list<const ESM::ObjectState*> states, ESM::RecNameInts objectType = ESM::REC_DOOR4)
+        {
+            return writeStates(states, objectType);
         }
 
         static std::unique_ptr<std::stringstream> writeCreatureStates(
@@ -1629,6 +1699,210 @@ namespace
         std::unique_ptr<MWWorld::Action> wrongKey = wrongKeyDoor.getClass().activate(wrongKeyDoor, actor);
         EXPECT_NE(dynamic_cast<MWWorld::FailedAction*>(wrongKey.get()), nullptr);
         EXPECT_TRUE(wrongKeyDoor.getCellRef().isLocked());
+    }
+
+    TEST_F(ESM4ContainerTest, DoorCellStateOmitsUnchangedAuthoredReference)
+    {
+        MWWorld::ESMStore store;
+        populateDoorWorldStore(store);
+        ESM::ReadersCache readers;
+        MWWorld::WorldModel worldModel(store, readers);
+        mEnvironment.setESMStore(store);
+        mEnvironment.setWorldModel(worldModel);
+
+        MWWorld::CellStore* cell
+            = worldModel.findCell(ESM::RefId(ESM::FormId::fromUint32(sCreatureCell)), false);
+        ASSERT_NE(cell, nullptr);
+        cell->load();
+        cell->setWaterLevel(12.f);
+        ASSERT_EQ(cell->count(), 1u);
+
+        ESM::ESMReader reader;
+        reader.open(writeWorldState(worldModel), "unchanged-fnv-door-omission");
+        ASSERT_TRUE(reader.hasMoreRecs());
+        ASSERT_EQ(reader.getRecName().toInt(), ESM::REC_CSTA);
+        reader.getRecHeader();
+        EXPECT_EQ(reader.getCellId(), ESM::RefId(ESM::FormId::fromUint32(sCreatureCell)));
+        ESM::CellState cellState{};
+        cellState.load(reader);
+        EXPECT_FALSE(reader.isNextSub("OBJE"));
+    }
+
+    TEST_F(ESM4ContainerTest, DoorStateRoundTripRetainsUnlockOuterAndImmutableTeleportData)
+    {
+        MWWorld::ESMStore store;
+        populateDoorWorldStore(store);
+        ESM::ReadersCache readers;
+        MWWorld::WorldModel sourceModel(store, readers);
+        mEnvironment.setESMStore(store);
+        mEnvironment.setWorldModel(sourceModel);
+        const ESM::RefId sourceCellId(ESM::FormId::fromUint32(sCreatureCell));
+        MWWorld::CellStore* sourceCell = sourceModel.findCell(sourceCellId, false);
+        ASSERT_NE(sourceCell, nullptr);
+        sourceCell->load();
+        MWWorld::Ptr source = findPlacedDoor(*sourceCell);
+        ASSERT_FALSE(source.isEmpty());
+
+        ESM::Position savedPosition{};
+        savedPosition.pos[0] = 101.f;
+        savedPosition.pos[1] = 202.f;
+        savedPosition.pos[2] = 303.f;
+        savedPosition.rot[2] = 0.5f;
+        source.getCellRef().unlock();
+        source.getCellRef().setCount(2);
+        source.getCellRef().setScale(1.25f);
+        source.getCellRef().setPosition(savedPosition);
+        source.getRefData().setPosition(savedPosition);
+        source.getRefData().disable();
+
+        auto stream = writeWorldState(sourceModel);
+        MWWorld::WorldModel restoredModel(store, readers);
+        mEnvironment.setWorldModel(restoredModel);
+        MWWorld::CellStore* restoredCell = restoredModel.findCell(sourceCellId, false);
+        ASSERT_NE(restoredCell, nullptr);
+        ASSERT_EQ(restoredCell->getState(), MWWorld::CellStore::State_Unloaded);
+        readWorldState(std::move(stream), restoredModel);
+
+        MWWorld::Ptr restored = restoredModel.getPtr(ESM::FormId::fromUint32(sDoorRef));
+        ASSERT_FALSE(restored.isEmpty());
+        EXPECT_FALSE(restored.getCellRef().isLocked());
+        // ESM3 save serialization omits FLTV for unlocked references, so reload canonicalizes its level to zero.
+        EXPECT_EQ(restored.getCellRef().getLockLevel(), 0);
+        EXPECT_EQ(restored.getCellRef().getKey(), ESM::RefId(ESM::FormId::fromUint32(sSaloonKeyBase)));
+        EXPECT_EQ(restored.getCellRef().getOwner(), ESM::RefId(ESM::FormId::fromUint32(sNpcBase)));
+        EXPECT_EQ(restored.getCellRef().getCount(false), 2);
+        EXPECT_FLOAT_EQ(restored.getCellRef().getScale(), 1.25f);
+        EXPECT_EQ(restored.getCellRef().getPosition(), savedPosition);
+        EXPECT_EQ(restored.getRefData().getPosition(), savedPosition);
+        EXPECT_FALSE(restored.getRefData().isEnabled());
+        EXPECT_TRUE(restored.getCellRef().getTeleport());
+        EXPECT_EQ(restored.getCellRef().getDestCell(), ESM::RefId(ESM::FormId::fromUint32(sDoorDestCell)));
+        ESM::Position expectedDestination{};
+        expectedDestination.pos[0] = 401.f;
+        expectedDestination.pos[1] = 402.f;
+        expectedDestination.pos[2] = 403.f;
+        EXPECT_EQ(restored.getCellRef().getDoorDest(), expectedDestination);
+    }
+
+    TEST_F(ESM4ContainerTest, MalformedAndWrongObjeDoorStatesCannotMutateLiveReference)
+    {
+        MWWorld::ESMStore store;
+        populateDoorWorldStore(store);
+        ESM::ReadersCache readers;
+        MWWorld::WorldModel worldModel(store, readers);
+        mEnvironment.setESMStore(store);
+        mEnvironment.setWorldModel(worldModel);
+        MWWorld::CellStore* cell
+            = worldModel.findCell(ESM::RefId(ESM::FormId::fromUint32(sCreatureCell)), false);
+        ASSERT_NE(cell, nullptr);
+        cell->load();
+        MWWorld::Ptr target = findPlacedDoor(*cell);
+        ASSERT_FALSE(target.isEmpty());
+        worldModel.registerPtr(target);
+        const std::size_t revisionBefore = worldModel.getPtrRegistryRevision();
+        const ESM::RefNum generatedBefore = worldModel.getLastGeneratedRefNum();
+
+        ESM::ObjectState candidate;
+        target.get<ESM4::Door>()->save(candidate);
+        candidate.mRef.mCount = 7;
+        candidate.mRef.mScale = 1.5f;
+        candidate.mEnabled = 0;
+        candidate.mPosition.pos[0] = -900.f;
+
+        readWorldState(writeDoorStates({ &candidate }, ESM::REC_CONT4), worldModel);
+        EXPECT_EQ(target.getCellRef().getCount(false), 1);
+        EXPECT_FLOAT_EQ(target.getCellRef().getScale(), 1.f);
+        EXPECT_TRUE(target.getRefData().isEnabled());
+
+        candidate.mRef.mScale = std::numeric_limits<float>::quiet_NaN();
+        readWorldState(writeDoorStates({ &candidate }), worldModel);
+        EXPECT_EQ(target.getCellRef().getCount(false), 1);
+        EXPECT_FLOAT_EQ(target.getCellRef().getScale(), 1.f);
+        EXPECT_TRUE(target.getCellRef().isLocked());
+        EXPECT_TRUE(target.getRefData().isEnabled());
+        EXPECT_EQ(worldModel.getPtrRegistryRevision(), revisionBefore);
+        EXPECT_EQ(worldModel.getLastGeneratedRefNum(), generatedBefore);
+    }
+
+    TEST_F(ESM4ContainerTest, DuplicateDoorObjectsUseFirstFullyValidatedStateAfterInvalid)
+    {
+        MWWorld::ESMStore store;
+        populateDoorWorldStore(store);
+        ESM::ReadersCache readers;
+        MWWorld::WorldModel sourceModel(store, readers);
+        mEnvironment.setESMStore(store);
+        mEnvironment.setWorldModel(sourceModel);
+        const ESM::RefId cellId(ESM::FormId::fromUint32(sCreatureCell));
+        MWWorld::CellStore* sourceCell = sourceModel.findCell(cellId, false);
+        ASSERT_NE(sourceCell, nullptr);
+        sourceCell->load();
+        MWWorld::Ptr source = findPlacedDoor(*sourceCell);
+        ASSERT_FALSE(source.isEmpty());
+
+        ESM::ObjectState invalid;
+        source.get<ESM4::Door>()->save(invalid);
+        invalid.mRef.mScale = std::numeric_limits<float>::quiet_NaN();
+
+        ESM::ObjectState firstValid;
+        source.get<ESM4::Door>()->save(firstValid);
+        firstValid.mRef.mCount = 2;
+        firstValid.mRef.mScale = 1.25f;
+        firstValid.mEnabled = 0;
+        firstValid.mPosition.pos[0] = 111.f;
+
+        ESM::ObjectState secondValid = firstValid;
+        secondValid.mRef.mCount = 3;
+        secondValid.mRef.mScale = 1.5f;
+        secondValid.mEnabled = 1;
+        secondValid.mPosition.pos[0] = 222.f;
+
+        MWWorld::WorldModel restoredModel(store, readers);
+        mEnvironment.setWorldModel(restoredModel);
+        MWWorld::CellStore* restoredCell = restoredModel.findCell(cellId, false);
+        ASSERT_NE(restoredCell, nullptr);
+        const std::size_t revisionBefore = restoredModel.getPtrRegistryRevision();
+        readWorldState(writeDoorStates({ &invalid, &firstValid, &secondValid }), restoredModel);
+
+        MWWorld::Ptr restored = restoredModel.getPtr(ESM::FormId::fromUint32(sDoorRef));
+        ASSERT_FALSE(restored.isEmpty());
+        EXPECT_EQ(restored.getCellRef().getCount(false), 2);
+        EXPECT_FLOAT_EQ(restored.getCellRef().getScale(), 1.25f);
+        EXPECT_FALSE(restored.getRefData().isEnabled());
+        EXPECT_FLOAT_EQ(restored.getRefData().getPosition().pos[0], 111.f);
+        EXPECT_EQ(restoredModel.getPtrRegistryRevision(), revisionBefore + 1);
+    }
+
+    TEST_F(ESM4ContainerTest, DoorStateFromRemovedContentCannotMutateAuthoredReference)
+    {
+        MWWorld::ESMStore store;
+        populateDoorWorldStore(store);
+        ESM::ReadersCache readers;
+        MWWorld::WorldModel sourceModel(store, readers);
+        mEnvironment.setESMStore(store);
+        mEnvironment.setWorldModel(sourceModel);
+        const ESM::RefId cellId(ESM::FormId::fromUint32(sCreatureCell));
+        MWWorld::CellStore* sourceCell = sourceModel.findCell(cellId, false);
+        ASSERT_NE(sourceCell, nullptr);
+        sourceCell->load();
+        MWWorld::Ptr source = findPlacedDoor(*sourceCell);
+        ASSERT_FALSE(source.isEmpty());
+        ESM::ObjectState removed;
+        source.get<ESM4::Door>()->save(removed);
+        removed.mRef.mCount = 9;
+        removed.mEnabled = 0;
+
+        MWWorld::WorldModel restoredModel(store, readers);
+        mEnvironment.setWorldModel(restoredModel);
+        const std::map<int, int> noLoadedContentFiles;
+        readWorldState(writeDoorStates({ &removed }), restoredModel, &noLoadedContentFiles);
+        MWWorld::CellStore* restoredCell = restoredModel.findCell(cellId, false);
+        ASSERT_NE(restoredCell, nullptr);
+        restoredCell->load();
+        MWWorld::Ptr restored = findPlacedDoor(*restoredCell);
+        ASSERT_FALSE(restored.isEmpty());
+        EXPECT_EQ(restored.getCellRef().getCount(false), 1);
+        EXPECT_TRUE(restored.getCellRef().isLocked());
+        EXPECT_TRUE(restored.getRefData().isEnabled());
     }
 
     TEST_F(ESM4ContainerTest, ContainerStateRoundTripRetainsContentsAndEsm4Reference)

@@ -19,6 +19,10 @@ namespace MWWorld
 
 namespace MWClass
 {
+    /// Validate mutable fields common to a placed FNV ObjectState before applying any outer reference mutation.
+    bool validateFnvPlacedObjectState(
+        const ESM::ObjectState& state, std::string_view objectKind, std::string& error);
+
     /// Validate the complete compatibility payload before applying any enclosing reference or runtime state.
     bool validateFnvActorState(bool isFnv, std::string_view actorKind, const ESM::CreatureState& state,
         const MWWorld::ESMStore& store, std::string& error);

@@ -139,6 +139,12 @@ namespace MWBase
             return *sThis;
         }
 
+        /// Return the world when the engine environment has initialized one.
+        ///
+        /// Runtime services that can also be exercised headlessly should use this accessor for optional scene and
+        /// physics side effects while still applying their data-model changes without a World.
+        static World* tryGetWorld() noexcept { return sThis != nullptr ? sThis->mWorld : nullptr; }
+
         /// Return the window manager when the engine environment has initialized one.
         ///
         /// Runtime services that can also be exercised headlessly should use this

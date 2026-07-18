@@ -1298,8 +1298,8 @@ namespace MWClass
         }
     }
 
-    bool validateFnvActorState(bool isFnv, std::string_view actorKind, const ESM::CreatureState& state,
-        const MWWorld::ESMStore& store, std::string& error)
+    bool validateFnvPlacedObjectState(
+        const ESM::ObjectState& state, std::string_view objectKind, std::string& error)
     {
         if (!isFiniteObjectState(state))
         {
@@ -1308,16 +1308,24 @@ namespace MWClass
         }
         if (state.mRef.mCount < 0)
         {
-            // Zero is the normal saved deletion state. Negative counts are ESM3 restocking semantics and are not a
-            // valid placed FNV actor state.
-            error = "negative outer actor count";
+            // Zero is the normal saved deletion state. Negative counts are ESM3 restocking semantics and are not
+            // valid for placed FNV references.
+            error = "negative outer " + std::string(objectKind) + " count";
             return false;
         }
         if (!state.mRef.mRefNum.isSet())
         {
-            error = "unset outer actor reference number";
+            error = "unset outer " + std::string(objectKind) + " reference number";
             return false;
         }
+        return true;
+    }
+
+    bool validateFnvActorState(bool isFnv, std::string_view actorKind, const ESM::CreatureState& state,
+        const MWWorld::ESMStore& store, std::string& error)
+    {
+        if (!validateFnvPlacedObjectState(state, "actor", error))
+            return false;
         if (!isFnv)
         {
             error = "CreatureState is only supported for Fallout: New Vegas " + std::string(actorKind);
