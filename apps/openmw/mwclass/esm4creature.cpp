@@ -368,25 +368,54 @@ namespace MWClass
         MWMechanics::CreatureStats& stats = data.mCreatureStats;
         stats.setLevel(getLevel(creature));
 
-        const ESM4::AttributeValues& attributes = creature.mData.attribs;
-        stats.setAttribute(ESM::Attribute::Strength, attributes.strength ? attributes.strength : 50);
-        stats.setAttribute(ESM::Attribute::Intelligence, attributes.intelligence ? attributes.intelligence : 25);
-        stats.setAttribute(ESM::Attribute::Willpower, attributes.willpower ? attributes.willpower : 25);
-        stats.setAttribute(ESM::Attribute::Agility, attributes.agility ? attributes.agility : 50);
-        stats.setAttribute(ESM::Attribute::Speed, attributes.speed ? attributes.speed : 50);
-        stats.setAttribute(ESM::Attribute::Endurance, attributes.endurance ? attributes.endurance : 50);
-        stats.setAttribute(ESM::Attribute::Personality, attributes.personality ? attributes.personality : 25);
-        stats.setAttribute(ESM::Attribute::Luck, attributes.luck ? attributes.luck : 50);
+        float health = 100.f;
+        if (creature.mIsFONV && creature.mHasFNVData)
+        {
+            const ESM4::Creature::FNVData& attributes = creature.mFNVData;
+            stats.setAttribute(ESM::Attribute::Strength, attributes.strength);
+            stats.setAttribute(ESM::Attribute::Intelligence, attributes.intelligence);
+            // OpenMW's ESM3 stat shell has no Perception slot. Keep the same
+            // Fallout-to-shell mapping as native ESM4 NPCs use.
+            stats.setAttribute(ESM::Attribute::Willpower, attributes.perception);
+            stats.setAttribute(ESM::Attribute::Agility, attributes.agility);
+            // Fallout CREA DATA has no speed attribute; 50 is the neutral
+            // shell value and ACBS still supplies the authored multiplier.
+            stats.setAttribute(ESM::Attribute::Speed, 50);
+            stats.setAttribute(ESM::Attribute::Endurance, attributes.endurance);
+            stats.setAttribute(ESM::Attribute::Personality, attributes.charisma);
+            stats.setAttribute(ESM::Attribute::Luck, attributes.luck);
+            health = static_cast<float>(attributes.health);
+        }
+        else
+        {
+            const ESM4::AttributeValues& attributes = creature.mData.attribs;
+            stats.setAttribute(ESM::Attribute::Strength, attributes.strength ? attributes.strength : 50);
+            stats.setAttribute(ESM::Attribute::Intelligence, attributes.intelligence ? attributes.intelligence : 25);
+            stats.setAttribute(ESM::Attribute::Willpower, attributes.willpower ? attributes.willpower : 25);
+            stats.setAttribute(ESM::Attribute::Agility, attributes.agility ? attributes.agility : 50);
+            stats.setAttribute(ESM::Attribute::Speed, attributes.speed ? attributes.speed : 50);
+            stats.setAttribute(ESM::Attribute::Endurance, attributes.endurance ? attributes.endurance : 50);
+            stats.setAttribute(ESM::Attribute::Personality, attributes.personality ? attributes.personality : 25);
+            stats.setAttribute(ESM::Attribute::Luck, attributes.luck ? attributes.luck : 50);
+            health = creature.mData.health > 0 ? static_cast<float>(creature.mData.health) : 100.f;
+        }
 
-        stats.setHealth(creature.mData.health > 0 ? static_cast<float>(creature.mData.health) : 100.f);
+        stats.setHealth(health);
         stats.setMagicka(0.f);
         stats.setFatigue(100.f);
 
+        const int aggression
+            = creature.mIsFONV && creature.mHasFNVAIData ? creature.mFNVAIData.aggression : creature.mAIData.aggression;
+        const int confidence
+            = creature.mIsFONV && creature.mHasFNVAIData ? creature.mFNVAIData.confidence : creature.mAIData.confidence;
+        const int responsibility = creature.mIsFONV && creature.mHasFNVAIData
+            ? creature.mFNVAIData.responsibility
+            : creature.mAIData.responsibility;
         stats.setAiSetting(MWMechanics::AiSetting::Hello, 30);
         stats.setAiSetting(MWMechanics::AiSetting::Fight,
-            std::getenv("OPENMW_FNV_DISABLE_AI_PACKAGES") != nullptr ? 0 : creature.mAIData.aggression);
-        stats.setAiSetting(MWMechanics::AiSetting::Flee, 100 - creature.mAIData.confidence);
-        stats.setAiSetting(MWMechanics::AiSetting::Alarm, creature.mAIData.responsibility);
+            std::getenv("OPENMW_FNV_DISABLE_AI_PACKAGES") != nullptr ? 0 : aggression);
+        stats.setAiSetting(MWMechanics::AiSetting::Flee, 100 - confidence);
+        stats.setAiSetting(MWMechanics::AiSetting::Alarm, responsibility);
 
         if (stats.isDead())
             stats.setDeathAnimationFinished((creature.mFlags & ESM::FLAG_Persistent) != 0);

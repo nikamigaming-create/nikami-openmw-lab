@@ -26,7 +26,10 @@
 */
 #include "loadcrea.hpp"
 
+#include <algorithm>
+#include <cctype>
 #include <cstring>
+#include <filesystem>
 #include <stdexcept>
 #include <string>
 
@@ -35,10 +38,39 @@
 #include "reader.hpp"
 //#include "writer.hpp"
 
+namespace
+{
+    std::string lowerFilename(std::filesystem::path path)
+    {
+        std::string value = path.filename().string();
+        std::transform(value.begin(), value.end(), value.begin(),
+            [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        return value;
+    }
+
+    bool hasMasterNamed(const ESM4::Reader& reader, std::string_view expected)
+    {
+        for (const ESM::MasterData& master : reader.getGameFiles())
+        {
+            std::string name = master.name;
+            std::transform(name.begin(), name.end(), name.begin(),
+                [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+            if (name == expected)
+                return true;
+        }
+        return false;
+    }
+}
+
 void ESM4::Creature::load(ESM4::Reader& reader)
 {
     mId = reader.getFormIdFromHeader();
     mFlags = reader.hdr().record.flags;
+
+    const std::uint32_t esmVer = reader.esmVersion();
+    const bool isFO3 = esmVer == ESM::VER_094
+        && (lowerFilename(reader.getFileName()) == "fallout3.esm" || hasMasterNamed(reader, "fallout3.esm"));
+    mIsFONV = isFO3 || esmVer == ESM::VER_132 || esmVer == ESM::VER_133 || esmVer == ESM::VER_134;
 
     while (reader.getSubRecordHeader())
     {
@@ -79,10 +111,17 @@ void ESM4::Creature::load(ESM4::Reader& reader)
                 reader.getFormId(mScriptId);
                 break;
             case ESM::fourCC("AIDT"):
-                if (subHdr.dataSize == 20) // FO3
-                    reader.skipSubRecordData();
-                else
-                    reader.get(mAIData); // 12 bytes
+                if (mIsFONV)
+                {
+                    if (subHdr.dataSize != sizeof(mFNVAIData))
+                        throw std::runtime_error("ESM4::CREA::load - Fallout AIDT size mismatch");
+
+                    reader.get(mFNVAIData);
+                    mHasFNVAIData = true;
+                    break;
+                }
+
+                reader.get(mAIData); // 12 bytes
                 break;
             case ESM::fourCC("ACBS"):
                 // if (esmVer == ESM::VER_094 || esmVer == ESM::VER_170 || mIsFONV)
@@ -92,10 +131,17 @@ void ESM4::Creature::load(ESM4::Reader& reader)
                     reader.get(&mBaseConfig, 16); // TES4
                 break;
             case ESM::fourCC("DATA"):
-                if (subHdr.dataSize == 17) // FO3
-                    reader.skipSubRecordData();
-                else
-                    reader.get(mData);
+                if (mIsFONV)
+                {
+                    if (subHdr.dataSize != sizeof(mFNVData))
+                        throw std::runtime_error("ESM4::CREA::load - Fallout DATA size mismatch");
+
+                    reader.get(mFNVData);
+                    mHasFNVData = true;
+                    break;
+                }
+
+                reader.get(mData);
                 break;
             case ESM::fourCC("ZNAM"):
                 reader.getFormId(mCombatStyle);

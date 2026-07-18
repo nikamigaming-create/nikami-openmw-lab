@@ -110,7 +110,29 @@ namespace ESM4
             std::uint16_t damage;
             AttributeValues attribs;
         };
+
+        // Fallout 3/New Vegas CREA DATA. Unlike the TES4 payload above, the
+        // actor attributes are SPECIAL values and health/damage are signed.
+        struct FNVData
+        {
+            std::uint8_t type;
+            std::uint8_t combatSkill;
+            std::uint8_t magicSkill;
+            std::uint8_t stealthSkill;
+            std::int16_t health;
+            std::uint16_t unused;
+            std::int16_t damage;
+            std::uint8_t strength;
+            std::uint8_t perception;
+            std::uint8_t endurance;
+            std::uint8_t charisma;
+            std::uint8_t intelligence;
+            std::uint8_t agility;
+            std::uint8_t luck;
+        };
 #pragma pack(pop)
+
+        static_assert(sizeof(FNVData) == 17);
 
         ESM::FormId mId; // from the header
         std::uint32_t mFlags = 0; // from the header, see enum type RecordFlag for details
@@ -123,11 +145,16 @@ namespace ESM4
         std::vector<ESM::FormId> mSpell;
         ESM::FormId mScriptId;
 
+        bool mIsFONV = false;
         AIData mAIData = {};
+        AIDataFO3 mFNVAIData = {};
+        bool mHasFNVAIData = false;
         std::vector<ESM::FormId> mAIPackages;
         ActorBaseConfig mBaseConfig = {};
         ActorFaction mFaction = {};
         Data mData = {};
+        FNVData mFNVData = {};
+        bool mHasFNVData = false;
         ESM::FormId mCombatStyle;
         ESM::FormId mSoundBase;
         ESM::FormId mSound;
