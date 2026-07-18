@@ -188,6 +188,28 @@ namespace
         EXPECT_TRUE(retained->posReference.isZeroOrUnset());
     }
 
+    TEST_F(ESM4TalkingActivatorTest, OrdinaryAndRadioActiRoutingRemainUnchanged)
+    {
+        ESM4::Activator radio{};
+        radio.mId = ESM::FormId::fromUint32(sActiBaseId);
+        radio.mEditorId = "FnvActiRadioRegression";
+        radio.mFullName = "Radio Activator";
+        radio.mLoopingSound = ESM::FormId::fromUint32(sLoopSoundId);
+        ESM4::Reference radioPlacement = makeReference(sActiRefId, sActiBaseId);
+        MWWorld::LiveCellRef<ESM4::Activator> liveRadio(radioPlacement, &radio);
+        MWWorld::Ptr radioPtr(&liveRadio);
+        EXPECT_NE(dynamic_cast<MWWorld::ActionEsm4Radio*>(radioPtr.getClass().activate(radioPtr, {}).get()), nullptr);
+
+        ESM4::Activator ordinary{};
+        ordinary.mId = ESM::FormId::fromUint32(sActiBaseId + 1);
+        ordinary.mEditorId = "FnvActiOrdinaryRegression";
+        ordinary.mFullName = "Ordinary Activator";
+        ESM4::Reference ordinaryPlacement = makeReference(sActiRefId + 1, sActiBaseId + 1);
+        MWWorld::LiveCellRef<ESM4::Activator> liveOrdinary(ordinaryPlacement, &ordinary);
+        MWWorld::Ptr ordinaryPtr(&liveOrdinary);
+        EXPECT_NE(dynamic_cast<MWWorld::NullAction*>(ordinaryPtr.getClass().activate(ordinaryPtr, {}).get()), nullptr);
+    }
+
     TEST_F(ESM4TalkingActivatorTest, DropsMissingAndMalformedTactRefsWithoutRegressingActi)
     {
         constexpr std::uint32_t missingRefId = 0x01010008;

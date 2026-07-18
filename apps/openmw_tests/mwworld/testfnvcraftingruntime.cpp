@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <array>
 #include <cstdint>
 #include <limits>
 #include <map>
@@ -56,6 +57,8 @@ namespace
     {
         Record result{};
         result.mId = ESM::FormId::fromUint32(id);
+        result.mEditorId = "Item" + std::to_string(id);
+        result.mFullName = "Item " + std::to_string(id);
         return result;
     }
 
@@ -64,6 +67,8 @@ namespace
         ESM4::Activator result{};
         result.mId = ESM::FormId::fromUint32(id);
         result.mScriptId = ESM::FormId::fromUint32(script);
+        result.mEditorId = "CraftingStation";
+        result.mFullName = "Crafting Station";
         return result;
     }
 
@@ -71,13 +76,17 @@ namespace
     {
         ESM4::RecipeCategory result{};
         result.mId = ESM::FormId::fromUint32(id);
+        result.mEditorId = "RecipeCategory" + std::to_string(id);
+        result.mFullName = "Recipe Category " + std::to_string(id);
         return result;
     }
 
-    ESM4::Recipe makeRecipe(std::uint32_t category = sWorkbenchCategory)
+    ESM4::Recipe makeRecipe(std::uint32_t category = sWorkbenchCategory, std::uint32_t id = sRecipe)
     {
         ESM4::Recipe result{};
-        result.mId = ESM::FormId::fromUint32(sRecipe);
+        result.mId = ESM::FormId::fromUint32(id);
+        result.mEditorId = "Recipe" + std::to_string(id);
+        result.mFullName = "Recipe " + std::to_string(id);
         result.mData.mRequiredSkill = 39; // Repair
         result.mData.mRequiredSkillLevel = 40;
         result.mData.mCategory = ESM::FormId::fromUint32(category);
@@ -259,6 +268,216 @@ namespace
 static_assert(!std::is_copy_constructible_v<MWWorld::PreparedFnvCraftingPlan>);
 static_assert(!std::is_copy_assignable_v<MWWorld::PreparedFnvCraftingPlan>);
 static_assert(std::is_nothrow_move_constructible_v<MWWorld::PreparedFnvCraftingPlan>);
+static_assert(!std::is_copy_assignable_v<MWWorld::PreparedFnvCraftingCatalog>);
+static_assert(!std::is_move_assignable_v<MWWorld::PreparedFnvCraftingCatalog>);
+
+TEST(FnvCraftingRuntimeTest, PublicStationMappingAcceptsOnlyTheTwoExactBaseScriptPairs)
+{
+    EXPECT_EQ(MWWorld::getFnvCraftingStationCategory(makeStation()), ESM::FormId::fromUint32(sWorkbenchCategory));
+    EXPECT_EQ(MWWorld::getFnvCraftingStationCategory(makeStation(sReloadingBench, sReloadingBenchScript)),
+        ESM::FormId::fromUint32(sReloadingBenchCategory));
+    EXPECT_FALSE(MWWorld::getFnvCraftingStationCategory(makeStation(sWorkbench, sWorkbenchScript + 1)));
+    EXPECT_FALSE(MWWorld::getFnvCraftingStationCategory(makeStation(sWorkbench + 1, sWorkbenchScript)));
+}
+
+TEST(FnvCraftingRuntimeTest, CatalogRetainsEveryLiveMatchingRecipeWithExplicitStaticBlockers)
+{
+    CraftingFixture fixture;
+    ESM4::Recipe conditional = makeRecipe(sWorkbenchCategory, sRecipe + 1);
+    conditional.mConditions.emplace_back();
+    fixture.mStore.overrideRecord(conditional);
+    ESM4::Recipe currency = makeRecipe(sWorkbenchCategory, sRecipe + 2);
+    currency.mIngredients[0].mItem = ESM::FormId::fromUint32(sCoinShotCurrency);
+    fixture.mStore.overrideRecord(currency);
+
+    MWWorld::FnvCraftingPreparationError error = MWWorld::FnvCraftingPreparationError::MissingRecipe;
+    std::optional<MWWorld::PreparedFnvCraftingCatalog> catalog = MWWorld::prepareFnvCraftingCatalog(
+        { MWWorld::ESM4Game::FalloutNewVegas, &fixture.mStore, fixture.mStation }, &error);
+
+    ASSERT_TRUE(catalog);
+    EXPECT_EQ(error, MWWorld::FnvCraftingPreparationError::None);
+    EXPECT_EQ(catalog->getStation(), ESM::FormId::fromUint32(sWorkbench));
+    EXPECT_EQ(catalog->getCategory(), ESM::FormId::fromUint32(sWorkbenchCategory));
+    EXPECT_EQ(catalog->getEntries().size(), 3u);
+    EXPECT_EQ(fixture.mInventory.mPrepareCalls, 0);
+
+    const auto findEntry = [&](std::uint32_t id) -> const MWWorld::PreparedFnvCraftingCatalogEntry* {
+        for (const auto& entry : catalog->getEntries())
+        {
+            if (entry.getRecipe() == ESM::FormId::fromUint32(id))
+                return &entry;
+        }
+        return nullptr;
+    };
+    const auto* supported = findEntry(sRecipe);
+    const auto* blockedConditional = findEntry(sRecipe + 1);
+    const auto* blockedCurrency = findEntry(sRecipe + 2);
+    ASSERT_NE(supported, nullptr);
+    ASSERT_NE(blockedConditional, nullptr);
+    ASSERT_NE(blockedCurrency, nullptr);
+    EXPECT_TRUE(supported->isStaticallySupported());
+    EXPECT_EQ(blockedConditional->getStaticBlocker(), MWWorld::FnvCraftingPreparationError::ConditionalRecipe);
+    EXPECT_EQ(blockedCurrency->getStaticBlocker(), MWWorld::FnvCraftingPreparationError::UnsupportedCurrency);
+    ASSERT_EQ(supported->getIngredients().size(), 2u);
+    EXPECT_EQ(supported->getIngredients()[0].getDelta().mQuantity, 2);
+    EXPECT_FALSE(supported->getIngredients()[0].getName().empty());
+    EXPECT_FALSE(supported->getSubCategoryName().empty());
+}
+
+TEST(FnvCraftingRuntimeTest, CatalogRejectsDetachedDeletedAndIncompleteStationSources)
+{
+    CraftingFixture fixture;
+    MWWorld::FnvCraftingPreparationError error = MWWorld::FnvCraftingPreparationError::None;
+    EXPECT_FALSE(
+        MWWorld::prepareFnvCraftingCatalog({ MWWorld::ESM4Game::Fallout3, &fixture.mStore, fixture.mStation }, &error));
+    EXPECT_EQ(error, MWWorld::FnvCraftingPreparationError::NotFalloutNewVegas);
+
+    EXPECT_FALSE(
+        MWWorld::prepareFnvCraftingCatalog({ MWWorld::ESM4Game::FalloutNewVegas, nullptr, fixture.mStation }, &error));
+    EXPECT_EQ(error, MWWorld::FnvCraftingPreparationError::MissingStore);
+
+    EXPECT_FALSE(
+        MWWorld::prepareFnvCraftingCatalog({ MWWorld::ESM4Game::FalloutNewVegas, &fixture.mStore, nullptr }, &error));
+    EXPECT_EQ(error, MWWorld::FnvCraftingPreparationError::MissingStation);
+
+    ESM4::Activator detached = *fixture.mStation;
+    EXPECT_FALSE(
+        MWWorld::prepareFnvCraftingCatalog({ MWWorld::ESM4Game::FalloutNewVegas, &fixture.mStore, &detached }, &error));
+    EXPECT_EQ(error, MWWorld::FnvCraftingPreparationError::StationNotInStore);
+
+    ESM4::Activator deleted = *fixture.mStation;
+    deleted.mFlags |= ESM4::Rec_Deleted;
+    fixture.mStation = fixture.mStore.overrideRecord(deleted);
+    EXPECT_FALSE(MWWorld::prepareFnvCraftingCatalog(
+        { MWWorld::ESM4Game::FalloutNewVegas, &fixture.mStore, fixture.mStation }, &error));
+    EXPECT_EQ(error, MWWorld::FnvCraftingPreparationError::DeletedRecord);
+
+    MWWorld::ESMStore missingCategoryStore;
+    const ESM4::Activator* stationWithoutCategory = missingCategoryStore.overrideRecord(makeStation());
+    EXPECT_FALSE(MWWorld::prepareFnvCraftingCatalog(
+        { MWWorld::ESM4Game::FalloutNewVegas, &missingCategoryStore, stationWithoutCategory }, &error));
+    EXPECT_EQ(error, MWWorld::FnvCraftingPreparationError::CategoryNotInStore);
+
+    CraftingFixture deletedCategoryFixture;
+    ESM4::RecipeCategory deletedCategory = *deletedCategoryFixture.mCategory;
+    deletedCategory.mFlags |= ESM4::Rec_Deleted;
+    deletedCategoryFixture.mStore.overrideRecord(deletedCategory);
+    EXPECT_FALSE(MWWorld::prepareFnvCraftingCatalog(
+        { MWWorld::ESM4Game::FalloutNewVegas, &deletedCategoryFixture.mStore, deletedCategoryFixture.mStation },
+        &error));
+    EXPECT_EQ(error, MWWorld::FnvCraftingPreparationError::DeletedRecord);
+}
+
+TEST(FnvCraftingRuntimeTest, FrozenWorkbenchAndReloadingCatalogAnchorsStayCompleteAndFailClosed)
+{
+    constexpr std::uint32_t coinShotRecipe = 0x00165e7d;
+    constexpr std::array<std::uint32_t, 6> blockedFunctions{
+        ESM4::FUN_GetItemCount,
+        ESM4::FUN_GetStage,
+        ESM4::FUN_GetDeadCount,
+        ESM4::FUN_GetHasNote,
+        ESM4::FUN_HasPerk,
+        ESM4::FUN_GetMapMarkerVisible,
+    };
+
+    MWWorld::ESMStore store;
+    store.overrideRecord(makeStation());
+    store.overrideRecord(makeStation(sReloadingBench, sReloadingBenchScript));
+    store.overrideRecord(makeCategory(sWorkbenchCategory));
+    store.overrideRecord(makeCategory(sReloadingBenchCategory));
+    store.overrideRecord(makeCategory(sSubCategory));
+    store.overrideRecord(makeItem<ESM4::MiscItem>(sMisc));
+    store.overrideRecord(makeItem<ESM4::Weapon>(sWeapon));
+
+    for (std::size_t index = 0; index < 96; ++index)
+    {
+        ESM4::Recipe recipe = makeRecipe(sWorkbenchCategory, 0x02010000 + static_cast<std::uint32_t>(index));
+        recipe.mData.mRequiredSkill = -1;
+        recipe.mData.mRequiredSkillLevel = 0;
+        recipe.mIngredients = { { ESM::FormId::fromUint32(sMisc), 1 } };
+        recipe.mOutputs = { { ESM::FormId::fromUint32(sWeapon), 1 } };
+        if (index < 59)
+        {
+            ESM4::TargetCondition condition;
+            condition.functionIndex = blockedFunctions[index % blockedFunctions.size()];
+            recipe.mConditions.push_back(condition);
+        }
+        store.overrideRecord(recipe);
+    }
+    for (std::size_t index = 0; index < 63; ++index)
+    {
+        const std::uint32_t id = index == 26 ? coinShotRecipe : 0x02020000 + static_cast<std::uint32_t>(index);
+        ESM4::Recipe recipe = makeRecipe(sReloadingBenchCategory, id);
+        recipe.mData.mRequiredSkill = -1;
+        recipe.mData.mRequiredSkillLevel = 0;
+        recipe.mIngredients = { { ESM::FormId::fromUint32(sMisc), 1 } };
+        recipe.mOutputs = { { ESM::FormId::fromUint32(sWeapon), 1 } };
+        if (index < 26)
+        {
+            ESM4::TargetCondition condition;
+            condition.functionIndex = blockedFunctions[index % blockedFunctions.size()];
+            recipe.mConditions.push_back(condition);
+        }
+        else if (index == 26)
+            recipe.mIngredients[0].mItem = ESM::FormId::fromUint32(sCoinShotCurrency);
+        store.overrideRecord(recipe);
+    }
+
+    const ESM4::Activator* workbench = store.get<ESM4::Activator>().search(refId(sWorkbench));
+    const ESM4::Activator* reloadingBench = store.get<ESM4::Activator>().search(refId(sReloadingBench));
+    ASSERT_NE(workbench, nullptr);
+    ASSERT_NE(reloadingBench, nullptr);
+    std::optional<MWWorld::PreparedFnvCraftingCatalog> workbenchCatalog
+        = MWWorld::prepareFnvCraftingCatalog({ MWWorld::ESM4Game::FalloutNewVegas, &store, workbench });
+    std::optional<MWWorld::PreparedFnvCraftingCatalog> reloadingCatalog
+        = MWWorld::prepareFnvCraftingCatalog({ MWWorld::ESM4Game::FalloutNewVegas, &store, reloadingBench });
+    ASSERT_TRUE(workbenchCatalog);
+    ASSERT_TRUE(reloadingCatalog);
+    ASSERT_EQ(workbenchCatalog->getEntries().size(), 96u);
+    ASSERT_EQ(reloadingCatalog->getEntries().size(), 63u);
+
+    const auto blockerCount
+        = [](const MWWorld::PreparedFnvCraftingCatalog& catalog, MWWorld::FnvCraftingPreparationError blocker) {
+              std::size_t result = 0;
+              for (const auto& entry : catalog.getEntries())
+              {
+                  if (entry.getStaticBlocker() == blocker)
+                      ++result;
+              }
+              return result;
+          };
+    EXPECT_EQ(blockerCount(*workbenchCatalog, MWWorld::FnvCraftingPreparationError::ConditionalRecipe), 59u);
+    EXPECT_EQ(blockerCount(*workbenchCatalog, MWWorld::FnvCraftingPreparationError::None), 37u);
+    EXPECT_EQ(blockerCount(*reloadingCatalog, MWWorld::FnvCraftingPreparationError::ConditionalRecipe), 26u);
+    EXPECT_EQ(blockerCount(*reloadingCatalog, MWWorld::FnvCraftingPreparationError::UnsupportedCurrency), 1u);
+    EXPECT_EQ(blockerCount(*reloadingCatalog, MWWorld::FnvCraftingPreparationError::None), 36u);
+
+    for (std::size_t index = 0; index < blockedFunctions.size(); ++index)
+    {
+        const ESM::FormId recipe = ESM::FormId::fromUint32(0x02010000 + static_cast<std::uint32_t>(index));
+        bool found = false;
+        for (const auto& entry : workbenchCatalog->getEntries())
+        {
+            if (entry.getRecipe() == recipe)
+            {
+                found = true;
+                EXPECT_EQ(entry.getStaticBlocker(), MWWorld::FnvCraftingPreparationError::ConditionalRecipe);
+            }
+        }
+        EXPECT_TRUE(found) << "missing CTDA blocker recipe for function " << blockedFunctions[index];
+    }
+
+    bool foundCoinShot = false;
+    for (const auto& entry : reloadingCatalog->getEntries())
+    {
+        if (entry.getRecipe() == ESM::FormId::fromUint32(coinShotRecipe))
+        {
+            foundCoinShot = true;
+            EXPECT_EQ(entry.getStaticBlocker(), MWWorld::FnvCraftingPreparationError::UnsupportedCurrency);
+        }
+    }
+    EXPECT_TRUE(foundCoinShot);
+}
 
 TEST(FnvCraftingRuntimeTest, PreflightsAndAppliesAllSupportedTypesInRemoveThenAddOrder)
 {

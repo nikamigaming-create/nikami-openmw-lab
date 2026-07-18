@@ -83,6 +83,7 @@ add_openmw_dir (mwworld
     refdata worldimp scene globals class action nullaction actionteleport
     containerstore actiontalk actiontake manualref player cellvisitors failedaction
     worldmodel localscripts customdata inventorystore ptr actionopen actionread actionharvest actionesm4radio actionesm4terminal
+    actionfnvcrafting
     actionequip timestamp actionalchemy cellstore actionapply actioneat
     store esmstore fallback actionrepair actionsoulgem livecellref actiondoor
     esm4questruntime fnvcraftingruntime fnvplayerstate fnvplayerruntimestate fnvterminalruntime

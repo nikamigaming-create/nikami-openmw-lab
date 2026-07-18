@@ -110,6 +110,7 @@ namespace MWWorld
     class TimeStamp;
     class ESMStore;
     class ESM4QuestRuntime;
+    class FalloutPlayerRuntimeState;
     class RefData;
     class Cell;
     class DateTimeManager;
@@ -173,6 +174,8 @@ namespace MWBase
 
         virtual MWWorld::ESM4QuestRuntime& getESM4QuestRuntime() = 0;
         virtual const MWWorld::ESM4QuestRuntime& getESM4QuestRuntime() const = 0;
+
+        virtual const MWWorld::FalloutPlayerRuntimeState& getFalloutPlayerRuntimeState() const = 0;
 
         virtual const std::vector<int>& getESMVersions() const = 0;
 

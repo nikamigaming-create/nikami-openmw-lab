@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -80,6 +81,91 @@ namespace MWWorld
 
         bool operator==(const FnvCraftingItemDelta&) const = default;
     };
+
+    struct FnvCraftingCatalogSource
+    {
+        ESM4Game mGame;
+        const ESMStore* mStore = nullptr;
+        const ESM4::Activator* mStation = nullptr;
+    };
+
+    class FnvCraftingCatalogBuilder;
+
+    class PreparedFnvCraftingCatalogItem final
+    {
+        const FnvCraftingItemDelta mDelta;
+        const std::string mName;
+
+        PreparedFnvCraftingCatalogItem(FnvCraftingItemDelta delta, std::string name);
+
+        friend class FnvCraftingCatalogBuilder;
+
+    public:
+        const FnvCraftingItemDelta& getDelta() const { return mDelta; }
+        std::string_view getName() const { return mName; }
+    };
+
+    class PreparedFnvCraftingCatalogEntry final
+    {
+        const ESM::FormId mRecipe;
+        const std::string mName;
+        const ESM::FormId mSubCategory;
+        const std::string mSubCategoryName;
+        const std::int32_t mRequiredSkill;
+        const std::uint32_t mRequiredSkillLevel;
+        const std::vector<PreparedFnvCraftingCatalogItem> mIngredients;
+        const std::vector<PreparedFnvCraftingCatalogItem> mOutputs;
+        const FnvCraftingPreparationError mStaticBlocker;
+
+        PreparedFnvCraftingCatalogEntry(ESM::FormId recipe, std::string name, ESM::FormId subCategory,
+            std::string subCategoryName, std::int32_t requiredSkill, std::uint32_t requiredSkillLevel,
+            std::vector<PreparedFnvCraftingCatalogItem> ingredients,
+            std::vector<PreparedFnvCraftingCatalogItem> outputs, FnvCraftingPreparationError staticBlocker);
+
+        friend class FnvCraftingCatalogBuilder;
+
+    public:
+        ESM::FormId getRecipe() const { return mRecipe; }
+        std::string_view getName() const { return mName; }
+        ESM::FormId getSubCategory() const { return mSubCategory; }
+        std::string_view getSubCategoryName() const { return mSubCategoryName; }
+        std::int32_t getRequiredSkill() const { return mRequiredSkill; }
+        std::uint32_t getRequiredSkillLevel() const { return mRequiredSkillLevel; }
+        const std::vector<PreparedFnvCraftingCatalogItem>& getIngredients() const { return mIngredients; }
+        const std::vector<PreparedFnvCraftingCatalogItem>& getOutputs() const { return mOutputs; }
+        FnvCraftingPreparationError getStaticBlocker() const { return mStaticBlocker; }
+        bool isStaticallySupported() const { return mStaticBlocker == FnvCraftingPreparationError::None; }
+    };
+
+    /// Immutable station menu snapshot. Every winning, live recipe in the
+    /// station category is retained; unsupported records carry their exact
+    /// fail-closed blocker instead of disappearing from the menu.
+    class PreparedFnvCraftingCatalog final
+    {
+        const ESM::FormId mStation;
+        const ESM::FormId mCategory;
+        const std::string mCategoryName;
+        const std::vector<PreparedFnvCraftingCatalogEntry> mEntries;
+
+        PreparedFnvCraftingCatalog(ESM::FormId station, ESM::FormId category, std::string categoryName,
+            std::vector<PreparedFnvCraftingCatalogEntry> entries);
+
+        friend class FnvCraftingCatalogBuilder;
+
+    public:
+        ESM::FormId getStation() const { return mStation; }
+        ESM::FormId getCategory() const { return mCategory; }
+        std::string_view getCategoryName() const { return mCategoryName; }
+        const std::vector<PreparedFnvCraftingCatalogEntry>& getEntries() const { return mEntries; }
+    };
+
+    /// Return a category only for the two audited FNV base/script pairs.
+    [[nodiscard]] std::optional<ESM::FormId> getFnvCraftingStationCategory(const ESM4::Activator& station);
+
+    /// Freeze the complete live recipe catalog before opening UI. This does
+    /// not inspect inventory, construct outputs, or create a mutation plan.
+    [[nodiscard]] std::optional<PreparedFnvCraftingCatalog> prepareFnvCraftingCatalog(
+        const FnvCraftingCatalogSource& source, FnvCraftingPreparationError* error = nullptr);
 
     /// Narrow mutation boundary used by the headless crafting planner.
     ///

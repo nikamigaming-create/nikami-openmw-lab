@@ -15,7 +15,9 @@
 
 #include "../mwbase/environment.hpp"
 #include "../mwworld/actionesm4radio.hpp"
+#include "../mwworld/actionfnvcrafting.hpp"
 #include "../mwworld/esmstore.hpp"
+#include "../mwworld/fnvcraftingruntime.hpp"
 #include "../mwworld/nullaction.hpp"
 
 namespace MWClass
@@ -118,6 +120,19 @@ namespace MWClass
     {
         (void)actor;
         const ESM4::Activator& activator = *ptr.get<ESM4::Activator>()->mBase;
+        const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
+        if (store != nullptr && store->getESM4Game() == MWWorld::ESM4Game::FalloutNewVegas
+            && MWWorld::getFnvCraftingStationCategory(activator))
+        {
+            MWWorld::FnvCraftingPreparationError error = MWWorld::FnvCraftingPreparationError::None;
+            std::optional<MWWorld::PreparedFnvCraftingCatalog> catalog
+                = MWWorld::prepareFnvCraftingCatalog({ store->getESM4Game(), store, &activator }, &error);
+            if (catalog)
+                return std::make_unique<MWWorld::ActionFnvCraftingStation>(ptr, std::move(*catalog));
+            Log(Debug::Warning) << "FNV crafting: station catalog rejected form="
+                                << ESM::RefId(activator.mId).toDebugString()
+                                << " error=" << MWWorld::getFnvCraftingPreparationErrorName(error);
+        }
         Log(Debug::Info) << "FNV/ESM4 activator: activate editor=" << activator.mEditorId
                          << " form=" << ESM::RefId(activator.mId).toDebugString()
                          << " loop=" << ESM::RefId(activator.mLoopingSound).toDebugString()
