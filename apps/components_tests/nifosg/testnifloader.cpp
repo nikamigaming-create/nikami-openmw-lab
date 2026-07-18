@@ -608,7 +608,7 @@ osg::Group {
         EXPECT_FALSE(depth->getWriteMask());
     }
 
-    TEST_F(NifOsgLoaderTest, shouldOnlyBindPpLightingEnvironmentTexturesWhenAuthored)
+    TEST_F(NifOsgLoaderTest, shouldSuppressFalloutPpLightingEnvironmentTextures)
     {
         FalloutPPLightingGeometry unflagged(0);
         osg::ref_ptr<osg::Node> unflaggedResult
@@ -629,8 +629,8 @@ osg::Group {
         FindNamedNodeStateSetVisitor authoredVisitor("Window:0");
         authoredResult->accept(authoredVisitor);
         ASSERT_NE(authoredVisitor.mStateSet, nullptr);
-        EXPECT_TRUE(hasTextureType(*authoredVisitor.mStateSet, "envMap"));
-        EXPECT_TRUE(hasTextureType(*authoredVisitor.mStateSet, "glossMap"));
+        EXPECT_FALSE(hasTextureType(*authoredVisitor.mStateSet, "envMap"));
+        EXPECT_FALSE(hasTextureType(*authoredVisitor.mStateSet, "glossMap"));
     }
 
     TEST_F(NifOsgLoaderTest, shouldApplyStandardAlphaBlendForPpLightingWindowWithoutNiAlphaProperty)
@@ -643,8 +643,8 @@ osg::Group {
         FindNamedNodeStateSetVisitor visitor("Window:0");
         result->accept(visitor);
         ASSERT_NE(visitor.mStateSet, nullptr);
-        EXPECT_TRUE(hasTextureType(*visitor.mStateSet, "envMap"));
-        EXPECT_TRUE(hasTextureType(*visitor.mStateSet, "glossMap"));
+        EXPECT_FALSE(hasTextureType(*visitor.mStateSet, "envMap"));
+        EXPECT_FALSE(hasTextureType(*visitor.mStateSet, "glossMap"));
         EXPECT_NE(visitor.mStateSet->getMode(GL_BLEND) & osg::StateAttribute::ON, 0u);
         const auto* blend
             = dynamic_cast<const osg::BlendFunc*>(visitor.mStateSet->getAttribute(osg::StateAttribute::BLENDFUNC));
