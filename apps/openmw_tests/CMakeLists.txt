@@ -10,6 +10,7 @@ file(GLOB UNITTEST_SRC_FILES
     mwworld/testesm4questruntime.cpp
     mwworld/testesm4actorvaluestore.cpp
     mwworld/testesm4factionstore.cpp
+    mwworld/testesm4perkstore.cpp
     mwworld/testfnvplayerstate.cpp
     mwworld/testfnvplayerruntimestate.cpp
     mwworld/testduration.cpp

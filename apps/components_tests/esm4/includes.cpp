@@ -60,6 +60,7 @@
 #include <components/esm4/loadnpc.hpp>
 #include <components/esm4/loadotft.hpp>
 #include <components/esm4/loadpack.hpp>
+#include <components/esm4/loadperk.hpp>
 #include <components/esm4/loadpgrd.hpp>
 #include <components/esm4/loadpgre.hpp>
 #include <components/esm4/loadpwat.hpp>

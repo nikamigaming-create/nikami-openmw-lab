@@ -123,6 +123,7 @@ namespace ESM4
     struct MovableStatic;
     struct Npc;
     struct Outfit;
+    struct Perk;
     struct Potion;
     struct Projectile;
     struct Quest;
@@ -201,7 +202,7 @@ namespace MWWorld
 
             // StoreTuple is an ABI-like compile-time ordinal shared by inline get<T>() call sites.
             // New stores must be appended so an incremental build can never reinterpret an existing slot.
-            Store<ESM4::Projectile>, Store<ESM4::ActorValueInformation>, Store<ESM4::Faction>>;
+            Store<ESM4::Projectile>, Store<ESM4::ActorValueInformation>, Store<ESM4::Faction>, Store<ESM4::Perk>>;
 
     private:
         template <typename T>
