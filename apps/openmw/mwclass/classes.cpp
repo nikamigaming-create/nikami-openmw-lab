@@ -48,6 +48,7 @@
 
 #include "esm4base.hpp"
 #include "esm4activator.hpp"
+#include "esm4container.hpp"
 #include "esm4creature.hpp"
 #include "esm4npc.hpp"
 #include "light4.hpp"
@@ -84,7 +85,7 @@ namespace MWClass
         ESM4Named<ESM4::Book>::registerSelf();
         ESM4Named<ESM4::Clothing>::registerSelf();
         ESM4Creature::registerSelf();
-        ESM4Named<ESM4::Container>::registerSelf();
+        ESM4Container::registerSelf();
         ESM4Door::registerSelf();
         ESM4Named<ESM4::Flora>::registerSelf();
         ESM4Named<ESM4::Furniture>::registerSelf();

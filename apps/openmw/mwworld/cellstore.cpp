@@ -128,6 +128,11 @@ namespace
         using StateType = ESM::ContainerState;
     };
     template <>
+    struct RecordToState<ESM4::Container>
+    {
+        using StateType = ESM::ContainerState;
+    };
+    template <>
     struct RecordToState<ESM::CreatureLevList>
     {
         using StateType = ESM::CreatureLevListState;
@@ -177,7 +182,7 @@ namespace
         // references
         for (const MWWorld::LiveCellRef<T>& liveCellRef : collection.mList)
         {
-            if (ESM::isESM4Rec(T::sRecordId))
+            if constexpr (ESM::isESM4Rec(T::sRecordId) && !std::is_same_v<T, ESM4::Container>)
             {
                 // TODO: Implement loading/saving of REFR4 and ACHR4 with ESM3 reader/writer.
                 continue;

@@ -258,6 +258,9 @@ namespace MWWorld
 
         void setCount(int value);
 
+        // Load mutable state without changing the underlying reference format.
+        void loadState(const ESM::CellRef& state);
+
         // Write the content of this CellRef into the given ObjectState
         void writeState(ESM::ObjectState& state) const;
 
