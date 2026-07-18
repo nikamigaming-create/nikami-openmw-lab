@@ -123,8 +123,12 @@ namespace MWSound
         if (mBufferNameMap.empty())
         {
             const MWWorld::ESMStore* esmstore = MWBase::Environment::get().getESMStore();
-            for (const ESM::Sound& sound : esmstore->get<ESM::Sound>())
-                insertSound(sound.mId, sound);
+            const bool falloutNewVegas = esmstore->getESM4Game() == MWWorld::ESM4Game::FalloutNewVegas;
+            if (!falloutNewVegas)
+            {
+                for (const ESM::Sound& sound : esmstore->get<ESM::Sound>())
+                    insertSound(sound.mId, sound);
+            }
 
             std::size_t soundEditorIdAliases = 0;
             for (const ESM4::Sound& sound : esmstore->get<ESM4::Sound>())
@@ -145,7 +149,8 @@ namespace MWSound
             }
 
             Log(Debug::Info) << "FNV/ESM4 sound: registered editor-id aliases sounds=" << soundEditorIdAliases
-                             << " references=" << soundReferenceEditorIdAliases;
+                             << " references=" << soundReferenceEditorIdAliases
+                             << " legacyEsm3Fallback=" << (falloutNewVegas ? "disabled" : "enabled");
         }
 
         SoundBuffer* sfx;
@@ -155,12 +160,18 @@ namespace MWSound
         else
         {
             const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
-            if (const ESM::Sound* sound = store->get<ESM::Sound>().search(soundId))
-                sfx = insertSound(soundId, *sound);
-            else if (const ESM4::Sound* sound = store->get<ESM4::Sound>().search(soundId))
+            const bool falloutNewVegas = store->getESM4Game() == MWWorld::ESM4Game::FalloutNewVegas;
+            if (const ESM4::Sound* sound = store->get<ESM4::Sound>().search(soundId))
                 sfx = insertSound(soundId, *sound);
             else if (const ESM4::SoundReference* sound = store->get<ESM4::SoundReference>().search(soundId))
                 sfx = insertSound(soundId, *sound);
+            else if (!falloutNewVegas)
+            {
+                if (const ESM::Sound* sound = store->get<ESM::Sound>().search(soundId))
+                    sfx = insertSound(soundId, *sound);
+                else
+                    return {};
+            }
             else
                 return {};
             if (sfx == nullptr)
