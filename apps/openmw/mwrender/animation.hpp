@@ -409,6 +409,11 @@ namespace MWRender
         virtual bool prepareFalloutWeaponAnimation(
             std::uint8_t animationType, std::uint8_t reloadAnimation, FonvWeaponAction action);
 
+        /// Bind the audited retail New Vegas humanoid hit reaction on demand.
+        /// Non-New-Vegas actors are not affected. A New Vegas NPC fails closed unless the exact shared skeleton and
+        /// fully bound source are selected.
+        bool prepareFalloutHitReaction();
+
         /// Return every animation group currently bound to this assembled object.
         /// The result is copied and sorted so proof/telemetry callers can build a
         /// deterministic pose inventory without depending on animation-source order.

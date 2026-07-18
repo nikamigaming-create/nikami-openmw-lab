@@ -590,6 +590,11 @@ namespace MWMechanics
         }
         else if (recovery)
         {
+            if (!mAnimation->prepareFalloutHitReaction())
+            {
+                stats.setHitRecovery(false);
+                return;
+            }
             mHitState = isSwimming ? CharState_SwimHit : CharState_Hit;
             priority = Priority_Hit;
         }

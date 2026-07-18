@@ -99,6 +99,52 @@ namespace MWRender
         }
     }
 
+    TEST(FalloutHitReactionTest, resolvesExactGoodspringsHumanoidHitReactionContract)
+    {
+        EXPECT_EQ(FonvNpcHitReactionSemanticGroup, "hit1");
+        EXPECT_EQ(FonvNpcHitReactionSource, "meshes/characters/_male/idleanims/mt_hittorso.kf");
+        EXPECT_EQ(FonvNpcHitReactionSkeleton, "meshes/characters/_male/skeleton.nif");
+
+        struct Decision
+        {
+            bool mIsStrictFonvNpc;
+            std::string_view mBaseModel;
+            std::string_view mSelectedSource;
+            bool mExactSourceExists;
+            FonvNpcHitReactionResolution mExpected;
+        };
+        static constexpr std::array<Decision, 5> decisions = { {
+            { false, "meshes/characters/_male/skeleton.nif", {}, true,
+                FonvNpcHitReactionResolution::NotApplicable },
+            { true, "meshes/characters/_male/skeleton.nif",
+                "meshes/characters/_male/idleanims/mt_hittorso.kf", false,
+                FonvNpcHitReactionResolution::AlreadyBound },
+            { true, "meshes/characters/_male/skeleton.nif", "meshes/characters/_male/idleanims/unknown.kf", true,
+                FonvNpcHitReactionResolution::BindExact },
+            { true, "meshes/characters/_male/skeleton.nif", "meshes/characters/_male/idleanims/unknown.kf", false,
+                FonvNpcHitReactionResolution::MissingSource },
+            { true, "meshes/characters/custom/skeleton.nif", {}, true,
+                FonvNpcHitReactionResolution::IncompatibleSkeleton },
+        } };
+
+        for (const Decision& decision : decisions)
+        {
+            EXPECT_EQ(resolveFonvNpcHitReaction(decision.mIsStrictFonvNpc, decision.mBaseModel,
+                          decision.mSelectedSource, decision.mExactSourceExists),
+                decision.mExpected);
+        }
+    }
+
+    TEST(FalloutHitReactionTest, normalizesRetailHumanoidPathsButRejectsIncompleteBindings)
+    {
+        EXPECT_EQ(resolveFonvNpcHitReaction(true, "MESHES\\CHARACTERS\\_MALE\\SKELETON.NIF",
+                      "MESHES\\CHARACTERS\\_MALE\\IDLEANIMS\\MT_HITTORSO.KF", false),
+            FonvNpcHitReactionResolution::AlreadyBound);
+        EXPECT_TRUE(isPreparedFonvNpcHitReaction("MESHES\\CHARACTERS\\_MALE\\IDLEANIMS\\MT_HITTORSO.KF", 1u));
+        EXPECT_FALSE(isPreparedFonvNpcHitReaction(FonvNpcHitReactionSource, 0u));
+        EXPECT_FALSE(isPreparedFonvNpcHitReaction("meshes/characters/_male/idleanims/mt_hithead.kf", 1u));
+    }
+
     TEST(FalloutHitReactionTest, resolvesCanonicalRecoverySourceWithinEachGoodspringsCreatureRig)
     {
         struct ExpectedSource

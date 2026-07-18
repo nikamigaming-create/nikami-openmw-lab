@@ -1,5 +1,6 @@
 #include "animation.hpp"
 #include "falloutanimationtargets.hpp"
+#include "fallouthitreaction.hpp"
 #include "falloutweaponanimation.hpp"
 
 #include <algorithm>
@@ -247,6 +248,15 @@ namespace
 
         const MWWorld::LiveCellRef<ESM4::Npc>* ref = ptr.get<ESM4::Npc>();
         return ref != nullptr && ref->mBase != nullptr && (ref->mBase->mIsFO3 || ref->mBase->mIsFONV);
+    }
+
+    bool isStrictFonvNpcAnimationContext(const MWWorld::Ptr& ptr)
+    {
+        if (ptr.getType() != ESM::REC_NPC_4)
+            return false;
+
+        const MWWorld::LiveCellRef<ESM4::Npc>* ref = ptr.get<ESM4::Npc>();
+        return ref != nullptr && ref->mBase != nullptr && ref->mBase->mIsFONV && !ref->mBase->mIsFO3;
     }
 
     float matrixDifference(const osg::Matrixf& left, const osg::Matrixf& right)
@@ -5124,6 +5134,57 @@ namespace MWRender
                 return (*source)->mSourceName;
         }
         return {};
+    }
+
+    bool Animation::prepareFalloutHitReaction()
+    {
+        const bool isStrictFonvNpc = isStrictFonvNpcAnimationContext(mPtr);
+        std::string baseModel;
+        if (isStrictFonvNpc)
+            baseModel = mPtr.getClass().getCorrectedModel(mPtr);
+        const std::string selectedSource = getAnimationSourceName(FonvNpcHitReactionSemanticGroup);
+        const std::string exactSource(FonvNpcHitReactionSource);
+        const bool exactSourceExists
+            = isStrictFonvNpc && mResourceSystem != nullptr && mResourceSystem->getVFS()->exists(exactSource);
+        const FonvNpcHitReactionResolution resolution
+            = resolveFonvNpcHitReaction(isStrictFonvNpc, baseModel, selectedSource, exactSourceExists);
+
+        if (resolution == FonvNpcHitReactionResolution::NotApplicable)
+            return true;
+
+        if (resolution == FonvNpcHitReactionResolution::IncompatibleSkeleton)
+        {
+            Log(Debug::Error) << "FNV NPC hit reaction rejected incompatible skeleton: " << baseModel;
+            return false;
+        }
+
+        if (resolution == FonvNpcHitReactionResolution::MissingSource)
+        {
+            Log(Debug::Error) << "FNV NPC hit reaction exact source is unavailable: " << exactSource;
+            return false;
+        }
+
+        if (resolution == FonvNpcHitReactionResolution::BindExact)
+        {
+            const std::shared_ptr<AnimSource> source
+                = addSingleAnimSource(exactSource, baseModel, false, {}, FonvNpcHitReactionSemanticGroup);
+            if (source == nullptr)
+            {
+                Log(Debug::Error) << "FNV NPC hit reaction exact source failed controller binding: " << exactSource
+                                  << " skeleton=" << baseModel;
+                return false;
+            }
+        }
+
+        const std::string finalSource = getAnimationSourceName(FonvNpcHitReactionSemanticGroup);
+        const unsigned int controllerMask = getAnimationGroupControllerMask(FonvNpcHitReactionSemanticGroup);
+        if (!isPreparedFonvNpcHitReaction(finalSource, controllerMask))
+        {
+            Log(Debug::Error) << "FNV NPC hit reaction failed final source validation: expected=" << exactSource
+                              << " selected=" << finalSource << " controllerMask=" << controllerMask;
+            return false;
+        }
+        return true;
     }
 
     bool Animation::prepareFalloutWeaponAnimation(

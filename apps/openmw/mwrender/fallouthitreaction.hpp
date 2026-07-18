@@ -10,7 +10,21 @@
 
 namespace MWRender
 {
-    inline constexpr std::string_view FonvCreatureHitReactionSemanticGroup = "hit1";
+    inline constexpr std::string_view FonvHitReactionSemanticGroup = "hit1";
+    inline constexpr std::string_view FonvCreatureHitReactionSemanticGroup = FonvHitReactionSemanticGroup;
+    inline constexpr std::string_view FonvNpcHitReactionSemanticGroup = FonvHitReactionSemanticGroup;
+    inline constexpr std::string_view FonvNpcHitReactionSource
+        = "meshes/characters/_male/idleanims/mt_hittorso.kf";
+    inline constexpr std::string_view FonvNpcHitReactionSkeleton = "meshes/characters/_male/skeleton.nif";
+
+    enum class FonvNpcHitReactionResolution
+    {
+        NotApplicable,
+        AlreadyBound,
+        BindExact,
+        MissingSource,
+        IncompatibleSkeleton,
+    };
 
     inline bool shouldClearHitRecoveryDuringActiveAction(
         bool isNpc, bool isFonvCreature, bool hasBoundHitReaction)
@@ -18,12 +32,36 @@ namespace MWRender
         return !isNpc && (!isFonvCreature || !hasBoundHitReaction);
     }
 
-    inline std::string normalizeFonvCreatureAnimationDirectory(std::string_view animationDirectory)
+    inline std::string normalizeFonvHitReactionPath(std::string_view path)
     {
-        std::string directory(animationDirectory);
-        std::transform(directory.begin(), directory.end(), directory.begin(), [](unsigned char c) {
+        std::string normalized(path);
+        std::transform(normalized.begin(), normalized.end(), normalized.begin(), [](unsigned char c) {
             return c == '\\' ? '/' : static_cast<char>(std::tolower(c));
         });
+        return normalized;
+    }
+
+    inline FonvNpcHitReactionResolution resolveFonvNpcHitReaction(bool isStrictFonvNpc,
+        std::string_view baseModel, std::string_view selectedSource, bool exactSourceExists)
+    {
+        if (!isStrictFonvNpc)
+            return FonvNpcHitReactionResolution::NotApplicable;
+        if (normalizeFonvHitReactionPath(baseModel) != FonvNpcHitReactionSkeleton)
+            return FonvNpcHitReactionResolution::IncompatibleSkeleton;
+        if (normalizeFonvHitReactionPath(selectedSource) == FonvNpcHitReactionSource)
+            return FonvNpcHitReactionResolution::AlreadyBound;
+        return exactSourceExists ? FonvNpcHitReactionResolution::BindExact
+                                 : FonvNpcHitReactionResolution::MissingSource;
+    }
+
+    inline bool isPreparedFonvNpcHitReaction(std::string_view selectedSource, unsigned int controllerMask)
+    {
+        return controllerMask != 0 && normalizeFonvHitReactionPath(selectedSource) == FonvNpcHitReactionSource;
+    }
+
+    inline std::string normalizeFonvCreatureAnimationDirectory(std::string_view animationDirectory)
+    {
+        std::string directory = normalizeFonvHitReactionPath(animationDirectory);
         while (!directory.empty() && directory.back() == '/')
             directory.pop_back();
         return directory;
