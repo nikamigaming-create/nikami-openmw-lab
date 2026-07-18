@@ -141,7 +141,9 @@ namespace
         EXPECT_EQ(radio->posReference, ESM::FormId::fromUint32(sPositionRefId));
 
         std::unique_ptr<MWWorld::Action> action = ptr.getClass().activate(ptr, {});
-        EXPECT_NE(dynamic_cast<MWWorld::ActionEsm4Radio*>(action.get()), nullptr);
+        MWWorld::ActionEsm4Radio* radioAction = dynamic_cast<MWWorld::ActionEsm4Radio*>(action.get());
+        ASSERT_NE(radioAction, nullptr);
+        EXPECT_EQ(radioAction->getPlaybackMode(), MWWorld::Esm4RadioPlaybackMode::Loop);
 
         MWWorld::ManualRef manual(mStore, ESM::RefId(ESM::FormId::fromUint32(sTactBaseId)));
         EXPECT_EQ(manual.getPtr().getType(), ESM::REC_TACT4);
@@ -198,7 +200,10 @@ namespace
         ESM4::Reference radioPlacement = makeReference(sActiRefId, sActiBaseId);
         MWWorld::LiveCellRef<ESM4::Activator> liveRadio(radioPlacement, &radio);
         MWWorld::Ptr radioPtr(&liveRadio);
-        EXPECT_NE(dynamic_cast<MWWorld::ActionEsm4Radio*>(radioPtr.getClass().activate(radioPtr, {}).get()), nullptr);
+        std::unique_ptr<MWWorld::Action> radioAction = radioPtr.getClass().activate(radioPtr, {});
+        MWWorld::ActionEsm4Radio* esm4Radio = dynamic_cast<MWWorld::ActionEsm4Radio*>(radioAction.get());
+        ASSERT_NE(esm4Radio, nullptr);
+        EXPECT_EQ(esm4Radio->getPlaybackMode(), MWWorld::Esm4RadioPlaybackMode::Loop);
 
         ESM4::Activator ordinary{};
         ordinary.mId = ESM::FormId::fromUint32(sActiBaseId + 1);

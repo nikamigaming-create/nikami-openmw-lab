@@ -14,10 +14,12 @@
 #include <components/vfs/recursivedirectoryiterator.hpp>
 
 #include "../mwbase/environment.hpp"
+#include "../mwbase/world.hpp"
 #include "../mwworld/actionesm4radio.hpp"
 #include "../mwworld/actionfnvcrafting.hpp"
 #include "../mwworld/esmstore.hpp"
 #include "../mwworld/fnvcraftingruntime.hpp"
+#include "../mwworld/fnvradioprogram.hpp"
 #include "../mwworld/nullaction.hpp"
 
 namespace MWClass
@@ -139,33 +141,63 @@ namespace MWClass
                          << " activation=" << ESM::RefId(activator.mActivationSound).toDebugString()
                          << " template=" << ESM::RefId(activator.mRadioTemplate).toDebugString()
                          << " station=" << ESM::RefId(activator.mRadioStation).toDebugString();
-        ESM::FormId broadcast = activator.mLoopingSound;
         std::string broadcastVoice;
-        if (broadcast.isZeroOrUnset())
-            broadcast = activator.mRadioTemplate;
+        const ESM4::TalkingActivator* station = nullptr;
+        if (!activator.mRadioStation.isZeroOrUnset() && store != nullptr)
+            station = store->get<ESM4::TalkingActivator>().search(ESM::RefId(activator.mRadioStation));
 
-        if (broadcast.isZeroOrUnset() && !activator.mRadioStation.isZeroOrUnset())
+        MWWorld::Esm4RadioPlaybackSelection selection = MWWorld::selectEsm4RadioBroadcast(
+            activator.mLoopingSound, activator.mRadioTemplate, station != nullptr ? station->mLoopSound : ESM::FormId{},
+            station != nullptr ? station->mRadioTemplate : ESM::FormId{}, {});
+
+        if (selection.mSound.isZeroOrUnset() && station != nullptr)
         {
-            const auto& stations
-                = MWBase::Environment::get().getESMStore()->get<ESM4::TalkingActivator>();
-            if (const ESM4::TalkingActivator* station = stations.search(ESM::RefId(activator.mRadioStation)))
+            broadcastVoice = resolveFo3StationVoice(*station);
+            if (broadcastVoice.empty() && store->getESM4Game() == MWWorld::ESM4Game::FalloutNewVegas)
             {
-                broadcast = !station->mLoopSound.isZeroOrUnset() ? station->mLoopSound : station->mRadioTemplate;
-                if (broadcast.isZeroOrUnset())
-                    broadcastVoice = resolveFo3StationVoice(*station);
-                Log(Debug::Info) << "FNV/ESM4 radio: resolved station activator=" << activator.mEditorId
-                                 << " station=" << station->mEditorId << " stationForm="
-                                 << ESM::RefId(station->mId).toDebugString() << " template="
-                                 << ESM::RefId(broadcast).toDebugString() << " voice=\""
-                                 << broadcastVoice << "\"";
+                if (MWBase::World* world = MWBase::Environment::tryGetWorld())
+                {
+                    MWWorld::FnvRadioProgramPreparationError error
+                        = MWWorld::FnvRadioProgramPreparationError::None;
+                    const std::optional<MWWorld::PreparedFnvRadioOneShot> program = MWWorld::prepareFnvRadioOneShot(
+                        { store->getESM4Game(), store, &world->getESM4QuestRuntime(), station }, &error);
+                    if (program)
+                    {
+                        selection = MWWorld::selectEsm4RadioBroadcast(activator.mLoopingSound,
+                            activator.mRadioTemplate, station->mLoopSound, station->mRadioTemplate, program->mSound);
+                        Log(Debug::Info) << "FNV radio: prepared authored one-shot station="
+                                         << ESM::RefId(program->mStation).toDebugString() << " quest="
+                                         << ESM::RefId(program->mQuest).toDebugString() << " topic="
+                                         << ESM::RefId(program->mTopic).toDebugString() << " info="
+                                         << ESM::RefId(program->mInfo).toDebugString() << " sound="
+                                         << ESM::RefId(program->mSound).toDebugString();
+                    }
+                    else
+                    {
+                        Log(Debug::Warning) << "FNV radio: rejected authored one-shot station="
+                                            << ESM::RefId(station->mId).toDebugString() << " error="
+                                            << MWWorld::getFnvRadioProgramPreparationErrorName(error);
+                    }
+                }
+                else
+                {
+                    Log(Debug::Warning) << "FNV radio: no world quest runtime station="
+                                        << ESM::RefId(station->mId).toDebugString();
+                }
             }
+            Log(Debug::Info) << "FNV/ESM4 radio: resolved station activator=" << activator.mEditorId
+                             << " station=" << station->mEditorId << " stationForm="
+                             << ESM::RefId(station->mId).toDebugString() << " template="
+                             << ESM::RefId(selection.mSound).toDebugString() << " voice=\""
+                             << broadcastVoice << "\"";
         }
 
-        if (activator.mActivationSound.isZeroOrUnset() && broadcast.isZeroOrUnset()
+        if (activator.mActivationSound.isZeroOrUnset() && selection.mSound.isZeroOrUnset()
             && broadcastVoice.empty())
             return std::make_unique<MWWorld::NullAction>();
 
         return std::make_unique<MWWorld::ActionEsm4Radio>(ptr, ESM::RefId(activator.mActivationSound),
-            ESM::RefId(broadcast), ESM::RefId(activator.mRadioStation), std::move(broadcastVoice));
+            ESM::RefId(selection.mSound), ESM::RefId(activator.mRadioStation), std::move(broadcastVoice),
+            selection.mMode);
     }
 }
