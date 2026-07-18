@@ -105,26 +105,9 @@ namespace MWWorld
 
     using FalloutWeatherColorSamples = std::array<osg::Vec4f, 6>;
 
-    struct FalloutWeatherFog
-    {
-        float mNear = 0.f;
-        float mFar = 0.f;
-        float mPower = 1.f;
-    };
-
-    struct FalloutWeatherFogSamples
-    {
-        FalloutWeatherFog mDay;
-        FalloutWeatherFog mNight;
-    };
-
     osg::Vec4f sampleFalloutWeatherColor(
         const FalloutWeatherColorSamples& samples, float gameHour, const TimeOfDaySettings& timeSettings,
         float daytimeColorExtension = 0.5f);
-    FalloutWeatherFog interpolateFalloutWeatherFog(
-        const FalloutWeatherFog& current, const FalloutWeatherFog& next, float factor);
-    FalloutWeatherFog sampleFalloutWeatherFog(const FalloutWeatherFogSamples& samples, float gameHour,
-        const TimeOfDaySettings& timeSettings, float daytimeColorExtension = 0.5f);
     osg::Vec3f falloutSunPosition(float orbit);
     MWRender::MoonState::Phase falloutMoonPhase(int gameDay, std::uint8_t encodedMoonInfo);
     MWRender::MoonState falloutMoonState(
@@ -200,7 +183,6 @@ namespace MWWorld
         std::optional<std::array<std::string, 4>> mFalloutCloudTextures;
         std::optional<std::array<float, 4>> mFalloutCloudSpeeds;
         std::optional<std::array<FalloutWeatherColorSamples, 4>> mFalloutCloudColors;
-        std::optional<FalloutWeatherFogSamples> mFalloutFog;
 
         // Fog depth/density
         TimeOfDayInterpolator<float> mLandFogDepth;

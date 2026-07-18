@@ -255,30 +255,6 @@ namespace MWWorld
             return result;
         }
 
-        float getFalloutFogDayStrength(
-            float gameHour, const TimeOfDaySettings& timeSettings, float daytimeColorExtension)
-        {
-            const float nightEnd = timeSettings.mNightEnd - daytimeColorExtension;
-            const float nightStart = timeSettings.mNightStart + daytimeColorExtension;
-
-            if (gameHour <= nightEnd || gameHour >= nightStart)
-                return 0.f;
-
-            if (gameHour < timeSettings.mDayStart)
-            {
-                const float duration = timeSettings.mDayStart - nightEnd;
-                return duration > 0.f ? std::clamp((gameHour - nightEnd) / duration, 0.f, 1.f) : 1.f;
-            }
-
-            if (gameHour <= timeSettings.mDayEnd)
-                return 1.f;
-
-            const float duration = nightStart - timeSettings.mDayEnd;
-            return duration > 0.f
-                ? std::clamp((nightStart - gameHour) / duration, 0.f, 1.f)
-                : 0.f;
-        }
-
         float getFalloutDaytimeColorExtension(const MWWorld::ESMStore& store)
         {
             if (const ESM::GameSetting* setting
@@ -296,20 +272,6 @@ namespace MWWorld
         const FalloutWeatherTimeBlend blend
             = getFalloutWeatherTimeBlend(gameHour, timeSettings, daytimeColorExtension);
         return lerp(samples[blend.mSecondary], samples[blend.mPrimary], blend.mPrimaryStrength);
-    }
-
-    FalloutWeatherFog interpolateFalloutWeatherFog(
-        const FalloutWeatherFog& current, const FalloutWeatherFog& next, float factor)
-    {
-        return { lerp(current.mNear, next.mNear, factor), lerp(current.mFar, next.mFar, factor),
-            lerp(current.mPower, next.mPower, factor) };
-    }
-
-    FalloutWeatherFog sampleFalloutWeatherFog(const FalloutWeatherFogSamples& samples, float gameHour,
-        const TimeOfDaySettings& timeSettings, float daytimeColorExtension)
-    {
-        return interpolateFalloutWeatherFog(samples.mNight, samples.mDay,
-            getFalloutFogDayStrength(gameHour, timeSettings, daytimeColorExtension));
     }
 
     osg::Vec3f falloutSunPosition(float orbit)
@@ -1878,13 +1840,6 @@ namespace MWWorld
                 weather.mFalloutSkyLowerColors = skyLower;
                 weather.mFalloutHorizonColors = horizon;
             }
-            if (source.mHasFogDistance)
-            {
-                weather.mFalloutFog = FalloutWeatherFogSamples{
-                    { source.mFogDistance[0], source.mFogDistance[1], source.mFogDistance[4] },
-                    { source.mFogDistance[2], source.mFogDistance[3], source.mFogDistance[5] },
-                };
-            }
             weather.mWindSpeed = static_cast<float>(source.mData.windSpeed) / 255.f;
             weather.mCloudSpeed = static_cast<float>(source.mData.lowerCloudSpeed) / 255.f;
             weather.mGlareView = static_cast<float>(source.mData.sunGlare) / 255.f;
@@ -2132,21 +2087,6 @@ namespace MWWorld
         }
 
         mResult.mFogDepth = current.mLandFogDepth.getValue(gameHour, mTimeSettings, "Fog");
-        mResult.mHasFalloutFog = current.mFalloutFog.has_value();
-        if (mResult.mHasFalloutFog)
-        {
-            const FalloutWeatherFog fog = sampleFalloutWeatherFog(
-                *current.mFalloutFog, gameHour, mTimeSettings, mFalloutDaytimeColorExtension);
-            mResult.mFalloutFogNear = fog.mNear;
-            mResult.mFalloutFogFar = fog.mFar;
-            mResult.mFalloutFogPower = fog.mPower;
-        }
-        else
-        {
-            mResult.mFalloutFogNear = 0.f;
-            mResult.mFalloutFogFar = 0.f;
-            mResult.mFalloutFogPower = 1.f;
-        }
         mResult.mFogColor = current.mFalloutFogColors
             ? sampleFalloutWeatherColor(
                 *current.mFalloutFogColors, gameHour, mTimeSettings, mFalloutDaytimeColorExtension)
@@ -2251,22 +2191,6 @@ namespace MWWorld
             = current.mHasFalloutCelestialColors && other.mHasFalloutCelestialColors;
         mResult.mFalloutStarsColor = lerp(current.mFalloutStarsColor, other.mFalloutStarsColor, factor);
         mResult.mFogDepth = lerp(current.mFogDepth, other.mFogDepth, factor);
-        mResult.mHasFalloutFog = current.mHasFalloutFog && other.mHasFalloutFog;
-        if (mResult.mHasFalloutFog)
-        {
-            const FalloutWeatherFog fog = interpolateFalloutWeatherFog(
-                { current.mFalloutFogNear, current.mFalloutFogFar, current.mFalloutFogPower },
-                { other.mFalloutFogNear, other.mFalloutFogFar, other.mFalloutFogPower }, factor);
-            mResult.mFalloutFogNear = fog.mNear;
-            mResult.mFalloutFogFar = fog.mFar;
-            mResult.mFalloutFogPower = fog.mPower;
-        }
-        else
-        {
-            mResult.mFalloutFogNear = 0.f;
-            mResult.mFalloutFogFar = 0.f;
-            mResult.mFalloutFogPower = 1.f;
-        }
         mResult.mDLFogFactor = lerp(current.mDLFogFactor, other.mDLFogFactor, factor);
         mResult.mDLFogOffset = lerp(current.mDLFogOffset, other.mDLFogOffset, factor);
 

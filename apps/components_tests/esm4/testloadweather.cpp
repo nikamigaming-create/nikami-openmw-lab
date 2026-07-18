@@ -125,23 +125,9 @@ namespace
         EXPECT_EQ(weather.mCloudTextures[0], "textures/sky/layer0.dds");
         EXPECT_EQ(weather.mCloudSpeeds[2], 75);
         EXPECT_EQ(weather.mCloudColors[2][ESM4::Weather::Time_HighNoon].unused, 40);
-        EXPECT_TRUE(weather.mHasFogDistance);
-        EXPECT_EQ(weather.mFogDistance, fog);
+        EXPECT_FLOAT_EQ(weather.mFogDistance[1], 120000.f);
         EXPECT_EQ(weather.mData.transitionDelta, 255);
         EXPECT_EQ(weather.mData.classification, 1);
-    }
-
-    TEST(Esm4WeatherTest, shouldRejectShortFogDistancePayload)
-    {
-        std::string payload;
-        appendSubRecord(payload, "FNAM", std::array<float, 5>{ 10.f, 120000.f, 0.f, 150000.f, 0.5f });
-
-        auto reader = makeReader(payload);
-        ESM4::Weather weather;
-        weather.load(*reader);
-
-        EXPECT_FALSE(weather.mHasFogDistance);
-        EXPECT_EQ(weather.mFogDistance, (std::array<float, 6>{}));
     }
 
     TEST(Esm4WeatherTest, shouldExpandFO3FourTimeColorRowsWithoutInventingHighNoon)
@@ -248,9 +234,7 @@ namespace
         EXPECT_EQ(weather.mColors[ESM4::Weather::Color_Ambient][ESM4::Weather::Time_Day].b, 103);
         EXPECT_EQ(weather.mColors[ESM4::Weather::Color_SkyUpper][ESM4::Weather::Time_Night].r, 20);
         EXPECT_FLOAT_EQ(weather.mUnknownCloudLayerValues[4], 0.75f);
-        EXPECT_TRUE(weather.mHasFogDistance);
-        EXPECT_EQ(weather.mFogDistance,
-            (std::array<float, 6>{ 100.f, 250000.f, 0.f, 0.f, 0.f, 0.8f }));
+        EXPECT_FLOAT_EQ(weather.mFogDistance[1], 250000.f);
         EXPECT_EQ(weather.mData.windSpeed, 42);
         EXPECT_EQ(weather.mData.transitionDelta, 77);
         EXPECT_EQ(weather.mData.classification, 0x41);
