@@ -226,15 +226,19 @@ namespace MWWorld
         {
             const MWRender::MoonState day
                 = falloutMoonState(14.4118919f, MWRender::MoonState::Phase::FirstQuarter, false);
-            EXPECT_NEAR(day.mRotationFromHorizon, -53.82162f, 0.0001f);
+            // The retail angle accumulator is normalized to [0, 360). 306.17838 degrees is
+            // the same quad rotation as the legacy -53.82162 value, but preserves the domain
+            // used by the retail 20..160 degree phase-shadow window below.
+            EXPECT_NEAR(day.mRotationFromHorizon, 306.17838f, 0.0001f);
             EXPECT_FLOAT_EQ(day.mRotationFromNorth, 35.f);
             EXPECT_EQ(day.mPhase, MWRender::MoonState::Phase::FirstQuarter);
-            EXPECT_FLOAT_EQ(day.mShadowBlend, 1.f);
+            EXPECT_FLOAT_EQ(day.mShadowBlend, 0.f);
             EXPECT_FLOAT_EQ(day.mMoonAlpha, 0.f);
 
             const MWRender::MoonState night
                 = falloutMoonState(23.004034f, MWRender::MoonState::Phase::FirstQuarter, true);
             EXPECT_NEAR(night.mRotationFromHorizon, 75.06051f, 0.0001f);
+            EXPECT_FLOAT_EQ(night.mShadowBlend, 1.f);
             EXPECT_FLOAT_EQ(night.mMoonAlpha, 1.f);
         }
 
