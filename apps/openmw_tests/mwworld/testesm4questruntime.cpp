@@ -52,6 +52,19 @@ namespace
         condition.param2 = parameter2;
         return condition;
     }
+
+    ESM4::QuestStageEntry makeCompiledSetStageEntry(
+        std::vector<ESM::FormId> references, std::uint16_t referenceIndex, std::int32_t stage)
+    {
+        const std::uint32_t stageBits = std::bit_cast<std::uint32_t>(stage);
+        ESM4::QuestStageEntry entry;
+        entry.mScript.compiledData = { 0x39, 0x10, 0x0a, 0x00, 0x02, 0x00, 0x72,
+            static_cast<std::uint8_t>(referenceIndex), static_cast<std::uint8_t>(referenceIndex >> 8), 0x6e,
+            static_cast<std::uint8_t>(stageBits), static_cast<std::uint8_t>(stageBits >> 8),
+            static_cast<std::uint8_t>(stageBits >> 16), static_cast<std::uint8_t>(stageBits >> 24) };
+        entry.mScript.references = std::move(references);
+        return entry;
+    }
 }
 
 TEST(ESM4QuestRuntimeTest, MatchesRetailVcg02StageFiveTransition)
@@ -303,6 +316,297 @@ TEST(ESM4QuestRuntimeTest, LaterInvalidNewCommandCannotPartiallyMutateAnyQuest)
     EXPECT_EQ(runtime.search(startId)->mFlags, 0);
     ASSERT_NE(runtime.search(completeId), nullptr);
     EXPECT_EQ(runtime.search(completeId)->mFlags, 0);
+}
+
+TEST(ESM4QuestRuntimeTest, ExecutesRetailVms38NestedSetStageAsOneTransaction)
+{
+    MWWorld::ESMStore store;
+    const ESM::FormId questId{ .mIndex = 0x1348db, .mContentFile = 0 };
+    ESM4::Quest quest = makeQuest(questId, "VMS38");
+    quest.mObjectives.push_back({ .mIndex = 140, .mDescription = "Return to Red Lucy" });
+
+    ESM4::QuestStageEntry stage140;
+    // FalloutNV.esm VMS38 stage 140 entry 0, complete SCDA, SHA256
+    // 210dadb71f7e8539f23fbfef10808e0df47310b1845d9297773c2a7eb04bcd33.
+    stage140.mScript.compiledData = { 0xa3, 0x11, 0x0f, 0x00, 0x03, 0x00, 0x72, 0x01, 0x00, 0x6e, 0x8c,
+        0x00, 0x00, 0x00, 0x6e, 0x01, 0x00, 0x00, 0x00, 0x39, 0x10, 0x0a, 0x00, 0x02, 0x00, 0x72, 0x01, 0x00,
+        0x6e, 0x96, 0x00, 0x00, 0x00 };
+    stage140.mScript.references = { questId };
+    quest.mStages.push_back({ .mIndex = 140, .mEntries = { std::move(stage140) } });
+
+    ESM4::QuestStageEntry stage150;
+    // FalloutNV.esm VMS38 stage 150 entry 0, complete SCDA, SHA256
+    // d606b82e0020674e61f6f80b3f96bc40774a4fd367629c67424a5e5baafb4cbc.
+    stage150.mScript.compiledData = { 0xa2, 0x11, 0x0f, 0x00, 0x03, 0x00, 0x72, 0x01, 0x00, 0x6e, 0x8c,
+        0x00, 0x00, 0x00, 0x6e, 0x01, 0x00, 0x00, 0x00 };
+    stage150.mScript.references = { questId };
+    quest.mStages.push_back({ .mIndex = 150, .mEntries = { std::move(stage150) } });
+    store.overrideRecord(quest);
+
+    MWWorld::ESM4QuestRuntime runtime;
+    runtime.initialize(store);
+    ASSERT_TRUE(runtime.setStage(questId, 140));
+    const MWWorld::ESM4QuestState* state = runtime.search(questId);
+    ASSERT_NE(state, nullptr);
+    EXPECT_EQ(state->mCurrentStage, 150);
+    EXPECT_TRUE(state->mStageDone.at(140));
+    EXPECT_TRUE(state->mStageDone.at(150));
+    EXPECT_EQ(state->mObjectiveStatus.at(140),
+        MWWorld::ESM4QuestState::Objective_Displayed | MWWorld::ESM4QuestState::Objective_Completed);
+    EXPECT_TRUE(runtime.getUnsupportedCompiledOpcodes().empty());
+    EXPECT_TRUE(runtime.getUnsupportedConditionFunctions().empty());
+}
+
+TEST(ESM4QuestRuntimeTest, RejectsSelfAndMutualCompiledSetStageCyclesWithoutMutation)
+{
+    MWWorld::ESMStore store;
+    const ESM::FormId selfId{ .mIndex = 0x120220, .mContentFile = 0 };
+    ESM4::Quest self = makeQuest(selfId, "SelfStageCycle");
+    self.mStages.push_back({ .mIndex = 5, .mEntries = { makeCompiledSetStageEntry({ selfId }, 1, 5) } });
+    store.overrideRecord(self);
+
+    const ESM::FormId firstId{ .mIndex = 0x120221, .mContentFile = 0 };
+    const ESM::FormId secondId{ .mIndex = 0x120222, .mContentFile = 0 };
+    ESM4::Quest first = makeQuest(firstId, "FirstStageCycle");
+    first.mStages.push_back({ .mIndex = 5, .mEntries = { makeCompiledSetStageEntry({ secondId }, 1, 5) } });
+    store.overrideRecord(first);
+    ESM4::Quest second = makeQuest(secondId, "SecondStageCycle");
+    second.mStages.push_back({ .mIndex = 5, .mEntries = { makeCompiledSetStageEntry({ firstId }, 1, 5) } });
+    store.overrideRecord(second);
+
+    MWWorld::ESM4QuestRuntime runtime;
+    runtime.initialize(store);
+    EXPECT_FALSE(runtime.setStage(selfId, 5));
+    EXPECT_FALSE(runtime.setStage(firstId, 5));
+    for (const ESM::FormId id : { selfId, firstId, secondId })
+    {
+        const MWWorld::ESM4QuestState* state = runtime.search(id);
+        ASSERT_NE(state, nullptr);
+        EXPECT_EQ(state->mFlags, 0);
+        EXPECT_EQ(state->mCurrentStage, 0);
+        EXPECT_FALSE(state->mStageDone.at(5));
+    }
+}
+
+TEST(ESM4QuestRuntimeTest, RejectsInvalidCompiledSetStageQuestStageAndRange)
+{
+    MWWorld::ESMStore store;
+    const ESM::FormId driverId{ .mIndex = 0x120223, .mContentFile = 0 };
+    const ESM::FormId targetId{ .mIndex = 0x120224, .mContentFile = 0 };
+    const ESM::FormId missingId{ .mIndex = 0x120225, .mContentFile = 0 };
+    ESM4::Quest driver = makeQuest(driverId, "InvalidStageDriver");
+    driver.mStages.push_back({ .mIndex = 5, .mEntries = { makeCompiledSetStageEntry({ missingId }, 1, 5) } });
+    driver.mStages.push_back({ .mIndex = 6, .mEntries = { makeCompiledSetStageEntry({ targetId }, 1, 99) } });
+    driver.mStages.push_back({ .mIndex = 7, .mEntries = { makeCompiledSetStageEntry({ targetId }, 1, -1) } });
+    driver.mStages.push_back({ .mIndex = 8, .mEntries = { makeCompiledSetStageEntry({ targetId }, 1, 256) } });
+    ESM4::QuestStageEntry wrongQuestType;
+    wrongQuestType.mScript.compiledData = { 0x39, 0x10, 0x0c, 0x00, 0x02, 0x00, 0x6e, 0x01, 0x00, 0x00, 0x00,
+        0x6e, 0x05, 0x00, 0x00, 0x00 };
+    driver.mStages.push_back({ .mIndex = 9, .mEntries = { std::move(wrongQuestType) } });
+    ESM4::QuestStageEntry wrongStageType;
+    wrongStageType.mScript.compiledData
+        = { 0x39, 0x10, 0x08, 0x00, 0x02, 0x00, 0x72, 0x01, 0x00, 0x72, 0x01, 0x00 };
+    wrongStageType.mScript.references = { targetId };
+    driver.mStages.push_back({ .mIndex = 10, .mEntries = { std::move(wrongStageType) } });
+    store.overrideRecord(driver);
+    ESM4::Quest target = makeQuest(targetId, "InvalidStageTarget");
+    ESM4::QuestStageEntry targetEntry;
+    targetEntry.mScript.compiledData = { 0x37, 0x10, 0x05, 0x00, 0x01, 0x00, 0x72, 0x01, 0x00 };
+    targetEntry.mScript.references = { targetId };
+    target.mStages.push_back({ .mIndex = 5, .mEntries = { std::move(targetEntry) } });
+    store.overrideRecord(target);
+
+    MWWorld::ESM4QuestRuntime runtime;
+    runtime.initialize(store);
+    for (const std::uint8_t stage : { 5, 6, 7, 8, 9, 10 })
+        EXPECT_FALSE(runtime.setStage(driverId, stage)) << static_cast<unsigned int>(stage);
+    const MWWorld::ESM4QuestState* driverState = runtime.search(driverId);
+    ASSERT_NE(driverState, nullptr);
+    EXPECT_EQ(driverState->mFlags, 0);
+    EXPECT_EQ(driverState->mCurrentStage, 0);
+    for (const std::uint8_t stage : { 5, 6, 7, 8, 9, 10 })
+        EXPECT_FALSE(driverState->mStageDone.at(stage));
+    EXPECT_TRUE(runtime.getUnsupportedCompiledOpcodes().empty());
+}
+
+TEST(ESM4QuestRuntimeTest, RollsBackActiveQuestAndStateWhenNestedStageHasLaterInvalidCommand)
+{
+    MWWorld::ESMStore store;
+    const ESM::FormId baselineId{ .mIndex = 0x120226, .mContentFile = 0 };
+    const ESM::FormId activeCandidateId{ .mIndex = 0x120227, .mContentFile = 0 };
+    const ESM::FormId rootId{ .mIndex = 0x120228, .mContentFile = 0 };
+    const ESM::FormId nestedId{ .mIndex = 0x120229, .mContentFile = 0 };
+    store.overrideRecord(makeQuest(baselineId, "BaselineActiveQuest"));
+    store.overrideRecord(makeQuest(activeCandidateId, "RejectedActiveQuest"));
+
+    ESM4::Quest root = makeQuest(rootId, "TransactionalRoot");
+    root.mObjectives.push_back({ .mIndex = 10, .mDescription = "Must remain hidden" });
+    ESM4::QuestStageEntry rootEntry;
+    rootEntry.mScript.references = { rootId, activeCandidateId, nestedId };
+    rootEntry.mScript.compiledData = {
+        0xa3, 0x11, 0x0f, 0x00, 0x03, 0x00, 0x72, 0x01, 0x00, 0x6e, 0x0a, 0x00, 0x00, 0x00, 0x6e, 0x01, 0x00,
+        0x00, 0x00, // SetObjectiveDisplayed root 10 1
+        0xdd, 0x11, 0x05, 0x00, 0x01, 0x00, 0x72, 0x02, 0x00, // ForceActiveQuest candidate
+        0x39, 0x10, 0x0a, 0x00, 0x02, 0x00, 0x72, 0x03, 0x00, 0x6e, 0x05, 0x00, 0x00, 0x00 // SetStage nested 5
+    };
+    root.mStages.push_back({ .mIndex = 5, .mEntries = { std::move(rootEntry) } });
+    store.overrideRecord(root);
+
+    ESM4::Quest nested = makeQuest(nestedId, "TransactionalNested");
+    nested.mObjectives.push_back({ .mIndex = 20, .mDescription = "Must remain hidden" });
+    ESM4::QuestStageEntry nestedEntry;
+    nestedEntry.mScript.references = { nestedId };
+    nestedEntry.mScript.compiledData = {
+        0xa3, 0x11, 0x0f, 0x00, 0x03, 0x00, 0x72, 0x01, 0x00, 0x6e, 0x14, 0x00, 0x00, 0x00, 0x6e, 0x01, 0x00,
+        0x00, 0x00, // valid objective prefix
+        0x36, 0x10, 0x05, 0x00, 0x01, 0x00, 0x72, 0x02, 0x00 // invalid later StartQuest SCRO
+    };
+    nested.mStages.push_back({ .mIndex = 5, .mEntries = { std::move(nestedEntry) } });
+    store.overrideRecord(nested);
+
+    MWWorld::ESM4QuestRuntime runtime;
+    runtime.initialize(store);
+    ASSERT_TRUE(runtime.forceActiveQuest(baselineId));
+    ASSERT_EQ(runtime.getActiveQuest(), baselineId);
+    EXPECT_FALSE(runtime.setStage(rootId, 5));
+    EXPECT_EQ(runtime.getActiveQuest(), baselineId);
+    ASSERT_NE(runtime.search(rootId), nullptr);
+    EXPECT_EQ(runtime.search(rootId)->mFlags, 0);
+    EXPECT_FALSE(runtime.search(rootId)->mStageDone.at(5));
+    EXPECT_EQ(runtime.search(rootId)->mObjectiveStatus.at(10), 0);
+    ASSERT_NE(runtime.search(nestedId), nullptr);
+    EXPECT_EQ(runtime.search(nestedId)->mFlags, 0);
+    EXPECT_FALSE(runtime.search(nestedId)->mStageDone.at(5));
+    EXPECT_EQ(runtime.search(nestedId)->mObjectiveStatus.at(20), 0);
+    ASSERT_NE(runtime.search(activeCandidateId), nullptr);
+    EXPECT_EQ(runtime.search(activeCandidateId)->mFlags, 0);
+}
+
+TEST(ESM4QuestRuntimeTest, RejectsImpureNestedStageWithoutTouchingFallbackOrUnsupportedLedgers)
+{
+    MWWorld::ESMStore store;
+    const ESM::FormId driverId{ .mIndex = 0x12022a, .mContentFile = 0 };
+    const ESM::FormId sourceId{ .mIndex = 0x12022b, .mContentFile = 0 };
+    const ESM::FormId unsupportedId{ .mIndex = 0x12022c, .mContentFile = 0 };
+    const ESM::FormId conditionedId{ .mIndex = 0x12022d, .mContentFile = 0 };
+    ESM4::Quest driver = makeQuest(driverId, "ImpureNestedDriver");
+    driver.mStages.push_back({ .mIndex = 5, .mEntries = { makeCompiledSetStageEntry({ sourceId }, 1, 5) } });
+    driver.mStages.push_back({ .mIndex = 6, .mEntries = { makeCompiledSetStageEntry({ unsupportedId }, 1, 5) } });
+    driver.mStages.push_back({ .mIndex = 7, .mEntries = { makeCompiledSetStageEntry({ conditionedId }, 1, 5) } });
+    store.overrideRecord(driver);
+
+    ESM4::Quest source = makeQuest(sourceId, "SourceFallbackTarget");
+    source.mObjectives.push_back({ .mIndex = 10, .mDescription = "Must remain hidden" });
+    ESM4::QuestStageEntry sourceEntry;
+    sourceEntry.mScript.scriptSource = "SetObjectiveDisplayed SourceFallbackTarget 10 1";
+    source.mStages.push_back({ .mIndex = 5, .mEntries = { std::move(sourceEntry) } });
+    store.overrideRecord(source);
+
+    ESM4::Quest unsupported = makeQuest(unsupportedId, "UnsupportedTarget");
+    unsupported.mObjectives.push_back({ .mIndex = 10, .mDescription = "Must remain hidden" });
+    ESM4::QuestStageEntry unsupportedEntry;
+    unsupportedEntry.mScript.compiledData = { 0xef, 0xbe, 0x03, 0x00, 0xaa, 0xbb, 0xcc };
+    unsupportedEntry.mScript.scriptSource = "SetObjectiveDisplayed UnsupportedTarget 10 1";
+    unsupported.mStages.push_back({ .mIndex = 5, .mEntries = { std::move(unsupportedEntry) } });
+    store.overrideRecord(unsupported);
+
+    ESM4::Quest conditioned = makeQuest(conditionedId, "UnsupportedConditionTarget");
+    conditioned.mObjectives.push_back({ .mIndex = 10, .mDescription = "Must remain hidden" });
+    ESM4::QuestStageEntry conditionedEntry;
+    conditionedEntry.mConditions = { makeCondition(9999, conditionedId, 1.f) };
+    conditionedEntry.mScript.compiledData = { 0xa3, 0x11, 0x0f, 0x00, 0x03, 0x00, 0x72, 0x01, 0x00, 0x6e,
+        0x0a, 0x00, 0x00, 0x00, 0x6e, 0x01, 0x00, 0x00, 0x00 };
+    conditionedEntry.mScript.references = { conditionedId };
+    conditioned.mStages.push_back({ .mIndex = 5, .mEntries = { std::move(conditionedEntry) } });
+    store.overrideRecord(conditioned);
+
+    MWWorld::ESM4QuestRuntime runtime;
+    runtime.initialize(store);
+    EXPECT_FALSE(runtime.setStage(driverId, 5));
+    EXPECT_FALSE(runtime.setStage(driverId, 6));
+    EXPECT_FALSE(runtime.setStage(driverId, 7));
+    const MWWorld::ESM4QuestState* driverState = runtime.search(driverId);
+    ASSERT_NE(driverState, nullptr);
+    EXPECT_EQ(driverState->mFlags, 0);
+    EXPECT_EQ(driverState->mCurrentStage, 0);
+    for (const std::uint8_t stage : { 5, 6, 7 })
+        EXPECT_FALSE(driverState->mStageDone.at(stage));
+    EXPECT_TRUE(runtime.getUnsupportedStageCommands().empty());
+    EXPECT_TRUE(runtime.getUnsupportedCompiledOpcodes().empty());
+    EXPECT_TRUE(runtime.getUnsupportedConditionFunctions().empty());
+    for (const ESM::FormId id : { sourceId, unsupportedId, conditionedId })
+    {
+        const MWWorld::ESM4QuestState* state = runtime.search(id);
+        ASSERT_NE(state, nullptr);
+        EXPECT_EQ(state->mFlags, 0);
+        EXPECT_FALSE(state->mStageDone.at(5));
+        EXPECT_EQ(state->mObjectiveStatus.at(10), 0);
+    }
+}
+
+TEST(ESM4QuestRuntimeTest, TreatsAlreadyDoneNonRepeatableNestedTargetAsTerminalBeforeCycleCheck)
+{
+    MWWorld::ESMStore store;
+    const ESM::FormId driverId{ .mIndex = 0x12022e, .mContentFile = 0 };
+    const ESM::FormId targetId{ .mIndex = 0x12022f, .mContentFile = 0 };
+    ESM4::Quest driver = makeQuest(driverId, "DoneTargetDriver");
+    driver.mStages.push_back({ .mIndex = 5, .mEntries = { makeCompiledSetStageEntry({ targetId }, 1, 5) } });
+    store.overrideRecord(driver);
+    ESM4::Quest target = makeQuest(targetId, "DoneTarget");
+    ESM4::QuestStageEntry stopEntry;
+    stopEntry.mScript.compiledData = { 0x37, 0x10, 0x05, 0x00, 0x01, 0x00, 0x72, 0x01, 0x00 };
+    stopEntry.mScript.references = { targetId };
+    target.mStages.push_back({ .mIndex = 5, .mEntries = { std::move(stopEntry) } });
+    store.overrideRecord(target);
+
+    MWWorld::ESM4QuestRuntime runtime;
+    runtime.initialize(store);
+    ASSERT_TRUE(runtime.setStage(targetId, 5));
+    ASSERT_TRUE(runtime.search(targetId)->mStageDone.at(5));
+
+    ESM4::Quest cyclicTarget = makeQuest(targetId, "DoneTarget");
+    cyclicTarget.mStages.push_back(
+        { .mIndex = 5, .mEntries = { makeCompiledSetStageEntry({ targetId }, 1, 5) } });
+    store.overrideRecord(cyclicTarget);
+    ASSERT_TRUE(runtime.setStage(driverId, 5));
+    ASSERT_NE(runtime.search(driverId), nullptr);
+    EXPECT_TRUE(runtime.search(driverId)->mStageDone.at(5));
+    EXPECT_TRUE(runtime.search(targetId)->mStageDone.at(5));
+}
+
+TEST(ESM4QuestRuntimeTest, RejectsCompiledSetStageGraphBeyondExplicitDepthLimit)
+{
+    MWWorld::ESMStore store;
+    std::array<ESM::FormId, 33> ids;
+    for (std::size_t i = 0; i < ids.size(); ++i)
+        ids[i] = ESM::FormId{ .mIndex = static_cast<std::uint32_t>(0x121000 + i), .mContentFile = 0 };
+    for (std::size_t i = 0; i < ids.size(); ++i)
+    {
+        ESM4::Quest quest = makeQuest(ids[i], "SetStageDepth" + std::to_string(i));
+        if (i + 1 < ids.size())
+            quest.mStages.push_back(
+                { .mIndex = 5, .mEntries = { makeCompiledSetStageEntry({ ids[i + 1] }, 1, 5) } });
+        else
+        {
+            ESM4::QuestStageEntry terminal;
+            terminal.mScript.compiledData = { 0x37, 0x10, 0x05, 0x00, 0x01, 0x00, 0x72, 0x01, 0x00 };
+            terminal.mScript.references = { ids[i] };
+            quest.mStages.push_back({ .mIndex = 5, .mEntries = { std::move(terminal) } });
+        }
+        store.overrideRecord(quest);
+    }
+
+    MWWorld::ESM4QuestRuntime runtime;
+    runtime.initialize(store);
+    EXPECT_FALSE(runtime.setStage(ids.front(), 5));
+    for (const ESM::FormId id : ids)
+    {
+        const MWWorld::ESM4QuestState* state = runtime.search(id);
+        ASSERT_NE(state, nullptr);
+        EXPECT_EQ(state->mFlags, 0);
+        EXPECT_EQ(state->mCurrentStage, 0);
+        EXPECT_FALSE(state->mStageDone.at(5));
+    }
 }
 
 TEST(ESM4QuestRuntimeTest, DecodesOneBasedScroReferencesAndRejectsEveryBoundedArgumentMismatch)

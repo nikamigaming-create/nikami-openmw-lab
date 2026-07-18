@@ -14,6 +14,7 @@
 namespace ESM4
 {
     struct Quest;
+    struct QuestStage;
     struct ScriptDefinition;
     struct TargetCondition;
 }
@@ -57,9 +58,11 @@ namespace MWWorld
 
     class ESM4QuestRuntime
     {
+        using QuestStateMap = std::unordered_map<ESM::FormId, ESM4QuestState>;
+
         const ESMStore* mStore = nullptr;
         const Globals* mGlobals = nullptr;
-        std::unordered_map<ESM::FormId, ESM4QuestState> mStates;
+        QuestStateMap mStates;
         std::optional<ESM::FormId> mActiveQuest;
         std::vector<std::string> mUnsupportedStageCommands;
         std::vector<std::uint16_t> mUnsupportedCompiledOpcodes;
@@ -70,6 +73,7 @@ namespace MWWorld
             StartQuest,
             StopQuest,
             CompleteQuest,
+            SetStage,
             SetObjectiveCompleted,
             SetObjectiveDisplayed,
             ForceActiveQuest,
@@ -81,6 +85,7 @@ namespace MWWorld
             ESM::FormId mQuest{};
             std::int32_t mObjective = 0;
             bool mValue = false;
+            std::uint8_t mStage = 0;
         };
 
         struct CompiledStageScript
@@ -90,12 +95,50 @@ namespace MWWorld
             std::vector<std::uint16_t> mUnsupportedOpcodes;
         };
 
+        struct CompiledStageKey
+        {
+            ESM::FormId mQuest{};
+            std::uint8_t mStage = 0;
+
+            friend bool operator==(const CompiledStageKey&, const CompiledStageKey&) = default;
+        };
+
+        struct PendingStageEffect
+        {
+            ESM::FormId mQuest{};
+            std::uint8_t mStage = 0;
+            bool mWasRunning = false;
+            bool mEntryExecuted = false;
+            std::string mNotification;
+        };
+
+        struct CompiledStageWorkingState
+        {
+            QuestStateMap mStates;
+            std::optional<ESM::FormId> mActiveQuest;
+            std::vector<CompiledStageKey> mStack;
+            std::vector<PendingStageEffect> mEffects;
+        };
+
         const ESM4::Quest* resolveQuest(std::string_view id) const;
         ESM4QuestState* findState(const ESM4::Quest& quest);
         const ESM4QuestState* findState(const ESM4::Quest& quest) const;
         std::optional<float> evaluateConditionValue(const ESM4::TargetCondition& condition);
+        std::optional<float> evaluateConditionValue(
+            const ESM4::TargetCondition& condition, const QuestStateMap& states, bool recordUnsupported);
+        bool evaluateConditions(const std::vector<ESM4::TargetCondition>& conditions, const QuestStateMap& states,
+            bool recordUnsupported);
         bool isStateDirty(ESM::FormId id, const ESM4QuestState& state) const;
         bool prepareStageScript(const ESM4::ScriptDefinition& script, CompiledStageScript& prepared) const;
+        bool stageContainsCompiledSetStage(const ESM4::QuestStage& stage) const;
+        bool areCompiledStageConditionsPure(const std::vector<ESM4::TargetCondition>& conditions) const;
+        bool preflightPureCompiledStage(
+            ESM::FormId id, std::uint8_t stage, std::vector<CompiledStageKey>& stack) const;
+        bool executePureCompiledStage(ESM::FormId id, std::uint8_t stage, CompiledStageWorkingState& working);
+        bool executePureCompiledCommand(
+            const CompiledQuestCommand& command, CompiledStageWorkingState& working);
+        bool executeCompiledStageTransaction(ESM::FormId id, std::uint8_t stage);
+        void flushCompiledStageEffects(const std::vector<PendingStageEffect>& effects);
         void executeStageSource(std::string_view source);
 
     public:
