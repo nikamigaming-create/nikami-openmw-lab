@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <optional>
 #include <span>
+#include <utility>
 
 #include <components/esm/defs.hpp>
 
@@ -24,6 +25,13 @@ namespace
     {
         return static_cast<std::uint16_t>(bytes[offset])
             | static_cast<std::uint16_t>(static_cast<std::uint16_t>(bytes[offset + 1]) << 8);
+    }
+
+    std::uint32_t readLittleEndianUint32(std::span<const std::uint8_t> bytes, std::size_t offset)
+    {
+        return static_cast<std::uint32_t>(bytes[offset]) | (static_cast<std::uint32_t>(bytes[offset + 1]) << 8)
+            | (static_cast<std::uint32_t>(bytes[offset + 2]) << 16)
+            | (static_cast<std::uint32_t>(bytes[offset + 3]) << 24);
     }
 
     ESM4::ScriptBytecodeDecodeError decodeInstruction(
@@ -101,6 +109,55 @@ namespace ESM4
         }
 
         return { ScriptBytecodeDecodeError::None, bytecode.size(), instructionCount };
+    }
+
+    ScriptBytecodeArgumentDecodeResult decodeFalloutScriptArguments(std::span<const std::uint8_t> payload,
+        std::span<const ESM::FormId> references, std::vector<ScriptBytecodeArgument>& arguments)
+    {
+        arguments.clear();
+        if (payload.size() < sizeof(std::uint16_t))
+            return { ScriptBytecodeArgumentDecodeError::TruncatedArgumentCount, 0, 0 };
+
+        const std::size_t expectedCount = readLittleEndianUint16(payload, 0);
+        if (expectedCount > payload.size() - sizeof(std::uint16_t))
+            return { ScriptBytecodeArgumentDecodeError::ArgumentCountMismatch, sizeof(std::uint16_t), 0 };
+        std::vector<ScriptBytecodeArgument> decoded;
+        decoded.reserve(expectedCount);
+        std::size_t offset = sizeof(std::uint16_t);
+
+        for (std::size_t argument = 0; argument < expectedCount; ++argument)
+        {
+            if (offset == payload.size())
+                return { ScriptBytecodeArgumentDecodeError::ArgumentCountMismatch, offset, argument };
+
+            const std::uint8_t token = payload[offset++];
+            if (token == 0x72) // 'r': one-based SCRO reference index
+            {
+                if (payload.size() - offset < sizeof(std::uint16_t))
+                    return { ScriptBytecodeArgumentDecodeError::TruncatedReference, offset - 1, argument };
+                const std::uint16_t referenceIndex = readLittleEndianUint16(payload, offset);
+                offset += sizeof(std::uint16_t);
+                if (referenceIndex == 0 || referenceIndex > references.size())
+                    return { ScriptBytecodeArgumentDecodeError::InvalidReferenceIndex, offset, argument };
+                decoded.emplace_back(std::in_place_type<ESM::FormId>, references[referenceIndex - 1]);
+            }
+            else if (token == 0x6e) // 'n': little-endian signed 32-bit integer
+            {
+                if (payload.size() - offset < sizeof(std::uint32_t))
+                    return { ScriptBytecodeArgumentDecodeError::TruncatedInteger, offset - 1, argument };
+                decoded.emplace_back(std::in_place_type<std::int32_t>,
+                    std::bit_cast<std::int32_t>(readLittleEndianUint32(payload, offset)));
+                offset += sizeof(std::uint32_t);
+            }
+            else
+                return { ScriptBytecodeArgumentDecodeError::UnknownArgumentToken, offset - 1, argument };
+        }
+
+        if (offset != payload.size())
+            return { ScriptBytecodeArgumentDecodeError::TrailingArgumentData, offset, decoded.size() };
+
+        arguments = std::move(decoded);
+        return { ScriptBytecodeArgumentDecodeError::None, offset, arguments.size() };
     }
 
     bool loadScriptSubRecord(Reader& reader, ScriptDefinition& script)

@@ -14,6 +14,7 @@
 namespace ESM4
 {
     struct Quest;
+    struct ScriptDefinition;
     struct TargetCondition;
 }
 
@@ -61,13 +62,36 @@ namespace MWWorld
         std::unordered_map<ESM::FormId, ESM4QuestState> mStates;
         std::optional<ESM::FormId> mActiveQuest;
         std::vector<std::string> mUnsupportedStageCommands;
+        std::vector<std::uint16_t> mUnsupportedCompiledOpcodes;
         std::vector<std::uint32_t> mUnsupportedConditionFunctions;
+
+        enum class CompiledQuestCommandType : std::uint8_t
+        {
+            SetObjectiveDisplayed,
+            ForceActiveQuest,
+        };
+
+        struct CompiledQuestCommand
+        {
+            CompiledQuestCommandType mType = CompiledQuestCommandType::ForceActiveQuest;
+            ESM::FormId mQuest{};
+            std::int32_t mObjective = 0;
+            bool mValue = false;
+        };
+
+        struct CompiledStageScript
+        {
+            bool mUseSourceFallback = false;
+            std::vector<CompiledQuestCommand> mCommands;
+            std::vector<std::uint16_t> mUnsupportedOpcodes;
+        };
 
         const ESM4::Quest* resolveQuest(std::string_view id) const;
         ESM4QuestState* findState(const ESM4::Quest& quest);
         const ESM4QuestState* findState(const ESM4::Quest& quest) const;
         std::optional<float> evaluateConditionValue(const ESM4::TargetCondition& condition);
         bool isStateDirty(ESM::FormId id, const ESM4QuestState& state) const;
+        bool prepareStageScript(const ESM4::ScriptDefinition& script, CompiledStageScript& prepared) const;
         void executeStageSource(std::string_view source);
 
     public:
@@ -81,9 +105,11 @@ namespace MWWorld
         bool setStage(std::string_view id, std::uint8_t stage);
         bool setStage(ESM::FormId id, std::uint8_t stage);
         bool setObjectiveDisplayed(std::string_view id, std::int32_t objective, bool displayed);
+        bool setObjectiveDisplayed(ESM::FormId id, std::int32_t objective, bool displayed);
         bool setObjectiveCompleted(std::string_view id, std::int32_t objective, bool completed);
         bool setQuestVariable(std::string_view id, std::string_view variable, float value);
         bool forceActiveQuest(std::string_view id);
+        bool forceActiveQuest(ESM::FormId id);
         void executeResultSource(std::string_view source);
         bool evaluateConditions(const std::vector<ESM4::TargetCondition>& conditions);
 
@@ -96,6 +122,7 @@ namespace MWWorld
         std::optional<float> getQuestVariable(std::string_view id, std::string_view variable) const;
         std::optional<ESM::FormId> getActiveQuest() const { return mActiveQuest; }
         const std::vector<std::string>& getUnsupportedStageCommands() const { return mUnsupportedStageCommands; }
+        const std::vector<std::uint16_t>& getUnsupportedCompiledOpcodes() const { return mUnsupportedCompiledOpcodes; }
         const std::vector<std::uint32_t>& getUnsupportedConditionFunctions() const
         {
             return mUnsupportedConditionFunctions;

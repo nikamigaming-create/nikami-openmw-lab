@@ -92,6 +92,7 @@ namespace MWWorld
         mStates.clear();
         mActiveQuest.reset();
         mUnsupportedStageCommands.clear();
+        mUnsupportedCompiledOpcodes.clear();
         mUnsupportedConditionFunctions.clear();
     }
 
@@ -178,6 +179,76 @@ namespace MWWorld
         return quest != nullptr && setStage(quest->mId, stage);
     }
 
+    bool ESM4QuestRuntime::prepareStageScript(const ESM4::ScriptDefinition& script, CompiledStageScript& prepared) const
+    {
+        prepared = {};
+        if (script.compiledData.empty())
+        {
+            prepared.mUseSourceFallback = true;
+            return true;
+        }
+
+        std::vector<ESM4::ScriptBytecodeInstruction> instructions;
+        if (!ESM4::decodeFalloutScriptBytecode(script.compiledData, instructions).succeeded())
+            return false;
+
+        for (const ESM4::ScriptBytecodeInstruction& instruction : instructions)
+        {
+            if (instruction.callingReferenceIndex
+                && (*instruction.callingReferenceIndex == 0
+                    || *instruction.callingReferenceIndex > script.references.size()))
+                return false;
+
+            if (instruction.opcode != 0x11a3 && instruction.opcode != 0x11dd)
+            {
+                prepared.mUseSourceFallback = true;
+                prepared.mUnsupportedOpcodes.push_back(instruction.opcode);
+                continue;
+            }
+            if (instruction.callingReferenceIndex)
+                return false;
+
+            std::vector<ESM4::ScriptBytecodeArgument> arguments;
+            if (!ESM4::decodeFalloutScriptArguments(instruction.arguments, script.references, arguments).succeeded())
+                return false;
+
+            if (instruction.opcode == 0x11a3) // SetObjectiveDisplayed Quest Objective Displayed
+            {
+                if (arguments.size() != 3)
+                    return false;
+                const ESM::FormId* questId = std::get_if<ESM::FormId>(&arguments[0]);
+                const std::int32_t* objective = std::get_if<std::int32_t>(&arguments[1]);
+                const std::int32_t* displayed = std::get_if<std::int32_t>(&arguments[2]);
+                if (questId == nullptr || objective == nullptr || displayed == nullptr || mStore == nullptr)
+                    return false;
+                const ESM4::Quest* quest = mStore->get<ESM4::Quest>().search(ESM::RefId(*questId));
+                const ESM4QuestState* state = quest != nullptr ? findState(*quest) : nullptr;
+                if (state == nullptr || !state->mObjectiveStatus.contains(*objective))
+                    return false;
+                prepared.mCommands.push_back(
+                    { CompiledQuestCommandType::SetObjectiveDisplayed, *questId, *objective, *displayed != 0 });
+            }
+            else // ForceActiveQuest Quest
+            {
+                if (arguments.size() != 1)
+                    return false;
+                const ESM::FormId* questId = std::get_if<ESM::FormId>(&arguments[0]);
+                if (questId == nullptr || mStore == nullptr)
+                    return false;
+                const ESM4::Quest* quest = mStore->get<ESM4::Quest>().search(ESM::RefId(*questId));
+                if (quest == nullptr || findState(*quest) == nullptr)
+                    return false;
+                prepared.mCommands.push_back({ CompiledQuestCommandType::ForceActiveQuest, *questId, 0, false });
+            }
+        }
+
+        // Never mix native prefix execution with an unsupported command. The already existing
+        // source path is retained only as a whole-script compatibility fallback.
+        if (prepared.mUseSourceFallback)
+            prepared.mCommands.clear();
+        return true;
+    }
+
     bool ESM4QuestRuntime::setStage(ESM::FormId id, std::uint8_t stageIndex)
     {
         if (mStore == nullptr)
@@ -196,18 +267,56 @@ namespace MWWorld
         if (state->mStageDone[stage->mIndex] && !repeatedStages)
             return true;
 
+        struct PreparedEntry
+        {
+            const ESM4::QuestStageEntry* mEntry = nullptr;
+            CompiledStageScript mScript;
+        };
+        std::vector<PreparedEntry> preparedEntries;
+        for (const ESM4::QuestStageEntry& entry : stage->mEntries)
+        {
+            if (!evaluateConditions(entry.mConditions))
+                continue;
+            CompiledStageScript prepared;
+            if (!prepareStageScript(entry.mScript, prepared))
+            {
+                Log(Debug::Warning) << "FNV/ESM4 behavior: malformed SCDA failed closed quest=" << quest->mEditorId
+                                    << " stage=" << static_cast<unsigned int>(stageIndex);
+                return false;
+            }
+            preparedEntries.push_back({ &entry, std::move(prepared) });
+        }
+
         const bool wasRunning = (state->mFlags & ESM4QuestState::Flag_Running) != 0;
         state->mFlags |= ESM4QuestState::Flag_Running;
         state->mCurrentStage = stageIndex;
         state->mStageDone[stage->mIndex] = true;
 
-        bool executedEntry = false;
-        for (const ESM4::QuestStageEntry& entry : stage->mEntries)
+        const bool executedEntry = !preparedEntries.empty();
+        for (const PreparedEntry& preparedEntry : preparedEntries)
         {
-            if (!evaluateConditions(entry.mConditions))
-                continue;
-            executedEntry = true;
-            executeStageSource(entry.mScript.scriptSource);
+            const ESM4::QuestStageEntry& entry = *preparedEntry.mEntry;
+            for (const std::uint16_t opcode : preparedEntry.mScript.mUnsupportedOpcodes)
+            {
+                mUnsupportedCompiledOpcodes.push_back(opcode);
+                Log(Debug::Warning) << "FNV/ESM4 behavior: unsupported SCDA opcode="
+                                    << static_cast<unsigned int>(opcode)
+                                    << " using temporary whole-SCTX fallback quest=" << quest->mEditorId
+                                    << " stage=" << static_cast<unsigned int>(stageIndex);
+            }
+            if (preparedEntry.mScript.mUseSourceFallback)
+                executeStageSource(entry.mScript.scriptSource);
+            else
+            {
+                for (const CompiledQuestCommand& command : preparedEntry.mScript.mCommands)
+                {
+                    const bool executed = command.mType == CompiledQuestCommandType::SetObjectiveDisplayed
+                        ? setObjectiveDisplayed(command.mQuest, command.mObjective, command.mValue)
+                        : forceActiveQuest(command.mQuest);
+                    if (!executed)
+                        throw std::logic_error("preflighted Fallout quest command became invalid during execution");
+                }
+            }
             if ((entry.mFlags & ESM4::QuestStageEntry::Flag_CompleteQuest) != 0)
             {
                 state->mFlags |= ESM4QuestState::Flag_Completed;
@@ -522,6 +631,12 @@ namespace MWWorld
     bool ESM4QuestRuntime::setObjectiveDisplayed(std::string_view id, std::int32_t objective, bool displayed)
     {
         const ESM4::Quest* quest = resolveQuest(id);
+        return quest != nullptr && setObjectiveDisplayed(quest->mId, objective, displayed);
+    }
+
+    bool ESM4QuestRuntime::setObjectiveDisplayed(ESM::FormId id, std::int32_t objective, bool displayed)
+    {
+        const ESM4::Quest* quest = mStore != nullptr ? mStore->get<ESM4::Quest>().search(ESM::RefId(id)) : nullptr;
         ESM4QuestState* state = quest != nullptr ? findState(*quest) : nullptr;
         if (state == nullptr || !state->mObjectiveStatus.contains(objective))
             return false;
@@ -551,6 +666,12 @@ namespace MWWorld
     bool ESM4QuestRuntime::forceActiveQuest(std::string_view id)
     {
         const ESM4::Quest* quest = resolveQuest(id);
+        return quest != nullptr && forceActiveQuest(quest->mId);
+    }
+
+    bool ESM4QuestRuntime::forceActiveQuest(ESM::FormId id)
+    {
+        const ESM4::Quest* quest = mStore != nullptr ? mStore->get<ESM4::Quest>().search(ESM::RefId(id)) : nullptr;
         ESM4QuestState* state = quest != nullptr ? findState(*quest) : nullptr;
         if (state == nullptr)
             return false;
