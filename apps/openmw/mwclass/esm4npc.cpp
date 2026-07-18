@@ -712,17 +712,34 @@ namespace MWClass
         MWMechanics::CreatureStats& stats = data.mCreatureStats;
         stats.setLevel(getLevel(*statsRecord));
 
-        const ESM4::AttributeValues& attributes = statsRecord->mData.attribs;
-        stats.setAttribute(ESM::Attribute::Strength, attributes.strength ? attributes.strength : 50);
-        stats.setAttribute(ESM::Attribute::Intelligence, attributes.intelligence ? attributes.intelligence : 50);
-        stats.setAttribute(ESM::Attribute::Willpower, attributes.willpower ? attributes.willpower : 50);
-        stats.setAttribute(ESM::Attribute::Agility, attributes.agility ? attributes.agility : 50);
-        stats.setAttribute(ESM::Attribute::Speed, attributes.speed ? attributes.speed : 50);
-        stats.setAttribute(ESM::Attribute::Endurance, attributes.endurance ? attributes.endurance : 50);
-        stats.setAttribute(ESM::Attribute::Personality, attributes.personality ? attributes.personality : 50);
-        stats.setAttribute(ESM::Attribute::Luck, attributes.luck ? attributes.luck : 50);
+        float health = 100.f;
+        if (statsRecord->mIsFONV && statsRecord->mHasFNVData)
+        {
+            const ESM4::Npc::FNVData& attributes = statsRecord->mFNVData;
+            stats.setAttribute(ESM::Attribute::Strength, attributes.strength);
+            stats.setAttribute(ESM::Attribute::Intelligence, attributes.intelligence);
+            stats.setAttribute(ESM::Attribute::Willpower, attributes.perception);
+            stats.setAttribute(ESM::Attribute::Agility, attributes.agility);
+            stats.setAttribute(ESM::Attribute::Speed, 50);
+            stats.setAttribute(ESM::Attribute::Endurance, attributes.endurance);
+            stats.setAttribute(ESM::Attribute::Personality, attributes.charisma);
+            stats.setAttribute(ESM::Attribute::Luck, attributes.luck);
+            health = static_cast<float>(attributes.health);
+        }
+        else
+        {
+            const ESM4::AttributeValues& attributes = statsRecord->mData.attribs;
+            stats.setAttribute(ESM::Attribute::Strength, attributes.strength ? attributes.strength : 50);
+            stats.setAttribute(ESM::Attribute::Intelligence, attributes.intelligence ? attributes.intelligence : 50);
+            stats.setAttribute(ESM::Attribute::Willpower, attributes.willpower ? attributes.willpower : 50);
+            stats.setAttribute(ESM::Attribute::Agility, attributes.agility ? attributes.agility : 50);
+            stats.setAttribute(ESM::Attribute::Speed, attributes.speed ? attributes.speed : 50);
+            stats.setAttribute(ESM::Attribute::Endurance, attributes.endurance ? attributes.endurance : 50);
+            stats.setAttribute(ESM::Attribute::Personality, attributes.personality ? attributes.personality : 50);
+            stats.setAttribute(ESM::Attribute::Luck, attributes.luck ? attributes.luck : 50);
+            health = statsRecord->mData.health > 0 ? static_cast<float>(statsRecord->mData.health) : 100.f;
+        }
 
-        const float health = statsRecord->mData.health > 0 ? static_cast<float>(statsRecord->mData.health) : 100.f;
         const float fatigue = statsRecord->mIsFONV && statsRecord->mBaseConfig.fo3.fatigue > 0
             ? static_cast<float>(statsRecord->mBaseConfig.fo3.fatigue)
             : 100.f;
@@ -732,9 +749,18 @@ namespace MWClass
 
         const ESM4::Npc* aiRecord = data.mAIData != nullptr ? data.mAIData : statsRecord;
         stats.setAiSetting(MWMechanics::AiSetting::Hello, 30);
-        stats.setAiSetting(MWMechanics::AiSetting::Fight, aiRecord->mAIData.aggression);
-        stats.setAiSetting(MWMechanics::AiSetting::Flee, 100 - aiRecord->mAIData.confidence);
-        stats.setAiSetting(MWMechanics::AiSetting::Alarm, aiRecord->mAIData.responsibility);
+        if (aiRecord->mIsFONV && aiRecord->mHasFNVAIData)
+        {
+            stats.setAiSetting(MWMechanics::AiSetting::Fight, aiRecord->mFNVAIData.aggression);
+            stats.setAiSetting(MWMechanics::AiSetting::Flee, 100 - aiRecord->mFNVAIData.confidence);
+            stats.setAiSetting(MWMechanics::AiSetting::Alarm, aiRecord->mFNVAIData.responsibility);
+        }
+        else
+        {
+            stats.setAiSetting(MWMechanics::AiSetting::Fight, aiRecord->mAIData.aggression);
+            stats.setAiSetting(MWMechanics::AiSetting::Flee, 100 - aiRecord->mAIData.confidence);
+            stats.setAiSetting(MWMechanics::AiSetting::Alarm, aiRecord->mAIData.responsibility);
+        }
 
         if (stats.isDead())
             stats.setDeathAnimationFinished(data.mBaseData != nullptr && isPersistentRecord(*data.mBaseData));

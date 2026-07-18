@@ -13,9 +13,11 @@
 #include <limits>
 #include <memory>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <type_traits>
+#include <utility>
 #include <vector>
 
 namespace
@@ -129,6 +131,127 @@ namespace
         EXPECT_EQ(npc.mFactions[0].rank, 2);
         EXPECT_EQ(ESM::FormId::fromUint32(npc.mFactions[1].faction), ESM::FormId::fromUint32(0x03002002));
         EXPECT_EQ(npc.mFactions[1].rank, -1);
+    }
+
+    TEST(Esm4BehaviorRecordTest, shouldPreserveExactFalloutNpcRuntimeStatePayloads)
+    {
+        const ESM4::AIDataFO3 aiData{ .aggression = 1,
+            .confidence = 2,
+            .energyLevel = 73,
+            .responsibility = 3,
+            .mood = 4,
+            .unused = { 0xa1, 0xb2, 0xc3 },
+            .services = 0x12345678,
+            .trainSkill = -7,
+            .trainLevel = 42,
+            .assistance = -2,
+            .aggroRadiusBehavior = 0x81,
+            .aggroRadius = -1234567 };
+        const ESM4::Npc::FNVData npcData{ .health = 275,
+            .strength = 1,
+            .perception = 2,
+            .endurance = 3,
+            .charisma = 4,
+            .intelligence = 5,
+            .agility = 6,
+            .luck = 7 };
+        const ESM4::Npc::FNVSkills skills{
+            .values = { .barter = 11,
+                .bigGuns = 12,
+                .energyWeapons = 13,
+                .explosives = 14,
+                .lockpick = 15,
+                .medicine = 16,
+                .meleeWeapons = 17,
+                .repair = 18,
+                .science = 19,
+                .smallGuns = 20,
+                .sneak = 21,
+                .speech = 22,
+                .survivalOrThrowing = 23,
+                .unarmed = 24 },
+            .offsets = { .barter = 31,
+                .bigGuns = 32,
+                .energyWeapons = 33,
+                .explosives = 34,
+                .lockpick = 35,
+                .medicine = 36,
+                .meleeWeapons = 37,
+                .repair = 38,
+                .science = 39,
+                .smallGuns = 40,
+                .sneak = 41,
+                .speech = 42,
+                .survivalOrThrowing = 43,
+                .unarmed = 44 }
+        };
+
+        std::string payload;
+        appendSubRecord(payload, "AIDT", aiData);
+        appendSubRecord(payload, "DATA", npcData);
+        appendSubRecord(payload, "DNAM", skills);
+
+        auto reader = makeReader("NPC_", 0x1011, payload);
+        ESM4::Npc npc;
+        npc.load(*reader);
+
+        EXPECT_TRUE(npc.mIsFONV);
+        EXPECT_TRUE(npc.mHasFNVAIData);
+        EXPECT_TRUE(npc.mHasFNVData);
+        EXPECT_TRUE(npc.mHasFNVSkills);
+        EXPECT_EQ(std::memcmp(&npc.mFNVAIData, &aiData, sizeof(aiData)), 0);
+        EXPECT_EQ(std::memcmp(&npc.mFNVData, &npcData, sizeof(npcData)), 0);
+        EXPECT_EQ(std::memcmp(&npc.mFNVSkills, &skills, sizeof(skills)), 0);
+        EXPECT_EQ(npc.mFNVAIData.aggression, 1);
+        EXPECT_EQ(npc.mFNVAIData.confidence, 2);
+        EXPECT_EQ(npc.mFNVAIData.energyLevel, 73);
+        EXPECT_EQ(npc.mFNVAIData.responsibility, 3);
+        EXPECT_EQ(npc.mFNVAIData.mood, 4);
+        EXPECT_EQ(npc.mFNVAIData.unused[0], 0xa1);
+        EXPECT_EQ(npc.mFNVAIData.unused[1], 0xb2);
+        EXPECT_EQ(npc.mFNVAIData.unused[2], 0xc3);
+        EXPECT_EQ(npc.mFNVAIData.services, 0x12345678u);
+        EXPECT_EQ(npc.mFNVAIData.trainSkill, -7);
+        EXPECT_EQ(npc.mFNVAIData.trainLevel, 42);
+        EXPECT_EQ(npc.mFNVAIData.assistance, -2);
+        EXPECT_EQ(npc.mFNVAIData.aggroRadiusBehavior, 0x81);
+        EXPECT_EQ(npc.mFNVAIData.aggroRadius, -1234567);
+        EXPECT_EQ(npc.mFNVData.health, 275);
+        EXPECT_EQ(npc.mFNVData.strength, 1);
+        EXPECT_EQ(npc.mFNVData.perception, 2);
+        EXPECT_EQ(npc.mFNVData.endurance, 3);
+        EXPECT_EQ(npc.mFNVData.charisma, 4);
+        EXPECT_EQ(npc.mFNVData.intelligence, 5);
+        EXPECT_EQ(npc.mFNVData.agility, 6);
+        EXPECT_EQ(npc.mFNVData.luck, 7);
+        EXPECT_EQ(npc.mFNVSkills.values.barter, 11);
+        EXPECT_EQ(npc.mFNVSkills.values.speech, 22);
+        EXPECT_EQ(npc.mFNVSkills.values.survivalOrThrowing, 23);
+        EXPECT_EQ(npc.mFNVSkills.values.unarmed, 24);
+        EXPECT_EQ(npc.mFNVSkills.offsets.barter, 31);
+        EXPECT_EQ(npc.mFNVSkills.offsets.speech, 42);
+        EXPECT_EQ(npc.mFNVSkills.offsets.survivalOrThrowing, 43);
+        EXPECT_EQ(npc.mFNVSkills.offsets.unarmed, 44);
+    }
+
+    TEST(Esm4BehaviorRecordTest, shouldRejectMalformedFalloutNpcRuntimeStatePayloads)
+    {
+        constexpr std::array<std::pair<std::string_view, std::size_t>, 3> malformed{
+            std::pair{ std::string_view{ "AIDT" }, std::size_t{ 19 } },
+            std::pair{ std::string_view{ "DATA" }, std::size_t{ 10 } },
+            std::pair{ std::string_view{ "DNAM" }, std::size_t{ 27 } },
+        };
+
+        for (const auto& [type, size] : malformed)
+        {
+            SCOPED_TRACE(type);
+            std::string payload;
+            appendSubRecord(payload, type, std::string(size, '\0'));
+
+            auto reader = makeReader("NPC_", 0x1012, payload);
+            ESM4::Npc npc;
+            EXPECT_THROW(npc.load(*reader), std::runtime_error);
+        }
     }
 
     TEST(Esm4BehaviorRecordTest, shouldPreserveFalloutQuestStagesObjectivesConditionsAndBytecode)

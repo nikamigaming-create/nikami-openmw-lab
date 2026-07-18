@@ -181,7 +181,47 @@ namespace ESM4
             AttributeValues attribs;
         };
 
+        struct FNVData
+        {
+            std::int32_t health;
+            std::uint8_t strength;
+            std::uint8_t perception;
+            std::uint8_t endurance;
+            std::uint8_t charisma;
+            std::uint8_t intelligence;
+            std::uint8_t agility;
+            std::uint8_t luck;
+        };
+
+        struct FNVSkillValues
+        {
+            std::uint8_t barter;
+            std::uint8_t bigGuns;
+            std::uint8_t energyWeapons;
+            std::uint8_t explosives;
+            std::uint8_t lockpick;
+            std::uint8_t medicine;
+            std::uint8_t meleeWeapons;
+            std::uint8_t repair;
+            std::uint8_t science;
+            std::uint8_t smallGuns;
+            std::uint8_t sneak;
+            std::uint8_t speech;
+            std::uint8_t survivalOrThrowing;
+            std::uint8_t unarmed;
+        };
+
+        struct FNVSkills
+        {
+            FNVSkillValues values;
+            FNVSkillValues offsets;
+        };
+
 #pragma pack(pop)
+
+        static_assert(sizeof(FNVData) == 11);
+        static_assert(sizeof(FNVSkillValues) == 14);
+        static_assert(sizeof(FNVSkills) == 28);
 
         ESM::FormId mId; // from the header
         std::uint32_t mFlags = 0; // from the header, see enum type RecordFlag for details
@@ -214,11 +254,17 @@ namespace ESM4
         ESM::FormId mScriptId;
 
         AIData mAIData{};
+        AIDataFO3 mFNVAIData{};
+        bool mHasFNVAIData = false;
         std::vector<ESM::FormId> mAIPackages; // seems to be in priority order, 0 = highest priority
         ActorBaseConfig mBaseConfig{}; // union
         ActorFaction mFaction{};
         std::vector<ActorFaction> mFactions;
         Data mData{};
+        FNVData mFNVData{};
+        FNVSkills mFNVSkills{};
+        bool mHasFNVData = false;
+        bool mHasFNVSkills = false;
         ESM::FormId mCombatStyle;
         ESM::FormId mSoundBase;
         ESM::FormId mSound;

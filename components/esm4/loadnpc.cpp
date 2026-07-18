@@ -172,6 +172,16 @@ void ESM4::Npc::load(ESM4::Reader& reader)
             //
             case ESM::fourCC("AIDT"):
             {
+                if (mIsFONV)
+                {
+                    if (subHdr.dataSize != sizeof(mFNVAIData))
+                        throw std::runtime_error("ESM4::NPC_::load - Fallout AIDT size mismatch");
+
+                    reader.get(mFNVAIData);
+                    mHasFNVAIData = true;
+                    break;
+                }
+
                 if (subHdr.dataSize != 12)
                 {
                     reader.skipSubRecordData(); // FIXME: process the subrecord rather than skip
@@ -200,6 +210,16 @@ void ESM4::Npc::load(ESM4::Reader& reader)
             }
             case ESM::fourCC("DATA"):
             {
+                if (mIsFONV)
+                {
+                    if (subHdr.dataSize != sizeof(mFNVData))
+                        throw std::runtime_error("ESM4::NPC_::load - Fallout DATA size mismatch");
+
+                    reader.get(mFNVData);
+                    mHasFNVData = true;
+                    break;
+                }
+
                 if (subHdr.dataSize == 0)
                     break;
 
@@ -207,6 +227,21 @@ void ESM4::Npc::load(ESM4::Reader& reader)
                     reader.get(&mData, 33); // FIXME: check packing
                 else // FIXME FO3
                     reader.skipSubRecordData();
+                break;
+            }
+            case ESM::fourCC("DNAM"):
+            {
+                if (!mIsFONV)
+                {
+                    reader.skipSubRecordData();
+                    break;
+                }
+
+                if (subHdr.dataSize != sizeof(mFNVSkills))
+                    throw std::runtime_error("ESM4::NPC_::load - Fallout DNAM size mismatch");
+
+                reader.get(mFNVSkills);
+                mHasFNVSkills = true;
                 break;
             }
             case ESM::fourCC("ZNAM"):
@@ -391,7 +426,6 @@ void ESM4::Npc::load(ESM4::Reader& reader)
             case ESM::fourCC("ATKR"):
             case ESM::fourCC("CRIF"):
             case ESM::fourCC("CSDT"):
-            case ESM::fourCC("DNAM"):
             case ESM::fourCC("ECOR"):
             case ESM::fourCC("ANAM"):
             case ESM::fourCC("ATKD"):
