@@ -134,6 +134,12 @@ namespace MWWorld
     bool ESM4QuestRuntime::startQuest(std::string_view id)
     {
         const ESM4::Quest* quest = resolveQuest(id);
+        return quest != nullptr && startQuest(quest->mId);
+    }
+
+    bool ESM4QuestRuntime::startQuest(ESM::FormId id)
+    {
+        const ESM4::Quest* quest = mStore != nullptr ? mStore->get<ESM4::Quest>().search(ESM::RefId(id)) : nullptr;
         ESM4QuestState* state = quest != nullptr ? findState(*quest) : nullptr;
         if (state == nullptr)
             return false;
@@ -144,6 +150,12 @@ namespace MWWorld
     bool ESM4QuestRuntime::stopQuest(std::string_view id)
     {
         const ESM4::Quest* quest = resolveQuest(id);
+        return quest != nullptr && stopQuest(quest->mId);
+    }
+
+    bool ESM4QuestRuntime::stopQuest(ESM::FormId id)
+    {
+        const ESM4::Quest* quest = mStore != nullptr ? mStore->get<ESM4::Quest>().search(ESM::RefId(id)) : nullptr;
         ESM4QuestState* state = quest != nullptr ? findState(*quest) : nullptr;
         if (state == nullptr)
             return false;
@@ -154,6 +166,12 @@ namespace MWWorld
     bool ESM4QuestRuntime::completeQuest(std::string_view id)
     {
         const ESM4::Quest* quest = resolveQuest(id);
+        return quest != nullptr && completeQuest(quest->mId);
+    }
+
+    bool ESM4QuestRuntime::completeQuest(ESM::FormId id)
+    {
+        const ESM4::Quest* quest = mStore != nullptr ? mStore->get<ESM4::Quest>().search(ESM::RefId(id)) : nullptr;
         ESM4QuestState* state = quest != nullptr ? findState(*quest) : nullptr;
         if (state == nullptr)
             return false;
@@ -199,7 +217,9 @@ namespace MWWorld
                     || *instruction.callingReferenceIndex > script.references.size()))
                 return false;
 
-            if (instruction.opcode != 0x11a3 && instruction.opcode != 0x11dd)
+            if (instruction.opcode != 0x1036 && instruction.opcode != 0x1037
+                && instruction.opcode != 0x1071 && instruction.opcode != 0x11a2
+                && instruction.opcode != 0x11a3 && instruction.opcode != 0x11dd)
             {
                 prepared.mUseSourceFallback = true;
                 prepared.mUnsupportedOpcodes.push_back(instruction.opcode);
@@ -212,7 +232,7 @@ namespace MWWorld
             if (!ESM4::decodeFalloutScriptArguments(instruction.arguments, script.references, arguments).succeeded())
                 return false;
 
-            if (instruction.opcode == 0x11a3) // SetObjectiveDisplayed Quest Objective Displayed
+            if (instruction.opcode == 0x11a2 || instruction.opcode == 0x11a3)
             {
                 if (arguments.size() != 3)
                     return false;
@@ -225,10 +245,12 @@ namespace MWWorld
                 const ESM4QuestState* state = quest != nullptr ? findState(*quest) : nullptr;
                 if (state == nullptr || !state->mObjectiveStatus.contains(*objective))
                     return false;
-                prepared.mCommands.push_back(
-                    { CompiledQuestCommandType::SetObjectiveDisplayed, *questId, *objective, *displayed != 0 });
+                const CompiledQuestCommandType type = instruction.opcode == 0x11a2
+                    ? CompiledQuestCommandType::SetObjectiveCompleted
+                    : CompiledQuestCommandType::SetObjectiveDisplayed;
+                prepared.mCommands.push_back({ type, *questId, *objective, *displayed != 0 });
             }
-            else // ForceActiveQuest Quest
+            else
             {
                 if (arguments.size() != 1)
                     return false;
@@ -238,7 +260,24 @@ namespace MWWorld
                 const ESM4::Quest* quest = mStore->get<ESM4::Quest>().search(ESM::RefId(*questId));
                 if (quest == nullptr || findState(*quest) == nullptr)
                     return false;
-                prepared.mCommands.push_back({ CompiledQuestCommandType::ForceActiveQuest, *questId, 0, false });
+                CompiledQuestCommandType type = CompiledQuestCommandType::ForceActiveQuest;
+                switch (instruction.opcode)
+                {
+                    case 0x1036:
+                        type = CompiledQuestCommandType::StartQuest;
+                        break;
+                    case 0x1037:
+                        type = CompiledQuestCommandType::StopQuest;
+                        break;
+                    case 0x1071:
+                        type = CompiledQuestCommandType::CompleteQuest;
+                        break;
+                    case 0x11dd:
+                        break;
+                    default:
+                        throw std::logic_error("unhandled preflighted Fallout quest opcode");
+                }
+                prepared.mCommands.push_back({ type, *questId, 0, false });
             }
         }
 
@@ -310,9 +349,28 @@ namespace MWWorld
             {
                 for (const CompiledQuestCommand& command : preparedEntry.mScript.mCommands)
                 {
-                    const bool executed = command.mType == CompiledQuestCommandType::SetObjectiveDisplayed
-                        ? setObjectiveDisplayed(command.mQuest, command.mObjective, command.mValue)
-                        : forceActiveQuest(command.mQuest);
+                    bool executed = false;
+                    switch (command.mType)
+                    {
+                        case CompiledQuestCommandType::StartQuest:
+                            executed = startQuest(command.mQuest);
+                            break;
+                        case CompiledQuestCommandType::StopQuest:
+                            executed = stopQuest(command.mQuest);
+                            break;
+                        case CompiledQuestCommandType::CompleteQuest:
+                            executed = completeQuest(command.mQuest);
+                            break;
+                        case CompiledQuestCommandType::SetObjectiveCompleted:
+                            executed = setObjectiveCompleted(command.mQuest, command.mObjective, command.mValue);
+                            break;
+                        case CompiledQuestCommandType::SetObjectiveDisplayed:
+                            executed = setObjectiveDisplayed(command.mQuest, command.mObjective, command.mValue);
+                            break;
+                        case CompiledQuestCommandType::ForceActiveQuest:
+                            executed = forceActiveQuest(command.mQuest);
+                            break;
+                    }
                     if (!executed)
                         throw std::logic_error("preflighted Fallout quest command became invalid during execution");
                 }
@@ -653,6 +711,12 @@ namespace MWWorld
     bool ESM4QuestRuntime::setObjectiveCompleted(std::string_view id, std::int32_t objective, bool completed)
     {
         const ESM4::Quest* quest = resolveQuest(id);
+        return quest != nullptr && setObjectiveCompleted(quest->mId, objective, completed);
+    }
+
+    bool ESM4QuestRuntime::setObjectiveCompleted(ESM::FormId id, std::int32_t objective, bool completed)
+    {
+        const ESM4::Quest* quest = mStore != nullptr ? mStore->get<ESM4::Quest>().search(ESM::RefId(id)) : nullptr;
         ESM4QuestState* state = quest != nullptr ? findState(*quest) : nullptr;
         if (state == nullptr || !state->mObjectiveStatus.contains(objective))
             return false;

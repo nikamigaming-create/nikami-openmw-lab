@@ -67,6 +67,10 @@ namespace MWWorld
 
         enum class CompiledQuestCommandType : std::uint8_t
         {
+            StartQuest,
+            StopQuest,
+            CompleteQuest,
+            SetObjectiveCompleted,
             SetObjectiveDisplayed,
             ForceActiveQuest,
         };
@@ -99,14 +103,18 @@ namespace MWWorld
         void clear();
 
         bool startQuest(std::string_view id);
+        bool startQuest(ESM::FormId id);
         bool stopQuest(std::string_view id);
+        bool stopQuest(ESM::FormId id);
         bool completeQuest(std::string_view id);
+        bool completeQuest(ESM::FormId id);
         bool failQuest(std::string_view id);
         bool setStage(std::string_view id, std::uint8_t stage);
         bool setStage(ESM::FormId id, std::uint8_t stage);
         bool setObjectiveDisplayed(std::string_view id, std::int32_t objective, bool displayed);
         bool setObjectiveDisplayed(ESM::FormId id, std::int32_t objective, bool displayed);
         bool setObjectiveCompleted(std::string_view id, std::int32_t objective, bool completed);
+        bool setObjectiveCompleted(ESM::FormId id, std::int32_t objective, bool completed);
         bool setQuestVariable(std::string_view id, std::string_view variable, float value);
         bool forceActiveQuest(std::string_view id);
         bool forceActiveQuest(ESM::FormId id);
