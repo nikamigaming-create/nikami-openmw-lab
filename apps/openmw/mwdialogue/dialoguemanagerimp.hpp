@@ -69,6 +69,7 @@ namespace MWDialogue
         std::set<ESM::FormId> mEsm4SaidInfos;
         std::set<ESM::FormId> mEsm4AddedTopics;
         std::map<std::pair<ESM::FormId, std::uint32_t>, std::string> mEsm4VoicePaths;
+        std::map<std::string, ESM::FormId, Misc::StringUtils::CiComp> mEsm4ResultReferenceIds;
 
         int mOriginalDisposition;
         int mCurrentDisposition;
@@ -92,6 +93,8 @@ namespace MWDialogue
         int getEsm4InfoActorAffinity(const ESM4::DialogInfo& info) const;
         std::string resolveEsm4Voice(
             const ESM4::DialogInfo& info, const ESM4::DialogResponse& response, std::size_t responseIndex);
+        ESM::FormId resolveEsm4ResultReferenceId(std::string_view editorId);
+        void executeEsm4ResultSource(std::string_view source);
         void updateEsm4Topics();
 
         const ESM::Dialogue* searchDialogue(const ESM::RefId& id);

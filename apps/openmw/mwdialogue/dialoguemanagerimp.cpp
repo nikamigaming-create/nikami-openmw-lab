@@ -17,10 +17,12 @@
 #include <components/esm3/loadmgef.hpp>
 #include <components/esm3/loadnpc.hpp>
 #include <components/esm4/loaddial.hpp>
+#include <components/esm4/loadachr.hpp>
 #include <components/esm4/loadarmo.hpp>
 #include <components/esm4/loadclot.hpp>
 #include <components/esm4/loadinfo.hpp>
 #include <components/esm4/loadnpc.hpp>
+#include <components/esm4/loadrefr.hpp>
 #include <components/esm4/loadsoun.hpp>
 #include <components/esm4/loadsndr.hpp>
 #include <components/esm4/script.hpp>
@@ -67,9 +69,11 @@
 #include "../mwmechanics/npcstats.hpp"
 
 #include "../mwclass/esm4npc.hpp"
+#include "../mwclass/fnvaipackage.hpp"
 
 #include "filter.hpp"
 #include "esm4dialogueutils.hpp"
+#include "esm4resultscript.hpp"
 #include "hypertextparser.hpp"
 
 namespace MWDialogue
@@ -124,6 +128,7 @@ namespace MWDialogue
         mEsm4SaidInfos.clear();
         mEsm4AddedTopics.clear();
         mEsm4VoicePaths.clear();
+        mEsm4ResultReferenceIds.clear();
     }
 
     bool DialogueManager::matchesEsm4Info(const ESM4::DialogInfo& info) const
@@ -436,6 +441,104 @@ namespace MWDialogue
         return path;
     }
 
+    ESM::FormId DialogueManager::resolveEsm4ResultReferenceId(std::string_view editorId)
+    {
+        if (const auto cached = mEsm4ResultReferenceIds.find(std::string(editorId));
+            cached != mEsm4ResultReferenceIds.end())
+            return cached->second;
+
+        const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
+        ESM::FormId result;
+        const auto search = [&](const auto& records) {
+            for (const auto& record : records)
+            {
+                if (Misc::StringUtils::ciEqual(record.mEditorId, editorId))
+                {
+                    result = record.mId;
+                    return true;
+                }
+            }
+            return false;
+        };
+        if (store != nullptr && !search(store->get<ESM4::Reference>())
+            && !search(store->get<ESM4::ActorCharacter>()))
+            search(store->get<ESM4::ActorCreature>());
+
+        mEsm4ResultReferenceIds.emplace(std::string(editorId), result);
+        return result;
+    }
+
+    void DialogueManager::executeEsm4ResultSource(std::string_view source)
+    {
+        const Esm4ResultScript script = parseEsm4ResultScript(source);
+        if (script.mMalformedControlFlow)
+        {
+            Log(Debug::Warning) << "FNV/ESM4 dialogue: skipped malformed result-script control flow";
+            return;
+        }
+
+        MWBase::World* world = MWBase::Environment::get().getWorld();
+        if (world == nullptr)
+            return;
+        MWWorld::ESM4QuestRuntime& questRuntime = world->getESM4QuestRuntime();
+
+        for (const Esm4ResultCommand& command : script.mCommands)
+        {
+            if (command.mType == Esm4ResultCommandType::Quest)
+            {
+                questRuntime.executeResultSource(command.mSource);
+                continue;
+            }
+            if (command.mType == Esm4ResultCommandType::ShowBarterMenu)
+            {
+                MWBase::WindowManager* windowManager = MWBase::Environment::get().getWindowManager();
+                if (windowManager != nullptr && !mActor.isEmpty() && !windowManager->containsMode(MWGui::GM_Barter))
+                    windowManager->pushGuiMode(MWGui::GM_Barter, mActor);
+                continue;
+            }
+
+            const ESM::FormId referenceId = resolveEsm4ResultReferenceId(command.mTarget);
+            const MWWorld::Ptr target = referenceId.isZeroOrUnset()
+                ? MWWorld::Ptr()
+                : world->searchPtr(ESM::RefId(referenceId), false, false);
+            if (target.isEmpty())
+            {
+                Log(Debug::Warning) << "FNV/ESM4 dialogue: could not resolve result-script reference '"
+                                    << command.mTarget << "'";
+                continue;
+            }
+
+            switch (command.mType)
+            {
+                case Esm4ResultCommandType::Enable:
+                    world->enable(target);
+                    break;
+                case Esm4ResultCommandType::Disable:
+                    world->disable(target);
+                    break;
+                case Esm4ResultCommandType::Unlock:
+                    if (target.getClass().canLock(target))
+                        target.getCellRef().unlock();
+                    else
+                        Log(Debug::Warning) << "FNV/ESM4 dialogue: Unlock rejected non-lockable reference '"
+                                            << command.mTarget << "'";
+                    break;
+                case Esm4ResultCommandType::EvaluatePackage:
+                    if (!MWClass::requestFnvAiPackageEvaluation(target))
+                        Log(Debug::Warning) << "FNV/ESM4 dialogue: deferred unsafe EvaluatePackage for '"
+                                            << command.mTarget << "'";
+                    break;
+                case Esm4ResultCommandType::Quest:
+                case Esm4ResultCommandType::ShowBarterMenu:
+                    break;
+            }
+        }
+
+        if (script.mSkippedConditionalCommands != 0)
+            Log(Debug::Verbose) << "FNV/ESM4 dialogue: deferred " << script.mSkippedConditionalCommands
+                                << " conditional result command(s) pending expression evaluation";
+    }
+
     void DialogueManager::executeEsm4Topic(
         ESM::FormId topic, ResponseCallback* callback, bool greeting, const ESM4::DialogInfo* retainedInfo)
     {
@@ -518,9 +621,9 @@ namespace MWDialogue
             = MWBase::Environment::get().getWorld()->getESM4QuestRuntime();
         const std::size_t unsupportedBefore = questRuntime.getUnsupportedStageCommands().size();
         if (!info->mScript.scriptSource.empty())
-            questRuntime.executeResultSource(info->mScript.scriptSource);
+            executeEsm4ResultSource(info->mScript.scriptSource);
         if (!info->mEndScript.scriptSource.empty())
-            questRuntime.executeResultSource(info->mEndScript.scriptSource);
+            executeEsm4ResultSource(info->mEndScript.scriptSource);
         const std::size_t unsupportedAfter = questRuntime.getUnsupportedStageCommands().size();
         if (!info->mScript.scriptSource.empty() || !info->mEndScript.scriptSource.empty()
             || !info->mScript.compiledData.empty() || !info->mEndScript.compiledData.empty())

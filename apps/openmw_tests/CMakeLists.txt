@@ -29,6 +29,7 @@ file(GLOB UNITTEST_SRC_FILES
 
     mwdialogue/testkeywordsearch.cpp
     mwdialogue/testesm4dialogueutils.cpp
+    mwdialogue/testesm4resultscript.cpp
 
     mwgui/tooltips.cpp
 

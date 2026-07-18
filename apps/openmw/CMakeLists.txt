@@ -51,7 +51,7 @@ add_openmw_dir (mwgui
     )
 
 add_openmw_dir (mwdialogue
-    dialoguemanagerimp journalimp journalentry quest topic filter selectwrapper hypertextparser keywordsearch scripttest
+    dialoguemanagerimp esm4resultscript journalimp journalentry quest topic filter selectwrapper hypertextparser keywordsearch scripttest
     )
 
 add_openmw_dir (mwscript
@@ -101,7 +101,7 @@ add_openmw_dir (mwphysics
 add_openmw_dir (mwclass
     classes activator creature npc weapon armor potion apparatus book clothing container door
     ingredient creaturelevlist itemlevlist light lockpick misc probe repair static actor bodypart
-    esm4base esm4activator esm4container esm4creature esm4npc esm4talkingactivator esm4terminal light4
+    esm4base esm4activator esm4container esm4creature esm4npc fnvaipackage esm4talkingactivator esm4terminal light4
     )
 
 add_openmw_dir (mwmechanics

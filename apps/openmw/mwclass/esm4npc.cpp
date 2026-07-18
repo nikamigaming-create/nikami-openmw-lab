@@ -1,4 +1,5 @@
 #include "esm4npc.hpp"
+#include "fnvaipackage.hpp"
 #include "fnvfurniturelifecycle.hpp"
 
 #include <algorithm>
@@ -221,6 +222,35 @@ namespace MWClass
         , mFurnitureState(other.mFurnitureState)
         , mFurniturePlacement(other.mFurniturePlacement)
     {
+    }
+
+    bool requestFnvAiPackageEvaluation(const MWWorld::Ptr& ptr)
+    {
+        if (ptr.isEmpty() || ptr.getType() != ESM4::Npc::sRecordId)
+            return false;
+
+        // CreatureStats access creates the per-reference custom data when the
+        // actor has not been simulated yet (common for a newly enabled NPC).
+        ptr.getClass().getCreatureStats(ptr);
+        MWWorld::CustomData* customData = ptr.getRefData().getCustomData();
+        if (customData == nullptr)
+            return false;
+
+        ESM4NpcCustomData& data = customData->asESM4NpcCustomData();
+        if (data.mTraits == nullptr || !data.mTraits->mIsFONV)
+            return false;
+
+        MWMechanics::AiSequence& sequence = data.mCreatureStats.getAiSequence();
+        // EVP selects a new base package; it must not erase combat, pursuit,
+        // or a furniture claim whose release transition has not completed.
+        if (sequence.isInCombat() || sequence.isInPursuit()
+            || data.mFurnitureState != FalloutFurnitureState::None)
+            return false;
+
+        sequence.clear();
+        data.mFnvAiSequenceInitialised = false;
+        ptr.getClass().getCreatureStats(ptr);
+        return true;
     }
 
     static std::string_view getFalloutNpcFallbackSkeleton(const ESM4NpcCustomData& data)
