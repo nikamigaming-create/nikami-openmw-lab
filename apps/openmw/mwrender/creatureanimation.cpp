@@ -1,5 +1,7 @@
 #include "creatureanimation.hpp"
 
+#include "fallouthitreaction.hpp"
+
 #include <osg/BlendFunc>
 #include <osg/Camera>
 #include <osg/ColorMask>
@@ -1754,6 +1756,8 @@ void main()
                     logCreatureBounds("root", ref->mBase->mEditorId, actorModel, *mObjectRoot);
                 unsigned int fallbackKfs = 0;
                 unsigned int discoveredKfs = 0;
+                std::string hitReactionKf;
+                bool hitReactionBound = false;
                 if (!markerCreatureRoot)
                 {
                     for (const std::string& kf : authoredKfs)
@@ -1796,6 +1800,27 @@ void main()
                     discoveredKfs = static_cast<unsigned int>(discoveredKfPaths.size());
                     for (const std::string& path : discoveredKfPaths)
                         addAnimSource(path, actorModel);
+
+                    hitReactionKf = resolveFonvCreatureHitReaction(animationDirectory,
+                        [vfs](std::string_view path) { return vfs->exists(VFS::Path::toNormalized(path)); });
+                    if (!hitReactionKf.empty())
+                    {
+                        const std::shared_ptr<AnimSource> source = addSingleAnimSource(hitReactionKf, actorModel,
+                            false, {}, FonvCreatureHitReactionSemanticGroup);
+                        hitReactionBound = source != nullptr
+                            && getAnimationSourceName(FonvCreatureHitReactionSemanticGroup) == hitReactionKf;
+                        Log(hitReactionBound ? Debug::Info : Debug::Error)
+                            << "FNV/ESM4 creature hit-reaction binding: editor=" << ref->mBase->mEditorId
+                            << " semantic=" << FonvCreatureHitReactionSemanticGroup << " source=" << hitReactionKf
+                            << " status=" << (hitReactionBound ? "pass" : "fail");
+                    }
+                    else
+                    {
+                        Log(Debug::Verbose) << "FNV/ESM4 creature hit-reaction binding: editor="
+                                            << ref->mBase->mEditorId << " semantic="
+                                            << FonvCreatureHitReactionSemanticGroup
+                                            << " source=<none> status=unavailable";
+                    }
                 }
                 else
                     Log(Debug::Warning) << "FNV/ESM4 diag: skipped marker-creature animation binding for "
@@ -1831,7 +1856,10 @@ void main()
                                  << " bodyPartCount=" << authoredBodyParts.size()
                                  << " attachedBodyNifs=" << attachedBodyNifs
                                  << " fallbackKfs=" << fallbackKfs
-                                 << " discoveredKfs=" << discoveredKfs;
+                                 << " discoveredKfs=" << discoveredKfs
+                                 << " hitReactionKf="
+                                 << (hitReactionKf.empty() ? std::string("<none>") : hitReactionKf)
+                                 << " hitReactionBound=" << hitReactionBound;
             }
         }
     }

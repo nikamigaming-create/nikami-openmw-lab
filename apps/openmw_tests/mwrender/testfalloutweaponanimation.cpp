@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include "apps/openmw/mwrender/falloutanimationtargets.hpp"
+#include "apps/openmw/mwrender/fallouthitreaction.hpp"
 #include "apps/openmw/mwrender/falloutweaponanimation.hpp"
 #include "apps/openmw/mwmechanics/weapontype.hpp"
 
@@ -66,6 +67,72 @@ namespace MWRender
             EXPECT_NEAR(actual.mRotation->z(), expectedRotation.z(), 1e-6f);
             EXPECT_NEAR(actual.mRotation->w(), expectedRotation.w(), 1e-6f);
         }
+    }
+
+    TEST(FalloutHitReactionTest, resolvesCanonicalRecoverySourceWithinEachGoodspringsCreatureRig)
+    {
+        struct ExpectedSource
+        {
+            std::string_view mDirectory;
+            std::string_view mPath;
+        };
+        static constexpr std::array<ExpectedSource, 6> expectedSources = { {
+            { "meshes/creatures/nvsecuritron", "meshes/creatures/nvsecuritron/idleanims/specialidle_hithead.kf" },
+            { "meshes/creatures/dog", "meshes/creatures/dog/idleanims/mtspecialidle_hithead.kf" },
+            { "meshes/creatures/nvbighorner", "meshes/creatures/nvbighorner/idleanims/hitreaction_torso.kf" },
+            { "meshes/creatures/nvmantis", "meshes/creatures/nvmantis/idleanims/specialidle_hittorso.kf" },
+            { "meshes/creatures/radscorpion", "meshes/creatures/radscorpion/recoil.kf" },
+            { "meshes/creatures/nvgecko", "meshes/creatures/nvgecko/idleanims/hitreaction_torso.kf" },
+        } };
+        const std::vector<std::string> available = {
+            "meshes/creatures/nvsecuritron/idleanims/specialidle_hithead.kf",
+            "meshes/creatures/dog/idleanims/mtspecialidle_hithead.kf",
+            "meshes/creatures/dog/h2hrecoil.kf",
+            "meshes/creatures/nvbighorner/idleanims/hitreaction_torso.kf",
+            "meshes/creatures/nvbighorner/idleanims/hitreaction_head.kf",
+            "meshes/creatures/nvmantis/idleanims/specialidle_hittorso.kf",
+            "meshes/creatures/nvmantis/idleanims/specialidle_hithead.kf",
+            "meshes/creatures/radscorpion/recoil.kf",
+            "meshes/creatures/nvgecko/idleanims/hitreaction_torso.kf",
+            "meshes/creatures/nvgecko/idleanims/hitreaction_head.kf",
+        };
+        const auto exists = [&available](std::string_view path) {
+            return std::find(available.begin(), available.end(), path) != available.end();
+        };
+
+        EXPECT_EQ(FonvCreatureHitReactionSemanticGroup, "hit1");
+        for (const ExpectedSource& expected : expectedSources)
+            EXPECT_EQ(resolveFonvCreatureHitReaction(expected.mDirectory, exists), expected.mPath);
+    }
+
+    TEST(FalloutHitReactionTest, preservesDeterministicTorsoFirstCandidatePriority)
+    {
+        const std::array<std::string, 7> candidates
+            = getFonvCreatureHitReactionCandidates("MESHES\\CREATURES\\NVGECKO\\");
+        const std::vector<std::string> available(candidates.begin(), candidates.end());
+        const auto exists = [&available](std::string_view path) {
+            return std::find(available.begin(), available.end(), path) != available.end();
+        };
+
+        EXPECT_EQ(candidates.front(), "meshes/creatures/nvgecko/idleanims/hitreaction_torso.kf");
+        EXPECT_EQ(resolveFonvCreatureHitReaction("MESHES\\CREATURES\\NVGECKO\\", exists), candidates.front());
+    }
+
+    TEST(FalloutHitReactionTest, failsClosedForRavenAndUnauditedRigs)
+    {
+        const std::vector<std::string> available = {
+            "meshes/creatures/nvraven/idleanims/specialidle_flyaway.kf",
+            "meshes/creatures/nightstalker/idleanims/hitreaction_torso.kf",
+            "meshes/creatures/nightstalker/recoil.kf",
+            "meshes/creatures/nvgecko/idleanims/hitreaction_torso.kf",
+            "meshes/creatures/radscorpion/recoil.kf",
+        };
+        const auto exists = [&available](std::string_view path) {
+            return std::find(available.begin(), available.end(), path) != available.end();
+        };
+
+        EXPECT_TRUE(resolveFonvCreatureHitReaction("meshes\\creatures\\nvraven\\", exists).empty());
+        EXPECT_TRUE(resolveFonvCreatureHitReaction("meshes/creatures/nightstalker", exists).empty());
     }
 
     TEST(FalloutWeaponAnimationTest, resolvesFamilySpecificEquipAndHandGripSelectors)
