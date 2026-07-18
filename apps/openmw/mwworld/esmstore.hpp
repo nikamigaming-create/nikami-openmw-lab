@@ -17,6 +17,7 @@
 #include <components/esm4/loadimad.hpp>
 #include <components/misc/tuplemeta.hpp>
 
+#include "fnvplayerstate.hpp"
 #include "store.hpp"
 
 namespace Loading
@@ -244,6 +245,7 @@ namespace MWWorld
         bool mIsSetUpDone = false;
         bool mHasStarfieldContent = false;
         ESM4Game mESM4Game = ESM4Game::Unknown;
+        std::optional<FalloutPlayerState> mFalloutPlayerState;
 
     public:
         void addOMWScripts(std::filesystem::path filePath) { mLuaContent.push_back(std::move(filePath)); }
@@ -277,6 +279,8 @@ namespace MWWorld
         void loadESM4(ESM4::Reader& esm, Loading::Listener* listener);
 
         ESM4Game getESM4Game() const { return mESM4Game; }
+
+        const std::optional<FalloutPlayerState>& getFalloutPlayerState() const { return mFalloutPlayerState; }
 
         /// Return the authored storage cell behind a Starfield BGSPackIn base form.
         /// Pack-ins are expanded lazily by CellStore so only the active exterior grid pays their assembly cost.

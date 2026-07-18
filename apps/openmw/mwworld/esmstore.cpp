@@ -190,7 +190,7 @@ namespace
         MWWorld::Store<ESM::Skill>& skills, MWWorld::Store<ESM::MagicEffect>& magicEffects,
         MWWorld::Store<ESM::Dialogue>& dialogues, MWWorld::Store<ESM::NPC>& npcs, MWWorld::Store<ESM::Weapon>& weapons,
         MWWorld::Store<ESM::Potion>& potions, MWWorld::Store<ESM::Miscellaneous>& miscItems,
-        std::string_view playerSkeleton)
+        const MWWorld::FalloutPlayerState* falloutPlayerState, std::string_view playerSkeleton)
     {
         const ESM::RefId classId = ESM::RefId::stringRefId("FNV_Courier");
         const ESM::RefId raceId = ESM::RefId::stringRefId("FNV_Wastelander");
@@ -310,9 +310,11 @@ namespace
             player.mNpdt.mFatigue = 220;
             player.mNpdt.mDisposition = 50;
             player.mNpdt.mGold = 0;
+            if (falloutPlayerState != nullptr)
+                MWWorld::seedFalloutPlayerProxy(player, *falloutPlayerState);
             npcs.insertStatic(player);
-            Log(Debug::Info) << "FNV/ESM4: inserted fallback ESM3 Player NPC for normal save/load model="
-                             << player.mModel;
+            Log(Debug::Info) << "FNV/ESM4: inserted ESM3 Player compatibility shell for normal save/load model="
+                             << player.mModel << " nativeState=" << static_cast<bool>(falloutPlayerState);
         }
 
         const auto ensureWeapon
@@ -1183,13 +1185,27 @@ namespace MWWorld
     void ESMStore::validate()
     {
         auto& npcs = getWritable<ESM::NPC>();
+        if (mESM4Game == ESM4Game::FalloutNewVegas)
+        {
+            FalloutPlayerStateResolution resolution = resolveFalloutPlayerState(getWritable<ESM4::Npc>());
+            if (!resolution)
+                throw std::runtime_error("Cannot resolve native FNV Player state: " + resolution.mError);
+            mFalloutPlayerState = std::move(resolution.mState);
+            Log(Debug::Info) << "FNV/ESM4: resolved native Player state base=" << mFalloutPlayerState->mBaseRecord
+                             << " stats=" << mFalloutPlayerState->mStatsRecord
+                             << " ai=" << mFalloutPlayerState->mAIDataRecord
+                             << " health=" << mFalloutPlayerState->mHealth;
+        }
+        else
+            mFalloutPlayerState.reset();
         if (shouldEnsureFalloutCharacterDefaults(getWritable<ESM::Class>(), getWritable<ESM::Race>(),
                 getWritable<ESM4::Npc>(), getWritable<ESM4::Creature>(), getWritable<ESM4::Race>()))
             ensureFalloutCharacterDefaults(getWritable<ESM::Class>(), getWritable<ESM::Race>(),
                 getWritable<ESM::Skill>(), getWritable<ESM::MagicEffect>(), getWritable<ESM::Dialogue>(), npcs,
                 getWritable<ESM::Weapon>(), getWritable<ESM::Potion>(), getWritable<ESM::Miscellaneous>(),
-                chooseViewerPlayerSkeleton(mHasStarfieldContent,
-                    getWritable<ESM4::World>(), getWritable<ESM4::ArmorAddon>(), getWritable<ESM4::HeadPart>()));
+                mFalloutPlayerState ? &*mFalloutPlayerState : nullptr,
+                chooseViewerPlayerSkeleton(mHasStarfieldContent, getWritable<ESM4::World>(),
+                    getWritable<ESM4::ArmorAddon>(), getWritable<ESM4::HeadPart>()));
         rebuildIdsIndex();
         mStoreImp->mStaticIds = mStoreImp->mIds;
         std::vector<ESM::NPC> npcsToReplace = getNPCsToReplace(getWritable<ESM::Faction>(), getWritable<ESM::Class>(),
@@ -1238,8 +1254,9 @@ namespace MWWorld
             ensureFalloutCharacterDefaults(getWritable<ESM::Class>(), getWritable<ESM::Race>(),
                 getWritable<ESM::Skill>(), getWritable<ESM::MagicEffect>(), getWritable<ESM::Dialogue>(), npcs,
                 getWritable<ESM::Weapon>(), getWritable<ESM::Potion>(), getWritable<ESM::Miscellaneous>(),
-                chooseViewerPlayerSkeleton(mHasStarfieldContent,
-                    getWritable<ESM4::World>(), getWritable<ESM4::ArmorAddon>(), getWritable<ESM4::HeadPart>()));
+                mFalloutPlayerState ? &*mFalloutPlayerState : nullptr,
+                chooseViewerPlayerSkeleton(mHasStarfieldContent, getWritable<ESM4::World>(),
+                    getWritable<ESM4::ArmorAddon>(), getWritable<ESM4::HeadPart>()));
         rebuildIdsIndex();
         auto& scripts = getWritable<ESM::Script>();
 

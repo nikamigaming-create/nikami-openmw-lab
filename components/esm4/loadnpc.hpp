@@ -255,6 +255,7 @@ namespace ESM4
 
         AIData mAIData{};
         AIDataFO3 mFNVAIData{};
+        bool mHasFNVBaseConfig = false;
         bool mHasFNVAIData = false;
         std::vector<ESM::FormId> mAIPackages; // seems to be in priority order, 0 = highest priority
         ActorBaseConfig mBaseConfig{}; // union

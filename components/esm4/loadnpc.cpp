@@ -108,6 +108,7 @@ void ESM4::Npc::load(ESM4::Reader& reader)
     mIsFONV = mIsFO3 || esmVer == ESM::VER_132 || esmVer == ESM::VER_133 || esmVer == ESM::VER_134;
     mIsStarfield = reader.esmVersionF() >= 0.959f && reader.esmVersionF() <= 0.961f;
     // mIsTES5 = esmVer == ESM::VER_094 || esmVer == ESM::VER_170; // WARN: FO3 is also VER_094
+    bool hasExactFalloutBaseConfig = false;
 
     while (reader.getSubRecordHeader())
     {
@@ -200,8 +201,12 @@ void ESM4::Npc::load(ESM4::Reader& reader)
                         [[fallthrough]];
                     case 16: // TES4
                     case 24: // FO3/FNV, TES5
-                        reader.get(&mBaseConfig, subHdr.dataSize);
+                    {
+                        const std::uint32_t dataSize = subHdr.dataSize;
+                        reader.get(&mBaseConfig, dataSize);
+                        hasExactFalloutBaseConfig = dataSize == sizeof(ESM4::ACBS_FO3);
                         break;
+                    }
                     default:
                         reader.skipSubRecordData();
                         break;
@@ -493,6 +498,7 @@ void ESM4::Npc::load(ESM4::Reader& reader)
                 throw std::runtime_error("ESM4::NPC_::load - Unknown subrecord " + ESM::printName(subHdr.typeId));
         }
     }
+    mHasFNVBaseConfig = mIsFONV && hasExactFalloutBaseConfig;
 }
 
 // void ESM4::Npc::save(ESM4::Writer& writer) const

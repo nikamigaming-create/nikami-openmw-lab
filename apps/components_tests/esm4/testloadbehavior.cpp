@@ -135,6 +135,7 @@ namespace
 
     TEST(Esm4BehaviorRecordTest, shouldPreserveExactFalloutNpcRuntimeStatePayloads)
     {
+        const ESM4::ACBS_FO3 baseConfig{ .fatigue = 200, .levelOrMult = 1, .speedMultiplier = 100 };
         const ESM4::AIDataFO3 aiData{ .aggression = 1,
             .confidence = 2,
             .energyLevel = 73,
@@ -187,6 +188,7 @@ namespace
         };
 
         std::string payload;
+        appendSubRecord(payload, "ACBS", baseConfig);
         appendSubRecord(payload, "AIDT", aiData);
         appendSubRecord(payload, "DATA", npcData);
         appendSubRecord(payload, "DNAM", skills);
@@ -196,9 +198,11 @@ namespace
         npc.load(*reader);
 
         EXPECT_TRUE(npc.mIsFONV);
+        EXPECT_TRUE(npc.mHasFNVBaseConfig);
         EXPECT_TRUE(npc.mHasFNVAIData);
         EXPECT_TRUE(npc.mHasFNVData);
         EXPECT_TRUE(npc.mHasFNVSkills);
+        EXPECT_EQ(std::memcmp(&npc.mBaseConfig.fo3, &baseConfig, sizeof(baseConfig)), 0);
         EXPECT_EQ(std::memcmp(&npc.mFNVAIData, &aiData, sizeof(aiData)), 0);
         EXPECT_EQ(std::memcmp(&npc.mFNVData, &npcData, sizeof(npcData)), 0);
         EXPECT_EQ(std::memcmp(&npc.mFNVSkills, &skills, sizeof(skills)), 0);
