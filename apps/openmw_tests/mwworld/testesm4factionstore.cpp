@@ -14,6 +14,7 @@
 
 #include <components/esm/refid.hpp>
 #include <components/esm4/common.hpp>
+#include <components/esm4/loadcrea.hpp>
 #include <components/esm4/loadfact.hpp>
 #include <components/esm4/reader.hpp>
 
@@ -105,6 +106,23 @@ namespace
         appendRecord(plugin, "TES4", 0, headerPayload, ESM4::Rec_ESM);
         for (const auto& [formId, payload] : factionRecords)
             appendRecord(plugin, "FACT", formId, payload, factionFlags);
+        return plugin;
+    }
+
+    std::string makeSingleRecordPlugin(
+        std::string_view type, std::uint32_t formId, std::string_view payload)
+    {
+        std::string hedr;
+        appendPod(hedr, 1.34f);
+        appendPod(hedr, std::int32_t{ 2 });
+        appendPod(hedr, std::uint32_t{ 0x800 });
+
+        std::string headerPayload;
+        appendSubRecord(headerPayload, "HEDR", hedr);
+
+        std::string plugin;
+        appendRecord(plugin, "TES4", 0, headerPayload, ESM4::Rec_ESM);
+        appendRecord(plugin, type, formId, payload, 0);
         return plugin;
     }
 
@@ -208,6 +226,30 @@ namespace
 
         EXPECT_EQ(store.get<ESM4::Faction>().getSize(), 0);
         EXPECT_EQ(store.getESM4Game(), MWWorld::ESM4Game::Skyrim);
+    }
+
+    TEST(Esm4FactionStoreTest, shouldRetainEveryFnvCreatureFactionMembershipInAuthoredOrder)
+    {
+        ESM4::ActorFaction mantis{ 0x000e60e2, 0, 0x49, 0x46, 0x5a };
+        ESM4::ActorFaction creature{ 0x00000013, 0, 0x49, 0x46, 0x5a };
+        std::string payload;
+        appendSubRecord(payload, "EDID", zString("GSGiantMantisNymph"));
+        appendSubRecord(payload, "SNAM", pod(mantis));
+        appendSubRecord(payload, "SNAM", pod(creature));
+
+        const std::string plugin = makeSingleRecordPlugin("CREA", 0x0011d584, payload);
+        auto reader = makeReader(plugin, "FalloutNV.esm", 1);
+        MWWorld::ESMStore store;
+        store.loadESM4(*reader, nullptr);
+        store.setUp();
+
+        const ESM4::Creature* loaded
+            = store.get<ESM4::Creature>().search(ESM::RefId(ESM::FormId::fromUint32(0x0111d584)));
+        ASSERT_NE(loaded, nullptr);
+        ASSERT_EQ(loaded->mFactions.size(), 2);
+        EXPECT_EQ(loaded->mFactions[0].faction, 0x010e60e2);
+        EXPECT_EQ(loaded->mFactions[1].faction, 0x01000013);
+        EXPECT_EQ(loaded->mFaction.faction, 0x01000013);
     }
 
     TEST(Esm4FactionStoreTest, shouldRejectUnobservedFnvSubrecordSizes)

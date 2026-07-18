@@ -6,13 +6,194 @@
 #include <gtest/gtest.h>
 
 #include <array>
+#include <map>
 #include <unordered_map>
+#include <vector>
 
 namespace
 {
     ESM::FormId id(std::uint32_t value)
     {
         return ESM::FormId::fromUint32(value);
+    }
+
+    ESM4::ActorFaction membership(std::uint32_t value)
+    {
+        return ESM4::ActorFaction{ value, 0, 0, 0, 0 };
+    }
+
+    TEST(FalloutCombatTest, AppliesCategoricalAggressionWithoutMorrowindFightBiases)
+    {
+        using Reaction = ESM4::Faction::GroupCombatReaction;
+
+        for (Reaction reaction : { Reaction::Neutral, Reaction::Enemy, Reaction::Ally, Reaction::Friend })
+            EXPECT_FALSE(MWMechanics::shouldFalloutActorInitiateCombat(0, reaction));
+
+        EXPECT_FALSE(MWMechanics::shouldFalloutActorInitiateCombat(1, Reaction::Neutral));
+        EXPECT_TRUE(MWMechanics::shouldFalloutActorInitiateCombat(1, Reaction::Enemy));
+        EXPECT_FALSE(MWMechanics::shouldFalloutActorInitiateCombat(1, Reaction::Ally));
+        EXPECT_FALSE(MWMechanics::shouldFalloutActorInitiateCombat(1, Reaction::Friend));
+
+        EXPECT_TRUE(MWMechanics::shouldFalloutActorInitiateCombat(2, Reaction::Neutral));
+        EXPECT_TRUE(MWMechanics::shouldFalloutActorInitiateCombat(2, Reaction::Enemy));
+        EXPECT_FALSE(MWMechanics::shouldFalloutActorInitiateCombat(2, Reaction::Ally));
+        EXPECT_FALSE(MWMechanics::shouldFalloutActorInitiateCombat(2, Reaction::Friend));
+
+        for (Reaction reaction : { Reaction::Neutral, Reaction::Enemy, Reaction::Ally, Reaction::Friend })
+            EXPECT_TRUE(MWMechanics::shouldFalloutActorInitiateCombat(3, reaction));
+
+        EXPECT_FALSE(MWMechanics::shouldFalloutActorInitiateCombat(1, std::nullopt));
+        EXPECT_FALSE(MWMechanics::shouldFalloutActorInitiateCombat(2, std::nullopt));
+        EXPECT_TRUE(MWMechanics::shouldFalloutActorInitiateCombat(3, std::nullopt));
+        EXPECT_FALSE(MWMechanics::shouldFalloutActorInitiateCombat(4, Reaction::Enemy));
+    }
+
+    TEST(FalloutCombatTest, KeepsExactGoodspringsSettlerAndEasyPeteAggressionOneNeutralToPlayerFaction)
+    {
+        using Reaction = ESM4::Faction::GroupCombatReaction;
+        constexpr std::uint32_t goodspringsFaction = 0x01104c6e;
+        constexpr std::uint32_t goodspringsDialogueFaction = 0x0116311a;
+        constexpr std::uint32_t goodspringsMilitiaFaction = 0x0115ec58;
+        constexpr std::uint32_t mojaveCivilianDialogueFaction = 0x0113f89b;
+        constexpr std::uint32_t mojaveRancherDialogueFaction = 0x0113f89e;
+
+        std::map<ESM::FormId, ESM4::Faction> factions;
+        for (std::uint32_t value : { goodspringsFaction, goodspringsDialogueFaction, goodspringsMilitiaFaction,
+                 mojaveCivilianDialogueFaction, mojaveRancherDialogueFaction })
+        {
+            ESM4::Faction faction;
+            faction.mId = id(value);
+            factions.emplace(faction.mId, faction);
+        }
+
+        // GSSettlerAM 0x00104f07 delegates factions and AI to GSSettlerAAM 0x00104f02. This is the effective
+        // template membership order; both records author aggression 1 (Enemy only).
+        const std::array actorFactions{ membership(mojaveRancherDialogueFaction),
+            membership(mojaveCivilianDialogueFaction), membership(goodspringsFaction),
+            membership(goodspringsDialogueFaction) };
+        // Exact winning FalloutNV.esm Player NPC_ 0x01000007 membership order, including the inherited note/share
+        // factions and PlayerFaction. None has an authored XNAM relation from either Goodsprings actor fixture.
+        const std::array playerFactions{ membership(0x01047cd7), membership(0x01047cd6), membership(0x01047cd5),
+            membership(0x01047cd4), membership(0x01047cd3), membership(0x01047cd2), membership(0x01047cd1),
+            membership(0x01047cd0), membership(0x01047ccf), membership(0x01047cce), membership(0x01047ccd),
+            membership(0x01047ccc), membership(0x01047ccb), membership(0x01047cca), membership(0x01047cc9),
+            membership(0x01047cc8), membership(0x01047cc7), membership(0x01047cc6), membership(0x01047cc5),
+            membership(0x0101b2a4), membership(0x010c3370), membership(0x0107e712) };
+        const auto reaction = MWMechanics::resolveFalloutFactionReaction(actorFactions, playerFactions,
+            [&](ESM::FormId factionId) -> const ESM4::Faction* {
+                const auto found = factions.find(factionId);
+                return found != factions.end() ? &found->second : nullptr;
+            });
+
+        ASSERT_EQ(reaction, Reaction::Neutral);
+        // FNV aggression 1 means "attack enemies", regardless of conversational distance.
+        EXPECT_FALSE(MWMechanics::shouldFalloutActorInitiateCombat(1, reaction));
+
+        // Easy Pete 0x00104c7f authors aggression 1 and these two SNAM memberships in this order.
+        const std::array easyPeteFactions{ membership(goodspringsMilitiaFaction), membership(goodspringsFaction) };
+        const auto easyPeteReaction = MWMechanics::resolveFalloutFactionReaction(easyPeteFactions, playerFactions,
+            [&](ESM::FormId factionId) -> const ESM4::Faction* {
+                const auto found = factions.find(factionId);
+                return found != factions.end() ? &found->second : nullptr;
+            });
+        ASSERT_EQ(easyPeteReaction, Reaction::Neutral);
+        EXPECT_FALSE(MWMechanics::shouldFalloutActorInitiateCombat(1, easyPeteReaction));
+    }
+
+    TEST(FalloutCombatTest, AggressiveGoodspringsMantisInitiatesAgainstPlayerFaction)
+    {
+        using Reaction = ESM4::Faction::GroupCombatReaction;
+        constexpr std::uint32_t mantisFaction = 0x010e60e2;
+        constexpr std::uint32_t creatureFaction = 0x01000013;
+        constexpr std::uint32_t playerFaction = 0x0101b2a4;
+
+        std::map<ESM::FormId, ESM4::Faction> factions;
+        ESM4::Faction creature;
+        creature.mId = id(creatureFaction);
+        factions.emplace(creature.mId, creature);
+        ESM4::Faction mantis;
+        mantis.mId = id(mantisFaction);
+        mantis.mRelations.push_back({ id(playerFaction), 0, Reaction::Enemy });
+        factions.emplace(mantis.mId, mantis);
+
+        // GSGiantMantisNymph 0x0111d584: prove both normalized memberships are consumed by putting the neutral
+        // CreatureFaction first and the enemy-bearing MantisFaction second.
+        const std::array actorFactions{ membership(creatureFaction), membership(mantisFaction) };
+        const std::array playerFactions{ membership(playerFaction) };
+        const auto reaction = MWMechanics::resolveFalloutFactionReaction(actorFactions, playerFactions,
+            [&](ESM::FormId factionId) -> const ESM4::Faction* {
+                const auto found = factions.find(factionId);
+                return found != factions.end() ? &found->second : nullptr;
+            });
+
+        ASSERT_EQ(reaction, Reaction::Enemy);
+        EXPECT_TRUE(MWMechanics::shouldFalloutActorInitiateCombat(1, reaction));
+    }
+
+    TEST(FalloutCombatTest, UnknownFactionIdentityFailsClosed)
+    {
+        const std::array actorFactions{ membership(0x00dead01) };
+        const std::array playerFactions{ membership(0x0001b2a4) };
+        const auto reaction = MWMechanics::resolveFalloutFactionReaction(
+            actorFactions, playerFactions, [](ESM::FormId) -> const ESM4::Faction* { return nullptr; });
+
+        EXPECT_FALSE(reaction.has_value());
+        EXPECT_FALSE(MWMechanics::shouldFalloutActorInitiateCombat(1, reaction));
+        EXPECT_FALSE(MWMechanics::shouldFalloutActorInitiateCombat(2, reaction));
+    }
+
+    TEST(FalloutCombatTest, ActorWithoutFactionIsNeutralToKnownTargetFaction)
+    {
+        using Reaction = ESM4::Faction::GroupCombatReaction;
+        const std::array<ESM4::ActorFaction, 0> actorFactions{};
+        const std::array playerFactions{ membership(0x0001b2a4) };
+        const auto reaction = MWMechanics::resolveFalloutFactionReaction(
+            actorFactions, playerFactions, [](ESM::FormId) -> const ESM4::Faction* { return nullptr; });
+
+        ASSERT_EQ(reaction, Reaction::Neutral);
+        EXPECT_FALSE(MWMechanics::shouldFalloutActorInitiateCombat(1, reaction));
+        EXPECT_TRUE(MWMechanics::shouldFalloutActorInitiateCombat(2, reaction));
+    }
+
+    TEST(FalloutCombatTest, TargetWithoutFactionIdentityFailsClosed)
+    {
+        const std::array actorFactions{ membership(0x000e60e2) };
+        const std::array<ESM4::ActorFaction, 0> targetFactions{};
+        const auto reaction = MWMechanics::resolveFalloutFactionReaction(
+            actorFactions, targetFactions, [](ESM::FormId) -> const ESM4::Faction* { return nullptr; });
+
+        EXPECT_FALSE(reaction.has_value());
+        EXPECT_FALSE(MWMechanics::shouldFalloutActorInitiateCombat(1, reaction));
+        EXPECT_FALSE(MWMechanics::shouldFalloutActorInitiateCombat(2, reaction));
+    }
+
+    TEST(FalloutCombatTest, AuthoredAllyRelationPreventsConflictingEnemyInitiation)
+    {
+        using Reaction = ESM4::Faction::GroupCombatReaction;
+        constexpr std::uint32_t enemyFaction = 0x01000010;
+        constexpr std::uint32_t sharedFaction = 0x01000020;
+
+        std::map<ESM::FormId, ESM4::Faction> factions;
+        ESM4::Faction enemy;
+        enemy.mId = id(enemyFaction);
+        enemy.mRelations.push_back({ id(sharedFaction), 0, Reaction::Enemy });
+        factions.emplace(enemy.mId, enemy);
+        ESM4::Faction shared;
+        shared.mId = id(sharedFaction);
+        shared.mRelations.push_back({ id(sharedFaction), 0, Reaction::Ally });
+        factions.emplace(shared.mId, shared);
+
+        const std::array actorFactions{ membership(enemyFaction), membership(sharedFaction) };
+        const std::array targetFactions{ membership(sharedFaction) };
+        const auto reaction = MWMechanics::resolveFalloutFactionReaction(actorFactions, targetFactions,
+            [&](ESM::FormId factionId) -> const ESM4::Faction* {
+                const auto found = factions.find(factionId);
+                return found != factions.end() ? &found->second : nullptr;
+            });
+
+        EXPECT_EQ(reaction, Reaction::Ally);
+        EXPECT_FALSE(MWMechanics::shouldFalloutActorInitiateCombat(1, reaction));
+        EXPECT_FALSE(MWMechanics::shouldFalloutActorInitiateCombat(2, reaction));
     }
 
     TEST(FalloutCombatTest, SelectsFirstAvailableAmmoInAuthoredListOrder)

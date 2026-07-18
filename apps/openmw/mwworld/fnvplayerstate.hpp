@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <vector>
 
 #include <components/esm/formid.hpp>
 #include <components/esm4/actor.hpp>
@@ -74,6 +75,7 @@ namespace MWWorld
         ESM::FormId mBaseRecord;
         ESM::FormId mTraitsRecord;
         ESM::FormId mStatsRecord;
+        ESM::FormId mFactionsRecord;
         ESM::FormId mAIDataRecord;
         ESM::FormId mModelRecord;
         ESM::FormId mBaseDataRecord;
@@ -88,6 +90,7 @@ namespace MWWorld
         ESM::FormId mVoiceType;
 
         std::uint32_t mRecordFlags = 0;
+        std::vector<ESM4::ActorFaction> mFactions;
         ESM4::ACBS_FO3 mStatsConfig{};
         ESM4::AIDataFO3 mAIData{};
         std::int32_t mHealth = 0;

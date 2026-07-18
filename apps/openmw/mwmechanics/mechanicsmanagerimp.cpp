@@ -1,6 +1,7 @@
 #include "mechanicsmanagerimp.hpp"
 
 #include <cassert>
+#include <vector>
 
 #include <osg/Stats>
 
@@ -19,6 +20,7 @@
 
 #include "../mwworld/class.hpp"
 #include "../mwworld/esmstore.hpp"
+#include "../mwworld/fnvplayerruntimestate.hpp"
 #include "../mwworld/globals.hpp"
 #include "../mwworld/inventorystore.hpp"
 #include "../mwworld/player.hpp"
@@ -31,6 +33,9 @@
 #include "../mwbase/windowmanager.hpp"
 #include "../mwbase/world.hpp"
 
+#include "../mwclass/esm4creature.hpp"
+#include "../mwclass/esm4npc.hpp"
+
 #include "../mwsound/constants.hpp"
 
 #include "actor.hpp"
@@ -40,11 +45,59 @@
 #include "aipursue.hpp"
 #include "autocalcspell.hpp"
 #include "combat.hpp"
+#include "falloutcombat.hpp"
 #include "npcstats.hpp"
 #include "spellutil.hpp"
 
 namespace
 {
+
+    bool isFalloutNewVegasActor(const MWWorld::Ptr& ptr)
+    {
+        const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
+        if (store == nullptr || store->getESM4Game() != MWWorld::ESM4Game::FalloutNewVegas)
+            return false;
+
+        if (ptr.getType() == ESM4::Npc::sRecordId)
+        {
+            const ESM4::Npc* npc = ptr.get<ESM4::Npc>()->mBase;
+            return npc != nullptr && npc->mIsFONV;
+        }
+        if (ptr.getType() == ESM4::Creature::sRecordId)
+        {
+            const ESM4::Creature* creature = ptr.get<ESM4::Creature>()->mBase;
+            return creature != nullptr && creature->mIsFONV;
+        }
+        return false;
+    }
+
+    std::vector<ESM4::ActorFaction> getFalloutActorFactions(const MWWorld::Ptr& ptr)
+    {
+        // The gameplay player may also satisfy the ESM4 NPC type check, so resolve its runtime proxy before the
+        // generic NPC branch. The proxy preserves the winning Player NPC/template faction list.
+        if (ptr == MWMechanics::getPlayer())
+        {
+            const std::optional<MWWorld::FalloutPlayerState>& state
+                = MWBase::Environment::get().getWorld()->getFalloutPlayerRuntimeState().getBaseState();
+            if (state)
+                return state->mFactions;
+        }
+        if (ptr.getType() == ESM4::Npc::sRecordId)
+        {
+            const ESM4::Npc* factions = MWClass::ESM4Npc::getFactionsRecord(ptr);
+            return factions != nullptr ? factions->mFactions : std::vector<ESM4::ActorFaction>{};
+        }
+        if (ptr.getType() == ESM4::Creature::sRecordId)
+        {
+            const ESM4::Creature* factions = MWClass::ESM4Creature::getFactionsRecord(ptr);
+            if (factions != nullptr && !factions->mFactions.empty())
+                return factions->mFactions;
+            if (factions != nullptr && factions->mFaction.faction != 0)
+                return { factions->mFaction }; // Compatibility for programmatically constructed records.
+            return {};
+        }
+        return {};
+    }
 
     float getFightDispositionBias(float disposition)
     {
@@ -1889,21 +1942,39 @@ namespace MWMechanics
                     > 0))
             return false;
 
-        // Creation Engine aggression 0 means Unaggressive. It is categorical,
-        // not Morrowind's 0..100 Fight score, so disposition/distance biases
-        // must never promote it into spontaneous combat.
+        // Creation Engine aggression is categorical, not Morrowind's 0..100 Fight score. FNV category 1 means
+        // "attack enemies", so feeding it through the proximity bias makes every nearby neutral dialogue actor
+        // hostile. Resolve the already-authored directional faction reaction and keep every Morrowind bias out of
+        // this path.
         const bool isEsm4Actor
             = ptr.getType() == ESM4::Npc::sRecordId || ptr.getType() == ESM4::Creature::sRecordId;
-        const int authoredFight
-            = ptr.getClass().getCreatureStats(ptr).getAiSetting(AiSetting::Fight).getModified();
-        if (isEsm4Actor && authoredFight <= 0)
+        const Stat<int> fightStat = ptr.getClass().getCreatureStats(ptr).getAiSetting(AiSetting::Fight);
+        const int modifiedFight = fightStat.getModified();
+        if (isFalloutNewVegasActor(ptr))
+        {
+            // FNV AIDT aggression is the authored categorical value. Generic Fight modifiers must not promote an
+            // Enemy-only actor into Very Aggressive; Calm is handled explicitly above.
+            const int authoredAggression = fightStat.getBase();
+            if (authoredAggression < 0 || authoredAggression > 3)
+                return false;
+
+            const std::vector<ESM4::ActorFaction> actorFactions = getFalloutActorFactions(ptr);
+            const std::vector<ESM4::ActorFaction> targetFactions = getFalloutActorFactions(target);
+            const MWWorld::Store<ESM4::Faction>& factionStore
+                = MWBase::Environment::get().getESMStore()->get<ESM4::Faction>();
+            const std::optional<ESM4::Faction::GroupCombatReaction> reaction = resolveFalloutFactionReaction(
+                actorFactions, targetFactions,
+                [&](ESM::FormId faction) { return factionStore.search(ESM::RefId(faction)); });
+            return shouldFalloutActorInitiateCombat(static_cast<std::uint8_t>(authoredAggression), reaction);
+        }
+        if (isEsm4Actor && modifiedFight <= 0)
             return false;
 
         int disposition = 50;
         if (ptr.getClass().isNpc())
             disposition = getDerivedDisposition(ptr);
 
-        int fight = authoredFight
+        int fight = modifiedFight
             + static_cast<int>(
                 getFightDistanceBias(ptr, target) + getFightDispositionBias(static_cast<float>(disposition)));
 

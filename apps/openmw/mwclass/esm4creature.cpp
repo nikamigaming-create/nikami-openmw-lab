@@ -1432,6 +1432,11 @@ namespace MWClass
         return result;
     }
 
+    const ESM4::Creature* ESM4Creature::getFactionsRecord(const MWWorld::Ptr& ptr)
+    {
+        return getCustomData(ptr).mTemplates.mFactions;
+    }
+
     std::string_view ESM4Creature::getModel(const MWWorld::ConstPtr& ptr) const
     {
         const ESM4::Creature* base = ptr.get<ESM4::Creature>()->mBase;

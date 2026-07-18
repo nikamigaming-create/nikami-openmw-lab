@@ -162,6 +162,7 @@ namespace ESM4
         std::vector<ESM::FormId> mAIPackages;
         ActorBaseConfig mBaseConfig = {};
         ActorFaction mFaction = {};
+        std::vector<ActorFaction> mFactions;
         Data mData = {};
         FNVData mFNVData = {};
         bool mHasFNVData = false;

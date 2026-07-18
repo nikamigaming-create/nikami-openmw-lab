@@ -37,6 +37,7 @@ namespace
         result.mHair = form(0x2ddee);
         result.mEyes = form(0x4253);
         result.mVoiceType = form(0x2853b);
+        result.mFactions = { ESM4::ActorFaction{ form(0x1b2a4).toUint32(), 0, 0, 0, 0 } };
 
         result.mHasFNVBaseConfig = true;
         result.mBaseConfig.fo3.flags = 0;
@@ -84,6 +85,7 @@ namespace
         EXPECT_EQ(state.mBaseRecord, form(7));
         EXPECT_EQ(state.mTraitsRecord, form(7));
         EXPECT_EQ(state.mStatsRecord, form(7));
+        EXPECT_EQ(state.mFactionsRecord, form(7));
         EXPECT_EQ(state.mAIDataRecord, form(7));
         EXPECT_EQ(state.mModelRecord, form(7));
         EXPECT_EQ(state.mBaseDataRecord, form(7));
@@ -95,6 +97,8 @@ namespace
         EXPECT_EQ(state.mHair, form(0x2ddee));
         EXPECT_EQ(state.mEyes, form(0x4253));
         EXPECT_EQ(state.mVoiceType, form(0x2853b));
+        ASSERT_EQ(state.mFactions.size(), 1);
+        EXPECT_EQ(ESM::FormId::fromUint32(state.mFactions.front().faction), form(0x1b2a4));
         EXPECT_EQ(state.mHealth, 100);
         EXPECT_EQ(state.mStatsConfig.fatigue, 200);
         EXPECT_EQ(state.mStatsConfig.levelOrMult, 1);
@@ -172,12 +176,14 @@ namespace
         const ESM::FormId templateId = form(0x1000);
         player.mBaseTemplate = templateId;
         player.mBaseConfig.fo3.templateFlags = ESM4::Npc::Template_UseTraits | ESM4::Npc::Template_UseStats
-            | ESM4::Npc::Template_UseAIData | ESM4::Npc::Template_UseModel | ESM4::Npc::Template_UseBaseData;
+            | ESM4::Npc::Template_UseFactions | ESM4::Npc::Template_UseAIData | ESM4::Npc::Template_UseModel
+            | ESM4::Npc::Template_UseBaseData;
         player.mHasFNVData = false;
         player.mHasFNVSkills = false;
         player.mHasFNVAIData = false;
         player.mRace = {};
         player.mClass = {};
+        player.mFactions.clear();
         player.mModel.clear();
 
         ESM4::Npc templated = makeCompletePlayer(templateId);
@@ -186,6 +192,7 @@ namespace
         templated.mFNVData.health = 321;
         templated.mFNVData.strength = 8;
         templated.mFNVAIData.aggression = 2;
+        templated.mFactions.front().faction = form(0x2000).toUint32();
         npcs.insertStatic(player);
         npcs.insertStatic(templated);
 
@@ -194,6 +201,7 @@ namespace
         EXPECT_EQ(resolution.mState->mBaseRecord, form(7));
         EXPECT_EQ(resolution.mState->mTraitsRecord, templateId);
         EXPECT_EQ(resolution.mState->mStatsRecord, templateId);
+        EXPECT_EQ(resolution.mState->mFactionsRecord, templateId);
         EXPECT_EQ(resolution.mState->mAIDataRecord, templateId);
         EXPECT_EQ(resolution.mState->mModelRecord, templateId);
         EXPECT_EQ(resolution.mState->mBaseDataRecord, templateId);
@@ -201,6 +209,8 @@ namespace
         EXPECT_EQ(resolution.mState->mHealth, 321);
         EXPECT_EQ(resolution.mState->getSpecial(MWWorld::FalloutSpecial::Strength), 8);
         EXPECT_EQ(resolution.mState->mAIData.aggression, 2);
+        ASSERT_EQ(resolution.mState->mFactions.size(), 1);
+        EXPECT_EQ(ESM::FormId::fromUint32(resolution.mState->mFactions.front().faction), form(0x2000));
     }
 
     TEST(FalloutPlayerStateTest, templateCyclesAndMissingTemplatesFailClosed)

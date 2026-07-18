@@ -90,6 +90,8 @@ namespace MWClass
         void readAdditionalState(const MWWorld::Ptr& ptr, const ESM::ObjectState& state) const override;
         void writeAdditionalState(const MWWorld::ConstPtr& ptr, ESM::ObjectState& state) const override;
 
+        static const ESM4::Creature* getFactionsRecord(const MWWorld::Ptr& ptr);
+
         /// Validate all fallible FNV creature payload data before LiveCellRef applies the enclosing CellRef/RefData.
         static bool validateState(const ESM4::Creature& creature, const ESM::CreatureState& state,
             const MWWorld::ESMStore& store, std::string& error);

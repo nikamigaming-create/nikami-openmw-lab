@@ -101,9 +101,14 @@ void ESM4::Creature::load(ESM4::Reader& reader)
                 reader.getFormId(mAIPackages.emplace_back());
                 break;
             case ESM::fourCC("SNAM"):
-                reader.get(mFaction);
-                reader.adjustFormId(mFaction.faction);
+            {
+                ActorFaction faction{};
+                reader.get(faction);
+                reader.adjustFormId(faction.faction);
+                mFaction = faction;
+                mFactions.push_back(faction);
                 break;
+            }
             case ESM::fourCC("INAM"):
                 reader.getFormId(mDeathItem);
                 break;

@@ -139,6 +139,10 @@ namespace MWWorld
         const CategoryResolution stats = resolveCategory(npcs, *player, ESM4::Npc::Template_UseStats, "stats");
         if (stats.mRecord == nullptr)
             return failure(stats.mError);
+        const CategoryResolution factions
+            = resolveCategory(npcs, *player, ESM4::Npc::Template_UseFactions, "factions");
+        if (factions.mRecord == nullptr)
+            return failure(factions.mError);
         const CategoryResolution ai = resolveCategory(npcs, *player, ESM4::Npc::Template_UseAIData, "AI data");
         if (ai.mRecord == nullptr)
             return failure(ai.mError);
@@ -170,6 +174,7 @@ namespace MWWorld
         result.mBaseRecord = player->mId;
         result.mTraitsRecord = traits.mRecord->mId;
         result.mStatsRecord = stats.mRecord->mId;
+        result.mFactionsRecord = factions.mRecord->mId;
         result.mAIDataRecord = ai.mRecord->mId;
         result.mModelRecord = model.mRecord->mId;
         result.mBaseDataRecord = baseData.mRecord->mId;
@@ -182,6 +187,7 @@ namespace MWWorld
         result.mEyes = traits.mRecord->mEyes;
         result.mVoiceType = traits.mRecord->mVoiceType;
         result.mRecordFlags = baseData.mRecord->mFlags;
+        result.mFactions = factions.mRecord->mFactions;
         result.mStatsConfig = stats.mRecord->mBaseConfig.fo3;
         result.mAIData = ai.mRecord->mFNVAIData;
         result.mHealth = stats.mRecord->mFNVData.health;

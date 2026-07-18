@@ -1,12 +1,80 @@
 #include "falloutcombat.hpp"
 
+#include <algorithm>
 #include <cmath>
+#include <vector>
 
 #include <components/esm4/loadproj.hpp>
 #include <components/esm4/loadweap.hpp>
 
 namespace MWMechanics
 {
+    std::optional<ESM4::Faction::GroupCombatReaction> resolveFalloutFactionReaction(
+        std::span<const ESM4::ActorFaction> actorFactions, std::span<const ESM4::ActorFaction> targetFactions,
+        const FalloutFactionLookup& findFaction)
+    {
+        std::vector<ESM::FormId> targetIds;
+        targetIds.reserve(targetFactions.size());
+        for (const ESM4::ActorFaction& membership : targetFactions)
+        {
+            const ESM::FormId id = ESM::FormId::fromUint32(membership.faction);
+            if (!id.isZeroOrUnset())
+                targetIds.push_back(id);
+        }
+        if (targetIds.empty())
+            return std::nullopt;
+
+        auto result = ESM4::Faction::GroupCombatReaction::Neutral;
+        for (const ESM4::ActorFaction& membership : actorFactions)
+        {
+            const ESM::FormId actorFactionId = ESM::FormId::fromUint32(membership.faction);
+            if (actorFactionId.isZeroOrUnset())
+                continue;
+
+            const ESM4::Faction* faction = findFaction(actorFactionId);
+            if (faction == nullptr)
+                return std::nullopt;
+
+            for (const ESM4::Faction::Relation& relation : faction->mRelations)
+            {
+                if (std::find(targetIds.begin(), targetIds.end(), relation.mFaction) == targetIds.end())
+                    continue;
+
+                // Native StartCombat treats any authored Ally/Friend pairing as non-hostile even when another
+                // membership is Enemy. Preserve that contract across all directional faction pairs.
+                if (relation.mGroupCombatReaction == ESM4::Faction::GroupCombatReaction::Friend)
+                    result = ESM4::Faction::GroupCombatReaction::Friend;
+                else if (relation.mGroupCombatReaction == ESM4::Faction::GroupCombatReaction::Ally
+                    && result != ESM4::Faction::GroupCombatReaction::Friend)
+                    result = ESM4::Faction::GroupCombatReaction::Ally;
+                else if (relation.mGroupCombatReaction == ESM4::Faction::GroupCombatReaction::Enemy
+                    && result == ESM4::Faction::GroupCombatReaction::Neutral)
+                    result = ESM4::Faction::GroupCombatReaction::Enemy;
+            }
+        }
+
+        return result;
+    }
+
+    bool shouldFalloutActorInitiateCombat(
+        std::uint8_t aggression, std::optional<ESM4::Faction::GroupCombatReaction> reaction)
+    {
+        switch (aggression)
+        {
+            case 0:
+                return false;
+            case 1:
+                return reaction == ESM4::Faction::GroupCombatReaction::Enemy;
+            case 2:
+                return reaction == ESM4::Faction::GroupCombatReaction::Enemy
+                    || reaction == ESM4::Faction::GroupCombatReaction::Neutral;
+            case 3:
+                return true;
+            default:
+                return false;
+        }
+    }
+
     std::optional<ESM::FormId> selectAuthoredFalloutAmmo(std::span<const ESM::FormId> candidates,
         std::uint8_t rounds, const FalloutAmmoTypePredicate& isAmmo, const FalloutAmmoCount& countAmmo)
     {
