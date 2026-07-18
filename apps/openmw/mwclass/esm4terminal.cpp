@@ -50,7 +50,7 @@ namespace MWClass
         const bool isTerminal = hasTarget && ptr.getType() == ESM::REC_TERM4;
         const MWWorld::LiveCellRef<ESM4::Terminal>* live = isTerminal ? ptr.get<ESM4::Terminal>() : nullptr;
         const MWWorld::FnvTerminalSessionSource source{ store.getESM4Game(), hasTarget ? ptr.getType() : 0u,
-            hasTarget && ptr.mRef->isDeleted(), live != nullptr ? live->mBase : nullptr };
+            hasTarget && ptr.mRef->isDeleted(), live != nullptr ? live->mBase : nullptr, &store };
 
         MWWorld::FnvTerminalPreparationError error = MWWorld::FnvTerminalPreparationError::None;
         std::optional<MWWorld::PreparedTerminalSession> session = MWWorld::prepareFnvTerminalSession(source, &error);

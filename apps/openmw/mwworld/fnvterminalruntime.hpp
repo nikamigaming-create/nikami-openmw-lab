@@ -15,6 +15,7 @@ namespace ESM4
 
 namespace MWWorld
 {
+    class ESMStore;
     enum class ESM4Game;
 
     struct FnvTerminalSessionSource
@@ -23,6 +24,7 @@ namespace MWWorld
         unsigned int mRecordType;
         bool mDeleted;
         const ESM4::Terminal* mTerminal;
+        const ESMStore* mStore = nullptr;
     };
 
     enum class FnvTerminalPreparationError
@@ -37,6 +39,8 @@ namespace MWWorld
         UnsupportedTopLevelField,
         UnsupportedDataShape,
         UnsupportedMenuItem,
+        MissingDisplayNote,
+        UnsupportedDisplayNote,
     };
 
     class FnvTerminalSessionBuilder;
@@ -46,8 +50,10 @@ namespace MWWorld
         const std::string mText;
         const std::string mResultText;
         const bool mRedraw;
+        const std::optional<ESM::FormId> mDisplayNote;
 
-        PreparedTerminalMenuItem(std::string text, std::string resultText, bool redraw);
+        PreparedTerminalMenuItem(
+            std::string text, std::string resultText, bool redraw, std::optional<ESM::FormId> displayNote);
 
         friend class FnvTerminalSessionBuilder;
 
@@ -55,6 +61,7 @@ namespace MWWorld
         std::string_view getText() const { return mText; }
         std::string_view getResultText() const { return mResultText; }
         bool redrawsMenu() const { return mRedraw; }
+        std::optional<ESM::FormId> getDisplayNote() const { return mDisplayNote; }
     };
 
     /// A fully preflighted, read-only terminal interaction. There are no

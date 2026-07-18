@@ -3,6 +3,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <type_traits>
@@ -12,6 +13,7 @@
 #include <components/esm/defs.hpp>
 #include <components/esm/formid.hpp>
 #include <components/esm4/common.hpp>
+#include <components/esm4/loadnote.hpp>
 #include <components/esm4/loadterm.hpp>
 
 #include "apps/openmw/mwworld/actionesm4terminal.hpp"
@@ -59,6 +61,51 @@ namespace
             { 0x00, 0x02, 0x04, 0x00 }, "Compose Automated Blast Message", "System Offline...", 0);
     }
 
+    ESM4::Note makeTextDisplayNote(ESM::FormId id, std::string text)
+    {
+        ESM4::Note note;
+        note.mId = id;
+        note.mEditorId = "FrozenTerminalDisplayNote";
+        note.mData = 1;
+        note.mText = std::move(text);
+        return note;
+    }
+
+    struct FrozenMenuItem
+    {
+        std::string_view mText;
+        std::string_view mResultText;
+        std::uint8_t mFlags;
+        std::optional<ESM::FormId> mDisplayNote;
+    };
+
+    ESM4::Terminal makeDisplayNoteTerminal(ESM::FormId id, std::string_view editorId, std::string_view description,
+        bool deadMoney, const std::vector<FrozenMenuItem>& menuItems)
+    {
+        ESM4::Terminal terminal = makeStrictTerminal(id, editorId, description,
+            deadMoney ? std::array<std::uint8_t, 4>{ 0x00, 0x02, 0x08, 0x00 }
+                      : std::array<std::uint8_t, 4>{ 0x00, 0x02, 0x04, 0x00 },
+            "placeholder", "placeholder result", 0, deadMoney);
+        terminal.mMenuItems.clear();
+        for (const FrozenMenuItem& frozenItem : menuItems)
+        {
+            ESM4::Terminal::MenuItem item
+                = makeStrictMenuItem(frozenItem.mText, frozenItem.mResultText, frozenItem.mFlags);
+            item.mDisplayNote = frozenItem.mDisplayNote;
+            terminal.mMenuItems.push_back(std::move(item));
+        }
+        terminal.mResultText = terminal.mMenuItems.back().mResultText;
+        return terminal;
+    }
+
+    ESM4::Terminal makeSingleDisplayNoteTerminal(
+        ESM::FormId id, bool deadMoney, ESM::FormId displayNote, std::string_view itemText = "Read entry")
+    {
+        return makeDisplayNoteTerminal(id, "SyntheticSingleDisplayNoteTerminal", "Read-only terminal", deadMoney,
+            { { itemText, deadMoney ? "Displaying log..." : "Opening Message...",
+                static_cast<std::uint8_t>(deadMoney ? 2 : 0), displayNote } });
+    }
+
     ESM4::Terminal makeDeadMoneyRetailTerminalC()
     {
         // DeadMoney.esm TERM 0100F2CB, placed by REFR 0100F2D6.
@@ -79,15 +126,16 @@ namespace
             "Dealer 2 Servicing Blackjack Table A.", 0, true);
     }
 
-    MWWorld::FnvTerminalSessionSource sourceFor(const ESM4::Terminal& terminal)
+    MWWorld::FnvTerminalSessionSource sourceFor(
+        const ESM4::Terminal& terminal, const MWWorld::ESMStore* store = nullptr)
     {
-        return { MWWorld::ESM4Game::FalloutNewVegas, ESM::REC_TERM4, false, &terminal };
+        return { MWWorld::ESM4Game::FalloutNewVegas, ESM::REC_TERM4, false, &terminal, store };
     }
 
-    std::optional<MWWorld::PreparedTerminalSession> prepare(
-        const ESM4::Terminal& terminal, MWWorld::FnvTerminalPreparationError* error = nullptr)
+    std::optional<MWWorld::PreparedTerminalSession> prepare(const ESM4::Terminal& terminal,
+        MWWorld::FnvTerminalPreparationError* error = nullptr, const MWWorld::ESMStore* store = nullptr)
     {
-        return MWWorld::prepareFnvTerminalSession(sourceFor(terminal), error);
+        return MWWorld::prepareFnvTerminalSession(sourceFor(terminal, store), error);
     }
 
     class RecordingPresenter final : public MWWorld::TerminalSessionPresenter
@@ -151,6 +199,227 @@ TEST(FnvTerminalRuntimeTest, PreparesExactlyDecodedThreeItemOfficialSubset)
         EXPECT_EQ(session->getMenuItems()[0].getResultText(), expected.mResult);
         EXPECT_EQ(session->getMenuItems()[0].redrawsMenu(), expected.mRedraw);
     }
+}
+
+TEST(FnvTerminalRuntimeTest, PreparesExactFrozenTextNoteOnlyNumerator)
+{
+    struct FrozenNote
+    {
+        ESM::FormId mId;
+        std::string_view mPayloadSha256;
+        std::string_view mTextSha256;
+        std::size_t mTextBytes;
+    };
+    struct FrozenTerminal
+    {
+        ESM::FormId mId;
+        ESM::FormId mPlacement;
+        std::string_view mEditorId;
+        std::string_view mDescription;
+        std::string_view mPayloadSha256;
+        bool mDeadMoney;
+        std::vector<FrozenMenuItem> mMenuItems;
+        std::string_view mFinalResultText;
+    };
+
+    // These raw-record and text hashes are provenance anchors from the
+    // hash-verified frozen English Ultimate Edition corpus. Synthetic text is
+    // used below so this unit test does not embed the copyrighted transcripts.
+    const std::vector<FrozenNote> notes{
+        { ESM::FormId::fromUint32(0x000fc9c1), "2a9369098b4f006059f9de8fffb19295f6d0508de8f130514a397452d1a56dcd",
+            "3dfde03741c9688aca3be1e92c229a768c43fe4952cef59ea41d36cdf80d4618", 253 },
+        { ESM::FormId::fromUint32(0x000fc9c2), "92da0a3e2efb9b88884f51a8cf5b97376d635ad56340ce99610d686d1fb2144e",
+            "96e32566f0320639f80bb422a8d7d037599c1b3509b2914b9f74bbcf5c720e97", 362 },
+        { ESM::FormId::fromUint32(0x000fc9c3), "f8adcc9ad91a77d19f5d26ffbbe8ac4f085305280aedc91517cb9349b4d7dc28",
+            "0bb7d5dbeecfa2553efacf3aed0b5d0ac7c672d9018f99549262c2f6c5841408", 577 },
+        { ESM::FormId::fromUint32(0x000fc9c4), "e8cfed7d487e2916d60484fd25e23cba58c54af201a2df93117d567f9f4c016b",
+            "de2f5089689002df9319f4b751be7d71e114510414c38b4881ee14a70fa1cae3", 385 },
+        { ESM::FormId::fromUint32(0x000fd774), "f9f0c12a42063df7764ac6388eb19475bf95715abcc6d8965798f9d771e29eb5",
+            "1328e0005a2e717cce3f41e4452dd631edc409b4ebe52224a7f5bc65483d454d", 774 },
+        { ESM::FormId::fromUint32(0x000fd775), "bdb1e07b65b07389bf9c033e1f10342bb842f7a27b557350fd7b1ee50e8624f2",
+            "0a1625b3f5029876d25cf4bfe87783f63fcd97f6dc8ae0f24ec183974bfa7c3c", 245 },
+        { ESM::FormId::fromUint32(0x000fd776), "8566d32bda84b8c52b51200082f0f8e055ef7e8d5a936f2f9ac1138334cfd673",
+            "05c517fd2f4bada1e27e2d2a29267dc6b3b4ab9257a0fd5574d1b4a5e133dd23", 519 },
+        { ESM::FormId::fromUint32(0x01011b02), "4b9af0dc72a44437c8782fcba83cd0b3259c0ea1322306a121c3b3c4a42db462",
+            "47bf97dca884a24bdb78aa1ef0d715086bee99971bbe9d9b2353d1a4a547d113", 453 },
+        { ESM::FormId::fromUint32(0x01011b03), "eb2bba61018a0203e8aa9ab321f6bed1db29136a34c4f0b414e70788d30fc135",
+            "b8dd5884e7164b7a5b79d155c81aaa3227c7a459d9a627c635226208c8c84328", 1096 },
+        { ESM::FormId::fromUint32(0x010121fe), "d329c9256c45ed3e677046371d4bdd105f11829f27bfe3b40c125dc9ac3c3f0b",
+            "1021ce755ddfc9687c503f5f8097e2b02ea82ceeb323a4ce726bfa6aeb09e8cd", 542 },
+    };
+
+    // Exact ITXT/RNAM/ANAM/INAM order from the four official TERM payloads.
+    // The last RNAM is also loadterm's compatibility mResultText mirror.
+    const std::vector<FrozenTerminal> terminals{
+        { ESM::FormId::fromUint32(0x000fd76b), ESM::FormId::fromUint32(0x000f5165), "V03LincolnTerminal",
+            "Lincoln Davis", "77238c6a2c1019e4267b5a5b6ca7d5283d77ac0bb0421bbbf6d930cfa172333b", false,
+            { { "The Water Situation", "Opening Message...", 0, ESM::FormId::fromUint32(0x000fd774) },
+                { "External Relations", "Opening Message...", 0, ESM::FormId::fromUint32(0x000fd775) },
+                { "Your Endorsement", "Opening Message...", 0, ESM::FormId::fromUint32(0x000fd776) } },
+            "Opening Message..." },
+        { ESM::FormId::fromUint32(0x000fc9b9), ESM::FormId::fromUint32(0x000f5131), "V03VincentTerminal",
+            "Vincent Vanmiller\r\nMaintenance Chief",
+            "4219ceef79251850e93f337435fcc4a8cd9a45cf0269e73a1d9b054550119b31", false,
+            { { "Water Leak", "Opening Message...", 0, ESM::FormId::fromUint32(0x000fc9c3) },
+                { "Dinner?", "Opening Message...", 0, ESM::FormId::fromUint32(0x000fc9c4) },
+                { "Re: Dinner?", "Opening Message...", 0, ESM::FormId::fromUint32(0x000fc9c1) },
+                { "Thank You!", "Opening Message...", 0, ESM::FormId::fromUint32(0x000fc9c2) } },
+            "Opening Message..." },
+        { ESM::FormId::fromUint32(0x010121fb), ESM::FormId::fromUint32(0x010121ff), "NVDLC01CasinoOfficeTerminal",
+            "Sierra Madre Security Network\r\n", "234dc706162327391156824cb0a0a62cbb228f509a5bdfa7204c1c25453cb989",
+            true, { { "Security Measure Meeting", "Displaying log...", 2, ESM::FormId::fromUint32(0x010121fe) } },
+            "Displaying log..." },
+        { ESM::FormId::fromUint32(0x0100f2ca), ESM::FormId::fromUint32(0x0100f2d5), "NVDLC01HoloCasinoTerminalBHost",
+            "Sierra Madre Host Services Network\r\n",
+            "0df91c1612c1a9025b983d3aab2dcae6656d549204c73b1b21336afd3e745537", true,
+            { { "Check Hologram Status", "Cashier is currently active.", 2, std::nullopt },
+                { "Security Log 1", "Displaying log...", 2, ESM::FormId::fromUint32(0x01011b03) },
+                { "Security Log 2", "Displaying log...", 2, ESM::FormId::fromUint32(0x01011b02) } },
+            "Displaying log..." },
+    };
+
+    MWWorld::ESMStore store;
+    const auto syntheticText = [](ESM::FormId id) { return "Frozen DATA=1 text " + std::to_string(id.toUint32()); };
+    for (const FrozenNote& frozen : notes)
+    {
+        SCOPED_TRACE(frozen.mPayloadSha256);
+        EXPECT_EQ(frozen.mPayloadSha256.size(), 64);
+        EXPECT_EQ(frozen.mTextSha256.size(), 64);
+        EXPECT_GT(frozen.mTextBytes, 0);
+        ESM4::Note note = makeTextDisplayNote(frozen.mId, syntheticText(frozen.mId));
+        EXPECT_EQ(note.mData, 1);
+        EXPECT_TRUE(note.mImage.empty());
+        EXPECT_TRUE(note.mVoiceTopic.isZeroOrUnset());
+        EXPECT_TRUE(note.mVoiceSpeaker.isZeroOrUnset());
+        EXPECT_TRUE(note.mQuests.empty());
+        store.overrideRecord(note);
+    }
+
+    std::size_t linkedNotes = 0;
+    std::size_t preparedItems = 0;
+    for (const FrozenTerminal& frozen : terminals)
+    {
+        SCOPED_TRACE(frozen.mPayloadSha256);
+        const ESM4::Terminal terminal = makeDisplayNoteTerminal(
+            frozen.mId, frozen.mEditorId, frozen.mDescription, frozen.mDeadMoney, frozen.mMenuItems);
+        EXPECT_FALSE(frozen.mPlacement.isZeroOrUnset());
+        EXPECT_EQ(frozen.mPayloadSha256.size(), 64);
+        EXPECT_EQ(terminal.mResultText, frozen.mFinalResultText);
+        MWWorld::FnvTerminalPreparationError error = MWWorld::FnvTerminalPreparationError::UnsupportedDisplayNote;
+        const std::optional<MWWorld::PreparedTerminalSession> session = prepare(terminal, &error, &store);
+        ASSERT_TRUE(session.has_value());
+        EXPECT_EQ(error, MWWorld::FnvTerminalPreparationError::None);
+        EXPECT_EQ(session->getTerminal(), frozen.mId);
+        EXPECT_EQ(session->getDescription(), frozen.mDescription);
+        ASSERT_EQ(session->getMenuItems().size(), frozen.mMenuItems.size());
+        preparedItems += session->getMenuItems().size();
+
+        for (std::size_t i = 0; i < frozen.mMenuItems.size(); ++i)
+        {
+            const FrozenMenuItem& expected = frozen.mMenuItems[i];
+            const MWWorld::PreparedTerminalMenuItem& actual = session->getMenuItems()[i];
+            EXPECT_EQ(actual.getText(), expected.mText);
+            EXPECT_EQ(actual.redrawsMenu(), expected.mFlags == 2);
+            EXPECT_EQ(actual.getDisplayNote(), expected.mDisplayNote);
+            if (expected.mDisplayNote.has_value())
+            {
+                EXPECT_EQ(actual.getResultText(), syntheticText(*expected.mDisplayNote));
+                ++linkedNotes;
+            }
+            else
+                EXPECT_EQ(actual.getResultText(), expected.mResultText);
+        }
+    }
+
+    EXPECT_EQ(notes.size(), 10);
+    EXPECT_EQ(terminals.size(), 4);
+    EXPECT_EQ(linkedNotes, 10);
+    EXPECT_EQ(preparedItems, 11);
+}
+
+TEST(FnvTerminalRuntimeTest, RejectsMissingAndUnsupportedDisplayNotesBeforePresentation)
+{
+    const ESM::FormId noteId = ESM::FormId::fromUint32(0x000fd774);
+    ESM4::Terminal terminal = makeSingleDisplayNoteTerminal(ESM::FormId::fromUint32(0x000fd76b), false, noteId);
+    MWWorld::FnvTerminalPreparationError error = MWWorld::FnvTerminalPreparationError::None;
+
+    EXPECT_FALSE(prepare(terminal, &error));
+    EXPECT_EQ(error, MWWorld::FnvTerminalPreparationError::MissingDisplayNote);
+
+    MWWorld::ESMStore emptyStore;
+    EXPECT_FALSE(prepare(terminal, &error, &emptyStore));
+    EXPECT_EQ(error, MWWorld::FnvTerminalPreparationError::MissingDisplayNote);
+
+    const auto expectUnsupported = [&](std::string_view label, ESM4::Note note) {
+        SCOPED_TRACE(label);
+        MWWorld::ESMStore store;
+        store.overrideRecord(note);
+        EXPECT_FALSE(prepare(terminal, &error, &store));
+        EXPECT_EQ(error, MWWorld::FnvTerminalPreparationError::UnsupportedDisplayNote);
+    };
+
+    ESM4::Note note = makeTextDisplayNote(noteId, "");
+    expectUnsupported("empty DATA=1 text", note);
+    note = makeTextDisplayNote(noteId, std::string("embedded\0text", 13));
+    expectUnsupported("embedded NUL text", note);
+    note = makeTextDisplayNote(noteId, "text");
+    note.mData = 0;
+    expectUnsupported("DATA=0", note);
+    note.mData = 2;
+    note.mImage = "Architecture\\Urban\\MetroMap.dds";
+    expectUnsupported("DATA=2 image", note);
+    note = makeTextDisplayNote(noteId, "text");
+    note.mData = 3;
+    note.mVoiceTopic = ESM::FormId::fromUint32(0x000e9abb);
+    note.mVoiceSpeaker = ESM::FormId::fromUint32(0x000e9ac0);
+    expectUnsupported("DATA=3 voice", note);
+    note = makeTextDisplayNote(noteId, "text");
+    note.mImage = "forbidden.dds";
+    expectUnsupported("DATA=1 with image state", note);
+    note = makeTextDisplayNote(noteId, "text");
+    note.mVoiceTopic = ESM::FormId::fromUint32(0x000e9abb);
+    expectUnsupported("DATA=1 with voice state", note);
+    note = makeTextDisplayNote(noteId, "text");
+    note.mQuests.push_back(ESM::FormId::fromUint32(0x00000001));
+    expectUnsupported("DATA=1 with quest state", note);
+    note = makeTextDisplayNote(noteId, "text");
+    note.mFlags = ESM4::Rec_Deleted;
+    expectUnsupported("non-live NOTE flags", note);
+
+    MWWorld::ESMStore validStore;
+    validStore.overrideRecord(makeTextDisplayNote(noteId, "Prepared text"));
+    terminal.mMenuItems.push_back(makeStrictMenuItem("Later bad item", "Must not render", 0));
+    terminal.mMenuItems.back().mConditions.emplace_back();
+    terminal.mResultText = terminal.mMenuItems.back().mResultText;
+    const std::optional<MWWorld::PreparedTerminalSession> rejected = prepare(terminal, &error, &validStore);
+    EXPECT_FALSE(rejected.has_value());
+    EXPECT_EQ(error, MWWorld::FnvTerminalPreparationError::UnsupportedMenuItem);
+
+    RecordingPresenter presenter;
+    if (rejected)
+        (void)MWWorld::runPreparedTerminalSession(*rejected, presenter);
+    EXPECT_TRUE(presenter.mCalls.empty());
+}
+
+TEST(FnvTerminalRuntimeTest, PresentsPreparedTextNoteThroughExistingReadOnlyPath)
+{
+    const ESM::FormId noteId = ESM::FormId::fromUint32(0x010121fe);
+    ESM4::Note note = makeTextDisplayNote(noteId, "Security meeting transcript");
+    MWWorld::ESMStore store;
+    store.overrideRecord(note);
+    ESM4::Terminal terminal = makeSingleDisplayNoteTerminal(ESM::FormId::fromUint32(0x010121fb), true, noteId);
+    const std::optional<MWWorld::PreparedTerminalSession> session = prepare(terminal, nullptr, &store);
+    ASSERT_TRUE(session.has_value());
+
+    RecordingPresenter presenter;
+    presenter.mResponses = { 0, 0, -1 };
+    EXPECT_EQ(MWWorld::runPreparedTerminalSession(*session, presenter), MWWorld::TerminalSessionRunResult::Cancelled);
+    ASSERT_EQ(presenter.mCalls.size(), 3);
+    EXPECT_EQ(presenter.mCalls[0].mMessage, "Read-only terminal");
+    EXPECT_EQ(presenter.mCalls[1].mMessage, "Security meeting transcript");
+    EXPECT_EQ(presenter.mCalls[2].mMessage, "Read-only terminal");
+    EXPECT_EQ(note.mText, "Security meeting transcript");
+    EXPECT_EQ(*terminal.mMenuItems[0].mDisplayNote, noteId);
 }
 
 TEST(FnvTerminalRuntimeTest, RejectsNonFnvMissingWrongAndDeletedTargets)
@@ -271,8 +540,6 @@ TEST(FnvTerminalRuntimeTest, RejectsEveryUnsupportedMenuFieldAndNonemptyScriptBo
     expectUnsupported("empty RNAM", [](ESM4::Terminal::MenuItem& item) { item.mResultText.clear(); });
     expectUnsupported("ANAM 1", [](ESM4::Terminal::MenuItem& item) { item.mFlags = 1; });
     expectUnsupported("ANAM 3", [](ESM4::Terminal::MenuItem& item) { item.mFlags = 3; });
-    expectUnsupported(
-        "INAM", [](ESM4::Terminal::MenuItem& item) { item.mDisplayNote = ESM::FormId::fromUint32(0x00000100); });
     expectUnsupported(
         "TNAM", [](ESM4::Terminal::MenuItem& item) { item.mSubmenu = ESM::FormId::fromUint32(0x00000101); });
     expectUnsupported("CTDA", [](ESM4::Terminal::MenuItem& item) { item.mConditions.emplace_back(); });

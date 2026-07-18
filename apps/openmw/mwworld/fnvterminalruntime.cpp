@@ -5,6 +5,8 @@
 #include <utility>
 
 #include <components/esm/defs.hpp>
+#include <components/esm/refid.hpp>
+#include <components/esm4/loadnote.hpp>
 #include <components/esm4/loadterm.hpp>
 
 #include "esmstore.hpp"
@@ -56,9 +58,10 @@ namespace MWWorld
     class FnvTerminalSessionBuilder
     {
     public:
-        static PreparedTerminalMenuItem makeMenuItem(std::string text, std::string resultText, bool redraw)
+        static PreparedTerminalMenuItem makeMenuItem(std::string text, std::string resultText, bool redraw,
+            std::optional<ESM::FormId> displayNote = std::nullopt)
         {
-            return PreparedTerminalMenuItem(std::move(text), std::move(resultText), redraw);
+            return PreparedTerminalMenuItem(std::move(text), std::move(resultText), redraw, std::move(displayNote));
         }
 
         static PreparedTerminalSession makeSession(
@@ -68,10 +71,12 @@ namespace MWWorld
         }
     };
 
-    PreparedTerminalMenuItem::PreparedTerminalMenuItem(std::string text, std::string resultText, bool redraw)
+    PreparedTerminalMenuItem::PreparedTerminalMenuItem(
+        std::string text, std::string resultText, bool redraw, std::optional<ESM::FormId> displayNote)
         : mText(std::move(text))
         , mResultText(std::move(resultText))
         , mRedraw(redraw)
+        , mDisplayNote(std::move(displayNote))
     {
     }
 
@@ -86,10 +91,12 @@ namespace MWWorld
     std::optional<PreparedTerminalSession> prepareFnvTerminalSession(
         const FnvTerminalSessionSource& source, FnvTerminalPreparationError* error)
     {
-        // Frozen English Ultimate Edition numerator: 3/1,350 menu items,
-        // 3/515 winning live TERM records, and 3/357 placed terminal REFRs.
-        // This is runtime coverage only: no retail visual parity or certified
-        // subsystem parity is claimed.
+        // Frozen English Ultimate Edition numerator: 14/1,350 menu items,
+        // 7/515 winning live TERM records, and 7/357 placed terminal REFRs.
+        // Ten of those items are DATA=1 NOTE links on exactly four TERM records
+        // and four placements; the other four items retain the pre-existing
+        // RNAM path. This is runtime coverage only: no retail visual parity or
+        // certified subsystem parity is claimed.
         if (error != nullptr)
             *error = FnvTerminalPreparationError::None;
 
@@ -122,13 +129,37 @@ namespace MWWorld
         preparedItems.reserve(terminal.mMenuItems.size());
         for (const ESM4::Terminal::MenuItem& item : terminal.mMenuItems)
         {
-            if (!hasRenderableText(item.mText) || !hasRenderableText(item.mResultText)
-                || (item.mFlags != 0 && item.mFlags != 2) || item.mDisplayNote.has_value() || item.mSubmenu.has_value()
+            if (!hasRenderableText(item.mText) || (item.mFlags != 0 && item.mFlags != 2) || item.mSubmenu.has_value()
                 || !item.mConditions.empty() || !isStrictEmptyScript(item.mScript))
                 return fail(FnvTerminalPreparationError::UnsupportedMenuItem, error);
 
-            preparedItems.push_back(
-                FnvTerminalSessionBuilder::makeMenuItem(item.mText, item.mResultText, item.mFlags == 2));
+            std::string resultText;
+            std::optional<ESM::FormId> displayNote;
+            if (item.mDisplayNote.has_value())
+            {
+                if (source.mStore == nullptr)
+                    return fail(FnvTerminalPreparationError::MissingDisplayNote, error);
+                const ESM4::Note* note = source.mStore->get<ESM4::Note>().search(ESM::RefId(*item.mDisplayNote));
+                if (note == nullptr)
+                    return fail(FnvTerminalPreparationError::MissingDisplayNote, error);
+                if (note->mId != *item.mDisplayNote || note->mFlags != 0 || note->mData != 1
+                    || !hasRenderableText(note->mText) || !note->mImage.empty() || !note->mVoiceTopic.isZeroOrUnset()
+                    || !note->mVoiceSpeaker.isZeroOrUnset() || !note->mQuests.empty())
+                {
+                    return fail(FnvTerminalPreparationError::UnsupportedDisplayNote, error);
+                }
+                resultText = note->mText;
+                displayNote = *item.mDisplayNote;
+            }
+            else
+            {
+                if (!hasRenderableText(item.mResultText))
+                    return fail(FnvTerminalPreparationError::UnsupportedMenuItem, error);
+                resultText = item.mResultText;
+            }
+
+            preparedItems.push_back(FnvTerminalSessionBuilder::makeMenuItem(
+                item.mText, std::move(resultText), item.mFlags == 2, std::move(displayNote)));
         }
 
         // loadterm keeps this compatibility mirror synchronized with the final
@@ -164,6 +195,10 @@ namespace MWWorld
                 return "unsupported-data-shape";
             case FnvTerminalPreparationError::UnsupportedMenuItem:
                 return "unsupported-menu-item";
+            case FnvTerminalPreparationError::MissingDisplayNote:
+                return "missing-display-note";
+            case FnvTerminalPreparationError::UnsupportedDisplayNote:
+                return "unsupported-display-note";
         }
         return "unknown";
     }
