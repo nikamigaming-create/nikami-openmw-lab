@@ -216,6 +216,25 @@ namespace
         Nif::BSShaderTextureSet mTextureSet;
     };
 
+    struct FalloutPPLightingSiblingGeometry
+    {
+        FalloutPPLightingSiblingGeometry()
+            : mWindow(
+                  Nif::BSShaderFlags1::BSSFlag1_WindowEnvironmentMapping | Nif::BSShaderFlags1::BSSFlag1_AlphaTexture)
+            , mOpaque(Nif::BSShaderFlags1::BSSFlag1_AlphaTexture)
+        {
+            init(static_cast<Nif::NiAVObject&>(mRoot));
+            mRoot.recType = Nif::RC_NiNode;
+            mRoot.mName = "Root";
+            mOpaque.mGeometry.mName = "Opaque:0";
+            mRoot.mChildren = { Nif::NiAVObjectPtr(&mWindow.mGeometry), Nif::NiAVObjectPtr(&mOpaque.mGeometry) };
+        }
+
+        Nif::NiNode mRoot;
+        FalloutPPLightingGeometry mWindow;
+        FalloutPPLightingGeometry mOpaque;
+    };
+
     struct FalloutManagedMaterialGeometry
     {
         FalloutManagedMaterialGeometry()
@@ -344,6 +363,25 @@ namespace
         const osg::StateSet* mStateSet = nullptr;
     };
 
+    struct FindNamedNodeVisitor : osg::NodeVisitor
+    {
+        explicit FindNamedNodeVisitor(std::string_view name)
+            : osg::NodeVisitor(TRAVERSE_ALL_CHILDREN)
+            , mName(name)
+        {
+        }
+
+        void apply(osg::Node& node) override
+        {
+            if (mNode == nullptr && node.getName() == mName)
+                mNode = &node;
+            traverse(node);
+        }
+
+        std::string mName;
+        osg::Node* mNode = nullptr;
+    };
+
     bool hasTextureType(const osg::StateSet& stateSet, std::string_view name)
     {
         for (unsigned int unit = 0; unit < stateSet.getTextureAttributeList().size(); ++unit)
@@ -354,6 +392,13 @@ namespace
                 return true;
         }
         return false;
+    }
+
+    void expectOpaqueState(const osg::StateSet& stateSet)
+    {
+        EXPECT_EQ(stateSet.getMode(GL_BLEND) & osg::StateAttribute::ON, 0u);
+        EXPECT_EQ(stateSet.getAttribute(osg::StateAttribute::BLENDFUNC), nullptr);
+        EXPECT_NE(stateSet.getRenderingHint(), osg::StateSet::TRANSPARENT_BIN);
     }
 
     osg::ref_ptr<osg::Node> loadFalloutPPLightingGeometry(FalloutPPLightingGeometry& fixture,
@@ -626,6 +671,62 @@ osg::Group {
         EXPECT_EQ(blend->getSource(), osg::BlendFunc::ONE);
         EXPECT_EQ(blend->getDestination(), osg::BlendFunc::ONE);
         EXPECT_NE(visitor.mStateSet->getMode(GL_BLEND) & osg::StateAttribute::PROTECTED, 0u);
+    }
+
+    TEST_F(NifOsgLoaderTest, shouldNotApplyWindowBlendForPpLightingAlphaTextureAlone)
+    {
+        FalloutPPLightingGeometry fixture(Nif::BSShaderFlags1::BSSFlag1_AlphaTexture);
+        osg::ref_ptr<osg::Node> result = loadFalloutPPLightingGeometry(fixture, mImageManager, mMaterialManager);
+        ASSERT_NE(result, nullptr);
+
+        FindNamedNodeStateSetVisitor visitor("Window:0");
+        result->accept(visitor);
+        ASSERT_NE(visitor.mStateSet, nullptr);
+        expectOpaqueState(*visitor.mStateSet);
+    }
+
+    TEST_F(NifOsgLoaderTest, shouldNotApplyWindowBlendForPpLightingWindowEnvironmentMappingAlone)
+    {
+        FalloutPPLightingGeometry fixture(Nif::BSShaderFlags1::BSSFlag1_WindowEnvironmentMapping);
+        osg::ref_ptr<osg::Node> result = loadFalloutPPLightingGeometry(fixture, mImageManager, mMaterialManager);
+        ASSERT_NE(result, nullptr);
+
+        FindNamedNodeStateSetVisitor visitor("Window:0");
+        result->accept(visitor);
+        ASSERT_NE(visitor.mStateSet, nullptr);
+        EXPECT_TRUE(hasTextureType(*visitor.mStateSet, "envMap"));
+        EXPECT_TRUE(hasTextureType(*visitor.mStateSet, "glossMap"));
+        expectOpaqueState(*visitor.mStateSet);
+    }
+
+    TEST_F(NifOsgLoaderTest, shouldKeepPpLightingWindowBlendLocalToWindowSibling)
+    {
+        FalloutPPLightingSiblingGeometry fixture;
+        Nif::NIFFile file(testNif);
+        file.mVersion = Nif::NIFFile::NIFVersion::VER_BGS;
+        file.mUserVersion = 11;
+        file.mBethVersion = Nif::NIFFile::BethVersion::BETHVER_FO3;
+        file.mRoots.push_back(&fixture.mRoot);
+        osg::ref_ptr<osg::Node> result = Loader::load(file, &mImageManager, &mMaterialManager);
+        ASSERT_NE(result, nullptr);
+
+        FindNamedNodeStateSetVisitor windowVisitor("Window:0");
+        result->accept(windowVisitor);
+        ASSERT_NE(windowVisitor.mStateSet, nullptr);
+        EXPECT_NE(windowVisitor.mStateSet->getMode(GL_BLEND) & osg::StateAttribute::ON, 0u);
+        EXPECT_EQ(windowVisitor.mStateSet->getRenderingHint(), osg::StateSet::TRANSPARENT_BIN);
+
+        FindNamedNodeStateSetVisitor opaqueVisitor("Opaque:0");
+        result->accept(opaqueVisitor);
+        ASSERT_NE(opaqueVisitor.mStateSet, nullptr);
+        expectOpaqueState(*opaqueVisitor.mStateSet);
+
+        FindNamedNodeVisitor rootVisitor("Root");
+        result->accept(rootVisitor);
+        ASSERT_NE(rootVisitor.mNode, nullptr);
+        const osg::StateSet* rootStateSet = rootVisitor.mNode->getStateSet();
+        if (rootStateSet != nullptr)
+            expectOpaqueState(*rootStateSet);
     }
 
     TEST_F(NifOsgLoaderTest, shouldBindEmbeddedMaterialSequenceToEverySharedMaterialInstance)
