@@ -682,12 +682,10 @@ osg::Group {
         FindNamedNodeStateSetVisitor visitor("Window:0");
         result->accept(visitor);
         ASSERT_NE(visitor.mStateSet, nullptr);
-        EXPECT_FALSE(hasTextureType(*visitor.mStateSet, "envMap"));
-        EXPECT_FALSE(hasTextureType(*visitor.mStateSet, "glossMap"));
         expectOpaqueState(*visitor.mStateSet);
     }
 
-    TEST_F(NifOsgLoaderTest, shouldNotApplyWindowReflectionForPpLightingWindowFlagAlone)
+    TEST_F(NifOsgLoaderTest, shouldNotApplyWindowBlendForPpLightingWindowEnvironmentMappingAlone)
     {
         FalloutPPLightingGeometry fixture(Nif::BSShaderFlags1::BSSFlag1_WindowEnvironmentMapping);
         osg::ref_ptr<osg::Node> result = loadFalloutPPLightingGeometry(fixture, mImageManager, mMaterialManager);
@@ -696,8 +694,8 @@ osg::Group {
         FindNamedNodeStateSetVisitor visitor("Window:0");
         result->accept(visitor);
         ASSERT_NE(visitor.mStateSet, nullptr);
-        EXPECT_FALSE(hasTextureType(*visitor.mStateSet, "envMap"));
-        EXPECT_FALSE(hasTextureType(*visitor.mStateSet, "glossMap"));
+        EXPECT_TRUE(hasTextureType(*visitor.mStateSet, "envMap"));
+        EXPECT_TRUE(hasTextureType(*visitor.mStateSet, "glossMap"));
         expectOpaqueState(*visitor.mStateSet);
     }
 
@@ -721,8 +719,6 @@ osg::Group {
         FindNamedNodeStateSetVisitor opaqueVisitor("Opaque:0");
         result->accept(opaqueVisitor);
         ASSERT_NE(opaqueVisitor.mStateSet, nullptr);
-        EXPECT_FALSE(hasTextureType(*opaqueVisitor.mStateSet, "envMap"));
-        EXPECT_FALSE(hasTextureType(*opaqueVisitor.mStateSet, "glossMap"));
         expectOpaqueState(*opaqueVisitor.mStateSet);
 
         FindNamedNodeVisitor rootVisitor("Root");
