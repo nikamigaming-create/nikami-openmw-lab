@@ -1,5 +1,7 @@
 #include <gtest/gtest.h>
 
+#include <array>
+#include <bit>
 #include <cstdint>
 #include <optional>
 #include <string_view>
@@ -26,6 +28,15 @@ namespace
     constexpr std::uint32_t sTopicId = 0x00170001;
     constexpr std::uint32_t sInfoId = 0x000cd185;
     constexpr std::uint32_t sSoundId = 0x00169bed;
+    // FalloutNV.esm 000CD185 has this exact blank SCHR for both begin and end result scripts.
+    constexpr std::array<std::uint8_t, sizeof(ESM4::ScriptHeader)> sRetailEmptyResultScriptHeader{
+        0x00, 0x00, 0x00, 0x00, // unused
+        0x00, 0x00, 0x00, 0x00, // reference count
+        0x00, 0x00, 0x00, 0x00, // compiled size
+        0x00, 0x00, 0x00, 0x00, // variable count
+        0x00, 0x00, // type
+        0x01, 0x00, // enabled flag
+    };
 
     ESM::FormId formId(std::uint32_t value)
     {
@@ -76,6 +87,8 @@ namespace
             mInfo.mTopic = mTopic.mId;
             mInfo.mDialType = ESM4::DTYP_Radio;
             mInfo.mInfoFlags = ESM4::INFO_RunImmediately;
+            mInfo.mScript.scriptHeader = std::bit_cast<ESM4::ScriptHeader>(sRetailEmptyResultScriptHeader);
+            mInfo.mEndScript.scriptHeader = std::bit_cast<ESM4::ScriptHeader>(sRetailEmptyResultScriptHeader);
             ESM4::DialogResponse response{};
             response.mData.sound = sSoundId;
             mInfo.mResponses = { response };
@@ -132,6 +145,12 @@ TEST(FnvRadioProgramTest, PreparesFrozenRepconOneShotWithoutFormIdSpecialCases)
     const std::optional<MWWorld::PreparedFnvRadioOneShot> prepared = harness.prepare(&error);
 
     ASSERT_TRUE(prepared.has_value());
+    const auto beginScriptHeader
+        = std::bit_cast<std::array<std::uint8_t, sizeof(ESM4::ScriptHeader)>>(harness.mInfo.mScript.scriptHeader);
+    const auto endScriptHeader
+        = std::bit_cast<std::array<std::uint8_t, sizeof(ESM4::ScriptHeader)>>(harness.mInfo.mEndScript.scriptHeader);
+    EXPECT_EQ(beginScriptHeader, sRetailEmptyResultScriptHeader);
+    EXPECT_EQ(endScriptHeader, sRetailEmptyResultScriptHeader);
     EXPECT_EQ(error, MWWorld::FnvRadioProgramPreparationError::None);
     EXPECT_EQ(prepared->mStation, formId(sStationId));
     EXPECT_EQ(prepared->mQuest, formId(sQuestId));
@@ -272,6 +291,39 @@ TEST(FnvRadioProgramTest, RejectsAmbiguousConditionedRandomOrScriptedHelloInfo)
         Error::UnsupportedInfo);
     expectPreparationError(
         [](RadioProgramHarness& harness) { harness.mInfo.mEndScript.scriptSource = "set x to 1"; },
+        Error::UnsupportedInfo);
+    expectPreparationError(
+        [](RadioProgramHarness& harness) { harness.mInfo.mScript.scriptHeader.flag = 2; },
+        Error::UnsupportedInfo);
+    expectPreparationError(
+        [](RadioProgramHarness& harness) { harness.mInfo.mScript.scriptHeader.unused = 1; },
+        Error::UnsupportedInfo);
+    expectPreparationError(
+        [](RadioProgramHarness& harness) { harness.mInfo.mScript.scriptHeader.refCount = 1; },
+        Error::UnsupportedInfo);
+    expectPreparationError(
+        [](RadioProgramHarness& harness) { harness.mInfo.mScript.scriptHeader.compiledSize = 1; },
+        Error::UnsupportedInfo);
+    expectPreparationError(
+        [](RadioProgramHarness& harness) { harness.mInfo.mScript.scriptHeader.variableCount = 1; },
+        Error::UnsupportedInfo);
+    expectPreparationError(
+        [](RadioProgramHarness& harness) { harness.mInfo.mScript.scriptHeader.type = 1; },
+        Error::UnsupportedInfo);
+    expectPreparationError(
+        [](RadioProgramHarness& harness) { harness.mInfo.mScript.compiledData.push_back(0); },
+        Error::UnsupportedInfo);
+    expectPreparationError(
+        [](RadioProgramHarness& harness) { harness.mInfo.mScript.references.push_back(formId(0x00170015)); },
+        Error::UnsupportedInfo);
+    expectPreparationError(
+        [](RadioProgramHarness& harness) { harness.mInfo.mScript.localVarData.push_back({}); },
+        Error::UnsupportedInfo);
+    expectPreparationError(
+        [](RadioProgramHarness& harness) { harness.mInfo.mScript.localRefVarIndex.push_back(1); },
+        Error::UnsupportedInfo);
+    expectPreparationError(
+        [](RadioProgramHarness& harness) { harness.mInfo.mScript.globReference = formId(0x00170016); },
         Error::UnsupportedInfo);
     expectPreparationError(
         [](RadioProgramHarness& harness) {

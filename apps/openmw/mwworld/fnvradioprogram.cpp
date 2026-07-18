@@ -46,7 +46,7 @@ namespace
     {
         const ESM4::ScriptHeader& header = script.scriptHeader;
         return header.unused == 0 && header.refCount == 0 && header.compiledSize == 0
-            && header.variableCount == 0 && header.type == 0 && header.flag == 0
+            && header.variableCount == 0 && header.type == 0 && (header.flag == 0 || header.flag == 1)
             && script.compiledData.empty() && script.scriptSource.empty() && script.localVarData.empty()
             && script.localRefVarIndex.empty() && script.references.empty() && script.globReference.isZeroOrUnset();
     }
