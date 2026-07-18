@@ -18,9 +18,9 @@ MWRender::FalloutDistantReferenceSelection MWRender::selectFalloutNewVegasDistan
 {
     if (activeGrid)
         return FalloutDistantReferenceSelection::FullModel;
-    if (!(recordFlags & ESM4::Rec_VisDistant))
-        return FalloutDistantReferenceSelection::Skip;
     if (distantModelAvailable)
         return FalloutDistantReferenceSelection::DistantModel;
+    // Keep a representation through the active-grid/paged-grid handoff until a retail-proven transition band
+    // exists. Hard-skipping unflagged references here produces a visible hole at the active-grid boundary.
     return FalloutDistantReferenceSelection::FullModel;
 }

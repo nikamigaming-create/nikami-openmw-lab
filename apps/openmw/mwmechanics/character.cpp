@@ -188,12 +188,6 @@ namespace
         return {};
     }
 
-    bool shouldHoldFalloutActorDisplacement(const MWWorld::Ptr& ptr, bool isPlayer)
-    {
-        return VR::getVR() && !isPlayer && isFalloutActor(ptr)
-            && std::getenv("OPENMW_FNV_ALLOW_ACTOR_DISPLACEMENT") == nullptr;
-    }
-
     std::string_view getBestAttack(const ESM::Weapon* weapon)
     {
         int slash = weapon->mData.mSlash[0] + weapon->mData.mSlash[1];
@@ -2795,14 +2789,6 @@ namespace MWMechanics
                 movementSettings.mPosition[1] = fallbackMovement.y();
                 movementSettings.mSpeedFactor = std::min(fallbackMovement.length(), 1.f);
             }
-            const bool holdFalloutActorDisplacement = shouldHoldFalloutActorDisplacement(mPtr, isPlayer);
-            if (holdFalloutActorDisplacement)
-            {
-                movementSettings.mPosition[0] = 0.f;
-                movementSettings.mPosition[1] = 0.f;
-                movementSettings.mPosition[2] = 0.f;
-            }
-
             // Force Jump Logic
 
             bool isMoving
@@ -2818,8 +2804,6 @@ namespace MWMechanics
             }
 
             osg::Vec3f rot = cls.getRotationVector(mPtr);
-            if (holdFalloutActorDisplacement)
-                rot = osg::Vec3f();
             //if ((rot.x() != 0 || rot.y() != 0 || rot.z() != 0) && isPlayer)
             //    Log(Debug::Verbose) << "breakpoint";
             osg::Vec3f vec(movementSettings.asVec3());
@@ -3342,12 +3326,6 @@ namespace MWMechanics
 
             movement.x() *= scale;
             movement.y() *= scale;
-            if (shouldHoldFalloutActorDisplacement(mPtr, isPlayer))
-            {
-                movement.x() = 0.f;
-                movement.y() = 0.f;
-            }
-
             if (VR::getVR() && isPlayer)
             {
                 static_cast<MWVR::VRAnimation*>(mAnimation)->modifyMovement(movement);

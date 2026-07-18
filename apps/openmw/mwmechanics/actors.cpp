@@ -15,7 +15,6 @@
 #include <components/misc/rng.hpp>
 #include <components/sceneutil/positionattitudetransform.hpp>
 #include <components/settings/values.hpp>
-#include <components/vr/vr.hpp>
 
 #include <components/esm3/loadcrea.hpp>
 #include <components/esm3/loadgmst.hpp>
@@ -48,8 +47,6 @@
 
 #include "../mwsound/constants.hpp"
 
-#include "../mwvr/vrinputmanager.hpp"
-
 #include "actor.hpp"
 #include "actorutil.hpp"
 #include "aicombataction.hpp"
@@ -72,12 +69,6 @@ namespace
     {
         const char* value = std::getenv("OPENMW_WORLD_VIEWER_ACTOR_TELEMETRY");
         return value != nullptr && *value != '\0' && value[0] != '0';
-    }
-
-    bool shouldHoldFalloutActorDisplacement(const MWWorld::Ptr& ptr)
-    {
-        return VR::getVR() && (ptr.getType() == ESM::REC_NPC_4 || ptr.getType() == ESM::REC_CREA4)
-            && std::getenv("OPENMW_FNV_ALLOW_ACTOR_DISPLACEMENT") == nullptr;
     }
 
     bool isConscious(const MWWorld::Ptr& ptr)
@@ -1384,9 +1375,6 @@ namespace MWMechanics
             const MWWorld::Ptr& ptr = cached.mPtr;
             if (ptr == player)
                 continue; // Don't interfere with player controls.
-            if (shouldHoldFalloutActorDisplacement(ptr))
-                continue;
-
             const float maxSpeed = cached.mMaxSpeed;
             if (maxSpeed == 0.0)
                 continue; // Can't move, so there is no sense to predict collisions.

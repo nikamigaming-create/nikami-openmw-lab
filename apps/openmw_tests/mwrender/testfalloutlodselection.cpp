@@ -16,8 +16,8 @@ namespace MWRender
         // Each ordered manifest hashes UTF-8 name<TAB>byte-size<TAB>file-SHA-256<LF> entries.
         // Of 211,339 enabled supported exterior REFR placements, all 23,810 marked Visible When Distant resolve
         // a _lod[_N] proxy. 4,676 unmarked placements are also proxy-capable, and 897 disabled placements are
-        // excluded before selection.
-        // The authored REFR flag, not proxy existence alone, therefore controls distant participation.
+        // excluded before selection. Until the active-grid/paged-grid transition has a retail-proven overlap,
+        // unflagged references retain a representation so the handoff cannot create a visible hole.
 
         TEST(FalloutLodSelectionTest, recognizesOnlyFalloutNewVegasRecordVersions)
         {
@@ -51,10 +51,12 @@ namespace MWRender
             EXPECT_FALSE(isEsm4ReferenceEnabledForPaging(ESM4::Rec_Disabled | ESM4::Rec_VisDistant));
         }
 
-        TEST(FalloutLodSelectionTest, proxyPresenceDoesNotPromoteAnUnflaggedPlacement)
+        TEST(FalloutLodSelectionTest, unflaggedPlacementRetainsRepresentationAcrossGridHandoff)
         {
-            EXPECT_EQ(selectFalloutNewVegasDistantReference(0, false, false), FalloutDistantReferenceSelection::Skip);
-            EXPECT_EQ(selectFalloutNewVegasDistantReference(0, false, true), FalloutDistantReferenceSelection::Skip);
+            EXPECT_EQ(selectFalloutNewVegasDistantReference(0, false, false),
+                FalloutDistantReferenceSelection::FullModel);
+            EXPECT_EQ(selectFalloutNewVegasDistantReference(0, false, true),
+                FalloutDistantReferenceSelection::DistantModel);
         }
 
         TEST(FalloutLodSelectionTest, visibleDistantPlacementUsesAnAvailableProxy)
