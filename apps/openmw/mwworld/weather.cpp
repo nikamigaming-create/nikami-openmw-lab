@@ -1368,82 +1368,79 @@ namespace MWWorld
         else
             mNightDayMode = Default;
 
-        const auto applyFalloutImageSpace = [&]() {
-            if (!usesFallout3Weather(mStore.getESM4Game()))
-                return;
+        if (!isExterior)
+        {
+            mRendering.setSkyEnabled(false);
+            stopSounds();
+            mWindSpeed = 0.f;
+            mCurrentWindSpeed = 0.f;
+            mNextWindSpeed = 0.f;
+            return;
+        }
 
-            ESM::RefId imageSpaceId;
-            bool hasImageSpaceContext = false;
-            if (const char* proofImageSpace = std::getenv("OPENMW_FNV_PROOF_IMAGE_SPACE_ID"))
-            {
-                hasImageSpaceContext = true;
-                const std::string_view value(proofImageSpace);
-                if (value.starts_with("FormId:") || value.starts_with("formid:"))
-                    imageSpaceId = ESM::RefId::deserializeText(value);
-            }
-            if (imageSpaceId.empty() && player.getCell() != nullptr && player.getCell()->getCell() != nullptr
-                && player.getCell()->getCell()->isEsm4())
-            {
-                hasImageSpaceContext = true;
-                const ESM4::Cell& cell = player.getCell()->getCell()->getEsm4();
-                const ESM4::World* parentWorld = cell.isExterior()
-                    ? mStore.get<ESM4::World>().search(ESM::RefId(cell.mParent))
-                    : nullptr;
-                imageSpaceId = ESM::RefId(ESM4::resolveCellImageSpace(cell, parentWorld));
-            }
+        calculateWeatherResult(time.getHour(), duration, paused);
 
-            const ESM4::ImageSpace* base = mStore.get<ESM4::ImageSpace>().search(imageSpaceId);
-            if (base == nullptr)
+        ESM::RefId imageSpaceId;
+        if (const char* proofImageSpace = std::getenv("OPENMW_FNV_PROOF_IMAGE_SPACE_ID"))
+        {
+            const std::string_view value(proofImageSpace);
+            if (value.starts_with("FormId:") || value.starts_with("formid:"))
+                imageSpaceId = ESM::RefId::deserializeText(value);
+        }
+        if (imageSpaceId.empty() && player.getCell() != nullptr && player.getCell()->getCell() != nullptr
+            && player.getCell()->getCell()->isEsm4())
+        {
+            const ESM4::Cell& cell = player.getCell()->getCell()->getEsm4();
+            ESM::FormId cellImageSpaceId = cell.mImageSpace;
+            if (!cellImageSpaceId.isSet() && cell.isExterior())
             {
-                // Do not carry a previous exterior's cinematic constants into an interior without XCIM.
-                if (hasImageSpaceContext)
-                {
-                    mRendering.getPostProcessor()->setFalloutImageSpace(osg::Vec4f(1.f, 0.f, 1.f, 1.f),
-                        osg::Vec4f(1.f, 0.f, 1.f, 1.f), osg::Vec4f(1.f, 1.f, 1.f, 0.f), osg::Vec4f());
-                }
-                return;
+                if (const ESM4::World* world = mStore.get<ESM4::World>().search(ESM::RefId(cell.mParent)))
+                    cellImageSpaceId = world->mImageSpace;
             }
+            imageSpaceId = ESM::RefId(cellImageSpaceId);
+        }
 
+        // This shader and its modifier-channel mapping are retail-derived from Fallout 3/New Vegas.
+        // Other Creation Engine games retain their parsed image-space records for their own adapters.
+        if (const ESM4::ImageSpace* base = usesFallout3Weather(mStore.getESM4Game())
+                ? mStore.get<ESM4::ImageSpace>().search(imageSpaceId)
+                : nullptr)
+        {
             std::vector<ESM4::ImageSpaceModifierContribution> modifiers;
             const FalloutWeatherTimeBlend timeBlend = getFalloutWeatherTimeBlend(
                 time.getHour(), mTimeSettings, mFalloutDaytimeColorExtension);
-            if (isExterior)
-            {
-                const auto addWeatherModifiers = [&](const Weather& falloutWeather, float weatherStrength) {
-                    const auto addModifier = [&](ESM4::Weather::Time timeIndex, float timeStrength) {
-                        const float strength = weatherStrength * timeStrength;
-                        if (strength <= 0.f)
-                            return;
-                        const ESM::FormId id = falloutWeather.mFalloutImageSpaceModifiers[timeIndex];
-                        if (const ESM4::ImageSpaceModifier* modifier
-                            = mStore.get<ESM4::ImageSpaceModifier>().search(ESM::RefId(id)))
-                            modifiers.push_back({ modifier, 0.f, strength });
-                    };
-                    addModifier(timeBlend.mPrimary, timeBlend.mPrimaryStrength);
-                    addModifier(timeBlend.mSecondary, 1.f - timeBlend.mPrimaryStrength);
+            const auto addWeatherModifiers = [&](const Weather& falloutWeather, float weatherStrength) {
+                const auto addModifier = [&](ESM4::Weather::Time timeIndex, float timeStrength) {
+                    const float strength = weatherStrength * timeStrength;
+                    if (strength <= 0.f)
+                        return;
+                    const ESM::FormId id = falloutWeather.mFalloutImageSpaceModifiers[timeIndex];
+                    if (const ESM4::ImageSpaceModifier* modifier
+                        = mStore.get<ESM4::ImageSpaceModifier>().search(ESM::RefId(id)))
+                        modifiers.push_back({ modifier, 0.f, strength });
                 };
-                const float currentWeatherStrength = inTransition() ? mTransitionFactor : 1.f;
-                addWeatherModifiers(mWeatherSettings[mCurrentWeather], currentWeatherStrength);
-                if (inTransition())
-                    addWeatherModifiers(mWeatherSettings[mNextWeather], 1.f - mTransitionFactor);
-            }
+                addModifier(timeBlend.mPrimary, timeBlend.mPrimaryStrength);
+                addModifier(timeBlend.mSecondary, 1.f - timeBlend.mPrimaryStrength);
+            };
+            const float currentWeatherStrength = inTransition() ? mTransitionFactor : 1.f;
+            addWeatherModifiers(mWeatherSettings[mCurrentWeather], currentWeatherStrength);
+            if (inTransition())
+                addWeatherModifiers(mWeatherSettings[mNextWeather], 1.f - mTransitionFactor);
 
             const ESM4::ComposedImageSpace composed = ESM4::composeImageSpace(*base, modifiers);
             const float sunlightDimmer = composed.mTraits[ESM4::ImageSpace::Trait_SunlightDimmer];
-            if (isExterior)
-            {
-                mResult.mFalloutCloudRgbMultiplier
-                    = composed.mTraits[ESM4::ImageSpace::Trait_LuminanceRampNoTexture];
-                for (int component = 0; component < 3; ++component)
-                    mResult.mSunColor[component] *= sunlightDimmer;
-            }
+            mResult.mFalloutCloudRgbMultiplier
+                = composed.mTraits[ESM4::ImageSpace::Trait_LuminanceRampNoTexture];
+            for (int component = 0; component < 3; ++component)
+                mResult.mSunColor[component] *= sunlightDimmer;
 
             mRendering.getPostProcessor()->setFalloutImageSpace(
                 osg::Vec4f(composed.mTraits[ESM4::ImageSpace::Trait_TargetLuminance],
                     composed.mTraits[ESM4::ImageSpace::Trait_BrightScale],
                     composed.mTraits[ESM4::ImageSpace::Trait_BrightClamp],
-                    isExterior ? composed.mTraits[ESM4::ImageSpace::Trait_BloomAlphaExterior]
-                               : composed.mTraits[ESM4::ImageSpace::Trait_BloomAlphaInterior]),
+                    player.getCell()->isExterior()
+                        ? composed.mTraits[ESM4::ImageSpace::Trait_BloomAlphaExterior]
+                        : composed.mTraits[ESM4::ImageSpace::Trait_BloomAlphaInterior]),
                 osg::Vec4f(composed.mTraits[ESM4::ImageSpace::Trait_CinematicSaturation],
                     composed.mTraits[ESM4::ImageSpace::Trait_CinematicContrastAverageLuminance],
                     composed.mTraits[ESM4::ImageSpace::Trait_CinematicContrast],
@@ -1457,7 +1454,6 @@ namespace MWWorld
                 if (imageSpaceLogs++ < 12)
                 {
                     Log(Debug::Info) << "FNV/ESM4 proof: composed image space base=" << base->mId
-                                     << " exterior=" << (isExterior ? 1 : 0)
                                      << " weather=" << mWeatherSettings[mCurrentWeather].mId
                                      << " modifiers=" << modifiers.size() << " timeSlots=("
                                      << static_cast<std::size_t>(timeBlend.mPrimary) << ":"
@@ -1466,8 +1462,7 @@ namespace MWWorld
                                      << (1.f - timeBlend.mPrimaryStrength) << ")"
                                      << " skinDimmer="
                                      << composed.mTraits[ESM4::ImageSpace::Trait_SkinDimmer]
-                                     << " cloudRgbMultiplier="
-                                     << composed.mTraits[ESM4::ImageSpace::Trait_LuminanceRampNoTexture]
+                                     << " cloudRgbMultiplier=" << mResult.mFalloutCloudRgbMultiplier
                                      << " sunlightDimmer=" << sunlightDimmer << " cinematic=("
                                      << composed.mTraits[ESM4::ImageSpace::Trait_CinematicSaturation] << ","
                                      << composed.mTraits[
@@ -1478,23 +1473,7 @@ namespace MWWorld
                                      << "," << composed.mTint[3] << ")";
                 }
             }
-        };
-
-        if (!isExterior)
-        {
-            // Interior CELL XCIM is independent of exterior weather. Apply it before the weather-only early return
-            // so an exterior grade cannot leak into the newly loaded interior.
-            applyFalloutImageSpace();
-            mRendering.setSkyEnabled(false);
-            stopSounds();
-            mWindSpeed = 0.f;
-            mCurrentWindSpeed = 0.f;
-            mNextWindSpeed = 0.f;
-            return;
         }
-
-        calculateWeatherResult(time.getHour(), duration, paused);
-        applyFalloutImageSpace();
         if (std::getenv("OPENMW_FNV_PROOF_WEATHER_ID") != nullptr)
         {
             static int proofWeatherLogs = 0;

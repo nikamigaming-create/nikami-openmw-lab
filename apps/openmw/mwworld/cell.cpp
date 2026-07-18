@@ -5,13 +5,10 @@
 #include "../mwbase/environment.hpp"
 
 #include <components/esm3/loadcell.hpp>
-#include <components/esm4/lightingcomposition.hpp>
 #include <components/esm4/loadcell.hpp>
-#include <components/esm4/loadlgtm.hpp>
 #include <components/esm4/loadwrld.hpp>
 #include <components/misc/algorithm.hpp>
 
-#include <cmath>
 #include <stdexcept>
 #include <string>
 
@@ -62,39 +59,11 @@ namespace MWWorld
             .mAmbiantColor = cell.mLighting.ambient,
             .mDirectionalColor = cell.mLighting.directional,
             .mFogColor = cell.mLighting.fogColor,
+            // TODO: use ESM4::Lighting fog parameters
             .mFogDensity = 1.f,
-            .mHasFalloutFog = false,
-            .mFogNear = cell.mLighting.fogNear,
-            .mFogFar = cell.mLighting.fogFar,
-            .mFogClipDistance = cell.mLighting.fogClipDist,
-            .mFogPower = cell.mLighting.fogPower,
         }
     {
-        const ESMStore* store = MWBase::Environment::get().getESMStore();
-        const ESM4::World* world = store->get<ESM4::World>().search(mParent);
-        ESM4::Lighting lighting = cell.mLighting;
-        if (!cell.mLightingTemplate.isZeroOrUnset())
-        {
-            if (const ESM4::LightingTemplate* lightingTemplate
-                = store->get<ESM4::LightingTemplate>().search(ESM::RefId(cell.mLightingTemplate)))
-            {
-                lighting = ESM4::composeLighting(
-                    cell.mLighting, lightingTemplate->mLighting, cell.mLightingTemplateFlags);
-            }
-        }
-        mMood = {
-            .mAmbiantColor = lighting.ambient,
-            .mDirectionalColor = lighting.directional,
-            .mFogColor = lighting.fogColor,
-            .mFogDensity = 1.f,
-            .mHasFalloutFog = !cell.isExterior() && std::isfinite(lighting.fogNear)
-                && std::isfinite(lighting.fogFar) && std::isfinite(lighting.fogPower) && lighting.fogFar > 0.f
-                && lighting.fogFar >= lighting.fogNear && lighting.fogPower > 0.f,
-            .mFogNear = lighting.fogNear,
-            .mFogFar = lighting.fogFar,
-            .mFogClipDistance = lighting.fogClipDist,
-            .mFogPower = lighting.fogPower,
-        };
+        const ESM4::World* world = MWBase::Environment::get().getESMStore()->get<ESM4::World>().search(mParent);
         if (isExterior())
         {
             if (world == nullptr)
@@ -124,11 +93,6 @@ namespace MWWorld
             .mDirectionalColor = cell.mAmbi.mSunlight,
             .mFogColor = cell.mAmbi.mFog,
             .mFogDensity = cell.mAmbi.mFogDensity,
-            .mHasFalloutFog = false,
-            .mFogNear = 0.f,
-            .mFogFar = 0.f,
-            .mFogClipDistance = 0.f,
-            .mFogPower = 1.f,
         }
     {
         if (isExterior())
