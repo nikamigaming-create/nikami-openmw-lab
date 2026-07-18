@@ -10,6 +10,7 @@
 #include <components/esm4/loadachr.hpp>
 #include <components/esm4/loadcell.hpp>
 #include <components/esm4/loadcrea.hpp>
+#include <components/esm4/loaddoor.hpp>
 #include <components/esm4/loadkeym.hpp>
 #include <components/esm4/loadlvli.hpp>
 #include <components/esm4/loadmisc.hpp>
@@ -27,6 +28,8 @@
 #include "apps/openmw/mwmechanics/creaturestats.hpp"
 
 #include "apps/openmw/mwworld/actionopen.hpp"
+#include "apps/openmw/mwworld/actiondoor.hpp"
+#include "apps/openmw/mwworld/actionteleport.hpp"
 #include "apps/openmw/mwworld/esmstore.hpp"
 #include "apps/openmw/mwworld/failedaction.hpp"
 #include "apps/openmw/mwworld/livecellref.hpp"
@@ -64,6 +67,9 @@ namespace
     constexpr std::uint32_t sNonFnvNpcBase = 0x01103b2b;
     constexpr std::uint32_t sNonFnvNpcRef = 0x01108743;
     constexpr std::uint32_t sNpcRace = 0x01103b2c;
+    constexpr std::uint32_t sDoorBase = 0x01103b2d;
+    constexpr std::uint32_t sDoorRef = 0x01108744;
+    constexpr std::uint32_t sDoorDestRef = 0x01108745;
 
     class TestLuaManager final : public MWBase::LuaManager
     {
@@ -179,6 +185,30 @@ namespace
             reference.mId = ESM::FormId::fromUint32(sKeyHolderRef);
             reference.mBaseObj = ESM::FormId::fromUint32(sKeyHolderBase);
             reference.mCount = 1;
+            return reference;
+        }
+
+        static ESM4::Door makeDoor()
+        {
+            ESM4::Door door{};
+            door.mId = ESM::FormId::fromUint32(sDoorBase);
+            door.mEditorId = "GoodspringsKeyedDoorTest";
+            door.mFullName = "Goodsprings Keyed Door";
+            return door;
+        }
+
+        static ESM4::Reference makeLockedDoorReference(bool teleport)
+        {
+            ESM4::Reference reference{};
+            reference.mId = ESM::FormId::fromUint32(sDoorRef);
+            reference.mParent = ESM::RefId(ESM::FormId::fromUint32(sCreatureCell));
+            reference.mBaseObj = ESM::FormId::fromUint32(sDoorBase);
+            reference.mCount = 1;
+            reference.mIsLocked = true;
+            reference.mLockLevel = 50;
+            reference.mKey = ESM::FormId::fromUint32(sSaloonKeyBase);
+            if (teleport)
+                reference.mDoor.destDoor = ESM::FormId::fromUint32(sDoorDestRef);
             return reference;
         }
 
@@ -1548,6 +1578,57 @@ namespace
         restoredRef.load(diskState);
         EXPECT_FALSE(restoredRef.mRef.isLocked());
         EXPECT_EQ(restoredRef.mRef.getKey(), ESM::RefId(ESM::FormId::fromUint32(sSaloonKeyBase)));
+    }
+
+    TEST_F(ESM4ContainerTest, AuthoredKeyUnlocksEsm4TeleportAndOrdinaryDoors)
+    {
+        ESM4::Door door = makeDoor();
+        ESM4::Container keyHolder = makeKeyHolder();
+        ESM4::Reference keyHolderReference = makeKeyHolderReference();
+        MWWorld::LiveCellRef<ESM4::Container> keyHolderRef(keyHolderReference, &keyHolder);
+        MWWorld::Ptr actor(&keyHolderRef);
+
+        ESM4::Reference teleportReference = makeLockedDoorReference(true);
+        MWWorld::LiveCellRef<ESM4::Door> teleportRef(teleportReference, &door);
+        MWWorld::Ptr teleportDoor(&teleportRef);
+        std::unique_ptr<MWWorld::Action> teleport = teleportDoor.getClass().activate(teleportDoor, actor);
+        EXPECT_NE(dynamic_cast<MWWorld::ActionTeleport*>(teleport.get()), nullptr);
+        EXPECT_FALSE(teleportDoor.getCellRef().isLocked());
+        EXPECT_EQ(teleportDoor.getCellRef().getLockLevel(), -50);
+
+        ESM4::Reference ordinaryReference = makeLockedDoorReference(false);
+        MWWorld::LiveCellRef<ESM4::Door> ordinaryRef(ordinaryReference, &door);
+        MWWorld::Ptr ordinaryDoor(&ordinaryRef);
+        std::unique_ptr<MWWorld::Action> open = ordinaryDoor.getClass().activate(ordinaryDoor, actor);
+        EXPECT_NE(dynamic_cast<MWWorld::ActionDoor*>(open.get()), nullptr);
+        EXPECT_FALSE(ordinaryDoor.getCellRef().isLocked());
+        EXPECT_EQ(ordinaryDoor.getCellRef().getLockLevel(), -50);
+    }
+
+    TEST_F(ESM4ContainerTest, Esm4DoorRejectsMissingOrWrongAuthoredKey)
+    {
+        ESM4::Door door = makeDoor();
+
+        ESM4::Reference missingActorReference = makeLockedDoorReference(true);
+        MWWorld::LiveCellRef<ESM4::Door> missingActorRef(missingActorReference, &door);
+        MWWorld::Ptr missingActorDoor(&missingActorRef);
+        std::unique_ptr<MWWorld::Action> missingActor
+            = missingActorDoor.getClass().activate(missingActorDoor, {});
+        EXPECT_NE(dynamic_cast<MWWorld::FailedAction*>(missingActor.get()), nullptr);
+        EXPECT_TRUE(missingActorDoor.getCellRef().isLocked());
+
+        ESM4::Container keyHolder = makeKeyHolder();
+        ESM4::Reference keyHolderReference = makeKeyHolderReference();
+        MWWorld::LiveCellRef<ESM4::Container> keyHolderRef(keyHolderReference, &keyHolder);
+        MWWorld::Ptr actor(&keyHolderRef);
+
+        ESM4::Reference wrongKeyReference = makeLockedDoorReference(false);
+        wrongKeyReference.mKey = ESM::FormId::fromUint32(sSaloonBottleBase);
+        MWWorld::LiveCellRef<ESM4::Door> wrongKeyRef(wrongKeyReference, &door);
+        MWWorld::Ptr wrongKeyDoor(&wrongKeyRef);
+        std::unique_ptr<MWWorld::Action> wrongKey = wrongKeyDoor.getClass().activate(wrongKeyDoor, actor);
+        EXPECT_NE(dynamic_cast<MWWorld::FailedAction*>(wrongKey.get()), nullptr);
+        EXPECT_TRUE(wrongKeyDoor.getCellRef().isLocked());
     }
 
     TEST_F(ESM4ContainerTest, ContainerStateRoundTripRetainsContentsAndEsm4Reference)

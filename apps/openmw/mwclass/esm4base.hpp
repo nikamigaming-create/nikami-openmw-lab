@@ -447,18 +447,24 @@ namespace MWClass
 
         std::unique_ptr<MWWorld::Action> activate(const MWWorld::Ptr& ptr, const MWWorld::Ptr& actor) const override
         {
-            (void)actor;
-
             const MWWorld::LiveCellRef<ESM4::Door>* ref = ptr.get<ESM4::Door>();
             const ESM::RefId openSound(ref->mBase->mOpenSound);
             const ESM::RefId closeSound(ref->mBase->mCloseSound);
 
             if (ptr.getCellRef().isLocked())
             {
-                std::unique_ptr<MWWorld::Action> action
-                    = std::make_unique<MWWorld::FailedAction>(std::string_view{}, ptr);
-                action->setSound(ESM::RefId::stringRefId("LockedDoor"));
-                return action;
+                const ESM::RefId keyId = ptr.getCellRef().getKey();
+                const bool hasKey = !actor.isEmpty() && !keyId.empty()
+                    && !actor.getClass().getContainerStore(actor).search(keyId).isEmpty();
+                if (hasKey)
+                    ptr.getCellRef().unlock();
+                else
+                {
+                    std::unique_ptr<MWWorld::Action> action
+                        = std::make_unique<MWWorld::FailedAction>(std::string_view{}, ptr);
+                    action->setSound(ESM::RefId::stringRefId("LockedDoor"));
+                    return action;
+                }
             }
 
             if (ptr.getCellRef().getTeleport())
