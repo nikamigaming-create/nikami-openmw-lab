@@ -31,6 +31,7 @@ file(GLOB UNITTEST_SRC_FILES
     mwclass/testfnvfurniturelifecycle.cpp
 
     mwrender/testfalloutweaponanimation.cpp
+    mwrender/testfalloutcloudtransition.cpp
     mwrender/testplayervisualpolicy.cpp
 
     mwmechanics/testfalloutcombat.cpp

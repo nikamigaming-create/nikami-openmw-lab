@@ -139,6 +139,61 @@ namespace MWWorld
             EXPECT_FLOAT_EQ(result.mPower, 0.4375f);
         }
 
+        TEST(MWWorldWeatherTest, preservesBothFalloutCloudEndpointsAcrossContinuousTransition)
+        {
+            MWRender::WeatherResult current{};
+            current.mHasFalloutCloudLayers = true;
+            current.mFalloutCloudTextures = { "current0.dds", "", "current2.dds", "current3.dds" };
+            current.mFalloutCloudSpeeds = { -0.2f, 0.1f, 0.2f, 0.3f };
+            current.mFalloutCloudColors[0] = osg::Vec4f(0.f, 0.2f, 0.4f, 1.f);
+
+            MWRender::WeatherResult next{};
+            next.mHasFalloutCloudLayers = true;
+            next.mFalloutCloudTextures = { "next0.dds", "next1.dds", "", "next3.dds" };
+            next.mFalloutCloudSpeeds = { 0.2f, 0.3f, 0.4f, 0.5f };
+            next.mFalloutCloudColors[0] = osg::Vec4f(1.f, 0.6f, 0.8f, 1.f);
+
+            MWRender::WeatherResult result{};
+            interpolateFalloutCloudLayers(current, next, 0.25f, result);
+
+            ASSERT_TRUE(result.mHasFalloutCloudLayers);
+            EXPECT_EQ(result.mFalloutCloudTextures, current.mFalloutCloudTextures);
+            EXPECT_EQ(result.mFalloutNextCloudTextures, next.mFalloutCloudTextures);
+            EXPECT_FLOAT_EQ(result.mFalloutCloudBlendFactor, 0.25f);
+            EXPECT_FLOAT_EQ(result.mFalloutCloudSpeeds[0], -0.1f);
+            EXPECT_FLOAT_EQ(result.mFalloutCloudColors[0].r(), 0.25f);
+            EXPECT_FLOAT_EQ(result.mFalloutCloudColors[0].g(), 0.3f);
+            EXPECT_FLOAT_EQ(result.mFalloutCloudColors[0].b(), 0.5f);
+            EXPECT_FLOAT_EQ(result.mFalloutCloudColors[0].a(), 1.f);
+
+            interpolateFalloutCloudLayers(
+                current, next, std::numeric_limits<float>::quiet_NaN(), result);
+            EXPECT_FLOAT_EQ(result.mFalloutCloudBlendFactor, 0.f);
+            EXPECT_FLOAT_EQ(result.mFalloutCloudSpeeds[0], current.mFalloutCloudSpeeds[0]);
+            EXPECT_EQ(result.mFalloutCloudTextures, current.mFalloutCloudTextures);
+            EXPECT_EQ(result.mFalloutNextCloudTextures, next.mFalloutCloudTextures);
+        }
+
+        TEST(MWWorldWeatherTest, clearsFalloutCloudEndpointsWhenTransitionCannotUseNativeLayers)
+        {
+            MWRender::WeatherResult current{};
+            current.mHasFalloutCloudLayers = true;
+            current.mFalloutCloudTextures[0] = "current.dds";
+            MWRender::WeatherResult next{};
+
+            MWRender::WeatherResult result{};
+            result.mHasFalloutCloudLayers = true;
+            result.mFalloutCloudTextures.fill("stale-current.dds");
+            result.mFalloutNextCloudTextures.fill("stale-next.dds");
+            result.mFalloutCloudBlendFactor = 0.75f;
+            interpolateFalloutCloudLayers(current, next, 0.5f, result);
+
+            EXPECT_FALSE(result.mHasFalloutCloudLayers);
+            EXPECT_EQ(result.mFalloutCloudTextures, decltype(result.mFalloutCloudTextures){});
+            EXPECT_EQ(result.mFalloutNextCloudTextures, decltype(result.mFalloutNextCloudTextures){});
+            EXPECT_FLOAT_EQ(result.mFalloutCloudBlendFactor, 0.f);
+        }
+
         TEST(MWWorldWeatherTest, appliesRetailFalloutFogCurve)
         {
             constexpr float fogNear = 10.f;

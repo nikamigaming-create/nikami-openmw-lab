@@ -123,6 +123,9 @@ namespace MWWorld
         float daytimeColorExtension = 0.5f);
     FalloutWeatherFog interpolateFalloutWeatherFog(
         const FalloutWeatherFog& current, const FalloutWeatherFog& next, float factor);
+
+    void interpolateFalloutCloudLayers(const MWRender::WeatherResult& current,
+        const MWRender::WeatherResult& next, float factor, MWRender::WeatherResult& result);
     FalloutWeatherFog sampleFalloutWeatherFog(const FalloutWeatherFogSamples& samples, float gameHour,
         const TimeOfDaySettings& timeSettings, float daytimeColorExtension = 0.5f);
     osg::Vec3f falloutSunPosition(float orbit);
