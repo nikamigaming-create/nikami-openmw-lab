@@ -54,7 +54,20 @@ void ESM4::ImageSpace::load(Reader& reader)
                 std::vector<std::uint8_t> raw(subHdr.dataSize);
                 if (!raw.empty())
                     reader.get(raw.data(), raw.size());
-                if (raw.size() >= sizeof(mTraits))
+                constexpr std::size_t legacyTraitCount = sTraitCount - 1;
+                constexpr std::size_t legacyTraitBytes = legacyTraitCount * sizeof(float);
+                if (reader.formVersion() < 14 && raw.size() >= legacyTraitBytes)
+                {
+                    // Older Fallout image spaces omit Skin Dimmer. Migrate their 32 authored traits into the
+                    // 33-slot runtime layout instead of treating the first trailing flag word as Tint Strength.
+                    constexpr std::size_t traitsBeforeSkin = Trait_SkinDimmer;
+                    constexpr std::size_t traitsAfterSkin = sTraitCount - Trait_BloomBlurRadius;
+                    std::memcpy(mTraits.data(), raw.data(), traitsBeforeSkin * sizeof(float));
+                    mTraits[Trait_SkinDimmer] = 1.f;
+                    std::memcpy(mTraits.data() + Trait_BloomBlurRadius, raw.data() + traitsBeforeSkin * sizeof(float),
+                        traitsAfterSkin * sizeof(float));
+                }
+                else if (raw.size() >= sizeof(mTraits))
                 {
                     // Fallout 3/New Vegas store the base image-space traits in one DNAM.
                     std::memcpy(mTraits.data(), raw.data(), sizeof(mTraits));
