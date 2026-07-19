@@ -1,0 +1,677 @@
+#include "fonvsavegame.hpp"
+
+#include <algorithm>
+#include <fstream>
+#include <limits>
+#include <sstream>
+#include <string_view>
+#include <utility>
+
+namespace
+{
+    constexpr std::string_view sMagic = "FO3SAVEGAME";
+    constexpr std::uint8_t sDelimiter = 0x7c;
+    constexpr std::size_t sLanguageBytes = 64;
+    constexpr std::uint32_t sLanguageDiscriminator = 16384;
+    constexpr std::size_t sFileLocationTableBytes = 0x6e;
+    constexpr std::size_t sFileLocationFieldCount = 9;
+    constexpr std::size_t sFileLocationUnusedBytes
+        = sFileLocationTableBytes - sFileLocationFieldCount * sizeof(std::uint32_t);
+    constexpr std::size_t sGlobalDataHeaderBytes = 2 * sizeof(std::uint32_t);
+    constexpr std::size_t sChangedFormFixedHeaderBytes = 3 + sizeof(std::uint32_t) + 1 + 1;
+    constexpr std::size_t sMinimumChangedFormEnvelopeBytes = sChangedFormFixedHeaderBytes + 1;
+
+    std::string errorMessage(std::uint64_t offset, std::string_view message)
+    {
+        std::ostringstream stream;
+        stream << "Invalid Fallout 3/New Vegas save at byte " << offset << ": " << message;
+        return stream.str();
+    }
+
+    class Cursor
+    {
+    public:
+        Cursor(std::span<const std::uint8_t> data, std::size_t begin, std::size_t end)
+            : mData(data)
+            , mPosition(begin)
+            , mEnd(end)
+        {
+            if (begin > end || end > data.size())
+                throw ESM4::FONVSaveError(begin, "invalid parser bounds");
+        }
+
+        std::size_t position() const { return mPosition; }
+        std::size_t end() const { return mEnd; }
+
+        std::span<const std::uint8_t> take(std::size_t count, std::string_view description)
+        {
+            if (count > mEnd - mPosition)
+                throw ESM4::FONVSaveError(mPosition, std::string("truncated ") + std::string(description));
+            const auto result = mData.subspan(mPosition, count);
+            mPosition += count;
+            return result;
+        }
+
+        std::uint8_t readU8(std::string_view description) { return take(1, description)[0]; }
+
+        std::uint16_t readU16(std::string_view description)
+        {
+            const auto bytes = take(2, description);
+            return static_cast<std::uint16_t>(bytes[0]) | (static_cast<std::uint16_t>(bytes[1]) << 8);
+        }
+
+        std::uint32_t readU32(std::string_view description)
+        {
+            const auto bytes = take(4, description);
+            return static_cast<std::uint32_t>(bytes[0]) | (static_cast<std::uint32_t>(bytes[1]) << 8)
+                | (static_cast<std::uint32_t>(bytes[2]) << 16) | (static_cast<std::uint32_t>(bytes[3]) << 24);
+        }
+
+        std::uint32_t peekU32(std::string_view description)
+        {
+            const std::size_t saved = mPosition;
+            const std::uint32_t result = readU32(description);
+            mPosition = saved;
+            return result;
+        }
+
+        void expectDelimiter(std::string_view description)
+        {
+            const std::size_t offset = mPosition;
+            if (readU8(description) != sDelimiter)
+                throw ESM4::FONVSaveError(
+                    offset, std::string("bad delimiter before/after ") + std::string(description));
+        }
+
+    private:
+        std::span<const std::uint8_t> mData;
+        std::size_t mPosition;
+        std::size_t mEnd;
+    };
+
+    ESM4::FONVSaveRange range(std::size_t begin, std::size_t end)
+    {
+        return { static_cast<std::uint64_t>(begin), static_cast<std::uint64_t>(end - begin) };
+    }
+
+    std::vector<std::uint8_t> copyRange(std::span<const std::uint8_t> data, std::size_t begin, std::size_t end)
+    {
+        return { data.begin() + static_cast<std::ptrdiff_t>(begin), data.begin() + static_cast<std::ptrdiff_t>(end) };
+    }
+
+    template <class T, class Read>
+    ESM4::FONVSaveField<T> readField(
+        Cursor& cursor, std::span<const std::uint8_t> data, Read&& read, std::string_view description)
+    {
+        const std::size_t begin = cursor.position();
+        const T value = read(description);
+        const std::size_t end = cursor.position();
+        return { value, range(begin, end), copyRange(data, begin, end) };
+    }
+
+    ESM4::FONVSaveStringField readStringField(
+        Cursor& cursor, std::span<const std::uint8_t> data, std::uint16_t maxBytes, std::string_view description)
+    {
+        const std::size_t encodedBegin = cursor.position();
+        auto length = readField<std::uint16_t>(
+            cursor, data, [&](std::string_view label) { return cursor.readU16(label); }, description);
+        if (length.mValue > maxBytes)
+            throw ESM4::FONVSaveError(
+                length.mRange.mOffset, std::string(description) + " length exceeds the configured bound");
+
+        cursor.expectDelimiter(description);
+        const std::size_t valueBegin = cursor.position();
+        const auto valueBytes = cursor.take(length.mValue, description);
+        const std::size_t valueEnd = cursor.position();
+        // The retail writer omits the otherwise trailing delimiter for an empty string (Save 330's player name is
+        // encoded as 00 00 7c immediately followed by the next field).
+        if (length.mValue != 0)
+            cursor.expectDelimiter(description);
+
+        if (std::find(valueBytes.begin(), valueBytes.end(), 0) != valueBytes.end())
+            throw ESM4::FONVSaveError(valueBegin, std::string(description) + " contains an embedded NUL");
+
+        ESM4::FONVSaveStringField result;
+        result.mLength = std::move(length);
+        result.mValue.assign(reinterpret_cast<const char*>(valueBytes.data()), valueBytes.size());
+        result.mValueRange = range(valueBegin, valueEnd);
+        result.mEncodedRange = range(encodedBegin, cursor.position());
+        result.mRawValue.assign(valueBytes.begin(), valueBytes.end());
+        result.mRawEncoded = copyRange(data, encodedBegin, cursor.position());
+        return result;
+    }
+
+    bool checkedMultiply(std::uint64_t left, std::uint64_t right, std::uint64_t& result)
+    {
+        if (left != 0 && right > std::numeric_limits<std::uint64_t>::max() / left)
+            return false;
+        result = left * right;
+        return true;
+    }
+
+    bool looksLikeLanguage(std::uint32_t firstWord)
+    {
+        // Fallout 3 puts the width here. New Vegas puts a fixed 64-byte language field here, whose first four ASCII
+        // bytes are numerically far outside any retail screenshot dimension.
+        return firstWord > sLanguageDiscriminator;
+    }
+
+    std::string decodeLanguage(std::span<const std::uint8_t> bytes, std::uint64_t offset)
+    {
+        const auto nul = std::find(bytes.begin(), bytes.end(), 0);
+        if (nul == bytes.begin() || nul == bytes.end())
+            throw ESM4::FONVSaveError(offset, "invalid fixed-width language field");
+
+        for (auto it = bytes.begin(); it != nul; ++it)
+        {
+            if (*it < 0x20 || *it > 0x7e)
+                throw ESM4::FONVSaveError(offset, "language contains a non-printable byte");
+        }
+        if (std::any_of(nul, bytes.end(), [](std::uint8_t value) { return value != 0; }))
+            throw ESM4::FONVSaveError(offset, "language padding is not zero-filled");
+
+        return { reinterpret_cast<const char*>(bytes.data()), static_cast<std::size_t>(nul - bytes.begin()) };
+    }
+
+    ESM4::FONVSaveRawField readRawField(Cursor& cursor, std::span<const std::uint8_t> data, std::size_t count,
+        std::string_view description)
+    {
+        const std::size_t begin = cursor.position();
+        cursor.take(count, description);
+        const std::size_t end = cursor.position();
+        return { range(begin, end), copyRange(data, begin, end) };
+    }
+
+    ESM4::FONVSaveField<std::uint32_t> readReferenceId(
+        Cursor& cursor, std::span<const std::uint8_t> data, std::string_view description)
+    {
+        const std::size_t begin = cursor.position();
+        const auto bytes = cursor.take(3, description);
+        const std::uint32_t value = (static_cast<std::uint32_t>(bytes[0]) << 16)
+            | (static_cast<std::uint32_t>(bytes[1]) << 8) | static_cast<std::uint32_t>(bytes[2]);
+        return { value, range(begin, cursor.position()), std::vector<std::uint8_t>(bytes.begin(), bytes.end()) };
+    }
+
+    ESM4::FONVSaveField<std::uint32_t> readVariableWidthField(Cursor& cursor,
+        std::span<const std::uint8_t> data, std::uint8_t width, std::string_view description)
+    {
+        switch (width)
+        {
+            case 1:
+                return readField<std::uint32_t>(cursor, data,
+                    [&](std::string_view label) { return static_cast<std::uint32_t>(cursor.readU8(label)); },
+                    description);
+            case 2:
+                return readField<std::uint32_t>(cursor, data,
+                    [&](std::string_view label) { return static_cast<std::uint32_t>(cursor.readU16(label)); },
+                    description);
+            case 4:
+                return readField<std::uint32_t>(
+                    cursor, data, [&](std::string_view label) { return cursor.readU32(label); }, description);
+            default:
+                throw ESM4::FONVSaveError(cursor.position(), "invalid integer field width");
+        }
+    }
+
+    ESM4::FONVSaveGlobalDataTable parseGlobalDataTable(std::span<const std::uint8_t> data, std::size_t begin,
+        std::size_t end, std::uint32_t entryCount, const ESM4::FONVSaveLimits& limits, std::string_view description)
+    {
+        if (entryCount > limits.mMaxGlobalDataEntries)
+            throw ESM4::FONVSaveError(begin, std::string(description) + " count exceeds the configured bound");
+        const std::size_t sectionSize = end - begin;
+        if (entryCount > sectionSize / sGlobalDataHeaderBytes)
+            throw ESM4::FONVSaveError(begin, std::string(description) + " count cannot fit in its section");
+
+        ESM4::FONVSaveGlobalDataTable result;
+        result.mRange = range(begin, end);
+        result.mEntries.reserve(entryCount);
+        Cursor cursor(data, begin, end);
+        for (std::uint32_t i = 0; i < entryCount; ++i)
+        {
+            ESM4::FONVSaveGlobalDataEntry entry;
+            const std::size_t envelopeBegin = cursor.position();
+            const std::size_t headerBegin = cursor.position();
+            entry.mType = readField<std::uint32_t>(
+                cursor, data, [&](std::string_view label) { return cursor.readU32(label); }, "global data type");
+            entry.mDataLength = readField<std::uint32_t>(cursor, data,
+                [&](std::string_view label) { return cursor.readU32(label); }, "global data payload length");
+            const std::size_t headerEnd = cursor.position();
+            entry.mHeaderRange = range(headerBegin, headerEnd);
+            entry.mRawHeader = copyRange(data, headerBegin, headerEnd);
+
+            if (entry.mDataLength.mValue > limits.mMaxEntryPayloadBytes)
+                throw ESM4::FONVSaveError(entry.mDataLength.mRange.mOffset,
+                    std::string(description) + " payload exceeds the configured bound");
+            if (entry.mDataLength.mValue > cursor.end() - cursor.position())
+                throw ESM4::FONVSaveError(
+                    cursor.position(), std::string(description) + " payload crosses its section boundary");
+            entry.mUnparsedPayload
+                = readRawField(cursor, data, entry.mDataLength.mValue, "global data payload");
+            entry.mEnvelopeRange = range(envelopeBegin, cursor.position());
+            result.mEntries.push_back(std::move(entry));
+        }
+        if (cursor.position() != cursor.end())
+            throw ESM4::FONVSaveError(cursor.position(), std::string(description) + " contains unaccounted bytes");
+        return result;
+    }
+
+    ESM4::FONVSaveChangedForms parseChangedForms(std::span<const std::uint8_t> data, std::size_t begin,
+        std::size_t end, std::uint32_t entryCount, const ESM4::FONVSaveLimits& limits)
+    {
+        if (entryCount > limits.mMaxChangedForms)
+            throw ESM4::FONVSaveError(begin, "changed-form count exceeds the configured bound");
+        const std::size_t sectionSize = end - begin;
+        if (entryCount > sectionSize / sMinimumChangedFormEnvelopeBytes)
+            throw ESM4::FONVSaveError(begin, "changed-form count cannot fit in its section");
+
+        ESM4::FONVSaveChangedForms result;
+        result.mRange = range(begin, end);
+        result.mEntries.reserve(entryCount);
+        Cursor cursor(data, begin, end);
+        for (std::uint32_t i = 0; i < entryCount; ++i)
+        {
+            ESM4::FONVSaveChangedFormEnvelope entry;
+            const std::size_t envelopeBegin = cursor.position();
+            const std::size_t headerBegin = cursor.position();
+            entry.mEncodedReferenceId = readReferenceId(cursor, data, "changed-form reference ID");
+            entry.mReferenceId = { entry.mEncodedReferenceId.mRange, entry.mEncodedReferenceId.mRaw };
+            const std::uint32_t referenceKind = entry.mEncodedReferenceId.mValue >> 22;
+            if (referenceKind == 3)
+                throw ESM4::FONVSaveError(
+                    entry.mEncodedReferenceId.mRange.mOffset, "invalid changed-form RefID namespace");
+            entry.mReferenceKind = static_cast<ESM4::FONVSaveReferenceKind>(referenceKind);
+            entry.mReferencePayload = entry.mEncodedReferenceId.mValue & 0x003fffffu;
+            entry.mChangeFlags = readField<std::uint32_t>(cursor, data,
+                [&](std::string_view label) { return cursor.readU32(label); }, "changed-form flags");
+            entry.mRawType = readField<std::uint8_t>(
+                cursor, data, [&](std::string_view label) { return cursor.readU8(label); }, "changed-form type");
+            entry.mChangeType = entry.mRawType.mValue & 0x3f;
+            const std::uint8_t lengthCode = entry.mRawType.mValue >> 6;
+            if (lengthCode == 3)
+                throw ESM4::FONVSaveError(entry.mRawType.mRange.mOffset, "invalid changed-form length-width code");
+            entry.mLengthWidth = static_cast<std::uint8_t>(1u << lengthCode);
+            entry.mVersion = readField<std::uint8_t>(cursor, data,
+                [&](std::string_view label) { return cursor.readU8(label); }, "changed-form version");
+            entry.mDataLength
+                = readVariableWidthField(cursor, data, entry.mLengthWidth, "changed-form payload length");
+            const std::size_t headerEnd = cursor.position();
+            entry.mHeaderRange = range(headerBegin, headerEnd);
+            entry.mRawHeader = copyRange(data, headerBegin, headerEnd);
+
+            if (entry.mDataLength.mValue > limits.mMaxEntryPayloadBytes)
+                throw ESM4::FONVSaveError(
+                    entry.mDataLength.mRange.mOffset, "changed-form payload exceeds the configured bound");
+            if (entry.mDataLength.mValue > cursor.end() - cursor.position())
+                throw ESM4::FONVSaveError(cursor.position(), "changed-form payload crosses its section boundary");
+            entry.mUnparsedPayload
+                = readRawField(cursor, data, entry.mDataLength.mValue, "changed-form payload");
+            entry.mEnvelopeRange = range(envelopeBegin, cursor.position());
+            result.mEntries.push_back(std::move(entry));
+        }
+        if (cursor.position() != cursor.end())
+            throw ESM4::FONVSaveError(cursor.position(), "changed-form section contains unaccounted bytes");
+        return result;
+    }
+
+    ESM4::FONVSaveFormIdTable parseFormIdTable(Cursor& cursor, std::span<const std::uint8_t> data,
+        std::size_t maximumCount, std::string_view description)
+    {
+        ESM4::FONVSaveFormIdTable result;
+        const std::size_t begin = cursor.position();
+        result.mCount = readField<std::uint32_t>(
+            cursor, data, [&](std::string_view label) { return cursor.readU32(label); }, description);
+        if (result.mCount.mValue > maximumCount)
+            throw ESM4::FONVSaveError(
+                result.mCount.mRange.mOffset, std::string(description) + " count exceeds the configured bound");
+        if (result.mCount.mValue > (cursor.end() - cursor.position()) / sizeof(std::uint32_t))
+            throw ESM4::FONVSaveError(
+                cursor.position(), std::string(description) + " entries cross the section boundary");
+
+        result.mFormIds.reserve(result.mCount.mValue);
+        for (std::uint32_t i = 0; i < result.mCount.mValue; ++i)
+        {
+            result.mFormIds.push_back(readField<std::uint32_t>(cursor, data,
+                [&](std::string_view label) { return cursor.readU32(label); }, "FormID table entry"));
+        }
+        result.mRange = range(begin, cursor.position());
+        return result;
+    }
+
+    void resolveChangedFormReferences(
+        ESM4::FONVSaveChangedForms& changedForms, const ESM4::FONVSaveFormIdTable& formIds)
+    {
+        for (ESM4::FONVSaveChangedFormEnvelope& entry : changedForms.mEntries)
+        {
+            switch (entry.mReferenceKind)
+            {
+                case ESM4::FONVSaveReferenceKind::FormIdArray:
+                {
+                    if (entry.mReferencePayload == 0)
+                    {
+                        entry.mResolvedFormId.reset();
+                        break;
+                    }
+                    if (entry.mReferencePayload > formIds.mFormIds.size())
+                        throw ESM4::FONVSaveError(entry.mEncodedReferenceId.mRange.mOffset,
+                            "changed-form RefID index lies beyond the FormID array");
+                    const std::uint32_t formId = formIds.mFormIds[entry.mReferencePayload - 1].mValue;
+                    if (formId == 0)
+                        throw ESM4::FONVSaveError(entry.mEncodedReferenceId.mRange.mOffset,
+                            "changed-form RefID resolves to an empty FormID-array slot");
+                    entry.mResolvedFormId = formId;
+                    break;
+                }
+                case ESM4::FONVSaveReferenceKind::DefaultForm:
+                    if (entry.mReferencePayload == 0)
+                        throw ESM4::FONVSaveError(
+                            entry.mEncodedReferenceId.mRange.mOffset, "changed-form default RefID resolves to zero");
+                    entry.mResolvedFormId = entry.mReferencePayload;
+                    break;
+                case ESM4::FONVSaveReferenceKind::CreatedForm:
+                    entry.mResolvedFormId = 0xff000000u | entry.mReferencePayload;
+                    break;
+            }
+        }
+    }
+
+    void appendUnparsedSemanticPayload(ESM4::FONVSaveGamePrefix& save, const ESM4::FONVSaveRange& payload)
+    {
+        if (payload.empty())
+            return;
+        save.mUnparsedSemanticPayloadRanges.push_back(payload);
+        save.mUnparsedSemanticPayloadBytes += payload.mSize;
+    }
+}
+
+namespace ESM4
+{
+    FONVSaveError::FONVSaveError(std::uint64_t offset, std::string message)
+        : std::runtime_error(errorMessage(offset, message))
+        , mOffset(offset)
+    {
+    }
+
+    bool isFONVSaveGame(std::span<const std::uint8_t> data)
+    {
+        return data.size() >= sMagic.size()
+            && std::equal(sMagic.begin(), sMagic.end(), reinterpret_cast<const char*>(data.data()));
+    }
+
+    const FONVSaveChangedFormEnvelope* FONVSaveGamePrefix::findChangedForm(
+        std::uint32_t resolvedFormId, std::optional<std::uint8_t> changeType) const
+    {
+        const auto found = std::find_if(mChangedForms.mEntries.begin(), mChangedForms.mEntries.end(),
+            [&](const FONVSaveChangedFormEnvelope& entry) {
+                return entry.mResolvedFormId == resolvedFormId
+                    && (!changeType.has_value() || entry.mChangeType == *changeType);
+            });
+        return found == mChangedForms.mEntries.end() ? nullptr : &*found;
+    }
+
+    const FONVSaveChangedFormEnvelope& FONVSaveGamePrefix::requirePlayerReferenceChangeForm() const
+    {
+        const FONVSaveChangedFormEnvelope* result = nullptr;
+        for (const FONVSaveChangedFormEnvelope& entry : mChangedForms.mEntries)
+        {
+            if (entry.mResolvedFormId != sFONVPlayerReferenceFormId
+                || entry.mChangeType != sFONVActorReferenceChangeType)
+                continue;
+            if (result != nullptr)
+                throw FONVSaveError(entry.mEncodedReferenceId.mRange.mOffset,
+                    "multiple canonical player ACHR change forms are present");
+            result = &entry;
+        }
+        if (result == nullptr)
+            throw FONVSaveError(mChangedForms.mRange.mOffset,
+                "canonical player ACHR reference FormID 0x00000014 is absent; NPC_ FormID 0x00000007 cannot be located");
+        return *result;
+    }
+
+    FONVSaveGamePrefix parseFONVSaveGamePrefix(
+        std::span<const std::uint8_t> data, const std::filesystem::path& sourcePath, const FONVSaveLimits& limits)
+    {
+        if (data.size() > limits.mMaxFileBytes)
+            throw FONVSaveError(0, "file exceeds the configured bound");
+        if (!isFONVSaveGame(data))
+            throw FONVSaveError(0, "expected FO3SAVEGAME magic");
+
+        FONVSaveGamePrefix result;
+        result.mSourcePath = sourcePath;
+        result.mFileSize = data.size();
+        result.mMagicRange = { 0, sMagic.size() };
+        result.mRawMagic = copyRange(data, 0, sMagic.size());
+
+        Cursor prefix(data, sMagic.size(), data.size());
+        result.mHeaderSize = readField<std::uint32_t>(
+            prefix, data, [&](std::string_view label) { return prefix.readU32(label); }, "header size");
+        if (result.mHeaderSize.mValue == 0 || result.mHeaderSize.mValue > limits.mMaxHeaderBytes)
+            throw FONVSaveError(result.mHeaderSize.mRange.mOffset, "header size exceeds the configured bound");
+        if (result.mHeaderSize.mValue > data.size() - prefix.position())
+            throw FONVSaveError(prefix.position(), "truncated header");
+
+        const std::size_t headerBegin = prefix.position();
+        const std::size_t headerEnd = headerBegin + result.mHeaderSize.mValue;
+        Cursor header(data, headerBegin, headerEnd);
+        result.mHeaderRange = range(headerBegin, headerEnd);
+        result.mRawHeader = copyRange(data, headerBegin, headerEnd);
+
+        result.mHeader.mVersion = readField<std::uint32_t>(
+            header, data, [&](std::string_view label) { return header.readU32(label); }, "header version");
+        header.expectDelimiter("header version");
+
+        if (looksLikeLanguage(header.peekU32("screenshot width or language")))
+        {
+            const std::size_t begin = header.position();
+            const auto raw = header.take(sLanguageBytes, "language");
+            FONVSaveField<std::string> language;
+            language.mValue = decodeLanguage(raw, begin);
+            language.mRange = range(begin, header.position());
+            language.mRaw.assign(raw.begin(), raw.end());
+            result.mHeader.mLanguage = std::move(language);
+            header.expectDelimiter("language");
+        }
+
+        result.mHeader.mScreenshotWidth = readField<std::uint32_t>(
+            header, data, [&](std::string_view label) { return header.readU32(label); }, "screenshot width");
+        if (result.mHeader.mScreenshotWidth.mValue == 0
+            || result.mHeader.mScreenshotWidth.mValue > limits.mMaxScreenshotDimension)
+            throw FONVSaveError(
+                result.mHeader.mScreenshotWidth.mRange.mOffset, "screenshot width exceeds the configured bound");
+        header.expectDelimiter("screenshot width");
+
+        result.mHeader.mScreenshotHeight = readField<std::uint32_t>(
+            header, data, [&](std::string_view label) { return header.readU32(label); }, "screenshot height");
+        if (result.mHeader.mScreenshotHeight.mValue == 0
+            || result.mHeader.mScreenshotHeight.mValue > limits.mMaxScreenshotDimension)
+            throw FONVSaveError(
+                result.mHeader.mScreenshotHeight.mRange.mOffset, "screenshot height exceeds the configured bound");
+        header.expectDelimiter("screenshot height");
+
+        result.mHeader.mSaveNumber = readField<std::uint32_t>(
+            header, data, [&](std::string_view label) { return header.readU32(label); }, "save number");
+        header.expectDelimiter("save number");
+        result.mHeader.mPlayerName
+            = readStringField(header, data, std::numeric_limits<std::uint16_t>::max(), "player name");
+        result.mHeader.mPlayerKarmaTitle
+            = readStringField(header, data, std::numeric_limits<std::uint16_t>::max(), "player karma title");
+        result.mHeader.mPlayerLevel = readField<std::uint32_t>(
+            header, data, [&](std::string_view label) { return header.readU32(label); }, "player level");
+        header.expectDelimiter("player level");
+        result.mHeader.mPlayerLocation
+            = readStringField(header, data, std::numeric_limits<std::uint16_t>::max(), "player location");
+        result.mHeader.mPlayTime
+            = readStringField(header, data, std::numeric_limits<std::uint16_t>::max(), "play time");
+        if (header.position() != header.end())
+            throw FONVSaveError(header.position(), "header contains unaccounted bytes");
+
+        std::uint64_t screenshotPixels = 0;
+        std::uint64_t screenshotBytes = 0;
+        if (!checkedMultiply(
+                result.mHeader.mScreenshotWidth.mValue, result.mHeader.mScreenshotHeight.mValue, screenshotPixels)
+            || !checkedMultiply(screenshotPixels, result.mScreenshotBytesPerPixel, screenshotBytes)
+            || screenshotBytes > limits.mMaxScreenshotBytes)
+            throw FONVSaveError(headerEnd, "screenshot byte count overflows or exceeds the configured bound");
+        if (screenshotBytes > data.size() - headerEnd)
+            throw FONVSaveError(headerEnd, "truncated screenshot payload");
+
+        const std::size_t screenshotEnd = headerEnd + static_cast<std::size_t>(screenshotBytes);
+        result.mScreenshotRange = range(headerEnd, screenshotEnd);
+        result.mRawScreenshot = copyRange(data, headerEnd, screenshotEnd);
+
+        Cursor postScreenshot(data, screenshotEnd, data.size());
+        result.mFormVersion = readField<std::uint8_t>(
+            postScreenshot, data, [&](std::string_view label) { return postScreenshot.readU8(label); }, "form version");
+        result.mMasterTableSize = readField<std::uint32_t>(
+            postScreenshot, data, [&](std::string_view label) { return postScreenshot.readU32(label); },
+            "master table size");
+        if (result.mMasterTableSize.mValue == 0 || result.mMasterTableSize.mValue > limits.mMaxMasterTableBytes)
+            throw FONVSaveError(
+                result.mMasterTableSize.mRange.mOffset, "master table size exceeds the configured bound");
+        if (result.mMasterTableSize.mValue > data.size() - postScreenshot.position())
+            throw FONVSaveError(postScreenshot.position(), "truncated master table");
+
+        const std::size_t masterTableBegin = postScreenshot.position();
+        const std::size_t masterTableEnd = masterTableBegin + result.mMasterTableSize.mValue;
+        Cursor masterTable(data, masterTableBegin, masterTableEnd);
+        result.mMasterTableRange = range(masterTableBegin, masterTableEnd);
+        result.mRawMasterTable = copyRange(data, masterTableBegin, masterTableEnd);
+        result.mMasterCount = readField<std::uint8_t>(
+            masterTable, data, [&](std::string_view label) { return masterTable.readU8(label); }, "master count");
+        if (result.mMasterCount.mValue == 0)
+            throw FONVSaveError(result.mMasterCount.mRange.mOffset, "master table is empty");
+        if (result.mMasterCount.mValue > limits.mMaxMasterCount)
+            throw FONVSaveError(result.mMasterCount.mRange.mOffset, "master count exceeds the configured bound");
+        masterTable.expectDelimiter("master count");
+
+        result.mMasters.reserve(result.mMasterCount.mValue);
+        for (std::size_t i = 0; i < result.mMasterCount.mValue; ++i)
+        {
+            FONVSaveMaster master;
+            master.mFileName = readStringField(masterTable, data, limits.mMaxMasterNameBytes, "master file name");
+            if (master.mFileName.mValue.empty())
+                throw FONVSaveError(master.mFileName.mValueRange.mOffset, "master file name is empty");
+            result.mMasters.push_back(std::move(master));
+        }
+        if (masterTable.position() != masterTable.end())
+            throw FONVSaveError(masterTable.position(), "master table contains unaccounted bytes");
+
+        result.mHeaderAndMastersRange = { 0, masterTableEnd };
+        if (sFileLocationTableBytes > data.size() - masterTableEnd)
+            throw FONVSaveError(masterTableEnd, "truncated file-location table");
+        const std::size_t fileLocationEnd = masterTableEnd + sFileLocationTableBytes;
+        Cursor fileLocation(data, masterTableEnd, fileLocationEnd);
+        result.mFileLocationTable.mRange = range(masterTableEnd, fileLocationEnd);
+        result.mFileLocationTable.mRaw = copyRange(data, masterTableEnd, fileLocationEnd);
+        result.mFileLocationTable.mRefIdArrayCountOffset = readField<std::uint32_t>(fileLocation, data,
+            [&](std::string_view label) { return fileLocation.readU32(label); }, "RefID-array count offset");
+        result.mFileLocationTable.mUnknownTableOffset = readField<std::uint32_t>(fileLocation, data,
+            [&](std::string_view label) { return fileLocation.readU32(label); }, "unknown-table offset");
+        result.mFileLocationTable.mGlobalDataTable1Offset = readField<std::uint32_t>(fileLocation, data,
+            [&](std::string_view label) { return fileLocation.readU32(label); }, "global-data table 1 offset");
+        result.mFileLocationTable.mChangedFormsOffset = readField<std::uint32_t>(fileLocation, data,
+            [&](std::string_view label) { return fileLocation.readU32(label); }, "changed-forms offset");
+        result.mFileLocationTable.mGlobalDataTable2Offset = readField<std::uint32_t>(fileLocation, data,
+            [&](std::string_view label) { return fileLocation.readU32(label); }, "global-data table 2 offset");
+        result.mFileLocationTable.mGlobalDataTable1Count = readField<std::uint32_t>(fileLocation, data,
+            [&](std::string_view label) { return fileLocation.readU32(label); }, "global-data table 1 count");
+        result.mFileLocationTable.mGlobalDataTable2Count = readField<std::uint32_t>(fileLocation, data,
+            [&](std::string_view label) { return fileLocation.readU32(label); }, "global-data table 2 count");
+        result.mFileLocationTable.mChangedFormsCount = readField<std::uint32_t>(fileLocation, data,
+            [&](std::string_view label) { return fileLocation.readU32(label); }, "changed-forms count");
+        result.mFileLocationTable.mUnknownCount = readField<std::uint32_t>(fileLocation, data,
+            [&](std::string_view label) { return fileLocation.readU32(label); }, "unknown-table count");
+        result.mFileLocationTable.mUnused
+            = readRawField(fileLocation, data, sFileLocationUnusedBytes, "file-location unused bytes");
+        if (fileLocation.position() != fileLocation.end())
+            throw FONVSaveError(fileLocation.position(), "file-location table contains unaccounted bytes");
+
+        const std::uint64_t fileSize = data.size();
+        const auto validateOffset = [&](const FONVSaveField<std::uint32_t>& field, std::string_view description) {
+            if (field.mValue > fileSize)
+                throw FONVSaveError(field.mRange.mOffset, std::string(description) + " lies beyond EOF");
+        };
+        validateOffset(result.mFileLocationTable.mRefIdArrayCountOffset, "RefID-array count offset");
+        validateOffset(result.mFileLocationTable.mUnknownTableOffset, "unknown-table offset");
+        validateOffset(result.mFileLocationTable.mGlobalDataTable1Offset, "global-data table 1 offset");
+        validateOffset(result.mFileLocationTable.mChangedFormsOffset, "changed-forms offset");
+        validateOffset(result.mFileLocationTable.mGlobalDataTable2Offset, "global-data table 2 offset");
+
+        const std::size_t globalData1Offset = result.mFileLocationTable.mGlobalDataTable1Offset.mValue;
+        const std::size_t changedFormsOffset = result.mFileLocationTable.mChangedFormsOffset.mValue;
+        const std::size_t globalData2Offset = result.mFileLocationTable.mGlobalDataTable2Offset.mValue;
+        const std::size_t refIdArrayOffset = result.mFileLocationTable.mRefIdArrayCountOffset.mValue;
+        const std::size_t unknownTableOffset = result.mFileLocationTable.mUnknownTableOffset.mValue;
+        if (globalData1Offset != fileLocationEnd)
+            throw FONVSaveError(result.mFileLocationTable.mGlobalDataTable1Offset.mRange.mOffset,
+                "global-data table 1 does not immediately follow the file-location table");
+        if (changedFormsOffset < globalData1Offset || globalData2Offset < changedFormsOffset
+            || refIdArrayOffset < globalData2Offset || unknownTableOffset < refIdArrayOffset)
+            throw FONVSaveError(masterTableEnd, "file-location sections overlap or are out of retail FNV order");
+
+        result.mGlobalDataTable1 = parseGlobalDataTable(data, globalData1Offset, changedFormsOffset,
+            result.mFileLocationTable.mGlobalDataTable1Count.mValue, limits, "global-data table 1");
+        result.mChangedForms = parseChangedForms(data, changedFormsOffset, globalData2Offset,
+            result.mFileLocationTable.mChangedFormsCount.mValue, limits);
+        result.mGlobalDataTable2 = parseGlobalDataTable(data, globalData2Offset, refIdArrayOffset,
+            result.mFileLocationTable.mGlobalDataTable2Count.mValue, limits, "global-data table 2");
+
+        Cursor formIdAndWorldspaceTables(data, refIdArrayOffset, unknownTableOffset);
+        result.mFormIdTable = parseFormIdTable(
+            formIdAndWorldspaceTables, data, limits.mMaxFormIds, "FormID-array count");
+        result.mVisitedWorldspaces = parseFormIdTable(
+            formIdAndWorldspaceTables, data, limits.mMaxVisitedWorldspaces, "visited-worldspace count");
+        if (formIdAndWorldspaceTables.position() != formIdAndWorldspaceTables.end())
+            throw FONVSaveError(
+                formIdAndWorldspaceTables.position(), "FormID and visited-worldspace tables contain unaccounted bytes");
+        resolveChangedFormReferences(result.mChangedForms, result.mFormIdTable);
+
+        Cursor unknownTable(data, unknownTableOffset, data.size());
+        const std::size_t unknownTableBegin = unknownTable.position();
+        result.mUnknownTable.mCount = readField<std::uint32_t>(unknownTable, data,
+            [&](std::string_view label) { return unknownTable.readU32(label); }, "unknown-table byte count");
+        if (result.mUnknownTable.mCount.mValue > limits.mMaxUnknownTableBytes)
+            throw FONVSaveError(result.mUnknownTable.mCount.mRange.mOffset,
+                "unknown-table byte count exceeds the configured bound");
+        if (result.mUnknownTable.mCount.mValue != unknownTable.end() - unknownTable.position())
+            throw FONVSaveError(
+                unknownTable.position(), "unknown-table byte count does not account exactly for the file tail");
+        result.mUnknownTable.mUnparsedEntries
+            = readRawField(unknownTable, data, result.mUnknownTable.mCount.mValue, "unknown-table entries");
+        result.mUnknownTable.mRange = range(unknownTableBegin, unknownTable.position());
+
+        for (const FONVSaveGlobalDataEntry& entry : result.mGlobalDataTable1.mEntries)
+            appendUnparsedSemanticPayload(result, entry.mUnparsedPayload.mRange);
+        for (const FONVSaveChangedFormEnvelope& entry : result.mChangedForms.mEntries)
+            appendUnparsedSemanticPayload(result, entry.mUnparsedPayload.mRange);
+        for (const FONVSaveGlobalDataEntry& entry : result.mGlobalDataTable2.mEntries)
+            appendUnparsedSemanticPayload(result, entry.mUnparsedPayload.mRange);
+        appendUnparsedSemanticPayload(result, result.mUnknownTable.mUnparsedEntries.mRange);
+
+        result.mStructurallyAccountedRange = { 0, data.size() };
+        result.mParsedPrefixRange = result.mStructurallyAccountedRange;
+        result.mUnparsedBodyRange = { data.size(), 0 };
+        return result;
+    }
+
+    FONVSaveGamePrefix readFONVSaveGamePrefix(const std::filesystem::path& path, const FONVSaveLimits& limits)
+    {
+        std::ifstream stream(path, std::ios::binary | std::ios::ate);
+        if (!stream)
+            throw FONVSaveError(0, "could not open source file");
+        const std::streampos end = stream.tellg();
+        if (end < 0)
+            throw FONVSaveError(0, "could not determine source file size");
+        const auto fileSize = static_cast<std::uint64_t>(end);
+        if (fileSize > limits.mMaxFileBytes || fileSize > std::numeric_limits<std::size_t>::max()
+            || fileSize > static_cast<std::uint64_t>(std::numeric_limits<std::streamsize>::max()))
+            throw FONVSaveError(0, "file exceeds the configured or platform bound");
+
+        std::vector<std::uint8_t> bytes(static_cast<std::size_t>(fileSize));
+        stream.seekg(0);
+        if (!bytes.empty())
+            stream.read(reinterpret_cast<char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+        if (!stream || static_cast<std::size_t>(stream.gcount()) != bytes.size())
+            throw FONVSaveError(0, "source file changed or was truncated while reading");
+        return parseFONVSaveGamePrefix(bytes, path, limits);
+    }
+}

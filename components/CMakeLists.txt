@@ -204,6 +204,7 @@ add_component_dir (esm4
     common
     dialogue
     effect
+    fonvsavegame
     grid
     grouptype
     inventory
