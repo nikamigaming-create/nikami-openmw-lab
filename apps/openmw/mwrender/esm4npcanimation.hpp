@@ -8,6 +8,7 @@
 #include <osg/MatrixTransform>
 
 #include <array>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -24,6 +25,15 @@ namespace MWRender
     class ESM4NpcAnimation : public Animation
     {
     public:
+        struct FirstPersonUnarmedState
+        {
+            float mFieldOfView = 55.f;
+            std::vector<std::string> mSaveWornArmorModels;
+            std::string mSaveWornLeftHandModel;
+            bool mPipBoy = false;
+            bool mPipBoyGlove = false;
+        };
+
         struct WeaponAttachmentState
         {
             bool mApplied = false;
@@ -38,6 +48,8 @@ namespace MWRender
 
         ESM4NpcAnimation(
             const MWWorld::Ptr& ptr, osg::ref_ptr<osg::Group> parentNode, Resource::ResourceSystem* resourceSystem);
+        ESM4NpcAnimation(const MWWorld::Ptr& ptr, osg::ref_ptr<osg::Group> parentNode,
+            Resource::ResourceSystem* resourceSystem, std::optional<FirstPersonUnarmedState> firstPersonUnarmed);
         osg::Vec3f runAnimation(float duration) override;
         bool getWeaponsShown() const override { return mFalloutWeaponsShown; }
         void showWeapons(bool showWeapon) override;
@@ -49,6 +61,7 @@ namespace MWRender
         WeaponAttachmentState getWeaponHolsterAttachmentState() const;
         bool supportsProceduralHumanoidLocomotion() const;
         bool applyProceduralHumanoidLocomotion(std::string_view group, float elapsed);
+        std::size_t getFirstPersonAttachedPartCount() const { return mFirstPersonAttachedPartCount; }
 
     private:
         struct ProceduralPoseBone
@@ -67,6 +80,7 @@ namespace MWRender
         std::string mFalloutWeaponDrawBone = "Weapon";
         std::string mFalloutWeaponHolsterBone;
         bool mFalloutWeaponsShown = false;
+        std::size_t mFirstPersonAttachedPartCount = 0;
         const ESM4::Weapon* mFalloutActionWeapon = nullptr;
         osg::ref_ptr<osg::Node> mFalloutAnimatedObjectPart;
         std::string mFalloutAnimatedObjectModel;
@@ -77,6 +91,7 @@ namespace MWRender
             std::string_view preferredBone = {});
         osg::ref_ptr<osg::Node> insertAttachedPart(std::string_view model, std::string_view preferredBone,
             std::string* authoredParent = nullptr);
+        void initializeFirstPersonUnarmed(const FirstPersonUnarmedState& state);
 
         // Works for FO3/FONV/TES5
         unsigned int insertHeadParts(const ESM4::Npc& traits, const std::vector<ESM::FormId>& partIds,

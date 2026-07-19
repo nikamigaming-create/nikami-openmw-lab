@@ -25,6 +25,7 @@
 #include <cstdlib>
 #include <iomanip>
 #include <set>
+#include <stdexcept>
 #include <components/misc/resourcehelpers.hpp>
 #include <components/misc/strings/algorithm.hpp>
 #include <components/misc/strings/lower.hpp>
@@ -82,6 +83,7 @@
 #include "../mwworld/esmstore.hpp"
 #include "../mwworld/timestamp.hpp"
 #include "falloutweaponanimation.hpp"
+#include "npcanimation.hpp"
 #include "util.hpp"
 #include "vismask.hpp"
 
@@ -4124,14 +4126,24 @@ namespace MWRender
             return lowered.find("characters/_male/lefthand.nif") != std::string::npos
                 || lowered.find("characters\\_male\\lefthand.nif") != std::string::npos
                 || lowered.find("characters/_male/righthand.nif") != std::string::npos
-                || lowered.find("characters\\_male\\righthand.nif") != std::string::npos;
+                || lowered.find("characters\\_male\\righthand.nif") != std::string::npos
+                || lowered.find("characters/_male/lefthand1st.nif") != std::string::npos
+                || lowered.find("characters\\_male\\lefthand1st.nif") != std::string::npos
+                || lowered.find("characters/_male/righthand1st.nif") != std::string::npos
+                || lowered.find("characters\\_male\\righthand1st.nif") != std::string::npos
+                || lowered.find("characters/_male/femalelefthand1st.nif") != std::string::npos
+                || lowered.find("characters\\_male\\femalelefthand1st.nif") != std::string::npos
+                || lowered.find("characters/_male/femalerighthand1st.nif") != std::string::npos
+                || lowered.find("characters\\_male\\femalerighthand1st.nif") != std::string::npos;
         }
 
         bool isFalloutLeftHandSurfaceModel(std::string_view model)
         {
             std::string lowered(model);
             Misc::StringUtils::lowerCaseInPlace(lowered);
-            return lowered.find("lefthand.nif") != std::string::npos;
+            return lowered.find("lefthand.nif") != std::string::npos
+                || lowered.find("lefthand1st.nif") != std::string::npos
+                || lowered.find("lefthandpipboyglove1st.nif") != std::string::npos;
         }
 
         bool isFalloutStaticHeadgearPart(std::string_view model)
@@ -8083,10 +8095,120 @@ namespace MWRender
 
     }
 
+    void ESM4NpcAnimation::initializeFirstPersonUnarmed(const FirstPersonUnarmedState& state)
+    {
+        constexpr std::string_view skeleton = "meshes/characters/_1stperson/skeleton.nif";
+        constexpr std::string_view idle = "meshes/characters/_1stperson/h2hidle.kf";
+        const ESM4::Npc* traits = MWClass::ESM4Npc::getTraitsRecord(mPtr);
+        if (traits == nullptr || !traits->mIsFONV)
+            throw std::runtime_error("native first-person unarmed profile requires an FNV NPC");
+        if (MWClass::ESM4Npc::getEquippedWeapon(mPtr) != nullptr)
+            throw std::runtime_error("native first-person unarmed profile received an equipped weapon");
+        if (!std::isfinite(state.mFieldOfView) || state.mFieldOfView <= 0.f || state.mFieldOfView >= 180.f)
+            throw std::runtime_error("native first-person unarmed profile received an invalid FOV");
+
+        const bool female = MWClass::ESM4Npc::isFemale(mPtr);
+        const std::string rightHand = female ? "meshes/characters/_male/femalerighthand1st.nif"
+                                             : "meshes/characters/_male/righthand1st.nif";
+        const std::string leftHand = !state.mSaveWornLeftHandModel.empty()
+            ? state.mSaveWornLeftHandModel
+            : (female ? "meshes/characters/_male/femalelefthand1st.nif"
+                      : "meshes/characters/_male/lefthand1st.nif");
+        const std::string pipBoy = female ? "meshes/pipboy3000/pipboyarmfemale.nif"
+                                          : "meshes/pipboy3000/pipboyarm.nif";
+        const VFS::Manager* vfs = mResourceSystem != nullptr ? mResourceSystem->getVFS() : nullptr;
+        if (vfs == nullptr)
+            throw std::runtime_error("native first-person unarmed profile has no VFS");
+
+        const auto requireAsset
+            = [&](std::string_view role, std::string_view path, bool saveWorn, bool correctMeshPath = false) {
+            const VFS::Path::Normalized selected = correctMeshPath
+                ? Misc::ResourceHelpers::correctMeshPath(VFS::Path::Normalized(path))
+                : VFS::Path::toNormalized(path);
+            const bool exists = vfs->exists(selected);
+            Log(exists ? Debug::Info : Debug::Error)
+                << "FNV first-person asset: actor=" << traits->mEditorId << " role=" << role
+                << " saveWorn=" << saveWorn << " selected=" << path << " corrected=" << selected.value()
+                << " exists=" << exists;
+            if (!exists)
+                throw std::runtime_error("missing required native FNV first-person asset " + std::string(path));
+        };
+
+        requireAsset("skeleton", skeleton, false);
+        requireAsset("idle-kf", idle, false);
+        for (const std::string& armorModel : state.mSaveWornArmorModels)
+            requireAsset("armor-composite", armorModel, true, true);
+        if (state.mPipBoy)
+            requireAsset("pipboy-arm", pipBoy, true);
+        requireAsset("left-hand", leftHand, !state.mSaveWornLeftHandModel.empty());
+        requireAsset("right-hand", rightHand, false);
+
+        setObjectRoot(std::string(skeleton), true, true, false);
+        if (mObjectRoot == nullptr)
+            throw std::runtime_error("native FNV first-person skeleton produced no render root");
+        mObjectRoot->setName("FNV Native First Person Unarmed Root");
+        mObjectRoot->setUserValue("OpenMW.ActorEditorId", traits->mEditorId);
+
+        const auto attach = [&](std::string_view role, std::string_view path, bool saveWorn) {
+            const bool attached = insertPart(path) != nullptr;
+            if (attached)
+                ++mFirstPersonAttachedPartCount;
+            Log(attached ? Debug::Info : Debug::Error)
+                << "FNV first-person attachment: actor=" << traits->mEditorId << " role=" << role
+                << " saveWorn=" << saveWorn << " selected=" << path << " attached=" << attached
+                << " attachedNodeCount=" << mFirstPersonAttachedPartCount;
+            if (!attached)
+                throw std::runtime_error("failed to attach required native FNV first-person asset "
+                    + std::string(path));
+        };
+
+        for (const std::string& armorModel : state.mSaveWornArmorModels)
+            attach("armor-composite", armorModel, true);
+        if (state.mPipBoy)
+            attach("pipboy-arm", pipBoy, true);
+        attach("left-hand", leftHand, !state.mSaveWornLeftHandModel.empty());
+        attach("right-hand", rightHand, false);
+
+        mNodeMap.clear();
+        mNodeMapCreated = false;
+        const std::shared_ptr<AnimSource> idleSource
+            = addSingleAnimSource(std::string(idle), std::string(skeleton), false, {}, "idle");
+        const std::string selectedIdleSource = getAnimationSourceName("idle");
+        const bool idleBound = idleSource != nullptr && hasAnimation("idle") && selectedIdleSource == idle;
+        Log(idleBound ? Debug::Info : Debug::Error)
+            << "FNV first-person animation: actor=" << traits->mEditorId << " semantic=idle selected=" << idle
+            << " bound=" << idleBound << " semanticSource=" << selectedIdleSource;
+        if (!idleBound)
+            throw std::runtime_error("failed to bind exact native FNV first-person H2H idle");
+
+        play("idle", Animation::AnimPriority(1), BlendMask_All, false, 1.f, "start", "stop", 0.f,
+            std::numeric_limits<std::uint32_t>::max(), true);
+        configureFirstPersonActorRoot(*mObjectRoot, state.mFieldOfView);
+        Log(Debug::Info) << "FNV first-person profile: actor=" << traits->mEditorId << " saveWorn="
+                         << state.mSaveWornArmorModels.size() + static_cast<std::size_t>(state.mPipBoy)
+                                + static_cast<std::size_t>(state.mPipBoyGlove)
+                         << " attachedNodeCount=" << mFirstPersonAttachedPartCount << " fov=" << state.mFieldOfView
+                         << " mask=0x" << std::hex << mObjectRoot->getNodeMask() << std::dec
+                         << " profile=flat-unarmed-h2h";
+    }
+
     ESM4NpcAnimation::ESM4NpcAnimation(
         const MWWorld::Ptr& ptr, osg::ref_ptr<osg::Group> parentNode, Resource::ResourceSystem* resourceSystem)
+        : ESM4NpcAnimation(ptr, std::move(parentNode), resourceSystem, std::nullopt)
+    {
+    }
+
+    ESM4NpcAnimation::ESM4NpcAnimation(
+        const MWWorld::Ptr& ptr, osg::ref_ptr<osg::Group> parentNode, Resource::ResourceSystem* resourceSystem,
+        std::optional<FirstPersonUnarmedState> firstPersonUnarmed)
         : Animation(ptr, std::move(parentNode), resourceSystem)
     {
+        if (firstPersonUnarmed)
+        {
+            initializeFirstPersonUnarmed(*firstPersonUnarmed);
+            return;
+        }
+
         std::string skeletonModel = mPtr.getClass().getCorrectedModel(mPtr);
         const ESM4::Npc* traits = MWClass::ESM4Npc::getTraitsRecord(mPtr);
         const ESM4::Npc* modelRecord = MWClass::ESM4Npc::getModelRecord(mPtr);

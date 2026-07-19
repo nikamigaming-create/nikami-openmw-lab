@@ -4610,10 +4610,16 @@ namespace MWRender
             = shouldSynthesizeFonvSemanticAlias(isFalloutNpcAnimationContext(mPtr), falloutSemanticGroup)
             && (lowerKf.find("meshes/characters/_male/") != std::string::npos
                 || lowerKf.find("meshes\\characters\\_male\\") != std::string::npos
+                || lowerKf.find("meshes/characters/_1stperson/") != std::string::npos
+                || lowerKf.find("meshes\\characters\\_1stperson\\") != std::string::npos
                 || lowerKf.find("characters/_male/") != std::string::npos
                 || lowerKf.find("characters\\_male\\") != std::string::npos
+                || lowerKf.find("characters/_1stperson/") != std::string::npos
+                || lowerKf.find("characters\\_1stperson\\") != std::string::npos
                 || lowerBaseModel.find("characters\\_male\\") != std::string::npos
-                || lowerBaseModel.find("characters/_male/") != std::string::npos);
+                || lowerBaseModel.find("characters/_male/") != std::string::npos
+                || lowerBaseModel.find("characters\\_1stperson\\") != std::string::npos
+                || lowerBaseModel.find("characters/_1stperson/") != std::string::npos);
         const bool isFonvCreatureAnim = lowerKf.find("meshes/creatures/") != std::string::npos
             || lowerBaseModel.find("meshes\\creatures\\") != std::string::npos
             || lowerBaseModel.find("meshes/creatures/") != std::string::npos;

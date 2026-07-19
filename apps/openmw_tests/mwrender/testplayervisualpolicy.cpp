@@ -40,4 +40,33 @@ namespace MWRender
         EXPECT_EQ(policy.mHeadgear, "LegacyHeadgear");
         EXPECT_EQ(policy.mWeapon, "LegacyWeapon");
     }
+
+    TEST(MWRenderPlayerVisualPolicyTest, derivesAuthoredFirstPersonModelFromWornBipedModel)
+    {
+        EXPECT_EQ(normalizeFalloutFirstPersonBipedModel(
+                      "characters\\_male\\lefthandpipboyglove.nif"),
+            "meshes/characters/_male/lefthandpipboyglove1st.nif");
+        EXPECT_EQ(normalizeFalloutFirstPersonBipedModel(
+                      "meshes/characters/_male/femalelefthandpipboyglove1st.nif"),
+            "meshes/characters/_male/femalelefthandpipboyglove1st.nif");
+        EXPECT_TRUE(normalizeFalloutFirstPersonBipedModel("").empty());
+        EXPECT_TRUE(normalizeFalloutFirstPersonBipedModel("not-a-nif.dds").empty());
+    }
+
+    TEST(MWRenderPlayerVisualPolicyTest, unrelatedLeftHandArmorIsNotMisclassifiedAsPipBoyGlove)
+    {
+        EXPECT_TRUE(isFalloutPipBoyGloveFirstPersonModel(
+            true, "meshes/characters/_male/lefthandpipboyglove1st.nif"));
+        EXPECT_FALSE(isFalloutPipBoyGloveFirstPersonModel(
+            false, "meshes/characters/_male/lefthandpipboyglove1st.nif"));
+        EXPECT_FALSE(isFalloutPipBoyGloveFirstPersonModel(
+            true, "meshes/armor/raider/lefthandglove1st.nif"));
+    }
+
+    TEST(MWRenderPlayerVisualPolicyTest, unarmedProfileFailsClosedForAnyWeapon)
+    {
+        EXPECT_TRUE(useFalloutFirstPersonUnarmedProfile(false, false));
+        EXPECT_FALSE(useFalloutFirstPersonUnarmedProfile(true, false));
+        EXPECT_FALSE(useFalloutFirstPersonUnarmedProfile(false, true));
+    }
 }

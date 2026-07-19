@@ -105,6 +105,7 @@ namespace MWRender
     class FogManager;
     class SkyManager;
     class Animation;
+    class ESM4NpcAnimation;
     class NpcAnimation;
     class Pathgrid;
     class Camera;
@@ -380,6 +381,7 @@ namespace MWRender
         osg::ref_ptr<PostProcessor> mPostProcessor;
         std::unique_ptr<MWWorld::LiveCellRef<ESM4::Npc>> mFalloutPlayerVisualRef;
         osg::ref_ptr<Animation> mFalloutPlayerVisualAnimation;
+        osg::ref_ptr<ESM4NpcAnimation> mFalloutPlayerFirstPersonAnimation;
         std::string mFalloutPlayerVisualGroup;
         float mFalloutPlayerVisualGroupElapsed = 0.f;
         bool mFalloutPlayerVisualCycleLogged = false;

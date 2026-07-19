@@ -1,6 +1,9 @@
 #ifndef OPENMW_MWRENDER_PLAYERVISUALPOLICY_H
 #define OPENMW_MWRENDER_PLAYERVISUALPOLICY_H
 
+#include <algorithm>
+#include <cctype>
+#include <string>
 #include <string_view>
 
 namespace MWRender
@@ -39,6 +42,41 @@ namespace MWRender
             weapon = "WeapNVVarmintRifle";
 
         return { outfit, headgear, weapon };
+    }
+
+    inline std::string normalizeFalloutFirstPersonBipedModel(std::string_view bipedModel)
+    {
+        if (bipedModel.empty())
+            return {};
+        std::string result(bipedModel);
+        std::replace(result.begin(), result.end(), '\\', '/');
+        std::string lowered(result);
+        std::transform(lowered.begin(), lowered.end(), lowered.begin(),
+            [](unsigned char value) { return static_cast<char>(std::tolower(value)); });
+        if (!lowered.starts_with("meshes/"))
+        {
+            result.insert(0, "meshes/");
+            lowered.insert(0, "meshes/");
+        }
+        if (!lowered.ends_with(".nif"))
+            return {};
+        if (!lowered.ends_with("1st.nif"))
+            result.insert(result.size() - 4, "1st");
+        return result;
+    }
+
+    inline bool isFalloutPipBoyGloveFirstPersonModel(bool pipBoyWorn, std::string_view firstPersonModel)
+    {
+        std::string lowered(firstPersonModel);
+        std::transform(lowered.begin(), lowered.end(), lowered.begin(),
+            [](unsigned char value) { return static_cast<char>(std::tolower(value)); });
+        return pipBoyWorn && lowered.find("pipboy") != std::string::npos
+            && lowered.find("glove") != std::string::npos;
+    }
+
+    inline bool useFalloutFirstPersonUnarmedProfile(bool saveWornWeapon, bool proxyEquippedWeapon)
+    {
+        return !saveWornWeapon && !proxyEquippedWeapon;
     }
 }
 

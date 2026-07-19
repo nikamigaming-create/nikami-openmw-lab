@@ -25,6 +25,10 @@ namespace MWSound
 namespace MWRender
 {
 
+    // Apply the same depth-clear render bin, first-person mask, and projection override used by the established
+    // NpcAnimation first-person path to another native actor root.
+    void configureFirstPersonActorRoot(osg::Group& root, float fieldOfView);
+
     class RotateController;
     class HeadAnimationTime;
 
