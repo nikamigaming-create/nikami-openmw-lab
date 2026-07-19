@@ -3141,7 +3141,14 @@ namespace MWRender
             osg::Matrix mat = transform->getMatrix();
             osg::Vec3f position = mat.getTrans();
             position = mResetAllTranslation ? osg::Vec3f() : osg::componentMultiply(mResetAxes, position);
-            mat.setTrans(position);
+            if (mBindRotation)
+            {
+                const osg::Vec3f scale = mat.getScale();
+                mat = osg::Matrix::scale(scale) * osg::Matrix::rotate(*mBindRotation)
+                    * osg::Matrix::translate(position);
+            }
+            else
+                mat.setTrans(position);
             transform->setMatrix(mat);
 
             traverse(transform, nv);
@@ -3160,9 +3167,15 @@ namespace MWRender
             mResetAllTranslation = resetAll;
         }
 
+        void setBindRotation(std::optional<osg::Quat> rotation)
+        {
+            mBindRotation = std::move(rotation);
+        }
+
     private:
         osg::Vec3f mResetAxes;
         bool mResetAllTranslation = false;
+        std::optional<osg::Quat> mBindRotation;
     };
 
     Animation::Animation(
@@ -4582,11 +4595,11 @@ namespace MWRender
                 {
                     animsrc->mKeyframes = mergeFonvWeaponControllerOverlay(*animsrc->mKeyframes, *overlay);
                     Log(Debug::Verbose) << "FNV/ESM4 diag: merged " << overlay->mKeyframeControllers.size()
-                                        << " hand-grip controller(s) from " << overlayPath << " over " << kfname;
+                                        << " controller(s) from " << overlayPath << " over " << kfname;
                 }
             }
             else
-                Log(Debug::Warning) << "FNV/ESM4: weapon hand-grip overlay is absent: " << overlayPath;
+                Log(Debug::Warning) << "FNV/ESM4: controller overlay is absent: " << overlayPath;
         }
 
         std::string lowerKf = Misc::StringUtils::lowerCase(kfname);
@@ -5907,6 +5920,7 @@ namespace MWRender
         size_t falloutAddedControllers = 0;
         size_t falloutBoneLodSuppressedControllers = 0;
         bool accumResetAttached = false;
+        bool activeFalloutProcedureIdle = false;
         const int requestedBoneLodLevel = falloutNpc ? getBethesdaBoneLodLevel() : 0;
         if (mBethesdaBoneLodLevel < 0 || !shouldDeferBethesdaBoneLodChange())
             mBethesdaBoneLodLevel = requestedBoneLodLevel;
@@ -5940,6 +5954,7 @@ namespace MWRender
             if (active != mStates.end())
             {
                 std::shared_ptr<AnimSource> animsrc = active->second.mSource;
+                activeFalloutProcedureIdle = activeFalloutProcedureIdle || animsrc->mFalloutProcedureIdle;
                 const AnimBlendStateData stateData
                     = { .mGroupname = active->second.mGroupname, .mStartKey = active->second.mStartKey };
 
@@ -6008,6 +6023,13 @@ namespace MWRender
                             mResetAccumRootCallback->setAccumulate(mAccumulate);
                         }
                         mResetAccumRootCallback->setResetAllTranslation(falloutNpc);
+                        const bool restoreFalloutBindRotation = falloutNpc
+                            && Misc::StringUtils::ciEqual(mAccumRoot->getName(), "Bip01")
+                            && !animsrc->mFalloutProcedureIdle && !shouldApplyFalloutAccumulationRotation();
+                        auto* accumTransform = dynamic_cast<osg::MatrixTransform*>(mAccumRoot.get());
+                        mResetAccumRootCallback->setBindRotation(restoreFalloutBindRotation && accumTransform != nullptr
+                                ? std::optional<osg::Quat>(getFalloutBindRotation(accumTransform))
+                                : std::nullopt);
                         // Keep the reset last in the callback chain so it sees the sampled controller value.
                         mAccumRoot->addUpdateCallback(mResetAccumRootCallback);
                         mActiveControllers.emplace_back(mAccumRoot, mResetAccumRootCallback);
@@ -6028,6 +6050,12 @@ namespace MWRender
                 mResetAccumRootCallback->setAccumulate(mAccumulate);
             }
             mResetAccumRootCallback->setResetAllTranslation(true);
+            const bool restoreFalloutBindRotation = Misc::StringUtils::ciEqual(mAccumRoot->getName(), "Bip01")
+                && !activeFalloutProcedureIdle && !shouldApplyFalloutAccumulationRotation();
+            auto* accumTransform = dynamic_cast<osg::MatrixTransform*>(mAccumRoot.get());
+            mResetAccumRootCallback->setBindRotation(restoreFalloutBindRotation && accumTransform != nullptr
+                    ? std::optional<osg::Quat>(getFalloutBindRotation(accumTransform))
+                    : std::nullopt);
             mAccumRoot->addUpdateCallback(mResetAccumRootCallback);
             mActiveControllers.emplace_back(mAccumRoot, mResetAccumRootCallback);
         }

@@ -77,11 +77,11 @@ namespace
     {
         const ESM::Position& position = ptr.getRefData().getPosition();
         float yaw = position.rot[2];
-        if (ptr.getType() == ESM::REC_NPC_4 || ptr.getType() == ESM::REC_CREA4)
+        if (ptr.getType() == ESM::REC_NPC_4)
         {
-            // TES3 actors and the imported Fallout/TES4-family actor skeletons use different local forward axes.
-            // Retail transform telemetry requires a quarter-turn relative to the TES3 actor convention. Keep the
-            // gameplay yaw unchanged and convert only the rendered/physics model basis here.
+            // Imported Fallout/TES4 NPC skeletons need a quarter-turn relative to
+            // the TES3 actor convention.  CREA4 rigs do not: securitrons and
+            // bighorners author their visual front on local +Y already.
             yaw += osg::PI_2;
         }
         return osg::Quat(yaw, osg::Vec3(0, 0, -1));
