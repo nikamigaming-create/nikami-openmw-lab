@@ -71,6 +71,8 @@ file(GLOB UNITTEST_SRC_FILES
     esm4/includes.cpp
     esm4/fnvclassrace.cpp
     esm4/fonvsavegame.cpp
+    esm4/testloadclimate.cpp
+    esm4/testloadweather.cpp
 
     fx/lexer.cpp
     fx/technique.cpp

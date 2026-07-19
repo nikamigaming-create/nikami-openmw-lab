@@ -223,6 +223,7 @@ add_component_dir (esm4
     loadbptd
     loadcell
     loadclas
+    loadclmt
     loadclfm
     loadclot
     loadcont
@@ -287,6 +288,7 @@ add_component_dir (esm4
     loadtree
     loadtxst
     loadweap
+    loadwthr
     loadwrld
     magiceffectid
     reader
