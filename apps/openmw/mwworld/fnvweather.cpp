@@ -205,20 +205,6 @@ namespace MWWorld
                     model.mCurrent.mColorTable.mCloudColors[layer][ESM4::Weather::Time_Day], factor);
         }
 
-        // Start from zeros/empty strings, never from the TES3 "Clear" weather. Only fields with an exact native
-        // meaning in this captured interval are projected. Four cloud layers and the six FNAM fog values remain in
-        // the native snapshot until their renderer contracts are native too.
-        MWRender::WeatherResult result{};
-        result.mFogColor = model.mCurrentColors[ESM4::Weather::Color_Fog];
-        result.mAmbientColor = model.mCurrentColors[ESM4::Weather::Color_Ambient];
-        result.mSkyColor = model.mCurrentColors[ESM4::Weather::Color_SkyUpper];
-        result.mSunColor = model.mCurrentColors[ESM4::Weather::Color_Sunlight];
-        result.mSunDiscColor = model.mCurrentColors[ESM4::Weather::Color_Sun];
-        result.mWindSpeed = static_cast<float>(current->mData.windSpeed) / 255.f;
-        result.mBaseWindSpeed = result.mWindSpeed;
-        result.mCurrentWindSpeed = result.mWindSpeed;
-        result.mGlareView = static_cast<float>(current->mData.sunGlare) / 255.f;
-        model.mRenderResult = std::move(result);
         return { std::move(model), {} };
     }
 }

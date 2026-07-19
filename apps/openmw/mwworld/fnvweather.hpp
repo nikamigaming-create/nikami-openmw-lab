@@ -9,7 +9,8 @@
 #include <components/esm/formid.hpp>
 #include <components/esm4/loadwthr.hpp>
 
-#include "../mwrender/skyutil.hpp"
+#include <osg/Vec4f>
+
 #include "fnvplayerstate.hpp"
 
 namespace ESM4
@@ -43,10 +44,9 @@ namespace MWWorld
         osg::Vec4f mLightningColor{};
     };
 
-    // This is deliberately a snapshot model rather than WeatherManager state. It contains only the exact native
-    // records and the one time interval for which retail interpolation has been captured. In particular, the generic
-    // WeatherResult has one TES3 cloud slot while FNV has four independent layers. The native layers remain above and
-    // are not collapsed into that slot by a guessed rule.
+    // This is deliberately a validation snapshot rather than WeatherManager state. The save application passes only
+    // mCurrent.mWeather to WeatherManager, which retains all four authored cloud layers and the complete native
+    // fog/celestial/image-space pipeline. No generic TES3 WeatherResult can be constructed from this type.
     struct FalloutWeatherModel
     {
         ESM::FormId mWorldspace;
@@ -58,7 +58,6 @@ namespace MWWorld
         float mHighNoonToDayFactor = 0.f;
         std::array<osg::Vec4f, ESM4::Weather::sColorTypeCount> mCurrentColors{};
         std::array<osg::Vec4f, ESM4::Weather::sCloudLayerCount> mCurrentCloudColors{};
-        MWRender::WeatherResult mRenderResult{};
     };
 
     struct FalloutWeatherModelResolution

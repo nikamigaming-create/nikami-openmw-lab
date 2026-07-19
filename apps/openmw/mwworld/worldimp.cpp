@@ -769,6 +769,9 @@ namespace MWWorld
         loadContentFiles(fileCollections, contentFiles, encoder, listener);
         loadGroundcoverFiles(fileCollections, groundcoverFiles, encoder, listener);
 
+        // Native FNV GMSTs must win before legacy defaults are inserted. The helper also installs only the narrow
+        // compatibility carriers still absent from the authored data and is a no-op for non-FNV content.
+        mStore.prepareFalloutNewVegasCompatibilityRecords();
         ensureNeededRecords();
         fillGlobalVariables();
 

@@ -73,6 +73,10 @@ namespace MWWorld
     // This is the mutation gate. It returns only when every semantic domain is covered; callers must invoke it before
     // cleanup or any save/world mutation.
     void requireFalloutSavePreflightReady(const FalloutSavePreflightContext& context);
+
+    // Narrow mutation gate for the normal-path Save330 visual slice. Full-game uncovered domains remain explicit in
+    // mPlan and are not claimed as loaded by this gate.
+    void requireFalloutSaveVisualApplicationReady(const FalloutSavePreflightContext& context);
 }
 
 #endif

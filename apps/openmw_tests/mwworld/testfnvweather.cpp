@@ -163,11 +163,10 @@ namespace
         for (const auto& layer : model.mCurrent.mColorTable.mCloudColors)
             for (const osg::Vec4f& color : layer)
                 EXPECT_FLOAT_EQ(color.a(), 1.f);
-        EXPECT_FLOAT_EQ(model.mRenderResult.mFogColor.a(), 1.f);
-        EXPECT_FLOAT_EQ(model.mRenderResult.mAmbientColor.a(), 1.f);
-        EXPECT_FLOAT_EQ(model.mRenderResult.mSkyColor.a(), 1.f);
-        EXPECT_FLOAT_EQ(model.mRenderResult.mSunColor.a(), 1.f);
-        EXPECT_FLOAT_EQ(model.mRenderResult.mSunDiscColor.a(), 1.f);
+        for (const osg::Vec4f& color : model.mCurrentColors)
+            EXPECT_FLOAT_EQ(color.a(), 1.f);
+        for (const osg::Vec4f& color : model.mCurrentCloudColors)
+            EXPECT_FLOAT_EQ(color.a(), 1.f);
     }
 
     TEST(FNVWeatherModel, RejectsEveryMissingRecordLink)
@@ -267,13 +266,15 @@ namespace
         MWWorld::FalloutWeatherModelResolution atHighNoon = fixture.resolve();
         ASSERT_TRUE(atHighNoon) << atHighNoon.mError;
         EXPECT_FLOAT_EQ(atHighNoon.mModel->mHighNoonToDayFactor, 0.f);
-        expectColor(atHighNoon.mModel->mRenderResult.mAmbientColor, 10.f / 255.f, 20.f / 255.f, 30.f / 255.f);
+        expectColor(atHighNoon.mModel->mCurrentColors[ESM4::Weather::Color_Ambient], 10.f / 255.f,
+            20.f / 255.f, 30.f / 255.f);
 
         fixture.mScene.mGameHour = 18.f;
         MWWorld::FalloutWeatherModelResolution atDay = fixture.resolve();
         ASSERT_TRUE(atDay) << atDay.mError;
         EXPECT_FLOAT_EQ(atDay.mModel->mHighNoonToDayFactor, 1.f);
-        expectColor(atDay.mModel->mRenderResult.mAmbientColor, 110.f / 255.f, 120.f / 255.f, 130.f / 255.f);
+        expectColor(atDay.mModel->mCurrentColors[ESM4::Weather::Color_Ambient], 110.f / 255.f, 120.f / 255.f,
+            130.f / 255.f);
 
         fixture.mScene.mGameHour = std::nextafter(12.f, 0.f);
         EXPECT_THAT(fixture.resolve().mError, HasSubstr("outside the captured"));
@@ -305,26 +306,17 @@ namespace
         EXPECT_EQ(model.mCurrent.mData.windSpeed, 50);
         EXPECT_EQ(model.mCurrent.mData.sunGlare, 54);
         EXPECT_NEAR(model.mHighNoonToDayFactor, 0.3691670f, 1e-7f);
-        expectColor(model.mRenderResult.mSkyColor, 0.25050324f, 0.32790846f, 0.58878428f);
-        expectColor(model.mRenderResult.mFogColor, 0.5882353f, 0.65882355f, 0.74509805f);
-        expectColor(model.mRenderResult.mAmbientColor, 0.37086272f, 0.44887254f, 0.58075815f);
-        expectColor(model.mRenderResult.mSunColor, 1.f, 0.8901961f, 0.6666667f);
-        expectColor(model.mRenderResult.mSunDiscColor, 0.99855226f, 0.9797320f, 0.9363006f);
-        EXPECT_NEAR(model.mRenderResult.mWindSpeed, 50.f / 255.f, 1e-7f);
-        EXPECT_FLOAT_EQ(model.mRenderResult.mBaseWindSpeed, model.mRenderResult.mWindSpeed);
-        EXPECT_FLOAT_EQ(model.mRenderResult.mCurrentWindSpeed, model.mRenderResult.mWindSpeed);
-        EXPECT_NEAR(model.mRenderResult.mGlareView, 54.f / 255.f, 1e-7f);
+        expectColor(model.mCurrentColors[ESM4::Weather::Color_SkyUpper], 0.25050324f, 0.32790846f,
+            0.58878428f);
+        expectColor(model.mCurrentColors[ESM4::Weather::Color_Fog], 0.5882353f, 0.65882355f, 0.74509805f);
+        expectColor(model.mCurrentColors[ESM4::Weather::Color_Ambient], 0.37086272f, 0.44887254f, 0.58075815f);
+        expectColor(model.mCurrentColors[ESM4::Weather::Color_Sunlight], 1.f, 0.8901961f, 0.6666667f);
+        expectColor(model.mCurrentColors[ESM4::Weather::Color_Sun], 0.99855226f, 0.9797320f, 0.9363006f);
 
-        // Four FNV layers cannot be truthfully collapsed into WeatherResult's one TES3 slot. Value initialization
-        // makes the limitation explicit and, critically, does not import the TES3 Clear texture/effects/sounds.
-        EXPECT_TRUE(model.mRenderResult.mCloudTexture.empty());
-        EXPECT_TRUE(model.mRenderResult.mNextCloudTexture.empty());
-        EXPECT_TRUE(model.mRenderResult.mParticleEffect.empty());
-        EXPECT_TRUE(model.mRenderResult.mRainEffect.empty());
-        EXPECT_TRUE(model.mRenderResult.mAmbientLoopSoundID.empty());
-        EXPECT_TRUE(model.mRenderResult.mRainLoopSoundID.empty());
-        EXPECT_FLOAT_EQ(model.mRenderResult.mCloudBlendFactor, 0.f);
-        EXPECT_FLOAT_EQ(model.mRenderResult.mAmbientSoundVolume, 0.f);
-        EXPECT_FLOAT_EQ(model.mRenderResult.mPrecipitationAlpha, 0.f);
+        // Preflight retains the complete native record; it cannot flatten four FNV layers into a TES3 slot.
+        EXPECT_EQ(model.mCurrent.mMaxCloudLayers, fixture.mCurrent.mMaxCloudLayers);
+        EXPECT_EQ(model.mCurrent.mCloudTextures, fixture.mCurrent.mCloudTextures);
+        EXPECT_EQ(model.mCurrent.mCloudSpeeds, fixture.mCurrent.mCloudSpeeds);
+        EXPECT_EQ(model.mCurrent.mFogDistance, fixture.mCurrent.mFogDistance);
     }
 }
