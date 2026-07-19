@@ -22,6 +22,7 @@
 #include <components/esm4/loadalch.hpp>
 #include <components/esm4/loadimod.hpp>
 #include <components/esm4/loadingr.hpp>
+#include <components/esm4/loadkeym.hpp>
 #include <components/esm4/loadligh.hpp>
 #include <components/esm4/loadmisc.hpp>
 #include <components/esm4/loadweap.hpp>
@@ -70,6 +71,7 @@ namespace
                 return 8;
             case ESM::Miscellaneous::sRecordId:
             case ESM4::ItemMod::sRecordId:
+            case ESM4::Key::sRecordId:
             case ESM4::MiscItem::sRecordId:
                 return 9;
             case ESM::Lockpick::sRecordId:
@@ -241,6 +243,7 @@ namespace MWGui
             case ESM4::Ammunition::sRecordId:
             case ESM4::Book::sRecordId:
             case ESM4::ItemMod::sRecordId:
+            case ESM4::Key::sRecordId:
             case ESM4::Light::sRecordId:
             case ESM4::MiscItem::sRecordId:
             case ESM::Repair::sRecordId:

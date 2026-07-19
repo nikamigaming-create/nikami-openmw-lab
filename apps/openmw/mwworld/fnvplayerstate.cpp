@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstring>
 #include <limits>
+#include <map>
 #include <numbers>
 #include <stdexcept>
 #include <string_view>
@@ -148,7 +149,7 @@ namespace
     {
         return {
             "player-runtime-actor-values-modifiers-health-limbs-perks",
-            "player-inventory-equipment-ammo",
+            "player-inventory-instance-condition-hotkeys-equipment-actions-ammo-selection",
             "player-factions-reputation-crime-disguise",
             "quest-stages-objectives-variables",
             "global-variables",
@@ -256,6 +257,10 @@ namespace MWWorld
             = resolveCategory(npcs, *player, ESM4::Npc::Template_UseBaseData, "base data");
         if (baseData.mRecord == nullptr)
             return failure(baseData.mError);
+        const CategoryResolution inventory
+            = resolveCategory(npcs, *player, ESM4::Npc::Template_UseInventory, "inventory");
+        if (inventory.mRecord == nullptr)
+            return failure(inventory.mError);
 
         if (!stats.mRecord->mHasFNVData)
             return failure("resolved Player stats record lacks exact 11-byte DATA");
@@ -281,6 +286,7 @@ namespace MWWorld
         result.mAIDataRecord = ai.mRecord->mId;
         result.mModelRecord = model.mRecord->mId;
         result.mBaseDataRecord = baseData.mRecord->mId;
+        result.mInventoryRecord = inventory.mRecord->mId;
         result.mEditorId = player->mEditorId;
         result.mFullName = baseData.mRecord->mFullName;
         result.mModel = model.mRecord->mModel;
@@ -291,6 +297,23 @@ namespace MWWorld
         result.mVoiceType = traits.mRecord->mVoiceType;
         result.mRecordFlags = baseData.mRecord->mFlags;
         result.mFactions = factions.mRecord->mFactions;
+        std::map<ESM::FormId, std::int64_t> authoredInventory;
+        for (const ESM4::InventoryItem& item : inventory.mRecord->mInventory)
+        {
+            const ESM::FormId record = ESM::FormId::fromUint32(item.item);
+            if (record.isZeroOrUnset())
+                return failure("resolved Player inventory contains a null CNTO FormID");
+            if (item.count == 0)
+                continue;
+
+            std::int64_t& total = authoredInventory[record];
+            total += static_cast<std::int64_t>(item.count);
+            if (total > std::numeric_limits<std::int32_t>::max())
+                return failure("resolved Player inventory CNTO count exceeds the compatibility carrier range");
+        }
+        result.mInventoryItems.reserve(authoredInventory.size());
+        for (const auto& [record, count] : authoredInventory)
+            result.mInventoryItems.push_back(FalloutInventoryItem{ record, static_cast<std::int32_t>(count) });
         result.mStatsConfig = stats.mRecord->mBaseConfig.fo3;
         result.mAIData = ai.mRecord->mFNVAIData;
         result.mHealth = stats.mRecord->mFNVData.health;
@@ -495,8 +518,24 @@ namespace MWWorld
         if (processInventory.mProcessLevel.mValue != 0)
             return loadFailure("FNV save Player process level is not canonical high process");
         plan.mPlayer.mProcessLevel = processInventory.mProcessLevel.mValue;
+        std::map<ESM::FormId, std::int64_t> inventoryTotals;
+        for (const FalloutInventoryItem& item : nativePlayerState->mInventoryItems)
+        {
+            if (item.mRecord.isZeroOrUnset() || item.mCount <= 0)
+                return loadFailure("resolved native FNV Player state has an invalid authored inventory item");
+            if (!inventoryTotals.emplace(item.mRecord, item.mCount).second)
+                return loadFailure("resolved native FNV Player state has duplicate authored inventory identities");
+        }
         for (const ESM4::FONVSavePlayerInventoryEntry& entry : processInventory.mInventoryEntries)
         {
+            if (!entry.mType.mResolvedFormId)
+                return loadFailure("FNV save Player inventory RefID did not resolve");
+            const std::optional<ESM::FormId> normalized
+                = normalizeSavedFormId(*entry.mType.mResolvedFormId, currentPluginIndices);
+            if (!normalized)
+                return loadFailure("FNV save Player inventory FormID has unsupported provenance");
+            inventoryTotals[*normalized] += static_cast<std::int64_t>(entry.mDelta.mValue);
+
             for (const ESM4::FONVSavePlayerInventoryExtendData& extend : entry.mExtendData)
             {
                 const auto worn = std::find_if(extend.mExtraData.begin(), extend.mExtraData.end(),
@@ -505,15 +544,19 @@ namespace MWWorld
                     });
                 if (worn == extend.mExtraData.end())
                     continue;
-                if (!entry.mType.mResolvedFormId)
-                    return loadFailure("FNV save Player ExtraWorn inventory RefID did not resolve");
-                const std::optional<ESM::FormId> normalized
-                    = normalizeSavedFormId(*entry.mType.mResolvedFormId, currentPluginIndices);
-                if (!normalized)
-                    return loadFailure("FNV save Player ExtraWorn FormID has unsupported provenance");
                 plan.mPlayer.mWornVisualItems.push_back(
                     FalloutSavePlayerHeaderState::WornVisualItem{ *normalized, worn->mType.mRange.mOffset });
             }
+        }
+        plan.mPlayer.mInventoryItems.reserve(inventoryTotals.size());
+        for (const auto& [record, total] : inventoryTotals)
+        {
+            if (total <= 0)
+                continue;
+            if (total > std::numeric_limits<std::int32_t>::max())
+                return loadFailure("FNV save Player inventory total exceeds the compatibility carrier range");
+            plan.mPlayer.mInventoryItems.push_back(
+                FalloutInventoryItem{ record, static_cast<std::int32_t>(total) });
         }
 
         if (!save.mPlayerReferenceMovement)
@@ -641,12 +684,13 @@ namespace MWWorld
             proxy.mName = state.mName;
         proxy.mNpdt.mLevel = static_cast<std::int16_t>(state.mLevel);
         proxy.mInventory.mList.clear();
-        proxy.mInventory.mList.reserve(state.mWornVisualItems.size());
-        for (const FalloutSavePlayerHeaderState::WornVisualItem& item : state.mWornVisualItems)
+        proxy.mInventory.mList.reserve(state.mInventoryItems.size());
+        std::unordered_set<ESM::FormId> seen;
+        for (const FalloutInventoryItem& item : state.mInventoryItems)
         {
-            if (item.mRecord.isZeroOrUnset())
-                throw std::runtime_error("invalid normalized FNV save ExtraWorn FormID");
-            proxy.mInventory.mList.push_back(ESM::ContItem{ 1, ESM::RefId(item.mRecord) });
+            if (item.mRecord.isZeroOrUnset() || item.mCount <= 0 || !seen.insert(item.mRecord).second)
+                throw std::runtime_error("invalid normalized FNV save Player inventory total");
+            proxy.mInventory.mList.push_back(ESM::ContItem{ item.mCount, ESM::RefId(item.mRecord) });
         }
     }
 
@@ -662,5 +706,15 @@ namespace MWWorld
             proxy.mFlags |= ESM::NPC::Female;
         else
             proxy.mFlags &= ~ESM::NPC::Female;
+
+        proxy.mInventory.mList.clear();
+        proxy.mInventory.mList.reserve(state.mInventoryItems.size());
+        std::unordered_set<ESM::FormId> seen;
+        for (const FalloutInventoryItem& item : state.mInventoryItems)
+        {
+            if (item.mRecord.isZeroOrUnset() || item.mCount <= 0 || !seen.insert(item.mRecord).second)
+                throw std::runtime_error("invalid native FNV Player authored inventory total");
+            proxy.mInventory.mList.push_back(ESM::ContItem{ item.mCount, ESM::RefId(item.mRecord) });
+        }
     }
 }

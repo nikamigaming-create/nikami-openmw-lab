@@ -73,6 +73,14 @@ namespace MWWorld
         std::optional<std::uint8_t> mRawSkillOffset;
     };
 
+    struct FalloutInventoryItem
+    {
+        ESM::FormId mRecord;
+        std::int32_t mCount = 0;
+
+        bool operator==(const FalloutInventoryItem&) const = default;
+    };
+
     struct FalloutPlayerState
     {
         static constexpr std::size_t SpecialCount = static_cast<std::size_t>(FalloutSpecial::Count);
@@ -87,6 +95,7 @@ namespace MWWorld
         ESM::FormId mAIDataRecord;
         ESM::FormId mModelRecord;
         ESM::FormId mBaseDataRecord;
+        ESM::FormId mInventoryRecord;
 
         std::string mEditorId;
         std::string mFullName;
@@ -99,6 +108,7 @@ namespace MWWorld
 
         std::uint32_t mRecordFlags = 0;
         std::vector<ESM4::ActorFaction> mFactions;
+        std::vector<FalloutInventoryItem> mInventoryItems;
         ESM4::ACBS_FO3 mStatsConfig{};
         ESM4::AIDataFO3 mAIData{};
         std::int32_t mHealth = 0;
@@ -171,6 +181,7 @@ namespace MWWorld
         std::string mLocationLabel;
         std::string mPlayTimeLabel;
         std::int8_t mProcessLevel = -1;
+        std::vector<FalloutInventoryItem> mInventoryItems;
         std::vector<WornVisualItem> mWornVisualItems;
     };
 
@@ -244,13 +255,14 @@ namespace MWWorld
     FalloutExteriorPlayerPlacementResolution resolveFalloutExteriorPlayerPlacement(const Store<ESM4::World>& worlds,
         const Store<ESM4::Cell>& cells, const FalloutSaveLoadPlan::PlayerTransform& transform);
 
-    // Apply exact name/level fields plus normalized ExtraWorn identities as a narrow visual carrier. This does not
-    // claim the still-uncovered inventory, stack, ammunition, condition, or gameplay equipment semantics.
+    // Apply exact name/level fields plus normalized positive inventory totals to the ESM3 compatibility carrier.
+    // ExtraWorn remains a separate visual signal because per-instance condition and equipment semantics are not
+    // represented by ESM::InventoryList.
     void applyFalloutSavePlayerHeader(ESM::NPC& proxy, const FalloutSavePlayerHeaderState& state);
 
-    // Seed only fields that have an explicit same-unit shared representation. The ESM3 proxy remains a
-    // compatibility carrier: its 0-100 attributes and 27 skills must retain their existing compatibility values.
-    // FalloutPlayerState is authoritative and intentionally retains all FNV SPECIAL/skills separately.
+    // Seed only fields that have an explicit same-unit shared representation, including positive authored inventory
+    // counts. The ESM3 proxy remains a compatibility carrier: its 0-100 attributes and 27 skills must retain their
+    // existing compatibility values. FalloutPlayerState is authoritative and retains all FNV SPECIAL/skills.
     void seedFalloutPlayerProxy(ESM::NPC& proxy, const FalloutPlayerState& state);
 }
 
