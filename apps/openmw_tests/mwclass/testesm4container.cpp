@@ -25,6 +25,7 @@
 #include "apps/openmw/mwbase/luamanager.hpp"
 
 #include "apps/openmw/mwclass/classes.hpp"
+#include "apps/openmw/mwclass/esm4base.hpp"
 #include "apps/openmw/mwclass/esm4container.hpp"
 #include "apps/openmw/mwclass/esm4creature.hpp"
 
@@ -48,14 +49,25 @@
 #include <cmath>
 #include <limits>
 #include <map>
+#include <memory>
 #include <optional>
 #include <sstream>
 #include <stdexcept>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
 namespace
 {
+    TEST(ESM4NamedActivationTest, OverridesGenericNullActivationForPickupRecords)
+    {
+        using PickupClass = MWClass::ESM4Named<ESM4::MiscItem>;
+        using PickupActivation = std::unique_ptr<MWWorld::Action> (PickupClass::*)(
+            const MWWorld::Ptr&, const MWWorld::Ptr&) const;
+
+        EXPECT_TRUE((std::is_same_v<decltype(&PickupClass::activate), PickupActivation>));
+    }
+
     constexpr std::uint32_t sSaloonContainerRef = 0x0110873e;
     constexpr std::uint32_t sSaloonContainerBase = 0x01103b17;
     constexpr std::uint32_t sSaloonBottleBase = 0x01103b1e;
