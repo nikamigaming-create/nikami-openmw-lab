@@ -171,6 +171,19 @@ namespace
         appendDelimiter(bytes);
     }
 
+    void appendPackedCount(std::vector<std::uint8_t>& bytes, std::uint32_t value)
+    {
+        if (value <= 0x3f)
+            appendU8(bytes, static_cast<std::uint8_t>(value << 2));
+        else if (value <= 0x3fff)
+            appendU16(bytes, static_cast<std::uint16_t>((value << 2) | 1));
+        else if (value <= 0x3fffffff)
+            appendU32(bytes, (value << 2) | 2);
+        else
+            throw std::logic_error("synthetic packed count does not fit U6to30");
+        appendDelimiter(bytes);
+    }
+
     std::vector<std::uint8_t> makeSkyPayload()
     {
         std::vector<std::uint8_t> result;
@@ -220,6 +233,63 @@ namespace
         appendDelimiter(result);
         if (result.size() != ESM4::sFONVPlayerActorValueDataBytes)
             throw std::logic_error("synthetic player actor-value data has the wrong size");
+        return result;
+    }
+
+    constexpr std::size_t sSyntheticPlayerProcessInventoryDataBytes = 82;
+
+    std::vector<std::uint8_t> makePlayerProcessInventoryData()
+    {
+        std::vector<std::uint8_t> result;
+        appendU8(result, 0);
+        appendDelimiter(result);
+
+        appendPackedCount(result, 2);
+        appendU8(result, ESM4::sFONVExtraFactionChangesType);
+        appendDelimiter(result);
+        appendPackedCount(result, 1);
+        appendDelimitedReferenceId(result, 0x400111);
+        appendU8(result, 1);
+        appendDelimiter(result);
+        appendU8(result, ESM4::sFONVExtraEncounterZoneType);
+        appendDelimiter(result);
+        appendDelimitedReferenceId(result, 0x400222);
+
+        appendPackedCount(result, 3);
+        appendDelimitedReferenceId(result, 0x400333);
+        appendU32(result, 5);
+        appendDelimiter(result);
+        appendPackedCount(result, 1);
+        appendPackedCount(result, 1);
+        appendU8(result, ESM4::sFONVExtraHealthType);
+        appendDelimiter(result);
+        appendF32(result, 75.f);
+        appendDelimiter(result);
+
+        appendDelimitedReferenceId(result, 0x400334);
+        appendU32(result, 0);
+        appendDelimiter(result);
+        appendPackedCount(result, 1);
+        appendPackedCount(result, 1);
+        appendU8(result, ESM4::sFONVExtraWornType);
+        appendDelimiter(result);
+
+        appendDelimitedReferenceId(result, 0x400335);
+        appendU32(result, 3);
+        appendDelimiter(result);
+        appendPackedCount(result, 1);
+        appendPackedCount(result, 2);
+        appendU8(result, ESM4::sFONVExtraCountType);
+        appendDelimiter(result);
+        appendU16(result, 2);
+        appendDelimiter(result);
+        appendU8(result, ESM4::sFONVExtraHealthType);
+        appendDelimiter(result);
+        appendF32(result, 25.f);
+        appendDelimiter(result);
+
+        if (result.size() != sSyntheticPlayerProcessInventoryDataBytes)
+            throw std::logic_error("synthetic player process/inventory data has the wrong size");
         return result;
     }
 
@@ -311,6 +381,7 @@ namespace
         std::array<std::size_t, 3> mChangedFormChangeFlags{};
         std::array<std::size_t, 3> mChangedFormLengthFields{};
         std::array<std::size_t, 3> mChangedFormPayloads{};
+        std::size_t mPlayerProcessInventoryBegin = 0;
         std::size_t mGlobalData2Begin = 0;
         std::size_t mRefIdArrayBegin = 0;
         std::size_t mUnknownTableBegin = 0;
@@ -319,7 +390,8 @@ namespace
     SaveBytes makeSave(bool hasLanguage = true, std::uint32_t width = 2, std::uint32_t height = 1,
         std::span<const std::string_view> masters = {}, bool includeScreenshot = true,
         std::string_view playerName = "Courier", bool includeSky = false,
-        std::size_t playerActorValueBytes = ESM4::sFONVPlayerActorValueDataBytes)
+        std::size_t playerActorValueBytes = ESM4::sFONVPlayerActorValueDataBytes,
+        std::size_t playerProcessInventoryBytes = sSyntheticPlayerProcessInventoryDataBytes)
     {
         std::vector<std::uint8_t> header;
         appendU32(header, 48);
@@ -396,6 +468,11 @@ namespace
             throw std::logic_error("synthetic player actor-value byte count is too large");
         changedPayload1.insert(changedPayload1.end(), playerActorValues.begin(),
             playerActorValues.begin() + static_cast<std::ptrdiff_t>(playerActorValueBytes));
+        const std::vector<std::uint8_t> playerProcessInventory = makePlayerProcessInventoryData();
+        if (playerProcessInventoryBytes > playerProcessInventory.size())
+            throw std::logic_error("synthetic player process/inventory byte count is too large");
+        changedPayload1.insert(changedPayload1.end(), playerProcessInventory.begin(),
+            playerProcessInventory.begin() + static_cast<std::ptrdiff_t>(playerProcessInventoryBytes));
         constexpr std::array<std::uint8_t, 3> changedPayload2 = { 0x20, 0x21, 0x22 };
         constexpr std::array<std::uint8_t, 4> changedPayload3 = { 0x30, 0x31, 0x32, 0x33 };
         const ChangedFormOffsets changed1 = appendChangedForm(
@@ -462,6 +539,8 @@ namespace
             result.mChangedFormsBegin + changed2.mDataLength, result.mChangedFormsBegin + changed3.mDataLength };
         result.mChangedFormPayloads = { result.mChangedFormsBegin + changed1.mPayload,
             result.mChangedFormsBegin + changed2.mPayload, result.mChangedFormsBegin + changed3.mPayload };
+        result.mPlayerProcessInventoryBegin
+            = result.mChangedFormPayloads[0] + 28 + playerActorValueBytes;
         result.mBytes.insert(result.mBytes.end(), globalData1.begin(), globalData1.end());
         result.mBytes.insert(result.mBytes.end(), changedForms.begin(), changedForms.end());
         result.mBytes.insert(result.mBytes.end(), globalData2.begin(), globalData2.end());
@@ -547,7 +626,8 @@ namespace
         EXPECT_EQ(save.mChangedForms.mEntries[0].mLengthWidth, 2u);
         EXPECT_EQ(save.mChangedForms.mEntries[0].mVersion.mValue, 27u);
         EXPECT_EQ(save.mChangedForms.mEntries[0].mDataLength.mValue,
-            28u + static_cast<std::uint32_t>(ESM4::sFONVPlayerActorValueDataBytes));
+            28u + static_cast<std::uint32_t>(ESM4::sFONVPlayerActorValueDataBytes)
+                + static_cast<std::uint32_t>(sSyntheticPlayerProcessInventoryDataBytes));
         EXPECT_EQ(save.mChangedForms.mEntries[1].mChangeType, 2u);
         EXPECT_EQ(save.mChangedForms.mEntries[1].mEncodedReferenceId.mValue, 0x401234u);
         EXPECT_EQ(save.mChangedForms.mEntries[1].mReferenceKind, ESM4::FONVSaveReferenceKind::DefaultForm);
@@ -599,7 +679,7 @@ namespace
             (ESM4::FONVSaveRange{ source.mChangedFormPayloads[0] + 27, 1 }));
         EXPECT_EQ(movement.mUnparsedRemainder.mRange,
             (ESM4::FONVSaveRange{ source.mChangedFormPayloads[0] + 28,
-                ESM4::sFONVPlayerActorValueDataBytes }));
+                ESM4::sFONVPlayerActorValueDataBytes + sSyntheticPlayerProcessInventoryDataBytes }));
         ASSERT_TRUE(save.mPlayerActorValueData.has_value());
         const auto& actorValues = *save.mPlayerActorValueData;
         const std::size_t actorValuesBegin = source.mChangedFormPayloads[0] + 28;
@@ -634,7 +714,55 @@ namespace
         EXPECT_EQ(actorValues.mUnk4AC.mValue, 0u);
         EXPECT_EQ(actorValues.mUnk4AC.mRange, (ESM4::FONVSaveRange{ actorValuesBegin + 1155, 4 }));
         EXPECT_EQ(actorValues.mUnparsedRemainder.mRange,
-            (ESM4::FONVSaveRange{ actorValuesBegin + ESM4::sFONVPlayerActorValueDataBytes, 0 }));
+            (ESM4::FONVSaveRange{ actorValuesBegin + ESM4::sFONVPlayerActorValueDataBytes,
+                sSyntheticPlayerProcessInventoryDataBytes }));
+        ASSERT_TRUE(save.mPlayerProcessInventoryData.has_value());
+        const auto& processInventory = *save.mPlayerProcessInventoryData;
+        EXPECT_EQ(processInventory.mRange,
+            (ESM4::FONVSaveRange{ source.mPlayerProcessInventoryBegin,
+                sSyntheticPlayerProcessInventoryDataBytes }));
+        EXPECT_EQ(processInventory.mRaw,
+            std::vector<std::uint8_t>(
+                source.mBytes.begin() + static_cast<std::ptrdiff_t>(source.mPlayerProcessInventoryBegin),
+                source.mBytes.begin() + static_cast<std::ptrdiff_t>(
+                                            source.mPlayerProcessInventoryBegin
+                                            + sSyntheticPlayerProcessInventoryDataBytes)));
+        EXPECT_EQ(processInventory.mProcessLevel.mValue, 0);
+        ASSERT_EQ(processInventory.mActorExtraData.size(), 2u);
+        EXPECT_EQ(processInventory.mActorExtraData[0].mType.mValue, ESM4::sFONVExtraFactionChangesType);
+        ASSERT_EQ(processInventory.mActorExtraData[0].mFactionChanges.size(), 1u);
+        EXPECT_EQ(processInventory.mActorExtraData[0].mFactionChanges[0].mFaction.mResolvedFormId, 0x00000111u);
+        EXPECT_EQ(processInventory.mActorExtraData[0].mFactionChanges[0].mRank.mValue, 1);
+        EXPECT_EQ(processInventory.mActorExtraData[1].mType.mValue, ESM4::sFONVExtraEncounterZoneType);
+        ASSERT_TRUE(processInventory.mActorExtraData[1].mEncounterZone.has_value());
+        EXPECT_EQ(processInventory.mActorExtraData[1].mEncounterZone->mResolvedFormId, 0x00000222u);
+        EXPECT_EQ(processInventory.mInventoryEntryCount.mValue, 3u);
+        ASSERT_EQ(processInventory.mInventoryEntries.size(), 3u);
+        EXPECT_EQ(processInventory.mInventoryEntries[0].mType.mResolvedFormId, 0x00000333u);
+        EXPECT_EQ(processInventory.mInventoryEntries[0].mDelta.mValue, 5);
+        ASSERT_EQ(processInventory.mInventoryEntries[0].mExtendData.size(), 1u);
+        ASSERT_EQ(processInventory.mInventoryEntries[0].mExtendData[0].mExtraData.size(), 1u);
+        const auto& health = processInventory.mInventoryEntries[0].mExtendData[0].mExtraData[0];
+        EXPECT_EQ(health.mType.mValue, ESM4::sFONVExtraHealthType);
+        ASSERT_TRUE(health.mHealth.has_value());
+        EXPECT_FLOAT_EQ(health.mHealth->mValue, 75.f);
+        EXPECT_EQ(health.mHealth->mRaw, (std::vector<std::uint8_t>{ 0, 0, 0x96, 0x42 }));
+        ASSERT_EQ(processInventory.mInventoryEntries[1].mExtendData.size(), 1u);
+        ASSERT_EQ(processInventory.mInventoryEntries[1].mExtendData[0].mExtraData.size(), 1u);
+        const auto& worn = processInventory.mInventoryEntries[1].mExtendData[0].mExtraData[0];
+        EXPECT_EQ(worn.mType.mValue, ESM4::sFONVExtraWornType);
+        EXPECT_FALSE(worn.mCount.has_value());
+        EXPECT_FALSE(worn.mHealth.has_value());
+        ASSERT_EQ(processInventory.mInventoryEntries[2].mExtendData.size(), 1u);
+        ASSERT_EQ(processInventory.mInventoryEntries[2].mExtendData[0].mExtraData.size(), 2u);
+        const auto& count = processInventory.mInventoryEntries[2].mExtendData[0].mExtraData[0];
+        EXPECT_EQ(count.mType.mValue, ESM4::sFONVExtraCountType);
+        ASSERT_TRUE(count.mCount.has_value());
+        EXPECT_EQ(count.mCount->mValue, 2);
+        EXPECT_EQ(processInventory.mUnparsedRemainder.mRange,
+            (ESM4::FONVSaveRange{ source.mPlayerProcessInventoryBegin
+                    + sSyntheticPlayerProcessInventoryDataBytes,
+                0 }));
         EXPECT_EQ(save.findChangedForm(0x00001234u), &save.mChangedForms.mEntries[1]);
         EXPECT_EQ(save.findChangedForm(0x00001234u, 3), nullptr);
         EXPECT_EQ(save.mUnparsedSemanticPayloadRanges.size(), 4u);
@@ -859,9 +987,11 @@ namespace
         const ESM4::FONVSaveGamePrefix changedCell = ESM4::parseFONVSaveGamePrefix(source.mBytes);
         EXPECT_FALSE(changedCell.mPlayerReferenceMovement.has_value());
         EXPECT_FALSE(changedCell.mPlayerActorValueData.has_value());
+        EXPECT_FALSE(changedCell.mPlayerProcessInventoryData.has_value());
         EXPECT_EQ(changedCell.mUnparsedSemanticPayloadRanges.size(), 5u);
         EXPECT_EQ(changedCell.mUnparsedSemanticPayloadBytes,
-            43u + static_cast<std::uint64_t>(ESM4::sFONVPlayerActorValueDataBytes));
+            43u + static_cast<std::uint64_t>(ESM4::sFONVPlayerActorValueDataBytes)
+                + static_cast<std::uint64_t>(sSyntheticPlayerProcessInventoryDataBytes));
     }
 
     TEST(FONVSaveGame, RejectsCorruptCanonicalPlayerActorValueData)
@@ -881,11 +1011,51 @@ namespace
         EXPECT_THROW(ESM4::parseFONVSaveGamePrefix(source.mBytes), ESM4::FONVSaveError);
 
         source = makeSave(true, 2, 1, masters, true, "Courier", false,
-            ESM4::sFONVPlayerActorValueDataBytes - 1);
+            ESM4::sFONVPlayerActorValueDataBytes - 1, 0);
         EXPECT_THROW(ESM4::parseFONVSaveGamePrefix(source.mBytes), ESM4::FONVSaveError);
 
         source = makeSave(true, 2, 1, masters);
         source.mBytes[source.mChangedFormRawTypes[0] + 1] = 26;
+        EXPECT_THROW(ESM4::parseFONVSaveGamePrefix(source.mBytes), ESM4::FONVSaveError);
+    }
+
+    TEST(FONVSaveGame, RejectsCorruptCanonicalPlayerProcessInventoryData)
+    {
+        constexpr std::array masters = { std::string_view("FalloutNV.esm") };
+        SaveBytes source = makeSave(true, 2, 1, masters);
+        source.mBytes[source.mPlayerProcessInventoryBegin + 1] = 0;
+        EXPECT_THROW(ESM4::parseFONVSaveGamePrefix(source.mBytes), ESM4::FONVSaveError);
+
+        source = makeSave(true, 2, 1, masters);
+        source.mBytes[source.mPlayerProcessInventoryBegin + 2] = 3;
+        EXPECT_THROW(ESM4::parseFONVSaveGamePrefix(source.mBytes), ESM4::FONVSaveError);
+
+        source = makeSave(true, 2, 1, masters);
+        source.mBytes[source.mPlayerProcessInventoryBegin + 4] = 0xff;
+        EXPECT_THROW(ESM4::parseFONVSaveGamePrefix(source.mBytes), ESM4::FONVSaveError);
+
+        source = makeSave(true, 2, 1, masters);
+        source.mBytes[source.mPlayerProcessInventoryBegin + 8] = 0;
+        EXPECT_THROW(ESM4::parseFONVSaveGamePrefix(source.mBytes), ESM4::FONVSaveError);
+
+        source = makeSave(true, 2, 1, masters);
+        source.mBytes[source.mPlayerProcessInventoryBegin + 20] = 0xfc;
+        EXPECT_THROW(ESM4::parseFONVSaveGamePrefix(source.mBytes), ESM4::FONVSaveError);
+
+        source = makeSave(true, 2, 1, masters);
+        source.mBytes[source.mPlayerProcessInventoryBegin + 35] = 0xff;
+        EXPECT_THROW(ESM4::parseFONVSaveGamePrefix(source.mBytes), ESM4::FONVSaveError);
+
+        source = makeSave(true, 2, 1, masters);
+        overwriteU32(source.mBytes, source.mPlayerProcessInventoryBegin + 37, 0x7f800000u);
+        EXPECT_THROW(ESM4::parseFONVSaveGamePrefix(source.mBytes), ESM4::FONVSaveError);
+
+        source = makeSave(true, 2, 1, masters);
+        source.mBytes[source.mPlayerProcessInventoryBegin + sSyntheticPlayerProcessInventoryDataBytes - 1] = 0;
+        EXPECT_THROW(ESM4::parseFONVSaveGamePrefix(source.mBytes), ESM4::FONVSaveError);
+
+        source = makeSave(true, 2, 1, masters, true, "Courier", false,
+            ESM4::sFONVPlayerActorValueDataBytes, 0);
         EXPECT_THROW(ESM4::parseFONVSaveGamePrefix(source.mBytes), ESM4::FONVSaveError);
     }
 
@@ -1181,6 +1351,139 @@ namespace
         EXPECT_EQ(movement.mUnparsedRemainder.mRange.mSize - actorValues.mRange.mSize,
             actorValues.mUnparsedRemainder.mRange.mSize);
 
+        ASSERT_TRUE(save.mPlayerProcessInventoryData.has_value());
+        const auto& processInventory = *save.mPlayerProcessInventoryData;
+        EXPECT_EQ(processInventory.mRange, (ESM4::FONVSaveRange{ 498677, 835 }));
+        EXPECT_EQ(processInventory.mRaw.size(), 835u);
+        EXPECT_EQ(sha256Hex(processInventory.mRaw),
+            "cd6574a59d2c4f30717f1368d42f9628f88f05f92a705c19ee709469ea060155");
+        EXPECT_EQ(processInventory.mProcessLevel.mValue, 0);
+        EXPECT_EQ(processInventory.mProcessLevel.mRange, (ESM4::FONVSaveRange{ 498677, 1 }));
+        EXPECT_EQ(processInventory.mActorExtraDataCount.mValue, 2u);
+        EXPECT_EQ(processInventory.mActorExtraDataCount.mRange, (ESM4::FONVSaveRange{ 498679, 1 }));
+        EXPECT_EQ(processInventory.mActorExtraDataCount.mRaw, (std::vector<std::uint8_t>{ 0x08 }));
+        ASSERT_EQ(processInventory.mActorExtraData.size(), 2u);
+
+        const auto& factionExtra = processInventory.mActorExtraData[0];
+        EXPECT_EQ(factionExtra.mRange, (ESM4::FONVSaveRange{ 498681, 22 }));
+        EXPECT_EQ(factionExtra.mType.mValue, ESM4::sFONVExtraFactionChangesType);
+        ASSERT_TRUE(factionExtra.mFactionChangeCount.has_value());
+        EXPECT_EQ(factionExtra.mFactionChangeCount->mValue, 3u);
+        EXPECT_EQ(factionExtra.mFactionChangeCount->mRaw, (std::vector<std::uint8_t>{ 0x0c }));
+        ASSERT_EQ(factionExtra.mFactionChanges.size(), 3u);
+        constexpr std::array factionTokens = { 0x004adeu, 0x004adfu, 0x004ae0u };
+        constexpr std::array factionFormIds = { 0x0200b42eu, 0x04003e41u, 0x03016154u };
+        for (std::size_t i = 0; i < factionExtra.mFactionChanges.size(); ++i)
+        {
+            const auto& faction = factionExtra.mFactionChanges[i];
+            EXPECT_EQ(faction.mRange, (ESM4::FONVSaveRange{ 498685 + i * 6, 6 }));
+            EXPECT_EQ(faction.mFaction.mEncoded.mValue, factionTokens[i]);
+            EXPECT_EQ(faction.mFaction.mResolvedFormId, factionFormIds[i]);
+            EXPECT_EQ(faction.mRank.mValue, 1);
+        }
+
+        const auto& encounterZoneExtra = processInventory.mActorExtraData[1];
+        EXPECT_EQ(encounterZoneExtra.mRange, (ESM4::FONVSaveRange{ 498703, 6 }));
+        EXPECT_EQ(encounterZoneExtra.mType.mValue, ESM4::sFONVExtraEncounterZoneType);
+        ASSERT_TRUE(encounterZoneExtra.mEncounterZone.has_value());
+        EXPECT_EQ(encounterZoneExtra.mEncounterZone->mEncoded.mValue, 0x000606u);
+        EXPECT_EQ(encounterZoneExtra.mEncounterZone->mEncoded.mRange, (ESM4::FONVSaveRange{ 498705, 3 }));
+        EXPECT_EQ(encounterZoneExtra.mEncounterZone->mResolvedFormId, 0x0000001eu);
+
+        EXPECT_EQ(processInventory.mInventoryEntryCount.mValue, 50u);
+        EXPECT_EQ(processInventory.mInventoryEntryCount.mRange, (ESM4::FONVSaveRange{ 498709, 1 }));
+        EXPECT_EQ(processInventory.mInventoryEntryCount.mRaw, (std::vector<std::uint8_t>{ 0xc8 }));
+        ASSERT_EQ(processInventory.mInventoryEntries.size(), 50u);
+        constexpr std::array<std::uint32_t, 50> expectedItemFormIds = { 0x000340fdu, 0x000425bau,
+            0x0001cbdcu, 0x00004345u, 0x0000434fu, 0x00022102u, 0x0013b2b1u, 0x0005b6d0u,
+            0x000250a7u, 0x000250a3u, 0x000250a8u, 0x000250a6u, 0x0013b2b2u, 0x0002210eu,
+            0x0013b2b3u, 0x000e2c6fu, 0x00032c74u, 0x00050f8fu, 0x00015165u, 0x00004241u,
+            0x000151a3u, 0x000cb05cu, 0x00015169u, 0x0000000fu, 0x0000000au, 0x0000421cu,
+            0x00004323u, 0x00028ff9u, 0x00025b83u, 0x00015038u, 0x0000431eu, 0x0002042eu,
+            0x0002935bu, 0x00034040u, 0x001735d1u, 0x001735d2u, 0x001735d4u, 0x001735e0u,
+            0x001735e3u, 0x000e86f2u, 0x00140a68u, 0x000e6346u, 0x001735e1u, 0x001735e4u,
+            0x0007ea26u, 0x000ccef2u, 0x001735e2u, 0x0014d2acu, 0x001735e5u, 0x001613d0u };
+        constexpr std::array<std::int32_t, 50> expectedDeltas = { 1, 1, 1, 1, 1, 1, 2, 1, 1, 1, 1,
+            2, 1, 1, 1, 1, 3, 1, 2, 250, 4, 5, 21, 300, 21, 1, 1, 1, 0, 0, 14, 1, 50, 1, 1, 1, 1,
+            1, 1, 40, 4, 1, 1, 1, 20, 3, 1, 10, 1, 5 };
+        std::uint64_t expectedInventoryOffset = 498711;
+        for (std::size_t i = 0; i < processInventory.mInventoryEntries.size(); ++i)
+        {
+            const auto& entry = processInventory.mInventoryEntries[i];
+            EXPECT_EQ(entry.mRange.mOffset, expectedInventoryOffset);
+            EXPECT_EQ(entry.mType.mResolvedFormId, expectedItemFormIds[i]);
+            EXPECT_EQ(entry.mDelta.mValue, expectedDeltas[i]);
+            EXPECT_EQ(entry.mRaw.size(), entry.mRange.mSize);
+            expectedInventoryOffset = entry.mRange.end();
+        }
+        EXPECT_EQ(expectedInventoryOffset, 499512u);
+
+        std::size_t wornCount = 0;
+        for (const auto& entry : processInventory.mInventoryEntries)
+        {
+            for (const auto& extendData : entry.mExtendData)
+            {
+                for (const auto& extra : extendData.mExtraData)
+                    wornCount += extra.mType.mValue == ESM4::sFONVExtraWornType;
+            }
+        }
+        EXPECT_EQ(wornCount, 3u);
+        ASSERT_EQ(processInventory.mInventoryEntries[28].mExtendData.size(), 1u);
+        ASSERT_EQ(processInventory.mInventoryEntries[28].mExtendData[0].mExtraData.size(), 1u);
+        EXPECT_EQ(processInventory.mInventoryEntries[28].mExtendData[0].mExtraData[0].mType.mValue,
+            ESM4::sFONVExtraWornType);
+        ASSERT_EQ(processInventory.mInventoryEntries[29].mExtendData.size(), 1u);
+        ASSERT_EQ(processInventory.mInventoryEntries[29].mExtendData[0].mExtraData.size(), 1u);
+        EXPECT_EQ(processInventory.mInventoryEntries[29].mExtendData[0].mExtraData[0].mType.mValue,
+            ESM4::sFONVExtraWornType);
+
+        const auto& jumpsuit = processInventory.mInventoryEntries[30];
+        EXPECT_EQ(jumpsuit.mExtendDataCount.mValue, 6u);
+        ASSERT_EQ(jumpsuit.mExtendData.size(), 6u);
+        constexpr std::array<std::int16_t, 5> expectedStackCounts = { 3, 2, 3, 3, 2 };
+        constexpr std::array<std::uint32_t, 6> expectedHealthBits
+            = { 0x41f00001u, 0x420c0000u, 0x42480000u, 0x42820000u, 0x42960000u, 0x42c7cccdu };
+        for (std::size_t i = 0; i < expectedStackCounts.size(); ++i)
+        {
+            ASSERT_EQ(jumpsuit.mExtendData[i].mExtraData.size(), 2u);
+            const auto& countExtra = jumpsuit.mExtendData[i].mExtraData[0];
+            EXPECT_EQ(countExtra.mType.mValue, ESM4::sFONVExtraCountType);
+            ASSERT_TRUE(countExtra.mCount.has_value());
+            EXPECT_EQ(countExtra.mCount->mValue, expectedStackCounts[i]);
+            const auto& healthExtra = jumpsuit.mExtendData[i].mExtraData[1];
+            EXPECT_EQ(healthExtra.mType.mValue, ESM4::sFONVExtraHealthType);
+            ASSERT_TRUE(healthExtra.mHealth.has_value());
+            EXPECT_EQ(std::bit_cast<std::uint32_t>(healthExtra.mHealth->mValue), expectedHealthBits[i]);
+        }
+        ASSERT_EQ(jumpsuit.mExtendData[5].mExtraData.size(), 2u);
+        const auto& finalHealth = jumpsuit.mExtendData[5].mExtraData[0];
+        ASSERT_TRUE(finalHealth.mHealth.has_value());
+        EXPECT_EQ(std::bit_cast<std::uint32_t>(finalHealth.mHealth->mValue), expectedHealthBits[5]);
+        EXPECT_EQ(finalHealth.mHealth->mRaw, (std::vector<std::uint8_t>{ 0xcd, 0xcc, 0xc7, 0x42 }));
+        EXPECT_EQ(jumpsuit.mExtendData[5].mExtraData[1].mType.mValue, ESM4::sFONVExtraWornType);
+
+        EXPECT_EQ(processInventory.mInventoryEntries[19].mType.mResolvedFormId, 0x00004241u);
+        EXPECT_EQ(processInventory.mInventoryEntries[19].mDelta.mValue, 250);
+        EXPECT_EQ(processInventory.mInventoryEntries[32].mType.mResolvedFormId, 0x0002935bu);
+        EXPECT_EQ(processInventory.mInventoryEntries[32].mDelta.mValue, 50);
+        EXPECT_EQ(processInventory.mInventoryEntries[39].mType.mResolvedFormId, 0x000e86f2u);
+        EXPECT_EQ(processInventory.mInventoryEntries[39].mDelta.mValue, 40);
+        EXPECT_EQ(processInventory.mInventoryEntries[44].mType.mResolvedFormId, 0x0007ea26u);
+        EXPECT_EQ(processInventory.mInventoryEntries[44].mDelta.mValue, 20);
+
+        constexpr std::array<std::size_t, 9> unresolvedContentIndices = { 34, 35, 36, 37, 38, 42, 43, 46, 48 };
+        constexpr std::array<std::uint32_t, 9> unresolvedContentFormIds = { 0x001735d1u, 0x001735d2u,
+            0x001735d4u, 0x001735e0u, 0x001735e3u, 0x001735e1u, 0x001735e4u, 0x001735e2u,
+            0x001735e5u };
+        for (std::size_t i = 0; i < unresolvedContentIndices.size(); ++i)
+            EXPECT_EQ(processInventory.mInventoryEntries[unresolvedContentIndices[i]].mType.mResolvedFormId,
+                unresolvedContentFormIds[i]);
+
+        EXPECT_EQ(processInventory.mUnparsedRemainder.mRange, (ESM4::FONVSaveRange{ 499512, 3072 }));
+        EXPECT_EQ(processInventory.mUnparsedRemainder.mRaw.size(), 3072u);
+        EXPECT_EQ(actorValues.mUnparsedRemainder.mRange.mSize - processInventory.mRange.mSize,
+            processInventory.mUnparsedRemainder.mRange.mSize);
+
         ASSERT_TRUE(movement.mCellOrWorldspace.mResolvedFormId.has_value());
         const ESM::RefId worldspace = ESM::RefId::formIdRefId(
             ESM::FormId::fromUint32(*movement.mCellOrWorldspace.mResolvedFormId));
@@ -1193,7 +1496,7 @@ namespace
             << "NPC_ FormID 0x7 is a FalloutNV.esm base-record relation, not serialized as a Save330 change form";
 
         EXPECT_EQ(save.mUnparsedSemanticPayloadRanges.size(), 7090u);
-        EXPECT_EQ(save.mUnparsedSemanticPayloadBytes, 2737787u);
+        EXPECT_EQ(save.mUnparsedSemanticPayloadBytes, 2736952u);
         EXPECT_EQ(save.mStructurallyAccountedRange, (ESM4::FONVSaveRange{ 0, 3395328 }));
         EXPECT_EQ(save.mParsedPrefixRange, save.mStructurallyAccountedRange);
         EXPECT_EQ(save.mUnparsedBodyRange, (ESM4::FONVSaveRange{ 3395328, 0 }));

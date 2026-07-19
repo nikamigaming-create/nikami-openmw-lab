@@ -20,6 +20,11 @@ namespace ESM4
     inline constexpr std::size_t sFONVPlayerActorValueDataBytes
         = 3 * sFONVPlayerActorValueCount * (sizeof(float) + 1) + sizeof(std::uint32_t) + 1;
     static_assert(sFONVPlayerActorValueDataBytes == 1160);
+    inline constexpr std::uint8_t sFONVExtraWornType = 0x16;
+    inline constexpr std::uint8_t sFONVExtraCountType = 0x24;
+    inline constexpr std::uint8_t sFONVExtraHealthType = 0x25;
+    inline constexpr std::uint8_t sFONVExtraFactionChangesType = 0x5e;
+    inline constexpr std::uint8_t sFONVExtraEncounterZoneType = 0x74;
 
     struct FONVSaveRange
     {
@@ -175,6 +180,68 @@ namespace ESM4
         FONVSaveRawField mUnparsedRemainder;
     };
 
+    struct FONVSavePlayerFactionChange
+    {
+        FONVSaveResolvedReferenceId mFaction;
+        FONVSaveField<std::int8_t> mRank;
+        FONVSaveRange mRange;
+        std::vector<std::uint8_t> mRaw;
+    };
+
+    // Only the engine-authored ExtraFactionChanges and ExtraEncounterZone layouts are decoded by this slice.
+    struct FONVSavePlayerActorExtraData
+    {
+        FONVSaveField<std::uint8_t> mType;
+        std::optional<FONVSaveField<std::uint32_t>> mFactionChangeCount;
+        std::vector<FONVSavePlayerFactionChange> mFactionChanges;
+        std::optional<FONVSaveResolvedReferenceId> mEncounterZone;
+        FONVSaveRange mRange;
+        std::vector<std::uint8_t> mRaw;
+    };
+
+    // The type byte is authoritative. Payloads are populated only for ExtraCount and ExtraHealth; ExtraWorn has
+    // no payload bytes and is represented solely by its type.
+    struct FONVSavePlayerInventoryExtraData
+    {
+        FONVSaveField<std::uint8_t> mType;
+        std::optional<FONVSaveField<std::int16_t>> mCount;
+        std::optional<FONVSaveField<float>> mHealth;
+        FONVSaveRange mRange;
+        std::vector<std::uint8_t> mRaw;
+    };
+
+    struct FONVSavePlayerInventoryExtendData
+    {
+        FONVSaveField<std::uint32_t> mExtraDataCount;
+        std::vector<FONVSavePlayerInventoryExtraData> mExtraData;
+        FONVSaveRange mRange;
+        std::vector<std::uint8_t> mRaw;
+    };
+
+    struct FONVSavePlayerInventoryEntry
+    {
+        FONVSaveResolvedReferenceId mType;
+        FONVSaveField<std::int32_t> mDelta;
+        FONVSaveField<std::uint32_t> mExtendDataCount;
+        std::vector<FONVSavePlayerInventoryExtendData> mExtendData;
+        FONVSaveRange mRange;
+        std::vector<std::uint8_t> mRaw;
+    };
+
+    // ChangedMobileObject process level, ChangedREFR actor extras, then ChangedInventory. Array counts retain their
+    // raw U6to30 encodings; all remaining player process state stays opaque.
+    struct FONVSavePlayerProcessInventoryData
+    {
+        FONVSaveField<std::int8_t> mProcessLevel;
+        FONVSaveField<std::uint32_t> mActorExtraDataCount;
+        std::vector<FONVSavePlayerActorExtraData> mActorExtraData;
+        FONVSaveField<std::uint32_t> mInventoryEntryCount;
+        std::vector<FONVSavePlayerInventoryEntry> mInventoryEntries;
+        FONVSaveRange mRange;
+        std::vector<std::uint8_t> mRaw;
+        FONVSaveRawField mUnparsedRemainder;
+    };
+
     struct FONVSaveChangedFormEnvelope
     {
         FONVSaveRawField mReferenceId;
@@ -282,6 +349,7 @@ namespace ESM4
         FONVSaveUnknownTable mUnknownTable;
         std::optional<FONVSavePlayerReferenceMovement> mPlayerReferenceMovement;
         std::optional<FONVSavePlayerActorValueData> mPlayerActorValueData;
+        std::optional<FONVSavePlayerProcessInventoryData> mPlayerProcessInventoryData;
         std::optional<FONVSaveSkyState> mSky;
 
         // The parser accounts for every byte structurally. These ranges are gameplay payload bytes whose internal
