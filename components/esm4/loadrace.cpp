@@ -30,7 +30,17 @@
 #include <stdexcept>
 
 #include "reader.hpp"
-//#include "writer.hpp"
+// #include "writer.hpp"
+
+ESM4::Race::Data ESM4::Race::decodeFalloutData(std::span<const std::uint8_t> payload)
+{
+    if (payload.size() != sizeof(Data))
+        throw std::runtime_error("ESM4::RACE Fallout DATA must be exactly 36 bytes");
+
+    Data result{};
+    std::memcpy(&result, payload.data(), sizeof(result));
+    return result;
+}
 
 void ESM4::Race::load(ESM4::Reader& reader)
 {
@@ -92,6 +102,22 @@ void ESM4::Race::load(ESM4::Reader& reader)
                 break;
             case ESM::fourCC("DATA"): // ?? different length for TES5
             {
+                if (isFONV)
+                {
+                    if (mHasFalloutData)
+                        throw std::runtime_error("ESM4::RACE contains duplicate Fallout DATA");
+                    std::array<std::uint8_t, sizeof(Data)> payload{};
+                    if (subHdr.dataSize != payload.size() || !reader.get(payload.data(), payload.size()))
+                        throw std::runtime_error("ESM4::RACE Fallout DATA size/read mismatch");
+                    mFalloutData = decodeFalloutData(payload);
+                    mHeightMale = mFalloutData.mHeightMale;
+                    mHeightFemale = mFalloutData.mHeightFemale;
+                    mWeightMale = mFalloutData.mWeightMale;
+                    mWeightFemale = mFalloutData.mWeightFemale;
+                    mRaceFlags = mFalloutData.mRawFlags;
+                    mHasFalloutData = true;
+                    break;
+                }
 // DATA:size 128
 // 0f 0f ff 00 ff 00 ff 00 ff 00 ff 00 ff 00 00 00
 // 9a 99 99 3f 00 00 80 3f 00 00 80 3f 00 00 80 3f

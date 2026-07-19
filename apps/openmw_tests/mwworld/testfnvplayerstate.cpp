@@ -3,25 +3,37 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cstdint>
+#include <initializer_list>
+#include <limits>
 #include <string>
+#include <utility>
+#include <vector>
 
 #include <components/esm/attr.hpp>
 #include <components/esm/refid.hpp>
 #include <components/esm3/loadnpc.hpp>
+#include <components/esm4/fonvsavegame.hpp>
+#include <components/esm4/loadcell.hpp>
+#include <components/esm4/loadclas.hpp>
 #include <components/esm4/loadnpc.hpp>
+#include <components/esm4/loadrace.hpp>
+#include <components/esm4/loadwrld.hpp>
 
 #include "apps/openmw/mwworld/fnvplayerstate.hpp"
 #include "apps/openmw/mwworld/store.hpp"
 
 namespace
 {
+    using testing::Contains;
     using testing::ElementsAreArray;
     using testing::HasSubstr;
+    using testing::Not;
 
-    constexpr ESM::FormId form(std::uint32_t index)
+    constexpr ESM::FormId form(std::uint32_t index, std::int32_t contentFile = 0)
     {
-        return ESM::FormId{ index, 0 };
+        return ESM::FormId{ index, contentFile };
     }
 
     ESM4::Npc makeCompletePlayer(ESM::FormId id = form(7))
@@ -71,6 +83,63 @@ namespace
         const MWWorld::Store<ESM4::Npc>& npcs, std::int32_t contentFile = 0)
     {
         return MWWorld::resolveFalloutPlayerState(npcs, ESM::FormId{ 7, contentFile });
+    }
+
+    ESM4::FONVSaveGamePrefix makeSavePlanFixture(std::initializer_list<std::string> masters)
+    {
+        ESM4::FONVSaveGamePrefix result;
+        result.mFileSize = 4096;
+        result.mHeader.mSaveNumber.mValue = 330;
+        result.mHeader.mPlayerName.mValue = "Courier Six";
+        result.mHeader.mPlayerKarmaTitle.mValue = "Desert Survivor";
+        result.mHeader.mPlayerLevel.mValue = 12;
+        result.mHeader.mPlayerLocation.mValue = "Goodsprings";
+        result.mHeader.mPlayTime.mValue = "00.16.45";
+        for (const std::string& name : masters)
+        {
+            ESM4::FONVSaveMaster master;
+            master.mFileName.mValue = name;
+            result.mMasters.push_back(std::move(master));
+        }
+
+        ESM4::FONVSaveChangedFormEnvelope playerChange;
+        playerChange.mResolvedFormId = ESM4::sFONVPlayerReferenceFormId;
+        playerChange.mChangeType = ESM4::sFONVActorReferenceChangeType;
+        playerChange.mChangeFlags.mValue = 0xb0000022;
+        playerChange.mUnparsedPayload.mRange = { 1024, 5095 };
+        result.mChangedForms.mEntries.push_back(std::move(playerChange));
+
+        ESM4::FONVSavePlayerReferenceMovement movement;
+        movement.mCellOrWorldspace.mResolvedFormId = 0x000da726u;
+        movement.mPosition[0].mValue = -72392.84375f;
+        movement.mPosition[1].mValue = -1240.19275f;
+        movement.mPosition[2].mValue = 8137.58643f;
+        movement.mRotationRadians[0].mValue = -0.06439045f;
+        movement.mRotationRadians[1].mValue = -0.0f;
+        movement.mRotationRadians[2].mValue = 2.93332028f;
+        result.mPlayerReferenceMovement = std::move(movement);
+
+        ESM4::FONVSavePlayerCharacterScalarReferenceState camera;
+        camera.mFirstPersonMode.mValue = 0;
+        camera.mFirstPersonMode.mRange = { 501845, 1 };
+        camera.mFirstPersonModelFov.mValue = 55.f;
+        camera.mFirstPersonModelFov.mRange = { 501942, 4 };
+        camera.mWorldFov.mValue = 75.f;
+        camera.mWorldFov.mRange = { 501947, 4 };
+        result.mPlayerCharacterScalarReferenceState = std::move(camera);
+
+        ESM4::FONVSaveSkyState sky;
+        sky.mCurrentWeather.mResolvedFormId = 0x001237d7u;
+        sky.mDefaultWeather.mResolvedFormId = 0x000ffc88u;
+        sky.mGameHour.mValue = 14.215002059936523f;
+        sky.mLastUpdateHour.mValue = 17.606250762939453f;
+        sky.mWeatherPercent.mValue = 1.f;
+        sky.mFlags.mValue = 0x20u;
+        sky.mFogPower.mValue = 0.5f;
+        sky.mSkyMode.mValue = 3u;
+        sky.mRange = { 494355, 71 };
+        result.mSky = std::move(sky);
+        return result;
     }
 
     TEST(FalloutPlayerStateTest, resolvesExactOfficialPlayerIdentityStateAndActorValueComponents)
@@ -307,5 +376,150 @@ namespace
             [](std::uint8_t value) { return value == 50; }));
         EXPECT_TRUE(std::all_of(
             proxy.mNpdt.mSkills.begin(), proxy.mNpdt.mSkills.end(), [](std::uint8_t value) { return value == 35; }));
+    }
+
+    TEST(FalloutPlayerStateTest, convertsRetailReferenceFovToExactOpenMwVerticalProjection)
+    {
+        EXPECT_EQ(std::bit_cast<std::uint32_t>(MWWorld::convertFalloutReferenceFovToOpenMwVertical(75.f)), 0x426f5c9du);
+        EXPECT_EQ(std::bit_cast<std::uint32_t>(MWWorld::convertFalloutReferenceFovToOpenMwVertical(55.f)), 0x422a9d8eu);
+        EXPECT_THROW(MWWorld::convertFalloutReferenceFovToOpenMwVertical(0.f), std::invalid_argument);
+        EXPECT_THROW(MWWorld::convertFalloutReferenceFovToOpenMwVertical(180.f), std::invalid_argument);
+    }
+
+    TEST(FalloutPlayerStateTest, resolvesEngineReservedReferenceAndExactTypedNativeRecords)
+    {
+        constexpr std::int32_t masterIndex = 37;
+        const ESM::FormId playerId = form(7, masterIndex);
+        const ESM::FormId referenceId = form(0x14, masterIndex);
+        ESM4::Npc player = makeCompletePlayer(playerId);
+        player.mClass = form(0x57e6a, masterIndex);
+        player.mRace = form(0x19, masterIndex);
+        MWWorld::Store<ESM4::Npc> npcs;
+        npcs.insertStatic(player);
+
+        const MWWorld::FalloutPlayerStateResolution identity
+            = MWWorld::resolveFalloutPlayerIdentity(npcs, playerId, referenceId);
+        ASSERT_TRUE(identity) << identity.mError;
+        EXPECT_EQ(identity.mState->mReferenceRecord, referenceId);
+        EXPECT_EQ(identity.mState->mReferenceBaseRecord, playerId);
+
+        MWWorld::Store<ESM4::Class> classes;
+        ESM4::Class playerClass;
+        playerClass.mId = player.mClass;
+        playerClass.mHasFalloutData = true;
+        playerClass.mHasFalloutAttributes = true;
+        classes.insertStatic(playerClass);
+        MWWorld::Store<ESM4::Race> races;
+        ESM4::Race playerRace;
+        playerRace.mId = player.mRace;
+        playerRace.mHasFalloutData = true;
+        races.insertStatic(playerRace);
+
+        const MWWorld::FalloutNativePlayerRecordsResolution records
+            = MWWorld::resolveFalloutNativePlayerRecords(npcs, classes, races, *identity.mState);
+        ASSERT_TRUE(records) << records.mError;
+        EXPECT_EQ(records.mRecords->mBaseNpc, npcs.search(ESM::RefId(playerId)));
+        EXPECT_EQ(records.mRecords->mClass, classes.search(ESM::RefId(player.mClass)));
+        EXPECT_EQ(records.mRecords->mRace, races.search(ESM::RefId(player.mRace)));
+
+        EXPECT_FALSE(MWWorld::resolveFalloutPlayerIdentity(npcs, playerId, form(0x15, masterIndex)));
+        playerClass.mHasFalloutAttributes = false;
+        classes.insert(playerClass);
+        const MWWorld::FalloutNativePlayerRecordsResolution malformed
+            = MWWorld::resolveFalloutNativePlayerRecords(npcs, classes, races, *identity.mState);
+        EXPECT_FALSE(malformed);
+        EXPECT_THAT(malformed.mError, HasSubstr("lacks exact 7-byte ATTR"));
+    }
+
+    TEST(FalloutPlayerStateTest, resolvesSave330TransformCameraSkyAndExteriorPlacement)
+    {
+        const std::vector<std::string> content{ "builtin.omwscripts", "FalloutNV.esm", "DeadMoney.esm" };
+        const ESM::FormId playerId = form(7, 1);
+        const ESM::FormId referenceId = form(0x14, 1);
+        MWWorld::Store<ESM4::Npc> npcs;
+        npcs.insertStatic(makeCompletePlayer(playerId));
+        const MWWorld::FalloutPlayerStateResolution player
+            = MWWorld::resolveFalloutPlayerIdentity(npcs, playerId, referenceId);
+        ASSERT_TRUE(player) << player.mError;
+
+        const ESM4::FONVSaveGamePrefix save = makeSavePlanFixture({ "FalloutNV.esm", "DeadMoney.esm" });
+        const MWWorld::FalloutSaveLoadPlanResolution resolution
+            = MWWorld::resolveFalloutSaveLoadPlan(save, &*player.mState, content);
+        ASSERT_TRUE(resolution) << resolution.mError;
+        const MWWorld::FalloutSaveLoadPlan& plan = *resolution.mPlan;
+        EXPECT_EQ(plan.mPlayer.mReferenceRecord, referenceId);
+        EXPECT_EQ(plan.mPlayer.mLevel, 12u);
+        EXPECT_EQ(plan.mTransform.mCellOrWorldspaceRecord, form(0x000da726, 1));
+        EXPECT_FLOAT_EQ(plan.mTransform.mPosition[0], -72392.84375f);
+        EXPECT_FLOAT_EQ(plan.mTransform.mPosition[1], -1240.19275f);
+        EXPECT_FLOAT_EQ(plan.mTransform.mPosition[2], 8137.58643f);
+        EXPECT_FLOAT_EQ(plan.mTransform.mRotationRadians[2], 2.93332028f);
+        EXPECT_TRUE(plan.mCamera.mFirstPerson);
+        EXPECT_FLOAT_EQ(plan.mCamera.mFirstPersonModelFov, 55.f);
+        EXPECT_FLOAT_EQ(plan.mCamera.mWorldFov, 75.f);
+        EXPECT_EQ(plan.mCamera.mModeOffset, 501845u);
+        EXPECT_EQ(plan.mScene.mCurrentWeather, form(0x001237d7, 1));
+        EXPECT_EQ(plan.mScene.mDefaultWeather, form(0x000ffc88, 1));
+        EXPECT_FLOAT_EQ(plan.mScene.mGameHour, 14.215002059936523f);
+        EXPECT_EQ(plan.mScene.mSkyMode, 3u);
+        EXPECT_THAT(plan.mUncoveredState, Contains("global-variables"));
+        EXPECT_THAT(plan.mUncoveredState, Not(Contains("global-variables-time-weather")));
+
+        MWWorld::Store<ESM4::World> worlds;
+        ESM4::World worldspace;
+        worldspace.mId = form(0x000da726, 1);
+        worlds.insertStatic(worldspace);
+        MWWorld::Store<ESM4::Cell> cells;
+        ESM4::Cell exterior;
+        exterior.mId = ESM::RefId(form(0x000e1aa7, 1));
+        exterior.mParent = ESM::RefId(worldspace.mId);
+        exterior.mCellFlags = ESM4::CELL_HasWater;
+        exterior.mX = -18;
+        exterior.mY = -1;
+        cells.insertStatic(exterior);
+        const MWWorld::FalloutExteriorPlayerPlacementResolution placement
+            = MWWorld::resolveFalloutExteriorPlayerPlacement(worlds, cells, plan.mTransform);
+        ASSERT_TRUE(placement) << placement.mError;
+        EXPECT_EQ(placement.mPlacement->mCellRecord, form(0x000e1aa7, 1));
+        EXPECT_EQ(placement.mPlacement->mCellX, -18);
+        EXPECT_EQ(placement.mPlacement->mCellY, -1);
+
+        ESM::NPC proxy;
+        proxy.blank();
+        proxy.mId = ESM::RefId::stringRefId("Player");
+        proxy.mName = "Content Player";
+        proxy.mNpdt.mHealth = 777;
+        MWWorld::applyFalloutSavePlayerHeader(proxy, plan.mPlayer);
+        EXPECT_EQ(proxy.mName, "Courier Six");
+        EXPECT_EQ(proxy.mNpdt.mLevel, 12);
+        EXPECT_EQ(proxy.mNpdt.mHealth, 777);
+    }
+
+    TEST(FalloutPlayerStateTest, savePlanFailsClosedWhenCameraOrSkyIsUnproven)
+    {
+        const std::vector<std::string> content{ "builtin.omwscripts", "FalloutNV.esm", "DeadMoney.esm" };
+        MWWorld::FalloutPlayerState player;
+        player.mBaseRecord = form(7, 1);
+        player.mReferenceRecord = form(0x14, 1);
+        player.mReferenceBaseRecord = player.mBaseRecord;
+        player.mEditorId = "Player";
+
+        ESM4::FONVSaveGamePrefix save = makeSavePlanFixture({ "FalloutNV.esm", "DeadMoney.esm" });
+        save.mPlayerCharacterScalarReferenceState.reset();
+        MWWorld::FalloutSaveLoadPlanResolution resolution = MWWorld::resolveFalloutSaveLoadPlan(save, &player, content);
+        EXPECT_FALSE(resolution);
+        EXPECT_THAT(resolution.mError, HasSubstr("does not expose the canonical Player camera/FOV state"));
+
+        save = makeSavePlanFixture({ "FalloutNV.esm", "DeadMoney.esm" });
+        save.mPlayerCharacterScalarReferenceState->mWorldFov.mValue = std::numeric_limits<float>::infinity();
+        resolution = MWWorld::resolveFalloutSaveLoadPlan(save, &player, content);
+        EXPECT_FALSE(resolution);
+        EXPECT_THAT(resolution.mError, HasSubstr("camera FOV values must be finite and in (0, 180)"));
+
+        save = makeSavePlanFixture({ "FalloutNV.esm", "DeadMoney.esm" });
+        save.mSky.reset();
+        resolution = MWWorld::resolveFalloutSaveLoadPlan(save, &player, content);
+        EXPECT_FALSE(resolution);
+        EXPECT_THAT(resolution.mError, HasSubstr("does not expose a proven Sky global-data payload"));
     }
 }

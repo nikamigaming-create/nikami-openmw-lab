@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -18,7 +19,12 @@ namespace ESM
 
 namespace ESM4
 {
+    struct Cell;
+    struct Class;
+    struct FONVSaveGamePrefix;
     struct Npc;
+    struct Race;
+    struct World;
 }
 
 namespace MWWorld
@@ -73,6 +79,8 @@ namespace MWWorld
         static constexpr std::size_t SkillCount = static_cast<std::size_t>(FalloutSkill::Count);
 
         ESM::FormId mBaseRecord;
+        ESM::FormId mReferenceRecord;
+        ESM::FormId mReferenceBaseRecord;
         ESM::FormId mTraitsRecord;
         ESM::FormId mStatsRecord;
         ESM::FormId mFactionsRecord;
@@ -117,6 +125,120 @@ namespace MWWorld
 
     FalloutPlayerStateResolution resolveFalloutPlayerState(
         const Store<ESM4::Npc>& npcs, ESM::FormId normalizedPlayerFormId);
+
+    FalloutPlayerStateResolution resolveFalloutPlayerIdentity(
+        const Store<ESM4::Npc>& npcs, ESM::FormId normalizedPlayerFormId, ESM::FormId normalizedPlayerReferenceFormId);
+
+    struct FalloutNativePlayerRecords
+    {
+        const ESM4::Npc* mBaseNpc = nullptr;
+        const ESM4::Class* mClass = nullptr;
+        const ESM4::Race* mRace = nullptr;
+    };
+
+    struct FalloutNativePlayerRecordsResolution
+    {
+        std::optional<FalloutNativePlayerRecords> mRecords;
+        std::string mError;
+
+        explicit operator bool() const { return mRecords.has_value(); }
+    };
+
+    FalloutNativePlayerRecordsResolution resolveFalloutNativePlayerRecords(const Store<ESM4::Npc>& npcs,
+        const Store<ESM4::Class>& classes, const Store<ESM4::Race>& races, const FalloutPlayerState& playerState);
+
+    // Only fields with an exact meaning in the currently decoded retail save header belong here. In particular, the
+    // location string is a display label, not a cell identity or permission to move the player.
+    struct FalloutSavePlayerHeaderState
+    {
+        ESM::FormId mBaseRecord;
+        ESM::FormId mReferenceRecord;
+        std::size_t mSaveFalloutNewVegasMasterIndex = 0;
+        std::size_t mCurrentFalloutNewVegasMasterIndex = 0;
+        std::uint32_t mReferenceChangeFlags = 0;
+        std::uint64_t mReferencePayloadOffset = 0;
+        std::uint64_t mReferencePayloadBytes = 0;
+        std::uint32_t mSaveNumber = 0;
+        std::string mName;
+        std::string mKarmaTitle;
+        std::uint32_t mLevel = 0;
+        std::string mLocationLabel;
+        std::string mPlayTimeLabel;
+    };
+
+    struct FalloutSaveLoadPlan
+    {
+        FalloutSavePlayerHeaderState mPlayer;
+        struct PlayerTransform
+        {
+            ESM::FormId mCellOrWorldspaceRecord;
+            std::array<float, 3> mPosition{};
+            std::array<float, 3> mRotationRadians{};
+        } mTransform;
+        struct CameraState
+        {
+            std::uint8_t mThirdPersonMode = 0;
+            bool mFirstPerson = true;
+            float mFirstPersonModelFov = 0.f;
+            float mWorldFov = 0.f;
+            std::uint64_t mModeOffset = 0;
+            std::uint64_t mFirstPersonModelFovOffset = 0;
+            std::uint64_t mWorldFovOffset = 0;
+        } mCamera;
+        struct SceneState
+        {
+            ESM::FormId mCurrentWeather;
+            std::optional<ESM::FormId> mTransitionWeather;
+            ESM::FormId mDefaultWeather;
+            std::optional<ESM::FormId> mOverrideWeather;
+            float mGameHour = 0.f;
+            float mLastUpdateHour = 0.f;
+            float mWeatherPercent = 0.f;
+            float mFogPower = 0.f;
+            std::uint32_t mFlags = 0;
+            std::uint32_t mSkyMode = 0;
+            std::uint64_t mPayloadOffset = 0;
+            std::uint64_t mPayloadBytes = 0;
+        } mScene;
+        std::vector<std::string> mUncoveredState;
+    };
+
+    struct FalloutExteriorPlayerPlacement
+    {
+        ESM::FormId mWorldspaceRecord;
+        ESM::FormId mCellRecord;
+        int mCellX = 0;
+        int mCellY = 0;
+    };
+
+    struct FalloutExteriorPlayerPlacementResolution
+    {
+        std::optional<FalloutExteriorPlayerPlacement> mPlacement;
+        std::string mError;
+
+        explicit operator bool() const { return mPlacement.has_value(); }
+    };
+
+    struct FalloutSaveLoadPlanResolution
+    {
+        std::optional<FalloutSaveLoadPlan> mPlan;
+        std::string mError;
+
+        explicit operator bool() const { return mPlan.has_value(); }
+    };
+
+    FalloutSaveLoadPlanResolution resolveFalloutSaveLoadPlan(const ESM4::FONVSaveGamePrefix& save,
+        const FalloutPlayerState* nativePlayerState, std::span<const std::string> currentContentFiles);
+
+    // Bethesda saves horizontal degrees at a 4:3 reference aspect; OpenMW consumes vertical fovy degrees.
+    float convertFalloutReferenceFovToOpenMwVertical(float horizontalReferenceFov);
+
+    FalloutExteriorPlayerPlacementResolution resolveFalloutExteriorPlayerPlacement(const Store<ESM4::World>& worlds,
+        const Store<ESM4::Cell>& cells, const FalloutSaveLoadPlan::PlayerTransform& transform);
+
+    // Apply only the name and level whose save-header semantics are exact. Display-only location and all still
+    // uncovered runtime/world state remain outside this operation.
+    void applyFalloutSavePlayerHeader(ESM::NPC& proxy, const FalloutSavePlayerHeaderState& state);
 
     // Seed only fields that have an explicit same-unit shared representation. The ESM3 proxy remains a
     // compatibility carrier: its 0-100 attributes and 27 skills must retain their existing compatibility values.
