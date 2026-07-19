@@ -53,7 +53,10 @@ namespace ESM4
                     break;
                 case ESM::fourCC("TNAM"):
                     if (subHdr.dataSize == sizeof(mTiming))
+                    {
                         reader.get(mTiming);
+                        mHasTiming = true;
+                    }
                     else
                         reader.skipSubRecordData();
                     break;

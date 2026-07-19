@@ -43,6 +43,10 @@ namespace ESM4
         std::string mSunGlareTexture;
         std::string mNightSkyModel;
         Timing mTiming;
+        // TNAM is optional in the binary format. Keep its provenance separate
+        // from the zero-initialized value so consumers can distinguish a real
+        // all-zero timing block from a missing or malformed one.
+        bool mHasTiming = false;
 
         void load(Reader& reader);
 
