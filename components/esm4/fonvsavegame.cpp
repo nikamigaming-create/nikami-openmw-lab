@@ -1722,6 +1722,65 @@ namespace
         return result;
     }
 
+    ESM4::FONVSaveFullFormId decodePlayerCharacterFullFormId(
+        Cursor& cursor, std::span<const std::uint8_t> data, std::string_view description)
+    {
+        ESM4::FONVSaveFullFormId result;
+        result.mEncoded = readPlayerProcessU32(cursor, data, description);
+        if (result.mEncoded.mValue != 0)
+            result.mResolvedFormId = result.mEncoded.mValue;
+        return result;
+    }
+
+    ESM4::FONVSavePlayerCharacterFinalState parsePlayerCharacterFinalState(std::span<const std::uint8_t> data,
+        const ESM4::FONVSaveChangedFormEnvelope& player,
+        const ESM4::FONVSavePlayerCharacterMagicTargetState& magicTargetState,
+        const ESM4::FONVSaveFormIdTable& formIds)
+    {
+        if (player.mVersion.mValue != 27)
+            throw ESM4::FONVSaveError(
+                player.mVersion.mRange.mOffset, "unsupported canonical PlayerCharacter final changed-form version");
+
+        const std::size_t begin = static_cast<std::size_t>(magicTargetState.mUnparsedRemainder.mRange.mOffset);
+        const std::size_t end = static_cast<std::size_t>(magicTargetState.mUnparsedRemainder.mRange.end());
+        Cursor cursor(data, begin, end);
+        ESM4::FONVSavePlayerCharacterFinalState result;
+        result.mKeyForUnkD64 = readPlayerProcessU32(cursor, data, "PlayerCharacter KeyForUnkD64");
+        result.mUnknown11DFED4 = readPlayerProcessFloat(cursor, data, "PlayerCharacter Unknown 11DFED4");
+        result.mUnknown11DFED8 = readPlayerProcessFloat(cursor, data, "PlayerCharacter Unknown 11DFED8");
+
+        result.mPerksAD4Count = readPackedCount(cursor, data, "PlayerCharacter Perks AD4 count");
+        validatePackedCountFits(result.mPerksAD4Count, cursor, 6, "PlayerCharacter Perks AD4 count");
+        result.mPerksAD4.reserve(result.mPerksAD4Count.mValue);
+        for (std::uint32_t i = 0; i < result.mPerksAD4Count.mValue; ++i)
+            result.mPerksAD4.push_back(parsePlayerCharacterPerkEntry(cursor, data, formIds));
+
+        result.mHardcoreMode = readPlayerProcessU8(cursor, data, "PlayerCharacter HardcoreMode");
+        result.mClearsHardcoreFlag = readPlayerProcessU8(cursor, data, "PlayerCharacter Clears HardcoreFlag");
+        result.mByt66E = readPlayerProcessU8(cursor, data, "PlayerCharacter Byt66E");
+        for (ESM4::FONVSaveFullFormId& form : result.mUnknownE3C)
+            form = decodePlayerCharacterFullFormId(cursor, data, "PlayerCharacter Unknown E3C FormID");
+
+        result.mEnabled = parsePlayerCharacterReferenceList(
+            cursor, data, formIds, result.mEnabledCount, "PlayerCharacter Lists11CAC98 Enabled count");
+        result.mDisabled = parsePlayerCharacterReferenceList(
+            cursor, data, formIds, result.mDisabledCount, "PlayerCharacter Lists11CAC98 Disabled count");
+        result.mUnknown = parsePlayerCharacterReferenceList(
+            cursor, data, formIds, result.mUnknownCount, "PlayerCharacter Lists11CAC98 Unknown count");
+        result.mFadeOut = parsePlayerCharacterReferenceList(
+            cursor, data, formIds, result.mFadeOutCount, "PlayerCharacter Lists11CAC98 FadeOut count");
+
+        if (cursor.position() - begin != ESM4::sFONVPlayerCharacterFinalStateBytes)
+            throw ESM4::FONVSaveError(begin, "canonical PlayerCharacter final state has an unexpected size");
+        if (cursor.position() != cursor.end())
+            throw ESM4::FONVSaveError(cursor.position(), "canonical PlayerCharacter payload has trailing bytes");
+        result.mRange = range(begin, cursor.position());
+        result.mRaw = copyRange(data, begin, cursor.position());
+        result.mUnparsedRemainder
+            = readRawField(cursor, data, 0, "remaining canonical PlayerCharacter payload");
+        return result;
+    }
+
     void appendUnparsedSemanticPayload(ESM4::FONVSaveGamePrefix& save, const ESM4::FONVSaveRange& payload)
     {
         if (payload.empty())
@@ -2019,6 +2078,8 @@ namespace ESM4
                     data, *playerReference, *result.mPlayerCharacterScalarReferenceState, result.mFormIdTable);
                 result.mPlayerCharacterMagicTargetState = parsePlayerCharacterMagicTargetState(
                     data, *playerReference, *result.mPlayerCharacterListsState, result.mFormIdTable);
+                result.mPlayerCharacterFinalState = parsePlayerCharacterFinalState(
+                    data, *playerReference, *result.mPlayerCharacterMagicTargetState, result.mFormIdTable);
             }
         }
 
@@ -2044,7 +2105,9 @@ namespace ESM4
         }
         for (const FONVSaveChangedFormEnvelope& entry : result.mChangedForms.mEntries)
         {
-            if (result.mPlayerCharacterMagicTargetState.has_value() && &entry == playerReference)
+            if (result.mPlayerCharacterFinalState.has_value() && &entry == playerReference)
+                appendUnparsedSemanticPayload(result, result.mPlayerCharacterFinalState->mUnparsedRemainder.mRange);
+            else if (result.mPlayerCharacterMagicTargetState.has_value() && &entry == playerReference)
                 appendUnparsedSemanticPayload(
                     result, result.mPlayerCharacterMagicTargetState->mUnparsedRemainder.mRange);
             else if (result.mPlayerCharacterListsState.has_value() && &entry == playerReference)
