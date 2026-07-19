@@ -20,8 +20,10 @@ namespace ESM
 namespace ESM4
 {
     struct ActorCharacter;
+    struct Cell;
     struct FONVSaveGamePrefix;
     struct Npc;
+    struct World;
 }
 
 namespace MWWorld
@@ -140,7 +142,29 @@ namespace MWWorld
     struct FalloutSaveLoadPlan
     {
         FalloutSavePlayerHeaderState mPlayer;
+        struct PlayerTransform
+        {
+            ESM::FormId mCellOrWorldspaceRecord;
+            std::array<float, 3> mPosition{};
+            std::array<float, 3> mRotationRadians{};
+        } mTransform;
         std::vector<std::string> mUncoveredState;
+    };
+
+    struct FalloutExteriorPlayerPlacement
+    {
+        ESM::FormId mWorldspaceRecord;
+        ESM::FormId mCellRecord;
+        int mCellX = 0;
+        int mCellY = 0;
+    };
+
+    struct FalloutExteriorPlayerPlacementResolution
+    {
+        std::optional<FalloutExteriorPlayerPlacement> mPlacement;
+        std::string mError;
+
+        explicit operator bool() const { return mPlacement.has_value(); }
     };
 
     struct FalloutSaveLoadPlanResolution
@@ -153,6 +177,10 @@ namespace MWWorld
 
     FalloutSaveLoadPlanResolution resolveFalloutSaveLoadPlan(const ESM4::FONVSaveGamePrefix& save,
         const FalloutPlayerState* nativePlayerState, std::span<const std::string> currentContentFiles);
+
+    FalloutExteriorPlayerPlacementResolution resolveFalloutExteriorPlayerPlacement(
+        const Store<ESM4::World>& worlds, const Store<ESM4::Cell>& cells,
+        const FalloutSaveLoadPlan::PlayerTransform& transform);
 
     // Apply only a non-empty player name and the runtime level carried with exact semantics by the FNV save header.
     // Save330's header name is empty, so that case preserves the content-derived carrier name. This must not project

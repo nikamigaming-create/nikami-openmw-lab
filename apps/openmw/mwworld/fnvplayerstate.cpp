@@ -8,10 +8,13 @@
 #include <utility>
 
 #include <components/esm/refid.hpp>
+#include <components/esm/util.hpp>
 #include <components/esm3/loadnpc.hpp>
 #include <components/esm4/fonvsavegame.hpp>
 #include <components/esm4/loadachr.hpp>
+#include <components/esm4/loadcell.hpp>
 #include <components/esm4/loadnpc.hpp>
+#include <components/esm4/loadwrld.hpp>
 #include <components/misc/strings/algorithm.hpp>
 
 #include "store.hpp"
@@ -77,6 +80,11 @@ namespace
         return { std::nullopt, std::move(message) };
     }
 
+    MWWorld::FalloutExteriorPlayerPlacementResolution placementFailure(std::string message)
+    {
+        return { std::nullopt, std::move(message) };
+    }
+
     std::vector<std::size_t> findContentFileIndices(
         std::span<const std::string> contentFiles, std::string_view fileName)
     {
@@ -117,7 +125,6 @@ namespace
     std::vector<std::string> falloutSaveLoadBlockers()
     {
         return {
-            "player-reference-cell-worldspace-transform",
             "player-runtime-actor-values-modifiers-health-limbs-perks",
             "player-inventory-equipment-ammo",
             "player-factions-reputation-crime-disguise",
@@ -367,8 +374,68 @@ namespace MWWorld
         plan.mPlayer.mLevel = level;
         plan.mPlayer.mLocationLabel = save.mHeader.mPlayerLocation.mValue;
         plan.mPlayer.mPlayTimeLabel = save.mHeader.mPlayTime.mValue;
+
+        if (!save.mPlayerReferenceMovement)
+            return loadFailure("FNV save does not expose a proven canonical Player reference-movement prefix");
+        const ESM4::FONVSavePlayerReferenceMovement& movement = *save.mPlayerReferenceMovement;
+        if (!movement.mCellOrWorldspace.mResolvedFormId)
+            return loadFailure("FNV save Player movement CELL/WRLD RefID did not resolve");
+        const std::uint32_t rawCellOrWorldspace = *movement.mCellOrWorldspace.mResolvedFormId;
+        const std::size_t saveOwnerIndex = rawCellOrWorldspace >> 24;
+        const std::uint32_t objectIndex = rawCellOrWorldspace & 0x00ffffffu;
+        if (objectIndex == 0 || saveOwnerIndex >= currentPluginIndices.size())
+            return loadFailure("FNV save Player movement CELL/WRLD FormID has unsupported provenance");
+        const std::size_t currentOwnerIndex = currentPluginIndices[saveOwnerIndex];
+        if (currentOwnerIndex > static_cast<std::size_t>(std::numeric_limits<std::int32_t>::max()))
+            return loadFailure("current Player movement CELL/WRLD content index cannot fit a normalized FormID");
+        plan.mTransform.mCellOrWorldspaceRecord
+            = ESM::FormId{ objectIndex, static_cast<std::int32_t>(currentOwnerIndex) };
+        for (std::size_t index = 0; index < plan.mTransform.mPosition.size(); ++index)
+        {
+            plan.mTransform.mPosition[index] = movement.mPosition[index].mValue;
+            plan.mTransform.mRotationRadians[index] = movement.mRotationRadians[index].mValue;
+        }
         plan.mUncoveredState = falloutSaveLoadBlockers();
         return { std::move(plan), {} };
+    }
+
+    FalloutExteriorPlayerPlacementResolution resolveFalloutExteriorPlayerPlacement(
+        const Store<ESM4::World>& worlds, const Store<ESM4::Cell>& cells,
+        const FalloutSaveLoadPlan::PlayerTransform& transform)
+    {
+        if (transform.mCellOrWorldspaceRecord.isZeroOrUnset())
+            return placementFailure("Player movement has no normalized CELL/WRLD identity");
+
+        const ESM::RefId worldspaceId(transform.mCellOrWorldspaceRecord);
+        const ESM4::World* worldspace = worlds.search(worldspaceId);
+        if (worldspace == nullptr)
+        {
+            return placementFailure("Player movement container is not a loaded WRLD; interior CELL placement remains "
+                                    "unsupported");
+        }
+        if (worldspace->mId != transform.mCellOrWorldspaceRecord)
+            return placementFailure("Player movement WRLD resolved with a different normalized FormID");
+
+        const ESM::ExteriorCellLocation location = ESM::positionToExteriorCellLocation(
+            transform.mPosition[0], transform.mPosition[1], worldspaceId);
+        const ESM4::Cell* cell = cells.searchExterior(location);
+        if (cell == nullptr)
+            return placementFailure("Player movement position has no authored exterior CELL in the resolved WRLD");
+        if (!cell->isExterior() || cell->mParent != worldspaceId || cell->mX != location.mX
+            || cell->mY != location.mY)
+        {
+            return placementFailure("Player movement exterior CELL identity does not match its WRLD/grid index");
+        }
+        const ESM::FormId* cellFormId = cell->mId.getIf<ESM::FormId>();
+        if (cellFormId == nullptr)
+            return placementFailure("Player movement exterior CELL does not preserve a native FormID identity");
+
+        FalloutExteriorPlayerPlacement placement;
+        placement.mWorldspaceRecord = transform.mCellOrWorldspaceRecord;
+        placement.mCellRecord = *cellFormId;
+        placement.mCellX = location.mX;
+        placement.mCellY = location.mY;
+        return { std::move(placement), {} };
     }
 
     void applyFalloutSavePlayerHeader(ESM::NPC& proxy, const FalloutSavePlayerHeaderState& state)

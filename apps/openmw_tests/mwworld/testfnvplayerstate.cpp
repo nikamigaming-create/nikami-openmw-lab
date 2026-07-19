@@ -13,7 +13,9 @@
 #include <components/esm3/loadnpc.hpp>
 #include <components/esm4/fonvsavegame.hpp>
 #include <components/esm4/loadachr.hpp>
+#include <components/esm4/loadcell.hpp>
 #include <components/esm4/loadnpc.hpp>
+#include <components/esm4/loadwrld.hpp>
 
 #include "apps/openmw/mwworld/fnvplayerstate.hpp"
 #include "apps/openmw/mwworld/store.hpp"
@@ -23,6 +25,7 @@ namespace
     using testing::Contains;
     using testing::ElementsAreArray;
     using testing::HasSubstr;
+    using testing::Not;
 
     constexpr ESM::FormId form(std::uint32_t index, std::int32_t contentFile = 0)
     {
@@ -115,6 +118,15 @@ namespace
         playerChange.mChangeFlags.mValue = 0xb0000022;
         playerChange.mUnparsedPayload.mRange = { 1024, 5095 };
         result.mChangedForms.mEntries.push_back(std::move(playerChange));
+        ESM4::FONVSavePlayerReferenceMovement movement;
+        movement.mCellOrWorldspace.mResolvedFormId = 0x000da726u;
+        movement.mPosition[0].mValue = -72392.84375f;
+        movement.mPosition[1].mValue = -1240.19275f;
+        movement.mPosition[2].mValue = 8137.58643f;
+        movement.mRotationRadians[0].mValue = -0.06439045f;
+        movement.mRotationRadians[1].mValue = -0.0f;
+        movement.mRotationRadians[2].mValue = 2.93332028f;
+        result.mPlayerReferenceMovement = std::move(movement);
         return result;
     }
 
@@ -417,10 +429,35 @@ namespace
         EXPECT_EQ(plan.mPlayer.mLevel, 12);
         EXPECT_EQ(plan.mPlayer.mLocationLabel, "Goodsprings");
         EXPECT_EQ(plan.mPlayer.mPlayTimeLabel, "00.16.45");
-        EXPECT_THAT(plan.mUncoveredState, Contains("player-reference-cell-worldspace-transform"));
+        EXPECT_EQ(plan.mTransform.mCellOrWorldspaceRecord, form(0x000da726, 1));
+        EXPECT_FLOAT_EQ(plan.mTransform.mPosition[0], -72392.84375f);
+        EXPECT_FLOAT_EQ(plan.mTransform.mPosition[1], -1240.19275f);
+        EXPECT_FLOAT_EQ(plan.mTransform.mPosition[2], 8137.58643f);
+        EXPECT_FLOAT_EQ(plan.mTransform.mRotationRadians[2], 2.93332028f);
+        EXPECT_THAT(plan.mUncoveredState, Not(Contains("player-reference-cell-worldspace-transform")));
         EXPECT_THAT(plan.mUncoveredState, Contains("player-inventory-equipment-ammo"));
         EXPECT_THAT(plan.mUncoveredState, Contains("quest-stages-objectives-variables"));
         EXPECT_THAT(plan.mUncoveredState, Contains("world-change-forms-doors-containers-actors-unloaded-references"));
+
+        MWWorld::Store<ESM4::World> worlds;
+        ESM4::World worldspace;
+        worldspace.mId = form(0x000da726, 1);
+        worlds.insertStatic(worldspace);
+        MWWorld::Store<ESM4::Cell> cells;
+        ESM4::Cell exterior;
+        exterior.mId = ESM::RefId(form(0x000e1aa7, 1));
+        exterior.mParent = ESM::RefId(worldspace.mId);
+        exterior.mCellFlags = ESM4::CELL_HasWater;
+        exterior.mX = -18;
+        exterior.mY = -1;
+        cells.insertStatic(exterior);
+        const MWWorld::FalloutExteriorPlayerPlacementResolution placement
+            = MWWorld::resolveFalloutExteriorPlayerPlacement(worlds, cells, plan.mTransform);
+        ASSERT_TRUE(placement) << placement.mError;
+        EXPECT_EQ(placement.mPlacement->mWorldspaceRecord, worldspace.mId);
+        EXPECT_EQ(placement.mPlacement->mCellRecord, form(0x000e1aa7, 1));
+        EXPECT_EQ(placement.mPlacement->mCellX, -18);
+        EXPECT_EQ(placement.mPlacement->mCellY, -1);
 
         ESM::NPC proxy;
         proxy.blank();
@@ -485,6 +522,13 @@ namespace
         resolution = MWWorld::resolveFalloutSaveLoadPlan(save, &nativePlayer, duplicateCurrentContent);
         EXPECT_FALSE(resolution);
         EXPECT_THAT(resolution.mError, HasSubstr("current content has ambiguous duplicate FalloutNV.esm"));
+
+        save = makeSavePrefix({ "FalloutNV.esm", "DeadMoney.esm" });
+        save.mPlayerReferenceMovement.reset();
+        resolution = MWWorld::resolveFalloutSaveLoadPlan(save, &nativePlayer, currentContentFiles);
+        EXPECT_FALSE(resolution);
+        EXPECT_THAT(resolution.mError, HasSubstr("does not expose a proven canonical Player reference-movement"));
+        save = makeSavePrefix({ "FalloutNV.esm", "DeadMoney.esm" });
 
         const std::vector<std::string> extraCurrentContent{
             "builtin.omwscripts", "FalloutNV.esm", "DeadMoney.esm", "GunRunnersArsenal.esm"

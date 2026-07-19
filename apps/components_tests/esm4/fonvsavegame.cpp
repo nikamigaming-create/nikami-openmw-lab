@@ -1,4 +1,5 @@
 #include <components/esm4/fonvsavegame.hpp>
+#include <components/esm/util.hpp>
 
 #include <gtest/gtest.h>
 
@@ -963,6 +964,15 @@ namespace
         EXPECT_EQ(movement.mTerminator.mValue, sDelimiter);
         EXPECT_EQ(movement.mTerminator.mRange, (ESM4::FONVSaveRange{ 497516, 1 }));
         EXPECT_EQ(movement.mUnparsedRemainder.mRange, (ESM4::FONVSaveRange{ 497517, 5067 }));
+
+        ASSERT_TRUE(movement.mCellOrWorldspace.mResolvedFormId.has_value());
+        const ESM::RefId worldspace = ESM::RefId::formIdRefId(
+            ESM::FormId::fromUint32(*movement.mCellOrWorldspace.mResolvedFormId));
+        const ESM::ExteriorCellLocation playerCell = ESM::positionToExteriorCellLocation(
+            movement.mPosition[0].mValue, movement.mPosition[1].mValue, worldspace);
+        // The hash-pinned FalloutNV.esm has WastelandNV CELL 0x000E1AA7 at this grid. Global Data type 1 stores
+        // (-18, 0), matching the named Goodsprings CELL, so it must not override the transform placement mapping.
+        EXPECT_EQ(playerCell, (ESM::ExteriorCellLocation{ -18, -1, worldspace }));
         EXPECT_EQ(save.findChangedForm(ESM4::sFONVPlayerNpcFormId), nullptr)
             << "NPC_ FormID 0x7 is a FalloutNV.esm base-record relation, not serialized as a Save330 change form";
 
