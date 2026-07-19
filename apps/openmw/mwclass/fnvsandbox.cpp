@@ -133,6 +133,11 @@ namespace
 
 namespace MWClass
 {
+    std::string getFalloutSandboxAnimationGroup(const FalloutSandboxIdle& idle)
+    {
+        return "specialidle_" + idle.mId.toString();
+    }
+
     float getFalloutSandboxRadius(const ESM4::AIPackage& package)
     {
         return static_cast<float>(std::max(64, package.mLocation.radius > 0 ? package.mLocation.radius : 256));

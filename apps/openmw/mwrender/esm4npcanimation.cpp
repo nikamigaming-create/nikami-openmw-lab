@@ -8571,18 +8571,21 @@ namespace MWRender
                         = MWClass::collectFalloutSandboxMarkers(*store, mPtr.getCell()->getCell()->getId(),
                             osg::Vec3f(actorPosition.pos[0], actorPosition.pos[1], actorPosition.pos[2]),
                             sandboxRadius);
-                    std::set<std::string> sandboxSources;
+                    std::set<std::string> sandboxGroups;
                     for (const MWClass::FalloutSandboxMarker& marker : sandboxMarkers)
                     {
                         for (const MWClass::FalloutSandboxIdle& idle : marker.mIdles)
                         {
-                            if (sandboxSources.insert(idle.mModel).second)
-                                addFonvAnimationSource(idle.mModel, "sandbox IDLM", false);
+                            const std::string group = MWClass::getFalloutSandboxAnimationGroup(idle);
+                            if (sandboxGroups.insert(group).second)
+                            {
+                                addFonvAnimationSource(idle.mModel, "sandbox IDLM", false, false, {}, group);
+                            }
                         }
                     }
                     Log(Debug::Verbose) << "FNV/ESM4 sandbox: actor=" << traits->mEditorId
                                      << " radius=" << sandboxRadius << " markers=" << sandboxMarkers.size()
-                                     << " idleSources=" << sandboxSources.size();
+                                     << " idleSources=" << sandboxGroups.size();
                 }
                 procedureIdleSources
                     = collectFonvPackageProcedureAnimationSources(mPtr, *store, mResourceSystem, *traits, packageIds);

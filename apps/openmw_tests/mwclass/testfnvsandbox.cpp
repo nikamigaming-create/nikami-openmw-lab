@@ -84,6 +84,23 @@ namespace
         EXPECT_FALSE(MWClass::isFalloutSandboxMarkerClaimed(markerId));
     }
 
+    TEST(FnvSandboxTest, GivesEveryAuthoredIdleAStableSourceSpecificGroup)
+    {
+        MWClass::FalloutSandboxIdle raking;
+        raking.mId = form(0x0108957a);
+        raking.mModel = "meshes/characters/_male/idleanims/raking.kf";
+
+        MWClass::FalloutSandboxIdle sweeping = raking;
+        sweeping.mId = form(0x0108957b);
+
+        const std::string rakingGroup = MWClass::getFalloutSandboxAnimationGroup(raking);
+        const std::string sweepingGroup = MWClass::getFalloutSandboxAnimationGroup(sweeping);
+        EXPECT_TRUE(rakingGroup.starts_with("specialidle_"));
+        EXPECT_TRUE(sweepingGroup.starts_with("specialidle_"));
+        EXPECT_NE(rakingGroup, sweepingGroup);
+        EXPECT_EQ(rakingGroup, "specialidle_0x108957a");
+    }
+
     TEST(FnvSandboxTest, SaveFallbackRoundTripsAuthoredPackageParameters)
     {
         ESM::AiSequence::AiSequence sequence;
