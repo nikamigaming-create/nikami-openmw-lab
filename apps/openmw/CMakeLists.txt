@@ -86,6 +86,7 @@ add_openmw_dir (mwworld
     actionequip timestamp actionalchemy cellstore actionapply actioneat
     store esmstore fallback actionrepair actionsoulgem livecellref actiondoor
     esm4questruntime fnvcraftingruntime fnvlockpickruntime fnvplayerstate fnvplayerruntimestate fnvterminalruntime
+    fnvweather
     contentloader esmloader actiontrap cellreflist cellref weather projectilemanager
     cellpreloader datetimemanager groundcoverstore magiceffects cell ptrregistry
     positioncellgrid
