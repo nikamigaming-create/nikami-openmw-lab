@@ -127,6 +127,17 @@ namespace
         movement.mRotationRadians[1].mValue = -0.0f;
         movement.mRotationRadians[2].mValue = 2.93332028f;
         result.mPlayerReferenceMovement = std::move(movement);
+        ESM4::FONVSaveSkyState sky;
+        sky.mCurrentWeather.mResolvedFormId = 0x001237d7u;
+        sky.mDefaultWeather.mResolvedFormId = 0x000ffc88u;
+        sky.mGameHour.mValue = 14.215002059936523f;
+        sky.mLastUpdateHour.mValue = 17.606250762939453f;
+        sky.mWeatherPercent.mValue = 1.f;
+        sky.mFlags.mValue = 0x20u;
+        sky.mFogPower.mValue = 0.5f;
+        sky.mSkyMode.mValue = 3u;
+        sky.mRange = { 494355, 71 };
+        result.mSky = std::move(sky);
         return result;
     }
 
@@ -434,7 +445,21 @@ namespace
         EXPECT_FLOAT_EQ(plan.mTransform.mPosition[1], -1240.19275f);
         EXPECT_FLOAT_EQ(plan.mTransform.mPosition[2], 8137.58643f);
         EXPECT_FLOAT_EQ(plan.mTransform.mRotationRadians[2], 2.93332028f);
+        EXPECT_EQ(plan.mScene.mCurrentWeather, form(0x001237d7, 1));
+        EXPECT_EQ(plan.mScene.mDefaultWeather, form(0x000ffc88, 1));
+        EXPECT_FALSE(plan.mScene.mTransitionWeather.has_value());
+        EXPECT_FALSE(plan.mScene.mOverrideWeather.has_value());
+        EXPECT_FLOAT_EQ(plan.mScene.mGameHour, 14.215002059936523f);
+        EXPECT_FLOAT_EQ(plan.mScene.mLastUpdateHour, 17.606250762939453f);
+        EXPECT_FLOAT_EQ(plan.mScene.mWeatherPercent, 1.f);
+        EXPECT_FLOAT_EQ(plan.mScene.mFogPower, 0.5f);
+        EXPECT_EQ(plan.mScene.mFlags, 0x20u);
+        EXPECT_EQ(plan.mScene.mSkyMode, 3u);
+        EXPECT_EQ(plan.mScene.mPayloadOffset, 494355u);
+        EXPECT_EQ(plan.mScene.mPayloadBytes, 71u);
         EXPECT_THAT(plan.mUncoveredState, Not(Contains("player-reference-cell-worldspace-transform")));
+        EXPECT_THAT(plan.mUncoveredState, Not(Contains("global-variables-time-weather")));
+        EXPECT_THAT(plan.mUncoveredState, Contains("global-variables"));
         EXPECT_THAT(plan.mUncoveredState, Contains("player-inventory-equipment-ammo"));
         EXPECT_THAT(plan.mUncoveredState, Contains("quest-stages-objectives-variables"));
         EXPECT_THAT(plan.mUncoveredState, Contains("world-change-forms-doors-containers-actors-unloaded-references"));
@@ -528,6 +553,12 @@ namespace
         resolution = MWWorld::resolveFalloutSaveLoadPlan(save, &nativePlayer, currentContentFiles);
         EXPECT_FALSE(resolution);
         EXPECT_THAT(resolution.mError, HasSubstr("does not expose a proven canonical Player reference-movement"));
+        save = makeSavePrefix({ "FalloutNV.esm", "DeadMoney.esm" });
+
+        save.mSky.reset();
+        resolution = MWWorld::resolveFalloutSaveLoadPlan(save, &nativePlayer, currentContentFiles);
+        EXPECT_FALSE(resolution);
+        EXPECT_THAT(resolution.mError, HasSubstr("does not expose a proven Sky global-data payload"));
         save = makeSavePrefix({ "FalloutNV.esm", "DeadMoney.esm" });
 
         const std::vector<std::string> extraCurrentContent{

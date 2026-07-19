@@ -148,6 +148,21 @@ namespace MWWorld
             std::array<float, 3> mPosition{};
             std::array<float, 3> mRotationRadians{};
         } mTransform;
+        struct SceneState
+        {
+            ESM::FormId mCurrentWeather;
+            std::optional<ESM::FormId> mTransitionWeather;
+            ESM::FormId mDefaultWeather;
+            std::optional<ESM::FormId> mOverrideWeather;
+            float mGameHour = 0.f;
+            float mLastUpdateHour = 0.f;
+            float mWeatherPercent = 0.f;
+            float mFogPower = 0.f;
+            std::uint32_t mFlags = 0;
+            std::uint32_t mSkyMode = 0;
+            std::uint64_t mPayloadOffset = 0;
+            std::uint64_t mPayloadBytes = 0;
+        } mScene;
         std::vector<std::string> mUncoveredState;
     };
 

@@ -122,6 +122,19 @@ namespace
         return result;
     }
 
+    std::optional<ESM::FormId> normalizeSavedFormId(
+        std::uint32_t rawFormId, std::span<const std::size_t> currentPluginIndices)
+    {
+        const std::size_t saveOwnerIndex = rawFormId >> 24;
+        const std::uint32_t objectIndex = rawFormId & 0x00ffffffu;
+        if (objectIndex == 0 || saveOwnerIndex >= currentPluginIndices.size())
+            return std::nullopt;
+        const std::size_t currentOwnerIndex = currentPluginIndices[saveOwnerIndex];
+        if (currentOwnerIndex > static_cast<std::size_t>(std::numeric_limits<std::int32_t>::max()))
+            return std::nullopt;
+        return ESM::FormId{ objectIndex, static_cast<std::int32_t>(currentOwnerIndex) };
+    }
+
     std::vector<std::string> falloutSaveLoadBlockers()
     {
         return {
@@ -129,7 +142,7 @@ namespace
             "player-inventory-equipment-ammo",
             "player-factions-reputation-crime-disguise",
             "quest-stages-objectives-variables",
-            "global-variables-time-weather",
+            "global-variables",
             "world-change-forms-doors-containers-actors-unloaded-references",
             "dynamic-forms-refid-array-visited-worldspaces",
         };
@@ -380,21 +393,50 @@ namespace MWWorld
         const ESM4::FONVSavePlayerReferenceMovement& movement = *save.mPlayerReferenceMovement;
         if (!movement.mCellOrWorldspace.mResolvedFormId)
             return loadFailure("FNV save Player movement CELL/WRLD RefID did not resolve");
-        const std::uint32_t rawCellOrWorldspace = *movement.mCellOrWorldspace.mResolvedFormId;
-        const std::size_t saveOwnerIndex = rawCellOrWorldspace >> 24;
-        const std::uint32_t objectIndex = rawCellOrWorldspace & 0x00ffffffu;
-        if (objectIndex == 0 || saveOwnerIndex >= currentPluginIndices.size())
+        const std::optional<ESM::FormId> normalizedContainer
+            = normalizeSavedFormId(*movement.mCellOrWorldspace.mResolvedFormId, currentPluginIndices);
+        if (!normalizedContainer)
             return loadFailure("FNV save Player movement CELL/WRLD FormID has unsupported provenance");
-        const std::size_t currentOwnerIndex = currentPluginIndices[saveOwnerIndex];
-        if (currentOwnerIndex > static_cast<std::size_t>(std::numeric_limits<std::int32_t>::max()))
-            return loadFailure("current Player movement CELL/WRLD content index cannot fit a normalized FormID");
-        plan.mTransform.mCellOrWorldspaceRecord
-            = ESM::FormId{ objectIndex, static_cast<std::int32_t>(currentOwnerIndex) };
+        plan.mTransform.mCellOrWorldspaceRecord = *normalizedContainer;
         for (std::size_t index = 0; index < plan.mTransform.mPosition.size(); ++index)
         {
             plan.mTransform.mPosition[index] = movement.mPosition[index].mValue;
             plan.mTransform.mRotationRadians[index] = movement.mRotationRadians[index].mValue;
         }
+
+        if (!save.mSky)
+            return loadFailure("FNV save does not expose a proven Sky global-data payload");
+        const ESM4::FONVSaveSkyState& sky = *save.mSky;
+        if (!sky.mCurrentWeather.mResolvedFormId || !sky.mDefaultWeather.mResolvedFormId)
+            return loadFailure("FNV save Sky state has no current/default weather identity");
+        const std::optional<ESM::FormId> currentWeather
+            = normalizeSavedFormId(*sky.mCurrentWeather.mResolvedFormId, currentPluginIndices);
+        const std::optional<ESM::FormId> defaultWeather
+            = normalizeSavedFormId(*sky.mDefaultWeather.mResolvedFormId, currentPluginIndices);
+        if (!currentWeather || !defaultWeather)
+            return loadFailure("FNV save Sky weather FormID has unsupported provenance");
+        plan.mScene.mCurrentWeather = *currentWeather;
+        plan.mScene.mDefaultWeather = *defaultWeather;
+        auto normalizeOptionalWeather = [&](const ESM4::FONVSaveResolvedReferenceId& source,
+                                            std::optional<ESM::FormId>& destination) {
+            if (!source.mResolvedFormId)
+                return true;
+            destination = normalizeSavedFormId(*source.mResolvedFormId, currentPluginIndices);
+            return destination.has_value();
+        };
+        if (!normalizeOptionalWeather(sky.mTransitionWeather, plan.mScene.mTransitionWeather)
+            || !normalizeOptionalWeather(sky.mOverrideWeather, plan.mScene.mOverrideWeather))
+        {
+            return loadFailure("FNV save optional Sky weather FormID has unsupported provenance");
+        }
+        plan.mScene.mGameHour = sky.mGameHour.mValue;
+        plan.mScene.mLastUpdateHour = sky.mLastUpdateHour.mValue;
+        plan.mScene.mWeatherPercent = sky.mWeatherPercent.mValue;
+        plan.mScene.mFogPower = sky.mFogPower.mValue;
+        plan.mScene.mFlags = sky.mFlags.mValue;
+        plan.mScene.mSkyMode = sky.mSkyMode.mValue;
+        plan.mScene.mPayloadOffset = sky.mRange.mOffset;
+        plan.mScene.mPayloadBytes = sky.mRange.mSize;
         plan.mUncoveredState = falloutSaveLoadBlockers();
         return { std::move(plan), {} };
     }
