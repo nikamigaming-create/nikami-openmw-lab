@@ -1061,7 +1061,7 @@ namespace
         constexpr std::array<std::uint8_t, 3> changedPayload2 = { 0x20, 0x21, 0x22 };
         constexpr std::array<std::uint8_t, 4> changedPayload3 = { 0x30, 0x31, 0x32, 0x33 };
         const ChangedFormOffsets changed1 = appendChangedForm(
-            changedForms, { 0, 0, 1 }, 0xb0000022, 1, 27, 1, changedPayload1);
+            changedForms, { 0, 0, 1 }, 0xb0000022, 1, 27, 2, changedPayload1);
         const ChangedFormOffsets changed2 = appendChangedForm(
             changedForms, { 0x40, 0x12, 0x34 }, 0x90abcdef, 2, 26, 2, changedPayload2);
         const ChangedFormOffsets changed3 = appendChangedForm(
@@ -1222,7 +1222,7 @@ namespace
         EXPECT_EQ(save.mChangedForms.mEntries[0].mResolvedFormId, ESM4::sFONVPlayerReferenceFormId);
         EXPECT_EQ(save.mChangedForms.mEntries[0].mChangeFlags.mValue, 0xb0000022u);
         EXPECT_EQ(save.mChangedForms.mEntries[0].mChangeType, 1u);
-        EXPECT_EQ(save.mChangedForms.mEntries[0].mLengthWidth, 1u);
+        EXPECT_EQ(save.mChangedForms.mEntries[0].mLengthWidth, 2u);
         EXPECT_EQ(save.mChangedForms.mEntries[0].mVersion.mValue, 27u);
         EXPECT_EQ(save.mChangedForms.mEntries[0].mDataLength.mValue,
             28u + static_cast<std::uint32_t>(ESM4::sFONVPlayerActorValueDataBytes)
@@ -1910,7 +1910,7 @@ namespace
         EXPECT_THROW(ESM4::parseFONVSaveGamePrefix(source.mBytes), ESM4::FONVSaveError);
     }
 
-    TEST(FONVSaveGame, RejectsCorruptCanonicalPlayerMovementWithoutInterpretingItsRemainder)
+    TEST(FONVSaveGame, RejectsCorruptCanonicalPlayerMovementBeforeActorValues)
     {
         constexpr std::array masters = { std::string_view("FalloutNV.esm") };
         SaveBytes source = makeSave(true, 2, 1, masters);
