@@ -89,6 +89,7 @@ namespace MWRender
     class Camera;
     class RenderingManager;
     class PostProcessor;
+    struct WeatherResult;
 }
 
 namespace MWMechanics
@@ -615,6 +616,8 @@ namespace MWBase
         virtual Misc::Rng::Generator& getPrng() = 0;
 
         virtual MWRender::RenderingManager* getRenderingManager() = 0;
+
+        virtual void setFalloutWeatherOverride(const MWRender::WeatherResult& weather) = 0;
 
         virtual MWRender::PostProcessor* getPostProcessor() = 0;
 

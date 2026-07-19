@@ -788,8 +788,9 @@ namespace MWWorld
     void WeatherManager::update(float duration, bool paused, const TimeStamp& time, bool isExterior)
     {
         MWWorld::ConstPtr player = MWMechanics::getPlayer();
+        const bool falloutWeather = mFalloutWeatherOverride.has_value();
 
-        if (!paused || mFastForward)
+        if (!falloutWeather && (!paused || mFastForward))
         {
             // Add new transitions when either the player's current external region changes.
             if (updateWeatherTime() || updateWeatherRegion(player.getCell()->getCell()->getRegion()))
@@ -822,7 +823,10 @@ namespace MWWorld
             return;
         }
 
-        calculateWeatherResult(time.getHour(), duration, paused);
+        if (falloutWeather)
+            mResult = *mFalloutWeatherOverride;
+        else
+            calculateWeatherResult(time.getHour(), duration, paused);
 
         if (!paused)
         {
@@ -893,8 +897,19 @@ namespace MWWorld
 
         mRendering.getSkyManager()->setGlareTimeOfDayFade(glareFade);
 
-        mRendering.getSkyManager()->setMasserState(mMasser.calculateState(time));
-        mRendering.getSkyManager()->setSecundaState(mSecunda.calculateState(time));
+        if (falloutWeather)
+        {
+            MWRender::MoonState hiddenMoon{};
+            hiddenMoon.mPhase = MWRender::MoonState::Phase::Unspecified;
+            hiddenMoon.mMoonAlpha = 0.f;
+            mRendering.getSkyManager()->setMasserState(hiddenMoon);
+            mRendering.getSkyManager()->setSecundaState(hiddenMoon);
+        }
+        else
+        {
+            mRendering.getSkyManager()->setMasserState(mMasser.calculateState(time));
+            mRendering.getSkyManager()->setSecundaState(mSecunda.calculateState(time));
+        }
 
         mRendering.configureFog(
             mResult.mFogDepth, underwaterFog, mResult.mDLFogFactor, mResult.mDLFogOffset / 100.0f, mResult.mFogColor);
@@ -1080,12 +1095,18 @@ namespace MWWorld
     {
         stopSounds();
 
+        mFalloutWeatherOverride.reset();
         mCurrentRegion = ESM::RefId();
         mTimePassed = 0.0f;
         mWeatherUpdateTime = 0.0f;
         forceWeather(0);
         mRegions.clear();
         importRegions();
+    }
+
+    void WeatherManager::setFalloutWeatherOverride(const MWRender::WeatherResult& weather)
+    {
+        mFalloutWeatherOverride = weather;
     }
 
     inline void WeatherManager::addWeather(

@@ -1,6 +1,9 @@
 #include "worldimp.hpp"
 
 #include <charconv>
+#include <limits>
+#include <optional>
+#include <type_traits>
 #include <vector>
 
 #include <osg/ComputeBoundsVisitor>
@@ -26,6 +29,7 @@
 #include <components/esm3/loadstat.hpp>
 #include <components/esm4/loadcell.hpp>
 #include <components/esm4/loaddoor.hpp>
+#include <components/esm4/loadgmst.hpp>
 #include <components/esm4/loadstat.hpp>
 #include <components/esm4/loadwrld.hpp>
 
@@ -185,6 +189,57 @@ namespace MWWorld
             };
         }
 
+        std::vector<std::pair<std::string_view, ESM::Variant>> generateFalloutCompatibilityGameSettings()
+        {
+            // These values are compatibility-carrier inputs for OpenMW subsystems whose interfaces still require
+            // ESM3-named records. They are not used as Fallout gameplay tuning when an authored FNV GMST exists.
+            return {
+                { "fSwimHeightScale", ESM::Variant(0.9f) },
+                { "fStromWindSpeed", ESM::Variant(0.7f) },
+                { "fPCbaseMagickaMult", ESM::Variant(1.f) },
+                { "fUnarmoredBase1", ESM::Variant(0.1f) },
+                { "fUnarmoredBase2", ESM::Variant(0.065f) },
+                { "fMessageTimePerChar", ESM::Variant(0.1f) },
+                { "sDefaultCellname", ESM::Variant("Wasteland") },
+            };
+        }
+
+        std::vector<std::pair<GlobalVariableName, ESM::Variant>> generateFalloutCompatibilityGlobals()
+        {
+            // The exact save transaction overwrites gamehour before the first rendered frame. The remaining values
+            // only initialize the legacy DateTimeManager until their native save globals are decoded and applied.
+            return {
+                { Globals::sGameHour, ESM::Variant(0.f) },
+                { Globals::sDaysPassed, ESM::Variant(0) },
+                { Globals::sTimeScale, ESM::Variant(30.f) },
+                { Globals::sDay, ESM::Variant(1) },
+                { Globals::sMonth, ESM::Variant(0) },
+                { Globals::sYear, ESM::Variant(2281) },
+            };
+        }
+
+        std::optional<ESM::Variant> bridgeFalloutGameSettingValue(const ESM4::GameSetting::Data& value)
+        {
+            return std::visit(
+                [](const auto& item) -> std::optional<ESM::Variant> {
+                    using T = std::decay_t<decltype(item)>;
+                    if constexpr (std::is_same_v<T, std::monostate>)
+                        return std::nullopt;
+                    else if constexpr (std::is_same_v<T, bool>)
+                        return ESM::Variant(static_cast<std::int32_t>(item));
+                    else if constexpr (std::is_same_v<T, float> || std::is_same_v<T, std::int32_t>
+                        || std::is_same_v<T, std::string>)
+                        return ESM::Variant(item);
+                    else
+                    {
+                        if (item > static_cast<std::uint32_t>(std::numeric_limits<std::int32_t>::max()))
+                            return std::nullopt;
+                        return ESM::Variant(static_cast<std::int32_t>(item));
+                    }
+                },
+                value);
+        }
+
         std::vector<std::pair<std::string_view, std::string_view>> generateDefaultStatics()
         {
             return {
@@ -291,6 +346,7 @@ namespace MWWorld
         loadContentFiles(fileCollections, contentFiles, encoder, listener);
         loadGroundcoverFiles(fileCollections, groundcoverFiles, encoder, listener);
 
+        ensureFalloutCompatibilityRecords();
         fillGlobalVariables();
 
         mStore.setUp();
@@ -601,6 +657,65 @@ namespace MWWorld
                 mStore.insertStatic(record);
             }
         }
+    }
+
+    void World::ensureFalloutCompatibilityRecords()
+    {
+        if (mStore.getFalloutNewVegasMasterCandidateCount() != 1
+            || !mStore.getFalloutNewVegasMasterCandidateIndex())
+        {
+            return;
+        }
+
+        std::size_t bridged = 0;
+        std::size_t skipped = 0;
+        for (const ESM4::GameSetting& source : mStore.get<ESM4::GameSetting>())
+        {
+            if (source.mEditorId.empty()
+                || mStore.get<ESM::GameSetting>().search(source.mEditorId) != nullptr)
+            {
+                continue;
+            }
+
+            const std::optional<ESM::Variant> value = bridgeFalloutGameSettingValue(source.mData);
+            if (!value)
+            {
+                ++skipped;
+                continue;
+            }
+
+            ESM::GameSetting record;
+            record.mId = ESM::RefId::stringRefId(source.mEditorId);
+            record.mValue = *value;
+            record.mRecordFlags = source.mFlags;
+            mStore.insertStatic(record);
+            ++bridged;
+        }
+
+        for (const auto& [id, value] : generateFalloutCompatibilityGameSettings())
+        {
+            if (mStore.get<ESM::GameSetting>().search(id) != nullptr)
+                continue;
+            ESM::GameSetting record;
+            record.mId = ESM::RefId::stringRefId(id);
+            record.mValue = value;
+            record.mRecordFlags = 0;
+            mStore.insertStatic(record);
+        }
+
+        for (const auto& [name, value] : generateFalloutCompatibilityGlobals())
+        {
+            if (mStore.get<ESM::Global>().search(ESM::RefId::stringRefId(name.getValue())) != nullptr)
+                continue;
+            ESM::Global record;
+            record.mId = ESM::RefId::stringRefId(name.getValue());
+            record.mValue = value;
+            record.mRecordFlags = 0;
+            mStore.insertStatic(record);
+        }
+
+        Log(Debug::Info) << "FNV compatibility: bridged " << bridged << " native GMST records; skipped " << skipped
+                         << " values outside the ESM3 carrier domain";
     }
 
     World::~World()
@@ -2345,6 +2460,11 @@ namespace MWWorld
         mStore.rebuildIdsIndex();
         mStore.validateDynamic();
         mTimeManager->setup(mGlobalVariables);
+    }
+
+    void World::setFalloutWeatherOverride(const MWRender::WeatherResult& weather)
+    {
+        mWeatherManager->setFalloutWeatherOverride(weather);
     }
 
     void World::setupPlayer()

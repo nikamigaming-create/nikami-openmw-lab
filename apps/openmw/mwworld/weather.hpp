@@ -3,6 +3,7 @@
 
 #include <cstdint>
 #include <map>
+#include <optional>
 #include <string>
 
 #include <osg/Vec4f>
@@ -363,6 +364,8 @@ namespace MWWorld
 
         void clear();
 
+        void setFalloutWeatherOverride(const MWRender::WeatherResult& weather);
+
     private:
         MWWorld::ESMStore& mStore;
         MWRender::RenderingManager& mRendering;
@@ -405,6 +408,7 @@ namespace MWWorld
         int mQueuedWeather;
         std::map<ESM::RefId, RegionWeather> mRegions;
         MWRender::WeatherResult mResult;
+        std::optional<MWRender::WeatherResult> mFalloutWeatherOverride;
 
         MWBase::Sound* mAmbientSound{ nullptr };
         ESM::RefId mPlayingAmbientSoundID;

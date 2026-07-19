@@ -73,6 +73,10 @@ namespace MWWorld
     // This is the mutation gate. It returns only when every semantic domain is covered; callers must invoke it before
     // cleanup or any save/world mutation.
     void requireFalloutSavePreflightReady(const FalloutSavePreflightContext& context);
+
+    // A narrower gate for a truthfully labeled visual application through the ordinary .fos load path. It validates
+    // every state input used by the first full-colour frame while deliberately retaining the full-game blockers above.
+    void requireFalloutSaveVisualApplicationReady(const FalloutSavePreflightContext& context);
 }
 
 #endif

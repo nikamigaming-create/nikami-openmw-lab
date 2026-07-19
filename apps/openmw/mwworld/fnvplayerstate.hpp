@@ -225,6 +225,10 @@ namespace MWWorld
     FalloutSaveLoadPlanResolution resolveFalloutSaveLoadPlan(const ESM4::FONVSaveGamePrefix& save,
         const FalloutPlayerState* nativePlayerState, std::span<const std::string> currentContentFiles);
 
+    // Bethesda's saved Display FOV values are horizontal degrees at a 4:3 reference aspect. OpenMW/OSG consumes
+    // vertical fovy degrees and applies the live viewport aspect afterwards.
+    float convertFalloutReferenceFovToOpenMwVertical(float horizontalReferenceFov);
+
     FalloutExteriorPlayerPlacementResolution resolveFalloutExteriorPlayerPlacement(
         const Store<ESM4::World>& worlds, const Store<ESM4::Cell>& cells,
         const FalloutSaveLoadPlan::PlayerTransform& transform);

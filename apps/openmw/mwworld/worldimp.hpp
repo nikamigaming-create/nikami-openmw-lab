@@ -172,6 +172,7 @@ namespace MWWorld
             const MWPhysics::Object& object, const DetourNavigator::UpdateGuard* navigatorUpdateGuard = nullptr);
 
         void ensureNeededRecords();
+        void ensureFalloutCompatibilityRecords();
 
         void fillGlobalVariables();
 
@@ -676,6 +677,8 @@ namespace MWWorld
         Misc::Rng::Generator& getPrng() override;
 
         MWRender::RenderingManager* getRenderingManager() override { return mRendering.get(); }
+
+        void setFalloutWeatherOverride(const MWRender::WeatherResult& weather) override;
 
         MWRender::PostProcessor* getPostProcessor() override;
 

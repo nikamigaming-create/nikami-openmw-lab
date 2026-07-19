@@ -3,6 +3,7 @@
 #include <cmath>
 #include <cstring>
 #include <limits>
+#include <numbers>
 #include <stdexcept>
 #include <string_view>
 #include <unordered_set>
@@ -169,6 +170,22 @@ namespace
 
 namespace MWWorld
 {
+    float convertFalloutReferenceFovToOpenMwVertical(float horizontalReferenceFov)
+    {
+        if (!std::isfinite(horizontalReferenceFov) || horizontalReferenceFov <= 0.f
+            || horizontalReferenceFov >= 180.f)
+        {
+            throw std::invalid_argument("Fallout reference FOV must be finite and in (0, 180)");
+        }
+
+        constexpr double referenceAspect = 4.0 / 3.0;
+        constexpr double radiansPerDegree = std::numbers::pi_v<double> / 180.0;
+        constexpr double degreesPerRadian = 180.0 / std::numbers::pi_v<double>;
+        const double horizontalRadians = static_cast<double>(horizontalReferenceFov) * radiansPerDegree;
+        return static_cast<float>(
+            2.0 * std::atan(std::tan(horizontalRadians * 0.5) / referenceAspect) * degreesPerRadian);
+    }
+
     std::uint8_t FalloutPlayerState::getSpecial(FalloutSpecial value) const
     {
         return mSpecial.at(static_cast<std::size_t>(value));

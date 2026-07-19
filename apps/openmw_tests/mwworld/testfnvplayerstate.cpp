@@ -2,6 +2,7 @@
 #include <gtest/gtest.h>
 
 #include <array>
+#include <bit>
 #include <cstdint>
 #include <initializer_list>
 #include <iterator>
@@ -225,6 +226,16 @@ namespace
         sky.mRange = { 494355, 71 };
         result.mSky = std::move(sky);
         return result;
+    }
+
+    TEST(FalloutPlayerStateTest, convertsRetailReferenceFovToExactOpenMwVerticalProjection)
+    {
+        EXPECT_EQ(
+            std::bit_cast<std::uint32_t>(MWWorld::convertFalloutReferenceFovToOpenMwVertical(75.f)), 0x426f5c9du);
+        EXPECT_EQ(
+            std::bit_cast<std::uint32_t>(MWWorld::convertFalloutReferenceFovToOpenMwVertical(55.f)), 0x422a9d8eu);
+        EXPECT_THROW(MWWorld::convertFalloutReferenceFovToOpenMwVertical(0.f), std::invalid_argument);
+        EXPECT_THROW(MWWorld::convertFalloutReferenceFovToOpenMwVertical(180.f), std::invalid_argument);
     }
 
     TEST(FalloutPlayerStateTest, resolvesExactNormalizedMasterPlayerAndNativePayloads)

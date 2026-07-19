@@ -1,5 +1,6 @@
 #include "fnvsavepreflight.hpp"
 
+#include <cmath>
 #include <sstream>
 #include <stdexcept>
 #include <utility>
@@ -101,5 +102,42 @@ namespace MWWorld
         for (const std::string& blocker : context.mPlan.mUncoveredState)
             message << " " << blocker << ";";
         throw std::runtime_error(message.str());
+    }
+
+    void requireFalloutSaveVisualApplicationReady(const FalloutSavePreflightContext& context)
+    {
+        const FalloutSaveLoadPlan& plan = context.mPlan;
+        if (plan.mPlayer.mBaseRecord != context.mNativePlayer.mBaseNpc
+            || plan.mPlayer.mReferenceRecord != context.mNativePlayer.mReference)
+        {
+            throw std::runtime_error("native FNV visual application Player identities do not match preflight");
+        }
+        if (plan.mTransform.mCellOrWorldspaceRecord != context.mPlacement.mWorldspaceRecord
+            || context.mWeather.mWorldspace != context.mPlacement.mWorldspaceRecord
+            || context.mPlacement.mCellRecord.isZeroOrUnset())
+        {
+            throw std::runtime_error("native FNV visual application placement identities do not match preflight");
+        }
+        for (float value : plan.mTransform.mPosition)
+        {
+            if (!std::isfinite(value))
+                throw std::runtime_error("native FNV visual application position is not finite");
+        }
+        for (float value : plan.mTransform.mRotationRadians)
+        {
+            if (!std::isfinite(value))
+                throw std::runtime_error("native FNV visual application rotation is not finite");
+        }
+        if (!std::isfinite(plan.mCamera.mWorldFov) || plan.mCamera.mWorldFov <= 0.f
+            || plan.mCamera.mWorldFov >= 180.f || !std::isfinite(plan.mCamera.mFirstPersonModelFov)
+            || plan.mCamera.mFirstPersonModelFov <= 0.f || plan.mCamera.mFirstPersonModelFov >= 180.f)
+        {
+            throw std::runtime_error("native FNV visual application camera FOV is invalid");
+        }
+        if (!std::isfinite(plan.mScene.mGameHour) || plan.mScene.mGameHour < 0.f || plan.mScene.mGameHour >= 24.f
+            || plan.mScene.mCurrentWeather != context.mWeather.mCurrent.mWeather)
+        {
+            throw std::runtime_error("native FNV visual application time/weather does not match preflight");
+        }
     }
 }

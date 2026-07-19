@@ -1,6 +1,7 @@
 #include "statemanagerimp.hpp"
 
 #include <filesystem>
+#include <sstream>
 #include <stdexcept>
 #include <utility>
 
@@ -12,6 +13,7 @@
 #include <components/esm3/esmwriter.hpp>
 #include <components/esm3/loadcell.hpp>
 #include <components/esm3/loadclas.hpp>
+#include <components/esm3/loadnpc.hpp>
 #include <components/esm4/fonvsavegame.hpp>
 
 #include <components/l10n/manager.hpp>
@@ -48,6 +50,9 @@
 
 #include "../mwmechanics/actorutil.hpp"
 #include "../mwmechanics/npcstats.hpp"
+
+#include "../mwrender/camera.hpp"
+#include "../mwrender/renderingmanager.hpp"
 
 #include "../mwscript/globalscripts.hpp"
 
@@ -477,11 +482,87 @@ void MWState::StateManager::loadGame(const Character* character, const std::file
             throw std::runtime_error("native FNV save preflight failed: " + preflight.mError);
 
         const MWWorld::FalloutSavePreflightContext& context = *preflight.mContext;
-        MWWorld::requireFalloutSavePreflightReady(context);
+        MWWorld::requireFalloutSaveVisualApplicationReady(context);
 
-        // Reaching this point will become permission to start one atomic native application transaction only when
-        // that transaction exists. Never route a blocker-free .fos into ESMReader or a partial header application.
-        throw std::runtime_error("native FNV save application transaction is not implemented");
+        // Prepare every value and record copy before cleanup. The full-game readiness gate remains closed and its
+        // domains stay visible in the log; this transaction applies only the exact state required for a normal,
+        // truthfully labelled visual slice.
+        const ESM::RefId playerId = ESM::RefId::stringRefId("Player");
+        const ESM::NPC* playerCarrier = world.getStore().get<ESM::NPC>().searchStatic(playerId);
+        if (playerCarrier == nullptr)
+            throw std::runtime_error("native FNV visual application has no validated Player compatibility carrier");
+        ESM::NPC savedPlayer = *playerCarrier;
+        MWWorld::applyFalloutSavePlayerHeader(savedPlayer, context.mPlan.mPlayer);
+
+        ESM::Position savedPosition;
+        for (std::size_t index = 0; index < 3; ++index)
+        {
+            savedPosition.pos[index] = context.mPlan.mTransform.mPosition[index];
+            savedPosition.rot[index] = context.mPlan.mTransform.mRotationRadians[index];
+        }
+        const ESM::RefId savedCell(context.mPlacement.mCellRecord);
+        const MWRender::WeatherResult savedWeather = context.mWeather.mRenderResult;
+        const float savedFirstPersonFov
+            = MWWorld::convertFalloutReferenceFovToOpenMwVertical(context.mPlan.mCamera.mFirstPersonModelFov);
+        const float savedWorldFov
+            = MWWorld::convertFalloutReferenceFovToOpenMwVertical(context.mPlan.mCamera.mWorldFov);
+
+        std::ostringstream uncovered;
+        for (const std::string& domain : context.mPlan.mUncoveredState)
+        {
+            if (uncovered.tellp() > 0)
+                uncovered << ", ";
+            uncovered << domain;
+        }
+        Log(Debug::Warning) << "Loading native FNV visual slice through the normal .fos path; full gameplay state "
+                            << "remains uncovered: " << uncovered.str();
+
+        cleanup();
+
+        MWBase::World& mutableWorld = *MWBase::Environment::get().getWorld();
+        mutableWorld.getStore().overrideRecord(savedPlayer);
+        mCharacterManager.setCurrentCharacter(character);
+        mState = State_Running;
+        if (character)
+            Settings::saves().mCharacter.set(Files::pathToUnicodeString(character->getPath().filename()));
+        mLastSavegame = filepath;
+
+        MWBase::Environment::get().getWindowManager()->setNewGame(false);
+        mutableWorld.saveLoaded();
+        mutableWorld.setupPlayer();
+
+        MWWorld::Ptr player = mutableWorld.getPlayerPtr();
+        player.getRefData().setPosition(savedPosition);
+        player.getCellRef().setPosition(savedPosition);
+        mutableWorld.getRenderingManager()->setFirstPersonFieldOfView(savedFirstPersonFov);
+        mutableWorld.renderPlayer();
+        MWBase::Environment::get().getWindowManager()->updatePlayer();
+        MWBase::Environment::get().getMechanicsManager()->playerLoaded();
+        mutableWorld.toggleVanityMode(false);
+
+        mutableWorld.getRenderingManager()->setFieldOfView(savedWorldFov);
+        if (context.mPlan.mCamera.mFirstPerson != mutableWorld.isFirstPerson())
+            mutableWorld.togglePOV(true);
+        mutableWorld.setGlobalFloat(MWWorld::Globals::sGameHour, context.mPlan.mScene.mGameHour);
+        mutableWorld.setFalloutWeatherOverride(savedWeather);
+
+        // false keeps Scene from ground-snapping the saved Z. Reapply the transform through World afterwards:
+        // renderPlayer deliberately zeroes player rotation, and raw RefData writes do not move the persistent player
+        // render node or physics actor.
+        mutableWorld.changeToCell(savedCell, savedPosition, false, false);
+        player = mutableWorld.moveObject(mutableWorld.getPlayerPtr(), savedPosition.asVec3());
+        mutableWorld.rotateObject(player, savedPosition.asRotationVec3());
+
+        // Camera tracking uses the inverse player Euler angles. Force the first exact frame after the POV transition;
+        // normal setters may be locked for that frame while a view-mode change is being processed.
+        MWRender::Camera* camera = mutableWorld.getCamera();
+        camera->setPitch(-savedPosition.rot[0], true);
+        camera->setYaw(-savedPosition.rot[2], true);
+        camera->setRoll(-savedPosition.rot[1]);
+        mutableWorld.updateProjectilesCasters();
+        MWBase::Environment::get().getWorldScene()->markCellAsUnchanged();
+        MWBase::Environment::get().getLuaManager()->gameLoaded();
+        return;
     }
 
     try

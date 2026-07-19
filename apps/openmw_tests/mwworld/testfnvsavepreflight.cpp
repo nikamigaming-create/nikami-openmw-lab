@@ -76,6 +76,12 @@ namespace
         movement.mRotationRadians[2].mValue = 2.93332028f;
         result.mPlayerReferenceMovement = std::move(movement);
 
+        ESM4::FONVSavePlayerCharacterScalarReferenceState camera;
+        camera.mFirstPersonMode.mValue = 0;
+        camera.mFirstPersonModelFov.mValue = 55.f;
+        camera.mWorldFov.mValue = 75.f;
+        result.mPlayerCharacterScalarReferenceState = std::move(camera);
+
         ESM4::FONVSaveSkyState sky;
         sky.mCurrentWeather.mResolvedFormId = 0x001237d7u;
         sky.mDefaultWeather.mResolvedFormId = 0x000ffc88u;
@@ -118,6 +124,7 @@ namespace
 
             mWorld.mId = form(0x0da726);
             mWorld.mClimate = form(0x08809b);
+            mWorld.mWorldFlags = 0;
             mCell.mId = ESM::RefId(form(0x0e1aa7));
             mCell.mParent = ESM::RefId(mWorld.mId);
             mCell.mCellFlags = ESM4::CELL_HasWater;
@@ -187,6 +194,7 @@ namespace
         EXPECT_EQ(context.mPlacement.mCellRecord, form(0x0e1aa7));
         EXPECT_EQ(context.mWeather.mCurrent.mWeather, form(0x1237d7));
         EXPECT_EQ(context.mWeather.mDefault.mWeather, form(0x0ffc88));
+        EXPECT_NO_THROW(MWWorld::requireFalloutSaveVisualApplicationReady(context));
         const MWWorld::FalloutSaveLoadPlanResolution expectedPlan
             = MWWorld::resolveFalloutSaveLoadPlan(makeSave(), &fixture.mPlayer, fixture.mContentFiles);
         ASSERT_TRUE(expectedPlan) << expectedPlan.mError;
