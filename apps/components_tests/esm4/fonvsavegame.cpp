@@ -579,6 +579,21 @@ namespace
         return result;
     }
 
+    constexpr std::size_t sSyntheticPlayerCharacterAnimationBodyBytes = 145;
+    constexpr std::size_t sSyntheticPlayerCharacterAnimationStateBytes
+        = sSyntheticPlayerCharacterAnimationBodyBytes + 3;
+
+    std::vector<std::uint8_t> makePlayerCharacterAnimationState()
+    {
+        std::vector<std::uint8_t> result;
+        appendPackedCount(result, sSyntheticPlayerCharacterAnimationBodyBytes);
+        for (std::size_t i = 0; i < sSyntheticPlayerCharacterAnimationBodyBytes; ++i)
+            appendU8(result, static_cast<std::uint8_t>(i));
+        if (result.size() != sSyntheticPlayerCharacterAnimationStateBytes)
+            throw std::logic_error("synthetic player animation buffer has the wrong size");
+        return result;
+    }
+
     void appendString(std::vector<std::uint8_t>& bytes, std::string_view value)
     {
         if (value.size() > std::numeric_limits<std::uint16_t>::max())
@@ -670,6 +685,7 @@ namespace
         std::size_t mPlayerProcessInventoryBegin = 0;
         std::size_t mPlayerMobileObjectProcessStateBegin = 0;
         std::size_t mPlayerChangedCharacterStateBegin = 0;
+        std::size_t mPlayerCharacterAnimationStateBegin = 0;
         std::size_t mGlobalData2Begin = 0;
         std::size_t mRefIdArrayBegin = 0;
         std::size_t mUnknownTableBegin = 0;
@@ -681,7 +697,8 @@ namespace
         std::size_t playerActorValueBytes = ESM4::sFONVPlayerActorValueDataBytes,
         std::size_t playerProcessInventoryBytes = sSyntheticPlayerProcessInventoryDataBytes,
         std::size_t playerMobileObjectProcessStateBytes = sSyntheticPlayerMobileObjectProcessStateBytes,
-        std::size_t playerChangedCharacterStateBytes = ESM4::sFONVPlayerChangedCharacterStateBytes)
+        std::size_t playerChangedCharacterStateBytes = ESM4::sFONVPlayerChangedCharacterStateBytes,
+        std::size_t playerCharacterAnimationStateBytes = sSyntheticPlayerCharacterAnimationStateBytes)
     {
         std::vector<std::uint8_t> header;
         appendU32(header, 48);
@@ -783,6 +800,16 @@ namespace
         changedPayload1.insert(changedPayload1.end(), playerChangedCharacterState.begin(),
             playerChangedCharacterState.begin()
                 + static_cast<std::ptrdiff_t>(actualPlayerChangedCharacterStateBytes));
+        const std::vector<std::uint8_t> playerCharacterAnimationState = makePlayerCharacterAnimationState();
+        const std::size_t actualPlayerCharacterAnimationStateBytes
+            = actualPlayerChangedCharacterStateBytes == ESM4::sFONVPlayerChangedCharacterStateBytes
+            ? playerCharacterAnimationStateBytes
+            : 0;
+        if (actualPlayerCharacterAnimationStateBytes > playerCharacterAnimationState.size())
+            throw std::logic_error("synthetic player animation-buffer byte count is too large");
+        changedPayload1.insert(changedPayload1.end(), playerCharacterAnimationState.begin(),
+            playerCharacterAnimationState.begin()
+                + static_cast<std::ptrdiff_t>(actualPlayerCharacterAnimationStateBytes));
         constexpr std::array<std::uint8_t, 3> changedPayload2 = { 0x20, 0x21, 0x22 };
         constexpr std::array<std::uint8_t, 4> changedPayload3 = { 0x30, 0x31, 0x32, 0x33 };
         const ChangedFormOffsets changed1 = appendChangedForm(
@@ -855,6 +882,8 @@ namespace
             = result.mPlayerProcessInventoryBegin + playerProcessInventoryBytes;
         result.mPlayerChangedCharacterStateBegin
             = result.mPlayerMobileObjectProcessStateBegin + actualPlayerMobileObjectProcessStateBytes;
+        result.mPlayerCharacterAnimationStateBegin
+            = result.mPlayerChangedCharacterStateBegin + actualPlayerChangedCharacterStateBytes;
         result.mBytes.insert(result.mBytes.end(), globalData1.begin(), globalData1.end());
         result.mBytes.insert(result.mBytes.end(), changedForms.begin(), changedForms.end());
         result.mBytes.insert(result.mBytes.end(), globalData2.begin(), globalData2.end());
@@ -943,7 +972,8 @@ namespace
             28u + static_cast<std::uint32_t>(ESM4::sFONVPlayerActorValueDataBytes)
                 + static_cast<std::uint32_t>(sSyntheticPlayerProcessInventoryDataBytes)
                 + static_cast<std::uint32_t>(sSyntheticPlayerMobileObjectProcessStateBytes)
-                + static_cast<std::uint32_t>(ESM4::sFONVPlayerChangedCharacterStateBytes));
+                + static_cast<std::uint32_t>(ESM4::sFONVPlayerChangedCharacterStateBytes)
+                + static_cast<std::uint32_t>(sSyntheticPlayerCharacterAnimationStateBytes));
         EXPECT_EQ(save.mChangedForms.mEntries[1].mChangeType, 2u);
         EXPECT_EQ(save.mChangedForms.mEntries[1].mEncodedReferenceId.mValue, 0x401234u);
         EXPECT_EQ(save.mChangedForms.mEntries[1].mReferenceKind, ESM4::FONVSaveReferenceKind::DefaultForm);
@@ -997,7 +1027,8 @@ namespace
             (ESM4::FONVSaveRange{ source.mChangedFormPayloads[0] + 28,
                 ESM4::sFONVPlayerActorValueDataBytes + sSyntheticPlayerProcessInventoryDataBytes
                     + sSyntheticPlayerMobileObjectProcessStateBytes
-                    + ESM4::sFONVPlayerChangedCharacterStateBytes }));
+                    + ESM4::sFONVPlayerChangedCharacterStateBytes
+                    + sSyntheticPlayerCharacterAnimationStateBytes }));
         ASSERT_TRUE(save.mPlayerActorValueData.has_value());
         const auto& actorValues = *save.mPlayerActorValueData;
         const std::size_t actorValuesBegin = source.mChangedFormPayloads[0] + 28;
@@ -1034,7 +1065,8 @@ namespace
         EXPECT_EQ(actorValues.mUnparsedRemainder.mRange,
             (ESM4::FONVSaveRange{ actorValuesBegin + ESM4::sFONVPlayerActorValueDataBytes,
                 sSyntheticPlayerProcessInventoryDataBytes + sSyntheticPlayerMobileObjectProcessStateBytes
-                    + ESM4::sFONVPlayerChangedCharacterStateBytes }));
+                    + ESM4::sFONVPlayerChangedCharacterStateBytes
+                    + sSyntheticPlayerCharacterAnimationStateBytes }));
         ASSERT_TRUE(save.mPlayerProcessInventoryData.has_value());
         const auto& processInventory = *save.mPlayerProcessInventoryData;
         EXPECT_EQ(processInventory.mRange,
@@ -1082,7 +1114,8 @@ namespace
             (ESM4::FONVSaveRange{ source.mPlayerProcessInventoryBegin
                     + sSyntheticPlayerProcessInventoryDataBytes,
                 sSyntheticPlayerMobileObjectProcessStateBytes
-                    + ESM4::sFONVPlayerChangedCharacterStateBytes }));
+                    + ESM4::sFONVPlayerChangedCharacterStateBytes
+                    + sSyntheticPlayerCharacterAnimationStateBytes }));
         ASSERT_TRUE(save.mPlayerMobileObjectProcessState.has_value());
         const auto& processState = *save.mPlayerMobileObjectProcessState;
         EXPECT_EQ(processState.mRange,
@@ -1130,7 +1163,8 @@ namespace
         EXPECT_EQ(processState.mUnparsedRemainder.mRange,
             (ESM4::FONVSaveRange{ source.mPlayerMobileObjectProcessStateBegin
                     + sSyntheticPlayerMobileObjectProcessStateBytes,
-                ESM4::sFONVPlayerChangedCharacterStateBytes }));
+                ESM4::sFONVPlayerChangedCharacterStateBytes
+                    + sSyntheticPlayerCharacterAnimationStateBytes }));
         ASSERT_TRUE(save.mPlayerChangedCharacterState.has_value());
         const auto& characterState = *save.mPlayerChangedCharacterState;
         EXPECT_EQ(characterState.mRange,
@@ -1171,6 +1205,31 @@ namespace
         EXPECT_EQ(characterState.mUnparsedRemainder.mRange,
             (ESM4::FONVSaveRange{ source.mPlayerChangedCharacterStateBegin
                     + ESM4::sFONVPlayerChangedCharacterStateBytes,
+                sSyntheticPlayerCharacterAnimationStateBytes }));
+        ASSERT_TRUE(save.mPlayerCharacterAnimationState.has_value());
+        const auto& animationState = *save.mPlayerCharacterAnimationState;
+        EXPECT_EQ(animationState.mRange,
+            (ESM4::FONVSaveRange{ source.mPlayerCharacterAnimationStateBegin,
+                sSyntheticPlayerCharacterAnimationStateBytes }));
+        EXPECT_EQ(animationState.mRaw,
+            std::vector<std::uint8_t>(
+                source.mBytes.begin() + static_cast<std::ptrdiff_t>(source.mPlayerCharacterAnimationStateBegin),
+                source.mBytes.begin() + static_cast<std::ptrdiff_t>(source.mPlayerCharacterAnimationStateBegin
+                    + sSyntheticPlayerCharacterAnimationStateBytes)));
+        EXPECT_EQ(animationState.mAnimation.mRange, animationState.mRange);
+        EXPECT_EQ(animationState.mAnimation.mLength.mValue, sSyntheticPlayerCharacterAnimationBodyBytes);
+        EXPECT_EQ(animationState.mAnimation.mLength.mRange,
+            (ESM4::FONVSaveRange{ source.mPlayerCharacterAnimationStateBegin, 2 }));
+        EXPECT_EQ(animationState.mAnimation.mLength.mRaw, (std::vector<std::uint8_t>{ 0x45, 0x02 }));
+        EXPECT_EQ(animationState.mAnimation.mData.mRange,
+            (ESM4::FONVSaveRange{ source.mPlayerCharacterAnimationStateBegin + 3,
+                sSyntheticPlayerCharacterAnimationBodyBytes }));
+        ASSERT_EQ(animationState.mAnimation.mData.mRaw.size(), sSyntheticPlayerCharacterAnimationBodyBytes);
+        for (std::size_t i = 0; i < animationState.mAnimation.mData.mRaw.size(); ++i)
+            EXPECT_EQ(animationState.mAnimation.mData.mRaw[i], static_cast<std::uint8_t>(i));
+        EXPECT_EQ(animationState.mUnparsedRemainder.mRange,
+            (ESM4::FONVSaveRange{ source.mPlayerCharacterAnimationStateBegin
+                    + sSyntheticPlayerCharacterAnimationStateBytes,
                 0 }));
         EXPECT_EQ(save.findChangedForm(0x00001234u), &save.mChangedForms.mEntries[1]);
         EXPECT_EQ(save.findChangedForm(0x00001234u, 3), nullptr);
@@ -1399,12 +1458,14 @@ namespace
         EXPECT_FALSE(changedCell.mPlayerProcessInventoryData.has_value());
         EXPECT_FALSE(changedCell.mPlayerMobileObjectProcessState.has_value());
         EXPECT_FALSE(changedCell.mPlayerChangedCharacterState.has_value());
+        EXPECT_FALSE(changedCell.mPlayerCharacterAnimationState.has_value());
         EXPECT_EQ(changedCell.mUnparsedSemanticPayloadRanges.size(), 5u);
         EXPECT_EQ(changedCell.mUnparsedSemanticPayloadBytes,
             43u + static_cast<std::uint64_t>(ESM4::sFONVPlayerActorValueDataBytes)
                 + static_cast<std::uint64_t>(sSyntheticPlayerProcessInventoryDataBytes)
                 + static_cast<std::uint64_t>(sSyntheticPlayerMobileObjectProcessStateBytes)
-                + static_cast<std::uint64_t>(ESM4::sFONVPlayerChangedCharacterStateBytes));
+                + static_cast<std::uint64_t>(ESM4::sFONVPlayerChangedCharacterStateBytes)
+                + static_cast<std::uint64_t>(sSyntheticPlayerCharacterAnimationStateBytes));
     }
 
     TEST(FONVSaveGame, RejectsCorruptCanonicalPlayerActorValueData)
@@ -1594,6 +1655,32 @@ namespace
         source = makeSave(true, 2, 1, masters, true, "Courier", false,
             ESM4::sFONVPlayerActorValueDataBytes, sSyntheticPlayerProcessInventoryDataBytes,
             sSyntheticPlayerMobileObjectProcessStateBytes, 0);
+        EXPECT_THROW(ESM4::parseFONVSaveGamePrefix(source.mBytes), ESM4::FONVSaveError);
+    }
+
+    TEST(FONVSaveGame, RejectsCorruptCanonicalPlayerCharacterAnimationState)
+    {
+        constexpr std::array masters = { std::string_view("FalloutNV.esm") };
+        SaveBytes source = makeSave(true, 2, 1, masters);
+        source.mBytes[source.mPlayerCharacterAnimationStateBegin] = 0x46;
+        source.mBytes[source.mPlayerCharacterAnimationStateBegin + 1] = 0x02;
+        source.mBytes[source.mPlayerCharacterAnimationStateBegin + 2] = 0;
+        source.mBytes[source.mPlayerCharacterAnimationStateBegin + 3] = 0;
+        EXPECT_THROW(ESM4::parseFONVSaveGamePrefix(source.mBytes), ESM4::FONVSaveError);
+
+        source = makeSave(true, 2, 1, masters);
+        source.mBytes[source.mPlayerCharacterAnimationStateBegin + 2] = 0;
+        EXPECT_THROW(ESM4::parseFONVSaveGamePrefix(source.mBytes), ESM4::FONVSaveError);
+
+        source = makeSave(true, 2, 1, masters);
+        source.mBytes[source.mPlayerCharacterAnimationStateBegin] = 0x49;
+        source.mBytes[source.mPlayerCharacterAnimationStateBegin + 1] = 0x02;
+        EXPECT_THROW(ESM4::parseFONVSaveGamePrefix(source.mBytes), ESM4::FONVSaveError);
+
+        source = makeSave(true, 2, 1, masters, true, "Courier", false,
+            ESM4::sFONVPlayerActorValueDataBytes, sSyntheticPlayerProcessInventoryDataBytes,
+            sSyntheticPlayerMobileObjectProcessStateBytes, ESM4::sFONVPlayerChangedCharacterStateBytes,
+            sSyntheticPlayerCharacterAnimationStateBytes - 1);
         EXPECT_THROW(ESM4::parseFONVSaveGamePrefix(source.mBytes), ESM4::FONVSaveError);
     }
 
@@ -2223,6 +2310,27 @@ namespace
         EXPECT_EQ(processState.mUnparsedRemainder.mRange.mSize - characterState.mRange.mSize,
             characterState.mUnparsedRemainder.mRange.mSize);
 
+        ASSERT_TRUE(save.mPlayerCharacterAnimationState.has_value());
+        const auto& animationState = *save.mPlayerCharacterAnimationState;
+        EXPECT_EQ(animationState.mRange, (ESM4::FONVSaveRange{ 501697, 148 }));
+        EXPECT_EQ(animationState.mRaw.size(), 148u);
+        EXPECT_EQ(sha256Hex(animationState.mRaw),
+            "eff4c16d299aa5c2b3b0385001d8340a165b4db3d13dc09ebe7886c98daf6206");
+        EXPECT_EQ(animationState.mAnimation.mRange, animationState.mRange);
+        EXPECT_EQ(animationState.mAnimation.mLength.mValue, 145u);
+        EXPECT_EQ(animationState.mAnimation.mLength.mRange, (ESM4::FONVSaveRange{ 501697, 2 }));
+        EXPECT_EQ(animationState.mAnimation.mLength.mRaw, (std::vector<std::uint8_t>{ 0x45, 0x02 }));
+        EXPECT_EQ(animationState.mAnimation.mData.mRange, (ESM4::FONVSaveRange{ 501700, 145 }));
+        EXPECT_EQ(animationState.mAnimation.mData.mRaw.size(), 145u);
+        EXPECT_EQ(sha256Hex(animationState.mAnimation.mData.mRaw),
+            "3b1a3de703fc484c1271076cbdac4e155531c2f794b0e7a7c49e418329090376");
+        EXPECT_EQ(animationState.mUnparsedRemainder.mRange, (ESM4::FONVSaveRange{ 501845, 739 }));
+        EXPECT_EQ(animationState.mUnparsedRemainder.mRaw.size(), 739u);
+        EXPECT_EQ(sha256Hex(animationState.mUnparsedRemainder.mRaw),
+            "71e6d95f325b5d4b7a8db31b4abbf185944b7fb936d4a54f09d4243ecfa1021f");
+        EXPECT_EQ(characterState.mUnparsedRemainder.mRange.mSize - animationState.mRange.mSize,
+            animationState.mUnparsedRemainder.mRange.mSize);
+
         ASSERT_TRUE(movement.mCellOrWorldspace.mResolvedFormId.has_value());
         const ESM::RefId worldspace = ESM::RefId::formIdRefId(
             ESM::FormId::fromUint32(*movement.mCellOrWorldspace.mResolvedFormId));
@@ -2235,9 +2343,37 @@ namespace
             << "NPC_ FormID 0x7 is a FalloutNV.esm base-record relation, not serialized as a Save330 change form";
 
         EXPECT_EQ(save.mUnparsedSemanticPayloadRanges.size(), 7090u);
-        EXPECT_EQ(save.mUnparsedSemanticPayloadBytes, 2734767u);
+        EXPECT_EQ(save.mUnparsedSemanticPayloadBytes, 2734619u);
         EXPECT_EQ(save.mStructurallyAccountedRange, (ESM4::FONVSaveRange{ 0, 3395328 }));
         EXPECT_EQ(save.mParsedPrefixRange, save.mStructurallyAccountedRange);
         EXPECT_EQ(save.mUnparsedBodyRange, (ESM4::FONVSaveRange{ 3395328, 0 }));
+    }
+
+    TEST(FONVSaveGame, RejectsCorruptExternalSave330PlayerCharacterAnimationState)
+    {
+        const char* fixture = std::getenv("OPENMW_FNV_SAVE330_FIXTURE");
+        if (fixture == nullptr || *fixture == '\0')
+            GTEST_SKIP() << "Set OPENMW_FNV_SAVE330_FIXTURE to the read-only retail Save 330 path";
+
+        const std::vector<std::uint8_t> fixtureBytes
+            = readFixtureBytes(std::filesystem::u8path(fixture));
+        ASSERT_EQ(sha256Hex(fixtureBytes), "07dbdd2d7c4abe3160628e5463a9603a40f4271042c1da1b89f1c4a4f7dbd81f")
+            << "OPENMW_FNV_SAVE330_FIXTURE is not the pinned Save330 evidence file";
+
+        std::vector<std::uint8_t> corrupted = fixtureBytes;
+        corrupted[501697] = 0x46;
+        corrupted[501698] = 0x02;
+        corrupted[501699] = 0;
+        corrupted[501700] = 0;
+        EXPECT_THROW(ESM4::parseFONVSaveGamePrefix(corrupted), ESM4::FONVSaveError);
+
+        corrupted = fixtureBytes;
+        corrupted[501699] = 0;
+        EXPECT_THROW(ESM4::parseFONVSaveGamePrefix(corrupted), ESM4::FONVSaveError);
+
+        corrupted = fixtureBytes;
+        corrupted[501697] = 0xe1;
+        corrupted[501698] = 0x0d;
+        EXPECT_THROW(ESM4::parseFONVSaveGamePrefix(corrupted), ESM4::FONVSaveError);
     }
 }
