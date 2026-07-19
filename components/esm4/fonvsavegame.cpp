@@ -395,7 +395,7 @@ namespace
 
     std::optional<std::uint32_t> resolveReferenceId(ESM4::FONVSaveReferenceKind kind, std::uint32_t payload,
         const ESM4::FONVSaveFormIdTable& formIds, std::uint64_t sourceOffset, bool allowNull,
-        std::string_view description)
+        std::string_view description, bool allowEmptyArraySlot = false)
     {
         switch (kind)
         {
@@ -410,8 +410,12 @@ namespace
                     throw ESM4::FONVSaveError(
                         sourceOffset, std::string(description) + " index lies beyond the FormID array");
                 if (formIds.mFormIds[payload - 1].mValue == 0)
+                {
+                    if (allowNull && allowEmptyArraySlot)
+                        return std::nullopt;
                     throw ESM4::FONVSaveError(
                         sourceOffset, std::string(description) + " resolves to an empty FormID-array slot");
+                }
                 return formIds.mFormIds[payload - 1].mValue;
             case ESM4::FONVSaveReferenceKind::DefaultForm:
                 if (payload == 0)
@@ -436,7 +440,7 @@ namespace
 
     ESM4::FONVSaveResolvedReferenceId decodeResolvedReferenceId(Cursor& cursor,
         std::span<const std::uint8_t> data, const ESM4::FONVSaveFormIdTable& formIds, std::string_view description,
-        bool allowNull = false)
+        bool allowNull = false, bool allowEmptyArraySlot = false)
     {
         ESM4::FONVSaveResolvedReferenceId result;
         result.mEncoded = readReferenceId(cursor, data, description);
@@ -447,16 +451,17 @@ namespace
         result.mKind = static_cast<ESM4::FONVSaveReferenceKind>(kind);
         result.mPayload = result.mEncoded.mValue & 0x003fffffu;
         result.mResolvedFormId = resolveReferenceId(
-            result.mKind, result.mPayload, formIds, result.mEncoded.mRange.mOffset, allowNull, description);
+            result.mKind, result.mPayload, formIds, result.mEncoded.mRange.mOffset, allowNull, description,
+            allowEmptyArraySlot);
         return result;
     }
 
     ESM4::FONVSaveResolvedReferenceId decodeDelimitedResolvedReferenceId(Cursor& cursor,
         std::span<const std::uint8_t> data, const ESM4::FONVSaveFormIdTable& formIds, std::string_view description,
-        bool allowNull = false)
+        bool allowNull = false, bool allowEmptyArraySlot = false)
     {
         ESM4::FONVSaveResolvedReferenceId result
-            = decodeResolvedReferenceId(cursor, data, formIds, description, allowNull);
+            = decodeResolvedReferenceId(cursor, data, formIds, description, allowNull, allowEmptyArraySlot);
         cursor.expectDelimiter(description);
         return result;
     }
@@ -1364,6 +1369,129 @@ namespace
         return result;
     }
 
+    ESM4::FONVSavePlayerCharacterVersion21State parsePlayerCharacterVersion21State(
+        Cursor& cursor, std::span<const std::uint8_t> data)
+    {
+        const std::size_t begin = cursor.position();
+        ESM4::FONVSavePlayerCharacterVersion21State result;
+        result.mUnk1FC = readPlayerProcessU32(cursor, data, "PlayerCharacter Unk1FC");
+        result.mUnk684 = readPlayerProcessU32(cursor, data, "PlayerCharacter Unk684");
+        for (ESM4::FONVSaveField<std::uint32_t>& value : result.mUnk744)
+            value = readPlayerProcessU32(cursor, data, "PlayerCharacter Unk744");
+        result.mRange = range(begin, cursor.position());
+        result.mRaw = copyRange(data, begin, cursor.position());
+        return result;
+    }
+
+    ESM4::FONVSavePlayerCharacterUnk878State parsePlayerCharacterUnk878State(
+        Cursor& cursor, std::span<const std::uint8_t> data)
+    {
+        const std::size_t begin = cursor.position();
+        ESM4::FONVSavePlayerCharacterUnk878State result;
+        result.mByt000 = readPlayerProcessU8(cursor, data, "PlayerCharacter Unk878 Byt000");
+        result.mUnk004 = readPlayerProcessU32(cursor, data, "PlayerCharacter Unk878 Unk004");
+        result.mRange = range(begin, cursor.position());
+        result.mRaw = copyRange(data, begin, cursor.position());
+        return result;
+    }
+
+    ESM4::FONVSavePlayerCharacterScalarReferenceState parsePlayerCharacterScalarReferenceState(
+        std::span<const std::uint8_t> data, const ESM4::FONVSaveChangedFormEnvelope& player,
+        const ESM4::FONVSavePlayerCharacterAnimationState& animationState,
+        const ESM4::FONVSaveFormIdTable& formIds)
+    {
+        if (player.mVersion.mValue != 27)
+            throw ESM4::FONVSaveError(player.mVersion.mRange.mOffset,
+                "unsupported canonical PlayerCharacter scalar/reference changed-form version");
+
+        const std::size_t begin = static_cast<std::size_t>(animationState.mUnparsedRemainder.mRange.mOffset);
+        const std::size_t end = static_cast<std::size_t>(animationState.mUnparsedRemainder.mRange.end());
+        Cursor cursor(data, begin, end);
+        ESM4::FONVSavePlayerCharacterScalarReferenceState result;
+        result.mFirstPersonMode = readPlayerProcessU8(cursor, data, "PlayerCharacter first-person mode (Byt64A)");
+        result.mByt64D = readPlayerProcessU8(cursor, data, "PlayerCharacter Byt64D");
+        result.mByt651 = readPlayerProcessU8(cursor, data, "PlayerCharacter Byt651");
+        result.mByt652 = readPlayerProcessU8(cursor, data, "PlayerCharacter Byt652");
+        result.mUnk654 = readPlayerProcessU32(cursor, data, "PlayerCharacter Unk654");
+        result.mUnk660 = readPlayerProcessU32(cursor, data, "PlayerCharacter Unk660");
+        result.mUnk664 = readPlayerProcessU32(cursor, data, "PlayerCharacter Unk664");
+        result.mUnk668 = readPlayerProcessU32(cursor, data, "PlayerCharacter Unk668");
+        result.mByt66C = readPlayerProcessU8(cursor, data, "PlayerCharacter Byt66C");
+        result.mByt6CC = readPlayerProcessU8(cursor, data, "PlayerCharacter Byt6CC");
+        result.mUnk6D0 = readPlayerProcessU32(cursor, data, "PlayerCharacter Unk6D0");
+        result.mUnk6D4 = readPlayerProcessU32(cursor, data, "PlayerCharacter Unk6D4");
+        result.mByt6D8 = readPlayerProcessU8(cursor, data, "PlayerCharacter Byt6D8");
+        result.mUnk6DC = readPlayerProcessU32(cursor, data, "PlayerCharacter Unk6DC");
+        result.mByt6E8 = readPlayerProcessU8(cursor, data, "PlayerCharacter Byt6E8");
+        result.mByt681 = readPlayerProcessU8(cursor, data, "PlayerCharacter Byt681");
+        result.mByt75CFaceGen = readPlayerProcessU8(cursor, data, "PlayerCharacter FaceGen-linked Byt75C");
+        result.mByt7C6 = readPlayerProcessU8(cursor, data, "PlayerCharacter Byt7C6");
+        result.mUnk6E4 = readPlayerProcessU32(cursor, data, "PlayerCharacter Unk6E4");
+        result.mRefr6F4Pos = parsePlayerProcessVector3(cursor, data, "PlayerCharacter Refr6F4 position");
+        result.mUnk698 = readPlayerProcessU32(cursor, data, "PlayerCharacter Unk698");
+        result.mUnk67C = readPlayerProcessU32(cursor, data, "PlayerCharacter Unk67C");
+        result.mUnk738 = readPlayerProcessU32(cursor, data, "PlayerCharacter Unk738");
+        result.mByt658 = readPlayerProcessU8(cursor, data, "PlayerCharacter Byt658");
+        result.mUnk65C = readPlayerProcessU32(cursor, data, "PlayerCharacter Unk65C");
+        result.mFirstPersonModelFov
+            = readPlayerProcessFloat(cursor, data, "PlayerCharacter first-person model FOV (Unk674)");
+        result.mWorldFov = readPlayerProcessFloat(cursor, data, "PlayerCharacter world FOV (Unk670)");
+        result.mByt75C = readPlayerProcessU8(cursor, data, "PlayerCharacter Byt75C");
+        result.mUnk730 = readPlayerProcessU32(cursor, data, "PlayerCharacter Unk730");
+        result.mUnk790 = readPlayerProcessU32(cursor, data, "PlayerCharacter Unk790");
+        result.mByt680 = readPlayerProcessU8(cursor, data, "PlayerCharacter Byt680");
+        result.mByt7C4 = readPlayerProcessU8(cursor, data, "PlayerCharacter Byt7C4");
+        result.mUnk63C = readPlayerProcessU32(cursor, data, "PlayerCharacter Unk63C");
+        result.mUnk640 = readPlayerProcessU32(cursor, data, "PlayerCharacter Unk640");
+        result.mUnk644 = readPlayerProcessU32(cursor, data, "PlayerCharacter Unk644");
+        result.mUnk200 = readPlayerProcessU32(cursor, data, "PlayerCharacter Unk200");
+        result.mByt240 = readPlayerProcessU8(cursor, data, "PlayerCharacter Byt240");
+        result.mByt64E = readPlayerProcessU8(cursor, data, "PlayerCharacter Byt64E");
+        result.mByt66D = readPlayerProcessU8(cursor, data, "PlayerCharacter Byt66D");
+        result.mUnk794 = readPlayerProcessU32(cursor, data, "PlayerCharacter Unk794");
+        result.mFlt11E0B5C = readPlayerProcessFloat(cursor, data, "PlayerCharacter flt_11E0B5C");
+        result.mUnkD6C = readPlayerProcessU32(cursor, data, "PlayerCharacter UnkD6C");
+        result.mUnkD70 = readPlayerProcessU32(cursor, data, "PlayerCharacter UnkD70");
+        result.mUnk228 = readPlayerProcessU32(cursor, data, "PlayerCharacter Unk228");
+        result.mUnk22C = readPlayerProcessU32(cursor, data, "PlayerCharacter Unk22C");
+        result.mUnk230 = readPlayerProcessU32(cursor, data, "PlayerCharacter Unk230");
+        result.mUnk234 = readPlayerProcessU32(cursor, data, "PlayerCharacter Unk234");
+        result.mByt608 = readPlayerProcessU8(cursor, data, "PlayerCharacter Byt608");
+        result.mBytDF2 = readPlayerProcessU8(cursor, data, "PlayerCharacter BytDF2");
+        result.mByt64F = readPlayerProcessU8(cursor, data, "PlayerCharacter version-13 Byt64F");
+        result.mByt650 = readPlayerProcessU8(cursor, data, "PlayerCharacter version-13 Byt650");
+        result.mByt7C7 = readPlayerProcessU8(cursor, data, "PlayerCharacter version-16 Byt7C7");
+        result.mByt5F8 = readPlayerProcessU8(cursor, data, "PlayerCharacter version-18 Byt5F8");
+        result.mVersion21 = parsePlayerCharacterVersion21State(cursor, data);
+        result.mUnk878 = parsePlayerCharacterUnk878State(cursor, data);
+
+        const auto readReference = [&](std::string_view description) {
+            // xEdit resolves a nonzero FormID-array index whose slot contains zero as null. Preserve that encoded
+            // index while retaining strict namespace and bounds validation.
+            return decodeDelimitedResolvedReferenceId(cursor, data, formIds, description, true, true);
+        };
+        result.mQuest = readReference("PlayerCharacter Quest RefID");
+        result.mClass = readReference("PlayerCharacter Class RefID");
+        result.mRefr6F4ParentCell = readReference("PlayerCharacter Refr6F4 parent-cell RefID");
+        result.mRegion = readReference("PlayerCharacter Region RefID");
+        result.mRegionWeather = readReference("PlayerCharacter Region Weather RefID");
+        result.mForm208 = readReference("PlayerCharacter Form208 RefID");
+        result.mForm224 = readReference("PlayerCharacter version-18 Form224 RefID");
+        result.mForm638 = readReference("PlayerCharacter Form638 RefID");
+        result.mForm604 = readReference("PlayerCharacter Form604 RefID");
+        result.mFormD2C = readReference("PlayerCharacter FormD2C RefID");
+        result.mFormD44 = readReference("PlayerCharacter FormD44 RefID");
+
+        if (cursor.position() - begin != ESM4::sFONVPlayerCharacterScalarReferenceStateBytes)
+            throw ESM4::FONVSaveError(
+                begin, "canonical PlayerCharacter scalar/reference state has an unexpected size");
+        result.mRange = range(begin, cursor.position());
+        result.mRaw = copyRange(data, begin, cursor.position());
+        result.mUnparsedRemainder = readRawField(
+            cursor, data, cursor.end() - cursor.position(), "remaining canonical PlayerCharacter payload");
+        return result;
+    }
+
     void appendUnparsedSemanticPayload(ESM4::FONVSaveGamePrefix& save, const ESM4::FONVSaveRange& payload)
     {
         if (payload.empty())
@@ -1655,6 +1783,8 @@ namespace ESM4
                     data, *playerReference, *result.mPlayerMobileObjectProcessState, result.mFormIdTable);
                 result.mPlayerCharacterAnimationState = parsePlayerCharacterAnimationState(
                     data, *playerReference, *result.mPlayerChangedCharacterState);
+                result.mPlayerCharacterScalarReferenceState = parsePlayerCharacterScalarReferenceState(
+                    data, *playerReference, *result.mPlayerCharacterAnimationState, result.mFormIdTable);
             }
         }
 
@@ -1680,7 +1810,10 @@ namespace ESM4
         }
         for (const FONVSaveChangedFormEnvelope& entry : result.mChangedForms.mEntries)
         {
-            if (result.mPlayerCharacterAnimationState.has_value() && &entry == playerReference)
+            if (result.mPlayerCharacterScalarReferenceState.has_value() && &entry == playerReference)
+                appendUnparsedSemanticPayload(
+                    result, result.mPlayerCharacterScalarReferenceState->mUnparsedRemainder.mRange);
+            else if (result.mPlayerCharacterAnimationState.has_value() && &entry == playerReference)
                 appendUnparsedSemanticPayload(
                     result, result.mPlayerCharacterAnimationState->mUnparsedRemainder.mRange);
             else if (result.mPlayerChangedCharacterState.has_value() && &entry == playerReference)

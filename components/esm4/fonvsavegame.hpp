@@ -21,6 +21,7 @@ namespace ESM4
         = 3 * sFONVPlayerActorValueCount * (sizeof(float) + 1) + sizeof(std::uint32_t) + 1;
     static_assert(sFONVPlayerActorValueDataBytes == 1160);
     inline constexpr std::size_t sFONVPlayerChangedCharacterStateBytes = 510;
+    inline constexpr std::size_t sFONVPlayerCharacterScalarReferenceStateBytes = 287;
     inline constexpr std::uint8_t sFONVExtraWornType = 0x16;
     inline constexpr std::uint8_t sFONVExtraCountType = 0x24;
     inline constexpr std::uint8_t sFONVExtraHealthType = 0x25;
@@ -582,6 +583,101 @@ namespace ESM4
         FONVSaveRawField mUnparsedRemainder;
     };
 
+    struct FONVSavePlayerCharacterVersion21State
+    {
+        FONVSaveField<std::uint32_t> mUnk1FC;
+        FONVSaveField<std::uint32_t> mUnk684;
+        std::array<FONVSaveField<std::uint32_t>, 5> mUnk744;
+        FONVSaveRange mRange;
+        std::vector<std::uint8_t> mRaw;
+    };
+
+    struct FONVSavePlayerCharacterUnk878State
+    {
+        FONVSaveField<std::uint8_t> mByt000;
+        FONVSaveField<std::uint32_t> mUnk004;
+        FONVSaveRange mRange;
+        std::vector<std::uint8_t> mRaw;
+    };
+
+    // Exact form-version-27 PlayerCharacter scalar/reference block after the second animation buffer. Names retain
+    // xEdit's wbDefinitionsFNVSaves identifiers except for the mode and two FOV fields supported by pinned retail
+    // evidence. xEdit declares the FOV storage as U32; the documented IEEE-754 interpretation is exposed while raw
+    // bytes remain attached to each field. Empty FormID-array slots resolve to null, matching xEdit, while their
+    // encoded reference provenance remains available.
+    struct FONVSavePlayerCharacterScalarReferenceState
+    {
+        FONVSaveField<std::uint8_t> mFirstPersonMode; // xEdit Byt64A
+        FONVSaveField<std::uint8_t> mByt64D;
+        FONVSaveField<std::uint8_t> mByt651;
+        FONVSaveField<std::uint8_t> mByt652;
+        FONVSaveField<std::uint32_t> mUnk654;
+        FONVSaveField<std::uint32_t> mUnk660;
+        FONVSaveField<std::uint32_t> mUnk664;
+        FONVSaveField<std::uint32_t> mUnk668;
+        FONVSaveField<std::uint8_t> mByt66C;
+        FONVSaveField<std::uint8_t> mByt6CC;
+        FONVSaveField<std::uint32_t> mUnk6D0;
+        FONVSaveField<std::uint32_t> mUnk6D4;
+        FONVSaveField<std::uint8_t> mByt6D8;
+        FONVSaveField<std::uint32_t> mUnk6DC;
+        FONVSaveField<std::uint8_t> mByt6E8;
+        FONVSaveField<std::uint8_t> mByt681;
+        FONVSaveField<std::uint8_t> mByt75CFaceGen;
+        FONVSaveField<std::uint8_t> mByt7C6;
+        FONVSaveField<std::uint32_t> mUnk6E4;
+        FONVSavePlayerProcessVector3 mRefr6F4Pos;
+        FONVSaveField<std::uint32_t> mUnk698;
+        FONVSaveField<std::uint32_t> mUnk67C;
+        FONVSaveField<std::uint32_t> mUnk738;
+        FONVSaveField<std::uint8_t> mByt658;
+        FONVSaveField<std::uint32_t> mUnk65C;
+        FONVSaveField<float> mFirstPersonModelFov; // xEdit Unk674
+        FONVSaveField<float> mWorldFov; // xEdit Unk670
+        FONVSaveField<std::uint8_t> mByt75C;
+        FONVSaveField<std::uint32_t> mUnk730;
+        FONVSaveField<std::uint32_t> mUnk790;
+        FONVSaveField<std::uint8_t> mByt680;
+        FONVSaveField<std::uint8_t> mByt7C4;
+        FONVSaveField<std::uint32_t> mUnk63C;
+        FONVSaveField<std::uint32_t> mUnk640;
+        FONVSaveField<std::uint32_t> mUnk644;
+        FONVSaveField<std::uint32_t> mUnk200;
+        FONVSaveField<std::uint8_t> mByt240;
+        FONVSaveField<std::uint8_t> mByt64E;
+        FONVSaveField<std::uint8_t> mByt66D;
+        FONVSaveField<std::uint32_t> mUnk794;
+        FONVSaveField<float> mFlt11E0B5C;
+        FONVSaveField<std::uint32_t> mUnkD6C;
+        FONVSaveField<std::uint32_t> mUnkD70;
+        FONVSaveField<std::uint32_t> mUnk228;
+        FONVSaveField<std::uint32_t> mUnk22C;
+        FONVSaveField<std::uint32_t> mUnk230;
+        FONVSaveField<std::uint32_t> mUnk234;
+        FONVSaveField<std::uint8_t> mByt608;
+        FONVSaveField<std::uint8_t> mBytDF2;
+        FONVSaveField<std::uint8_t> mByt64F;
+        FONVSaveField<std::uint8_t> mByt650;
+        FONVSaveField<std::uint8_t> mByt7C7;
+        FONVSaveField<std::uint8_t> mByt5F8;
+        FONVSavePlayerCharacterVersion21State mVersion21;
+        FONVSavePlayerCharacterUnk878State mUnk878;
+        FONVSaveResolvedReferenceId mQuest;
+        FONVSaveResolvedReferenceId mClass;
+        FONVSaveResolvedReferenceId mRefr6F4ParentCell;
+        FONVSaveResolvedReferenceId mRegion;
+        FONVSaveResolvedReferenceId mRegionWeather;
+        FONVSaveResolvedReferenceId mForm208;
+        FONVSaveResolvedReferenceId mForm224;
+        FONVSaveResolvedReferenceId mForm638;
+        FONVSaveResolvedReferenceId mForm604;
+        FONVSaveResolvedReferenceId mFormD2C;
+        FONVSaveResolvedReferenceId mFormD44;
+        FONVSaveRange mRange;
+        std::vector<std::uint8_t> mRaw;
+        FONVSaveRawField mUnparsedRemainder;
+    };
+
     struct FONVSaveChangedFormEnvelope
     {
         FONVSaveRawField mReferenceId;
@@ -693,6 +789,7 @@ namespace ESM4
         std::optional<FONVSavePlayerMobileObjectProcessState> mPlayerMobileObjectProcessState;
         std::optional<FONVSavePlayerChangedCharacterState> mPlayerChangedCharacterState;
         std::optional<FONVSavePlayerCharacterAnimationState> mPlayerCharacterAnimationState;
+        std::optional<FONVSavePlayerCharacterScalarReferenceState> mPlayerCharacterScalarReferenceState;
         std::optional<FONVSaveSkyState> mSky;
 
         // The parser accounts for every byte structurally. These ranges are gameplay payload bytes whose internal
