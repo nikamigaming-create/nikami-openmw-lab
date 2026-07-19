@@ -16,6 +16,7 @@
 #include <components/esm4/loadclas.hpp>
 #include <components/esm4/loadclmt.hpp>
 #include <components/esm4/loadgmst.hpp>
+#include <components/esm4/loadrace.hpp>
 #include <components/esm4/loadwthr.hpp>
 #include <components/esm4/reader.hpp>
 #include <components/esm4/readerutils.hpp>
@@ -97,6 +98,75 @@ namespace
         if (it != races.end())
             return it->mId;
         throw std::runtime_error("List of NPC races is empty!");
+    }
+
+    struct ValidatedFalloutPlayer
+    {
+        MWWorld::FalloutPlayerState mState;
+        MWWorld::FalloutNativePlayerRecords mNativeRecords;
+    };
+
+    std::optional<ValidatedFalloutPlayer> resolveValidatedFalloutPlayer(std::size_t masterCandidateCount,
+        const std::optional<std::int32_t>& masterCandidateIndex, const MWWorld::Store<ESM4::Npc>& npcs,
+        const MWWorld::Store<ESM4::ActorCharacter>& actorReferences,
+        const MWWorld::Store<ESM4::Class>& classes, const MWWorld::Store<ESM4::Race>& races)
+    {
+        if (masterCandidateCount == 0)
+            return std::nullopt;
+        if (masterCandidateCount != 1)
+            throw std::runtime_error("ambiguous duplicate FalloutNV.esm master candidates");
+        if (!masterCandidateIndex)
+            throw std::runtime_error("FalloutNV.esm master candidate has no valid normalized namespace");
+
+        const std::int32_t master = *masterCandidateIndex;
+        MWWorld::FalloutPlayerStateResolution player = MWWorld::resolveFalloutPlayerIdentity(
+            npcs, actorReferences, ESM::FormId{ 7, master }, ESM::FormId{ 0x14, master });
+        if (!player)
+            throw std::runtime_error(player.mError);
+
+        MWWorld::FalloutNativePlayerRecordsResolution native
+            = MWWorld::resolveFalloutNativePlayerRecords(npcs, actorReferences, classes, races, *player.mState);
+        if (!native)
+            throw std::runtime_error(native.mError);
+
+        return ValidatedFalloutPlayer{ std::move(*player.mState), *native.mRecords };
+    }
+
+    struct FalloutPlayerCompatibilityCarriers
+    {
+        ESM::Class mClass;
+        ESM::Race mRace;
+        ESM::NPC mPlayer;
+    };
+
+    FalloutPlayerCompatibilityCarriers makeFalloutPlayerCompatibilityCarriers(
+        const MWWorld::FalloutPlayerState& playerState, const MWWorld::FalloutNativePlayerRecords& nativeRecords)
+    {
+        // These records are deliberately only a carrier for the ESM3 player machinery. Native FNV records and the
+        // validated FalloutPlayerState remain authoritative; do not project unrelated TES3 gameplay defaults here.
+        FalloutPlayerCompatibilityCarriers result;
+
+        result.mClass.mId = ESM::RefId::formIdRefId(playerState.mClass);
+        result.mClass.blank();
+        result.mClass.mName = nativeRecords.mClass->mFullName;
+        result.mClass.mDescription = nativeRecords.mClass->mDesc;
+
+        result.mRace.mId = ESM::RefId::formIdRefId(playerState.mRace);
+        result.mRace.blank();
+        result.mRace.mName = nativeRecords.mRace->mFullName;
+        result.mRace.mDescription = nativeRecords.mRace->mDesc;
+        result.mRace.mData.mMaleHeight = nativeRecords.mRace->mHeightMale;
+        result.mRace.mData.mFemaleHeight = nativeRecords.mRace->mHeightFemale;
+        result.mRace.mData.mMaleWeight = nativeRecords.mRace->mWeightMale;
+        result.mRace.mData.mFemaleWeight = nativeRecords.mRace->mWeightFemale;
+
+        result.mPlayer.mId = ESM::RefId::stringRefId("Player");
+        result.mPlayer.blank();
+        result.mPlayer.mRace = result.mRace.mId;
+        result.mPlayer.mClass = result.mClass.mId;
+        MWWorld::seedFalloutPlayerProxy(result.mPlayer, playerState);
+
+        return result;
     }
 
     std::vector<ESM::NPC> getNPCsToReplace(const MWWorld::Store<ESM::Faction>& factions,
@@ -585,14 +655,28 @@ namespace MWWorld
     {
         if (mIsSetUpDone)
             throw std::logic_error("ESMStore::setUp() is called twice");
+
+        // A filename match alone must not alter setup behavior. Resolve the exact official Player records before
+        // selecting the FNV-only compatibility path; validate() repeats this check before publishing any state.
+        const std::optional<ValidatedFalloutPlayer> setupPlayer = resolveValidatedFalloutPlayer(
+            mStoreImp->mFalloutNewVegasMasterCandidateCount, mStoreImp->mFalloutNewVegasMasterCandidateIndex,
+            get<ESM4::Npc>(), get<ESM4::ActorCharacter>(), get<ESM4::Class>(), get<ESM4::Race>());
+        const bool isOfficialFalloutNewVegas = setupPlayer.has_value();
         mIsSetUpDone = true;
 
-        for (const auto& [_, store] : mStoreImp->mRecNameToStore)
+        for (const auto& [recordType, store] : mStoreImp->mRecNameToStore)
+        {
+            if (isOfficialFalloutNewVegas && recordType == ESM::REC_GMST)
+                continue;
             store->setUp();
+        }
 
         getWritable<ESM::Skill>().setUp(get<ESM::GameSetting>());
         getWritable<ESM::MagicEffect>().setUp();
-        getWritable<ESM::Attribute>().setUp(get<ESM::GameSetting>());
+        if (isOfficialFalloutNewVegas)
+            getWritable<ESM::Attribute>().setUpNeutral();
+        else
+            getWritable<ESM::Attribute>().setUp(get<ESM::GameSetting>());
         getWritable<ESM4::Land>().updateLandPositions(get<ESM4::Cell>());
         getWritable<ESM4::Reference>().preprocessReferences(get<ESM4::Cell>());
         getWritable<ESM4::ActorCharacter>().preprocessReferences(get<ESM4::Cell>());
@@ -671,25 +755,15 @@ namespace MWWorld
         // revalidation, and the local candidate is published only after both identity and exact typed payloads resolve.
         mStoreImp->mFalloutPlayerState.reset();
         std::optional<FalloutPlayerState> validatedFalloutPlayerState;
-        if (mStoreImp->mFalloutNewVegasMasterCandidateCount != 0)
+        std::optional<FalloutPlayerCompatibilityCarriers> falloutPlayerCarriers;
+        std::optional<ValidatedFalloutPlayer> player = resolveValidatedFalloutPlayer(
+            mStoreImp->mFalloutNewVegasMasterCandidateCount, mStoreImp->mFalloutNewVegasMasterCandidateIndex,
+            get<ESM4::Npc>(), get<ESM4::ActorCharacter>(), get<ESM4::Class>(), get<ESM4::Race>());
+        if (player)
         {
-            if (mStoreImp->mFalloutNewVegasMasterCandidateCount != 1)
-                throw std::runtime_error("ambiguous duplicate FalloutNV.esm master candidates");
-            if (!mStoreImp->mFalloutNewVegasMasterCandidateIndex)
-                throw std::runtime_error("FalloutNV.esm master candidate has no valid normalized namespace");
-
-            const std::int32_t master = *mStoreImp->mFalloutNewVegasMasterCandidateIndex;
-            FalloutPlayerStateResolution player = resolveFalloutPlayerIdentity(get<ESM4::Npc>(),
-                get<ESM4::ActorCharacter>(), ESM::FormId{ 7, master }, ESM::FormId{ 0x14, master });
-            if (!player)
-                throw std::runtime_error(player.mError);
-
-            FalloutNativePlayerRecordsResolution native = resolveFalloutNativePlayerRecords(get<ESM4::Npc>(),
-                get<ESM4::ActorCharacter>(), get<ESM4::Class>(), get<ESM4::Race>(), *player.mState);
-            if (!native)
-                throw std::runtime_error(native.mError);
-
-            validatedFalloutPlayerState = std::move(*player.mState);
+            falloutPlayerCarriers.emplace(
+                makeFalloutPlayerCompatibilityCarriers(player->mState, player->mNativeRecords));
+            validatedFalloutPlayerState = std::move(player->mState);
         }
 
         auto& npcs = getWritable<ESM::NPC>();
@@ -725,6 +799,18 @@ namespace MWWorld
         {
             enchantments.eraseStatic(enchantment.mId);
             enchantments.insertStatic(enchantment);
+        }
+
+        if (falloutPlayerCarriers)
+        {
+            getWritable<ESM::Class>().insertStatic(falloutPlayerCarriers->mClass);
+            getWritable<ESM::Race>().insertStatic(falloutPlayerCarriers->mRace);
+            npcs.insertStatic(falloutPlayerCarriers->mPlayer);
+
+            // setUp() captured the static ID snapshot before validation. Include the newly materialized Player so
+            // movePlayerRecord() and clearDynamic() use the normal ESM3 path without a special-case lookup.
+            rebuildIdsIndex();
+            mStoreImp->mStaticIds = mStoreImp->mIds;
         }
 
         mStoreImp->mFalloutPlayerState = std::move(validatedFalloutPlayerState);

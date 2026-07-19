@@ -26,6 +26,7 @@
 #include <components/esm3/typetraits.hpp>
 #include <components/esm4/common.hpp>
 #include <components/esm4/loadachr.hpp>
+#include <components/esm4/loadcell.hpp>
 #include <components/esm4/loadclas.hpp>
 #include <components/esm4/loadclmt.hpp>
 #include <components/esm4/loadgmst.hpp>
@@ -131,6 +132,9 @@ namespace
         result.mRace = fnvForm(0x19, contentFile);
         result.mClass = fnvForm(0x57e6a, contentFile);
         result.mHasFNVBaseConfig = true;
+        result.mBaseConfig.fo3.flags = ESM4::Npc::FO3_Female;
+        result.mBaseConfig.fo3.fatigue = 201;
+        result.mBaseConfig.fo3.levelOrMult = 7;
         result.mBaseConfig.fo3.templateFlags = 0;
         result.mHasFNVAIData = true;
         result.mHasFNVData = true;
@@ -145,7 +149,16 @@ namespace
     {
         ESM4::ActorCharacter result{};
         result.mId = fnvForm(0x14, contentFile);
+        result.mParent = ESM::RefId::formIdRefId(fnvForm(0x100, contentFile));
         result.mBaseObj = fnvForm(7, contentFile);
+        return result;
+    }
+
+    ESM4::Cell makeNativePlayerCell(std::int32_t contentFile = sFalloutMasterIndex)
+    {
+        ESM4::Cell result{};
+        result.mId = ESM::RefId::formIdRefId(fnvForm(0x100, contentFile));
+        result.mCellFlags = ESM4::CELL_Interior;
         return result;
     }
 
@@ -154,8 +167,11 @@ namespace
         ESM4::Class result{};
         result.mId = fnvForm(0x57e6a, contentFile);
         result.mEditorId = "PlayerClass";
+        result.mFullName = "Vault Dweller";
+        result.mDesc = "Native player class";
         result.mHasFalloutData = true;
         result.mHasFalloutAttributes = true;
+        result.mData.mRawFlags = 1;
         return result;
     }
 
@@ -164,7 +180,14 @@ namespace
         ESM4::Race result{};
         result.mId = fnvForm(0x19, contentFile);
         result.mEditorId = "Caucasian";
+        result.mFullName = "Caucasian";
+        result.mDesc = "Native player race";
         result.mHasFalloutData = true;
+        result.mHeightMale = 1.01f;
+        result.mHeightFemale = 0.97f;
+        result.mWeightMale = 1.11f;
+        result.mWeightFemale = 0.89f;
+        result.mRaceFlags = 1;
         return result;
     }
 
@@ -183,7 +206,10 @@ namespace
         if (omitted != NativePlayerRecord::Npc)
             store.insertStatic(makeNativePlayer());
         if (omitted != NativePlayerRecord::Reference)
+        {
+            store.insertStatic(makeNativePlayerCell());
             store.insertStatic(makeNativePlayerReference());
+        }
         if (omitted != NativePlayerRecord::Class)
             store.insertStatic(makeNativePlayerClass());
         if (omitted != NativePlayerRecord::Race)
@@ -193,6 +219,7 @@ namespace
         {
             constexpr std::int32_t decoyNamespace = sFalloutMasterIndex + 1;
             store.insertStatic(makeNativePlayer(decoyNamespace));
+            store.insertStatic(makeNativePlayerCell(decoyNamespace));
             store.insertStatic(makeNativePlayerReference(decoyNamespace));
             store.insertStatic(makeNativePlayerClass(decoyNamespace));
             store.insertStatic(makeNativePlayerRace(decoyNamespace));
@@ -206,7 +233,7 @@ namespace
     }
 }
 
-TEST(FNVNativePlayerStore, publishesExactStateAndReResolvesExactTypedPointersWithoutLegacyCarriers)
+TEST(FNVNativePlayerStore, publishesExactStateAndOnlyRequiredLegacyPlayerCarriers)
 {
     MWWorld::ESMStore store;
     observeNativeMaster(store, "Data/FaLlOuTnV.EsM");
@@ -229,10 +256,111 @@ TEST(FNVNativePlayerStore, publishesExactStateAndReResolvesExactTypedPointersWit
     EXPECT_EQ(records.mRecords->mClass, store.get<ESM4::Class>().search(fnvForm(0x57e6a)));
     EXPECT_EQ(records.mRecords->mRace, store.get<ESM4::Race>().search(fnvForm(0x19)));
 
-    EXPECT_EQ(store.get<ESM::Class>().getSize(), 0u);
-    EXPECT_EQ(store.get<ESM::Race>().getSize(), 0u);
-    EXPECT_EQ(store.get<ESM::NPC>().getSize(), 0u);
-    EXPECT_EQ(store.get<ESM::NPC>().search(ESM::RefId::stringRefId("Player")), nullptr);
+    const ESM::RefId classId = ESM::RefId::formIdRefId(fnvForm(0x57e6a));
+    const ESM::RefId raceId = ESM::RefId::formIdRefId(fnvForm(0x19));
+    const ESM::RefId playerId = ESM::RefId::stringRefId("Player");
+
+    ASSERT_EQ(store.get<ESM::Class>().getSize(), 1u);
+    ASSERT_EQ(store.get<ESM::Race>().getSize(), 1u);
+    ASSERT_EQ(store.get<ESM::NPC>().getSize(), 1u);
+
+    const ESM::Class* playerClass = store.get<ESM::Class>().search(classId);
+    ASSERT_NE(playerClass, nullptr);
+    EXPECT_EQ(playerClass->mName, "Vault Dweller");
+    EXPECT_EQ(playerClass->mDescription, "Native player class");
+    EXPECT_EQ(playerClass->mData.mIsPlayable, 0);
+
+    const ESM::Race* playerRace = store.get<ESM::Race>().search(raceId);
+    ASSERT_NE(playerRace, nullptr);
+    EXPECT_EQ(playerRace->mName, "Caucasian");
+    EXPECT_EQ(playerRace->mDescription, "Native player race");
+    EXPECT_FLOAT_EQ(playerRace->mData.mMaleHeight, 1.01f);
+    EXPECT_FLOAT_EQ(playerRace->mData.mFemaleHeight, 0.97f);
+    EXPECT_FLOAT_EQ(playerRace->mData.mMaleWeight, 1.11f);
+    EXPECT_FLOAT_EQ(playerRace->mData.mFemaleWeight, 0.89f);
+    EXPECT_EQ(playerRace->mData.mFlags, 0);
+
+    const ESM::NPC* player = store.get<ESM::NPC>().search(playerId);
+    ASSERT_NE(player, nullptr);
+    EXPECT_EQ(player->mRace, raceId);
+    EXPECT_EQ(player->mClass, classId);
+    EXPECT_EQ(player->mName, "The Courier");
+    EXPECT_EQ(player->mModel, "Characters\\_Male\\Skeleton.NIF");
+    EXPECT_EQ(player->mNpdt.mLevel, 7);
+    EXPECT_EQ(player->mNpdt.mHealth, 345);
+    EXPECT_EQ(player->mNpdt.mFatigue, 201);
+    EXPECT_NE(player->mFlags & ESM::NPC::Female, 0);
+
+    EXPECT_EQ(store.findStatic(playerId), ESM::REC_NPC_);
+    ASSERT_NO_THROW(store.movePlayerRecord());
+    EXPECT_EQ(store.get<ESM::NPC>().getDynamicSize(), 1);
+    ASSERT_NO_THROW(store.clearDynamic());
+    EXPECT_EQ(store.get<ESM::NPC>().getDynamicSize(), 1);
+}
+
+TEST(FNVNativePlayerStore, officialSetUpUsesNeutralAttributesWithoutMorrowindFallbackSettings)
+{
+    MWWorld::ESMStore store;
+    observeNativeMaster(store);
+    insertNativePlayerRecords(store);
+
+    ASSERT_NO_THROW(store.setUp());
+    EXPECT_EQ(store.get<ESM::GameSetting>().getSize(), 0u);
+    EXPECT_EQ(store.get<ESM::GameSetting>().search("sAttributeStrength"), nullptr);
+    EXPECT_EQ(store.get<ESM::GameSetting>().search("fWerewolfStrength"), nullptr);
+
+    const ESM::Attribute::AttributeID attributeIds[] = { ESM::Attribute::Strength, ESM::Attribute::Intelligence,
+        ESM::Attribute::Willpower, ESM::Attribute::Agility, ESM::Attribute::Speed, ESM::Attribute::Endurance,
+        ESM::Attribute::Personality, ESM::Attribute::Luck };
+    ASSERT_EQ(store.get<ESM::Attribute>().getSize(), std::size(attributeIds));
+    for (const ESM::Attribute::AttributeID& id : attributeIds)
+    {
+        const ESM::Attribute* attribute = store.get<ESM::Attribute>().search(ESM::RefId(id));
+        ASSERT_NE(attribute, nullptr);
+        EXPECT_EQ(attribute->mId, id);
+        EXPECT_TRUE(attribute->mName.empty());
+        EXPECT_TRUE(attribute->mDescription.empty());
+        EXPECT_TRUE(attribute->mIcon.empty());
+        EXPECT_FLOAT_EQ(attribute->mWerewolfValue, 0.f);
+    }
+
+    ASSERT_NO_THROW(validateStore(store));
+    ASSERT_NE(store.getFalloutPlayerState(), nullptr);
+    ASSERT_NO_THROW(store.movePlayerRecord());
+}
+
+TEST(FNVNativePlayerStore, leavesNonFalloutLegacyPlayerRecordsUntouched)
+{
+    MWWorld::ESMStore store;
+
+    ESM::Class playerClass;
+    playerClass.mId = ESM::RefId::stringRefId("legacy_class");
+    playerClass.blank();
+    playerClass.mName = "Legacy Class";
+    store.insertStatic(playerClass);
+
+    ESM::Race playerRace;
+    playerRace.mId = ESM::RefId::stringRefId("legacy_race");
+    playerRace.blank();
+    playerRace.mName = "Legacy Race";
+    store.insertStatic(playerRace);
+
+    ESM::NPC player;
+    player.mId = ESM::RefId::stringRefId("Player");
+    player.blank();
+    player.mName = "Legacy Player";
+    player.mClass = playerClass.mId;
+    player.mRace = playerRace.mId;
+    store.insertStatic(player);
+
+    ASSERT_NO_THROW(validateStore(store));
+    EXPECT_EQ(store.getFalloutPlayerState(), nullptr);
+    ASSERT_EQ(store.get<ESM::Class>().getSize(), 1u);
+    ASSERT_EQ(store.get<ESM::Race>().getSize(), 1u);
+    ASSERT_EQ(store.get<ESM::NPC>().getSize(), 1u);
+    EXPECT_EQ(store.get<ESM::Class>().find(playerClass.mId)->mName, "Legacy Class");
+    EXPECT_EQ(store.get<ESM::Race>().find(playerRace.mId)->mName, "Legacy Race");
+    EXPECT_EQ(store.get<ESM::NPC>().find(player.mId)->mName, "Legacy Player");
 }
 
 TEST(FNVNativePlayerStore, ignoresNamespaceDecoysAndRejectsEachMissingExactTypedRecordWithoutPartialState)

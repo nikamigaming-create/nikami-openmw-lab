@@ -1019,6 +1019,15 @@ namespace MWWorld
     // Attribute
     //=========================================================================
 
+    void Store<ESM::Attribute>::setUpNeutral()
+    {
+        const ESM::Attribute::AttributeID attributes[] = { ESM::Attribute::Strength, ESM::Attribute::Intelligence,
+            ESM::Attribute::Willpower, ESM::Attribute::Agility, ESM::Attribute::Speed, ESM::Attribute::Endurance,
+            ESM::Attribute::Personality, ESM::Attribute::Luck };
+        for (const ESM::Attribute::AttributeID& id : attributes)
+            insertStatic({ .mId = id });
+    }
+
     void Store<ESM::Attribute>::setUp(const MWWorld::Store<ESM::GameSetting>& settings)
     {
         insertStatic({ .mId = ESM::Attribute::Strength,
