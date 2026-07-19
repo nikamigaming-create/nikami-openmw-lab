@@ -1,6 +1,8 @@
 #include "fonvsavegame.hpp"
 
 #include <algorithm>
+#include <bit>
+#include <cmath>
 #include <fstream>
 #include <limits>
 #include <sstream>
@@ -66,6 +68,8 @@ namespace
             return static_cast<std::uint32_t>(bytes[0]) | (static_cast<std::uint32_t>(bytes[1]) << 8)
                 | (static_cast<std::uint32_t>(bytes[2]) << 16) | (static_cast<std::uint32_t>(bytes[3]) << 24);
         }
+
+        float readF32(std::string_view description) { return std::bit_cast<float>(readU32(description)); }
 
         std::uint32_t peekU32(std::string_view description)
         {
@@ -337,41 +341,99 @@ namespace
         return result;
     }
 
+    std::optional<std::uint32_t> resolveReferenceId(ESM4::FONVSaveReferenceKind kind, std::uint32_t payload,
+        const ESM4::FONVSaveFormIdTable& formIds, std::uint64_t sourceOffset, bool allowNull,
+        std::string_view description)
+    {
+        switch (kind)
+        {
+            case ESM4::FONVSaveReferenceKind::FormIdArray:
+                if (payload == 0)
+                {
+                    if (allowNull)
+                        return std::nullopt;
+                    throw ESM4::FONVSaveError(sourceOffset, std::string(description) + " is a null RefID");
+                }
+                if (payload > formIds.mFormIds.size())
+                    throw ESM4::FONVSaveError(
+                        sourceOffset, std::string(description) + " index lies beyond the FormID array");
+                if (formIds.mFormIds[payload - 1].mValue == 0)
+                    throw ESM4::FONVSaveError(
+                        sourceOffset, std::string(description) + " resolves to an empty FormID-array slot");
+                return formIds.mFormIds[payload - 1].mValue;
+            case ESM4::FONVSaveReferenceKind::DefaultForm:
+                if (payload == 0)
+                    throw ESM4::FONVSaveError(
+                        sourceOffset, std::string(description) + " default RefID resolves to zero");
+                return payload;
+            case ESM4::FONVSaveReferenceKind::CreatedForm:
+                return 0xff000000u | payload;
+        }
+        throw ESM4::FONVSaveError(sourceOffset, std::string(description) + " has an invalid namespace");
+    }
+
     void resolveChangedFormReferences(
         ESM4::FONVSaveChangedForms& changedForms, const ESM4::FONVSaveFormIdTable& formIds)
     {
         for (ESM4::FONVSaveChangedFormEnvelope& entry : changedForms.mEntries)
         {
-            switch (entry.mReferenceKind)
-            {
-                case ESM4::FONVSaveReferenceKind::FormIdArray:
-                {
-                    if (entry.mReferencePayload == 0)
-                    {
-                        entry.mResolvedFormId.reset();
-                        break;
-                    }
-                    if (entry.mReferencePayload > formIds.mFormIds.size())
-                        throw ESM4::FONVSaveError(entry.mEncodedReferenceId.mRange.mOffset,
-                            "changed-form RefID index lies beyond the FormID array");
-                    const std::uint32_t formId = formIds.mFormIds[entry.mReferencePayload - 1].mValue;
-                    if (formId == 0)
-                        throw ESM4::FONVSaveError(entry.mEncodedReferenceId.mRange.mOffset,
-                            "changed-form RefID resolves to an empty FormID-array slot");
-                    entry.mResolvedFormId = formId;
-                    break;
-                }
-                case ESM4::FONVSaveReferenceKind::DefaultForm:
-                    if (entry.mReferencePayload == 0)
-                        throw ESM4::FONVSaveError(
-                            entry.mEncodedReferenceId.mRange.mOffset, "changed-form default RefID resolves to zero");
-                    entry.mResolvedFormId = entry.mReferencePayload;
-                    break;
-                case ESM4::FONVSaveReferenceKind::CreatedForm:
-                    entry.mResolvedFormId = 0xff000000u | entry.mReferencePayload;
-                    break;
-            }
+            entry.mResolvedFormId = resolveReferenceId(entry.mReferenceKind, entry.mReferencePayload, formIds,
+                entry.mEncodedReferenceId.mRange.mOffset, true, "changed-form RefID");
         }
+    }
+
+    ESM4::FONVSaveResolvedReferenceId decodeResolvedReferenceId(Cursor& cursor,
+        std::span<const std::uint8_t> data, const ESM4::FONVSaveFormIdTable& formIds, std::string_view description)
+    {
+        ESM4::FONVSaveResolvedReferenceId result;
+        result.mEncoded = readReferenceId(cursor, data, description);
+        const std::uint32_t kind = result.mEncoded.mValue >> 22;
+        if (kind == 3)
+            throw ESM4::FONVSaveError(
+                result.mEncoded.mRange.mOffset, std::string(description) + " has an invalid namespace");
+        result.mKind = static_cast<ESM4::FONVSaveReferenceKind>(kind);
+        result.mPayload = result.mEncoded.mValue & 0x003fffffu;
+        result.mResolvedFormId = resolveReferenceId(
+            result.mKind, result.mPayload, formIds, result.mEncoded.mRange.mOffset, false, description);
+        return result;
+    }
+
+    ESM4::FONVSavePlayerReferenceMovement parsePlayerReferenceMovement(std::span<const std::uint8_t> data,
+        const ESM4::FONVSaveChangedFormEnvelope& player, const ESM4::FONVSaveFormIdTable& formIds)
+    {
+        constexpr std::size_t movementBytes = 3 + 6 * sizeof(float) + 1;
+        if (player.mUnparsedPayload.mRange.mSize < movementBytes)
+            throw ESM4::FONVSaveError(
+                player.mUnparsedPayload.mRange.mOffset, "truncated canonical player reference-movement block");
+
+        const std::size_t begin = static_cast<std::size_t>(player.mUnparsedPayload.mRange.mOffset);
+        const std::size_t end = static_cast<std::size_t>(player.mUnparsedPayload.mRange.end());
+        Cursor cursor(data, begin, end);
+        ESM4::FONVSavePlayerReferenceMovement result;
+        result.mCellOrWorldspace
+            = decodeResolvedReferenceId(cursor, data, formIds, "player movement CELL/WRLD RefID");
+        for (ESM4::FONVSaveField<float>& coordinate : result.mPosition)
+        {
+            coordinate = readField<float>(cursor, data,
+                [&](std::string_view label) { return cursor.readF32(label); }, "player movement position");
+            if (!std::isfinite(coordinate.mValue))
+                throw ESM4::FONVSaveError(coordinate.mRange.mOffset, "non-finite player movement position");
+        }
+        for (ESM4::FONVSaveField<float>& angle : result.mRotationRadians)
+        {
+            angle = readField<float>(cursor, data,
+                [&](std::string_view label) { return cursor.readF32(label); }, "player movement rotation");
+            if (!std::isfinite(angle.mValue))
+                throw ESM4::FONVSaveError(angle.mRange.mOffset, "non-finite player movement rotation");
+        }
+        result.mTerminator = readField<std::uint8_t>(
+            cursor, data, [&](std::string_view label) { return cursor.readU8(label); }, "player movement terminator");
+        if (result.mTerminator.mValue != sDelimiter)
+            throw ESM4::FONVSaveError(result.mTerminator.mRange.mOffset, "bad player movement terminator");
+        result.mRange = range(begin, cursor.position());
+        result.mUnparsedRemainder = readRawField(
+            cursor, data, cursor.end() - cursor.position(), "remaining canonical player ACHR payload");
+        return result;
     }
 
     void appendUnparsedSemanticPayload(ESM4::FONVSaveGamePrefix& save, const ESM4::FONVSaveRange& payload)
@@ -423,7 +485,8 @@ namespace ESM4
         }
         if (result == nullptr)
             throw FONVSaveError(mChangedForms.mRange.mOffset,
-                "canonical player ACHR reference FormID 0x00000014 is absent; NPC_ FormID 0x00000007 cannot be located");
+                "canonical player ACHR reference FormID 0x00000014 is absent; NPC_ FormID 0x00000007 cannot be "
+                "located");
         return *result;
     }
 
@@ -625,6 +688,29 @@ namespace ESM4
                 formIdAndWorldspaceTables.position(), "FormID and visited-worldspace tables contain unaccounted bytes");
         resolveChangedFormReferences(result.mChangedForms, result.mFormIdTable);
 
+        const FONVSaveChangedFormEnvelope* playerReference = nullptr;
+        for (const FONVSaveChangedFormEnvelope& entry : result.mChangedForms.mEntries)
+        {
+            if (entry.mResolvedFormId != sFONVPlayerReferenceFormId
+                || entry.mChangeType != sFONVActorReferenceChangeType)
+                continue;
+            if (playerReference != nullptr)
+                throw FONVSaveError(entry.mEncodedReferenceId.mRange.mOffset,
+                    "multiple canonical player ACHR change forms are present");
+            playerReference = &entry;
+        }
+        if (playerReference != nullptr)
+        {
+            constexpr std::uint32_t movedOrHavokMoved = 0x00000006;
+            constexpr std::uint32_t changedCell = 0x00000008;
+            if ((playerReference->mChangeFlags.mValue & changedCell) == 0
+                && (playerReference->mChangeFlags.mValue & movedOrHavokMoved) != 0)
+            {
+                result.mPlayerReferenceMovement
+                    = parsePlayerReferenceMovement(data, *playerReference, result.mFormIdTable);
+            }
+        }
+
         Cursor unknownTable(data, unknownTableOffset, data.size());
         const std::size_t unknownTableBegin = unknownTable.position();
         result.mUnknownTable.mCount = readField<std::uint32_t>(unknownTable, data,
@@ -642,7 +728,12 @@ namespace ESM4
         for (const FONVSaveGlobalDataEntry& entry : result.mGlobalDataTable1.mEntries)
             appendUnparsedSemanticPayload(result, entry.mUnparsedPayload.mRange);
         for (const FONVSaveChangedFormEnvelope& entry : result.mChangedForms.mEntries)
-            appendUnparsedSemanticPayload(result, entry.mUnparsedPayload.mRange);
+        {
+            if (result.mPlayerReferenceMovement.has_value() && &entry == playerReference)
+                appendUnparsedSemanticPayload(result, result.mPlayerReferenceMovement->mUnparsedRemainder.mRange);
+            else
+                appendUnparsedSemanticPayload(result, entry.mUnparsedPayload.mRange);
+        }
         for (const FONVSaveGlobalDataEntry& entry : result.mGlobalDataTable2.mEntries)
             appendUnparsedSemanticPayload(result, entry.mUnparsedPayload.mRange);
         appendUnparsedSemanticPayload(result, result.mUnknownTable.mUnparsedEntries.mRange);

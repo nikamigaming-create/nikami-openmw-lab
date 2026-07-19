@@ -4,6 +4,7 @@
 
 #include <array>
 #include <bit>
+#include <cmath>
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
@@ -143,6 +144,11 @@ namespace
         bytes.push_back(static_cast<std::uint8_t>(value >> 24));
     }
 
+    void appendF32(std::vector<std::uint8_t>& bytes, float value)
+    {
+        appendU32(bytes, std::bit_cast<std::uint32_t>(value));
+    }
+
     void overwriteU32(std::vector<std::uint8_t>& bytes, std::size_t offset, std::uint32_t value)
     {
         bytes[offset] = static_cast<std::uint8_t>(value);
@@ -178,8 +184,10 @@ namespace
     struct ChangedFormOffsets
     {
         std::size_t mReferenceId = 0;
+        std::size_t mChangeFlags = 0;
         std::size_t mRawType = 0;
         std::size_t mDataLength = 0;
+        std::size_t mPayload = 0;
     };
 
     ChangedFormOffsets appendChangedForm(std::vector<std::uint8_t>& bytes,
@@ -189,6 +197,7 @@ namespace
         ChangedFormOffsets result;
         result.mReferenceId = bytes.size();
         bytes.insert(bytes.end(), referenceId.begin(), referenceId.end());
+        result.mChangeFlags = bytes.size();
         appendU32(bytes, changeFlags);
         result.mRawType = bytes.size();
         std::uint8_t lengthCode = 0;
@@ -207,6 +216,7 @@ namespace
             appendU16(bytes, static_cast<std::uint16_t>(payload.size()));
         else
             appendU32(bytes, static_cast<std::uint32_t>(payload.size()));
+        result.mPayload = bytes.size();
         bytes.insert(bytes.end(), payload.begin(), payload.end());
         return result;
     }
@@ -237,7 +247,9 @@ namespace
         std::size_t mChangedFormsBegin = 0;
         std::array<std::size_t, 3> mChangedFormRawTypes{};
         std::array<std::size_t, 3> mChangedFormReferenceIds{};
+        std::array<std::size_t, 3> mChangedFormChangeFlags{};
         std::array<std::size_t, 3> mChangedFormLengthFields{};
+        std::array<std::size_t, 3> mChangedFormPayloads{};
         std::size_t mGlobalData2Begin = 0;
         std::size_t mRefIdArrayBegin = 0;
         std::size_t mUnknownTableBegin = 0;
@@ -308,11 +320,18 @@ namespace
         appendGlobalDataEntry(globalData1, 0, globalData1Payload);
 
         std::vector<std::uint8_t> changedForms;
-        constexpr std::array<std::uint8_t, 2> changedPayload1 = { 0x10, 0x11 };
+        std::vector<std::uint8_t> changedPayload1 = { 0, 0, 2 };
+        appendF32(changedPayload1, -72392.84375f);
+        appendF32(changedPayload1, -1240.19275f);
+        appendF32(changedPayload1, 8137.58643f);
+        appendF32(changedPayload1, -0.06439045f);
+        appendF32(changedPayload1, -0.0f);
+        appendF32(changedPayload1, 2.93332028f);
+        appendDelimiter(changedPayload1);
         constexpr std::array<std::uint8_t, 3> changedPayload2 = { 0x20, 0x21, 0x22 };
         constexpr std::array<std::uint8_t, 4> changedPayload3 = { 0x30, 0x31, 0x32, 0x33 };
         const ChangedFormOffsets changed1 = appendChangedForm(
-            changedForms, { 0, 0, 1 }, 0x12345678, 1, 27, 1, changedPayload1);
+            changedForms, { 0, 0, 1 }, 0xb0000022, 1, 27, 1, changedPayload1);
         const ChangedFormOffsets changed2 = appendChangedForm(
             changedForms, { 0x40, 0x12, 0x34 }, 0x90abcdef, 2, 26, 2, changedPayload2);
         const ChangedFormOffsets changed3 = appendChangedForm(
@@ -321,8 +340,9 @@ namespace
         std::vector<std::uint8_t> globalData2;
         appendGlobalDataEntry(globalData2, 1000, std::span<const std::uint8_t>{});
         std::vector<std::uint8_t> refIdAndVisitedWorldspace;
-        appendU32(refIdAndVisitedWorldspace, 1);
+        appendU32(refIdAndVisitedWorldspace, 2);
         appendU32(refIdAndVisitedWorldspace, ESM4::sFONVPlayerReferenceFormId);
+        appendU32(refIdAndVisitedWorldspace, 0x000da726);
         appendU32(refIdAndVisitedWorldspace, 1);
         appendU32(refIdAndVisitedWorldspace, 0x000da726);
         std::vector<std::uint8_t> unknownTableAndTail;
@@ -362,8 +382,13 @@ namespace
         result.mChangedFormReferenceIds = { result.mChangedFormsBegin + changed1.mReferenceId,
             result.mChangedFormsBegin + changed2.mReferenceId,
             result.mChangedFormsBegin + changed3.mReferenceId };
+        result.mChangedFormChangeFlags = { result.mChangedFormsBegin + changed1.mChangeFlags,
+            result.mChangedFormsBegin + changed2.mChangeFlags,
+            result.mChangedFormsBegin + changed3.mChangeFlags };
         result.mChangedFormLengthFields = { result.mChangedFormsBegin + changed1.mDataLength,
             result.mChangedFormsBegin + changed2.mDataLength, result.mChangedFormsBegin + changed3.mDataLength };
+        result.mChangedFormPayloads = { result.mChangedFormsBegin + changed1.mPayload,
+            result.mChangedFormsBegin + changed2.mPayload, result.mChangedFormsBegin + changed3.mPayload };
         result.mBytes.insert(result.mBytes.end(), globalData1.begin(), globalData1.end());
         result.mBytes.insert(result.mBytes.end(), changedForms.begin(), changedForms.end());
         result.mBytes.insert(result.mBytes.end(), globalData2.begin(), globalData2.end());
@@ -444,12 +469,11 @@ namespace
         EXPECT_EQ(save.mChangedForms.mEntries[0].mReferenceKind, ESM4::FONVSaveReferenceKind::FormIdArray);
         EXPECT_EQ(save.mChangedForms.mEntries[0].mReferencePayload, 1u);
         EXPECT_EQ(save.mChangedForms.mEntries[0].mResolvedFormId, ESM4::sFONVPlayerReferenceFormId);
-        EXPECT_EQ(save.mChangedForms.mEntries[0].mChangeFlags.mValue, 0x12345678u);
+        EXPECT_EQ(save.mChangedForms.mEntries[0].mChangeFlags.mValue, 0xb0000022u);
         EXPECT_EQ(save.mChangedForms.mEntries[0].mChangeType, 1u);
         EXPECT_EQ(save.mChangedForms.mEntries[0].mLengthWidth, 1u);
         EXPECT_EQ(save.mChangedForms.mEntries[0].mVersion.mValue, 27u);
-        EXPECT_EQ(save.mChangedForms.mEntries[0].mDataLength.mValue, 2u);
-        EXPECT_EQ(save.mChangedForms.mEntries[0].mUnparsedPayload.mRaw, std::vector<std::uint8_t>({ 0x10, 0x11 }));
+        EXPECT_EQ(save.mChangedForms.mEntries[0].mDataLength.mValue, 28u);
         EXPECT_EQ(save.mChangedForms.mEntries[1].mChangeType, 2u);
         EXPECT_EQ(save.mChangedForms.mEntries[1].mEncodedReferenceId.mValue, 0x401234u);
         EXPECT_EQ(save.mChangedForms.mEntries[1].mReferenceKind, ESM4::FONVSaveReferenceKind::DefaultForm);
@@ -467,23 +491,44 @@ namespace
         EXPECT_EQ(save.mGlobalDataTable2.mEntries[0].mType.mValue, 1000u);
         EXPECT_EQ(save.mGlobalDataTable2.mEntries[0].mDataLength.mValue, 0u);
         EXPECT_TRUE(save.mGlobalDataTable2.mEntries[0].mUnparsedPayload.mRaw.empty());
-        ASSERT_EQ(save.mFormIdTable.mFormIds.size(), 1u);
-        EXPECT_EQ(save.mFormIdTable.mCount.mValue, 1u);
+        ASSERT_EQ(save.mFormIdTable.mFormIds.size(), 2u);
+        EXPECT_EQ(save.mFormIdTable.mCount.mValue, 2u);
         EXPECT_EQ(save.mFormIdTable.mFormIds[0].mValue, ESM4::sFONVPlayerReferenceFormId);
-        EXPECT_EQ(save.mFormIdTable.mRange, (ESM4::FONVSaveRange{ source.mRefIdArrayBegin, 8 }));
+        EXPECT_EQ(save.mFormIdTable.mFormIds[1].mValue, 0x000da726u);
+        EXPECT_EQ(save.mFormIdTable.mRange, (ESM4::FONVSaveRange{ source.mRefIdArrayBegin, 12 }));
         ASSERT_EQ(save.mVisitedWorldspaces.mFormIds.size(), 1u);
         EXPECT_EQ(save.mVisitedWorldspaces.mCount.mValue, 1u);
         EXPECT_EQ(save.mVisitedWorldspaces.mFormIds[0].mValue, 0x000da726u);
-        EXPECT_EQ(save.mVisitedWorldspaces.mRange, (ESM4::FONVSaveRange{ source.mRefIdArrayBegin + 8, 8 }));
+        EXPECT_EQ(save.mVisitedWorldspaces.mRange, (ESM4::FONVSaveRange{ source.mRefIdArrayBegin + 12, 8 }));
         EXPECT_EQ(save.mUnknownTable.mCount.mValue, 5u);
         EXPECT_EQ(save.mUnknownTable.mUnparsedEntries.mRaw,
             std::vector<std::uint8_t>({ 0, 0, 0, 0, sDelimiter }));
         EXPECT_EQ(save.mUnknownTable.mRange, (ESM4::FONVSaveRange{ source.mUnknownTableBegin, 9 }));
         EXPECT_EQ(&save.requirePlayerReferenceChangeForm(), &save.mChangedForms.mEntries[0]);
+        ASSERT_TRUE(save.mPlayerReferenceMovement.has_value());
+        const auto& movement = *save.mPlayerReferenceMovement;
+        EXPECT_EQ(movement.mRange, (ESM4::FONVSaveRange{ source.mChangedFormPayloads[0], 28 }));
+        EXPECT_EQ(movement.mCellOrWorldspace.mEncoded.mValue, 2u);
+        EXPECT_EQ(movement.mCellOrWorldspace.mKind, ESM4::FONVSaveReferenceKind::FormIdArray);
+        EXPECT_EQ(movement.mCellOrWorldspace.mPayload, 2u);
+        EXPECT_EQ(movement.mCellOrWorldspace.mResolvedFormId, 0x000da726u);
+        EXPECT_FLOAT_EQ(movement.mPosition[0].mValue, -72392.84375f);
+        EXPECT_FLOAT_EQ(movement.mPosition[1].mValue, -1240.19275f);
+        EXPECT_FLOAT_EQ(movement.mPosition[2].mValue, 8137.58643f);
+        EXPECT_FLOAT_EQ(movement.mRotationRadians[0].mValue, -0.06439045f);
+        EXPECT_FLOAT_EQ(movement.mRotationRadians[1].mValue, 0.f);
+        EXPECT_TRUE(std::signbit(movement.mRotationRadians[1].mValue));
+        EXPECT_EQ(movement.mRotationRadians[1].mRaw, std::vector<std::uint8_t>({ 0, 0, 0, 0x80 }));
+        EXPECT_FLOAT_EQ(movement.mRotationRadians[2].mValue, 2.93332028f);
+        EXPECT_EQ(movement.mTerminator.mValue, sDelimiter);
+        EXPECT_EQ(movement.mTerminator.mRange,
+            (ESM4::FONVSaveRange{ source.mChangedFormPayloads[0] + 27, 1 }));
+        EXPECT_EQ(movement.mUnparsedRemainder.mRange,
+            (ESM4::FONVSaveRange{ source.mChangedFormPayloads[0] + 28, 0 }));
         EXPECT_EQ(save.findChangedForm(0x00001234u), &save.mChangedForms.mEntries[1]);
         EXPECT_EQ(save.findChangedForm(0x00001234u, 3), nullptr);
-        EXPECT_EQ(save.mUnparsedSemanticPayloadRanges.size(), 5u);
-        EXPECT_EQ(save.mUnparsedSemanticPayloadBytes, 17u);
+        EXPECT_EQ(save.mUnparsedSemanticPayloadRanges.size(), 4u);
+        EXPECT_EQ(save.mUnparsedSemanticPayloadBytes, 15u);
         EXPECT_EQ(save.mStructurallyAccountedRange, (ESM4::FONVSaveRange{ 0, source.mBytes.size() }));
         EXPECT_EQ(save.mParsedPrefixRange, save.mStructurallyAccountedRange);
         EXPECT_EQ(save.mUnparsedBodyRange, (ESM4::FONVSaveRange{ source.mBytes.size(), 0 }));
@@ -633,7 +678,7 @@ namespace
         EXPECT_THROW(ESM4::parseFONVSaveGamePrefix(source.mBytes), ESM4::FONVSaveError);
 
         source = makeSave(true, 2, 1, masters);
-        source.mBytes[source.mChangedFormReferenceIds[0] + 2] = 2;
+        source.mBytes[source.mChangedFormReferenceIds[0] + 2] = 3;
         EXPECT_THROW(ESM4::parseFONVSaveGamePrefix(source.mBytes), ESM4::FONVSaveError);
 
         source = makeSave(true, 2, 1, masters);
@@ -654,8 +699,30 @@ namespace
         source.mBytes[source.mChangedFormReferenceIds[1] + 1] = 0;
         source.mBytes[source.mChangedFormReferenceIds[1] + 2] = 1;
         source.mBytes[source.mChangedFormRawTypes[1]] = 0x41;
-        const ESM4::FONVSaveGamePrefix duplicate = ESM4::parseFONVSaveGamePrefix(source.mBytes);
-        EXPECT_THROW(duplicate.requirePlayerReferenceChangeForm(), ESM4::FONVSaveError);
+        EXPECT_THROW(ESM4::parseFONVSaveGamePrefix(source.mBytes), ESM4::FONVSaveError);
+    }
+
+    TEST(FONVSaveGame, RejectsCorruptCanonicalPlayerMovementWithoutInterpretingItsRemainder)
+    {
+        constexpr std::array masters = { std::string_view("FalloutNV.esm") };
+        SaveBytes source = makeSave(true, 2, 1, masters);
+        source.mBytes[source.mChangedFormPayloads[0] + 27] = 0;
+        EXPECT_THROW(ESM4::parseFONVSaveGamePrefix(source.mBytes), ESM4::FONVSaveError);
+
+        source = makeSave(true, 2, 1, masters);
+        overwriteU32(source.mBytes, source.mChangedFormPayloads[0] + 3, 0x7f800000u);
+        EXPECT_THROW(ESM4::parseFONVSaveGamePrefix(source.mBytes), ESM4::FONVSaveError);
+
+        source = makeSave(true, 2, 1, masters);
+        source.mBytes[source.mChangedFormPayloads[0] + 2] = 3;
+        EXPECT_THROW(ESM4::parseFONVSaveGamePrefix(source.mBytes), ESM4::FONVSaveError);
+
+        source = makeSave(true, 2, 1, masters);
+        overwriteU32(source.mBytes, source.mChangedFormChangeFlags[0], 0xb0000028u);
+        const ESM4::FONVSaveGamePrefix changedCell = ESM4::parseFONVSaveGamePrefix(source.mBytes);
+        EXPECT_FALSE(changedCell.mPlayerReferenceMovement.has_value());
+        EXPECT_EQ(changedCell.mUnparsedSemanticPayloadRanges.size(), 5u);
+        EXPECT_EQ(changedCell.mUnparsedSemanticPayloadBytes, 43u);
     }
 
     TEST(FONVSaveGame, RejectsUnaccountedCountedTailBytes)
@@ -666,7 +733,7 @@ namespace
         EXPECT_THROW(ESM4::parseFONVSaveGamePrefix(source.mBytes), ESM4::FONVSaveError);
 
         source = makeSave(true, 2, 1, masters);
-        overwriteU32(source.mBytes, source.mRefIdArrayBegin + 8, std::numeric_limits<std::uint32_t>::max());
+        overwriteU32(source.mBytes, source.mRefIdArrayBegin + 12, std::numeric_limits<std::uint32_t>::max());
         EXPECT_THROW(ESM4::parseFONVSaveGamePrefix(source.mBytes), ESM4::FONVSaveError);
 
         source = makeSave(true, 2, 1, masters);
@@ -854,6 +921,8 @@ namespace
         EXPECT_EQ(save.mFormIdTable.mCount.mValue, 21755u);
         ASSERT_EQ(save.mFormIdTable.mFormIds.size(), 21755u);
         EXPECT_EQ(save.mFormIdTable.mFormIds[0].mValue, 0x00031e12u);
+        EXPECT_EQ(save.mFormIdTable.mFormIds[582].mValue, 0x000da726u);
+        EXPECT_EQ(save.mFormIdTable.mFormIds[582].mRange, (ESM4::FONVSaveRange{ 3310619, 4 }));
         EXPECT_EQ(save.mFormIdTable.mFormIds[622].mValue, ESM4::sFONVPlayerReferenceFormId);
         EXPECT_EQ(save.mFormIdTable.mFormIds[622].mRange, (ESM4::FONVSaveRange{ 3310779, 4 }));
         EXPECT_EQ(save.mVisitedWorldspaces.mRange, (ESM4::FONVSaveRange{ 3395311, 8 }));
@@ -875,11 +944,30 @@ namespace
         EXPECT_EQ(player.mChangeType, ESM4::sFONVActorReferenceChangeType);
         EXPECT_EQ(player.mChangeFlags.mValue, 0xb0000022u);
         EXPECT_EQ(player.mUnparsedPayload.mRange, (ESM4::FONVSaveRange{ 497489, 5095 }));
+        ASSERT_TRUE(save.mPlayerReferenceMovement.has_value());
+        const auto& movement = *save.mPlayerReferenceMovement;
+        EXPECT_EQ(movement.mRange, (ESM4::FONVSaveRange{ 497489, 28 }));
+        EXPECT_EQ(movement.mCellOrWorldspace.mEncoded.mValue, 0x000247u);
+        EXPECT_EQ(movement.mCellOrWorldspace.mKind, ESM4::FONVSaveReferenceKind::FormIdArray);
+        EXPECT_EQ(movement.mCellOrWorldspace.mPayload, 583u);
+        EXPECT_EQ(movement.mCellOrWorldspace.mResolvedFormId, 0x000da726u);
+        EXPECT_EQ(movement.mCellOrWorldspace.mEncoded.mRange, (ESM4::FONVSaveRange{ 497489, 3 }));
+        EXPECT_FLOAT_EQ(movement.mPosition[0].mValue, -72392.84375f);
+        EXPECT_FLOAT_EQ(movement.mPosition[1].mValue, -1240.19275f);
+        EXPECT_FLOAT_EQ(movement.mPosition[2].mValue, 8137.58643f);
+        EXPECT_EQ(movement.mPosition[0].mRange, (ESM4::FONVSaveRange{ 497492, 4 }));
+        EXPECT_FLOAT_EQ(movement.mRotationRadians[0].mValue, -0.06439045f);
+        EXPECT_FLOAT_EQ(movement.mRotationRadians[1].mValue, 0.f);
+        EXPECT_FLOAT_EQ(movement.mRotationRadians[2].mValue, 2.93332028f);
+        EXPECT_EQ(movement.mRotationRadians[0].mRange, (ESM4::FONVSaveRange{ 497504, 4 }));
+        EXPECT_EQ(movement.mTerminator.mValue, sDelimiter);
+        EXPECT_EQ(movement.mTerminator.mRange, (ESM4::FONVSaveRange{ 497516, 1 }));
+        EXPECT_EQ(movement.mUnparsedRemainder.mRange, (ESM4::FONVSaveRange{ 497517, 5067 }));
         EXPECT_EQ(save.findChangedForm(ESM4::sFONVPlayerNpcFormId), nullptr)
             << "NPC_ FormID 0x7 is a FalloutNV.esm base-record relation, not serialized as a Save330 change form";
 
         EXPECT_EQ(save.mUnparsedSemanticPayloadRanges.size(), 7091u);
-        EXPECT_EQ(save.mUnparsedSemanticPayloadBytes, 2739046u);
+        EXPECT_EQ(save.mUnparsedSemanticPayloadBytes, 2739018u);
         EXPECT_EQ(save.mStructurallyAccountedRange, (ESM4::FONVSaveRange{ 0, 3395328 }));
         EXPECT_EQ(save.mParsedPrefixRange, save.mStructurallyAccountedRange);
         EXPECT_EQ(save.mUnparsedBodyRange, (ESM4::FONVSaveRange{ 3395328, 0 }));
