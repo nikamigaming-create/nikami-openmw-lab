@@ -241,6 +241,8 @@ namespace MWBase
         virtual void showCrosshair(bool show) = 0;
         virtual bool setHudVisibility(bool show) = 0;
         virtual bool isHudVisible() const = 0;
+        /// Suppress only the legacy ESM3 HUD surface without changing menus, tooltips, or message boxes.
+        virtual void setLegacyHudSuppressed(bool suppress) = 0;
 //## VR_PATCH BEGIN
         virtual MWGui::DragAndDrop& getDragAndDrop(void) = 0;
         virtual bool isPlayingVideo(void) const = 0;

@@ -267,6 +267,7 @@ namespace MWGui
         /// Turn visibility of HUD on or off
         bool setHudVisibility(bool show) override;
         bool isHudVisible() const override { return mHudEnabled; }
+        void setLegacyHudSuppressed(bool suppress) override;
 
         void disallowMouse() override;
         void allowMouse() override;
@@ -503,6 +504,7 @@ namespace MWGui
         MyGUI::Widget* mInputBlocker;
 
         bool mHudEnabled;
+        bool mLegacyHudSuppressed;
         bool mCursorVisible;
         bool mCursorActive;
 

@@ -236,6 +236,7 @@ namespace MWGui
         , mTranslationDataStorage(translationDataStorage)
         , mInputBlocker(nullptr)
         , mHudEnabled(true)
+        , mLegacyHudSuppressed(false)
         , mCursorVisible(true)
         , mCursorActive(true)
         , mPlayerBounty(-1)
@@ -758,7 +759,7 @@ namespace MWGui
         if (!mMap)
             return; // UI not created yet
 
-        mHud->setVisible(mHudEnabled && !loading);
+        mHud->setVisible(mHudEnabled && !loading && !mLegacyHudSuppressed);
         mToolTips->setVisible(mHudEnabled && !loading);
 
         bool gameMode = !isGuiMode();
@@ -2142,6 +2143,20 @@ namespace MWGui
         return mHudEnabled;
     }
 
+    void WindowManager::setLegacyHudSuppressed(bool suppress)
+    {
+        if (mLegacyHudSuppressed == suppress)
+            return;
+
+        mLegacyHudSuppressed = suppress;
+        if (suppress)
+        {
+            Log(Debug::Warning) << "Suppressing legacy ESM3 HUD for a validated native FNV save; native FNV HUD "
+                                   "remains uncovered";
+        }
+        updateVisible();
+    }
+
     bool WindowManager::getRestEnabled()
     {
         // Enable rest dialogue if character creation finished
@@ -2319,6 +2334,8 @@ namespace MWGui
     void WindowManager::clear()
     {
         mPlayerBounty = -1;
+        // Session-local compatibility policy. Normal ESM3 loads must never inherit FNV HUD suppression.
+        mLegacyHudSuppressed = false;
 
         for (const auto& window : mWindows)
         {
