@@ -3,6 +3,7 @@
 #include <components/esm4/loadnpc.hpp>
 #include <components/esm4/loadpack.hpp>
 #include <components/esm4/loadqust.hpp>
+#include <components/esm4/loadrefr.hpp>
 #include <components/esm4/reader.hpp>
 
 #include <gtest/gtest.h>
@@ -367,6 +368,61 @@ namespace
         EXPECT_EQ(loaded.runOn, 2u);
         EXPECT_EQ(ESM::FormId::fromUint32(loaded.reference),
             (ESM::FormId{ .mIndex = 0x300, .mContentFile = static_cast<std::int32_t>(modIndex) }));
+    }
+
+    TEST(Esm4BehaviorRecordTest, shouldPreserveExactFalloutPatrolReferenceContract)
+    {
+        std::string payload;
+        appendSubRecord(payload, "NAME", std::uint32_t{ 0x34 });
+        appendSubRecord(payload, "XLKR", std::uint32_t{ 0x16adc7 });
+        appendSubRecord(payload, "XPRD", 3.f);
+        appendSubRecord(payload, "XPPA", std::string_view{});
+        ESM::Position position{};
+        position.pos[0] = -62254.207f;
+        position.pos[1] = 12785.296f;
+        position.pos[2] = 10264.f;
+        position.rot[2] = 0.8f;
+        appendSubRecord(payload, "DATA", position);
+
+        constexpr std::uint32_t modIndex = 7;
+        auto reader = makeReader("REFR", 0x16adce, payload, modIndex);
+        ESM4::Reference reference;
+        reference.load(*reader);
+
+        EXPECT_EQ(reference.mLinkedReference,
+            (ESM::FormId{ .mIndex = 0x16adc7, .mContentFile = static_cast<std::int32_t>(modIndex) }));
+        EXPECT_TRUE(reference.mHasPatrolIdleTime);
+        EXPECT_FLOAT_EQ(reference.mPatrolIdleTime, 3.f);
+        EXPECT_TRUE(reference.mIsPatrolIdleScriptMarker);
+        EXPECT_FLOAT_EQ(reference.mPos.pos[0], position.pos[0]);
+        EXPECT_FLOAT_EQ(reference.mPos.pos[1], position.pos[1]);
+        EXPECT_FLOAT_EQ(reference.mPos.pos[2], position.pos[2]);
+        EXPECT_FLOAT_EQ(reference.mPos.rot[2], position.rot[2]);
+    }
+
+    TEST(Esm4BehaviorRecordTest, shouldIgnoreMalformedFalloutPatrolReferencePayloadsWithoutLosingAlignment)
+    {
+        std::string payload;
+        appendSubRecord(payload, "XLKR", std::string_view("\x01\x02", 2));
+        appendSubRecord(payload, "XPRD", std::string_view("\0\0\0\0\0\0\0\0", 8));
+        appendSubRecord(payload, "XPPA", std::string_view("\x01", 1));
+        ESM::Position position{};
+        position.pos[0] = 101.f;
+        position.pos[1] = 202.f;
+        position.pos[2] = 303.f;
+        appendSubRecord(payload, "DATA", position);
+
+        auto reader = makeReader("REFR", 0x16adce, payload);
+        ESM4::Reference reference;
+        reference.load(*reader);
+
+        EXPECT_TRUE(reference.mLinkedReference.isZeroOrUnset());
+        EXPECT_FALSE(reference.mHasPatrolIdleTime);
+        EXPECT_FLOAT_EQ(reference.mPatrolIdleTime, 0.f);
+        EXPECT_FALSE(reference.mIsPatrolIdleScriptMarker);
+        EXPECT_FLOAT_EQ(reference.mPos.pos[0], position.pos[0]);
+        EXPECT_FLOAT_EQ(reference.mPos.pos[1], position.pos[1]);
+        EXPECT_FLOAT_EQ(reference.mPos.pos[2], position.pos[2]);
     }
 
     TEST(Esm4BehaviorRecordTest, shouldPreserveAllInfoResponsesConditionsLinksAndResultScripts)

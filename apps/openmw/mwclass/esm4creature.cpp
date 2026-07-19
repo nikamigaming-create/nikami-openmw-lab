@@ -21,6 +21,7 @@
 #include <components/esm4/loadammo.hpp>
 #include <components/esm4/loadarmo.hpp>
 #include <components/esm4/loadbook.hpp>
+#include <components/esm4/loadcell.hpp>
 #include <components/esm4/loadclot.hpp>
 #include <components/esm4/loadfurn.hpp>
 #include <components/esm4/loadimod.hpp>
@@ -39,7 +40,9 @@
 #include "../mwbase/world.hpp"
 #include "../mwmechanics/aitravel.hpp"
 #include "../mwmechanics/aiwander.hpp"
+#include "../mwmechanics/character.hpp"
 #include "../mwmechanics/creaturestats.hpp"
+#include "../mwmechanics/drawstate.hpp"
 #include "../mwmechanics/movement.hpp"
 
 #include "../mwworld/containerstore.hpp"
@@ -792,6 +795,185 @@ namespace MWClass
         return nullptr;
     }
 
+    static std::optional<ESM::RefId> getFnvPatrolWorldspace(
+        const MWWorld::ESMStore& store, const ESM::RefId& cellId)
+    {
+        const ESM4::Cell* cell = store.get<ESM4::Cell>().search(cellId);
+        if (cell == nullptr)
+            return std::nullopt;
+        return cell->isExterior() ? cell->mParent : cell->mId;
+    }
+
+    std::optional<std::vector<FnvCreaturePatrolPoint>> collectFnvCreaturePatrolRoute(
+        const MWWorld::ESMStore& store, ESM::FormId firstMarker, std::size_t maxPoints)
+    {
+        if (firstMarker.isZeroOrUnset() || maxPoints == 0)
+            return std::nullopt;
+
+        std::vector<FnvCreaturePatrolPoint> result;
+        result.reserve(std::min<std::size_t>(maxPoints, 32));
+        std::set<ESM::FormId> visited;
+        std::optional<ESM::RefId> routeWorldspace;
+        ESM::FormId markerId = firstMarker;
+
+        for (std::size_t index = 0; index < maxPoints; ++index)
+        {
+            if (!visited.insert(markerId).second)
+                return std::nullopt;
+
+            const ESM4::Reference* marker = store.get<ESM4::Reference>().search(markerId);
+            if (marker == nullptr)
+                return std::nullopt;
+
+            const std::optional<ESM::RefId> markerWorldspace
+                = getFnvPatrolWorldspace(store, marker->mParent);
+            if (!markerWorldspace)
+                return std::nullopt;
+            if (!routeWorldspace)
+                routeWorldspace = markerWorldspace;
+            else if (*routeWorldspace != *markerWorldspace)
+                return std::nullopt;
+
+            const osg::Vec3f position = marker->mPos.asVec3();
+            const float yaw = marker->mPos.rot[2];
+            const float waitSeconds = marker->mHasPatrolIdleTime ? marker->mPatrolIdleTime : 0.f;
+            if (!std::isfinite(position.x()) || !std::isfinite(position.y()) || !std::isfinite(position.z())
+                || !std::isfinite(yaw) || !std::isfinite(waitSeconds) || waitSeconds < 0.f)
+            {
+                return std::nullopt;
+            }
+
+            result.push_back(FnvCreaturePatrolPoint{ marker->mId, marker->mParent, *markerWorldspace, position, yaw,
+                waitSeconds, marker->mBaseObj.mIndex == 0x34, marker->mIsPatrolIdleScriptMarker });
+
+            if (marker->mLinkedReference.isZeroOrUnset())
+                return result;
+            markerId = marker->mLinkedReference;
+        }
+
+        // A valid route terminates at an unlinked marker before exhausting the bound.
+        return std::nullopt;
+    }
+
+    class FnvCreaturePatrolPackage final : public MWMechanics::TypedAiPackage<FnvCreaturePatrolPackage>
+    {
+    public:
+        FnvCreaturePatrolPackage(std::vector<FnvCreaturePatrolPoint> points, std::string packageName)
+            : mPoints(std::move(points))
+            , mPackageName(std::move(packageName))
+        {
+        }
+
+        // Cloning an authored package starts a fresh route cycle rather than copying transient path/wait state.
+        FnvCreaturePatrolPackage(const FnvCreaturePatrolPackage& other)
+            : mPoints(other.mPoints)
+            , mPackageName(other.mPackageName)
+        {
+        }
+
+        static constexpr MWMechanics::AiPackageTypeId getTypeId()
+        {
+            return MWMechanics::AiPackageTypeId::Travel;
+        }
+
+        static constexpr Options makeDefaultOptions()
+        {
+            Options options;
+            options.mUseVariableSpeed = true;
+            options.mAlwaysActive = true;
+            return options;
+        }
+
+        bool execute(const MWWorld::Ptr& actor, MWMechanics::CharacterController& characterController,
+            MWMechanics::AiState& state, float duration) override
+        {
+            (void)state;
+            if (mPointIndex >= mPoints.size())
+                return true;
+
+            MWBase::World* world = MWBase::Environment::get().getWorld();
+            if (world == nullptr)
+                return false;
+
+            MWMechanics::CreatureStats& stats = actor.getClass().getCreatureStats(actor);
+            stats.setMovementFlag(MWMechanics::CreatureStats::Flag_Run, false);
+            stats.setDrawState(MWMechanics::DrawState::Nothing);
+
+            const FnvCreaturePatrolPoint& point = mPoints[mPointIndex];
+            if (mWaiting)
+            {
+                stopMovement(actor);
+                applyHeading(actor, point, world);
+                mWaitElapsed += std::max(duration, 0.f);
+                if (mWaitElapsed < point.mWaitSeconds)
+                    return false;
+                return advancePoint();
+            }
+
+            constexpr float sPatrolArrivalTolerance = 8.f;
+            if (!pathTo(actor, point.mPosition, duration, characterController.getSupportedMovementDirections(),
+                    sPatrolArrivalTolerance))
+            {
+                return false;
+            }
+
+            stopMovement(actor);
+            applyHeading(actor, point, world);
+            Log(Debug::Verbose) << "FNV/ESM4 patrol: reached package=" << mPackageName
+                                << " actor=" << actor.getCellRef().getRefId() << " point=" << point.mReference
+                                << " index=" << mPointIndex << " wait=" << point.mWaitSeconds
+                                << " yaw=" << point.mYaw;
+            if (point.mWaitSeconds > 0.f)
+            {
+                mWaiting = true;
+                mWaitElapsed = 0.f;
+                return false;
+            }
+            return advancePoint();
+        }
+
+        osg::Vec3f getDestination(const MWWorld::Ptr& actor) const override
+        {
+            if (mPointIndex < mPoints.size())
+                return mPoints[mPointIndex].mPosition;
+            return actor.getRefData().getPosition().asVec3();
+        }
+
+    private:
+        static void stopMovement(const MWWorld::Ptr& actor)
+        {
+            MWMechanics::Movement& movement = actor.getClass().getMovementSettings(actor);
+            movement.mPosition[0] = 0.f;
+            movement.mPosition[1] = 0.f;
+            movement.mPosition[2] = 0.f;
+            movement.mRotation[0] = 0.f;
+            movement.mRotation[1] = 0.f;
+            movement.mRotation[2] = 0.f;
+        }
+
+        static void applyHeading(
+            const MWWorld::Ptr& actor, const FnvCreaturePatrolPoint& point, MWBase::World* world)
+        {
+            if (point.mUsesAuthoredHeading)
+                world->rotateObject(actor, osg::Vec3f(0.f, 0.f, point.mYaw), MWBase::RotationFlag_none);
+        }
+
+        bool advancePoint()
+        {
+            reset();
+            mWaiting = false;
+            mWaitElapsed = 0.f;
+            ++mPointIndex;
+            return mPointIndex >= mPoints.size();
+        }
+
+        std::vector<FnvCreaturePatrolPoint> mPoints;
+        std::string mPackageName;
+        std::size_t mPointIndex = 0;
+        float mWaitElapsed = 0.f;
+        bool mWaiting = false;
+    };
+
     static const char* getFnvPackageTypeName(int type)
     {
         switch (type)
@@ -809,6 +991,8 @@ namespace MWClass
             case 11:
             case 12:
                 return "Sandbox";
+            case 13:
+                return "Patrol";
             default:
                 return "Other";
         }
@@ -856,8 +1040,70 @@ namespace MWClass
             return;
 
         const ESM::RefId& currentCellId = ptr.getCell()->getCell()->getId();
+        if (package->mData.type == 13)
+        {
+            const ESM4::Reference* firstMarker = resolveFnvPackageReference(*store, *package);
+            const std::optional<std::vector<FnvCreaturePatrolPoint>> route = firstMarker != nullptr
+                ? collectFnvCreaturePatrolRoute(*store, firstMarker->mId)
+                : std::nullopt;
+            const std::optional<ESM::RefId> currentWorldspace
+                = getFnvPatrolWorldspace(*store, currentCellId);
+            if (!route || route->empty() || !currentWorldspace
+                || route->front().mWorldspace != *currentWorldspace)
+            {
+                Log(Debug::Verbose) << "FNV/ESM4 diag: skipped native creature AI patrol package "
+                                    << package->mEditorId << " startResolved=" << static_cast<bool>(firstMarker)
+                                    << " routeResolved=" << static_cast<bool>(route)
+                                    << " currentCell=" << currentCellId << " for " << creature.mEditorId;
+                return;
+            }
+
+            const std::size_t routeSize = route->size();
+            const ESM::FormId firstPoint = route->front().mReference;
+            const ESM::FormId lastPoint = route->back().mReference;
+            FnvCreaturePatrolPackage patrol(*route, package->mEditorId);
+            sequence.stack(patrol, ptr, true);
+            Log(Debug::Verbose) << "FNV/ESM4 diag: stacked native creature AI patrol from FNV package "
+                                << package->mEditorId << " hour=" << hour << " override=" << usedHourOverride
+                                << " points=" << routeSize << " first=" << firstPoint << " last=" << lastPoint
+                                << " for " << creature.mEditorId;
+            return;
+        }
+
         if (isFnvPackageTravelLike(package->mData.type))
         {
+            // Fallout PLDT type 3 means the placed actor's editor location, not a reference FormID. Victor's
+            // normal idle package uses this contract to return to his Goodsprings charging pad and restore the
+            // authored heading. Treat it as a one-point native route so heading is applied even when the actor is
+            // already within the arrival tolerance.
+            if (package->mLocation.type == 3)
+            {
+                const std::optional<ESM::RefId> currentWorldspace
+                    = getFnvPatrolWorldspace(*store, currentCellId);
+                if (!currentWorldspace)
+                {
+                    Log(Debug::Verbose) << "FNV/ESM4 diag: skipped native creature AI editor-location package "
+                                        << package->mEditorId << " currentCell=" << currentCellId << " for "
+                                        << creature.mEditorId;
+                    return;
+                }
+
+                const ESM::Position& editorPosition = ptr.getCellRef().getPosition();
+                std::vector<FnvCreaturePatrolPoint> route;
+                route.push_back(FnvCreaturePatrolPoint{ ptr.getCellRef().getRefNum(), currentCellId,
+                    *currentWorldspace, editorPosition.asVec3(), editorPosition.rot[2], 0.f, true, false });
+                FnvCreaturePatrolPackage editorTravel(std::move(route), package->mEditorId);
+                sequence.stack(editorTravel, ptr, true);
+                Log(Debug::Verbose) << "FNV/ESM4 diag: stacked native creature AI editor-location travel from FNV "
+                                       "package "
+                                    << package->mEditorId << " type=" << getFnvPackageTypeName(package->mData.type)
+                                    << " hour=" << hour << " override=" << usedHourOverride << " pos=("
+                                    << editorPosition.pos[0] << "," << editorPosition.pos[1] << ","
+                                    << editorPosition.pos[2] << ") yaw=" << editorPosition.rot[2] << " for "
+                                    << creature.mEditorId;
+                return;
+            }
+
             const ESM4::Reference* target = resolveFnvPackageReference(*store, *package);
             if (target == nullptr || target->mParent != currentCellId)
             {
@@ -907,7 +1153,7 @@ namespace MWClass
                 return;
             }
 
-            const int distance = std::max(64, package->mLocation.radius > 0 ? package->mLocation.radius : 256);
+            const int distance = fnvCreatureWanderDistance(package->mLocation.radius);
             const int duration = package->mSchedule.duration > 0
                 ? static_cast<int>(std::min<std::uint32_t>(package->mSchedule.duration, 24))
                 : 5;

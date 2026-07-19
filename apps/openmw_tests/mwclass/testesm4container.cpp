@@ -18,6 +18,7 @@
 #include <components/esm4/loadnpc.hpp>
 #include <components/esm4/loadpack.hpp>
 #include <components/esm4/loadrace.hpp>
+#include <components/esm4/loadrefr.hpp>
 #include <components/esm4/loadstat.hpp>
 
 #include "apps/openmw/mwbase/environment.hpp"
@@ -40,9 +41,11 @@
 
 #include <components/loadinglistener/loadinglistener.hpp>
 
+#include <array>
 #include <cmath>
 #include <limits>
 #include <map>
+#include <optional>
 #include <sstream>
 
 namespace
@@ -553,12 +556,116 @@ namespace
         }
     };
 
-    TEST(FnvCreatureAiPolicyTest, UnsupportedPatrolLeavesSmallRadiusSandboxEligible)
+    TEST(FnvCreatureAiPolicyTest, SupportsPatrolAndPreservesAuthoredSmallRadiusSandbox)
     {
-        EXPECT_FALSE(MWClass::fnvCreatureAiPackageProcedureSupported(13));
+        EXPECT_TRUE(MWClass::fnvCreatureAiPackageProcedureSupported(13));
         EXPECT_TRUE(MWClass::fnvCreatureAiPackageProcedureSupported(12));
-        EXPECT_EQ(MWClass::fnvCreatureWanderDestinationTolerance(64), 8u);
-        EXPECT_LT(MWClass::fnvCreatureWanderDestinationTolerance(64), 64u);
+        EXPECT_EQ(MWClass::fnvCreatureWanderDistance(16), 16);
+        EXPECT_EQ(MWClass::fnvCreatureWanderDestinationTolerance(16), 2u);
+        EXPECT_EQ(MWClass::fnvCreatureWanderDistance(0), 256);
+        EXPECT_EQ(MWClass::fnvCreatureWanderDestinationTolerance(256), 32u);
+    }
+
+    TEST_F(ESM4ContainerTest, ResolvesExactBoundedVictorPatrolWithinOneWorldspace)
+    {
+        constexpr std::uint32_t worldId = 0x01000da7;
+        constexpr std::array<std::uint32_t, 3> cellIds{ 0x01104c20, 0x01104c21, 0x01104c22 };
+        for (std::size_t index = 0; index < cellIds.size(); ++index)
+        {
+            ESM4::Cell cell{};
+            cell.mId = ESM::RefId(ESM::FormId::fromUint32(cellIds[index]));
+            cell.mParent = ESM::RefId(ESM::FormId::fromUint32(worldId));
+            cell.mEditorId = "SyntheticVictorPatrolCell" + std::to_string(index);
+            cell.mX = static_cast<std::int32_t>(index);
+            mStore.overrideRecord(cell);
+        }
+
+        constexpr std::array<std::uint32_t, 11> markerIds{ 0x0116adc6, 0x0116adc7, 0x0116adc8,
+            0x0116adcc, 0x0116adce, 0x0116adcf, 0x0116adcd, 0x0116adc9, 0x0116adca, 0x0116adcb,
+            0x01154154 };
+        constexpr std::array<std::array<float, 3>, 11> positions{ {
+            { -71370.422f, 2131.071f, 8371.142f },
+            { -66739.336f, 2942.334f, 8371.142f },
+            { -66144.289f, 5613.587f, 8446.199f },
+            { -62775.902f, 10359.241f, 9761.637f },
+            { -62254.207f, 12785.296f, 10264.f },
+            { -63754.926f, 9666.817f, 9417.408f },
+            { -70165.922f, 7881.824f, 8496.f },
+            { -70336.977f, 5223.771f, 8414.835f },
+            { -71903.633f, 991.477f, 8414.835f },
+            { -72299.93f, -3123.941f, 8142.937f },
+            { -72320.f, -6000.f, 8320.f },
+        } };
+
+        auto makeMarker = [&](std::size_t index) {
+            ESM4::Reference marker{};
+            marker.mId = ESM::FormId::fromUint32(markerIds[index]);
+            marker.mParent = ESM::RefId(ESM::FormId::fromUint32(cellIds[index / 4]));
+            marker.mBaseObj = ESM::FormId::fromUint32(index == 4 || index == 10 ? 0x01000034 : 0x0100003b);
+            marker.mPos.pos[0] = positions[index][0];
+            marker.mPos.pos[1] = positions[index][1];
+            marker.mPos.pos[2] = positions[index][2];
+            if (index + 1 < markerIds.size())
+                marker.mLinkedReference = ESM::FormId::fromUint32(markerIds[index + 1]);
+            if (index == 4)
+            {
+                marker.mPos.rot[2] = 0.8f;
+                marker.mPatrolIdleTime = 3.f;
+                marker.mHasPatrolIdleTime = true;
+                marker.mIsPatrolIdleScriptMarker = true;
+            }
+            else if (index == 10)
+            {
+                marker.mPatrolIdleTime = 1.f;
+                marker.mHasPatrolIdleTime = true;
+                marker.mIsPatrolIdleScriptMarker = true;
+            }
+            return marker;
+        };
+
+        for (std::size_t index = 0; index < markerIds.size(); ++index)
+            mStore.overrideRecord(makeMarker(index));
+
+        const std::optional<std::vector<MWClass::FnvCreaturePatrolPoint>> route
+            = MWClass::collectFnvCreaturePatrolRoute(
+                mStore, ESM::FormId::fromUint32(markerIds.front()), markerIds.size());
+        ASSERT_TRUE(route);
+        ASSERT_EQ(route->size(), markerIds.size());
+        for (std::size_t index = 0; index < markerIds.size(); ++index)
+        {
+            EXPECT_EQ((*route)[index].mReference, ESM::FormId::fromUint32(markerIds[index]));
+            EXPECT_EQ((*route)[index].mWorldspace, ESM::RefId(ESM::FormId::fromUint32(worldId)));
+            EXPECT_FLOAT_EQ((*route)[index].mPosition.x(), positions[index][0]);
+            EXPECT_FLOAT_EQ((*route)[index].mPosition.y(), positions[index][1]);
+            EXPECT_FLOAT_EQ((*route)[index].mPosition.z(), positions[index][2]);
+        }
+        EXPECT_TRUE((*route)[4].mUsesAuthoredHeading);
+        EXPECT_FLOAT_EQ((*route)[4].mYaw, 0.8f);
+        EXPECT_FLOAT_EQ((*route)[4].mWaitSeconds, 3.f);
+        EXPECT_TRUE((*route)[4].mIsPatrolIdleScriptMarker);
+        EXPECT_TRUE((*route)[10].mUsesAuthoredHeading);
+        EXPECT_FLOAT_EQ((*route)[10].mWaitSeconds, 1.f);
+        EXPECT_TRUE((*route)[10].mIsPatrolIdleScriptMarker);
+
+        EXPECT_FALSE(MWClass::collectFnvCreaturePatrolRoute(
+            mStore, ESM::FormId::fromUint32(markerIds.front()), markerIds.size() - 1));
+
+        ESM4::Reference cyclicTerminal = makeMarker(markerIds.size() - 1);
+        cyclicTerminal.mLinkedReference = ESM::FormId::fromUint32(markerIds.front());
+        mStore.overrideRecord(cyclicTerminal);
+        EXPECT_FALSE(MWClass::collectFnvCreaturePatrolRoute(
+            mStore, ESM::FormId::fromUint32(markerIds.front()), 32));
+
+        constexpr std::uint32_t foreignWorldId = 0x01000da8;
+        ESM4::Cell foreignCell{};
+        foreignCell.mId = ESM::RefId(ESM::FormId::fromUint32(0x01104c23));
+        foreignCell.mParent = ESM::RefId(ESM::FormId::fromUint32(foreignWorldId));
+        mStore.overrideRecord(foreignCell);
+        ESM4::Reference foreignTerminal = makeMarker(markerIds.size() - 1);
+        foreignTerminal.mParent = foreignCell.mId;
+        mStore.overrideRecord(foreignTerminal);
+        EXPECT_FALSE(MWClass::collectFnvCreaturePatrolRoute(
+            mStore, ESM::FormId::fromUint32(markerIds.front()), 32));
     }
 
     TEST_F(ESM4ContainerTest, CreatureInitializesDirectFixedInventoryOnceAndMergesDuplicateStacks)

@@ -2,10 +2,15 @@
 #define GAME_MWCLASS_ESM4CREATURE_H
 
 #include <algorithm>
+#include <cstddef>
 #include <cstdint>
+#include <optional>
+#include <vector>
 
 #include <components/esm4/loadcrea.hpp>
 #include <components/vfs/pathutil.hpp>
+
+#include <osg/Vec3f>
 
 #include "../mwgui/tooltips.hpp"
 
@@ -34,7 +39,12 @@ namespace MWClass
     [[nodiscard]] constexpr bool fnvCreatureAiPackageProcedureSupported(std::int32_t packageType) noexcept
     {
         return packageType == 3 || packageType == 4 || packageType == 5 || packageType == 6 || packageType == 8
-            || packageType == 11 || packageType == 12;
+            || packageType == 11 || packageType == 12 || packageType == 13;
+    }
+
+    [[nodiscard]] constexpr int fnvCreatureWanderDistance(std::int32_t authoredRadius) noexcept
+    {
+        return authoredRadius > 0 ? authoredRadius : 256;
     }
 
     [[nodiscard]] constexpr unsigned fnvCreatureWanderDestinationTolerance(unsigned distance) noexcept
@@ -58,6 +68,23 @@ namespace MWClass
         return (creatureFlags & sFlyAndWalk) == sFlyAndWalk
             && (packageType == sSandbox || packageType == sSandboxEditorLocation);
     }
+
+    struct FnvCreaturePatrolPoint
+    {
+        ESM::FormId mReference;
+        ESM::RefId mCell;
+        ESM::RefId mWorldspace;
+        osg::Vec3f mPosition;
+        float mYaw = 0.f;
+        float mWaitSeconds = 0.f;
+        bool mUsesAuthoredHeading = false;
+        bool mIsPatrolIdleScriptMarker = false;
+    };
+
+    /// Resolve a Fallout XLKR patrol chain, rejecting missing records, cycles, overlong chains, and transitions
+    /// outside the first marker's worldspace (or interior cell).
+    [[nodiscard]] std::optional<std::vector<FnvCreaturePatrolPoint>> collectFnvCreaturePatrolRoute(
+        const MWWorld::ESMStore& store, ESM::FormId firstMarker, std::size_t maxPoints = 256);
 
     class ESM4Creature final : public MWWorld::RegisteredClass<ESM4Creature, Actor>
     {

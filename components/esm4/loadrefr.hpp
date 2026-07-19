@@ -114,6 +114,13 @@ namespace ESM4
 
         ESM::FormId mTargetRef;
 
+        // Fallout patrol routes are linked REFR chains. XLKR points at the next marker, XPRD stores the
+        // marker's authored wait time, and an empty XPPA marks a patrol-idle/script point.
+        ESM::FormId mLinkedReference;
+        float mPatrolIdleTime = 0.f;
+        bool mHasPatrolIdleTime = false;
+        bool mIsPatrolIdleScriptMarker = false;
+
         void load(ESM4::Reader& reader);
         // void save(ESM4::Writer& writer) const;
 
