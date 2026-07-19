@@ -108,7 +108,6 @@ namespace
 
     std::optional<ValidatedFalloutPlayer> resolveValidatedFalloutPlayer(std::size_t masterCandidateCount,
         const std::optional<std::int32_t>& masterCandidateIndex, const MWWorld::Store<ESM4::Npc>& npcs,
-        const MWWorld::Store<ESM4::ActorCharacter>& actorReferences,
         const MWWorld::Store<ESM4::Class>& classes, const MWWorld::Store<ESM4::Race>& races)
     {
         if (masterCandidateCount == 0)
@@ -120,12 +119,12 @@ namespace
 
         const std::int32_t master = *masterCandidateIndex;
         MWWorld::FalloutPlayerStateResolution player = MWWorld::resolveFalloutPlayerIdentity(
-            npcs, actorReferences, ESM::FormId{ 7, master }, ESM::FormId{ 0x14, master });
+            npcs, ESM::FormId{ 7, master }, ESM::FormId{ 0x14, master });
         if (!player)
             throw std::runtime_error(player.mError);
 
         MWWorld::FalloutNativePlayerRecordsResolution native
-            = MWWorld::resolveFalloutNativePlayerRecords(npcs, actorReferences, classes, races, *player.mState);
+            = MWWorld::resolveFalloutNativePlayerRecords(npcs, classes, races, *player.mState);
         if (!native)
             throw std::runtime_error(native.mError);
 
@@ -613,8 +612,8 @@ namespace MWWorld
     {
         if (!mStoreImp->mFalloutPlayerState)
             return { std::nullopt, "native FNV Player state has not been fully validated" };
-        return resolveFalloutNativePlayerRecords(get<ESM4::Npc>(), get<ESM4::ActorCharacter>(), get<ESM4::Class>(),
-            get<ESM4::Race>(), *mStoreImp->mFalloutPlayerState);
+        return resolveFalloutNativePlayerRecords(get<ESM4::Npc>(), get<ESM4::Class>(), get<ESM4::Race>(),
+            *mStoreImp->mFalloutPlayerState);
     }
 
     void ESMStore::setIdType(const ESM::RefId& id, ESM::RecNameInts type)
@@ -660,7 +659,7 @@ namespace MWWorld
         // selecting the FNV-only compatibility path; validate() repeats this check before publishing any state.
         const std::optional<ValidatedFalloutPlayer> setupPlayer = resolveValidatedFalloutPlayer(
             mStoreImp->mFalloutNewVegasMasterCandidateCount, mStoreImp->mFalloutNewVegasMasterCandidateIndex,
-            get<ESM4::Npc>(), get<ESM4::ActorCharacter>(), get<ESM4::Class>(), get<ESM4::Race>());
+            get<ESM4::Npc>(), get<ESM4::Class>(), get<ESM4::Race>());
         const bool isOfficialFalloutNewVegas = setupPlayer.has_value();
         mIsSetUpDone = true;
 
@@ -758,7 +757,7 @@ namespace MWWorld
         std::optional<FalloutPlayerCompatibilityCarriers> falloutPlayerCarriers;
         std::optional<ValidatedFalloutPlayer> player = resolveValidatedFalloutPlayer(
             mStoreImp->mFalloutNewVegasMasterCandidateCount, mStoreImp->mFalloutNewVegasMasterCandidateIndex,
-            get<ESM4::Npc>(), get<ESM4::ActorCharacter>(), get<ESM4::Class>(), get<ESM4::Race>());
+            get<ESM4::Npc>(), get<ESM4::Class>(), get<ESM4::Race>());
         if (player)
         {
             falloutPlayerCarriers.emplace(

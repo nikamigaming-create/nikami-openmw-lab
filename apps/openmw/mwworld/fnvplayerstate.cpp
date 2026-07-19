@@ -299,35 +299,31 @@ namespace MWWorld
     }
 
     FalloutPlayerStateResolution resolveFalloutPlayerIdentity(const Store<ESM4::Npc>& npcs,
-        const Store<ESM4::ActorCharacter>& actorReferences, ESM::FormId normalizedPlayerFormId,
-        ESM::FormId normalizedPlayerReferenceFormId)
+        ESM::FormId normalizedPlayerFormId, ESM::FormId normalizedPlayerReferenceFormId)
     {
         FalloutPlayerStateResolution resolution = resolveFalloutPlayerState(npcs, normalizedPlayerFormId);
         if (!resolution)
             return resolution;
 
-        const ESM4::ActorCharacter* reference = actorReferences.search(normalizedPlayerReferenceFormId);
-        if (reference == nullptr)
+        // FormID 0x14 is the engine-reserved Player reference. It is serialized by FNV saves but is not an authored
+        // ACHR record in FalloutNV.esm, so it must never be resolved through the content ActorCharacter store.
+        if (!normalizedPlayerReferenceFormId.hasContentFile() || normalizedPlayerReferenceFormId.mIndex != 0x14)
         {
-            return failure("missing winning FalloutNV.esm Player ACHR FormID 0x00000014 at normalized "
-                + normalizedPlayerReferenceFormId.toString());
+            return failure("FNV engine-reserved Player reference is not canonical FormID 0x00000014");
         }
-        if (reference->mId != normalizedPlayerReferenceFormId)
-            return failure("winning Player ACHR resolved with the wrong normalized FormID");
-        if (reference->mBaseObj != normalizedPlayerFormId)
+        if (normalizedPlayerReferenceFormId.mContentFile != normalizedPlayerFormId.mContentFile)
         {
-            return failure("winning FalloutNV.esm Player ACHR FormID 0x00000014 does not target NPC_ FormID "
-                + normalizedPlayerFormId.toString());
+            return failure("FNV engine-reserved Player reference FormID 0x00000014 is not in the Player NPC_ content "
+                           "namespace");
         }
 
-        resolution.mState->mReferenceRecord = reference->mId;
-        resolution.mState->mReferenceBaseRecord = reference->mBaseObj;
+        resolution.mState->mReferenceRecord = normalizedPlayerReferenceFormId;
+        resolution.mState->mReferenceBaseRecord = normalizedPlayerFormId;
         return resolution;
     }
 
     FalloutNativePlayerRecordsResolution resolveFalloutNativePlayerRecords(const Store<ESM4::Npc>& npcs,
-        const Store<ESM4::ActorCharacter>& actorReferences, const Store<ESM4::Class>& classes,
-        const Store<ESM4::Race>& races, const FalloutPlayerState& playerState)
+        const Store<ESM4::Class>& classes, const Store<ESM4::Race>& races, const FalloutPlayerState& playerState)
     {
         if (!playerState.mBaseRecord.hasContentFile() || playerState.mBaseRecord.mIndex != 7)
         {
@@ -382,17 +378,6 @@ namespace MWWorld
         if (baseNpc->mRace != playerState.mRace)
             return nativeRecordsFailure("native FNV Player NPC_ does not preserve the resolved RACE identity");
 
-        const ESM4::ActorCharacter* reference = actorReferences.search(playerState.mReferenceRecord);
-        if (reference == nullptr)
-        {
-            return nativeRecordsFailure(
-                "missing exact native FNV Player ACHR " + playerState.mReferenceRecord.toString());
-        }
-        if (reference->mId != playerState.mReferenceRecord)
-            return nativeRecordsFailure("native FNV Player ACHR resolved with the wrong typed FormID");
-        if (reference->mBaseObj != playerState.mBaseRecord)
-            return nativeRecordsFailure("native FNV Player ACHR does not target the exact Player NPC_ FormID");
-
         const ESM4::Class* playerClass = classes.search(ESM::RefId(playerState.mClass));
         if (playerClass == nullptr)
             return nativeRecordsFailure("missing exact native FNV Player CLAS " + playerState.mClass.toString());
@@ -411,7 +396,7 @@ namespace MWWorld
         if (!playerRace->mHasFalloutData)
             return nativeRecordsFailure("native FNV Player RACE lacks exact 36-byte DATA");
 
-        return { FalloutNativePlayerRecords{ baseNpc, reference, playerClass, playerRace }, {} };
+        return { FalloutNativePlayerRecords{ baseNpc, playerClass, playerRace }, {} };
     }
 
     FalloutSaveLoadPlanResolution resolveFalloutSaveLoadPlan(const ESM4::FONVSaveGamePrefix& save,

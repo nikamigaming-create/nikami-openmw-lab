@@ -195,7 +195,6 @@ namespace
     {
         None,
         Npc,
-        Reference,
         Class,
         Race,
     };
@@ -205,11 +204,6 @@ namespace
     {
         if (omitted != NativePlayerRecord::Npc)
             store.insertStatic(makeNativePlayer());
-        if (omitted != NativePlayerRecord::Reference)
-        {
-            store.insertStatic(makeNativePlayerCell());
-            store.insertStatic(makeNativePlayerReference());
-        }
         if (omitted != NativePlayerRecord::Class)
             store.insertStatic(makeNativePlayerClass());
         if (omitted != NativePlayerRecord::Race)
@@ -252,7 +246,7 @@ TEST(FNVNativePlayerStore, publishesExactStateAndOnlyRequiredLegacyPlayerCarrier
     const MWWorld::FalloutNativePlayerRecordsResolution records = store.getFalloutNativePlayerRecords();
     ASSERT_TRUE(records) << records.mError;
     EXPECT_EQ(records.mRecords->mBaseNpc, store.get<ESM4::Npc>().search(fnvForm(7)));
-    EXPECT_EQ(records.mRecords->mReference, store.get<ESM4::ActorCharacter>().search(fnvForm(0x14)));
+    EXPECT_EQ(store.get<ESM4::ActorCharacter>().search(fnvForm(0x14)), nullptr);
     EXPECT_EQ(records.mRecords->mClass, store.get<ESM4::Class>().search(fnvForm(0x57e6a)));
     EXPECT_EQ(records.mRecords->mRace, store.get<ESM4::Race>().search(fnvForm(0x19)));
 
@@ -365,8 +359,8 @@ TEST(FNVNativePlayerStore, leavesNonFalloutLegacyPlayerRecordsUntouched)
 
 TEST(FNVNativePlayerStore, ignoresNamespaceDecoysAndRejectsEachMissingExactTypedRecordWithoutPartialState)
 {
-    const NativePlayerRecord missingRecords[]{ NativePlayerRecord::Npc, NativePlayerRecord::Reference,
-        NativePlayerRecord::Class, NativePlayerRecord::Race };
+    const NativePlayerRecord missingRecords[]{
+        NativePlayerRecord::Npc, NativePlayerRecord::Class, NativePlayerRecord::Race };
     for (const NativePlayerRecord missing : missingRecords)
     {
         SCOPED_TRACE(static_cast<int>(missing));
@@ -402,8 +396,8 @@ TEST(FNVNativePlayerStore, rejectsCorruptTypedRecordsAndClearsPreviouslyPublishe
 
 TEST(FNVNativePlayerStore, rejectsCorruptionOfEveryCoreTypedIdentityOrPayload)
 {
-    const NativePlayerRecord corruptRecords[]{ NativePlayerRecord::Npc, NativePlayerRecord::Reference,
-        NativePlayerRecord::Class, NativePlayerRecord::Race };
+    const NativePlayerRecord corruptRecords[]{
+        NativePlayerRecord::Npc, NativePlayerRecord::Class, NativePlayerRecord::Race };
     for (const NativePlayerRecord corrupt : corruptRecords)
     {
         SCOPED_TRACE(static_cast<int>(corrupt));
@@ -417,13 +411,6 @@ TEST(FNVNativePlayerStore, rejectsCorruptionOfEveryCoreTypedIdentityOrPayload)
             {
                 ESM4::Npc value = makeNativePlayer();
                 value.mEditorId = "NotPlayer";
-                store.insertStatic(value);
-                break;
-            }
-            case NativePlayerRecord::Reference:
-            {
-                ESM4::ActorCharacter value = makeNativePlayerReference();
-                value.mBaseObj = fnvForm(8);
                 store.insertStatic(value);
                 break;
             }

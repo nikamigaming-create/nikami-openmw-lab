@@ -59,7 +59,8 @@ namespace MWWorld
     bool isFalloutNewVegasSavePath(const std::filesystem::path& path);
 
     // Production entry point. The ESMStore accessors publish a Player state only after validating the exact winning
-    // FalloutNV.esm NPC_/ACHR/CLAS/RACE view; this function deliberately has no filename-candidate fallback.
+    // FalloutNV.esm NPC_/CLAS/RACE view plus the engine-reserved Player reference identity; this function deliberately
+    // has no filename-candidate fallback.
     FalloutSavePreflightResolution resolveFalloutSavePreflightContext(
         ESM4::FONVSaveGamePrefix save, const ESMStore& store, std::span<const std::string> currentContentFiles);
 

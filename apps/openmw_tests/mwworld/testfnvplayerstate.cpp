@@ -290,32 +290,27 @@ namespace
         EXPECT_EQ(state.mVoiceType, form(0x2853b, masterIndex));
     }
 
-    TEST(FalloutPlayerStateTest, resolvesExactPlayerReferenceToBaseRelation)
+    TEST(FalloutPlayerStateTest, resolvesEngineReservedPlayerReferenceWithoutAuthoredACHR)
     {
         constexpr std::int32_t masterIndex = 37;
         const ESM::FormId playerId = form(7, masterIndex);
         const ESM::FormId playerReferenceId = form(0x14, masterIndex);
         MWWorld::Store<ESM4::Npc> npcs;
         npcs.insertStatic(makeCompletePlayer(playerId));
-        MWWorld::Store<ESM4::ActorCharacter> actorReferences;
-        actorReferences.insertStatic(makePlayerReference(playerReferenceId, playerId));
 
         MWWorld::FalloutPlayerStateResolution resolution
-            = MWWorld::resolveFalloutPlayerIdentity(npcs, actorReferences, playerId, playerReferenceId);
+            = MWWorld::resolveFalloutPlayerIdentity(npcs, playerId, playerReferenceId);
         ASSERT_TRUE(resolution) << resolution.mError;
         EXPECT_EQ(resolution.mState->mReferenceRecord, playerReferenceId);
         EXPECT_EQ(resolution.mState->mReferenceBaseRecord, playerId);
 
-        MWWorld::Store<ESM4::ActorCharacter> missingReference;
-        resolution = MWWorld::resolveFalloutPlayerIdentity(npcs, missingReference, playerId, playerReferenceId);
+        resolution = MWWorld::resolveFalloutPlayerIdentity(npcs, playerId, form(0x15, masterIndex));
         EXPECT_FALSE(resolution);
-        EXPECT_THAT(resolution.mError, HasSubstr("missing winning FalloutNV.esm Player ACHR"));
+        EXPECT_THAT(resolution.mError, HasSubstr("not canonical FormID 0x00000014"));
 
-        MWWorld::Store<ESM4::ActorCharacter> wrongBase;
-        wrongBase.insertStatic(makePlayerReference(playerReferenceId, form(8, masterIndex)));
-        resolution = MWWorld::resolveFalloutPlayerIdentity(npcs, wrongBase, playerId, playerReferenceId);
+        resolution = MWWorld::resolveFalloutPlayerIdentity(npcs, playerId, form(0x14, masterIndex + 1));
         EXPECT_FALSE(resolution);
-        EXPECT_THAT(resolution.mError, HasSubstr("does not target NPC_ FormID"));
+        EXPECT_THAT(resolution.mError, HasSubstr("not in the Player NPC_ content namespace"));
     }
 
     TEST(FalloutNativePlayerRecordsTest, resolvesExactTypedRecordsAndPreservesRawPayloads)
@@ -328,21 +323,17 @@ namespace
         fixture.insertAll(npcs, actorReferences, classes, races);
 
         const MWWorld::FalloutPlayerStateResolution playerResolution
-            = MWWorld::resolveFalloutPlayerIdentity(npcs, actorReferences, fixture.mPlayerId, fixture.mReferenceId);
+            = MWWorld::resolveFalloutPlayerIdentity(npcs, fixture.mPlayerId, fixture.mReferenceId);
         ASSERT_TRUE(playerResolution) << playerResolution.mError;
         const MWWorld::FalloutNativePlayerRecordsResolution resolution
-            = MWWorld::resolveFalloutNativePlayerRecords(
-                npcs, actorReferences, classes, races, *playerResolution.mState);
+            = MWWorld::resolveFalloutNativePlayerRecords(npcs, classes, races, *playerResolution.mState);
         ASSERT_TRUE(resolution) << resolution.mError;
 
         const MWWorld::FalloutNativePlayerRecords& records = *resolution.mRecords;
         EXPECT_EQ(records.mBaseNpc, npcs.search(ESM::RefId(fixture.mPlayerId)));
-        EXPECT_EQ(records.mReference, actorReferences.search(fixture.mReferenceId));
         EXPECT_EQ(records.mClass, classes.search(ESM::RefId(fixture.mClassId)));
         EXPECT_EQ(records.mRace, races.search(ESM::RefId(fixture.mRaceId)));
         EXPECT_EQ(records.mBaseNpc->mId, fixture.mPlayerId);
-        EXPECT_EQ(records.mReference->mId, fixture.mReferenceId);
-        EXPECT_EQ(records.mReference->mBaseObj, fixture.mPlayerId);
 
         EXPECT_EQ(records.mClass->mData.mTagActorValues,
             (std::array<std::int32_t, 4>{ 12, 37, -5, 0x12345678 }));
@@ -454,7 +445,7 @@ namespace
             testCase.mMutate(fixture.mState);
 
             const MWWorld::FalloutNativePlayerRecordsResolution resolution
-                = MWWorld::resolveFalloutNativePlayerRecords(npcs, actorReferences, classes, races, fixture.mState);
+                = MWWorld::resolveFalloutNativePlayerRecords(npcs, classes, races, fixture.mState);
             EXPECT_FALSE(resolution);
             EXPECT_FALSE(resolution.mRecords.has_value());
             EXPECT_THAT(resolution.mError, HasSubstr(testCase.mExpectedError));
@@ -494,7 +485,7 @@ namespace
             testCase.mMutate(fixture.mState);
 
             const MWWorld::FalloutNativePlayerRecordsResolution resolution
-                = MWWorld::resolveFalloutNativePlayerRecords(npcs, actorReferences, classes, races, fixture.mState);
+                = MWWorld::resolveFalloutNativePlayerRecords(npcs, classes, races, fixture.mState);
             EXPECT_FALSE(resolution);
             EXPECT_THAT(resolution.mError, HasSubstr("record identities collide"));
             EXPECT_THAT(resolution.mError, HasSubstr(testCase.mExpectedPair));
@@ -504,14 +495,12 @@ namespace
     TEST(FalloutNativePlayerRecordsTest, requiresEveryExactTypedRecordAndIgnoresNamespaceDecoys)
     {
         const char* expectedErrors[] = { "missing exact native FNV Player NPC_",
-            "missing exact native FNV Player ACHR", "missing exact native FNV Player CLAS",
-            "missing exact native FNV Player RACE" };
+            "missing exact native FNV Player CLAS", "missing exact native FNV Player RACE" };
         for (std::size_t missing = 0; missing < std::size(expectedErrors); ++missing)
         {
             SCOPED_TRACE(missing);
             NativePlayerRecordsFixture fixture;
             MWWorld::Store<ESM4::Npc> npcs;
-            MWWorld::Store<ESM4::ActorCharacter> actorReferences;
             MWWorld::Store<ESM4::Class> classes;
             MWWorld::Store<ESM4::Race> races;
 
@@ -525,21 +514,13 @@ namespace
                 npcs.insertStatic(fixture.mPlayer);
             if (missing == 1)
             {
-                ESM4::ActorCharacter decoy = fixture.mReference;
-                ++decoy.mId.mContentFile;
-                actorReferences.insertStatic(decoy);
-            }
-            else
-                actorReferences.insertStatic(fixture.mReference);
-            if (missing == 2)
-            {
                 ESM4::Class decoy = fixture.mClass;
                 ++decoy.mId.mContentFile;
                 classes.insertStatic(decoy);
             }
             else
                 classes.insertStatic(fixture.mClass);
-            if (missing == 3)
+            if (missing == 2)
             {
                 ESM4::Race decoy = fixture.mRace;
                 ++decoy.mId.mContentFile;
@@ -549,7 +530,7 @@ namespace
                 races.insertStatic(fixture.mRace);
 
             const MWWorld::FalloutNativePlayerRecordsResolution resolution
-                = MWWorld::resolveFalloutNativePlayerRecords(npcs, actorReferences, classes, races, fixture.mState);
+                = MWWorld::resolveFalloutNativePlayerRecords(npcs, classes, races, fixture.mState);
             EXPECT_FALSE(resolution);
             EXPECT_THAT(resolution.mError, HasSubstr(expectedErrors[missing]));
         }
@@ -574,9 +555,6 @@ namespace
             { "NPC race relation",
                 [](NativePlayerRecordsFixture& fixture) { fixture.mPlayer.mRace = form(0x1a, 37); },
                 "does not preserve the resolved RACE identity" },
-            { "ACHR base",
-                [](NativePlayerRecordsFixture& fixture) { fixture.mReference.mBaseObj = form(8, 37); },
-                "does not target the exact Player NPC_ FormID" },
             { "CLAS DATA",
                 [](NativePlayerRecordsFixture& fixture) { fixture.mClass.mHasFalloutData = false; },
                 "CLAS lacks exact 28-byte DATA" },
@@ -599,7 +577,7 @@ namespace
             fixture.insertAll(npcs, actorReferences, classes, races);
 
             const MWWorld::FalloutNativePlayerRecordsResolution resolution
-                = MWWorld::resolveFalloutNativePlayerRecords(npcs, actorReferences, classes, races, fixture.mState);
+                = MWWorld::resolveFalloutNativePlayerRecords(npcs, classes, races, fixture.mState);
             EXPECT_FALSE(resolution);
             EXPECT_THAT(resolution.mError, HasSubstr(testCase.mExpectedError));
         }
@@ -799,10 +777,8 @@ namespace
         const ESM::FormId playerReferenceId = form(0x14, 1);
         MWWorld::Store<ESM4::Npc> npcs;
         npcs.insertStatic(makeCompletePlayer(playerId));
-        MWWorld::Store<ESM4::ActorCharacter> actorReferences;
-        actorReferences.insertStatic(makePlayerReference(playerReferenceId, playerId));
         const MWWorld::FalloutPlayerStateResolution playerResolution
-            = MWWorld::resolveFalloutPlayerIdentity(npcs, actorReferences, playerId, playerReferenceId);
+            = MWWorld::resolveFalloutPlayerIdentity(npcs, playerId, playerReferenceId);
         ASSERT_TRUE(playerResolution) << playerResolution.mError;
 
         const ESM4::FONVSaveGamePrefix save = makeSavePrefix({ "FalloutNV.esm", "DeadMoney.esm" });
