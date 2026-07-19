@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <fstream>
+#include <limits>
+#include <optional>
 #include <tuple>
 
 #include <components/debug/debuglog.hpp>
@@ -21,8 +23,10 @@
 #include <components/loadinglistener/loadinglistener.hpp>
 #include <components/lua/configuration.hpp>
 #include <components/misc/algorithm.hpp>
+#include <components/misc/strings/algorithm.hpp>
 
 #include "../mwmechanics/spelllist.hpp"
+#include "fnvplayerstate.hpp"
 
 namespace
 {
@@ -237,6 +241,10 @@ namespace MWWorld
     struct ESMStoreImp
     {
         ESMStore::StoreTuple mStores;
+
+        std::size_t mFalloutNewVegasMasterCandidateCount = 0;
+        std::optional<std::int32_t> mFalloutNewVegasMasterCandidateIndex;
+        std::optional<FalloutPlayerState> mFalloutPlayerState;
 
         std::map<ESM::RecNameInts, DynamicStore*> mRecNameToStore;
 
@@ -474,6 +482,25 @@ namespace MWWorld
 
     void ESMStore::loadESM4(ESM4::Reader& reader, Loading::Listener* listener)
     {
+        // Any further native content load invalidates a previously published resolution. The state is republished
+        // only after validate() proves the complete typed identity against the resulting winning stores.
+        mStoreImp->mFalloutPlayerState.reset();
+
+        const bool isFalloutNewVegasMasterCandidate
+            = Misc::StringUtils::ciEqual(reader.getFileName().filename().string(), "FalloutNV.esm");
+        if (isFalloutNewVegasMasterCandidate)
+        {
+            ++mStoreImp->mFalloutNewVegasMasterCandidateCount;
+            mStoreImp->mFalloutNewVegasMasterCandidateIndex.reset();
+
+            if (mStoreImp->mFalloutNewVegasMasterCandidateCount != 1)
+                throw std::runtime_error("ambiguous duplicate FalloutNV.esm master candidates");
+            if (reader.getModIndex() > static_cast<std::uint32_t>(std::numeric_limits<std::int32_t>::max()))
+                throw std::runtime_error("FalloutNV.esm master index cannot be represented by a normalized FormID");
+
+            mStoreImp->mFalloutNewVegasMasterCandidateIndex = static_cast<std::int32_t>(reader.getModIndex());
+        }
+
         if (listener != nullptr)
             listener->setProgressRange(::EsmLoader::fileProgress);
         auto visitorRec = [this, listener](ESM4::Reader& r) {
@@ -482,7 +509,42 @@ namespace MWWorld
                 listener->setProgress(::EsmLoader::fileProgress * r.getFileOffset() / r.getFileSize());
             return result;
         };
-        ESM4::ReaderUtils::readAll(reader, visitorRec, [](ESM4::Reader&) {});
+        try
+        {
+            ESM4::ReaderUtils::readAll(reader, visitorRec, [](ESM4::Reader&) {});
+        }
+        catch (...)
+        {
+            // A matching filename whose records did not load completely cannot establish normalized provenance.
+            if (isFalloutNewVegasMasterCandidate)
+                mStoreImp->mFalloutNewVegasMasterCandidateIndex.reset();
+            throw;
+        }
+    }
+
+    std::size_t ESMStore::getFalloutNewVegasMasterCandidateCount() const
+    {
+        return mStoreImp->mFalloutNewVegasMasterCandidateCount;
+    }
+
+    std::optional<std::int32_t> ESMStore::getFalloutNewVegasMasterCandidateIndex() const
+    {
+        return mStoreImp->mFalloutNewVegasMasterCandidateIndex;
+    }
+
+    const FalloutPlayerState* ESMStore::getFalloutPlayerState() const
+    {
+        if (!mStoreImp->mFalloutPlayerState)
+            return nullptr;
+        return &*mStoreImp->mFalloutPlayerState;
+    }
+
+    FalloutNativePlayerRecordsResolution ESMStore::getFalloutNativePlayerRecords() const
+    {
+        if (!mStoreImp->mFalloutPlayerState)
+            return { std::nullopt, "native FNV Player state has not been fully validated" };
+        return resolveFalloutNativePlayerRecords(get<ESM4::Npc>(), get<ESM4::ActorCharacter>(), get<ESM4::Class>(),
+            get<ESM4::Race>(), *mStoreImp->mFalloutPlayerState);
     }
 
     void ESMStore::setIdType(const ESM::RefId& id, ESM::RecNameInts type)
@@ -605,9 +667,38 @@ namespace MWWorld
 
     void ESMStore::validate()
     {
+        // Validation is transactional for native Player publication. No earlier successful state survives a failed
+        // revalidation, and the local candidate is published only after both identity and exact typed payloads resolve.
+        mStoreImp->mFalloutPlayerState.reset();
+        std::optional<FalloutPlayerState> validatedFalloutPlayerState;
+        if (mStoreImp->mFalloutNewVegasMasterCandidateCount != 0)
+        {
+            if (mStoreImp->mFalloutNewVegasMasterCandidateCount != 1)
+                throw std::runtime_error("ambiguous duplicate FalloutNV.esm master candidates");
+            if (!mStoreImp->mFalloutNewVegasMasterCandidateIndex)
+                throw std::runtime_error("FalloutNV.esm master candidate has no valid normalized namespace");
+
+            const std::int32_t master = *mStoreImp->mFalloutNewVegasMasterCandidateIndex;
+            FalloutPlayerStateResolution player = resolveFalloutPlayerIdentity(get<ESM4::Npc>(),
+                get<ESM4::ActorCharacter>(), ESM::FormId{ 7, master }, ESM::FormId{ 0x14, master });
+            if (!player)
+                throw std::runtime_error(player.mError);
+
+            FalloutNativePlayerRecordsResolution native = resolveFalloutNativePlayerRecords(get<ESM4::Npc>(),
+                get<ESM4::ActorCharacter>(), get<ESM4::Class>(), get<ESM4::Race>(), *player.mState);
+            if (!native)
+                throw std::runtime_error(native.mError);
+
+            validatedFalloutPlayerState = std::move(*player.mState);
+        }
+
         auto& npcs = getWritable<ESM::NPC>();
-        std::vector<ESM::NPC> npcsToReplace = getNPCsToReplace(getWritable<ESM::Faction>(), getWritable<ESM::Class>(),
-            getWritable<ESM::Race>(), getWritable<ESM::Script>(), npcs.mStatic);
+        std::vector<ESM::NPC> npcsToReplace;
+        if (!npcs.mStatic.empty())
+        {
+            npcsToReplace = getNPCsToReplace(getWritable<ESM::Faction>(), getWritable<ESM::Class>(),
+                getWritable<ESM::Race>(), getWritable<ESM::Script>(), npcs.mStatic);
+        }
 
         for (const ESM::NPC& npc : npcsToReplace)
         {
@@ -635,6 +726,8 @@ namespace MWWorld
             enchantments.eraseStatic(enchantment.mId);
             enchantments.insertStatic(enchantment);
         }
+
+        mStoreImp->mFalloutPlayerState = std::move(validatedFalloutPlayerState);
     }
 
     void ESMStore::movePlayerRecord()
@@ -649,8 +742,12 @@ namespace MWWorld
         auto& npcs = getWritable<ESM::NPC>();
         auto& scripts = getWritable<ESM::Script>();
 
-        std::vector<ESM::NPC> npcsToReplace = getNPCsToReplace(getWritable<ESM::Faction>(), getWritable<ESM::Class>(),
-            getWritable<ESM::Race>(), getWritable<ESM::Script>(), npcs.mDynamic);
+        std::vector<ESM::NPC> npcsToReplace;
+        if (!npcs.mDynamic.empty())
+        {
+            npcsToReplace = getNPCsToReplace(getWritable<ESM::Faction>(), getWritable<ESM::Class>(),
+                getWritable<ESM::Race>(), getWritable<ESM::Script>(), npcs.mDynamic);
+        }
 
         for (const ESM::NPC& npc : npcsToReplace)
             npcs.insert(npc);

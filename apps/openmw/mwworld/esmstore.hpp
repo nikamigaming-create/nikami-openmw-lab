@@ -1,8 +1,10 @@
 #ifndef OPENMW_MWWORLD_ESMSTORE_H
 #define OPENMW_MWWORLD_ESMSTORE_H
 
+#include <cstdint>
 #include <filesystem>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <tuple>
 #include <unordered_map>
@@ -122,6 +124,8 @@ namespace ESM4
 
 namespace MWWorld
 {
+    struct FalloutNativePlayerRecordsResolution;
+    struct FalloutPlayerState;
     struct ESMStoreImp;
 
     class ESMStore
@@ -231,6 +235,19 @@ namespace MWWorld
         void load(ESM::ESMReader& esm, Loading::Listener* listener, ESM::Dialogue*& dialogue);
         void loadESM4(ESM4::Reader& esm, Loading::Listener* listener);
 
+        /// Number of content files whose case-insensitive basename is exactly FalloutNV.esm.
+        /// A matching filename is only a provenance candidate; it does not prove native Player data.
+        std::size_t getFalloutNewVegasMasterCandidateCount() const;
+
+        /// Normalized namespace of the sole in-range FalloutNV.esm candidate, if unambiguous.
+        std::optional<std::int32_t> getFalloutNewVegasMasterCandidateIndex() const;
+
+        /// Fully validated, pointer-free native Player state, or nullptr until validation succeeds.
+        const FalloutPlayerState* getFalloutPlayerState() const;
+
+        /// Re-resolve exact typed records from the current stores; no raw pointer is retained by ESMStore.
+        FalloutNativePlayerRecordsResolution getFalloutNativePlayerRecords() const;
+
         template <class T>
         const Store<T>& get() const
         {
@@ -278,7 +295,7 @@ namespace MWWorld
         {
             Store<T>& store = getWritable<T>();
             if (store.search(x.mId) != nullptr)
-                throw std::runtime_error("Try to override existing record " + x.mId.toDebugString());
+                throw std::runtime_error("Try to override existing record " + ESM::RefId(x.mId).toDebugString());
 
             T* ptr = store.insertStatic(x);
             if constexpr (std::is_convertible_v<Store<T>*, DynamicStore*>)

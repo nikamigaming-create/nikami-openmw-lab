@@ -3,8 +3,16 @@
 
 #include <algorithm>
 #include <array>
+#include <cstdint>
+#include <filesystem>
 #include <fstream>
+#include <limits>
+#include <memory>
 #include <span>
+#include <sstream>
+#include <string>
+#include <string_view>
+#include <type_traits>
 
 #include <boost/program_options/options_description.hpp>
 #include <boost/program_options/variables_map.hpp>
@@ -14,11 +22,15 @@
 #include <components/esm/typetraits.hpp>
 #include <components/esm3/esmreader.hpp>
 #include <components/esm3/esmwriter.hpp>
+#include <components/esm3/readerscache.hpp>
 #include <components/esm3/typetraits.hpp>
 #include <components/esm4/common.hpp>
+#include <components/esm4/loadachr.hpp>
 #include <components/esm4/loadclas.hpp>
 #include <components/esm4/loadclmt.hpp>
 #include <components/esm4/loadgmst.hpp>
+#include <components/esm4/loadnpc.hpp>
+#include <components/esm4/loadrace.hpp>
 #include <components/esm4/loadwthr.hpp>
 #include <components/esm4/reader.hpp>
 #include <components/esm4/readerutils.hpp>
@@ -29,6 +41,7 @@
 #include <components/testing/util.hpp>
 
 #include "apps/openmw/mwworld/esmstore.hpp"
+#include "apps/openmw/mwworld/fnvplayerstate.hpp"
 
 static Loading::Listener dummyListener;
 
@@ -49,6 +62,305 @@ TEST(FNVStoreRegistration, exposesNativeClimateAndWeatherStores)
     MWWorld::ESMStore store;
     EXPECT_EQ(store.get<ESM4::Climate>().getSize(), 0u);
     EXPECT_EQ(store.get<ESM4::Weather>().getSize(), 0u);
+}
+
+namespace
+{
+    constexpr std::int32_t sFalloutMasterIndex = 37;
+
+    constexpr ESM::FormId fnvForm(std::uint32_t index, std::int32_t contentFile = sFalloutMasterIndex)
+    {
+        return ESM::FormId{ index, contentFile };
+    }
+
+    template <class T>
+    void appendPod(std::string& output, const T& value)
+    {
+        static_assert(std::is_trivially_copyable_v<T>);
+        output.append(reinterpret_cast<const char*>(&value), sizeof(value));
+    }
+
+    void appendSubRecord(std::string& output, std::string_view type, std::string_view data)
+    {
+        output.append(type);
+        appendPod(output, static_cast<std::uint16_t>(data.size()));
+        output.append(data);
+    }
+
+    std::unique_ptr<ESM4::Reader> makeHeaderOnlyReader(
+        const std::filesystem::path& filename, std::uint32_t modIndex)
+    {
+        std::string hedr;
+        appendPod(hedr, 1.34f);
+        appendPod(hedr, std::int32_t{ 0 });
+        appendPod(hedr, std::uint32_t{ 0x800 });
+
+        std::string headerBody;
+        appendSubRecord(headerBody, "HEDR", hedr);
+
+        std::string plugin = "TES4";
+        appendPod(plugin, static_cast<std::uint32_t>(headerBody.size()));
+        appendPod(plugin, std::uint32_t{ 0 });
+        appendPod(plugin, std::uint32_t{ 0 });
+        appendPod(plugin, std::uint32_t{ 0 });
+        appendPod(plugin, std::uint16_t{ 0 });
+        appendPod(plugin, std::uint16_t{ 0 });
+        plugin.append(headerBody);
+
+        auto stream = std::make_unique<std::istringstream>(plugin, std::ios::in | std::ios::binary);
+        auto reader = std::make_unique<ESM4::Reader>(std::move(stream), filename, nullptr, nullptr, true);
+        reader->setModIndex(modIndex);
+        return reader;
+    }
+
+    void observeNativeMaster(MWWorld::ESMStore& store, const std::filesystem::path& filename = "FalloutNV.esm",
+        std::uint32_t modIndex = static_cast<std::uint32_t>(sFalloutMasterIndex))
+    {
+        std::unique_ptr<ESM4::Reader> reader = makeHeaderOnlyReader(filename, modIndex);
+        store.loadESM4(*reader, nullptr);
+    }
+
+    ESM4::Npc makeNativePlayer(std::int32_t contentFile = sFalloutMasterIndex)
+    {
+        ESM4::Npc result{};
+        result.mId = fnvForm(7, contentFile);
+        result.mIsFONV = true;
+        result.mEditorId = "Player";
+        result.mFullName = "The Courier";
+        result.mModel = "Characters\\_Male\\Skeleton.NIF";
+        result.mRace = fnvForm(0x19, contentFile);
+        result.mClass = fnvForm(0x57e6a, contentFile);
+        result.mHasFNVBaseConfig = true;
+        result.mBaseConfig.fo3.templateFlags = 0;
+        result.mHasFNVAIData = true;
+        result.mHasFNVData = true;
+        result.mFNVData = { 345, 1, 2, 3, 4, 5, 6, 7 };
+        result.mHasFNVSkills = true;
+        result.mFNVSkills.values = { 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24 };
+        result.mFNVSkills.offsets = { 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44 };
+        return result;
+    }
+
+    ESM4::ActorCharacter makeNativePlayerReference(std::int32_t contentFile = sFalloutMasterIndex)
+    {
+        ESM4::ActorCharacter result{};
+        result.mId = fnvForm(0x14, contentFile);
+        result.mBaseObj = fnvForm(7, contentFile);
+        return result;
+    }
+
+    ESM4::Class makeNativePlayerClass(std::int32_t contentFile = sFalloutMasterIndex)
+    {
+        ESM4::Class result{};
+        result.mId = fnvForm(0x57e6a, contentFile);
+        result.mEditorId = "PlayerClass";
+        result.mHasFalloutData = true;
+        result.mHasFalloutAttributes = true;
+        return result;
+    }
+
+    ESM4::Race makeNativePlayerRace(std::int32_t contentFile = sFalloutMasterIndex)
+    {
+        ESM4::Race result{};
+        result.mId = fnvForm(0x19, contentFile);
+        result.mEditorId = "Caucasian";
+        result.mHasFalloutData = true;
+        return result;
+    }
+
+    enum class NativePlayerRecord
+    {
+        None,
+        Npc,
+        Reference,
+        Class,
+        Race,
+    };
+
+    void insertNativePlayerRecords(
+        MWWorld::ESMStore& store, NativePlayerRecord omitted = NativePlayerRecord::None, bool insertDecoys = false)
+    {
+        if (omitted != NativePlayerRecord::Npc)
+            store.insertStatic(makeNativePlayer());
+        if (omitted != NativePlayerRecord::Reference)
+            store.insertStatic(makeNativePlayerReference());
+        if (omitted != NativePlayerRecord::Class)
+            store.insertStatic(makeNativePlayerClass());
+        if (omitted != NativePlayerRecord::Race)
+            store.insertStatic(makeNativePlayerRace());
+
+        if (insertDecoys)
+        {
+            constexpr std::int32_t decoyNamespace = sFalloutMasterIndex + 1;
+            store.insertStatic(makeNativePlayer(decoyNamespace));
+            store.insertStatic(makeNativePlayerReference(decoyNamespace));
+            store.insertStatic(makeNativePlayerClass(decoyNamespace));
+            store.insertStatic(makeNativePlayerRace(decoyNamespace));
+        }
+    }
+
+    void validateStore(MWWorld::ESMStore& store)
+    {
+        ESM::ReadersCache readers;
+        store.validateRecords(readers);
+    }
+}
+
+TEST(FNVNativePlayerStore, publishesExactStateAndReResolvesExactTypedPointersWithoutLegacyCarriers)
+{
+    MWWorld::ESMStore store;
+    observeNativeMaster(store, "Data/FaLlOuTnV.EsM");
+    insertNativePlayerRecords(store, NativePlayerRecord::None, true);
+
+    ASSERT_NO_THROW(validateStore(store));
+    ASSERT_EQ(store.getFalloutNewVegasMasterCandidateCount(), 1u);
+    ASSERT_TRUE(store.getFalloutNewVegasMasterCandidateIndex().has_value());
+    ASSERT_EQ(*store.getFalloutNewVegasMasterCandidateIndex(), sFalloutMasterIndex);
+
+    const MWWorld::FalloutPlayerState* state = store.getFalloutPlayerState();
+    ASSERT_NE(state, nullptr);
+    EXPECT_EQ(state->mBaseRecord, fnvForm(7));
+    EXPECT_EQ(state->mReferenceRecord, fnvForm(0x14));
+
+    const MWWorld::FalloutNativePlayerRecordsResolution records = store.getFalloutNativePlayerRecords();
+    ASSERT_TRUE(records) << records.mError;
+    EXPECT_EQ(records.mRecords->mBaseNpc, store.get<ESM4::Npc>().search(fnvForm(7)));
+    EXPECT_EQ(records.mRecords->mReference, store.get<ESM4::ActorCharacter>().search(fnvForm(0x14)));
+    EXPECT_EQ(records.mRecords->mClass, store.get<ESM4::Class>().search(fnvForm(0x57e6a)));
+    EXPECT_EQ(records.mRecords->mRace, store.get<ESM4::Race>().search(fnvForm(0x19)));
+
+    EXPECT_EQ(store.get<ESM::Class>().getSize(), 0u);
+    EXPECT_EQ(store.get<ESM::Race>().getSize(), 0u);
+    EXPECT_EQ(store.get<ESM::NPC>().getSize(), 0u);
+    EXPECT_EQ(store.get<ESM::NPC>().search(ESM::RefId::stringRefId("Player")), nullptr);
+}
+
+TEST(FNVNativePlayerStore, ignoresNamespaceDecoysAndRejectsEachMissingExactTypedRecordWithoutPartialState)
+{
+    const NativePlayerRecord missingRecords[]{ NativePlayerRecord::Npc, NativePlayerRecord::Reference,
+        NativePlayerRecord::Class, NativePlayerRecord::Race };
+    for (const NativePlayerRecord missing : missingRecords)
+    {
+        SCOPED_TRACE(static_cast<int>(missing));
+        MWWorld::ESMStore store;
+        observeNativeMaster(store);
+        insertNativePlayerRecords(store, missing, true);
+
+        EXPECT_THROW(validateStore(store), std::runtime_error);
+        EXPECT_EQ(store.getFalloutPlayerState(), nullptr);
+        EXPECT_FALSE(store.getFalloutNativePlayerRecords());
+        EXPECT_EQ(store.get<ESM::Class>().getSize(), 0u);
+        EXPECT_EQ(store.get<ESM::Race>().getSize(), 0u);
+        EXPECT_EQ(store.get<ESM::NPC>().getSize(), 0u);
+    }
+}
+
+TEST(FNVNativePlayerStore, rejectsCorruptTypedRecordsAndClearsPreviouslyPublishedState)
+{
+    MWWorld::ESMStore store;
+    observeNativeMaster(store);
+    insertNativePlayerRecords(store);
+    ASSERT_NO_THROW(validateStore(store));
+    ASSERT_NE(store.getFalloutPlayerState(), nullptr);
+
+    ESM4::Class corruptClass = makeNativePlayerClass();
+    corruptClass.mHasFalloutAttributes = false;
+    store.overrideRecord(corruptClass);
+
+    EXPECT_THROW(validateStore(store), std::runtime_error);
+    EXPECT_EQ(store.getFalloutPlayerState(), nullptr);
+    EXPECT_FALSE(store.getFalloutNativePlayerRecords());
+}
+
+TEST(FNVNativePlayerStore, rejectsCorruptionOfEveryCoreTypedIdentityOrPayload)
+{
+    const NativePlayerRecord corruptRecords[]{ NativePlayerRecord::Npc, NativePlayerRecord::Reference,
+        NativePlayerRecord::Class, NativePlayerRecord::Race };
+    for (const NativePlayerRecord corrupt : corruptRecords)
+    {
+        SCOPED_TRACE(static_cast<int>(corrupt));
+        MWWorld::ESMStore store;
+        observeNativeMaster(store);
+        insertNativePlayerRecords(store, corrupt);
+
+        switch (corrupt)
+        {
+            case NativePlayerRecord::Npc:
+            {
+                ESM4::Npc value = makeNativePlayer();
+                value.mEditorId = "NotPlayer";
+                store.insertStatic(value);
+                break;
+            }
+            case NativePlayerRecord::Reference:
+            {
+                ESM4::ActorCharacter value = makeNativePlayerReference();
+                value.mBaseObj = fnvForm(8);
+                store.insertStatic(value);
+                break;
+            }
+            case NativePlayerRecord::Class:
+            {
+                ESM4::Class value = makeNativePlayerClass();
+                value.mHasFalloutData = false;
+                store.insertStatic(value);
+                break;
+            }
+            case NativePlayerRecord::Race:
+            {
+                ESM4::Race value = makeNativePlayerRace();
+                value.mHasFalloutData = false;
+                store.insertStatic(value);
+                break;
+            }
+            case NativePlayerRecord::None:
+                break;
+        }
+
+        EXPECT_THROW(validateStore(store), std::runtime_error);
+        EXPECT_EQ(store.getFalloutPlayerState(), nullptr);
+        EXPECT_FALSE(store.getFalloutNativePlayerRecords());
+    }
+}
+
+TEST(FNVNativePlayerStore, exactBasenameIsOnlyACandidateUntilTypedValidationSucceeds)
+{
+    MWWorld::ESMStore store;
+    observeNativeMaster(store, "Data/FalloutNV.esm.backup");
+    EXPECT_EQ(store.getFalloutNewVegasMasterCandidateCount(), 0u);
+    EXPECT_FALSE(store.getFalloutNewVegasMasterCandidateIndex().has_value());
+    EXPECT_EQ(store.getFalloutPlayerState(), nullptr);
+
+    observeNativeMaster(store, "Elsewhere/FalloutNV.esm");
+    EXPECT_EQ(store.getFalloutNewVegasMasterCandidateCount(), 1u);
+    ASSERT_TRUE(store.getFalloutNewVegasMasterCandidateIndex().has_value());
+    EXPECT_EQ(*store.getFalloutNewVegasMasterCandidateIndex(), sFalloutMasterIndex);
+    EXPECT_THROW(validateStore(store), std::runtime_error);
+    EXPECT_EQ(store.getFalloutPlayerState(), nullptr);
+}
+
+TEST(FNVNativePlayerStore, rejectsCaseInsensitiveDuplicateCandidatesEvenAtIdenticalIndex)
+{
+    MWWorld::ESMStore store;
+    observeNativeMaster(store, "Data/FalloutNV.esm");
+    EXPECT_THROW(observeNativeMaster(store, "Overrides/FALLOUTnv.ESM"), std::runtime_error);
+
+    EXPECT_EQ(store.getFalloutNewVegasMasterCandidateCount(), 2u);
+    EXPECT_FALSE(store.getFalloutNewVegasMasterCandidateIndex().has_value());
+    EXPECT_THROW(validateStore(store), std::runtime_error);
+    EXPECT_EQ(store.getFalloutPlayerState(), nullptr);
+}
+
+TEST(FNVNativePlayerStore, rejectsOutOfRangeCandidateIndexBeforeFormIdNormalization)
+{
+    MWWorld::ESMStore store;
+    EXPECT_THROW(observeNativeMaster(store, "FalloutNV.esm", std::numeric_limits<std::uint32_t>::max()),
+        std::runtime_error);
+
+    EXPECT_EQ(store.getFalloutNewVegasMasterCandidateCount(), 1u);
+    EXPECT_FALSE(store.getFalloutNewVegasMasterCandidateIndex().has_value());
+    EXPECT_THROW(validateStore(store), std::runtime_error);
+    EXPECT_EQ(store.getFalloutPlayerState(), nullptr);
 }
 
 /// Base class for tests of ESMStore that rely on external content files to produce the test results

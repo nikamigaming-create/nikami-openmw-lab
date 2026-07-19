@@ -213,6 +213,12 @@ namespace ESM4
 
         inline std::filesystem::path getFileName() const { return mCtx.filename; } // not used
 
+        /// Return the normalized content-file namespace assigned by the loader.
+        ///
+        /// FormIds read by this reader are normalized into this namespace, so callers that
+        /// establish provenance must use the same value rather than infer it from load order.
+        inline std::uint32_t getModIndex() const noexcept { return mCtx.modIndex; }
+
         inline bool hasMoreRecs() const { return (mFileSize - mCtx.fileRead) > 0; }
 
         // Methods added for updating loading progress bars
