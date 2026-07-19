@@ -920,6 +920,24 @@ namespace MWWorld
     // Skill
     //=========================================================================
 
+    void Store<ESM::Skill>::setUpNeutral()
+    {
+        for (int index = 0; index < ESM::Skill::Length; ++index)
+        {
+            ESM::Skill skill;
+            skill.blank();
+            skill.mId = *ESM::Skill::indexToRefId(index).getIf<ESM::SkillId>();
+            skill.mName.clear();
+            skill.mDescription.clear();
+            skill.mIcon.clear();
+            skill.mWerewolfValue = 0.f;
+            skill.mSchool.reset();
+            for (float& value : skill.mData.mUseValue)
+                value = 0.f;
+            insertStatic(skill);
+        }
+    }
+
     void Store<ESM::Skill>::setUp(const MWWorld::Store<ESM::GameSetting>& settings)
     {
         constexpr std::string_view skillValues[ESM::Skill::Length][4] = {
@@ -1023,8 +1041,29 @@ namespace MWWorld
     //=========================================================================
     Store<ESM::MagicEffect>::Store() {}
 
+    void Store<ESM::MagicEffect>::setUpNeutral()
+    {
+        for (int index = 0; index < ESM::MagicEffect::Length; ++index)
+        {
+            ESM::MagicEffect effect;
+            effect.mIndex = index;
+            effect.mId = ESM::MagicEffect::indexToRefId(index);
+            effect.blank();
+            insertStatic(effect);
+        }
+    }
+
     // Attribute
     //=========================================================================
+
+    void Store<ESM::Attribute>::setUpNeutral()
+    {
+        const ESM::Attribute::AttributeID attributes[] = { ESM::Attribute::Strength, ESM::Attribute::Intelligence,
+            ESM::Attribute::Willpower, ESM::Attribute::Agility, ESM::Attribute::Speed, ESM::Attribute::Endurance,
+            ESM::Attribute::Personality, ESM::Attribute::Luck };
+        for (const ESM::Attribute::AttributeID& id : attributes)
+            insertStatic({ .mId = id });
+    }
 
     void Store<ESM::Attribute>::setUp(const MWWorld::Store<ESM::GameSetting>& settings)
     {
@@ -1350,6 +1389,7 @@ template class MWWorld::TypedDynamicStore<ESM4::Book>;
 template class MWWorld::TypedDynamicStore<ESM4::BodyPartData>;
 template class MWWorld::TypedDynamicStore<ESM4::Cell>;
 template class MWWorld::TypedDynamicStore<ESM4::Class>;
+template class MWWorld::TypedDynamicStore<ESM4::GameSetting>;
 template class MWWorld::TypedDynamicStore<ESM4::Climate>;
 template class MWWorld::TypedDynamicStore<ESM4::Colour>;
 template class MWWorld::TypedDynamicStore<ESM4::Clothing>;

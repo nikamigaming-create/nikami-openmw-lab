@@ -107,6 +107,7 @@ namespace ESM4
     struct Flora;
     struct FormIdList;
     struct Furniture;
+    struct GameSetting;
     struct GlobalVariable;
     struct Hair;
     struct HeadPart;
@@ -208,7 +209,8 @@ namespace MWWorld
             // StoreTuple is an ABI-like compile-time ordinal shared by inline get<T>() call sites.
             // New stores must be appended so an incremental build can never reinterpret an existing slot.
             Store<ESM4::Projectile>, Store<ESM4::ActorValueInformation>, Store<ESM4::Faction>, Store<ESM4::Perk>,
-            Store<ESM4::RecipeCategory>, Store<ESM4::Recipe>, Store<ESM4::Note>, Store<ESM4::AnimObject>>;
+            Store<ESM4::RecipeCategory>, Store<ESM4::Recipe>, Store<ESM4::Note>, Store<ESM4::AnimObject>,
+            Store<ESM4::GameSetting>>;
 
     private:
         template <typename T>
@@ -253,6 +255,8 @@ namespace MWWorld
         bool mHasStarfieldContent = false;
         ESM4Game mESM4Game = ESM4Game::Unknown;
         std::optional<std::uint32_t> mESM4GameMasterIndex;
+        std::size_t mFalloutNewVegasMasterCandidateCount = 0;
+        std::optional<std::int32_t> mFalloutNewVegasMasterCandidateIndex;
         std::optional<FalloutPlayerState> mFalloutPlayerState;
 
     public:
@@ -288,7 +292,31 @@ namespace MWWorld
 
         ESM4Game getESM4Game() const { return mESM4Game; }
 
-        const std::optional<FalloutPlayerState>& getFalloutPlayerState() const { return mFalloutPlayerState; }
+        /// Number of content files whose case-insensitive basename is exactly FalloutNV.esm.
+        /// A matching filename establishes only provenance; typed Player validation selects FNV setup.
+        std::size_t getFalloutNewVegasMasterCandidateCount() const
+        {
+            return mFalloutNewVegasMasterCandidateCount;
+        }
+
+        /// Normalized namespace of the sole fully-read FalloutNV.esm candidate, if unambiguous and in range.
+        std::optional<std::int32_t> getFalloutNewVegasMasterCandidateIndex() const
+        {
+            return mFalloutNewVegasMasterCandidateIndex;
+        }
+
+        /// Fully validated, pointer-free native Player state, or nullptr until validation succeeds.
+        const FalloutPlayerState* getFalloutPlayerState() const
+        {
+            return mFalloutPlayerState ? &*mFalloutPlayerState : nullptr;
+        }
+
+        /// Re-resolve exact typed records from the current stores; no raw pointer is retained by ESMStore.
+        FalloutNativePlayerRecordsResolution getFalloutNativePlayerRecords() const;
+
+        /// Bridge validated official FNV GMSTs and the narrow OpenMW compatibility globals/settings before generic
+        /// fallback insertion. Returns false without mutation when no FalloutNV.esm provenance candidate exists.
+        bool prepareFalloutNewVegasCompatibilityRecords();
 
         /// Return the authored storage cell behind a Starfield BGSPackIn base form.
         /// Pack-ins are expanded lazily by CellStore so only the active exterior grid pays their assembly cost.
