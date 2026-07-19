@@ -83,6 +83,7 @@ namespace ESM4
     struct Book;
     struct Cell;
     struct Class;
+    struct Climate;
     struct Clothing;
     struct Container;
     struct Creature;
@@ -115,6 +116,7 @@ namespace ESM4
     struct TextureSet;
     struct Tree;
     struct Weapon;
+    struct Weather;
     struct World;
 }
 
@@ -155,7 +157,7 @@ namespace MWWorld
             Store<ESM4::Terminal>, Store<ESM4::TextureSet>, Store<ESM4::Tree>, Store<ESM4::Weapon>, Store<ESM4::World>,
 
             // Append new native stores so the ordinals of every existing store remain stable.
-            Store<ESM4::Class>, Store<ESM4::GameSetting>>;
+            Store<ESM4::Class>, Store<ESM4::GameSetting>, Store<ESM4::Climate>, Store<ESM4::Weather>>;
 
     private:
         template <typename T>
