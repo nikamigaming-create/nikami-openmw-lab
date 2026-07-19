@@ -20,6 +20,7 @@ namespace ESM4
     inline constexpr std::size_t sFONVPlayerActorValueDataBytes
         = 3 * sFONVPlayerActorValueCount * (sizeof(float) + 1) + sizeof(std::uint32_t) + 1;
     static_assert(sFONVPlayerActorValueDataBytes == 1160);
+    inline constexpr std::size_t sFONVPlayerChangedCharacterStateBytes = 510;
     inline constexpr std::uint8_t sFONVExtraWornType = 0x16;
     inline constexpr std::uint8_t sFONVExtraCountType = 0x24;
     inline constexpr std::uint8_t sFONVExtraHealthType = 0x25;
@@ -452,7 +453,7 @@ namespace ESM4
     };
 
     // Exact changed-form version-27, process-level-0 continuation after ChangedInventory. Any xEdit branch not
-    // represented above is rejected instead of being guessed. The next player-character block remains opaque.
+    // represented above is rejected instead of being guessed. Its raw continuation is handed to ChangedActor.
     struct FONVSavePlayerMobileObjectProcessState
     {
         FONVSavePlayerMobileObjectBaseState mMobileObjectBase;
@@ -461,6 +462,111 @@ namespace ESM4
         FONVSavePlayerMiddleLowProcessState mMiddleLowProcess;
         FONVSavePlayerMiddleHighProcessState mMiddleHighProcess;
         FONVSavePlayerHighProcessState mHighProcess;
+        FONVSaveRange mRange;
+        std::vector<std::uint8_t> mRaw;
+        FONVSaveRawField mUnparsedRemainder;
+    };
+
+    // ChangedActor's fixed members after ChangedMobileObject. Version-gated members are present because the
+    // enclosing canonical player ACHR is required to be changed-form version 27. Names deliberately follow the
+    // authoritative FNV save definition; unknown runtime meanings are not inferred.
+    struct FONVSavePlayerChangedActorFixedState
+    {
+        FONVSaveField<float> mUnk114;
+        std::array<FONVSaveField<std::uint8_t>, 4> mByt124_125_0BC_0C4;
+        FONVSaveField<std::uint32_t> mUnk0C8;
+        FONVSaveField<std::uint8_t> mByt07D;
+        FONVSaveField<std::uint32_t> mUnk110;
+        std::array<FONVSaveField<std::uint8_t>, 6> mByt118_126_145_146_14C_14D;
+        std::array<FONVSaveField<std::uint32_t>, 3> mUnk150_154_158;
+        std::array<FONVSaveField<std::uint8_t>, 3> mByt174_175_18D;
+        std::array<FONVSaveField<std::uint32_t>, 2> mUnk1A4_1A8;
+        std::array<FONVSaveField<std::uint8_t>, 2> mByt0F0_0F1;
+        FONVSaveField<std::uint32_t> mUnk10C;
+        FONVSaveField<std::uint8_t> mUnk0138Byt000;
+        FONVSaveField<std::uint32_t> mUnk0138Unk004;
+        FONVSaveField<std::uint8_t> mUnk0138Byt010;
+        std::array<FONVSaveField<std::uint32_t>, 2> mUnk0138Unk008_00C;
+        FONVSaveField<std::uint32_t> mUnk120;
+        std::array<FONVSaveResolvedReferenceId, 3> mForm0C0_ActorBase_Form070;
+        FONVSaveRange mRange;
+        std::vector<std::uint8_t> mRaw;
+    };
+
+    struct FONVSavePlayerPathingLocation
+    {
+        FONVSavePlayerProcessVector3 mCoords;
+        std::array<FONVSaveResolvedReferenceId, 3> mNavMesh_Cell_Worldspace;
+        FONVSaveField<std::uint32_t> mCoordXandY;
+        FONVSaveField<std::int16_t> mWrd024;
+        FONVSaveField<std::uint8_t> mByt026;
+        FONVSaveField<std::uint8_t> mUnknown;
+        FONVSaveRange mRange;
+        std::vector<std::uint8_t> mRaw;
+    };
+
+    // Save330 selects ActorMover content bit 3, the detailed actor path handler. Other content branches have no
+    // enclosing byte length, so accepting them here would move the boundary by guesswork and is rejected.
+    struct FONVSavePlayerDetailedActorPathHandler
+    {
+        std::array<FONVSavePlayerProcessVector3, 5> mCoords01C_028_034_040_04C;
+        std::array<FONVSaveField<std::uint32_t>, 20>
+            mUnk060_064_068_06C_070_074_078_07C_080_084_088_08C_090_094_098_09C_0AC_0B0_0B4_0B8;
+        std::array<FONVSaveField<std::uint32_t>, 2> mUnk014;
+        std::array<FONVSaveField<std::uint32_t>, 4> mUnk0C8_0CC_0D0_0D4;
+        std::array<FONVSaveField<std::uint8_t>, 7> mByt0DC_0DD_0DE_0DF_0E0_0E2_0E1;
+        FONVSaveField<std::uint8_t> mUnk0C0Byt000;
+        FONVSaveField<std::uint8_t> mUnk0C0Byt001;
+        FONVSaveField<std::uint32_t> mUnk0C0Unk004;
+        FONVSavePlayerProcessVector3 mUnknownCoords;
+        FONVSaveField<std::uint32_t> mUnk0BC;
+        FONVSaveResolvedReferenceId mForm0D8;
+        FONVSaveField<std::uint32_t> mList058Count;
+        std::vector<FONVSaveResolvedReferenceId> mList058;
+        FONVSaveRange mRange;
+        std::vector<std::uint8_t> mRaw;
+    };
+
+    struct FONVSavePlayerMoverState
+    {
+        FONVSavePlayerProcessVector3 mCoords;
+        std::array<FONVSaveField<std::uint32_t>, 3> mUnk094_098_09C;
+        FONVSaveRange mRange;
+        std::vector<std::uint8_t> mRaw;
+    };
+
+    struct FONVSavePlayerActorMoverState
+    {
+        FONVSaveField<std::uint16_t> mWrd040;
+        FONVSaveField<std::uint16_t> mWrd042;
+        FONVSaveField<std::uint8_t> mByt070;
+        FONVSaveField<std::uint32_t> mUnk034;
+        FONVSaveField<std::uint8_t> mByt071;
+        FONVSaveField<std::uint32_t> mUnk038;
+        std::array<FONVSaveField<std::uint8_t>, 2> mByt072_073;
+        FONVSavePlayerProcessVector3 mCoords004;
+        FONVSavePlayerProcessVector3 mCoords010;
+        FONVSaveField<std::uint32_t> mUnk03C;
+        std::array<FONVSaveField<std::uint8_t>, 5> mByt074_075_077_076_078;
+        FONVSaveField<std::uint32_t> mUnk06C;
+        std::array<FONVSaveField<std::uint32_t>, 2> mUnknown_Unk084;
+        FONVSavePlayerPathingLocation mPathingLocation;
+        FONVSaveResolvedReferenceId mForm02C;
+        FONVSaveField<std::uint8_t> mContentFlags;
+        FONVSavePlayerDetailedActorPathHandler mDetailedPathHandler;
+        FONVSavePlayerMoverState mPlayerMover;
+        FONVSaveRange mRange;
+        std::vector<std::uint8_t> mRaw;
+    };
+
+    // Exact 510-byte ChangedActor/ActorMover/ChangedCharacter continuation in pinned Save330. The following
+    // player-only ACHR data remains explicit and opaque until its own authoritative slice is decoded.
+    struct FONVSavePlayerChangedCharacterState
+    {
+        FONVSavePlayerChangedActorFixedState mActorFixed;
+        FONVSavePlayerActorMoverState mActorMover;
+        FONVSaveField<std::uint8_t> mByt1C0;
+        FONVSaveField<std::uint8_t> mByt1C1;
         FONVSaveRange mRange;
         std::vector<std::uint8_t> mRaw;
         FONVSaveRawField mUnparsedRemainder;
@@ -575,6 +681,7 @@ namespace ESM4
         std::optional<FONVSavePlayerActorValueData> mPlayerActorValueData;
         std::optional<FONVSavePlayerProcessInventoryData> mPlayerProcessInventoryData;
         std::optional<FONVSavePlayerMobileObjectProcessState> mPlayerMobileObjectProcessState;
+        std::optional<FONVSavePlayerChangedCharacterState> mPlayerChangedCharacterState;
         std::optional<FONVSaveSkyState> mSky;
 
         // The parser accounts for every byte structurally. These ranges are gameplay payload bytes whose internal
