@@ -106,14 +106,13 @@ fragment final(rt1=RT_FalloutBloom) {
         vec4 source = omw_GetLastShader(omw_TexCoord);
         vec3 color = source.rgb;
 
-        // ISHDRBLENDINSHADER*.pso: the unblurred scene contribution is
-        // normalized by twice the greater of scene alpha and the authored
-        // target luminance. OpenMW's intercepted scene is already LDR-scaled,
-        // unlike retail's HDR source; the measured LDR-equivalent source
-        // coefficient is 2/3 rather than retail's 1/2. Keep this conversion
-        // at the buffer boundary instead of baking a grade into actor assets.
+        // ISHDRBLENDINSHADER*.pso normalizes retail's HDR source before this
+        // cinematic stage. OpenMW's intercepted scene is an RGBA8, already
+        // tone-mapped LDR texture, so applying that normalization here would
+        // divide the displayed scene by the target luminance a second time.
+        // Preserve the LDR scene contribution and use the authored HDR values
+        // only for the bright-pass/bloom contribution below.
         float hdrDenominator = max(max(source.a, uFalloutHdr.x), 0.01);
-        color = max(color / (1.5 * hdrDenominator), vec3(0.0));
         color += omw_Texture2D(RT_FalloutBloom, omw_TexCoord).rgb
             * (uFalloutHdr.x / hdrDenominator);
 

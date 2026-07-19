@@ -8,12 +8,18 @@
 #include <array>
 #include <cstdint>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <limits>
 #include <memory>
 #include <sstream>
 #include <string>
 #include <string_view>
 #include <type_traits>
+
+#ifndef OPENMW_PROJECT_SOURCE_DIR
+#define OPENMW_PROJECT_SOURCE_DIR "."
+#endif
 
 namespace
 {
@@ -222,5 +228,22 @@ namespace
         EXPECT_NEAR(result.mTint[1], 0.660198152f, 1e-6f);
         EXPECT_NEAR(result.mTint[2], 0.0276841652f, 1e-6f);
         EXPECT_NEAR(result.mTint[3], 0.392156869f, 1e-6f);
+    }
+
+    TEST(Esm4ImageSpaceTest, shouldNotRenormalizeOpenMwLdrSceneByRetailTargetLuminance)
+    {
+        const std::filesystem::path shaderPath = std::filesystem::path{ OPENMW_PROJECT_SOURCE_DIR } / "files" / "data"
+            / "shaders" / "internal_fallout_imagespace.omwfx";
+        std::ifstream stream(shaderPath);
+        ASSERT_TRUE(stream) << shaderPath;
+        const std::string shader{ std::istreambuf_iterator<char>{ stream }, std::istreambuf_iterator<char>{} };
+
+        // The post-process intercept is RGBA8. The retail target-luminance
+        // denominator belongs to its HDR source and must not scale this LDR
+        // scene contribution; it remains available for authored bloom.
+        EXPECT_NE(shader.find("vec3 color = source.rgb;"), std::string::npos);
+        EXPECT_EQ(shader.find("color = max(color /"), std::string::npos);
+        EXPECT_EQ(shader.find("color /= "), std::string::npos);
+        EXPECT_NE(shader.find("* (uFalloutHdr.x / hdrDenominator)"), std::string::npos);
     }
 }
