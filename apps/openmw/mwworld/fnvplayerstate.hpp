@@ -21,8 +21,10 @@ namespace ESM4
 {
     struct ActorCharacter;
     struct Cell;
+    struct Class;
     struct FONVSaveGamePrefix;
     struct Npc;
+    struct Race;
     struct World;
 }
 
@@ -119,6 +121,26 @@ namespace MWWorld
     FalloutPlayerStateResolution resolveFalloutPlayerIdentity(const Store<ESM4::Npc>& npcs,
         const Store<ESM4::ActorCharacter>& actorReferences, ESM::FormId normalizedPlayerFormId,
         ESM::FormId normalizedPlayerReferenceFormId);
+
+    struct FalloutNativePlayerRecords
+    {
+        const ESM4::Npc* mBaseNpc = nullptr;
+        const ESM4::ActorCharacter* mReference = nullptr;
+        const ESM4::Class* mClass = nullptr;
+        const ESM4::Race* mRace = nullptr;
+    };
+
+    struct FalloutNativePlayerRecordsResolution
+    {
+        std::optional<FalloutNativePlayerRecords> mRecords;
+        std::string mError;
+
+        explicit operator bool() const { return mRecords.has_value(); }
+    };
+
+    FalloutNativePlayerRecordsResolution resolveFalloutNativePlayerRecords(const Store<ESM4::Npc>& npcs,
+        const Store<ESM4::ActorCharacter>& actorReferences, const Store<ESM4::Class>& classes,
+        const Store<ESM4::Race>& races, const FalloutPlayerState& playerState);
 
     // Only fields with an exact meaning in the currently decoded retail save header belong here. In particular, the
     // location string is a display label, not a cell identity or permission to move the player.

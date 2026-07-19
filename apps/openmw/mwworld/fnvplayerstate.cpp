@@ -13,7 +13,9 @@
 #include <components/esm4/fonvsavegame.hpp>
 #include <components/esm4/loadachr.hpp>
 #include <components/esm4/loadcell.hpp>
+#include <components/esm4/loadclas.hpp>
 #include <components/esm4/loadnpc.hpp>
+#include <components/esm4/loadrace.hpp>
 #include <components/esm4/loadwrld.hpp>
 #include <components/misc/strings/algorithm.hpp>
 
@@ -71,6 +73,11 @@ namespace
     }
 
     MWWorld::FalloutPlayerStateResolution failure(std::string message)
+    {
+        return { std::nullopt, std::move(message) };
+    }
+
+    MWWorld::FalloutNativePlayerRecordsResolution nativeRecordsFailure(std::string message)
     {
         return { std::nullopt, std::move(message) };
     }
@@ -243,9 +250,6 @@ namespace MWWorld
             return failure("resolved Player stats record lacks CNAM class identity");
         if (model.mRecord->mModel.empty())
             return failure("resolved Player model record lacks MODL identity");
-        if (stats.mRecord->mFNVData.health < 0
-            || stats.mRecord->mFNVData.health > std::numeric_limits<std::uint16_t>::max())
-            return failure("resolved Player health cannot be represented by the ESM3 compatibility carrier");
 
         FalloutPlayerState result;
         result.mBaseRecord = player->mId;
@@ -301,6 +305,95 @@ namespace MWWorld
         resolution.mState->mReferenceRecord = reference->mId;
         resolution.mState->mReferenceBaseRecord = reference->mBaseObj;
         return resolution;
+    }
+
+    FalloutNativePlayerRecordsResolution resolveFalloutNativePlayerRecords(const Store<ESM4::Npc>& npcs,
+        const Store<ESM4::ActorCharacter>& actorReferences, const Store<ESM4::Class>& classes,
+        const Store<ESM4::Race>& races, const FalloutPlayerState& playerState)
+    {
+        if (!playerState.mBaseRecord.hasContentFile() || playerState.mBaseRecord.mIndex != 7)
+        {
+            return nativeRecordsFailure(
+                "native FNV Player state does not identify exact normalized NPC_ FormID 0x00000007");
+        }
+        if (!playerState.mReferenceRecord.hasContentFile() || playerState.mReferenceRecord.mIndex != 0x14
+            || playerState.mReferenceRecord.mContentFile != playerState.mBaseRecord.mContentFile)
+        {
+            return nativeRecordsFailure(
+                "native FNV Player state does not identify exact normalized ACHR FormID 0x00000014 in the Player "
+                "content namespace");
+        }
+        if (playerState.mEditorId != "Player")
+            return nativeRecordsFailure("native FNV Player state does not preserve EDID Player");
+        if (playerState.mReferenceBaseRecord != playerState.mBaseRecord)
+            return nativeRecordsFailure("native FNV Player state does not preserve the ACHR-to-NPC_ base relation");
+        if (!playerState.mClass.hasContentFile() || playerState.mClass.mIndex == 0)
+            return nativeRecordsFailure("native FNV Player CLAS identity has no normalized content provenance");
+        if (!playerState.mRace.hasContentFile() || playerState.mRace.mIndex == 0)
+            return nativeRecordsFailure("native FNV Player RACE identity has no normalized content provenance");
+
+        const std::array<std::pair<std::string_view, ESM::FormId>, 4> identities{ {
+            { "NPC_", playerState.mBaseRecord },
+            { "ACHR", playerState.mReferenceRecord },
+            { "CLAS", playerState.mClass },
+            { "RACE", playerState.mRace },
+        } };
+        for (std::size_t left = 0; left < identities.size(); ++left)
+        {
+            for (std::size_t right = left + 1; right < identities.size(); ++right)
+            {
+                if (identities[left].second == identities[right].second)
+                {
+                    return nativeRecordsFailure("native FNV Player record identities collide: "
+                        + std::string(identities[left].first) + " and " + std::string(identities[right].first));
+                }
+            }
+        }
+
+        const ESM4::Npc* baseNpc = npcs.search(ESM::RefId(playerState.mBaseRecord));
+        if (baseNpc == nullptr)
+            return nativeRecordsFailure("missing exact native FNV Player NPC_ " + playerState.mBaseRecord.toString());
+        if (baseNpc->mId != playerState.mBaseRecord)
+            return nativeRecordsFailure("native FNV Player NPC_ resolved with the wrong typed FormID");
+        if (!baseNpc->mIsFONV)
+            return nativeRecordsFailure("native FNV Player NPC_ is not marked as an FNV record");
+        if (baseNpc->mEditorId != "Player")
+            return nativeRecordsFailure("native FNV Player NPC_ does not have EDID Player");
+        if (baseNpc->mClass != playerState.mClass)
+            return nativeRecordsFailure("native FNV Player NPC_ does not preserve the resolved CLAS identity");
+        if (baseNpc->mRace != playerState.mRace)
+            return nativeRecordsFailure("native FNV Player NPC_ does not preserve the resolved RACE identity");
+
+        const ESM4::ActorCharacter* reference = actorReferences.search(playerState.mReferenceRecord);
+        if (reference == nullptr)
+        {
+            return nativeRecordsFailure(
+                "missing exact native FNV Player ACHR " + playerState.mReferenceRecord.toString());
+        }
+        if (reference->mId != playerState.mReferenceRecord)
+            return nativeRecordsFailure("native FNV Player ACHR resolved with the wrong typed FormID");
+        if (reference->mBaseObj != playerState.mBaseRecord)
+            return nativeRecordsFailure("native FNV Player ACHR does not target the exact Player NPC_ FormID");
+
+        const ESM4::Class* playerClass = classes.search(ESM::RefId(playerState.mClass));
+        if (playerClass == nullptr)
+            return nativeRecordsFailure("missing exact native FNV Player CLAS " + playerState.mClass.toString());
+        if (playerClass->mId != playerState.mClass)
+            return nativeRecordsFailure("native FNV Player CLAS resolved with the wrong typed FormID");
+        if (!playerClass->mHasFalloutData)
+            return nativeRecordsFailure("native FNV Player CLAS lacks exact 28-byte DATA");
+        if (!playerClass->mHasFalloutAttributes)
+            return nativeRecordsFailure("native FNV Player CLAS lacks exact 7-byte ATTR");
+
+        const ESM4::Race* playerRace = races.search(ESM::RefId(playerState.mRace));
+        if (playerRace == nullptr)
+            return nativeRecordsFailure("missing exact native FNV Player RACE " + playerState.mRace.toString());
+        if (playerRace->mId != playerState.mRace)
+            return nativeRecordsFailure("native FNV Player RACE resolved with the wrong typed FormID");
+        if (!playerRace->mHasFalloutData)
+            return nativeRecordsFailure("native FNV Player RACE lacks exact 36-byte DATA");
+
+        return { FalloutNativePlayerRecords{ baseNpc, reference, playerClass, playerRace }, {} };
     }
 
     FalloutSaveLoadPlanResolution resolveFalloutSaveLoadPlan(const ESM4::FONVSaveGamePrefix& save,
@@ -497,6 +590,8 @@ namespace MWWorld
 
     void seedFalloutPlayerProxy(ESM::NPC& proxy, const FalloutPlayerState& state)
     {
+        if (state.mHealth < 0 || state.mHealth > std::numeric_limits<std::uint16_t>::max())
+            throw std::runtime_error("native FNV Player health cannot fit the legacy ESM3 proxy");
         if (!state.mFullName.empty())
             proxy.mName = state.mFullName;
         proxy.mModel = state.mModel;
