@@ -913,6 +913,19 @@ namespace MWWorld
     // Skill
     //=========================================================================
 
+    void Store<ESM::Skill>::setUpNeutral()
+    {
+        for (int index = 0; index < ESM::Skill::Length; ++index)
+        {
+            ESM::Skill skill;
+            skill.blank();
+            skill.mId = *ESM::Skill::indexToRefId(index).getIf<ESM::SkillId>();
+            skill.mData.mUseValue[0] = skill.mData.mUseValue[1] = skill.mData.mUseValue[2]
+                = skill.mData.mUseValue[3] = 0.f;
+            insertStatic(skill);
+        }
+    }
+
     void Store<ESM::Skill>::setUp(const MWWorld::Store<ESM::GameSetting>& settings)
     {
         constexpr std::string_view skillValues[ESM::Skill::Length][4] = {

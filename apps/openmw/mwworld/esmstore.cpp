@@ -670,7 +670,10 @@ namespace MWWorld
             store->setUp();
         }
 
-        getWritable<ESM::Skill>().setUp(get<ESM::GameSetting>());
+        if (isOfficialFalloutNewVegas)
+            getWritable<ESM::Skill>().setUpNeutral();
+        else
+            getWritable<ESM::Skill>().setUp(get<ESM::GameSetting>());
         getWritable<ESM::MagicEffect>().setUp();
         if (isOfficialFalloutNewVegas)
             getWritable<ESM::Attribute>().setUpNeutral();

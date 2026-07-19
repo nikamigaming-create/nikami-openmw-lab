@@ -292,7 +292,7 @@ TEST(FNVNativePlayerStore, publishesExactStateAndOnlyRequiredLegacyPlayerCarrier
     EXPECT_EQ(store.get<ESM::NPC>().getDynamicSize(), 1);
 }
 
-TEST(FNVNativePlayerStore, officialSetUpUsesNeutralAttributesWithoutMorrowindFallbackSettings)
+TEST(FNVNativePlayerStore, officialSetUpUsesNeutralStructuralStatsWithoutMorrowindFallbackSettings)
 {
     MWWorld::ESMStore store;
     observeNativeMaster(store);
@@ -316,6 +316,21 @@ TEST(FNVNativePlayerStore, officialSetUpUsesNeutralAttributesWithoutMorrowindFal
         EXPECT_TRUE(attribute->mDescription.empty());
         EXPECT_TRUE(attribute->mIcon.empty());
         EXPECT_FLOAT_EQ(attribute->mWerewolfValue, 0.f);
+    }
+
+    ASSERT_EQ(store.get<ESM::Skill>().getSize(), ESM::Skill::Length);
+    for (int index = 0; index < ESM::Skill::Length; ++index)
+    {
+        const ESM::RefId id = ESM::Skill::indexToRefId(index);
+        const ESM::Skill* skill = store.get<ESM::Skill>().search(id);
+        ASSERT_NE(skill, nullptr);
+        EXPECT_EQ(skill->mId, *id.getIf<ESM::SkillId>());
+        EXPECT_TRUE(skill->mName.empty());
+        EXPECT_TRUE(skill->mDescription.empty());
+        EXPECT_TRUE(skill->mIcon.empty());
+        EXPECT_FALSE(skill->mSchool.has_value());
+        EXPECT_FLOAT_EQ(skill->mWerewolfValue, 0.f);
+        EXPECT_THAT(skill->mData.mUseValue, testing::Each(0.f));
     }
 
     ASSERT_NO_THROW(validateStore(store));

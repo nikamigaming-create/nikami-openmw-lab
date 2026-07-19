@@ -473,6 +473,7 @@ namespace MWWorld
     public:
         Store() = default;
 
+        void setUpNeutral();
         void setUp(const MWWorld::Store<ESM::GameSetting>& settings);
     };
 
