@@ -953,8 +953,8 @@ namespace
         nativePlayer.mReferenceBaseRecord = nativePlayer.mBaseRecord;
         save.mHeader.mPlayerLevel.mValue = std::numeric_limits<std::uint32_t>::max();
         resolution = MWWorld::resolveFalloutSaveLoadPlan(save, &nativePlayer, currentContentFiles);
-        EXPECT_FALSE(resolution);
-        EXPECT_THAT(resolution.mError, HasSubstr("player level cannot be represented"));
+        ASSERT_TRUE(resolution) << resolution.mError;
+        EXPECT_EQ(resolution.mPlan->mPlayer.mLevel, std::numeric_limits<std::uint32_t>::max());
     }
 
     TEST(FalloutPlayerStateTest, semanticHeaderApplicationRejectsNonPlayerCarrierWithoutMutation)

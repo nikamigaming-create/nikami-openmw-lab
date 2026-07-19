@@ -463,8 +463,8 @@ namespace MWWorld
         }
 
         const std::uint32_t level = save.mHeader.mPlayerLevel.mValue;
-        if (level == 0 || level > static_cast<std::uint32_t>(std::numeric_limits<std::int16_t>::max()))
-            return loadFailure("FNV save header player level cannot be represented by the compatibility carrier");
+        if (level == 0)
+            return loadFailure("FNV save header player level must be nonzero");
 
         FalloutSaveLoadPlan plan;
         plan.mPlayer.mBaseRecord = expectedPlayerId;
