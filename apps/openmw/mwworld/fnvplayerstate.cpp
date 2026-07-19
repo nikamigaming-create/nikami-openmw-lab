@@ -1,5 +1,6 @@
 #include "fnvplayerstate.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <limits>
@@ -488,6 +489,33 @@ namespace MWWorld
         plan.mPlayer.mLocationLabel = save.mHeader.mPlayerLocation.mValue;
         plan.mPlayer.mPlayTimeLabel = save.mHeader.mPlayTime.mValue;
 
+        if (!save.mPlayerProcessInventoryData)
+            return loadFailure("FNV save does not expose the canonical Player process/inventory state");
+        const ESM4::FONVSavePlayerProcessInventoryData& processInventory = *save.mPlayerProcessInventoryData;
+        if (processInventory.mProcessLevel.mValue != 0)
+            return loadFailure("FNV save Player process level is not canonical high process");
+        plan.mPlayer.mProcessLevel = processInventory.mProcessLevel.mValue;
+        for (const ESM4::FONVSavePlayerInventoryEntry& entry : processInventory.mInventoryEntries)
+        {
+            for (const ESM4::FONVSavePlayerInventoryExtendData& extend : entry.mExtendData)
+            {
+                const auto worn = std::find_if(extend.mExtraData.begin(), extend.mExtraData.end(),
+                    [](const ESM4::FONVSavePlayerInventoryExtraData& extra) {
+                        return extra.mType.mValue == ESM4::sFONVExtraWornType;
+                    });
+                if (worn == extend.mExtraData.end())
+                    continue;
+                if (!entry.mType.mResolvedFormId)
+                    return loadFailure("FNV save Player ExtraWorn inventory RefID did not resolve");
+                const std::optional<ESM::FormId> normalized
+                    = normalizeSavedFormId(*entry.mType.mResolvedFormId, currentPluginIndices);
+                if (!normalized)
+                    return loadFailure("FNV save Player ExtraWorn FormID has unsupported provenance");
+                plan.mPlayer.mWornVisualItems.push_back(
+                    FalloutSavePlayerHeaderState::WornVisualItem{ *normalized, worn->mType.mRange.mOffset });
+            }
+        }
+
         if (!save.mPlayerReferenceMovement)
             return loadFailure("FNV save does not expose a proven canonical Player reference-movement prefix");
         const ESM4::FONVSavePlayerReferenceMovement& movement = *save.mPlayerReferenceMovement;
@@ -602,7 +630,8 @@ namespace MWWorld
     {
         if (proxy.mId != ESM::RefId::stringRefId("Player"))
             throw std::runtime_error("FNV save header target is not the Player compatibility carrier");
-        if (state.mBaseRecord.mIndex != 7 || state.mReferenceRecord.mIndex != 0x14 || state.mLevel == 0
+        if (state.mBaseRecord.mIndex != 7 || state.mReferenceRecord.mIndex != 0x14 || state.mProcessLevel != 0
+            || state.mLevel == 0
             || state.mLevel > static_cast<std::uint32_t>(std::numeric_limits<std::int16_t>::max()))
         {
             throw std::runtime_error("invalid semantically available FNV save Player header state");
@@ -611,6 +640,14 @@ namespace MWWorld
         if (!state.mName.empty())
             proxy.mName = state.mName;
         proxy.mNpdt.mLevel = static_cast<std::int16_t>(state.mLevel);
+        proxy.mInventory.mList.clear();
+        proxy.mInventory.mList.reserve(state.mWornVisualItems.size());
+        for (const FalloutSavePlayerHeaderState::WornVisualItem& item : state.mWornVisualItems)
+        {
+            if (item.mRecord.isZeroOrUnset())
+                throw std::runtime_error("invalid normalized FNV save ExtraWorn FormID");
+            proxy.mInventory.mList.push_back(ESM::ContItem{ 1, ESM::RefId(item.mRecord) });
+        }
     }
 
     void seedFalloutPlayerProxy(ESM::NPC& proxy, const FalloutPlayerState& state)

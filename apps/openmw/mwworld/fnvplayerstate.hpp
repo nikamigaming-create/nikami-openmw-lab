@@ -151,6 +151,12 @@ namespace MWWorld
     // location string is a display label, not a cell identity or permission to move the player.
     struct FalloutSavePlayerHeaderState
     {
+        struct WornVisualItem
+        {
+            ESM::FormId mRecord;
+            std::uint64_t mSourceOffset = 0;
+        };
+
         ESM::FormId mBaseRecord;
         ESM::FormId mReferenceRecord;
         std::size_t mSaveFalloutNewVegasMasterIndex = 0;
@@ -164,6 +170,8 @@ namespace MWWorld
         std::uint32_t mLevel = 0;
         std::string mLocationLabel;
         std::string mPlayTimeLabel;
+        std::int8_t mProcessLevel = -1;
+        std::vector<WornVisualItem> mWornVisualItems;
     };
 
     struct FalloutSaveLoadPlan
@@ -236,8 +244,8 @@ namespace MWWorld
     FalloutExteriorPlayerPlacementResolution resolveFalloutExteriorPlayerPlacement(const Store<ESM4::World>& worlds,
         const Store<ESM4::Cell>& cells, const FalloutSaveLoadPlan::PlayerTransform& transform);
 
-    // Apply only the name and level whose save-header semantics are exact. Display-only location and all still
-    // uncovered runtime/world state remain outside this operation.
+    // Apply exact name/level fields plus normalized ExtraWorn identities as a narrow visual carrier. This does not
+    // claim the still-uncovered inventory, stack, ammunition, condition, or gameplay equipment semantics.
     void applyFalloutSavePlayerHeader(ESM::NPC& proxy, const FalloutSavePlayerHeaderState& state);
 
     // Seed only fields that have an explicit same-unit shared representation. The ESM3 proxy remains a

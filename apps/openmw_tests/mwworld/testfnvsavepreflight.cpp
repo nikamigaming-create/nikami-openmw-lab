@@ -76,6 +76,10 @@ namespace
         movement.mRotationRadians[2].mValue = 2.93332028f;
         result.mPlayerReferenceMovement = std::move(movement);
 
+        ESM4::FONVSavePlayerProcessInventoryData processInventory;
+        processInventory.mProcessLevel.mValue = 0;
+        result.mPlayerProcessInventoryData = std::move(processInventory);
+
         ESM4::FONVSavePlayerCharacterScalarReferenceState camera;
         camera.mFirstPersonMode.mValue = 0;
         camera.mFirstPersonModelFov.mValue = 55.f;

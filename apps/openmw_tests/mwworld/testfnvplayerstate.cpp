@@ -119,6 +119,26 @@ namespace
         movement.mRotationRadians[2].mValue = 2.93332028f;
         result.mPlayerReferenceMovement = std::move(movement);
 
+        ESM4::FONVSavePlayerProcessInventoryData processInventory;
+        processInventory.mProcessLevel.mValue = 0;
+        const auto addWorn = [&](std::uint32_t rawFormId, std::uint64_t sourceOffset) {
+            ESM4::FONVSavePlayerInventoryEntry entry;
+            entry.mType.mResolvedFormId = rawFormId;
+            ESM4::FONVSavePlayerInventoryExtendData extend;
+            ESM4::FONVSavePlayerInventoryExtraData worn;
+            worn.mType.mValue = ESM4::sFONVExtraWornType;
+            worn.mType.mRange = { sourceOffset, 1 };
+            extend.mExtraData.push_back(std::move(worn));
+            entry.mExtendData.push_back(std::move(extend));
+            processInventory.mInventoryEntries.push_back(std::move(entry));
+        };
+        addWorn(0x00025b83u, 2010);
+        addWorn(0x00015038u, 2020);
+        addWorn(0x0000431eu, 2030);
+        processInventory.mInventoryEntryCount.mValue
+            = static_cast<std::uint32_t>(processInventory.mInventoryEntries.size());
+        result.mPlayerProcessInventoryData = std::move(processInventory);
+
         ESM4::FONVSavePlayerCharacterScalarReferenceState camera;
         camera.mFirstPersonMode.mValue = 0;
         camera.mFirstPersonMode.mRange = { 501845, 1 };
@@ -449,6 +469,12 @@ namespace
         const MWWorld::FalloutSaveLoadPlan& plan = *resolution.mPlan;
         EXPECT_EQ(plan.mPlayer.mReferenceRecord, referenceId);
         EXPECT_EQ(plan.mPlayer.mLevel, 12u);
+        EXPECT_EQ(plan.mPlayer.mProcessLevel, 0);
+        ASSERT_EQ(plan.mPlayer.mWornVisualItems.size(), 3u);
+        EXPECT_EQ(plan.mPlayer.mWornVisualItems[0].mRecord, form(0x00025b83, 1));
+        EXPECT_EQ(plan.mPlayer.mWornVisualItems[1].mRecord, form(0x00015038, 1));
+        EXPECT_EQ(plan.mPlayer.mWornVisualItems[2].mRecord, form(0x0000431e, 1));
+        EXPECT_EQ(plan.mPlayer.mWornVisualItems[0].mSourceOffset, 2010u);
         EXPECT_EQ(plan.mTransform.mCellOrWorldspaceRecord, form(0x000da726, 1));
         EXPECT_FLOAT_EQ(plan.mTransform.mPosition[0], -72392.84375f);
         EXPECT_FLOAT_EQ(plan.mTransform.mPosition[1], -1240.19275f);
@@ -493,6 +519,11 @@ namespace
         EXPECT_EQ(proxy.mName, "Courier Six");
         EXPECT_EQ(proxy.mNpdt.mLevel, 12);
         EXPECT_EQ(proxy.mNpdt.mHealth, 777);
+        ASSERT_EQ(proxy.mInventory.mList.size(), 3u);
+        EXPECT_EQ(proxy.mInventory.mList[0].mCount, 1);
+        EXPECT_EQ(proxy.mInventory.mList[0].mItem, ESM::RefId(form(0x00025b83, 1)));
+        EXPECT_EQ(proxy.mInventory.mList[1].mItem, ESM::RefId(form(0x00015038, 1)));
+        EXPECT_EQ(proxy.mInventory.mList[2].mItem, ESM::RefId(form(0x0000431e, 1)));
     }
 
     TEST(FalloutPlayerStateTest, savePlanFailsClosedWhenCameraOrSkyIsUnproven)
@@ -521,5 +552,23 @@ namespace
         resolution = MWWorld::resolveFalloutSaveLoadPlan(save, &player, content);
         EXPECT_FALSE(resolution);
         EXPECT_THAT(resolution.mError, HasSubstr("does not expose a proven Sky global-data payload"));
+
+        save = makeSavePlanFixture({ "FalloutNV.esm", "DeadMoney.esm" });
+        save.mPlayerProcessInventoryData.reset();
+        resolution = MWWorld::resolveFalloutSaveLoadPlan(save, &player, content);
+        EXPECT_FALSE(resolution);
+        EXPECT_THAT(resolution.mError, HasSubstr("does not expose the canonical Player process/inventory state"));
+
+        save = makeSavePlanFixture({ "FalloutNV.esm", "DeadMoney.esm" });
+        save.mPlayerProcessInventoryData->mProcessLevel.mValue = 1;
+        resolution = MWWorld::resolveFalloutSaveLoadPlan(save, &player, content);
+        EXPECT_FALSE(resolution);
+        EXPECT_THAT(resolution.mError, HasSubstr("process level is not canonical high process"));
+
+        save = makeSavePlanFixture({ "FalloutNV.esm", "DeadMoney.esm" });
+        save.mPlayerProcessInventoryData->mInventoryEntries.front().mType.mResolvedFormId.reset();
+        resolution = MWWorld::resolveFalloutSaveLoadPlan(save, &player, content);
+        EXPECT_FALSE(resolution);
+        EXPECT_THAT(resolution.mError, HasSubstr("ExtraWorn inventory RefID did not resolve"));
     }
 }
