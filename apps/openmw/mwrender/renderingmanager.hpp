@@ -7,6 +7,7 @@
 #include "vismask.hpp"
 
 #include <components/settings/settings.hpp>
+#include <components/esm/formid.hpp>
 #include <components/vfs/pathutil.hpp>
 
 #include <osg/Light>
@@ -20,10 +21,12 @@
 #include <span>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 namespace osg
 {
     class Group;
+    class MatrixTransform;
     class PositionAttitudeTransform;
 }
 
@@ -274,6 +277,11 @@ namespace MWRender
         void setFieldOfView(float val);
         /// Set the field of view used when the next first-person player animation is constructed.
         void setFirstPersonFieldOfView(float val) { mFirstPersonFieldOfView = val; }
+        /// Carry only preflighted native-save ExtraWorn identities into the visual player proxy.
+        void setFalloutSaveWornVisualItems(std::vector<ESM::FormId> items)
+        {
+            mFalloutSaveWornVisualItems = std::move(items);
+        }
         float getFieldOfView() const;
         /// reset a previous overrideFieldOfView() call, i.e. revert to field of view specified in the settings file.
         void resetFieldOfView();
@@ -382,9 +390,13 @@ namespace MWRender
         std::unique_ptr<MWWorld::LiveCellRef<ESM4::Npc>> mFalloutPlayerVisualRef;
         osg::ref_ptr<Animation> mFalloutPlayerVisualAnimation;
         osg::ref_ptr<ESM4NpcAnimation> mFalloutPlayerFirstPersonAnimation;
+        osg::ref_ptr<osg::MatrixTransform> mFalloutPlayerVisualBasis;
+        osg::ref_ptr<osg::MatrixTransform> mFalloutPlayerFirstPersonBasis;
+        std::vector<ESM::FormId> mFalloutSaveWornVisualItems;
         std::string mFalloutPlayerVisualGroup;
         float mFalloutPlayerVisualGroupElapsed = 0.f;
         bool mFalloutPlayerVisualCycleLogged = false;
+        bool mFalloutPlayerFirstPersonAlignmentLogged = false;
         osg::Vec3f mFalloutPlayerVisualPreviousPosition;
         bool mFalloutPlayerVisualPreviousPositionValid = false;
         osg::ref_ptr<NpcAnimation> mPlayerAnimation;

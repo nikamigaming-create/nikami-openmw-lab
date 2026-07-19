@@ -559,6 +559,18 @@ void MWState::StateManager::loadGame(const Character* character, const std::file
         MWWorld::Ptr player = mutableWorld.getPlayerPtr();
         player.getRefData().setPosition(savedPosition);
         player.getCellRef().setPosition(savedPosition);
+        std::vector<ESM::FormId> wornVisualItems;
+        wornVisualItems.reserve(context.mPlan.mPlayer.mWornVisualItems.size());
+        for (std::size_t ordinal = 0; ordinal < context.mPlan.mPlayer.mWornVisualItems.size(); ++ordinal)
+        {
+            const MWWorld::FalloutSavePlayerHeaderState::WornVisualItem& item
+                = context.mPlan.mPlayer.mWornVisualItems[ordinal];
+            wornVisualItems.push_back(item.mRecord);
+            Log(Debug::Info) << "Native FNV save ExtraWorn visual: ordinal=" << ordinal + 1
+                             << " form=" << ESM::RefId(item.mRecord)
+                             << " sourceOffset=" << item.mSourceOffset;
+        }
+        mutableWorld.getRenderingManager()->setFalloutSaveWornVisualItems(std::move(wornVisualItems));
         mutableWorld.getRenderingManager()->setFirstPersonFieldOfView(savedFirstPersonFov);
         mutableWorld.renderPlayer();
         MWBase::Environment::get().getWindowManager()->updatePlayer();

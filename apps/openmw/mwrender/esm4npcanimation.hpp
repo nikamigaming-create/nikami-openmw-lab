@@ -88,9 +88,9 @@ namespace MWRender
 
         osg::ref_ptr<osg::Node> insertPart(
             std::string_view model, const osg::Vec4f* tint = nullptr, std::string_view diffuseTexture = {},
-            std::string_view preferredBone = {});
-        osg::ref_ptr<osg::Node> insertAttachedPart(std::string_view model, std::string_view preferredBone,
-            std::string* authoredParent = nullptr);
+            std::string_view preferredBone = {}, bool forceActorSpace = false);
+        osg::ref_ptr<osg::Node> insertAttachedPart(
+            std::string_view model, std::string_view preferredBone, std::string* authoredParent = nullptr);
         void initializeFirstPersonUnarmed(const FirstPersonUnarmedState& state);
 
         // Works for FO3/FONV/TES5

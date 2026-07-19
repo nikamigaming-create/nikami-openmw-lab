@@ -91,6 +91,48 @@ namespace MWRender
 {
     namespace
     {
+        class FirstPersonArmorArmsOnlyVisitor final : public osg::NodeVisitor
+        {
+        public:
+            FirstPersonArmorArmsOnlyVisitor()
+                : osg::NodeVisitor(osg::NodeVisitor::TRAVERSE_ALL_CHILDREN)
+            {
+            }
+
+            void apply(osg::Geode& geode) override
+            {
+                for (unsigned int i = 0; i < geode.getNumDrawables(); ++i)
+                {
+                    osg::Drawable* drawable = geode.getDrawable(i);
+                    if (drawable != nullptr)
+                        filter(*drawable);
+                }
+                traverse(geode);
+            }
+
+            void apply(osg::Drawable& drawable) override { filter(drawable); }
+
+            std::size_t mKept = 0;
+            std::size_t mHidden = 0;
+
+        private:
+            void filter(osg::Drawable& drawable)
+            {
+                if (dynamic_cast<SceneUtil::RigGeometry*>(&drawable) == nullptr)
+                    return;
+
+                const std::string name = Misc::StringUtils::lowerCase(drawable.getName());
+                const bool keep = name == "arms" || Misc::StringUtils::ciStartsWith(name, "arms:");
+                if (keep)
+                    ++mKept;
+                else
+                {
+                    drawable.setNodeMask(0u);
+                    ++mHidden;
+                }
+            }
+        };
+
         bool worldViewerEnvEnabled(const char* name)
         {
             const char* value = std::getenv(name);
@@ -8098,7 +8140,11 @@ namespace MWRender
     void ESM4NpcAnimation::initializeFirstPersonUnarmed(const FirstPersonUnarmedState& state)
     {
         constexpr std::string_view skeleton = "meshes/characters/_1stperson/skeleton.nif";
-        constexpr std::string_view idle = "meshes/characters/_1stperson/h2hidle.kf";
+        // Retail composes the steady raised-fist state from the movement idle's
+        // pelvis/camera frame and the H2H aim overlay.  H2HAim intentionally omits
+        // Bip01 Pelvis; playing it alone leaks the skeleton bind pose into the arms.
+        constexpr std::string_view baseIdle = "meshes/characters/_1stperson/mtidle.kf";
+        constexpr std::string_view h2hAimOverlay = "meshes/characters/_1stperson/h2haim.kf";
         const ESM4::Npc* traits = MWClass::ESM4Npc::getTraitsRecord(mPtr);
         if (traits == nullptr || !traits->mIsFONV)
             throw std::runtime_error("native first-person unarmed profile requires an FNV NPC");
@@ -8135,7 +8181,8 @@ namespace MWRender
         };
 
         requireAsset("skeleton", skeleton, false);
-        requireAsset("idle-kf", idle, false);
+        requireAsset("base-idle-kf", baseIdle, false);
+        requireAsset("h2h-aim-overlay-kf", h2hAimOverlay, false);
         for (const std::string& armorModel : state.mSaveWornArmorModels)
             requireAsset("armor-composite", armorModel, true, true);
         if (state.mPipBoy)
@@ -8149,13 +8196,35 @@ namespace MWRender
         mObjectRoot->setName("FNV Native First Person Unarmed Root");
         mObjectRoot->setUserValue("OpenMW.ActorEditorId", traits->mEditorId);
 
-        const auto attach = [&](std::string_view role, std::string_view path, bool saveWorn) {
-            const bool attached = insertPart(path) != nullptr;
+        const auto attach = [&](std::string_view role, std::string_view path, bool saveWorn,
+                                bool actorSpace, std::string_view preferredBone = {}) {
+            std::string recordModel(path);
+            constexpr std::string_view meshPrefix = "meshes/";
+            if (Misc::StringUtils::ciStartsWith(recordModel, meshPrefix))
+                recordModel.erase(0, meshPrefix.size());
+            osg::ref_ptr<osg::Node> attachedNode = preferredBone.empty()
+                ? insertPart(recordModel, nullptr, {}, {}, actorSpace)
+                : insertAttachedPart(recordModel, preferredBone);
+            const bool attached = attachedNode != nullptr;
+            if (attached && role == "armor-composite")
+            {
+                FirstPersonArmorArmsOnlyVisitor armsOnly;
+                attachedNode->accept(armsOnly);
+                const bool exactArmPartition = armsOnly.mKept == 1 && armsOnly.mHidden == 5;
+                Log(exactArmPartition ? Debug::Info : Debug::Error)
+                    << "FNV first-person armor filter: actor=" << traits->mEditorId
+                    << " selected=" << path << " keptArms=" << armsOnly.mKept
+                    << " hiddenNonArms=" << armsOnly.mHidden << " expected=1/5";
+                if (!exactArmPartition)
+                    throw std::runtime_error("native FNV first-person armor did not expose the exact Arms partition");
+            }
             if (attached)
                 ++mFirstPersonAttachedPartCount;
             Log(attached ? Debug::Info : Debug::Error)
                 << "FNV first-person attachment: actor=" << traits->mEditorId << " role=" << role
-                << " saveWorn=" << saveWorn << " selected=" << path << " attached=" << attached
+                << " saveWorn=" << saveWorn << " selected=" << path << " recordModel=" << recordModel
+                << " attached=" << attached << " actorSpace=" << actorSpace
+                << " preferredBone=" << preferredBone
                 << " attachedNodeCount=" << mFirstPersonAttachedPartCount;
             if (!attached)
                 throw std::runtime_error("failed to attach required native FNV first-person asset "
@@ -8163,23 +8232,26 @@ namespace MWRender
         };
 
         for (const std::string& armorModel : state.mSaveWornArmorModels)
-            attach("armor-composite", armorModel, true);
+            attach("armor-composite", armorModel, true, true);
         if (state.mPipBoy)
-            attach("pipboy-arm", pipBoy, true);
-        attach("left-hand", leftHand, !state.mSaveWornLeftHandModel.empty());
-        attach("right-hand", rightHand, false);
+            // PipBoyArm is a rigid PRN component, not a skin.  Its authored parent
+            // is Bip01 L ForeTwist; no calibration transform is needed.
+            attach("pipboy-arm", pipBoy, true, false, "Bip01 L ForeTwist");
+        attach("left-hand", leftHand, !state.mSaveWornLeftHandModel.empty(), true);
+        attach("right-hand", rightHand, false, true);
 
         mNodeMap.clear();
         mNodeMapCreated = false;
-        const std::shared_ptr<AnimSource> idleSource
-            = addSingleAnimSource(std::string(idle), std::string(skeleton), false, {}, "idle");
+        const std::shared_ptr<AnimSource> idleSource = addSingleAnimSource(
+            std::string(baseIdle), std::string(skeleton), false, h2hAimOverlay, "idle");
         const std::string selectedIdleSource = getAnimationSourceName("idle");
-        const bool idleBound = idleSource != nullptr && hasAnimation("idle") && selectedIdleSource == idle;
+        const bool idleBound = idleSource != nullptr && hasAnimation("idle") && selectedIdleSource == baseIdle;
         Log(idleBound ? Debug::Info : Debug::Error)
-            << "FNV first-person animation: actor=" << traits->mEditorId << " semantic=idle selected=" << idle
-            << " bound=" << idleBound << " semanticSource=" << selectedIdleSource;
+            << "FNV first-person animation: actor=" << traits->mEditorId << " semantic=idle base=" << baseIdle
+            << " overlay=" << h2hAimOverlay << " bound=" << idleBound
+            << " semanticSource=" << selectedIdleSource;
         if (!idleBound)
-            throw std::runtime_error("failed to bind exact native FNV first-person H2H idle");
+            throw std::runtime_error("failed to bind native FNV first-person base-plus-H2H pose");
 
         play("idle", Animation::AnimPriority(1), BlendMask_All, false, 1.f, "start", "stop", 0.f,
             std::numeric_limits<std::uint32_t>::max(), true);
@@ -8189,7 +8261,7 @@ namespace MWRender
                                 + static_cast<std::size_t>(state.mPipBoyGlove)
                          << " attachedNodeCount=" << mFirstPersonAttachedPartCount << " fov=" << state.mFieldOfView
                          << " mask=0x" << std::hex << mObjectRoot->getNodeMask() << std::dec
-                         << " profile=flat-unarmed-h2h";
+                         << " profile=flat-unarmed-mtidle-plus-h2haim";
     }
 
     ESM4NpcAnimation::ESM4NpcAnimation(
@@ -9413,7 +9485,7 @@ namespace MWRender
 
     osg::ref_ptr<osg::Node> ESM4NpcAnimation::insertPart(
         std::string_view model, const osg::Vec4f* tint, std::string_view diffuseTexture,
-        std::string_view preferredBone)
+        std::string_view preferredBone, bool forceActorSpace)
     {
         if (model.empty())
         {
@@ -9651,7 +9723,7 @@ namespace MWRender
                     << " nodeMap=" << nodeMap.size();
             logWorldViewerActorLedger(mPtr, "head-attach-direct", details.str());
         }
-        if (bareHandSurfacePart)
+        if (bareHandSurfacePart && !forceActorSpace)
         {
             osg::Group* bip01 = nullptr;
             if (const auto found = nodeMap.find("Bip01"); found != nodeMap.end())
@@ -9684,7 +9756,9 @@ namespace MWRender
                                     << " hand=" << static_cast<bool>(hand) << " for "
                                     << mPtr.getCellRef().getRefId();
         }
-        if (attachNode == mObjectRoot.get())
+        if (forceActorSpace)
+            attachNode = mObjectRoot.get();
+        else if (attachNode == mObjectRoot.get())
         {
             auto bip01 = nodeMap.find("Bip01");
             if (bip01 != nodeMap.end())
@@ -10964,7 +11038,7 @@ namespace MWRender
         // NIF. Attach each model once: duplicate actor-space skins z-fight and
         // make otherwise opaque clothing appear translucent.
         std::map<std::string, osg::ref_ptr<osg::Node>> attachedEquipmentModels;
-        const auto attachEquipmentModel = [&](std::string_view model) {
+        const auto attachEquipmentModel = [&](std::string_view model, bool authoredRigidAttachment = false) {
             const VFS::Path::Normalized corrected
                 = Misc::ResourceHelpers::correctMeshPath(VFS::Path::Normalized(model));
             std::string key = corrected.value();
@@ -10972,7 +11046,9 @@ namespace MWRender
             if (const auto found = attachedEquipmentModels.find(key); found != attachedEquipmentModels.end())
                 return std::make_pair(found->second, false);
 
-            osg::ref_ptr<osg::Node> attached = insertPart(model);
+            osg::ref_ptr<osg::Node> attached = authoredRigidAttachment
+                ? insertAttachedPart(model, {})
+                : insertPart(model);
             forceFalloutActorPartVisible(attached.get(), model, traits);
             overrideFalloutEquipmentSkinTextures(attached.get(), model, traits, mResourceSystem, npcBodyTexture,
                 npcFaceTexture, npcFaceDetailTexture, npcGeneratedSkinFaceGen0.get(), npcBodyDetailTexture,
@@ -10987,7 +11063,33 @@ namespace MWRender
 
         for (const ESM4::Armor* armor : MWClass::ESM4Npc::getEquippedArmor(mPtr))
         {
-            const std::string_view model = MWClass::ESM4Npc::chooseEquipmentModel(armor, isFemale);
+            const bool pipBoySlot = (armor->mArmorFlags & ESM4::Armor::FO3_PipBoy) != 0;
+            std::string_view model = MWClass::ESM4Npc::chooseEquipmentModel(armor, isFemale);
+            if (pipBoySlot)
+            {
+                // Retail substitutes the separate PipBoyNPC armor model for world/
+                // third-person rendering even though Player owns the full PipBoy.
+                const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
+                if (store != nullptr)
+                {
+                    for (const ESM4::Armor& candidate : store->get<ESM4::Armor>())
+                    {
+                        if (!Misc::StringUtils::ciEqual(candidate.mEditorId, "PipBoyNPC"))
+                            continue;
+                        model = MWClass::ESM4Npc::chooseEquipmentModel(&candidate, isFemale);
+                        break;
+                    }
+                }
+                if (model.empty() || Misc::StringUtils::lowerCase(model).find("pipboyarmnpc.nif") == std::string::npos
+                    && Misc::StringUtils::lowerCase(model).find("pipboyarmfemalenpc.nif") == std::string::npos)
+                {
+                    model = isFemale ? "PipBoy3000/PipBoyArmFemaleNPC.NIF"
+                                     : "PipBoy3000/PipBoyArmNPC.NIF";
+                }
+                Log(Debug::Info) << "FNV/ESM4 PipBoy view substitution: actor=" << traits.mEditorId
+                                 << " source=" << armor->mEditorId << " selected=" << model
+                                 << " attachment=authored-Prn";
+            }
             if (proofActor)
                 Log(Debug::Info) << "FNV/ESM4 ASSET PROOF GSEasyPete: armor " << armor->mEditorId
                                  << " form=" << ESM::RefId(armor->mId) << " model=" << model;
@@ -11003,7 +11105,7 @@ namespace MWRender
                 continue;
             }
             ++requiredArmorParts;
-            auto [attached, firstAttachment] = attachEquipmentModel(model);
+            auto [attached, firstAttachment] = attachEquipmentModel(model, pipBoySlot);
             const bool renderable = actorPartHasRenderableGeometry(attached.get());
             if (renderable)
                 ++attachedArmorParts;
