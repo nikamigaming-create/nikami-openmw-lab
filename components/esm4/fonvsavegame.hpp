@@ -1,6 +1,7 @@
 #ifndef OPENMW_COMPONENTS_ESM4_FONVSAVEGAME
 #define OPENMW_COMPONENTS_ESM4_FONVSAVEGAME
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
@@ -113,6 +114,28 @@ namespace ESM4
         CreatedForm = 2,
     };
 
+    struct FONVSaveResolvedReferenceId
+    {
+        FONVSaveField<std::uint32_t> mEncoded;
+        FONVSaveReferenceKind mKind = FONVSaveReferenceKind::FormIdArray;
+        std::uint32_t mPayload = 0;
+        std::optional<std::uint32_t> mResolvedFormId;
+    };
+
+    // This is only the type-4 "Reference moved" prefix selected by ACHR change flags 1/2. Other initial-data
+    // layouts remain opaque. The container can be either a CELL or WRLD; save bytes alone cannot distinguish them,
+    // and this block carries no separate exterior cell-grid coordinates.
+    struct FONVSavePlayerReferenceMovement
+    {
+        FONVSaveResolvedReferenceId mCellOrWorldspace;
+        std::array<FONVSaveField<float>, 3> mPosition;
+        // Bethesda reference placement stores these angles in radians, matching ESM::Position.
+        std::array<FONVSaveField<float>, 3> mRotationRadians;
+        FONVSaveField<std::uint8_t> mTerminator;
+        FONVSaveRange mRange;
+        FONVSaveRawField mUnparsedRemainder;
+    };
+
     struct FONVSaveChangedFormEnvelope
     {
         FONVSaveRawField mReferenceId;
@@ -130,6 +153,8 @@ namespace ESM4
         FONVSaveField<std::uint32_t> mDataLength;
         FONVSaveRange mHeaderRange;
         std::vector<std::uint8_t> mRawHeader;
+        // Raw carrier for the complete payload. A proven semantic subset may also be exposed separately; consult
+        // FONVSaveGamePrefix::mUnparsedSemanticPayloadRanges for the bytes that remain semantically uncovered.
         FONVSaveRawField mUnparsedPayload;
         FONVSaveRange mEnvelopeRange;
     };
@@ -216,6 +241,7 @@ namespace ESM4
         FONVSaveFormIdTable mFormIdTable;
         FONVSaveFormIdTable mVisitedWorldspaces;
         FONVSaveUnknownTable mUnknownTable;
+        std::optional<FONVSavePlayerReferenceMovement> mPlayerReferenceMovement;
 
         // The parser accounts for every byte structurally. These ranges are the gameplay payload bytes whose
         // internal meaning is still deliberately unknown: every global-data payload, every changed-form payload,
