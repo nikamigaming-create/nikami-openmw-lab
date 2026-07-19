@@ -53,6 +53,7 @@
 #include "../mwworld/customdata.hpp"
 #include "../mwworld/esmstore.hpp"
 #include "../mwworld/failedaction.hpp"
+#include "../mwworld/fnvplayerstate.hpp"
 #include "../mwworld/inventorystore.hpp"
 #include "../mwworld/localscripts.hpp"
 #include "../mwworld/ptr.hpp"
@@ -1094,6 +1095,18 @@ namespace MWClass
     float Npc::getCapacity(const MWWorld::Ptr& ptr) const
     {
         const MWMechanics::CreatureStats& stats = getCreatureStats(ptr);
+        const MWWorld::ESMStore& esmStore = *MWBase::Environment::get().getESMStore();
+        if (ptr == MWMechanics::getPlayer())
+        {
+            if (const MWWorld::FalloutPlayerState* player = esmStore.getFalloutPlayerState())
+            {
+                const auto& gameSettings = esmStore.get<ESM::GameSetting>();
+                const ESM::GameSetting* base = gameSettings.find("fAVDCarryWeightsBase");
+                const ESM::GameSetting* multiplier = gameSettings.find("fAVDCarryWeightMult");
+                return base->mValue.getFloat()
+                    + multiplier->mValue.getFloat() * player->getSpecial(MWWorld::FalloutSpecial::Strength);
+            }
+        }
         static const float fEncumbranceStrMult = MWBase::Environment::get()
                                                      .getESMStore()
                                                      ->get<ESM::GameSetting>()
