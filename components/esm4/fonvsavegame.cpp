@@ -732,6 +732,438 @@ namespace
         return result;
     }
 
+    ESM4::FONVSaveField<std::uint8_t> readPlayerProcessU8(
+        Cursor& cursor, std::span<const std::uint8_t> data, std::string_view description)
+    {
+        return readDelimitedField<std::uint8_t>(
+            cursor, data, [&](std::string_view label) { return cursor.readU8(label); }, description);
+    }
+
+    ESM4::FONVSaveField<std::int8_t> readPlayerProcessS8(
+        Cursor& cursor, std::span<const std::uint8_t> data, std::string_view description)
+    {
+        return readDelimitedField<std::int8_t>(cursor, data,
+            [&](std::string_view label) { return std::bit_cast<std::int8_t>(cursor.readU8(label)); }, description);
+    }
+
+    ESM4::FONVSaveField<std::uint16_t> readPlayerProcessU16(
+        Cursor& cursor, std::span<const std::uint8_t> data, std::string_view description)
+    {
+        return readDelimitedField<std::uint16_t>(
+            cursor, data, [&](std::string_view label) { return cursor.readU16(label); }, description);
+    }
+
+    ESM4::FONVSaveField<std::uint32_t> readPlayerProcessU32(
+        Cursor& cursor, std::span<const std::uint8_t> data, std::string_view description)
+    {
+        return readDelimitedField<std::uint32_t>(
+            cursor, data, [&](std::string_view label) { return cursor.readU32(label); }, description);
+    }
+
+    ESM4::FONVSaveField<std::int32_t> readPlayerProcessS32(
+        Cursor& cursor, std::span<const std::uint8_t> data, std::string_view description)
+    {
+        return readDelimitedField<std::int32_t>(cursor, data,
+            [&](std::string_view label) { return std::bit_cast<std::int32_t>(cursor.readU32(label)); }, description);
+    }
+
+    ESM4::FONVSaveField<float> readPlayerProcessFloat(
+        Cursor& cursor, std::span<const std::uint8_t> data, std::string_view description)
+    {
+        ESM4::FONVSaveField<float> result = readDelimitedField<float>(
+            cursor, data, [&](std::string_view label) { return cursor.readF32(label); }, description);
+        if (!std::isfinite(result.mValue))
+            throw ESM4::FONVSaveError(result.mRange.mOffset, std::string("non-finite ") + std::string(description));
+        return result;
+    }
+
+    ESM4::FONVSavePlayerProcessVector3 parsePlayerProcessVector3(
+        Cursor& cursor, std::span<const std::uint8_t> data, std::string_view description)
+    {
+        const std::size_t begin = cursor.position();
+        ESM4::FONVSavePlayerProcessVector3 result;
+        for (ESM4::FONVSaveField<float>& component : result.mComponents)
+        {
+            component = readField<float>(
+                cursor, data, [&](std::string_view label) { return cursor.readF32(label); }, description);
+            if (!std::isfinite(component.mValue))
+            {
+                throw ESM4::FONVSaveError(
+                    component.mRange.mOffset, std::string("non-finite ") + std::string(description));
+            }
+        }
+        cursor.expectDelimiter(description);
+        result.mRange = range(begin, cursor.position());
+        result.mRaw = copyRange(data, begin, cursor.position());
+        return result;
+    }
+
+    ESM4::FONVSavePlayerProcessSubBuffer parsePlayerProcessSubBuffer(
+        Cursor& cursor, std::span<const std::uint8_t> data, std::string_view description)
+    {
+        const std::size_t begin = cursor.position();
+        ESM4::FONVSavePlayerProcessSubBuffer result;
+        result.mLength = readPackedCount(cursor, data, description);
+        if (result.mLength.mValue > cursor.end() - cursor.position())
+            throw ESM4::FONVSaveError(result.mLength.mRange.mOffset, std::string(description) + " overruns its container");
+        result.mData = readRawField(cursor, data, result.mLength.mValue, description);
+        result.mRange = range(begin, cursor.position());
+        result.mRaw = copyRange(data, begin, cursor.position());
+        return result;
+    }
+
+    ESM4::FONVSavePlayerProcessModifier parsePlayerProcessModifier(
+        Cursor& cursor, std::span<const std::uint8_t> data, std::string_view description)
+    {
+        const std::size_t begin = cursor.position();
+        ESM4::FONVSavePlayerProcessModifier result;
+        result.mActorValue = readPlayerProcessU8(cursor, data, description);
+        result.mModifier = readPlayerProcessFloat(cursor, data, description);
+        result.mRange = range(begin, cursor.position());
+        result.mRaw = copyRange(data, begin, cursor.position());
+        return result;
+    }
+
+    void rejectPlayerProcessPackageData(
+        const ESM4::FONVSaveResolvedReferenceId& package, std::string_view description)
+    {
+        if (package.mResolvedFormId.has_value())
+        {
+            throw ESM4::FONVSaveError(
+                package.mEncoded.mRange.mOffset, std::string("unsupported ") + std::string(description) + " data");
+        }
+    }
+
+    ESM4::FONVSavePlayerMobileObjectBaseState parsePlayerMobileObjectBaseState(Cursor& cursor,
+        std::span<const std::uint8_t> data, const ESM4::FONVSaveFormIdTable& formIds)
+    {
+        const std::size_t begin = cursor.position();
+        ESM4::FONVSavePlayerMobileObjectBaseState result;
+        for (ESM4::FONVSaveField<std::int8_t>& value : result.mBytes084_085_07C_07F_080_07D_07E_086)
+            value = readPlayerProcessS8(cursor, data, "player MobileObject base byte");
+        result.mUnk074 = readPlayerProcessU32(cursor, data, "player MobileObject Unk074");
+        result.mUnk078 = readPlayerProcessU32(cursor, data, "player MobileObject Unk078");
+        result.mByt081 = readPlayerProcessS8(cursor, data, "player MobileObject Byt081");
+        result.mByt083 = readPlayerProcessU8(cursor, data, "player MobileObject Byt083");
+        result.mUnk06C
+            = decodeDelimitedResolvedReferenceId(cursor, data, formIds, "player MobileObject Unk06C RefID", true);
+        result.mUnk070
+            = decodeDelimitedResolvedReferenceId(cursor, data, formIds, "player MobileObject Unk070 RefID", true);
+        result.mRange = range(begin, cursor.position());
+        result.mRaw = copyRange(data, begin, cursor.position());
+        return result;
+    }
+
+    ESM4::FONVSavePlayerBaseProcessState parsePlayerBaseProcessState(Cursor& cursor,
+        std::span<const std::uint8_t> data, const ESM4::FONVSaveFormIdTable& formIds)
+    {
+        const std::size_t begin = cursor.position();
+        ESM4::FONVSavePlayerBaseProcessState result;
+        result.mUnk01C = readPlayerProcessU32(cursor, data, "player base-process Unk01C");
+        result.mUnk020 = readPlayerProcessU32(cursor, data, "player base-process Unk020");
+        result.mUnk024 = readPlayerProcessU32(cursor, data, "player base-process Unk024");
+        result.mPackage
+            = decodeDelimitedResolvedReferenceId(cursor, data, formIds, "player base-process package RefID", true);
+        rejectPlayerProcessPackageData(result.mPackage, "player base-process package");
+        result.mRange = range(begin, cursor.position());
+        result.mRaw = copyRange(data, begin, cursor.position());
+        return result;
+    }
+
+    ESM4::FONVSavePlayerLowProcessState parsePlayerLowProcessState(Cursor& cursor,
+        std::span<const std::uint8_t> data, const ESM4::FONVSaveFormIdTable& formIds, std::uint32_t changeFlags)
+    {
+        const std::size_t begin = cursor.position();
+        ESM4::FONVSavePlayerLowProcessState result;
+        result.mByt030 = readPlayerProcessU8(cursor, data, "player low-process Byt030");
+        result.mUnk0A4 = readPlayerProcessU32(cursor, data, "player low-process Unk0A4");
+        result.mBoundObject
+            = decodeDelimitedResolvedReferenceId(cursor, data, formIds, "player low-process bound-object RefID", true);
+        result.mUnk058 = readPlayerProcessU32(cursor, data, "player low-process Unk058");
+        result.mUnk0A8 = readPlayerProcessU32(cursor, data, "player low-process Unk0A8");
+        result.mUnk0AC = readPlayerProcessU32(cursor, data, "player low-process Unk0AC");
+        result.mByt0B0 = readPlayerProcessU8(cursor, data, "player low-process Byt0B0");
+        result.mWrd050 = readPlayerProcessU16(cursor, data, "player low-process Wrd050");
+        for (ESM4::FONVSaveField<float>& value : result.mUnk038)
+            value = readPlayerProcessFloat(cursor, data, "player low-process Unk038");
+        for (ESM4::FONVSaveResolvedReferenceId& value : result.mUnk040_044_048_FormList_054)
+            value = decodeDelimitedResolvedReferenceId(cursor, data, formIds, "player low-process RefID", true);
+        result.mList006CCount = readPackedCount(cursor, data, "player low-process List006C count");
+        validatePackedCountFits(result.mList006CCount, cursor, 4, "player low-process List006C count");
+        result.mList006C.reserve(result.mList006CCount.mValue);
+        for (std::uint32_t i = 0; i < result.mList006CCount.mValue; ++i)
+            result.mList006C.push_back(
+                decodeDelimitedResolvedReferenceId(cursor, data, formIds, "player low-process List006C RefID", true));
+
+        constexpr std::uint32_t damageModifiersChanged = 1u << 21;
+        if ((changeFlags & damageModifiersChanged) != 0)
+        {
+            result.mDamageModifierCount = readPackedCount(cursor, data, "player damage-modifier count");
+            validatePackedCountFits(*result.mDamageModifierCount, cursor, 7, "player damage-modifier count");
+            result.mDamageModifiers.reserve(result.mDamageModifierCount->mValue);
+            for (std::uint32_t i = 0; i < result.mDamageModifierCount->mValue; ++i)
+                result.mDamageModifiers.push_back(parsePlayerProcessModifier(cursor, data, "player damage modifier"));
+        }
+        result.mRange = range(begin, cursor.position());
+        result.mRaw = copyRange(data, begin, cursor.position());
+        return result;
+    }
+
+    ESM4::FONVSavePlayerMiddleLowProcessState parsePlayerMiddleLowProcessState(
+        Cursor& cursor, std::span<const std::uint8_t> data, std::uint32_t changeFlags)
+    {
+        const std::size_t begin = cursor.position();
+        ESM4::FONVSavePlayerMiddleLowProcessState result;
+        result.mUnk0B4 = readPlayerProcessU32(cursor, data, "player middle-low-process Unk0B4");
+        constexpr std::uint32_t tempModifiersChanged = 1u << 20;
+        if ((changeFlags & tempModifiersChanged) != 0)
+        {
+            result.mTempModifierCount = readPackedCount(cursor, data, "player temp-modifier count");
+            validatePackedCountFits(*result.mTempModifierCount, cursor, 7, "player temp-modifier count");
+            result.mTempModifiers.reserve(result.mTempModifierCount->mValue);
+            for (std::uint32_t i = 0; i < result.mTempModifierCount->mValue; ++i)
+                result.mTempModifiers.push_back(parsePlayerProcessModifier(cursor, data, "player temp modifier"));
+        }
+        result.mRange = range(begin, cursor.position());
+        result.mRaw = copyRange(data, begin, cursor.position());
+        return result;
+    }
+
+    ESM4::FONVSavePlayerMiddleHighList230Entry parsePlayerMiddleHighList230Entry(Cursor& cursor,
+        std::span<const std::uint8_t> data, const ESM4::FONVSaveFormIdTable& formIds)
+    {
+        const std::size_t begin = cursor.position();
+        ESM4::FONVSavePlayerMiddleHighList230Entry result;
+        result.mBoundObject = decodeDelimitedResolvedReferenceId(
+            cursor, data, formIds, "player middle-high-process List230 bound-object RefID", true);
+        result.mUnknown = readPlayerProcessS32(cursor, data, "player middle-high-process List230 Unknown");
+        result.mUnk008 = readPlayerProcessU32(cursor, data, "player middle-high-process List230 Unk008");
+        for (ESM4::FONVSaveField<std::uint8_t>& value : result.mBytes00C_00D_00E_00F_010_011)
+            value = readPlayerProcessU8(cursor, data, "player middle-high-process List230 byte");
+        result.mRange = range(begin, cursor.position());
+        result.mRaw = copyRange(data, begin, cursor.position());
+        return result;
+    }
+
+    ESM4::FONVSavePlayerMiddleHighProcessState parsePlayerMiddleHighProcessState(Cursor& cursor,
+        std::span<const std::uint8_t> data, const ESM4::FONVSaveFormIdTable& formIds, std::uint32_t changeFlags)
+    {
+        const std::size_t begin = cursor.position();
+        ESM4::FONVSavePlayerMiddleHighProcessState result;
+        for (ESM4::FONVSaveField<std::uint8_t>& value : result.mUnk134_135_168)
+            value = readPlayerProcessU8(cursor, data, "player middle-high-process initial byte");
+        for (ESM4::FONVSaveField<std::uint32_t>& value : result.mUnk170_174_108)
+            value = readPlayerProcessU32(cursor, data, "player middle-high-process initial word");
+        result.mUnk1DA = readPlayerProcessU8(cursor, data, "player middle-high-process Unk1DA");
+        result.mCoords0E4 = parsePlayerProcessVector3(cursor, data, "player middle-high-process Coords0E4");
+        result.mUnk0DC = readPlayerProcessU32(cursor, data, "player middle-high-process Unk0DC");
+        for (ESM4::FONVSaveField<std::uint8_t>& value : result.mByt13D_144_156)
+            value = readPlayerProcessU8(cursor, data, "player middle-high-process control byte");
+        result.mWrd154 = readPlayerProcessU16(cursor, data, "player middle-high-process Wrd154");
+        result.mCoords148 = parsePlayerProcessVector3(cursor, data, "player middle-high-process Coords148");
+        for (ESM4::FONVSaveField<std::uint8_t>& value : result.mBool_Byt0E0_188_189)
+            value = readPlayerProcessU8(cursor, data, "player middle-high-process state byte");
+        result.mUnk0D8 = readPlayerProcessU32(cursor, data, "player middle-high-process Unk0D8");
+        result.mByt18B = readPlayerProcessU8(cursor, data, "player middle-high-process Byt18B");
+        result.mUnk1D0 = readPlayerProcessU32(cursor, data, "player middle-high-process Unk1D0");
+        result.mUnk1D4 = readPlayerProcessU32(cursor, data, "player middle-high-process Unk1D4");
+        for (ESM4::FONVSaveField<std::uint8_t>& value : result.mByt1D8_1D9_228)
+            value = readPlayerProcessU8(cursor, data, "player middle-high-process state byte");
+        result.mWrd22A = readPlayerProcessU16(cursor, data, "player middle-high-process Wrd22A");
+        result.mUnk1A8 = readPlayerProcessU32(cursor, data, "player middle-high-process Unk1A8");
+        result.mByt0E1 = readPlayerProcessU8(cursor, data, "player middle-high-process Byt0E1");
+        result.mUnk190 = readPlayerProcessU32(cursor, data, "player middle-high-process Unk190");
+        result.mUnk198 = readPlayerProcessU32(cursor, data, "player middle-high-process Unk198");
+        result.mByt19C = readPlayerProcessU8(cursor, data, "player middle-high-process Byt19C");
+        result.mByt19D = readPlayerProcessU8(cursor, data, "player middle-high-process Byt19D");
+        for (ESM4::FONVSaveField<std::uint32_t>& value : result.mUnk234_238_23C_244)
+            value = readPlayerProcessU32(cursor, data, "player middle-high-process versioned word");
+        result.mUnk110 = readPlayerProcessU8(cursor, data, "player middle-high-process Unk110");
+        for (ESM4::FONVSaveResolvedReferenceId& value : result.mIdleForm10C_IdleForm194_Unk158_Unk140)
+            value = decodeDelimitedResolvedReferenceId(cursor, data, formIds, "player middle-high-process RefID", true);
+        result.mUnknown = readPlayerProcessU32(cursor, data, "player middle-high-process Unknown");
+        result.mList0C8Count = readPackedCount(cursor, data, "player middle-high-process List0C8 count");
+        validatePackedCountFits(result.mList0C8Count, cursor, 4, "player middle-high-process List0C8 count");
+        result.mList0C8.reserve(result.mList0C8Count.mValue);
+        for (std::uint32_t i = 0; i < result.mList0C8Count.mValue; ++i)
+            result.mList0C8.push_back(decodeDelimitedResolvedReferenceId(
+                cursor, data, formIds, "player middle-high-process List0C8 RefID", true));
+        result.mPackage
+            = decodeDelimitedResolvedReferenceId(cursor, data, formIds, "player middle-high-process package RefID", true);
+        rejectPlayerProcessPackageData(result.mPackage, "player middle-high-process package");
+
+        constexpr std::uint32_t animationChanged = 1u << 28;
+        if ((changeFlags & animationChanged) != 0)
+            result.mAnimation = parsePlayerProcessSubBuffer(cursor, data, "player actor animation sub-buffer");
+
+        result.mMagicItemCount = readPackedCount(cursor, data, "player middle-high-process magic-item count");
+        if (result.mMagicItemCount.mValue != 0)
+        {
+            throw ESM4::FONVSaveError(
+                result.mMagicItemCount.mRange.mOffset, "unsupported player middle-high-process magic-item data");
+        }
+        for (ESM4::FONVSaveResolvedReferenceId& value : result.mUnk164_160_1BC)
+            value = decodeDelimitedResolvedReferenceId(cursor, data, formIds, "player middle-high-process RefID", true);
+        result.mList230Count = readPackedCount(cursor, data, "player middle-high-process List230 count");
+        validatePackedCountFits(result.mList230Count, cursor, 26, "player middle-high-process List230 count");
+        result.mList230.reserve(result.mList230Count.mValue);
+        for (std::uint32_t i = 0; i < result.mList230Count.mValue; ++i)
+            result.mList230.push_back(parsePlayerMiddleHighList230Entry(cursor, data, formIds));
+        result.mRange = range(begin, cursor.position());
+        result.mRaw = copyRange(data, begin, cursor.position());
+        return result;
+    }
+
+    ESM4::FONVSavePlayerHighLocationEntry parsePlayerHighLocationEntry(Cursor& cursor,
+        std::span<const std::uint8_t> data, const ESM4::FONVSaveFormIdTable& formIds, std::string_view description)
+    {
+        const std::size_t begin = cursor.position();
+        ESM4::FONVSavePlayerHighLocationEntry result;
+        result.mForm000 = decodeDelimitedResolvedReferenceId(cursor, data, formIds, description, true);
+        result.mUnk004 = readPlayerProcessU8(cursor, data, description);
+        result.mUnk008 = readPlayerProcessU32(cursor, data, description);
+        result.mCoords = parsePlayerProcessVector3(cursor, data, description);
+        result.mTim018 = readPlayerProcessFloat(cursor, data, description);
+        for (ESM4::FONVSaveField<std::uint8_t>& value : result.mByt01E_01C_01D)
+            value = readPlayerProcessU8(cursor, data, description);
+        result.mUnk020 = readPlayerProcessU32(cursor, data, description);
+        result.mByt01F = readPlayerProcessU8(cursor, data, description);
+        result.mRange = range(begin, cursor.position());
+        result.mRaw = copyRange(data, begin, cursor.position());
+        return result;
+    }
+
+    ESM4::FONVSavePlayerHighProcessState parsePlayerHighProcessState(Cursor& cursor,
+        std::span<const std::uint8_t> data, const ESM4::FONVSaveFormIdTable& formIds)
+    {
+        const std::size_t begin = cursor.position();
+        ESM4::FONVSavePlayerHighProcessState result;
+        for (ESM4::FONVSaveField<std::uint8_t>& value : result.mUnk32C_340_374_375)
+            value = readPlayerProcessU8(cursor, data, "player high-process initial byte");
+        result.mUnk2FC = readPlayerProcessU16(cursor, data, "player high-process Unk2FC");
+        for (ESM4::FONVSaveField<std::uint32_t>& value : result.mUnk2B4_2F8_310_330_334_338_34C_294_2B8_2BC_298)
+            value = readPlayerProcessU32(cursor, data, "player high-process initial word");
+        for (ESM4::FONVSaveField<std::uint16_t>& value : result.mUnk2C0_2C2_2C4)
+            value = readPlayerProcessU16(cursor, data, "player high-process initial short");
+        result.mUnk349 = readPlayerProcessU8(cursor, data, "player high-process Unk349");
+        result.mCoords = parsePlayerProcessVector3(cursor, data, "player high-process Coords");
+        for (ESM4::FONVSaveField<std::uint32_t>& value : result.mUnk36C_3E8_3EC_33C_2A8_378)
+            value = readPlayerProcessU32(cursor, data, "player high-process state word");
+        result.mUnk3A0 = readPlayerProcessU8(cursor, data, "player high-process Unk3A0");
+        result.mUnk39C = readPlayerProcessU32(cursor, data, "player high-process Unk39C");
+        result.mUnk3A8 = readPlayerProcessU8(cursor, data, "player high-process Unk3A8");
+        result.mUnk3A4 = readPlayerProcessU32(cursor, data, "player high-process Unk3A4");
+        result.mUnk420 = readPlayerProcessU8(cursor, data, "player high-process Unk420");
+        result.mUnk3BC = readPlayerProcessU32(cursor, data, "player high-process Unk3BC");
+        result.mUnk3B0 = readPlayerProcessU32(cursor, data, "player high-process Unk3B0");
+        result.mUnk2C6 = readPlayerProcessU8(cursor, data, "player high-process Unk2C6");
+        for (ESM4::FONVSaveField<std::uint32_t>& value : result.mUnk2D0_2D4_2D8)
+            value = readPlayerProcessU32(cursor, data, "player high-process state word");
+        result.mUnk3B8 = readPlayerProcessU8(cursor, data, "player high-process Unk3B8");
+        result.mUnk2DC1 = readPlayerProcessU8(cursor, data, "player high-process Unk2DC first");
+        result.mUnk2E0 = readPlayerProcessU32(cursor, data, "player high-process Unk2E0");
+        result.mUnk344 = readPlayerProcessU32(cursor, data, "player high-process Unk344");
+        result.mUnk2DC2 = readPlayerProcessU8(cursor, data, "player high-process Unk2DC second");
+        result.mUnk2DC3 = readPlayerProcessU8(cursor, data, "player high-process Unk2DC third");
+        result.mUnk3D8Modulo12 = readPlayerProcessU32(cursor, data, "player high-process Unk3D8 modulo 12");
+        if (result.mUnk3D8Modulo12.mValue >= 12)
+            throw ESM4::FONVSaveError(result.mUnk3D8Modulo12.mRange.mOffset, "invalid player high-process modulo-12 value");
+        result.mUnk448 = readPlayerProcessU32(cursor, data, "player high-process Unk448");
+        result.mUnk29D = readPlayerProcessU8(cursor, data, "player high-process Unk29D");
+        for (ESM4::FONVSaveField<std::uint32_t>& value : result.mUnk2B0_2C8_418_43C_440)
+            value = readPlayerProcessU32(cursor, data, "player high-process state word");
+        result.mUnk444 = readPlayerProcessU8(cursor, data, "player high-process Unk444");
+        result.mUnk445 = readPlayerProcessU8(cursor, data, "player high-process Unk445");
+        result.mUnk450 = readPlayerProcessU32(cursor, data, "player high-process Unk450");
+        result.mUnk458 = readPlayerProcessU8(cursor, data, "player high-process Unk458");
+        result.mUnk430 = readPlayerProcessU32(cursor, data, "player high-process Unk430");
+        result.mUnk3E0 = readPlayerProcessU8(cursor, data, "player high-process Unk3E0");
+        result.mUnk459 = readPlayerProcessU8(cursor, data, "player high-process Unk459");
+        result.mUnk2A0 = readPlayerProcessU32(cursor, data, "player high-process Unk2A0");
+        for (ESM4::FONVSaveField<std::uint8_t>& value : result.mUnk3D0_3D1_348_Unknown)
+            value = readPlayerProcessU8(cursor, data, "player high-process versioned byte");
+        for (ESM4::FONVSaveResolvedReferenceId& value : result.mUnk30C_2A4_3F0_41C_37C_Idle_2AC)
+            value = decodeDelimitedResolvedReferenceId(cursor, data, formIds, "player high-process RefID", true);
+        for (ESM4::FONVSavePlayerHighUnknownEntry& entry : result.mUnknownEntries)
+        {
+            const std::size_t entryBegin = cursor.position();
+            entry.mUnk3F8 = decodeDelimitedResolvedReferenceId(
+                cursor, data, formIds, "player high-process fixed-array RefID", true);
+            entry.mUnk410 = readPlayerProcessU8(cursor, data, "player high-process fixed-array byte");
+            entry.mRange = range(entryBegin, cursor.position());
+            entry.mRaw = copyRange(data, entryBegin, cursor.position());
+        }
+
+        const auto readReferenceList = [&](ESM4::FONVSaveField<std::uint32_t>& count,
+                                           std::vector<ESM4::FONVSaveResolvedReferenceId>& values,
+                                           std::string_view description) {
+            count = readPackedCount(cursor, data, description);
+            validatePackedCountFits(count, cursor, 4, description);
+            values.reserve(count.mValue);
+            for (std::uint32_t i = 0; i < count.mValue; ++i)
+                values.push_back(decodeDelimitedResolvedReferenceId(cursor, data, formIds, description, true));
+        };
+        readReferenceList(result.mList38CCount, result.mList38C, "player high-process List38C count");
+        readReferenceList(result.mList394Count, result.mList394, "player high-process List394 count");
+        readReferenceList(result.mList264Count, result.mList264, "player high-process List264 count");
+
+        result.mHasDialogueItems = readPlayerProcessU8(cursor, data, "player high-process Has Dialogue Items");
+        if (result.mHasDialogueItems.mValue != 0)
+            throw ESM4::FONVSaveError(result.mHasDialogueItems.mRange.mOffset, "unsupported player high-process dialogue data");
+        result.mList44CCount = readPackedCount(cursor, data, "player high-process List44C count");
+        if (result.mList44CCount.mValue != 0)
+            throw ESM4::FONVSaveError(result.mList44CCount.mRange.mOffset, "unsupported player high-process List44C data");
+
+        const auto readLocationList = [&](ESM4::FONVSaveField<std::uint32_t>& count,
+                                          std::vector<ESM4::FONVSavePlayerHighLocationEntry>& values,
+                                          std::string_view description) {
+            count = readPackedCount(cursor, data, description);
+            validatePackedCountFits(count, cursor, 42, description);
+            values.reserve(count.mValue);
+            for (std::uint32_t i = 0; i < count.mValue; ++i)
+                values.push_back(parsePlayerHighLocationEntry(cursor, data, formIds, description));
+        };
+        readLocationList(result.mList25CCount, result.mList25C, "player high-process List25C");
+        readLocationList(result.mList260Count, result.mList260, "player high-process List260");
+        result.mHasUnk3DC = readPlayerProcessU8(cursor, data, "player high-process Has Unk3DC");
+        if (result.mHasUnk3DC.mValue != 0)
+            throw ESM4::FONVSaveError(result.mHasUnk3DC.mRange.mOffset, "unsupported player high-process Unk3DC data");
+        result.mSubBuffer = parsePlayerProcessSubBuffer(cursor, data, "player high-process sub-buffer");
+        result.mRange = range(begin, cursor.position());
+        result.mRaw = copyRange(data, begin, cursor.position());
+        return result;
+    }
+
+    ESM4::FONVSavePlayerMobileObjectProcessState parsePlayerMobileObjectProcessState(std::span<const std::uint8_t> data,
+        const ESM4::FONVSaveChangedFormEnvelope& player,
+        const ESM4::FONVSavePlayerProcessInventoryData& processInventory,
+        const ESM4::FONVSaveFormIdTable& formIds)
+    {
+        if (player.mVersion.mValue != 27)
+            throw ESM4::FONVSaveError(player.mVersion.mRange.mOffset,
+                "unsupported canonical player MobileObject process-state changed-form version");
+        if (processInventory.mProcessLevel.mValue != 0)
+            throw ESM4::FONVSaveError(processInventory.mProcessLevel.mRange.mOffset,
+                "unsupported canonical player MobileObject process level");
+
+        const std::size_t begin = static_cast<std::size_t>(processInventory.mUnparsedRemainder.mRange.mOffset);
+        const std::size_t end = static_cast<std::size_t>(processInventory.mUnparsedRemainder.mRange.end());
+        Cursor cursor(data, begin, end);
+        ESM4::FONVSavePlayerMobileObjectProcessState result;
+        result.mMobileObjectBase = parsePlayerMobileObjectBaseState(cursor, data, formIds);
+        result.mBaseProcess = parsePlayerBaseProcessState(cursor, data, formIds);
+        result.mLowProcess = parsePlayerLowProcessState(cursor, data, formIds, player.mChangeFlags.mValue);
+        result.mMiddleLowProcess = parsePlayerMiddleLowProcessState(cursor, data, player.mChangeFlags.mValue);
+        result.mMiddleHighProcess
+            = parsePlayerMiddleHighProcessState(cursor, data, formIds, player.mChangeFlags.mValue);
+        result.mHighProcess = parsePlayerHighProcessState(cursor, data, formIds);
+        result.mRange = range(begin, cursor.position());
+        result.mRaw = copyRange(data, begin, cursor.position());
+        result.mUnparsedRemainder = readRawField(
+            cursor, data, cursor.end() - cursor.position(), "remaining canonical player ACHR payload");
+        return result;
+    }
+
     void appendUnparsedSemanticPayload(ESM4::FONVSaveGamePrefix& save, const ESM4::FONVSaveRange& payload)
     {
         if (payload.empty())
@@ -1017,6 +1449,8 @@ namespace ESM4
                     = parsePlayerActorValueData(data, *playerReference, *result.mPlayerReferenceMovement);
                 result.mPlayerProcessInventoryData = parsePlayerProcessInventoryData(
                     data, *playerReference, *result.mPlayerActorValueData, result.mFormIdTable);
+                result.mPlayerMobileObjectProcessState = parsePlayerMobileObjectProcessState(
+                    data, *playerReference, *result.mPlayerProcessInventoryData, result.mFormIdTable);
             }
         }
 
@@ -1042,7 +1476,9 @@ namespace ESM4
         }
         for (const FONVSaveChangedFormEnvelope& entry : result.mChangedForms.mEntries)
         {
-            if (result.mPlayerProcessInventoryData.has_value() && &entry == playerReference)
+            if (result.mPlayerMobileObjectProcessState.has_value() && &entry == playerReference)
+                appendUnparsedSemanticPayload(result, result.mPlayerMobileObjectProcessState->mUnparsedRemainder.mRange);
+            else if (result.mPlayerProcessInventoryData.has_value() && &entry == playerReference)
                 appendUnparsedSemanticPayload(result, result.mPlayerProcessInventoryData->mUnparsedRemainder.mRange);
             else if (result.mPlayerActorValueData.has_value() && &entry == playerReference)
                 appendUnparsedSemanticPayload(result, result.mPlayerActorValueData->mUnparsedRemainder.mRange);

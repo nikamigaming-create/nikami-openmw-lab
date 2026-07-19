@@ -293,6 +293,187 @@ namespace
         return result;
     }
 
+    void appendProcessVector3(std::vector<std::uint8_t>& bytes, float x, float y, float z)
+    {
+        appendF32(bytes, x);
+        appendF32(bytes, y);
+        appendF32(bytes, z);
+        appendDelimiter(bytes);
+    }
+
+    constexpr std::size_t sSyntheticPlayerMobileObjectProcessStateBytes = 688;
+
+    std::vector<std::uint8_t> makePlayerMobileObjectProcessState()
+    {
+        std::vector<std::uint8_t> result;
+        const auto appendDelimitedU8 = [&](std::uint8_t value) {
+            appendU8(result, value);
+            appendDelimiter(result);
+        };
+        const auto appendDelimitedU16 = [&](std::uint16_t value) {
+            appendU16(result, value);
+            appendDelimiter(result);
+        };
+        const auto appendDelimitedU32 = [&](std::uint32_t value) {
+            appendU32(result, value);
+            appendDelimiter(result);
+        };
+        const auto appendDelimitedF32 = [&](float value) {
+            appendF32(result, value);
+            appendDelimiter(result);
+        };
+        const auto appendNullReferences = [&](std::size_t count) {
+            for (std::size_t i = 0; i < count; ++i)
+                appendDelimitedReferenceId(result, 0);
+        };
+
+        for (const std::uint8_t value : { 0xff, 0, 1, 1, 1, 0, 0, 1 })
+            appendDelimitedU8(value);
+        appendDelimitedU32(0x3f9a4658u);
+        appendDelimitedU32(0);
+        appendDelimitedU8(0);
+        appendDelimitedU8(0);
+        appendNullReferences(2);
+
+        appendDelimitedU32(0);
+        appendDelimitedU32(0xbf800000u);
+        appendDelimitedU32(0);
+        appendDelimitedReferenceId(result, 0);
+
+        appendDelimitedU8(0);
+        appendDelimitedU32(0);
+        appendDelimitedReferenceId(result, 0);
+        appendDelimitedU32(0);
+        appendDelimitedU32(0);
+        appendDelimitedU32(0);
+        appendDelimitedU8(0);
+        appendDelimitedU16(0);
+        appendDelimitedF32(-1.f);
+        appendDelimitedF32(0.f);
+        appendNullReferences(5);
+        appendPackedCount(result, 0);
+
+        appendDelimitedU32(0xffffffffu);
+
+        for (const std::uint8_t value : { 1, 1, 0 })
+            appendDelimitedU8(value);
+        appendDelimitedU32(0x3f800000u);
+        appendDelimitedU32(0);
+        appendDelimitedU32(0);
+        appendDelimitedU8(0);
+        appendProcessVector3(result, 0.f, 0.f, 0.f);
+        appendDelimitedU32(0);
+        appendDelimitedU8(0);
+        appendDelimitedU8(0x7f);
+        appendDelimitedU8(0);
+        appendDelimitedU16(0);
+        appendProcessVector3(result, 0.f, 0.f, 0.f);
+        for (std::size_t i = 0; i < 4; ++i)
+            appendDelimitedU8(0);
+        appendDelimitedU32(0);
+        appendDelimitedU8(0);
+        appendDelimitedU32(0);
+        appendDelimitedU32(0);
+        appendDelimitedU8(1);
+        appendDelimitedU8(0);
+        appendDelimitedU8(0);
+        appendDelimitedU16(2);
+        appendDelimitedU32(0xffffffffu);
+        appendDelimitedU8(0);
+        appendDelimitedU32(0xffffffffu);
+        appendDelimitedU32(0xbf800000u);
+        appendDelimitedU8(0);
+        appendDelimitedU8(0);
+        appendDelimitedU32(0);
+        appendDelimitedU32(0);
+        appendDelimitedU32(0);
+        appendDelimitedU32(0xffffffffu);
+        appendDelimitedU8(0);
+        appendNullReferences(4);
+        appendDelimitedU32(0);
+        appendPackedCount(result, 0);
+        appendDelimitedReferenceId(result, 0);
+        appendPackedCount(result, 0);
+        appendPackedCount(result, 0);
+        appendNullReferences(3);
+        appendPackedCount(result, 0);
+
+        for (const std::uint8_t value : { 0, 1, 0, 0 })
+            appendDelimitedU8(value);
+        appendDelimitedU16(0xffffu);
+        for (std::size_t i = 0; i < 11; ++i)
+            appendDelimitedU32(i == 4 ? 0x3f4353f8u : 0);
+        appendDelimitedU16(13);
+        appendDelimitedU16(0xffffu);
+        appendDelimitedU16(0);
+        appendDelimitedU8(0);
+        appendProcessVector3(result, 11.7265625f, 39.951904296875f, 83.052734375f);
+        for (const std::uint32_t value : { 0u, 0u, 0x3f800000u, 0x41200000u, 0u, 0u })
+            appendDelimitedU32(value);
+        appendDelimitedU8(0);
+        appendDelimitedU32(0);
+        appendDelimitedU8(0);
+        appendDelimitedU32(0);
+        appendDelimitedU8(0);
+        appendDelimitedU32(0);
+        appendDelimitedU32(0x3f39999bu);
+        appendDelimitedU8(0);
+        appendDelimitedU32(0);
+        appendDelimitedU32(0);
+        appendDelimitedU32(0);
+        appendDelimitedU8(0);
+        appendDelimitedU8(0);
+        appendDelimitedU32(0);
+        appendDelimitedU32(0);
+        appendDelimitedU8(0);
+        appendDelimitedU8(0);
+        appendDelimitedU32(0);
+        appendDelimitedU32(0xbf800000u);
+        appendDelimitedU8(0);
+        for (const std::uint32_t value : { 0x3f800000u, 0x4159475eu, 0x41200000u, 0x40400000u, 0u })
+            appendDelimitedU32(value);
+        appendDelimitedU8(0);
+        appendDelimitedU8(0);
+        appendDelimitedU32(0);
+        appendDelimitedU8(0);
+        appendDelimitedU32(2);
+        appendDelimitedU8(0);
+        appendDelimitedU8(0);
+        appendDelimitedU32(0x42f00000u);
+        for (std::size_t i = 0; i < 4; ++i)
+            appendDelimitedU8(0);
+        appendNullReferences(7);
+        for (std::size_t i = 0; i < 6; ++i)
+        {
+            appendDelimitedReferenceId(result, i == 0 ? 0x400014u : 0u);
+            appendDelimitedU8(0);
+        }
+        appendPackedCount(result, 0);
+        appendPackedCount(result, 0);
+        appendPackedCount(result, 0);
+        appendDelimitedU8(0);
+        appendPackedCount(result, 0);
+        appendPackedCount(result, 1);
+        appendDelimitedReferenceId(result, 0x400333u);
+        appendDelimitedU8(1);
+        appendDelimitedU32(0xfffffffeu);
+        appendProcessVector3(result, 1.f, 2.f, 3.f);
+        appendDelimitedF32(-4.f);
+        appendDelimitedU8(5);
+        appendDelimitedU8(6);
+        appendDelimitedU8(7);
+        appendDelimitedU32(8);
+        appendDelimitedU8(9);
+        appendPackedCount(result, 0);
+        appendDelimitedU8(0);
+        appendPackedCount(result, 3);
+        result.insert(result.end(), { 0xaa, 0xbb, 0xcc });
+
+        if (result.size() != sSyntheticPlayerMobileObjectProcessStateBytes)
+            throw std::logic_error("synthetic player MobileObject process state has the wrong size");
+        return result;
+    }
+
     void appendString(std::vector<std::uint8_t>& bytes, std::string_view value)
     {
         if (value.size() > std::numeric_limits<std::uint16_t>::max())
@@ -382,6 +563,7 @@ namespace
         std::array<std::size_t, 3> mChangedFormLengthFields{};
         std::array<std::size_t, 3> mChangedFormPayloads{};
         std::size_t mPlayerProcessInventoryBegin = 0;
+        std::size_t mPlayerMobileObjectProcessStateBegin = 0;
         std::size_t mGlobalData2Begin = 0;
         std::size_t mRefIdArrayBegin = 0;
         std::size_t mUnknownTableBegin = 0;
@@ -391,7 +573,8 @@ namespace
         std::span<const std::string_view> masters = {}, bool includeScreenshot = true,
         std::string_view playerName = "Courier", bool includeSky = false,
         std::size_t playerActorValueBytes = ESM4::sFONVPlayerActorValueDataBytes,
-        std::size_t playerProcessInventoryBytes = sSyntheticPlayerProcessInventoryDataBytes)
+        std::size_t playerProcessInventoryBytes = sSyntheticPlayerProcessInventoryDataBytes,
+        std::size_t playerMobileObjectProcessStateBytes = sSyntheticPlayerMobileObjectProcessStateBytes)
     {
         std::vector<std::uint8_t> header;
         appendU32(header, 48);
@@ -473,6 +656,16 @@ namespace
             throw std::logic_error("synthetic player process/inventory byte count is too large");
         changedPayload1.insert(changedPayload1.end(), playerProcessInventory.begin(),
             playerProcessInventory.begin() + static_cast<std::ptrdiff_t>(playerProcessInventoryBytes));
+        const std::vector<std::uint8_t> playerMobileObjectProcessState = makePlayerMobileObjectProcessState();
+        const std::size_t actualPlayerMobileObjectProcessStateBytes
+            = playerProcessInventoryBytes == sSyntheticPlayerProcessInventoryDataBytes
+            ? playerMobileObjectProcessStateBytes
+            : 0;
+        if (actualPlayerMobileObjectProcessStateBytes > playerMobileObjectProcessState.size())
+            throw std::logic_error("synthetic player MobileObject process-state byte count is too large");
+        changedPayload1.insert(changedPayload1.end(), playerMobileObjectProcessState.begin(),
+            playerMobileObjectProcessState.begin()
+                + static_cast<std::ptrdiff_t>(actualPlayerMobileObjectProcessStateBytes));
         constexpr std::array<std::uint8_t, 3> changedPayload2 = { 0x20, 0x21, 0x22 };
         constexpr std::array<std::uint8_t, 4> changedPayload3 = { 0x30, 0x31, 0x32, 0x33 };
         const ChangedFormOffsets changed1 = appendChangedForm(
@@ -541,6 +734,8 @@ namespace
             result.mChangedFormsBegin + changed2.mPayload, result.mChangedFormsBegin + changed3.mPayload };
         result.mPlayerProcessInventoryBegin
             = result.mChangedFormPayloads[0] + 28 + playerActorValueBytes;
+        result.mPlayerMobileObjectProcessStateBegin
+            = result.mPlayerProcessInventoryBegin + playerProcessInventoryBytes;
         result.mBytes.insert(result.mBytes.end(), globalData1.begin(), globalData1.end());
         result.mBytes.insert(result.mBytes.end(), changedForms.begin(), changedForms.end());
         result.mBytes.insert(result.mBytes.end(), globalData2.begin(), globalData2.end());
@@ -627,7 +822,8 @@ namespace
         EXPECT_EQ(save.mChangedForms.mEntries[0].mVersion.mValue, 27u);
         EXPECT_EQ(save.mChangedForms.mEntries[0].mDataLength.mValue,
             28u + static_cast<std::uint32_t>(ESM4::sFONVPlayerActorValueDataBytes)
-                + static_cast<std::uint32_t>(sSyntheticPlayerProcessInventoryDataBytes));
+                + static_cast<std::uint32_t>(sSyntheticPlayerProcessInventoryDataBytes)
+                + static_cast<std::uint32_t>(sSyntheticPlayerMobileObjectProcessStateBytes));
         EXPECT_EQ(save.mChangedForms.mEntries[1].mChangeType, 2u);
         EXPECT_EQ(save.mChangedForms.mEntries[1].mEncodedReferenceId.mValue, 0x401234u);
         EXPECT_EQ(save.mChangedForms.mEntries[1].mReferenceKind, ESM4::FONVSaveReferenceKind::DefaultForm);
@@ -679,7 +875,8 @@ namespace
             (ESM4::FONVSaveRange{ source.mChangedFormPayloads[0] + 27, 1 }));
         EXPECT_EQ(movement.mUnparsedRemainder.mRange,
             (ESM4::FONVSaveRange{ source.mChangedFormPayloads[0] + 28,
-                ESM4::sFONVPlayerActorValueDataBytes + sSyntheticPlayerProcessInventoryDataBytes }));
+                ESM4::sFONVPlayerActorValueDataBytes + sSyntheticPlayerProcessInventoryDataBytes
+                    + sSyntheticPlayerMobileObjectProcessStateBytes }));
         ASSERT_TRUE(save.mPlayerActorValueData.has_value());
         const auto& actorValues = *save.mPlayerActorValueData;
         const std::size_t actorValuesBegin = source.mChangedFormPayloads[0] + 28;
@@ -715,7 +912,7 @@ namespace
         EXPECT_EQ(actorValues.mUnk4AC.mRange, (ESM4::FONVSaveRange{ actorValuesBegin + 1155, 4 }));
         EXPECT_EQ(actorValues.mUnparsedRemainder.mRange,
             (ESM4::FONVSaveRange{ actorValuesBegin + ESM4::sFONVPlayerActorValueDataBytes,
-                sSyntheticPlayerProcessInventoryDataBytes }));
+                sSyntheticPlayerProcessInventoryDataBytes + sSyntheticPlayerMobileObjectProcessStateBytes }));
         ASSERT_TRUE(save.mPlayerProcessInventoryData.has_value());
         const auto& processInventory = *save.mPlayerProcessInventoryData;
         EXPECT_EQ(processInventory.mRange,
@@ -762,6 +959,54 @@ namespace
         EXPECT_EQ(processInventory.mUnparsedRemainder.mRange,
             (ESM4::FONVSaveRange{ source.mPlayerProcessInventoryBegin
                     + sSyntheticPlayerProcessInventoryDataBytes,
+                sSyntheticPlayerMobileObjectProcessStateBytes }));
+        ASSERT_TRUE(save.mPlayerMobileObjectProcessState.has_value());
+        const auto& processState = *save.mPlayerMobileObjectProcessState;
+        EXPECT_EQ(processState.mRange,
+            (ESM4::FONVSaveRange{ source.mPlayerMobileObjectProcessStateBegin,
+                sSyntheticPlayerMobileObjectProcessStateBytes }));
+        EXPECT_EQ(processState.mRaw,
+            std::vector<std::uint8_t>(
+                source.mBytes.begin() + static_cast<std::ptrdiff_t>(source.mPlayerMobileObjectProcessStateBegin),
+                source.mBytes.begin() + static_cast<std::ptrdiff_t>(
+                                            source.mPlayerMobileObjectProcessStateBegin
+                                            + sSyntheticPlayerMobileObjectProcessStateBytes)));
+        EXPECT_EQ(processState.mMobileObjectBase.mRange,
+            (ESM4::FONVSaveRange{ source.mPlayerMobileObjectProcessStateBegin, 38 }));
+        EXPECT_EQ(processState.mMobileObjectBase.mBytes084_085_07C_07F_080_07D_07E_086[0].mValue, -1);
+        EXPECT_EQ(processState.mBaseProcess.mRange,
+            (ESM4::FONVSaveRange{ source.mPlayerMobileObjectProcessStateBegin + 38, 19 }));
+        EXPECT_FALSE(processState.mBaseProcess.mPackage.mResolvedFormId.has_value());
+        EXPECT_EQ(processState.mLowProcess.mRange,
+            (ESM4::FONVSaveRange{ source.mPlayerMobileObjectProcessStateBegin + 57, 63 }));
+        EXPECT_FLOAT_EQ(processState.mLowProcess.mUnk038[0].mValue, -1.f);
+        EXPECT_EQ(processState.mMiddleLowProcess.mRange,
+            (ESM4::FONVSaveRange{ source.mPlayerMobileObjectProcessStateBegin + 120, 5 }));
+        EXPECT_EQ(processState.mMiddleLowProcess.mUnk0B4.mValue, 0xffffffffu);
+        EXPECT_EQ(processState.mMiddleHighProcess.mRange,
+            (ESM4::FONVSaveRange{ source.mPlayerMobileObjectProcessStateBegin + 125, 185 }));
+        ASSERT_TRUE(processState.mMiddleHighProcess.mAnimation.has_value());
+        EXPECT_EQ(processState.mMiddleHighProcess.mAnimation->mLength.mValue, 0u);
+        EXPECT_TRUE(processState.mMiddleHighProcess.mAnimation->mData.mRaw.empty());
+        EXPECT_EQ(processState.mHighProcess.mRange,
+            (ESM4::FONVSaveRange{ source.mPlayerMobileObjectProcessStateBegin + 310, 378 }));
+        ASSERT_EQ(processState.mHighProcess.mList25C.size(), 1u);
+        const auto& location = processState.mHighProcess.mList25C[0];
+        EXPECT_EQ(location.mRange,
+            (ESM4::FONVSaveRange{ processState.mHighProcess.mList25CCount.mRange.end() + 1, 42 }));
+        EXPECT_EQ(location.mForm000.mResolvedFormId, 0x00000333u);
+        EXPECT_EQ(location.mUnk004.mValue, 1u);
+        EXPECT_EQ(location.mUnk008.mValue, 0xfffffffeu);
+        EXPECT_FLOAT_EQ(location.mCoords.mComponents[0].mValue, 1.f);
+        EXPECT_FLOAT_EQ(location.mCoords.mComponents[1].mValue, 2.f);
+        EXPECT_FLOAT_EQ(location.mCoords.mComponents[2].mValue, 3.f);
+        EXPECT_FLOAT_EQ(location.mTim018.mValue, -4.f);
+        EXPECT_EQ(processState.mHighProcess.mSubBuffer.mLength.mValue, 3u);
+        EXPECT_EQ(processState.mHighProcess.mSubBuffer.mData.mRaw,
+            (std::vector<std::uint8_t>{ 0xaa, 0xbb, 0xcc }));
+        EXPECT_EQ(processState.mUnparsedRemainder.mRange,
+            (ESM4::FONVSaveRange{ source.mPlayerMobileObjectProcessStateBegin
+                    + sSyntheticPlayerMobileObjectProcessStateBytes,
                 0 }));
         EXPECT_EQ(save.findChangedForm(0x00001234u), &save.mChangedForms.mEntries[1]);
         EXPECT_EQ(save.findChangedForm(0x00001234u, 3), nullptr);
@@ -988,10 +1233,12 @@ namespace
         EXPECT_FALSE(changedCell.mPlayerReferenceMovement.has_value());
         EXPECT_FALSE(changedCell.mPlayerActorValueData.has_value());
         EXPECT_FALSE(changedCell.mPlayerProcessInventoryData.has_value());
+        EXPECT_FALSE(changedCell.mPlayerMobileObjectProcessState.has_value());
         EXPECT_EQ(changedCell.mUnparsedSemanticPayloadRanges.size(), 5u);
         EXPECT_EQ(changedCell.mUnparsedSemanticPayloadBytes,
             43u + static_cast<std::uint64_t>(ESM4::sFONVPlayerActorValueDataBytes)
-                + static_cast<std::uint64_t>(sSyntheticPlayerProcessInventoryDataBytes));
+                + static_cast<std::uint64_t>(sSyntheticPlayerProcessInventoryDataBytes)
+                + static_cast<std::uint64_t>(sSyntheticPlayerMobileObjectProcessStateBytes));
     }
 
     TEST(FONVSaveGame, RejectsCorruptCanonicalPlayerActorValueData)
@@ -1056,6 +1303,82 @@ namespace
 
         source = makeSave(true, 2, 1, masters, true, "Courier", false,
             ESM4::sFONVPlayerActorValueDataBytes, 0);
+        EXPECT_THROW(ESM4::parseFONVSaveGamePrefix(source.mBytes), ESM4::FONVSaveError);
+    }
+
+    TEST(FONVSaveGame, RejectsCorruptCanonicalPlayerMobileObjectProcessState)
+    {
+        constexpr std::array masters = { std::string_view("FalloutNV.esm") };
+        SaveBytes source = makeSave(true, 2, 1, masters);
+        source.mBytes[source.mPlayerMobileObjectProcessStateBegin + 1] = 0;
+        EXPECT_THROW(ESM4::parseFONVSaveGamePrefix(source.mBytes), ESM4::FONVSaveError);
+
+        source = makeSave(true, 2, 1, masters);
+        source.mBytes[source.mPlayerProcessInventoryBegin] = 1;
+        EXPECT_THROW(ESM4::parseFONVSaveGamePrefix(source.mBytes), ESM4::FONVSaveError);
+
+        source = makeSave(true, 2, 1, masters);
+        source.mBytes[source.mPlayerMobileObjectProcessStateBegin + 30] = 0xc0;
+        EXPECT_THROW(ESM4::parseFONVSaveGamePrefix(source.mBytes), ESM4::FONVSaveError);
+
+        source = makeSave(true, 2, 1, masters);
+        source.mBytes[source.mPlayerMobileObjectProcessStateBegin + 53] = 0x40;
+        source.mBytes[source.mPlayerMobileObjectProcessStateBegin + 54] = 0;
+        source.mBytes[source.mPlayerMobileObjectProcessStateBegin + 55] = 0x14;
+        EXPECT_THROW(ESM4::parseFONVSaveGamePrefix(source.mBytes), ESM4::FONVSaveError);
+
+        source = makeSave(true, 2, 1, masters);
+        overwriteU32(source.mBytes, source.mPlayerMobileObjectProcessStateBegin + 148, 0x7f800000u);
+        EXPECT_THROW(ESM4::parseFONVSaveGamePrefix(source.mBytes), ESM4::FONVSaveError);
+
+        source = makeSave(true, 2, 1, masters);
+        source.mBytes[source.mPlayerMobileObjectProcessStateBegin + 292] = 3;
+        EXPECT_THROW(ESM4::parseFONVSaveGamePrefix(source.mBytes), ESM4::FONVSaveError);
+
+        source = makeSave(true, 2, 1, masters);
+        source.mBytes[source.mPlayerMobileObjectProcessStateBegin + 294] = 4;
+        EXPECT_THROW(ESM4::parseFONVSaveGamePrefix(source.mBytes), ESM4::FONVSaveError);
+
+        source = makeSave(true, 2, 1, masters);
+        overwriteU32(source.mBytes, source.mPlayerMobileObjectProcessStateBegin + 491, 12);
+        EXPECT_THROW(ESM4::parseFONVSaveGamePrefix(source.mBytes), ESM4::FONVSaveError);
+
+        source = makeSave(true, 2, 1, masters);
+        source.mBytes[source.mPlayerMobileObjectProcessStateBegin + 631] = 1;
+        EXPECT_THROW(ESM4::parseFONVSaveGamePrefix(source.mBytes), ESM4::FONVSaveError);
+
+        source = makeSave(true, 2, 1, masters);
+        source.mBytes[source.mPlayerMobileObjectProcessStateBegin + 633] = 4;
+        EXPECT_THROW(ESM4::parseFONVSaveGamePrefix(source.mBytes), ESM4::FONVSaveError);
+
+        source = makeSave(true, 2, 1, masters);
+        source.mBytes[source.mPlayerMobileObjectProcessStateBegin + 635] = 0xfc;
+        EXPECT_THROW(ESM4::parseFONVSaveGamePrefix(source.mBytes), ESM4::FONVSaveError);
+
+        source = makeSave(true, 2, 1, masters);
+        source.mBytes[source.mPlayerMobileObjectProcessStateBegin + 637] = 0xc0;
+        EXPECT_THROW(ESM4::parseFONVSaveGamePrefix(source.mBytes), ESM4::FONVSaveError);
+
+        source = makeSave(true, 2, 1, masters);
+        source.mBytes[source.mPlayerMobileObjectProcessStateBegin + 637] = 0;
+        source.mBytes[source.mPlayerMobileObjectProcessStateBegin + 638] = 0;
+        source.mBytes[source.mPlayerMobileObjectProcessStateBegin + 639] = 3;
+        EXPECT_THROW(ESM4::parseFONVSaveGamePrefix(source.mBytes), ESM4::FONVSaveError);
+
+        source = makeSave(true, 2, 1, masters);
+        overwriteU32(source.mBytes, source.mPlayerMobileObjectProcessStateBegin + 648, 0x7fc00000u);
+        EXPECT_THROW(ESM4::parseFONVSaveGamePrefix(source.mBytes), ESM4::FONVSaveError);
+
+        source = makeSave(true, 2, 1, masters);
+        source.mBytes[source.mPlayerMobileObjectProcessStateBegin + 681] = 1;
+        EXPECT_THROW(ESM4::parseFONVSaveGamePrefix(source.mBytes), ESM4::FONVSaveError);
+
+        source = makeSave(true, 2, 1, masters);
+        source.mBytes[source.mPlayerMobileObjectProcessStateBegin + 683] = 0xfc;
+        EXPECT_THROW(ESM4::parseFONVSaveGamePrefix(source.mBytes), ESM4::FONVSaveError);
+
+        source = makeSave(true, 2, 1, masters, true, "Courier", false,
+            ESM4::sFONVPlayerActorValueDataBytes, sSyntheticPlayerProcessInventoryDataBytes, 0);
         EXPECT_THROW(ESM4::parseFONVSaveGamePrefix(source.mBytes), ESM4::FONVSaveError);
     }
 
@@ -1484,6 +1807,127 @@ namespace
         EXPECT_EQ(actorValues.mUnparsedRemainder.mRange.mSize - processInventory.mRange.mSize,
             processInventory.mUnparsedRemainder.mRange.mSize);
 
+        ASSERT_TRUE(save.mPlayerMobileObjectProcessState.has_value());
+        const auto& processState = *save.mPlayerMobileObjectProcessState;
+        EXPECT_EQ(processState.mRange, (ESM4::FONVSaveRange{ 499512, 1675 }));
+        EXPECT_EQ(processState.mRaw.size(), 1675u);
+        EXPECT_EQ(sha256Hex(processState.mRaw),
+            "20e8deb09ebd4b1197ad5d77ce42dc8507c40ae70f9e4c14b43d6542c65c09f8");
+
+        const auto& mobileBase = processState.mMobileObjectBase;
+        EXPECT_EQ(mobileBase.mRange, (ESM4::FONVSaveRange{ 499512, 38 }));
+        constexpr std::array<std::int8_t, 8> expectedMobileBytes = { -1, 0, 1, 1, 1, 0, 0, 1 };
+        for (std::size_t i = 0; i < expectedMobileBytes.size(); ++i)
+        {
+            EXPECT_EQ(mobileBase.mBytes084_085_07C_07F_080_07D_07E_086[i].mValue,
+                expectedMobileBytes[i]);
+            EXPECT_EQ(mobileBase.mBytes084_085_07C_07F_080_07D_07E_086[i].mRange,
+                (ESM4::FONVSaveRange{ 499512 + i * 2, 1 }));
+        }
+        EXPECT_EQ(mobileBase.mUnk074.mValue, 0x3f9a4658u);
+        EXPECT_FALSE(mobileBase.mUnk06C.mResolvedFormId.has_value());
+        EXPECT_FALSE(mobileBase.mUnk070.mResolvedFormId.has_value());
+
+        const auto& baseProcess = processState.mBaseProcess;
+        EXPECT_EQ(baseProcess.mRange, (ESM4::FONVSaveRange{ 499550, 19 }));
+        EXPECT_EQ(baseProcess.mUnk020.mValue, 0xbf800000u);
+        EXPECT_FALSE(baseProcess.mPackage.mResolvedFormId.has_value());
+
+        const auto& lowProcess = processState.mLowProcess;
+        EXPECT_EQ(lowProcess.mRange, (ESM4::FONVSaveRange{ 499569, 63 }));
+        EXPECT_EQ(lowProcess.mWrd050.mValue, 21280u);
+        EXPECT_FLOAT_EQ(lowProcess.mUnk038[0].mValue, -618.7711181640625f);
+        EXPECT_FLOAT_EQ(lowProcess.mUnk038[1].mValue, 0.f);
+        EXPECT_EQ(lowProcess.mList006CCount.mValue, 0u);
+        EXPECT_TRUE(lowProcess.mList006C.empty());
+        EXPECT_FALSE(lowProcess.mDamageModifierCount.has_value());
+        EXPECT_EQ(processState.mMiddleLowProcess.mRange, (ESM4::FONVSaveRange{ 499632, 5 }));
+        EXPECT_EQ(processState.mMiddleLowProcess.mUnk0B4.mValue, 0xffffffffu);
+        EXPECT_FALSE(processState.mMiddleLowProcess.mTempModifierCount.has_value());
+
+        const auto& middleHigh = processState.mMiddleHighProcess;
+        EXPECT_EQ(middleHigh.mRange, (ESM4::FONVSaveRange{ 499637, 421 }));
+        EXPECT_EQ(middleHigh.mUnk134_135_168[0].mValue, 1u);
+        EXPECT_EQ(middleHigh.mUnk134_135_168[1].mValue, 1u);
+        EXPECT_EQ(middleHigh.mUnk134_135_168[2].mValue, 0u);
+        EXPECT_FLOAT_EQ(middleHigh.mCoords0E4.mComponents[0].mValue, 0.f);
+        EXPECT_EQ(std::bit_cast<std::uint32_t>(middleHigh.mCoords0E4.mComponents[2].mValue), 1u);
+        EXPECT_EQ(middleHigh.mWrd22A.mValue, 2u);
+        EXPECT_EQ(middleHigh.mList0C8Count.mValue, 0u);
+        EXPECT_FALSE(middleHigh.mPackage.mResolvedFormId.has_value());
+        ASSERT_TRUE(middleHigh.mAnimation.has_value());
+        EXPECT_EQ(middleHigh.mAnimation->mRange, (ESM4::FONVSaveRange{ 499804, 238 }));
+        EXPECT_EQ(middleHigh.mAnimation->mLength.mValue, 235u);
+        EXPECT_EQ(middleHigh.mAnimation->mLength.mRange, (ESM4::FONVSaveRange{ 499804, 2 }));
+        EXPECT_EQ(middleHigh.mAnimation->mLength.mRaw, (std::vector<std::uint8_t>{ 0xad, 0x03 }));
+        EXPECT_EQ(middleHigh.mAnimation->mData.mRange, (ESM4::FONVSaveRange{ 499807, 235 }));
+        EXPECT_EQ(sha256Hex(middleHigh.mAnimation->mData.mRaw),
+            "62d12608cef8654ce644b435bf1189fc2166369d34563dcd8ff36c45ce6e9830");
+        EXPECT_EQ(middleHigh.mMagicItemCount.mValue, 0u);
+        EXPECT_EQ(middleHigh.mList230Count.mValue, 0u);
+
+        const auto& high = processState.mHighProcess;
+        EXPECT_EQ(high.mRange, (ESM4::FONVSaveRange{ 500058, 1129 }));
+        EXPECT_FLOAT_EQ(high.mCoords.mComponents[0].mValue, 11.7265625f);
+        EXPECT_FLOAT_EQ(high.mCoords.mComponents[1].mValue, 39.951904296875f);
+        EXPECT_FLOAT_EQ(high.mCoords.mComponents[2].mValue, 83.052734375f);
+        EXPECT_EQ(high.mUnk3D8Modulo12.mValue, 0u);
+        EXPECT_EQ(high.mUnk30C_2A4_3F0_41C_37C_Idle_2AC[0].mEncoded.mValue, 0x002935u);
+        EXPECT_EQ(high.mUnk30C_2A4_3F0_41C_37C_Idle_2AC[0].mResolvedFormId, 0x00104e85u);
+        EXPECT_EQ(high.mUnk30C_2A4_3F0_41C_37C_Idle_2AC[3].mEncoded.mValue, 0x00026fu);
+        EXPECT_EQ(high.mUnk30C_2A4_3F0_41C_37C_Idle_2AC[3].mResolvedFormId,
+            ESM4::sFONVPlayerReferenceFormId);
+        EXPECT_EQ(high.mUnknownEntries[0].mUnk3F8.mEncoded.mValue, 0x00026fu);
+        EXPECT_EQ(high.mUnknownEntries[0].mUnk3F8.mResolvedFormId, ESM4::sFONVPlayerReferenceFormId);
+        EXPECT_EQ(high.mList38CCount.mValue, 0u);
+        EXPECT_EQ(high.mList394Count.mValue, 0u);
+        EXPECT_EQ(high.mList264Count.mValue, 0u);
+        EXPECT_EQ(high.mHasDialogueItems.mValue, 0u);
+        EXPECT_EQ(high.mList44CCount.mValue, 0u);
+        EXPECT_EQ(high.mList25CCount.mValue, 17u);
+        EXPECT_EQ(high.mList25CCount.mRange, (ESM4::FONVSaveRange{ 500383, 1 }));
+        EXPECT_EQ(high.mList25CCount.mRaw, (std::vector<std::uint8_t>{ 0x44 }));
+        ASSERT_EQ(high.mList25C.size(), 17u);
+        constexpr std::array<std::uint32_t, 17> expectedLocationTokens = { 0x002936u, 0x0029fdu,
+            0x002935u, 0x002a48u, 0x0025f5u, 0x001798u, 0x00200bu, 0x001ffcu, 0x0029f9u,
+            0x0029ffu, 0x002480u, 0x001557u, 0x002584u, 0x004af3u, 0x004af1u, 0x004af2u,
+            0x001b39u };
+        constexpr std::array<std::uint32_t, 17> expectedLocationFormIds = { 0x0010588eu, 0x00104f08u,
+            0x00104e85u, 0x0010769du, 0x001073e8u, 0x0015ef63u, 0x00107077u, 0x0010706eu,
+            0x00104f03u, 0x00104f0au, 0x00109a39u, 0x00106b16u, 0x00104c80u, 0x0014c448u,
+            0x0014c44au, 0x0014c447u, 0x00157b37u };
+        std::uint64_t expectedLocationOffset = 500385;
+        for (std::size_t i = 0; i < high.mList25C.size(); ++i)
+        {
+            const auto& location = high.mList25C[i];
+            EXPECT_EQ(location.mRange, (ESM4::FONVSaveRange{ expectedLocationOffset, 42 }));
+            EXPECT_EQ(location.mRaw.size(), 42u);
+            EXPECT_EQ(location.mForm000.mEncoded.mValue, expectedLocationTokens[i]);
+            EXPECT_EQ(location.mForm000.mResolvedFormId, expectedLocationFormIds[i]);
+            EXPECT_EQ(location.mUnk020.mValue, 0xffffff9cu);
+            expectedLocationOffset += 42;
+        }
+        EXPECT_EQ(expectedLocationOffset, 501099u);
+        EXPECT_FLOAT_EQ(high.mList25C[0].mCoords.mComponents[0].mValue, -68499.9609375f);
+        EXPECT_EQ(high.mList25C[3].mByt01E_01C_01D[0].mValue, 1u);
+        EXPECT_EQ(high.mList25C[3].mByt01E_01C_01D[1].mValue, 1u);
+        EXPECT_EQ(std::bit_cast<std::uint32_t>(high.mList25C[4].mTim018.mValue), 0xff7fffffu);
+        EXPECT_EQ(high.mList260Count.mValue, 0u);
+        EXPECT_EQ(high.mHasUnk3DC.mValue, 0u);
+        EXPECT_EQ(high.mSubBuffer.mRange, (ESM4::FONVSaveRange{ 501103, 84 }));
+        EXPECT_EQ(high.mSubBuffer.mLength.mValue, 81u);
+        EXPECT_EQ(high.mSubBuffer.mLength.mRange, (ESM4::FONVSaveRange{ 501103, 2 }));
+        EXPECT_EQ(high.mSubBuffer.mLength.mRaw, (std::vector<std::uint8_t>{ 0x45, 0x01 }));
+        EXPECT_EQ(high.mSubBuffer.mData.mRange, (ESM4::FONVSaveRange{ 501106, 81 }));
+        EXPECT_EQ(sha256Hex(high.mSubBuffer.mData.mRaw),
+            "90d95c383e63a856126f8304163ac8224c604ef7db1dc2b15b2893c23acc6bd7");
+        EXPECT_EQ(processState.mUnparsedRemainder.mRange, (ESM4::FONVSaveRange{ 501187, 1397 }));
+        EXPECT_EQ(processState.mUnparsedRemainder.mRaw.size(), 1397u);
+        EXPECT_EQ(sha256Hex(processState.mUnparsedRemainder.mRaw),
+            "6979bae30aeb0d49651a7629d159f4a2090cb57e9b7c28c96d8c22629bc852d1");
+        EXPECT_EQ(processInventory.mUnparsedRemainder.mRange.mSize - processState.mRange.mSize,
+            processState.mUnparsedRemainder.mRange.mSize);
+
         ASSERT_TRUE(movement.mCellOrWorldspace.mResolvedFormId.has_value());
         const ESM::RefId worldspace = ESM::RefId::formIdRefId(
             ESM::FormId::fromUint32(*movement.mCellOrWorldspace.mResolvedFormId));
@@ -1496,7 +1940,7 @@ namespace
             << "NPC_ FormID 0x7 is a FalloutNV.esm base-record relation, not serialized as a Save330 change form";
 
         EXPECT_EQ(save.mUnparsedSemanticPayloadRanges.size(), 7090u);
-        EXPECT_EQ(save.mUnparsedSemanticPayloadBytes, 2736952u);
+        EXPECT_EQ(save.mUnparsedSemanticPayloadBytes, 2735277u);
         EXPECT_EQ(save.mStructurallyAccountedRange, (ESM4::FONVSaveRange{ 0, 3395328 }));
         EXPECT_EQ(save.mParsedPrefixRange, save.mStructurallyAccountedRange);
         EXPECT_EQ(save.mUnparsedBodyRange, (ESM4::FONVSaveRange{ 3395328, 0 }));
