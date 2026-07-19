@@ -133,10 +133,10 @@ namespace
             mAlpha.recType = Nif::RC_NiAlphaProperty;
         }
 
-        void addAlpha(uint16_t flags)
+        void addAlpha(uint16_t flags, uint8_t threshold = 0)
         {
             mAlpha.mFlags = flags;
-            mAlpha.mThreshold = 0;
+            mAlpha.mThreshold = threshold;
             mGeometry.mProperties.push_back(Nif::RecordPtrT<Nif::NiProperty>(&mAlpha));
         }
 
@@ -439,6 +439,76 @@ osg::Group {
         niAlphaResult->accept(niAlphaVisitor);
         ASSERT_NE(niAlphaVisitor.mStateSet, nullptr);
         EXPECT_EQ(niAlphaVisitor.mStateSet->getDefinePair("IGNORE_DIFFUSE_ALPHA"), nullptr);
+    }
+
+    TEST_F(NifOsgLoaderTest, shouldRouteStaticFalloutDirectionalSlsByMaterialContract)
+    {
+        FalloutPPLightingGeometry fixture(Nif::BSShaderFlags1::BSSFlag1_RemappableTextures);
+        fixture.mShader.mShaderFlags2 = Nif::BSShaderFlags2::BSSFlag2_DepthWrite;
+        fixture.addAlpha(0x12ec, 70); // alpha test GREATER, no blending
+        osg::ref_ptr<osg::Node> result
+            = loadFalloutPPLightingGeometry(fixture, mImageManager, mMaterialManager);
+        ASSERT_NE(result, nullptr);
+
+        FindNamedNodeStateSetVisitor visitor("Siding:0");
+        result->accept(visitor);
+        ASSERT_NE(visitor.mStateSet, nullptr);
+        const osg::Uniform* slsMode = visitor.mStateSet->getUniform("falloutSlsMode");
+        ASSERT_NE(slsMode, nullptr);
+        int value = 0;
+        ASSERT_TRUE(slsMode->get(value));
+        EXPECT_EQ(value, 2);
+        EXPECT_EQ(visitor.mStateSet->getDefinePair("IGNORE_DIFFUSE_ALPHA"), nullptr);
+    }
+
+    TEST_F(NifOsgLoaderTest, shouldNotRouteNearMissesThroughStaticFalloutDirectionalSls)
+    {
+        auto getSlsMode = [this](FalloutPPLightingGeometry& fixture) {
+            osg::ref_ptr<osg::Node> result
+                = loadFalloutPPLightingGeometry(fixture, mImageManager, mMaterialManager);
+            EXPECT_NE(result, nullptr);
+            if (result == nullptr)
+                return -1;
+            FindNamedNodeStateSetVisitor visitor("Siding:0");
+            result->accept(visitor);
+            EXPECT_NE(visitor.mStateSet, nullptr);
+            if (visitor.mStateSet == nullptr)
+                return -1;
+            const osg::Uniform* uniform = visitor.mStateSet->getUniform("falloutSlsMode");
+            if (uniform == nullptr)
+                return 0;
+            int value = 0;
+            EXPECT_TRUE(uniform->get(value));
+            return value;
+        };
+        auto addSignAlpha = [](FalloutPPLightingGeometry& fixture) { fixture.addAlpha(0x12ec, 70); };
+
+        FalloutPPLightingGeometry specular(Nif::BSShaderFlags1::BSSFlag1_RemappableTextures
+            | Nif::BSShaderFlags1::BSSFlag1_Specular);
+        addSignAlpha(specular);
+        EXPECT_EQ(getSlsMode(specular), 0);
+
+        FalloutPPLightingGeometry noRemap(0);
+        addSignAlpha(noRemap);
+        EXPECT_EQ(getSlsMode(noRemap), 0);
+
+        FalloutPPLightingGeometry noAlpha(Nif::BSShaderFlags1::BSSFlag1_RemappableTextures);
+        EXPECT_EQ(getSlsMode(noAlpha), 0);
+
+        FalloutPPLightingGeometry blendedAlpha(Nif::BSShaderFlags1::BSSFlag1_RemappableTextures);
+        blendedAlpha.addAlpha(0x12ed, 70);
+        EXPECT_EQ(getSlsMode(blendedAlpha), 0);
+
+        FalloutPPLightingGeometry vertexColors(Nif::BSShaderFlags1::BSSFlag1_RemappableTextures);
+        addSignAlpha(vertexColors);
+        vertexColors.mData.mColors = { osg::Vec4f(1.f, 1.f, 1.f, 1.f), osg::Vec4f(1.f, 1.f, 1.f, 1.f),
+            osg::Vec4f(1.f, 1.f, 1.f, 1.f) };
+        EXPECT_EQ(getSlsMode(vertexColors), 0);
+
+        FalloutPPLightingGeometry pointLit(Nif::BSShaderFlags1::BSSFlag1_RemappableTextures);
+        addSignAlpha(pointLit);
+        pointLit.mShader.mShaderFlags2 = Nif::BSShaderFlags2::BSSFlag2_FalloutSlsPointLightMask;
+        EXPECT_EQ(getSlsMode(pointLit), 0);
     }
 
     TEST_F(NifOsgLoaderTest, shouldApplyBsPpLightingDepthFlags)

@@ -7040,6 +7040,10 @@ namespace NifOsg
             int bsShaderType = -1;
             bool hasNoLightingShader = false;
             bool ppLightingUsesDiffuseAlpha = false;
+            bool ppLightingSpecular = false;
+            bool ppLightingRemappableTextures = false;
+            bool ppLightingUsesFalloutSlsPointLights = false;
+            bool hasAlphaTestWithoutBlending = false;
             std::string shaderMaterialName;
             int shaderMaterialType = -1;
 
@@ -7126,6 +7130,8 @@ namespace NifOsg
                     {
                         ++niAlphaProperties;
                         const Nif::NiAlphaProperty* alphaprop = static_cast<const Nif::NiAlphaProperty*>(property);
+                        hasAlphaTestWithoutBlending = hasAlphaTestWithoutBlending
+                            || (alphaprop->useAlphaTesting() && !alphaprop->useAlphaBlending());
                         handleAlphaBlending(alphaprop->useAlphaBlending(), alphaprop->sourceBlendMode(),
                             alphaprop->destinationBlendMode(), !alphaprop->noSorter(), hasSortAlpha, *node, true);
                         handleAlphaTesting(alphaprop->useAlphaTesting(), getTestMode(alphaprop->alphaTestMode()),
@@ -7138,6 +7144,11 @@ namespace NifOsg
                         auto shaderprop = static_cast<const Nif::BSShaderPPLightingProperty*>(property);
                         bsShaderType = static_cast<int>(shaderprop->mType);
                         specEnabled = shaderprop->specular();
+                        ppLightingSpecular = ppLightingSpecular || shaderprop->specular();
+                        ppLightingRemappableTextures
+                            = ppLightingRemappableTextures || shaderprop->remappableTextures();
+                        ppLightingUsesFalloutSlsPointLights
+                            = ppLightingUsesFalloutSlsPointLights || shaderprop->falloutSlsPointLighting();
                         ppLightingUsesDiffuseAlpha = ppLightingUsesDiffuseAlpha || shaderprop->alphaTexture()
                             || shaderprop->refraction() || shaderprop->fireRefraction();
                         break;
@@ -7233,6 +7244,18 @@ namespace NifOsg
                 // consumes that channel when the material authors an alpha contract. Keep material/controller alpha
                 // available for fades, but do not let an unflagged texture punch holes into the scene or VR composite.
                 node->getOrCreateStateSet()->setDefine("IGNORE_DIFFUSE_ALPHA", "1", osg::StateAttribute::ON);
+            }
+
+            const bool falloutNvStaticDirectionalSls = fallout3GenerationDefaultPPLighting
+                && bsPPLightingProperties == 1 && !hasVertexColors && !ppLightingSpecular
+                && ppLightingRemappableTextures && !ppLightingUsesFalloutSlsPointLights && niAlphaProperties == 1
+                && hasAlphaTestWithoutBlending;
+            if (falloutNvStaticDirectionalSls)
+            {
+                // FNV SLS1009/1010 consumes only the base/normal maps, global ambient and directional sun.
+                // Select it from the authored material contract used by static alpha-tested street signs;
+                // do not bleed this into specular shells, blended foliage, vertex-lit meshes or point-light variants.
+                node->getOrCreateStateSet()->addUniform(new osg::Uniform("falloutSlsMode", 2));
             }
 
             if (hasNoLightingShader)

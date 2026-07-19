@@ -198,6 +198,29 @@ void main()
         return;
     }
 
+    if (falloutSlsMode == 2)
+    {
+        // Bytecode translation of FNV SLS1009/1010.  This static directional
+        // variant has no material-diffuse modulation, shadow sample, point-light
+        // loop, environment/specular term or generic OpenMW lighting clamp.
+        vec3 light = getAmbientColor().xyz * gl_LightModel.ambient.xyz;
+        vec3 sunDirection = normalize(lcalcPosition(0));
+        light += lcalcDiffuse(0) * clamp(dot(viewNormal, sunDirection), 0.0, 1.0);
+        gl_FragData[0].xyz *= clamp(light, vec3(0.0), vec3(1.0));
+        gl_FragData[0] = applyFogAtDist(gl_FragData[0], euclideanDepth, linearDepth, far);
+
+#if defined(FORCE_OPAQUE) && FORCE_OPAQUE
+        gl_FragData[0].a = 1.0;
+#endif
+
+#if !defined(FORCE_OPAQUE) && !@disableNormals
+        gl_FragData[1].xyz = viewNormal * 0.5 + 0.5;
+#endif
+
+        applyShadowDebugOverlay();
+        return;
+    }
+
     float shadowing = unshadowedLightRatio(linearDepth);
     vec3 diffuseLight, ambientLight, specularLight;
     doLighting(passViewPos, viewNormal, gl_FrontMaterial.shininess, shadowing, diffuseLight, ambientLight, specularLight);

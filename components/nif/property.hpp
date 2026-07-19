@@ -111,6 +111,7 @@ namespace Nif
         BSSFlag1_AlphaTexture = 0x00000100,
         BSSFlag1_Refraction = 0x00008000,
         BSSFlag1_FireRefraction = 0x00010000,
+        BSSFlag1_RemappableTextures = 0x02000000,
         BSSFlag1_Decal = 0x04000000,
         BSSFlag1_DepthTest = 0x80000000,
     };
@@ -118,6 +119,8 @@ namespace Nif
     enum BSShaderFlags2
     {
         BSSFlag2_DepthWrite = 0x00000001,
+        // FO3/FNV's shader package uses bits 7-9 to select point-light SLS variants.
+        BSSFlag2_FalloutSlsPointLightMask = 0x00000380,
     };
 
     struct BSSPParallaxParams
@@ -149,9 +152,11 @@ namespace Nif
         // Shader-specific flag methods must be handled on per-record basis
         bool specular() const { return mShaderFlags1 & BSSFlag1_Specular; }
         bool alphaTexture() const { return mShaderFlags1 & BSSFlag1_AlphaTexture; }
+        bool remappableTextures() const { return mShaderFlags1 & BSSFlag1_RemappableTextures; }
         bool decal() const { return mShaderFlags1 & BSSFlag1_Decal; }
         bool depthTest() const { return mShaderFlags1 & BSSFlag1_DepthTest; }
         bool depthWrite() const { return mShaderFlags2 & BSSFlag2_DepthWrite; }
+        bool falloutSlsPointLighting() const { return mShaderFlags2 & BSSFlag2_FalloutSlsPointLightMask; }
         bool refraction() const { return mShaderFlags1 & BSSFlag1_Refraction; }
         bool fireRefraction() const { return mShaderFlags1 & BSSFlag1_FireRefraction; }
     };
