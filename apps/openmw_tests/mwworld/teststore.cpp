@@ -16,6 +16,7 @@
 #include <components/esm3/esmwriter.hpp>
 #include <components/esm3/typetraits.hpp>
 #include <components/esm4/common.hpp>
+#include <components/esm4/loadclas.hpp>
 #include <components/esm4/reader.hpp>
 #include <components/esm4/readerutils.hpp>
 #include <components/files/configurationmanager.hpp>
@@ -27,6 +28,12 @@
 #include "apps/openmw/mwworld/esmstore.hpp"
 
 static Loading::Listener dummyListener;
+
+TEST(FNVStoreRegistration, exposesNativeClassStore)
+{
+    MWWorld::ESMStore store;
+    EXPECT_EQ(store.get<ESM4::Class>().getSize(), 0u);
+}
 
 /// Base class for tests of ESMStore that rely on external content files to produce the test results
 struct ContentFileTest : public ::testing::Test

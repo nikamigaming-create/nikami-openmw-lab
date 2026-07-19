@@ -1330,6 +1330,7 @@ template class MWWorld::TypedDynamicStore<ESM4::Armor>;
 template class MWWorld::TypedDynamicStore<ESM4::ArmorAddon>;
 template class MWWorld::TypedDynamicStore<ESM4::Book>;
 template class MWWorld::TypedDynamicStore<ESM4::Cell>;
+template class MWWorld::TypedDynamicStore<ESM4::Class>;
 template class MWWorld::TypedDynamicStore<ESM4::Clothing>;
 template class MWWorld::TypedDynamicStore<ESM4::Container>;
 template class MWWorld::TypedDynamicStore<ESM4::Creature>;

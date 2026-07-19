@@ -51,6 +51,7 @@
 #include <components/esm4/loadarmo.hpp>
 #include <components/esm4/loadbook.hpp>
 #include <components/esm4/loadcell.hpp>
+#include <components/esm4/loadclas.hpp>
 #include <components/esm4/loadclot.hpp>
 #include <components/esm4/loadcont.hpp>
 #include <components/esm4/loadcrea.hpp>
