@@ -1,4 +1,5 @@
 #include <components/esm4/fonvsavegame.hpp>
+#include <components/esm/util.hpp>
 
 #include <gtest/gtest.h>
 
