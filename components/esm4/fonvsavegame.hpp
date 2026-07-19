@@ -23,6 +23,7 @@ namespace ESM4
     inline constexpr std::size_t sFONVPlayerChangedCharacterStateBytes = 510;
     inline constexpr std::size_t sFONVPlayerCharacterScalarReferenceStateBytes = 287;
     inline constexpr std::size_t sFONVPlayerCharacterListsStateBytes = 147;
+    inline constexpr std::size_t sFONVPlayerCharacterMagicTargetStateBytes = 234;
     inline constexpr std::uint8_t sFONVExtraWornType = 0x16;
     inline constexpr std::uint8_t sFONVExtraCountType = 0x24;
     inline constexpr std::uint8_t sFONVExtraHealthType = 0x25;
@@ -768,6 +769,28 @@ namespace ESM4
         FONVSaveRawField mUnparsedRemainder;
     };
 
+    struct FONVSavePlayerCharacterMagicTargetEntry
+    {
+        FONVSaveResolvedReferenceId mMagicForm;
+        FONVSaveField<std::uint8_t> mArchType;
+        FONVSaveField<std::uint32_t> mUnk098;
+        FONVSaveField<std::uint32_t> mEffectItemCount;
+        std::vector<FONVSaveField<std::uint8_t>> mEffectItems;
+        FONVSaveRange mRange;
+        std::vector<std::uint8_t> mRaw;
+    };
+
+    // Exact Save330 wbNonActorMagicTarget block. Effect-item bytes are deliberately un-delimited U8 values in
+    // xEdit; every byte retains its own range/raw provenance. The following KeyForUnkD64 bytes remain opaque.
+    struct FONVSavePlayerCharacterMagicTargetState
+    {
+        FONVSaveField<std::uint32_t> mMagicItemCount;
+        std::vector<FONVSavePlayerCharacterMagicTargetEntry> mMagicItems;
+        FONVSaveRange mRange;
+        std::vector<std::uint8_t> mRaw;
+        FONVSaveRawField mUnparsedRemainder;
+    };
+
     struct FONVSaveChangedFormEnvelope
     {
         FONVSaveRawField mReferenceId;
@@ -881,6 +904,7 @@ namespace ESM4
         std::optional<FONVSavePlayerCharacterAnimationState> mPlayerCharacterAnimationState;
         std::optional<FONVSavePlayerCharacterScalarReferenceState> mPlayerCharacterScalarReferenceState;
         std::optional<FONVSavePlayerCharacterListsState> mPlayerCharacterListsState;
+        std::optional<FONVSavePlayerCharacterMagicTargetState> mPlayerCharacterMagicTargetState;
         std::optional<FONVSaveSkyState> mSky;
 
         // The parser accounts for every byte structurally. These ranges are gameplay payload bytes whose internal
