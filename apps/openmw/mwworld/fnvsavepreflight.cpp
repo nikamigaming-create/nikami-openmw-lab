@@ -7,7 +7,6 @@
 
 #include <components/files/conversion.hpp>
 #include <components/misc/strings/algorithm.hpp>
-#include <components/esm4/loadachr.hpp>
 #include <components/esm4/loadcell.hpp>
 #include <components/esm4/loadclas.hpp>
 #include <components/esm4/loadclmt.hpp>
@@ -55,13 +54,12 @@ namespace MWWorld
         }
 
         const FalloutNativePlayerRecords& records = *nativePlayer.mRecords;
-        if (records.mBaseNpc == nullptr || records.mReference == nullptr || records.mClass == nullptr
-            || records.mRace == nullptr)
+        if (records.mBaseNpc == nullptr || records.mClass == nullptr || records.mRace == nullptr)
         {
             return failure("ESMStore native FNV Player view is incomplete");
         }
-        if (records.mBaseNpc->mId != player->mBaseRecord || records.mReference->mId != player->mReferenceRecord
-            || records.mClass->mId != player->mClass || records.mRace->mId != player->mRace)
+        if (records.mBaseNpc->mId != player->mBaseRecord || records.mClass->mId != player->mClass
+            || records.mRace->mId != player->mRace)
         {
             return failure("ESMStore native FNV Player record identities do not match its validated Player state");
         }
@@ -83,7 +81,7 @@ namespace MWWorld
 
         FalloutNativePlayerRecordIdentities identities;
         identities.mBaseNpc = records.mBaseNpc->mId;
-        identities.mReference = records.mReference->mId;
+        identities.mReference = player->mReferenceRecord;
         identities.mClass = records.mClass->mId;
         identities.mRace = records.mRace->mId;
 

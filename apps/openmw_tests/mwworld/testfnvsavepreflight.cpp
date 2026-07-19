@@ -100,7 +100,6 @@ namespace
         std::vector<std::string> mContentFiles{ "builtin.omwscripts", "FalloutNV.esm" };
         MWWorld::FalloutPlayerState mPlayer;
         ESM4::Npc mBaseNpc;
-        ESM4::ActorCharacter mReference;
         ESM4::Class mClass;
         ESM4::Race mRace;
         ESM4::World mWorld;
@@ -118,7 +117,6 @@ namespace
             mPlayer.mRace = form(0x19);
             mPlayer.mEditorId = "Player";
             mBaseNpc.mId = mPlayer.mBaseRecord;
-            mReference.mId = mPlayer.mReferenceRecord;
             mClass.mId = mPlayer.mClass;
             mRace.mId = mPlayer.mRace;
 
@@ -158,10 +156,7 @@ namespace
 
             MWWorld::FalloutNativePlayerRecordsResolution native;
             if (includeNative)
-            {
-                native.mRecords
-                    = MWWorld::FalloutNativePlayerRecords{ &mBaseNpc, &mReference, &mClass, &mRace };
-            }
+                native.mRecords = MWWorld::FalloutNativePlayerRecords{ &mBaseNpc, &mClass, &mRace };
             else
                 native.mError = "validated native records were not published";
 

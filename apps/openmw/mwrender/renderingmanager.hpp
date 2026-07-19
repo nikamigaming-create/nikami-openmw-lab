@@ -271,6 +271,8 @@ namespace MWRender
             const osg::Matrixf& matrix, float fieldOfView, float nearClip, float farClip);
         void resetProjectionMatrixOverride();
         void setFieldOfView(float val);
+        /// Set the field of view used when the next first-person player animation is constructed.
+        void setFirstPersonFieldOfView(float val) { mFirstPersonFieldOfView = val; }
         float getFieldOfView() const;
         /// reset a previous overrideFieldOfView() call, i.e. revert to field of view specified in the settings file.
         void resetFieldOfView();
