@@ -790,6 +790,83 @@ TEST(ESM4QuestRuntimeTest, ExecutesDialogueResultQuestCommands)
     EXPECT_EQ(state->mFlags & MWWorld::ESM4QuestState::Flag_Running, 0);
 }
 
+TEST(ESM4QuestRuntimeTest, ExecutesExactGoodspringsConditionalDialogueQuestResults)
+{
+    MWWorld::ESMStore store;
+
+    const ESM::FormId goodspringsId{ .mIndex = 0x104c66, .mContentFile = 0 };
+    ESM4::Quest goodsprings = makeQuest(goodspringsId, "VFreeformGoodsprings");
+    const ESM::FormId goodspringsScriptId{ .mIndex = 0x104c67, .mContentFile = 0 };
+    goodsprings.mQuestScript = goodspringsScriptId;
+    store.overrideRecord(goodsprings);
+    ESM4::Script goodspringsScript;
+    goodspringsScript.mId = goodspringsScriptId;
+    goodspringsScript.mEditorId = "VFreeformGoodspringsScript";
+    goodspringsScript.mScript.localVarData = {
+        ESM4::ScriptLocalVariableData{ .index = 1, .variableName = "bArgumentOver" },
+    };
+    store.overrideRecord(goodspringsScript);
+
+    const ESM::FormId vcg02Id{ .mIndex = 0x10a214, .mContentFile = 0 };
+    ESM4::Quest vcg02 = makeQuest(vcg02Id, "VCG02");
+    vcg02.mObjectives.push_back({ .mIndex = 70, .mDescription = "Complete the exam" });
+    store.overrideRecord(vcg02);
+
+    const ESM::FormId vcg03Id{ .mIndex = 0x15d912, .mContentFile = 0 };
+    ESM4::Quest vcg03 = makeQuest(vcg03Id, "VCG03");
+    vcg03.mObjectives.push_back({ .mIndex = 40, .mDescription = "Finish the tutorial" });
+    store.overrideRecord(vcg03);
+
+    const ESM::FormId vms16Id{ .mIndex = 0x104eae, .mContentFile = 0 };
+    ESM4::Quest vms16 = makeQuest(vms16Id, "VMS16");
+    vms16.mStages = {
+        ESM4::QuestStage{ .mIndex = 5, .mEntries = { ESM4::QuestStageEntry{} } },
+        ESM4::QuestStage{ .mIndex = 10, .mEntries = { ESM4::QuestStageEntry{} } },
+        ESM4::QuestStage{ .mIndex = 110, .mEntries = { ESM4::QuestStageEntry{} } },
+    };
+    store.overrideRecord(vms16);
+
+    MWWorld::ESM4QuestRuntime runtime;
+    runtime.initialize(store);
+
+    runtime.executeResultSource("if VFreeformGoodsprings.bArgumentOver == 0\n"
+                                "  set VFreeformGoodsprings.bArgumentOver to 1\n"
+                                "endif");
+    EXPECT_EQ(runtime.getQuestVariable("VFreeformGoodsprings", "bArgumentOver"), 1.f);
+
+    ASSERT_TRUE(runtime.startQuest("VCG03"));
+    runtime.executeResultSource("if(GetQuestRunning VCG03)\n"
+                                "  RewardXP 50\n"
+                                "  SetObjectiveCompleted VCG03 40 1\n"
+                                "  CompleteQuest VCG03\n"
+                                "else\n"
+                                "  SetObjectiveCompleted VCG02 70 1\n"
+                                "  CompleteQuest VCG02\n"
+                                "endif\n"
+                                "StopQuest VCG02\n"
+                                "StopQuest VCG03");
+    const MWWorld::ESM4QuestState* vcg03State = runtime.search(vcg03Id);
+    const MWWorld::ESM4QuestState* vcg02State = runtime.search(vcg02Id);
+    ASSERT_NE(vcg03State, nullptr);
+    ASSERT_NE(vcg02State, nullptr);
+    EXPECT_NE(vcg03State->mFlags & MWWorld::ESM4QuestState::Flag_Completed, 0);
+    EXPECT_EQ(vcg03State->mObjectiveStatus.at(40), MWWorld::ESM4QuestState::Objective_Completed);
+    EXPECT_EQ(vcg02State->mFlags & MWWorld::ESM4QuestState::Flag_Completed, 0);
+    EXPECT_EQ(vcg02State->mObjectiveStatus.at(70), 0);
+
+    ASSERT_TRUE(runtime.setStage("VMS16", 10));
+    runtime.executeResultSource("if GetStage VMS16 > 0\nSetStage VMS16 110\nendif");
+    ASSERT_NE(runtime.search(vms16Id), nullptr);
+    EXPECT_EQ(runtime.search(vms16Id)->mCurrentStage, 110);
+
+    runtime.executeResultSource(
+        "if SunnyRef.GetDead == 0\nSetStage VMS16 5\nelse\nSetStage VMS16 5\nendif");
+    EXPECT_EQ(runtime.search(vms16Id)->mCurrentStage, 110)
+        << "unsupported actor predicates must make the entire branch tree fail closed";
+    ASSERT_FALSE(runtime.getUnsupportedStageCommands().empty());
+    EXPECT_EQ(runtime.getUnsupportedStageCommands().back(), "if SunnyRef.GetDead == 0");
+}
+
 TEST(ESM4QuestRuntimeTest, EvaluatesRetailQuestAndGlobalConditionGroups)
 {
     MWWorld::ESMStore store;

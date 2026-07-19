@@ -33,7 +33,8 @@ namespace MWDialogue
     };
 
     // Extract commands that are safe to execute without guessing the value of
-    // an unsupported script condition. Commands at the top level are retained.
+    // an unsupported script condition. Commands at the top level are retained,
+    // while conditional quest source is kept intact for the native quest runtime.
     // ShowBarterMenu is also retained when every branch of a complete if/else
     // tree opens barter (the pattern used by retail Chet dialogue).
     Esm4ResultScript parseEsm4ResultScript(std::string_view source);

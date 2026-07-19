@@ -21,6 +21,7 @@
 
 #include <apps/openmw/mwworld/esm4questruntime.hpp>
 #include <apps/openmw/mwworld/esmstore.hpp>
+#include <apps/openmw/mwworld/fnvplayerruntimestate.hpp>
 #include <apps/openmw/mwworld/livecellref.hpp>
 #include <apps/openmw/mwworld/ptr.hpp>
 
@@ -155,6 +156,47 @@ namespace
             = picker.selectTopic("Do you know anything about the people who attacked me?");
         ASSERT_TRUE(activated.has_value());
         EXPECT_EQ(*activated, easyPete);
+    }
+
+    TEST(Esm4DialogueUtilsTest, NativePlayerValuesResolveExactGoodspringsSkillAndSpecialConditions)
+    {
+        MWWorld::FalloutPlayerState base;
+        base.mBaseRecord = form(7);
+        base.mHealth = 100;
+        base.mSpecial = { 5, 5, 5, 5, 6, 5, 5 };
+        base.mSkillValues = { 24, 14, 12, 25, 15, 30, 30, 13, 25, 25, 25, 30, 22, 29 };
+
+        MWWorld::FalloutPlayerRuntimeState runtime;
+        runtime.initialize(base);
+
+        // FalloutNV.esm INFO 0015FF4B (Victor Science), 00104C4B (Easy Pete Explosives), and 0015EC53
+        // (Joe Cobb Intelligence) are representative of the 31 GetActorValue CTDAs owned by VFreeformGoodsprings.
+        const std::array<ESM4::TargetCondition, 4> conditions{
+            condition(ESM4::FUN_GetActorValue, form(0), 25.f),
+            condition(ESM4::FUN_GetActorValue, form(0), 25.f),
+            condition(ESM4::FUN_GetActorValue, form(0), 6.f),
+            condition(ESM4::FUN_GetActorValue, form(0), 25.f),
+        };
+        std::array<ESM4::TargetCondition, 4> exact = conditions;
+        exact[0].param1 = 40; // Science 25 succeeds.
+        exact[1].param1 = 35; // Explosives 25 succeeds.
+        exact[2].param1 = 9; // Intelligence 6 succeeds.
+        exact[3].param1 = 32; // Barter 24 fails a 25 check.
+
+        const auto currentValue = [&](const ESM4::TargetCondition& target) -> std::optional<bool> {
+            const std::optional<MWWorld::FalloutRuntimeActorValue> value
+                = runtime.getCurrentActorValue(target.param1);
+            if (!value)
+                return std::nullopt;
+            return value->mValue >= target.comparison;
+        };
+        EXPECT_TRUE(currentValue(exact[0]).value_or(false));
+        EXPECT_TRUE(currentValue(exact[1]).value_or(false));
+        EXPECT_TRUE(currentValue(exact[2]).value_or(false));
+        EXPECT_FALSE(currentValue(exact[3]).value_or(true));
+
+        exact[0].param1 = 31;
+        EXPECT_FALSE(currentValue(exact[0]).has_value()) << "unsupported actor values must remain fail-closed";
     }
 
     TEST(Esm4DialogueUtilsTest, RetailLegionInfoRequiresRunningOwnerAndMatchingFactionBeforeLocalConditions)

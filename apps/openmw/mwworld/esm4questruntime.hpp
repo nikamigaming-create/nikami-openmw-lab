@@ -139,6 +139,7 @@ namespace MWWorld
             const CompiledQuestCommand& command, CompiledStageWorkingState& working);
         bool executeCompiledStageTransaction(ESM::FormId id, std::uint8_t stage);
         void flushCompiledStageEffects(const std::vector<PendingStageEffect>& effects);
+        std::optional<bool> evaluateResultCondition(std::string_view expression) const;
         void executeStageSource(std::string_view source);
 
     public:

@@ -84,8 +84,16 @@ namespace MWDialogue
     {
         Esm4ResultScript result;
         std::vector<ConditionalFrame> conditionals;
+        std::string conditionalSource;
+        bool conditionalHasQuestCommands = false;
         bool rootShowsBarter = false;
         bool hasTopLevelShowBarter = false;
+
+        const auto appendConditionalLine = [&conditionalSource](std::string_view line) {
+            if (!conditionalSource.empty())
+                conditionalSource.push_back('\n');
+            conditionalSource.append(line);
+        };
 
         std::istringstream stream{ std::string(source) };
         for (std::string storage; std::getline(stream, storage);)
@@ -98,6 +106,12 @@ namespace MWDialogue
 
             if (isControlKeyword(line, "if", true))
             {
+                if (conditionals.empty())
+                {
+                    conditionalSource.clear();
+                    conditionalHasQuestCommands = false;
+                }
+                appendConditionalLine(line);
                 conditionals.emplace_back();
                 continue;
             }
@@ -108,6 +122,7 @@ namespace MWDialogue
                     result.mMalformedControlFlow = true;
                     continue;
                 }
+                appendConditionalLine(line);
                 ConditionalFrame& frame = conditionals.back();
                 frame.mAllClosedBranchesShowBarter &= frame.mCurrentBranchShowsBarter;
                 frame.mCurrentBranchShowsBarter = false;
@@ -120,6 +135,7 @@ namespace MWDialogue
                     result.mMalformedControlFlow = true;
                     continue;
                 }
+                appendConditionalLine(line);
                 ConditionalFrame& frame = conditionals.back();
                 frame.mAllClosedBranchesShowBarter &= frame.mCurrentBranchShowsBarter;
                 frame.mCurrentBranchShowsBarter = false;
@@ -134,6 +150,7 @@ namespace MWDialogue
                     result.mMalformedControlFlow = true;
                     continue;
                 }
+                appendConditionalLine(line);
                 ConditionalFrame frame = conditionals.back();
                 conditionals.pop_back();
                 const bool everyBranchShowsBarter
@@ -145,16 +162,20 @@ namespace MWDialogue
                     else
                         conditionals.back().mCurrentBranchShowsBarter = true;
                 }
+                if (conditionals.empty() && conditionalHasQuestCommands)
+                    result.mCommands.push_back(
+                        { Esm4ResultCommandType::Quest, {}, std::move(conditionalSource) });
                 continue;
             }
 
             const Esm4ResultCommand command = parseTopLevelCommand(line);
             if (!conditionals.empty())
             {
+                appendConditionalLine(line);
                 if (command.mType == Esm4ResultCommandType::ShowBarterMenu)
                     conditionals.back().mCurrentBranchShowsBarter = true;
                 else
-                    ++result.mSkippedConditionalCommands;
+                    conditionalHasQuestCommands = true;
                 continue;
             }
 

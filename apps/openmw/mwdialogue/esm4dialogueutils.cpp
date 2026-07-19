@@ -8,6 +8,9 @@
 #include <components/esm4/loadweap.hpp>
 #include <components/esm4/script.hpp>
 
+#include "../mwbase/environment.hpp"
+#include "../mwbase/world.hpp"
+
 #include "../mwclass/esm4npc.hpp"
 
 #include "../mwmechanics/creaturestats.hpp"
@@ -17,6 +20,7 @@
 #include "../mwworld/class.hpp"
 #include "../mwworld/containerstore.hpp"
 #include "../mwworld/esm4questruntime.hpp"
+#include "../mwworld/fnvplayerruntimestate.hpp"
 #include "../mwworld/ptr.hpp"
 
 namespace MWDialogue
@@ -90,6 +94,22 @@ namespace MWDialogue
         float actual = 0.f;
         switch (condition.functionIndex)
         {
+            case ESM4::FUN_GetActorValue:
+            {
+                // Every GetActorValue CTDA owned by the Goodsprings dialogue quest runs on the Player. Its exact
+                // operands cover SPECIAL and FNV skills (INT, Barter, Explosives, Medicine, Science, Sneak, Speech),
+                // all of which are retained by the native player runtime state. Non-player and unsupported values
+                // remain fail-closed rather than being projected through Morrowind stats.
+                MWBase::World* world = isPlayer ? MWBase::Environment::tryGetWorld() : nullptr;
+                const std::optional<MWWorld::FalloutRuntimeActorValue> value
+                    = world != nullptr
+                    ? world->getFalloutPlayerRuntimeState().getCurrentActorValue(condition.param1)
+                    : std::nullopt;
+                if (!value)
+                    return std::nullopt;
+                actual = value->mValue;
+                break;
+            }
             case ESM4::FUN_GetIsID:
                 actual = (base != nullptr && base->mId == parameter)
                         || actor.getCellRef().getRefId() == ESM::RefId(parameter)

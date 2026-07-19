@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <bit>
 #include <charconv>
+#include <cctype>
 #include <sstream>
 #include <stdexcept>
 #include <utility>
@@ -61,6 +62,26 @@ namespace
         const char* const end = value.data() + value.size();
         const auto parsed = std::from_chars(begin, end, result);
         return parsed.ec == std::errc{} && parsed.ptr == end;
+    }
+
+    std::string_view trim(std::string_view value)
+    {
+        while (!value.empty() && std::isspace(static_cast<unsigned char>(value.front())))
+            value.remove_prefix(1);
+        while (!value.empty() && std::isspace(static_cast<unsigned char>(value.back())))
+            value.remove_suffix(1);
+        return value;
+    }
+
+    bool isControlKeyword(std::string_view line, std::string_view keyword, bool allowOpeningParenthesis = false)
+    {
+        if (line.size() < keyword.size()
+            || !Misc::StringUtils::ciEqual(line.substr(0, keyword.size()), keyword))
+            return false;
+        if (line.size() == keyword.size())
+            return true;
+        const char next = line[keyword.size()];
+        return std::isspace(static_cast<unsigned char>(next)) || (allowOpeningParenthesis && next == '(');
     }
 }
 
@@ -1101,6 +1122,81 @@ namespace MWWorld
         return true;
     }
 
+    std::optional<bool> ESM4QuestRuntime::evaluateResultCondition(std::string_view expression) const
+    {
+        expression = trim(expression);
+        while (expression.size() >= 2 && expression.front() == '(' && expression.back() == ')')
+            expression = trim(expression.substr(1, expression.size() - 2));
+
+        const std::vector<std::string_view> tokens = tokenize(expression);
+        if (tokens.empty())
+            return std::nullopt;
+
+        const auto compare = [&tokens](float actual, std::size_t operatorIndex) -> std::optional<bool> {
+            if (tokens.size() == operatorIndex)
+                return actual != 0.f;
+            if (tokens.size() != operatorIndex + 2)
+                return std::nullopt;
+
+            float expected = 0.f;
+            if (!parseFloat(tokens[operatorIndex + 1], expected))
+                return std::nullopt;
+            const std::string_view op = tokens[operatorIndex];
+            if (op == "==")
+                return actual == expected;
+            if (op == "!=")
+                return actual != expected;
+            if (op == ">")
+                return actual > expected;
+            if (op == ">=")
+                return actual >= expected;
+            if (op == "<")
+                return actual < expected;
+            if (op == "<=")
+                return actual <= expected;
+            return std::nullopt;
+        };
+        const auto questState = [this](std::string_view id) -> const ESM4QuestState* {
+            const ESM4::Quest* quest = resolveQuest(id);
+            return quest != nullptr ? findState(*quest) : nullptr;
+        };
+
+        if (Misc::StringUtils::ciEqual(tokens[0], "GetQuestRunning") && tokens.size() >= 2)
+        {
+            if (const ESM4QuestState* state = questState(tokens[1]))
+                return compare((state->mFlags & ESM4QuestState::Flag_Running) != 0 ? 1.f : 0.f, 2);
+            return std::nullopt;
+        }
+        if (Misc::StringUtils::ciEqual(tokens[0], "GetQuestCompleted") && tokens.size() >= 2)
+        {
+            if (const ESM4QuestState* state = questState(tokens[1]))
+                return compare((state->mFlags & ESM4QuestState::Flag_Completed) != 0 ? 1.f : 0.f, 2);
+            return std::nullopt;
+        }
+        if (Misc::StringUtils::ciEqual(tokens[0], "GetStage") && tokens.size() >= 2)
+        {
+            if (const ESM4QuestState* state = questState(tokens[1]))
+                return compare(static_cast<float>(state->mCurrentStage), 2);
+            return std::nullopt;
+        }
+        if (Misc::StringUtils::ciEqual(tokens[0], "GetStageDone") && tokens.size() >= 3)
+        {
+            std::int32_t stage = 0;
+            const ESM4QuestState* state = questState(tokens[1]);
+            if (state == nullptr || !parseInt(tokens[2], stage))
+                return std::nullopt;
+            const auto found = state->mStageDone.find(static_cast<std::int16_t>(stage));
+            return compare(found != state->mStageDone.end() && found->second ? 1.f : 0.f, 3);
+        }
+
+        const std::size_t separator = tokens[0].find('.');
+        if (separator == std::string_view::npos || separator == 0 || separator + 1 == tokens[0].size())
+            return std::nullopt;
+        const std::optional<float> value
+            = getQuestVariable(tokens[0].substr(0, separator), tokens[0].substr(separator + 1));
+        return value ? compare(*value, 1) : std::nullopt;
+    }
+
     void ESM4QuestRuntime::executeStageSource(std::string_view source)
     {
         std::istringstream stream{ std::string(source) };
@@ -1165,7 +1261,100 @@ namespace MWWorld
 
     void ESM4QuestRuntime::executeResultSource(std::string_view source)
     {
-        executeStageSource(source);
+        struct ConditionalFrame
+        {
+            bool mParentActive = true;
+            bool mBranchTaken = false;
+            bool mCurrentBranchActive = false;
+            bool mIndeterminate = false;
+            bool mSawElse = false;
+        };
+
+        std::vector<ConditionalFrame> conditionals;
+        std::istringstream stream{ std::string(source) };
+        for (std::string storage; std::getline(stream, storage);)
+        {
+            std::string_view line = trim(storage);
+            if (const std::size_t comment = line.find(';'); comment != std::string_view::npos)
+                line = trim(line.substr(0, comment));
+            if (line.empty())
+                continue;
+
+            if (isControlKeyword(line, "if", true))
+            {
+                ConditionalFrame frame;
+                frame.mParentActive = conditionals.empty() || conditionals.back().mCurrentBranchActive;
+                if (frame.mParentActive)
+                {
+                    const std::optional<bool> condition = evaluateResultCondition(trim(line.substr(2)));
+                    if (condition)
+                    {
+                        frame.mCurrentBranchActive = *condition;
+                        frame.mBranchTaken = *condition;
+                    }
+                    else
+                    {
+                        frame.mIndeterminate = true;
+                        mUnsupportedStageCommands.emplace_back(line);
+                    }
+                }
+                conditionals.push_back(frame);
+                continue;
+            }
+            if (isControlKeyword(line, "elseif", true))
+            {
+                if (conditionals.empty() || conditionals.back().mSawElse)
+                {
+                    mUnsupportedStageCommands.emplace_back(line);
+                    continue;
+                }
+                ConditionalFrame& frame = conditionals.back();
+                frame.mCurrentBranchActive = false;
+                if (frame.mParentActive && !frame.mBranchTaken && !frame.mIndeterminate)
+                {
+                    const std::optional<bool> condition = evaluateResultCondition(trim(line.substr(6)));
+                    if (condition)
+                    {
+                        frame.mCurrentBranchActive = *condition;
+                        frame.mBranchTaken = *condition;
+                    }
+                    else
+                    {
+                        frame.mIndeterminate = true;
+                        mUnsupportedStageCommands.emplace_back(line);
+                    }
+                }
+                continue;
+            }
+            if (isControlKeyword(line, "else"))
+            {
+                if (conditionals.empty() || conditionals.back().mSawElse)
+                {
+                    mUnsupportedStageCommands.emplace_back(line);
+                    continue;
+                }
+                ConditionalFrame& frame = conditionals.back();
+                frame.mSawElse = true;
+                frame.mCurrentBranchActive
+                    = frame.mParentActive && !frame.mBranchTaken && !frame.mIndeterminate;
+                frame.mBranchTaken |= frame.mCurrentBranchActive;
+                continue;
+            }
+            if (isControlKeyword(line, "endif"))
+            {
+                if (conditionals.empty())
+                    mUnsupportedStageCommands.emplace_back(line);
+                else
+                    conditionals.pop_back();
+                continue;
+            }
+
+            if (conditionals.empty() || conditionals.back().mCurrentBranchActive)
+                executeStageSource(line);
+        }
+
+        if (!conditionals.empty())
+            mUnsupportedStageCommands.emplace_back("unterminated result-script conditional");
     }
 
     const ESM4QuestState* ESM4QuestRuntime::search(std::string_view id) const
