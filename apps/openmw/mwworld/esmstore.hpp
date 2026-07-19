@@ -369,7 +369,7 @@ namespace MWWorld
         {
             Store<T>& store = getWritable<T>();
             if (store.search(x.mId) != nullptr)
-                throw std::runtime_error("Try to override existing record " + x.mId.toDebugString());
+                throw std::runtime_error("Try to override existing record " + x.mId.toString());
 
             T* ptr = store.insertStatic(x);
             if constexpr (std::is_convertible_v<Store<T>*, DynamicStore*>)
