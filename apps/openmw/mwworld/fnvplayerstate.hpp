@@ -170,6 +170,16 @@ namespace MWWorld
             std::array<float, 3> mPosition{};
             std::array<float, 3> mRotationRadians{};
         } mTransform;
+        struct CameraState
+        {
+            std::uint8_t mThirdPersonMode = 0;
+            bool mFirstPerson = true;
+            float mFirstPersonModelFov = 0.f;
+            float mWorldFov = 0.f;
+            std::uint64_t mModeOffset = 0;
+            std::uint64_t mFirstPersonModelFovOffset = 0;
+            std::uint64_t mWorldFovOffset = 0;
+        } mCamera;
         struct SceneState
         {
             ESM::FormId mCurrentWeather;

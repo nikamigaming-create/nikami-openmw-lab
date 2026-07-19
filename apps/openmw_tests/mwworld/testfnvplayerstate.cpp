@@ -205,6 +205,14 @@ namespace
         movement.mRotationRadians[1].mValue = -0.0f;
         movement.mRotationRadians[2].mValue = 2.93332028f;
         result.mPlayerReferenceMovement = std::move(movement);
+        ESM4::FONVSavePlayerCharacterScalarReferenceState camera;
+        camera.mFirstPersonMode.mValue = 0;
+        camera.mFirstPersonMode.mRange = { 501845, 1 };
+        camera.mFirstPersonModelFov.mValue = 55.f;
+        camera.mFirstPersonModelFov.mRange = { 501942, 4 };
+        camera.mWorldFov.mValue = 75.f;
+        camera.mWorldFov.mRange = { 501947, 4 };
+        result.mPlayerCharacterScalarReferenceState = std::move(camera);
         ESM4::FONVSaveSkyState sky;
         sky.mCurrentWeather.mResolvedFormId = 0x001237d7u;
         sky.mDefaultWeather.mResolvedFormId = 0x000ffc88u;
@@ -810,6 +818,13 @@ namespace
         EXPECT_FLOAT_EQ(plan.mTransform.mPosition[1], -1240.19275f);
         EXPECT_FLOAT_EQ(plan.mTransform.mPosition[2], 8137.58643f);
         EXPECT_FLOAT_EQ(plan.mTransform.mRotationRadians[2], 2.93332028f);
+        EXPECT_EQ(plan.mCamera.mThirdPersonMode, 0u);
+        EXPECT_TRUE(plan.mCamera.mFirstPerson);
+        EXPECT_FLOAT_EQ(plan.mCamera.mFirstPersonModelFov, 55.f);
+        EXPECT_FLOAT_EQ(plan.mCamera.mWorldFov, 75.f);
+        EXPECT_EQ(plan.mCamera.mModeOffset, 501845u);
+        EXPECT_EQ(plan.mCamera.mFirstPersonModelFovOffset, 501942u);
+        EXPECT_EQ(plan.mCamera.mWorldFovOffset, 501947u);
         EXPECT_EQ(plan.mScene.mCurrentWeather, form(0x001237d7, 1));
         EXPECT_EQ(plan.mScene.mDefaultWeather, form(0x000ffc88, 1));
         EXPECT_FALSE(plan.mScene.mTransitionWeather.has_value());
@@ -918,6 +933,24 @@ namespace
         resolution = MWWorld::resolveFalloutSaveLoadPlan(save, &nativePlayer, currentContentFiles);
         EXPECT_FALSE(resolution);
         EXPECT_THAT(resolution.mError, HasSubstr("does not expose a proven canonical Player reference-movement"));
+        save = makeSavePrefix({ "FalloutNV.esm", "DeadMoney.esm" });
+
+        save.mPlayerCharacterScalarReferenceState.reset();
+        resolution = MWWorld::resolveFalloutSaveLoadPlan(save, &nativePlayer, currentContentFiles);
+        EXPECT_FALSE(resolution);
+        EXPECT_THAT(resolution.mError, HasSubstr("does not expose the canonical Player camera/FOV state"));
+        save = makeSavePrefix({ "FalloutNV.esm", "DeadMoney.esm" });
+
+        save.mPlayerCharacterScalarReferenceState->mFirstPersonMode.mValue = 2;
+        resolution = MWWorld::resolveFalloutSaveLoadPlan(save, &nativePlayer, currentContentFiles);
+        EXPECT_FALSE(resolution);
+        EXPECT_THAT(resolution.mError, HasSubstr("camera mode is not a canonical boolean"));
+        save = makeSavePrefix({ "FalloutNV.esm", "DeadMoney.esm" });
+
+        save.mPlayerCharacterScalarReferenceState->mWorldFov.mValue = std::numeric_limits<float>::infinity();
+        resolution = MWWorld::resolveFalloutSaveLoadPlan(save, &nativePlayer, currentContentFiles);
+        EXPECT_FALSE(resolution);
+        EXPECT_THAT(resolution.mError, HasSubstr("camera FOV values must be finite and in (0, 180)"));
         save = makeSavePrefix({ "FalloutNV.esm", "DeadMoney.esm" });
 
         save.mSky.reset();

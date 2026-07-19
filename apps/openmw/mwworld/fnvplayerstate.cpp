@@ -1,5 +1,6 @@
 #include "fnvplayerstate.hpp"
 
+#include <cmath>
 #include <cstring>
 #include <limits>
 #include <stdexcept>
@@ -496,6 +497,26 @@ namespace MWWorld
             plan.mTransform.mPosition[index] = movement.mPosition[index].mValue;
             plan.mTransform.mRotationRadians[index] = movement.mRotationRadians[index].mValue;
         }
+
+        if (!save.mPlayerCharacterScalarReferenceState)
+            return loadFailure("FNV save does not expose the canonical Player camera/FOV state");
+        const ESM4::FONVSavePlayerCharacterScalarReferenceState& camera
+            = *save.mPlayerCharacterScalarReferenceState;
+        if (camera.mFirstPersonMode.mValue > 1)
+            return loadFailure("FNV save Player camera mode is not a canonical boolean");
+        if (!std::isfinite(camera.mFirstPersonModelFov.mValue) || camera.mFirstPersonModelFov.mValue <= 0.f
+            || camera.mFirstPersonModelFov.mValue >= 180.f || !std::isfinite(camera.mWorldFov.mValue)
+            || camera.mWorldFov.mValue <= 0.f || camera.mWorldFov.mValue >= 180.f)
+        {
+            return loadFailure("FNV save Player camera FOV values must be finite and in (0, 180)");
+        }
+        plan.mCamera.mThirdPersonMode = camera.mFirstPersonMode.mValue;
+        plan.mCamera.mFirstPerson = camera.mFirstPersonMode.mValue == 0;
+        plan.mCamera.mFirstPersonModelFov = camera.mFirstPersonModelFov.mValue;
+        plan.mCamera.mWorldFov = camera.mWorldFov.mValue;
+        plan.mCamera.mModeOffset = camera.mFirstPersonMode.mRange.mOffset;
+        plan.mCamera.mFirstPersonModelFovOffset = camera.mFirstPersonModelFov.mRange.mOffset;
+        plan.mCamera.mWorldFovOffset = camera.mWorldFov.mRange.mOffset;
 
         if (!save.mSky)
             return loadFailure("FNV save does not expose a proven Sky global-data payload");
