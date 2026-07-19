@@ -245,6 +245,11 @@ namespace MWBase
 
         virtual void changeWeather(const ESM::RefId& region, const ESM::RefId& id) = 0;
 
+        /// Select an already loaded authored weather immediately. Native Bethesda
+        /// weather records remain inside WeatherManager so their complete cloud,
+        /// fog, celestial, and image-space state is calculated by that pipeline.
+        virtual bool forceWeather(const ESM::RefId& id) = 0;
+
         virtual const std::vector<MWWorld::Weather>& getAllWeather() const = 0;
 
         virtual int getCurrentWeatherScriptId() const = 0;

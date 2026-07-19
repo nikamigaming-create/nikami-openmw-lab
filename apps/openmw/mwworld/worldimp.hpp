@@ -341,6 +341,8 @@ namespace MWWorld
 
         void changeWeather(const ESM::RefId& region, const ESM::RefId& id) override;
 
+        bool forceWeather(const ESM::RefId& id) override;
+
         const std::vector<MWWorld::Weather>& getAllWeather() const override;
 
         int getCurrentWeatherScriptId() const override;

@@ -2683,6 +2683,11 @@ namespace MWWorld
         mWeatherManager->changeWeather(region, id);
     }
 
+    bool World::forceWeather(const ESM::RefId& id)
+    {
+        return mWeatherManager->forceWeather(id);
+    }
+
     void World::modRegion(const ESM::RefId& regionid, const std::vector<uint8_t>& chances)
     {
         mWeatherManager->modRegion(regionid, chances);
