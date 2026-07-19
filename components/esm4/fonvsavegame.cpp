@@ -1492,6 +1492,179 @@ namespace
         return result;
     }
 
+    std::vector<ESM4::FONVSaveResolvedReferenceId> parsePlayerCharacterReferenceList(Cursor& cursor,
+        std::span<const std::uint8_t> data, const ESM4::FONVSaveFormIdTable& formIds,
+        ESM4::FONVSaveField<std::uint32_t>& count, std::string_view description)
+    {
+        count = readPackedCount(cursor, data, description);
+        validatePackedCountFits(count, cursor, 4, description);
+        std::vector<ESM4::FONVSaveResolvedReferenceId> result;
+        result.reserve(count.mValue);
+        for (std::uint32_t i = 0; i < count.mValue; ++i)
+            result.push_back(decodeDelimitedResolvedReferenceId(cursor, data, formIds, description));
+        return result;
+    }
+
+    ESM4::FONVSavePlayerCharacterListD48Entry parsePlayerCharacterListD48Entry(Cursor& cursor,
+        std::span<const std::uint8_t> data, const ESM4::FONVSaveFormIdTable& formIds)
+    {
+        const std::size_t begin = cursor.position();
+        ESM4::FONVSavePlayerCharacterListD48Entry result;
+        result.mForm000
+            = decodeDelimitedResolvedReferenceId(cursor, data, formIds, "PlayerCharacter ListD48 Form000 RefID");
+        result.mByt004 = readPlayerProcessU8(cursor, data, "PlayerCharacter ListD48 Byt004");
+        result.mByt005 = readPlayerProcessU8(cursor, data, "PlayerCharacter ListD48 Byt005");
+        result.mRange = range(begin, cursor.position());
+        result.mRaw = copyRange(data, begin, cursor.position());
+        return result;
+    }
+
+    ESM4::FONVSavePlayerCharacterPerkEntry parsePlayerCharacterPerkEntry(Cursor& cursor,
+        std::span<const std::uint8_t> data, const ESM4::FONVSaveFormIdTable& formIds)
+    {
+        const std::size_t begin = cursor.position();
+        ESM4::FONVSavePlayerCharacterPerkEntry result;
+        result.mPerk = decodeDelimitedResolvedReferenceId(cursor, data, formIds, "PlayerCharacter Perk RefID");
+        result.mByt004 = readPlayerProcessU8(cursor, data, "PlayerCharacter Perk Byt004");
+        result.mRange = range(begin, cursor.position());
+        result.mRaw = copyRange(data, begin, cursor.position());
+        return result;
+    }
+
+    ESM4::FONVSavePlayerCharacterList60CEntry parsePlayerCharacterList60CEntry(Cursor& cursor,
+        std::span<const std::uint8_t> data, const ESM4::FONVSaveFormIdTable& formIds)
+    {
+        const std::size_t begin = cursor.position();
+        ESM4::FONVSavePlayerCharacterList60CEntry result;
+        result.mUnk000 = readPlayerProcessU32(cursor, data, "PlayerCharacter List60C Unk000");
+        result.mFlt004 = readPlayerProcessFloat(cursor, data, "PlayerCharacter List60C Flt004");
+        result.mFormId
+            = decodeDelimitedResolvedReferenceId(cursor, data, formIds, "PlayerCharacter List60C FormID RefID");
+        result.mRange = range(begin, cursor.position());
+        result.mRaw = copyRange(data, begin, cursor.position());
+        return result;
+    }
+
+    ESM4::FONVSavePlayerCharacterList610Entry parsePlayerCharacterList610Entry(
+        Cursor& cursor, std::span<const std::uint8_t> data)
+    {
+        const std::size_t begin = cursor.position();
+        ESM4::FONVSavePlayerCharacterList610Entry result;
+        result.mUnk000 = readPlayerProcessU32(cursor, data, "PlayerCharacter List610 Unk000");
+        result.mUnk004 = readPlayerProcessU32(cursor, data, "PlayerCharacter List610 Unk004");
+        result.mWrd008 = readPlayerProcessU16(cursor, data, "PlayerCharacter List610 Wrd008");
+        result.mRange = range(begin, cursor.position());
+        result.mRaw = copyRange(data, begin, cursor.position());
+        return result;
+    }
+
+    ESM4::FONVSavePlayerCharacterStageEntry parsePlayerCharacterStageEntry(Cursor& cursor,
+        std::span<const std::uint8_t> data, const ESM4::FONVSaveFormIdTable& formIds)
+    {
+        const std::size_t begin = cursor.position();
+        ESM4::FONVSavePlayerCharacterStageEntry result;
+        result.mQuest
+            = decodeDelimitedResolvedReferenceId(cursor, data, formIds, "PlayerCharacter Stage Quest RefID");
+        result.mStage = readPlayerProcessU8(cursor, data, "PlayerCharacter Stage");
+        result.mLogEntry = readPlayerProcessU8(cursor, data, "PlayerCharacter Stage LogEntry");
+        result.mRange = range(begin, cursor.position());
+        result.mRaw = copyRange(data, begin, cursor.position());
+        return result;
+    }
+
+    ESM4::FONVSavePlayerCharacterObjectiveEntry parsePlayerCharacterObjectiveEntry(Cursor& cursor,
+        std::span<const std::uint8_t> data, const ESM4::FONVSaveFormIdTable& formIds)
+    {
+        const std::size_t begin = cursor.position();
+        ESM4::FONVSavePlayerCharacterObjectiveEntry result;
+        result.mQuest
+            = decodeDelimitedResolvedReferenceId(cursor, data, formIds, "PlayerCharacter Objective Quest RefID");
+        result.mObjective = readPlayerProcessU32(cursor, data, "PlayerCharacter Objective");
+        result.mRange = range(begin, cursor.position());
+        result.mRaw = copyRange(data, begin, cursor.position());
+        return result;
+    }
+
+    ESM4::FONVSavePlayerCharacterListsState parsePlayerCharacterListsState(std::span<const std::uint8_t> data,
+        const ESM4::FONVSaveChangedFormEnvelope& player,
+        const ESM4::FONVSavePlayerCharacterScalarReferenceState& scalarState,
+        const ESM4::FONVSaveFormIdTable& formIds)
+    {
+        if (player.mVersion.mValue != 27)
+            throw ESM4::FONVSaveError(
+                player.mVersion.mRange.mOffset, "unsupported canonical PlayerCharacter lists changed-form version");
+
+        const std::size_t begin = static_cast<std::size_t>(scalarState.mUnparsedRemainder.mRange.mOffset);
+        const std::size_t end = static_cast<std::size_t>(scalarState.mUnparsedRemainder.mRange.end());
+        Cursor cursor(data, begin, end);
+        ESM4::FONVSavePlayerCharacterListsState result;
+        result.mTopics = parsePlayerCharacterReferenceList(
+            cursor, data, formIds, result.mList6A8Count, "PlayerCharacter List6A8 Topic count");
+        result.mNotes = parsePlayerCharacterReferenceList(
+            cursor, data, formIds, result.mList5E4Count, "PlayerCharacter List5E4 Note count");
+
+        result.mInventoryEntryCount = readPackedCount(cursor, data, "PlayerCharacter inventory entry count");
+        validatePackedCountFits(
+            result.mInventoryEntryCount, cursor, 11, "PlayerCharacter inventory entry count");
+        result.mInventoryEntries.reserve(result.mInventoryEntryCount.mValue);
+        for (std::uint32_t i = 0; i < result.mInventoryEntryCount.mValue; ++i)
+            result.mInventoryEntries.push_back(parsePlayerInventoryEntry(cursor, data, formIds));
+
+        result.mListD48Count = readPackedCount(cursor, data, "PlayerCharacter ListD48 count");
+        validatePackedCountFits(result.mListD48Count, cursor, 8, "PlayerCharacter ListD48 count");
+        result.mListD48.reserve(result.mListD48Count.mValue);
+        for (std::uint32_t i = 0; i < result.mListD48Count.mValue; ++i)
+            result.mListD48.push_back(parsePlayerCharacterListD48Entry(cursor, data, formIds));
+
+        result.mPerkCount = readPackedCount(cursor, data, "PlayerCharacter Perks count");
+        validatePackedCountFits(result.mPerkCount, cursor, 6, "PlayerCharacter Perks count");
+        result.mPerks.reserve(result.mPerkCount.mValue);
+        for (std::uint32_t i = 0; i < result.mPerkCount.mValue; ++i)
+            result.mPerks.push_back(parsePlayerCharacterPerkEntry(cursor, data, formIds));
+
+        result.mList60CCount = readPackedCount(cursor, data, "PlayerCharacter List60C count");
+        validatePackedCountFits(result.mList60CCount, cursor, 14, "PlayerCharacter List60C count");
+        result.mList60C.reserve(result.mList60CCount.mValue);
+        for (std::uint32_t i = 0; i < result.mList60CCount.mValue; ++i)
+            result.mList60C.push_back(parsePlayerCharacterList60CEntry(cursor, data, formIds));
+
+        result.mList610Count = readPackedCount(cursor, data, "PlayerCharacter List610 count");
+        validatePackedCountFits(result.mList610Count, cursor, 13, "PlayerCharacter List610 count");
+        result.mList610.reserve(result.mList610Count.mValue);
+        for (std::uint32_t i = 0; i < result.mList610Count.mValue; ++i)
+            result.mList610.push_back(parsePlayerCharacterList610Entry(cursor, data));
+
+        result.mCards614 = parsePlayerCharacterReferenceList(
+            cursor, data, formIds, result.mCards614Count, "PlayerCharacter Cards 614 count");
+        result.mCards618 = parsePlayerCharacterReferenceList(
+            cursor, data, formIds, result.mCards618Count, "PlayerCharacter Cards 618 count");
+        result.mUnk61C = readPlayerProcessU32(cursor, data, "PlayerCharacter Unk61C");
+        result.mUnk620 = readPlayerProcessU32(cursor, data, "PlayerCharacter Unk620");
+        result.mUnk624 = readPlayerProcessU32(cursor, data, "PlayerCharacter Unk624");
+        result.mUnk628 = readPlayerProcessU32(cursor, data, "PlayerCharacter Unk628");
+        result.mUnk62C = readPlayerProcessU32(cursor, data, "PlayerCharacter Unk62C");
+
+        result.mStageCount = readPackedCount(cursor, data, "PlayerCharacter Stages count");
+        validatePackedCountFits(result.mStageCount, cursor, 8, "PlayerCharacter Stages count");
+        result.mStages.reserve(result.mStageCount.mValue);
+        for (std::uint32_t i = 0; i < result.mStageCount.mValue; ++i)
+            result.mStages.push_back(parsePlayerCharacterStageEntry(cursor, data, formIds));
+
+        result.mObjectiveCount = readPackedCount(cursor, data, "PlayerCharacter Objectives count");
+        validatePackedCountFits(result.mObjectiveCount, cursor, 9, "PlayerCharacter Objectives count");
+        result.mObjectives.reserve(result.mObjectiveCount.mValue);
+        for (std::uint32_t i = 0; i < result.mObjectiveCount.mValue; ++i)
+            result.mObjectives.push_back(parsePlayerCharacterObjectiveEntry(cursor, data, formIds));
+
+        if (cursor.position() - begin != ESM4::sFONVPlayerCharacterListsStateBytes)
+            throw ESM4::FONVSaveError(begin, "canonical PlayerCharacter lists state has an unexpected size");
+        result.mRange = range(begin, cursor.position());
+        result.mRaw = copyRange(data, begin, cursor.position());
+        result.mUnparsedRemainder = readRawField(
+            cursor, data, cursor.end() - cursor.position(), "remaining canonical PlayerCharacter payload");
+        return result;
+    }
+
     void appendUnparsedSemanticPayload(ESM4::FONVSaveGamePrefix& save, const ESM4::FONVSaveRange& payload)
     {
         if (payload.empty())
@@ -1785,6 +1958,8 @@ namespace ESM4
                     data, *playerReference, *result.mPlayerChangedCharacterState);
                 result.mPlayerCharacterScalarReferenceState = parsePlayerCharacterScalarReferenceState(
                     data, *playerReference, *result.mPlayerCharacterAnimationState, result.mFormIdTable);
+                result.mPlayerCharacterListsState = parsePlayerCharacterListsState(
+                    data, *playerReference, *result.mPlayerCharacterScalarReferenceState, result.mFormIdTable);
             }
         }
 
@@ -1810,7 +1985,9 @@ namespace ESM4
         }
         for (const FONVSaveChangedFormEnvelope& entry : result.mChangedForms.mEntries)
         {
-            if (result.mPlayerCharacterScalarReferenceState.has_value() && &entry == playerReference)
+            if (result.mPlayerCharacterListsState.has_value() && &entry == playerReference)
+                appendUnparsedSemanticPayload(result, result.mPlayerCharacterListsState->mUnparsedRemainder.mRange);
+            else if (result.mPlayerCharacterScalarReferenceState.has_value() && &entry == playerReference)
                 appendUnparsedSemanticPayload(
                     result, result.mPlayerCharacterScalarReferenceState->mUnparsedRemainder.mRange);
             else if (result.mPlayerCharacterAnimationState.has_value() && &entry == playerReference)

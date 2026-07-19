@@ -661,6 +661,74 @@ namespace
         return result;
     }
 
+    std::vector<std::uint8_t> makePlayerCharacterListsState()
+    {
+        std::vector<std::uint8_t> result;
+        const auto appendDelimitedU8 = [&](std::uint8_t value) {
+            appendU8(result, value);
+            appendDelimiter(result);
+        };
+        const auto appendDelimitedU16 = [&](std::uint16_t value) {
+            appendU16(result, value);
+            appendDelimiter(result);
+        };
+        const auto appendDelimitedU32 = [&](std::uint32_t value) {
+            appendU32(result, value);
+            appendDelimiter(result);
+        };
+        const auto appendDelimitedF32 = [&](float value) {
+            appendF32(result, value);
+            appendDelimiter(result);
+        };
+
+        appendPackedCount(result, 2);
+        appendDelimitedReferenceId(result, 0x400111u);
+        appendDelimitedReferenceId(result, 0x400112u);
+        appendPackedCount(result, 1);
+        appendDelimitedReferenceId(result, 0x400113u);
+
+        appendPackedCount(result, 2);
+        appendDelimitedReferenceId(result, 0x400114u);
+        appendDelimitedU32(3u);
+        appendPackedCount(result, 0);
+        appendDelimitedReferenceId(result, 0x800115u);
+        appendDelimitedU32(std::bit_cast<std::uint32_t>(std::int32_t{ -2 }));
+        appendPackedCount(result, 0);
+
+        appendPackedCount(result, 1);
+        appendDelimitedReferenceId(result, 0x400116u);
+        appendDelimitedU8(0x44u);
+        appendDelimitedU8(0x45u);
+        appendPackedCount(result, 1);
+        appendDelimitedReferenceId(result, 0x400117u);
+        appendDelimitedU8(2u);
+        appendPackedCount(result, 1);
+        appendDelimitedU32(0x60cu);
+        appendDelimitedF32(12.5f);
+        appendDelimitedReferenceId(result, 0x400118u);
+        appendPackedCount(result, 1);
+        appendDelimitedU32(0x610u);
+        appendDelimitedU32(0x611u);
+        appendDelimitedU16(0x612u);
+        appendPackedCount(result, 1);
+        appendDelimitedReferenceId(result, 0x400119u);
+        appendPackedCount(result, 1);
+        appendDelimitedReferenceId(result, 0x40011au);
+        for (const std::uint32_t value : { 0x61cu, 0x620u, 0x624u, 0x628u, 0x62cu })
+            appendDelimitedU32(value);
+        appendPackedCount(result, 1);
+        appendDelimitedReferenceId(result, 0x40011bu);
+        appendDelimitedU8(10u);
+        appendDelimitedU8(1u);
+        appendPackedCount(result, 1);
+        appendDelimitedReferenceId(result, 0x40011cu);
+        appendDelimitedU32(10u);
+
+        if (result.size() != ESM4::sFONVPlayerCharacterListsStateBytes)
+            throw std::logic_error("synthetic PlayerCharacter lists state has the wrong size");
+        return result;
+    }
+
     void appendString(std::vector<std::uint8_t>& bytes, std::string_view value)
     {
         if (value.size() > std::numeric_limits<std::uint16_t>::max())
@@ -754,6 +822,7 @@ namespace
         std::size_t mPlayerChangedCharacterStateBegin = 0;
         std::size_t mPlayerCharacterAnimationStateBegin = 0;
         std::size_t mPlayerCharacterScalarReferenceStateBegin = 0;
+        std::size_t mPlayerCharacterListsStateBegin = 0;
         std::size_t mGlobalData2Begin = 0;
         std::size_t mRefIdArrayBegin = 0;
         std::size_t mUnknownTableBegin = 0;
@@ -768,7 +837,8 @@ namespace
         std::size_t playerChangedCharacterStateBytes = ESM4::sFONVPlayerChangedCharacterStateBytes,
         std::size_t playerCharacterAnimationStateBytes = sSyntheticPlayerCharacterAnimationStateBytes,
         std::size_t playerCharacterScalarReferenceStateBytes
-            = ESM4::sFONVPlayerCharacterScalarReferenceStateBytes)
+            = ESM4::sFONVPlayerCharacterScalarReferenceStateBytes,
+        std::size_t playerCharacterListsStateBytes = ESM4::sFONVPlayerCharacterListsStateBytes)
     {
         std::vector<std::uint8_t> header;
         appendU32(header, 48);
@@ -891,6 +961,16 @@ namespace
         changedPayload1.insert(changedPayload1.end(), playerCharacterScalarReferenceState.begin(),
             playerCharacterScalarReferenceState.begin()
                 + static_cast<std::ptrdiff_t>(actualPlayerCharacterScalarReferenceStateBytes));
+        const std::vector<std::uint8_t> playerCharacterListsState = makePlayerCharacterListsState();
+        const std::size_t actualPlayerCharacterListsStateBytes
+            = actualPlayerCharacterScalarReferenceStateBytes == ESM4::sFONVPlayerCharacterScalarReferenceStateBytes
+            ? playerCharacterListsStateBytes
+            : 0;
+        if (actualPlayerCharacterListsStateBytes > playerCharacterListsState.size())
+            throw std::logic_error("synthetic PlayerCharacter lists-state byte count is too large");
+        changedPayload1.insert(changedPayload1.end(), playerCharacterListsState.begin(),
+            playerCharacterListsState.begin()
+                + static_cast<std::ptrdiff_t>(actualPlayerCharacterListsStateBytes));
         constexpr std::array<std::uint8_t, 3> changedPayload2 = { 0x20, 0x21, 0x22 };
         constexpr std::array<std::uint8_t, 4> changedPayload3 = { 0x30, 0x31, 0x32, 0x33 };
         const ChangedFormOffsets changed1 = appendChangedForm(
@@ -967,6 +1047,8 @@ namespace
             = result.mPlayerChangedCharacterStateBegin + actualPlayerChangedCharacterStateBytes;
         result.mPlayerCharacterScalarReferenceStateBegin
             = result.mPlayerCharacterAnimationStateBegin + actualPlayerCharacterAnimationStateBytes;
+        result.mPlayerCharacterListsStateBegin
+            = result.mPlayerCharacterScalarReferenceStateBegin + actualPlayerCharacterScalarReferenceStateBytes;
         result.mBytes.insert(result.mBytes.end(), globalData1.begin(), globalData1.end());
         result.mBytes.insert(result.mBytes.end(), changedForms.begin(), changedForms.end());
         result.mBytes.insert(result.mBytes.end(), globalData2.begin(), globalData2.end());
@@ -1057,7 +1139,8 @@ namespace
                 + static_cast<std::uint32_t>(sSyntheticPlayerMobileObjectProcessStateBytes)
                 + static_cast<std::uint32_t>(ESM4::sFONVPlayerChangedCharacterStateBytes)
                 + static_cast<std::uint32_t>(sSyntheticPlayerCharacterAnimationStateBytes)
-                + static_cast<std::uint32_t>(ESM4::sFONVPlayerCharacterScalarReferenceStateBytes));
+                + static_cast<std::uint32_t>(ESM4::sFONVPlayerCharacterScalarReferenceStateBytes)
+                + static_cast<std::uint32_t>(ESM4::sFONVPlayerCharacterListsStateBytes));
         EXPECT_EQ(save.mChangedForms.mEntries[1].mChangeType, 2u);
         EXPECT_EQ(save.mChangedForms.mEntries[1].mEncodedReferenceId.mValue, 0x401234u);
         EXPECT_EQ(save.mChangedForms.mEntries[1].mReferenceKind, ESM4::FONVSaveReferenceKind::DefaultForm);
@@ -1113,7 +1196,8 @@ namespace
                     + sSyntheticPlayerMobileObjectProcessStateBytes
                     + ESM4::sFONVPlayerChangedCharacterStateBytes
                     + sSyntheticPlayerCharacterAnimationStateBytes
-                    + ESM4::sFONVPlayerCharacterScalarReferenceStateBytes }));
+                    + ESM4::sFONVPlayerCharacterScalarReferenceStateBytes
+                    + ESM4::sFONVPlayerCharacterListsStateBytes }));
         ASSERT_TRUE(save.mPlayerActorValueData.has_value());
         const auto& actorValues = *save.mPlayerActorValueData;
         const std::size_t actorValuesBegin = source.mChangedFormPayloads[0] + 28;
@@ -1152,7 +1236,8 @@ namespace
                 sSyntheticPlayerProcessInventoryDataBytes + sSyntheticPlayerMobileObjectProcessStateBytes
                     + ESM4::sFONVPlayerChangedCharacterStateBytes
                     + sSyntheticPlayerCharacterAnimationStateBytes
-                    + ESM4::sFONVPlayerCharacterScalarReferenceStateBytes }));
+                    + ESM4::sFONVPlayerCharacterScalarReferenceStateBytes
+                    + ESM4::sFONVPlayerCharacterListsStateBytes }));
         ASSERT_TRUE(save.mPlayerProcessInventoryData.has_value());
         const auto& processInventory = *save.mPlayerProcessInventoryData;
         EXPECT_EQ(processInventory.mRange,
@@ -1202,7 +1287,8 @@ namespace
                 sSyntheticPlayerMobileObjectProcessStateBytes
                     + ESM4::sFONVPlayerChangedCharacterStateBytes
                     + sSyntheticPlayerCharacterAnimationStateBytes
-                    + ESM4::sFONVPlayerCharacterScalarReferenceStateBytes }));
+                    + ESM4::sFONVPlayerCharacterScalarReferenceStateBytes
+                    + ESM4::sFONVPlayerCharacterListsStateBytes }));
         ASSERT_TRUE(save.mPlayerMobileObjectProcessState.has_value());
         const auto& processState = *save.mPlayerMobileObjectProcessState;
         EXPECT_EQ(processState.mRange,
@@ -1252,7 +1338,8 @@ namespace
                     + sSyntheticPlayerMobileObjectProcessStateBytes,
                 ESM4::sFONVPlayerChangedCharacterStateBytes
                     + sSyntheticPlayerCharacterAnimationStateBytes
-                    + ESM4::sFONVPlayerCharacterScalarReferenceStateBytes }));
+                    + ESM4::sFONVPlayerCharacterScalarReferenceStateBytes
+                    + ESM4::sFONVPlayerCharacterListsStateBytes }));
         ASSERT_TRUE(save.mPlayerChangedCharacterState.has_value());
         const auto& characterState = *save.mPlayerChangedCharacterState;
         EXPECT_EQ(characterState.mRange,
@@ -1294,7 +1381,8 @@ namespace
             (ESM4::FONVSaveRange{ source.mPlayerChangedCharacterStateBegin
                     + ESM4::sFONVPlayerChangedCharacterStateBytes,
                 sSyntheticPlayerCharacterAnimationStateBytes
-                    + ESM4::sFONVPlayerCharacterScalarReferenceStateBytes }));
+                    + ESM4::sFONVPlayerCharacterScalarReferenceStateBytes
+                    + ESM4::sFONVPlayerCharacterListsStateBytes }));
         ASSERT_TRUE(save.mPlayerCharacterAnimationState.has_value());
         const auto& animationState = *save.mPlayerCharacterAnimationState;
         EXPECT_EQ(animationState.mRange,
@@ -1319,7 +1407,8 @@ namespace
         EXPECT_EQ(animationState.mUnparsedRemainder.mRange,
             (ESM4::FONVSaveRange{ source.mPlayerCharacterAnimationStateBegin
                     + sSyntheticPlayerCharacterAnimationStateBytes,
-                ESM4::sFONVPlayerCharacterScalarReferenceStateBytes }));
+                ESM4::sFONVPlayerCharacterScalarReferenceStateBytes
+                    + ESM4::sFONVPlayerCharacterListsStateBytes }));
         ASSERT_TRUE(save.mPlayerCharacterScalarReferenceState.has_value());
         const auto& scalarState = *save.mPlayerCharacterScalarReferenceState;
         EXPECT_EQ(scalarState.mRange,
@@ -1362,6 +1451,71 @@ namespace
         EXPECT_EQ(scalarState.mUnparsedRemainder.mRange,
             (ESM4::FONVSaveRange{ source.mPlayerCharacterScalarReferenceStateBegin
                     + ESM4::sFONVPlayerCharacterScalarReferenceStateBytes,
+                ESM4::sFONVPlayerCharacterListsStateBytes }));
+        ASSERT_TRUE(save.mPlayerCharacterListsState.has_value());
+        const auto& listsState = *save.mPlayerCharacterListsState;
+        EXPECT_EQ(listsState.mRange,
+            (ESM4::FONVSaveRange{ source.mPlayerCharacterListsStateBegin,
+                ESM4::sFONVPlayerCharacterListsStateBytes }));
+        EXPECT_EQ(listsState.mRaw,
+            std::vector<std::uint8_t>(
+                source.mBytes.begin() + static_cast<std::ptrdiff_t>(source.mPlayerCharacterListsStateBegin),
+                source.mBytes.begin() + static_cast<std::ptrdiff_t>(source.mPlayerCharacterListsStateBegin
+                    + ESM4::sFONVPlayerCharacterListsStateBytes)));
+        EXPECT_EQ(listsState.mList6A8Count.mValue, 2u);
+        ASSERT_EQ(listsState.mTopics.size(), 2u);
+        EXPECT_EQ(listsState.mTopics[0].mResolvedFormId, 0x00000111u);
+        EXPECT_EQ(listsState.mTopics[1].mResolvedFormId, 0x00000112u);
+        EXPECT_EQ(listsState.mList5E4Count.mValue, 1u);
+        ASSERT_EQ(listsState.mNotes.size(), 1u);
+        EXPECT_EQ(listsState.mNotes[0].mResolvedFormId, 0x00000113u);
+        EXPECT_EQ(listsState.mInventoryEntryCount.mValue, 2u);
+        ASSERT_EQ(listsState.mInventoryEntries.size(), 2u);
+        EXPECT_EQ(listsState.mInventoryEntries[0].mRange,
+            (ESM4::FONVSaveRange{ source.mPlayerCharacterListsStateBegin + 18, 11 }));
+        EXPECT_EQ(listsState.mInventoryEntries[0].mType.mResolvedFormId, 0x00000114u);
+        EXPECT_EQ(listsState.mInventoryEntries[0].mDelta.mValue, 3);
+        EXPECT_EQ(listsState.mInventoryEntries[1].mType.mResolvedFormId, 0xff000115u);
+        EXPECT_EQ(listsState.mInventoryEntries[1].mDelta.mValue, -2);
+        EXPECT_EQ(listsState.mListD48Count.mValue, 1u);
+        ASSERT_EQ(listsState.mListD48.size(), 1u);
+        EXPECT_EQ(listsState.mListD48[0].mForm000.mResolvedFormId, 0x00000116u);
+        EXPECT_EQ(listsState.mListD48[0].mByt004.mValue, 0x44u);
+        EXPECT_EQ(listsState.mListD48[0].mByt005.mValue, 0x45u);
+        EXPECT_EQ(listsState.mPerkCount.mValue, 1u);
+        ASSERT_EQ(listsState.mPerks.size(), 1u);
+        EXPECT_EQ(listsState.mPerks[0].mPerk.mResolvedFormId, 0x00000117u);
+        EXPECT_EQ(listsState.mPerks[0].mByt004.mValue, 2u);
+        EXPECT_EQ(listsState.mList60CCount.mValue, 1u);
+        ASSERT_EQ(listsState.mList60C.size(), 1u);
+        EXPECT_EQ(listsState.mList60C[0].mUnk000.mValue, 0x60cu);
+        EXPECT_FLOAT_EQ(listsState.mList60C[0].mFlt004.mValue, 12.5f);
+        EXPECT_EQ(listsState.mList60C[0].mFlt004.mRange,
+            (ESM4::FONVSaveRange{ source.mPlayerCharacterListsStateBegin + 65, 4 }));
+        EXPECT_EQ(listsState.mList60C[0].mFormId.mResolvedFormId, 0x00000118u);
+        EXPECT_EQ(listsState.mList610Count.mValue, 1u);
+        ASSERT_EQ(listsState.mList610.size(), 1u);
+        EXPECT_EQ(listsState.mList610[0].mUnk000.mValue, 0x610u);
+        EXPECT_EQ(listsState.mList610[0].mUnk004.mValue, 0x611u);
+        EXPECT_EQ(listsState.mList610[0].mWrd008.mValue, 0x612u);
+        ASSERT_EQ(listsState.mCards614.size(), 1u);
+        ASSERT_EQ(listsState.mCards618.size(), 1u);
+        EXPECT_EQ(listsState.mCards614[0].mResolvedFormId, 0x00000119u);
+        EXPECT_EQ(listsState.mCards618[0].mResolvedFormId, 0x0000011au);
+        EXPECT_EQ(listsState.mUnk61C.mValue, 0x61cu);
+        EXPECT_EQ(listsState.mUnk62C.mValue, 0x62cu);
+        EXPECT_EQ(listsState.mStageCount.mValue, 1u);
+        ASSERT_EQ(listsState.mStages.size(), 1u);
+        EXPECT_EQ(listsState.mStages[0].mQuest.mResolvedFormId, 0x0000011bu);
+        EXPECT_EQ(listsState.mStages[0].mStage.mValue, 10u);
+        EXPECT_EQ(listsState.mStages[0].mLogEntry.mValue, 1u);
+        EXPECT_EQ(listsState.mObjectiveCount.mValue, 1u);
+        ASSERT_EQ(listsState.mObjectives.size(), 1u);
+        EXPECT_EQ(listsState.mObjectives[0].mQuest.mResolvedFormId, 0x0000011cu);
+        EXPECT_EQ(listsState.mObjectives[0].mObjective.mValue, 10u);
+        EXPECT_EQ(listsState.mUnparsedRemainder.mRange,
+            (ESM4::FONVSaveRange{ source.mPlayerCharacterListsStateBegin
+                    + ESM4::sFONVPlayerCharacterListsStateBytes,
                 0 }));
         EXPECT_EQ(save.findChangedForm(0x00001234u), &save.mChangedForms.mEntries[1]);
         EXPECT_EQ(save.findChangedForm(0x00001234u, 3), nullptr);
@@ -1592,6 +1746,7 @@ namespace
         EXPECT_FALSE(changedCell.mPlayerChangedCharacterState.has_value());
         EXPECT_FALSE(changedCell.mPlayerCharacterAnimationState.has_value());
         EXPECT_FALSE(changedCell.mPlayerCharacterScalarReferenceState.has_value());
+        EXPECT_FALSE(changedCell.mPlayerCharacterListsState.has_value());
         EXPECT_EQ(changedCell.mUnparsedSemanticPayloadRanges.size(), 5u);
         EXPECT_EQ(changedCell.mUnparsedSemanticPayloadBytes,
             43u + static_cast<std::uint64_t>(ESM4::sFONVPlayerActorValueDataBytes)
@@ -1599,7 +1754,8 @@ namespace
                 + static_cast<std::uint64_t>(sSyntheticPlayerMobileObjectProcessStateBytes)
                 + static_cast<std::uint64_t>(ESM4::sFONVPlayerChangedCharacterStateBytes)
                 + static_cast<std::uint64_t>(sSyntheticPlayerCharacterAnimationStateBytes)
-                + static_cast<std::uint64_t>(ESM4::sFONVPlayerCharacterScalarReferenceStateBytes));
+                + static_cast<std::uint64_t>(ESM4::sFONVPlayerCharacterScalarReferenceStateBytes)
+                + static_cast<std::uint64_t>(ESM4::sFONVPlayerCharacterListsStateBytes));
     }
 
     TEST(FONVSaveGame, RejectsCorruptCanonicalPlayerActorValueData)
@@ -1866,6 +2022,66 @@ namespace
             sSyntheticPlayerMobileObjectProcessStateBytes, ESM4::sFONVPlayerChangedCharacterStateBytes,
             sSyntheticPlayerCharacterAnimationStateBytes,
             ESM4::sFONVPlayerCharacterScalarReferenceStateBytes - 1);
+        EXPECT_THROW(ESM4::parseFONVSaveGamePrefix(source.mBytes), ESM4::FONVSaveError);
+    }
+
+    TEST(FONVSaveGame, RejectsCorruptCanonicalPlayerCharacterListsState)
+    {
+        constexpr std::array masters = { std::string_view("FalloutNV.esm") };
+        SaveBytes source = makeSave(true, 2, 1, masters);
+        source.mBytes[source.mPlayerCharacterListsStateBegin + 1] = 0;
+        EXPECT_THROW(ESM4::parseFONVSaveGamePrefix(source.mBytes), ESM4::FONVSaveError);
+
+        source = makeSave(true, 2, 1, masters);
+        source.mBytes[source.mPlayerCharacterListsStateBegin] = 3;
+        EXPECT_THROW(ESM4::parseFONVSaveGamePrefix(source.mBytes), ESM4::FONVSaveError);
+
+        source = makeSave(true, 2, 1, masters);
+        source.mBytes[source.mPlayerCharacterListsStateBegin] = 0xfc;
+        EXPECT_THROW(ESM4::parseFONVSaveGamePrefix(source.mBytes), ESM4::FONVSaveError);
+
+        source = makeSave(true, 2, 1, masters);
+        source.mBytes[source.mPlayerCharacterListsStateBegin + 2] = 0xc0;
+        source.mBytes[source.mPlayerCharacterListsStateBegin + 3] = 0;
+        source.mBytes[source.mPlayerCharacterListsStateBegin + 4] = 1;
+        EXPECT_THROW(ESM4::parseFONVSaveGamePrefix(source.mBytes), ESM4::FONVSaveError);
+
+        source = makeSave(true, 2, 1, masters);
+        source.mBytes[source.mPlayerCharacterListsStateBegin + 2] = 0;
+        source.mBytes[source.mPlayerCharacterListsStateBegin + 3] = 0;
+        source.mBytes[source.mPlayerCharacterListsStateBegin + 4] = 3;
+        EXPECT_THROW(ESM4::parseFONVSaveGamePrefix(source.mBytes), ESM4::FONVSaveError);
+
+        source = makeSave(true, 2, 1, masters);
+        source.mBytes[source.mPlayerCharacterListsStateBegin + 5] = 0;
+        EXPECT_THROW(ESM4::parseFONVSaveGamePrefix(source.mBytes), ESM4::FONVSaveError);
+
+        source = makeSave(true, 2, 1, masters);
+        source.mBytes[source.mPlayerCharacterListsStateBegin + 27] = 3;
+        EXPECT_THROW(ESM4::parseFONVSaveGamePrefix(source.mBytes), ESM4::FONVSaveError);
+
+        source = makeSave(true, 2, 1, masters);
+        overwriteU32(source.mBytes, source.mPlayerCharacterListsStateBegin + 65, 0x7f800000u);
+        EXPECT_THROW(ESM4::parseFONVSaveGamePrefix(source.mBytes), ESM4::FONVSaveError);
+
+        source = makeSave(true, 2, 1, masters);
+        source.mBytes[source.mPlayerCharacterListsStateBegin + 88] = 0;
+        EXPECT_THROW(ESM4::parseFONVSaveGamePrefix(source.mBytes), ESM4::FONVSaveError);
+
+        source = makeSave(true, 2, 1, masters);
+        source.mBytes[source.mPlayerCharacterListsStateBegin + 141] = 0;
+        EXPECT_THROW(ESM4::parseFONVSaveGamePrefix(source.mBytes), ESM4::FONVSaveError);
+
+        source = makeSave(true, 2, 1, masters);
+        source.mBytes[source.mChangedFormRawTypes[0] + 1] = 26;
+        EXPECT_THROW(ESM4::parseFONVSaveGamePrefix(source.mBytes), ESM4::FONVSaveError);
+
+        source = makeSave(true, 2, 1, masters, true, "Courier", false,
+            ESM4::sFONVPlayerActorValueDataBytes, sSyntheticPlayerProcessInventoryDataBytes,
+            sSyntheticPlayerMobileObjectProcessStateBytes, ESM4::sFONVPlayerChangedCharacterStateBytes,
+            sSyntheticPlayerCharacterAnimationStateBytes,
+            ESM4::sFONVPlayerCharacterScalarReferenceStateBytes,
+            ESM4::sFONVPlayerCharacterListsStateBytes - 1);
         EXPECT_THROW(ESM4::parseFONVSaveGamePrefix(source.mBytes), ESM4::FONVSaveError);
     }
 
@@ -2583,6 +2799,88 @@ namespace
         EXPECT_EQ(animationState.mUnparsedRemainder.mRange.mSize - scalarState.mRange.mSize,
             scalarState.mUnparsedRemainder.mRange.mSize);
 
+        ASSERT_TRUE(save.mPlayerCharacterListsState.has_value());
+        const auto& listsState = *save.mPlayerCharacterListsState;
+        EXPECT_EQ(listsState.mRange, (ESM4::FONVSaveRange{ 502132, 147 }));
+        EXPECT_EQ(listsState.mRaw.size(), 147u);
+        EXPECT_EQ(sha256Hex(listsState.mRaw),
+            "cec00de438e97af6429ad69dc1b514b67a287e04a71146cbe114e24ac322da3c");
+        EXPECT_EQ(listsState.mList6A8Count.mValue, 0u);
+        EXPECT_EQ(listsState.mList6A8Count.mRange, (ESM4::FONVSaveRange{ 502132, 1 }));
+        EXPECT_TRUE(listsState.mTopics.empty());
+        EXPECT_EQ(listsState.mList5E4Count.mValue, 2u);
+        EXPECT_EQ(listsState.mList5E4Count.mRange, (ESM4::FONVSaveRange{ 502134, 1 }));
+        ASSERT_EQ(listsState.mNotes.size(), 2u);
+        constexpr std::array<std::uint32_t, 2> noteTokens = { 0x000295u, 0x000297u };
+        constexpr std::array<std::uint32_t, 2> noteFormIds = { 0x0001a7eau, 0x000744b7u };
+        for (std::size_t i = 0; i < listsState.mNotes.size(); ++i)
+        {
+            EXPECT_EQ(listsState.mNotes[i].mEncoded.mValue, noteTokens[i]);
+            EXPECT_EQ(listsState.mNotes[i].mEncoded.mRange, (ESM4::FONVSaveRange{ 502136 + i * 4, 3 }));
+            EXPECT_EQ(listsState.mNotes[i].mResolvedFormId, noteFormIds[i]);
+        }
+        EXPECT_EQ(listsState.mInventoryEntryCount.mValue, 0u);
+        EXPECT_EQ(listsState.mInventoryEntryCount.mRange, (ESM4::FONVSaveRange{ 502144, 1 }));
+        EXPECT_TRUE(listsState.mInventoryEntries.empty());
+        EXPECT_EQ(listsState.mListD48Count.mValue, 7u);
+        EXPECT_EQ(listsState.mListD48Count.mRange, (ESM4::FONVSaveRange{ 502146, 1 }));
+        ASSERT_EQ(listsState.mListD48.size(), 7u);
+        constexpr std::array<std::uint32_t, 7> listD48Tokens
+            = { 0x0029f9u, 0x00200bu, 0x004af1u, 0x001798u, 0x001ffcu, 0x002a48u, 0x0025f5u };
+        constexpr std::array<std::uint32_t, 7> listD48FormIds
+            = { 0x00104f03u, 0x00107077u, 0x0014c44au, 0x0015ef63u, 0x0010706eu, 0x0010769du,
+                  0x001073e8u };
+        for (std::size_t i = 0; i < listsState.mListD48.size(); ++i)
+        {
+            const auto& entry = listsState.mListD48[i];
+            EXPECT_EQ(entry.mRange, (ESM4::FONVSaveRange{ 502148 + i * 8, 8 }));
+            EXPECT_EQ(entry.mForm000.mEncoded.mValue, listD48Tokens[i]);
+            EXPECT_EQ(entry.mForm000.mResolvedFormId, listD48FormIds[i]);
+            EXPECT_EQ(entry.mByt004.mValue, 0u);
+            EXPECT_EQ(entry.mByt005.mValue, i == 6 ? 1u : 0u);
+        }
+        EXPECT_EQ(listsState.mPerkCount.mValue, 0u);
+        EXPECT_TRUE(listsState.mPerks.empty());
+        EXPECT_EQ(listsState.mList60CCount.mValue, 0u);
+        EXPECT_TRUE(listsState.mList60C.empty());
+        EXPECT_EQ(listsState.mList610Count.mValue, 0u);
+        EXPECT_TRUE(listsState.mList610.empty());
+        EXPECT_EQ(listsState.mCards614Count.mValue, 0u);
+        EXPECT_TRUE(listsState.mCards614.empty());
+        EXPECT_EQ(listsState.mCards618Count.mValue, 0u);
+        EXPECT_TRUE(listsState.mCards618.empty());
+        EXPECT_EQ(listsState.mUnk61C.mValue, 0u);
+        EXPECT_EQ(listsState.mUnk61C.mRange, (ESM4::FONVSaveRange{ 502214, 4 }));
+        EXPECT_EQ(listsState.mUnk620.mValue, 0u);
+        EXPECT_EQ(listsState.mUnk624.mValue, 0u);
+        EXPECT_EQ(listsState.mUnk628.mValue, 0u);
+        EXPECT_EQ(listsState.mUnk62C.mValue, 0u);
+        EXPECT_EQ(listsState.mUnk62C.mRange, (ESM4::FONVSaveRange{ 502234, 4 }));
+        EXPECT_EQ(listsState.mStageCount.mValue, 0u);
+        EXPECT_EQ(listsState.mStageCount.mRange, (ESM4::FONVSaveRange{ 502239, 1 }));
+        EXPECT_TRUE(listsState.mStages.empty());
+        EXPECT_EQ(listsState.mObjectiveCount.mValue, 4u);
+        EXPECT_EQ(listsState.mObjectiveCount.mRange, (ESM4::FONVSaveRange{ 502241, 1 }));
+        ASSERT_EQ(listsState.mObjectives.size(), 4u);
+        constexpr std::array<std::uint32_t, 4> objectiveQuestTokens
+            = { 0x0031f1u, 0x002dd4u, 0x002c0fu, 0x00403cu };
+        constexpr std::array<std::uint32_t, 4> objectiveQuestFormIds
+            = { 0x01005229u, 0x02008891u, 0x04003603u, 0x03002fcau };
+        for (std::size_t i = 0; i < listsState.mObjectives.size(); ++i)
+        {
+            const auto& entry = listsState.mObjectives[i];
+            EXPECT_EQ(entry.mRange, (ESM4::FONVSaveRange{ 502243 + i * 9, 9 }));
+            EXPECT_EQ(entry.mQuest.mEncoded.mValue, objectiveQuestTokens[i]);
+            EXPECT_EQ(entry.mQuest.mResolvedFormId, objectiveQuestFormIds[i]);
+            EXPECT_EQ(entry.mObjective.mValue, 10u);
+        }
+        EXPECT_EQ(listsState.mUnparsedRemainder.mRange, (ESM4::FONVSaveRange{ 502279, 305 }));
+        EXPECT_EQ(listsState.mUnparsedRemainder.mRaw.size(), 305u);
+        EXPECT_EQ(sha256Hex(listsState.mUnparsedRemainder.mRaw),
+            "54c70a2c054231d134ae65f1d26c23e8ed57b7385d7baaa6d6ff15a62264b07b");
+        EXPECT_EQ(scalarState.mUnparsedRemainder.mRange.mSize - listsState.mRange.mSize,
+            listsState.mUnparsedRemainder.mRange.mSize);
+
         ASSERT_TRUE(movement.mCellOrWorldspace.mResolvedFormId.has_value());
         const ESM::RefId worldspace = ESM::RefId::formIdRefId(
             ESM::FormId::fromUint32(*movement.mCellOrWorldspace.mResolvedFormId));
@@ -2595,7 +2893,7 @@ namespace
             << "NPC_ FormID 0x7 is a FalloutNV.esm base-record relation, not serialized as a Save330 change form";
 
         EXPECT_EQ(save.mUnparsedSemanticPayloadRanges.size(), 7090u);
-        EXPECT_EQ(save.mUnparsedSemanticPayloadBytes, 2734332u);
+        EXPECT_EQ(save.mUnparsedSemanticPayloadBytes, 2734185u);
         EXPECT_EQ(save.mStructurallyAccountedRange, (ESM4::FONVSaveRange{ 0, 3395328 }));
         EXPECT_EQ(save.mParsedPrefixRange, save.mStructurallyAccountedRange);
         EXPECT_EQ(save.mUnparsedBodyRange, (ESM4::FONVSaveRange{ 3395328, 0 }));
@@ -2678,6 +2976,64 @@ namespace
 
         corrupted = fixtureBytes;
         corrupted[497486] = 26;
+        EXPECT_THROW(ESM4::parseFONVSaveGamePrefix(corrupted), ESM4::FONVSaveError);
+    }
+
+    TEST(FONVSaveGame, RejectsCorruptExternalSave330PlayerCharacterListsState)
+    {
+        const char* fixture = std::getenv("OPENMW_FNV_SAVE330_FIXTURE");
+        if (fixture == nullptr || *fixture == '\0')
+            GTEST_SKIP() << "Set OPENMW_FNV_SAVE330_FIXTURE to the read-only retail Save 330 path";
+
+        const std::vector<std::uint8_t> fixtureBytes
+            = readFixtureBytes(std::filesystem::u8path(fixture));
+        ASSERT_EQ(sha256Hex(fixtureBytes), "07dbdd2d7c4abe3160628e5463a9603a40f4271042c1da1b89f1c4a4f7dbd81f")
+            << "OPENMW_FNV_SAVE330_FIXTURE is not the pinned Save330 evidence file";
+
+        std::vector<std::uint8_t> corrupted = fixtureBytes;
+        corrupted[502133] = 0;
+        EXPECT_THROW(ESM4::parseFONVSaveGamePrefix(corrupted), ESM4::FONVSaveError);
+
+        corrupted = fixtureBytes;
+        corrupted[502134] = 3;
+        EXPECT_THROW(ESM4::parseFONVSaveGamePrefix(corrupted), ESM4::FONVSaveError);
+
+        corrupted = fixtureBytes;
+        corrupted[502136] = 0xc0;
+        corrupted[502137] = 0;
+        corrupted[502138] = 1;
+        EXPECT_THROW(ESM4::parseFONVSaveGamePrefix(corrupted), ESM4::FONVSaveError);
+
+        corrupted = fixtureBytes;
+        corrupted[502136] = 0x3f;
+        corrupted[502137] = 0xff;
+        corrupted[502138] = 0xff;
+        EXPECT_THROW(ESM4::parseFONVSaveGamePrefix(corrupted), ESM4::FONVSaveError);
+
+        corrupted = fixtureBytes;
+        corrupted[502139] = 0;
+        EXPECT_THROW(ESM4::parseFONVSaveGamePrefix(corrupted), ESM4::FONVSaveError);
+
+        corrupted = fixtureBytes;
+        corrupted[502146] = 0xfc;
+        EXPECT_THROW(ESM4::parseFONVSaveGamePrefix(corrupted), ESM4::FONVSaveError);
+
+        corrupted = fixtureBytes;
+        corrupted[502153] = 0;
+        EXPECT_THROW(ESM4::parseFONVSaveGamePrefix(corrupted), ESM4::FONVSaveError);
+
+        corrupted = fixtureBytes;
+        corrupted[502242] = 0;
+        EXPECT_THROW(ESM4::parseFONVSaveGamePrefix(corrupted), ESM4::FONVSaveError);
+
+        corrupted = fixtureBytes;
+        corrupted[502243] = 0xc0;
+        corrupted[502244] = 0;
+        corrupted[502245] = 1;
+        EXPECT_THROW(ESM4::parseFONVSaveGamePrefix(corrupted), ESM4::FONVSaveError);
+
+        corrupted = fixtureBytes;
+        corrupted[502246] = 0;
         EXPECT_THROW(ESM4::parseFONVSaveGamePrefix(corrupted), ESM4::FONVSaveError);
     }
 }
