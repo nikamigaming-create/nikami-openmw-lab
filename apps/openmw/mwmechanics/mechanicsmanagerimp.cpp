@@ -19,6 +19,7 @@
 #include <components/sceneutil/positionattitudetransform.hpp>
 
 #include "../mwworld/class.hpp"
+#include "../mwworld/cellstore.hpp"
 #include "../mwworld/esmstore.hpp"
 #include "../mwworld/fnvplayerruntimestate.hpp"
 #include "../mwworld/globals.hpp"
@@ -47,6 +48,7 @@
 #include "combat.hpp"
 #include "falloutcombat.hpp"
 #include "npcstats.hpp"
+#include "ownership.hpp"
 #include "spellutil.hpp"
 
 namespace
@@ -99,6 +101,13 @@ namespace
         return {};
     }
 
+    MWMechanics::ObjectOwnership getObjectOwnership(const MWWorld::Ptr& ptr)
+    {
+        const MWWorld::Cell* cell = ptr.isInCell() ? ptr.getCell()->getCell() : nullptr;
+        return MWMechanics::resolveObjectOwnership(
+            ptr.getCellRef(), cell, *MWBase::Environment::get().getESMStore());
+    }
+
     float getFightDispositionBias(float disposition)
     {
         static const float fFightDispMult = MWBase::Environment::get()
@@ -144,16 +153,23 @@ namespace
     {
         const MWWorld::CellRef& cellref = target.getCellRef();
 
-        const ESM::RefId& owner = cellref.getOwner();
+        const MWMechanics::ObjectOwnership ownership = getObjectOwnership(target);
+
+        const ESM::RefId& owner = ownership.mOwner;
         bool isOwned = !owner.empty() && owner != ESM::RefId::stringRefId("Player");
 
-        const ESM::RefId& faction = cellref.getFaction();
+        const ESM::RefId& faction = ownership.mFaction;
         bool isFactionOwned = false;
-        if (!faction.empty() && ptr.getClass().isNpc())
+        if (!faction.empty() && isFalloutNewVegasActor(ptr))
+        {
+            const std::vector<ESM4::ActorFaction> factions = getFalloutActorFactions(ptr);
+            isFactionOwned = !MWMechanics::isFactionOwnershipAllowed(ownership, factions);
+        }
+        else if (!faction.empty() && ptr.getClass().isNpc())
         {
             const std::map<ESM::RefId, int>& factions = ptr.getClass().getNpcStats(ptr).getFactionRanks();
             auto found = factions.find(faction);
-            if (found == factions.end() || found->second < cellref.getFactionRank())
+            if (found == factions.end() || found->second < ownership.mFactionRank)
                 isFactionOwned = true;
         }
 
@@ -164,8 +180,8 @@ namespace
             isFactionOwned = false;
         }
 
-        if (!cellref.getOwner().empty())
-            victim = MWBase::Environment::get().getWorld()->searchPtr(cellref.getOwner(), true, false);
+        if (!owner.empty())
+            victim = MWBase::Environment::get().getWorld()->searchPtr(owner, true, false);
 
         return isOwned || isFactionOwned;
     }
@@ -1006,7 +1022,8 @@ namespace MWMechanics
         if (isAllowedToUse(ptr, bed, victim))
             return false;
 
-        if (commitCrime(ptr, victim, OT_SleepingInOwnedBed, bed.getCellRef().getFaction()))
+        const ObjectOwnership ownership = getObjectOwnership(bed);
+        if (commitCrime(ptr, victim, OT_SleepingInOwnedBed, ownership.mFaction))
         {
             MWBase::Environment::get().getWindowManager()->messageBox("#{sNotifyMessage64}");
             return true;
@@ -1024,7 +1041,7 @@ namespace MWMechanics
             // unlocked. Likewise, it's illegal to unlock something that has a trap but isn't otherwise locked.
             const auto& cellref = item.getCellRef();
             if (cellref.getLockLevel() || cellref.isLocked() || !cellref.getTrap().empty())
-                commitCrime(ptr, victim, OT_Trespassing, item.getCellRef().getFaction());
+                commitCrime(ptr, victim, OT_Trespassing, getObjectOwnership(item).mFaction);
         }
     }
 
@@ -1149,10 +1166,12 @@ namespace MWMechanics
         MWWorld::Ptr victim;
 
         bool isAllowed = true;
+        const MWWorld::Ptr* ownerObject = &item;
         const MWWorld::CellRef* ownerCellRef = &item.getCellRef();
         if (!container.isEmpty())
         {
             // Inherit the owner of the container
+            ownerObject = &container;
             ownerCellRef = &container.getCellRef();
             isAllowed = isAllowedToUse(ptr, container, victim);
         }
@@ -1166,6 +1185,7 @@ namespace MWMechanics
 
         Owner owner;
         owner.second = false;
+        ObjectOwnership ownership;
         if (!container.isEmpty() && container.getClass().isActor())
         {
             // "container" is an actor inventory, so just take actor's ID
@@ -1173,10 +1193,11 @@ namespace MWMechanics
         }
         else
         {
-            owner.first = ownerCellRef->getOwner();
+            ownership = getObjectOwnership(*ownerObject);
+            owner.first = ownership.mOwner;
             if (owner.first.empty())
             {
-                owner.first = ownerCellRef->getFaction();
+                owner.first = ownership.mFaction;
                 owner.second = true;
             }
         }
@@ -1194,7 +1215,7 @@ namespace MWMechanics
             int value = count;
             if (!isGold)
                 value *= item.getClass().getValue(item);
-            commitCrime(ptr, victim, OT_Theft, ownerCellRef->getFaction(), value);
+            commitCrime(ptr, victim, OT_Theft, ownership.mFaction, value);
         }
     }
 
