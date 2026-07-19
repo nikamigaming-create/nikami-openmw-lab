@@ -21,6 +21,7 @@
 #include <components/esm4/loadmisc.hpp>
 #include <components/esm4/loadrcct.hpp>
 #include <components/esm4/loadrcpe.hpp>
+#include <components/esm4/loadscpt.hpp>
 #include <components/esm4/loadweap.hpp>
 
 #include "apps/openmw/mwclass/classes.hpp"
@@ -278,6 +279,53 @@ TEST(FnvCraftingRuntimeTest, PublicStationMappingAcceptsOnlyTheTwoExactBaseScrip
         ESM::FormId::fromUint32(sReloadingBenchCategory));
     EXPECT_FALSE(MWWorld::getFnvCraftingStationCategory(makeStation(sWorkbench, sWorkbenchScript + 1)));
     EXPECT_FALSE(MWWorld::getFnvCraftingStationCategory(makeStation(sWorkbench + 1, sWorkbenchScript)));
+}
+
+TEST(FnvCraftingRuntimeTest, MapsCanonicalAuthoredRecipeMenuScriptWithoutStationFormIdKnowledge)
+{
+    constexpr std::uint32_t stationId = 0x02000001;
+    constexpr std::uint32_t scriptId = 0x02000002;
+    constexpr std::uint32_t categoryId = 0x02000003;
+
+    MWWorld::ESMStore store;
+    ESM4::Activator station = makeStation(stationId, scriptId);
+    ESM4::Script script;
+    script.mId = ESM::FormId::fromUint32(scriptId);
+    script.mEditorId = "CraftingCampfireRecipesScript";
+    script.mScript.scriptSource = "scn CraftingCampfireRecipesScript\n"
+                                  "Ref User\n"
+                                  "Begin OnActivate\n"
+                                  "Set User to GetActionRef\n"
+                                  "If GetActionRef != Player\n"
+                                  "User.Activate\n"
+                                  "Elseif GetActionRef == Player\n"
+                                  "player.showrecipemenu CampfireRecipes\n"
+                                  "Endif\n"
+                                  "End\n";
+    ESM4::RecipeCategory category = makeCategory(categoryId);
+    category.mEditorId = "CampfireRecipes";
+    store.overrideRecord(station);
+    store.overrideRecord(script);
+    store.overrideRecord(category);
+
+    EXPECT_EQ(MWWorld::getFnvCraftingStationCategory(store, station), ESM::FormId::fromUint32(categoryId));
+
+    script.mScript.scriptSource = "scn VCG03CraftingCampfireRecipesScript\n"
+                                  "Ref User\n"
+                                  "Begin OnActivate\n"
+                                  "if GetQuestRunning VCG03\n"
+                                  "else\n"
+                                  "Set User to GetActionRef\n"
+                                  "If GetActionRef != Player\n"
+                                  "User.Activate\n"
+                                  "Elseif GetActionRef == Player\n"
+                                  "player.showrecipemenu CampfireRecipes\n"
+                                  "Endif\n"
+                                  "endif\n"
+                                  "End\n";
+    store.overrideRecord(script);
+    EXPECT_FALSE(MWWorld::getFnvCraftingStationCategory(store, station))
+        << "quest-gated recipe-menu scripts must remain fail-closed";
 }
 
 TEST(FnvCraftingRuntimeTest, CatalogRetainsEveryLiveMatchingRecipeWithExplicitStaticBlockers)
