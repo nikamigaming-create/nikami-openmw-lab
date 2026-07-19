@@ -22,6 +22,7 @@ namespace ESM4
     static_assert(sFONVPlayerActorValueDataBytes == 1160);
     inline constexpr std::size_t sFONVPlayerChangedCharacterStateBytes = 510;
     inline constexpr std::size_t sFONVPlayerCharacterScalarReferenceStateBytes = 287;
+    inline constexpr std::size_t sFONVPlayerCharacterListsStateBytes = 147;
     inline constexpr std::uint8_t sFONVExtraWornType = 0x16;
     inline constexpr std::uint8_t sFONVExtraCountType = 0x24;
     inline constexpr std::uint8_t sFONVExtraHealthType = 0x25;
@@ -679,6 +680,95 @@ namespace ESM4
         FONVSaveRawField mUnparsedRemainder;
     };
 
+    struct FONVSavePlayerCharacterListD48Entry
+    {
+        FONVSaveResolvedReferenceId mForm000;
+        FONVSaveField<std::uint8_t> mByt004;
+        FONVSaveField<std::uint8_t> mByt005;
+        FONVSaveRange mRange;
+        std::vector<std::uint8_t> mRaw;
+    };
+
+    struct FONVSavePlayerCharacterPerkEntry
+    {
+        FONVSaveResolvedReferenceId mPerk;
+        FONVSaveField<std::uint8_t> mByt004;
+        FONVSaveRange mRange;
+        std::vector<std::uint8_t> mRaw;
+    };
+
+    struct FONVSavePlayerCharacterList60CEntry
+    {
+        FONVSaveField<std::uint32_t> mUnk000;
+        FONVSaveField<float> mFlt004;
+        FONVSaveResolvedReferenceId mFormId;
+        FONVSaveRange mRange;
+        std::vector<std::uint8_t> mRaw;
+    };
+
+    struct FONVSavePlayerCharacterList610Entry
+    {
+        FONVSaveField<std::uint32_t> mUnk000;
+        FONVSaveField<std::uint32_t> mUnk004;
+        FONVSaveField<std::uint16_t> mWrd008;
+        FONVSaveRange mRange;
+        std::vector<std::uint8_t> mRaw;
+    };
+
+    struct FONVSavePlayerCharacterStageEntry
+    {
+        FONVSaveResolvedReferenceId mQuest;
+        FONVSaveField<std::uint8_t> mStage;
+        FONVSaveField<std::uint8_t> mLogEntry;
+        FONVSaveRange mRange;
+        std::vector<std::uint8_t> mRaw;
+    };
+
+    struct FONVSavePlayerCharacterObjectiveEntry
+    {
+        FONVSaveResolvedReferenceId mQuest;
+        FONVSaveField<std::uint32_t> mObjective;
+        FONVSaveRange mRange;
+        std::vector<std::uint8_t> mRaw;
+    };
+
+    // Exact Save330 PlayerCharacter arrays and quest-progress block following the scalar/reference state. Array
+    // counts retain their canonical U6to30 encoding. Element names and order follow xEdit's form-version-27 layout;
+    // the following NonActorMagicTarget bytes remain explicitly opaque.
+    struct FONVSavePlayerCharacterListsState
+    {
+        FONVSaveField<std::uint32_t> mList6A8Count;
+        std::vector<FONVSaveResolvedReferenceId> mTopics;
+        FONVSaveField<std::uint32_t> mList5E4Count;
+        std::vector<FONVSaveResolvedReferenceId> mNotes;
+        FONVSaveField<std::uint32_t> mInventoryEntryCount;
+        std::vector<FONVSavePlayerInventoryEntry> mInventoryEntries;
+        FONVSaveField<std::uint32_t> mListD48Count;
+        std::vector<FONVSavePlayerCharacterListD48Entry> mListD48;
+        FONVSaveField<std::uint32_t> mPerkCount;
+        std::vector<FONVSavePlayerCharacterPerkEntry> mPerks;
+        FONVSaveField<std::uint32_t> mList60CCount;
+        std::vector<FONVSavePlayerCharacterList60CEntry> mList60C;
+        FONVSaveField<std::uint32_t> mList610Count;
+        std::vector<FONVSavePlayerCharacterList610Entry> mList610;
+        FONVSaveField<std::uint32_t> mCards614Count;
+        std::vector<FONVSaveResolvedReferenceId> mCards614;
+        FONVSaveField<std::uint32_t> mCards618Count;
+        std::vector<FONVSaveResolvedReferenceId> mCards618;
+        FONVSaveField<std::uint32_t> mUnk61C;
+        FONVSaveField<std::uint32_t> mUnk620;
+        FONVSaveField<std::uint32_t> mUnk624;
+        FONVSaveField<std::uint32_t> mUnk628;
+        FONVSaveField<std::uint32_t> mUnk62C;
+        FONVSaveField<std::uint32_t> mStageCount;
+        std::vector<FONVSavePlayerCharacterStageEntry> mStages;
+        FONVSaveField<std::uint32_t> mObjectiveCount;
+        std::vector<FONVSavePlayerCharacterObjectiveEntry> mObjectives;
+        FONVSaveRange mRange;
+        std::vector<std::uint8_t> mRaw;
+        FONVSaveRawField mUnparsedRemainder;
+    };
+
     struct FONVSaveChangedFormEnvelope
     {
         FONVSaveRawField mReferenceId;
@@ -791,6 +881,7 @@ namespace ESM4
         std::optional<FONVSavePlayerChangedCharacterState> mPlayerChangedCharacterState;
         std::optional<FONVSavePlayerCharacterAnimationState> mPlayerCharacterAnimationState;
         std::optional<FONVSavePlayerCharacterScalarReferenceState> mPlayerCharacterScalarReferenceState;
+        std::optional<FONVSavePlayerCharacterListsState> mPlayerCharacterListsState;
         std::optional<FONVSaveSkyState> mSky;
 
         // The parser accounts for every byte structurally. These ranges are gameplay payload bytes whose internal
