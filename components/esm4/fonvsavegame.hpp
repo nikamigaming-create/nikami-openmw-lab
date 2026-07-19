@@ -558,14 +558,25 @@ namespace ESM4
         std::vector<std::uint8_t> mRaw;
     };
 
-    // Exact 510-byte ChangedActor/ActorMover/ChangedCharacter continuation in pinned Save330. The following
-    // player-only ACHR data remains explicit and opaque until its own authoritative slice is decoded.
+    // Exact 510-byte ChangedActor/ActorMover/ChangedCharacter continuation in pinned Save330. Its raw continuation
+    // is handed to the second player animation-buffer parser.
     struct FONVSavePlayerChangedCharacterState
     {
         FONVSavePlayerChangedActorFixedState mActorFixed;
         FONVSavePlayerActorMoverState mActorMover;
         FONVSaveField<std::uint8_t> mByt1C0;
         FONVSaveField<std::uint8_t> mByt1C1;
+        FONVSaveRange mRange;
+        std::vector<std::uint8_t> mRaw;
+        FONVSaveRawField mUnparsedRemainder;
+    };
+
+    // The second player animation buffer is an authoritative U6to30-sized field after ChangedCharacter. xEdit
+    // deliberately leaves the animation body opaque, so its exact bytes and absolute range are preserved without
+    // inventing an internal layout. The following PlayerCharacter bytes remain explicitly unparsed.
+    struct FONVSavePlayerCharacterAnimationState
+    {
+        FONVSavePlayerProcessSubBuffer mAnimation;
         FONVSaveRange mRange;
         std::vector<std::uint8_t> mRaw;
         FONVSaveRawField mUnparsedRemainder;
@@ -681,6 +692,7 @@ namespace ESM4
         std::optional<FONVSavePlayerProcessInventoryData> mPlayerProcessInventoryData;
         std::optional<FONVSavePlayerMobileObjectProcessState> mPlayerMobileObjectProcessState;
         std::optional<FONVSavePlayerChangedCharacterState> mPlayerChangedCharacterState;
+        std::optional<FONVSavePlayerCharacterAnimationState> mPlayerCharacterAnimationState;
         std::optional<FONVSaveSkyState> mSky;
 
         // The parser accounts for every byte structurally. These ranges are gameplay payload bytes whose internal

@@ -1344,6 +1344,26 @@ namespace
         return result;
     }
 
+    ESM4::FONVSavePlayerCharacterAnimationState parsePlayerCharacterAnimationState(
+        std::span<const std::uint8_t> data, const ESM4::FONVSaveChangedFormEnvelope& player,
+        const ESM4::FONVSavePlayerChangedCharacterState& characterState)
+    {
+        if (player.mVersion.mValue != 27)
+            throw ESM4::FONVSaveError(player.mVersion.mRange.mOffset,
+                "unsupported canonical player animation-buffer changed-form version");
+
+        const std::size_t begin = static_cast<std::size_t>(characterState.mUnparsedRemainder.mRange.mOffset);
+        const std::size_t end = static_cast<std::size_t>(characterState.mUnparsedRemainder.mRange.end());
+        Cursor cursor(data, begin, end);
+        ESM4::FONVSavePlayerCharacterAnimationState result;
+        result.mAnimation = parsePlayerProcessSubBuffer(cursor, data, "second player animation sub-buffer");
+        result.mRange = range(begin, cursor.position());
+        result.mRaw = copyRange(data, begin, cursor.position());
+        result.mUnparsedRemainder = readRawField(
+            cursor, data, cursor.end() - cursor.position(), "remaining canonical PlayerCharacter payload");
+        return result;
+    }
+
     void appendUnparsedSemanticPayload(ESM4::FONVSaveGamePrefix& save, const ESM4::FONVSaveRange& payload)
     {
         if (payload.empty())
@@ -1633,6 +1653,8 @@ namespace ESM4
                     data, *playerReference, *result.mPlayerProcessInventoryData, result.mFormIdTable);
                 result.mPlayerChangedCharacterState = parsePlayerChangedCharacterState(
                     data, *playerReference, *result.mPlayerMobileObjectProcessState, result.mFormIdTable);
+                result.mPlayerCharacterAnimationState = parsePlayerCharacterAnimationState(
+                    data, *playerReference, *result.mPlayerChangedCharacterState);
             }
         }
 
@@ -1658,7 +1680,10 @@ namespace ESM4
         }
         for (const FONVSaveChangedFormEnvelope& entry : result.mChangedForms.mEntries)
         {
-            if (result.mPlayerChangedCharacterState.has_value() && &entry == playerReference)
+            if (result.mPlayerCharacterAnimationState.has_value() && &entry == playerReference)
+                appendUnparsedSemanticPayload(
+                    result, result.mPlayerCharacterAnimationState->mUnparsedRemainder.mRange);
+            else if (result.mPlayerChangedCharacterState.has_value() && &entry == playerReference)
                 appendUnparsedSemanticPayload(result, result.mPlayerChangedCharacterState->mUnparsedRemainder.mRange);
             else if (result.mPlayerMobileObjectProcessState.has_value() && &entry == playerReference)
                 appendUnparsedSemanticPayload(result, result.mPlayerMobileObjectProcessState->mUnparsedRemainder.mRange);
