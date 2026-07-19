@@ -226,6 +226,49 @@ namespace
         }
     }
 
+    ESM4::FONVSaveField<std::uint32_t> readPackedCount(
+        Cursor& cursor, std::span<const std::uint8_t> data, std::string_view description)
+    {
+        const std::size_t begin = cursor.position();
+        const std::uint8_t first = cursor.readU8(description);
+        const std::uint8_t tag = first & 3u;
+        std::size_t width = 0;
+        switch (tag)
+        {
+            case 0:
+                width = 1;
+                break;
+            case 1:
+                width = 2;
+                break;
+            case 2:
+                width = 4;
+                break;
+            default:
+                throw ESM4::FONVSaveError(begin, std::string(description) + " has an invalid U6to30 width tag");
+        }
+
+        std::uint32_t encoded = first;
+        for (std::size_t i = 1; i < width; ++i)
+            encoded |= static_cast<std::uint32_t>(cursor.readU8(description)) << (8 * i);
+        const std::uint32_t value = encoded >> 2;
+        if ((width == 2 && value <= 0x3fu) || (width == 4 && value <= 0x3fffu))
+            throw ESM4::FONVSaveError(begin, std::string(description) + " uses a non-canonical U6to30 width");
+
+        ESM4::FONVSaveField<std::uint32_t> result
+            = { value, range(begin, cursor.position()), copyRange(data, begin, cursor.position()) };
+        cursor.expectDelimiter(description);
+        return result;
+    }
+
+    void validatePackedCountFits(const ESM4::FONVSaveField<std::uint32_t>& count, const Cursor& cursor,
+        std::size_t minimumEntryBytes, std::string_view description)
+    {
+        const std::size_t remaining = cursor.end() - cursor.position();
+        if (minimumEntryBytes == 0 || count.mValue > remaining / minimumEntryBytes)
+            throw ESM4::FONVSaveError(count.mRange.mOffset, std::string(description) + " overruns its container");
+    }
+
     ESM4::FONVSaveGlobalDataTable parseGlobalDataTable(std::span<const std::uint8_t> data, std::size_t begin,
         std::size_t end, std::uint32_t entryCount, const ESM4::FONVSaveLimits& limits, std::string_view description)
     {
@@ -408,6 +451,16 @@ namespace
         return result;
     }
 
+    ESM4::FONVSaveResolvedReferenceId decodeDelimitedResolvedReferenceId(Cursor& cursor,
+        std::span<const std::uint8_t> data, const ESM4::FONVSaveFormIdTable& formIds, std::string_view description,
+        bool allowNull = false)
+    {
+        ESM4::FONVSaveResolvedReferenceId result
+            = decodeResolvedReferenceId(cursor, data, formIds, description, allowNull);
+        cursor.expectDelimiter(description);
+        return result;
+    }
+
     ESM4::FONVSaveSkyState parseSkyState(std::span<const std::uint8_t> data,
         const ESM4::FONVSaveGlobalDataEntry& entry, const ESM4::FONVSaveFormIdTable& formIds)
     {
@@ -495,6 +548,189 @@ namespace
         return result;
     }
 
+    ESM4::FONVSavePlayerActorValueData parsePlayerActorValueData(std::span<const std::uint8_t> data,
+        const ESM4::FONVSaveChangedFormEnvelope& player, const ESM4::FONVSavePlayerReferenceMovement& movement)
+    {
+        if (player.mVersion.mValue != 27)
+            throw ESM4::FONVSaveError(
+                player.mVersion.mRange.mOffset, "unsupported canonical player actor-value changed-form version");
+        if (movement.mUnparsedRemainder.mRange.mSize < ESM4::sFONVPlayerActorValueDataBytes)
+        {
+            throw ESM4::FONVSaveError(
+                movement.mUnparsedRemainder.mRange.mOffset, "truncated canonical player actor-value data");
+        }
+
+        const std::size_t begin = static_cast<std::size_t>(movement.mUnparsedRemainder.mRange.mOffset);
+        const std::size_t end = static_cast<std::size_t>(movement.mUnparsedRemainder.mRange.end());
+        Cursor cursor(data, begin, end);
+        ESM4::FONVSavePlayerActorValueData result;
+        const auto readActorValues = [&](auto& values, std::string_view description) {
+            for (ESM4::FONVSaveField<float>& value : values)
+            {
+                value = readDelimitedField<float>(cursor, data,
+                    [&](std::string_view label) { return cursor.readF32(label); }, description);
+                if (!std::isfinite(value.mValue))
+                {
+                    throw ESM4::FONVSaveError(
+                        value.mRange.mOffset, std::string("non-finite canonical player ") + std::string(description));
+                }
+            }
+        };
+
+        readActorValues(result.mActorValues244, "ActorValues244 value");
+        readActorValues(result.mActorValues378, "ActorValues378 value");
+        readActorValues(result.mActorValues4B0, "ActorValues4B0 value");
+        result.mUnk4AC = readDelimitedField<std::uint32_t>(cursor, data,
+            [&](std::string_view label) { return cursor.readU32(label); }, "player Unk4AC");
+        result.mRange = range(begin, cursor.position());
+        if (result.mRange.mSize != ESM4::sFONVPlayerActorValueDataBytes)
+            throw ESM4::FONVSaveError(begin, "canonical player actor-value data has an invalid encoded size");
+        result.mRaw = copyRange(data, begin, cursor.position());
+        result.mUnparsedRemainder = readRawField(
+            cursor, data, cursor.end() - cursor.position(), "remaining canonical player ACHR payload");
+        return result;
+    }
+
+    ESM4::FONVSavePlayerActorExtraData parsePlayerActorExtraData(Cursor& cursor,
+        std::span<const std::uint8_t> data, const ESM4::FONVSaveFormIdTable& formIds)
+    {
+        const std::size_t begin = cursor.position();
+        ESM4::FONVSavePlayerActorExtraData result;
+        result.mType = readDelimitedField<std::uint8_t>(
+            cursor, data, [&](std::string_view label) { return cursor.readU8(label); }, "player actor extra type");
+        switch (result.mType.mValue)
+        {
+            case ESM4::sFONVExtraFactionChangesType:
+            {
+                result.mFactionChangeCount = readPackedCount(cursor, data, "player faction-change count");
+                validatePackedCountFits(*result.mFactionChangeCount, cursor, 6, "player faction-change count");
+                result.mFactionChanges.reserve(result.mFactionChangeCount->mValue);
+                for (std::uint32_t i = 0; i < result.mFactionChangeCount->mValue; ++i)
+                {
+                    const std::size_t factionBegin = cursor.position();
+                    ESM4::FONVSavePlayerFactionChange faction;
+                    faction.mFaction = decodeDelimitedResolvedReferenceId(
+                        cursor, data, formIds, "player faction-change faction RefID");
+                    faction.mRank = readDelimitedField<std::int8_t>(cursor, data,
+                        [&](std::string_view label) { return std::bit_cast<std::int8_t>(cursor.readU8(label)); },
+                        "player faction-change rank");
+                    faction.mRange = range(factionBegin, cursor.position());
+                    faction.mRaw = copyRange(data, factionBegin, cursor.position());
+                    result.mFactionChanges.push_back(std::move(faction));
+                }
+                break;
+            }
+            case ESM4::sFONVExtraEncounterZoneType:
+                result.mEncounterZone
+                    = decodeDelimitedResolvedReferenceId(cursor, data, formIds, "player encounter-zone RefID");
+                break;
+            default:
+                throw ESM4::FONVSaveError(
+                    result.mType.mRange.mOffset, "unsupported canonical player actor extra type");
+        }
+        result.mRange = range(begin, cursor.position());
+        result.mRaw = copyRange(data, begin, cursor.position());
+        return result;
+    }
+
+    ESM4::FONVSavePlayerInventoryExtraData parsePlayerInventoryExtraData(
+        Cursor& cursor, std::span<const std::uint8_t> data)
+    {
+        const std::size_t begin = cursor.position();
+        ESM4::FONVSavePlayerInventoryExtraData result;
+        result.mType = readDelimitedField<std::uint8_t>(
+            cursor, data, [&](std::string_view label) { return cursor.readU8(label); }, "player inventory extra type");
+        switch (result.mType.mValue)
+        {
+            case ESM4::sFONVExtraWornType:
+                break;
+            case ESM4::sFONVExtraCountType:
+                result.mCount = readDelimitedField<std::int16_t>(cursor, data,
+                    [&](std::string_view label) { return std::bit_cast<std::int16_t>(cursor.readU16(label)); },
+                    "player inventory ExtraCount");
+                break;
+            case ESM4::sFONVExtraHealthType:
+                result.mHealth = readDelimitedField<float>(cursor, data,
+                    [&](std::string_view label) { return cursor.readF32(label); }, "player inventory ExtraHealth");
+                if (!std::isfinite(result.mHealth->mValue))
+                    throw ESM4::FONVSaveError(result.mHealth->mRange.mOffset, "non-finite player inventory ExtraHealth");
+                break;
+            default:
+                throw ESM4::FONVSaveError(
+                    result.mType.mRange.mOffset, "unsupported canonical player inventory extra type");
+        }
+        result.mRange = range(begin, cursor.position());
+        result.mRaw = copyRange(data, begin, cursor.position());
+        return result;
+    }
+
+    ESM4::FONVSavePlayerInventoryExtendData parsePlayerInventoryExtendData(
+        Cursor& cursor, std::span<const std::uint8_t> data)
+    {
+        const std::size_t begin = cursor.position();
+        ESM4::FONVSavePlayerInventoryExtendData result;
+        result.mExtraDataCount = readPackedCount(cursor, data, "player inventory stack extra-data count");
+        validatePackedCountFits(result.mExtraDataCount, cursor, 2, "player inventory stack extra-data count");
+        result.mExtraData.reserve(result.mExtraDataCount.mValue);
+        for (std::uint32_t i = 0; i < result.mExtraDataCount.mValue; ++i)
+            result.mExtraData.push_back(parsePlayerInventoryExtraData(cursor, data));
+        result.mRange = range(begin, cursor.position());
+        result.mRaw = copyRange(data, begin, cursor.position());
+        return result;
+    }
+
+    ESM4::FONVSavePlayerInventoryEntry parsePlayerInventoryEntry(Cursor& cursor,
+        std::span<const std::uint8_t> data, const ESM4::FONVSaveFormIdTable& formIds)
+    {
+        const std::size_t begin = cursor.position();
+        ESM4::FONVSavePlayerInventoryEntry result;
+        result.mType = decodeDelimitedResolvedReferenceId(cursor, data, formIds, "player inventory type RefID");
+        result.mDelta = readDelimitedField<std::int32_t>(cursor, data,
+            [&](std::string_view label) { return std::bit_cast<std::int32_t>(cursor.readU32(label)); },
+            "player inventory delta");
+        result.mExtendDataCount = readPackedCount(cursor, data, "player inventory extend-data count");
+        validatePackedCountFits(result.mExtendDataCount, cursor, 2, "player inventory extend-data count");
+        result.mExtendData.reserve(result.mExtendDataCount.mValue);
+        for (std::uint32_t i = 0; i < result.mExtendDataCount.mValue; ++i)
+            result.mExtendData.push_back(parsePlayerInventoryExtendData(cursor, data));
+        result.mRange = range(begin, cursor.position());
+        result.mRaw = copyRange(data, begin, cursor.position());
+        return result;
+    }
+
+    ESM4::FONVSavePlayerProcessInventoryData parsePlayerProcessInventoryData(std::span<const std::uint8_t> data,
+        const ESM4::FONVSaveChangedFormEnvelope& player, const ESM4::FONVSavePlayerActorValueData& actorValues,
+        const ESM4::FONVSaveFormIdTable& formIds)
+    {
+        if (player.mVersion.mValue != 27)
+            throw ESM4::FONVSaveError(
+                player.mVersion.mRange.mOffset, "unsupported canonical player process/inventory changed-form version");
+
+        const std::size_t begin = static_cast<std::size_t>(actorValues.mUnparsedRemainder.mRange.mOffset);
+        const std::size_t end = static_cast<std::size_t>(actorValues.mUnparsedRemainder.mRange.end());
+        Cursor cursor(data, begin, end);
+        ESM4::FONVSavePlayerProcessInventoryData result;
+        result.mProcessLevel = readDelimitedField<std::int8_t>(cursor, data,
+            [&](std::string_view label) { return std::bit_cast<std::int8_t>(cursor.readU8(label)); },
+            "player process level");
+        result.mActorExtraDataCount = readPackedCount(cursor, data, "player actor extra-data count");
+        validatePackedCountFits(result.mActorExtraDataCount, cursor, 2, "player actor extra-data count");
+        result.mActorExtraData.reserve(result.mActorExtraDataCount.mValue);
+        for (std::uint32_t i = 0; i < result.mActorExtraDataCount.mValue; ++i)
+            result.mActorExtraData.push_back(parsePlayerActorExtraData(cursor, data, formIds));
+
+        result.mInventoryEntryCount = readPackedCount(cursor, data, "player inventory entry count");
+        validatePackedCountFits(result.mInventoryEntryCount, cursor, 11, "player inventory entry count");
+        result.mInventoryEntries.reserve(result.mInventoryEntryCount.mValue);
+        for (std::uint32_t i = 0; i < result.mInventoryEntryCount.mValue; ++i)
+            result.mInventoryEntries.push_back(parsePlayerInventoryEntry(cursor, data, formIds));
+
+        result.mRange = range(begin, cursor.position());
+        result.mRaw = copyRange(data, begin, cursor.position());
+        result.mUnparsedRemainder = readRawField(
+            cursor, data, cursor.end() - cursor.position(), "remaining canonical player ACHR payload");
+        return result;
+    }
     void appendUnparsedSemanticPayload(ESM4::FONVSaveGamePrefix& save, const ESM4::FONVSaveRange& payload)
     {
         if (payload.empty())
@@ -776,6 +1012,10 @@ namespace ESM4
             {
                 result.mPlayerReferenceMovement
                     = parsePlayerReferenceMovement(data, *playerReference, result.mFormIdTable);
+                result.mPlayerActorValueData
+                    = parsePlayerActorValueData(data, *playerReference, *result.mPlayerReferenceMovement);
+                result.mPlayerProcessInventoryData = parsePlayerProcessInventoryData(
+                    data, *playerReference, *result.mPlayerActorValueData, result.mFormIdTable);
             }
         }
 
@@ -801,7 +1041,11 @@ namespace ESM4
         }
         for (const FONVSaveChangedFormEnvelope& entry : result.mChangedForms.mEntries)
         {
-            if (result.mPlayerReferenceMovement.has_value() && &entry == playerReference)
+            if (result.mPlayerProcessInventoryData.has_value() && &entry == playerReference)
+                appendUnparsedSemanticPayload(result, result.mPlayerProcessInventoryData->mUnparsedRemainder.mRange);
+            else if (result.mPlayerActorValueData.has_value() && &entry == playerReference)
+                appendUnparsedSemanticPayload(result, result.mPlayerActorValueData->mUnparsedRemainder.mRange);
+            else if (result.mPlayerReferenceMovement.has_value() && &entry == playerReference)
                 appendUnparsedSemanticPayload(result, result.mPlayerReferenceMovement->mUnparsedRemainder.mRange);
             else
                 appendUnparsedSemanticPayload(result, entry.mUnparsedPayload.mRange);
