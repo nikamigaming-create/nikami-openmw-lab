@@ -89,6 +89,9 @@ namespace MWGui
         int mCurrentMerchantOffer;
 
         bool mUpdateNextFrame;
+        bool mFlatFalloutTrade = false;
+        ESM::RefId mCurrency;
+        std::vector<MWWorld::Ptr> mItemSources;
 
         void sellToNpc(
             const MWWorld::Ptr& item, int count, bool boughtItem); ///< only used for adjusting the gold balance
@@ -124,6 +127,7 @@ namespace MWGui
         void onDecreaseButtonTriggered();
 
         void addOrRemoveGold(int gold, const MWWorld::Ptr& actor);
+        int getPlayerGold() const;
 
         void updateLabels();
 

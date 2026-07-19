@@ -31,6 +31,7 @@
 #include <components/esm3/loadregn.hpp>
 #include <components/esm3/loadstat.hpp>
 #include <components/esm4/loadcell.hpp>
+#include <components/esm4/loadcont.hpp>
 #include <components/esm4/loaddoor.hpp>
 #include <components/esm4/loadland.hpp>
 #include <components/esm4/loadstat.hpp>
@@ -3405,8 +3406,9 @@ namespace MWWorld
             if (ptr.mRef->isDeleted())
                 return true;
 
-            // vanilla Morrowind does not allow to sell items from containers with zero capacity
-            if (ptr.getClass().getCapacity(ptr) <= 0.f)
+            // Vanilla Morrowind does not allow selling from zero-capacity TES3 containers. Fallout containers do not
+            // use TES3 capacity semantics, and retail vendor chests commonly have a zero weight/capacity field.
+            if (ptr.getType() == ESM::Container::sRecordId && ptr.getClass().getCapacity(ptr) <= 0.f)
                 return true;
 
             if (ptr.getCellRef().getOwner() == mOwner.getCellRef().getRefId())
@@ -3422,6 +3424,7 @@ namespace MWWorld
         {
             GetContainersOwnedByVisitor visitor(owner, out);
             cellstore->forEachType<ESM::Container>(visitor);
+            cellstore->forEachType<ESM4::Container>(visitor);
         }
     }
 

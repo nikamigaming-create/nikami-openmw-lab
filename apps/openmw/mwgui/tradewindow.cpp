@@ -210,17 +210,24 @@ namespace MWGui
 
         mCurrentBalance = 0;
         mCurrentMerchantOffer = 0;
+        mFlatFalloutTrade = isFlatFalloutMerchant(actor);
+        mCurrency = mFlatFalloutTrade
+            ? findFlatFalloutCurrency(*MWBase::Environment::get().getESMStore())
+            : MWWorld::ContainerStore::sGoldId;
+        if (mCurrency.empty())
+            throw std::runtime_error("FNV barter requires the loaded Caps001 MISC record");
 
         std::vector<MWWorld::Ptr> itemSources;
         // Important: actor goes first, so purchased items come out of the actor's pocket first
         itemSources.push_back(actor);
         MWBase::Environment::get().getWorld()->getContainersOwnedBy(actor, itemSources);
+        mItemSources = itemSources;
 
         std::vector<MWWorld::Ptr> worldItems;
         MWBase::Environment::get().getWorld()->getItemsOwnedBy(actor, worldItems);
 
-        auto tradeModel
-            = std::make_unique<TradeItemModel>(std::make_unique<ContainerItemModel>(itemSources, worldItems), mPtr);
+        auto tradeModel = std::make_unique<TradeItemModel>(
+            std::make_unique<ContainerItemModel>(itemSources, worldItems), mPtr, mCurrency);
         mTradeModel = tradeModel.get();
         auto sortModel = std::make_unique<SortFilterItemModel>(std::move(tradeModel));
         mSortModel = sortModel.get();
@@ -388,6 +395,12 @@ namespace MWGui
         }
     }
 
+    int TradeWindow::getPlayerGold() const
+    {
+        MWWorld::Ptr player = MWMechanics::getPlayer();
+        return player.getClass().getContainerStore(player).count(mCurrency);
+    }
+
     void TradeWindow::onOfferSubmitted(MyGUI::Widget* /*sender*/, size_t offerAmount)
     {
         mCurrentBalance = offerAmount * (mCurrentBalance < 0 ? -1 : 1);
@@ -417,7 +430,7 @@ namespace MWGui
         }
 
         MWWorld::Ptr player = MWMechanics::getPlayer();
-        int playerGold = player.getClass().getContainerStore(player).count(MWWorld::ContainerStore::sGoldId);
+        int playerGold = getPlayerGold();
 
         // check if the player can afford this
         if (mCurrentBalance < 0 && playerGold < std::abs(mCurrentBalance))
@@ -476,12 +489,24 @@ namespace MWGui
         mTradeModel->transferItems();
         playerItemModel->transferItems();
 
-        // transfer the gold
+        // Transfer currency only after both item models have successfully committed their borrowed stacks.
         if (mCurrentBalance != 0)
         {
-            addOrRemoveGold(mCurrentBalance, player);
-            mPtr.getClass().getCreatureStats(mPtr).setGoldPool(
-                mPtr.getClass().getCreatureStats(mPtr).getGoldPool() - mCurrentBalance);
+            if (mFlatFalloutTrade)
+            {
+                const std::vector<MWWorld::Ptr> playerSource{ player };
+                const bool transferred = mCurrentBalance > 0
+                    ? transferBarterCurrency(mItemSources, playerSource, mCurrency, mCurrentBalance)
+                    : transferBarterCurrency(playerSource, mItemSources, mCurrency, -mCurrentBalance);
+                if (!transferred)
+                    throw std::runtime_error("FNV barter currency transfer failed after affordability preflight");
+            }
+            else
+            {
+                addOrRemoveGold(mCurrentBalance, player);
+                mPtr.getClass().getCreatureStats(mPtr).setGoldPool(
+                    mPtr.getClass().getCreatureStats(mPtr).getGoldPool() - mCurrentBalance);
+            }
         }
 
         eventTradeDone();
@@ -588,7 +613,7 @@ namespace MWGui
     void TradeWindow::updateLabels()
     {
         MWWorld::Ptr player = MWMechanics::getPlayer();
-        int playerGold = player.getClass().getContainerStore(player).count(MWWorld::ContainerStore::sGoldId);
+        int playerGold = getPlayerGold();
         mPlayerGold->setCaptionWithReplacing("#{sYourGold} " + MyGUI::utility::toString(playerGold));
 
         TradeItemModel* playerTradeModel
@@ -674,6 +699,8 @@ namespace MWGui
 
     int TradeWindow::getMerchantGold()
     {
+        if (mFlatFalloutTrade)
+            return countBarterCurrency(mItemSources, mCurrency);
         int merchantGold = mPtr.getClass().getCreatureStats(mPtr).getGoldPool();
         return merchantGold;
     }
@@ -684,6 +711,9 @@ namespace MWGui
         mItemView->setModel(nullptr);
         mTradeModel = nullptr;
         mSortModel = nullptr;
+        mFlatFalloutTrade = false;
+        mCurrency = {};
+        mItemSources.clear();
     }
 
     void TradeWindow::onClose()

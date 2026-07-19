@@ -28,6 +28,8 @@
 #include "apps/openmw/mwclass/esm4container.hpp"
 #include "apps/openmw/mwclass/esm4creature.hpp"
 
+#include "apps/openmw/mwgui/tradeitemmodel.hpp"
+
 #include "apps/openmw/mwmechanics/aiwander.hpp"
 #include "apps/openmw/mwmechanics/creaturestats.hpp"
 
@@ -41,12 +43,16 @@
 
 #include <components/loadinglistener/loadinglistener.hpp>
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <limits>
 #include <map>
 #include <optional>
 #include <sstream>
+#include <stdexcept>
+#include <utility>
+#include <vector>
 
 namespace
 {
@@ -77,6 +83,119 @@ namespace
     constexpr std::uint32_t sDoorRef = 0x01108744;
     constexpr std::uint32_t sDoorDestRef = 0x01108745;
     constexpr std::uint32_t sDoorDestCell = 0x01104c11;
+    constexpr std::uint32_t sCapsBase = 0x0100000f;
+    constexpr std::uint32_t sBarterPocketBase = 0x01103b30;
+    constexpr std::uint32_t sBarterPocketRef = 0x01108746;
+    constexpr std::uint32_t sBarterChestBase = 0x01103b31;
+    constexpr std::uint32_t sBarterChestRef = 0x01108747;
+    constexpr std::uint32_t sBarterPlayerBase = 0x01103b32;
+    constexpr std::uint32_t sBarterPlayerRef = 0x01108748;
+
+    class BarterTestItemModel final : public MWGui::ItemModel
+    {
+    public:
+        explicit BarterTestItemModel(std::vector<MWWorld::Ptr> sources)
+            : mSources(std::move(sources))
+        {
+        }
+
+        MWGui::ItemStack getItem(ModelIndex index) override { return mItems.at(static_cast<std::size_t>(index)); }
+        std::size_t getItemCount() override { return mItems.size(); }
+
+        ModelIndex getIndex(const MWGui::ItemStack& item) override
+        {
+            for (std::size_t index = 0; index < mItems.size(); ++index)
+            {
+                if (mItems[index].mBase == item.mBase)
+                    return static_cast<ModelIndex>(index);
+            }
+            return -1;
+        }
+
+        void update() override
+        {
+            mItems.clear();
+            for (const MWWorld::Ptr& source : mSources)
+            {
+                MWWorld::ContainerStore& store = source.getClass().getContainerStore(source);
+                for (MWWorld::Ptr item : store)
+                {
+                    if (!item.getClass().showsInInventory(item))
+                        continue;
+
+                    const auto existing = std::find_if(mItems.begin(), mItems.end(), [&](const MWGui::ItemStack& stack) {
+                        return stack.mBase.getCellRef().getRefId() == item.getCellRef().getRefId();
+                    });
+                    if (existing != mItems.end())
+                    {
+                        existing->mCount += item.getCellRef().getCount();
+                        continue;
+                    }
+
+                    MWGui::ItemStack stack;
+                    stack.mBase = item;
+                    stack.mCreator = this;
+                    stack.mCount = item.getCellRef().getCount();
+                    mItems.push_back(std::move(stack));
+                }
+            }
+        }
+
+        MWWorld::Ptr addItem(
+            const MWGui::ItemStack& item, std::size_t count, bool /*allowAutoEquip*/ = true) override
+        {
+            const ESM::RefId id = item.mBase.getCellRef().getRefId();
+            const auto existing = std::find_if(mItems.begin(), mItems.end(), [&](const MWGui::ItemStack& stack) {
+                return stack.mBase.getCellRef().getRefId() == id;
+            });
+            if (existing != mItems.end())
+                existing->mCount += count;
+            else
+            {
+                MWGui::ItemStack added = item;
+                added.mCreator = this;
+                added.mCount = count;
+                mItems.push_back(std::move(added));
+            }
+            return item.mBase;
+        }
+
+        MWWorld::Ptr copyItem(
+            const MWGui::ItemStack& item, std::size_t count, bool allowAutoEquip = true) override
+        {
+            return addItem(item, count, allowAutoEquip);
+        }
+
+        void removeItem(const MWGui::ItemStack& item, std::size_t count) override
+        {
+            const ESM::RefId id = item.mBase.getCellRef().getRefId();
+            const auto existing = std::find_if(mItems.begin(), mItems.end(), [&](const MWGui::ItemStack& stack) {
+                return stack.mBase.getCellRef().getRefId() == id;
+            });
+            if (existing == mItems.end() || existing->mCount < count)
+                throw std::runtime_error("barter test source did not contain the requested item count");
+            existing->mCount -= count;
+            if (existing->mCount == 0)
+                mItems.erase(existing);
+        }
+
+        std::size_t count(const ESM::RefId& id) const
+        {
+            const auto existing = std::find_if(mItems.begin(), mItems.end(), [&](const MWGui::ItemStack& stack) {
+                return stack.mBase.getCellRef().getRefId() == id;
+            });
+            return existing == mItems.end() ? 0 : existing->mCount;
+        }
+
+        bool usesContainer(const MWWorld::Ptr& container) override
+        {
+            return std::find(mSources.begin(), mSources.end(), container) != mSources.end();
+        }
+
+    private:
+        std::vector<MWWorld::Ptr> mSources;
+        std::vector<MWGui::ItemStack> mItems;
+    };
 
     TEST(FnvCreatureAiPolicyTest, FlyAndWalkSandboxRetainsAuthoredPerch)
     {
@@ -2126,6 +2245,159 @@ namespace
         EXPECT_EQ(restoredStore.count(bottleId), 4);
         EXPECT_EQ(&restored.getClass().getContainerStore(restored), &restoredStore);
         EXPECT_EQ(restoredStore.count(bottleId), 4);
+    }
+
+    TEST_F(ESM4ContainerTest, FlatFalloutBarterFiltersCapsAndAcceptsSupportedInventory)
+    {
+        ESM4::MiscItem caps{};
+        caps.mId = ESM::FormId::fromUint32(sCapsBase);
+        caps.mEditorId = "Caps001";
+        caps.mFullName = "Bottle Cap";
+        mStore.overrideRecord(caps);
+
+        ESM4::Npc merchant = makeNpc();
+        ESM4::ActorCharacter merchantReference = makePlacedNpc();
+        MWWorld::LiveCellRef<ESM4::Npc> merchantRef(merchantReference, &merchant);
+        MWWorld::Ptr merchantPtr(&merchantRef);
+        ASSERT_TRUE(MWGui::isFlatFalloutMerchant(merchantPtr));
+
+        const ESM::RefId capsId(ESM::FormId::fromUint32(sCapsBase));
+        EXPECT_EQ(MWGui::findFlatFalloutCurrency(mStore), capsId);
+
+        ESM4::Container inventory{};
+        inventory.mId = ESM::FormId::fromUint32(sBarterPocketBase);
+        inventory.mInventory.push_back(ESM4::InventoryItem{ sCapsBase, 40 });
+        inventory.mInventory.push_back(ESM4::InventoryItem{ sSaloonBottleBase, 2 });
+        ESM4::Reference inventoryReference{};
+        inventoryReference.mId = ESM::FormId::fromUint32(sBarterPocketRef);
+        inventoryReference.mBaseObj = inventory.mId;
+        inventoryReference.mCount = 1;
+        MWWorld::LiveCellRef<ESM4::Container> inventoryRef(inventoryReference, &inventory);
+        MWWorld::Ptr inventoryPtr(&inventoryRef);
+
+        auto sourceModel = std::make_unique<BarterTestItemModel>(std::vector<MWWorld::Ptr>{ inventoryPtr });
+        MWGui::TradeItemModel model(std::move(sourceModel), merchantPtr, capsId);
+        model.update();
+        ASSERT_EQ(model.getItemCount(), 1u);
+        EXPECT_EQ(model.getItem(0).mBase.getCellRef().getRefId(),
+            ESM::RefId(ESM::FormId::fromUint32(sSaloonBottleBase)));
+        EXPECT_TRUE(MWGui::isItemAcceptedForBarter(model.getItem(0).mBase, merchantPtr, 0));
+
+        ESM4::Static marker{};
+        marker.mId = ESM::FormId::fromUint32(0x01103b33);
+        ESM4::Reference markerReference{};
+        markerReference.mId = ESM::FormId::fromUint32(0x01108749);
+        markerReference.mBaseObj = marker.mId;
+        markerReference.mCount = 1;
+        MWWorld::LiveCellRef<ESM4::Static> markerRef(markerReference, &marker);
+        EXPECT_FALSE(MWGui::isItemAcceptedForBarter(MWWorld::Ptr(&markerRef), merchantPtr, 0));
+    }
+
+    TEST_F(ESM4ContainerTest, FlatFalloutBarterAcceptCancelAndCapsPreflightStayCoherent)
+    {
+        ESM4::MiscItem caps{};
+        caps.mId = ESM::FormId::fromUint32(sCapsBase);
+        caps.mEditorId = "Caps001";
+        caps.mFullName = "Bottle Cap";
+        mStore.overrideRecord(caps);
+
+        ESM4::Npc merchant = makeNpc();
+        ESM4::ActorCharacter merchantReference = makePlacedNpc();
+        MWWorld::LiveCellRef<ESM4::Npc> merchantRef(merchantReference, &merchant);
+        MWWorld::Ptr merchantPtr(&merchantRef);
+
+        ESM4::Container pocket{};
+        pocket.mId = ESM::FormId::fromUint32(sBarterPocketBase);
+        pocket.mInventory.push_back(ESM4::InventoryItem{ sCapsBase, 10 });
+        pocket.mInventory.push_back(ESM4::InventoryItem{ sSaloonBottleBase, 2 });
+        ESM4::Reference pocketReference{};
+        pocketReference.mId = ESM::FormId::fromUint32(sBarterPocketRef);
+        pocketReference.mBaseObj = pocket.mId;
+        pocketReference.mCount = 1;
+        MWWorld::LiveCellRef<ESM4::Container> pocketRef(pocketReference, &pocket);
+        MWWorld::Ptr pocketPtr(&pocketRef);
+
+        ESM4::Container chest{};
+        chest.mId = ESM::FormId::fromUint32(sBarterChestBase);
+        chest.mInventory.push_back(ESM4::InventoryItem{ sCapsBase, 40 });
+        ESM4::Reference chestReference{};
+        chestReference.mId = ESM::FormId::fromUint32(sBarterChestRef);
+        chestReference.mBaseObj = chest.mId;
+        chestReference.mCount = 1;
+        MWWorld::LiveCellRef<ESM4::Container> chestRef(chestReference, &chest);
+        MWWorld::Ptr chestPtr(&chestRef);
+
+        ESM4::Container player{};
+        player.mId = ESM::FormId::fromUint32(sBarterPlayerBase);
+        player.mInventory.push_back(ESM4::InventoryItem{ sCapsBase, 100 });
+        player.mInventory.push_back(ESM4::InventoryItem{ sSaloonKeyBase, 1 });
+        ESM4::Reference playerReference{};
+        playerReference.mId = ESM::FormId::fromUint32(sBarterPlayerRef);
+        playerReference.mBaseObj = player.mId;
+        playerReference.mCount = 1;
+        MWWorld::LiveCellRef<ESM4::Container> playerRef(playerReference, &player);
+        MWWorld::Ptr playerPtr(&playerRef);
+
+        const ESM::RefId capsId(ESM::FormId::fromUint32(sCapsBase));
+        const ESM::RefId bottleId(ESM::FormId::fromUint32(sSaloonBottleBase));
+        const ESM::RefId keyId(ESM::FormId::fromUint32(sSaloonKeyBase));
+        const std::vector<MWWorld::Ptr> merchantSources{ pocketPtr, chestPtr };
+        const std::vector<MWWorld::Ptr> playerSources{ playerPtr };
+
+        auto merchantSource = std::make_unique<BarterTestItemModel>(merchantSources);
+        BarterTestItemModel* merchantInventory = merchantSource.get();
+        MWGui::TradeItemModel merchantModel(std::move(merchantSource), merchantPtr, capsId);
+        auto playerSource = std::make_unique<BarterTestItemModel>(playerSources);
+        BarterTestItemModel* playerInventory = playerSource.get();
+        MWGui::TradeItemModel playerModel(std::move(playerSource), merchantPtr, capsId);
+        const auto update = [&] {
+            merchantModel.update();
+            playerModel.update();
+        };
+        const auto find = [](MWGui::TradeItemModel& model, const ESM::RefId& id) {
+            for (std::size_t index = 0; index < model.getItemCount(); ++index)
+            {
+                if (model.getItem(static_cast<int>(index)).mBase.getCellRef().getRefId() == id)
+                    return static_cast<int>(index);
+            }
+            return -1;
+        };
+
+        update();
+        const int merchantBottle = find(merchantModel, bottleId);
+        const int playerKey = find(playerModel, keyId);
+        ASSERT_GE(merchantBottle, 0);
+        ASSERT_GE(playerKey, 0);
+        EXPECT_EQ(find(merchantModel, capsId), -1);
+        EXPECT_EQ(find(playerModel, capsId), -1);
+
+        playerModel.borrowItemToUs(merchantBottle, &merchantModel, 1);
+        merchantModel.borrowItemFromUs(merchantBottle, 1);
+        merchantModel.borrowItemToUs(playerKey, &playerModel, 1);
+        playerModel.borrowItemFromUs(playerKey, 1);
+        playerModel.abort();
+        merchantModel.abort();
+        EXPECT_EQ(pocketPtr.getClass().getContainerStore(pocketPtr).count(bottleId), 2);
+        EXPECT_EQ(playerPtr.getClass().getContainerStore(playerPtr).count(keyId), 1);
+
+        update();
+        playerModel.borrowItemToUs(find(merchantModel, bottleId), &merchantModel, 1);
+        merchantModel.borrowItemFromUs(find(merchantModel, bottleId), 1);
+        merchantModel.borrowItemToUs(find(playerModel, keyId), &playerModel, 1);
+        playerModel.borrowItemFromUs(find(playerModel, keyId), 1);
+        merchantModel.transferItems();
+        playerModel.transferItems();
+        EXPECT_EQ(merchantInventory->count(bottleId), 1);
+        EXPECT_EQ(playerInventory->count(bottleId), 1);
+        EXPECT_EQ(merchantInventory->count(keyId), 1);
+        EXPECT_EQ(playerInventory->count(keyId), 0);
+
+        EXPECT_EQ(MWGui::countBarterCurrency(merchantSources, capsId), 50);
+        EXPECT_EQ(MWGui::countBarterCurrency(playerSources, capsId), 100);
+        EXPECT_TRUE(MWGui::transferBarterCurrency(merchantSources, playerSources, capsId, 0));
+        EXPECT_FALSE(MWGui::transferBarterCurrency(merchantSources, playerSources, capsId, 51));
+        EXPECT_EQ(MWGui::countBarterCurrency(merchantSources, capsId), 50);
+        EXPECT_EQ(MWGui::countBarterCurrency(playerSources, capsId), 100);
     }
 
     TEST_F(ESM4ContainerTest, ESM3CellRefStateStillReplacesAllMutableFields)

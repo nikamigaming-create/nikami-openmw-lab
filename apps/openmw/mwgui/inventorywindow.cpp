@@ -435,8 +435,9 @@ namespace MWGui
             }
 
             // check if merchant accepts item
-            int services = MWBase::Environment::get().getWindowManager()->getTradeWindow()->getMerchantServices();
-            if (!object.getClass().canSell(object, services))
+            TradeWindow* tradeWindow = MWBase::Environment::get().getWindowManager()->getTradeWindow();
+            int services = tradeWindow->getMerchantServices();
+            if (!isItemAcceptedForBarter(object, tradeWindow->mPtr, services))
             {
                 MWBase::Environment::get().getWindowManager()->playSound(sound);
                 MWBase::Environment::get().getWindowManager()->messageBox("#{sBarterDialog4}");
@@ -987,6 +988,15 @@ namespace MWGui
     void InventoryWindow::setTrading(bool trading)
     {
         mTrading = trading;
+        if (mTradeModel == nullptr)
+            return;
+
+        TradeWindow* tradeWindow = MWBase::Environment::get().getWindowManager()->getTradeWindow();
+        if (trading && tradeWindow != nullptr && tradeWindow->mFlatFalloutTrade && !tradeWindow->mPtr.isEmpty())
+            mTradeModel->setMerchant(tradeWindow->mPtr, tradeWindow->mCurrency);
+        else
+            mTradeModel->setMerchant(MWWorld::Ptr());
+        mItemView->update();
     }
 
     void InventoryWindow::dirtyPreview()
