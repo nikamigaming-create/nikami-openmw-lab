@@ -4688,17 +4688,22 @@ namespace NifOsg
             if (tangents.size() == vertices.size() && bitangents.size() == vertices.size()
                 && normals.size() == vertices.size())
             {
+                const bool falloutNvTangentConvention = mVersion == Nif::NIFFile::NIFVersion::VER_BGS
+                    && mUserVersion == 11 && mBethVersion == Nif::NIFFile::BethVersion::BETHVER_FO3;
                 osg::ref_ptr<osg::Vec4Array> tangentFrame = new osg::Vec4Array;
                 tangentFrame->reserve(tangents.size());
                 for (std::size_t i = 0; i < tangents.size(); ++i)
                 {
                     // The compatibility shaders reconstruct B as cross(T, N) * w.
-                    // Preserve the NIF's authored handedness; regenerating this frame
-                    // rotated Fallout skin, eye, beard, and board normals away from retail.
+                    // FO3/FNV NiGeometry stores the shader tangent axis in mBitangents
+                    // and the negated shader bitangent axis in mTangents.  Other NIF
+                    // generations use the conventional field mapping.
+                    const osg::Vec3f shaderTangent = falloutNvTangentConvention ? bitangents[i] : tangents[i];
+                    const osg::Vec3f shaderBitangent = falloutNvTangentConvention ? -tangents[i] : bitangents[i];
                     const float handedness
-                        = ((tangents[i] ^ normals[i]) * bitangents[i]) < 0.f ? -1.f : 1.f;
+                        = ((shaderTangent ^ normals[i]) * shaderBitangent) < 0.f ? -1.f : 1.f;
                     tangentFrame->push_back(osg::Vec4f(
-                        tangents[i].x(), tangents[i].y(), tangents[i].z(), handedness));
+                        shaderTangent.x(), shaderTangent.y(), shaderTangent.z(), handedness));
                 }
                 geometry->setTexCoordArray(7, tangentFrame, osg::Array::BIND_PER_VERTEX);
             }
