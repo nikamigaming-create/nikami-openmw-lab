@@ -53,6 +53,7 @@
 #include <components/esm4/loadcell.hpp>
 #include <components/esm4/loadclas.hpp>
 #include <components/esm4/loadclot.hpp>
+#include <components/esm4/loadgmst.hpp>
 #include <components/esm4/loadcont.hpp>
 #include <components/esm4/loadcrea.hpp>
 #include <components/esm4/loaddoor.hpp>

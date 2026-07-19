@@ -89,6 +89,7 @@ namespace ESM4
     struct Door;
     struct Flora;
     struct Furniture;
+    struct GameSetting;
     struct Hair;
     struct HeadPart;
     struct Ingredient;
@@ -154,7 +155,7 @@ namespace MWWorld
             Store<ESM4::Terminal>, Store<ESM4::TextureSet>, Store<ESM4::Tree>, Store<ESM4::Weapon>, Store<ESM4::World>,
 
             // Append new native stores so the ordinals of every existing store remain stable.
-            Store<ESM4::Class>>;
+            Store<ESM4::Class>, Store<ESM4::GameSetting>>;
 
     private:
         template <typename T>

@@ -17,6 +17,7 @@
 #include <components/esm3/typetraits.hpp>
 #include <components/esm4/common.hpp>
 #include <components/esm4/loadclas.hpp>
+#include <components/esm4/loadgmst.hpp>
 #include <components/esm4/reader.hpp>
 #include <components/esm4/readerutils.hpp>
 #include <components/files/configurationmanager.hpp>
@@ -33,6 +34,12 @@ TEST(FNVStoreRegistration, exposesNativeClassStore)
 {
     MWWorld::ESMStore store;
     EXPECT_EQ(store.get<ESM4::Class>().getSize(), 0u);
+}
+
+TEST(FNVStoreRegistration, exposesNativeGameSettingStore)
+{
+    MWWorld::ESMStore store;
+    EXPECT_EQ(store.get<ESM4::GameSetting>().getSize(), 0u);
 }
 
 /// Base class for tests of ESMStore that rely on external content files to produce the test results
