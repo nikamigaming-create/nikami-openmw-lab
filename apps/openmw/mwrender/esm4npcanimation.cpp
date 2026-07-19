@@ -7649,6 +7649,9 @@ namespace MWRender
                 stream << ESM::printName(ref.mType) << "=" << ESM::RefId(ref.mSound) << ":"
                        << (file.empty() ? std::string_view("<unresolved>") : std::string_view(file));
             }
+            return stream.str();
+        }
+
         bool actorUsesFonvPowerArmor(const MWWorld::Ptr& ptr)
         {
             static_assert(FonvPowerArmorGeneralFlag == ESM4::Armor::FO3_PowerArmor);
@@ -7669,9 +7672,6 @@ namespace MWRender
                     stream << getFonvPowerArmorAnimationKf(candidates[index]) << '|';
                 stream << candidates[index];
             }
-            return stream.str();
-        }
-
             return stream.str();
         }
 
@@ -8269,6 +8269,29 @@ namespace MWRender
                                                    std::string_view falloutSemanticGroup = {}) {
                 if (kfPath.empty())
                     return false;
+
+                Log(Debug::Verbose) << "FNV/ESM4 diag: adding FONV NPC " << reason << " animation source " << kfPath
+                                 << " for " << traits->mEditorId;
+                auto source = addSingleAnimSource(
+                    kfPath, skeletonModel, falloutProcedureIdle, controllerOverlayKf, falloutSemanticGroup);
+                if (worldViewerActorTelemetryEnabled())
+                {
+                    std::ostringstream details;
+                    details << "game=" << worldViewerNpcGameTag(*traits)
+                            << " npc=\"" << traits->mEditorId << "\""
+                            << " kf=\"" << kfPath << "\""
+                            << " reason=\"" << reason << "\""
+                            << " skeleton=\"" << skeletonModel << "\""
+                            << " bound=" << (source != nullptr)
+                            << " primary=" << countsAsPrimary
+                            << " procedureIdle=" << falloutProcedureIdle
+                            << " controllerOverlay=\"" << controllerOverlayKf << "\""
+                            << " semanticGroup=\"" << falloutSemanticGroup << "\"";
+                    logWorldViewerActorLedger(mPtr, "animation-source", details.str());
+                }
+                return source != nullptr;
+            };
+
             const bool powerArmor = actorUsesFonvPowerArmor(mPtr);
             const VFS::Manager* animationVfs = mResourceSystem != nullptr ? mResourceSystem->getVFS() : nullptr;
             const auto animationExists = [animationVfs](std::string_view path) {
@@ -8315,28 +8338,6 @@ namespace MWRender
                     logWorldViewerActorLedger(mPtr, "animation-family-resolution", details.str());
                 }
                 return passed;
-            };
-
-                Log(Debug::Verbose) << "FNV/ESM4 diag: adding FONV NPC " << reason << " animation source " << kfPath
-                                 << " for " << traits->mEditorId;
-                auto source = addSingleAnimSource(
-                    kfPath, skeletonModel, falloutProcedureIdle, controllerOverlayKf, falloutSemanticGroup);
-                if (worldViewerActorTelemetryEnabled())
-                {
-                    std::ostringstream details;
-                    details << "game=" << worldViewerNpcGameTag(*traits)
-                            << " npc=\"" << traits->mEditorId << "\""
-                            << " kf=\"" << kfPath << "\""
-                            << " reason=\"" << reason << "\""
-                            << " skeleton=\"" << skeletonModel << "\""
-                            << " bound=" << (source != nullptr)
-                            << " primary=" << countsAsPrimary
-                            << " procedureIdle=" << falloutProcedureIdle
-                            << " controllerOverlay=\"" << controllerOverlayKf << "\""
-                            << " semanticGroup=\"" << falloutSemanticGroup << "\"";
-                    logWorldViewerActorLedger(mPtr, "animation-source", details.str());
-                }
-                return source != nullptr;
             };
 
             const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();

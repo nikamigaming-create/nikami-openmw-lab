@@ -778,7 +778,10 @@ namespace MWWorld
         mStore.setUp();
         mESM4QuestRuntime.initialize(mStore, &mGlobalVariables);
         mStore.validateRecords(mReaders);
-        mFalloutPlayerRuntimeState.initialize(mStore.getFalloutPlayerState());
+        if (const FalloutPlayerState* playerState = mStore.getFalloutPlayerState())
+            mFalloutPlayerRuntimeState.initialize(*playerState);
+        else
+            mFalloutPlayerRuntimeState.clear();
         mStore.movePlayerRecord();
 
         mSwimHeightScale = mStore.get<ESM::GameSetting>().find("fSwimHeightScale")->mValue.getFloat();
@@ -842,7 +845,10 @@ namespace MWWorld
 
         mGoToJail = false;
         mESM4QuestRuntime.initialize(mStore, &mGlobalVariables);
-        mFalloutPlayerRuntimeState.initialize(mStore.getFalloutPlayerState());
+        if (const FalloutPlayerState* playerState = mStore.getFalloutPlayerState())
+            mFalloutPlayerRuntimeState.initialize(*playerState);
+        else
+            mFalloutPlayerRuntimeState.clear();
         mLevitationEnabled = true;
         mTeleportEnabled = true;
 
@@ -1126,7 +1132,10 @@ namespace MWWorld
 
         fillGlobalVariables();
         mESM4QuestRuntime.initialize(mStore, &mGlobalVariables);
-        mFalloutPlayerRuntimeState.initialize(mStore.getFalloutPlayerState());
+        if (const FalloutPlayerState* playerState = mStore.getFalloutPlayerState())
+            mFalloutPlayerRuntimeState.initialize(*playerState);
+        else
+            mFalloutPlayerRuntimeState.clear();
     }
 
     int World::countSavedGameRecords() const
