@@ -67,6 +67,7 @@ namespace MyGUIPlatform
         std::map<std::string, OSGTexture> mTextures;
 
         bool mIsInitialise;
+        bool mUseMissingTextureFallback;
 
         float mInvScalingFactor;
 
@@ -80,6 +81,11 @@ namespace MyGUIPlatform
         void shutdown();
 
         void enableShaders(Shader::ShaderManager& shaderManager);
+
+        /// Replace absent MyGUI-only images with generated, readable placeholders.
+        /// Existing images, including malformed ones, remain on the normal loader path.
+        void setUseMissingTextureFallback(bool enabled) { mUseMissingTextureFallback = enabled; }
+        bool useMissingTextureFallback() const { return mUseMissingTextureFallback; }
 
         static RenderManager& getInstance() { return *getInstancePtr(); }
         static RenderManager* getInstancePtr()

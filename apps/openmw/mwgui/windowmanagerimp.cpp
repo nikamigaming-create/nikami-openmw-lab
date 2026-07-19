@@ -44,6 +44,7 @@
 #include <components/myguiplatform/additivelayer.hpp>
 #include <components/myguiplatform/myguiplatform.hpp>
 #include <components/myguiplatform/myguirendermanager.hpp>
+#include <components/myguiplatform/myguitexture.hpp>
 #include <components/myguiplatform/scalinglayer.hpp>
 
 #include <components/vfs/manager.hpp>
@@ -269,6 +270,14 @@ namespace MWGui
         if(VR::getVR())
             mGuiPlatform->getRenderManagerPtr()->setViewSize(1024, 1024);
 //## VR_PATCH END
+
+        const VFS::Manager* vfs = resourceSystem->getVFS();
+        const bool useFnvMissingGuiFallback = !VR::getVR()
+            && vfs->exists(VFS::Path::Normalized("falloutnv.esm"))
+            && !vfs->exists(VFS::Path::Normalized("textures/menu_thin_border_top.dds"));
+        mGuiPlatform->getRenderManagerPtr()->setUseMissingTextureFallback(useFnvMissingGuiFallback);
+        if (useFnvMissingGuiFallback)
+            Log(Debug::Info) << "FNV UI: enabled generated fallbacks for absent MyGUI textures";
 
         mGui = std::make_unique<MyGUI::Gui>();
         mGui->initialise({});
@@ -2825,7 +2834,12 @@ namespace MWGui
 
             const VFS::Path::Normalized path(imgSetPointer->getImageSet()->getIndexInfo(0, 0).texture);
 
-            osg::ref_ptr<osg::Image> image = mResourceSystem->getImageManager()->getImage(path);
+            osg::ref_ptr<osg::Image> image;
+            if (mGuiPlatform->getRenderManagerPtr()->useMissingTextureFallback()
+                && !mResourceSystem->getVFS()->exists(path))
+                image = MyGUIPlatform::createMissingTextureFallback(path.value());
+            else
+                image = mResourceSystem->getImageManager()->getImage(path);
 
             if (image.valid())
             {
