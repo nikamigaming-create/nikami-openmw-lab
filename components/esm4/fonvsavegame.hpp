@@ -24,6 +24,7 @@ namespace ESM4
     inline constexpr std::size_t sFONVPlayerCharacterScalarReferenceStateBytes = 287;
     inline constexpr std::size_t sFONVPlayerCharacterListsStateBytes = 147;
     inline constexpr std::size_t sFONVPlayerCharacterMagicTargetStateBytes = 234;
+    inline constexpr std::size_t sFONVPlayerCharacterFinalStateBytes = 71;
     inline constexpr std::uint8_t sFONVExtraWornType = 0x16;
     inline constexpr std::uint8_t sFONVExtraCountType = 0x24;
     inline constexpr std::uint8_t sFONVExtraHealthType = 0x25;
@@ -132,6 +133,14 @@ namespace ESM4
         FONVSaveField<std::uint32_t> mEncoded;
         FONVSaveReferenceKind mKind = FONVSaveReferenceKind::FormIdArray;
         std::uint32_t mPayload = 0;
+        std::optional<std::uint32_t> mResolvedFormId;
+    };
+
+    // Unlike the save's packed three-byte RefID, wbFormIDT stores an already-expanded little-endian FormID. Zero is
+    // null; nonzero values resolve directly while retaining the exact encoded field bytes and range.
+    struct FONVSaveFullFormId
+    {
+        FONVSaveField<std::uint32_t> mEncoded;
         std::optional<std::uint32_t> mResolvedFormId;
     };
 
@@ -791,6 +800,33 @@ namespace ESM4
         FONVSaveRawField mUnparsedRemainder;
     };
 
+    // Final exact form-version-27 PlayerCharacter block. All four Lists11CAC98 arrays are empty in Save330, while
+    // their canonical packed counts remain range-addressable. Successful parsing consumes the complete Player
+    // payload; mUnparsedRemainder must therefore be empty.
+    struct FONVSavePlayerCharacterFinalState
+    {
+        FONVSaveField<std::uint32_t> mKeyForUnkD64;
+        FONVSaveField<float> mUnknown11DFED4;
+        FONVSaveField<float> mUnknown11DFED8;
+        FONVSaveField<std::uint32_t> mPerksAD4Count;
+        std::vector<FONVSavePlayerCharacterPerkEntry> mPerksAD4;
+        FONVSaveField<std::uint8_t> mHardcoreMode;
+        FONVSaveField<std::uint8_t> mClearsHardcoreFlag;
+        FONVSaveField<std::uint8_t> mByt66E;
+        std::array<FONVSaveFullFormId, 8> mUnknownE3C;
+        FONVSaveField<std::uint32_t> mEnabledCount;
+        std::vector<FONVSaveResolvedReferenceId> mEnabled;
+        FONVSaveField<std::uint32_t> mDisabledCount;
+        std::vector<FONVSaveResolvedReferenceId> mDisabled;
+        FONVSaveField<std::uint32_t> mUnknownCount;
+        std::vector<FONVSaveResolvedReferenceId> mUnknown;
+        FONVSaveField<std::uint32_t> mFadeOutCount;
+        std::vector<FONVSaveResolvedReferenceId> mFadeOut;
+        FONVSaveRange mRange;
+        std::vector<std::uint8_t> mRaw;
+        FONVSaveRawField mUnparsedRemainder;
+    };
+
     struct FONVSaveChangedFormEnvelope
     {
         FONVSaveRawField mReferenceId;
@@ -905,6 +941,7 @@ namespace ESM4
         std::optional<FONVSavePlayerCharacterScalarReferenceState> mPlayerCharacterScalarReferenceState;
         std::optional<FONVSavePlayerCharacterListsState> mPlayerCharacterListsState;
         std::optional<FONVSavePlayerCharacterMagicTargetState> mPlayerCharacterMagicTargetState;
+        std::optional<FONVSavePlayerCharacterFinalState> mPlayerCharacterFinalState;
         std::optional<FONVSaveSkyState> mSky;
 
         // The parser accounts for every byte structurally. These ranges are gameplay payload bytes whose internal
