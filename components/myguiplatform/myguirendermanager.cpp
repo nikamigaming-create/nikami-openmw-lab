@@ -541,10 +541,8 @@ namespace MyGUIPlatform
         auto program = shaderManager.getProgram("gui");
 //## VR_PATCH BEGIN
 // VR-TODO: Is there a specific reason i am specifying GLSLVersion here, isn't that taken care of in the shaderManager.getProgram?
-        auto vertexShader
-            = shaderManager.getShader("gui_vertex.glsl", { { "GLSLVersion", "120" } }, osg::Shader::VERTEX);
-        auto fragmentShader
-            = shaderManager.getShader("gui_fragment.glsl", { { "GLSLVersion", "120" } }, osg::Shader::FRAGMENT);
+        auto vertexShader = shaderManager.getShader("gui.vert", { { "GLSLVersion", "120" } }, osg::Shader::VERTEX);
+        auto fragmentShader = shaderManager.getShader("gui.frag", { { "GLSLVersion", "120" } }, osg::Shader::FRAGMENT);
 
         mGuiStateSet->setAttributeAndModes(program, osg::StateAttribute::ON);
         mGuiStateSet->addUniform(new osg::Uniform("diffuseMap", 0));
