@@ -162,6 +162,42 @@ namespace
         bytes.push_back(sDelimiter);
     }
 
+    void appendDelimitedReferenceId(std::vector<std::uint8_t>& bytes, std::uint32_t value)
+    {
+        bytes.push_back(static_cast<std::uint8_t>(value >> 16));
+        bytes.push_back(static_cast<std::uint8_t>(value >> 8));
+        bytes.push_back(static_cast<std::uint8_t>(value));
+        appendDelimiter(bytes);
+    }
+
+    std::vector<std::uint8_t> makeSkyPayload()
+    {
+        std::vector<std::uint8_t> result;
+        for (const std::uint32_t weather : { 3u, 0u, 4u, 0u })
+            appendDelimitedReferenceId(result, weather);
+        for (const float value : { 14.25f, 14.f, 1.f })
+        {
+            appendF32(result, value);
+            appendDelimiter(result);
+        }
+        appendU32(result, 0x20u);
+        appendDelimiter(result);
+        appendF32(result, 0.f);
+        appendDelimiter(result);
+        for (const float value : { 0.f, 0.f, 0.f })
+        {
+            appendF32(result, value);
+            appendDelimiter(result);
+        }
+        appendU32(result, 0xa00f0800u);
+        appendDelimiter(result);
+        appendF32(result, 0.5f);
+        appendDelimiter(result);
+        appendU32(result, 3u);
+        appendDelimiter(result);
+        return result;
+    }
+
     void appendString(std::vector<std::uint8_t>& bytes, std::string_view value)
     {
         if (value.size() > std::numeric_limits<std::uint16_t>::max())
@@ -257,7 +293,7 @@ namespace
 
     SaveBytes makeSave(bool hasLanguage = true, std::uint32_t width = 2, std::uint32_t height = 1,
         std::span<const std::string_view> masters = {}, bool includeScreenshot = true,
-        std::string_view playerName = "Courier")
+        std::string_view playerName = "Courier", bool includeSky = false)
     {
         std::vector<std::uint8_t> header;
         appendU32(header, 48);
@@ -315,9 +351,10 @@ namespace
         result.mBytes.insert(result.mBytes.end(), masterTable.begin(), masterTable.end());
         result.mMasterTableEnd = result.mBytes.size();
 
-        constexpr std::array<std::uint8_t, 3> globalData1Payload = { 0xaa, 0xbb, 0xcc };
+        const std::vector<std::uint8_t> globalData1Payload
+            = includeSky ? makeSkyPayload() : std::vector<std::uint8_t>{ 0xaa, 0xbb, 0xcc };
         std::vector<std::uint8_t> globalData1;
-        appendGlobalDataEntry(globalData1, 0, globalData1Payload);
+        appendGlobalDataEntry(globalData1, includeSky ? 8u : 0u, globalData1Payload);
 
         std::vector<std::uint8_t> changedForms;
         std::vector<std::uint8_t> changedPayload1 = { 0, 0, 2 };
@@ -340,9 +377,14 @@ namespace
         std::vector<std::uint8_t> globalData2;
         appendGlobalDataEntry(globalData2, 1000, std::span<const std::uint8_t>{});
         std::vector<std::uint8_t> refIdAndVisitedWorldspace;
-        appendU32(refIdAndVisitedWorldspace, 2);
+        appendU32(refIdAndVisitedWorldspace, includeSky ? 4u : 2u);
         appendU32(refIdAndVisitedWorldspace, ESM4::sFONVPlayerReferenceFormId);
         appendU32(refIdAndVisitedWorldspace, 0x000da726);
+        if (includeSky)
+        {
+            appendU32(refIdAndVisitedWorldspace, 0x001237d7);
+            appendU32(refIdAndVisitedWorldspace, 0x000ffc88);
+        }
         appendU32(refIdAndVisitedWorldspace, 1);
         appendU32(refIdAndVisitedWorldspace, 0x000da726);
         std::vector<std::uint8_t> unknownTableAndTail;
@@ -539,6 +581,33 @@ namespace
         constexpr std::array<std::uint8_t, 3> abc = { 'a', 'b', 'c' };
         EXPECT_EQ(sha256Hex({}), "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
         EXPECT_EQ(sha256Hex(abc), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+    }
+
+    TEST(FONVSaveGame, ParsesDelimitedSkyStateAndRejectsCorruptDelimiters)
+    {
+        constexpr std::array masters = { std::string_view("FalloutNV.esm") };
+        SaveBytes source = makeSave(true, 2, 1, masters, true, "Courier", true);
+
+        ESM4::FONVSaveGamePrefix save = ESM4::parseFONVSaveGamePrefix(source.mBytes);
+        ASSERT_TRUE(save.mSky.has_value());
+        const ESM4::FONVSaveSkyState& sky = *save.mSky;
+        EXPECT_EQ(sky.mRange, (ESM4::FONVSaveRange{ source.mGlobalData1Begin + 8, 71 }));
+        EXPECT_EQ(sky.mRaw.size(), 71u);
+        EXPECT_EQ(sky.mCurrentWeather.mResolvedFormId, 0x001237d7u);
+        EXPECT_FALSE(sky.mTransitionWeather.mResolvedFormId.has_value());
+        EXPECT_EQ(sky.mDefaultWeather.mResolvedFormId, 0x000ffc88u);
+        EXPECT_FALSE(sky.mOverrideWeather.mResolvedFormId.has_value());
+        EXPECT_FLOAT_EQ(sky.mGameHour.mValue, 14.25f);
+        EXPECT_FLOAT_EQ(sky.mLastUpdateHour.mValue, 14.f);
+        EXPECT_FLOAT_EQ(sky.mWeatherPercent.mValue, 1.f);
+        EXPECT_EQ(sky.mFlags.mValue, 0x20u);
+        EXPECT_FLOAT_EQ(sky.mFogPower.mValue, 0.5f);
+        EXPECT_EQ(sky.mSkyMode.mValue, 3u);
+        EXPECT_EQ(save.mUnparsedSemanticPayloadRanges.size(), 3u);
+        EXPECT_EQ(save.mUnparsedSemanticPayloadBytes, 12u);
+
+        source.mBytes[source.mGlobalData1Begin + 8 + 3] = 0;
+        EXPECT_THROW(ESM4::parseFONVSaveGamePrefix(source.mBytes), ESM4::FONVSaveError);
     }
 
     TEST(FONVSaveGame, ParsesFallout3StylePrefixWithoutLanguage)
@@ -839,6 +908,22 @@ namespace
             EXPECT_EQ(save.mGlobalDataTable1.mEntries[i].mEnvelopeRange.mSize, global1Lengths[i] + 8u);
         }
         EXPECT_EQ(save.mGlobalDataTable1.mEntries.back().mEnvelopeRange.end(), 494730u);
+        ASSERT_TRUE(save.mSky.has_value());
+        const ESM4::FONVSaveSkyState& sky = *save.mSky;
+        EXPECT_EQ(sky.mRange, (ESM4::FONVSaveRange{ 494355, 71 }));
+        EXPECT_EQ(sha256Hex(sky.mRaw), "8492cf418cdf6f301a51d504b6a0b0df842282e77bae5607245d3fee04a71468");
+        EXPECT_EQ(sky.mCurrentWeather.mEncoded.mRange, (ESM4::FONVSaveRange{ 494355, 3 }));
+        EXPECT_EQ(sky.mCurrentWeather.mResolvedFormId, 0x001237d7u);
+        EXPECT_FALSE(sky.mTransitionWeather.mResolvedFormId.has_value());
+        EXPECT_EQ(sky.mDefaultWeather.mResolvedFormId, 0x000ffc88u);
+        EXPECT_FALSE(sky.mOverrideWeather.mResolvedFormId.has_value());
+        EXPECT_EQ(sky.mGameHour.mRange, (ESM4::FONVSaveRange{ 494371, 4 }));
+        EXPECT_FLOAT_EQ(sky.mGameHour.mValue, 14.215002059936523f);
+        EXPECT_FLOAT_EQ(sky.mLastUpdateHour.mValue, 17.606250762939453f);
+        EXPECT_FLOAT_EQ(sky.mWeatherPercent.mValue, 1.f);
+        EXPECT_EQ(sky.mFlags.mValue, 0x20u);
+        EXPECT_FLOAT_EQ(sky.mFogPower.mValue, 0.5f);
+        EXPECT_EQ(sky.mSkyMode.mValue, 3u);
 
         EXPECT_EQ(save.mChangedForms.mRange, (ESM4::FONVSaveRange{ 494730, 2813549 }));
         ASSERT_EQ(save.mChangedForms.mEntries.size(), 7093u);
@@ -966,8 +1051,8 @@ namespace
         EXPECT_EQ(save.findChangedForm(ESM4::sFONVPlayerNpcFormId), nullptr)
             << "NPC_ FormID 0x7 is a FalloutNV.esm base-record relation, not serialized as a Save330 change form";
 
-        EXPECT_EQ(save.mUnparsedSemanticPayloadRanges.size(), 7091u);
-        EXPECT_EQ(save.mUnparsedSemanticPayloadBytes, 2739018u);
+        EXPECT_EQ(save.mUnparsedSemanticPayloadRanges.size(), 7090u);
+        EXPECT_EQ(save.mUnparsedSemanticPayloadBytes, 2738947u);
         EXPECT_EQ(save.mStructurallyAccountedRange, (ESM4::FONVSaveRange{ 0, 3395328 }));
         EXPECT_EQ(save.mParsedPrefixRange, save.mStructurallyAccountedRange);
         EXPECT_EQ(save.mUnparsedBodyRange, (ESM4::FONVSaveRange{ 3395328, 0 }));

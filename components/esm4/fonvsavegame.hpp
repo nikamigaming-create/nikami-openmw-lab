@@ -122,6 +122,27 @@ namespace ESM4
         std::optional<std::uint32_t> mResolvedFormId;
     };
 
+    // Global-data table 1 type 8. Retail serializes every member with a trailing 0x7c delimiter. The four weather
+    // identities use the save RefID namespace; null transition/override weather is valid.
+    struct FONVSaveSkyState
+    {
+        FONVSaveResolvedReferenceId mCurrentWeather;
+        FONVSaveResolvedReferenceId mTransitionWeather;
+        FONVSaveResolvedReferenceId mDefaultWeather;
+        FONVSaveResolvedReferenceId mOverrideWeather;
+        FONVSaveField<float> mGameHour;
+        FONVSaveField<float> mLastUpdateHour;
+        FONVSaveField<float> mWeatherPercent;
+        FONVSaveField<std::uint32_t> mFlags;
+        FONVSaveField<float> mUnknown110;
+        std::array<FONVSaveField<float>, 3> mVectorB4;
+        FONVSaveField<std::uint32_t> mUnknownE4;
+        FONVSaveField<float> mFogPower;
+        FONVSaveField<std::uint32_t> mSkyMode;
+        FONVSaveRange mRange;
+        std::vector<std::uint8_t> mRaw;
+    };
+
     // This is only the type-4 "Reference moved" prefix selected by ACHR change flags 1/2. Other initial-data
     // layouts remain opaque. The container can be either a CELL or WRLD; save bytes alone cannot distinguish them,
     // and this block carries no separate exterior cell-grid coordinates.
@@ -208,8 +229,8 @@ namespace ESM4
         std::uint64_t mOffset;
     };
 
-    // This deliberately represents only the structures that this reader validates. Global-data and change-form
-    // envelopes are bounded exactly, but their payload bytes remain explicitly uninterpreted.
+    // This deliberately represents only the structures that this reader validates. Recognized semantic payloads
+    // are exposed explicitly; every remaining global-data and change-form payload stays byte-accounted and opaque.
     struct FONVSaveGamePrefix
     {
         std::filesystem::path mSourcePath;
@@ -242,10 +263,11 @@ namespace ESM4
         FONVSaveFormIdTable mVisitedWorldspaces;
         FONVSaveUnknownTable mUnknownTable;
         std::optional<FONVSavePlayerReferenceMovement> mPlayerReferenceMovement;
+        std::optional<FONVSaveSkyState> mSky;
 
-        // The parser accounts for every byte structurally. These ranges are the gameplay payload bytes whose
-        // internal meaning is still deliberately unknown: every global-data payload, every changed-form payload,
-        // and the trailing unknown-table entries. Envelope coverage is never reported as semantic coverage.
+        // The parser accounts for every byte structurally. These ranges are gameplay payload bytes whose internal
+        // meaning is still deliberately unknown: unrecognized global data, undecoded change-form bytes, and the
+        // trailing unknown-table entries. Envelope coverage is never reported as semantic coverage.
         std::vector<FONVSaveRange> mUnparsedSemanticPayloadRanges;
         std::uint64_t mUnparsedSemanticPayloadBytes = 0;
         FONVSaveRange mStructurallyAccountedRange;

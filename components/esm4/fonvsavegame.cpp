@@ -113,6 +113,15 @@ namespace
         return { value, range(begin, end), copyRange(data, begin, end) };
     }
 
+    template <class T, class Read>
+    ESM4::FONVSaveField<T> readDelimitedField(
+        Cursor& cursor, std::span<const std::uint8_t> data, Read&& read, std::string_view description)
+    {
+        ESM4::FONVSaveField<T> result = readField<T>(cursor, data, std::forward<Read>(read), description);
+        cursor.expectDelimiter(description);
+        return result;
+    }
+
     ESM4::FONVSaveStringField readStringField(
         Cursor& cursor, std::span<const std::uint8_t> data, std::uint16_t maxBytes, std::string_view description)
     {
@@ -383,7 +392,8 @@ namespace
     }
 
     ESM4::FONVSaveResolvedReferenceId decodeResolvedReferenceId(Cursor& cursor,
-        std::span<const std::uint8_t> data, const ESM4::FONVSaveFormIdTable& formIds, std::string_view description)
+        std::span<const std::uint8_t> data, const ESM4::FONVSaveFormIdTable& formIds, std::string_view description,
+        bool allowNull = false)
     {
         ESM4::FONVSaveResolvedReferenceId result;
         result.mEncoded = readReferenceId(cursor, data, description);
@@ -394,7 +404,56 @@ namespace
         result.mKind = static_cast<ESM4::FONVSaveReferenceKind>(kind);
         result.mPayload = result.mEncoded.mValue & 0x003fffffu;
         result.mResolvedFormId = resolveReferenceId(
-            result.mKind, result.mPayload, formIds, result.mEncoded.mRange.mOffset, false, description);
+            result.mKind, result.mPayload, formIds, result.mEncoded.mRange.mOffset, allowNull, description);
+        return result;
+    }
+
+    ESM4::FONVSaveSkyState parseSkyState(std::span<const std::uint8_t> data,
+        const ESM4::FONVSaveGlobalDataEntry& entry, const ESM4::FONVSaveFormIdTable& formIds)
+    {
+        constexpr std::size_t sSkyPayloadBytes = 4 * (3 + 1) + 11 * (sizeof(std::uint32_t) + 1);
+        if (entry.mUnparsedPayload.mRange.mSize != sSkyPayloadBytes)
+            throw ESM4::FONVSaveError(entry.mUnparsedPayload.mRange.mOffset, "unsupported Sky payload size");
+
+        const std::size_t begin = static_cast<std::size_t>(entry.mUnparsedPayload.mRange.mOffset);
+        Cursor cursor(data, begin, static_cast<std::size_t>(entry.mUnparsedPayload.mRange.end()));
+        auto readWeather = [&](std::string_view description) {
+            ESM4::FONVSaveResolvedReferenceId result
+                = decodeResolvedReferenceId(cursor, data, formIds, description, true);
+            cursor.expectDelimiter(description);
+            return result;
+        };
+        auto readFloat = [&](std::string_view description) {
+            ESM4::FONVSaveField<float> result = readDelimitedField<float>(cursor, data,
+                [&](std::string_view label) { return cursor.readF32(label); }, description);
+            if (!std::isfinite(result.mValue))
+                throw ESM4::FONVSaveError(result.mRange.mOffset, std::string("non-finite ") + std::string(description));
+            return result;
+        };
+        auto readUint = [&](std::string_view description) {
+            return readDelimitedField<std::uint32_t>(cursor, data,
+                [&](std::string_view label) { return cursor.readU32(label); }, description);
+        };
+
+        ESM4::FONVSaveSkyState result;
+        result.mCurrentWeather = readWeather("Sky current-weather RefID");
+        result.mTransitionWeather = readWeather("Sky transition-weather RefID");
+        result.mDefaultWeather = readWeather("Sky default-weather RefID");
+        result.mOverrideWeather = readWeather("Sky override-weather RefID");
+        result.mGameHour = readFloat("Sky game hour");
+        result.mLastUpdateHour = readFloat("Sky last-update hour");
+        result.mWeatherPercent = readFloat("Sky weather percent");
+        result.mFlags = readUint("Sky flags");
+        result.mUnknown110 = readFloat("Sky field 0x110");
+        for (ESM4::FONVSaveField<float>& value : result.mVectorB4)
+            value = readFloat("Sky vector 0xB4 component");
+        result.mUnknownE4 = readUint("Sky field 0xE4");
+        result.mFogPower = readFloat("Sky fog power");
+        result.mSkyMode = readUint("Sky mode");
+        if (cursor.position() != cursor.end())
+            throw ESM4::FONVSaveError(cursor.position(), "Sky payload contains unaccounted bytes");
+        result.mRange = range(begin, cursor.position());
+        result.mRaw = copyRange(data, begin, cursor.position());
         return result;
     }
 
@@ -688,6 +747,15 @@ namespace ESM4
                 formIdAndWorldspaceTables.position(), "FormID and visited-worldspace tables contain unaccounted bytes");
         resolveChangedFormReferences(result.mChangedForms, result.mFormIdTable);
 
+        for (const FONVSaveGlobalDataEntry& entry : result.mGlobalDataTable1.mEntries)
+        {
+            if (entry.mType.mValue != 8)
+                continue;
+            if (result.mSky.has_value())
+                throw FONVSaveError(entry.mType.mRange.mOffset, "multiple Sky global-data entries are present");
+            result.mSky = parseSkyState(data, entry, result.mFormIdTable);
+        }
+
         const FONVSaveChangedFormEnvelope* playerReference = nullptr;
         for (const FONVSaveChangedFormEnvelope& entry : result.mChangedForms.mEntries)
         {
@@ -726,7 +794,11 @@ namespace ESM4
         result.mUnknownTable.mRange = range(unknownTableBegin, unknownTable.position());
 
         for (const FONVSaveGlobalDataEntry& entry : result.mGlobalDataTable1.mEntries)
+        {
+            if (result.mSky.has_value() && entry.mUnparsedPayload.mRange == result.mSky->mRange)
+                continue;
             appendUnparsedSemanticPayload(result, entry.mUnparsedPayload.mRange);
+        }
         for (const FONVSaveChangedFormEnvelope& entry : result.mChangedForms.mEntries)
         {
             if (result.mPlayerReferenceMovement.has_value() && &entry == playerReference)
