@@ -21,6 +21,58 @@
 
 namespace MWDialogue
 {
+    void Esm4DialoguePicker::clear()
+    {
+        mTopics.clear();
+        mChoices.clear();
+    }
+
+    void Esm4DialoguePicker::clearTopics()
+    {
+        mTopics.clear();
+    }
+
+    void Esm4DialoguePicker::clearChoices()
+    {
+        mChoices.clear();
+    }
+
+    bool Esm4DialoguePicker::bindTopic(std::string_view title, Esm4DialogueSelection selection)
+    {
+        if (title.empty())
+            return false;
+        return mTopics.emplace(std::string(title), selection).second;
+    }
+
+    int Esm4DialoguePicker::bindChoice(Esm4DialogueSelection selection)
+    {
+        mChoices.push_back(selection);
+        return static_cast<int>(mChoices.size() - 1);
+    }
+
+    std::optional<Esm4DialogueSelection> Esm4DialoguePicker::selectTopic(std::string_view title) const
+    {
+        if (hasChoices())
+            return std::nullopt;
+        const auto found = mTopics.find(title);
+        if (found == mTopics.end())
+            return std::nullopt;
+        return found->second;
+    }
+
+    std::optional<Esm4DialogueSelection> Esm4DialoguePicker::selectChoice(int index) const
+    {
+        if (index < 0 || static_cast<std::size_t>(index) >= mChoices.size())
+            return std::nullopt;
+        return mChoices[static_cast<std::size_t>(index)];
+    }
+
+    bool matchesEsm4DialogueSelection(
+        const Esm4DialogueSelection& selection, const ESM4::DialogInfo& info)
+    {
+        return info.mTopic == selection.mTopic && info.mId == selection.mInfo;
+    }
+
     std::optional<bool> evaluateEsm4ActorDialogueCondition(
         const ESM4::TargetCondition& condition, const MWWorld::Ptr& actor, bool isPlayer)
     {

@@ -124,8 +124,10 @@ namespace MWDialogue
         mPermanentDispositionChange = 0;
         mEsm4Dialogue = false;
         mLastEsm4Topic = {};
-        mEsm4TopicIds.clear();
-        mEsm4ChoiceSelections.clear();
+        mEsm4Picker.clear();
+        mChoices.clear();
+        mIsInChoice = false;
+        mGoodbye = false;
         mEsm4SaidInfos.clear();
         mEsm4AddedTopics.clear();
         mEsm4VoicePaths.clear();
@@ -244,9 +246,21 @@ namespace MWDialogue
         return selected;
     }
 
+    const ESM4::DialogInfo* DialogueManager::resolveEsm4Selection(
+        const Esm4DialogueSelection& selection) const
+    {
+        const ESM4::DialogInfo* info = MWBase::Environment::get()
+                                               .getESMStore()
+                                               ->get<ESM4::DialogInfo>()
+                                               .search(ESM::RefId(selection.mInfo));
+        if (info == nullptr || !matchesEsm4DialogueSelection(selection, *info))
+            return nullptr;
+        return info;
+    }
+
     void DialogueManager::updateEsm4Topics()
     {
-        mEsm4TopicIds.clear();
+        mEsm4Picker.clearTopics();
         const auto& dialogues = MWBase::Environment::get().getESMStore()->get<ESM4::Dialogue>();
         for (const ESM4::Dialogue& dialogue : dialogues)
         {
@@ -261,10 +275,17 @@ namespace MWDialogue
             const std::string_view title = getEsm4DialoguePrompt(dialogue, *info);
             if (!title.empty())
             {
-                mEsm4TopicIds.emplace(std::string(title), dialogue.mId);
-                if (std::getenv("OPENMW_PROOF_DIALOGUE_TOPIC") != nullptr)
-                    Log(Debug::Info) << "FNV/ESM4 dialogue: available topic=\"" << title << "\" form="
-                                     << ESM::RefId(dialogue.mId) << " info=" << ESM::RefId(info->mId);
+                const Esm4DialogueSelection selection{ dialogue.mId, info->mId };
+                if (mEsm4Picker.bindTopic(title, selection))
+                {
+                    if (std::getenv("OPENMW_PROOF_DIALOGUE_TOPIC") != nullptr)
+                        Log(Debug::Info) << "FNV/ESM4 dialogue: available topic=\"" << title << "\" form="
+                                         << ESM::RefId(dialogue.mId) << " info=" << ESM::RefId(info->mId);
+                }
+                else
+                    Log(Debug::Verbose) << "FNV/ESM4 dialogue: duplicate visible topic skipped title=\"" << title
+                                        << "\" form=" << ESM::RefId(dialogue.mId)
+                                        << " info=" << ESM::RefId(info->mId);
             }
         }
     }
@@ -473,7 +494,7 @@ namespace MWDialogue
             MWBase::Environment::get().getSoundManager()->saySequence(mActor, voices);
 
         mChoices.clear();
-        mEsm4ChoiceSelections.clear();
+        mEsm4Picker.clearChoices();
         for (ESM::FormId choice : info->mChoices)
         {
             const ESM4::Dialogue* choiceDialogue
@@ -482,10 +503,10 @@ namespace MWDialogue
             if (choiceDialogue == nullptr || choiceInfo == nullptr)
                 continue;
             const std::string_view title = getEsm4DialoguePrompt(*choiceDialogue, *choiceInfo);
-            mEsm4ChoiceSelections.emplace_back(choice, choiceInfo->mId);
-            mChoices.emplace_back(std::string(title), static_cast<int>(mEsm4ChoiceSelections.size() - 1));
+            const int choiceIndex = mEsm4Picker.bindChoice({ choice, choiceInfo->mId });
+            mChoices.emplace_back(std::string(title), choiceIndex);
         }
-        mIsInChoice = !mChoices.empty();
+        mIsInChoice = mEsm4Picker.hasChoices();
         if ((info->mInfoFlags & ESM4::INFO_Goodbye) != 0)
             goodbye();
 
@@ -593,8 +614,7 @@ namespace MWDialogue
 
         mEsm4Dialogue = actor.getType() == ESM4::Npc::sRecordId;
         mLastEsm4Topic = {};
-        mEsm4TopicIds.clear();
-        mEsm4ChoiceSelections.clear();
+        mEsm4Picker.clear();
         if (mEsm4Dialogue)
         {
             const auto& esm4Dialogues = MWBase::Environment::get().getESMStore()->get<ESM4::Dialogue>();
@@ -856,7 +876,7 @@ namespace MWDialogue
         {
             updateEsm4Topics();
             std::list<std::string> result;
-            for (const auto& [title, _] : mEsm4TopicIds)
+            for (const auto& [title, _] : mEsm4Picker.getTopics())
                 result.push_back(title);
             return result;
         }
@@ -890,8 +910,9 @@ namespace MWDialogue
     {
         if (mEsm4Dialogue)
         {
-            if (const auto found = mEsm4TopicIds.find(keyword); found != mEsm4TopicIds.end())
-                executeEsm4Topic(found->second, callback);
+            if (const std::optional<Esm4DialogueSelection> selection = mEsm4Picker.selectTopic(keyword))
+                if (const ESM4::DialogInfo* info = resolveEsm4Selection(*selection))
+                    executeEsm4Topic(selection->mTopic, callback, false, info);
             updateEsm4Topics();
             return;
         }
@@ -930,22 +951,30 @@ namespace MWDialogue
         mPermanentDispositionChange = 0;
         mOriginalDisposition = 0;
         mCurrentDisposition = 0;
+        if (mEsm4Dialogue)
+        {
+            mEsm4Picker.clear();
+            mChoices.clear();
+            mIsInChoice = false;
+            mGoodbye = false;
+            mLastEsm4Topic = {};
+            mEsm4Dialogue = false;
+        }
     }
 
     void DialogueManager::questionAnswered(int answer, ResponseCallback* callback)
     {
         if (mEsm4Dialogue)
         {
-            if (answer >= 0 && static_cast<std::size_t>(answer) < mEsm4ChoiceSelections.size())
+            if (const std::optional<Esm4DialogueSelection> selection = mEsm4Picker.selectChoice(answer))
             {
-                const auto [topic, infoId] = mEsm4ChoiceSelections[answer];
-                const ESM4::DialogInfo* info
-                    = MWBase::Environment::get().getESMStore()->get<ESM4::DialogInfo>().search(ESM::RefId(infoId));
-                mChoices.clear();
-                mEsm4ChoiceSelections.clear();
-                mIsInChoice = false;
-                if (info != nullptr && info->mTopic == topic)
-                    executeEsm4Topic(topic, callback, false, info);
+                if (const ESM4::DialogInfo* info = resolveEsm4Selection(*selection))
+                {
+                    mChoices.clear();
+                    mEsm4Picker.clearChoices();
+                    mIsInChoice = false;
+                    executeEsm4Topic(selection->mTopic, callback, false, info);
+                }
             }
             updateEsm4Topics();
             return;
@@ -1013,6 +1042,11 @@ namespace MWDialogue
     void DialogueManager::goodbye()
     {
         mIsInChoice = false;
+        if (mEsm4Dialogue)
+        {
+            mChoices.clear();
+            mEsm4Picker.clearChoices();
+        }
         mGoodbye = true;
     }
 

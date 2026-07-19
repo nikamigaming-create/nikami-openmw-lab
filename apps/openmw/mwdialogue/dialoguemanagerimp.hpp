@@ -18,6 +18,8 @@
 
 #include "../mwscript/compilercontext.hpp"
 
+#include "esm4dialogueutils.hpp"
+
 namespace ESM
 {
     struct Dialogue;
@@ -64,8 +66,7 @@ namespace MWDialogue
 
         bool mEsm4Dialogue = false;
         ESM::FormId mLastEsm4Topic{};
-        std::map<std::string, ESM::FormId, Misc::StringUtils::CiComp> mEsm4TopicIds;
-        std::vector<std::pair<ESM::FormId, ESM::FormId>> mEsm4ChoiceSelections;
+        Esm4DialoguePicker mEsm4Picker;
         std::set<ESM::FormId> mEsm4SaidInfos;
         std::set<ESM::FormId> mEsm4AddedTopics;
         std::map<std::pair<ESM::FormId, std::uint32_t>, std::string> mEsm4VoicePaths;
@@ -89,6 +90,7 @@ namespace MWDialogue
         void executeEsm4Topic(ESM::FormId topic, ResponseCallback* callback, bool greeting = false,
             const ESM4::DialogInfo* retainedInfo = nullptr);
         const ESM4::DialogInfo* selectEsm4Info(ESM::FormId topic) const;
+        const ESM4::DialogInfo* resolveEsm4Selection(const Esm4DialogueSelection& selection) const;
         bool matchesEsm4Info(const ESM4::DialogInfo& info) const;
         int getEsm4InfoActorAffinity(const ESM4::DialogInfo& info) const;
         std::string resolveEsm4Voice(

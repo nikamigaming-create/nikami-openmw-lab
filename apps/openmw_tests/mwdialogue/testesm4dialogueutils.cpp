@@ -5,6 +5,7 @@
 #include <array>
 #include <cstdint>
 #include <initializer_list>
+#include <optional>
 #include <string_view>
 
 #include <components/esm/formid.hpp>
@@ -88,6 +89,72 @@ namespace
         EXPECT_EQ(MWDialogue::getEsm4DialoguePrompt(dialogue, info), dialogue.mTopicName);
         dialogue.mTopicName.clear();
         EXPECT_EQ(MWDialogue::getEsm4DialoguePrompt(dialogue, info), dialogue.mEditorId);
+    }
+
+    TEST(Esm4DialogueUtilsTest, RightSideTopicRetainsTheExactInfoUsedForItsVisiblePrompt)
+    {
+        // Exact normalized FalloutNV.esm Easy Pete records observed in the Save330 runtime:
+        // VFreeformGoodspringsGSEasyPeteTopic000 DIAL 01105159 selects INFO 0110515C.
+        const MWDialogue::Esm4DialogueSelection displayed{ form(0x01105159), form(0x0110515c) };
+        MWDialogue::Esm4DialoguePicker picker;
+        ASSERT_TRUE(picker.bindTopic("Why are you called Easy Pete?", displayed));
+
+        const std::optional<MWDialogue::Esm4DialogueSelection> activated
+            = picker.selectTopic("why are you called easy pete?");
+        ASSERT_TRUE(activated.has_value());
+        EXPECT_EQ(*activated, displayed);
+
+        ESM4::DialogInfo displayedInfo;
+        displayedInfo.mId = form(0x0110515c);
+        displayedInfo.mTopic = form(0x01105159);
+        EXPECT_TRUE(MWDialogue::matchesEsm4DialogueSelection(*activated, displayedInfo));
+
+        ESM4::DialogInfo laterFallback = displayedInfo;
+        laterFallback.mId = form(0x0110515d);
+        EXPECT_FALSE(MWDialogue::matchesEsm4DialogueSelection(*activated, laterFallback));
+    }
+
+    TEST(Esm4DialogueUtilsTest, NestedChoiceOwnsThePickerUntilItReturnsToRightSideTopics)
+    {
+        // Exact FalloutNV.esm Victor Science branch: INFO 0115FF4B offers TCLT 0110B192,
+        // whose authored response is INFO 0110B19F.
+        const MWDialogue::Esm4DialogueSelection rightSide{ form(0x01105159), form(0x0110515c) };
+        const MWDialogue::Esm4DialogueSelection nested{ form(0x0110b192), form(0x0110b19f) };
+        MWDialogue::Esm4DialoguePicker picker;
+        ASSERT_TRUE(picker.bindTopic("Why are you called Easy Pete?", rightSide));
+        EXPECT_EQ(picker.bindChoice(nested), 0);
+
+        EXPECT_FALSE(picker.selectTopic("Why are you called Easy Pete?").has_value());
+        ASSERT_TRUE(picker.selectChoice(0).has_value());
+        EXPECT_EQ(*picker.selectChoice(0), nested);
+        EXPECT_FALSE(picker.selectChoice(-1).has_value());
+        EXPECT_FALSE(picker.selectChoice(1).has_value());
+
+        picker.clearChoices();
+        ASSERT_TRUE(picker.selectTopic("Why are you called Easy Pete?").has_value());
+        EXPECT_EQ(*picker.selectTopic("Why are you called Easy Pete?"), rightSide);
+
+        // Starting a new actor/dialogue calls clear(), so no prior actor's label or choice can remain selectable.
+        picker.bindChoice(nested);
+        picker.clear();
+        EXPECT_TRUE(picker.getTopics().empty());
+        EXPECT_FALSE(picker.selectTopic("Why are you called Easy Pete?").has_value());
+        EXPECT_FALSE(picker.selectChoice(0).has_value());
+    }
+
+    TEST(Esm4DialogueUtilsTest, DuplicateVisibleTopicCannotReplaceItsDisplayedSelection)
+    {
+        // These two exact Goodsprings DIALs share a visible label but belong to Easy Pete and Chet.
+        const MWDialogue::Esm4DialogueSelection easyPete{ form(0x01106632), form(0x01106635) };
+        const MWDialogue::Esm4DialogueSelection chet{ form(0x011084cc), form(0x011084cd) };
+        MWDialogue::Esm4DialoguePicker picker;
+        ASSERT_TRUE(picker.bindTopic("Do you know anything about the people who attacked me?", easyPete));
+        EXPECT_FALSE(picker.bindTopic("do you know anything about the people who attacked me?", chet));
+
+        const std::optional<MWDialogue::Esm4DialogueSelection> activated
+            = picker.selectTopic("Do you know anything about the people who attacked me?");
+        ASSERT_TRUE(activated.has_value());
+        EXPECT_EQ(*activated, easyPete);
     }
 
     TEST(Esm4DialogueUtilsTest, RetailLegionInfoRequiresRunningOwnerAndMatchingFactionBeforeLocalConditions)
