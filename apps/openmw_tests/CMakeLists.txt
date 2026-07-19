@@ -8,6 +8,7 @@ file(GLOB UNITTEST_SRC_FILES
 
     mwworld/teststore.cpp
     mwworld/testfnvplayerstate.cpp
+    mwworld/testfnvweather.cpp
     mwworld/testduration.cpp
     mwworld/testtimestamp.cpp
     mwworld/testptr.cpp
