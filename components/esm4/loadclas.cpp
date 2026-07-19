@@ -26,15 +26,28 @@
 */
 #include "loadclas.hpp"
 
+#include <cstring>
 #include <stdexcept>
 
 #include "reader.hpp"
 //#include "writer.hpp"
 
+ESM4::Class::Data ESM4::Class::decodeFalloutData(std::span<const std::uint8_t> payload)
+{
+    if (payload.size() != sizeof(Data))
+        throw std::runtime_error("ESM4::CLAS Fallout DATA must be exactly 28 bytes");
+
+    Data result{};
+    std::memcpy(&result, payload.data(), sizeof(result));
+    return result;
+}
+
 void ESM4::Class::load(ESM4::Reader& reader)
 {
     mId = reader.getFormIdFromHeader();
     mFlags = reader.hdr().record.flags;
+    const std::uint32_t esmVer = reader.esmVersion();
+    const bool isFONV = esmVer == ESM::VER_132 || esmVer == ESM::VER_133 || esmVer == ESM::VER_134;
 
     while (reader.getSubRecordHeader())
     {
@@ -54,7 +67,34 @@ void ESM4::Class::load(ESM4::Reader& reader)
                 reader.getZString(mIcon);
                 break;
             case ESM::fourCC("DATA"):
+            {
+                if (!isFONV)
+                {
+                    reader.skipSubRecordData();
+                    break;
+                }
+                if (mHasFalloutData)
+                    throw std::runtime_error("ESM4::CLAS contains duplicate Fallout DATA");
+                std::array<std::uint8_t, sizeof(Data)> payload{};
+                if (subHdr.dataSize != payload.size() || !reader.get(payload.data(), payload.size()))
+                    throw std::runtime_error("ESM4::CLAS Fallout DATA size/read mismatch");
+                mData = decodeFalloutData(payload);
+                mHasFalloutData = true;
+                break;
+            }
             case ESM::fourCC("ATTR"):
+            {
+                if (!isFONV)
+                {
+                    reader.skipSubRecordData();
+                    break;
+                }
+                if (mHasFalloutAttributes || subHdr.dataSize != mAttributes.size()
+                    || !reader.get(mAttributes.data(), mAttributes.size()))
+                    throw std::runtime_error("ESM4::CLAS Fallout ATTR duplicate/size/read mismatch");
+                mHasFalloutAttributes = true;
+                break;
+            }
             case ESM::fourCC("PRPS"):
                 reader.skipSubRecordData();
                 break;

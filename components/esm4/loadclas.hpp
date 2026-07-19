@@ -27,7 +27,10 @@
 #ifndef ESM4_CLAS_H
 #define ESM4_CLAS_H
 
+#include <array>
+#include <cstddef>
 #include <cstdint>
+#include <span>
 #include <string>
 
 #include <components/esm/defs.hpp>
@@ -40,19 +43,34 @@ namespace ESM4
 
     struct Class
     {
+#pragma pack(push, 1)
         struct Data
         {
-            std::uint32_t attr;
+            std::array<std::int32_t, 4> mTagActorValues{};
+            std::uint32_t mRawFlags = 0;
+            std::uint32_t mRawServices = 0;
+            std::uint8_t mRawTeaches = 0;
+            std::uint8_t mTrainingLevel = 0;
+            std::array<std::uint8_t, 2> mReserved{};
         };
+#pragma pack(pop)
 
-        ESM::FormId mId; // from the header
-        std::uint32_t mFlags; // from the header, see enum type RecordFlag for details
+        static_assert(sizeof(Data) == 28);
+        static constexpr std::size_t sFalloutAttributeSize = 7;
+
+        ESM::FormId mId{}; // from the header
+        std::uint32_t mFlags = 0; // from the header, see enum type RecordFlag for details
 
         std::string mEditorId;
         std::string mFullName;
         std::string mDesc;
         std::string mIcon;
-        Data mData;
+        Data mData{};
+        std::array<std::uint8_t, sFalloutAttributeSize> mAttributes{};
+        bool mHasFalloutData = false;
+        bool mHasFalloutAttributes = false;
+
+        static Data decodeFalloutData(std::span<const std::uint8_t> payload);
 
         void load(ESM4::Reader& reader);
         // void save(ESM4::Writer& reader) const;
