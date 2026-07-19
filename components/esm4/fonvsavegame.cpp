@@ -495,6 +495,49 @@ namespace
         return result;
     }
 
+    ESM4::FONVSavePlayerActorValueData parsePlayerActorValueData(std::span<const std::uint8_t> data,
+        const ESM4::FONVSaveChangedFormEnvelope& player, const ESM4::FONVSavePlayerReferenceMovement& movement)
+    {
+        if (player.mVersion.mValue != 27)
+            throw ESM4::FONVSaveError(
+                player.mVersion.mRange.mOffset, "unsupported canonical player actor-value changed-form version");
+        if (movement.mUnparsedRemainder.mRange.mSize < ESM4::sFONVPlayerActorValueDataBytes)
+        {
+            throw ESM4::FONVSaveError(
+                movement.mUnparsedRemainder.mRange.mOffset, "truncated canonical player actor-value data");
+        }
+
+        const std::size_t begin = static_cast<std::size_t>(movement.mUnparsedRemainder.mRange.mOffset);
+        const std::size_t end = static_cast<std::size_t>(movement.mUnparsedRemainder.mRange.end());
+        Cursor cursor(data, begin, end);
+        ESM4::FONVSavePlayerActorValueData result;
+        const auto readActorValues = [&](auto& values, std::string_view description) {
+            for (ESM4::FONVSaveField<float>& value : values)
+            {
+                value = readDelimitedField<float>(cursor, data,
+                    [&](std::string_view label) { return cursor.readF32(label); }, description);
+                if (!std::isfinite(value.mValue))
+                {
+                    throw ESM4::FONVSaveError(
+                        value.mRange.mOffset, std::string("non-finite canonical player ") + std::string(description));
+                }
+            }
+        };
+
+        readActorValues(result.mActorValues244, "ActorValues244 value");
+        readActorValues(result.mActorValues378, "ActorValues378 value");
+        readActorValues(result.mActorValues4B0, "ActorValues4B0 value");
+        result.mUnk4AC = readDelimitedField<std::uint32_t>(cursor, data,
+            [&](std::string_view label) { return cursor.readU32(label); }, "player Unk4AC");
+        result.mRange = range(begin, cursor.position());
+        if (result.mRange.mSize != ESM4::sFONVPlayerActorValueDataBytes)
+            throw ESM4::FONVSaveError(begin, "canonical player actor-value data has an invalid encoded size");
+        result.mRaw = copyRange(data, begin, cursor.position());
+        result.mUnparsedRemainder = readRawField(
+            cursor, data, cursor.end() - cursor.position(), "remaining canonical player ACHR payload");
+        return result;
+    }
+
     void appendUnparsedSemanticPayload(ESM4::FONVSaveGamePrefix& save, const ESM4::FONVSaveRange& payload)
     {
         if (payload.empty())
@@ -776,6 +819,8 @@ namespace ESM4
             {
                 result.mPlayerReferenceMovement
                     = parsePlayerReferenceMovement(data, *playerReference, result.mFormIdTable);
+                result.mPlayerActorValueData
+                    = parsePlayerActorValueData(data, *playerReference, *result.mPlayerReferenceMovement);
             }
         }
 
@@ -801,7 +846,9 @@ namespace ESM4
         }
         for (const FONVSaveChangedFormEnvelope& entry : result.mChangedForms.mEntries)
         {
-            if (result.mPlayerReferenceMovement.has_value() && &entry == playerReference)
+            if (result.mPlayerActorValueData.has_value() && &entry == playerReference)
+                appendUnparsedSemanticPayload(result, result.mPlayerActorValueData->mUnparsedRemainder.mRange);
+            else if (result.mPlayerReferenceMovement.has_value() && &entry == playerReference)
                 appendUnparsedSemanticPayload(result, result.mPlayerReferenceMovement->mUnparsedRemainder.mRange);
             else
                 appendUnparsedSemanticPayload(result, entry.mUnparsedPayload.mRange);

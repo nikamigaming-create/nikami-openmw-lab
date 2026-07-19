@@ -16,6 +16,10 @@ namespace ESM4
     inline constexpr std::uint32_t sFONVPlayerNpcFormId = 0x00000007;
     inline constexpr std::uint32_t sFONVPlayerReferenceFormId = 0x00000014;
     inline constexpr std::uint8_t sFONVActorReferenceChangeType = 1;
+    inline constexpr std::size_t sFONVPlayerActorValueCount = 77;
+    inline constexpr std::size_t sFONVPlayerActorValueDataBytes
+        = 3 * sFONVPlayerActorValueCount * (sizeof(float) + 1) + sizeof(std::uint32_t) + 1;
+    static_assert(sFONVPlayerActorValueDataBytes == 1160);
 
     struct FONVSaveRange
     {
@@ -157,6 +161,20 @@ namespace ESM4
         FONVSaveRawField mUnparsedRemainder;
     };
 
+    // Fixed player-only prefix immediately after the ACHR reference-movement block in changed-form version 27.
+    // The three arrays are intentionally kept under xEdit's structural names: their broader runtime semantics are
+    // not established. Each value and Unk4AC is followed by a retail 0x7c delimiter.
+    struct FONVSavePlayerActorValueData
+    {
+        std::array<FONVSaveField<float>, sFONVPlayerActorValueCount> mActorValues244;
+        std::array<FONVSaveField<float>, sFONVPlayerActorValueCount> mActorValues378;
+        std::array<FONVSaveField<float>, sFONVPlayerActorValueCount> mActorValues4B0;
+        FONVSaveField<std::uint32_t> mUnk4AC;
+        FONVSaveRange mRange;
+        std::vector<std::uint8_t> mRaw;
+        FONVSaveRawField mUnparsedRemainder;
+    };
+
     struct FONVSaveChangedFormEnvelope
     {
         FONVSaveRawField mReferenceId;
@@ -263,6 +281,7 @@ namespace ESM4
         FONVSaveFormIdTable mVisitedWorldspaces;
         FONVSaveUnknownTable mUnknownTable;
         std::optional<FONVSavePlayerReferenceMovement> mPlayerReferenceMovement;
+        std::optional<FONVSavePlayerActorValueData> mPlayerActorValueData;
         std::optional<FONVSaveSkyState> mSky;
 
         // The parser accounts for every byte structurally. These ranges are gameplay payload bytes whose internal
