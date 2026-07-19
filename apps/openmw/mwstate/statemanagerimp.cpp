@@ -608,7 +608,6 @@ void MWState::StateManager::loadGame(const Character* character, const std::file
         mutableWorld.updateProjectilesCasters();
         MWBase::Environment::get().getWorldScene()->markCellAsUnchanged();
         MWBase::Environment::get().getLuaManager()->gameLoaded();
-        MWBase::Environment::get().getWindowManager()->setLegacyHudSuppressed(true);
         mNativeFalloutSaveLoaded = true;
         Log(Debug::Info) << "Native FNV save owns camera mode=" << static_cast<int>(camera->getMode())
                          << " pitch=" << camera->getPitch() << " yaw=" << camera->getYaw()
