@@ -3,6 +3,8 @@
 #include <cmath>
 #include <cstdlib>
 #include <filesystem>
+#include <stdexcept>
+#include <utility>
 
 #include <SDL_clipboard.h>
 
@@ -12,6 +14,7 @@
 #include <components/esm3/esmwriter.hpp>
 #include <components/esm3/loadcell.hpp>
 #include <components/esm3/loadclas.hpp>
+#include <components/esm4/fonvsavegame.hpp>
 
 #include <components/l10n/manager.hpp>
 
@@ -40,6 +43,7 @@
 #include "../mwworld/class.hpp"
 #include "../mwworld/datetimemanager.hpp"
 #include "../mwworld/esmstore.hpp"
+#include "../mwworld/fnvsavepreflight.hpp"
 #include "../mwworld/globals.hpp"
 #include "../mwworld/scene.hpp"
 #include "../mwworld/worldmodel.hpp"
@@ -481,6 +485,27 @@ struct SaveVersionTooNewError : SaveFormatVersionError
 
 void MWState::StateManager::loadGame(const Character* character, const std::filesystem::path& filepath)
 {
+    // A normal retail .fos is not an ESM3 save. Resolve its complete read-only transaction candidate before entering
+    // the legacy try/catch: both cleanup() below and printSavegameFormatError() in the catch path mutate the current
+    // session. Save330 deliberately stops at the uncovered-state gate, leaving the existing game untouched.
+    if (MWWorld::isFalloutNewVegasSavePath(filepath))
+    {
+        Log(Debug::Info) << "Preflighting native FNV save file " << filepath.filename();
+        ESM4::FONVSaveGamePrefix save = ESM4::readFONVSaveGamePrefix(filepath);
+        const MWBase::World& world = *MWBase::Environment::get().getWorld();
+        MWWorld::FalloutSavePreflightResolution preflight = MWWorld::resolveFalloutSavePreflightContext(
+            std::move(save), world.getStore(), world.getContentFiles());
+        if (!preflight)
+            throw std::runtime_error("native FNV save preflight failed: " + preflight.mError);
+
+        const MWWorld::FalloutSavePreflightContext& context = *preflight.mContext;
+        MWWorld::requireFalloutSavePreflightReady(context);
+
+        // Reaching this point will become permission to start one atomic native application transaction only when
+        // that transaction exists. Never route a blocker-free .fos into ESMReader or a partial header application.
+        throw std::runtime_error("native FNV save application transaction is not implemented");
+    }
+
     try
     {
         cleanup();
