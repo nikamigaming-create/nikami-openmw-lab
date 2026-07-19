@@ -37,6 +37,7 @@ file(GLOB UNITTEST_SRC_FILES
 
     mwclass/testesm4container.cpp
     mwclass/testesm4talkingactivator.cpp
+    mwclass/testfnvaipackage.cpp
     mwclass/testfnvfurniturelifecycle.cpp
     mwclass/testfnvsandbox.cpp
 

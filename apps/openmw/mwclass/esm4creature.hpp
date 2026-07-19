@@ -38,8 +38,39 @@ namespace MWClass
 {
     [[nodiscard]] constexpr bool fnvCreatureAiPackageProcedureSupported(std::int32_t packageType) noexcept
     {
-        return packageType == 3 || packageType == 4 || packageType == 5 || packageType == 6 || packageType == 8
-            || packageType == 11 || packageType == 12 || packageType == 13;
+        return packageType == 1 || packageType == 3 || packageType == 4 || packageType == 5 || packageType == 6
+            || packageType == 7 || packageType == 8 || packageType == 11 || packageType == 12 || packageType == 13;
+    }
+
+    // The Goodsprings CheyenneAccompany package and adult bighorner herd packages target an exact ACHR/ACRE.
+    // Calf packages instead use PTDT type 3 (linked reference), which ActorCharacter does not currently retain.
+    // Keep that form out of the supported set so package selection can continue to an authored fallback.
+    [[nodiscard]] constexpr bool fnvCreatureFollowTargetSupported(
+        std::int32_t packageType, std::int32_t targetType, std::uint32_t target) noexcept
+    {
+        return (packageType == 1 || packageType == 7) && targetType == 0 && target != 0;
+    }
+
+    [[nodiscard]] constexpr bool fnvCreaturePackageConditionComparisonPasses(
+        std::uint32_t condition, float actual, float expected) noexcept
+    {
+        switch (condition & 0xe0)
+        {
+            case 0x00:
+                return actual == expected;
+            case 0x20:
+                return actual != expected;
+            case 0x40:
+                return actual > expected;
+            case 0x60:
+                return actual >= expected;
+            case 0x80:
+                return actual < expected;
+            case 0xa0:
+                return actual <= expected;
+            default:
+                return false;
+        }
     }
 
     [[nodiscard]] constexpr int fnvCreatureWanderDistance(std::int32_t authoredRadius) noexcept

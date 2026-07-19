@@ -37,7 +37,9 @@
 #include <components/esm4/script.hpp>
 
 #include "../mwbase/environment.hpp"
+#include "../mwbase/mechanicsmanager.hpp"
 #include "../mwbase/world.hpp"
+#include "../mwmechanics/aifollow.hpp"
 #include "../mwmechanics/aitravel.hpp"
 #include "../mwmechanics/aiwander.hpp"
 #include "../mwmechanics/character.hpp"
@@ -55,6 +57,7 @@
 
 #include "esm4base.hpp"
 #include "fnvactorstate.hpp"
+#include "fnvaipackage.hpp"
 
 namespace MWClass
 {
@@ -588,6 +591,31 @@ namespace MWClass
         }
     };
 
+    bool requestFnvCreatureAiPackageEvaluation(const MWWorld::Ptr& ptr)
+    {
+        if (ptr.isEmpty() || ptr.getType() != ESM4::Creature::sRecordId)
+            return false;
+
+        const ESM4::Creature* creature = ptr.get<ESM4::Creature>()->mBase;
+        if (creature == nullptr || !creature->mIsFONV)
+            return false;
+
+        // CreatureStats access creates the per-reference custom data for newly enabled creatures.
+        ptr.getClass().getCreatureStats(ptr);
+        auto* data = dynamic_cast<ESM4CreatureCustomData*>(ptr.getRefData().getCustomData());
+        if (data == nullptr)
+            return false;
+
+        MWMechanics::AiSequence& sequence = data->mCreatureStats.getAiSequence();
+        if (sequence.isInCombat() || sequence.isInPursuit())
+            return false;
+
+        sequence.clear();
+        data->mFnvAiSequenceInitialised = false;
+        ptr.getClass().getCreatureStats(ptr);
+        return true;
+    }
+
     static int positiveOrDefault(int value, int fallback)
     {
         value = value < 0 ? -value : value;
@@ -742,6 +770,24 @@ namespace MWClass
         return hour;
     }
 
+    static bool fnvCreaturePackageConditionPasses(
+        const ESM4::TargetCondition& condition, MWWorld::ESM4QuestRuntime& questRuntime)
+    {
+        if (condition.functionIndex == ESM4::FUN_GetDeadCount && condition.runOn == 0
+            && (condition.condition & ESM4::CTF_UseGlobal) == 0)
+        {
+            const ESM::RefId actorBase(ESM::FormId::fromUint32(condition.param1));
+            const float deathCount = static_cast<float>(
+                MWBase::Environment::get().getMechanicsManager()->countDeaths(actorBase));
+            return fnvCreaturePackageConditionComparisonPasses(
+                condition.condition, deathCount, condition.comparison);
+        }
+
+        ESM4::TargetCondition standalone = condition;
+        standalone.condition &= ~ESM4::CTF_Combine;
+        return questRuntime.evaluateConditions({ standalone });
+    }
+
     static bool fnvPackageConditionsPass(const ESM4::AIPackage& package)
     {
         if (package.mConditions.empty())
@@ -749,7 +795,22 @@ namespace MWClass
         MWBase::World* world = MWBase::Environment::get().getWorld();
         if (world == nullptr)
             return false;
-        return world->getESM4QuestRuntime().evaluateConditions(package.mConditions);
+
+        MWWorld::ESM4QuestRuntime& questRuntime = world->getESM4QuestRuntime();
+        for (std::size_t index = 0; index < package.mConditions.size(); ++index)
+        {
+            bool groupResult = fnvCreaturePackageConditionPasses(package.mConditions[index], questRuntime);
+            while ((package.mConditions[index].condition & ESM4::CTF_Combine) != 0
+                && index + 1 < package.mConditions.size())
+            {
+                ++index;
+                if (!groupResult)
+                    groupResult = fnvCreaturePackageConditionPasses(package.mConditions[index], questRuntime);
+            }
+            if (!groupResult)
+                return false;
+        }
+        return true;
     }
 
     static const ESM4::AIPackage* selectFnvPackage(const std::vector<ESM::FormId>& packageIds, float hour)
@@ -769,6 +830,15 @@ namespace MWClass
             {
                 Log(Debug::Verbose) << "FNV/ESM4 diag: skipped unsupported native creature AI package "
                                     << package->mEditorId << " procedureType=" << package->mData.type;
+                continue;
+            }
+            if ((package->mData.type == 1 || package->mData.type == 7)
+                && !fnvCreatureFollowTargetSupported(
+                    package->mData.type, package->mTarget.type, package->mTarget.target))
+            {
+                Log(Debug::Verbose) << "FNV/ESM4 diag: skipped unsupported native creature follow target "
+                                    << package->mEditorId << " procedureType=" << package->mData.type
+                                    << " targetType=" << package->mTarget.type;
                 continue;
             }
             if (!fnvPackageConditionsPass(*package))
@@ -978,6 +1048,8 @@ namespace MWClass
     {
         switch (type)
         {
+            case 1:
+                return "Follow";
             case 3:
                 return "Eat";
             case 4:
@@ -986,6 +1058,8 @@ namespace MWClass
                 return "Wander";
             case 6:
                 return "Travel";
+            case 7:
+                return "Accompany";
             case 8:
                 return "UseItemAt";
             case 11:
@@ -1040,6 +1114,32 @@ namespace MWClass
             return;
 
         const ESM::RefId& currentCellId = ptr.getCell()->getCell()->getId();
+        if (package->mData.type == 1 || package->mData.type == 7)
+        {
+            MWBase::World* world = MWBase::Environment::get().getWorld();
+            const ESM::FormId targetId = ESM::FormId::fromUint32(package->mTarget.target);
+            const MWWorld::Ptr target = world != nullptr
+                ? world->searchPtr(ESM::RefId(targetId), false, false)
+                : MWWorld::Ptr{};
+            if (target.isEmpty() || !target.getClass().isActor())
+            {
+                Log(Debug::Verbose) << "FNV/ESM4 diag: skipped native creature AI follow package "
+                                    << package->mEditorId << " type="
+                                    << getFnvPackageTypeName(package->mData.type) << " target=" << targetId
+                                    << " targetResolved=" << !target.isEmpty() << " for " << creature.mEditorId;
+                return;
+            }
+
+            MWMechanics::AiFollow follow(target);
+            sequence.stack(follow, ptr, true);
+            Log(Debug::Verbose) << "FNV/ESM4 diag: stacked native creature AI follow from FNV package "
+                                << package->mEditorId << " type=" << getFnvPackageTypeName(package->mData.type)
+                                << " hour=" << hour << " override=" << usedHourOverride << " target=" << targetId
+                                << " authoredDistance=" << package->mTarget.distance << " for "
+                                << creature.mEditorId;
+            return;
+        }
+
         if (package->mData.type == 13)
         {
             const ESM4::Reference* firstMarker = resolveFnvPackageReference(*store, *package);

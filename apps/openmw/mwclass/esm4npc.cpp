@@ -233,7 +233,11 @@ namespace MWClass
 
     bool requestFnvAiPackageEvaluation(const MWWorld::Ptr& ptr)
     {
-        if (ptr.isEmpty() || ptr.getType() != ESM4::Npc::sRecordId)
+        if (ptr.isEmpty())
+            return false;
+        if (ptr.getType() == ESM4::Creature::sRecordId)
+            return requestFnvCreatureAiPackageEvaluation(ptr);
+        if (ptr.getType() != ESM4::Npc::sRecordId)
             return false;
 
         // CreatureStats access creates the per-reference custom data when the
