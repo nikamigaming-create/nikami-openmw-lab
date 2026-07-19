@@ -229,7 +229,7 @@ namespace ESM4
     };
 
     // ChangedMobileObject process level, ChangedREFR actor extras, then ChangedInventory. Array counts retain their
-    // raw U6to30 encodings; all remaining player process state stays opaque.
+    // raw U6to30 encodings; the raw continuation is handed to the following MobileObject process-state parser.
     struct FONVSavePlayerProcessInventoryData
     {
         FONVSaveField<std::int8_t> mProcessLevel;
@@ -237,6 +237,230 @@ namespace ESM4
         std::vector<FONVSavePlayerActorExtraData> mActorExtraData;
         FONVSaveField<std::uint32_t> mInventoryEntryCount;
         std::vector<FONVSavePlayerInventoryEntry> mInventoryEntries;
+        FONVSaveRange mRange;
+        std::vector<std::uint8_t> mRaw;
+        FONVSaveRawField mUnparsedRemainder;
+    };
+
+    // wbCoordXYZ is three adjacent little-endian floats followed by one save-field delimiter. The component ranges
+    // cover the float bytes; the aggregate range/raw carrier also preserves the shared delimiter.
+    struct FONVSavePlayerProcessVector3
+    {
+        std::array<FONVSaveField<float>, 3> mComponents;
+        FONVSaveRange mRange;
+        std::vector<std::uint8_t> mRaw;
+    };
+
+    // xEdit deliberately leaves both actor animation and high-process sub-buffers opaque. Their U6to30 lengths are
+    // still decoded canonically and the exact body bytes remain range-addressable.
+    struct FONVSavePlayerProcessSubBuffer
+    {
+        FONVSaveField<std::uint32_t> mLength;
+        FONVSaveRawField mData;
+        FONVSaveRange mRange;
+        std::vector<std::uint8_t> mRaw;
+    };
+
+    struct FONVSavePlayerProcessModifier
+    {
+        FONVSaveField<std::uint8_t> mActorValue;
+        FONVSaveField<float> mModifier;
+        FONVSaveRange mRange;
+        std::vector<std::uint8_t> mRaw;
+    };
+
+    // The Changed MobileObject members following ChangedREFR. Names intentionally mirror xEdit's authoritative FNV
+    // save definition; unknown runtime semantics are not invented.
+    struct FONVSavePlayerMobileObjectBaseState
+    {
+        std::array<FONVSaveField<std::int8_t>, 8> mBytes084_085_07C_07F_080_07D_07E_086;
+        FONVSaveField<std::uint32_t> mUnk074;
+        FONVSaveField<std::uint32_t> mUnk078;
+        FONVSaveField<std::int8_t> mByt081;
+        FONVSaveField<std::uint8_t> mByt083;
+        FONVSaveResolvedReferenceId mUnk06C;
+        FONVSaveResolvedReferenceId mUnk070;
+        FONVSaveRange mRange;
+        std::vector<std::uint8_t> mRaw;
+    };
+
+    struct FONVSavePlayerBaseProcessState
+    {
+        FONVSaveField<std::uint32_t> mUnk01C;
+        FONVSaveField<std::uint32_t> mUnk020;
+        FONVSaveField<std::uint32_t> mUnk024;
+        FONVSaveResolvedReferenceId mPackage;
+        FONVSaveRange mRange;
+        std::vector<std::uint8_t> mRaw;
+    };
+
+    struct FONVSavePlayerLowProcessState
+    {
+        FONVSaveField<std::uint8_t> mByt030;
+        FONVSaveField<std::uint32_t> mUnk0A4;
+        FONVSaveResolvedReferenceId mBoundObject;
+        FONVSaveField<std::uint32_t> mUnk058;
+        FONVSaveField<std::uint32_t> mUnk0A8;
+        FONVSaveField<std::uint32_t> mUnk0AC;
+        FONVSaveField<std::uint8_t> mByt0B0;
+        FONVSaveField<std::uint16_t> mWrd050;
+        std::array<FONVSaveField<float>, 2> mUnk038;
+        std::array<FONVSaveResolvedReferenceId, 5> mUnk040_044_048_FormList_054;
+        FONVSaveField<std::uint32_t> mList006CCount;
+        std::vector<FONVSaveResolvedReferenceId> mList006C;
+        std::optional<FONVSaveField<std::uint32_t>> mDamageModifierCount;
+        std::vector<FONVSavePlayerProcessModifier> mDamageModifiers;
+        FONVSaveRange mRange;
+        std::vector<std::uint8_t> mRaw;
+    };
+
+    struct FONVSavePlayerMiddleLowProcessState
+    {
+        FONVSaveField<std::uint32_t> mUnk0B4;
+        std::optional<FONVSaveField<std::uint32_t>> mTempModifierCount;
+        std::vector<FONVSavePlayerProcessModifier> mTempModifiers;
+        FONVSaveRange mRange;
+        std::vector<std::uint8_t> mRaw;
+    };
+
+    struct FONVSavePlayerMiddleHighList230Entry
+    {
+        FONVSaveResolvedReferenceId mBoundObject;
+        FONVSaveField<std::int32_t> mUnknown;
+        FONVSaveField<std::uint32_t> mUnk008;
+        std::array<FONVSaveField<std::uint8_t>, 6> mBytes00C_00D_00E_00F_010_011;
+        FONVSaveRange mRange;
+        std::vector<std::uint8_t> mRaw;
+    };
+
+    struct FONVSavePlayerMiddleHighProcessState
+    {
+        std::array<FONVSaveField<std::uint8_t>, 3> mUnk134_135_168;
+        std::array<FONVSaveField<std::uint32_t>, 3> mUnk170_174_108;
+        FONVSaveField<std::uint8_t> mUnk1DA;
+        FONVSavePlayerProcessVector3 mCoords0E4;
+        FONVSaveField<std::uint32_t> mUnk0DC;
+        std::array<FONVSaveField<std::uint8_t>, 3> mByt13D_144_156;
+        FONVSaveField<std::uint16_t> mWrd154;
+        FONVSavePlayerProcessVector3 mCoords148;
+        std::array<FONVSaveField<std::uint8_t>, 4> mBool_Byt0E0_188_189;
+        FONVSaveField<std::uint32_t> mUnk0D8;
+        FONVSaveField<std::uint8_t> mByt18B;
+        FONVSaveField<std::uint32_t> mUnk1D0;
+        FONVSaveField<std::uint32_t> mUnk1D4;
+        std::array<FONVSaveField<std::uint8_t>, 3> mByt1D8_1D9_228;
+        FONVSaveField<std::uint16_t> mWrd22A;
+        FONVSaveField<std::uint32_t> mUnk1A8;
+        FONVSaveField<std::uint8_t> mByt0E1;
+        FONVSaveField<std::uint32_t> mUnk190;
+        FONVSaveField<std::uint32_t> mUnk198;
+        FONVSaveField<std::uint8_t> mByt19C;
+        FONVSaveField<std::uint8_t> mByt19D;
+        std::array<FONVSaveField<std::uint32_t>, 4> mUnk234_238_23C_244;
+        FONVSaveField<std::uint8_t> mUnk110;
+        std::array<FONVSaveResolvedReferenceId, 4> mIdleForm10C_IdleForm194_Unk158_Unk140;
+        FONVSaveField<std::uint32_t> mUnknown;
+        FONVSaveField<std::uint32_t> mList0C8Count;
+        std::vector<FONVSaveResolvedReferenceId> mList0C8;
+        FONVSaveResolvedReferenceId mPackage;
+        std::optional<FONVSavePlayerProcessSubBuffer> mAnimation;
+        FONVSaveField<std::uint32_t> mMagicItemCount;
+        std::array<FONVSaveResolvedReferenceId, 3> mUnk164_160_1BC;
+        FONVSaveField<std::uint32_t> mList230Count;
+        std::vector<FONVSavePlayerMiddleHighList230Entry> mList230;
+        FONVSaveRange mRange;
+        std::vector<std::uint8_t> mRaw;
+    };
+
+    struct FONVSavePlayerHighUnknownEntry
+    {
+        FONVSaveResolvedReferenceId mUnk3F8;
+        FONVSaveField<std::uint8_t> mUnk410;
+        FONVSaveRange mRange;
+        std::vector<std::uint8_t> mRaw;
+    };
+
+    struct FONVSavePlayerHighLocationEntry
+    {
+        FONVSaveResolvedReferenceId mForm000;
+        FONVSaveField<std::uint8_t> mUnk004;
+        FONVSaveField<std::uint32_t> mUnk008;
+        FONVSavePlayerProcessVector3 mCoords;
+        FONVSaveField<float> mTim018;
+        std::array<FONVSaveField<std::uint8_t>, 3> mByt01E_01C_01D;
+        FONVSaveField<std::uint32_t> mUnk020;
+        FONVSaveField<std::uint8_t> mByt01F;
+        FONVSaveRange mRange;
+        std::vector<std::uint8_t> mRaw;
+    };
+
+    struct FONVSavePlayerHighProcessState
+    {
+        std::array<FONVSaveField<std::uint8_t>, 4> mUnk32C_340_374_375;
+        FONVSaveField<std::uint16_t> mUnk2FC;
+        std::array<FONVSaveField<std::uint32_t>, 11> mUnk2B4_2F8_310_330_334_338_34C_294_2B8_2BC_298;
+        std::array<FONVSaveField<std::uint16_t>, 3> mUnk2C0_2C2_2C4;
+        FONVSaveField<std::uint8_t> mUnk349;
+        FONVSavePlayerProcessVector3 mCoords;
+        std::array<FONVSaveField<std::uint32_t>, 6> mUnk36C_3E8_3EC_33C_2A8_378;
+        FONVSaveField<std::uint8_t> mUnk3A0;
+        FONVSaveField<std::uint32_t> mUnk39C;
+        FONVSaveField<std::uint8_t> mUnk3A8;
+        FONVSaveField<std::uint32_t> mUnk3A4;
+        FONVSaveField<std::uint8_t> mUnk420;
+        FONVSaveField<std::uint32_t> mUnk3BC;
+        FONVSaveField<std::uint32_t> mUnk3B0;
+        FONVSaveField<std::uint8_t> mUnk2C6;
+        std::array<FONVSaveField<std::uint32_t>, 3> mUnk2D0_2D4_2D8;
+        FONVSaveField<std::uint8_t> mUnk3B8;
+        FONVSaveField<std::uint8_t> mUnk2DC1;
+        FONVSaveField<std::uint32_t> mUnk2E0;
+        FONVSaveField<std::uint32_t> mUnk344;
+        FONVSaveField<std::uint8_t> mUnk2DC2;
+        FONVSaveField<std::uint8_t> mUnk2DC3;
+        FONVSaveField<std::uint32_t> mUnk3D8Modulo12;
+        FONVSaveField<std::uint32_t> mUnk448;
+        FONVSaveField<std::uint8_t> mUnk29D;
+        std::array<FONVSaveField<std::uint32_t>, 5> mUnk2B0_2C8_418_43C_440;
+        FONVSaveField<std::uint8_t> mUnk444;
+        FONVSaveField<std::uint8_t> mUnk445;
+        FONVSaveField<std::uint32_t> mUnk450;
+        FONVSaveField<std::uint8_t> mUnk458;
+        FONVSaveField<std::uint32_t> mUnk430;
+        FONVSaveField<std::uint8_t> mUnk3E0;
+        FONVSaveField<std::uint8_t> mUnk459;
+        FONVSaveField<std::uint32_t> mUnk2A0;
+        std::array<FONVSaveField<std::uint8_t>, 4> mUnk3D0_3D1_348_Unknown;
+        std::array<FONVSaveResolvedReferenceId, 7> mUnk30C_2A4_3F0_41C_37C_Idle_2AC;
+        std::array<FONVSavePlayerHighUnknownEntry, 6> mUnknownEntries;
+        FONVSaveField<std::uint32_t> mList38CCount;
+        std::vector<FONVSaveResolvedReferenceId> mList38C;
+        FONVSaveField<std::uint32_t> mList394Count;
+        std::vector<FONVSaveResolvedReferenceId> mList394;
+        FONVSaveField<std::uint32_t> mList264Count;
+        std::vector<FONVSaveResolvedReferenceId> mList264;
+        FONVSaveField<std::uint8_t> mHasDialogueItems;
+        FONVSaveField<std::uint32_t> mList44CCount;
+        FONVSaveField<std::uint32_t> mList25CCount;
+        std::vector<FONVSavePlayerHighLocationEntry> mList25C;
+        FONVSaveField<std::uint32_t> mList260Count;
+        std::vector<FONVSavePlayerHighLocationEntry> mList260;
+        FONVSaveField<std::uint8_t> mHasUnk3DC;
+        FONVSavePlayerProcessSubBuffer mSubBuffer;
+        FONVSaveRange mRange;
+        std::vector<std::uint8_t> mRaw;
+    };
+
+    // Exact changed-form version-27, process-level-0 continuation after ChangedInventory. Any xEdit branch not
+    // represented above is rejected instead of being guessed. The next player-character block remains opaque.
+    struct FONVSavePlayerMobileObjectProcessState
+    {
+        FONVSavePlayerMobileObjectBaseState mMobileObjectBase;
+        FONVSavePlayerBaseProcessState mBaseProcess;
+        FONVSavePlayerLowProcessState mLowProcess;
+        FONVSavePlayerMiddleLowProcessState mMiddleLowProcess;
+        FONVSavePlayerMiddleHighProcessState mMiddleHighProcess;
+        FONVSavePlayerHighProcessState mHighProcess;
         FONVSaveRange mRange;
         std::vector<std::uint8_t> mRaw;
         FONVSaveRawField mUnparsedRemainder;
@@ -350,6 +574,7 @@ namespace ESM4
         std::optional<FONVSavePlayerReferenceMovement> mPlayerReferenceMovement;
         std::optional<FONVSavePlayerActorValueData> mPlayerActorValueData;
         std::optional<FONVSavePlayerProcessInventoryData> mPlayerProcessInventoryData;
+        std::optional<FONVSavePlayerMobileObjectProcessState> mPlayerMobileObjectProcessState;
         std::optional<FONVSaveSkyState> mSky;
 
         // The parser accounts for every byte structurally. These ranges are gameplay payload bytes whose internal
