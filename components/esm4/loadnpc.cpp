@@ -42,6 +42,7 @@ void ESM4::Npc::load(ESM4::Reader& reader)
     mIsTES4 = (esmVer == ESM::VER_080 || esmVer == ESM::VER_100) && !reader.hasFormVersion();
     mIsFONV = esmVer == ESM::VER_132 || esmVer == ESM::VER_133 || esmVer == ESM::VER_134;
     // mIsTES5 = esmVer == ESM::VER_094 || esmVer == ESM::VER_170; // WARN: FO3 is also VER_094
+    bool hasExactFalloutBaseConfig = false;
 
     while (reader.getSubRecordHeader())
     {
@@ -93,6 +94,9 @@ void ESM4::Npc::load(ESM4::Reader& reader)
             case ESM::fourCC("ENAM"):
                 reader.getFormId(mEyes);
                 break;
+            case ESM::fourCC("VTCK"):
+                reader.getFormId(mVoiceType);
+                break;
             //
             case ESM::fourCC("INAM"):
                 reader.getFormId(mDeathItem);
@@ -103,6 +107,16 @@ void ESM4::Npc::load(ESM4::Reader& reader)
             //
             case ESM::fourCC("AIDT"):
             {
+                if (mIsFONV)
+                {
+                    if (subHdr.dataSize != sizeof(mFNVAIData))
+                        throw std::runtime_error("ESM4::NPC_::load - Fallout AIDT size mismatch");
+
+                    reader.get(mFNVAIData);
+                    mHasFNVAIData = true;
+                    break;
+                }
+
                 if (subHdr.dataSize != 12)
                 {
                     reader.skipSubRecordData(); // FIXME: process the subrecord rather than skip
@@ -121,8 +135,12 @@ void ESM4::Npc::load(ESM4::Reader& reader)
                         [[fallthrough]];
                     case 16: // TES4
                     case 24: // FO3/FNV, TES5
-                        reader.get(&mBaseConfig, subHdr.dataSize);
+                    {
+                        const std::uint32_t dataSize = subHdr.dataSize;
+                        reader.get(&mBaseConfig, dataSize);
+                        hasExactFalloutBaseConfig = mIsFONV && dataSize == sizeof(ESM4::ACBS_FO3);
                         break;
+                    }
                     default:
                         reader.skipSubRecordData();
                         break;
@@ -131,6 +149,16 @@ void ESM4::Npc::load(ESM4::Reader& reader)
             }
             case ESM::fourCC("DATA"):
             {
+                if (mIsFONV)
+                {
+                    if (subHdr.dataSize != sizeof(mFNVData))
+                        throw std::runtime_error("ESM4::NPC_::load - Fallout DATA size mismatch");
+
+                    reader.get(mFNVData);
+                    mHasFNVData = true;
+                    break;
+                }
+
                 if (subHdr.dataSize == 0)
                     break;
 
@@ -138,6 +166,21 @@ void ESM4::Npc::load(ESM4::Reader& reader)
                     reader.get(&mData, 33); // FIXME: check packing
                 else // FIXME FO3
                     reader.skipSubRecordData();
+                break;
+            }
+            case ESM::fourCC("DNAM"):
+            {
+                if (!mIsFONV)
+                {
+                    reader.skipSubRecordData();
+                    break;
+                }
+
+                if (subHdr.dataSize != sizeof(mFNVSkills))
+                    throw std::runtime_error("ESM4::NPC_::load - Fallout DNAM size mismatch");
+
+                reader.get(mFNVSkills);
+                mHasFNVSkills = true;
                 break;
             }
             case ESM::fourCC("ZNAM"):
@@ -264,7 +307,6 @@ void ESM4::Npc::load(ESM4::Reader& reader)
             case ESM::fourCC("ATKR"):
             case ESM::fourCC("CRIF"):
             case ESM::fourCC("CSDT"):
-            case ESM::fourCC("DNAM"):
             case ESM::fourCC("ECOR"):
             case ESM::fourCC("ANAM"):
             case ESM::fourCC("ATKD"):
@@ -286,7 +328,6 @@ void ESM4::Npc::load(ESM4::Reader& reader)
             case ESM::fourCC("TINI"):
             case ESM::fourCC("TINV"):
             case ESM::fourCC("VMAD"):
-            case ESM::fourCC("VTCK"):
             case ESM::fourCC("GNAM"):
             case ESM::fourCC("SHRT"):
             case ESM::fourCC("SPOR"):
@@ -335,6 +376,7 @@ void ESM4::Npc::load(ESM4::Reader& reader)
                 throw std::runtime_error("ESM4::NPC_::load - Unknown subrecord " + ESM::printName(subHdr.typeId));
         }
     }
+    mHasFNVBaseConfig = hasExactFalloutBaseConfig;
 }
 
 // void ESM4::Npc::save(ESM4::Writer& writer) const

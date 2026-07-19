@@ -81,7 +81,7 @@ add_openmw_dir (mwworld
     containerstore actiontalk actiontake manualref player cellvisitors failedaction
     worldmodel localscripts customdata inventorystore ptr actionopen actionread actionharvest
     actionequip timestamp actionalchemy cellstore actionapply actioneat
-    store esmstore fallback actionrepair actionsoulgem livecellref actiondoor
+    store esmstore fallback actionrepair actionsoulgem livecellref actiondoor fnvplayerstate
     contentloader esmloader actiontrap cellreflist cellref weather projectilemanager
     cellpreloader datetimemanager groundcoverstore magiceffects cell ptrregistry
     positioncellgrid

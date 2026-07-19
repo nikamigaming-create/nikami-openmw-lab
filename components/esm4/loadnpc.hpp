@@ -171,13 +171,53 @@ namespace ESM4
             AttributeValues attribs;
         };
 
+        struct FNVData
+        {
+            std::int32_t health;
+            std::uint8_t strength;
+            std::uint8_t perception;
+            std::uint8_t endurance;
+            std::uint8_t charisma;
+            std::uint8_t intelligence;
+            std::uint8_t agility;
+            std::uint8_t luck;
+        };
+
+        struct FNVSkillValues
+        {
+            std::uint8_t barter;
+            std::uint8_t bigGuns;
+            std::uint8_t energyWeapons;
+            std::uint8_t explosives;
+            std::uint8_t lockpick;
+            std::uint8_t medicine;
+            std::uint8_t meleeWeapons;
+            std::uint8_t repair;
+            std::uint8_t science;
+            std::uint8_t smallGuns;
+            std::uint8_t sneak;
+            std::uint8_t speech;
+            std::uint8_t survivalOrThrowing;
+            std::uint8_t unarmed;
+        };
+
+        struct FNVSkills
+        {
+            FNVSkillValues values;
+            FNVSkillValues offsets;
+        };
+
 #pragma pack(pop)
 
-        ESM::FormId mId; // from the header
-        std::uint32_t mFlags; // from the header, see enum type RecordFlag for details
+        static_assert(sizeof(FNVData) == 11);
+        static_assert(sizeof(FNVSkillValues) == 14);
+        static_assert(sizeof(FNVSkills) == 28);
 
-        bool mIsTES4;
-        bool mIsFONV;
+        ESM::FormId mId; // from the header
+        std::uint32_t mFlags = 0; // from the header, see enum type RecordFlag for details
+
+        bool mIsTES4 = false;
+        bool mIsFONV = false;
         bool mIsFO4 = false;
 
         std::string mEditorId;
@@ -188,11 +228,12 @@ namespace ESM4
         ESM::FormId mClass;
         ESM::FormId mHair; // not for TES5, see mHeadParts
         ESM::FormId mEyes;
+        ESM::FormId mVoiceType;
 
         std::vector<ESM::FormId> mHeadParts; // FO3/FONV/TES5
 
-        float mHairLength;
-        HairColour mHairColour; // TES4/FO3/FONV
+        float mHairLength = 0.f;
+        HairColour mHairColour{}; // TES4/FO3/FONV
         ESM::FormId mHairColourId; // TES5
         ESM::FormId mBeardColourId; // FO4
 
@@ -200,18 +241,25 @@ namespace ESM4
         std::vector<ESM::FormId> mSpell;
         ESM::FormId mScriptId;
 
-        AIData mAIData;
+        AIData mAIData{};
+        AIDataFO3 mFNVAIData{};
+        bool mHasFNVBaseConfig = false;
+        bool mHasFNVAIData = false;
         std::vector<ESM::FormId> mAIPackages; // seems to be in priority order, 0 = highest priority
-        ActorBaseConfig mBaseConfig; // union
-        ActorFaction mFaction;
-        Data mData;
+        ActorBaseConfig mBaseConfig{}; // union
+        ActorFaction mFaction{};
+        Data mData{};
+        FNVData mFNVData{};
+        FNVSkills mFNVSkills{};
+        bool mHasFNVData = false;
+        bool mHasFNVSkills = false;
         ESM::FormId mCombatStyle;
         ESM::FormId mSoundBase;
         ESM::FormId mSound;
-        std::uint8_t mSoundChance;
-        float mFootWeight;
+        std::uint8_t mSoundChance = 0;
+        float mFootWeight = 0.f;
 
-        float mBoundRadius;
+        float mBoundRadius = 0.f;
         std::vector<std::string> mKf; // filenames only, get directory path from mModel
 
         std::vector<InventoryItem> mInventory;
@@ -226,7 +274,7 @@ namespace ESM4
         std::vector<float> mSymShapeModeCoefficients; // size 0 or 50
         std::vector<float> mAsymShapeModeCoefficients; // size 0 or 30
         std::vector<float> mSymTextureModeCoefficients; // size 0 or 50
-        std::int16_t mFgRace;
+        std::int16_t mFgRace = 0;
 
         void load(ESM4::Reader& reader);
         // void save(ESM4::Writer& writer) const;
