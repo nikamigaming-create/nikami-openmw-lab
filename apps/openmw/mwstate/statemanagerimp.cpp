@@ -84,6 +84,8 @@ namespace
 
 void MWState::StateManager::cleanup(bool force)
 {
+    mNativeFalloutSaveLoaded = false;
+
     if (mState != State_NoGame || force)
     {
         MWBase::Environment::get().getSoundManager()->clear();
@@ -564,8 +566,6 @@ void MWState::StateManager::loadGame(const Character* character, const std::file
         mutableWorld.toggleVanityMode(false);
 
         mutableWorld.getRenderingManager()->setFieldOfView(savedWorldFov);
-        if (context.mPlan.mCamera.mFirstPerson != mutableWorld.isFirstPerson())
-            mutableWorld.togglePOV(true);
         mutableWorld.setGlobalFloat(MWWorld::Globals::sGameHour, context.mPlan.mScene.mGameHour);
         if (!mutableWorld.forceWeather(savedWeather))
             throw std::runtime_error("native FNV visual application lost its preflighted current WTHR");
@@ -575,14 +575,32 @@ void MWState::StateManager::loadGame(const Character* character, const std::file
         player = mutableWorld.moveObject(mutableWorld.getPlayerPtr(), savedPosition.asVec3());
         mutableWorld.rotateObject(player, savedPosition.asRotationVec3());
 
-        // Camera tracking uses inverse player Euler angles. A POV transition can lock ordinary setters for this frame.
+        // Camera tracking uses inverse player Euler angles. Apply the save-owned view only after the final cell,
+        // render-node and physics transforms exist, so no transitional/default camera state can win a frame.
         MWRender::Camera* camera = mutableWorld.getCamera();
+        if (camera == nullptr)
+            throw std::runtime_error("native FNV visual application has no player camera");
+        camera->attachTo(player);
+        camera->setMode(context.mPlan.mCamera.mFirstPerson ? MWRender::Camera::Mode::FirstPerson
+                                                          : MWRender::Camera::Mode::ThirdPerson,
+            true);
+        if (context.mPlan.mCamera.mFirstPerson)
+            camera->setPreferredCameraDistance(0.f);
+        camera->processViewChange();
+        camera->instantTransition();
         camera->setPitch(-savedPosition.rot[0], true);
         camera->setYaw(-savedPosition.rot[2], true);
         camera->setRoll(-savedPosition.rot[1]);
+        camera->update(0.f, false);
+        camera->updateCamera();
         mutableWorld.updateProjectilesCasters();
         MWBase::Environment::get().getWorldScene()->markCellAsUnchanged();
         MWBase::Environment::get().getLuaManager()->gameLoaded();
+        mNativeFalloutSaveLoaded = true;
+        Log(Debug::Info) << "Native FNV save owns camera mode=" << static_cast<int>(camera->getMode())
+                         << " pitch=" << camera->getPitch() << " yaw=" << camera->getYaw()
+                         << " roll=" << camera->getRoll() << " worldFov=" << savedWorldFov
+                         << " firstPersonModelFov=" << savedFirstPersonFov;
         return;
     }
 

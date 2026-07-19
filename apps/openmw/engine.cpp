@@ -4306,6 +4306,10 @@ void OMW::Engine::executeLocalScripts()
 
 bool OMW::Engine::frame(unsigned frameNumber, float frametime)
 {
+    const auto nativeFalloutSaveOwnsCamera = [&]() {
+        return mStateManager != nullptr && mStateManager->isNativeFalloutSaveLoaded();
+    };
+
     const auto getProofFrame = [](const char* name) {
         const char* env = std::getenv(name);
         if (env == nullptr || *env == '\0')
@@ -4945,10 +4949,14 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
         const bool playableSessionRequested = proofEnvEnabled("OPENMW_PLAYABLE_SESSION");
         const int playableSessionSettleFrames
             = std::max(1, readProofInt("OPENMW_PLAYABLE_SESSION_SETTLE_FRAMES", 120));
-        const bool playableSessionReady = playableSessionRequested && mWorld != nullptr
+        const bool playableSessionReady = playableSessionRequested && !nativeFalloutSaveOwnsCamera()
+            && mWorld != nullptr
             && mStateManager->getState() == MWBase::StateManager::State_Running && !paused
             && proofWorldReadyFrames >= playableSessionSettleFrames;
         const auto setPlayableSessionCamera = [&](MWRender::Camera::Mode mode) {
+            if (nativeFalloutSaveOwnsCamera())
+                return;
+
             MWWorld::Ptr player = mWorld->getPlayerPtr();
             MWRender::Camera* camera = mWorld->getCamera();
             if (player.isEmpty() || camera == nullptr)
@@ -4966,6 +4974,9 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
             camera->updateCamera();
         };
         setPlayableSessionFrontPortraitCamera = [&](int orbitIndex) {
+            if (nativeFalloutSaveOwnsCamera())
+                return;
+
             MWWorld::Ptr player = mWorld->getPlayerPtr();
             MWRender::Camera* camera = mWorld->getCamera();
             if (player.isEmpty() || camera == nullptr)
@@ -5267,7 +5278,8 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                              << "\" actorDistance=" << playableSessionActorStartDistance;
         }
 
-        if (playableSessionStarted && !playableSessionFinished && !playableSessionEndTelemetryPending)
+        if (playableSessionStarted && !playableSessionFinished && !playableSessionEndTelemetryPending
+            && !nativeFalloutSaveOwnsCamera())
         {
             MWWorld::Ptr player = mWorld->getPlayerPtr();
             const float duration
@@ -5672,7 +5684,8 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
     else
         proofWorldReadyFrames = 0;
 
-    if (proofWorldReady && mWorld != nullptr && std::getenv("OPENMW_FNV_RETAIL_PROJECTION_REPLAY") != nullptr)
+    if (proofWorldReady && !nativeFalloutSaveOwnsCamera() && mWorld != nullptr
+        && std::getenv("OPENMW_FNV_RETAIL_PROJECTION_REPLAY") != nullptr)
     {
         const osg::Matrixf retailProjection = makeFalloutRetailProjectionMatrix();
         mWorld->getRenderingManager()->overrideProjectionMatrix(retailProjection,
@@ -5751,7 +5764,8 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
     const bool proofActorStaticCameraOwnsView = proofActorCameraAligned
         && std::getenv("OPENMW_PROOF_ALIGN_PLAYER_TO_ACTOR") != nullptr
         && std::getenv("OPENMW_PROOF_ACTOR_VIEW_STATIC_CAMERA") != nullptr;
-    if (proofWorldReady && mWorld != nullptr && !VR::getVR() && !proofActorStaticCameraOwnsView)
+    if (proofWorldReady && !nativeFalloutSaveOwnsCamera() && mWorld != nullptr && !VR::getVR()
+        && !proofActorStaticCameraOwnsView)
     {
         worldViewerTrace(frameNumber, "static-camera.begin");
         enforceWorldViewerStaticCamera(*mWorld, frameNumber);
@@ -5909,7 +5923,8 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
 
     const bool proofFNVBootstrapProfile = std::getenv("OPENMW_FNV_BOOTSTRAP_LEVEL1_COURIER") != nullptr;
     const bool proofFNVBootstrapOutside = std::getenv("OPENMW_FNV_BOOTSTRAP_DOC_SENT") != nullptr;
-    if (!proofFNVBootstrapApplied && proofRunning && (proofFNVBootstrapProfile || proofFNVBootstrapOutside))
+    if (!proofFNVBootstrapApplied && proofRunning && !nativeFalloutSaveOwnsCamera()
+        && (proofFNVBootstrapProfile || proofFNVBootstrapOutside))
     {
         try
         {
@@ -5927,14 +5942,15 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
     const bool worldViewerStaticStartCamera
         = worldViewerStartCameraMode != nullptr && std::string(worldViewerStartCameraMode) == "static";
     if (!worldViewerNonStaticStartCameraSettled && proofWorldReady && proofWorldReadyFrames >= 2 && !VR::getVR()
-        && worldViewerNonStaticStartCameraRequested() && mWorld != nullptr && !proofActorStaticCameraOwnsView)
+        && !nativeFalloutSaveOwnsCamera() && worldViewerNonStaticStartCameraRequested() && mWorld != nullptr
+        && !proofActorStaticCameraOwnsView)
     {
         worldViewerNonStaticStartCameraSettled = settleWorldViewerNonStaticStartCamera(*mWorld);
     }
 
     const bool worldViewerExplicitNonStaticStartCamera = worldViewerNonStaticStartCameraRequested();
     if (!fnvFlatStartupCameraSettled && proofWorldReady && proofWorldReadyFrames >= 2 && !VR::getVR()
-        && hasFalloutNvContent(mContentFiles) && !worldViewerStaticStartCamera
+        && !nativeFalloutSaveOwnsCamera() && hasFalloutNvContent(mContentFiles) && !worldViewerStaticStartCamera
         && !worldViewerExplicitNonStaticStartCamera && !proofActorStaticCameraOwnsView
         && std::getenv("OPENMW_FNV_PROOF_RESET_CAMERA") == nullptr)
     {
@@ -5942,7 +5958,8 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
         fnvFlatStartupCameraSettled = true;
     }
 
-    if (!proofFNVCameraResetApplied && proofWorldReady && std::getenv("OPENMW_FNV_PROOF_RESET_CAMERA") != nullptr)
+    if (!proofFNVCameraResetApplied && proofWorldReady && !nativeFalloutSaveOwnsCamera()
+        && std::getenv("OPENMW_FNV_PROOF_RESET_CAMERA") != nullptr)
     {
         resetFNVProofCamera(*mWorld);
         proofFNVCameraResetApplied = true;
@@ -5954,7 +5971,8 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
         if (frameNumber >= static_cast<unsigned>(worldViewerCameraAngleSequence[i].mFrame))
             requestedCameraAngleSequenceIndex = static_cast<int>(i);
     }
-    if (requestedCameraAngleSequenceIndex >= 0 && proofWorldReady && mWorld != nullptr && !VR::getVR())
+    if (requestedCameraAngleSequenceIndex >= 0 && proofWorldReady && !nativeFalloutSaveOwnsCamera()
+        && mWorld != nullptr && !VR::getVR())
     {
         if (MWRender::Camera* camera = mWorld->getCamera())
         {
@@ -7007,7 +7025,7 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                 || (proofActorSnappedToRenderGround && proofActorSnappedFrame >= 0
                     && static_cast<int>(frameNumber) > proofActorSnappedFrame);
             if (!proofActor.isEmpty() && !proofNeutralActorPreviewReady && proofActorCameraAlignmentWindowOpen
-                && !proofActorRenderGroundReady
+                && !nativeFalloutSaveOwnsCamera() && !proofActorRenderGroundReady
                 && std::getenv("OPENMW_PROOF_ALIGN_PLAYER_TO_ACTOR") != nullptr)
             {
                 Log(Debug::Info) << "FNV/ESM4 proof: actor camera waiting for coherent render-ground state target=\""
@@ -7015,7 +7033,7 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                                  << " snappedFrame=" << proofActorSnappedFrame << " frame=" << frameNumber;
             }
             if (!proofActor.isEmpty() && !proofNeutralActorPreviewReady && proofActorCameraAlignmentWindowOpen
-                && proofActorRenderGroundReady
+                && !nativeFalloutSaveOwnsCamera() && proofActorRenderGroundReady
                 && std::getenv("OPENMW_PROOF_ALIGN_PLAYER_TO_ACTOR") != nullptr)
             {
                 const ESM::Position& actorPos = proofActor.getRefData().getPosition();
@@ -8849,7 +8867,7 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
         proofDialogueTopicQueued = true;
     }
 
-    if (proofPinnedPlayerToActorView && proofRunning && mWorld != nullptr
+    if (proofPinnedPlayerToActorView && proofRunning && !nativeFalloutSaveOwnsCamera() && mWorld != nullptr
         && std::getenv("OPENMW_PROOF_PIN_PLAYER_TO_ACTOR_VIEW") != nullptr)
     {
         try
@@ -8899,7 +8917,8 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
 
     const bool fnvInteractionRequested = proofEnvEnabled("OPENMW_FNV_INTERACTION_AUDIT");
     const bool fnvInteractionDoorOnly = proofEnvEnabled("OPENMW_FNV_INTERACTION_DOOR_ONLY");
-    if (fnvInteractionRequested && fnvInteractionPhase >= 0 && proofRunning && mWorld != nullptr
+    if (fnvInteractionRequested && fnvInteractionPhase >= 0 && proofRunning
+        && !nativeFalloutSaveOwnsCamera() && mWorld != nullptr
         && mWindowManager != nullptr)
     {
         // The native audit deliberately activates actors and crosses cell doors after the Lua
@@ -8998,6 +9017,9 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
         };
         const auto aimInteractionCameraAt = [&](const MWWorld::Ptr& target, std::string_view label,
                                                     float aimOffsetZ) {
+            if (nativeFalloutSaveOwnsCamera())
+                return false;
+
             MWRender::Camera* camera = mWorld->getCamera();
             if (camera == nullptr || target.isEmpty())
                 return false;
@@ -9295,8 +9317,8 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
     }
 
     const bool authoredInteractionRequested = proofEnvEnabled("OPENMW_AUTHORED_INTERACTION_AUDIT");
-    if (authoredInteractionRequested && authoredInteractionPhase >= 0 && proofRunning && mWorld != nullptr
-        && mWindowManager != nullptr)
+    if (authoredInteractionRequested && authoredInteractionPhase >= 0 && proofRunning
+        && !nativeFalloutSaveOwnsCamera() && mWorld != nullptr && mWindowManager != nullptr)
     {
         // This audit uses only normal activation actions, but it deliberately crosses cells and
         // repositions the player between authored interaction points. Keep those mutations on the
@@ -9390,6 +9412,9 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
             return actionable;
         };
         const auto aimCameraAt = [&](const MWWorld::Ptr& target, std::string_view label, float offsetZ) {
+            if (nativeFalloutSaveOwnsCamera())
+                return false;
+
             MWRender::Camera* camera = mWorld->getCamera();
             if (camera == nullptr || target.isEmpty())
                 return false;
@@ -9475,15 +9500,18 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                     << " pos=(" << actorPosition.x() << "," << actorPosition.y() << ","
                     << actorPosition.z() << ") result="
                     << (authoredInteractionActorPass ? "pass" : "fail");
-                if (MWRender::Camera* camera = mWorld->getCamera())
+                if (!nativeFalloutSaveOwnsCamera())
                 {
-                    camera->attachTo(player);
-                    camera->setMode(MWRender::Camera::Mode::FirstPerson, true);
-                    camera->setPreferredCameraDistance(0.f);
-                    camera->processViewChange();
-                    camera->update(0.f, false);
-                    camera->instantTransition();
-                    camera->updateCamera();
+                    if (MWRender::Camera* camera = mWorld->getCamera())
+                    {
+                        camera->attachTo(player);
+                        camera->setMode(MWRender::Camera::Mode::FirstPerson, true);
+                        camera->setPreferredCameraDistance(0.f);
+                        camera->processViewChange();
+                        camera->update(0.f, false);
+                        camera->instantTransition();
+                        camera->updateCamera();
+                    }
                 }
                 aimCameraAt(authoredInteractionActor, "exterior-actor",
                     readProofFloat("OPENMW_AUTHORED_INTERACTION_ACTOR_AIM_Z", 96.f));
