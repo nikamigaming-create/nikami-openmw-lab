@@ -98,7 +98,6 @@ namespace
 
         MWWorld::ESMStore store;
         store.loadESM4(*reader, nullptr);
-        store.setUp();
 
         const ESM::FormId adjustedId = ESM::FormId::fromUint32(0x020003e8);
         const ESM::RefId lookupId(adjustedId);

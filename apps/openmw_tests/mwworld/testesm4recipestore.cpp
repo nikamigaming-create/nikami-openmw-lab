@@ -148,7 +148,6 @@ namespace
 
         MWWorld::ESMStore store;
         store.loadESM4(*reader, nullptr);
-        store.setUp();
 
         const auto& categories = store.get<ESM4::RecipeCategory>();
         ASSERT_EQ(categories.getSize(), 1);
