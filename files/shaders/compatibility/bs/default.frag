@@ -1,5 +1,5 @@
 #version 120
-#pragma import_defines(FORCE_OPAQUE, DISTORTION)
+#pragma import_defines(FORCE_OPAQUE, DISTORTION, IGNORE_DIFFUSE_ALPHA)
 
 #if @useUBO
     #extension GL_ARB_uniform_buffer_object : require
@@ -127,7 +127,11 @@ void main()
     return;
 #endif
 
+#if defined(IGNORE_DIFFUSE_ALPHA) && IGNORE_DIFFUSE_ALPHA
+    gl_FragData[0].a = 1.0;
+#else
     gl_FragData[0].a *= coveragePreservingAlphaScale(diffuseMap, diffuseMapUV);
+#endif
 #else
     gl_FragData[0] = vec4(1.0);
 #endif

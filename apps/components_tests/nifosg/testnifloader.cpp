@@ -2,6 +2,7 @@
 
 #include <components/nif/node.hpp>
 #include <components/nif/property.hpp>
+#include <components/nif/texture.hpp>
 #include <components/nifosg/nifloader.hpp>
 #include <components/resource/bgsmfilemanager.hpp>
 #include <components/resource/imagemanager.hpp>
@@ -184,6 +185,27 @@ namespace
         Nif::NiSkinPartition mPartitions;
     };
 
+    struct FalloutPPLightingGeometry : FalloutMaterialOnlyGeometry
+    {
+        explicit FalloutPPLightingGeometry(uint32_t shaderFlags1)
+            : FalloutMaterialOnlyGeometry("Siding:0")
+        {
+            mData.mUVList.push_back(
+                { osg::Vec2f(0.f, 0.f), osg::Vec2f(1.f, 0.f), osg::Vec2f(0.f, 1.f) });
+            init(static_cast<Nif::NiObjectNET&>(mShader));
+            mShader.recType = Nif::RC_BSShaderPPLightingProperty;
+            mShader.mType = static_cast<unsigned int>(Nif::BSShaderType::ShaderType_Default);
+            mShader.mShaderFlags1 = shaderFlags1;
+            mShader.mController = nullptr;
+            mShader.mTextureSet = Nif::BSShaderTextureSetPtr(&mTextureSet);
+            mGeometry.mShaderProperty = Nif::BSShaderPropertyPtr(&mShader);
+            mTextureSet.mTextures = { "textures/test/diffuse.dds", "textures/test/normal.dds" };
+        }
+
+        Nif::BSShaderPPLightingProperty mShader;
+        Nif::BSShaderTextureSet mTextureSet;
+    };
+
     struct FindNamedNodeStateSetVisitor : osg::NodeVisitor
     {
         explicit FindNamedNodeStateSetVisitor(std::string_view name)
@@ -221,6 +243,17 @@ namespace
         DrawableCountVisitor visitor;
         result->accept(visitor);
         return visitor.mCount;
+    }
+
+    osg::ref_ptr<osg::Node> loadFalloutPPLightingGeometry(FalloutPPLightingGeometry& fixture,
+        Resource::ImageManager& imageManager, Resource::BgsmFileManager& materialManager)
+    {
+        Nif::NIFFile file(testNif);
+        file.mVersion = Nif::NIFFile::NIFVersion::VER_BGS;
+        file.mUserVersion = 11;
+        file.mBethVersion = Nif::NIFFile::BethVersion::BETHVER_FO3;
+        file.mRoots.push_back(&fixture.mGeometry);
+        return Loader::load(file, &imageManager, &materialManager);
     }
 
     TEST_F(NifOsgLoaderTest, shouldLoadFileWithDefaultNode)
@@ -371,6 +404,41 @@ osg::Group {
         ASSERT_NE(blend, nullptr);
         EXPECT_EQ(blend->getSource(), osg::BlendFunc::ONE);
         EXPECT_EQ(blend->getDestination(), osg::BlendFunc::ONE);
+    }
+
+    TEST_F(NifOsgLoaderTest, shouldIgnorePackedDiffuseAlphaForUnflaggedFalloutPpLighting)
+    {
+        FalloutPPLightingGeometry fixture(0);
+        osg::ref_ptr<osg::Node> result
+            = loadFalloutPPLightingGeometry(fixture, mImageManager, mMaterialManager);
+        ASSERT_NE(result, nullptr);
+
+        FindNamedNodeStateSetVisitor visitor("Siding:0");
+        result->accept(visitor);
+        ASSERT_NE(visitor.mStateSet, nullptr);
+        EXPECT_NE(visitor.mStateSet->getDefinePair("IGNORE_DIFFUSE_ALPHA"), nullptr);
+    }
+
+    TEST_F(NifOsgLoaderTest, shouldPreserveAuthoredFalloutPpLightingAlphaContracts)
+    {
+        FalloutPPLightingGeometry alphaTexture(Nif::BSShaderFlags1::BSSFlag1_AlphaTexture);
+        osg::ref_ptr<osg::Node> alphaTextureResult
+            = loadFalloutPPLightingGeometry(alphaTexture, mImageManager, mMaterialManager);
+        ASSERT_NE(alphaTextureResult, nullptr);
+        FindNamedNodeStateSetVisitor alphaTextureVisitor("Siding:0");
+        alphaTextureResult->accept(alphaTextureVisitor);
+        ASSERT_NE(alphaTextureVisitor.mStateSet, nullptr);
+        EXPECT_EQ(alphaTextureVisitor.mStateSet->getDefinePair("IGNORE_DIFFUSE_ALPHA"), nullptr);
+
+        FalloutPPLightingGeometry niAlpha(0);
+        niAlpha.addAlpha(0x12ed); // standard blend plus alpha test
+        osg::ref_ptr<osg::Node> niAlphaResult
+            = loadFalloutPPLightingGeometry(niAlpha, mImageManager, mMaterialManager);
+        ASSERT_NE(niAlphaResult, nullptr);
+        FindNamedNodeStateSetVisitor niAlphaVisitor("Siding:0");
+        niAlphaResult->accept(niAlphaVisitor);
+        ASSERT_NE(niAlphaVisitor.mStateSet, nullptr);
+        EXPECT_EQ(niAlphaVisitor.mStateSet->getDefinePair("IGNORE_DIFFUSE_ALPHA"), nullptr);
     }
 
     TEST_F(NifOsgLoaderTest, shouldApplyBsPpLightingDepthFlags)

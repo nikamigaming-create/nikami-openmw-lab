@@ -7039,6 +7039,7 @@ namespace NifOsg
             int bsLightingType = -1;
             int bsShaderType = -1;
             bool hasNoLightingShader = false;
+            bool ppLightingUsesDiffuseAlpha = false;
             std::string shaderMaterialName;
             int shaderMaterialType = -1;
 
@@ -7137,6 +7138,8 @@ namespace NifOsg
                         auto shaderprop = static_cast<const Nif::BSShaderPPLightingProperty*>(property);
                         bsShaderType = static_cast<int>(shaderprop->mType);
                         specEnabled = shaderprop->specular();
+                        ppLightingUsesDiffuseAlpha = ppLightingUsesDiffuseAlpha || shaderprop->alphaTexture()
+                            || shaderprop->refraction() || shaderprop->fireRefraction();
                         break;
                     }
                     case Nif::RC_BSShaderNoLightingProperty:
@@ -7218,6 +7221,18 @@ namespace NifOsg
                     default:
                         break;
                 }
+            }
+
+            const bool fallout3GenerationDefaultPPLighting
+                = mVersion == Nif::NIFFile::NIFVersion::VER_BGS && mUserVersion == 11
+                && mBethVersion == Nif::NIFFile::BethVersion::BETHVER_FO3 && bsPPLightingProperties > 0
+                && bsShaderType == static_cast<int>(Nif::BSShaderType::ShaderType_Default);
+            if (fallout3GenerationDefaultPPLighting && niAlphaProperties == 0 && !ppLightingUsesDiffuseAlpha)
+            {
+                // FO3/FNV diffuse textures often pack unrelated masks in alpha. The retail PP-lighting path only
+                // consumes that channel when the material authors an alpha contract. Keep material/controller alpha
+                // available for fades, but do not let an unflagged texture punch holes into the scene or VR composite.
+                node->getOrCreateStateSet()->setDefine("IGNORE_DIFFUSE_ALPHA", "1", osg::StateAttribute::ON);
             }
 
             if (hasNoLightingShader)
