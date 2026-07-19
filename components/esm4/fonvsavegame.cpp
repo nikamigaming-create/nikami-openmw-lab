@@ -752,6 +752,13 @@ namespace
             cursor, data, [&](std::string_view label) { return cursor.readU16(label); }, description);
     }
 
+    ESM4::FONVSaveField<std::int16_t> readPlayerProcessS16(
+        Cursor& cursor, std::span<const std::uint8_t> data, std::string_view description)
+    {
+        return readDelimitedField<std::int16_t>(cursor, data,
+            [&](std::string_view label) { return std::bit_cast<std::int16_t>(cursor.readU16(label)); }, description);
+    }
+
     ESM4::FONVSaveField<std::uint32_t> readPlayerProcessU32(
         Cursor& cursor, std::span<const std::uint8_t> data, std::string_view description)
     {
@@ -1163,6 +1170,180 @@ namespace
         return result;
     }
 
+    ESM4::FONVSavePlayerChangedActorFixedState parsePlayerChangedActorFixedState(Cursor& cursor,
+        std::span<const std::uint8_t> data, const ESM4::FONVSaveFormIdTable& formIds, std::uint32_t changeFlags)
+    {
+        constexpr std::uint32_t unsupportedActorBranches
+            = (1u << 10) | (1u << 19) | (1u << 22) | (1u << 23);
+        if ((changeFlags & unsupportedActorBranches) != 0)
+            throw ESM4::FONVSaveError(cursor.position(), "unsupported canonical player ChangedActor flag branch");
+
+        const std::size_t begin = cursor.position();
+        ESM4::FONVSavePlayerChangedActorFixedState result;
+        result.mUnk114 = readPlayerProcessFloat(cursor, data, "player ChangedActor Unk114");
+        for (ESM4::FONVSaveField<std::uint8_t>& value : result.mByt124_125_0BC_0C4)
+            value = readPlayerProcessU8(cursor, data, "player ChangedActor initial byte");
+        result.mUnk0C8 = readPlayerProcessU32(cursor, data, "player ChangedActor Unk0C8");
+        result.mByt07D = readPlayerProcessU8(cursor, data, "player ChangedActor Byt07D");
+        result.mUnk110 = readPlayerProcessU32(cursor, data, "player ChangedActor Unk110");
+        for (ESM4::FONVSaveField<std::uint8_t>& value : result.mByt118_126_145_146_14C_14D)
+            value = readPlayerProcessU8(cursor, data, "player ChangedActor state byte");
+        for (ESM4::FONVSaveField<std::uint32_t>& value : result.mUnk150_154_158)
+            value = readPlayerProcessU32(cursor, data, "player ChangedActor state word");
+        for (ESM4::FONVSaveField<std::uint8_t>& value : result.mByt174_175_18D)
+            value = readPlayerProcessU8(cursor, data, "player ChangedActor state byte");
+        for (ESM4::FONVSaveField<std::uint32_t>& value : result.mUnk1A4_1A8)
+            value = readPlayerProcessU32(cursor, data, "player ChangedActor state word");
+        for (ESM4::FONVSaveField<std::uint8_t>& value : result.mByt0F0_0F1)
+            value = readPlayerProcessU8(cursor, data, "player ChangedActor state byte");
+        result.mUnk10C = readPlayerProcessU32(cursor, data, "player ChangedActor Unk10C");
+        result.mUnk0138Byt000 = readPlayerProcessU8(cursor, data, "player ChangedActor Unk0138 Byt000");
+        result.mUnk0138Unk004 = readPlayerProcessU32(cursor, data, "player ChangedActor Unk0138 Unk004");
+        result.mUnk0138Byt010 = readPlayerProcessU8(cursor, data, "player ChangedActor Unk0138 Byt010");
+        for (ESM4::FONVSaveField<std::uint32_t>& value : result.mUnk0138Unk008_00C)
+            value = readPlayerProcessU32(cursor, data, "player ChangedActor Unk0138 word");
+        result.mUnk120 = readPlayerProcessU32(cursor, data, "player ChangedActor Unk120");
+        for (ESM4::FONVSaveResolvedReferenceId& value : result.mForm0C0_ActorBase_Form070)
+            value = decodeDelimitedResolvedReferenceId(
+                cursor, data, formIds, "player ChangedActor fixed RefID", true);
+        result.mRange = range(begin, cursor.position());
+        result.mRaw = copyRange(data, begin, cursor.position());
+        return result;
+    }
+
+    ESM4::FONVSavePlayerPathingLocation parsePlayerPathingLocation(
+        Cursor& cursor, std::span<const std::uint8_t> data, const ESM4::FONVSaveFormIdTable& formIds)
+    {
+        const std::size_t begin = cursor.position();
+        ESM4::FONVSavePlayerPathingLocation result;
+        result.mCoords = parsePlayerProcessVector3(cursor, data, "player ActorMover pathing-location coordinates");
+        for (ESM4::FONVSaveResolvedReferenceId& value : result.mNavMesh_Cell_Worldspace)
+        {
+            value = decodeDelimitedResolvedReferenceId(
+                cursor, data, formIds, "player ActorMover pathing-location RefID", true);
+        }
+        result.mCoordXandY
+            = readPlayerProcessU32(cursor, data, "player ActorMover pathing-location CoordXandY");
+        result.mWrd024 = readPlayerProcessS16(cursor, data, "player ActorMover pathing-location Wrd024");
+        result.mByt026 = readPlayerProcessU8(cursor, data, "player ActorMover pathing-location Byt026");
+        result.mUnknown = readPlayerProcessU8(cursor, data, "player ActorMover pathing-location Unknown");
+        result.mRange = range(begin, cursor.position());
+        result.mRaw = copyRange(data, begin, cursor.position());
+        return result;
+    }
+
+    ESM4::FONVSavePlayerDetailedActorPathHandler parsePlayerDetailedActorPathHandler(Cursor& cursor,
+        std::span<const std::uint8_t> data, const ESM4::FONVSaveFormIdTable& formIds)
+    {
+        const std::size_t begin = cursor.position();
+        ESM4::FONVSavePlayerDetailedActorPathHandler result;
+        for (ESM4::FONVSavePlayerProcessVector3& value : result.mCoords01C_028_034_040_04C)
+            value = parsePlayerProcessVector3(cursor, data, "player detailed actor-path coordinates");
+        for (ESM4::FONVSaveField<std::uint32_t>& value :
+            result.mUnk060_064_068_06C_070_074_078_07C_080_084_088_08C_090_094_098_09C_0AC_0B0_0B4_0B8)
+        {
+            value = readPlayerProcessU32(cursor, data, "player detailed actor-path word");
+        }
+        for (ESM4::FONVSaveField<std::uint32_t>& value : result.mUnk014)
+            value = readPlayerProcessU32(cursor, data, "player detailed actor-path Unk014 word");
+        for (ESM4::FONVSaveField<std::uint32_t>& value : result.mUnk0C8_0CC_0D0_0D4)
+            value = readPlayerProcessU32(cursor, data, "player detailed actor-path tail word");
+        for (ESM4::FONVSaveField<std::uint8_t>& value : result.mByt0DC_0DD_0DE_0DF_0E0_0E2_0E1)
+            value = readPlayerProcessU8(cursor, data, "player detailed actor-path byte");
+        result.mUnk0C0Byt000 = readPlayerProcessU8(cursor, data, "player detailed actor-path Unk0C0 Byt000");
+        result.mUnk0C0Byt001 = readPlayerProcessU8(cursor, data, "player detailed actor-path Unk0C0 Byt001");
+        result.mUnk0C0Unk004 = readPlayerProcessU32(cursor, data, "player detailed actor-path Unk0C0 Unk004");
+        result.mUnknownCoords
+            = parsePlayerProcessVector3(cursor, data, "player detailed actor-path unknown coordinates");
+        result.mUnk0BC = readPlayerProcessU32(cursor, data, "player detailed actor-path Unk0BC");
+        result.mForm0D8 = decodeDelimitedResolvedReferenceId(
+            cursor, data, formIds, "player detailed actor-path Form0D8 RefID", true);
+        result.mList058Count = readPackedCount(cursor, data, "player detailed actor-path List058 count");
+        if (result.mList058Count.mValue != 0)
+        {
+            throw ESM4::FONVSaveError(
+                result.mList058Count.mRange.mOffset, "unsupported player detailed actor-path List058 data");
+        }
+        result.mRange = range(begin, cursor.position());
+        result.mRaw = copyRange(data, begin, cursor.position());
+        return result;
+    }
+
+    ESM4::FONVSavePlayerMoverState parsePlayerMoverState(
+        Cursor& cursor, std::span<const std::uint8_t> data)
+    {
+        const std::size_t begin = cursor.position();
+        ESM4::FONVSavePlayerMoverState result;
+        result.mCoords = parsePlayerProcessVector3(cursor, data, "player-specific ActorMover coordinates");
+        for (ESM4::FONVSaveField<std::uint32_t>& value : result.mUnk094_098_09C)
+            value = readPlayerProcessU32(cursor, data, "player-specific ActorMover word");
+        result.mRange = range(begin, cursor.position());
+        result.mRaw = copyRange(data, begin, cursor.position());
+        return result;
+    }
+
+    ESM4::FONVSavePlayerActorMoverState parsePlayerActorMoverState(Cursor& cursor,
+        std::span<const std::uint8_t> data, const ESM4::FONVSaveFormIdTable& formIds)
+    {
+        const std::size_t begin = cursor.position();
+        ESM4::FONVSavePlayerActorMoverState result;
+        result.mWrd040 = readPlayerProcessU16(cursor, data, "player ActorMover Wrd040");
+        result.mWrd042 = readPlayerProcessU16(cursor, data, "player ActorMover Wrd042");
+        result.mByt070 = readPlayerProcessU8(cursor, data, "player ActorMover Byt070");
+        result.mUnk034 = readPlayerProcessU32(cursor, data, "player ActorMover Unk034");
+        result.mByt071 = readPlayerProcessU8(cursor, data, "player ActorMover Byt071");
+        result.mUnk038 = readPlayerProcessU32(cursor, data, "player ActorMover Unk038");
+        for (ESM4::FONVSaveField<std::uint8_t>& value : result.mByt072_073)
+            value = readPlayerProcessU8(cursor, data, "player ActorMover initial byte");
+        result.mCoords004 = parsePlayerProcessVector3(cursor, data, "player ActorMover Coords004");
+        result.mCoords010 = parsePlayerProcessVector3(cursor, data, "player ActorMover Coords010");
+        result.mUnk03C = readPlayerProcessU32(cursor, data, "player ActorMover Unk03C");
+        for (ESM4::FONVSaveField<std::uint8_t>& value : result.mByt074_075_077_076_078)
+            value = readPlayerProcessU8(cursor, data, "player ActorMover state byte");
+        result.mUnk06C = readPlayerProcessU32(cursor, data, "player ActorMover Unk06C");
+        for (ESM4::FONVSaveField<std::uint32_t>& value : result.mUnknown_Unk084)
+            value = readPlayerProcessU32(cursor, data, "player ActorMover versioned word");
+        result.mPathingLocation = parsePlayerPathingLocation(cursor, data, formIds);
+        result.mForm02C
+            = decodeDelimitedResolvedReferenceId(cursor, data, formIds, "player ActorMover Form02C RefID", true);
+        result.mContentFlags = readPlayerProcessU8(cursor, data, "player ActorMover content flags");
+        if (result.mContentFlags.mValue != 0x08)
+            throw ESM4::FONVSaveError(result.mContentFlags.mRange.mOffset,
+                "unsupported player ActorMover content-flag branch");
+        result.mDetailedPathHandler = parsePlayerDetailedActorPathHandler(cursor, data, formIds);
+        result.mPlayerMover = parsePlayerMoverState(cursor, data);
+        result.mRange = range(begin, cursor.position());
+        result.mRaw = copyRange(data, begin, cursor.position());
+        return result;
+    }
+
+    ESM4::FONVSavePlayerChangedCharacterState parsePlayerChangedCharacterState(std::span<const std::uint8_t> data,
+        const ESM4::FONVSaveChangedFormEnvelope& player,
+        const ESM4::FONVSavePlayerMobileObjectProcessState& processState,
+        const ESM4::FONVSaveFormIdTable& formIds)
+    {
+        if (player.mVersion.mValue != 27)
+            throw ESM4::FONVSaveError(player.mVersion.mRange.mOffset,
+                "unsupported canonical player ChangedCharacter changed-form version");
+
+        const std::size_t begin = static_cast<std::size_t>(processState.mUnparsedRemainder.mRange.mOffset);
+        const std::size_t end = static_cast<std::size_t>(processState.mUnparsedRemainder.mRange.end());
+        Cursor cursor(data, begin, end);
+        ESM4::FONVSavePlayerChangedCharacterState result;
+        result.mActorFixed
+            = parsePlayerChangedActorFixedState(cursor, data, formIds, player.mChangeFlags.mValue);
+        result.mActorMover = parsePlayerActorMoverState(cursor, data, formIds);
+        result.mByt1C0 = readPlayerProcessU8(cursor, data, "player ChangedCharacter Byt1C0");
+        result.mByt1C1 = readPlayerProcessU8(cursor, data, "player ChangedCharacter Byt1C1");
+        if (cursor.position() - begin != ESM4::sFONVPlayerChangedCharacterStateBytes)
+            throw ESM4::FONVSaveError(begin, "canonical player ChangedCharacter state has an unexpected size");
+        result.mRange = range(begin, cursor.position());
+        result.mRaw = copyRange(data, begin, cursor.position());
+        result.mUnparsedRemainder = readRawField(
+            cursor, data, cursor.end() - cursor.position(), "remaining canonical player ACHR payload");
+        return result;
+    }
+
     void appendUnparsedSemanticPayload(ESM4::FONVSaveGamePrefix& save, const ESM4::FONVSaveRange& payload)
     {
         if (payload.empty())
@@ -1450,6 +1631,8 @@ namespace ESM4
                     data, *playerReference, *result.mPlayerActorValueData, result.mFormIdTable);
                 result.mPlayerMobileObjectProcessState = parsePlayerMobileObjectProcessState(
                     data, *playerReference, *result.mPlayerProcessInventoryData, result.mFormIdTable);
+                result.mPlayerChangedCharacterState = parsePlayerChangedCharacterState(
+                    data, *playerReference, *result.mPlayerMobileObjectProcessState, result.mFormIdTable);
             }
         }
 
@@ -1475,7 +1658,9 @@ namespace ESM4
         }
         for (const FONVSaveChangedFormEnvelope& entry : result.mChangedForms.mEntries)
         {
-            if (result.mPlayerMobileObjectProcessState.has_value() && &entry == playerReference)
+            if (result.mPlayerChangedCharacterState.has_value() && &entry == playerReference)
+                appendUnparsedSemanticPayload(result, result.mPlayerChangedCharacterState->mUnparsedRemainder.mRange);
+            else if (result.mPlayerMobileObjectProcessState.has_value() && &entry == playerReference)
                 appendUnparsedSemanticPayload(result, result.mPlayerMobileObjectProcessState->mUnparsedRemainder.mRange);
             else if (result.mPlayerProcessInventoryData.has_value() && &entry == playerReference)
                 appendUnparsedSemanticPayload(result, result.mPlayerProcessInventoryData->mUnparsedRemainder.mRange);
