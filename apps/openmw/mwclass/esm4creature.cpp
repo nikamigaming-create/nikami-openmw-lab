@@ -58,12 +58,13 @@
 #include "../mwgui/tooltips.hpp"
 
 #include "esm4base.hpp"
+#include "esm4container.hpp"
 #include "fnvactorstate.hpp"
 #include "fnvaipackage.hpp"
 
 namespace MWClass
 {
-    class ESM4CreatureContainerStore final : public MWWorld::ContainerStore
+    class ESM4CreatureContainerStore final : public ESM4ActorContainerStore
     {
         using PlannedItems = std::map<ESM::RefId, int>;
 
@@ -579,6 +580,7 @@ namespace MWClass
         std::unique_ptr<MWWorld::ContainerStore> mContainerStore
             = std::make_unique<ESM4CreatureContainerStore>();
         bool mContainerItemsRegistered = false;
+        bool mDeathItemsGenerated = false;
         bool mFnvAiSequenceInitialised = false;
 
         ESM4CreatureCustomData() = default;
@@ -588,6 +590,7 @@ namespace MWClass
             , mMovement(other.mMovement)
             , mContainerStore(other.mContainerStore ? other.mContainerStore->clone()
                                                     : std::make_unique<ESM4CreatureContainerStore>())
+            , mDeathItemsGenerated(other.mDeathItemsGenerated)
             , mFnvAiSequenceInitialised(other.mFnvAiSequenceInitialised)
         {
         }
@@ -1855,6 +1858,11 @@ namespace MWClass
         return getCustomData(ptr).mTemplates.mFactions;
     }
 
+    const ESM4::Creature* ESM4Creature::getStatsRecord(const MWWorld::Ptr& ptr)
+    {
+        return getCustomData(ptr).mTemplates.mStats;
+    }
+
     std::string_view ESM4Creature::getModel(const MWWorld::ConstPtr& ptr) const
     {
         const ESM4::Creature* base = ptr.get<ESM4::Creature>()->mBase;
@@ -1936,6 +1944,60 @@ namespace MWClass
         return store;
     }
 
+    bool ESM4Creature::materializeFnvDeathItem(
+        const MWWorld::Ptr& ptr, Misc::Rng::Generator& prng, int playerLevel, MWBase::World* world)
+    {
+        const ESM4::Creature* base = ptr.get<ESM4::Creature>()->mBase;
+        if (base == nullptr || !base->mIsFONV)
+            return false;
+
+        ESM4CreatureCustomData& data = getCustomData(ptr);
+        if (!data.mCreatureStats.isDead() || data.mDeathItemsGenerated)
+            return false;
+
+        // The transition owns the roll. Even an empty result or malformed authored list must not be rolled again by
+        // later hits or corpse activation.
+        data.mDeathItemsGenerated = true;
+        const ESM4::Creature* traits = data.mTemplates.mTraits;
+        if (traits == nullptr || traits->mDeathItem.isZeroOrUnset())
+            return true;
+
+        const MWWorld::ESMStore& esmStore = *MWBase::Environment::get().getESMStore();
+        MWWorld::ContainerStore& destination = ptr.getClass().getContainerStore(ptr);
+        const ESM::RefId deathItem(traits->mDeathItem);
+        std::string_view failure;
+        if (!materializeFnvDeathItemList(
+                destination, esmStore, deathItem, playerLevel, prng, world, failure))
+        {
+            Log(Debug::Warning) << "Unable to materialize FNV CREA death item " << deathItem << " for "
+                                << ESM::RefId(base->mId) << " reason=" << failure;
+            return false;
+        }
+        return true;
+    }
+
+    void ESM4Creature::onHit(const MWWorld::Ptr& ptr, const std::map<std::string, float>& damages,
+        ESM::RefId object, const MWWorld::Ptr& attacker, bool successful,
+        const MWMechanics::DamageSourceType sourceType) const
+    {
+        const bool wasDead = getCreatureStats(ptr).isDead();
+        Actor::onHit(ptr, damages, object, attacker, successful, sourceType);
+        if (wasDead || !getCreatureStats(ptr).isDead())
+            return;
+
+        MWBase::World* world = MWBase::Environment::tryGetWorld();
+        if (world == nullptr)
+        {
+            Log(Debug::Warning) << "Unable to materialize first-death FNV CREA loot without a runtime World";
+            return;
+        }
+        int playerLevel = ESM4Impl::sDefaultLevel;
+        const MWWorld::Ptr player = world->getPlayerPtr();
+        if (!player.isEmpty() && player.getClass().isActor())
+            playerLevel = player.getClass().getCreatureStats(player).getLevel();
+        materializeFnvDeathItem(ptr, world->getPrng(), std::max(playerLevel, 1), world);
+    }
+
     void ESM4Creature::readAdditionalState(const MWWorld::Ptr& ptr, const ESM::ObjectState& state) const
     {
         if (!state.mHasCustomState)
@@ -1956,6 +2018,9 @@ namespace MWClass
         data->mContainerStore->readState(creatureState.mInventory);
         data->mCreatureStats.readState(creatureState.mCreatureStats);
         data->mContainerItemsRegistered = true; // ContainerStore::readState registered each retained saved item.
+        // A saved dead actor already contains the synchronous first-death result in its complete inventory. Treat it
+        // as consumed so loading or striking the corpse cannot roll the authored LVLI a second time.
+        data->mDeathItemsGenerated = data->mCreatureStats.isDead();
         // Native saves commonly omit transient packages such as patrol and sandbox from an otherwise complete
         // creature state.  An empty saved sequence therefore means "rebuild from the winning PACK/XLKR data", not
         // "this actor intentionally has no AI".  Preserve non-empty serialized sequences exactly, while allowing

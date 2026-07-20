@@ -40,12 +40,7 @@ namespace
 {
     constexpr int sMaxLevelledItemDepth = 32;
 
-    struct ResolvedFnvContainerItem
-    {
-        ESM::RefId mId;
-        int mCount = 0;
-        std::optional<float> mCondition;
-    };
+    using MWClass::ResolvedFnvContainerItem;
 
     bool checkedMultiply(int left, int right, int& result)
     {
@@ -283,6 +278,229 @@ namespace
 
 namespace MWClass
 {
+    bool resolveFnvLevelledItem(const MWWorld::ESMStore& store, const ESM::RefId& listId, int playerLevel,
+        int requestedCount, Misc::Rng::Generator& prng, MWBase::World* world,
+        std::vector<ResolvedFnvContainerItem>& result, std::string_view& failure)
+    {
+        std::set<ESM::RefId> path;
+        return resolveLevelledList(
+            store, listId, std::max(playerLevel, 1), requestedCount, prng, world, 1, path, result, failure);
+    }
+
+    template <class Record>
+    ESM4ActorContainerStore::AddResult ESM4ActorContainerStore::validateResolvedRecord(
+        const MWWorld::ESMStore& store, const ResolvedFnvContainerItem& item)
+    {
+        if (item.mId.empty() || item.mCount <= 0
+            || (item.mCondition
+                && (!std::isfinite(*item.mCondition) || *item.mCondition < 0.f || *item.mCondition > 1.f)))
+            return AddResult::Invalid;
+
+        const Record* record = store.get<Record>().search(item.mId);
+        if (record == nullptr)
+            return AddResult::Missing;
+
+        ESM::CellRef cellRef = ESM::makeBlankCellRef();
+        cellRef.mRefID = ESM::RefId::formIdRefId(record->mId);
+        MWWorld::LiveCellRef<Record> liveRef(cellRef, record);
+        const MWWorld::Ptr ptr(&liveRef);
+        if (item.mCondition)
+        {
+            const int maxHealth = ptr.getClass().getItemMaxHealth(ptr);
+            if (maxHealth > 0)
+            {
+                const int health = std::clamp(static_cast<int>(
+                                                  std::lround(*item.mCondition * static_cast<float>(maxHealth))),
+                    0, maxHealth);
+                ptr.getCellRef().setCharge(health);
+            }
+        }
+
+        const int type = getType(ptr);
+        for (MWWorld::ContainerStoreIterator existing = begin(type); existing != end(); ++existing)
+        {
+            if (existing->getCellRef().getRefId() != cellRef.mRefID
+                || existing->getCellRef().getCharge() != ptr.getCellRef().getCharge())
+                continue;
+            const int oldCount = existing->getCellRef().getCount(false);
+            if (oldCount < 0 || oldCount > std::numeric_limits<int>::max() - item.mCount)
+                return AddResult::Overflow;
+            break;
+        }
+        return AddResult::Stored;
+    }
+
+    template <class Record>
+    ESM4ActorContainerStore::AddResult ESM4ActorContainerStore::addResolvedRecord(
+        const MWWorld::ESMStore& store, const ResolvedFnvContainerItem& item)
+    {
+        const Record* record = store.get<Record>().search(item.mId);
+        if (record == nullptr)
+            return AddResult::Missing;
+
+        ESM::CellRef cellRef = ESM::makeBlankCellRef();
+        cellRef.mRefID = ESM::RefId::formIdRefId(record->mId);
+        MWWorld::LiveCellRef<Record> liveRef(cellRef, record);
+        const MWWorld::Ptr ptr(&liveRef);
+        if (item.mCondition)
+        {
+            const int maxHealth = ptr.getClass().getItemMaxHealth(ptr);
+            if (maxHealth > 0)
+            {
+                const int health = std::clamp(static_cast<int>(
+                                                  std::lround(*item.mCondition * static_cast<float>(maxHealth))),
+                    0, maxHealth);
+                ptr.getCellRef().setCharge(health);
+            }
+        }
+
+        const int type = getType(ptr);
+        for (MWWorld::ContainerStoreIterator existing = begin(type); existing != end(); ++existing)
+        {
+            if (existing->getCellRef().getRefId() != cellRef.mRefID
+                || existing->getCellRef().getCharge() != ptr.getCellRef().getCharge())
+                continue;
+            existing->getCellRef().setCount(existing->getCellRef().getCount(false) + item.mCount);
+            flagAsModified();
+            return AddResult::Stored;
+        }
+
+        const MWWorld::ContainerStoreIterator added = addNewStack(ptr, item.mCount);
+        MWBase::Environment::get().getWorldModel()->registerPtr(*added);
+        return AddResult::Stored;
+    }
+
+    ESM4ActorContainerStore::AddResult ESM4ActorContainerStore::validateResolvedRecord(
+        const MWWorld::ESMStore& store, const ResolvedFnvContainerItem& item)
+    {
+        switch (store.find(item.mId))
+        {
+            case ESM::REC_ALCH4:
+                return validateResolvedRecord<ESM4::Potion>(store, item);
+            case ESM::REC_AMMO4:
+                return validateResolvedRecord<ESM4::Ammunition>(store, item);
+            case ESM::REC_ARMO4:
+                return validateResolvedRecord<ESM4::Armor>(store, item);
+            case ESM::REC_BOOK4:
+                return validateResolvedRecord<ESM4::Book>(store, item);
+            case ESM::REC_CLOT4:
+                return validateResolvedRecord<ESM4::Clothing>(store, item);
+            case ESM::REC_IMOD4:
+                return validateResolvedRecord<ESM4::ItemMod>(store, item);
+            case ESM::REC_INGR4:
+                return validateResolvedRecord<ESM4::Ingredient>(store, item);
+            case ESM::REC_KEYM4:
+                return validateResolvedRecord<ESM4::Key>(store, item);
+            case ESM::REC_LIGH4:
+                return validateResolvedRecord<ESM4::Light>(store, item);
+            case ESM::REC_MISC4:
+                return validateResolvedRecord<ESM4::MiscItem>(store, item);
+            case ESM::REC_WEAP4:
+                return validateResolvedRecord<ESM4::Weapon>(store, item);
+            default:
+                return AddResult::Missing;
+        }
+    }
+
+    ESM4ActorContainerStore::AddResult ESM4ActorContainerStore::addResolvedRecord(
+        const MWWorld::ESMStore& store, const ResolvedFnvContainerItem& item)
+    {
+        switch (store.find(item.mId))
+        {
+            case ESM::REC_ALCH4:
+                return addResolvedRecord<ESM4::Potion>(store, item);
+            case ESM::REC_AMMO4:
+                return addResolvedRecord<ESM4::Ammunition>(store, item);
+            case ESM::REC_ARMO4:
+                return addResolvedRecord<ESM4::Armor>(store, item);
+            case ESM::REC_BOOK4:
+                return addResolvedRecord<ESM4::Book>(store, item);
+            case ESM::REC_CLOT4:
+                return addResolvedRecord<ESM4::Clothing>(store, item);
+            case ESM::REC_IMOD4:
+                return addResolvedRecord<ESM4::ItemMod>(store, item);
+            case ESM::REC_INGR4:
+                return addResolvedRecord<ESM4::Ingredient>(store, item);
+            case ESM::REC_KEYM4:
+                return addResolvedRecord<ESM4::Key>(store, item);
+            case ESM::REC_LIGH4:
+                return addResolvedRecord<ESM4::Light>(store, item);
+            case ESM::REC_MISC4:
+                return addResolvedRecord<ESM4::MiscItem>(store, item);
+            case ESM::REC_WEAP4:
+                return addResolvedRecord<ESM4::Weapon>(store, item);
+            default:
+                return AddResult::Missing;
+        }
+    }
+
+    bool ESM4ActorContainerStore::addResolvedDeathItems(const MWWorld::ESMStore& store,
+        const std::vector<ResolvedFnvContainerItem>& items, std::string_view& failure)
+    {
+        std::vector<ResolvedFnvContainerItem> canonical;
+        for (const ResolvedFnvContainerItem& item : items)
+        {
+            if (!appendResolved(canonical, item.mId, item.mCount, item.mCondition, failure))
+                return false;
+        }
+
+        const auto failureFor = [](AddResult result) -> std::string_view {
+            switch (result)
+            {
+                case AddResult::Missing:
+                    return "missing-or-unsupported-terminal-record";
+                case AddResult::Invalid:
+                    return "invalid-terminal-item";
+                case AddResult::Overflow:
+                    return "destination-count-overflow";
+                case AddResult::Stored:
+                    break;
+            }
+            return "stored";
+        };
+
+        for (const ResolvedFnvContainerItem& item : canonical)
+        {
+            const AddResult result = validateResolvedRecord(store, item);
+            if (result != AddResult::Stored)
+            {
+                failure = failureFor(result);
+                return false;
+            }
+        }
+        for (const ResolvedFnvContainerItem& item : canonical)
+        {
+            if (addResolvedRecord(store, item) != AddResult::Stored)
+            {
+                failure = "commit-precondition-changed";
+                return false;
+            }
+        }
+        return true;
+    }
+
+    bool materializeFnvDeathItemList(MWWorld::ContainerStore& destination, const MWWorld::ESMStore& store,
+        const ESM::RefId& listId, int playerLevel, Misc::Rng::Generator& prng, MWBase::World* world,
+        std::string_view& failure)
+    {
+        if (store.find(listId) != ESM::REC_LVLI4)
+        {
+            failure = "death-item-is-not-lvli";
+            return false;
+        }
+        auto* actorStore = dynamic_cast<ESM4ActorContainerStore*>(&destination);
+        if (actorStore == nullptr)
+        {
+            failure = "unsupported-actor-container-store";
+            return false;
+        }
+
+        std::vector<ResolvedFnvContainerItem> plan;
+        if (!resolveFnvLevelledItem(store, listId, playerLevel, 1, prng, world, plan, failure))
+            return false;
+        return actorStore->addResolvedDeathItems(store, plan, failure);
+    }
+
     template <class Record>
     bool ESM4ContainerStore::addInitialRecord(
         const MWWorld::ESMStore& store, const ESM::RefId& id, int count, std::optional<float> condition)
@@ -344,10 +562,8 @@ namespace MWClass
                 }
 
                 std::vector<ResolvedFnvContainerItem> plan;
-                std::set<ESM::RefId> path;
                 std::string_view failure;
-                if (!resolveLevelledList(store, itemId, std::max(playerLevel, 1), count, *prng, world, 1, path, plan,
-                        failure))
+                if (!resolveFnvLevelledItem(store, itemId, playerLevel, count, *prng, world, plan, failure))
                 {
                     Log(Debug::Warning) << "Unable to resolve ESM4 levelled container item " << itemId << " in "
                                         << ESM::RefId(container.mId) << " reason=" << failure;

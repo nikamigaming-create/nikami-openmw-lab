@@ -158,6 +158,89 @@ namespace MWMechanics
         return result;
     }
 
+    bool isFalloutMeleeAnimationType(std::uint8_t animationType) noexcept
+    {
+        return animationType <= 2;
+    }
+
+    std::optional<FalloutMeleeContract> buildFalloutMeleeContract(const ESM4::Weapon* weapon,
+        std::uint8_t animationType, float skill, float strength, const FalloutMeleeTuning& tuning,
+        FalloutMeleeFailure& failure)
+    {
+        failure = FalloutMeleeFailure::None;
+        const bool unarmedFamily = animationType == 0;
+        const bool bareHanded = weapon == nullptr;
+        if (!isFalloutMeleeAnimationType(animationType))
+            failure = FalloutMeleeFailure::NotMelee;
+        else if (bareHanded && !unarmedFamily)
+            failure = FalloutMeleeFailure::MissingWeapon;
+        else if (!std::isfinite(skill) || skill < 0.f || !std::isfinite(strength) || strength < 0.f)
+            failure = FalloutMeleeFailure::InvalidActorValues;
+        else if (!std::isfinite(tuning.mDamageSkillBase) || !std::isfinite(tuning.mDamageSkillMult)
+            || !std::isfinite(tuning.mUnarmedDamageBase) || !std::isfinite(tuning.mUnarmedDamageMult)
+            || !std::isfinite(tuning.mMeleeStrengthMult) || !std::isfinite(tuning.mMeleeStrengthOffset)
+            || !std::isfinite(tuning.mCombatDistance) || !std::isfinite(tuning.mUnarmedReach))
+            failure = FalloutMeleeFailure::InvalidTuning;
+
+        if (failure != FalloutMeleeFailure::None)
+            return std::nullopt;
+
+        const float skillMultiplier = tuning.mDamageSkillBase + tuning.mDamageSkillMult * (skill / 100.f);
+        const float familyDamage = unarmedFamily
+            ? tuning.mUnarmedDamageBase + tuning.mUnarmedDamageMult * skill
+            : tuning.mMeleeStrengthOffset + tuning.mMeleeStrengthMult * strength;
+        const float weaponDamage = bareHanded ? 0.f : static_cast<float>(weapon->mData.damage);
+        const float damage = weaponDamage * skillMultiplier + familyDamage;
+        if (!std::isfinite(skillMultiplier) || skillMultiplier < 0.f || !std::isfinite(damage) || damage <= 0.f)
+        {
+            failure = FalloutMeleeFailure::InvalidDamage;
+            return std::nullopt;
+        }
+
+        const float reachMultiplier = bareHanded ? tuning.mUnarmedReach : weapon->mData.reach;
+        const float reach = tuning.mCombatDistance * reachMultiplier;
+        if (!std::isfinite(reachMultiplier) || reachMultiplier <= 0.f || !std::isfinite(reach) || reach <= 0.f)
+        {
+            failure = FalloutMeleeFailure::InvalidReach;
+            return std::nullopt;
+        }
+
+        return FalloutMeleeContract{ damage, reach, unarmedFamily, bareHanded };
+    }
+
+    std::optional<FalloutMeleeContract> buildFalloutCreatureMeleeContract(float authoredDamage,
+        float combatSkill, float strength, const FalloutMeleeTuning& tuning, FalloutMeleeFailure& failure)
+    {
+        failure = FalloutMeleeFailure::None;
+        if (!std::isfinite(authoredDamage) || authoredDamage <= 0.f || !std::isfinite(combatSkill)
+            || combatSkill < 0.f || !std::isfinite(strength) || strength < 0.f)
+            failure = FalloutMeleeFailure::InvalidActorValues;
+        else if (!std::isfinite(tuning.mDamageSkillBase) || !std::isfinite(tuning.mDamageSkillMult)
+            || !std::isfinite(tuning.mMeleeStrengthMult) || !std::isfinite(tuning.mMeleeStrengthOffset)
+            || !std::isfinite(tuning.mCombatDistance) || !std::isfinite(tuning.mUnarmedReach))
+            failure = FalloutMeleeFailure::InvalidTuning;
+        if (failure != FalloutMeleeFailure::None)
+            return std::nullopt;
+
+        const float skillMultiplier
+            = tuning.mDamageSkillBase + tuning.mDamageSkillMult * (combatSkill / 100.f);
+        const float strengthDamage = tuning.mMeleeStrengthOffset + tuning.mMeleeStrengthMult * strength;
+        const float damage = authoredDamage * skillMultiplier + strengthDamage;
+        if (!std::isfinite(skillMultiplier) || skillMultiplier < 0.f || !std::isfinite(damage) || damage <= 0.f)
+        {
+            failure = FalloutMeleeFailure::InvalidDamage;
+            return std::nullopt;
+        }
+
+        const float reach = tuning.mCombatDistance * tuning.mUnarmedReach;
+        if (!std::isfinite(reach) || reach <= 0.f)
+        {
+            failure = FalloutMeleeFailure::InvalidReach;
+            return std::nullopt;
+        }
+        return FalloutMeleeContract{ damage, reach, true, true };
+    }
+
     std::string_view getFalloutShotFailureName(FalloutShotFailure failure)
     {
         switch (failure)
@@ -180,6 +263,28 @@ namespace MWMechanics
                 return "invalid-range";
             case FalloutShotFailure::InvalidSpread:
                 return "invalid-spread";
+        }
+        return "unknown";
+    }
+
+    std::string_view getFalloutMeleeFailureName(FalloutMeleeFailure failure)
+    {
+        switch (failure)
+        {
+            case FalloutMeleeFailure::None:
+                return "none";
+            case FalloutMeleeFailure::NotMelee:
+                return "not-melee";
+            case FalloutMeleeFailure::MissingWeapon:
+                return "missing-weapon";
+            case FalloutMeleeFailure::InvalidActorValues:
+                return "invalid-actor-values";
+            case FalloutMeleeFailure::InvalidTuning:
+                return "invalid-tuning";
+            case FalloutMeleeFailure::InvalidDamage:
+                return "invalid-damage";
+            case FalloutMeleeFailure::InvalidReach:
+                return "invalid-reach";
         }
         return "unknown";
     }

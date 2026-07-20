@@ -366,4 +366,101 @@ namespace
         EXPECT_FALSE(MWMechanics::buildFalloutRayDirection(
             osg::Vec3f(0.f, 1.f, 0.f), 1.f, osg::Vec2f(1.1f, 0.f)));
     }
+
+    MWMechanics::FalloutMeleeTuning retailMeleeTuning()
+    {
+        // The six damage values are exact winning FalloutNV.esm GMST values. The final two values are the shared
+        // contact-distance defaults used after the FNV compatibility bridge. Keeping all of them in the fixture
+        // proves the production formula consumes content/runtime tuning rather than hiding constants in code.
+        return MWMechanics::FalloutMeleeTuning{ 0.5f, 0.5f, 0.5f, 0.05f, 0.5f, 0.f, 256.f, 1.f };
+    }
+
+    TEST(FalloutCombatTest, BuildsBareUnarmedDamageFromNativeSkillAndGmstValues)
+    {
+        MWMechanics::FalloutMeleeFailure failure;
+        const auto contract = MWMechanics::buildFalloutMeleeContract(
+            nullptr, 0, 50.f, 6.f, retailMeleeTuning(), failure);
+
+        ASSERT_TRUE(contract);
+        EXPECT_EQ(failure, MWMechanics::FalloutMeleeFailure::None);
+        EXPECT_TRUE(contract->mUnarmedFamily);
+        EXPECT_TRUE(contract->mBareHanded);
+        EXPECT_FLOAT_EQ(contract->mDamage, 3.f);
+        EXPECT_FLOAT_EQ(contract->mReach, 256.f);
+    }
+
+    TEST(FalloutCombatTest, BuildsAuthoredOneHandMeleeDamageAndReach)
+    {
+        ESM4::Weapon weapon;
+        weapon.mData.animationType = 1;
+        weapon.mData.damage = 20;
+        weapon.mData.reach = 1.25f;
+
+        MWMechanics::FalloutMeleeFailure failure;
+        const auto contract = MWMechanics::buildFalloutMeleeContract(
+            &weapon, weapon.mData.animationType, 50.f, 6.f, retailMeleeTuning(), failure);
+
+        ASSERT_TRUE(contract);
+        EXPECT_EQ(failure, MWMechanics::FalloutMeleeFailure::None);
+        EXPECT_FALSE(contract->mUnarmedFamily);
+        EXPECT_FALSE(contract->mBareHanded);
+        // 20 * (0.5 + 0.5 * 50/100) + 6 * 0.5
+        EXPECT_FLOAT_EQ(contract->mDamage, 18.f);
+        EXPECT_FLOAT_EQ(contract->mReach, 320.f);
+    }
+
+    TEST(FalloutCombatTest, AppliesUnarmedActorDamageToAuthoredHandToHandWeapon)
+    {
+        ESM4::Weapon weapon;
+        weapon.mData.animationType = 0;
+        weapon.mData.damage = 10;
+        weapon.mData.reach = 1.f;
+
+        MWMechanics::FalloutMeleeFailure failure;
+        const auto contract = MWMechanics::buildFalloutMeleeContract(
+            &weapon, weapon.mData.animationType, 50.f, 6.f, retailMeleeTuning(), failure);
+
+        ASSERT_TRUE(contract);
+        EXPECT_TRUE(contract->mUnarmedFamily);
+        EXPECT_FALSE(contract->mBareHanded);
+        // 10 * (0.5 + 0.5 * 50/100) + (0.5 + 0.05 * 50)
+        EXPECT_FLOAT_EQ(contract->mDamage, 10.5f);
+    }
+
+    TEST(FalloutCombatTest, BuildsCreatureStrikeFromWinningFNVDataPayload)
+    {
+        MWMechanics::FalloutMeleeFailure failure;
+        const auto contract = MWMechanics::buildFalloutCreatureMeleeContract(
+            12.f, 60.f, 5.f, retailMeleeTuning(), failure);
+
+        ASSERT_TRUE(contract);
+        EXPECT_EQ(failure, MWMechanics::FalloutMeleeFailure::None);
+        EXPECT_TRUE(contract->mUnarmedFamily);
+        EXPECT_TRUE(contract->mBareHanded);
+        // CREA DATA damage 12 * (0.5 + 0.5 * combatSkill 60/100) + Strength 5 * 0.5.
+        EXPECT_FLOAT_EQ(contract->mDamage, 12.1f);
+        EXPECT_FLOAT_EQ(contract->mReach, 256.f);
+    }
+
+    TEST(FalloutCombatTest, RejectsNonMeleeAndMalformedMeleeContracts)
+    {
+        ESM4::Weapon weapon;
+        weapon.mData.animationType = 3;
+        weapon.mData.damage = 20;
+        weapon.mData.reach = 1.f;
+        MWMechanics::FalloutMeleeFailure failure;
+        EXPECT_FALSE(MWMechanics::buildFalloutMeleeContract(
+            &weapon, weapon.mData.animationType, 50.f, 6.f, retailMeleeTuning(), failure));
+        EXPECT_EQ(failure, MWMechanics::FalloutMeleeFailure::NotMelee);
+
+        EXPECT_FALSE(MWMechanics::buildFalloutMeleeContract(
+            nullptr, 1, 50.f, 6.f, retailMeleeTuning(), failure));
+        EXPECT_EQ(failure, MWMechanics::FalloutMeleeFailure::MissingWeapon);
+
+        weapon.mData.animationType = 2;
+        weapon.mData.reach = 0.f;
+        EXPECT_FALSE(MWMechanics::buildFalloutMeleeContract(
+            &weapon, weapon.mData.animationType, 50.f, 6.f, retailMeleeTuning(), failure));
+        EXPECT_EQ(failure, MWMechanics::FalloutMeleeFailure::InvalidReach);
+    }
 }

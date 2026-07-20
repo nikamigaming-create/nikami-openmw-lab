@@ -49,6 +49,7 @@
 #include <components/vfs/pathutil.hpp>
 
 #include "../mwrender/animation.hpp"
+#include "../mwrender/camera.hpp"
 #include "../mwrender/fallouthitreaction.hpp"
 #include "../mwrender/falloutweaponanimation.hpp"
 
@@ -59,11 +60,13 @@
 #include "../mwbase/windowmanager.hpp"
 #include "../mwbase/world.hpp"
 
+#include "../mwclass/esm4creature.hpp"
 #include "../mwclass/esm4npc.hpp"
 #include "../mwclass/fnvfurniturelifecycle.hpp"
 
 #include "../mwworld/class.hpp"
 #include "../mwworld/esmstore.hpp"
+#include "../mwworld/fnvplayerruntimestate.hpp"
 #include "../mwworld/inventorystore.hpp"
 #include "../mwworld/player.hpp"
 #include "../mwworld/spellcaststate.hpp"
@@ -127,6 +130,83 @@ namespace
         return ptr.getType() == ESM::REC_NPC_4 || ptr.getType() == ESM4::Creature::sRecordId;
     }
 
+    struct FalloutMeleeActorValues
+    {
+        float mSkill = 0.f;
+        float mStrength = 0.f;
+        std::optional<float> mCreatureDamage;
+    };
+
+    std::optional<FalloutMeleeActorValues> getFalloutMeleeActorValues(
+        const MWWorld::Ptr& ptr, bool unarmedFamily)
+    {
+        constexpr std::uint32_t strengthActorValue = MWWorld::FalloutPlayerRuntimeState::SpecialActorValueBegin;
+        const std::uint32_t skillActorValue = MWWorld::FalloutPlayerRuntimeState::SkillActorValueBegin
+            + static_cast<std::uint32_t>(unarmedFamily ? MWWorld::FalloutSkill::Unarmed
+                                                      : MWWorld::FalloutSkill::MeleeWeapons);
+
+        if (ptr == MWMechanics::getPlayer())
+        {
+            const MWWorld::FalloutPlayerRuntimeState& runtime
+                = MWBase::Environment::get().getWorld()->getFalloutPlayerRuntimeState();
+            const std::optional<MWWorld::FalloutRuntimeActorValue> skill
+                = runtime.getCurrentActorValue(skillActorValue);
+            const std::optional<MWWorld::FalloutRuntimeActorValue> strength
+                = runtime.getCurrentActorValue(strengthActorValue);
+            if (skill && strength)
+                return FalloutMeleeActorValues{ skill->mValue, strength->mValue, std::nullopt };
+        }
+
+        if (ptr.getType() == ESM::REC_NPC_4)
+        {
+            const ESM4::Npc* stats = MWClass::ESM4Npc::getStatsRecord(ptr);
+            if (stats == nullptr || !stats->mHasFNVSkills || !stats->mHasFNVData)
+                return std::nullopt;
+            const float skill = static_cast<float>(unarmedFamily ? stats->mFNVSkills.values.unarmed
+                                                                  : stats->mFNVSkills.values.meleeWeapons);
+            return FalloutMeleeActorValues{
+                skill, static_cast<float>(stats->mFNVData.strength), std::nullopt };
+        }
+        if (ptr.getType() == ESM4::Creature::sRecordId)
+        {
+            const ESM4::Creature* stats = MWClass::ESM4Creature::getStatsRecord(ptr);
+            if (stats == nullptr || !stats->mIsFONV || !stats->mHasFNVData || stats->mFNVData.damage <= 0)
+                return std::nullopt;
+            return FalloutMeleeActorValues{ static_cast<float>(stats->mFNVData.combatSkill),
+                static_cast<float>(stats->mFNVData.strength), static_cast<float>(stats->mFNVData.damage) };
+        }
+        return std::nullopt;
+    }
+
+    std::optional<float> getFalloutGameSetting(std::string_view id)
+    {
+        const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
+        if (store == nullptr)
+            return std::nullopt;
+        const ESM::GameSetting* setting = store->get<ESM::GameSetting>().search(id);
+        if (setting == nullptr || setting->mValue.getType() != ESM::VT_Float)
+            return std::nullopt;
+        const float value = setting->mValue.getFloat();
+        return std::isfinite(value) ? std::optional<float>(value) : std::nullopt;
+    }
+
+    std::optional<MWMechanics::FalloutMeleeTuning> getFalloutMeleeTuning()
+    {
+        const std::optional<float> damageSkillBase = getFalloutGameSetting("fDamageSkillBase");
+        const std::optional<float> damageSkillMult = getFalloutGameSetting("fDamageSkillMult");
+        const std::optional<float> unarmedDamageBase = getFalloutGameSetting("fAVDUnarmedDamageBase");
+        const std::optional<float> unarmedDamageMult = getFalloutGameSetting("fAVDUnarmedDamageMult");
+        const std::optional<float> meleeStrengthMult = getFalloutGameSetting("fAVDMeleeDamageStrengthMult");
+        const std::optional<float> meleeStrengthOffset = getFalloutGameSetting("fAVDMeleeDamageStrengthOffset");
+        const std::optional<float> combatDistance = getFalloutGameSetting("fCombatDistance");
+        const std::optional<float> unarmedReach = getFalloutGameSetting("fHandToHandReach");
+        if (!damageSkillBase || !damageSkillMult || !unarmedDamageBase || !unarmedDamageMult
+            || !meleeStrengthMult || !meleeStrengthOffset || !combatDistance || !unarmedReach)
+            return std::nullopt;
+        return MWMechanics::FalloutMeleeTuning{ *damageSkillBase, *damageSkillMult, *unarmedDamageBase,
+            *unarmedDamageMult, *meleeStrengthMult, *meleeStrengthOffset, *combatDistance, *unarmedReach };
+    }
+
     bool usesFonvPowerArmorAnimationFamily(const MWWorld::Ptr& ptr)
     {
         if (ptr.getType() != ESM::REC_NPC_4)
@@ -138,20 +218,33 @@ namespace
         });
     }
 
-    std::optional<int> getFalloutNpcActiveWeaponType(const MWWorld::Ptr& ptr)
+    std::optional<int> getFalloutActiveWeaponType(const MWWorld::Ptr& ptr)
     {
-        if (ptr.getType() != ESM::REC_NPC_4)
+        const bool creature = ptr.getType() == ESM4::Creature::sRecordId;
+        const bool npc = ptr.getType() == ESM::REC_NPC_4;
+        if (!creature && !npc)
             return std::nullopt;
-
-        const ESM4::Npc* traits = MWClass::ESM4Npc::getTraitsRecord(ptr);
-        if (traits == nullptr || (!traits->mIsFO3 && !traits->mIsFONV))
-            return std::nullopt;
+        if (creature)
+        {
+            const ESM4::Creature* record = ptr.get<ESM4::Creature>()->mBase;
+            if (record == nullptr || !record->mIsFONV)
+                return std::nullopt;
+        }
+        else
+        {
+            const ESM4::Npc* traits = MWClass::ESM4Npc::getTraitsRecord(ptr);
+            if (traits == nullptr || (!traits->mIsFO3 && !traits->mIsFONV))
+                return std::nullopt;
+        }
 
         const MWMechanics::DrawState drawState = ptr.getClass().getCreatureStats(ptr).getDrawState();
         if (drawState == MWMechanics::DrawState::Spell)
             return ESM::Weapon::Spell;
         if (drawState != MWMechanics::DrawState::Weapon)
             return ESM::Weapon::None;
+
+        if (creature)
+            return MWMechanics::getFalloutWeaponType(0).value();
 
         const ESM4::Weapon* weapon = MWClass::ESM4Npc::getEquippedWeapon(ptr);
         if (weapon == nullptr)
@@ -1367,9 +1460,10 @@ namespace MWMechanics
              * handle knockout and death which moves the character down. */
             mAnimation->setAccumulation(osg::Vec3f(1.0f, 1.0f, 0.0f));
 
-            if (const std::optional<int> falloutWeaponType = getFalloutNpcActiveWeaponType(mPtr))
+            if (const std::optional<int> falloutWeaponType = getFalloutActiveWeaponType(mPtr))
             {
-                mFalloutWeapon = MWClass::ESM4Npc::getEquippedWeapon(mPtr);
+                mFalloutWeapon
+                    = mPtr.getType() == ESM::REC_NPC_4 ? MWClass::ESM4Npc::getEquippedWeapon(mPtr) : nullptr;
                 mWeaponType = *falloutWeaponType;
                 if (mWeaponType != ESM::Weapon::None)
                 {
@@ -1775,6 +1869,17 @@ namespace MWMechanics
             mCurrentWeapon.clear();
             mAnimation->setWeaponGroup(std::string{}, false);
         };
+        const auto settleUsableWithoutAction = [&](std::string_view reason) {
+            if (!mCurrentWeapon.empty())
+                mAnimation->disable(mCurrentWeapon);
+            mCurrentWeapon.clear();
+            mAnimation->setWeaponGroup(std::string{}, false);
+            mAnimation->showWeapons(mFalloutWeapon != nullptr);
+            mUpperBodyState = UpperBodyState::WeaponEquipped;
+            Log(Debug::Warning) << "FNV mechanics retained usable weapon without exact visual action: actor="
+                                << mPtr.toString() << " weaponType=" << mWeaponType << " reason=" << reason
+                                << " gameplayAvailable=1";
+        };
         const auto updateAiming = [&]() {
             const bool actionPlaying = mUpperBodyState == UpperBodyState::AttackEnd;
             const bool ranged = isFalloutWeaponType(mWeaponType)
@@ -1803,7 +1908,10 @@ namespace MWMechanics
             {
                 Log(Debug::Error) << "FNV mechanics exact weapon action was interrupted: actor=" << mPtr.toString()
                                   << " group=" << mCurrentWeapon;
-                failVisualClosed();
+                if (mUpperBodyState == UpperBodyState::Unequipping)
+                    failVisualClosed();
+                else
+                    settleUsableWithoutAction("action-interrupted");
                 updateAiming();
                 return true;
             }
@@ -1814,11 +1922,7 @@ namespace MWMechanics
                     mAnimation->showWeapons(true);
                     mUpperBodyState = UpperBodyState::WeaponEquipped;
                     if (!restoreFalloutPrimaryWeaponGroup(mWeaponType))
-                    {
-                        failVisualClosed();
-                        updateAiming();
-                        return true;
-                    }
+                        settleUsableWithoutAction("missing-primary-after-equip");
                     break;
                 case UpperBodyState::Unequipping:
                     failVisualClosed();
@@ -1826,11 +1930,7 @@ namespace MWMechanics
                 case UpperBodyState::AttackEnd:
                     mUpperBodyState = UpperBodyState::WeaponEquipped;
                     if (!restoreFalloutPrimaryWeaponGroup(mWeaponType))
-                    {
-                        failVisualClosed();
-                        updateAiming();
-                        return true;
-                    }
+                        settleUsableWithoutAction("missing-primary-after-attack");
                     break;
                 default:
                     break;
@@ -1849,11 +1949,7 @@ namespace MWMechanics
                 mAnimation->disable(mCurrentWeapon);
             mUpperBodyState = UpperBodyState::WeaponEquipped;
             if (!restoreFalloutPrimaryWeaponGroup(mWeaponType))
-            {
-                failVisualClosed();
-                updateAiming();
-                return true;
-            }
+                settleUsableWithoutAction("state-normalization");
             forceStateUpdate = true;
         }
 
@@ -1883,11 +1979,7 @@ namespace MWMechanics
             if (playFalloutWeaponAction(mWeaponType, MWRender::FonvWeaponAction::Equip, priorityWeapon))
                 mUpperBodyState = UpperBodyState::Equipping;
             else
-            {
-                // Do not replace or skip a missing exact equip action. Keeping the weapon hidden makes bad data
-                // observable without substituting another family or silently presenting an impossible pose.
-                failVisualClosed();
-            }
+                settleUsableWithoutAction("missing-equip-action");
             updateAiming();
             return true;
         }
@@ -1908,13 +2000,22 @@ namespace MWMechanics
             mAttackHitPos = osg::Vec3f();
             MWBase::Environment::get().getWorld()->breakInvisibility(mPtr);
 
-            if (playFalloutWeaponAction(mWeaponType, MWRender::FonvWeaponAction::PrimaryAttack, priorityWeapon))
-            {
-                fireFalloutWeapon();
+            const bool visualAction
+                = playFalloutWeaponAction(mWeaponType, MWRender::FonvWeaponAction::PrimaryAttack, priorityWeapon);
+            const std::optional<std::uint8_t> animationType = getFalloutWeaponAnimationType(mWeaponType);
+            const bool gameplayAction = animationType && isFalloutMeleeAnimationType(*animationType)
+                ? strikeFalloutMelee(*animationType)
+                : fireFalloutWeapon();
+            if (visualAction)
                 mUpperBodyState = UpperBodyState::AttackEnd;
-            }
             else
+            {
+                settleUsableWithoutAction("missing-primary-attack-action");
                 setAttackingOrSpell(false);
+            }
+            if (!gameplayAction)
+                Log(Debug::Error) << "FNV mechanics gameplay attack failed: actor=" << mPtr.toString()
+                                  << " weaponType=" << mWeaponType << " visualAction=" << visualAction;
 
             if (mIdleState != CharState_IdleSneak && mIdleState != CharState_IdleSwim)
                 resetCurrentIdleState();
@@ -1980,7 +2081,9 @@ namespace MWMechanics
             mPtr.getClass().getCreatureStats(mPtr).getAiSequence().getCombatTargets(targetActors);
 
         osg::Vec3f direction;
-        if (!targetActors.empty())
+        if (mPtr == getPlayer() && world->getCamera() != nullptr)
+            direction = world->getCamera()->getOrient() * osg::Vec3f(0.f, 1.f, 0.f);
+        else if (!targetActors.empty())
             direction = world->getActorHeadTransform(targetActors.front()).getTrans() - origin;
         else
         {
@@ -2068,6 +2171,95 @@ namespace MWMechanics
         return true;
     }
 
+    bool CharacterController::strikeFalloutMelee(std::uint8_t animationType)
+    {
+        const auto fail = [&](std::string_view reason) {
+            Log(Debug::Error) << "FNV combat melee rejected: actor=" << mPtr.toString()
+                              << " weapon="
+                              << (mFalloutWeapon != nullptr
+                                      ? ESM::RefId::formIdRefId(mFalloutWeapon->mId).toDebugString()
+                                      : std::string("unarmed"))
+                              << " animationType=" << static_cast<unsigned int>(animationType)
+                              << " reason=" << reason << " exact=1";
+            return false;
+        };
+
+        MWBase::World* world = MWBase::Environment::get().getWorld();
+        if (world == nullptr)
+            return fail("missing-world");
+        const bool unarmedFamily = animationType == 0;
+        const std::optional<FalloutMeleeActorValues> values
+            = getFalloutMeleeActorValues(mPtr, unarmedFamily);
+        if (!values)
+            return fail("missing-native-actor-values");
+        const std::optional<FalloutMeleeTuning> tuning = getFalloutMeleeTuning();
+        if (!tuning)
+            return fail("missing-native-game-settings");
+
+        FalloutMeleeFailure contractFailure = FalloutMeleeFailure::None;
+        const std::optional<FalloutMeleeContract> contract = values->mCreatureDamage
+            ? buildFalloutCreatureMeleeContract(
+                *values->mCreatureDamage, values->mSkill, values->mStrength, *tuning, contractFailure)
+            : buildFalloutMeleeContract(
+                mFalloutWeapon, animationType, values->mSkill, values->mStrength, *tuning, contractFailure);
+        if (!contract)
+            return fail(getFalloutMeleeFailureName(contractFailure));
+
+        const osg::Vec3f origin = world->getActorHeadTransform(mPtr).getTrans();
+        std::vector<MWWorld::Ptr> targetActors;
+        if (mPtr != getPlayer())
+            mPtr.getClass().getCreatureStats(mPtr).getAiSequence().getCombatTargets(targetActors);
+
+        osg::Vec3f direction;
+        if (mPtr == getPlayer() && world->getCamera() != nullptr)
+            direction = world->getCamera()->getOrient() * osg::Vec3f(0.f, 1.f, 0.f);
+        else if (!targetActors.empty())
+            direction = world->getActorHeadTransform(targetActors.front()).getTrans() - origin;
+        else
+        {
+            const ESM::Position& position = mPtr.getRefData().getPosition();
+            const osg::Quat orientation = osg::Quat(position.rot[0], osg::Vec3f(-1.f, 0.f, 0.f))
+                * osg::Quat(position.rot[2], osg::Vec3f(0.f, 0.f, -1.f));
+            direction = orientation * osg::Vec3f(0.f, 1.f, 0.f);
+        }
+        if (direction.normalize() == 0.f)
+            return fail("zero-strike-direction");
+
+        const MWPhysics::RayCastingInterface* rayCasting = world->getRayCasting();
+        if (rayCasting == nullptr)
+            return fail("missing-ray-caster");
+        const osg::Vec3f destination = origin + direction * contract->mReach;
+        const MWPhysics::RayCastingResult result = rayCasting->castRay(origin, destination, { mPtr }, targetActors,
+            MWPhysics::CollisionType_Default, MWPhysics::CollisionType_Projectile);
+        const bool actorHit
+            = result.mHit && !result.mHitObject.isEmpty() && result.mHitObject.getClass().isActor();
+        if (actorHit)
+        {
+            const ESM::RefId weapon = mFalloutWeapon != nullptr
+                ? ESM::RefId::formIdRefId(mFalloutWeapon->mId)
+                : ESM::RefId{};
+            result.mHitObject.getClass().onHit(result.mHitObject, { { "health", contract->mDamage } }, weapon, mPtr,
+                true, DamageSourceType::Melee);
+        }
+
+        Log(Debug::Info) << "FNV combat melee: actor=" << mPtr.toString()
+                         << " weapon="
+                         << (mFalloutWeapon != nullptr
+                                 ? ESM::RefId::formIdRefId(mFalloutWeapon->mId).toDebugString()
+                                 : std::string("unarmed"))
+                         << " animationType=" << static_cast<unsigned int>(animationType)
+                         << " unarmedFamily=" << contract->mUnarmedFamily
+                         << " bareHanded=" << contract->mBareHanded << " skill=" << values->mSkill
+                         << " strength=" << values->mStrength
+                         << " creatureAuthoredDamage=" << values->mCreatureDamage.value_or(0.f)
+                         << " reach=" << contract->mReach
+                         << " damage=" << contract->mDamage << " rayHit=" << result.mHit
+                         << " actorHit=" << actorHit
+                         << " target=" << (actorHit ? result.mHitObject.toString() : std::string("none"))
+                         << " exact=1 status=pass";
+        return true;
+    }
+
     bool CharacterController::updateWeaponState()
     {
         // If the current animation is scripted, we can't do anything here.
@@ -2093,11 +2285,12 @@ namespace MWMechanics
         const ESM4::Weapon* requestedFalloutWeapon = nullptr;
         bool ammunition = true;
         float weapSpeed = 1.f;
-        const std::optional<int> falloutWeaponType = getFalloutNpcActiveWeaponType(mPtr);
+        const std::optional<int> falloutWeaponType = getFalloutActiveWeaponType(mPtr);
         if (falloutWeaponType)
         {
             weaptype = *falloutWeaponType;
-            requestedFalloutWeapon = MWClass::ESM4Npc::getEquippedWeapon(mPtr);
+            requestedFalloutWeapon
+                = mPtr.getType() == ESM::REC_NPC_4 ? MWClass::ESM4Npc::getEquippedWeapon(mPtr) : nullptr;
             weaponChanged = requestedFalloutWeapon != mFalloutWeapon;
         }
         else if (cls.hasInventoryStore(mPtr))

@@ -9,6 +9,7 @@
 #include <vector>
 
 #include <components/esm4/loadcrea.hpp>
+#include <components/misc/rng.hpp>
 
 #include <osg/Vec3f>
 
@@ -37,6 +38,11 @@ namespace ESM4
 namespace MWWorld
 {
     class ESMStore;
+}
+
+namespace MWBase
+{
+    class World;
 }
 
 namespace MWClass
@@ -202,6 +208,9 @@ namespace MWClass
             const MWWorld::Ptr& ptr, const MWWorld::Ptr& actor) const override;
         MWMechanics::CreatureStats& getCreatureStats(const MWWorld::Ptr& ptr) const override;
         MWWorld::ContainerStore& getContainerStore(const MWWorld::Ptr& ptr) const override;
+        void onHit(const MWWorld::Ptr& ptr, const std::map<std::string, float>& damages, ESM::RefId object,
+            const MWWorld::Ptr& attacker, bool successful,
+            MWMechanics::DamageSourceType sourceType) const override;
         MWMechanics::Movement& getMovementSettings(const MWWorld::Ptr& ptr) const override;
         float getCapacity(const MWWorld::Ptr& ptr) const override;
         float getMaxSpeed(const MWWorld::Ptr& ptr) const override;
@@ -219,6 +228,12 @@ namespace MWClass
         void writeAdditionalState(const MWWorld::ConstPtr& ptr, ESM::ObjectState& state) const override;
 
         static const ESM4::Creature* getFactionsRecord(const MWWorld::Ptr& ptr);
+
+        /// Materialize the resolved Traits death-item list once for a dead FNV creature. The explicit RNG/level
+        /// parameters keep the Bethesda LVLI decision deterministic and directly testable.
+        static bool materializeFnvDeathItem(const MWWorld::Ptr& ptr, Misc::Rng::Generator& prng, int playerLevel,
+            MWBase::World* world = nullptr);
+        static const ESM4::Creature* getStatsRecord(const MWWorld::Ptr& ptr);
 
         /// Validate all fallible FNV creature payload data before LiveCellRef applies the enclosing CellRef/RefData.
         static bool validateState(const ESM4::Creature& creature, const ESM::CreatureState& state,

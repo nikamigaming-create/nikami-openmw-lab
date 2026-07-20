@@ -35,6 +35,37 @@ namespace MWMechanics
         InvalidSpread,
     };
 
+    enum class FalloutMeleeFailure
+    {
+        None,
+        NotMelee,
+        MissingWeapon,
+        InvalidActorValues,
+        InvalidTuning,
+        InvalidDamage,
+        InvalidReach,
+    };
+
+    struct FalloutMeleeTuning
+    {
+        float mDamageSkillBase = 0.f;
+        float mDamageSkillMult = 0.f;
+        float mUnarmedDamageBase = 0.f;
+        float mUnarmedDamageMult = 0.f;
+        float mMeleeStrengthMult = 0.f;
+        float mMeleeStrengthOffset = 0.f;
+        float mCombatDistance = 0.f;
+        float mUnarmedReach = 0.f;
+    };
+
+    struct FalloutMeleeContract
+    {
+        float mDamage = 0.f;
+        float mReach = 0.f;
+        bool mUnarmedFamily = false;
+        bool mBareHanded = false;
+    };
+
     struct FalloutShotContract
     {
         ESM::FormId mAmmo;
@@ -92,7 +123,22 @@ namespace MWMechanics
     [[nodiscard]] std::optional<osg::Vec3f> buildFalloutRayDirection(
         const osg::Vec3f& forward, float spreadDegrees, const osg::Vec2f& diskSample);
 
+    /// Build the native Fallout melee contract from WEAP DATA/DNAM and the actor's current Fallout values. DNAM
+    /// families 0..2 are HandToHand, OneHandMelee, and TwoHandMelee respectively. A missing WEAP is valid only for
+    /// bare HandToHand. Damage tuning comes from the winning Fallout GMST records; reach preserves authored WEAP
+    /// DATA.reach and uses the shared combat-distance scale used by actor contact tests.
+    [[nodiscard]] std::optional<FalloutMeleeContract> buildFalloutMeleeContract(const ESM4::Weapon* weapon,
+        std::uint8_t animationType, float skill, float strength, const FalloutMeleeTuning& tuning,
+        FalloutMeleeFailure& failure);
+
+    /// Build an intrinsic creature attack from the winning FNV CREA DATA damage/combatSkill/strength payload.
+    [[nodiscard]] std::optional<FalloutMeleeContract> buildFalloutCreatureMeleeContract(float authoredDamage,
+        float combatSkill, float strength, const FalloutMeleeTuning& tuning, FalloutMeleeFailure& failure);
+
+    [[nodiscard]] bool isFalloutMeleeAnimationType(std::uint8_t animationType) noexcept;
+
     [[nodiscard]] std::string_view getFalloutShotFailureName(FalloutShotFailure failure);
+    [[nodiscard]] std::string_view getFalloutMeleeFailureName(FalloutMeleeFailure failure);
 }
 
 #endif

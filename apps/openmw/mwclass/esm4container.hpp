@@ -5,6 +5,8 @@
 #include <components/misc/rng.hpp>
 
 #include <optional>
+#include <string_view>
+#include <vector>
 
 #include "../mwworld/containerstore.hpp"
 #include "../mwworld/customdata.hpp"
@@ -29,6 +31,48 @@ namespace MWBase
 
 namespace MWClass
 {
+    struct ResolvedFnvContainerItem
+    {
+        ESM::RefId mId;
+        int mCount = 0;
+        std::optional<float> mCondition;
+    };
+
+    /// Resolve an authored Fallout LVLI with the same runtime rules used by ESM4 containers.
+    bool resolveFnvLevelledItem(const MWWorld::ESMStore& store, const ESM::RefId& listId, int playerLevel,
+        int requestedCount, Misc::Rng::Generator& prng, MWBase::World* world,
+        std::vector<ResolvedFnvContainerItem>& result, std::string_view& failure);
+
+    /// Shared mutable store support for ESM4 actors. Death-item plans are preflighted in full before any stack is
+    /// changed, and newly-created stacks are registered with the WorldModel immediately.
+    class ESM4ActorContainerStore : public MWWorld::ContainerStore
+    {
+        enum class AddResult
+        {
+            Stored,
+            Missing,
+            Invalid,
+            Overflow,
+        };
+
+        template <class Record>
+        AddResult validateResolvedRecord(const MWWorld::ESMStore& store, const ResolvedFnvContainerItem& item);
+
+        template <class Record>
+        AddResult addResolvedRecord(const MWWorld::ESMStore& store, const ResolvedFnvContainerItem& item);
+
+        AddResult validateResolvedRecord(const MWWorld::ESMStore& store, const ResolvedFnvContainerItem& item);
+        AddResult addResolvedRecord(const MWWorld::ESMStore& store, const ResolvedFnvContainerItem& item);
+
+    public:
+        bool addResolvedDeathItems(const MWWorld::ESMStore& store,
+            const std::vector<ResolvedFnvContainerItem>& items, std::string_view& failure);
+    };
+
+    bool materializeFnvDeathItemList(MWWorld::ContainerStore& destination, const MWWorld::ESMStore& store,
+        const ESM::RefId& listId, int playerLevel, Misc::Rng::Generator& prng, MWBase::World* world,
+        std::string_view& failure);
+
     class ESM4ContainerStore final : public MWWorld::ContainerStore
     {
         template <class Record>

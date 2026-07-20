@@ -28,6 +28,7 @@
 #include "apps/openmw/mwclass/esm4base.hpp"
 #include "apps/openmw/mwclass/esm4container.hpp"
 #include "apps/openmw/mwclass/esm4creature.hpp"
+#include "apps/openmw/mwclass/esm4npc.hpp"
 
 #include "apps/openmw/mwgui/tradeitemmodel.hpp"
 
@@ -103,6 +104,8 @@ namespace
     constexpr std::uint32_t sBarterChestRef = 0x01108747;
     constexpr std::uint32_t sBarterPlayerBase = 0x01103b32;
     constexpr std::uint32_t sBarterPlayerRef = 0x01108748;
+    constexpr std::uint32_t sCreatureDeathItemBase = 0x01103b33;
+    constexpr std::uint32_t sNpcDeathItemBase = 0x01103b34;
 
     class BarterTestItemModel final : public MWGui::ItemModel
     {
@@ -491,7 +494,7 @@ namespace
             return actor;
         }
 
-        static void populateCreatureWorldStore(MWWorld::ESMStore& store)
+        static void populateCreatureWorldStore(MWWorld::ESMStore& store, std::uint32_t deathItem = 0)
         {
             ESM4::MiscItem bottle{};
             bottle.mId = ESM::FormId::fromUint32(sSaloonBottleBase);
@@ -512,6 +515,7 @@ namespace
             ESM4::Creature creature = makeCreature();
             creature.mBaseConfig.fo3.levelOrMult = 1;
             creature.mInventory.push_back(ESM4::InventoryItem{ sLevelledItemBase, 2 });
+            creature.mDeathItem = ESM::FormId::fromUint32(deathItem);
             store.overrideRecord(creature);
             store.overrideRecord(makeCreatureCell());
             const_cast<MWWorld::Store<ESM4::ActorCreature>&>(store.get<ESM4::ActorCreature>())
@@ -519,7 +523,7 @@ namespace
             store.setUp();
         }
 
-        static void populateNpcWorldStore(MWWorld::ESMStore& store)
+        static void populateNpcWorldStore(MWWorld::ESMStore& store, std::uint32_t deathItem = 0)
         {
             ESM4::MiscItem bottle{};
             bottle.mId = ESM::FormId::fromUint32(sSaloonBottleBase);
@@ -534,7 +538,9 @@ namespace
             store.overrideRecord(key);
 
             store.overrideRecord(makeNpcRace());
-            store.overrideRecord(makeNpc());
+            ESM4::Npc npc = makeNpc();
+            npc.mDeathItem = ESM::FormId::fromUint32(deathItem);
+            store.overrideRecord(npc);
             store.overrideRecord(makeCreatureCell());
             const_cast<MWWorld::Store<ESM4::ActorCharacter>&>(store.get<ESM4::ActorCharacter>())
                 .insertStatic(makePlacedNpc());
@@ -1387,6 +1393,55 @@ namespace
         EXPECT_EQ(restored.getCellRef().getRefNum(), creatureRef);
     }
 
+    TEST_F(ESM4ContainerTest, CreatureDeathItemMaterializesOnceAndRoundTripsWithoutDuplication)
+    {
+        MWWorld::ESMStore store;
+        store.overrideRecord(makeLevelledItem(sCreatureDeathItemBase, 0x04,
+            { makeLevelledEntry(1, sSaloonKeyBase, 2) }));
+        populateCreatureWorldStore(store, sCreatureDeathItemBase);
+        ESM::ReadersCache readers;
+        MWWorld::WorldModel sourceModel(store, readers);
+        mEnvironment.setESMStore(store);
+        mEnvironment.setWorldModel(sourceModel);
+
+        const ESM::RefId cellId(ESM::FormId::fromUint32(sCreatureCell));
+        const ESM::RefId keyId(ESM::FormId::fromUint32(sSaloonKeyBase));
+        MWWorld::CellStore* sourceCell = sourceModel.findCell(cellId, false);
+        ASSERT_NE(sourceCell, nullptr);
+        sourceCell->load();
+        MWWorld::Ptr source = findPlacedCreature(*sourceCell);
+        ASSERT_FALSE(source.isEmpty());
+        sourceModel.registerPtr(source);
+        EXPECT_EQ(source.getClass().getContainerStore(source).count(keyId), 0);
+
+        MWMechanics::CreatureStats& stats = source.getClass().getCreatureStats(source);
+        ESM::CreatureStats deadState;
+        stats.writeState(deadState);
+        deadState.mDynamic[0].mCurrent = 0.f;
+        deadState.mDead = true;
+        deadState.mDeathAnimationFinished = true;
+        deadState.mDied = true;
+        stats.readState(deadState);
+
+        Misc::Rng::Generator prng(0x330);
+        EXPECT_TRUE(MWClass::ESM4Creature::materializeFnvDeathItem(source, prng, 1));
+        EXPECT_EQ(source.getClass().getContainerStore(source).count(keyId), 2);
+        EXPECT_FALSE(MWClass::ESM4Creature::materializeFnvDeathItem(source, prng, 1));
+        EXPECT_EQ(source.getClass().getContainerStore(source).count(keyId), 2);
+
+        auto stream = writeWorldState(sourceModel);
+        MWWorld::WorldModel restoredModel(store, readers);
+        mEnvironment.setWorldModel(restoredModel);
+        readWorldState(std::move(stream), restoredModel);
+        MWWorld::Ptr restored = restoredModel.getPtr(ESM::FormId::fromUint32(sCreatureRef));
+        ASSERT_FALSE(restored.isEmpty());
+        EXPECT_EQ(restored.getClass().getContainerStore(restored).count(keyId), 2);
+
+        Misc::Rng::Generator reloadPrng(0x331);
+        EXPECT_FALSE(MWClass::ESM4Creature::materializeFnvDeathItem(restored, reloadPrng, 1));
+        EXPECT_EQ(restored.getClass().getContainerStore(restored).count(keyId), 2);
+    }
+
     TEST_F(ESM4ContainerTest, DeadCreatureActivatesAsLootContainer)
     {
         MWWorld::ESMStore store;
@@ -1788,6 +1843,55 @@ namespace
         EXPECT_EQ(restored.getRefData().getPosition(), savedPosition);
         EXPECT_TRUE(restored.getRefData().isEnabled());
         EXPECT_EQ(restored.getCellRef().getRefNum(), npcRef);
+    }
+
+    TEST_F(ESM4ContainerTest, NpcDeathItemMaterializesOnceAndRoundTripsWithoutDuplication)
+    {
+        MWWorld::ESMStore store;
+        store.overrideRecord(
+            makeLevelledItem(sNpcDeathItemBase, 0x04, { makeLevelledEntry(1, sSaloonKeyBase, 3) }));
+        populateNpcWorldStore(store, sNpcDeathItemBase);
+        ESM::ReadersCache readers;
+        MWWorld::WorldModel sourceModel(store, readers);
+        mEnvironment.setESMStore(store);
+        mEnvironment.setWorldModel(sourceModel);
+
+        const ESM::RefId cellId(ESM::FormId::fromUint32(sCreatureCell));
+        const ESM::RefId keyId(ESM::FormId::fromUint32(sSaloonKeyBase));
+        MWWorld::CellStore* sourceCell = sourceModel.findCell(cellId, false);
+        ASSERT_NE(sourceCell, nullptr);
+        sourceCell->load();
+        MWWorld::Ptr source = findPlacedNpc(*sourceCell);
+        ASSERT_FALSE(source.isEmpty());
+        sourceModel.registerPtr(source);
+        EXPECT_EQ(source.getClass().getContainerStore(source).count(keyId), 0);
+
+        MWMechanics::CreatureStats& stats = source.getClass().getCreatureStats(source);
+        ESM::CreatureStats deadState;
+        stats.writeState(deadState);
+        deadState.mDynamic[0].mCurrent = 0.f;
+        deadState.mDead = true;
+        deadState.mDeathAnimationFinished = true;
+        deadState.mDied = true;
+        stats.readState(deadState);
+
+        Misc::Rng::Generator prng(0x332);
+        EXPECT_TRUE(MWClass::ESM4Npc::materializeFnvDeathItem(source, prng, 1));
+        EXPECT_EQ(source.getClass().getContainerStore(source).count(keyId), 3);
+        EXPECT_FALSE(MWClass::ESM4Npc::materializeFnvDeathItem(source, prng, 1));
+        EXPECT_EQ(source.getClass().getContainerStore(source).count(keyId), 3);
+
+        auto stream = writeWorldState(sourceModel);
+        MWWorld::WorldModel restoredModel(store, readers);
+        mEnvironment.setWorldModel(restoredModel);
+        readWorldState(std::move(stream), restoredModel);
+        MWWorld::Ptr restored = restoredModel.getPtr(ESM::FormId::fromUint32(sNpcRef));
+        ASSERT_FALSE(restored.isEmpty());
+        EXPECT_EQ(restored.getClass().getContainerStore(restored).count(keyId), 3);
+
+        Misc::Rng::Generator reloadPrng(0x333);
+        EXPECT_FALSE(MWClass::ESM4Npc::materializeFnvDeathItem(restored, reloadPrng, 1));
+        EXPECT_EQ(restored.getClass().getContainerStore(restored).count(keyId), 3);
     }
 
     TEST_F(ESM4ContainerTest, NpcActivationTalksWhileAliveAndOpensLootWhenDead)
