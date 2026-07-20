@@ -46,6 +46,7 @@
 #include "../mwmechanics/character.hpp"
 #include "../mwmechanics/creaturestats.hpp"
 #include "../mwmechanics/drawstate.hpp"
+#include "../mwmechanics/greetingstate.hpp"
 #include "../mwmechanics/movement.hpp"
 
 #include "../mwworld/actionopen.hpp"
@@ -1010,11 +1011,22 @@ namespace MWClass
             if (mPointIndex >= mPoints.size())
                 return true;
 
+            MWMechanics::CreatureStats& stats = actor.getClass().getCreatureStats(actor);
+            MWBase::MechanicsManager* mechanics = MWBase::Environment::get().getMechanicsManager();
+            if (mechanics != nullptr
+                && fnvCreaturePatrolYieldsToPlayerTurn(
+                    stats.getMovementFlag(MWMechanics::CreatureStats::Flag_ForceJump),
+                    stats.getMovementFlag(MWMechanics::CreatureStats::Flag_ForceSneak),
+                    mechanics->isTurningToPlayer(actor),
+                    mechanics->getGreetingState(actor) == MWMechanics::GreetingState::InProgress))
+            {
+                return false;
+            }
+
             MWBase::World* world = MWBase::Environment::get().getWorld();
             if (world == nullptr)
                 return false;
 
-            MWMechanics::CreatureStats& stats = actor.getClass().getCreatureStats(actor);
             stats.setMovementFlag(MWMechanics::CreatureStats::Flag_Run, false);
             stats.setDrawState(MWMechanics::DrawState::Nothing);
 

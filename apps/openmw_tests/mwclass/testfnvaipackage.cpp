@@ -34,6 +34,17 @@ namespace
             ESM4::CTF_EqualTo, 1.f, 0.f));
     }
 
+    TEST(FnvAiPackageTest, CreaturePatrolYieldsWhileTurningOrGreeting)
+    {
+        EXPECT_TRUE(MWClass::fnvCreaturePatrolYieldsToPlayerTurn(false, false, true, false));
+        EXPECT_TRUE(MWClass::fnvCreaturePatrolYieldsToPlayerTurn(false, false, false, true));
+        EXPECT_FALSE(MWClass::fnvCreaturePatrolYieldsToPlayerTurn(false, false, false, false));
+
+        // Match generic AiTravel: forced jump/sneak movement remains authoritative over greeting turns.
+        EXPECT_FALSE(MWClass::fnvCreaturePatrolYieldsToPlayerTurn(true, false, true, true));
+        EXPECT_FALSE(MWClass::fnvCreaturePatrolYieldsToPlayerTurn(false, true, true, true));
+    }
+
     TEST(FnvAiPackageTest, SupportsOnlyNpcProceduresImplementedByRuntimeBridge)
     {
         for (const int type : { 3, 4, 5, 6, 8, 11, 12 })

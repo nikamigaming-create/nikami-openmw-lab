@@ -84,6 +84,12 @@ namespace MWClass
         }
     }
 
+    [[nodiscard]] constexpr bool fnvCreaturePatrolYieldsToPlayerTurn(
+        bool forceJump, bool forceSneak, bool turningToPlayer, bool greetingInProgress) noexcept
+    {
+        return !forceJump && !forceSneak && (turningToPlayer || greetingInProgress);
+    }
+
     [[nodiscard]] constexpr int fnvCreatureWanderDistance(std::int32_t authoredRadius) noexcept
     {
         return authoredRadius > 0 ? authoredRadius : 256;
