@@ -92,6 +92,9 @@ namespace ESM4
             std::uint32_t flags2;
             float animAttackMult;
             float fireRate;
+            float overrideActionPoints;
+            float limbDamageMult;
+            std::int32_t skillActorValue;
             float animShotsPerSec;
             float semiAutoFireDelayMin;
             float semiAutoFireDelayMax;
@@ -126,6 +129,9 @@ namespace ESM4
                 , flags2(0)
                 , animAttackMult(0.f)
                 , fireRate(0.f)
+                , overrideActionPoints(0.f)
+                , limbDamageMult(1.f)
+                , skillActorValue(-1)
                 , animShotsPerSec(0.f)
                 , semiAutoFireDelayMin(0.f)
                 , semiAutoFireDelayMax(0.f)

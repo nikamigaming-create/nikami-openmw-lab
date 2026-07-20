@@ -42,16 +42,18 @@ namespace MWWorld
     {
     public:
         static constexpr std::uint32_t HealthActorValue = 16;
+        static constexpr std::uint32_t ActionPointsActorValue = 12;
         static constexpr std::uint32_t SpecialActorValueBegin = 5;
         static constexpr std::uint32_t SpecialActorValueEnd = 11;
         static constexpr std::uint32_t SkillActorValueBegin = 32;
         static constexpr std::uint32_t SkillActorValueEnd = 45;
-        static constexpr std::uint32_t SaveVersion = 1;
+        static constexpr std::uint32_t SaveVersion = 2;
 
     private:
         struct CurrentState
         {
             float mHealth = 0.f;
+            float mActionPoints = 0.f;
             std::array<float, FalloutPlayerState::SpecialCount> mSpecial{};
             std::array<float, FalloutPlayerState::SkillCount> mSkills{};
 
@@ -79,6 +81,7 @@ namespace MWWorld
         std::optional<FalloutRuntimeActorValue> getBaseActorValue(std::uint32_t actorValue) const;
         std::optional<FalloutRuntimeActorValue> getCurrentActorValue(std::uint32_t actorValue) const;
         [[nodiscard]] std::optional<float> getCarryCapacity() const;
+        [[nodiscard]] std::optional<float> getMaxActionPoints() const;
         FalloutActorValueMutationResult setCurrentActorValue(std::uint32_t actorValue, float value);
         FalloutActorValueMutationResult modCurrentActorValue(std::uint32_t actorValue, float delta);
 

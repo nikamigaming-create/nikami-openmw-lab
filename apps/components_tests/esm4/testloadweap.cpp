@@ -133,6 +133,28 @@ namespace
         EXPECT_FLOAT_EQ(data.semiAutoFireDelayMax, 0.2f);
     }
 
+    TEST(Esm4WeaponTest, shouldPreserveFalloutVatsAndLimbContract)
+    {
+        std::array<std::uint8_t, 120> dnam{};
+        const auto writeFloat = [&](std::size_t offset, float value) {
+            std::memcpy(dnam.data() + offset, &value, sizeof(value));
+        };
+        const auto writeInt32 = [&](std::size_t offset, std::int32_t value) {
+            std::memcpy(dnam.data() + offset, &value, sizeof(value));
+        };
+        dnam[40] = 17;
+        writeFloat(68, 22.f);
+        writeInt32(104, 32);
+        writeFloat(116, 0.75f);
+
+        ESM4::Weapon::Data data;
+        ASSERT_TRUE(ESM4::loadFalloutWeaponDnam(dnam, data));
+        EXPECT_EQ(data.baseVatsChance, 17);
+        EXPECT_FLOAT_EQ(data.overrideActionPoints, 22.f);
+        EXPECT_EQ(data.skillActorValue, 32);
+        EXPECT_FLOAT_EQ(data.limbDamageMult, 0.75f);
+    }
+
     TEST(Esm4WeaponTest, shouldParseRetailServiceRifleBallisticContractByteExactly)
     {
         // FalloutNV.esm 000E9C3B WEAP.DNAM, through fireRate at byte 67.

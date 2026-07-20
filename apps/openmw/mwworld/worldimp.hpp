@@ -259,6 +259,11 @@ namespace MWWorld
 
         const MWWorld::ESM4QuestRuntime& getESM4QuestRuntime() const override { return mESM4QuestRuntime; }
 
+        MWWorld::FalloutPlayerRuntimeState& getFalloutPlayerRuntimeState() override
+        {
+            return mFalloutPlayerRuntimeState;
+        }
+
         const MWWorld::FalloutPlayerRuntimeState& getFalloutPlayerRuntimeState() const override
         {
             return mFalloutPlayerRuntimeState;

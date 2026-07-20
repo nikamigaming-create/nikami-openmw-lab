@@ -271,6 +271,37 @@ namespace
         EXPECT_TRUE(contract->mAuthoredHitscan);
     }
 
+    TEST(FalloutCombatTest, PreservesWeaponAuthoredVatsContractWithoutFallback)
+    {
+        ESM4::Weapon weapon;
+        weapon.mData.hasBallistics = true;
+        weapon.mData.flags2 = 0x00000008;
+        weapon.mData.overrideActionPoints = 22.f;
+        weapon.mData.baseVatsChance = 42;
+        weapon.mData.limbDamageMult = 0.75f;
+        weapon.mData.skillActorValue = 32;
+
+        MWMechanics::FalloutVatsWeaponFailure failure;
+        const auto contract = MWMechanics::buildFalloutVatsWeaponContract(weapon, failure);
+        ASSERT_TRUE(contract);
+        EXPECT_EQ(failure, MWMechanics::FalloutVatsWeaponFailure::None);
+        EXPECT_FLOAT_EQ(contract->mActionPointCost, 22.f);
+        EXPECT_EQ(contract->mBaseHitChance, 42);
+        EXPECT_FLOAT_EQ(contract->mLimbDamageMultiplier, 0.75f);
+        EXPECT_EQ(contract->mSkillActorValue, 32);
+    }
+
+    TEST(FalloutCombatTest, RefusesToInventVatsActionPointCost)
+    {
+        ESM4::Weapon weapon;
+        weapon.mData.hasBallistics = true;
+        weapon.mData.overrideActionPoints = 22.f;
+
+        MWMechanics::FalloutVatsWeaponFailure failure;
+        EXPECT_FALSE(MWMechanics::buildFalloutVatsWeaponContract(weapon, failure));
+        EXPECT_EQ(failure, MWMechanics::FalloutVatsWeaponFailure::MissingAuthoredActionPointOverride);
+    }
+
     TEST(FalloutCombatTest, PreservesGenericShotgunRaysAndTotalAuthoredDamage)
     {
         ESM4::Weapon weapon;

@@ -55,6 +55,25 @@ namespace MWMechanics
         InvalidShotsPerSecond,
     };
 
+    enum class FalloutVatsWeaponFailure
+    {
+        None,
+        MissingBallistics,
+        MissingAuthoredActionPointOverride,
+        InvalidActionPointCost,
+        InvalidBaseHitChance,
+        InvalidLimbDamageMultiplier,
+        InvalidSkillActorValue,
+    };
+
+    struct FalloutVatsWeaponContract
+    {
+        float mActionPointCost = 0.f;
+        std::uint8_t mBaseHitChance = 0;
+        float mLimbDamageMultiplier = 1.f;
+        std::int32_t mSkillActorValue = -1;
+    };
+
     struct FalloutFireCadence
     {
         bool mAutomatic = false;
@@ -145,6 +164,11 @@ namespace MWMechanics
     [[nodiscard]] std::optional<FalloutFireCadence> buildFalloutFireCadence(
         const ESM4::Weapon& weapon, FalloutFireCadenceFailure& failure);
 
+    /// Preserve the weapon-authored VATS inputs without supplying an inferred fallback. DNAM flag 3 makes the
+    /// serialized AP override authoritative; weapons that require retail GMST/perk calculation remain uncovered.
+    [[nodiscard]] std::optional<FalloutVatsWeaponContract> buildFalloutVatsWeaponContract(
+        const ESM4::Weapon& weapon, FalloutVatsWeaponFailure& failure);
+
     /// Advance one weapon trigger using elapsed simulation time. A semi-automatic trigger fires once per press;
     /// an automatic trigger repeats while held when its authored cooldown expires. Visual animation state is only an
     /// eligibility input and never supplies the cadence.
@@ -174,6 +198,7 @@ namespace MWMechanics
 
     [[nodiscard]] std::string_view getFalloutShotFailureName(FalloutShotFailure failure);
     [[nodiscard]] std::string_view getFalloutFireCadenceFailureName(FalloutFireCadenceFailure failure);
+    [[nodiscard]] std::string_view getFalloutVatsWeaponFailureName(FalloutVatsWeaponFailure failure);
     [[nodiscard]] std::string_view getFalloutMeleeFailureName(FalloutMeleeFailure failure);
 }
 

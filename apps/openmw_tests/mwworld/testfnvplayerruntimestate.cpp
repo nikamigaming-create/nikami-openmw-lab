@@ -39,6 +39,8 @@ namespace
         writer.writeHNT("VERS", version);
         writer.writeFormId(form, true, "FORM");
         writer.writeHNT("HLTH", health);
+        if (version >= 2)
+            writer.writeHNT("ACTP", 80.f);
         for (std::size_t i = 0; i < MWWorld::FalloutPlayerState::SpecialCount; ++i)
             writer.writeHNT("SPEC", 5.f);
         for (const std::uint8_t value : base.mSkillValues)
@@ -137,6 +139,27 @@ TEST(FalloutPlayerRuntimeStateTest, DerivesCarryCapacityFromCurrentStrength)
     runtime.resetCurrent();
     ASSERT_TRUE(runtime.getCarryCapacity());
     EXPECT_FLOAT_EQ(*runtime.getCarryCapacity(), 200.f);
+}
+
+TEST(FalloutPlayerRuntimeStateTest, DerivesSpendsAndClampsActionPoints)
+{
+    MWWorld::FalloutPlayerRuntimeState runtime;
+    EXPECT_FALSE(runtime.getMaxActionPoints());
+
+    runtime.initialize(makeBaseState(0));
+    ASSERT_TRUE(runtime.getMaxActionPoints());
+    EXPECT_FLOAT_EQ(*runtime.getMaxActionPoints(), 80.f);
+    EXPECT_FLOAT_EQ(runtime.getCurrentActorValue(MWWorld::FalloutPlayerRuntimeState::ActionPointsActorValue)->mValue,
+        80.f);
+
+    EXPECT_EQ(runtime.modCurrentActorValue(MWWorld::FalloutPlayerRuntimeState::ActionPointsActorValue, -22.f),
+        MWWorld::FalloutActorValueMutationResult::Applied);
+    EXPECT_FLOAT_EQ(runtime.getCurrentActorValue(MWWorld::FalloutPlayerRuntimeState::ActionPointsActorValue)->mValue,
+        58.f);
+    EXPECT_EQ(runtime.setCurrentActorValue(MWWorld::FalloutPlayerRuntimeState::ActionPointsActorValue, 999.f),
+        MWWorld::FalloutActorValueMutationResult::Applied);
+    EXPECT_FLOAT_EQ(runtime.getCurrentActorValue(MWWorld::FalloutPlayerRuntimeState::ActionPointsActorValue)->mValue,
+        80.f);
 }
 
 TEST(FalloutPlayerRuntimeStateTest, RoundTripsFractionalValuesAndOffsetProvenanceAcrossChangedLoadOrder)

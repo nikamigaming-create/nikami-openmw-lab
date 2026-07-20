@@ -509,6 +509,21 @@ void MWState::StateManager::loadGame(const Character* character, const std::file
         const MWWorld::FalloutSavePreflightContext& context = *preflight.mContext;
         MWWorld::requireFalloutSaveVisualApplicationReady(context);
 
+        if (const char* trace = std::getenv("OPENMW_FNV_VATS_TRACE"); trace != nullptr && *trace != '\0'
+            && context.mSave.mPlayerActorValueData)
+        {
+            constexpr std::size_t actionPointsActorValue = 12;
+            const ESM4::FONVSavePlayerActorValueData& values = *context.mSave.mPlayerActorValueData;
+            Log(Debug::Info) << "FNV VATS retail state: actorValue=" << actionPointsActorValue
+                             << " values244=" << values.mActorValues244[actionPointsActorValue].mValue
+                             << " values244Offset=" << values.mActorValues244[actionPointsActorValue].mRange.mOffset
+                             << " values378=" << values.mActorValues378[actionPointsActorValue].mValue
+                             << " values378Offset=" << values.mActorValues378[actionPointsActorValue].mRange.mOffset
+                             << " values4B0=" << values.mActorValues4B0[actionPointsActorValue].mValue
+                             << " values4B0Offset=" << values.mActorValues4B0[actionPointsActorValue].mRange.mOffset
+                             << " exact=1";
+        }
+
         const ESM::RefId playerId = ESM::RefId::stringRefId("Player");
         const ESM::NPC* playerCarrier = world.getStore().get<ESM::NPC>().searchStatic(playerId);
         if (playerCarrier == nullptr)

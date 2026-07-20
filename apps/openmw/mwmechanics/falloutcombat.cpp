@@ -159,6 +159,30 @@ namespace MWMechanics
         return FalloutFireCadence{ true, 1.f / shotsPerSecond };
     }
 
+    std::optional<FalloutVatsWeaponContract> buildFalloutVatsWeaponContract(
+        const ESM4::Weapon& weapon, FalloutVatsWeaponFailure& failure)
+    {
+        failure = FalloutVatsWeaponFailure::None;
+        constexpr std::uint32_t overrideActionPointsFlag = 0x00000008;
+        if (!weapon.mData.hasBallistics)
+            failure = FalloutVatsWeaponFailure::MissingBallistics;
+        else if ((weapon.mData.flags2 & overrideActionPointsFlag) == 0)
+            failure = FalloutVatsWeaponFailure::MissingAuthoredActionPointOverride;
+        else if (!std::isfinite(weapon.mData.overrideActionPoints) || weapon.mData.overrideActionPoints <= 0.f)
+            failure = FalloutVatsWeaponFailure::InvalidActionPointCost;
+        else if (weapon.mData.baseVatsChance > 100)
+            failure = FalloutVatsWeaponFailure::InvalidBaseHitChance;
+        else if (!std::isfinite(weapon.mData.limbDamageMult) || weapon.mData.limbDamageMult < 0.f)
+            failure = FalloutVatsWeaponFailure::InvalidLimbDamageMultiplier;
+        else if (weapon.mData.skillActorValue < 0)
+            failure = FalloutVatsWeaponFailure::InvalidSkillActorValue;
+
+        if (failure != FalloutVatsWeaponFailure::None)
+            return std::nullopt;
+        return FalloutVatsWeaponContract{ weapon.mData.overrideActionPoints, weapon.mData.baseVatsChance,
+            weapon.mData.limbDamageMult, weapon.mData.skillActorValue };
+    }
+
     bool advanceFalloutTrigger(FalloutTriggerState& state, bool triggerDown, bool ready,
         const FalloutFireCadence& cadence, float duration) noexcept
     {
@@ -335,6 +359,28 @@ namespace MWMechanics
                 return "invalid-fire-rate";
             case FalloutFireCadenceFailure::InvalidShotsPerSecond:
                 return "invalid-shots-per-second";
+        }
+        return "unknown";
+    }
+
+    std::string_view getFalloutVatsWeaponFailureName(FalloutVatsWeaponFailure failure)
+    {
+        switch (failure)
+        {
+            case FalloutVatsWeaponFailure::None:
+                return "none";
+            case FalloutVatsWeaponFailure::MissingBallistics:
+                return "missing-ballistics";
+            case FalloutVatsWeaponFailure::MissingAuthoredActionPointOverride:
+                return "missing-authored-action-point-override";
+            case FalloutVatsWeaponFailure::InvalidActionPointCost:
+                return "invalid-action-point-cost";
+            case FalloutVatsWeaponFailure::InvalidBaseHitChance:
+                return "invalid-base-hit-chance";
+            case FalloutVatsWeaponFailure::InvalidLimbDamageMultiplier:
+                return "invalid-limb-damage-multiplier";
+            case FalloutVatsWeaponFailure::InvalidSkillActorValue:
+                return "invalid-skill-actor-value";
         }
         return "unknown";
     }

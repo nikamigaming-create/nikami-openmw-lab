@@ -49,6 +49,11 @@ bool ESM4::loadFalloutWeaponDnam(std::span<const std::uint8_t> dnam, Weapon::Dat
         std::memcpy(&value, dnam.data() + offset, sizeof(value));
         return value;
     };
+    const auto readInt32 = [&](std::size_t offset) {
+        std::int32_t value = 0;
+        std::memcpy(&value, dnam.data() + offset, sizeof(value));
+        return value;
+    };
 
     data.animationType = dnam[0];
     data.animationMultiplier = readFloat(4);
@@ -77,8 +82,14 @@ bool ESM4::loadFalloutWeaponDnam(std::span<const std::uint8_t> dnam, Weapon::Dat
     data.fireRate = readFloat(64);
     data.hasBallistics = true;
 
+    if (dnam.size() >= 72)
+        data.overrideActionPoints = readFloat(68);
     if (dnam.size() >= 92)
         data.animShotsPerSec = readFloat(88);
+    if (dnam.size() >= 108)
+        data.skillActorValue = readInt32(104);
+    if (dnam.size() >= 120)
+        data.limbDamageMult = readFloat(116);
     if (dnam.size() >= 132)
         data.semiAutoFireDelayMin = readFloat(128);
     if (dnam.size() >= 136)
