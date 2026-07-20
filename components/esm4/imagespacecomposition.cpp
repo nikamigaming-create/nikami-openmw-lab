@@ -1,5 +1,8 @@
 #include "imagespacecomposition.hpp"
 
+#include "loadcell.hpp"
+#include "loadwrld.hpp"
+
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -157,4 +160,13 @@ ESM4::ComposedImageSpace ESM4::composeImageSpace(
     result.mTraits[ImageSpace::Trait_CinematicTintBlue] = result.mTint[2];
     result.mTraits[ImageSpace::Trait_CinematicTintStrength] = result.mTint[3];
     return result;
+}
+
+ESM::FormId ESM4::resolveCellImageSpace(const Cell& cell, const World* parentWorld)
+{
+    if (!cell.mImageSpace.isZeroOrUnset())
+        return cell.mImageSpace;
+    if (cell.isExterior() && parentWorld != nullptr)
+        return parentWorld->mImageSpace;
+    return {};
 }

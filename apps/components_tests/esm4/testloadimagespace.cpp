@@ -1,6 +1,8 @@
 #include <components/esm4/imagespacecomposition.hpp>
+#include <components/esm4/loadcell.hpp>
 #include <components/esm4/loadimad.hpp>
 #include <components/esm4/loadimgs.hpp>
+#include <components/esm4/loadwrld.hpp>
 #include <components/esm4/reader.hpp>
 
 #include <gtest/gtest.h>
@@ -247,6 +249,36 @@ namespace
         EXPECT_NE(shader.find("* (uFalloutHdr.x / hdrDenominator)"), std::string::npos);
     }
 
+    TEST(Esm4ImageSpaceTest, shouldPreferAuthoredInteriorCellImageSpace)
+    {
+        ESM4::World world;
+        world.mImageSpace = ESM::FormId::fromUint32(0x0008809d);
+        ESM4::Cell interior;
+        interior.mCellFlags = ESM4::CELL_Interior;
+        interior.mImageSpace = ESM::FormId::fromUint32(0x0001507a);
+
+        EXPECT_EQ(ESM4::resolveCellImageSpace(interior, &world), interior.mImageSpace);
+    }
+
+    TEST(Esm4ImageSpaceTest, shouldInheritWorldImageSpaceOnlyForExteriorCells)
+    {
+        ESM4::World world;
+        world.mImageSpace = ESM::FormId::fromUint32(0x0008809d);
+        ESM4::Cell exterior;
+
+        EXPECT_EQ(ESM4::resolveCellImageSpace(exterior, &world), world.mImageSpace);
+    }
+
+    TEST(Esm4ImageSpaceTest, shouldNotCarryExteriorImageSpaceIntoInteriorWithoutXcim)
+    {
+        ESM4::World world;
+        world.mImageSpace = ESM::FormId::fromUint32(0x0008809d);
+        ESM4::Cell interior;
+        interior.mCellFlags = ESM4::CELL_Interior;
+
+        EXPECT_TRUE(ESM4::resolveCellImageSpace(interior, &world).isZeroOrUnset());
+    }
+
     TEST(Esm4ImageSpaceTest, shouldClearStaleFalloutImageSpaceWhenNoBaseIsActive)
     {
         const std::filesystem::path postProcessorPath = std::filesystem::path{ OPENMW_PROJECT_SOURCE_DIR } / "apps"
@@ -280,20 +312,25 @@ namespace
             std::istreambuf_iterator<char>{} };
         constexpr std::string_view clearCall = "mRendering.getPostProcessor()->clearFalloutImageSpace();";
 
-        const std::size_t interiorStart = weatherSource.find("if (!isExterior)");
+        const std::size_t applyStart = weatherSource.find("const auto applyFalloutImageSpace");
+        ASSERT_NE(applyStart, std::string::npos);
+        const std::size_t interiorStart = weatherSource.find("if (!isExterior)", applyStart);
         ASSERT_NE(interiorStart, std::string::npos);
         const std::size_t interiorReturn = weatherSource.find("return;", interiorStart);
         ASSERT_NE(interiorReturn, std::string::npos);
-        const std::size_t interiorClear = weatherSource.find(clearCall, interiorStart);
-        ASSERT_NE(interiorClear, std::string::npos);
-        EXPECT_LT(interiorClear, interiorReturn);
+        const std::size_t interiorApply = weatherSource.find("applyFalloutImageSpace();", interiorStart);
+        ASSERT_NE(interiorApply, std::string::npos);
+        EXPECT_LT(interiorApply, interiorReturn);
+        const std::string_view interiorBody(
+            weatherSource.data() + interiorStart, interiorReturn - interiorStart);
+        EXPECT_EQ(interiorBody.find(clearCall), std::string_view::npos);
 
-        const std::size_t missingBaseStart = weatherSource.find("if (base == nullptr)", interiorReturn);
+        const std::size_t missingBaseStart = weatherSource.find("if (base == nullptr)", applyStart);
         ASSERT_NE(missingBaseStart, std::string::npos);
-        const std::size_t missingBaseElse = weatherSource.find("\n        else", missingBaseStart);
-        ASSERT_NE(missingBaseElse, std::string::npos);
+        const std::size_t missingBaseReturn = weatherSource.find("return;", missingBaseStart);
+        ASSERT_NE(missingBaseReturn, std::string::npos);
         const std::size_t missingBaseClear = weatherSource.find(clearCall, missingBaseStart);
         ASSERT_NE(missingBaseClear, std::string::npos);
-        EXPECT_LT(missingBaseClear, missingBaseElse);
+        EXPECT_LT(missingBaseClear, missingBaseReturn);
     }
 }
