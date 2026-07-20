@@ -5,10 +5,10 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <string>
 #include <vector>
 
 #include <components/esm4/loadcrea.hpp>
-#include <components/vfs/pathutil.hpp>
 
 #include <osg/Vec3f>
 
@@ -191,14 +191,15 @@ namespace MWClass
         {
             if (ESM4Impl::worldViewerDisableEsm4Actors())
                 return;
-            (void)rotation;
-            physics.addActor(ptr, VFS::Path::toNormalized(model.empty() ? std::string(getModel(ptr)) : model));
+            Actor::insertObject(ptr, model.empty() ? std::string(getModel(ptr)) : model, rotation, physics);
         }
 
         std::string_view getModel(const MWWorld::ConstPtr& ptr) const override;
         std::string_view getName(const MWWorld::ConstPtr& ptr) const override;
         bool hasToolTip(const MWWorld::ConstPtr& ptr) const override;
         MWGui::ToolTipInfo getToolTipInfo(const MWWorld::ConstPtr& ptr, int count) const override;
+        std::unique_ptr<MWWorld::Action> activate(
+            const MWWorld::Ptr& ptr, const MWWorld::Ptr& actor) const override;
         MWMechanics::CreatureStats& getCreatureStats(const MWWorld::Ptr& ptr) const override;
         MWWorld::ContainerStore& getContainerStore(const MWWorld::Ptr& ptr) const override;
         MWMechanics::Movement& getMovementSettings(const MWWorld::Ptr& ptr) const override;

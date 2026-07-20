@@ -48,13 +48,13 @@
 #include "../mwbase/environment.hpp"
 #include "../mwbase/world.hpp"
 
+#include "../mwworld/actionopen.hpp"
+#include "../mwworld/actiontalk.hpp"
 #include "../mwworld/containerstore.hpp"
 #include "../mwworld/customdata.hpp"
 #include "../mwworld/esmstore.hpp"
 #include "../mwworld/esm4questruntime.hpp"
 #include "../mwworld/worldmodel.hpp"
-#include "../mwworld/actiontalk.hpp"
-#include "../mwworld/failedaction.hpp"
 
 #include "esm4base.hpp"
 #include "fnvactorstate.hpp"
@@ -1862,7 +1862,7 @@ namespace MWClass
     {
         (void)actor;
         if (getCreatureStats(ptr).isDead())
-            return std::make_unique<MWWorld::FailedAction>();
+            return std::make_unique<MWWorld::ActionOpen>(ptr);
         return std::make_unique<MWWorld::ActionTalk>(ptr);
     }
 

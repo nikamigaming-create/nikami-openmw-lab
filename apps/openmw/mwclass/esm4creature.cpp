@@ -48,6 +48,7 @@
 #include "../mwmechanics/drawstate.hpp"
 #include "../mwmechanics/movement.hpp"
 
+#include "../mwworld/actionopen.hpp"
 #include "../mwworld/containerstore.hpp"
 #include "../mwworld/customdata.hpp"
 #include "../mwworld/esmstore.hpp"
@@ -1897,6 +1898,14 @@ namespace MWClass
     MWGui::ToolTipInfo ESM4Creature::getToolTipInfo(const MWWorld::ConstPtr& ptr, int count) const
     {
         return ESM4Impl::getToolTipInfo(getName(ptr), count);
+    }
+
+    std::unique_ptr<MWWorld::Action> ESM4Creature::activate(
+        const MWWorld::Ptr& ptr, const MWWorld::Ptr& actor) const
+    {
+        if (getCreatureStats(ptr).isDead())
+            return std::make_unique<MWWorld::ActionOpen>(ptr);
+        return Actor::activate(ptr, actor);
     }
 
     MWMechanics::CreatureStats& ESM4Creature::getCreatureStats(const MWWorld::Ptr& ptr) const

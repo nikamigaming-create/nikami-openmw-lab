@@ -7,7 +7,6 @@
 #include <components/esm4/loadcrea.hpp>
 #include <components/esm4/loadnpc.hpp>
 #include <components/esm4/loadweap.hpp>
-#include <components/vfs/pathutil.hpp>
 
 #include <osg/Vec3f>
 
@@ -84,8 +83,7 @@ namespace MWClass
         {
             if (ESM4Impl::worldViewerDisableEsm4Actors())
                 return;
-            (void)rotation;
-            physics.addActor(ptr, VFS::Path::toNormalized(model.empty() ? std::string(getModel(ptr)) : model));
+            Actor::insertObject(ptr, model.empty() ? std::string(getModel(ptr)) : model, rotation, physics);
         }
 
         bool hasToolTip(const MWWorld::ConstPtr& ptr) const override { return true; }

@@ -34,8 +34,9 @@
 #include "apps/openmw/mwmechanics/aiwander.hpp"
 #include "apps/openmw/mwmechanics/creaturestats.hpp"
 
-#include "apps/openmw/mwworld/actionopen.hpp"
 #include "apps/openmw/mwworld/actiondoor.hpp"
+#include "apps/openmw/mwworld/actionopen.hpp"
+#include "apps/openmw/mwworld/actiontalk.hpp"
 #include "apps/openmw/mwworld/actionteleport.hpp"
 #include "apps/openmw/mwworld/esmstore.hpp"
 #include "apps/openmw/mwworld/failedaction.hpp"
@@ -1358,6 +1359,7 @@ namespace
         stats.writeState(deadState);
         deadState.mDynamic[0].mCurrent = 0.f;
         deadState.mDead = true;
+        deadState.mDeathAnimationFinished = true;
         deadState.mDied = true;
         stats.readState(deadState);
         ASSERT_TRUE(stats.isDead());
@@ -1380,8 +1382,37 @@ namespace
         const MWMechanics::CreatureStats& restoredStats = restored.getClass().getCreatureStats(restored);
         EXPECT_FLOAT_EQ(restoredStats.getHealth().getCurrent(), 0.f);
         EXPECT_TRUE(restoredStats.isDead());
+        EXPECT_TRUE(restoredStats.isDeathAnimationFinished());
         EXPECT_TRUE(restoredStats.hasDied());
         EXPECT_EQ(restored.getCellRef().getRefNum(), creatureRef);
+    }
+
+    TEST_F(ESM4ContainerTest, DeadCreatureActivatesAsLootContainer)
+    {
+        MWWorld::ESMStore store;
+        populateCreatureWorldStore(store);
+        ESM::ReadersCache readers;
+        MWWorld::WorldModel worldModel(store, readers);
+        mEnvironment.setESMStore(store);
+        mEnvironment.setWorldModel(worldModel);
+
+        MWWorld::CellStore* cell
+            = worldModel.findCell(ESM::RefId(ESM::FormId::fromUint32(sCreatureCell)), false);
+        ASSERT_NE(cell, nullptr);
+        cell->load();
+        MWWorld::Ptr creature = findPlacedCreature(*cell);
+        ASSERT_FALSE(creature.isEmpty());
+
+        MWMechanics::CreatureStats& stats = creature.getClass().getCreatureStats(creature);
+        ESM::CreatureStats deadState;
+        stats.writeState(deadState);
+        deadState.mDynamic[0].mCurrent = 0.f;
+        deadState.mDead = true;
+        deadState.mDeathAnimationFinished = true;
+        stats.readState(deadState);
+
+        std::unique_ptr<MWWorld::Action> action = creature.getClass().activate(creature, {});
+        EXPECT_NE(dynamic_cast<MWWorld::ActionOpen*>(action.get()), nullptr);
     }
 
     TEST_F(ESM4ContainerTest, CreatureStateDropsItemsWhoseContentFileWasRemoved)
@@ -1718,6 +1749,7 @@ namespace
         stats.writeState(deadState);
         deadState.mDynamic[0].mCurrent = 0.f;
         deadState.mDead = true;
+        deadState.mDeathAnimationFinished = true;
         deadState.mDied = true;
         stats.readState(deadState);
 
@@ -1747,6 +1779,7 @@ namespace
         const MWMechanics::CreatureStats& restoredStats = restored.getClass().getCreatureStats(restored);
         EXPECT_FLOAT_EQ(restoredStats.getHealth().getCurrent(), 0.f);
         EXPECT_TRUE(restoredStats.isDead());
+        EXPECT_TRUE(restoredStats.isDeathAnimationFinished());
         EXPECT_TRUE(restoredStats.hasDied());
         EXPECT_TRUE(restoredStats.getAiSequence().isEmpty());
         EXPECT_EQ(restored.getCellRef().getCount(false), 2);
@@ -1755,6 +1788,37 @@ namespace
         EXPECT_EQ(restored.getRefData().getPosition(), savedPosition);
         EXPECT_TRUE(restored.getRefData().isEnabled());
         EXPECT_EQ(restored.getCellRef().getRefNum(), npcRef);
+    }
+
+    TEST_F(ESM4ContainerTest, NpcActivationTalksWhileAliveAndOpensLootWhenDead)
+    {
+        MWWorld::ESMStore store;
+        populateNpcWorldStore(store);
+        ESM::ReadersCache readers;
+        MWWorld::WorldModel worldModel(store, readers);
+        mEnvironment.setESMStore(store);
+        mEnvironment.setWorldModel(worldModel);
+
+        MWWorld::CellStore* cell
+            = worldModel.findCell(ESM::RefId(ESM::FormId::fromUint32(sCreatureCell)), false);
+        ASSERT_NE(cell, nullptr);
+        cell->load();
+        MWWorld::Ptr npc = findPlacedNpc(*cell);
+        ASSERT_FALSE(npc.isEmpty());
+
+        std::unique_ptr<MWWorld::Action> talk = npc.getClass().activate(npc, {});
+        EXPECT_NE(dynamic_cast<MWWorld::ActionTalk*>(talk.get()), nullptr);
+
+        MWMechanics::CreatureStats& stats = npc.getClass().getCreatureStats(npc);
+        ESM::CreatureStats deadState;
+        stats.writeState(deadState);
+        deadState.mDynamic[0].mCurrent = 0.f;
+        deadState.mDead = true;
+        deadState.mDeathAnimationFinished = true;
+        stats.readState(deadState);
+
+        std::unique_ptr<MWWorld::Action> loot = npc.getClass().activate(npc, {});
+        EXPECT_NE(dynamic_cast<MWWorld::ActionOpen*>(loot.get()), nullptr);
     }
 
     TEST_F(ESM4ContainerTest, NpcStateDropsItemsWhoseContentFileWasRemoved)
