@@ -60,6 +60,11 @@ namespace MWGui
 
         void setEnemy(const MWWorld::Ptr& enemy);
 
+        void setFalloutVatsVisible(bool visible, std::string_view targetName = {},
+            std::string_view bodyPartName = {}, unsigned int hitChance = 0,
+            float actionPointsBefore = 0.f, float actionPointsAfter = 0.f,
+            std::size_t queuedAttacks = 0, bool executing = false);
+
         void clear() override;
 
         void dropDraggedItem(float mouseX, float mouseY);
@@ -78,6 +83,12 @@ namespace MWGui
         MyGUI::TextBox* mCellNameBox;
         MyGUI::TextBox* mWeaponSpellBox;
         MyGUI::TextBox* mCompassHeading;
+        MyGUI::Widget* mFalloutVatsOverlay = nullptr;
+        MyGUI::TextBox* mFalloutVatsTarget = nullptr;
+        MyGUI::TextBox* mFalloutVatsBodyPart = nullptr;
+        MyGUI::TextBox* mFalloutVatsChance = nullptr;
+        MyGUI::TextBox* mFalloutVatsActionPoints = nullptr;
+        MyGUI::TextBox* mFalloutVatsInstructions = nullptr;
         MyGUI::Widget *mDrowningBar, *mDrowningFrame, *mDrowningFlash;
 
         // bottom left elements

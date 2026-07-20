@@ -4,6 +4,12 @@
 #include <osg/ref_ptr>
 #include <osgViewer/ViewerEventHandlers>
 
+#include <optional>
+#include <string>
+
+#include "../mwmechanics/falloutcombat.hpp"
+#include "../mwworld/ptr.hpp"
+
 namespace osgViewer
 {
     class Viewer;
@@ -47,12 +53,25 @@ namespace MWInput
 
     private:
         void handleGuiArrowKey(int action);
+        bool isFalloutContent() const;
+        void toggleFalloutVats();
+        void queueFalloutVatsAttack();
+        void executeFalloutVatsQueue();
+        void updateFalloutVatsHud();
 
         BindingsManager* mBindingsManager;
         osg::ref_ptr<osgViewer::Viewer> mViewer;
         osg::ref_ptr<osgViewer::ScreenCaptureHandler> mScreenCaptureHandler;
 
         float mTimeIdle;
+        MWMechanics::FalloutVatsRuntime mFalloutVats;
+        std::optional<MWMechanics::FalloutVatsWeaponContract> mFalloutVatsWeapon;
+        MWWorld::Ptr mFalloutVatsTarget;
+        std::string mFalloutVatsTargetName;
+        std::string mFalloutVatsBodyPartName;
+        unsigned int mFalloutVatsHitChance = 0;
+        float mFalloutVatsCaptureTimer = 0.f;
+        bool mFalloutVatsCaptureQueued = false;
     };
 }
 #endif

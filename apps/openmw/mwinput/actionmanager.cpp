@@ -4,6 +4,13 @@
 
 #include <SDL_keyboard.h>
 
+#include <algorithm>
+#include <cctype>
+#include <cstdlib>
+#include <limits>
+#include <ranges>
+#include <vector>
+
 #include <components/settings/values.hpp>
 //## VR_PATCH BEGIN
 #include <components/vr/vr.hpp>
@@ -19,10 +26,21 @@
 
 #include "../mwworld/class.hpp"
 #include "../mwworld/globals.hpp"
+#include "../mwworld/esmstore.hpp"
+#include "../mwworld/fnvplayerruntimestate.hpp"
+#include "../mwworld/inventorystore.hpp"
 #include "../mwworld/player.hpp"
+
+#include <components/esm4/loadbptd.hpp>
+#include <components/esm4/loadcrea.hpp>
+#include <components/esm4/loadnpc.hpp>
+#include <components/esm4/loadrace.hpp>
+#include <components/esm4/loadweap.hpp>
 
 #include "../mwmechanics/actorutil.hpp"
 #include "../mwmechanics/npcstats.hpp"
+
+#include "../mwgui/hud.hpp"
 
 #include "actions.hpp"
 #include "bindingsmanager.hpp"
@@ -51,6 +69,24 @@ namespace MWInput
         }
         else
             mTimeIdle += dt;
+
+        if (std::getenv("OPENMW_FNV_VATS_CAPTURE") != nullptr && !mFalloutVatsCaptureQueued
+            && isFalloutContent())
+        {
+            mFalloutVatsCaptureTimer += dt;
+            if (mFalloutVatsCaptureTimer >= 2.f
+                && mFalloutVats.getPhase() == MWMechanics::FalloutVatsPhase::Inactive)
+                toggleFalloutVats();
+            if (mFalloutVatsCaptureTimer >= 2.5f
+                && mFalloutVats.getPhase() == MWMechanics::FalloutVatsPhase::Targeting
+                && mFalloutVats.getQueue().empty())
+                queueFalloutVatsAttack();
+            if (mFalloutVatsCaptureTimer >= 3.f && !mFalloutVats.getQueue().empty())
+            {
+                screenshot();
+                mFalloutVatsCaptureQueued = true;
+            }
+        }
     }
 
     void ActionManager::resetIdleTime()
@@ -66,6 +102,10 @@ namespace MWInput
         // trigger action activated
         switch (action)
         {
+            case A_QuickMenu:
+                if (isFalloutContent())
+                    toggleFalloutVats();
+                break;
             case A_GameMenu:
                 toggleMainMenu();
                 break;
@@ -77,8 +117,14 @@ namespace MWInput
                 break;
             case A_Activate:
                 inputManager->resetIdleTime();
-                if (!VR::getVR())
+                if (mFalloutVats.getPhase() == MWMechanics::FalloutVatsPhase::Targeting)
+                    executeFalloutVatsQueue();
+                else if (!VR::getVR())
                     activate();
+                break;
+            case A_Use:
+                if (mFalloutVats.getPhase() == MWMechanics::FalloutVatsPhase::Targeting)
+                    queueFalloutVatsAttack();
                 break;
             case A_MoveLeft:
             case A_MoveRight:
@@ -156,6 +202,184 @@ namespace MWInput
                 // Handled in Lua
                 break;
         }
+    }
+
+    bool ActionManager::isFalloutContent() const
+    {
+        const auto world = MWBase::Environment::get().getWorld();
+        for (const std::string& file : world->getContentFiles())
+        {
+            std::string lower = file;
+            std::ranges::transform(lower, lower.begin(), [](unsigned char c) { return std::tolower(c); });
+            if (lower.find("falloutnv.esm") != std::string::npos)
+                return true;
+        }
+        return false;
+    }
+
+    void ActionManager::toggleFalloutVats()
+    {
+        if (mFalloutVats.getPhase() != MWMechanics::FalloutVatsPhase::Inactive)
+        {
+            mFalloutVats.cancel();
+            mFalloutVatsTarget = {};
+            updateFalloutVatsHud();
+            return;
+        }
+
+        const auto world = MWBase::Environment::get().getWorld();
+        MWWorld::Ptr player = world->getPlayerPtr();
+        MWWorld::Ptr target = world->getFacedObject();
+        if (target.isEmpty() || !target.getClass().isActor())
+        {
+            std::vector<MWWorld::Ptr> nearby;
+            MWBase::Environment::get().getMechanicsManager()->getActorsInRange(
+                player.getRefData().getPosition().asVec3(), 3000.f, nearby);
+            float bestDistance2 = std::numeric_limits<float>::infinity();
+            for (const MWWorld::Ptr& candidate : nearby)
+            {
+                if (candidate == player || candidate.isEmpty() || !candidate.getClass().isActor())
+                    continue;
+                const float distance2 = (candidate.getRefData().getPosition().asVec3()
+                    - player.getRefData().getPosition().asVec3()).length2();
+                if (distance2 < bestDistance2)
+                {
+                    bestDistance2 = distance2;
+                    target = candidate;
+                }
+            }
+        }
+        if (target.isEmpty() || !target.getClass().isActor())
+        {
+            MWBase::Environment::get().getWindowManager()->messageBox("No V.A.T.S. target");
+            return;
+        }
+
+        const auto ap = world->getFalloutPlayerRuntimeState().getCurrentActorValue(
+            MWWorld::FalloutPlayerRuntimeState::ActionPointsActorValue);
+        if (!ap || !mFalloutVats.enter(ap->mValue))
+        {
+            MWBase::Environment::get().getWindowManager()->messageBox("V.A.T.S. action points unavailable");
+            return;
+        }
+
+        MWWorld::InventoryStore& inventory = player.getClass().getInventoryStore(player);
+        const MWWorld::ContainerStoreIterator weapon = inventory.getSlot(MWWorld::InventoryStore::Slot_CarriedRight);
+        MWMechanics::FalloutVatsWeaponFailure weaponFailure;
+        if (weapon == inventory.end() || weapon->getType() != ESM4::Weapon::sRecordId
+            || !(mFalloutVatsWeapon = MWMechanics::buildFalloutVatsWeaponContract(
+                     *weapon->get<ESM4::Weapon>()->mBase, weaponFailure)))
+        {
+            mFalloutVats.cancel();
+            MWBase::Environment::get().getWindowManager()->messageBox("Equipped weapon has no authored V.A.T.S. AP contract");
+            return;
+        }
+
+        const ESM4::BodyPartData* targetBodyData = nullptr;
+        if (target.getType() == ESM4::Npc::sRecordId)
+        {
+            const ESM4::Npc* npc = target.get<ESM4::Npc>()->mBase;
+            if (const ESM4::Race* race = world->getStore().get<ESM4::Race>().search(npc->mRace))
+                targetBodyData = world->getStore().get<ESM4::BodyPartData>().search(race->mBodyPartData);
+        }
+        if (targetBodyData == nullptr)
+        {
+            std::string targetToken(target.getClass().getName(target));
+            std::erase_if(targetToken, [](unsigned char c) { return !std::isalnum(c); });
+            std::ranges::transform(targetToken, targetToken.begin(), [](unsigned char c) { return std::tolower(c); });
+            if (targetToken.starts_with("young"))
+                targetToken.erase(0, 5);
+            for (const ESM4::BodyPartData& candidate : world->getStore().get<ESM4::BodyPartData>())
+            {
+                std::string editor = candidate.mEditorId;
+                std::ranges::transform(editor, editor.begin(), [](unsigned char c) { return std::tolower(c); });
+                if (!targetToken.empty() && editor.find(targetToken) != std::string::npos)
+                {
+                    targetBodyData = &candidate;
+                    break;
+                }
+            }
+        }
+        if (targetBodyData == nullptr)
+        {
+            mFalloutVats.cancel();
+            MWBase::Environment::get().getWindowManager()->messageBox("Target has no authored V.A.T.S. body data");
+            return;
+        }
+
+        std::optional<MWMechanics::FalloutVatsBodyPartContract> selectedBodyPart;
+        for (std::size_t index = 0; index < targetBodyData->mBodyParts.size() && index <= 14; ++index)
+        {
+            MWMechanics::FalloutVatsBodyPartFailure bodyFailure;
+            auto candidate = MWMechanics::buildFalloutVatsBodyPartContract(
+                targetBodyData->mBodyParts[index], static_cast<std::uint8_t>(index), bodyFailure);
+            if (candidate && (candidate->mName == "Torso" || !selectedBodyPart))
+                selectedBodyPart = candidate;
+            if (selectedBodyPart && selectedBodyPart->mName == "Torso")
+                break;
+        }
+        const ESM::FormId targetId = target.getCellRef().getRefNum();
+        if (!selectedBodyPart)
+        {
+            mFalloutVats.cancel();
+            MWBase::Environment::get().getWindowManager()->messageBox("Target V.A.T.S. limbs are incomplete");
+            return;
+        }
+        const unsigned int hitChance = selectedBodyPart->mAbsoluteHitChance
+            ? selectedBodyPart->mBaseHitChance
+            : std::min(100u, static_cast<unsigned int>(selectedBodyPart->mBaseHitChance)
+                    + static_cast<unsigned int>(mFalloutVatsWeapon->mBaseHitChance));
+        if (!mFalloutVats.select(targetId, *selectedBodyPart, hitChance))
+        {
+            mFalloutVats.cancel();
+            return;
+        }
+        mFalloutVatsTarget = target;
+        mFalloutVatsTargetName = std::string(target.getClass().getName(target));
+        mFalloutVatsBodyPartName = std::string(selectedBodyPart->mName);
+        mFalloutVatsHitChance = hitChance;
+        updateFalloutVatsHud();
+    }
+
+    void ActionManager::queueFalloutVatsAttack()
+    {
+        if (!mFalloutVatsWeapon)
+            return;
+        MWMechanics::FalloutVatsQueueFailure failure;
+        if (!mFalloutVats.queueSelected(*mFalloutVatsWeapon, failure))
+            MWBase::Environment::get().getWindowManager()->messageBox(
+                std::string("V.A.T.S. queue failed: ") + std::string(MWMechanics::getFalloutVatsQueueFailureName(failure)));
+        updateFalloutVatsHud();
+    }
+
+    void ActionManager::executeFalloutVatsQueue()
+    {
+        const std::optional<float> apAfter = mFalloutVats.beginExecution();
+        if (!apAfter || mFalloutVatsTarget.isEmpty())
+            return;
+        MWBase::Environment::get().getWorld()->getFalloutPlayerRuntimeState().setCurrentActorValue(
+            MWWorld::FalloutPlayerRuntimeState::ActionPointsActorValue, *apAfter);
+        updateFalloutVatsHud();
+        while (const MWMechanics::FalloutVatsQueuedAction* action = mFalloutVats.getExecutingAction())
+        {
+            MWBase::Environment::get().getMechanicsManager()->executeFalloutVatsRangedHit(
+                MWBase::Environment::get().getWorld()->getPlayerPtr(), mFalloutVatsTarget,
+                mFalloutVatsTarget.getRefData().getPosition().asVec3(), action->mDamageMultiplier);
+            mFalloutVats.advanceExecution();
+        }
+        mFalloutVats.cancel();
+        updateFalloutVatsHud();
+    }
+
+    void ActionManager::updateFalloutVatsHud()
+    {
+        MWGui::HUD* hud = MWBase::Environment::get().getWindowManager()->getHud();
+        if (hud == nullptr)
+            return;
+        const bool visible = mFalloutVats.getPhase() != MWMechanics::FalloutVatsPhase::Inactive;
+        hud->setFalloutVatsVisible(visible, mFalloutVatsTargetName, mFalloutVatsBodyPartName,
+            mFalloutVatsHitChance, mFalloutVats.getActionPointsBefore(), mFalloutVats.getActionPointsAfter(),
+            mFalloutVats.getQueue().size(), mFalloutVats.getPhase() == MWMechanics::FalloutVatsPhase::Executing);
     }
 
     bool ActionManager::checkAllowedToUseItems() const
