@@ -26,6 +26,7 @@ file(GLOB UNITTEST_SRC_FILES
     mwworld/testtimestamp.cpp
     mwworld/testptr.cpp
     mwworld/testcellvisitors.cpp
+    mwworld/testactorfacing.cpp
     mwworld/testcontainerstoreesm4.cpp
     mwworld/testweather.cpp
 
@@ -42,6 +43,7 @@ file(GLOB UNITTEST_SRC_FILES
     mwclass/testfnvsandbox.cpp
 
     mwrender/testfalloutweaponanimation.cpp
+    mwrender/testfonvpackageanimation.cpp
     mwrender/testobjectpaging.cpp
     mwrender/testplayervisualpolicy.cpp
 

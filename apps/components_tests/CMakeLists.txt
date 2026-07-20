@@ -77,6 +77,7 @@ file(GLOB UNITTEST_SRC_FILES
     esm4/testlip.cpp
     esm4/testloadbehavior.cpp
     esm4/testscdadecoder.cpp
+    esm4/testloadachr.cpp
     esm4/testloadcreature.cpp
     esm4/testloadarmor.cpp
     esm4/testloadclimate.cpp

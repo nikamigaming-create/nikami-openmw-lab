@@ -59,6 +59,7 @@
 
 #include "../mwworld/actionteleport.hpp"
 
+#include "actorfacing.hpp"
 #include "cellpreloader.hpp"
 #include "cellstore.hpp"
 #include "cellvisitors.hpp"
@@ -76,15 +77,15 @@ namespace
     osg::Quat makeActorOsgQuat(const MWWorld::Ptr& ptr)
     {
         const ESM::Position& position = ptr.getRefData().getPosition();
-        float yaw = position.rot[2];
+        bool tes4Npc = false;
         if (ptr.getType() == ESM::REC_NPC_4)
         {
-            // Imported Fallout/TES4 NPC skeletons need a quarter-turn relative to
-            // the TES3 actor convention.  CREA4 rigs do not: securitrons and
-            // bighorners author their visual front on local +Y already.
-            yaw += osg::PI_2;
+            const MWWorld::LiveCellRef<ESM4::Npc>* npc = ptr.get<ESM4::Npc>();
+            tes4Npc = npc != nullptr && npc->mBase != nullptr && npc->mBase->mIsTES4;
         }
-        return osg::Quat(yaw, osg::Vec3(0, 0, -1));
+        // TES4 NPC meshes retain the legacy quarter-turn conversion. FO3/FNV NPCs and CREA4 rigs author their
+        // visual front on the same local +Y axis used by CharacterController and the movement solver.
+        return osg::Quat(MWWorld::getActorModelYaw(position.rot[2], tes4Npc), osg::Vec3(0, 0, -1));
     }
 
     osg::Quat makeInversedOrderObjectOsgQuat(const ESM::Position& position)

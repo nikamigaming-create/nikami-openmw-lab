@@ -59,6 +59,7 @@
 
 #include <components/nifosg/matrixtransform.hpp>
 #include <components/nifosg/controller.hpp>
+#include <components/nifosg/falloutkf.hpp>
 
 #include <components/vfs/manager.hpp>
 #include <components/vfs/pathutil.hpp>
@@ -4433,42 +4434,14 @@ namespace MWRender
         if (stem.find("wave") != std::string::npos || stem.find("gesture") != std::string::npos
             || stem == "specialidle_mtponder" || stem == "specialidle_salutes")
             return "wave";
-        if (stem == "swimidle")
-            return "swimidle";
         if (stem.find("flyaway") != std::string::npos)
             return "flyforward";
         if (stem.find("specialidle") != std::string::npos)
             return "idle2";
+        if (const std::string_view movement = NifOsg::getFalloutKfMovementGroup(kfname); !movement.empty())
+            return std::string(movement);
         if (stem == "mtidle" || stem == "idle" || Misc::StringUtils::ciEndsWith(stem, "idle"))
             return "idle";
-        if (Misc::StringUtils::ciEndsWith(stem, "turnleft"))
-            return "turnleft";
-        if (Misc::StringUtils::ciEndsWith(stem, "turnright"))
-            return "turnright";
-        if (stem == "mtforward")
-            return "walkforward";
-        if (stem == "mtbackward")
-            return "walkback";
-        if (stem == "mtleft")
-            return "walkleft";
-        if (stem == "mtright")
-            return "walkright";
-        if (Misc::StringUtils::ciEndsWith(stem, "fastforward") || Misc::StringUtils::ciEndsWith(stem, "runforward"))
-            return "runforward";
-        if (Misc::StringUtils::ciEndsWith(stem, "fastbackward") || Misc::StringUtils::ciEndsWith(stem, "runbackward"))
-            return "runback";
-        if (Misc::StringUtils::ciEndsWith(stem, "fastleft") || Misc::StringUtils::ciEndsWith(stem, "runleft"))
-            return "runleft";
-        if (Misc::StringUtils::ciEndsWith(stem, "fastright") || Misc::StringUtils::ciEndsWith(stem, "runright"))
-            return "runright";
-        if (Misc::StringUtils::ciEndsWith(stem, "forward") || Misc::StringUtils::ciEndsWith(stem, "walkforward"))
-            return "walkforward";
-        if (Misc::StringUtils::ciEndsWith(stem, "backward") || Misc::StringUtils::ciEndsWith(stem, "walkbackward"))
-            return "walkback";
-        if (Misc::StringUtils::ciEndsWith(stem, "left") || Misc::StringUtils::ciEndsWith(stem, "walkleft"))
-            return "walkleft";
-        if (Misc::StringUtils::ciEndsWith(stem, "right") || Misc::StringUtils::ciEndsWith(stem, "walkright"))
-            return "walkright";
         return {};
     }
 
@@ -4566,10 +4539,11 @@ namespace MWRender
     bool isSyntheticFalloutLoopingGroup(std::string_view group)
     {
         return group == "idle" || group == "idle2" || group == "stand" || group == "weaponpose"
-            || group == "swimidle" || group == "kneel" || group == "prone" || group == "walk"
+            || group == "idleswim" || group == "swimidle" || group == "kneel" || group == "prone" || group == "walk"
             || group == "talk" || group == "flyforward"
             || group.starts_with("walk") || group.starts_with("run")
-            || group.starts_with("turn") || group.starts_with("sneak");
+            || group.starts_with("turn") || group.starts_with("sneak") || group.starts_with("swimwalk")
+            || group.starts_with("swimrun") || group.starts_with("swimturn");
     }
 
     std::shared_ptr<Animation::AnimSource> Animation::addSingleAnimSource(const std::string& kfname,
@@ -4676,6 +4650,19 @@ namespace MWRender
             animsrc->mKeyframes = keyframes;
             Log(Debug::Verbose) << "FNV/ESM4 diag: aliased selected creature KF " << kfname
                                 << " to semantic group '" << group << "'";
+        }
+        if (animsrc->mKeyframes && isFonvCreatureAnim
+            && falloutSemanticGroup == FonvCreatureHitReactionSemanticGroup)
+        {
+            osg::ref_ptr<SceneUtil::KeyframeHolder> keyframes
+                = new SceneUtil::KeyframeHolder(*animsrc->mKeyframes, osg::CopyOp::SHALLOW_COPY);
+            if (NifOsg::isolateFalloutCreatureHitReactionTextKeys(
+                    keyframes->mTextKeys, falloutSemanticGroup))
+            {
+                animsrc->mKeyframes = keyframes;
+                Log(Debug::Verbose) << "FNV/ESM4 diag: isolated selected creature hit KF " << kfname
+                                    << " from generic idle groups";
+            }
         }
         if (animsrc->mKeyframes && !animsrc->mKeyframes->mKeyframeControllers.empty() && isFonvActorAnim)
         {

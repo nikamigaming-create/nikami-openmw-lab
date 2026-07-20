@@ -83,6 +83,7 @@
 #include "../mwworld/esmstore.hpp"
 #include "../mwworld/timestamp.hpp"
 #include "falloutweaponanimation.hpp"
+#include "fonvpackageanimation.hpp"
 #include "npcanimation.hpp"
 #include "util.hpp"
 #include "vismask.hpp"
@@ -7995,22 +7996,6 @@ namespace MWRender
                 result.push_back(std::move(path));
         }
 
-        void addChairTransitionSources(std::vector<std::string>& result, const VFS::Manager& vfs)
-        {
-            static constexpr std::array<std::string_view, 8> paths{
-                "meshes/characters/_male/idleanims/chair_forwardenter.kf",
-                "meshes/characters/_male/idleanims/chair_forwardexit.kf",
-                "meshes/characters/_male/idleanims/chair_backenter.kf",
-                "meshes/characters/_male/idleanims/chair_backexit.kf",
-                "meshes/characters/_male/idleanims/chair_leftenter.kf",
-                "meshes/characters/_male/idleanims/chair_leftexit.kf",
-                "meshes/characters/_male/idleanims/chair_rightenter.kf",
-                "meshes/characters/_male/idleanims/chair_rightexit.kf",
-            };
-            for (std::string_view path : paths)
-                addProcedureSourceIfPresent(result, vfs, std::string(path));
-        }
-
         std::vector<std::string> collectFonvPackageProcedureAnimationSources(const MWWorld::Ptr& ptr,
             const MWWorld::ESMStore& store, Resource::ResourceSystem* resourceSystem, const ESM4::Npc& traits,
             const std::vector<ESM::FormId>& packageIds)
@@ -8062,54 +8047,9 @@ namespace MWRender
 
             const VFS::Manager* vfs = resourceSystem->getVFS();
             const std::string furnitureModel = getPackageReferenceFurnitureModel(store, *selected);
-            std::string lowerFurniture = furnitureModel;
-            Misc::StringUtils::lowerCaseInPlace(lowerFurniture);
-            const bool usesTableSeat = lowerFurniture.find("dinerbooth") != std::string::npos
-                || lowerFurniture.find("table") != std::string::npos;
-            const bool usesChairSeat = lowerFurniture.find("chair") != std::string::npos || usesTableSeat;
-            switch (selected->mData.type)
-            {
-                case 3: // Eat
-                    if (usesChairSeat)
-                        addChairTransitionSources(result, *vfs);
-                    if (usesTableSeat)
-                        addProcedureSourceIfPresent(
-                            result, *vfs, "meshes/characters/_male/idleanims/sittablechaireata.kf");
-                    else
-                        addProcedureSourceIfPresent(
-                            result, *vfs, "meshes/characters/_male/idleanims/sitchaireata.kf");
-                    if (usesChairSeat)
-                        addProcedureSourceIfPresent(
-                            result, *vfs, "meshes/characters/_male/idleanims/dynamicidle_chairsit.kf");
-                    else
-                        addProcedureSourceIfPresent(
-                            result, *vfs, "meshes/characters/_male/idleanims/dynamicidle_sit.kf");
-                    break;
-                case 4: // Sleep
-                    addProcedureSourceIfPresent(
-                        result, *vfs, "meshes/characters/_male/idleanims/dynamicidle_sleep.kf");
-                    break;
-                case 6: // Travel-to-ref, used by Pete's scheduled chair packages.
-                case 8: // Use item at / furniture.
-                    if (!furnitureModel.empty())
-                    {
-                        if (usesChairSeat)
-                            addChairTransitionSources(result, *vfs);
-                        addProcedureSourceIfPresent(
-                            result, *vfs, "meshes/characters/_male/idleanims/sitchairlistena.kf");
-                        addProcedureSourceIfPresent(
-                            result, *vfs, "meshes/characters/_male/idleanims/sitchairtalktoplayera.kf");
-                        if (usesChairSeat)
-                            addProcedureSourceIfPresent(
-                                result, *vfs, "meshes/characters/_male/idleanims/dynamicidle_chairsit.kf");
-                        else
-                            addProcedureSourceIfPresent(
-                                result, *vfs, "meshes/characters/_male/idleanims/dynamicidle_sit.kf");
-                    }
-                    break;
-                default:
-                    break;
-            }
+            for (std::string_view path
+                : getFonvPackageProcedureAnimationCandidates(selected->mData.type, furnitureModel))
+                addProcedureSourceIfPresent(result, *vfs, std::string(path));
 
             for (const std::string& path : result)
                 Log(Debug::Verbose) << "FNV/ESM4 diag: package procedure animation source " << path << " from "
