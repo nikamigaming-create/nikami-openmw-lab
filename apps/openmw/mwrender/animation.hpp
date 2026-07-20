@@ -17,6 +17,9 @@
 #include <components/sceneutil/util.hpp>
 #include <components/vfs/pathutil.hpp>
 
+#include <osg/Node>
+#include <osg/StateSet>
+
 #include <map>
 #include <span>
 #include <string>
@@ -255,6 +258,8 @@ namespace MWRender
 
         osg::ref_ptr<SceneUtil::LightSource> mGlowLight;
         osg::ref_ptr<SceneUtil::GlowUpdater> mGlowUpdater;
+        osg::ref_ptr<osg::Node> mFalloutVatsWireframeNode;
+        osg::ref_ptr<osg::StateSet> mFalloutVatsOriginalStateSet;
         osg::ref_ptr<TransparencyUpdater> mTransparencyUpdater;
         osg::ref_ptr<SceneUtil::LightSource> mExtraLightSource;
 
@@ -398,6 +403,9 @@ namespace MWRender
         // Add a spell casting glow to an object. From measuring video taken from the original engine,
         // the glow seems to be about 1.5 seconds except for telekinesis, which is 1 second.
         void addSpellCastGlow(const osg::Vec4f& color, float glowDuration = 1.5);
+
+        /// Apply the VATS diagnostic wireframe to an authored target node, restoring its prior state on disable.
+        void setFalloutVatsWireframe(std::string_view targetNode, bool enabled);
 
         virtual void updatePtr(const MWWorld::Ptr& ptr);
 

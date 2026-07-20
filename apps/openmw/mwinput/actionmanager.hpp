@@ -72,8 +72,10 @@ namespace MWInput
         unsigned int mFalloutVatsHitChance = 0;
         float mFalloutVatsCaptureTimer = 0.f;
         unsigned int mFalloutVatsCaptureFrames = 0;
+        unsigned int mFalloutVatsVideoCaptureCount = 0;
         bool mFalloutVatsCapturePrepared = false;
         bool mFalloutVatsCaptureQueued = false;
+        bool mFalloutVatsVideoExited = false;
     };
 }
 #endif

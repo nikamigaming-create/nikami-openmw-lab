@@ -75,4 +75,16 @@ namespace
         race.load(*reader);
         EXPECT_EQ(race.mBodyPartData, ESM::FormId::fromUint32(bodyPartData));
     }
+
+    TEST(Esm4RaceTest, DoesNotTreatAttackDataAsFalloutBodyPartDataLink)
+    {
+        constexpr std::uint32_t bodyPartData = 0x0002d1e0;
+        std::string payload;
+        appendSubRecord(payload, "GNAM", bodyPartData);
+        appendSubRecord(payload, "ATKD", std::uint32_t{ 0xdeadbeef });
+        auto reader = makeReader(payload);
+        ESM4::Race race;
+        race.load(*reader);
+        EXPECT_EQ(race.mBodyPartData, ESM::FormId::fromUint32(bodyPartData));
+    }
 }

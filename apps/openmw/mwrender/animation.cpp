@@ -23,8 +23,10 @@
 #include <osg/FrameStamp>
 #include <osg/Geode>
 #include <osg/LightModel>
+#include <osg/LineWidth>
 #include <osg/Material>
 #include <osg/MatrixTransform>
+#include <osg/PolygonMode>
 #include <osg/Switch>
 
 #include <osgParticle/ParticleProcessor>
@@ -7505,6 +7507,47 @@ namespace MWRender
             else if (mObjectRoot)
                 mGlowUpdater = SceneUtil::addEnchantedGlow(mObjectRoot, mResourceSystem, color, glowDuration);
         }
+    }
+
+    void Animation::setFalloutVatsWireframe(std::string_view targetNode, bool enabled)
+    {
+        if (mFalloutVatsWireframeNode)
+        {
+            mFalloutVatsWireframeNode->setStateSet(mFalloutVatsOriginalStateSet);
+            mFalloutVatsWireframeNode = nullptr;
+            mFalloutVatsOriginalStateSet = nullptr;
+        }
+        if (!enabled)
+            return;
+
+        osg::Node* node = const_cast<osg::Node*>(getNode(targetNode));
+        if (node == nullptr)
+            node = mObjectRoot.get();
+        if (node == nullptr)
+            return;
+
+        mFalloutVatsWireframeNode = node;
+        mFalloutVatsOriginalStateSet = node->getStateSet();
+        osg::ref_ptr<osg::StateSet> stateSet = mFalloutVatsOriginalStateSet
+            ? new osg::StateSet(*mFalloutVatsOriginalStateSet, osg::CopyOp::SHALLOW_COPY)
+            : new osg::StateSet;
+
+        osg::ref_ptr<osg::PolygonMode> wireframe = new osg::PolygonMode;
+        wireframe->setMode(osg::PolygonMode::FRONT_AND_BACK, osg::PolygonMode::LINE);
+        stateSet->setAttributeAndModes(
+            wireframe, osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE | osg::StateAttribute::PROTECTED);
+        stateSet->setAttributeAndModes(new osg::LineWidth(3.f),
+            osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE | osg::StateAttribute::PROTECTED);
+
+        osg::ref_ptr<osg::Material> material = new osg::Material;
+        const osg::Vec4f vatsGreen(0.05f, 1.f, 0.2f, 1.f);
+        material->setColorMode(osg::Material::OFF);
+        material->setAmbient(osg::Material::FRONT_AND_BACK, vatsGreen);
+        material->setDiffuse(osg::Material::FRONT_AND_BACK, vatsGreen);
+        material->setEmission(osg::Material::FRONT_AND_BACK, vatsGreen * 0.65f);
+        stateSet->setAttributeAndModes(
+            material, osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE | osg::StateAttribute::PROTECTED);
+        node->setStateSet(stateSet);
     }
 
     void Animation::addExtraLight(osg::ref_ptr<osg::Group> parent, const SceneUtil::LightCommon& esmLight)
