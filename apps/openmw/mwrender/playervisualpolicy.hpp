@@ -8,6 +8,12 @@
 
 namespace MWRender
 {
+    inline constexpr float getFalloutFlatPlayerVisualYawOffset()
+    {
+        // FO3/FNV NPC meshes already share the gameplay-forward basis. Only TES4 NPC rigs need a quarter-turn.
+        return 0.f;
+    }
+
     struct ESM4PlayerVisualEquipmentPolicy
     {
         std::string_view mOutfit;

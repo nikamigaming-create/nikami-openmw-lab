@@ -2371,10 +2371,12 @@ namespace MWRender
 
             mFalloutPlayerVisualBasis = new osg::MatrixTransform;
             mFalloutPlayerVisualBasis->setName("FNV Player Visual Basis Conversion");
+            const float playerVisualYawOffset = getFalloutFlatPlayerVisualYawOffset();
             mFalloutPlayerVisualBasis->setMatrix(
-                osg::Matrix::rotate(osg::PI_2, osg::Vec3f(0.f, 0.f, -1.f)));
+                osg::Matrix::rotate(playerVisualYawOffset, osg::Vec3f(0.f, 0.f, -1.f)));
             player.getRefData().getBaseNode()->addChild(mFalloutPlayerVisualBasis);
-            Log(Debug::Info) << "FNV player visual basis: angleDegrees=90 axis=(0,0,-1)"
+            Log(Debug::Info) << "FNV player visual basis: angleDegrees="
+                             << osg::RadiansToDegrees(playerVisualYawOffset) << " axis=(0,0,-1)"
                              << " parent=" << player.getRefData().getBaseNode()->getName();
 
             mFalloutPlayerVisualAnimation = new ESM4NpcAnimation(

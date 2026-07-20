@@ -4,6 +4,11 @@
 
 namespace MWRender
 {
+    TEST(MWRenderPlayerVisualPolicyTest, keepsFlatFalloutPlayerAlignedWithGameplayYaw)
+    {
+        EXPECT_FLOAT_EQ(getFalloutFlatPlayerVisualYawOffset(), 0.f);
+    }
+
     TEST(MWRenderPlayerVisualPolicyTest, normalSessionDoesNotInjectProofEquipment)
     {
         const ESM4PlayerVisualEquipmentPolicy policy
