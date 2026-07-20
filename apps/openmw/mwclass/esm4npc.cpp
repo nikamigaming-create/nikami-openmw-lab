@@ -391,6 +391,8 @@ namespace MWClass
             const ESM4::AIPackage* package = packageStore.search(packageId);
             if (package == nullptr)
                 continue;
+            if (!fnvNpcAiPackageProcedureSupported(package->mData.type))
+                continue;
             if (!fnvPackageConditionsPass(*package))
                 continue;
             if (fnvPackageCoversHour(*package, hour))
