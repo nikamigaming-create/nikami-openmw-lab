@@ -2,6 +2,8 @@
 
 #include <components/esm3/loadench.hpp>
 #include <components/esm3/loadmgef.hpp>
+#include <components/esm4/loadcrea.hpp>
+#include <components/esm4/loadnpc.hpp>
 
 #include "../mwbase/environment.hpp"
 #include "../mwbase/mechanicsmanager.hpp"
@@ -15,6 +17,7 @@
 
 #include "actorutil.hpp"
 #include "combat.hpp"
+#include "falloutcombat.hpp"
 #include "npcstats.hpp"
 #include "spellpriority.hpp"
 #include "spellutil.hpp"
@@ -506,6 +509,21 @@ namespace MWMechanics
         return true;
     }
 
+    static bool isFalloutNewVegasActor(const MWWorld::Ptr& actor)
+    {
+        if (actor.getType() == ESM4::Npc::sRecordId)
+        {
+            const MWWorld::LiveCellRef<ESM4::Npc>* ref = actor.get<ESM4::Npc>();
+            return ref != nullptr && ref->mBase != nullptr && ref->mBase->mIsFONV;
+        }
+        if (actor.getType() == ESM4::Creature::sRecordId)
+        {
+            const MWWorld::LiveCellRef<ESM4::Creature>* ref = actor.get<ESM4::Creature>();
+            return ref != nullptr && ref->mBase != nullptr && ref->mBase->mIsFONV;
+        }
+        return false;
+    }
+
     float vanillaRateFlee(const MWWorld::Ptr& actor, const MWWorld::Ptr& enemy)
     {
         const CreatureStats& stats = actor.getClass().getCreatureStats(actor);
@@ -541,6 +559,17 @@ namespace MWMechanics
 
     bool makeFleeDecision(const MWWorld::Ptr& actor, const MWWorld::Ptr& enemy, float antiFleeRating)
     {
+        if (isFalloutNewVegasActor(actor))
+        {
+            // ESM4 actor initialization maps Fallout confidence C to the legacy storage slot as Flee = 100 - C.
+            // Decode the authored category and do not let Morrowind's distance bias turn confidence 1..4 into flee.
+            const int mappedFlee
+                = actor.getClass().getCreatureStats(actor).getAiSetting(AiSetting::Flee).getBase();
+            if (mappedFlee < 96 || mappedFlee > 100)
+                return false;
+            return shouldFalloutActorFlee(static_cast<std::uint8_t>(100 - mappedFlee));
+        }
+
         float fleeRating = vanillaRateFlee(actor, enemy);
         if (fleeRating < 100.0f)
             fleeRating = 0.0f;

@@ -1163,7 +1163,15 @@ namespace MWDialogue
         }
 
         const MWWorld::ESMStore& store = *MWBase::Environment::get().getESMStore();
-        const ESM::Dialogue* dial = store.get<ESM::Dialogue>().find(topic);
+        // Fallout actors can enter native combat/flee states without defining Morrowind's ambient voice topics.
+        // A missing optional bark must be silent, not abort the AI package with an exception.
+        const ESM::Dialogue* dial = store.get<ESM::Dialogue>().search(topic);
+        if (dial == nullptr)
+        {
+            Log(Debug::Verbose) << "FNV/ESM4 dialogue: skipped unavailable voice topic \""
+                                << topic.toDebugString() << "\" for actor " << actor.toString();
+            return false;
+        }
 
         const MWMechanics::CreatureStats& creatureStats = actor.getClass().getCreatureStats(actor);
         Filter filter(actor, 0, creatureStats.hasTalkedToPlayer());

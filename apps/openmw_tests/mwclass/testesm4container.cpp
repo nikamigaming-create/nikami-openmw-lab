@@ -697,6 +697,121 @@ namespace
         EXPECT_EQ(MWClass::fnvCreatureWanderDestinationTolerance(256), 32u);
     }
 
+    TEST(FnvCreatureAiPolicyTest, NativePatrolRoutesLoopWithoutCompletingTheirPackage)
+    {
+        const MWClass::FnvCreatureRouteAdvance middle = MWClass::fnvAdvanceCreatureRoute(
+            4, 11, MWClass::FnvCreatureRouteEndBehavior::Loop);
+        EXPECT_EQ(middle.mPointIndex, 5u);
+        EXPECT_FALSE(middle.mHolding);
+
+        const MWClass::FnvCreatureRouteAdvance terminal = MWClass::fnvAdvanceCreatureRoute(
+            10, 11, MWClass::FnvCreatureRouteEndBehavior::Loop);
+        EXPECT_EQ(terminal.mPointIndex, 0u);
+        EXPECT_FALSE(terminal.mHolding);
+    }
+
+    TEST(FnvCreatureAiPolicyTest, EditorLocationRouteHoldsItsReturnAnchor)
+    {
+        const MWClass::FnvCreatureRouteAdvance terminal = MWClass::fnvAdvanceCreatureRoute(
+            0, 1, MWClass::FnvCreatureRouteEndBehavior::Hold);
+        EXPECT_EQ(terminal.mPointIndex, 0u);
+        EXPECT_TRUE(terminal.mHolding);
+
+        const MWClass::FnvCreatureRouteAdvance empty = MWClass::fnvAdvanceCreatureRoute(
+            0, 0, MWClass::FnvCreatureRouteEndBehavior::Hold);
+        EXPECT_EQ(empty.mPointIndex, 0u);
+        EXPECT_FALSE(empty.mHolding);
+    }
+
+    TEST_F(ESM4ContainerTest, PatrolSelectionFallsThroughUntilPlacedXlkrRouteIsRunnable)
+    {
+        constexpr std::uint32_t worldId = 0x01000db0;
+        constexpr std::uint32_t foreignWorldId = 0x01000db1;
+        constexpr std::uint32_t actorCellId = 0x01104c30;
+        constexpr std::uint32_t foreignCellId = 0x01104c31;
+        constexpr std::uint32_t patrolPackageId = 0x01104c32;
+        constexpr std::uint32_t sandboxPackageId = 0x01104c33;
+        constexpr std::uint32_t validMarkerId = 0x01104c34;
+        constexpr std::uint32_t cyclicMarkerId = 0x01104c35;
+        constexpr std::uint32_t foreignMarkerId = 0x01104c36;
+        constexpr std::uint32_t unresolvedActorId = 0x01104c37;
+        constexpr std::uint32_t validActorId = 0x01104c38;
+        constexpr std::uint32_t cyclicActorId = 0x01104c39;
+        constexpr std::uint32_t foreignActorId = 0x01104c3a;
+
+        ESM4::Cell actorCell{};
+        actorCell.mId = ESM::RefId(ESM::FormId::fromUint32(actorCellId));
+        actorCell.mParent = ESM::RefId(ESM::FormId::fromUint32(worldId));
+        mStore.overrideRecord(actorCell);
+
+        ESM4::Cell foreignCell{};
+        foreignCell.mId = ESM::RefId(ESM::FormId::fromUint32(foreignCellId));
+        foreignCell.mParent = ESM::RefId(ESM::FormId::fromUint32(foreignWorldId));
+        mStore.overrideRecord(foreignCell);
+
+        ESM4::AIPackage patrol{};
+        patrol.mId = ESM::FormId::fromUint32(patrolPackageId);
+        patrol.mEditorId = "SyntheticPatrol";
+        patrol.mData.type = 13;
+        patrol.mSchedule.time = 0xff;
+        mStore.overrideRecord(patrol);
+
+        ESM4::AIPackage sandbox{};
+        sandbox.mId = ESM::FormId::fromUint32(sandboxPackageId);
+        sandbox.mEditorId = "SyntheticSandbox";
+        sandbox.mData.type = 12;
+        sandbox.mSchedule.time = 0xff;
+        sandbox.mLocation.type = 3;
+        sandbox.mLocation.radius = 512;
+        mStore.overrideRecord(sandbox);
+
+        auto marker = [&](std::uint32_t id, const ESM::RefId& cell) {
+            ESM4::Reference reference{};
+            reference.mId = ESM::FormId::fromUint32(id);
+            reference.mParent = cell;
+            return reference;
+        };
+
+        mStore.overrideRecord(marker(validMarkerId, actorCell.mId));
+        ESM4::Reference cyclicMarker = marker(cyclicMarkerId, actorCell.mId);
+        cyclicMarker.mLinkedReference = cyclicMarker.mId;
+        mStore.overrideRecord(cyclicMarker);
+        mStore.overrideRecord(marker(foreignMarkerId, foreignCell.mId));
+
+        auto placedActor = [&](std::uint32_t id, std::uint32_t linkedMarker) {
+            ESM4::ActorCreature actor{};
+            actor.mId = ESM::FormId::fromUint32(id);
+            actor.mParent = actorCell.mId;
+            actor.mLinkedReference = ESM::FormId::fromUint32(linkedMarker);
+            return actor;
+        };
+
+        auto& actors = const_cast<MWWorld::Store<ESM4::ActorCreature>&>(mStore.get<ESM4::ActorCreature>());
+        actors.insertStatic(placedActor(unresolvedActorId, 0));
+        actors.insertStatic(placedActor(validActorId, validMarkerId));
+        actors.insertStatic(placedActor(cyclicActorId, cyclicMarkerId));
+        actors.insertStatic(placedActor(foreignActorId, foreignMarkerId));
+
+        const std::vector<ESM::FormId> packageIds{ patrol.mId, sandbox.mId };
+        const auto select = [&](std::uint32_t actorId) {
+            return MWClass::selectFnvCreaturePackage(mStore, packageIds, 12.f,
+                ESM::FormId::fromUint32(actorId), actorCell.mId);
+        };
+
+        const ESM4::AIPackage* unresolvedSelection = select(unresolvedActorId);
+        ASSERT_NE(unresolvedSelection, nullptr);
+        EXPECT_EQ(unresolvedSelection->mId, sandbox.mId);
+        const ESM4::AIPackage* cyclicSelection = select(cyclicActorId);
+        ASSERT_NE(cyclicSelection, nullptr);
+        EXPECT_EQ(cyclicSelection->mId, sandbox.mId);
+        const ESM4::AIPackage* foreignSelection = select(foreignActorId);
+        ASSERT_NE(foreignSelection, nullptr);
+        EXPECT_EQ(foreignSelection->mId, sandbox.mId);
+        const ESM4::AIPackage* validSelection = select(validActorId);
+        ASSERT_NE(validSelection, nullptr);
+        EXPECT_EQ(validSelection->mId, patrol.mId);
+    }
+
     TEST_F(ESM4ContainerTest, ResolvesExactBoundedVictorPatrolWithinOneWorldspace)
     {
         constexpr std::uint32_t worldId = 0x01000da7;

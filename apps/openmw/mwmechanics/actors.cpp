@@ -2243,6 +2243,9 @@ namespace MWMechanics
     std::vector<MWWorld::Ptr> Actors::getActorsSidingWith(const MWWorld::Ptr& actorPtr, bool excludeInfighting) const
     {
         std::vector<MWWorld::Ptr> list;
+        if (actorPtr.isEmpty())
+            return list;
+
         list.push_back(actorPtr);
         for (const Actor& actor : mActors)
         {

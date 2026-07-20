@@ -1,4 +1,6 @@
 #include <apps/openmw/mwmechanics/falloutcombat.hpp>
+#include <apps/openmw/mwmechanics/actors.hpp>
+#include <apps/openmw/mwworld/ptr.hpp>
 
 #include <components/esm4/loadproj.hpp>
 #include <components/esm4/loadweap.hpp>
@@ -20,6 +22,12 @@ namespace
     ESM4::ActorFaction membership(std::uint32_t value)
     {
         return ESM4::ActorFaction{ value, 0, 0, 0, 0 };
+    }
+
+    TEST(FalloutCombatTest, EmptyFollowTargetHasNoSidingActors)
+    {
+        const MWMechanics::Actors actors;
+        EXPECT_TRUE(actors.getActorsSidingWith(MWWorld::Ptr{}).empty());
     }
 
     TEST(FalloutCombatTest, AppliesCategoricalAggressionWithoutMorrowindFightBiases)
@@ -46,6 +54,15 @@ namespace
         EXPECT_FALSE(MWMechanics::shouldFalloutActorInitiateCombat(2, std::nullopt));
         EXPECT_TRUE(MWMechanics::shouldFalloutActorInitiateCombat(3, std::nullopt));
         EXPECT_FALSE(MWMechanics::shouldFalloutActorInitiateCombat(4, Reaction::Enemy));
+    }
+
+    TEST(FalloutCombatTest, AppliesCategoricalConfidenceWithoutMorrowindDistanceBias)
+    {
+        EXPECT_TRUE(MWMechanics::shouldFalloutActorFlee(0));
+        for (std::uint8_t confidence = 1; confidence <= 4; ++confidence)
+            EXPECT_FALSE(MWMechanics::shouldFalloutActorFlee(confidence));
+        EXPECT_FALSE(MWMechanics::shouldFalloutActorFlee(5));
+        EXPECT_FALSE(MWMechanics::shouldFalloutActorFlee(255));
     }
 
     TEST(FalloutCombatTest, KeepsExactGoodspringsSettlerAndEasyPeteAggressionOneNeutralToPlayerFaction)

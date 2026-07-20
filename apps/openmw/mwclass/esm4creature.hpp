@@ -29,6 +29,11 @@ namespace ESM
     struct CreatureState;
 }
 
+namespace ESM4
+{
+    struct AIPackage;
+}
+
 namespace MWWorld
 {
     class ESMStore;
@@ -43,8 +48,8 @@ namespace MWClass
     }
 
     // The Goodsprings CheyenneAccompany package and adult bighorner herd packages target an exact ACHR/ACRE.
-    // Calf packages instead use PTDT type 3 (linked reference), which ActorCharacter does not currently retain.
-    // Keep that form out of the supported set so package selection can continue to an authored fallback.
+    // Calf packages instead use PTDT type 3 (linked reference). That package-target form has runtime semantics
+    // distinct from the placed actor's XLKR link, so keep it unsupported and continue to an authored fallback.
     [[nodiscard]] constexpr bool fnvCreatureFollowTargetSupported(
         std::int32_t packageType, std::int32_t targetType, std::uint32_t target) noexcept
     {
@@ -112,10 +117,43 @@ namespace MWClass
         bool mIsPatrolIdleScriptMarker = false;
     };
 
+    enum class FnvCreatureRouteEndBehavior
+    {
+        Loop,
+        Hold,
+    };
+
+    struct FnvCreatureRouteAdvance
+    {
+        std::size_t mPointIndex = 0;
+        bool mHolding = false;
+    };
+
+    /// Advance a native Fallout route without completing and removing its AI package. Authored patrols loop back to
+    /// their first marker, while editor-location travel keeps the final point active as a return anchor.
+    [[nodiscard]] constexpr FnvCreatureRouteAdvance fnvAdvanceCreatureRoute(std::size_t pointIndex,
+        std::size_t pointCount, FnvCreatureRouteEndBehavior endBehavior) noexcept
+    {
+        if (pointCount == 0)
+            return {};
+        if (pointIndex < pointCount - 1)
+            return { pointIndex + 1, false };
+        if (endBehavior == FnvCreatureRouteEndBehavior::Loop)
+            return { 0, false };
+        return { pointCount - 1, true };
+    }
+
     /// Resolve a Fallout XLKR patrol chain, rejecting missing records, cycles, overlong chains, and transitions
     /// outside the first marker's worldspace (or interior cell).
     [[nodiscard]] std::optional<std::vector<FnvCreaturePatrolPoint>> collectFnvCreaturePatrolRoute(
         const MWWorld::ESMStore& store, ESM::FormId firstMarker, std::size_t maxPoints = 256);
+
+    /// Select the first runnable native package. A Patrol is runnable only when its explicit marker or the placed
+    /// actor's XLKR resolves to a complete route in the actor's current worldspace; otherwise selection continues to
+    /// the next authored package (normally Sandbox).
+    [[nodiscard]] const ESM4::AIPackage* selectFnvCreaturePackage(const MWWorld::ESMStore& store,
+        const std::vector<ESM::FormId>& packageIds, float hour, ESM::FormId placedActor,
+        const ESM::RefId& currentCell);
 
     class ESM4Creature final : public MWWorld::RegisteredClass<ESM4Creature, Actor>
     {

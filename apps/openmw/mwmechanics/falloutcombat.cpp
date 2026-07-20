@@ -75,6 +75,11 @@ namespace MWMechanics
         }
     }
 
+    bool shouldFalloutActorFlee(std::uint8_t confidence) noexcept
+    {
+        return confidence == 0;
+    }
+
     std::optional<ESM::FormId> selectAuthoredFalloutAmmo(std::span<const ESM::FormId> candidates,
         std::uint8_t rounds, const FalloutAmmoTypePredicate& isAmmo, const FalloutAmmoCount& countAmmo)
     {

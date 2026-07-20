@@ -61,6 +61,10 @@ namespace MWMechanics
     [[nodiscard]] bool shouldFalloutActorInitiateCombat(
         std::uint8_t aggression, std::optional<ESM4::Faction::GroupCombatReaction> reaction);
 
+    /// Apply Fallout's categorical confidence contract. Only confidence 0 flees automatically; confidence 1..4
+    /// remains in combat instead of inheriting Morrowind's continuous flee score and distance bias.
+    [[nodiscard]] bool shouldFalloutActorFlee(std::uint8_t confidence) noexcept;
+
     /// Select the first authored AMMO entry that has enough rounds. Candidate order is authoritative; this function
     /// never guesses a replacement or matches by editor-id/name.
     [[nodiscard]] std::optional<ESM::FormId> selectAuthoredFalloutAmmo(std::span<const ESM::FormId> candidates,
