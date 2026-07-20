@@ -47,6 +47,7 @@ file(GLOB UNITTEST_SRC_FILES
     mwclass/testfnvsandbox.cpp
 
     mwrender/testfalloutweaponanimation.cpp
+    mwrender/testfalloutlodselection.cpp
     mwrender/testfonvpackageanimation.cpp
     mwrender/testobjectpaging.cpp
     mwrender/testplayervisualpolicy.cpp
