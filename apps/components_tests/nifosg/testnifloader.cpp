@@ -1,12 +1,16 @@
 #include "../nif/node.hpp"
 
 #include <components/nif/node.hpp>
+#include <components/nif/niffile.hpp>
+#include <components/nif/controller.hpp>
 #include <components/nif/property.hpp>
 #include <components/nif/texture.hpp>
+#include <components/nifosg/controller.hpp>
 #include <components/nifosg/falloutkf.hpp>
 #include <components/nifosg/nifloader.hpp>
 #include <components/resource/bgsmfilemanager.hpp>
 #include <components/resource/imagemanager.hpp>
+#include <components/sceneutil/keyframe.hpp>
 #include <components/sceneutil/riggeometry.hpp>
 #include <components/sceneutil/serialize.hpp>
 #include <components/vfs/manager.hpp>
@@ -833,5 +837,50 @@ osg::Group {
             winningSource[group] = hitSource;
         EXPECT_EQ(winningSource.at("idle"), idleSource);
         EXPECT_EQ(winningSource.at("hit1"), hitSource);
+    }
+
+    TEST(NifOsgFalloutKfTest, shouldLoadBethesdaRotationalAccumulationTransform)
+    {
+        Nif::NiTransformInterpolator interpolator;
+        interpolator.recType = Nif::RC_BSRotAccumTransfInterpolator;
+        interpolator.mDefaultValue.mTranslation = osg::Vec3f(1.f, 2.f, 3.f);
+        interpolator.mDefaultValue.mRotation = osg::Quat();
+        interpolator.mDefaultValue.mScale = 1.f;
+        interpolator.mData = Nif::NiKeyframeDataPtr(nullptr);
+
+        Nif::NiControllerSequence sequence;
+        sequence.recType = Nif::RC_NiControllerSequence;
+        sequence.mName = "Forward";
+        sequence.mStartTime = 0.f;
+        sequence.mStopTime = 1.f;
+        sequence.mFrequency = 1.f;
+        sequence.mPhase = 0.f;
+        sequence.mTextKeys = Nif::ExtraPtr(nullptr);
+        sequence.mManager = Nif::NiControllerManagerPtr(nullptr);
+        sequence.mStringPalette = Nif::NiStringPalettePtr(nullptr);
+        Nif::ControlledBlock block;
+        block.mTargetName = "Bip01 Wheel";
+        block.mInterpolator = Nif::NiInterpolatorPtr(&interpolator);
+        block.mController = Nif::NiTimeControllerPtr(nullptr);
+        block.mBlendInterpolator = Nif::NiBlendInterpolatorPtr(nullptr);
+        block.mStringPalette = Nif::NiStringPalettePtr(nullptr);
+        sequence.mControlledBlocks.push_back(block);
+
+        Nif::NIFFile file(testNif);
+        file.mRoots.push_back(&sequence);
+        SceneUtil::KeyframeHolder keyframes;
+        Loader::loadKf(Nif::FileView(file), keyframes);
+
+        const auto found = keyframes.mKeyframeControllers.find("Bip01 Wheel");
+        ASSERT_NE(found, keyframes.mKeyframeControllers.end());
+        const auto* sequenceController = dynamic_cast<const NifOsg::KeyframeController*>(found->second.get());
+        ASSERT_NE(sequenceController, nullptr);
+        EXPECT_TRUE(sequenceController->hasTransformChannels());
+
+        Nif::NiKeyframeController nifController;
+        nifController.mInterpolator = Nif::NiInterpolatorPtr(&interpolator);
+        nifController.mData = Nif::NiKeyframeDataPtr(nullptr);
+        NifOsg::KeyframeController nodeController(&nifController);
+        EXPECT_TRUE(nodeController.hasTransformChannels());
     }
 }

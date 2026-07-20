@@ -86,6 +86,11 @@
 
 namespace
 {
+    bool isTransformInterpolatorRecordType(Nif::RecordType type)
+    {
+        return type == Nif::RC_NiTransformInterpolator || type == Nif::RC_BSRotAccumTransfInterpolator;
+    }
+
     struct DisableOptimizer : osg::NodeVisitor
     {
         DisableOptimizer(osg::NodeVisitor::TraversalMode mode = TRAVERSE_ALL_CHILDREN)
@@ -2118,7 +2123,7 @@ namespace NifOsg
                 if (key->mData.empty() && key->mInterpolator.empty())
                     continue;
 
-                if (!key->mInterpolator.empty() && key->mInterpolator->recType != Nif::RC_NiTransformInterpolator)
+                if (!key->mInterpolator.empty() && !isTransformInterpolatorRecordType(key->mInterpolator->recType))
                 {
                     Log(Debug::Error) << "Unsupported interpolator type for NiKeyframeController " << key->recIndex
                                       << " in " << mFilename;
@@ -2231,7 +2236,7 @@ namespace NifOsg
                                          << " target=\"" << targetName << "\" interpolator="
                                          << block.mInterpolator->recName << " recType="
                                          << block.mInterpolator->recType;
-                        if (block.mInterpolator->recType == Nif::RC_NiTransformInterpolator)
+                        if (isTransformInterpolatorRecordType(block.mInterpolator->recType))
                         {
                             const auto* transform
                                 = static_cast<const Nif::NiTransformInterpolator*>(block.mInterpolator.getPtr());
@@ -2307,7 +2312,7 @@ namespace NifOsg
 
                 osg::ref_ptr<SceneUtil::KeyframeController> callback;
                 osg::ref_ptr<NifOsg::KeyframeController> nifCallback;
-                if (block.mInterpolator->recType == Nif::RC_NiTransformInterpolator)
+                if (isTransformInterpolatorRecordType(block.mInterpolator->recType))
                 {
                     nifCallback = new NifOsg::KeyframeController(
                         static_cast<const Nif::NiTransformInterpolator*>(block.mInterpolator.getPtr()));
@@ -2748,7 +2753,7 @@ namespace NifOsg
                             continue;
                         }
 
-                        if (block.mInterpolator->recType == Nif::RC_NiTransformInterpolator)
+                        if (isTransformInterpolatorRecordType(block.mInterpolator->recType))
                         {
                             auto* transform = dynamic_cast<NifOsg::MatrixTransform*>(node);
                             if (!transform)
@@ -3359,7 +3364,7 @@ namespace NifOsg
                     const Nif::NiKeyframeController* key = static_cast<const Nif::NiKeyframeController*>(ctrl.getPtr());
                     if (key->mData.empty() && key->mInterpolator.empty())
                         continue;
-                    if (!key->mInterpolator.empty() && key->mInterpolator->recType != Nif::RC_NiTransformInterpolator)
+                    if (!key->mInterpolator.empty() && !isTransformInterpolatorRecordType(key->mInterpolator->recType))
                     {
                         Log(Debug::Error) << "Unsupported interpolator type for NiKeyframeController " << key->recIndex
                                           << " in " << mFilename << ": " << key->mInterpolator->recName;
