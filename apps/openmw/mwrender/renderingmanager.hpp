@@ -283,6 +283,8 @@ namespace MWRender
             mFalloutSaveWornVisualItems = std::move(items);
         }
         float getFieldOfView() const;
+        bool isFieldOfViewOverridden() const { return mFieldOfViewOverridden; }
+        bool isProjectionMatrixOverridden() const { return mProjectionMatrixOverridden; }
         /// reset a previous overrideFieldOfView() call, i.e. revert to field of view specified in the settings file.
         void resetFieldOfView();
 
