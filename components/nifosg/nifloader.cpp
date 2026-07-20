@@ -80,6 +80,7 @@
 #include <components/sceneutil/texturetype.hpp>
 
 #include "fog.hpp"
+#include "falloutkf.hpp"
 #include "matrixtransform.hpp"
 #include "particle.hpp"
 
@@ -1903,111 +1904,12 @@ namespace
         }
     }
 
-    void addLoopingTextKeys(SceneUtil::TextKeyMap& textkeys, float start, float stop, const std::string& group)
-    {
-        textkeys.emplace(start, group + ": start");
-        textkeys.emplace(start, group + ": loop start");
-        textkeys.emplace(stop, group + ": loop stop");
-        textkeys.emplace(stop, group + ": stop");
-    }
-
     void synthesizeFalloutTextKeys(const Nif::NiControllerSequence* sequence, SceneUtil::TextKeyMap& textkeys,
         const std::filesystem::path& filename)
     {
-        std::string stem = filename.stem().generic_string();
-        Misc::StringUtils::lowerCaseInPlace(stem);
-
-        std::vector<std::string> groups;
-        if (stem.find("flyaway") != std::string::npos)
-        {
-            groups.emplace_back("idle");
-            groups.emplace_back("idle2");
-            groups.emplace_back("flyforward");
-            groups.emplace_back("walkforward");
-        }
-        else if (stem.find("specialidle") != std::string::npos)
-        {
-            groups.emplace_back("idle2");
-            groups.emplace_back("idle");
-        }
-        else if (stem == "2hrcrouch")
-            groups.emplace_back("kneel");
-        else if (stem == "floorsleepdynamicidle")
-            groups.emplace_back("prone");
-        else if (stem == "talk_handsatside_moving")
-            groups.emplace_back("talk");
-        else if (stem == "wavehello")
-            groups.emplace_back("wave");
-        // Directional words on action clips describe the action variant, not locomotion. In particular,
-        // 2hrattackleft/right were being exposed as walkleft/right and, because later animation sources win,
-        // stealing the actor's authored locomotion source. The animation layer synthesizes the semantic attack,
-        // reload, equip, and unequip groups for these clips; do not also infer a looping movement group here.
-        else if (stem.find("attack") != std::string::npos || stem.find("reload") != std::string::npos
-            || stem.find("equip") != std::string::npos)
-            return;
-        else if (stem == "mtidle" || stem == "pamtidle" || stem == "talk_handsatside_still2"
-            || stem == "2hrloiter" || stem == "2hrloiteronehanded"
-            || stem == "3rdp_specialidle_1hmidlela" || stem == "3rdp_specialidle_1hmidlelb"
-            || stem == "dlcanch1hpistolpose" || Misc::StringUtils::ciEndsWith(stem, "idle"))
-            groups.emplace_back("idle");
-        else if (stem == "mtturnleft" || Misc::StringUtils::ciEndsWith(stem, "turnleft"))
-            groups.emplace_back("turnleft");
-        else if (stem == "mtturnright" || Misc::StringUtils::ciEndsWith(stem, "turnright"))
-            groups.emplace_back("turnright");
-        else if (stem == "mtforward")
-        {
-            groups.emplace_back("walkforward");
-            groups.emplace_back("runforward");
-        }
-        else if (stem == "mtbackward")
-        {
-            groups.emplace_back("walkback");
-            groups.emplace_back("runback");
-        }
-        else if (stem == "mtleft")
-        {
-            groups.emplace_back("walkleft");
-            groups.emplace_back("runleft");
-        }
-        else if (stem == "mtright")
-        {
-            groups.emplace_back("walkright");
-            groups.emplace_back("runright");
-        }
-        else if (Misc::StringUtils::ciEndsWith(stem, "fastforward"))
-            groups.emplace_back("runforward");
-        else if (Misc::StringUtils::ciEndsWith(stem, "fastbackward"))
-            groups.emplace_back("runback");
-        else if (Misc::StringUtils::ciEndsWith(stem, "fastleft"))
-            groups.emplace_back("runleft");
-        else if (Misc::StringUtils::ciEndsWith(stem, "fastright"))
-            groups.emplace_back("runright");
-        else if (Misc::StringUtils::ciEndsWith(stem, "forward"))
-            groups.emplace_back("walkforward");
-        else if (Misc::StringUtils::ciEndsWith(stem, "backward"))
-            groups.emplace_back("walkback");
-        else if (Misc::StringUtils::ciEndsWith(stem, "left"))
-            groups.emplace_back("walkleft");
-        else if (Misc::StringUtils::ciEndsWith(stem, "right"))
-            groups.emplace_back("walkright");
-        if (groups.empty())
-            return;
-
-        bool hasAllGroups = true;
-        for (const std::string& group : groups)
-            hasAllGroups = hasAllGroups && textkeys.hasGroupStart(group);
-        if (hasAllGroups)
-            return;
-
-        const float start = std::isfinite(sequence->mStartTime) ? sequence->mStartTime : 0.f;
-        float stop = std::isfinite(sequence->mStopTime) ? sequence->mStopTime : start;
-        if (stop <= start)
-            stop = start + 1.f;
-
-        for (const std::string& group : groups)
-            addLoopingTextKeys(textkeys, start, stop, group);
-
-        Log(Debug::Verbose) << "FNV/ESM4 diag: synthesized Fallout KF text key group(s) for " << filename;
+        if (NifOsg::synthesizeFalloutKfTextKeys(
+                filename.generic_string(), sequence->mStartTime, sequence->mStopTime, textkeys))
+            Log(Debug::Verbose) << "FNV/ESM4 diag: synthesized Fallout KF text key group(s) for " << filename;
     }
 
     void handleExtraData(const std::string& data, osg::Group* node)

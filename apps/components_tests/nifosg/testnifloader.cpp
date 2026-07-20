@@ -3,6 +3,7 @@
 #include <components/nif/node.hpp>
 #include <components/nif/property.hpp>
 #include <components/nif/texture.hpp>
+#include <components/nifosg/falloutkf.hpp>
 #include <components/nifosg/nifloader.hpp>
 #include <components/resource/bgsmfilemanager.hpp>
 #include <components/resource/imagemanager.hpp>
@@ -21,6 +22,7 @@
 
 #include <array>
 #include <limits>
+#include <map>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -729,4 +731,107 @@ osg::Group {
 
     INSTANTIATE_TEST_SUITE_P(
         Params, NifOsgLoaderBSLightingShaderPrefixTest, ValuesIn(NifOsgLoaderBSLightingShaderPrefixTest::sParams));
+
+    TEST(NifOsgFalloutKfTest, shouldKeepDogLandAndSwimGroupsDisjointUnderLastSourceWins)
+    {
+        // VFS recursive discovery is lexical, and Animation::play searches sources in reverse insertion order.
+        static constexpr std::array<std::string_view, 14> dogSources = {
+            "meshes/creatures/dog/h2hbackward.kf",
+            "meshes/creatures/dog/locomotion/h2hfastforward.kf",
+            "meshes/creatures/dog/locomotion/h2hforward.kf",
+            "meshes/creatures/dog/locomotion/mtfastforward.kf",
+            "meshes/creatures/dog/locomotion/mtforward.kf",
+            "meshes/creatures/dog/mtbackrward.kf",
+            "meshes/creatures/dog/mtidle.kf",
+            "meshes/creatures/dog/mtturnleft.kf",
+            "meshes/creatures/dog/mtturnright.kf",
+            "meshes/creatures/dog/swimfastforward.kf",
+            "meshes/creatures/dog/swimforward.kf",
+            "meshes/creatures/dog/swimidle.kf",
+            "meshes/creatures/dog/swimturnleft.kf",
+            "meshes/creatures/dog/swimturnright.kf",
+        };
+
+        std::map<std::string_view, std::string_view, std::less<>> winningSource;
+        for (std::string_view source : dogSources)
+        {
+            for (std::string_view group : getFalloutKfLoopGroups(source))
+                winningSource[group] = source;
+        }
+
+        EXPECT_EQ(winningSource.at("walkforward"), "meshes/creatures/dog/locomotion/mtforward.kf");
+        EXPECT_EQ(winningSource.at("runforward"), "meshes/creatures/dog/locomotion/mtfastforward.kf");
+        EXPECT_EQ(winningSource.at("walkback"), "meshes/creatures/dog/mtbackrward.kf");
+        EXPECT_EQ(winningSource.at("turnleft"), "meshes/creatures/dog/mtturnleft.kf");
+        EXPECT_EQ(winningSource.at("turnright"), "meshes/creatures/dog/mtturnright.kf");
+        EXPECT_EQ(winningSource.at("swimwalkforward"), "meshes/creatures/dog/swimforward.kf");
+        EXPECT_EQ(winningSource.at("swimrunforward"), "meshes/creatures/dog/swimfastforward.kf");
+        EXPECT_EQ(winningSource.at("idleswim"), "meshes/creatures/dog/swimidle.kf");
+        EXPECT_EQ(winningSource.at("swimturnleft"), "meshes/creatures/dog/swimturnleft.kf");
+        EXPECT_EQ(winningSource.at("swimturnright"), "meshes/creatures/dog/swimturnright.kf");
+    }
+
+    TEST(NifOsgFalloutKfTest, shouldUseCompleteRetailDogSequenceDurationsForLoops)
+    {
+        const auto findKeyTime = [](const SceneUtil::TextKeyMap& keys, std::string_view text) {
+            const auto found = std::find_if(keys.begin(), keys.end(),
+                [&](const auto& value) { return value.second == text; });
+            return found == keys.end() ? -1.f : found->first;
+        };
+
+        SceneUtil::TextKeyMap walk;
+        EXPECT_TRUE(synthesizeFalloutKfTextKeys(
+            "meshes/creatures/dog/locomotion/mtforward.kf", 0.f, 2.66666675f, walk));
+        EXPECT_TRUE(walk.hasGroupStart("walkforward"));
+        EXPECT_FALSE(walk.hasGroupStart("runforward"));
+        EXPECT_FLOAT_EQ(findKeyTime(walk, "walkforward: loop stop"), 2.66666675f);
+
+        SceneUtil::TextKeyMap run;
+        EXPECT_TRUE(synthesizeFalloutKfTextKeys(
+            "meshes/creatures/dog/locomotion/mtfastforward.kf", 0.f, 1.5f, run));
+        EXPECT_TRUE(run.hasGroupStart("runforward"));
+        EXPECT_FLOAT_EQ(findKeyTime(run, "runforward: loop stop"), 1.5f);
+
+        SceneUtil::TextKeyMap swim;
+        EXPECT_TRUE(synthesizeFalloutKfTextKeys(
+            "meshes/creatures/dog/swimforward.kf", 0.f, 2.f, swim));
+        EXPECT_TRUE(swim.hasGroupStart("swimwalkforward"));
+        EXPECT_FALSE(swim.hasGroupStart("walkforward"));
+        EXPECT_FLOAT_EQ(findKeyTime(swim, "swimwalkforward: loop stop"), 2.f);
+    }
+
+    TEST(NifOsgFalloutKfTest, shouldKeepSelectedDogHitReactionFromStealingIdle)
+    {
+        static constexpr std::string_view idleSource = "meshes/creatures/dog/mtidle.kf";
+        static constexpr std::string_view hitSource
+            = "meshes/creatures/dog/idleanims/mtspecialidle_hithead.kf";
+
+        std::map<std::string_view, std::string_view, std::less<>> winningSource;
+        for (std::string_view group : getFalloutKfLoopGroups(idleSource))
+            winningSource[group] = idleSource;
+
+        SceneUtil::TextKeyMap hitKeys;
+        hitKeys.emplace(0.f, "start");
+        hitKeys.emplace(0.167f, "enum: idle");
+        hitKeys.emplace(0.8f, "end");
+        EXPECT_TRUE(synthesizeFalloutKfTextKeys(hitSource, 0.f, 0.8f, hitKeys));
+        EXPECT_TRUE(hitKeys.hasGroupStart("idle"));
+        EXPECT_TRUE(hitKeys.hasGroupStart("idle2"));
+        hitKeys.emplace(0.f, "hit1: start");
+        hitKeys.emplace(0.8f, "hit1: stop");
+
+        EXPECT_TRUE(isolateFalloutCreatureHitReactionTextKeys(hitKeys, "hit1"));
+        EXPECT_TRUE(hitKeys.hasGroupStart("hit1"));
+        EXPECT_FALSE(hitKeys.hasGroupStart("idle"));
+        EXPECT_FALSE(hitKeys.hasGroupStart("idle2"));
+        EXPECT_NE(std::find_if(hitKeys.begin(), hitKeys.end(),
+                      [](const auto& value) { return value.second == "enum: idle"; }),
+            hitKeys.end());
+
+        // The selected hit source is added last. Only its explicit hit alias may win reverse lookup.
+        for (const std::string& group : hitKeys.getGroups())
+            winningSource[group] = hitSource;
+        EXPECT_EQ(winningSource.at("idle"), idleSource);
+        EXPECT_EQ(winningSource.at("hit1"), hitSource);
+    }
 }
