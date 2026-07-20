@@ -167,6 +167,12 @@ namespace MWBase
         ///< Perform a persuasion action on NPC
 
         virtual void forceStateUpdate(const MWWorld::Ptr& ptr) = 0;
+
+        virtual bool executeFalloutVatsRangedHit(const MWWorld::Ptr&, const MWWorld::Ptr&,
+            const osg::Vec3f&, float)
+        {
+            return false;
+        }
         ///< Forces an object to refresh its animation state.
 
         virtual bool playAnimationGroup(

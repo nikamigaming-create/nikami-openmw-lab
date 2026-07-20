@@ -137,6 +137,8 @@ namespace MWMechanics
         bool sleepInBed(const MWWorld::Ptr& ptr, const MWWorld::Ptr& bed) override;
 
         void forceStateUpdate(const MWWorld::Ptr& ptr) override;
+        bool executeFalloutVatsRangedHit(const MWWorld::Ptr& actor, const MWWorld::Ptr& target,
+            const osg::Vec3f& targetPoint, float damageMultiplier) override;
 
         /// Attempt to play an animation group
         /// @return Success or error

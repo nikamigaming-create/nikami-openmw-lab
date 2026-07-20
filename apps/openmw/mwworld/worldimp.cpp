@@ -1798,6 +1798,21 @@ namespace MWWorld
         return osg::Matrixf::translate(actor.getRefData().getPosition().asVec3());
     }
 
+    std::optional<osg::Matrixf> World::getActorNodeTransform(
+        const MWWorld::ConstPtr& actor, std::string_view nodeName) const
+    {
+        const MWRender::Animation* animation = mRendering->getAnimation(actor);
+        if (animation == nullptr)
+            return std::nullopt;
+        const osg::Node* node = animation->getNode(nodeName);
+        if (node == nullptr)
+            return std::nullopt;
+        const osg::NodePathList paths = node->getParentalNodePaths();
+        if (paths.empty())
+            return std::nullopt;
+        return osg::computeLocalToWorld(paths.front());
+    }
+
     void World::deleteObject(const Ptr& ptr)
     {
         if (!ptr.mRef->isDeleted() && ptr.getContainerStore() == nullptr)

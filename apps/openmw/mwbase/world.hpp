@@ -4,6 +4,7 @@
 #include "rotationflags.hpp"
 
 #include <deque>
+#include <optional>
 #include <set>
 #include <span>
 #include <string_view>
@@ -396,6 +397,11 @@ namespace MWBase
         virtual bool isOnGround(const MWWorld::Ptr& ptr) const = 0;
 
         virtual osg::Matrixf getActorHeadTransform(const MWWorld::ConstPtr& actor) const = 0;
+        virtual std::optional<osg::Matrixf> getActorNodeTransform(
+            const MWWorld::ConstPtr&, std::string_view) const
+        {
+            return std::nullopt;
+        }
 
         virtual MWRender::Camera* getCamera() = 0;
         virtual void togglePOV(bool force = false) = 0;

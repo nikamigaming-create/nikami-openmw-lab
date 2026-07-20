@@ -482,6 +482,8 @@ namespace MWWorld
         bool isOnGround(const MWWorld::Ptr& ptr) const override;
 
         osg::Matrixf getActorHeadTransform(const MWWorld::ConstPtr& actor) const override;
+        std::optional<osg::Matrixf> getActorNodeTransform(
+            const MWWorld::ConstPtr& actor, std::string_view nodeName) const override;
 
         void togglePOV(bool force = false) override;
 

@@ -3,6 +3,7 @@
 
 #include <cstdint>
 #include <deque>
+#include <optional>
 
 #include <components/esm3/loadweap.hpp>
 
@@ -230,7 +231,8 @@ namespace MWMechanics
         bool updateWeaponState(float duration);
         bool updateFalloutWeaponState(int requestedWeaponType, bool weaponChanged,
             const ESM4::Weapon* requestedWeapon, const MWRender::AnimPriority& priorityWeapon, float duration);
-        bool fireFalloutWeapon();
+        bool fireFalloutWeapon(const MWWorld::Ptr& vatsTarget = MWWorld::Ptr(),
+            const std::optional<osg::Vec3f>& vatsAimPoint = std::nullopt, float vatsDamageMultiplier = 1.f);
         bool strikeFalloutMelee(std::uint8_t animationType);
         void updateIdleStormState(bool inwater) const;
 
@@ -349,6 +351,11 @@ namespace MWMechanics
 
         bool readyToPrepareAttack() const;
         bool readyToStartAttack() const;
+
+        /// Execute an already queued and resolved VATS ranged hit through the ordinary Fallout weapon path. The
+        /// caller owns chance resolution and supplies the selected body-part target point and damage multiplier.
+        bool executeFalloutVatsRangedHit(
+            const MWWorld::Ptr& target, const osg::Vec3f& targetPoint, float damageMultiplier);
 
         float calculateWindUp() const;
 

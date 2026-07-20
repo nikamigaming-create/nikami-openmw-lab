@@ -830,6 +830,13 @@ namespace MWMechanics
             mActors.forceStateUpdate(ptr);
     }
 
+    bool MechanicsManager::executeFalloutVatsRangedHit(const MWWorld::Ptr& actor, const MWWorld::Ptr& target,
+        const osg::Vec3f& targetPoint, float damageMultiplier)
+    {
+        return actor.getClass().isActor() && target.getClass().isActor()
+            && mActors.executeFalloutVatsRangedHit(actor, target, targetPoint, damageMultiplier);
+    }
+
     bool MechanicsManager::playAnimationGroup(
         const MWWorld::Ptr& ptr, std::string_view groupName, int mode, uint32_t number, bool scripted)
     {

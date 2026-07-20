@@ -2110,7 +2110,8 @@ namespace MWMechanics
         return forceStateUpdate;
     }
 
-    bool CharacterController::fireFalloutWeapon()
+    bool CharacterController::fireFalloutWeapon(const MWWorld::Ptr& vatsTarget,
+        const std::optional<osg::Vec3f>& vatsAimPoint, float vatsDamageMultiplier)
     {
         const auto fail = [&](std::string_view reason) {
             Log(Debug::Error) << "FNV combat shot rejected: actor=" << mPtr.toString()
@@ -2192,11 +2193,15 @@ namespace MWMechanics
 
         const osg::Vec3f origin = world->getActorHeadTransform(mPtr).getTrans();
         std::vector<MWWorld::Ptr> targetActors;
-        if (mPtr != getPlayer())
+        if (!vatsTarget.isEmpty())
+            targetActors.push_back(vatsTarget);
+        else if (mPtr != getPlayer())
             mPtr.getClass().getCreatureStats(mPtr).getAiSequence().getCombatTargets(targetActors);
 
         osg::Vec3f direction;
-        if (mPtr == getPlayer() && world->getCamera() != nullptr)
+        if (vatsAimPoint)
+            direction = *vatsAimPoint - origin;
+        else if (mPtr == getPlayer() && world->getCamera() != nullptr)
             direction = world->getCamera()->getOrient() * osg::Vec3f(0.f, 1.f, 0.f);
         else if (!targetActors.empty())
             direction = world->getActorHeadTransform(targetActors.front()).getTrans() - origin;
@@ -2223,7 +2228,7 @@ namespace MWMechanics
             const float angle = 2.f * osg::PI * Misc::Rng::rollProbability(prng);
             const osg::Vec2f diskSample(radius * std::cos(angle), radius * std::sin(angle));
             const std::optional<osg::Vec3f> rayDirection
-                = buildFalloutRayDirection(direction, contract->mSpread, diskSample);
+                = buildFalloutRayDirection(direction, vatsAimPoint ? 0.f : contract->mSpread, diskSample);
             if (!rayDirection)
                 return fail("invalid-ray-direction");
             rayDirections.push_back(*rayDirection);
@@ -2276,6 +2281,8 @@ namespace MWMechanics
 
         for (ActorImpact& impact : actorImpacts)
         {
+            if (!vatsTarget.isEmpty() && impact.mActor == vatsTarget)
+                impact.mDamage *= vatsDamageMultiplier;
             impact.mActor.getClass().onHit(impact.mActor, { { "health", impact.mDamage } },
                 ESM::RefId::formIdRefId(mFalloutWeapon->mId), mPtr, true, DamageSourceType::Ranged);
         }
@@ -2292,8 +2299,19 @@ namespace MWMechanics
                          << " authoredHitscan=" << contract->mAuthoredHitscan
                          << " immediateRayFallback=" << !contract->mAuthoredHitscan << " rayHits=" << rayHits
                          << " actorRayHits=" << actorRayHits << " actorsHit=" << actorImpacts.size()
+                         << " vatsTarget=" << (vatsTarget.isEmpty() ? std::string("none") : vatsTarget.toString())
+                         << " vatsDamageMultiplier=" << vatsDamageMultiplier
                          << " exact=1 status=pass";
         return true;
+    }
+
+    bool CharacterController::executeFalloutVatsRangedHit(
+        const MWWorld::Ptr& target, const osg::Vec3f& targetPoint, float damageMultiplier)
+    {
+        if (target.isEmpty() || !target.getClass().isActor() || !std::isfinite(damageMultiplier)
+            || damageMultiplier <= 0.f)
+            return false;
+        return fireFalloutWeapon(target, targetPoint, damageMultiplier);
     }
 
     bool CharacterController::strikeFalloutMelee(std::uint8_t animationType)
