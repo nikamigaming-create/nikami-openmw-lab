@@ -176,6 +176,7 @@ namespace MWRender
 
         void setFalloutImageSpace(const osg::Vec4f& hdr, const osg::Vec4f& cinematic,
             const osg::Vec4f& tint, const osg::Vec4f& fade);
+        void clearFalloutImageSpace();
 
         void toggleMode();
 

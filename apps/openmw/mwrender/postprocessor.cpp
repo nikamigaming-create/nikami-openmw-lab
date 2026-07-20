@@ -322,6 +322,28 @@ namespace MWRender
         setUniform(mFalloutImageSpaceTechnique, "uFalloutFade", fade);
     }
 
+    void PostProcessor::clearFalloutImageSpace()
+    {
+        // Do not create or enable the internal technique merely to clear state.
+        if (!mFalloutImageSpaceTechnique)
+            return;
+
+        // This reset must also take effect while post-processing is temporarily
+        // disabled, otherwise re-enabling it can resurrect the last exterior
+        // grade. The generic setUniform helper intentionally ignores updates
+        // while disabled, so write these identity values directly.
+        const auto setIdentityUniform = [&](const std::string& name, const osg::Vec4f& value) {
+            const auto it = mFalloutImageSpaceTechnique->findUniform(name);
+            if (it != mFalloutImageSpaceTechnique->getUniformMap().end() && !(*it)->mStatic)
+                (*it)->setValue(value);
+        };
+
+        setIdentityUniform("uFalloutHdr", osg::Vec4f(1.f, 0.f, 1.f, 0.f));
+        setIdentityUniform("uFalloutCinematic", osg::Vec4f(1.f, 0.f, 1.f, 1.f));
+        setIdentityUniform("uFalloutTint", osg::Vec4f(1.f, 1.f, 1.f, 0.f));
+        setIdentityUniform("uFalloutFade", osg::Vec4f(0.f, 0.f, 0.f, 0.f));
+    }
+
     void PostProcessor::traverse(osg::NodeVisitor& nv)
     {
         size_t frameId = nv.getTraversalNumber() % 2;

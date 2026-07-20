@@ -1312,6 +1312,7 @@ namespace MWWorld
             mWindSpeed = 0.f;
             mCurrentWindSpeed = 0.f;
             mNextWindSpeed = 0.f;
+            mRendering.getPostProcessor()->clearFalloutImageSpace();
             return;
         }
 
@@ -1339,9 +1340,12 @@ namespace MWWorld
 
         // This shader and its modifier-channel mapping are retail-derived from Fallout 3/New Vegas.
         // Other Creation Engine games retain their parsed image-space records for their own adapters.
-        if (const ESM4::ImageSpace* base = usesFallout3Weather(mStore.getESM4Game())
-                ? mStore.get<ESM4::ImageSpace>().search(imageSpaceId)
-                : nullptr)
+        const ESM4::ImageSpace* base = usesFallout3Weather(mStore.getESM4Game())
+            ? mStore.get<ESM4::ImageSpace>().search(imageSpaceId)
+            : nullptr;
+        if (base == nullptr)
+            mRendering.getPostProcessor()->clearFalloutImageSpace();
+        else
         {
             std::vector<ESM4::ImageSpaceModifierContribution> modifiers;
             const FalloutWeatherTimeBlend timeBlend = getFalloutWeatherTimeBlend(
