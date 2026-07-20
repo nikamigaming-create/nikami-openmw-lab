@@ -6,6 +6,7 @@
 #include <optional>
 #include <span>
 #include <string_view>
+#include <vector>
 
 #include <osg/Vec2f>
 #include <osg/Vec3f>
@@ -114,6 +115,44 @@ namespace MWMechanics
         std::uint8_t mBaseHitChance = 0;
         float mDamageMultiplier = 1.f;
         bool mAbsoluteHitChance = false;
+    };
+
+    enum class FalloutVatsPhase
+    {
+        Inactive,
+        Targeting,
+        Executing,
+    };
+
+    /// Owns one VATS targeting/queue/execution transaction. World lookup, UI, camera and input remain adapters;
+    /// this object keeps the selected authored target data, AP reservation and execution cursor deterministic.
+    class FalloutVatsRuntime
+    {
+        FalloutVatsPhase mPhase = FalloutVatsPhase::Inactive;
+        float mActionPointsBefore = 0.f;
+        ESM::FormId mSelectedTarget;
+        std::uint8_t mSelectedBodyPart = 0;
+        unsigned int mDisplayedHitChance = 0;
+        float mSelectedDamageMultiplier = 1.f;
+        std::vector<FalloutVatsQueuedAction> mQueue;
+        std::size_t mExecutionIndex = 0;
+
+    public:
+        [[nodiscard]] bool enter(float currentActionPoints) noexcept;
+        void cancel() noexcept;
+        [[nodiscard]] bool select(ESM::FormId target, const FalloutVatsBodyPartContract& bodyPart,
+            unsigned int displayedHitChance) noexcept;
+        [[nodiscard]] bool queueSelected(
+            const FalloutVatsWeaponContract& weapon, FalloutVatsQueueFailure& failure);
+        [[nodiscard]] std::optional<float> beginExecution() noexcept;
+        [[nodiscard]] const FalloutVatsQueuedAction* getExecutingAction() const noexcept;
+        [[nodiscard]] bool advanceExecution() noexcept;
+
+        [[nodiscard]] FalloutVatsPhase getPhase() const noexcept { return mPhase; }
+        [[nodiscard]] float getActionPointsBefore() const noexcept { return mActionPointsBefore; }
+        [[nodiscard]] float getReservedActionPoints() const noexcept;
+        [[nodiscard]] float getActionPointsAfter() const noexcept;
+        [[nodiscard]] std::span<const FalloutVatsQueuedAction> getQueue() const noexcept { return mQueue; }
     };
 
     struct FalloutFireCadence

@@ -353,6 +353,36 @@ namespace
         EXPECT_TRUE(contract->mAbsoluteHitChance);
     }
 
+    TEST(FalloutCombatTest, RunsVatsQueueAsOneActionPointTransaction)
+    {
+        MWMechanics::FalloutVatsRuntime runtime;
+        ASSERT_TRUE(runtime.enter(80.f));
+        const MWMechanics::FalloutVatsBodyPartContract head{ 1, "Head", "Bip01 Head", 48, 35, 2.f, false };
+        ASSERT_TRUE(runtime.select(id(0x1234), head, 73));
+
+        const MWMechanics::FalloutVatsWeaponContract weapon{ 22.f, 42, 0.75f, 32 };
+        MWMechanics::FalloutVatsQueueFailure failure;
+        ASSERT_TRUE(runtime.queueSelected(weapon, failure));
+        ASSERT_TRUE(runtime.queueSelected(weapon, failure));
+        EXPECT_EQ(runtime.getPhase(), MWMechanics::FalloutVatsPhase::Targeting);
+        EXPECT_FLOAT_EQ(runtime.getReservedActionPoints(), 44.f);
+
+        const std::optional<float> actionPointsAfter = runtime.beginExecution();
+        ASSERT_TRUE(actionPointsAfter);
+        EXPECT_FLOAT_EQ(*actionPointsAfter, 36.f);
+        ASSERT_NE(runtime.getExecutingAction(), nullptr);
+        EXPECT_EQ(runtime.getExecutingAction()->mTarget, id(0x1234));
+        EXPECT_EQ(runtime.getExecutingAction()->mBodyPart, 1);
+        EXPECT_EQ(runtime.getExecutingAction()->mDisplayedHitChance, 73);
+        EXPECT_FLOAT_EQ(runtime.getExecutingAction()->mDamageMultiplier, 1.5f);
+
+        EXPECT_TRUE(runtime.advanceExecution());
+        ASSERT_NE(runtime.getExecutingAction(), nullptr);
+        EXPECT_TRUE(runtime.advanceExecution());
+        EXPECT_EQ(runtime.getPhase(), MWMechanics::FalloutVatsPhase::Inactive);
+        EXPECT_TRUE(runtime.getQueue().empty());
+    }
+
     TEST(FalloutCombatTest, PreservesGenericShotgunRaysAndTotalAuthoredDamage)
     {
         ESM4::Weapon weapon;

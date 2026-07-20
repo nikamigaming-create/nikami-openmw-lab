@@ -250,6 +250,95 @@ namespace MWMechanics
             (bodyPart.mData.flags & 0x40) != 0 };
     }
 
+    bool FalloutVatsRuntime::enter(float currentActionPoints) noexcept
+    {
+        cancel();
+        if (!std::isfinite(currentActionPoints) || currentActionPoints < 0.f)
+            return false;
+        mActionPointsBefore = currentActionPoints;
+        mPhase = FalloutVatsPhase::Targeting;
+        return true;
+    }
+
+    void FalloutVatsRuntime::cancel() noexcept
+    {
+        mPhase = FalloutVatsPhase::Inactive;
+        mActionPointsBefore = 0.f;
+        mSelectedTarget = {};
+        mSelectedBodyPart = 0;
+        mDisplayedHitChance = 0;
+        mSelectedDamageMultiplier = 1.f;
+        mQueue.clear();
+        mExecutionIndex = 0;
+    }
+
+    bool FalloutVatsRuntime::select(ESM::FormId target, const FalloutVatsBodyPartContract& bodyPart,
+        unsigned int displayedHitChance) noexcept
+    {
+        if (mPhase != FalloutVatsPhase::Targeting || target.isZeroOrUnset() || displayedHitChance > 100)
+            return false;
+        mSelectedTarget = target;
+        mSelectedBodyPart = bodyPart.mIndex;
+        mDisplayedHitChance = displayedHitChance;
+        mSelectedDamageMultiplier = bodyPart.mDamageMultiplier;
+        return true;
+    }
+
+    bool FalloutVatsRuntime::queueSelected(
+        const FalloutVatsWeaponContract& weapon, FalloutVatsQueueFailure& failure)
+    {
+        if (mPhase != FalloutVatsPhase::Targeting)
+        {
+            failure = FalloutVatsQueueFailure::MissingTarget;
+            return false;
+        }
+        const std::optional<FalloutVatsQueuedAction> action = queueFalloutVatsAction(mQueue, mSelectedTarget,
+            mSelectedBodyPart, mDisplayedHitChance, mSelectedDamageMultiplier, mActionPointsBefore, weapon, failure);
+        if (!action)
+            return false;
+        mQueue.push_back(*action);
+        return true;
+    }
+
+    std::optional<float> FalloutVatsRuntime::beginExecution() noexcept
+    {
+        if (mPhase != FalloutVatsPhase::Targeting || mQueue.empty())
+            return std::nullopt;
+        const float after = getActionPointsAfter();
+        if (!std::isfinite(after) || after < 0.f)
+            return std::nullopt;
+        mPhase = FalloutVatsPhase::Executing;
+        mExecutionIndex = 0;
+        return after;
+    }
+
+    const FalloutVatsQueuedAction* FalloutVatsRuntime::getExecutingAction() const noexcept
+    {
+        if (mPhase != FalloutVatsPhase::Executing || mExecutionIndex >= mQueue.size())
+            return nullptr;
+        return &mQueue[mExecutionIndex];
+    }
+
+    bool FalloutVatsRuntime::advanceExecution() noexcept
+    {
+        if (getExecutingAction() == nullptr)
+            return false;
+        ++mExecutionIndex;
+        if (mExecutionIndex == mQueue.size())
+            cancel();
+        return true;
+    }
+
+    float FalloutVatsRuntime::getReservedActionPoints() const noexcept
+    {
+        return MWMechanics::getFalloutVatsReservedActionPoints(mQueue);
+    }
+
+    float FalloutVatsRuntime::getActionPointsAfter() const noexcept
+    {
+        return mActionPointsBefore - getReservedActionPoints();
+    }
+
     bool advanceFalloutTrigger(FalloutTriggerState& state, bool triggerDown, bool ready,
         const FalloutFireCadence& cadence, float duration) noexcept
     {
