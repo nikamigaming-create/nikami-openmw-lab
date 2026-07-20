@@ -35,6 +35,7 @@ file(GLOB UNITTEST_SRC_FILES
     mwdialogue/testesm4resultscript.cpp
 
     mwgui/tooltips.cpp
+    mwgui/testinventoryitemtype.cpp
 
     mwclass/testesm4container.cpp
     mwclass/testesm4talkingactivator.cpp
