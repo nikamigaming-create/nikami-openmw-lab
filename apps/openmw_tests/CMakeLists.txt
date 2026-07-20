@@ -48,10 +48,12 @@ file(GLOB UNITTEST_SRC_FILES
     mwrender/testplayervisualpolicy.cpp
 
     mwmechanics/testfalloutcombat.cpp
+    mwmechanics/testfalloutweaponsound.cpp
     mwmechanics/testdialoguefacing.cpp
     mwmechanics/testownership.cpp
 
     mwsound/testsaysequence.cpp
+    mwsound/testfalloutsoundpath.cpp
 
     mwscript/testscripts.cpp
 )

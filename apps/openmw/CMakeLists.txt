@@ -74,7 +74,7 @@ add_openmw_dir (mwlua
     )
 
 add_openmw_dir (mwsound
-    soundmanagerimp openaloutput ffmpegdecoder sound soundbuffer sounddecoder soundoutput
+    soundmanagerimp openaloutput ffmpegdecoder sound soundbuffer falloutsoundpath sounddecoder soundoutput
     loudness movieaudiofactory alext efx efxpresets regionsoundselector saysequence watersoundupdater
     )
 
@@ -109,7 +109,7 @@ add_openmw_dir (mwmechanics
     drawstate spells activespells npcstats aipackage aisequence aipursue alchemy aiwander aitravel aifollow aiavoiddoor aibreathe
     aicast aiescort aiface aiactivate aicombat recharge repair enchanting pathfinding pathgrid security spellcasting spellresistance
     disease pickpocket levelledlist combat steering obstacle autocalcspell difficultyscaling aicombataction summoning
-    character dialoguefacing falloutcombat actors objects aistate weaponpriority spellpriority weapontype spellutil
+    character dialoguefacing falloutcombat falloutweaponsound actors objects aistate weaponpriority spellpriority weapontype spellutil
     spelleffects
     )
 

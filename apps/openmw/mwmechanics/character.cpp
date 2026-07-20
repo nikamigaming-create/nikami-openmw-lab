@@ -33,6 +33,8 @@
 #include <components/esm4/loadcrea.hpp>
 #include <components/esm4/loadflst.hpp>
 #include <components/esm4/loadproj.hpp>
+#include <components/esm4/loadsndr.hpp>
+#include <components/esm4/loadsoun.hpp>
 #include <components/esm4/loadweap.hpp>
 #include <components/debug/debuglog.hpp>
 #include <components/misc/mathutil.hpp>
@@ -79,6 +81,7 @@
 #include "creaturestats.hpp"
 #include "damagesourcetype.hpp"
 #include "falloutcombat.hpp"
+#include "falloutweaponsound.hpp"
 #include "movement.hpp"
 #include "npcstats.hpp"
 #include "security.hpp"
@@ -543,6 +546,32 @@ namespace
 
 namespace MWMechanics
 {
+    namespace
+    {
+        void playAuthoredFalloutWeaponSound(
+            const MWWorld::Ptr& actor, const ESM4::Weapon* weapon, FalloutWeaponSoundEvent event)
+        {
+            if (weapon == nullptr)
+                return;
+
+            const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
+            MWBase::SoundManager* soundManager = MWBase::Environment::get().getSoundManager();
+            if (store == nullptr || soundManager == nullptr)
+                return;
+
+            const std::optional<ESM::FormId> authoredSound
+                = selectAuthoredFalloutWeaponSound(*weapon, event, actor == getPlayer(), false);
+            if (!authoredSound)
+                return;
+
+            const ESM::RefId soundId = ESM::RefId::formIdRefId(*authoredSound);
+            if (store->get<ESM4::Sound>().search(soundId) == nullptr
+                && store->get<ESM4::SoundReference>().search(soundId) == nullptr)
+                return;
+
+            soundManager->playSound3D(actor, soundId, 1.f, 1.f);
+        }
+    }
 
     std::string CharacterController::chooseRandomGroup(const std::string& prefix, int* num) const
     {
@@ -1990,6 +2019,7 @@ namespace MWMechanics
             && shouldTransitionFalloutWeaponState(requestedWeaponType, mWeaponType, weaponChanged))
         {
             setAttackingOrSpell(false);
+            playAuthoredFalloutWeaponSound(mPtr, mFalloutWeapon, FalloutWeaponSoundEvent::Unequip);
             if (playFalloutWeaponAction(mWeaponType, MWRender::FonvWeaponAction::Unequip, priorityWeapon))
                 mUpperBodyState = UpperBodyState::Unequipping;
             else
@@ -2009,6 +2039,7 @@ namespace MWMechanics
             mWeaponType = requestedWeaponType;
             mFalloutWeapon = requestedWeapon;
             mFalloutTriggerState.mCooldown = 0.f;
+            playAuthoredFalloutWeaponSound(mPtr, mFalloutWeapon, FalloutWeaponSoundEvent::Equip);
             mAnimation->showWeapons(false);
             if (playFalloutWeaponAction(mWeaponType, MWRender::FonvWeaponAction::Equip, priorityWeapon))
                 mUpperBodyState = UpperBodyState::Equipping;
@@ -2081,7 +2112,14 @@ namespace MWMechanics
         const bool consumesWeapon = isFalloutThrownWeapon(*mFalloutWeapon);
         std::optional<ESM::FormId> consumable;
         if (consumesWeapon)
+        {
+            if (inventory.count(ESM::RefId::formIdRefId(mFalloutWeapon->mId)) < 1)
+            {
+                playAuthoredFalloutWeaponSound(mPtr, mFalloutWeapon, FalloutWeaponSoundEvent::DryFire);
+                return fail("missing-equipped-throwable");
+            }
             consumable = mFalloutWeapon->mId;
+        }
         else
         {
             std::vector<ESM::FormId> ammoCandidates;
@@ -2099,9 +2137,14 @@ namespace MWMechanics
                 [&](ESM::FormId candidate) {
                     return inventory.count(ESM::RefId::formIdRefId(candidate));
                 });
+            if (!consumable)
+            {
+                playAuthoredFalloutWeaponSound(mPtr, mFalloutWeapon, FalloutWeaponSoundEvent::DryFire);
+                return fail("insufficient-authored-ammo");
+            }
         }
         if (!consumable)
-            return fail(consumesWeapon ? "missing-equipped-throwable" : "insufficient-authored-ammo");
+            return fail("missing-consumable");
 
         const ESM4::Projectile* projectile = store->get<ESM4::Projectile>().search(mFalloutWeapon->mData.projectile);
         if (projectile == nullptr)
@@ -2163,6 +2206,7 @@ namespace MWMechanics
         const int consumableAfter = inventory.count(consumableRefId);
         if (removed != contract->mAmmoUse || consumableBefore - consumableAfter != contract->mAmmoUse)
             return fail(contract->mConsumesWeapon ? "throwable-transaction-mismatch" : "ammo-transaction-mismatch");
+        playAuthoredFalloutWeaponSound(mPtr, mFalloutWeapon, FalloutWeaponSoundEvent::Fire);
         if (contract->mConsumesWeapon && consumableAfter == 0 && mPtr.getType() == ESM::REC_NPC_4)
             MWClass::ESM4Npc::setEquippedWeapon(mPtr, nullptr);
 
