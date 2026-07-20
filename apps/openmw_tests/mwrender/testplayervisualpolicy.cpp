@@ -9,6 +9,20 @@ namespace MWRender
         EXPECT_FLOAT_EQ(getFalloutFlatPlayerVisualYawOffset(), 0.f);
     }
 
+    TEST(MWRenderPlayerVisualPolicyTest, canonicalWornSignatureIgnoresSlotOrderAndDuplicates)
+    {
+        const ESM::FormId vaultSuit = ESM::FormId::fromUint32(0x01015038);
+        const ESM::FormId pipBoy = ESM::FormId::fromUint32(0x01025b83);
+        const std::vector<ESM::FormId> signature
+            = canonicalizeFalloutWornVisualSignature({ vaultSuit, pipBoy, vaultSuit });
+
+        ASSERT_EQ(signature.size(), 2u);
+        EXPECT_EQ(signature[0], vaultSuit);
+        EXPECT_EQ(signature[1], pipBoy);
+        EXPECT_NE(signature, canonicalizeFalloutWornVisualSignature({ vaultSuit }));
+        EXPECT_NE(signature, canonicalizeFalloutWornVisualSignature({ pipBoy }));
+    }
+
     TEST(MWRenderPlayerVisualPolicyTest, normalSessionDoesNotInjectProofEquipment)
     {
         const ESM4PlayerVisualEquipmentPolicy policy

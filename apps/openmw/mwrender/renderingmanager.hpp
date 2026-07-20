@@ -395,6 +395,8 @@ namespace MWRender
         osg::ref_ptr<osg::MatrixTransform> mFalloutPlayerVisualBasis;
         osg::ref_ptr<osg::MatrixTransform> mFalloutPlayerFirstPersonBasis;
         std::vector<ESM::FormId> mFalloutSaveWornVisualItems;
+        std::vector<ESM::FormId> mFalloutPlayerFirstPersonWornSignature;
+        bool mFalloutPlayerFirstPersonWornSignatureObserved = false;
         std::string mFalloutPlayerVisualGroup;
         float mFalloutPlayerVisualGroupElapsed = 0.f;
         bool mFalloutPlayerVisualCycleLogged = false;

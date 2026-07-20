@@ -5,6 +5,9 @@
 #include <cctype>
 #include <string>
 #include <string_view>
+#include <vector>
+
+#include <components/esm/formid.hpp>
 
 namespace MWRender
 {
@@ -12,6 +15,14 @@ namespace MWRender
     {
         // FO3/FNV NPC meshes already share the gameplay-forward basis. Only TES4 NPC rigs need a quarter-turn.
         return 0.f;
+    }
+
+    inline std::vector<ESM::FormId> canonicalizeFalloutWornVisualSignature(
+        std::vector<ESM::FormId> signature)
+    {
+        std::sort(signature.begin(), signature.end());
+        signature.erase(std::unique(signature.begin(), signature.end()), signature.end());
+        return signature;
     }
 
     struct ESM4PlayerVisualEquipmentPolicy

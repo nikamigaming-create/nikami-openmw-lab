@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
+#include <exception>
 #include <iterator>
 #include <limits>
 #include <optional>
@@ -278,6 +279,99 @@ namespace MWRender
             }
         }
 
+        std::vector<ESM::FormId> makeFalloutWornVisualSignature(
+            std::span<const ESM4::Armor* const> equippedArmor)
+        {
+            std::vector<ESM::FormId> signature;
+            signature.reserve(equippedArmor.size());
+            for (const ESM4::Armor* armor : equippedArmor)
+            {
+                if (armor != nullptr)
+                    signature.push_back(armor->mId);
+            }
+            return canonicalizeFalloutWornVisualSignature(std::move(signature));
+        }
+
+        std::vector<const ESM4::Armor*> collectLiveFalloutArmor(const MWWorld::InventoryStore& inventory)
+        {
+            std::vector<const ESM4::Armor*> result;
+            result.reserve(MWWorld::InventoryStore::Slots);
+            for (int slot = 0; slot < MWWorld::InventoryStore::Slots; ++slot)
+            {
+                const MWWorld::ConstContainerStoreIterator item = inventory.getSlot(slot);
+                if (item == inventory.end() || item->getType() != ESM4::Armor::sRecordId)
+                    continue;
+                if (const ESM4::Armor* armor = item->get<ESM4::Armor>()->mBase)
+                    result.push_back(armor);
+            }
+            std::ranges::sort(result,
+                [](const ESM4::Armor* left, const ESM4::Armor* right) { return left->mId < right->mId; });
+            result.erase(std::unique(result.begin(), result.end(),
+                             [](const ESM4::Armor* left, const ESM4::Armor* right) {
+                                 return left->mId == right->mId;
+                             }),
+                result.end());
+            return result;
+        }
+
+        std::optional<ESM4NpcAnimation::FirstPersonState> makeFalloutFirstPersonState(
+            std::span<const ESM4::Armor* const> equippedArmor, const MWWorld::Ptr& visualPtr,
+            float firstPersonFieldOfView, Resource::ResourceSystem* resourceSystem)
+        {
+            ESM4NpcAnimation::FirstPersonState state;
+            state.mFieldOfView = firstPersonFieldOfView;
+            const bool female = MWClass::ESM4Npc::isFemale(visualPtr);
+            bool unresolvedWornLeftHand = false;
+            for (const ESM4::Armor* armor : equippedArmor)
+            {
+                if (armor == nullptr)
+                    continue;
+                state.mPipBoy = state.mPipBoy || (armor->mArmorFlags & ESM4::Armor::FO3_PipBoy) != 0;
+                if ((armor->mArmorFlags & ESM4::Armor::FO3_LeftHand) != 0)
+                {
+                    std::string candidate = normalizeFalloutFirstPersonBipedModel(
+                        MWClass::ESM4Npc::chooseEquipmentModel(armor, female));
+                    const VFS::Manager* vfs = resourceSystem != nullptr ? resourceSystem->getVFS() : nullptr;
+                    const bool exists = vfs != nullptr && !candidate.empty()
+                        && vfs->exists(VFS::Path::toNormalized(candidate));
+                    Log(exists ? Debug::Info : Debug::Error)
+                        << "FNV first-person equipped left-hand model: form=" << ESM::RefId(armor->mId)
+                        << " editor=" << armor->mEditorId << " biped="
+                        << MWClass::ESM4Npc::chooseEquipmentModel(armor, female) << " selected=" << candidate
+                        << " exists=" << exists << " source=ARMO-biped-1st-convention";
+                    if (exists)
+                        state.mSaveWornLeftHandModel = std::move(candidate);
+                    else
+                        unresolvedWornLeftHand = true;
+                }
+                if ((armor->mArmorFlags & ESM4::Armor::FO3_UpperBody) == 0)
+                    continue;
+                const std::string_view model = MWClass::ESM4Npc::chooseEquipmentModel(armor, female);
+                if (!model.empty())
+                    state.mSaveWornArmorModels.emplace_back(model);
+                Log(!model.empty() ? Debug::Info : Debug::Error)
+                    << "FNV first-person equipped armor model: form=" << ESM::RefId(armor->mId)
+                    << " editor=" << armor->mEditorId << " flags=0x" << std::hex << armor->mArmorFlags
+                    << std::dec << " selected=" << model << " source=ARMO-biped-MODL/MOD3";
+            }
+            if (unresolvedWornLeftHand)
+            {
+                Log(Debug::Error) << "FNV first-person equipped profile: worn left-hand armor has no authored 1st "
+                                     "model; profile=disabled";
+                return std::nullopt;
+            }
+            state.mPipBoyGlove
+                = isFalloutPipBoyGloveFirstPersonModel(state.mPipBoy, state.mSaveWornLeftHandModel);
+            const ESM4::Weapon* equippedWeapon = MWClass::ESM4Npc::getEquippedWeapon(visualPtr);
+            Log(Debug::Info) << "FNV first-person equipped profile: armor=" << equippedArmor.size()
+                             << " unarmed=" << (equippedWeapon == nullptr) << " equippedWeapon="
+                             << (equippedWeapon != nullptr ? equippedWeapon->mEditorId : std::string("none"))
+                             << " pipBoy=" << state.mPipBoy << " pipBoyGlove=" << state.mPipBoyGlove
+                             << " armorModels=" << state.mSaveWornArmorModels.size()
+                             << " fov=" << state.mFieldOfView << " profile=flat-first-person";
+            return state;
+        }
+
         std::optional<ESM4NpcAnimation::FirstPersonState> applyFalloutSaveWornPlayerVisuals(
             std::span<const ESM::FormId> wornVisualItems, const MWWorld::Ptr& visualPtr, float firstPersonFieldOfView,
             Resource::ResourceSystem* resourceSystem)
@@ -323,60 +417,10 @@ namespace MWRender
                 }
             }
 
-            ESM4NpcAnimation::FirstPersonState state;
-            state.mFieldOfView = firstPersonFieldOfView;
-            const bool female = MWClass::ESM4Npc::isFemale(visualPtr);
-            bool unresolvedWornLeftHand = false;
-            for (const ESM4::Armor* armor : MWClass::ESM4Npc::getEquippedArmor(visualPtr))
-            {
-                if (armor == nullptr)
-                    continue;
-                state.mPipBoy = state.mPipBoy || (armor->mArmorFlags & ESM4::Armor::FO3_PipBoy) != 0;
-                if ((armor->mArmorFlags & ESM4::Armor::FO3_LeftHand) != 0)
-                {
-                    std::string candidate = normalizeFalloutFirstPersonBipedModel(
-                        MWClass::ESM4Npc::chooseEquipmentModel(armor, female));
-                    const VFS::Manager* vfs = resourceSystem != nullptr ? resourceSystem->getVFS() : nullptr;
-                    const bool exists = vfs != nullptr && !candidate.empty()
-                        && vfs->exists(VFS::Path::toNormalized(candidate));
-                    Log(exists ? Debug::Info : Debug::Error)
-                        << "FNV first-person saveWorn left-hand model: form=" << ESM::RefId(armor->mId)
-                        << " editor=" << armor->mEditorId << " biped="
-                        << MWClass::ESM4Npc::chooseEquipmentModel(armor, female) << " selected=" << candidate
-                        << " exists=" << exists << " source=ARMO-biped-1st-convention";
-                    if (exists)
-                        state.mSaveWornLeftHandModel = std::move(candidate);
-                    else
-                        unresolvedWornLeftHand = true;
-                }
-                if ((armor->mArmorFlags & ESM4::Armor::FO3_UpperBody) == 0)
-                    continue;
-                const std::string_view model = MWClass::ESM4Npc::chooseEquipmentModel(armor, female);
-                if (!model.empty())
-                    state.mSaveWornArmorModels.emplace_back(model);
-                Log(!model.empty() ? Debug::Info : Debug::Error)
-                    << "FNV first-person saveWorn armor model: form=" << ESM::RefId(armor->mId)
-                    << " editor=" << armor->mEditorId << " flags=0x" << std::hex << armor->mArmorFlags
-                    << std::dec << " selected=" << model << " source=ARMO-biped-MODL/MOD3";
-            }
-            if (unresolvedWornLeftHand)
-            {
-                Log(Debug::Error) << "FNV first-person saveWorn: worn left-hand armor has no authored 1st model; "
-                                     "profile=disabled";
-                return std::nullopt;
-            }
-            state.mPipBoyGlove
-                = isFalloutPipBoyGloveFirstPersonModel(state.mPipBoy, state.mSaveWornLeftHandModel);
-            const ESM4::Weapon* equippedWeapon = MWClass::ESM4Npc::getEquippedWeapon(visualPtr);
             Log(Debug::Info) << "FNV first-person saveWorn: total=" << saveWorn << " armor=" << savedArmor
-                             << " weapon=" << savedWeapon << " unarmed=" << (equippedWeapon == nullptr)
-                             << " equippedWeapon="
-                             << (equippedWeapon != nullptr ? equippedWeapon->mEditorId : std::string("none"))
-                             << " pipBoy=" << state.mPipBoy
-                             << " pipBoyGlove=" << state.mPipBoyGlove
-                             << " armorModels=" << state.mSaveWornArmorModels.size()
-                             << " fov=" << state.mFieldOfView << " profile=flat-first-person";
-            return state;
+                             << " weapon=" << savedWeapon << " source=native-save";
+            return makeFalloutFirstPersonState(
+                MWClass::ESM4Npc::getEquippedArmor(visualPtr), visualPtr, firstPersonFieldOfView, resourceSystem);
         }
 
         uint32_t getFalloutActorCoveredBodySlots(const MWWorld::Ptr& ptr)
@@ -1554,9 +1598,12 @@ namespace MWRender
             if (mFalloutPlayerVisualAnimation)
             {
                 const ESM4::Weapon* liveWeapon = nullptr;
-                if (player.getClass().hasInventoryStore(player))
+                std::vector<const ESM4::Armor*> liveArmor;
+                const bool hasLiveInventory = player.getClass().hasInventoryStore(player);
+                if (hasLiveInventory)
                 {
                     const MWWorld::InventoryStore& inventory = player.getClass().getInventoryStore(player);
+                    liveArmor = collectLiveFalloutArmor(inventory);
                     const MWWorld::ConstContainerStoreIterator weapon
                         = inventory.getSlot(MWWorld::InventoryStore::Slot_CarriedRight);
                     if (weapon != inventory.end() && weapon->getType() == ESM4::Weapon::sRecordId)
@@ -1595,6 +1642,51 @@ namespace MWRender
                     mFalloutPlayerVisualAnimation->showWeapons(shown);
                     if (mFalloutPlayerFirstPersonAnimation)
                         mFalloutPlayerFirstPersonAnimation->showWeapons(shown);
+                }
+
+                const std::vector<ESM::FormId> wornSignature = makeFalloutWornVisualSignature(liveArmor);
+                if (hasLiveInventory
+                    && (!mFalloutPlayerFirstPersonWornSignatureObserved
+                        || wornSignature != mFalloutPlayerFirstPersonWornSignature))
+                {
+                    mFalloutPlayerFirstPersonWornSignature = wornSignature;
+                    mFalloutPlayerFirstPersonWornSignatureObserved = true;
+                    const std::optional<ESM4NpcAnimation::FirstPersonState> profile
+                        = makeFalloutFirstPersonState(liveArmor, visualPtr, mFirstPersonFieldOfView, mResourceSystem);
+                    if (profile)
+                    {
+                        if (!mFalloutPlayerFirstPersonBasis)
+                        {
+                            mFalloutPlayerFirstPersonBasis = new osg::MatrixTransform;
+                            mFalloutPlayerFirstPersonBasis->setName("FNV First Person Camera1st Alignment");
+                            mFalloutPlayerFirstPersonBasis->setMatrix(osg::Matrix::identity());
+                            mSceneRoot->addChild(mFalloutPlayerFirstPersonBasis);
+                        }
+                        try
+                        {
+                            osg::ref_ptr<ESM4NpcAnimation> replacement = new ESM4NpcAnimation(visualPtr,
+                                osg::ref_ptr<osg::Group>(mFalloutPlayerFirstPersonBasis), mResourceSystem, *profile);
+                            const bool shown
+                                = liveDrawState == MWMechanics::DrawState::Weapon && liveWeapon != nullptr;
+                            replacement->showWeapons(shown);
+                            if (osg::Group* root = replacement->getObjectRoot())
+                            {
+                                const bool visible = mCamera->getMode() == Camera::Mode::FirstPerson;
+                                root->setNodeMask(visible ? Mask_FirstPerson : 0);
+                            }
+                            mFalloutPlayerFirstPersonAnimation = std::move(replacement);
+                            mFalloutPlayerFirstPersonAlignmentLogged = false;
+                            Log(Debug::Info) << "FNV first-person equipment bridge: rebuilt=1 armor="
+                                             << liveArmor.size() << " signature=" << wornSignature.size()
+                                             << " pipBoy=" << profile->mPipBoy
+                                             << " pipBoyGlove=" << profile->mPipBoyGlove;
+                        }
+                        catch (const std::exception& error)
+                        {
+                            Log(Debug::Error) << "FNV first-person equipment bridge: rebuilt=0 armor="
+                                              << liveArmor.size() << " reason=" << error.what();
+                        }
+                    }
                 }
 
                 const MWMechanics::Movement& movement = player.getClass().getMovementSettings(player);
@@ -2183,6 +2275,8 @@ namespace MWRender
     {
         mSky->setMoonColour(false);
         mFalloutSaveWornVisualItems.clear();
+        mFalloutPlayerFirstPersonWornSignature.clear();
+        mFalloutPlayerFirstPersonWornSignatureObserved = false;
 
         notifyWorldSpaceChanged();
         if (mObjectPaging)
@@ -2224,6 +2318,8 @@ namespace MWRender
         mFalloutPlayerVisualCycleLogged = false;
         mFalloutPlayerFirstPersonAlignmentLogged = false;
         mFalloutPlayerVisualPreviousPositionValid = false;
+        mFalloutPlayerFirstPersonWornSignature.clear();
+        mFalloutPlayerFirstPersonWornSignatureObserved = false;
         mFalloutPlayerVisualRef.reset();
 
         if (mPlayerAnimation)
@@ -2312,6 +2408,8 @@ namespace MWRender
         mFalloutPlayerVisualCycleLogged = false;
         mFalloutPlayerFirstPersonAlignmentLogged = false;
         mFalloutPlayerVisualPreviousPositionValid = false;
+        mFalloutPlayerFirstPersonWornSignature.clear();
+        mFalloutPlayerFirstPersonWornSignatureObserved = false;
         const ESM4::Npc* falloutPlayerVisualRecord
             = VR::getVR() ? findFalloutPlayerVisualRecord() : findEsm4PlayerVisualRecord();
         const bool falloutFlatProfile = !VR::getVR() && falloutPlayerVisualRecord != nullptr;
@@ -2362,6 +2460,12 @@ namespace MWRender
                 ? applyFalloutSaveWornPlayerVisuals(
                     mFalloutSaveWornVisualItems, visualPtr, mFirstPersonFieldOfView, mResourceSystem)
                 : std::nullopt;
+            if (falloutFlatProfile)
+            {
+                mFalloutPlayerFirstPersonWornSignature
+                    = makeFalloutWornVisualSignature(MWClass::ESM4Npc::getEquippedArmor(visualPtr));
+                mFalloutPlayerFirstPersonWornSignatureObserved = true;
+            }
             visualPtr.getClass().getCreatureStats(visualPtr).setDrawState(
                 player.getClass().getCreatureStats(player).getDrawState());
 
