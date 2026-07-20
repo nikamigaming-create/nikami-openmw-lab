@@ -1858,7 +1858,7 @@ namespace MWMechanics
     }
 
     bool CharacterController::updateFalloutWeaponState(int requestedWeaponType, bool weaponChanged,
-        const ESM4::Weapon* requestedWeapon, const MWRender::AnimPriority& priorityWeapon)
+        const ESM4::Weapon* requestedWeapon, const MWRender::AnimPriority& priorityWeapon, float duration)
     {
         bool forceStateUpdate = false;
         const auto failVisualClosed = [&]() {
@@ -1866,6 +1866,7 @@ namespace MWMechanics
             mUpperBodyState = UpperBodyState::None;
             mWeaponType = ESM::Weapon::None;
             mFalloutWeapon = nullptr;
+            mFalloutTriggerState = {};
             mCurrentWeapon.clear();
             mAnimation->setWeaponGroup(std::string{}, false);
         };
@@ -1896,8 +1897,40 @@ namespace MWMechanics
             = semanticActionPlaying && !mCurrentWeapon.empty() && mAnimation->getInfo(mCurrentWeapon, &complete);
         const MWRender::FonvWeaponActionProgress actionProgress
             = MWRender::getFonvWeaponActionProgress(actionStateExists, complete);
+
+        const bool triggerDown = getAttackingOrSpell();
+        const bool hitAllowsAttack = mHitState == CharState_None || mHitState == CharState_Block;
+        const bool stateAllowsAttack = mUpperBodyState == UpperBodyState::WeaponEquipped
+            || (mUpperBodyState == UpperBodyState::AttackEnd && mFalloutWeapon != nullptr
+                && mFalloutWeapon->mData.isAutomatic());
+        FalloutFireCadence cadence;
+        bool cadenceValid = true;
+        FalloutFireCadenceFailure cadenceFailure = FalloutFireCadenceFailure::None;
+        if (mFalloutWeapon != nullptr)
+        {
+            const std::optional<FalloutFireCadence> authoredCadence
+                = buildFalloutFireCadence(*mFalloutWeapon, cadenceFailure);
+            cadenceValid = authoredCadence.has_value();
+            if (authoredCadence)
+                cadence = *authoredCadence;
+        }
+        const bool triggerPressed = triggerDown && !mFalloutTriggerState.mWasDown;
+        const bool triggerAttack = advanceFalloutTrigger(mFalloutTriggerState, triggerDown,
+            cadenceValid && stateAllowsAttack && hitAllowsAttack, cadence, duration);
+        if (!cadenceValid && triggerPressed && stateAllowsAttack && hitAllowsAttack)
+            Log(Debug::Error) << "FNV mechanics rejected automatic cadence: actor=" << mPtr.toString()
+                              << " weapon=" << ESM::RefId::formIdRefId(mFalloutWeapon->mId)
+                              << " reason=" << getFalloutFireCadenceFailureName(cadenceFailure);
+
         if (semanticActionPlaying && actionProgress == MWRender::FonvWeaponActionProgress::Running)
         {
+            if (triggerAttack)
+            {
+                const bool gameplayAction = fireFalloutWeapon();
+                if (!gameplayAction)
+                    Log(Debug::Error) << "FNV mechanics gameplay automatic attack failed: actor=" << mPtr.toString()
+                                      << " weaponType=" << mWeaponType;
+            }
             updateAiming();
             return false;
         }
@@ -1975,6 +2008,7 @@ namespace MWMechanics
                 mAnimation->disable(mCurrentWeapon);
             mWeaponType = requestedWeaponType;
             mFalloutWeapon = requestedWeapon;
+            mFalloutTriggerState.mCooldown = 0.f;
             mAnimation->showWeapons(false);
             if (playFalloutWeaponAction(mWeaponType, MWRender::FonvWeaponAction::Equip, priorityWeapon))
                 mUpperBodyState = UpperBodyState::Equipping;
@@ -1990,8 +2024,7 @@ namespace MWMechanics
             return forceStateUpdate;
         }
 
-        if (getAttackingOrSpell() && mUpperBodyState == UpperBodyState::WeaponEquipped
-            && (mHitState == CharState_None || mHitState == CharState_Block))
+        if (triggerAttack && mUpperBodyState == UpperBodyState::WeaponEquipped && hitAllowsAttack)
         {
             mAttackStrength = -1.f;
             mReadyToHit = false;
@@ -2044,26 +2077,31 @@ namespace MWMechanics
         if (world == nullptr || store == nullptr)
             return fail("missing-world-store");
 
-        std::vector<ESM::FormId> ammoCandidates;
-        if (store->get<ESM4::Ammunition>().search(mFalloutWeapon->mAmmo) != nullptr)
-            ammoCandidates.push_back(mFalloutWeapon->mAmmo);
-        else if (const ESM4::FormIdList* list = store->get<ESM4::FormIdList>().search(mFalloutWeapon->mAmmo))
-        {
-            ammoCandidates = list->mObjects;
-        }
-        else
-            return fail("invalid-ammo-reference");
-
         MWWorld::ContainerStore& inventory = mPtr.getClass().getContainerStore(mPtr);
-        const auto ammo = selectAuthoredFalloutAmmo(ammoCandidates, mFalloutWeapon->mData.ammoUse,
-            [&](ESM::FormId candidate) {
-                return store->get<ESM4::Ammunition>().search(candidate) != nullptr;
-            },
-            [&](ESM::FormId candidate) {
-                return inventory.count(ESM::RefId::formIdRefId(candidate));
-            });
-        if (!ammo)
-            return fail("insufficient-authored-ammo");
+        const bool consumesWeapon = isFalloutThrownWeapon(*mFalloutWeapon);
+        std::optional<ESM::FormId> consumable;
+        if (consumesWeapon)
+            consumable = mFalloutWeapon->mId;
+        else
+        {
+            std::vector<ESM::FormId> ammoCandidates;
+            if (store->get<ESM4::Ammunition>().search(mFalloutWeapon->mAmmo) != nullptr)
+                ammoCandidates.push_back(mFalloutWeapon->mAmmo);
+            else if (const ESM4::FormIdList* list = store->get<ESM4::FormIdList>().search(mFalloutWeapon->mAmmo))
+                ammoCandidates = list->mObjects;
+            else
+                return fail("invalid-ammo-reference");
+
+            consumable = selectAuthoredFalloutAmmo(ammoCandidates, mFalloutWeapon->mData.ammoUse,
+                [&](ESM::FormId candidate) {
+                    return store->get<ESM4::Ammunition>().search(candidate) != nullptr;
+                },
+                [&](ESM::FormId candidate) {
+                    return inventory.count(ESM::RefId::formIdRefId(candidate));
+                });
+        }
+        if (!consumable)
+            return fail(consumesWeapon ? "missing-equipped-throwable" : "insufficient-authored-ammo");
 
         const ESM4::Projectile* projectile = store->get<ESM4::Projectile>().search(mFalloutWeapon->mData.projectile);
         if (projectile == nullptr)
@@ -2071,7 +2109,7 @@ namespace MWMechanics
 
         FalloutShotFailure contractFailure = FalloutShotFailure::None;
         const std::optional<FalloutShotContract> contract
-            = buildFalloutRayShotContract(*mFalloutWeapon, *projectile, *ammo, contractFailure);
+            = buildFalloutRayShotContract(*mFalloutWeapon, *projectile, *consumable, contractFailure);
         if (!contract)
             return fail(getFalloutShotFailureName(contractFailure));
 
@@ -2114,12 +2152,19 @@ namespace MWMechanics
             rayDirections.push_back(*rayDirection);
         }
 
-        const ESM::RefId ammoRefId = ESM::RefId::formIdRefId(contract->mAmmo);
-        const int ammoBefore = inventory.count(ammoRefId);
-        const int removed = inventory.remove(ammoRefId, contract->mAmmoUse);
-        const int ammoAfter = inventory.count(ammoRefId);
-        if (removed != contract->mAmmoUse || ammoBefore - ammoAfter != contract->mAmmoUse)
-            return fail("ammo-transaction-mismatch");
+        const ESM::RefId consumableRefId = ESM::RefId::formIdRefId(contract->mAmmo);
+        const int consumableBefore = inventory.count(consumableRefId);
+        int removed = 0;
+        if (contract->mConsumesWeapon && !mWeapon.isEmpty() && mWeapon.getType() == ESM4::Weapon::sRecordId
+            && mWeapon.getCellRef().getRefId() == consumableRefId && mWeapon.getContainerStore() == &inventory)
+            removed = inventory.remove(mWeapon, contract->mAmmoUse);
+        else
+            removed = inventory.remove(consumableRefId, contract->mAmmoUse);
+        const int consumableAfter = inventory.count(consumableRefId);
+        if (removed != contract->mAmmoUse || consumableBefore - consumableAfter != contract->mAmmoUse)
+            return fail(contract->mConsumesWeapon ? "throwable-transaction-mismatch" : "ammo-transaction-mismatch");
+        if (contract->mConsumesWeapon && consumableAfter == 0 && mPtr.getType() == ESM::REC_NPC_4)
+            MWClass::ESM4Npc::setEquippedWeapon(mPtr, nullptr);
 
         struct ActorImpact
         {
@@ -2159,7 +2204,9 @@ namespace MWMechanics
 
         Log(Debug::Info) << "FNV combat shot: actor=" << mPtr.toString()
                          << " weapon=" << ESM::RefId::formIdRefId(mFalloutWeapon->mId)
-                         << " ammo=" << ammoRefId << " ammoBefore=" << ammoBefore << " ammoAfter=" << ammoAfter
+                         << " consumable=" << consumableRefId << " consumableKind="
+                         << (contract->mConsumesWeapon ? "weapon" : "ammo")
+                         << " consumableBefore=" << consumableBefore << " consumableAfter=" << consumableAfter
                          << " projectile=" << ESM::RefId::formIdRefId(contract->mProjectile)
                          << " projectileRange=" << contract->mProjectileRange << " damage=" << contract->mDamage
                          << " projectileCount=" << static_cast<unsigned int>(contract->mProjectileCount)
@@ -2260,7 +2307,7 @@ namespace MWMechanics
         return true;
     }
 
-    bool CharacterController::updateWeaponState()
+    bool CharacterController::updateWeaponState(float duration)
     {
         // If the current animation is scripted, we can't do anything here.
         if (isScriptedAnimPlaying())
@@ -2369,7 +2416,7 @@ namespace MWMechanics
         {
             if (!MWRender::canAdvanceFonvWeaponState(isKnockedOut(), isKnockedDown(), isRecovery()))
                 return false;
-            return updateFalloutWeaponState(weaptype, weaponChanged, requestedFalloutWeapon, priorityWeapon);
+            return updateFalloutWeaponState(weaptype, weaponChanged, requestedFalloutWeapon, priorityWeapon, duration);
         }
 
         bool forcestateupdate = false;
@@ -3411,7 +3458,7 @@ namespace MWMechanics
 
             if (!mSkipAnim)
             {
-                refreshCurrentAnims(idlestate, movestate, jumpstate, updateWeaponState());
+                refreshCurrentAnims(idlestate, movestate, jumpstate, updateWeaponState(duration));
                 updateIdleStormState(inwater);
             }
 

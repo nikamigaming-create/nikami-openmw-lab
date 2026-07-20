@@ -102,7 +102,8 @@ namespace MWMechanics
         const ESM4::Projectile& projectile, ESM::FormId ammo, FalloutShotFailure& failure)
     {
         failure = FalloutShotFailure::None;
-        if (ammo.isZeroOrUnset())
+        const bool consumesWeapon = isFalloutThrownWeapon(weapon);
+        if ((!consumesWeapon && ammo.isZeroOrUnset()) || (consumesWeapon && ammo != weapon.mId))
             failure = FalloutShotFailure::MissingAmmo;
         else if (!weapon.mData.hasBallistics)
             failure = FalloutShotFailure::MissingBallistics;
@@ -110,7 +111,7 @@ namespace MWMechanics
             failure = FalloutShotFailure::ProjectileMismatch;
         else if (!projectile.mData.present)
             failure = FalloutShotFailure::MissingProjectileData;
-        else if (weapon.mData.ammoUse == 0)
+        else if (!consumesWeapon && weapon.mData.ammoUse == 0)
             failure = FalloutShotFailure::InvalidAmmoUse;
         else if (weapon.mData.numProjectiles == 0)
             failure = FalloutShotFailure::InvalidProjectileCount;
@@ -124,10 +125,63 @@ namespace MWMechanics
         if (failure != FalloutShotFailure::None)
             return std::nullopt;
 
-        return FalloutShotContract{ ammo, weapon.mData.projectile, weapon.mData.ammoUse,
+        return FalloutShotContract{ ammo, weapon.mData.projectile,
+            static_cast<std::uint8_t>(consumesWeapon ? 1 : weapon.mData.ammoUse),
             weapon.mData.numProjectiles, static_cast<float>(weapon.mData.damage), weapon.mData.minRange,
             weapon.mData.maxRange, projectile.mData.range, weapon.mData.minSpread, weapon.mData.spread,
-            (projectile.mData.flags & ESM4::Projectile::Hitscan) != 0 };
+            (projectile.mData.flags & ESM4::Projectile::Hitscan) != 0, consumesWeapon };
+    }
+
+    std::optional<FalloutFireCadence> buildFalloutFireCadence(
+        const ESM4::Weapon& weapon, FalloutFireCadenceFailure& failure)
+    {
+        failure = FalloutFireCadenceFailure::None;
+        if (!weapon.mData.isAutomatic())
+            return FalloutFireCadence{};
+
+        if (!std::isfinite(weapon.mData.animationMultiplier) || weapon.mData.animationMultiplier <= 0.f)
+            failure = FalloutFireCadenceFailure::InvalidAnimationMultiplier;
+        else if (!std::isfinite(weapon.mData.animAttackMult) || weapon.mData.animAttackMult <= 0.f)
+            failure = FalloutFireCadenceFailure::InvalidAttackMultiplier;
+        else if (!std::isfinite(weapon.mData.fireRate) || weapon.mData.fireRate <= 0.f)
+            failure = FalloutFireCadenceFailure::InvalidFireRate;
+
+        if (failure != FalloutFireCadenceFailure::None)
+            return std::nullopt;
+
+        const float shotsPerSecond = weapon.mData.animationMultiplier * weapon.mData.animAttackMult
+            * weapon.mData.animAttackMult * weapon.mData.fireRate;
+        if (!std::isfinite(shotsPerSecond) || shotsPerSecond <= 0.f)
+        {
+            failure = FalloutFireCadenceFailure::InvalidShotsPerSecond;
+            return std::nullopt;
+        }
+        return FalloutFireCadence{ true, 1.f / shotsPerSecond };
+    }
+
+    bool advanceFalloutTrigger(FalloutTriggerState& state, bool triggerDown, bool ready,
+        const FalloutFireCadence& cadence, float duration) noexcept
+    {
+        if (state.mCooldown > 0.f && std::isfinite(duration) && duration > 0.f)
+            state.mCooldown -= duration;
+
+        const bool pressed = triggerDown && !state.mWasDown;
+        state.mWasDown = triggerDown;
+        if (!ready)
+            return false;
+        if (!cadence.mAutomatic)
+            return pressed;
+        if (!triggerDown || !std::isfinite(cadence.mSecondsPerShot) || cadence.mSecondsPerShot <= 0.f
+            || state.mCooldown > 0.f)
+            return false;
+
+        state.mCooldown += cadence.mSecondsPerShot;
+        return true;
+    }
+
+    bool isFalloutThrownWeapon(const ESM4::Weapon& weapon) noexcept
+    {
+        return weapon.mData.animationType == 13;
     }
 
     std::optional<osg::Vec3f> buildFalloutRayDirection(
@@ -263,6 +317,24 @@ namespace MWMechanics
                 return "invalid-range";
             case FalloutShotFailure::InvalidSpread:
                 return "invalid-spread";
+        }
+        return "unknown";
+    }
+
+    std::string_view getFalloutFireCadenceFailureName(FalloutFireCadenceFailure failure)
+    {
+        switch (failure)
+        {
+            case FalloutFireCadenceFailure::None:
+                return "none";
+            case FalloutFireCadenceFailure::InvalidAnimationMultiplier:
+                return "invalid-animation-multiplier";
+            case FalloutFireCadenceFailure::InvalidAttackMultiplier:
+                return "invalid-attack-multiplier";
+            case FalloutFireCadenceFailure::InvalidFireRate:
+                return "invalid-fire-rate";
+            case FalloutFireCadenceFailure::InvalidShotsPerSecond:
+                return "invalid-shots-per-second";
         }
         return "unknown";
     }

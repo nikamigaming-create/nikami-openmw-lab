@@ -39,14 +39,6 @@ bool ESM4::loadFalloutWeaponDnam(std::span<const std::uint8_t> dnam, Weapon::Dat
     if (dnam.size() < 16)
         return false;
 
-    data.animationType = dnam[0];
-    data.handGrip = dnam[13];
-    data.ammoUse = dnam[14];
-    data.reloadAnim = dnam[15];
-
-    if (dnam.size() < 68)
-        return true;
-
     const auto readFloat = [&](std::size_t offset) {
         float value = 0.f;
         std::memcpy(&value, dnam.data() + offset, sizeof(value));
@@ -57,6 +49,17 @@ bool ESM4::loadFalloutWeaponDnam(std::span<const std::uint8_t> dnam, Weapon::Dat
         std::memcpy(&value, dnam.data() + offset, sizeof(value));
         return value;
     };
+
+    data.animationType = dnam[0];
+    data.animationMultiplier = readFloat(4);
+    data.reach = readFloat(8);
+    data.weaponFlags1 = dnam[12];
+    data.handGrip = dnam[13];
+    data.ammoUse = dnam[14];
+    data.reloadAnim = dnam[15];
+
+    if (dnam.size() < 68)
+        return true;
 
     data.minSpread = readFloat(16);
     data.spread = readFloat(20);
@@ -73,6 +76,13 @@ bool ESM4::loadFalloutWeaponDnam(std::span<const std::uint8_t> dnam, Weapon::Dat
     data.animAttackMult = readFloat(60);
     data.fireRate = readFloat(64);
     data.hasBallistics = true;
+
+    if (dnam.size() >= 92)
+        data.animShotsPerSec = readFloat(88);
+    if (dnam.size() >= 132)
+        data.semiAutoFireDelayMin = readFloat(128);
+    if (dnam.size() >= 136)
+        data.semiAutoFireDelayMax = readFloat(132);
     return true;
 }
 

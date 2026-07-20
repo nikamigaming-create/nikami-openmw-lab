@@ -10,6 +10,8 @@
 
 #include "../mwrender/animation.hpp"
 
+#include "falloutcombat.hpp"
+
 namespace ESM4
 {
     struct Weapon;
@@ -137,6 +139,7 @@ namespace MWMechanics
         MWWorld::Ptr mPtr;
         MWWorld::Ptr mWeapon;
         const ESM4::Weapon* mFalloutWeapon = nullptr;
+        FalloutTriggerState mFalloutTriggerState;
         MWRender::Animation* mAnimation;
 
         struct AnimationQueueEntry
@@ -224,9 +227,9 @@ namespace MWMechanics
         void refreshMovementAnims(CharacterState movement, bool force = false);
         void refreshIdleAnims(CharacterState idle, bool force = false);
 
-        bool updateWeaponState();
+        bool updateWeaponState(float duration);
         bool updateFalloutWeaponState(int requestedWeaponType, bool weaponChanged,
-            const ESM4::Weapon* requestedWeapon, const MWRender::AnimPriority& priorityWeapon);
+            const ESM4::Weapon* requestedWeapon, const MWRender::AnimPriority& priorityWeapon, float duration);
         bool fireFalloutWeapon();
         bool strikeFalloutMelee(std::uint8_t animationType);
         void updateIdleStormState(bool inwater) const;

@@ -6,6 +6,7 @@
 #include <array>
 #include <bit>
 #include <cstdint>
+#include <cstring>
 #include <limits>
 #include <memory>
 #include <sstream>
@@ -81,6 +82,10 @@ namespace
 
         ASSERT_TRUE(ESM4::loadFalloutWeaponDnam(dnam, data));
         EXPECT_EQ(data.animationType, 6);
+        EXPECT_FLOAT_EQ(data.animationMultiplier, 1.f);
+        EXPECT_FLOAT_EQ(data.reach, 10.f);
+        EXPECT_EQ(data.weaponFlags1, 0x7f);
+        EXPECT_TRUE(data.isAutomatic());
         EXPECT_EQ(data.handGrip, 0xff);
         EXPECT_EQ(data.ammoUse, 1);
         EXPECT_EQ(data.reloadAnim, 5);
@@ -96,6 +101,36 @@ namespace
         EXPECT_EQ(data.handGrip, 0xff);
         EXPECT_EQ(data.ammoUse, 0);
         EXPECT_EQ(data.reloadAnim, 0);
+    }
+
+    TEST(Esm4WeaponTest, shouldPreserveFalloutAutomaticCadenceFields)
+    {
+        std::array<std::uint8_t, 136> dnam{};
+        const auto writeFloat = [&](std::size_t offset, float value) {
+            std::memcpy(dnam.data() + offset, &value, sizeof(value));
+        };
+        dnam[0] = 6;
+        dnam[12] = ESM4::Weapon::Data::Automatic;
+        dnam[14] = 1;
+        dnam[15] = 5;
+        writeFloat(4, 1.25f);
+        writeFloat(8, 1.f);
+        writeFloat(60, 1.5f);
+        writeFloat(64, 4.f);
+        writeFloat(88, 9.f);
+        writeFloat(128, 0.1f);
+        writeFloat(132, 0.2f);
+
+        ESM4::Weapon::Data data;
+        ASSERT_TRUE(ESM4::loadFalloutWeaponDnam(dnam, data));
+        EXPECT_TRUE(data.isAutomatic());
+        EXPECT_FLOAT_EQ(data.animationMultiplier, 1.25f);
+        EXPECT_FLOAT_EQ(data.reach, 1.f);
+        EXPECT_FLOAT_EQ(data.animAttackMult, 1.5f);
+        EXPECT_FLOAT_EQ(data.fireRate, 4.f);
+        EXPECT_FLOAT_EQ(data.animShotsPerSec, 9.f);
+        EXPECT_FLOAT_EQ(data.semiAutoFireDelayMin, 0.1f);
+        EXPECT_FLOAT_EQ(data.semiAutoFireDelayMax, 0.2f);
     }
 
     TEST(Esm4WeaponTest, shouldParseRetailServiceRifleBallisticContractByteExactly)

@@ -46,6 +46,27 @@ namespace MWMechanics
         InvalidReach,
     };
 
+    enum class FalloutFireCadenceFailure
+    {
+        None,
+        InvalidAnimationMultiplier,
+        InvalidAttackMultiplier,
+        InvalidFireRate,
+        InvalidShotsPerSecond,
+    };
+
+    struct FalloutFireCadence
+    {
+        bool mAutomatic = false;
+        float mSecondsPerShot = 0.f;
+    };
+
+    struct FalloutTriggerState
+    {
+        bool mWasDown = false;
+        float mCooldown = 0.f;
+    };
+
     struct FalloutMeleeTuning
     {
         float mDamageSkillBase = 0.f;
@@ -79,6 +100,7 @@ namespace MWMechanics
         float mMinSpread = 0.f;
         float mSpread = 0.f;
         bool mAuthoredHitscan = false;
+        bool mConsumesWeapon = false;
 
         /// Fallout WEAP damage is authored per trigger pull. Divide it evenly between the authored rays so a
         /// multi-projectile weapon preserves the same total damage when every pellet connects.
@@ -118,6 +140,19 @@ namespace MWMechanics
     [[nodiscard]] std::optional<FalloutShotContract> buildFalloutRayShotContract(const ESM4::Weapon& weapon,
         const ESM4::Projectile& projectile, ESM::FormId ammo, FalloutShotFailure& failure);
 
+    /// Build the trigger cadence authored by Fallout's WEAP DNAM. Semi-automatic weapons are edge-triggered and do
+    /// not need a cycle time. Automatic weapons use the same serialized multiplier product exposed by xNVSE.
+    [[nodiscard]] std::optional<FalloutFireCadence> buildFalloutFireCadence(
+        const ESM4::Weapon& weapon, FalloutFireCadenceFailure& failure);
+
+    /// Advance one weapon trigger using elapsed simulation time. A semi-automatic trigger fires once per press;
+    /// an automatic trigger repeats while held when its authored cooldown expires. Visual animation state is only an
+    /// eligibility input and never supplies the cadence.
+    [[nodiscard]] bool advanceFalloutTrigger(FalloutTriggerState& state, bool triggerDown, bool ready,
+        const FalloutFireCadence& cadence, float duration) noexcept;
+
+    [[nodiscard]] bool isFalloutThrownWeapon(const ESM4::Weapon& weapon) noexcept;
+
     /// Resolve one unit ray inside the authored circular spread cone. diskSample is a caller-provided point in the
     /// unit disk, allowing production to use the world PRNG while keeping the geometry deterministic and testable.
     [[nodiscard]] std::optional<osg::Vec3f> buildFalloutRayDirection(
@@ -138,6 +173,7 @@ namespace MWMechanics
     [[nodiscard]] bool isFalloutMeleeAnimationType(std::uint8_t animationType) noexcept;
 
     [[nodiscard]] std::string_view getFalloutShotFailureName(FalloutShotFailure failure);
+    [[nodiscard]] std::string_view getFalloutFireCadenceFailureName(FalloutFireCadenceFailure failure);
     [[nodiscard]] std::string_view getFalloutMeleeFailureName(FalloutMeleeFailure failure);
 }
 

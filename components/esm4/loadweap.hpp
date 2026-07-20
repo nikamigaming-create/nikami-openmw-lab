@@ -44,6 +44,11 @@ namespace ESM4
     {
         struct Data
         {
+            enum WeaponFlags1 : std::uint8_t
+            {
+                Automatic = 0x02,
+            };
+
             // type
             // 0 = Blade One Hand
             // 1 = Blade Two Hand
@@ -64,6 +69,8 @@ namespace ESM4
             // FO3/FONV WEAP.DNAM animation selectors. These choose the authored animation family and the
             // optional HandGrip overlay; they are not part of the TES4 DATA subrecord above.
             std::uint8_t animationType;
+            float animationMultiplier;
+            std::uint8_t weaponFlags1;
             std::uint8_t handGrip;
             std::uint8_t ammoUse;
             std::uint8_t reloadAnim;
@@ -85,6 +92,9 @@ namespace ESM4
             std::uint32_t flags2;
             float animAttackMult;
             float fireRate;
+            float animShotsPerSec;
+            float semiAutoFireDelayMin;
+            float semiAutoFireDelayMax;
             bool hasBallistics;
 
             Data()
@@ -98,6 +108,8 @@ namespace ESM4
                 , damage(0)
                 , clipSize(0)
                 , animationType(0xff)
+                , animationMultiplier(0.f)
+                , weaponFlags1(0)
                 , handGrip(0xff)
                 , ammoUse(0)
                 , reloadAnim(0)
@@ -114,9 +126,14 @@ namespace ESM4
                 , flags2(0)
                 , animAttackMult(0.f)
                 , fireRate(0.f)
+                , animShotsPerSec(0.f)
+                , semiAutoFireDelayMin(0.f)
+                , semiAutoFireDelayMax(0.f)
                 , hasBallistics(false)
             {
             }
+
+            [[nodiscard]] bool isAutomatic() const noexcept { return (weaponFlags1 & Automatic) != 0; }
         };
 
         struct SoundRef

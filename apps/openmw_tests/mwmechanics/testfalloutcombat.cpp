@@ -329,6 +329,81 @@ namespace
         EXPECT_FALSE(contract->mAuthoredHitscan);
     }
 
+    TEST(FalloutCombatTest, BuildsThrownWeaponContractThatConsumesExactlyOneWeapon)
+    {
+        ESM4::Weapon weapon;
+        weapon.mId = id(0x14d2ac);
+        weapon.mData.animationType = 13;
+        weapon.mData.hasBallistics = true;
+        weapon.mData.projectile = id(0x9001);
+        weapon.mData.ammoUse = 0;
+        weapon.mData.numProjectiles = 1;
+        weapon.mData.damage = 50;
+        ESM4::Projectile projectile;
+        projectile.mId = id(0x9001);
+        projectile.mData.present = true;
+        projectile.mData.range = 4096.f;
+
+        MWMechanics::FalloutShotFailure failure;
+        const auto contract
+            = MWMechanics::buildFalloutRayShotContract(weapon, projectile, weapon.mId, failure);
+
+        ASSERT_TRUE(contract);
+        EXPECT_EQ(failure, MWMechanics::FalloutShotFailure::None);
+        EXPECT_TRUE(contract->mConsumesWeapon);
+        EXPECT_EQ(contract->mAmmo, weapon.mId);
+        EXPECT_EQ(contract->mAmmoUse, 1);
+        EXPECT_FALSE(contract->mAuthoredHitscan);
+
+        EXPECT_FALSE(MWMechanics::buildFalloutRayShotContract(weapon, projectile, ESM::FormId{}, failure));
+        EXPECT_EQ(failure, MWMechanics::FalloutShotFailure::MissingAmmo);
+    }
+
+    TEST(FalloutCombatTest, SemiAutomaticTriggerFiresOncePerPress)
+    {
+        ESM4::Weapon weapon;
+        MWMechanics::FalloutFireCadenceFailure failure;
+        const auto cadence = MWMechanics::buildFalloutFireCadence(weapon, failure);
+        ASSERT_TRUE(cadence);
+        EXPECT_FALSE(cadence->mAutomatic);
+
+        MWMechanics::FalloutTriggerState trigger;
+        EXPECT_TRUE(MWMechanics::advanceFalloutTrigger(trigger, true, true, *cadence, 0.f));
+        EXPECT_FALSE(MWMechanics::advanceFalloutTrigger(trigger, true, true, *cadence, 1.f));
+        EXPECT_FALSE(MWMechanics::advanceFalloutTrigger(trigger, false, true, *cadence, 0.f));
+        EXPECT_TRUE(MWMechanics::advanceFalloutTrigger(trigger, true, true, *cadence, 0.f));
+    }
+
+    TEST(FalloutCombatTest, AutomaticTriggerRepeatsAtAuthoredDurationCadence)
+    {
+        ESM4::Weapon weapon;
+        weapon.mData.weaponFlags1 = ESM4::Weapon::Data::Automatic;
+        weapon.mData.animationMultiplier = 1.f;
+        weapon.mData.animAttackMult = 1.f;
+        weapon.mData.fireRate = 10.f;
+        MWMechanics::FalloutFireCadenceFailure failure;
+        const auto cadence = MWMechanics::buildFalloutFireCadence(weapon, failure);
+        ASSERT_TRUE(cadence);
+        ASSERT_TRUE(cadence->mAutomatic);
+        EXPECT_FLOAT_EQ(cadence->mSecondsPerShot, 0.1f);
+
+        MWMechanics::FalloutTriggerState trigger;
+        EXPECT_TRUE(MWMechanics::advanceFalloutTrigger(trigger, true, true, *cadence, 0.f));
+        EXPECT_FALSE(MWMechanics::advanceFalloutTrigger(trigger, true, true, *cadence, 0.05f));
+        EXPECT_TRUE(MWMechanics::advanceFalloutTrigger(trigger, true, true, *cadence, 0.05f));
+        EXPECT_FALSE(MWMechanics::advanceFalloutTrigger(trigger, true, false, *cadence, 0.1f));
+        EXPECT_TRUE(MWMechanics::advanceFalloutTrigger(trigger, true, true, *cadence, 0.f));
+    }
+
+    TEST(FalloutCombatTest, RejectsAutomaticWeaponWithoutAuthoredCadence)
+    {
+        ESM4::Weapon weapon;
+        weapon.mData.weaponFlags1 = ESM4::Weapon::Data::Automatic;
+        MWMechanics::FalloutFireCadenceFailure failure;
+        EXPECT_FALSE(MWMechanics::buildFalloutFireCadence(weapon, failure));
+        EXPECT_EQ(failure, MWMechanics::FalloutFireCadenceFailure::InvalidAnimationMultiplier);
+    }
+
     TEST(FalloutCombatTest, BuildsUnitRayAtAuthoredSpreadConeBoundary)
     {
         const auto center = MWMechanics::buildFalloutRayDirection(
