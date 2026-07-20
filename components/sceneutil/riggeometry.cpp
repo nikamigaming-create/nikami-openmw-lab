@@ -100,11 +100,8 @@ namespace SceneUtil
         }
 
         std::string_view getFalloutSkinningMode(
-            std::string_view name, std::string_view rootBone, bool inventoryPaperDoll)
+            std::string_view name, std::string_view rootBone, bool /* inventoryPaperDoll */)
         {
-            if (inventoryPaperDoll)
-                return "source";
-
             if (isFalloutHandRig(name, rootBone))
             {
                 if (const char* env = getEsm4RuntimeEnv("OPENMW_ESM4_HAND_SKINNING_MODE", "OPENMW_FNV_VR_HAND_SKINNING_MODE"))

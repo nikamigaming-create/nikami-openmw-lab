@@ -154,6 +154,24 @@ namespace MWClass
             static float get(const Record&) { return 0.f; }
         };
 
+        template <class Record>
+        struct ItemHealth
+        {
+            static int get(const Record&) { return 0; }
+        };
+
+        template <>
+        struct ItemHealth<ESM4::Armor>
+        {
+            static int get(const ESM4::Armor& record) { return static_cast<int>(record.mData.health); }
+        };
+
+        template <>
+        struct ItemHealth<ESM4::Weapon>
+        {
+            static int get(const ESM4::Weapon& record) { return static_cast<int>(record.mData.health); }
+        };
+
 #define OPENMW_ESM4_VALUE_WEIGHT_TRAIT(Type, ValueExpr, WeightExpr)                                                   \
     template <>                                                                                                      \
     struct ItemValue<Type>                                                                                           \
@@ -301,6 +319,11 @@ namespace MWClass
             return ESM4Impl::ItemWeight<Record>::get(*ptr.get<Record>()->mBase);
         }
 
+        int getItemMaxHealth(const MWWorld::ConstPtr& ptr) const override
+        {
+            return ESM4Impl::ItemHealth<Record>::get(*ptr.get<Record>()->mBase);
+        }
+
         const ESM::RefId& getUpSoundId(const MWWorld::ConstPtr& ptr) const override
         {
             static const ESM::RefId sEmpty;
@@ -367,6 +390,25 @@ namespace MWClass
         const std::string& getInventoryIcon(const MWWorld::ConstPtr& ptr) const override
         {
             return ESM4Impl::InventoryIcon<Record>::get(*ptr.get<Record>()->mBase);
+        }
+
+        bool showsInInventory(const MWWorld::ConstPtr& ptr) const override
+        {
+            const std::string_view name = getName(ptr);
+            if (Misc::StringUtils::ciEqual(name, "Pip-Boy 3000")
+                || Misc::StringUtils::ciEqual(name, "Pip-Boy Glove"))
+                return false;
+
+            if constexpr (std::is_same_v<Record, ESM4::Armor>)
+            {
+                const ESM4::Armor& armor = *ptr.get<ESM4::Armor>()->mBase;
+                return (armor.mGeneralFlags & ESM4::Armor::FO3_NonPlayable) == 0
+                    && (armor.mArmorFlags & ESM4::Armor::FO3_PipBoy) == 0
+                    && !Misc::StringUtils::ciEqual(armor.mEditorId, "PipBoy")
+                    && !Misc::StringUtils::ciEqual(armor.mEditorId, "PipBoyGlove");
+            }
+            else
+                return ESM4Base<Record>::showsInInventory(ptr);
         }
 
         std::pair<std::vector<int>, bool> getEquipmentSlots(const MWWorld::ConstPtr& ptr) const override

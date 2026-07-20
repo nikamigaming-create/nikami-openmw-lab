@@ -932,6 +932,44 @@ TEST(ESM4QuestRuntimeTest, EvaluatesRetailQuestAndGlobalConditionGroups)
     EXPECT_EQ(runtime.getUnsupportedConditionFunctions(), std::vector<std::uint32_t>{ 9999 });
 }
 
+TEST(ESM4QuestRuntimeTest, ImportsRetailSaveProgressTransactionallyWithoutExecutingStageScripts)
+{
+    MWWorld::ESMStore store;
+    const ESM::FormId questId{ .mIndex = 0x5229, .mContentFile = 1 };
+    ESM4::Quest quest = makeQuest(questId, "SaveQuest");
+    quest.mObjectives.push_back({ .mIndex = 10, .mDescription = "Read the imported objective" });
+    ESM4::QuestStageEntry stageEntry;
+    stageEntry.mScript.scriptSource = "SetObjectiveCompleted SaveQuest 10 1";
+    quest.mStages.push_back({ .mIndex = 5, .mEntries = { std::move(stageEntry) } });
+    store.overrideRecord(quest);
+
+    MWWorld::ESM4QuestRuntime runtime;
+    runtime.initialize(store);
+    MWWorld::ESM4SavedQuestProgress progress;
+    progress.mStages.push_back({ questId, 5, 1 });
+    progress.mObjectives.push_back({ questId, 10 });
+    progress.mActiveQuest = questId;
+
+    std::string error;
+    ASSERT_TRUE(runtime.loadSavedProgress(progress, &error)) << error;
+    const MWWorld::ESM4QuestState* state = runtime.search(questId);
+    ASSERT_NE(state, nullptr);
+    EXPECT_EQ(state->mFlags, 0x21);
+    EXPECT_EQ(state->mCurrentStage, 5);
+    EXPECT_TRUE(state->mStageDone.at(5));
+    EXPECT_EQ(state->mObjectiveStatus.at(10), MWWorld::ESM4QuestState::Objective_Displayed);
+    EXPECT_EQ(runtime.getActiveQuest(), questId);
+
+    MWWorld::ESM4SavedQuestProgress invalid = progress;
+    invalid.mObjectives.front().mObjective = 99;
+    EXPECT_FALSE(runtime.loadSavedProgress(invalid, &error));
+    EXPECT_FALSE(error.empty());
+    state = runtime.search(questId);
+    ASSERT_NE(state, nullptr);
+    EXPECT_EQ(state->mObjectiveStatus.at(10), MWWorld::ESM4QuestState::Objective_Displayed);
+    EXPECT_EQ(runtime.getActiveQuest(), questId);
+}
+
 TEST(ESM4QuestRuntimeTest, RoundTripsQuestStateAcrossChangedLoadOrder)
 {
     const ESM::FormId originalId{ .mIndex = 0x10a214, .mContentFile = 2 };

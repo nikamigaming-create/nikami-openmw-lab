@@ -83,6 +83,7 @@ namespace MWClass
         BodyPart::registerSelf();
 
         ESM4Activator::registerSelf();
+        // ESM4Named inventory and equipment policy is instantiated by these registrations.
         ESM4Named<ESM4::Ammunition>::registerSelf();
         ESM4Named<ESM4::Armor>::registerSelf();
         ESM4Named<ESM4::Book>::registerSelf();

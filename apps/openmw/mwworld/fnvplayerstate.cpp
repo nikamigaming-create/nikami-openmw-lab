@@ -594,6 +594,45 @@ namespace MWWorld
         plan.mCamera.mFirstPersonModelFovOffset = camera.mFirstPersonModelFov.mRange.mOffset;
         plan.mCamera.mWorldFovOffset = camera.mWorldFov.mRange.mOffset;
 
+        if (save.mPlayerCharacterListsState)
+        {
+            ESM4SavedQuestProgress progress;
+            progress.mStages.reserve(save.mPlayerCharacterListsState->mStages.size());
+            for (const ESM4::FONVSavePlayerCharacterStageEntry& entry
+                : save.mPlayerCharacterListsState->mStages)
+            {
+                if (!entry.mQuest.mResolvedFormId)
+                    return loadFailure("FNV save quest-stage QUST RefID did not resolve");
+                const std::optional<ESM::FormId> quest
+                    = normalizeSavedFormId(*entry.mQuest.mResolvedFormId, currentPluginIndices);
+                if (!quest)
+                    return loadFailure("FNV save quest-stage QUST FormID has unsupported provenance");
+                progress.mStages.push_back({ *quest, entry.mStage.mValue, entry.mLogEntry.mValue });
+            }
+
+            progress.mObjectives.reserve(save.mPlayerCharacterListsState->mObjectives.size());
+            for (const ESM4::FONVSavePlayerCharacterObjectiveEntry& entry
+                : save.mPlayerCharacterListsState->mObjectives)
+            {
+                if (!entry.mQuest.mResolvedFormId)
+                    return loadFailure("FNV save quest-objective QUST RefID did not resolve");
+                const std::optional<ESM::FormId> quest
+                    = normalizeSavedFormId(*entry.mQuest.mResolvedFormId, currentPluginIndices);
+                if (!quest || entry.mObjective.mValue > static_cast<std::uint32_t>(std::numeric_limits<std::int32_t>::max()))
+                    return loadFailure("FNV save quest-objective state is outside the supported range");
+                progress.mObjectives.push_back({ *quest, static_cast<std::int32_t>(entry.mObjective.mValue) });
+            }
+
+            if (camera.mQuest.mResolvedFormId)
+            {
+                progress.mActiveQuest
+                    = normalizeSavedFormId(*camera.mQuest.mResolvedFormId, currentPluginIndices);
+                if (!progress.mActiveQuest)
+                    return loadFailure("FNV save active QUST FormID has unsupported provenance");
+            }
+            plan.mQuestProgress = std::move(progress);
+        }
+
         if (!save.mSky)
             return loadFailure("FNV save does not expose a proven Sky global-data payload");
         const ESM4::FONVSaveSkyState& sky = *save.mSky;
@@ -628,6 +667,12 @@ namespace MWWorld
         plan.mScene.mPayloadOffset = sky.mRange.mOffset;
         plan.mScene.mPayloadBytes = sky.mRange.mSize;
         plan.mUncoveredState = falloutSaveLoadBlockers();
+        if (plan.mQuestProgress)
+        {
+            const auto blocker = std::ranges::find(plan.mUncoveredState, "quest-stages-objectives-variables");
+            if (blocker != plan.mUncoveredState.end())
+                *blocker = "quest-variables";
+        }
         return { std::move(plan), {} };
     }
 

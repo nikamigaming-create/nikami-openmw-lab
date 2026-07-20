@@ -56,6 +56,26 @@ namespace MWWorld
         std::map<std::string, float, std::less<>> mVariables;
     };
 
+    struct ESM4SavedQuestProgress
+    {
+        struct Stage
+        {
+            ESM::FormId mQuest;
+            std::uint8_t mStage = 0;
+            std::uint8_t mLogEntry = 0;
+        };
+
+        struct Objective
+        {
+            ESM::FormId mQuest;
+            std::int32_t mObjective = 0;
+        };
+
+        std::vector<Stage> mStages;
+        std::vector<Objective> mObjectives;
+        std::optional<ESM::FormId> mActiveQuest;
+    };
+
     class ESM4QuestRuntime
     {
         using QuestStateMap = std::unordered_map<ESM::FormId, ESM4QuestState>;
@@ -145,6 +165,10 @@ namespace MWWorld
     public:
         void initialize(const ESMStore& store, const Globals* globals = nullptr);
         void clear();
+
+        // Import decoded retail save progress without executing quest stage scripts. Validation is transactional:
+        // no runtime state changes unless every quest, stage and objective resolves against the loaded content.
+        bool loadSavedProgress(const ESM4SavedQuestProgress& progress, std::string* error = nullptr);
 
         bool startQuest(std::string_view id);
         bool startQuest(ESM::FormId id);

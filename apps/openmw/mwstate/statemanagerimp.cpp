@@ -47,6 +47,7 @@
 #include "../mwworld/esmstore.hpp"
 #include "../mwworld/fnvsavepreflight.hpp"
 #include "../mwworld/globals.hpp"
+#include "../mwworld/inventorystore.hpp"
 #include "../mwworld/scene.hpp"
 #include "../mwworld/worldmodel.hpp"
 
@@ -513,6 +514,15 @@ void MWState::StateManager::loadGame(const Character* character, const std::file
             throw std::runtime_error("native FNV visual application has no validated Player compatibility carrier");
         ESM::NPC savedPlayer = *playerCarrier;
         MWWorld::applyFalloutSavePlayerHeader(savedPlayer, context.mPlan.mPlayer);
+        Log(Debug::Info) << "Native FNV save Player inventory: stacks="
+                         << context.mPlan.mPlayer.mInventoryItems.size() << " worn="
+                         << context.mPlan.mPlayer.mWornVisualItems.size();
+        for (const MWWorld::FalloutInventoryItem& item : context.mPlan.mPlayer.mInventoryItems)
+        {
+            const ESM::RefId record(item.mRecord);
+            Log(Debug::Verbose) << "Native FNV save Player inventory item: form=" << record
+                                << " count=" << item.mCount << " type=" << world.getStore().find(record);
+        }
 
         ESM::Position savedPosition;
         for (std::size_t index = 0; index < 3; ++index)
@@ -554,9 +564,55 @@ void MWState::StateManager::loadGame(const Character* character, const std::file
 
         MWBase::Environment::get().getWindowManager()->setNewGame(false);
         mutableWorld.saveLoaded();
+        if (context.mPlan.mQuestProgress)
+        {
+            std::string error;
+            if (!mutableWorld.getESM4QuestRuntime().loadSavedProgress(*context.mPlan.mQuestProgress, &error))
+                throw std::runtime_error("native FNV quest-progress application failed after preflight: " + error);
+        }
         mutableWorld.setupPlayer();
 
         MWWorld::Ptr player = mutableWorld.getPlayerPtr();
+        // setupPlayer replaces the Player base record but intentionally retains the live reference data.  Native
+        // Fallout saves replace the authored compatibility-carrier inventory, so retaining that custom data would
+        // leave the pre-load inventory store (and its two placeholder entries) alive.  Rebuild it from savedPlayer
+        // before rendering or opening any inventory UI.
+        player.getRefData().setCustomData(nullptr);
+        MWWorld::InventoryStore& savedInventory = player.getClass().getInventoryStore(player);
+        savedInventory.unequipAll();
+        std::size_t runtimeStacks = 0;
+        std::size_t visibleStacks = 0;
+        for (MWWorld::ContainerStoreIterator item = savedInventory.begin(); item != savedInventory.end(); ++item)
+        {
+            ++runtimeStacks;
+            if (item->getClass().showsInInventory(*item))
+                ++visibleStacks;
+        }
+        Log(Debug::Info) << "Native FNV save Player runtime inventory rebuilt: stacks=" << runtimeStacks
+                         << " visible=" << visibleStacks;
+        for (const MWWorld::FalloutSavePlayerHeaderState::WornVisualItem& worn
+            : context.mPlan.mPlayer.mWornVisualItems)
+        {
+            const ESM::RefId record(worn.mRecord);
+            MWWorld::ContainerStoreIterator found = savedInventory.end();
+            for (MWWorld::ContainerStoreIterator item = savedInventory.begin(); item != savedInventory.end(); ++item)
+            {
+                if (item->getCellRef().getRefId() == record)
+                {
+                    found = item;
+                    break;
+                }
+            }
+            if (found == savedInventory.end())
+                throw std::runtime_error("native FNV ExtraWorn item is absent from rebuilt Player inventory");
+
+            const std::vector<int>& slots = found->getClass().getEquipmentSlots(*found).first;
+            if (slots.empty())
+                throw std::runtime_error("native FNV ExtraWorn item has no compatible runtime equipment slot");
+            savedInventory.equip(slots.front(), found);
+            Log(Debug::Info) << "Native FNV save Player equipped ExtraWorn: form=" << record
+                             << " slot=" << slots.front() << " name=" << found->getClass().getName(*found);
+        }
         player.getRefData().setPosition(savedPosition);
         player.getCellRef().setPosition(savedPosition);
         std::vector<ESM::FormId> wornVisualItems;

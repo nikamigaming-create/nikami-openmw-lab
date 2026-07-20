@@ -119,6 +119,71 @@ namespace MWWorld
         mUnsupportedConditionFunctions.clear();
     }
 
+    bool ESM4QuestRuntime::loadSavedProgress(const ESM4SavedQuestProgress& progress, std::string* error)
+    {
+        const auto fail = [error](std::string message) {
+            if (error != nullptr)
+                *error = std::move(message);
+            return false;
+        };
+        if (mStore == nullptr)
+            return fail("quest runtime is not initialized");
+
+        QuestStateMap states = mStates;
+        std::optional<ESM::FormId> activeQuest;
+        for (const ESM4SavedQuestProgress::Stage& saved : progress.mStages)
+        {
+            const ESM4::Quest* quest = mStore->get<ESM4::Quest>().search(ESM::RefId(saved.mQuest));
+            const auto state = states.find(saved.mQuest);
+            if (quest == nullptr || state == states.end())
+                return fail("saved quest stage references a missing QUST " + ESM::RefId(saved.mQuest).serializeText());
+            const auto stage = state->second.mStageDone.find(saved.mStage);
+            if (stage == state->second.mStageDone.end())
+                return fail("saved quest stage index is absent from loaded QUST " + quest->mEditorId);
+
+            stage->second = true;
+            state->second.mCurrentStage = std::max(state->second.mCurrentStage, saved.mStage);
+            state->second.mFlags |= ESM4QuestState::Flag_Running | ESM4QuestState::Flag_ShownInPipBoy;
+        }
+
+        for (const ESM4SavedQuestProgress::Objective& saved : progress.mObjectives)
+        {
+            const ESM4::Quest* quest = mStore->get<ESM4::Quest>().search(ESM::RefId(saved.mQuest));
+            const auto state = states.find(saved.mQuest);
+            if (quest == nullptr || state == states.end())
+            {
+                return fail(
+                    "saved quest objective references a missing QUST " + ESM::RefId(saved.mQuest).serializeText());
+            }
+            const auto objective = state->second.mObjectiveStatus.find(saved.mObjective);
+            if (objective == state->second.mObjectiveStatus.end())
+                return fail("saved quest objective index is absent from loaded QUST " + quest->mEditorId);
+
+            objective->second |= ESM4QuestState::Objective_Displayed;
+            state->second.mFlags |= ESM4QuestState::Flag_Running | ESM4QuestState::Flag_ShownInPipBoy;
+        }
+
+        if (progress.mActiveQuest)
+        {
+            const ESM4::Quest* quest = mStore->get<ESM4::Quest>().search(ESM::RefId(*progress.mActiveQuest));
+            const auto state = states.find(*progress.mActiveQuest);
+            if (quest == nullptr || state == states.end())
+            {
+                return fail(
+                    "saved active quest references a missing QUST " + ESM::RefId(*progress.mActiveQuest).serializeText());
+            }
+            state->second.mFlags |= ESM4QuestState::Flag_Running | ESM4QuestState::Flag_ShownInPipBoy;
+            activeQuest = *progress.mActiveQuest;
+        }
+
+        mStates = std::move(states);
+        mActiveQuest = activeQuest;
+        Log(Debug::Info) << "FNV/ESM4 save: imported quest progress stages=" << progress.mStages.size()
+                         << " objectives=" << progress.mObjectives.size() << " active="
+                         << (mActiveQuest ? ESM::RefId(*mActiveQuest).serializeText() : std::string("<none>"));
+        return true;
+    }
+
     const ESM4::Quest* ESM4QuestRuntime::resolveQuest(std::string_view id) const
     {
         if (mStore == nullptr || id.empty())

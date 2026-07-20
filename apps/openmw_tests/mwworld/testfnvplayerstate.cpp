@@ -176,7 +176,20 @@ namespace
         camera.mFirstPersonModelFov.mRange = { 501942, 4 };
         camera.mWorldFov.mValue = 75.f;
         camera.mWorldFov.mRange = { 501947, 4 };
+        camera.mQuest.mResolvedFormId = 0x01000042u;
         result.mPlayerCharacterScalarReferenceState = std::move(camera);
+
+        ESM4::FONVSavePlayerCharacterListsState questLists;
+        ESM4::FONVSavePlayerCharacterStageEntry stage;
+        stage.mQuest.mResolvedFormId = 0x00000043u;
+        stage.mStage.mValue = 5;
+        stage.mLogEntry.mValue = 1;
+        questLists.mStages.push_back(std::move(stage));
+        ESM4::FONVSavePlayerCharacterObjectiveEntry objective;
+        objective.mQuest.mResolvedFormId = 0x01000042u;
+        objective.mObjective.mValue = 10;
+        questLists.mObjectives.push_back(std::move(objective));
+        result.mPlayerCharacterListsState = std::move(questLists);
 
         ESM4::FONVSaveSkyState sky;
         sky.mCurrentWeather.mResolvedFormId = 0x001237d7u;
@@ -542,6 +555,15 @@ namespace
         EXPECT_FLOAT_EQ(plan.mCamera.mFirstPersonModelFov, 55.f);
         EXPECT_FLOAT_EQ(plan.mCamera.mWorldFov, 75.f);
         EXPECT_EQ(plan.mCamera.mModeOffset, 501845u);
+        ASSERT_TRUE(plan.mQuestProgress.has_value());
+        ASSERT_EQ(plan.mQuestProgress->mStages.size(), 1u);
+        EXPECT_EQ(plan.mQuestProgress->mStages[0].mQuest, form(0x43, 1));
+        EXPECT_EQ(plan.mQuestProgress->mStages[0].mStage, 5u);
+        EXPECT_EQ(plan.mQuestProgress->mStages[0].mLogEntry, 1u);
+        ASSERT_EQ(plan.mQuestProgress->mObjectives.size(), 1u);
+        EXPECT_EQ(plan.mQuestProgress->mObjectives[0].mQuest, form(0x42, 2));
+        EXPECT_EQ(plan.mQuestProgress->mObjectives[0].mObjective, 10);
+        EXPECT_EQ(plan.mQuestProgress->mActiveQuest, form(0x42, 2));
         EXPECT_EQ(plan.mScene.mCurrentWeather, form(0x001237d7, 1));
         EXPECT_EQ(plan.mScene.mDefaultWeather, form(0x000ffc88, 1));
         EXPECT_FLOAT_EQ(plan.mScene.mGameHour, 14.215002059936523f);
@@ -549,6 +571,8 @@ namespace
         EXPECT_THAT(plan.mUncoveredState, Contains("global-variables"));
         EXPECT_THAT(plan.mUncoveredState, Not(Contains("global-variables-time-weather")));
         EXPECT_THAT(plan.mUncoveredState, Not(Contains("player-inventory-equipment-ammo")));
+        EXPECT_THAT(plan.mUncoveredState, Contains("quest-variables"));
+        EXPECT_THAT(plan.mUncoveredState, Not(Contains("quest-stages-objectives-variables")));
 
         MWWorld::Store<ESM4::World> worlds;
         ESM4::World worldspace;

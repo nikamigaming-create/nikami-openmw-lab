@@ -2,6 +2,9 @@
 #define GAME_MWCLASS_ESM4CONTAINER_H
 
 #include <components/esm4/loadcont.hpp>
+#include <components/misc/rng.hpp>
+
+#include <optional>
 
 #include "../mwworld/containerstore.hpp"
 #include "../mwworld/customdata.hpp"
@@ -19,15 +22,26 @@ namespace MWWorld
     class ESMStore;
 }
 
+namespace MWBase
+{
+    class World;
+}
+
 namespace MWClass
 {
     class ESM4ContainerStore final : public MWWorld::ContainerStore
     {
         template <class Record>
-        bool addInitialRecord(const MWWorld::ESMStore& store, const ESM::RefId& id, int count);
+        bool addInitialRecord(
+            const MWWorld::ESMStore& store, const ESM::RefId& id, int count, std::optional<float> condition = {});
+
+        void fillImpl(const ESM4::Container& container, const MWWorld::ESMStore& store,
+            Misc::Rng::Generator* prng, int playerLevel, MWBase::World* world);
 
     public:
         void fill(const ESM4::Container& container, const MWWorld::ESMStore& store);
+        void fill(const ESM4::Container& container, const MWWorld::ESMStore& store,
+            Misc::Rng::Generator& prng, int playerLevel, MWBase::World* world = nullptr);
 
         std::unique_ptr<MWWorld::ContainerStore> clone() override;
     };
@@ -38,6 +52,8 @@ namespace MWClass
         ESM4ContainerStore mStore;
 
         ESM4ContainerCustomData(const ESM4::Container& container, const MWWorld::ESMStore& store);
+        ESM4ContainerCustomData(const ESM4::Container& container, const MWWorld::ESMStore& store,
+            Misc::Rng::Generator& prng, int playerLevel, MWBase::World* world);
         explicit ESM4ContainerCustomData(const ESM::InventoryState& inventory);
     };
 

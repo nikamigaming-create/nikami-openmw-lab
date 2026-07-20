@@ -1926,7 +1926,7 @@ namespace MWGui
         if (player->getDrawState() == MWMechanics::DrawState::Spell)
             player->setDrawState(MWMechanics::DrawState::Nothing);
 
-        mSpellWindow->setTitle("#{Interface:None}");
+        mSpellWindow->setTitle(isFalloutContentLoaded() ? "DATA / QUESTS" : "#{Interface:None}");
     }
 
     void WindowManager::unsetSelectedWeapon()

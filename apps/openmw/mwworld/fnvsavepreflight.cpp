@@ -35,9 +35,18 @@ namespace MWWorld
     FalloutSavePreflightResolution resolveFalloutSavePreflightContext(
         ESM4::FONVSaveGamePrefix save, const ESMStore& store, std::span<const std::string> currentContentFiles)
     {
-        return resolveFalloutSavePreflightContext(std::move(save), store.getFalloutPlayerState(),
+        FalloutSavePreflightResolution result = resolveFalloutSavePreflightContext(std::move(save), store.getFalloutPlayerState(),
             store.getFalloutNativePlayerRecords(), store.get<ESM4::World>(), store.get<ESM4::Cell>(),
             store.get<ESM4::Climate>(), store.get<ESM4::Weather>(), currentContentFiles);
+        if (!result || !result.mContext->mPlan.mQuestProgress)
+            return result;
+
+        ESM4QuestRuntime validationRuntime;
+        validationRuntime.initialize(store);
+        std::string error;
+        if (!validationRuntime.loadSavedProgress(*result.mContext->mPlan.mQuestProgress, &error))
+            return failure("FNV save quest-progress preflight failed: " + error);
+        return result;
     }
 
     FalloutSavePreflightResolution resolveFalloutSavePreflightContext(ESM4::FONVSaveGamePrefix save,

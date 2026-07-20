@@ -13,6 +13,11 @@
         <Widget type="SpellView" skin="MW_SpellView" position="8 38 268 490" align="Left Top Stretch" name="SpellView">
         </Widget>
 
+        <!-- Fallout uses this native pane for quest/objective data rather than TES3 spells. -->
+        <Widget type="MWList" skin="MW_QuestList" position="8 8 268 550" align="Left Top Stretch" name="FalloutQuestList">
+            <Property key="Visible" value="false"/>
+        </Widget>
+
         <Widget type="HBox" position="8 535 268 23" align="Right Bottom HStretch">
             <Widget type="Spacer"/>
             <!-- Spell deletion button -->

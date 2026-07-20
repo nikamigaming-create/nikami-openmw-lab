@@ -197,6 +197,39 @@ namespace MWRender
             }
         }
 
+        void applyFalloutInventoryPlayerEquippedItems(
+            const MWWorld::Ptr& visualPtr, const MWWorld::Ptr& sourcePlayer)
+        {
+            if (sourcePlayer.isEmpty() || !sourcePlayer.getClass().hasInventoryStore(sourcePlayer))
+                return;
+
+            MWWorld::InventoryStore& inventory = sourcePlayer.getClass().getInventoryStore(sourcePlayer);
+            for (int slot = 0; slot < MWWorld::InventoryStore::Slots; ++slot)
+            {
+                MWWorld::ContainerStoreIterator item = inventory.getSlot(slot);
+                if (item == inventory.end())
+                    continue;
+
+                if (item->getType() == ESM4::Armor::sRecordId)
+                {
+                    const ESM4::Armor* armor = item->get<ESM4::Armor>()->mBase;
+                    const bool added = MWClass::ESM4Npc::addEquippedArmorReplacingSlots(visualPtr, armor);
+                    Log(Debug::Info) << "FNV inventory paper doll: slot=" << slot << " type=ARMO form="
+                                     << item->getCellRef().getRefId() << " editor=" << armor->mEditorId
+                                     << " added=" << added;
+                }
+                else if (item->getType() == ESM4::Weapon::sRecordId)
+                {
+                    const ESM4::Weapon* weapon = item->get<ESM4::Weapon>()->mBase;
+                    const bool changed = MWClass::ESM4Npc::setEquippedWeapon(visualPtr, weapon);
+                    visualPtr.getClass().getCreatureStats(visualPtr).setDrawState(MWMechanics::DrawState::Weapon);
+                    Log(Debug::Info) << "FNV inventory paper doll: slot=" << slot << " type=WEAP form="
+                                     << item->getCellRef().getRefId() << " editor=" << weapon->mEditorId
+                                     << " changed=" << changed;
+                }
+            }
+        }
+
         std::string trimFalloutPreviewText(const char* value)
         {
             if (value == nullptr)
@@ -1001,6 +1034,7 @@ namespace MWRender
                 MWWorld::Ptr visualPtr(mFalloutPreviewRef.get(), nullptr);
                 visualPtr.getRefData().setCustomData(std::unique_ptr<MWWorld::CustomData>());
                 applyFalloutInventoryPlayerProxyConfiguredEquipment(visualPtr);
+                applyFalloutInventoryPlayerEquippedItems(visualPtr, mCharacter);
 
                 Log(Debug::Info) << "FNV/ESM4 proof: using Fallout inventory player visual proxy "
                                  << falloutPlayerVisual->mEditorId << " (" << ESM::RefId(falloutPlayerVisual->mId)

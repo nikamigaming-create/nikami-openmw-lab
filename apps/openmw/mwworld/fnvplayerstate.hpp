@@ -12,6 +12,8 @@
 #include <components/esm/formid.hpp>
 #include <components/esm4/actor.hpp>
 
+#include "esm4questruntime.hpp"
+
 namespace ESM
 {
     struct NPC;
@@ -219,6 +221,7 @@ namespace MWWorld
             std::uint64_t mPayloadOffset = 0;
             std::uint64_t mPayloadBytes = 0;
         } mScene;
+        std::optional<ESM4SavedQuestProgress> mQuestProgress;
         std::vector<std::string> mUncoveredState;
     };
 
