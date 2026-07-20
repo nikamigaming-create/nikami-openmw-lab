@@ -49,18 +49,56 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdlib>
 #include <limits>
 #include <map>
 #include <memory>
 #include <optional>
 #include <sstream>
 #include <stdexcept>
+#include <string>
 #include <type_traits>
 #include <utility>
 #include <vector>
 
 namespace
 {
+    class ScopedEnvironmentVariable
+    {
+    public:
+        ScopedEnvironmentVariable(std::string name, const char* value)
+            : mName(std::move(name))
+        {
+            if (const char* previous = std::getenv(mName.c_str()))
+                mPrevious = previous;
+            set(value);
+        }
+
+        ~ScopedEnvironmentVariable()
+        {
+            set(mPrevious ? mPrevious->c_str() : nullptr);
+        }
+
+        ScopedEnvironmentVariable(const ScopedEnvironmentVariable&) = delete;
+        ScopedEnvironmentVariable& operator=(const ScopedEnvironmentVariable&) = delete;
+
+    private:
+        void set(const char* value) const
+        {
+#ifdef _WIN32
+            _putenv_s(mName.c_str(), value != nullptr ? value : "");
+#else
+            if (value != nullptr)
+                setenv(mName.c_str(), value, 1);
+            else
+                unsetenv(mName.c_str());
+#endif
+        }
+
+        std::string mName;
+        std::optional<std::string> mPrevious;
+    };
+
     TEST(ESM4NamedActivationTest, OverridesGenericNullActivationForPickupRecords)
     {
         using PickupClass = MWClass::ESM4Named<ESM4::MiscItem>;
@@ -1391,6 +1429,51 @@ namespace
         EXPECT_TRUE(restoredStats.isDeathAnimationFinished());
         EXPECT_TRUE(restoredStats.hasDied());
         EXPECT_EQ(restored.getCellRef().getRefNum(), creatureRef);
+    }
+
+    TEST_F(ESM4ContainerTest, DisablingAuthoredPackagesDoesNotDisableCreatureAggression)
+    {
+        constexpr std::uint32_t wanderPackageId = 0x01104c40;
+        MWWorld::ESMStore store;
+
+        ESM4::AIPackage wander{};
+        wander.mId = ESM::FormId::fromUint32(wanderPackageId);
+        wander.mEditorId = "SyntheticCreatureWander";
+        wander.mData.type = 5;
+        wander.mSchedule.time = 0xff;
+        wander.mLocation.radius = 256;
+        store.overrideRecord(wander);
+
+        ESM4::Creature creature = makeCreature();
+        creature.mHasFNVAIData = true;
+        creature.mFNVAIData.aggression = 1;
+        creature.mAIPackages.push_back(wander.mId);
+        store.overrideRecord(creature);
+        store.overrideRecord(makeCreatureCell());
+        const_cast<MWWorld::Store<ESM4::ActorCreature>&>(store.get<ESM4::ActorCreature>())
+            .insertStatic(makePlacedCreature());
+        store.setUp();
+
+        ESM::ReadersCache readers;
+        MWWorld::WorldModel worldModel(store, readers);
+        mEnvironment.setESMStore(store);
+        mEnvironment.setWorldModel(worldModel);
+        MWWorld::CellStore* cell
+            = worldModel.findCell(ESM::RefId(ESM::FormId::fromUint32(sCreatureCell)), false);
+        ASSERT_NE(cell, nullptr);
+        cell->load();
+        MWWorld::Ptr ptr = findPlacedCreature(*cell);
+        ASSERT_FALSE(ptr.isEmpty());
+
+        ASSERT_EQ(MWClass::selectFnvCreaturePackage(store, creature.mAIPackages, 12.f,
+                      ptr.getCellRef().getRefNum(), cell->getCell()->getId()),
+            store.get<ESM4::AIPackage>().search(wander.mId));
+        ScopedEnvironmentVariable disablePackages("OPENMW_FNV_DISABLE_AI_PACKAGES", "1");
+
+        const MWMechanics::CreatureStats& stats = ptr.getClass().getCreatureStats(ptr);
+
+        EXPECT_EQ(stats.getAiSetting(MWMechanics::AiSetting::Fight).getBase(), 1);
+        EXPECT_TRUE(stats.getAiSequence().isEmpty());
     }
 
     TEST_F(ESM4ContainerTest, CreatureDeathItemMaterializesOnceAndRoundTripsWithoutDuplication)

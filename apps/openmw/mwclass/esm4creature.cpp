@@ -1431,8 +1431,7 @@ namespace MWClass
             responsibility = aiRecord->mAIData.responsibility;
         }
         stats.setAiSetting(MWMechanics::AiSetting::Hello, 30);
-        stats.setAiSetting(MWMechanics::AiSetting::Fight,
-            std::getenv("OPENMW_FNV_DISABLE_AI_PACKAGES") != nullptr ? 0 : aggression);
+        stats.setAiSetting(MWMechanics::AiSetting::Fight, aggression);
         stats.setAiSetting(MWMechanics::AiSetting::Flee, 100 - confidence);
         stats.setAiSetting(MWMechanics::AiSetting::Alarm, responsibility);
 
