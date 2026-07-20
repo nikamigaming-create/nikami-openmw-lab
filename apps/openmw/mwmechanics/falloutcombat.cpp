@@ -229,6 +229,27 @@ namespace MWMechanics
             weapon.mActionPointCost, bodyPartDamageMultiplier * weapon.mLimbDamageMultiplier };
     }
 
+    std::optional<FalloutVatsBodyPartContract> buildFalloutVatsBodyPartContract(
+        const ESM4::BodyPartData::BodyPart& bodyPart, std::uint8_t index, FalloutVatsBodyPartFailure& failure)
+    {
+        failure = FalloutVatsBodyPartFailure::None;
+        if (bodyPart.mPartName.empty())
+            failure = FalloutVatsBodyPartFailure::MissingName;
+        else if (bodyPart.mVATSTarget.empty())
+            failure = FalloutVatsBodyPartFailure::MissingTargetNode;
+        else if (bodyPart.mData.actorValue < 0)
+            failure = FalloutVatsBodyPartFailure::InvalidActorValue;
+        else if (bodyPart.mData.toHitChance > 100)
+            failure = FalloutVatsBodyPartFailure::InvalidHitChance;
+        else if (!std::isfinite(bodyPart.mData.damageMult) || bodyPart.mData.damageMult <= 0.f)
+            failure = FalloutVatsBodyPartFailure::InvalidDamageMultiplier;
+        if (failure != FalloutVatsBodyPartFailure::None)
+            return std::nullopt;
+        return FalloutVatsBodyPartContract{ index, bodyPart.mPartName, bodyPart.mVATSTarget,
+            bodyPart.mData.actorValue, bodyPart.mData.toHitChance, bodyPart.mData.damageMult,
+            (bodyPart.mData.flags & 0x40) != 0 };
+    }
+
     bool advanceFalloutTrigger(FalloutTriggerState& state, bool triggerDown, bool ready,
         const FalloutFireCadence& cadence, float duration) noexcept
     {
@@ -449,6 +470,26 @@ namespace MWMechanics
                 return "insufficient-action-points";
             case FalloutVatsQueueFailure::QueueLimitReached:
                 return "queue-limit-reached";
+        }
+        return "unknown";
+    }
+
+    std::string_view getFalloutVatsBodyPartFailureName(FalloutVatsBodyPartFailure failure)
+    {
+        switch (failure)
+        {
+            case FalloutVatsBodyPartFailure::None:
+                return "none";
+            case FalloutVatsBodyPartFailure::MissingName:
+                return "missing-name";
+            case FalloutVatsBodyPartFailure::MissingTargetNode:
+                return "missing-target-node";
+            case FalloutVatsBodyPartFailure::InvalidActorValue:
+                return "invalid-actor-value";
+            case FalloutVatsBodyPartFailure::InvalidHitChance:
+                return "invalid-hit-chance";
+            case FalloutVatsBodyPartFailure::InvalidDamageMultiplier:
+                return "invalid-damage-multiplier";
         }
         return "unknown";
     }

@@ -12,6 +12,7 @@
 
 #include <components/esm/formid.hpp>
 #include <components/esm4/actor.hpp>
+#include <components/esm4/loadbptd.hpp>
 #include <components/esm4/loadfact.hpp>
 
 namespace ESM4
@@ -92,6 +93,27 @@ namespace MWMechanics
         std::uint8_t mDisplayedHitChance = 0;
         float mActionPointCost = 0.f;
         float mDamageMultiplier = 1.f;
+    };
+
+    enum class FalloutVatsBodyPartFailure
+    {
+        None,
+        MissingName,
+        MissingTargetNode,
+        InvalidActorValue,
+        InvalidHitChance,
+        InvalidDamageMultiplier,
+    };
+
+    struct FalloutVatsBodyPartContract
+    {
+        std::uint8_t mIndex = 0;
+        std::string_view mName;
+        std::string_view mTargetNode;
+        std::int8_t mActorValue = -1;
+        std::uint8_t mBaseHitChance = 0;
+        float mDamageMultiplier = 1.f;
+        bool mAbsoluteHitChance = false;
     };
 
     struct FalloutFireCadence
@@ -200,6 +222,9 @@ namespace MWMechanics
     [[nodiscard]] float getFalloutVatsReservedActionPoints(
         std::span<const FalloutVatsQueuedAction> queued) noexcept;
 
+    [[nodiscard]] std::optional<FalloutVatsBodyPartContract> buildFalloutVatsBodyPartContract(
+        const ESM4::BodyPartData::BodyPart& bodyPart, std::uint8_t index, FalloutVatsBodyPartFailure& failure);
+
     /// Advance one weapon trigger using elapsed simulation time. A semi-automatic trigger fires once per press;
     /// an automatic trigger repeats while held when its authored cooldown expires. Visual animation state is only an
     /// eligibility input and never supplies the cadence.
@@ -231,6 +256,7 @@ namespace MWMechanics
     [[nodiscard]] std::string_view getFalloutFireCadenceFailureName(FalloutFireCadenceFailure failure);
     [[nodiscard]] std::string_view getFalloutVatsWeaponFailureName(FalloutVatsWeaponFailure failure);
     [[nodiscard]] std::string_view getFalloutVatsQueueFailureName(FalloutVatsQueueFailure failure);
+    [[nodiscard]] std::string_view getFalloutVatsBodyPartFailureName(FalloutVatsBodyPartFailure failure);
     [[nodiscard]] std::string_view getFalloutMeleeFailureName(FalloutMeleeFailure failure);
 }
 

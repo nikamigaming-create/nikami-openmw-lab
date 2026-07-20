@@ -330,6 +330,29 @@ namespace
         EXPECT_EQ(failure, MWMechanics::FalloutVatsQueueFailure::InsufficientActionPoints);
     }
 
+    TEST(FalloutCombatTest, PreservesAuthoredVatsBodyPartContract)
+    {
+        ESM4::BodyPartData::BodyPart bodyPart;
+        bodyPart.mPartName = "Head";
+        bodyPart.mVATSTarget = "Bip01 Head";
+        bodyPart.mData.actorValue = 48;
+        bodyPart.mData.toHitChance = 35;
+        bodyPart.mData.damageMult = 2.f;
+        bodyPart.mData.flags = 0x40;
+        MWMechanics::FalloutVatsBodyPartFailure failure;
+        const auto contract = MWMechanics::buildFalloutVatsBodyPartContract(bodyPart, 1, failure);
+
+        ASSERT_TRUE(contract);
+        EXPECT_EQ(failure, MWMechanics::FalloutVatsBodyPartFailure::None);
+        EXPECT_EQ(contract->mIndex, 1);
+        EXPECT_EQ(contract->mName, "Head");
+        EXPECT_EQ(contract->mTargetNode, "Bip01 Head");
+        EXPECT_EQ(contract->mActorValue, 48);
+        EXPECT_EQ(contract->mBaseHitChance, 35);
+        EXPECT_FLOAT_EQ(contract->mDamageMultiplier, 2.f);
+        EXPECT_TRUE(contract->mAbsoluteHitChance);
+    }
+
     TEST(FalloutCombatTest, PreservesGenericShotgunRaysAndTotalAuthoredDamage)
     {
         ESM4::Weapon weapon;
