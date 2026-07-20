@@ -12,6 +12,7 @@
 #include <vector>
 
 #include <components/settings/values.hpp>
+#include <components/debug/debuglog.hpp>
 //## VR_PATCH BEGIN
 #include <components/vr/vr.hpp>
 //## VR_PATCH END
@@ -73,16 +74,39 @@ namespace MWInput
         if (std::getenv("OPENMW_FNV_VATS_CAPTURE") != nullptr && !mFalloutVatsCaptureQueued
             && isFalloutContent())
         {
+            if (!mFalloutVatsCapturePrepared)
+            {
+                MWWorld::Ptr player = MWBase::Environment::get().getWorld()->getPlayerPtr();
+                MWWorld::InventoryStore& inventory = player.getClass().getInventoryStore(player);
+                MWWorld::ContainerStoreIterator weapon
+                    = inventory.getSlot(MWWorld::InventoryStore::Slot_CarriedRight);
+                if (weapon == inventory.end() || weapon->getType() != ESM4::Weapon::sRecordId)
+                {
+                    weapon = static_cast<MWWorld::ContainerStore&>(inventory).add(
+                        ESM::RefId(ESM::FormId::fromUint32(0x0107ea24)), 1, false);
+                    inventory.equip(MWWorld::InventoryStore::Slot_CarriedRight, weapon);
+                    player.getClass().getCreatureStats(player).setDrawState(MWMechanics::DrawState::Weapon);
+                }
+                Log(Debug::Info) << "FNV VATS capture: prepared player weapon="
+                                 << weapon->getClass().getName(*weapon);
+                mFalloutVatsCapturePrepared = true;
+            }
             mFalloutVatsCaptureTimer += dt;
-            if (mFalloutVatsCaptureTimer >= 2.f
+            ++mFalloutVatsCaptureFrames;
+            if ((mFalloutVatsCaptureTimer >= 2.f || mFalloutVatsCaptureFrames >= 30)
                 && mFalloutVats.getPhase() == MWMechanics::FalloutVatsPhase::Inactive)
                 toggleFalloutVats();
-            if (mFalloutVatsCaptureTimer >= 2.5f
+            if ((mFalloutVatsCaptureTimer >= 2.5f || mFalloutVatsCaptureFrames >= 45)
                 && mFalloutVats.getPhase() == MWMechanics::FalloutVatsPhase::Targeting
                 && mFalloutVats.getQueue().empty())
                 queueFalloutVatsAttack();
-            if (mFalloutVatsCaptureTimer >= 3.f && !mFalloutVats.getQueue().empty())
+            if ((mFalloutVatsCaptureTimer >= 3.f || mFalloutVatsCaptureFrames >= 60)
+                && !mFalloutVats.getQueue().empty())
             {
+                Log(Debug::Info) << "FNV VATS capture: screenshot target=" << mFalloutVatsTargetName
+                                 << " bodyPart=" << mFalloutVatsBodyPartName
+                                 << " hitChance=" << mFalloutVatsHitChance
+                                 << " queued=" << mFalloutVats.getQueue().size();
                 screenshot();
                 mFalloutVatsCaptureQueued = true;
             }
@@ -251,6 +275,7 @@ namespace MWInput
         }
         if (target.isEmpty() || !target.getClass().isActor())
         {
+            Log(Debug::Warning) << "FNV VATS: target acquisition failed";
             MWBase::Environment::get().getWindowManager()->messageBox("No V.A.T.S. target");
             return;
         }
@@ -259,6 +284,7 @@ namespace MWInput
             MWWorld::FalloutPlayerRuntimeState::ActionPointsActorValue);
         if (!ap || !mFalloutVats.enter(ap->mValue))
         {
+            Log(Debug::Warning) << "FNV VATS: action points unavailable";
             MWBase::Environment::get().getWindowManager()->messageBox("V.A.T.S. action points unavailable");
             return;
         }
@@ -271,6 +297,7 @@ namespace MWInput
                      *weapon->get<ESM4::Weapon>()->mBase, weaponFailure)))
         {
             mFalloutVats.cancel();
+            Log(Debug::Warning) << "FNV VATS: equipped weapon contract unavailable";
             MWBase::Environment::get().getWindowManager()->messageBox("Equipped weapon has no authored V.A.T.S. AP contract");
             return;
         }
@@ -300,9 +327,38 @@ namespace MWInput
                 }
             }
         }
+        if (targetBodyData == nullptr && target.getType() == ESM4::Npc::sRecordId)
+        {
+            const ESM4::BodyPartData* genericAuthoredBody = nullptr;
+            for (const ESM4::BodyPartData& candidate : world->getStore().get<ESM4::BodyPartData>())
+            {
+                std::string editor = candidate.mEditorId;
+                std::ranges::transform(editor, editor.begin(), [](unsigned char c) { return std::tolower(c); });
+                const bool humanRecord = editor.find("human") != std::string::npos
+                    || editor.find("humanoid") != std::string::npos;
+                const bool hasTorso = std::ranges::any_of(candidate.mBodyParts,
+                    [](const ESM4::BodyPartData::BodyPart& part) { return part.mPartName == "Torso"; });
+                if (hasTorso && genericAuthoredBody == nullptr)
+                    genericAuthoredBody = &candidate;
+                if (humanRecord && hasTorso)
+                {
+                    targetBodyData = &candidate;
+                    Log(Debug::Info) << "FNV VATS: using authored human body fallback=" << candidate.mEditorId;
+                    break;
+                }
+            }
+            if (targetBodyData == nullptr && genericAuthoredBody != nullptr)
+            {
+                targetBodyData = genericAuthoredBody;
+                Log(Debug::Info) << "FNV VATS: using authored generic body fallback="
+                                 << genericAuthoredBody->mEditorId;
+            }
+        }
         if (targetBodyData == nullptr)
         {
             mFalloutVats.cancel();
+            Log(Debug::Warning) << "FNV VATS: body data unavailable target="
+                                << target.getClass().getName(target);
             MWBase::Environment::get().getWindowManager()->messageBox("Target has no authored V.A.T.S. body data");
             return;
         }
@@ -322,6 +378,8 @@ namespace MWInput
         if (!selectedBodyPart)
         {
             mFalloutVats.cancel();
+            Log(Debug::Warning) << "FNV VATS: authored limbs incomplete target="
+                                << target.getClass().getName(target);
             MWBase::Environment::get().getWindowManager()->messageBox("Target V.A.T.S. limbs are incomplete");
             return;
         }
@@ -338,6 +396,9 @@ namespace MWInput
         mFalloutVatsTargetName = std::string(target.getClass().getName(target));
         mFalloutVatsBodyPartName = std::string(selectedBodyPart->mName);
         mFalloutVatsHitChance = hitChance;
+        Log(Debug::Info) << "FNV VATS: selected target=" << mFalloutVatsTargetName
+                         << " bodyPart=" << mFalloutVatsBodyPartName << " hitChance=" << mFalloutVatsHitChance
+                         << " actionPoints=" << ap->mValue;
         updateFalloutVatsHud();
     }
 

@@ -71,6 +71,8 @@ namespace MWInput
         std::string mFalloutVatsBodyPartName;
         unsigned int mFalloutVatsHitChance = 0;
         float mFalloutVatsCaptureTimer = 0.f;
+        unsigned int mFalloutVatsCaptureFrames = 0;
+        bool mFalloutVatsCapturePrepared = false;
         bool mFalloutVatsCaptureQueued = false;
     };
 }

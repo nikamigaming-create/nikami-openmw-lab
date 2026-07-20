@@ -501,6 +501,16 @@ void MWState::StateManager::loadGame(const Character* character, const std::file
         Log(Debug::Info) << "Preflighting native FNV save file " << filepath.filename();
         ESM4::FONVSaveGamePrefix save = ESM4::readFONVSaveGamePrefix(filepath);
         const MWBase::World& world = *MWBase::Environment::get().getWorld();
+        if (const char* trace = std::getenv("OPENMW_FNV_VATS_TRACE"); trace != nullptr && *trace != '\0')
+        {
+            for (std::size_t index = 0; index < save.mMasters.size(); ++index)
+                Log(Debug::Info) << "FNV VATS retail master: index=" << index
+                                 << " file=" << save.mMasters[index].mFileName.mValue;
+            const std::span<const std::string> currentContent = world.getContentFiles();
+            for (std::size_t index = 0; index < currentContent.size(); ++index)
+                Log(Debug::Info) << "FNV VATS OpenMW content: index=" << index
+                                 << " file=" << currentContent[index];
+        }
         MWWorld::FalloutSavePreflightResolution preflight = MWWorld::resolveFalloutSavePreflightContext(
             std::move(save), world.getStore(), world.getContentFiles());
         if (!preflight)
