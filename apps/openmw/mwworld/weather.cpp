@@ -263,6 +263,17 @@ namespace MWWorld
             // Retail FO3/FNV default. Keep malformed test content deterministic without changing non-Fallout paths.
             return 0.5f;
         }
+
+        float getFalloutFogDayStrength(float gameHour, const TimeOfDaySettings& timeSettings)
+        {
+            if (gameHour <= timeSettings.mNightEnd || gameHour >= timeSettings.mNightStart)
+                return 0.f;
+            if (gameHour < timeSettings.mDayStart)
+                return (gameHour - timeSettings.mNightEnd) / (timeSettings.mDayStart - timeSettings.mNightEnd);
+            if (gameHour <= timeSettings.mDayEnd)
+                return 1.f;
+            return (timeSettings.mNightStart - gameHour) / (timeSettings.mNightStart - timeSettings.mDayEnd);
+        }
     }
 
     osg::Vec4f sampleFalloutWeatherColor(
@@ -1596,8 +1607,11 @@ namespace MWWorld
             mRendering.getSkyManager()->setSecundaState(mSecunda.calculateState(time));
         }
 
-        mRendering.configureFog(
-            mResult.mFogDepth, underwaterFog, mResult.mDLFogFactor, mResult.mDLFogOffset / 100.0f, mResult.mFogColor);
+        if (mResult.mHasFalloutFogRange)
+            mRendering.configureFog(mResult.mFalloutFogNear, mResult.mFalloutFogFar, underwaterFog, mResult.mFogColor);
+        else
+            mRendering.configureFog(mResult.mFogDepth, underwaterFog, mResult.mDLFogFactor,
+                mResult.mDLFogOffset / 100.0f, mResult.mFogColor);
         mRendering.setAmbientColour(mResult.mAmbientColor);
         mRendering.setSunColour(mResult.mSunColor, mResult.mSunColor, mResult.mGlareView * glareFade);
 
@@ -1863,6 +1877,8 @@ namespace MWWorld
             weather.mCloudSpeed = static_cast<float>(source.mData.lowerCloudSpeed) / 255.f;
             weather.mGlareView = static_cast<float>(source.mData.sunGlare) / 255.f;
             weather.mFalloutImageSpaceModifiers = source.mImageSpaceModifiers;
+            if (source.mHasFogDistance)
+                weather.mFalloutFogDistance = source.mFogDistance;
             weather.mFalloutCloudTextures = source.mCloudTextures;
             std::array<float, 4> cloudSpeeds{};
             std::array<FalloutWeatherColorSamples, 4> cloudColors{};
@@ -2106,6 +2122,29 @@ namespace MWWorld
         }
 
         mResult.mFogDepth = current.mLandFogDepth.getValue(gameHour, mTimeSettings, "Fog");
+        mResult.mHasFalloutFogRange = current.mFalloutFogDistance.has_value();
+        if (mResult.mHasFalloutFogRange)
+        {
+            const std::array<float, ESM4::Weather::sTimeCount>& fogDistance = *current.mFalloutFogDistance;
+            const float dayStrength = std::clamp(getFalloutFogDayStrength(gameHour, mTimeSettings), 0.f, 1.f);
+            mResult.mFalloutFogNear = lerp(fogDistance[2], fogDistance[0], dayStrength);
+            mResult.mFalloutFogFar = lerp(fogDistance[3], fogDistance[1], dayStrength);
+            mResult.mFalloutFogPower = lerp(fogDistance[5], fogDistance[4], dayStrength);
+
+            if (std::getenv("OPENMW_FNV_PROOF_WEATHER_ID") != nullptr)
+            {
+                static int proofFogLogs = 0;
+                if (proofFogLogs < 12)
+                {
+                    const float range = mResult.mFalloutFogFar - mResult.mFalloutFogNear;
+                    Log(Debug::Info) << "FNV/ESM4 fog proof: mode=authored-fnam near="
+                                     << mResult.mFalloutFogNear << " far=" << mResult.mFalloutFogFar
+                                     << " power=" << mResult.mFalloutFogPower << " range=" << range
+                                     << " denominator=" << range;
+                    ++proofFogLogs;
+                }
+            }
+        }
         mResult.mFogColor = current.mFalloutFogColors
             ? sampleFalloutWeatherColor(
                 *current.mFalloutFogColors, gameHour, mTimeSettings, mFalloutDaytimeColorExtension)
@@ -2210,6 +2249,13 @@ namespace MWWorld
             = current.mHasFalloutCelestialColors && other.mHasFalloutCelestialColors;
         mResult.mFalloutStarsColor = lerp(current.mFalloutStarsColor, other.mFalloutStarsColor, factor);
         mResult.mFogDepth = lerp(current.mFogDepth, other.mFogDepth, factor);
+        mResult.mHasFalloutFogRange = current.mHasFalloutFogRange && other.mHasFalloutFogRange;
+        if (mResult.mHasFalloutFogRange)
+        {
+            mResult.mFalloutFogNear = lerp(current.mFalloutFogNear, other.mFalloutFogNear, factor);
+            mResult.mFalloutFogFar = lerp(current.mFalloutFogFar, other.mFalloutFogFar, factor);
+            mResult.mFalloutFogPower = lerp(current.mFalloutFogPower, other.mFalloutFogPower, factor);
+        }
         mResult.mDLFogFactor = lerp(current.mDLFogFactor, other.mDLFogFactor, factor);
         mResult.mDLFogOffset = lerp(current.mDLFogOffset, other.mDLFogOffset, factor);
 

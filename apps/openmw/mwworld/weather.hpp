@@ -180,6 +180,7 @@ namespace MWWorld
         std::optional<FalloutWeatherColorSamples> mFalloutSunDiscColors;
         std::optional<FalloutWeatherColorSamples> mFalloutStarColors;
         std::array<ESM::FormId, 6> mFalloutImageSpaceModifiers{};
+        std::optional<std::array<float, 6>> mFalloutFogDistance;
         std::optional<std::array<std::string, 4>> mFalloutCloudTextures;
         std::optional<std::array<float, 4>> mFalloutCloudSpeeds;
         std::optional<std::array<FalloutWeatherColorSamples, 4>> mFalloutCloudColors;
