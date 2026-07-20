@@ -355,15 +355,30 @@ namespace MWGui
         {
             if (arg.button == SDL_CONTROLLER_BUTTON_B)
                 MWBase::Environment::get().getWindowManager()->exitCurrentGuiMode();
-            else if (!mFalloutQuestItems.empty() && arg.button == SDL_CONTROLLER_BUTTON_DPAD_UP)
-                setFalloutQuestSelection((mFalloutSelectedQuest + mFalloutQuestItems.size() - 1)
-                    % mFalloutQuestItems.size());
-            else if (!mFalloutQuestItems.empty() && arg.button == SDL_CONTROLLER_BUTTON_DPAD_DOWN)
-                setFalloutQuestSelection((mFalloutSelectedQuest + 1) % mFalloutQuestItems.size());
-            else if (!mFalloutQuestItems.empty() && arg.button == SDL_CONTROLLER_BUTTON_A)
+            else if (!mFalloutQuestRows.empty() && arg.button == SDL_CONTROLLER_BUTTON_DPAD_UP)
             {
+                if (const std::optional<std::size_t> row
+                    = advanceFalloutQuestHeader(mFalloutQuestRows, mFalloutSelectedQuestRow, false))
+                {
+                    setFalloutQuestSelection(*row);
+                }
+            }
+            else if (!mFalloutQuestRows.empty() && arg.button == SDL_CONTROLLER_BUTTON_DPAD_DOWN)
+            {
+                if (const std::optional<std::size_t> row
+                    = advanceFalloutQuestHeader(mFalloutQuestRows, mFalloutSelectedQuestRow, true))
+                {
+                    setFalloutQuestSelection(*row);
+                }
+            }
+            else if (mFalloutSelectedQuestRow < mFalloutQuestRows.size()
+                && arg.button == SDL_CONTROLLER_BUTTON_A)
+            {
+                const FalloutQuestListRow& row = mFalloutQuestRows[mFalloutSelectedQuestRow];
+                if (row.mKind != FalloutQuestRowKind::Header)
+                    return true;
                 MWBase::Environment::get().getWorld()->getESM4QuestRuntime().forceActiveQuest(
-                    mFalloutQuestItems[mFalloutSelectedQuest]);
+                    row.mQuest);
                 updateFalloutQuestList();
             }
             return true;
@@ -398,7 +413,7 @@ namespace MWGui
         }
 
         if (isFalloutDataMode())
-            setFalloutQuestSelection(mFalloutSelectedQuest);
+            setFalloutQuestSelection(mFalloutSelectedQuestRow);
         else
             mSpellView->setActiveControllerWindow(active);
 
@@ -419,6 +434,9 @@ namespace MWGui
         const MWBase::World& world = *MWBase::Environment::get().getWorld();
         const MWWorld::ESM4QuestRuntime& runtime = world.getESM4QuestRuntime();
         const std::optional<ESM::FormId> activeQuest = runtime.getActiveQuest();
+        const std::optional<ESM::FormId> selectedQuest = mFalloutSelectedQuestRow < mFalloutQuestRows.size()
+            ? std::optional<ESM::FormId>(mFalloutQuestRows[mFalloutSelectedQuestRow].mQuest)
+            : activeQuest;
 
         struct VisibleQuest
         {
@@ -447,7 +465,7 @@ namespace MWGui
         });
 
         mFalloutQuestList->clear();
-        mFalloutQuestItems.clear();
+        mFalloutQuestRows.clear();
         for (const VisibleQuest& entry : visible)
         {
             const ESM4::Quest& quest = *entry.mQuest;
@@ -461,7 +479,7 @@ namespace MWGui
                 header += "[DONE] ";
             header += title;
             mFalloutQuestList->addItem(header, 4);
-            mFalloutQuestItems.push_back(quest.mId);
+            mFalloutQuestRows.push_back({ quest.mId, FalloutQuestRowKind::Header });
 
             for (const ESM4::QuestObjective& objective : quest.mObjectives)
             {
@@ -475,41 +493,54 @@ namespace MWGui
                     ? "Objective " + std::to_string(objective.mIndex)
                     : objective.mDescription;
                 mFalloutQuestList->addItem(text, 2);
-                mFalloutQuestItems.push_back(quest.mId);
+                mFalloutQuestRows.push_back({ quest.mId, FalloutQuestRowKind::Objective });
             }
         }
-        if (mFalloutQuestItems.empty())
+        if (mFalloutQuestRows.empty())
             mFalloutQuestList->addItem("No active quests in the loaded save", 8);
         mFalloutQuestList->adjustSize();
-        mFalloutSelectedQuest = std::min(mFalloutSelectedQuest,
-            mFalloutQuestItems.empty() ? std::size_t(0) : mFalloutQuestItems.size() - 1);
-        setFalloutQuestSelection(mFalloutSelectedQuest);
+        if (const std::optional<std::size_t> row = selectFalloutQuestHeader(mFalloutQuestRows, selectedQuest))
+            setFalloutQuestSelection(*row);
+        else
+            mFalloutSelectedQuestRow = 0;
     }
 
     void SpellWindow::onFalloutQuestSelected(const std::string& /*name*/, int index)
     {
-        if (index < 0 || static_cast<std::size_t>(index) >= mFalloutQuestItems.size())
+        if (index < 0 || static_cast<std::size_t>(index) >= mFalloutQuestRows.size())
             return;
-        mFalloutSelectedQuest = static_cast<std::size_t>(index);
+        const FalloutQuestListRow& row = mFalloutQuestRows[static_cast<std::size_t>(index)];
+        if (row.mKind != FalloutQuestRowKind::Header)
+        {
+            setFalloutQuestSelection(static_cast<std::size_t>(index));
+            return;
+        }
+        mFalloutSelectedQuestRow = static_cast<std::size_t>(index);
         MWBase::Environment::get().getWorld()->getESM4QuestRuntime().forceActiveQuest(
-            mFalloutQuestItems[mFalloutSelectedQuest]);
+            row.mQuest);
         updateFalloutQuestList();
     }
 
     void SpellWindow::setFalloutQuestSelection(std::size_t index)
     {
-        if (mFalloutQuestItems.empty())
+        if (mFalloutQuestRows.empty())
             return;
-        mFalloutSelectedQuest = std::min(index, mFalloutQuestItems.size() - 1);
-        for (std::size_t i = 0; i < mFalloutQuestItems.size(); ++i)
+        const std::optional<ESM::FormId> requestedQuest = index < mFalloutQuestRows.size()
+            ? std::optional<ESM::FormId>(mFalloutQuestRows[index].mQuest)
+            : std::nullopt;
+        const std::optional<std::size_t> selected = selectFalloutQuestHeader(mFalloutQuestRows, requestedQuest);
+        if (!selected)
+            return;
+        mFalloutSelectedQuestRow = *selected;
+        for (std::size_t i = 0; i < mFalloutQuestRows.size(); ++i)
         {
             if (MyGUI::Button* item = mFalloutQuestList->getItemWidget(mFalloutQuestList->getItemNameAt(i)))
             {
-                item->setStateSelected(i == mFalloutSelectedQuest);
+                item->setStateSelected(i == mFalloutSelectedQuestRow);
                 // The TES3 list skin applies a dim default colour. Override it at full
                 // opacity so FNV quest/objective text remains legible over the world view.
-                item->setTextColour(i == mFalloutSelectedQuest ? MyGUI::Colour(1.f, 0.95f, 0.55f, 1.f)
-                                                               : MyGUI::Colour(1.f, 0.82f, 0.22f, 1.f));
+                item->setTextColour(i == mFalloutSelectedQuestRow ? MyGUI::Colour(1.f, 0.95f, 0.55f, 1.f)
+                                                                  : MyGUI::Colour(1.f, 0.82f, 0.22f, 1.f));
             }
         }
     }

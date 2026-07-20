@@ -6,6 +6,7 @@
 
 #include <components/esm/formid.hpp>
 
+#include "falloutquestlistpolicy.hpp"
 #include "spellicons.hpp"
 #include "spellmodel.hpp"
 #include "windowpinnablebase.hpp"
@@ -61,8 +62,8 @@ namespace MWGui
         MyGUI::EditBox* mFilterEdit;
         MyGUI::Widget* mDeleteButton;
         Gui::MWList* mFalloutQuestList;
-        std::vector<ESM::FormId> mFalloutQuestItems;
-        std::size_t mFalloutSelectedQuest = 0;
+        std::vector<FalloutQuestListRow> mFalloutQuestRows;
+        std::size_t mFalloutSelectedQuestRow = 0;
 
     private:
         float mUpdateTimer;

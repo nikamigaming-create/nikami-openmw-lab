@@ -35,6 +35,7 @@ file(GLOB UNITTEST_SRC_FILES
     mwdialogue/testesm4resultscript.cpp
 
     mwgui/tooltips.cpp
+    mwgui/testfalloutquestlistpolicy.cpp
     mwgui/testinventorylistpolicy.cpp
     mwgui/testinventoryitemtype.cpp
 
