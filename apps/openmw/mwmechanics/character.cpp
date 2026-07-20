@@ -55,6 +55,8 @@
 #include "../mwrender/fallouthitreaction.hpp"
 #include "../mwrender/falloutweaponanimation.hpp"
 
+#include "../mwsound/falloutsoundpath.hpp"
+
 #include "../mwbase/environment.hpp"
 #include "../mwbase/luamanager.hpp"
 #include "../mwbase/mechanicsmanager.hpp"
@@ -1625,7 +1627,26 @@ namespace MWMechanics
         if (evt.substr(0, 7) == "sound: ")
         {
             MWBase::SoundManager* sndMgr = MWBase::Environment::get().getSoundManager();
-            sndMgr->playSound3D(mPtr, ESM::RefId::stringRefId(evt.substr(7)), 1.0f, 1.0f);
+            const std::string_view soundKey = evt.substr(7);
+            const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
+            if (isFalloutActor(mPtr) && store != nullptr
+                && store->getESM4Game() == MWWorld::ESM4Game::FalloutNewVegas
+                && MWSound::isFalloutSoundAssetPath(soundKey))
+            {
+                const Resource::ResourceSystem* resources = MWBase::Environment::get().getResourceSystem();
+                const VFS::Manager* vfs = resources != nullptr ? resources->getVFS() : nullptr;
+                if (vfs != nullptr)
+                {
+                    const std::optional<VFS::Path::Normalized> resolved
+                        = MWSound::resolveFalloutSoundPath(soundKey, *vfs);
+                    if (resolved)
+                        sndMgr->playSound3D(mPtr, resolved->value(), 1.0f, 1.0f);
+                }
+                // A path-like FNV key is authoritative. Never reinterpret a missing asset as an editor ID or
+                // fall back to a sound from another game.
+                return;
+            }
+            sndMgr->playSound3D(mPtr, ESM::RefId::stringRefId(soundKey), 1.0f, 1.0f);
             return;
         }
 

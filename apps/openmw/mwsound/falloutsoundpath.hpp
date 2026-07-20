@@ -13,6 +13,9 @@ namespace VFS
 
 namespace MWSound
 {
+    /// Fallout animation text keys may contain a VFS asset path instead of a SOUN/SNDR editor ID.
+    [[nodiscard]] bool isFalloutSoundAssetPath(std::string_view authoredPath);
+
     /// Resolve an authored Fallout SOUN/SNDR path against the VFS. Fallout sound records may name either one
     /// concrete audio file or a directory containing randomized variants. Directory records are resolved to the
     /// lexicographically first supported file so the current one-buffer-per-FormID cache remains deterministic.

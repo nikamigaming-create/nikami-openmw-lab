@@ -7,6 +7,13 @@
 
 namespace
 {
+    TEST(FalloutSoundPathTest, DistinguishesAnimationAssetPathsFromEditorIds)
+    {
+        EXPECT_TRUE(MWSound::isFalloutSoundAssetPath("sound/fx/npc/human/rake/long/"));
+        EXPECT_TRUE(MWSound::isFalloutSoundAssetPath("sound\\fx\\npc\\human\\sit\\chair\\down\\"));
+        EXPECT_FALSE(MWSound::isFalloutSoundAssetPath("SomeSoundEDID"));
+    }
+
     TEST(FalloutSoundPathTest, ResolvesConcreteAuthoredFileWithoutChangingIt)
     {
         TestingOpenMW::VFSTestFile wav("wav");
@@ -45,6 +52,26 @@ namespace
         const auto resolved = MWSound::resolveFalloutSoundPath("fx\\wpn\\rifle\\fire_3d\\", *vfs);
         ASSERT_TRUE(resolved);
         EXPECT_EQ(resolved->value(), "sound/fx/wpn/rifle/fire_3d/a_fire.wav");
+    }
+
+    TEST(FalloutSoundPathTest, ResolvesRetainedGoodspringsAnimationDirectoryKeys)
+    {
+        TestingOpenMW::VFSTestFile rake("rake");
+        TestingOpenMW::VFSTestFile chair("chair");
+        const auto vfs = TestingOpenMW::createTestVFS({
+            { VFS::Path::NormalizedView("sound/fx/npc/human/rake/long/npc_human_rake_long_01.wav"), &rake },
+            { VFS::Path::NormalizedView("sound/fx/npc/human/sit/chair/down/npc_human_sit_chair_down_01.wav"),
+                &chair },
+        });
+
+        const auto resolvedRake = MWSound::resolveFalloutSoundPath("sound/fx/npc/human/rake/long/", *vfs);
+        ASSERT_TRUE(resolvedRake);
+        EXPECT_EQ(resolvedRake->value(), "sound/fx/npc/human/rake/long/npc_human_rake_long_01.wav");
+
+        const auto resolvedChair
+            = MWSound::resolveFalloutSoundPath("sound\\fx\\npc\\human\\sit\\chair\\down\\", *vfs);
+        ASSERT_TRUE(resolvedChair);
+        EXPECT_EQ(resolvedChair->value(), "sound/fx/npc/human/sit/chair/down/npc_human_sit_chair_down_01.wav");
     }
 
     TEST(FalloutSoundPathTest, NeverTurnsDirectoryPrefixIntoSiblingMp3)

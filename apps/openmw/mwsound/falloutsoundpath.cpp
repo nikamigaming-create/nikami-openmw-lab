@@ -36,6 +36,11 @@ namespace MWSound
         }
     }
 
+    bool isFalloutSoundAssetPath(std::string_view authoredPath)
+    {
+        return authoredPath.find_first_of("/\\") != std::string_view::npos;
+    }
+
     std::optional<VFS::Path::Normalized> resolveFalloutSoundPath(std::string_view authoredPath, const VFS::Manager& vfs)
     {
         if (authoredPath.empty())
