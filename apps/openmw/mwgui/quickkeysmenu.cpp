@@ -262,6 +262,23 @@ namespace MWGui
             mItemSelectionDialog->setVisible(false);
     }
 
+    bool QuickKeysMenu::setFalloutSaveQuickKey(std::uint8_t index, const ESM::RefId& item)
+    {
+        if (index >= 8 || item.empty())
+            return false;
+
+        MWWorld::Ptr player = MWMechanics::getPlayer();
+        MWWorld::InventoryStore& store = player.getClass().getInventoryStore(player);
+        MWWorld::Ptr replacement = store.findReplacement(item);
+        if (replacement.isEmpty())
+            return false;
+
+        mSelected = &mKey[index];
+        assignItem(replacement);
+        mSelected = nullptr;
+        return true;
+    }
+
     void QuickKeysMenu::onAssignItem(MWWorld::Ptr item)
     {
         assignItem(item);

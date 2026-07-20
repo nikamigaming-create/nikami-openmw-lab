@@ -178,6 +178,21 @@ namespace MWWorld
             std::uint64_t mSourceOffset = 0;
         };
 
+        struct HotkeyItem
+        {
+            std::uint8_t mIndex = 0;
+            ESM::FormId mRecord;
+            std::uint64_t mSourceOffset = 0;
+        };
+
+        struct AmmoSelection
+        {
+            ESM::FormId mWeapon;
+            ESM::FormId mAmmo;
+            std::int32_t mSavedCount = 0;
+            std::uint64_t mSourceOffset = 0;
+        };
+
         ESM::FormId mBaseRecord;
         ESM::FormId mReferenceRecord;
         std::size_t mSaveFalloutNewVegasMasterIndex = 0;
@@ -192,9 +207,12 @@ namespace MWWorld
         std::string mLocationLabel;
         std::string mPlayTimeLabel;
         std::int8_t mProcessLevel = -1;
+        bool mWeaponDrawn = false;
         std::vector<FalloutInventoryItem> mInventoryItems;
         std::vector<ConditionedStack> mConditionedStacks;
         std::vector<WornVisualItem> mWornVisualItems;
+        std::vector<HotkeyItem> mHotkeyItems;
+        std::vector<AmmoSelection> mAmmoSelections;
     };
 
     struct FalloutSaveLoadPlan

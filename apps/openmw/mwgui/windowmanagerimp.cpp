@@ -2353,6 +2353,11 @@ namespace MWGui
         mQuickKeysMenu->activateQuickKey(index);
     }
 
+    bool WindowManager::setFalloutSaveQuickKey(std::uint8_t index, const ESM::RefId& item)
+    {
+        return mQuickKeysMenu->setFalloutSaveQuickKey(index, item);
+    }
+
     bool WindowManager::setHudVisibility(bool show)
     {
         mHudEnabled = show;

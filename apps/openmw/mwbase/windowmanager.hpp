@@ -226,6 +226,8 @@ namespace MWBase
 
         /// activate selected quick key
         virtual void activateQuickKey(int index) = 0;
+        /// assign a zero-based Fallout hotkey slot to an inventory item
+        virtual bool setFalloutSaveQuickKey(std::uint8_t index, const ESM::RefId& item) = 0;
         /// update activated quick key state (if action executing was delayed for some reason)
         virtual void updateActivatedQuickKey() = 0;
 

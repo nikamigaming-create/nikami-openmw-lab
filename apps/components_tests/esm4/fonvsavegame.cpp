@@ -236,7 +236,7 @@ namespace
         return result;
     }
 
-    constexpr std::size_t sSyntheticPlayerProcessInventoryDataBytes = 82;
+    constexpr std::size_t sSyntheticPlayerProcessInventoryDataBytes = 97;
 
     std::vector<std::uint8_t> makePlayerProcessInventoryData()
     {
@@ -260,10 +260,19 @@ namespace
         appendU32(result, 5);
         appendDelimiter(result);
         appendPackedCount(result, 1);
-        appendPackedCount(result, 1);
+        appendPackedCount(result, 3);
         appendU8(result, ESM4::sFONVExtraHealthType);
         appendDelimiter(result);
         appendF32(result, 75.f);
+        appendDelimiter(result);
+        appendU8(result, ESM4::sFONVExtraHotkeyType);
+        appendDelimiter(result);
+        appendU8(result, 6);
+        appendDelimiter(result);
+        appendU8(result, ESM4::sFONVExtraAmmoType);
+        appendDelimiter(result);
+        appendDelimitedReferenceId(result, 0x400444);
+        appendU32(result, 9);
         appendDelimiter(result);
 
         appendDelimitedReferenceId(result, 0x400334);
@@ -1360,12 +1369,22 @@ namespace
         EXPECT_EQ(processInventory.mInventoryEntries[0].mType.mResolvedFormId, 0x00000333u);
         EXPECT_EQ(processInventory.mInventoryEntries[0].mDelta.mValue, 5);
         ASSERT_EQ(processInventory.mInventoryEntries[0].mExtendData.size(), 1u);
-        ASSERT_EQ(processInventory.mInventoryEntries[0].mExtendData[0].mExtraData.size(), 1u);
+        ASSERT_EQ(processInventory.mInventoryEntries[0].mExtendData[0].mExtraData.size(), 3u);
         const auto& health = processInventory.mInventoryEntries[0].mExtendData[0].mExtraData[0];
         EXPECT_EQ(health.mType.mValue, ESM4::sFONVExtraHealthType);
         ASSERT_TRUE(health.mHealth.has_value());
         EXPECT_FLOAT_EQ(health.mHealth->mValue, 75.f);
         EXPECT_EQ(health.mHealth->mRaw, (std::vector<std::uint8_t>{ 0, 0, 0x96, 0x42 }));
+        const auto& hotkey = processInventory.mInventoryEntries[0].mExtendData[0].mExtraData[1];
+        EXPECT_EQ(hotkey.mType.mValue, ESM4::sFONVExtraHotkeyType);
+        ASSERT_TRUE(hotkey.mHotkey.has_value());
+        EXPECT_EQ(hotkey.mHotkey->mValue, 6u);
+        const auto& ammo = processInventory.mInventoryEntries[0].mExtendData[0].mExtraData[2];
+        EXPECT_EQ(ammo.mType.mValue, ESM4::sFONVExtraAmmoType);
+        ASSERT_TRUE(ammo.mAmmo.has_value());
+        EXPECT_EQ(ammo.mAmmo->mResolvedFormId, 0x00000444u);
+        ASSERT_TRUE(ammo.mAmmoCount.has_value());
+        EXPECT_EQ(ammo.mAmmoCount->mValue, 9);
         ASSERT_EQ(processInventory.mInventoryEntries[1].mExtendData.size(), 1u);
         ASSERT_EQ(processInventory.mInventoryEntries[1].mExtendData[0].mExtraData.size(), 1u);
         const auto& worn = processInventory.mInventoryEntries[1].mExtendData[0].mExtraData[0];
@@ -2781,15 +2800,23 @@ namespace
         EXPECT_EQ(expectedInventoryOffset, 499512u);
 
         std::size_t wornCount = 0;
+        std::size_t hotkeyCount = 0;
+        std::size_t ammoSelectionCount = 0;
         for (const auto& entry : processInventory.mInventoryEntries)
         {
             for (const auto& extendData : entry.mExtendData)
             {
                 for (const auto& extra : extendData.mExtraData)
+                {
                     wornCount += extra.mType.mValue == ESM4::sFONVExtraWornType;
+                    hotkeyCount += extra.mType.mValue == ESM4::sFONVExtraHotkeyType;
+                    ammoSelectionCount += extra.mType.mValue == ESM4::sFONVExtraAmmoType;
+                }
             }
         }
         EXPECT_EQ(wornCount, 3u);
+        EXPECT_EQ(hotkeyCount, 0u);
+        EXPECT_EQ(ammoSelectionCount, 0u);
         ASSERT_EQ(processInventory.mInventoryEntries[28].mExtendData.size(), 1u);
         ASSERT_EQ(processInventory.mInventoryEntries[28].mExtendData[0].mExtraData.size(), 1u);
         EXPECT_EQ(processInventory.mInventoryEntries[28].mExtendData[0].mExtraData[0].mType.mValue,
@@ -2886,9 +2913,9 @@ namespace
 
         const auto& middleHigh = processState.mMiddleHighProcess;
         EXPECT_EQ(middleHigh.mRange, (ESM4::FONVSaveRange{ 499637, 421 }));
-        EXPECT_EQ(middleHigh.mUnk134_135_168[0].mValue, 1u);
-        EXPECT_EQ(middleHigh.mUnk134_135_168[1].mValue, 1u);
-        EXPECT_EQ(middleHigh.mUnk134_135_168[2].mValue, 0u);
+        EXPECT_EQ(middleHigh.mUnk134.mValue, 1u);
+        EXPECT_EQ(middleHigh.mWeaponOut.mValue, 1u);
+        EXPECT_EQ(middleHigh.mUnk168.mValue, 0u);
         EXPECT_FLOAT_EQ(middleHigh.mCoords0E4.mComponents[0].mValue, 0.f);
         EXPECT_EQ(std::bit_cast<std::uint32_t>(middleHigh.mCoords0E4.mComponents[2].mValue), 1u);
         EXPECT_EQ(middleHigh.mWrd22A.mValue, 2u);

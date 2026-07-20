@@ -52,6 +52,7 @@
 #include "../mwworld/worldmodel.hpp"
 
 #include "../mwmechanics/actorutil.hpp"
+#include "../mwmechanics/drawstate.hpp"
 #include "../mwmechanics/npcstats.hpp"
 
 #include "../mwrender/camera.hpp"
@@ -608,6 +609,16 @@ void MWState::StateManager::loadGame(const Character* character, const std::file
                              << " count=" << stack.mCount << " health=" << health
                              << " sourceOffset=" << stack.mSourceOffset;
         }
+        for (const MWWorld::FalloutSavePlayerHeaderState::AmmoSelection& selection
+            : context.mPlan.mPlayer.mAmmoSelections)
+        {
+            const ESM::RefId weapon(selection.mWeapon);
+            const ESM::RefId ammo(selection.mAmmo);
+            savedInventory.setFalloutAmmoSelection(weapon, ammo);
+            Log(Debug::Info) << "Native FNV save Player restored selected ammo: weapon=" << weapon
+                             << " ammo=" << ammo << " savedCount=" << selection.mSavedCount
+                             << " sourceOffset=" << selection.mSourceOffset;
+        }
         std::size_t runtimeStacks = 0;
         std::size_t visibleStacks = 0;
         for (MWWorld::ContainerStoreIterator item = savedInventory.begin(); item != savedInventory.end(); ++item)
@@ -642,6 +653,20 @@ void MWState::StateManager::loadGame(const Character* character, const std::file
             savedInventory.equip(slots.front(), found);
             Log(Debug::Info) << "Native FNV save Player equipped ExtraWorn: form=" << record
                              << " slot=" << slots.front() << " name=" << found->getClass().getName(*found);
+        }
+        player.getClass().getCreatureStats(player).setDrawState(context.mPlan.mPlayer.mWeaponDrawn
+                ? MWMechanics::DrawState::Weapon
+                : MWMechanics::DrawState::Nothing);
+        Log(Debug::Info) << "Native FNV save Player restored weapon stance: drawn="
+                         << context.mPlan.mPlayer.mWeaponDrawn;
+        for (const MWWorld::FalloutSavePlayerHeaderState::HotkeyItem& hotkey
+            : context.mPlan.mPlayer.mHotkeyItems)
+        {
+            const ESM::RefId item(hotkey.mRecord);
+            if (!MWBase::Environment::get().getWindowManager()->setFalloutSaveQuickKey(hotkey.mIndex, item))
+                throw std::runtime_error("native FNV Player hotkey escaped preflight inventory validation");
+            Log(Debug::Info) << "Native FNV save Player restored hotkey: index=" << static_cast<int>(hotkey.mIndex)
+                             << " form=" << item << " sourceOffset=" << hotkey.mSourceOffset;
         }
         player.getRefData().setPosition(savedPosition);
         player.getCellRef().setPosition(savedPosition);

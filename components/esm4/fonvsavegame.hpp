@@ -28,6 +28,8 @@ namespace ESM4
     inline constexpr std::uint8_t sFONVExtraWornType = 0x16;
     inline constexpr std::uint8_t sFONVExtraCountType = 0x24;
     inline constexpr std::uint8_t sFONVExtraHealthType = 0x25;
+    inline constexpr std::uint8_t sFONVExtraHotkeyType = 0x4a;
+    inline constexpr std::uint8_t sFONVExtraAmmoType = 0x6e;
     inline constexpr std::uint8_t sFONVExtraFactionChangesType = 0x5e;
     inline constexpr std::uint8_t sFONVExtraEncounterZoneType = 0x74;
 
@@ -212,13 +214,15 @@ namespace ESM4
         std::vector<std::uint8_t> mRaw;
     };
 
-    // The type byte is authoritative. Payloads are populated only for ExtraCount and ExtraHealth; ExtraWorn has
-    // no payload bytes and is represented solely by its type.
+    // The type byte is authoritative. ExtraWorn has no payload bytes and is represented solely by its type.
     struct FONVSavePlayerInventoryExtraData
     {
         FONVSaveField<std::uint8_t> mType;
         std::optional<FONVSaveField<std::int16_t>> mCount;
         std::optional<FONVSaveField<float>> mHealth;
+        std::optional<FONVSaveField<std::uint8_t>> mHotkey;
+        std::optional<FONVSaveResolvedReferenceId> mAmmo;
+        std::optional<FONVSaveField<std::int32_t>> mAmmoCount;
         FONVSaveRange mRange;
         std::vector<std::uint8_t> mRaw;
     };
@@ -347,7 +351,9 @@ namespace ESM4
 
     struct FONVSavePlayerMiddleHighProcessState
     {
-        std::array<FONVSaveField<std::uint8_t>, 3> mUnk134_135_168;
+        FONVSaveField<std::uint8_t> mUnk134;
+        FONVSaveField<std::uint8_t> mWeaponOut; // MiddleHighProcess::isWeaponOut at runtime offset 0x135.
+        FONVSaveField<std::uint8_t> mUnk168;
         std::array<FONVSaveField<std::uint32_t>, 3> mUnk170_174_108;
         FONVSaveField<std::uint8_t> mUnk1DA;
         FONVSavePlayerProcessVector3 mCoords0E4;

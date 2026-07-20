@@ -149,7 +149,7 @@ namespace
     {
         return {
             "player-runtime-actor-values-modifiers-health-limbs-perks",
-            "player-inventory-hotkeys-equipment-actions-ammo-selection",
+            "player-weapon-current-action-clip-reload-state",
             "player-factions-reputation-crime-disguise",
             "quest-stages-objectives-variables",
             "global-variables",
@@ -518,8 +518,17 @@ namespace MWWorld
         if (processInventory.mProcessLevel.mValue != 0)
             return loadFailure("FNV save Player process level is not canonical high process");
         plan.mPlayer.mProcessLevel = processInventory.mProcessLevel.mValue;
+        if (!save.mPlayerMobileObjectProcessState)
+            return loadFailure("FNV save does not expose the canonical Player weapon-out state");
+        const ESM4::FONVSaveField<std::uint8_t>& weaponOut
+            = save.mPlayerMobileObjectProcessState->mMiddleHighProcess.mWeaponOut;
+        if (weaponOut.mValue > 1)
+            return loadFailure("FNV save Player weapon-out state is not a canonical boolean");
+        plan.mPlayer.mWeaponDrawn = weaponOut.mValue != 0;
         std::map<ESM::FormId, std::int64_t> inventoryTotals;
         std::map<ESM::FormId, std::int64_t> conditionedTotals;
+        std::array<bool, 8> assignedHotkeys{};
+        std::map<ESM::FormId, ESM::FormId> selectedAmmo;
         for (const FalloutInventoryItem& item : nativePlayerState->mInventoryItems)
         {
             if (item.mRecord.isZeroOrUnset() || item.mCount <= 0)
@@ -542,6 +551,8 @@ namespace MWWorld
                 std::int32_t stackCount = 1;
                 std::optional<float> health;
                 std::optional<std::uint64_t> wornOffset;
+                std::optional<ESM4::FONVSaveField<std::uint8_t>> hotkey;
+                const ESM4::FONVSavePlayerInventoryExtraData* ammoExtra = nullptr;
                 bool sawCount = false;
                 for (const ESM4::FONVSavePlayerInventoryExtraData& extra : extend.mExtraData)
                 {
@@ -566,6 +577,19 @@ namespace MWWorld
                                 return loadFailure("FNV save Player inventory stack has duplicate ExtraWorn state");
                             wornOffset = extra.mType.mRange.mOffset;
                             break;
+                        case ESM4::sFONVExtraHotkeyType:
+                            if (hotkey || !extra.mHotkey || extra.mHotkey->mValue >= assignedHotkeys.size())
+                                return loadFailure("FNV save Player inventory has an invalid ExtraHotkey stack");
+                            hotkey = *extra.mHotkey;
+                            break;
+                        case ESM4::sFONVExtraAmmoType:
+                            if (ammoExtra != nullptr || !extra.mAmmo || !extra.mAmmo->mResolvedFormId
+                                || !extra.mAmmoCount)
+                            {
+                                return loadFailure("FNV save Player inventory has an invalid ExtraAmmo stack");
+                            }
+                            ammoExtra = &extra;
+                            break;
                         default:
                             return loadFailure("FNV save Player inventory exposes an unsupported extra-data type");
                     }
@@ -582,6 +606,29 @@ namespace MWWorld
                         return loadFailure("FNV save Player ExtraWorn state applies to a non-singleton stack");
                     plan.mPlayer.mWornVisualItems.push_back(
                         FalloutSavePlayerHeaderState::WornVisualItem{ *normalized, health, *wornOffset });
+                }
+                if (hotkey)
+                {
+                    if (assignedHotkeys[hotkey->mValue])
+                        return loadFailure("FNV save Player inventory has duplicate ExtraHotkey assignments");
+                    assignedHotkeys[hotkey->mValue] = true;
+                    plan.mPlayer.mHotkeyItems.push_back(FalloutSavePlayerHeaderState::HotkeyItem{
+                        hotkey->mValue, *normalized, hotkey->mRange.mOffset });
+                }
+                if (ammoExtra != nullptr)
+                {
+                    const std::optional<ESM::FormId> ammo
+                        = normalizeSavedFormId(*ammoExtra->mAmmo->mResolvedFormId, currentPluginIndices);
+                    if (!ammo)
+                        return loadFailure("FNV save Player ExtraAmmo FormID has unsupported provenance");
+                    const auto [existing, inserted] = selectedAmmo.emplace(*normalized, *ammo);
+                    if (!inserted && existing->second != *ammo)
+                        return loadFailure("FNV save Player has conflicting ExtraAmmo selections for one weapon");
+                    if (inserted)
+                    {
+                        plan.mPlayer.mAmmoSelections.push_back(FalloutSavePlayerHeaderState::AmmoSelection{
+                            *normalized, *ammo, ammoExtra->mAmmoCount->mValue, ammoExtra->mType.mRange.mOffset });
+                    }
                 }
             }
         }

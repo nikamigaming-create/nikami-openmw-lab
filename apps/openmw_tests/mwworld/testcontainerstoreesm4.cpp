@@ -1,7 +1,9 @@
 #include "apps/openmw/mwworld/containerstore.hpp"
+#include "apps/openmw/mwworld/inventorystore.hpp"
 #include "apps/openmw/mwworld/livecellref.hpp"
 #include "apps/openmw/mwclass/classes.hpp"
 
+#include <components/esm3/inventorystate.hpp>
 #include <components/esm4/loadalch.hpp>
 #include <components/esm4/loadammo.hpp>
 #include <components/esm4/loadarmo.hpp>
@@ -93,6 +95,31 @@ namespace MWWorld
 
             EXPECT_EQ(recordTypes.size(), 11u);
             EXPECT_EQ(totalCount, 66);
+        }
+
+        TEST(ESM4ContainerStoreTest, falloutAmmoSelectionSurvivesInventoryStateAndCopies)
+        {
+            const ESM::RefId weapon = ESM::RefId::formIdRefId(ESM::FormId::fromUint32(0x0100421c));
+            const ESM::RefId ammo = ESM::RefId::formIdRefId(ESM::FormId::fromUint32(0x01004241));
+
+            InventoryStore source;
+            source.setFalloutAmmoSelection(weapon, ammo);
+            EXPECT_EQ(source.getFalloutAmmoSelection(weapon), ammo);
+
+            ESM::InventoryState state;
+            source.writeState(state);
+            InventoryStore restored;
+            restored.readState(state);
+            EXPECT_EQ(restored.getFalloutAmmoSelection(weapon), ammo);
+
+            InventoryStore copied(restored);
+            EXPECT_EQ(copied.getFalloutAmmoSelection(weapon), ammo);
+            InventoryStore assigned;
+            assigned = copied;
+            EXPECT_EQ(assigned.getFalloutAmmoSelection(weapon), ammo);
+
+            assigned.clear();
+            EXPECT_FALSE(assigned.getFalloutAmmoSelection(weapon));
         }
     }
 }

@@ -2130,6 +2130,19 @@ namespace MWMechanics
             else
                 return fail("invalid-ammo-reference");
 
+            if (const auto* inventoryStore = dynamic_cast<const MWWorld::InventoryStore*>(&inventory))
+            {
+                const ESM::RefId weaponId = ESM::RefId::formIdRefId(mFalloutWeapon->mId);
+                if (const std::optional<ESM::RefId> selected = inventoryStore->getFalloutAmmoSelection(weaponId))
+                {
+                    const auto found = std::find_if(ammoCandidates.begin(), ammoCandidates.end(), [&](ESM::FormId id) {
+                        return ESM::RefId::formIdRefId(id) == *selected;
+                    });
+                    if (found != ammoCandidates.end())
+                        std::rotate(ammoCandidates.begin(), found, std::next(found));
+                }
+            }
+
             consumable = selectAuthoredFalloutAmmo(ammoCandidates, mFalloutWeapon->mData.ammoUse,
                 [&](ESM::FormId candidate) {
                     return store->get<ESM4::Ammunition>().search(candidate) != nullptr;

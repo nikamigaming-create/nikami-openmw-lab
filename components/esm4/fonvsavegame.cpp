@@ -638,8 +638,8 @@ namespace
         return result;
     }
 
-    ESM4::FONVSavePlayerInventoryExtraData parsePlayerInventoryExtraData(
-        Cursor& cursor, std::span<const std::uint8_t> data)
+    ESM4::FONVSavePlayerInventoryExtraData parsePlayerInventoryExtraData(Cursor& cursor,
+        std::span<const std::uint8_t> data, const ESM4::FONVSaveFormIdTable& formIds)
     {
         const std::size_t begin = cursor.position();
         ESM4::FONVSavePlayerInventoryExtraData result;
@@ -660,6 +660,20 @@ namespace
                 if (!std::isfinite(result.mHealth->mValue))
                     throw ESM4::FONVSaveError(result.mHealth->mRange.mOffset, "non-finite player inventory ExtraHealth");
                 break;
+            case ESM4::sFONVExtraHotkeyType:
+                result.mHotkey = readDelimitedField<std::uint8_t>(
+                    cursor, data, [&](std::string_view label) { return cursor.readU8(label); },
+                    "player inventory ExtraHotkey");
+                if (result.mHotkey->mValue >= 8)
+                    throw ESM4::FONVSaveError(result.mHotkey->mRange.mOffset, "invalid player inventory ExtraHotkey");
+                break;
+            case ESM4::sFONVExtraAmmoType:
+                result.mAmmo
+                    = decodeDelimitedResolvedReferenceId(cursor, data, formIds, "player inventory ExtraAmmo RefID");
+                result.mAmmoCount = readDelimitedField<std::int32_t>(cursor, data,
+                    [&](std::string_view label) { return std::bit_cast<std::int32_t>(cursor.readU32(label)); },
+                    "player inventory ExtraAmmo count");
+                break;
             default:
                 throw ESM4::FONVSaveError(
                     result.mType.mRange.mOffset, "unsupported canonical player inventory extra type");
@@ -669,8 +683,8 @@ namespace
         return result;
     }
 
-    ESM4::FONVSavePlayerInventoryExtendData parsePlayerInventoryExtendData(
-        Cursor& cursor, std::span<const std::uint8_t> data)
+    ESM4::FONVSavePlayerInventoryExtendData parsePlayerInventoryExtendData(Cursor& cursor,
+        std::span<const std::uint8_t> data, const ESM4::FONVSaveFormIdTable& formIds)
     {
         const std::size_t begin = cursor.position();
         ESM4::FONVSavePlayerInventoryExtendData result;
@@ -678,7 +692,7 @@ namespace
         validatePackedCountFits(result.mExtraDataCount, cursor, 2, "player inventory stack extra-data count");
         result.mExtraData.reserve(result.mExtraDataCount.mValue);
         for (std::uint32_t i = 0; i < result.mExtraDataCount.mValue; ++i)
-            result.mExtraData.push_back(parsePlayerInventoryExtraData(cursor, data));
+            result.mExtraData.push_back(parsePlayerInventoryExtraData(cursor, data, formIds));
         result.mRange = range(begin, cursor.position());
         result.mRaw = copyRange(data, begin, cursor.position());
         return result;
@@ -697,7 +711,7 @@ namespace
         validatePackedCountFits(result.mExtendDataCount, cursor, 2, "player inventory extend-data count");
         result.mExtendData.reserve(result.mExtendDataCount.mValue);
         for (std::uint32_t i = 0; i < result.mExtendDataCount.mValue; ++i)
-            result.mExtendData.push_back(parsePlayerInventoryExtendData(cursor, data));
+            result.mExtendData.push_back(parsePlayerInventoryExtendData(cursor, data, formIds));
         result.mRange = range(begin, cursor.position());
         result.mRaw = copyRange(data, begin, cursor.position());
         return result;
@@ -961,8 +975,9 @@ namespace
     {
         const std::size_t begin = cursor.position();
         ESM4::FONVSavePlayerMiddleHighProcessState result;
-        for (ESM4::FONVSaveField<std::uint8_t>& value : result.mUnk134_135_168)
-            value = readPlayerProcessU8(cursor, data, "player middle-high-process initial byte");
+        result.mUnk134 = readPlayerProcessU8(cursor, data, "player middle-high-process Unk134");
+        result.mWeaponOut = readPlayerProcessU8(cursor, data, "player middle-high-process weapon-out state");
+        result.mUnk168 = readPlayerProcessU8(cursor, data, "player middle-high-process Unk168");
         for (ESM4::FONVSaveField<std::uint32_t>& value : result.mUnk170_174_108)
             value = readPlayerProcessU32(cursor, data, "player middle-high-process initial word");
         result.mUnk1DA = readPlayerProcessU8(cursor, data, "player middle-high-process Unk1DA");

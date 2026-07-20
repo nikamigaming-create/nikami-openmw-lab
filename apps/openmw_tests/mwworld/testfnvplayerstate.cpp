@@ -197,6 +197,10 @@ namespace
             = static_cast<std::uint32_t>(processInventory.mInventoryEntries.size());
         result.mPlayerProcessInventoryData = std::move(processInventory);
 
+        ESM4::FONVSavePlayerMobileObjectProcessState processState;
+        processState.mMiddleHighProcess.mWeaponOut.mValue = 1;
+        result.mPlayerMobileObjectProcessState = std::move(processState);
+
         ESM4::FONVSavePlayerCharacterScalarReferenceState camera;
         camera.mFirstPersonMode.mValue = 0;
         camera.mFirstPersonMode.mRange = { 501845, 1 };
@@ -555,6 +559,9 @@ namespace
         EXPECT_EQ(plan.mPlayer.mReferenceRecord, referenceId);
         EXPECT_EQ(plan.mPlayer.mLevel, 12u);
         EXPECT_EQ(plan.mPlayer.mProcessLevel, 0);
+        EXPECT_TRUE(plan.mPlayer.mWeaponDrawn);
+        EXPECT_TRUE(plan.mPlayer.mHotkeyItems.empty());
+        EXPECT_TRUE(plan.mPlayer.mAmmoSelections.empty());
         ASSERT_EQ(plan.mPlayer.mWornVisualItems.size(), 3u);
         EXPECT_EQ(plan.mPlayer.mWornVisualItems[0].mRecord, form(0x00025b83, 1));
         EXPECT_EQ(plan.mPlayer.mWornVisualItems[1].mRecord, form(0x00015038, 1));
@@ -614,7 +621,8 @@ namespace
         EXPECT_THAT(plan.mUncoveredState, Not(Contains("player-inventory-equipment-ammo")));
         EXPECT_THAT(plan.mUncoveredState,
             Not(Contains("player-inventory-instance-condition-hotkeys-equipment-actions-ammo-selection")));
-        EXPECT_THAT(plan.mUncoveredState, Contains("player-inventory-hotkeys-equipment-actions-ammo-selection"));
+        EXPECT_THAT(plan.mUncoveredState, Not(Contains("player-inventory-hotkeys-equipment-actions-ammo-selection")));
+        EXPECT_THAT(plan.mUncoveredState, Contains("player-weapon-current-action-clip-reload-state"));
         EXPECT_THAT(plan.mUncoveredState, Contains("quest-variables"));
         EXPECT_THAT(plan.mUncoveredState, Not(Contains("quest-stages-objectives-variables")));
 
@@ -705,6 +713,45 @@ namespace
         EXPECT_EQ(proxy.mInventory.mList[1].mCount, 3);
     }
 
+    TEST(FalloutPlayerStateTest, resolvesInventoryHotkeyAndSelectedAmmoExtras)
+    {
+        // Exercise both payload-bearing extra types on one saved weapon stack.
+        const std::vector<std::string> content{ "builtin.omwscripts", "FalloutNV.esm", "DeadMoney.esm" };
+        MWWorld::Store<ESM4::Npc> npcs;
+        npcs.insertStatic(makeCompletePlayer(form(7, 1)));
+        const MWWorld::FalloutPlayerStateResolution player
+            = MWWorld::resolveFalloutPlayerIdentity(npcs, form(7, 1), form(0x14, 1));
+        ASSERT_TRUE(player) << player.mError;
+
+        ESM4::FONVSaveGamePrefix save = makeSavePlanFixture({ "FalloutNV.esm", "DeadMoney.esm" });
+        ESM4::FONVSavePlayerInventoryExtendData extend;
+        ESM4::FONVSavePlayerInventoryExtraData hotkey;
+        hotkey.mType.mValue = ESM4::sFONVExtraHotkeyType;
+        hotkey.mHotkey.emplace().mValue = 4;
+        hotkey.mHotkey->mRange = { 3100, 1 };
+        extend.mExtraData.push_back(std::move(hotkey));
+        ESM4::FONVSavePlayerInventoryExtraData ammo;
+        ammo.mType.mValue = ESM4::sFONVExtraAmmoType;
+        ammo.mType.mRange = { 3110, 1 };
+        ammo.mAmmo.emplace().mResolvedFormId = 0x00004241u;
+        ammo.mAmmoCount.emplace().mValue = 7;
+        extend.mExtraData.push_back(std::move(ammo));
+        save.mPlayerProcessInventoryData->mInventoryEntries[25].mExtendData.push_back(std::move(extend));
+
+        const MWWorld::FalloutSaveLoadPlanResolution resolution
+            = MWWorld::resolveFalloutSaveLoadPlan(save, &*player.mState, content);
+        ASSERT_TRUE(resolution) << resolution.mError;
+        ASSERT_EQ(resolution.mPlan->mPlayer.mHotkeyItems.size(), 1u);
+        EXPECT_EQ(resolution.mPlan->mPlayer.mHotkeyItems[0].mIndex, 4u);
+        EXPECT_EQ(resolution.mPlan->mPlayer.mHotkeyItems[0].mRecord, form(0x421c, 1));
+        EXPECT_EQ(resolution.mPlan->mPlayer.mHotkeyItems[0].mSourceOffset, 3100u);
+        ASSERT_EQ(resolution.mPlan->mPlayer.mAmmoSelections.size(), 1u);
+        EXPECT_EQ(resolution.mPlan->mPlayer.mAmmoSelections[0].mWeapon, form(0x421c, 1));
+        EXPECT_EQ(resolution.mPlan->mPlayer.mAmmoSelections[0].mAmmo, form(0x4241, 1));
+        EXPECT_EQ(resolution.mPlan->mPlayer.mAmmoSelections[0].mSavedCount, 7);
+        EXPECT_EQ(resolution.mPlan->mPlayer.mAmmoSelections[0].mSourceOffset, 3110u);
+    }
+
     TEST(FalloutPlayerStateTest, savePlanFailsClosedWhenCameraOrSkyIsUnproven)
     {
         const std::vector<std::string> content{ "builtin.omwscripts", "FalloutNV.esm", "DeadMoney.esm" };
@@ -749,6 +796,12 @@ namespace
         resolution = MWWorld::resolveFalloutSaveLoadPlan(save, &player, content);
         EXPECT_FALSE(resolution);
         EXPECT_THAT(resolution.mError, HasSubstr("Player inventory RefID did not resolve"));
+
+        save = makeSavePlanFixture({ "FalloutNV.esm", "DeadMoney.esm" });
+        save.mPlayerMobileObjectProcessState->mMiddleHighProcess.mWeaponOut.mValue = 2;
+        resolution = MWWorld::resolveFalloutSaveLoadPlan(save, &player, content);
+        EXPECT_FALSE(resolution);
+        EXPECT_THAT(resolution.mError, HasSubstr("weapon-out state is not a canonical boolean"));
 
         save = makeSavePlanFixture({ "FalloutNV.esm", "DeadMoney.esm" });
         save.mPlayerProcessInventoryData->mInventoryEntries[30].mExtendData[0].mExtraData[0].mCount->mValue = 15;

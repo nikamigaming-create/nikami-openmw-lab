@@ -250,6 +250,7 @@ namespace MWGui
 
         /// activate selected quick key
         void activateQuickKey(int index) override;
+        bool setFalloutSaveQuickKey(std::uint8_t index, const ESM::RefId& item) override;
         /// update activated quick key state (if action executing was delayed for some reason)
         void updateActivatedQuickKey() override;
 
