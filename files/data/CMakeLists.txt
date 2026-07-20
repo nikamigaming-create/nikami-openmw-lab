@@ -123,6 +123,8 @@ set(BUILTIN_DATA_FILES
     openmw_aux/calendar.lua
     openmw_aux/calendarconfig.lua
     openmw_aux/ui.lua
+    openmw_aux/lexer.lua
+    openmw_aux/obscript/parser.lua
 
     builtin.omwscripts
 
