@@ -183,6 +183,52 @@ namespace MWMechanics
             weapon.mData.limbDamageMult, weapon.mData.skillActorValue };
     }
 
+    float getFalloutVatsReservedActionPoints(std::span<const FalloutVatsQueuedAction> queued) noexcept
+    {
+        float result = 0.f;
+        for (const FalloutVatsQueuedAction& action : queued)
+        {
+            if (!std::isfinite(action.mActionPointCost) || action.mActionPointCost <= 0.f)
+                return std::numeric_limits<float>::quiet_NaN();
+            result += action.mActionPointCost;
+        }
+        return result;
+    }
+
+    std::optional<FalloutVatsQueuedAction> queueFalloutVatsAction(
+        std::span<const FalloutVatsQueuedAction> queued, ESM::FormId target, std::uint8_t bodyPart,
+        unsigned int displayedHitChance, float bodyPartDamageMultiplier, float currentActionPoints,
+        const FalloutVatsWeaponContract& weapon, FalloutVatsQueueFailure& failure)
+    {
+        failure = FalloutVatsQueueFailure::None;
+        if (target.isZeroOrUnset())
+            failure = FalloutVatsQueueFailure::MissingTarget;
+        else if (bodyPart > 14)
+            failure = FalloutVatsQueueFailure::InvalidBodyPart;
+        else if (displayedHitChance > 100)
+            failure = FalloutVatsQueueFailure::InvalidDisplayedHitChance;
+        else if (!std::isfinite(currentActionPoints) || currentActionPoints < 0.f
+            || !std::isfinite(bodyPartDamageMultiplier) || bodyPartDamageMultiplier <= 0.f)
+            failure = FalloutVatsQueueFailure::InvalidActionPointState;
+        else if (queued.size() >= 16)
+            failure = FalloutVatsQueueFailure::QueueLimitReached;
+
+        const float reserved = failure == FalloutVatsQueueFailure::None
+            ? getFalloutVatsReservedActionPoints(queued) : 0.f;
+        if (failure == FalloutVatsQueueFailure::None
+            && (!std::isfinite(reserved) || !std::isfinite(weapon.mActionPointCost)
+                || weapon.mActionPointCost <= 0.f))
+            failure = FalloutVatsQueueFailure::InvalidActionPointState;
+        else if (failure == FalloutVatsQueueFailure::None
+            && reserved + weapon.mActionPointCost > currentActionPoints)
+            failure = FalloutVatsQueueFailure::InsufficientActionPoints;
+
+        if (failure != FalloutVatsQueueFailure::None)
+            return std::nullopt;
+        return FalloutVatsQueuedAction{ target, bodyPart, static_cast<std::uint8_t>(displayedHitChance),
+            weapon.mActionPointCost, bodyPartDamageMultiplier * weapon.mLimbDamageMultiplier };
+    }
+
     bool advanceFalloutTrigger(FalloutTriggerState& state, bool triggerDown, bool ready,
         const FalloutFireCadence& cadence, float duration) noexcept
     {
@@ -381,6 +427,28 @@ namespace MWMechanics
                 return "invalid-limb-damage-multiplier";
             case FalloutVatsWeaponFailure::InvalidSkillActorValue:
                 return "invalid-skill-actor-value";
+        }
+        return "unknown";
+    }
+
+    std::string_view getFalloutVatsQueueFailureName(FalloutVatsQueueFailure failure)
+    {
+        switch (failure)
+        {
+            case FalloutVatsQueueFailure::None:
+                return "none";
+            case FalloutVatsQueueFailure::MissingTarget:
+                return "missing-target";
+            case FalloutVatsQueueFailure::InvalidBodyPart:
+                return "invalid-body-part";
+            case FalloutVatsQueueFailure::InvalidDisplayedHitChance:
+                return "invalid-displayed-hit-chance";
+            case FalloutVatsQueueFailure::InvalidActionPointState:
+                return "invalid-action-point-state";
+            case FalloutVatsQueueFailure::InsufficientActionPoints:
+                return "insufficient-action-points";
+            case FalloutVatsQueueFailure::QueueLimitReached:
+                return "queue-limit-reached";
         }
         return "unknown";
     }

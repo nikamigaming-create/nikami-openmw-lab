@@ -74,6 +74,26 @@ namespace MWMechanics
         std::int32_t mSkillActorValue = -1;
     };
 
+    enum class FalloutVatsQueueFailure
+    {
+        None,
+        MissingTarget,
+        InvalidBodyPart,
+        InvalidDisplayedHitChance,
+        InvalidActionPointState,
+        InsufficientActionPoints,
+        QueueLimitReached,
+    };
+
+    struct FalloutVatsQueuedAction
+    {
+        ESM::FormId mTarget;
+        std::uint8_t mBodyPart = 0;
+        std::uint8_t mDisplayedHitChance = 0;
+        float mActionPointCost = 0.f;
+        float mDamageMultiplier = 1.f;
+    };
+
     struct FalloutFireCadence
     {
         bool mAutomatic = false;
@@ -169,6 +189,17 @@ namespace MWMechanics
     [[nodiscard]] std::optional<FalloutVatsWeaponContract> buildFalloutVatsWeaponContract(
         const ESM4::Weapon& weapon, FalloutVatsWeaponFailure& failure);
 
+    /// Queue one VATS attack using the hit chance already observed from the targeting calculation. This boundary
+    /// deliberately does not invent the still-uncovered retail distance/visibility/perk formula. It enforces the
+    /// retail-visible AP reservation atomically and preserves the selected target, limb and displayed percentage.
+    [[nodiscard]] std::optional<FalloutVatsQueuedAction> queueFalloutVatsAction(
+        std::span<const FalloutVatsQueuedAction> queued, ESM::FormId target, std::uint8_t bodyPart,
+        unsigned int displayedHitChance, float bodyPartDamageMultiplier, float currentActionPoints,
+        const FalloutVatsWeaponContract& weapon, FalloutVatsQueueFailure& failure);
+
+    [[nodiscard]] float getFalloutVatsReservedActionPoints(
+        std::span<const FalloutVatsQueuedAction> queued) noexcept;
+
     /// Advance one weapon trigger using elapsed simulation time. A semi-automatic trigger fires once per press;
     /// an automatic trigger repeats while held when its authored cooldown expires. Visual animation state is only an
     /// eligibility input and never supplies the cadence.
@@ -199,6 +230,7 @@ namespace MWMechanics
     [[nodiscard]] std::string_view getFalloutShotFailureName(FalloutShotFailure failure);
     [[nodiscard]] std::string_view getFalloutFireCadenceFailureName(FalloutFireCadenceFailure failure);
     [[nodiscard]] std::string_view getFalloutVatsWeaponFailureName(FalloutVatsWeaponFailure failure);
+    [[nodiscard]] std::string_view getFalloutVatsQueueFailureName(FalloutVatsQueueFailure failure);
     [[nodiscard]] std::string_view getFalloutMeleeFailureName(FalloutMeleeFailure failure);
 }
 

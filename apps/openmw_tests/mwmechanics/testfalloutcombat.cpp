@@ -302,6 +302,34 @@ namespace
         EXPECT_EQ(failure, MWMechanics::FalloutVatsWeaponFailure::MissingAuthoredActionPointOverride);
     }
 
+    TEST(FalloutCombatTest, QueuesObservedVatsTargetLimbChanceAndReservesActionPoints)
+    {
+        MWMechanics::FalloutVatsWeaponContract weapon{ 22.f, 42, 0.75f, 32 };
+        const MWMechanics::FalloutVatsQueuedAction first{ id(0x100), 0, 71, 22.f, 1.f };
+        MWMechanics::FalloutVatsQueueFailure failure;
+        const auto action = MWMechanics::queueFalloutVatsAction(
+            std::span(&first, 1), id(0x200), 1, 83, 2.f, 50.f, weapon, failure);
+
+        ASSERT_TRUE(action);
+        EXPECT_EQ(failure, MWMechanics::FalloutVatsQueueFailure::None);
+        EXPECT_EQ(action->mTarget, id(0x200));
+        EXPECT_EQ(action->mBodyPart, 1);
+        EXPECT_EQ(action->mDisplayedHitChance, 83);
+        EXPECT_FLOAT_EQ(action->mActionPointCost, 22.f);
+        EXPECT_FLOAT_EQ(action->mDamageMultiplier, 1.5f);
+        EXPECT_FLOAT_EQ(MWMechanics::getFalloutVatsReservedActionPoints(std::span(&first, 1)), 22.f);
+    }
+
+    TEST(FalloutCombatTest, RejectsVatsQueueWhenReservedActionPointsExceedCurrentValue)
+    {
+        MWMechanics::FalloutVatsWeaponContract weapon{ 22.f, 42, 1.f, 32 };
+        const MWMechanics::FalloutVatsQueuedAction first{ id(0x100), 0, 71, 22.f, 1.f };
+        MWMechanics::FalloutVatsQueueFailure failure;
+        EXPECT_FALSE(MWMechanics::queueFalloutVatsAction(
+            std::span(&first, 1), id(0x200), 1, 83, 1.f, 40.f, weapon, failure));
+        EXPECT_EQ(failure, MWMechanics::FalloutVatsQueueFailure::InsufficientActionPoints);
+    }
+
     TEST(FalloutCombatTest, PreservesGenericShotgunRaysAndTotalAuthoredDamage)
     {
         ESM4::Weapon weapon;
