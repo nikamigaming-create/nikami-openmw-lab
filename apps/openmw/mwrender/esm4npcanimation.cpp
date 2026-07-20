@@ -5029,7 +5029,14 @@ namespace MWRender
         void logFalloutAttachmentBounds(osg::Node* attached, osg::Group* attachNode, osg::Group* headNode,
             std::string_view model, const MWWorld::Ptr& ptr)
         {
-            if (attached == nullptr)
+            // Computing an attachment's full scene-graph bounds is intentionally expensive.  It was originally
+            // added for actor-part diagnostics, but doing it unconditionally means ordinary gameplay repeats the
+            // traversal every time a package animation attaches its authored object (for example, every rake idle
+            // cycle in Goodsprings).  Keep both the traversal and its high-volume log output behind an explicit
+            // telemetry request.
+            if (attached == nullptr
+                || (!worldViewerEnvEnabled("OPENMW_FNV_ATTACHMENT_BOUNDS_AUDIT")
+                    && !worldViewerActorTelemetryEnabled()))
                 return;
 
             osg::ComputeBoundsVisitor boundsVisitor;
