@@ -68,4 +68,16 @@ namespace
         EXPECT_FALSE(MWClass::shouldRetainFalloutFurnitureClaim(FalloutFurnitureState::Seated, false, true));
         EXPECT_FALSE(MWClass::shouldRetainFalloutFurnitureClaim(FalloutFurnitureState::Seated, true, false));
     }
+
+    TEST(FnvFurnitureLifecycleTest, FurnitureApproachMustReachEntryBeforeExactMarkerAlignment)
+    {
+        const osg::Vec3f entry(-67911.6f, 3445.14f, 8387.31f);
+
+        // Retained Goodsprings telemetry: Easy Pete's generic travel completed here, 36 units from the
+        // authored marker, immediately before the old package snapped him to the exact entry position.
+        EXPECT_FALSE(MWClass::hasReachedFalloutFurnitureEntry(
+            osg::Vec3f(-67884.8f, 3421.05f, 8387.45f), entry));
+        EXPECT_TRUE(MWClass::hasReachedFalloutFurnitureEntry(entry + osg::Vec3f(4.f, -4.f, 0.f), entry));
+        EXPECT_FALSE(MWClass::hasReachedFalloutFurnitureEntry(entry + osg::Vec3f(8.01f, 0.f, 0.f), entry));
+    }
 }

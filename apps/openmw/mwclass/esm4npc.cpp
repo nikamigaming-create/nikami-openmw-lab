@@ -507,6 +507,15 @@ namespace MWClass
                     reconcileLifecycle(mPhase);
                     if (!mTravel.execute(actor, characterController, state, duration))
                         return false;
+                    if (!hasReachedFalloutFurnitureEntry(
+                            actor.getRefData().getPosition().asVec3(), mPlacement.mEntryPosition))
+                    {
+                        // AiTravel's normal actor-sized finish tolerance is appropriate for ordinary travel,
+                        // but it can complete several dozen units before an exact furniture marker. Keep
+                        // walking toward the marker before aligning to the authored enter-animation anchor.
+                        actor.getClass().getMovementSettings(actor).mPosition[1] = 1.f;
+                        return false;
+                    }
                     stopMovement();
                     place(mPlacement.mEntryPosition, mPlacement.mEntryYaw);
                     mPhase = FalloutFurniturePackagePhase::Entering;
