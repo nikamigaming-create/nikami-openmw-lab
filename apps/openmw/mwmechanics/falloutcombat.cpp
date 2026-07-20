@@ -4,6 +4,8 @@
 #include <cmath>
 #include <vector>
 
+#include <osg/Math>
+
 #include <components/esm4/loadproj.hpp>
 #include <components/esm4/loadweap.hpp>
 
@@ -96,7 +98,7 @@ namespace MWMechanics
         return std::nullopt;
     }
 
-    std::optional<FalloutShotContract> buildFalloutHitscanContract(const ESM4::Weapon& weapon,
+    std::optional<FalloutShotContract> buildFalloutRayShotContract(const ESM4::Weapon& weapon,
         const ESM4::Projectile& projectile, ESM::FormId ammo, FalloutShotFailure& failure)
     {
         failure = FalloutShotFailure::None;
@@ -108,23 +110,52 @@ namespace MWMechanics
             failure = FalloutShotFailure::ProjectileMismatch;
         else if (!projectile.mData.present)
             failure = FalloutShotFailure::MissingProjectileData;
-        else if ((projectile.mData.flags & ESM4::Projectile::Hitscan) == 0)
-            failure = FalloutShotFailure::UnsupportedProjectile;
         else if (weapon.mData.ammoUse == 0)
             failure = FalloutShotFailure::InvalidAmmoUse;
         else if (weapon.mData.numProjectiles == 0)
             failure = FalloutShotFailure::InvalidProjectileCount;
-        else if (weapon.mData.numProjectiles != 1)
-            failure = FalloutShotFailure::UnsupportedProjectileCount;
         else if (!std::isfinite(projectile.mData.range) || projectile.mData.range <= 0.f)
             failure = FalloutShotFailure::InvalidRange;
+        else if (!std::isfinite(weapon.mData.minSpread) || weapon.mData.minSpread < 0.f
+            || weapon.mData.minSpread >= 90.f || !std::isfinite(weapon.mData.spread) || weapon.mData.spread < 0.f
+            || weapon.mData.spread >= 90.f)
+            failure = FalloutShotFailure::InvalidSpread;
 
         if (failure != FalloutShotFailure::None)
             return std::nullopt;
 
         return FalloutShotContract{ ammo, weapon.mData.projectile, weapon.mData.ammoUse,
             weapon.mData.numProjectiles, static_cast<float>(weapon.mData.damage), weapon.mData.minRange,
-            weapon.mData.maxRange, projectile.mData.range };
+            weapon.mData.maxRange, projectile.mData.range, weapon.mData.minSpread, weapon.mData.spread,
+            (projectile.mData.flags & ESM4::Projectile::Hitscan) != 0 };
+    }
+
+    std::optional<osg::Vec3f> buildFalloutRayDirection(
+        const osg::Vec3f& direction, float spreadDegrees, const osg::Vec2f& diskSample)
+    {
+        if (!std::isfinite(direction.x()) || !std::isfinite(direction.y()) || !std::isfinite(direction.z())
+            || !std::isfinite(spreadDegrees) || spreadDegrees < 0.f || spreadDegrees >= 90.f
+            || !std::isfinite(diskSample.x()) || !std::isfinite(diskSample.y()) || diskSample.length2() > 1.00001f)
+            return std::nullopt;
+
+        osg::Vec3f forward = direction;
+        if (forward.normalize() == 0.f)
+            return std::nullopt;
+
+        const osg::Vec3f reference
+            = std::abs(forward.z()) < 0.999f ? osg::Vec3f(0.f, 0.f, 1.f) : osg::Vec3f(1.f, 0.f, 0.f);
+        osg::Vec3f right = forward ^ reference;
+        if (right.normalize() == 0.f)
+            return std::nullopt;
+        osg::Vec3f up = right ^ forward;
+        up.normalize();
+
+        const float coneRadius = std::tan(osg::DegreesToRadians(spreadDegrees));
+        osg::Vec3f result
+            = forward + right * (diskSample.x() * coneRadius) + up * (diskSample.y() * coneRadius);
+        if (result.normalize() == 0.f)
+            return std::nullopt;
+        return result;
     }
 
     std::string_view getFalloutShotFailureName(FalloutShotFailure failure)
@@ -141,16 +172,14 @@ namespace MWMechanics
                 return "projectile-mismatch";
             case FalloutShotFailure::MissingProjectileData:
                 return "missing-projectile-data";
-            case FalloutShotFailure::UnsupportedProjectile:
-                return "unsupported-projectile";
             case FalloutShotFailure::InvalidAmmoUse:
                 return "invalid-ammo-use";
             case FalloutShotFailure::InvalidProjectileCount:
                 return "invalid-projectile-count";
-            case FalloutShotFailure::UnsupportedProjectileCount:
-                return "unsupported-projectile-count";
             case FalloutShotFailure::InvalidRange:
                 return "invalid-range";
+            case FalloutShotFailure::InvalidSpread:
+                return "invalid-spread";
         }
         return "unknown";
     }

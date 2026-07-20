@@ -1970,7 +1970,7 @@ namespace MWMechanics
 
         FalloutShotFailure contractFailure = FalloutShotFailure::None;
         const std::optional<FalloutShotContract> contract
-            = buildFalloutHitscanContract(*mFalloutWeapon, *projectile, *ammo, contractFailure);
+            = buildFalloutRayShotContract(*mFalloutWeapon, *projectile, *ammo, contractFailure);
         if (!contract)
             return fail(getFalloutShotFailureName(contractFailure));
 
@@ -1992,10 +1992,24 @@ namespace MWMechanics
         if (direction.normalize() == 0.f)
             return fail("zero-shot-direction");
 
-        const osg::Vec3f destination = origin + direction * contract->mProjectileRange;
         const MWPhysics::RayCastingInterface* rayCasting = world->getRayCasting();
         if (rayCasting == nullptr)
             return fail("missing-ray-caster");
+
+        std::vector<osg::Vec3f> rayDirections;
+        rayDirections.reserve(contract->mProjectileCount);
+        Misc::Rng::Generator& prng = world->getPrng();
+        for (unsigned int ray = 0; ray < contract->mProjectileCount; ++ray)
+        {
+            const float radius = std::sqrt(Misc::Rng::rollProbability(prng));
+            const float angle = 2.f * osg::PI * Misc::Rng::rollProbability(prng);
+            const osg::Vec2f diskSample(radius * std::cos(angle), radius * std::sin(angle));
+            const std::optional<osg::Vec3f> rayDirection
+                = buildFalloutRayDirection(direction, contract->mSpread, diskSample);
+            if (!rayDirection)
+                return fail("invalid-ray-direction");
+            rayDirections.push_back(*rayDirection);
+        }
 
         const ESM::RefId ammoRefId = ESM::RefId::formIdRefId(contract->mAmmo);
         const int ammoBefore = inventory.count(ammoRefId);
@@ -2004,19 +2018,40 @@ namespace MWMechanics
         if (removed != contract->mAmmoUse || ammoBefore - ammoAfter != contract->mAmmoUse)
             return fail("ammo-transaction-mismatch");
 
-        const MWPhysics::RayCastingResult result = rayCasting->castRay(origin, destination, { mPtr }, targetActors,
-            MWPhysics::CollisionType_Default, MWPhysics::CollisionType_Projectile);
-
-        float healthBefore = -1.f;
-        float healthAfter = -1.f;
-        bool actorHit = false;
-        if (result.mHit && !result.mHitObject.isEmpty() && result.mHitObject.getClass().isActor())
+        struct ActorImpact
         {
-            actorHit = true;
-            healthBefore = result.mHitObject.getClass().getCreatureStats(result.mHitObject).getHealth().getCurrent();
-            result.mHitObject.getClass().onHit(result.mHitObject, { { "health", contract->mDamage } },
+            MWWorld::Ptr mActor;
+            float mDamage = 0.f;
+        };
+        std::vector<ActorImpact> actorImpacts;
+        unsigned int rayHits = 0;
+        unsigned int actorRayHits = 0;
+        const float damagePerProjectile = contract->damagePerProjectile();
+        for (const osg::Vec3f& rayDirection : rayDirections)
+        {
+            const osg::Vec3f destination = origin + rayDirection * contract->mProjectileRange;
+            const MWPhysics::RayCastingResult result = rayCasting->castRay(origin, destination, { mPtr }, targetActors,
+                MWPhysics::CollisionType_Default, MWPhysics::CollisionType_Projectile);
+            if (!result.mHit)
+                continue;
+            ++rayHits;
+            if (result.mHitObject.isEmpty() || !result.mHitObject.getClass().isActor())
+                continue;
+            ++actorRayHits;
+
+            auto found = std::find_if(actorImpacts.begin(), actorImpacts.end(), [&](const ActorImpact& impact) {
+                return impact.mActor == result.mHitObject;
+            });
+            if (found == actorImpacts.end())
+                actorImpacts.push_back(ActorImpact{ result.mHitObject, damagePerProjectile });
+            else
+                found->mDamage += damagePerProjectile;
+        }
+
+        for (ActorImpact& impact : actorImpacts)
+        {
+            impact.mActor.getClass().onHit(impact.mActor, { { "health", impact.mDamage } },
                 ESM::RefId::formIdRefId(mFalloutWeapon->mId), mPtr, true, DamageSourceType::Ranged);
-            healthAfter = result.mHitObject.getClass().getCreatureStats(result.mHitObject).getHealth().getCurrent();
         }
 
         Log(Debug::Info) << "FNV combat shot: actor=" << mPtr.toString()
@@ -2024,9 +2059,12 @@ namespace MWMechanics
                          << " ammo=" << ammoRefId << " ammoBefore=" << ammoBefore << " ammoAfter=" << ammoAfter
                          << " projectile=" << ESM::RefId::formIdRefId(contract->mProjectile)
                          << " projectileRange=" << contract->mProjectileRange << " damage=" << contract->mDamage
-                         << " rayHit=" << result.mHit << " actorHit=" << actorHit
-                         << " hitObject=" << (result.mHitObject.isEmpty() ? std::string("none") : result.mHitObject.toString())
-                         << " healthBefore=" << healthBefore << " healthAfter=" << healthAfter << " exact=1 status=pass";
+                         << " projectileCount=" << static_cast<unsigned int>(contract->mProjectileCount)
+                         << " damagePerProjectile=" << damagePerProjectile << " spread=" << contract->mSpread
+                         << " authoredHitscan=" << contract->mAuthoredHitscan
+                         << " immediateRayFallback=" << !contract->mAuthoredHitscan << " rayHits=" << rayHits
+                         << " actorRayHits=" << actorRayHits << " actorsHit=" << actorImpacts.size()
+                         << " exact=1 status=pass";
         return true;
     }
 

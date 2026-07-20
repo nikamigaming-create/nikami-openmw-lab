@@ -7,6 +7,9 @@
 #include <span>
 #include <string_view>
 
+#include <osg/Vec2f>
+#include <osg/Vec3f>
+
 #include <components/esm/formid.hpp>
 #include <components/esm4/actor.hpp>
 #include <components/esm4/loadfact.hpp>
@@ -26,11 +29,10 @@ namespace MWMechanics
         MissingBallistics,
         ProjectileMismatch,
         MissingProjectileData,
-        UnsupportedProjectile,
         InvalidAmmoUse,
         InvalidProjectileCount,
-        UnsupportedProjectileCount,
         InvalidRange,
+        InvalidSpread,
     };
 
     struct FalloutShotContract
@@ -43,6 +45,16 @@ namespace MWMechanics
         float mMinRange = 0.f;
         float mMaxRange = 0.f;
         float mProjectileRange = 0.f;
+        float mMinSpread = 0.f;
+        float mSpread = 0.f;
+        bool mAuthoredHitscan = false;
+
+        /// Fallout WEAP damage is authored per trigger pull. Divide it evenly between the authored rays so a
+        /// multi-projectile weapon preserves the same total damage when every pellet connects.
+        [[nodiscard]] float damagePerProjectile() const noexcept
+        {
+            return mProjectileCount == 0 ? 0.f : mDamage / static_cast<float>(mProjectileCount);
+        }
     };
 
     using FalloutAmmoTypePredicate = std::function<bool(ESM::FormId)>;
@@ -70,9 +82,15 @@ namespace MWMechanics
     [[nodiscard]] std::optional<ESM::FormId> selectAuthoredFalloutAmmo(std::span<const ESM::FormId> candidates,
         std::uint8_t rounds, const FalloutAmmoTypePredicate& isAmmo, const FalloutAmmoCount& countAmmo);
 
-    /// Validate and preserve the exact serialized WEAP -> PROJ contract used by the first production hitscan path.
-    [[nodiscard]] std::optional<FalloutShotContract> buildFalloutHitscanContract(const ESM4::Weapon& weapon,
+    /// Validate and preserve the serialized WEAP -> PROJ contract used by the immediate-ray production path.
+    /// Authored non-hitscan projectiles deliberately use the same ray fallback until moving ESM4 projectiles exist.
+    [[nodiscard]] std::optional<FalloutShotContract> buildFalloutRayShotContract(const ESM4::Weapon& weapon,
         const ESM4::Projectile& projectile, ESM::FormId ammo, FalloutShotFailure& failure);
+
+    /// Resolve one unit ray inside the authored circular spread cone. diskSample is a caller-provided point in the
+    /// unit disk, allowing production to use the world PRNG while keeping the geometry deterministic and testable.
+    [[nodiscard]] std::optional<osg::Vec3f> buildFalloutRayDirection(
+        const osg::Vec3f& forward, float spreadDegrees, const osg::Vec2f& diskSample);
 
     [[nodiscard]] std::string_view getFalloutShotFailureName(FalloutShotFailure failure);
 }

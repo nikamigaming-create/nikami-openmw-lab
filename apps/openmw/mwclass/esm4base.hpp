@@ -32,6 +32,7 @@
 #include "../mwgui/tooltips.hpp"
 
 #include "../mwworld/cellstore.hpp"
+#include "../mwworld/actionequip.hpp"
 #include "../mwworld/actiondoor.hpp"
 #include "../mwworld/actionteleport.hpp"
 #include "../mwworld/failedaction.hpp"
@@ -438,6 +439,17 @@ namespace MWClass
             }
             else
                 return {};
+        }
+
+        std::unique_ptr<MWWorld::Action> use(const MWWorld::Ptr& ptr, bool force = false) const override
+        {
+            if constexpr (std::is_same_v<Record, ESM4::Weapon> || std::is_same_v<Record, ESM4::Ammunition>
+                || std::is_same_v<Record, ESM4::Armor> || std::is_same_v<Record, ESM4::Clothing>)
+            {
+                return std::make_unique<MWWorld::ActionEquip>(ptr, force);
+            }
+            else
+                return ESM4Base<Record>::use(ptr, force);
         }
 
         bool hasToolTip(const MWWorld::ConstPtr& ptr) const override { return !getName(ptr).empty(); }

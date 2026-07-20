@@ -98,6 +98,7 @@
 #include "esm4npcanimation.hpp"
 #include "effectmanager.hpp"
 #include "fogmanager.hpp"
+#include "falloutweaponanimation.hpp"
 #include "groundcover.hpp"
 #include "navmesh.hpp"
 #include "npcanimation.hpp"
@@ -1553,6 +1554,50 @@ namespace MWRender
 
             if (mFalloutPlayerVisualAnimation)
             {
+                const ESM4::Weapon* liveWeapon = nullptr;
+                if (player.getClass().hasInventoryStore(player))
+                {
+                    const MWWorld::InventoryStore& inventory = player.getClass().getInventoryStore(player);
+                    const MWWorld::ConstContainerStoreIterator weapon
+                        = inventory.getSlot(MWWorld::InventoryStore::Slot_CarriedRight);
+                    if (weapon != inventory.end() && weapon->getType() == ESM4::Weapon::sRecordId)
+                        liveWeapon = weapon->get<ESM4::Weapon>()->mBase;
+                }
+
+                const MWWorld::Ptr visualPtr = mFalloutPlayerVisualAnimation->getPtr();
+                const bool weaponChanged
+                    = MWClass::ESM4Npc::setEquippedWeapon(visualPtr, liveWeapon);
+                const MWMechanics::DrawState liveDrawState
+                    = player.getClass().getCreatureStats(player).getDrawState();
+                MWMechanics::CreatureStats& visualStats = visualPtr.getClass().getCreatureStats(visualPtr);
+                const bool drawStateChanged = visualStats.getDrawState() != liveDrawState;
+                if (drawStateChanged)
+                    visualStats.setDrawState(liveDrawState);
+
+                if (weaponChanged)
+                {
+                    const std::uint8_t animationType = liveWeapon != nullptr ? liveWeapon->mData.animationType : 0;
+                    const std::uint8_t reloadAnimation = liveWeapon != nullptr ? liveWeapon->mData.reloadAnim : 0;
+                    const bool thirdPersonPrepared = mFalloutPlayerVisualAnimation->prepareFalloutWeaponAnimation(
+                        animationType, reloadAnimation, FonvWeaponAction::Equip);
+                    const bool firstPersonPrepared = mFalloutPlayerFirstPersonAnimation == nullptr
+                        || mFalloutPlayerFirstPersonAnimation->prepareFalloutWeaponAnimation(
+                            animationType, reloadAnimation, FonvWeaponAction::Equip);
+                    Log(thirdPersonPrepared && firstPersonPrepared ? Debug::Info : Debug::Error)
+                        << "FNV player equipment bridge: weapon="
+                        << (liveWeapon != nullptr ? liveWeapon->mEditorId : std::string("none"))
+                        << " animationType=" << static_cast<unsigned int>(animationType)
+                        << " thirdPersonPrepared=" << thirdPersonPrepared
+                        << " firstPersonPrepared=" << firstPersonPrepared << " source=live-inventory-slot";
+                }
+                if (weaponChanged || drawStateChanged)
+                {
+                    const bool shown = liveDrawState == MWMechanics::DrawState::Weapon && liveWeapon != nullptr;
+                    mFalloutPlayerVisualAnimation->showWeapons(shown);
+                    if (mFalloutPlayerFirstPersonAnimation)
+                        mFalloutPlayerFirstPersonAnimation->showWeapons(shown);
+                }
+
                 const MWMechanics::Movement& movement = player.getClass().getMovementSettings(player);
                 std::string requestedGroup = "idle";
                 const std::string driverGroup(mPlayerAnimation->getActiveGroup(BoneGroup_LowerBody));

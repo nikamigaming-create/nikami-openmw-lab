@@ -6,8 +6,11 @@
 #include <components/esm4/loadweap.hpp>
 
 #include <gtest/gtest.h>
+#include <osg/Math>
 
 #include <array>
+#include <cmath>
+#include <limits>
 #include <map>
 #include <unordered_map>
 #include <vector>
@@ -252,7 +255,7 @@ namespace
         projectile.mData.range = 10000.f;
 
         MWMechanics::FalloutShotFailure failure;
-        const auto contract = MWMechanics::buildFalloutHitscanContract(weapon, projectile, id(0x4240), failure);
+        const auto contract = MWMechanics::buildFalloutRayShotContract(weapon, projectile, id(0x4240), failure);
 
         ASSERT_TRUE(contract);
         EXPECT_EQ(failure, MWMechanics::FalloutShotFailure::None);
@@ -264,15 +267,20 @@ namespace
         EXPECT_FLOAT_EQ(contract->mMinRange, 768.f);
         EXPECT_FLOAT_EQ(contract->mMaxRange, 3548.f);
         EXPECT_FLOAT_EQ(contract->mProjectileRange, 10000.f);
+        EXPECT_FLOAT_EQ(contract->damagePerProjectile(), 18.f);
+        EXPECT_TRUE(contract->mAuthoredHitscan);
     }
 
-    TEST(FalloutCombatTest, FailsClosedForAnUnimplementedMultiProjectileWeapon)
+    TEST(FalloutCombatTest, PreservesGenericShotgunRaysAndTotalAuthoredDamage)
     {
         ESM4::Weapon weapon;
         weapon.mData.hasBallistics = true;
         weapon.mData.projectile = id(0x426d);
         weapon.mData.ammoUse = 1;
         weapon.mData.numProjectiles = 7;
+        weapon.mData.damage = 70;
+        weapon.mData.minSpread = 0.5f;
+        weapon.mData.spread = 1.5f;
         ESM4::Projectile projectile;
         projectile.mId = id(0x426d);
         projectile.mData.present = true;
@@ -280,7 +288,82 @@ namespace
         projectile.mData.range = 10000.f;
 
         MWMechanics::FalloutShotFailure failure;
-        EXPECT_FALSE(MWMechanics::buildFalloutHitscanContract(weapon, projectile, id(0x4240), failure));
-        EXPECT_EQ(failure, MWMechanics::FalloutShotFailure::UnsupportedProjectileCount);
+        const auto contract = MWMechanics::buildFalloutRayShotContract(weapon, projectile, id(0x4240), failure);
+
+        ASSERT_TRUE(contract);
+        EXPECT_EQ(failure, MWMechanics::FalloutShotFailure::None);
+        EXPECT_EQ(contract->mAmmoUse, 1);
+        EXPECT_EQ(contract->mProjectileCount, 7);
+        EXPECT_FLOAT_EQ(contract->mDamage, 70.f);
+        EXPECT_FLOAT_EQ(contract->damagePerProjectile(), 10.f);
+        EXPECT_FLOAT_EQ(contract->mMinSpread, 0.5f);
+        EXPECT_FLOAT_EQ(contract->mSpread, 1.5f);
+        EXPECT_TRUE(contract->mAuthoredHitscan);
+    }
+
+    TEST(FalloutCombatTest, UsesImmediateRayFallbackForAuthoredNonHitscanProjectile)
+    {
+        ESM4::Weapon weapon;
+        weapon.mData.hasBallistics = true;
+        weapon.mData.projectile = id(0x9001);
+        weapon.mData.ammoUse = 2;
+        weapon.mData.numProjectiles = 1;
+        weapon.mData.damage = 42;
+        weapon.mData.spread = 0.75f;
+
+        ESM4::Projectile projectile;
+        projectile.mId = id(0x9001);
+        projectile.mData.present = true;
+        projectile.mData.flags = ESM4::Projectile::Rotates;
+        projectile.mData.range = 4096.f;
+
+        MWMechanics::FalloutShotFailure failure;
+        const auto contract = MWMechanics::buildFalloutRayShotContract(weapon, projectile, id(0x9002), failure);
+
+        ASSERT_TRUE(contract);
+        EXPECT_EQ(failure, MWMechanics::FalloutShotFailure::None);
+        EXPECT_EQ(contract->mAmmoUse, 2);
+        EXPECT_EQ(contract->mProjectileCount, 1);
+        EXPECT_FLOAT_EQ(contract->mDamage, 42.f);
+        EXPECT_FLOAT_EQ(contract->mProjectileRange, 4096.f);
+        EXPECT_FALSE(contract->mAuthoredHitscan);
+    }
+
+    TEST(FalloutCombatTest, BuildsUnitRayAtAuthoredSpreadConeBoundary)
+    {
+        const auto center = MWMechanics::buildFalloutRayDirection(
+            osg::Vec3f(0.f, 2.f, 0.f), 10.f, osg::Vec2f(0.f, 0.f));
+        ASSERT_TRUE(center);
+        EXPECT_FLOAT_EQ(center->x(), 0.f);
+        EXPECT_FLOAT_EQ(center->y(), 1.f);
+        EXPECT_FLOAT_EQ(center->z(), 0.f);
+
+        const auto edge = MWMechanics::buildFalloutRayDirection(
+            osg::Vec3f(0.f, 1.f, 0.f), 10.f, osg::Vec2f(1.f, 0.f));
+        ASSERT_TRUE(edge);
+        EXPECT_NEAR(edge->length(), 1.f, 1e-6f);
+        EXPECT_NEAR(std::acos((*edge) * osg::Vec3f(0.f, 1.f, 0.f)), osg::DegreesToRadians(10.f), 1e-6f);
+    }
+
+    TEST(FalloutCombatTest, RejectsMalformedSpreadAndRayInputsBeforeFiring)
+    {
+        ESM4::Weapon weapon;
+        weapon.mData.hasBallistics = true;
+        weapon.mData.projectile = id(0x426d);
+        weapon.mData.ammoUse = 1;
+        weapon.mData.numProjectiles = 1;
+        weapon.mData.spread = std::numeric_limits<float>::quiet_NaN();
+        ESM4::Projectile projectile;
+        projectile.mId = id(0x426d);
+        projectile.mData.present = true;
+        projectile.mData.range = 10000.f;
+
+        MWMechanics::FalloutShotFailure failure;
+        EXPECT_FALSE(MWMechanics::buildFalloutRayShotContract(weapon, projectile, id(0x4240), failure));
+        EXPECT_EQ(failure, MWMechanics::FalloutShotFailure::InvalidSpread);
+        EXPECT_FALSE(MWMechanics::buildFalloutRayDirection(
+            osg::Vec3f(0.f, 0.f, 0.f), 1.f, osg::Vec2f(0.f, 0.f)));
+        EXPECT_FALSE(MWMechanics::buildFalloutRayDirection(
+            osg::Vec3f(0.f, 1.f, 0.f), 1.f, osg::Vec2f(1.1f, 0.f)));
     }
 }
