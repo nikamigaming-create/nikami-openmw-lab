@@ -203,7 +203,7 @@ namespace
         ASSERT_EQ(markers[0].mIdles.size(), 1u);
         EXPECT_EQ(markers[0].mIdles[0].mId, idleId);
         EXPECT_EQ(markers[0].mIdles[0].mModel, "meshes/characters/_male/idleanims/raking.kf");
-        EXPECT_EQ(markers[0].mIdles[0].mAnimatedObjectModel, "meshes/animobjects/aorake.nif");
+        EXPECT_EQ(markers[0].mIdles[0].mAnimatedObjectModel, "animobjects/aorake.nif");
         EXPECT_EQ(store.get<ESM4::AnimObject>().getSize(), 1u);
 
         // Candidate membership stays pinned to the package origin (x=10), even after the actor walks near the
