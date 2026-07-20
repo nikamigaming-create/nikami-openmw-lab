@@ -114,6 +114,20 @@ namespace MWWorld
         return std::nullopt;
     }
 
+    std::optional<float> FalloutPlayerRuntimeState::getCarryCapacity() const
+    {
+        const std::optional<FalloutRuntimeActorValue> strength
+            = getCurrentActorValue(SpecialActorValueBegin + static_cast<std::uint32_t>(FalloutSpecial::Strength));
+        if (!strength)
+            return std::nullopt;
+
+        // Fallout: New Vegas' baseline carry-weight rule, before perks and temporary modifiers.
+        const float capacity = 150.f + 10.f * strength->mValue;
+        if (!std::isfinite(capacity))
+            return std::nullopt;
+        return capacity;
+    }
+
     FalloutActorValueMutationResult FalloutPlayerRuntimeState::setCurrentActorValue(
         std::uint32_t actorValue, float value)
     {

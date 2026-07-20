@@ -115,6 +115,30 @@ TEST(FalloutPlayerRuntimeStateTest, OmitsUnchangedStateFromTheSave)
     EXPECT_FALSE(reader.hasMoreRecs());
 }
 
+TEST(FalloutPlayerRuntimeStateTest, DerivesCarryCapacityFromCurrentStrength)
+{
+    MWWorld::FalloutPlayerRuntimeState runtime;
+    EXPECT_FALSE(runtime.getCarryCapacity());
+
+    runtime.initialize(makeBaseState(0));
+    ASSERT_TRUE(runtime.getCarryCapacity());
+    EXPECT_FLOAT_EQ(*runtime.getCarryCapacity(), 200.f);
+
+    ASSERT_EQ(runtime.setCurrentActorValue(MWWorld::FalloutPlayerRuntimeState::SpecialActorValueBegin, 8.5f),
+        MWWorld::FalloutActorValueMutationResult::Applied);
+    ASSERT_TRUE(runtime.getCarryCapacity());
+    EXPECT_FLOAT_EQ(*runtime.getCarryCapacity(), 235.f);
+
+    ASSERT_EQ(runtime.setCurrentActorValue(MWWorld::FalloutPlayerRuntimeState::SpecialActorValueBegin,
+                  std::numeric_limits<float>::max()),
+        MWWorld::FalloutActorValueMutationResult::Applied);
+    EXPECT_FALSE(runtime.getCarryCapacity());
+
+    runtime.resetCurrent();
+    ASSERT_TRUE(runtime.getCarryCapacity());
+    EXPECT_FLOAT_EQ(*runtime.getCarryCapacity(), 200.f);
+}
+
 TEST(FalloutPlayerRuntimeStateTest, RoundTripsFractionalValuesAndOffsetProvenanceAcrossChangedLoadOrder)
 {
     const MWWorld::FalloutPlayerState originalBase = makeBaseState(2);

@@ -78,6 +78,7 @@ namespace MWWorld
 
         std::optional<FalloutRuntimeActorValue> getBaseActorValue(std::uint32_t actorValue) const;
         std::optional<FalloutRuntimeActorValue> getCurrentActorValue(std::uint32_t actorValue) const;
+        [[nodiscard]] std::optional<float> getCarryCapacity() const;
         FalloutActorValueMutationResult setCurrentActorValue(std::uint32_t actorValue, float value);
         FalloutActorValueMutationResult modCurrentActorValue(std::uint32_t actorValue, float delta);
 
