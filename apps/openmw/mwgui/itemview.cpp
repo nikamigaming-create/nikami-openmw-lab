@@ -14,6 +14,7 @@
 #include "../mwbase/windowmanager.hpp"
 #include "../mwbase/world.hpp"
 
+#include "inventorylistpolicy.hpp"
 #include "itemmodel.hpp"
 #include "itemwidget.hpp"
 
@@ -86,6 +87,13 @@ namespace MWGui
             mScrollView->setCanvasSize(size);
             mScrollView->setVisibleVScroll(true);
             dragArea->setSize(size);
+
+            if (Settings::gui().mControllerMenus)
+            {
+                const int previousFocus = mControllerFocus;
+                mControllerFocus = normalizeInventoryControllerFocus(mControllerFocus, mItemCount);
+                updateControllerFocus(previousFocus, mControllerFocus);
+            }
             return;
         }
 
