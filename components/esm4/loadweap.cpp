@@ -129,6 +129,9 @@ void ESM4::Weapon::load(ESM4::Reader& reader)
             case ESM::fourCC("MODL"):
                 reader.getZString(mModel);
                 break;
+            case ESM::fourCC("MOD4"):
+                reader.getZString(mFirstPersonModel);
+                break;
             case ESM::fourCC("ICON"):
                 reader.getZString(mIcon);
                 break;
@@ -220,7 +223,6 @@ void ESM4::Weapon::load(ESM4::Reader& reader)
             case ESM::fourCC("MO2T"): // FO3
             case ESM::fourCC("MO2S"): // FO3
             case ESM::fourCC("NAM6"): // FO3
-            case ESM::fourCC("MOD4"): // First person model data
             case ESM::fourCC("MO4T"):
             case ESM::fourCC("MO4S"):
             case ESM::fourCC("MO4C"):

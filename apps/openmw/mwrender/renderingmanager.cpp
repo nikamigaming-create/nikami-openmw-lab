@@ -278,7 +278,7 @@ namespace MWRender
             }
         }
 
-        std::optional<ESM4NpcAnimation::FirstPersonUnarmedState> applyFalloutSaveWornPlayerVisuals(
+        std::optional<ESM4NpcAnimation::FirstPersonState> applyFalloutSaveWornPlayerVisuals(
             std::span<const ESM::FormId> wornVisualItems, const MWWorld::Ptr& visualPtr, float firstPersonFieldOfView,
             Resource::ResourceSystem* resourceSystem)
         {
@@ -308,9 +308,12 @@ namespace MWRender
                 else if (const ESM4::Weapon* weapon = store->get<ESM4::Weapon>().search(record))
                 {
                     ++savedWeapon;
+                    const bool changed = MWClass::ESM4Npc::setEquippedWeapon(visualPtr, weapon);
                     Log(Debug::Info) << "FNV first-person saveWorn: ordinal=" << saveWorn
                                      << " type=WEAP form=" << record << " editor=" << weapon->mEditorId
-                                     << " selectedProfile=weapon-not-unarmed";
+                                     << " worldModel=" << weapon->mModel
+                                     << " firstPersonModel=" << weapon->mFirstPersonModel
+                                     << " equipped=1 changed=" << changed << " selectedProfile=weapon";
                 }
                 else
                 {
@@ -320,15 +323,7 @@ namespace MWRender
                 }
             }
 
-            if (!useFalloutFirstPersonUnarmedProfile(
-                    savedWeapon != 0, MWClass::ESM4Npc::getEquippedWeapon(visualPtr) != nullptr))
-            {
-                Log(Debug::Info) << "FNV first-person saveWorn: total=" << saveWorn << " armor=" << savedArmor
-                                 << " weapon=" << savedWeapon << " unarmed=0 profile=disabled";
-                return std::nullopt;
-            }
-
-            ESM4NpcAnimation::FirstPersonUnarmedState state;
+            ESM4NpcAnimation::FirstPersonState state;
             state.mFieldOfView = firstPersonFieldOfView;
             const bool female = MWClass::ESM4Npc::isFemale(visualPtr);
             bool unresolvedWornLeftHand = false;
@@ -372,11 +367,15 @@ namespace MWRender
             }
             state.mPipBoyGlove
                 = isFalloutPipBoyGloveFirstPersonModel(state.mPipBoy, state.mSaveWornLeftHandModel);
+            const ESM4::Weapon* equippedWeapon = MWClass::ESM4Npc::getEquippedWeapon(visualPtr);
             Log(Debug::Info) << "FNV first-person saveWorn: total=" << saveWorn << " armor=" << savedArmor
-                             << " weapon=" << savedWeapon << " unarmed=1 pipBoy=" << state.mPipBoy
+                             << " weapon=" << savedWeapon << " unarmed=" << (equippedWeapon == nullptr)
+                             << " equippedWeapon="
+                             << (equippedWeapon != nullptr ? equippedWeapon->mEditorId : std::string("none"))
+                             << " pipBoy=" << state.mPipBoy
                              << " pipBoyGlove=" << state.mPipBoyGlove
                              << " armorModels=" << state.mSaveWornArmorModels.size()
-                             << " fov=" << state.mFieldOfView << " profile=flat-unarmed-h2h";
+                             << " fov=" << state.mFieldOfView << " profile=flat-first-person";
             return state;
         }
 
@@ -2358,11 +2357,13 @@ namespace MWRender
             mFalloutPlayerVisualRef->mData.setPosition(player.getRefData().getPosition());
             MWWorld::Ptr visualPtr(mFalloutPlayerVisualRef.get(), player.getCell());
             applyFalloutPlayerProxyConfiguredEquipment(visualPtr, "world");
-            const std::optional<ESM4NpcAnimation::FirstPersonUnarmedState> firstPersonUnarmed
+            const std::optional<ESM4NpcAnimation::FirstPersonState> firstPersonProfile
                 = falloutFlatProfile
                 ? applyFalloutSaveWornPlayerVisuals(
                     mFalloutSaveWornVisualItems, visualPtr, mFirstPersonFieldOfView, mResourceSystem)
                 : std::nullopt;
+            visualPtr.getClass().getCreatureStats(visualPtr).setDrawState(
+                player.getClass().getCreatureStats(player).getDrawState());
 
             Log(Debug::Info) << "ESM4 diag: using native player visual proxy "
                              << falloutPlayerVisual->mEditorId << " (" << ESM::RefId(falloutPlayerVisual->mId)
@@ -2378,7 +2379,7 @@ namespace MWRender
 
             mFalloutPlayerVisualAnimation = new ESM4NpcAnimation(
                 visualPtr, osg::ref_ptr<osg::Group>(mFalloutPlayerVisualBasis), mResourceSystem);
-            if (firstPersonUnarmed)
+            if (firstPersonProfile)
             {
                 mFalloutPlayerFirstPersonBasis = new osg::MatrixTransform;
                 mFalloutPlayerFirstPersonBasis->setName("FNV First Person Camera1st Alignment");
@@ -2389,11 +2390,11 @@ namespace MWRender
                 mSceneRoot->addChild(mFalloutPlayerFirstPersonBasis);
                 mFalloutPlayerFirstPersonAnimation = new ESM4NpcAnimation(visualPtr,
                     osg::ref_ptr<osg::Group>(mFalloutPlayerFirstPersonBasis), mResourceSystem,
-                    *firstPersonUnarmed);
+                    *firstPersonProfile);
                 Log(Debug::Info) << "FNV first-person profile created: attachedNodeCount="
                                  << mFalloutPlayerFirstPersonAnimation->getFirstPersonAttachedPartCount()
-                                 << " fov=" << firstPersonUnarmed->mFieldOfView
-                                 << " anchor=Camera1st profile=flat-unarmed-h2h";
+                                 << " fov=" << firstPersonProfile->mFieldOfView
+                                 << " anchor=Camera1st profile=flat-first-person";
             }
             if (osg::Group* legacyPlayerRoot = mPlayerAnimation->getObjectRoot())
                 legacyPlayerRoot->setNodeMask(0);

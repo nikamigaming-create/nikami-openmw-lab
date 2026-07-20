@@ -63,10 +63,13 @@ namespace MWRender
             true, "meshes/armor/raider/lefthandglove1st.nif"));
     }
 
-    TEST(MWRenderPlayerVisualPolicyTest, unarmedProfileFailsClosedForAnyWeapon)
+    TEST(MWRenderPlayerVisualPolicyTest, selectsAuthoredFirstPersonWeaponModelOnlyForCameraView)
     {
-        EXPECT_TRUE(useFalloutFirstPersonUnarmedProfile(false, false));
-        EXPECT_FALSE(useFalloutFirstPersonUnarmedProfile(true, false));
-        EXPECT_FALSE(useFalloutFirstPersonUnarmedProfile(false, true));
+        constexpr std::string_view world = "weapons/2handrifle/varmintrifle.nif";
+        constexpr std::string_view firstPerson = "weapons/2handrifle/1stpersonvarmintrifle.nif";
+
+        EXPECT_EQ(selectFalloutWeaponViewModel(world, firstPerson, false), world);
+        EXPECT_EQ(selectFalloutWeaponViewModel(world, firstPerson, true), firstPerson);
+        EXPECT_EQ(selectFalloutWeaponViewModel(world, {}, true), world);
     }
 }

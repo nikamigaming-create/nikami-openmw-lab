@@ -1,13 +1,75 @@
 #include <components/esm4/loadweap.hpp>
+#include <components/esm4/reader.hpp>
 
 #include <gtest/gtest.h>
 
 #include <array>
 #include <bit>
 #include <cstdint>
+#include <limits>
+#include <memory>
+#include <sstream>
+#include <string>
+#include <string_view>
+#include <type_traits>
 
 namespace
 {
+    template <class T>
+    void appendPod(std::string& output, const T& value)
+    {
+        static_assert(std::is_trivially_copyable_v<T>);
+        output.append(reinterpret_cast<const char*>(&value), sizeof(value));
+    }
+
+    void appendSubRecord(std::string& output, std::string_view type, std::string_view data)
+    {
+        ASSERT_EQ(type.size(), 4);
+        ASSERT_LE(data.size(), std::numeric_limits<std::uint16_t>::max());
+        output.append(type);
+        appendPod(output, static_cast<std::uint16_t>(data.size()));
+        output.append(data);
+    }
+
+    std::string zString(std::string_view value)
+    {
+        std::string result(value);
+        result.push_back('\0');
+        return result;
+    }
+
+    std::unique_ptr<ESM4::Reader> makeFnvWeaponReader(std::string payload)
+    {
+        std::string hedr;
+        appendPod(hedr, 1.34f);
+        appendPod(hedr, std::int32_t{ 2 });
+        appendPod(hedr, std::uint32_t{ 0x800 });
+        std::string headerPayload;
+        appendSubRecord(headerPayload, "HEDR", hedr);
+
+        const auto appendRecord = [](std::string& output, std::string_view type, std::uint32_t formId,
+                                      std::string_view body) {
+            output.append(type);
+            appendPod(output, static_cast<std::uint32_t>(body.size()));
+            appendPod(output, std::uint32_t{ 0 });
+            appendPod(output, formId);
+            appendPod(output, std::uint32_t{ 0 });
+            appendPod(output, std::uint16_t{ 0 });
+            appendPod(output, std::uint16_t{ 0 });
+            output.append(body);
+        };
+
+        std::string plugin;
+        appendRecord(plugin, "TES4", 0, headerPayload);
+        appendRecord(plugin, "WEAP", 0x123456, payload);
+        auto stream = std::make_unique<std::istringstream>(plugin, std::ios::in | std::ios::binary);
+        auto reader = std::make_unique<ESM4::Reader>(std::move(stream), "FalloutNV.esm", nullptr, nullptr, true);
+        reader->setModIndex(2);
+        EXPECT_TRUE(reader->getRecordHeader());
+        reader->getRecordData();
+        return reader;
+    }
+
     TEST(Esm4WeaponTest, shouldParseFalloutAnimationSelectorsFromDnamPrefix)
     {
         // Retail FNV WeapNVAssaultCarbine (0008F21E): TwoHandAutomatic, default grip, one ammo/use,
@@ -56,5 +118,28 @@ namespace
         EXPECT_EQ(std::bit_cast<std::uint32_t>(data.maxRange), std::uint32_t{ 0x455dc000 });
         EXPECT_EQ(std::bit_cast<std::uint32_t>(data.animAttackMult), std::uint32_t{ 0x3f333333 });
         EXPECT_EQ(std::bit_cast<std::uint32_t>(data.fireRate), std::uint32_t{ 0x3f800000 });
+    }
+
+    TEST(Esm4WeaponTest, shouldPreserveAuthoredFirstPersonModelAndConsumeItsModelData)
+    {
+        std::string payload;
+        appendSubRecord(payload, "EDID", zString("TestServiceRifle"));
+        appendSubRecord(payload, "MODL", zString("weapons/2handrifle/varmintrifle.nif"));
+        appendSubRecord(payload, "MOD4", zString("weapons/2handrifle/1stpersonvarmintrifle.nif"));
+        appendSubRecord(payload, "MO4T", std::string(7, '\x11'));
+        appendSubRecord(payload, "MO4S", std::string(13, '\x22'));
+        appendSubRecord(payload, "MO4C", std::string(4, '\x33'));
+        appendSubRecord(payload, "MO4F", std::string(1, '\x44'));
+        // This field after every MO4* payload proves the reader remains aligned.
+        appendSubRecord(payload, "ICON", zString("textures/interface/icons/weapons/varmintrifle.dds"));
+
+        auto reader = makeFnvWeaponReader(std::move(payload));
+        ESM4::Weapon weapon;
+        weapon.load(*reader);
+
+        EXPECT_EQ(weapon.mEditorId, "TestServiceRifle");
+        EXPECT_EQ(weapon.mModel, "weapons/2handrifle/varmintrifle.nif");
+        EXPECT_EQ(weapon.mFirstPersonModel, "weapons/2handrifle/1stpersonvarmintrifle.nif");
+        EXPECT_EQ(weapon.mIcon, "textures/interface/icons/weapons/varmintrifle.dds");
     }
 }

@@ -85,6 +85,7 @@
 #include "falloutweaponanimation.hpp"
 #include "fonvpackageanimation.hpp"
 #include "npcanimation.hpp"
+#include "playervisualpolicy.hpp"
 #include "util.hpp"
 #include "vismask.hpp"
 
@@ -8077,21 +8078,26 @@ namespace MWRender
 
     }
 
-    void ESM4NpcAnimation::initializeFirstPersonUnarmed(const FirstPersonUnarmedState& state)
+    void ESM4NpcAnimation::initializeFirstPerson(const FirstPersonState& state)
     {
         constexpr std::string_view skeleton = "meshes/characters/_1stperson/skeleton.nif";
-        // Retail composes the steady raised-fist state from the movement idle's
-        // pelvis/camera frame and the H2H aim overlay.  H2HAim intentionally omits
-        // Bip01 Pelvis; playing it alone leaks the skeleton bind pose into the arms.
+        // Retail composes the camera-space pose from the movement idle's
+        // pelvis/camera frame and the active weapon family's aim overlay. H2HAim
+        // is reserved for a truly unarmed actor. Aim overlays intentionally omit
+        // Bip01 Pelvis; playing one alone leaks the skeleton bind pose into the arms.
         constexpr std::string_view baseIdle = "meshes/characters/_1stperson/mtidle.kf";
         constexpr std::string_view h2hAimOverlay = "meshes/characters/_1stperson/h2haim.kf";
         const ESM4::Npc* traits = MWClass::ESM4Npc::getTraitsRecord(mPtr);
         if (traits == nullptr || !traits->mIsFONV)
-            throw std::runtime_error("native first-person unarmed profile requires an FNV NPC");
-        if (MWClass::ESM4Npc::getEquippedWeapon(mPtr) != nullptr)
-            throw std::runtime_error("native first-person unarmed profile received an equipped weapon");
+            throw std::runtime_error("native first-person profile requires an FNV NPC");
         if (!std::isfinite(state.mFieldOfView) || state.mFieldOfView <= 0.f || state.mFieldOfView >= 180.f)
-            throw std::runtime_error("native first-person unarmed profile received an invalid FOV");
+            throw std::runtime_error("native first-person profile received an invalid FOV");
+
+        const ESM4::Weapon* equippedWeapon = MWClass::ESM4Npc::getEquippedWeapon(mPtr);
+        std::string aimOverlay = equippedWeapon != nullptr
+            ? getFonvFirstPersonWeaponAnimationKf(
+                getFonvWeaponAnimationKf(equippedWeapon->mData.animationType, "aim"))
+            : std::string(h2hAimOverlay);
 
         const bool female = MWClass::ESM4Npc::isFemale(mPtr);
         const std::string rightHand = female ? "meshes/characters/_male/femalerighthand1st.nif"
@@ -8104,7 +8110,7 @@ namespace MWRender
                                           : "meshes/pipboy3000/pipboyarm.nif";
         const VFS::Manager* vfs = mResourceSystem != nullptr ? mResourceSystem->getVFS() : nullptr;
         if (vfs == nullptr)
-            throw std::runtime_error("native first-person unarmed profile has no VFS");
+            throw std::runtime_error("native first-person profile has no VFS");
 
         const auto requireAsset
             = [&](std::string_view role, std::string_view path, bool saveWorn, bool correctMeshPath = false) {
@@ -8122,7 +8128,19 @@ namespace MWRender
 
         requireAsset("skeleton", skeleton, false);
         requireAsset("base-idle-kf", baseIdle, false);
-        requireAsset("h2h-aim-overlay-kf", h2hAimOverlay, false);
+        if (equippedWeapon == nullptr)
+            requireAsset("h2h-aim-overlay-kf", aimOverlay, false);
+        else
+        {
+            const bool aimExists = !aimOverlay.empty() && vfs->exists(VFS::Path::toNormalized(aimOverlay));
+            Log(aimExists ? Debug::Info : Debug::Error)
+                << "FNV first-person asset: actor=" << traits->mEditorId
+                << " role=weapon-aim-overlay-kf saveWorn=1 selected=" << aimOverlay
+                << " exists=" << aimExists << " weapon=" << equippedWeapon->mEditorId
+                << " animationType=" << static_cast<unsigned int>(equippedWeapon->mData.animationType);
+            if (!aimExists)
+                aimOverlay.clear();
+        }
         for (const std::string& armorModel : state.mSaveWornArmorModels)
             requireAsset("armor-composite", armorModel, true, true);
         if (state.mPipBoy)
@@ -8133,7 +8151,7 @@ namespace MWRender
         setObjectRoot(std::string(skeleton), true, true, false);
         if (mObjectRoot == nullptr)
             throw std::runtime_error("native FNV first-person skeleton produced no render root");
-        mObjectRoot->setName("FNV Native First Person Unarmed Root");
+        mObjectRoot->setName("FNV Native First Person Root");
         mObjectRoot->setUserValue("OpenMW.ActorEditorId", traits->mEditorId);
 
         const auto attach = [&](std::string_view role, std::string_view path, bool saveWorn,
@@ -8183,12 +8201,14 @@ namespace MWRender
         mNodeMap.clear();
         mNodeMapCreated = false;
         const std::shared_ptr<AnimSource> idleSource = addSingleAnimSource(
-            std::string(baseIdle), std::string(skeleton), false, h2hAimOverlay, "idle");
+            std::string(baseIdle), std::string(skeleton), false, aimOverlay, "idle");
         const std::string selectedIdleSource = getAnimationSourceName("idle");
         const bool idleBound = idleSource != nullptr && hasAnimation("idle") && selectedIdleSource == baseIdle;
         Log(idleBound ? Debug::Info : Debug::Error)
             << "FNV first-person animation: actor=" << traits->mEditorId << " semantic=idle base=" << baseIdle
-            << " overlay=" << h2hAimOverlay << " bound=" << idleBound
+            << " overlay=" << aimOverlay << " weapon="
+            << (equippedWeapon != nullptr ? equippedWeapon->mEditorId : std::string("none"))
+            << " bound=" << idleBound
             << " semanticSource=" << selectedIdleSource;
         if (!idleBound)
             throw std::runtime_error("failed to bind native FNV first-person base-plus-H2H pose");
@@ -8196,12 +8216,21 @@ namespace MWRender
         play("idle", Animation::AnimPriority(1), BlendMask_All, false, 1.f, "start", "stop", 0.f,
             std::numeric_limits<std::uint32_t>::max(), true);
         configureFirstPersonActorRoot(*mObjectRoot, state.mFieldOfView);
+
+        const bool weaponAttached = equippedWeapon == nullptr || refreshFalloutWeaponPart();
+        const bool weaponFamilyPrepared = equippedWeapon == nullptr
+            || prepareFalloutWeaponAnimation(equippedWeapon->mData.animationType,
+                equippedWeapon->mData.reloadAnim, FonvWeaponAction::Equip);
         Log(Debug::Info) << "FNV first-person profile: actor=" << traits->mEditorId << " saveWorn="
                          << state.mSaveWornArmorModels.size() + static_cast<std::size_t>(state.mPipBoy)
                                 + static_cast<std::size_t>(state.mPipBoyGlove)
                          << " attachedNodeCount=" << mFirstPersonAttachedPartCount << " fov=" << state.mFieldOfView
+                         << " weapon="
+                         << (equippedWeapon != nullptr ? equippedWeapon->mEditorId : std::string("none"))
+                         << " weaponAttached=" << weaponAttached
+                         << " weaponFamilyPrepared=" << weaponFamilyPrepared
                          << " mask=0x" << std::hex << mObjectRoot->getNodeMask() << std::dec
-                         << " profile=flat-unarmed-mtidle-plus-h2haim";
+                         << " profile=flat-first-person-mtidle-plus-h2haim";
     }
 
     ESM4NpcAnimation::ESM4NpcAnimation(
@@ -8212,12 +8241,13 @@ namespace MWRender
 
     ESM4NpcAnimation::ESM4NpcAnimation(
         const MWWorld::Ptr& ptr, osg::ref_ptr<osg::Group> parentNode, Resource::ResourceSystem* resourceSystem,
-        std::optional<FirstPersonUnarmedState> firstPersonUnarmed)
+        std::optional<FirstPersonState> firstPerson)
         : Animation(ptr, std::move(parentNode), resourceSystem)
     {
-        if (firstPersonUnarmed)
+        if (firstPerson)
         {
-            initializeFirstPersonUnarmed(*firstPersonUnarmed);
+            mFirstPersonView = true;
+            initializeFirstPerson(*firstPerson);
             return;
         }
 
@@ -8808,6 +8838,14 @@ namespace MWRender
 
         if (!showWeapon)
         {
+            // A camera-space weapon is never transferred to a body holster.
+            // Keep the first-person arms resident and hide only the weapon
+            // until the live draw state exposes it again.
+            if (mFirstPersonView)
+            {
+                mFalloutWeaponPart->setNodeMask(0);
+                return;
+            }
             if (mFalloutWeaponHolsterFrame == nullptr)
             {
                 mFalloutWeaponPart->setNodeMask(0);
@@ -8973,8 +9011,10 @@ namespace MWRender
             return true;
         }
 
+        const std::string_view weaponModel = selectFalloutWeaponViewModel(
+            mFalloutActionWeapon->mModel, mFalloutActionWeapon->mFirstPersonModel, mFirstPersonView);
         std::string authoredParent;
-        mFalloutWeaponPart = insertAttachedPart(mFalloutActionWeapon->mModel, {}, &authoredParent);
+        mFalloutWeaponPart = insertAttachedPart(weaponModel, {}, &authoredParent);
         if (!authoredParent.empty())
             mFalloutWeaponDrawBone = authoredParent;
 
@@ -8984,6 +9024,8 @@ namespace MWRender
         {
             if (mFalloutWeaponsShown)
                 showWeapons(true);
+            else if (mFirstPersonView)
+                mFalloutWeaponPart->setNodeMask(0);
             else if (!applyRetailWeaponHolsterContract(*mFalloutActionWeapon))
                 mFalloutWeaponPart->setNodeMask(0);
         }
@@ -8993,7 +9035,9 @@ namespace MWRender
             << "FNV/ESM4 exact weapon-family attachment: actor=" << mPtr.toString()
             << " weapon=" << mFalloutActionWeapon->mEditorId
             << " animationType=" << static_cast<unsigned int>(mFalloutActionWeapon->mData.animationType)
-            << " model=" << mFalloutActionWeapon->mModel << " attached=" << (mFalloutWeaponPart != nullptr)
+            << " model=" << weaponModel << " worldModel=" << mFalloutActionWeapon->mModel
+            << " firstPersonModel=" << mFalloutActionWeapon->mFirstPersonModel
+            << " firstPerson=" << mFirstPersonView << " attached=" << (mFalloutWeaponPart != nullptr)
             << " renderable=" << renderable << " gate=dynamic-weapon-family";
         return renderable;
     }
@@ -9025,20 +9069,26 @@ namespace MWRender
         const auto exists = [vfs](std::string_view path) {
             return vfs != nullptr && vfs->exists(VFS::Path::toNormalized(path));
         };
-        const std::string baseModel = mPtr.getClass().getCorrectedModel(mPtr);
+        const std::string baseModel = mFirstPersonView
+            ? std::string("meshes/characters/_1stperson/skeleton.nif")
+            : mPtr.getClass().getCorrectedModel(mPtr).value();
         bool requiredSourcesAvailable = true;
         for (const FonvWeaponActionSource& source : manifest)
         {
+            const std::string sourcePath = mFirstPersonView
+                ? getFonvFirstPersonWeaponAnimationKf(source.mPath)
+                : source.mPath;
             const FonvAnimationFamilyResolution resolution
-                = resolveFonvAnimationFamily({ source.mPath }, powerArmor, exists);
+                = resolveFonvAnimationFamily({ sourcePath }, powerArmor, exists);
             if (resolution.mPath.empty())
             {
                 if (source.mRequired)
                     requiredSourcesAvailable = false;
                 Log(source.mRequired ? Debug::Error : Debug::Verbose)
                     << "FNV/ESM4 dynamic animation-family-resolution: actor=" << mPtr.toString()
+                    << " firstPerson=" << mFirstPersonView
                     << " powerArmor=" << powerArmor << " semantic=" << source.mSemanticGroup
-                    << " candidates=[" << formatFonvAnimationCandidates({ source.mPath }, powerArmor) << ']'
+                    << " candidates=[" << formatFonvAnimationCandidates({ sourcePath }, powerArmor) << ']'
                     << " selection=missing required=" << source.mRequired
                     << " status=" << (source.mRequired ? "fail" : "optional-missing");
                 continue;
@@ -9065,6 +9115,7 @@ namespace MWRender
             requiredSourcesAvailable = requiredSourcesAvailable && (exact || !source.mRequired);
             Log(exact ? Debug::Info : (source.mRequired ? Debug::Error : Debug::Warning))
                 << "FNV/ESM4 dynamic animation-family-resolution: actor=" << mPtr.toString()
+                << " firstPerson=" << mFirstPersonView
                 << " powerArmor=" << powerArmor << " semantic=" << source.mSemanticGroup
                 << " selection=" << getFonvAnimationFamilySelectionName(resolution.mSelection)
                 << " selectedPath=" << resolution.mPath << " finalSource=" << selected
@@ -9346,8 +9397,10 @@ namespace MWRender
                 getNodeMap(), { "Weapon", "weapon", "Bip01 Weapon", "Bip01 R Hand", "bip01 r hand" });
             if (weaponFrame != nullptr)
             {
+                const std::string_view weaponModel = selectFalloutWeaponViewModel(
+                    weapon->mModel, weapon->mFirstPersonModel, mFirstPersonView);
                 const VFS::Path::Normalized correctedModel
-                    = Misc::ResourceHelpers::correctMeshPath(VFS::Path::Normalized(weapon->mModel));
+                    = Misc::ResourceHelpers::correctMeshPath(VFS::Path::Normalized(weaponModel));
                 logFalloutWeaponMeshAudit(
                     weaponFrame, weaponFrame, getNodeMap(), correctedModel.value(), "Weapon", mPtr, "runtime");
             }
@@ -11140,13 +11193,15 @@ namespace MWRender
                                  << traits.mEditorId;
             }
             osg::ref_ptr<osg::Node> attached;
+            const std::string_view weaponModel
+                = selectFalloutWeaponViewModel(weapon->mModel, weapon->mFirstPersonModel, mFirstPersonView);
             if (!weaponIntentionallyHidden)
             {
                 std::string authoredParent;
                 // Resolve the model's Prn when present, otherwise the canonical
                 // authored skeleton Weapon target. Never invent a hand, hip,
                 // back, or actor-root fallback.
-                attached = insertAttachedPart(weapon->mModel, {}, &authoredParent);
+                attached = insertAttachedPart(weaponModel, {}, &authoredParent);
                 if (!authoredParent.empty())
                     mFalloutWeaponDrawBone = authoredParent;
                 mFalloutWeaponPart = attached;
@@ -11154,6 +11209,8 @@ namespace MWRender
                 {
                     if (weaponDrawn)
                         showWeapons(true);
+                    else if (mFirstPersonView)
+                        attached->setNodeMask(0);
                     else if (!applyRetailWeaponHolsterContract(*weapon))
                         attached->setNodeMask(0);
                 }
@@ -11165,7 +11222,9 @@ namespace MWRender
                 std::ostringstream details;
                 details << "game=FONV npc=\"" << traits.mEditorId << "\" kind=weapon"
                         << " form=" << ESM::RefId(weapon->mId) << " editor=\"" << weapon->mEditorId << "\""
-                        << " model=\"" << weapon->mModel << "\" preferredBone=\"" << preferredBone << "\""
+                        << " model=\"" << weaponModel << "\" worldModel=\"" << weapon->mModel
+                        << "\" firstPersonModel=\"" << weapon->mFirstPersonModel
+                        << "\" firstPerson=" << mFirstPersonView << " preferredBone=\"" << preferredBone << "\""
                         << " animationType=" << static_cast<unsigned int>(weapon->mData.animationType)
                         << " handGrip=" << static_cast<unsigned int>(weapon->mData.handGrip)
                         << " reloadAnim=" << static_cast<unsigned int>(weapon->mData.reloadAnim)

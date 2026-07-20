@@ -74,10 +74,14 @@ namespace MWRender
             && lowered.find("glove") != std::string::npos;
     }
 
-    inline bool useFalloutFirstPersonUnarmedProfile(bool saveWornWeapon, bool proxyEquippedWeapon)
+    inline std::string_view selectFalloutWeaponViewModel(
+        std::string_view worldModel, std::string_view firstPersonModel, bool firstPerson)
     {
-        return !saveWornWeapon && !proxyEquippedWeapon;
+        if (firstPerson && !firstPersonModel.empty())
+            return firstPersonModel;
+        return worldModel;
     }
+
 }
 
 #endif
