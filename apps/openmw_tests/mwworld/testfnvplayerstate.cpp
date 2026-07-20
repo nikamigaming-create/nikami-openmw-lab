@@ -165,6 +165,34 @@ namespace
                 wornOffset = 2030;
             addInventory(save330ItemFormIds[index], save330Deltas[index], wornOffset);
         }
+        ESM4::FONVSavePlayerInventoryEntry& jumpsuit = processInventory.mInventoryEntries[30];
+        jumpsuit.mExtendData.clear();
+        constexpr std::array<std::int16_t, 5> jumpsuitCounts{ 3, 2, 3, 3, 2 };
+        constexpr std::array<float, 6> jumpsuitHealth{ 30.0000019f, 35.f, 50.f, 65.f, 75.f, 99.9f };
+        for (std::size_t index = 0; index < jumpsuitHealth.size(); ++index)
+        {
+            ESM4::FONVSavePlayerInventoryExtendData extend;
+            extend.mRange.mOffset = 2100 + index * 10;
+            if (index < jumpsuitCounts.size())
+            {
+                ESM4::FONVSavePlayerInventoryExtraData count;
+                count.mType.mValue = ESM4::sFONVExtraCountType;
+                count.mCount.emplace().mValue = jumpsuitCounts[index];
+                extend.mExtraData.push_back(std::move(count));
+            }
+            ESM4::FONVSavePlayerInventoryExtraData health;
+            health.mType.mValue = ESM4::sFONVExtraHealthType;
+            health.mHealth.emplace().mValue = jumpsuitHealth[index];
+            extend.mExtraData.push_back(std::move(health));
+            if (index + 1 == jumpsuitHealth.size())
+            {
+                ESM4::FONVSavePlayerInventoryExtraData worn;
+                worn.mType.mValue = ESM4::sFONVExtraWornType;
+                worn.mType.mRange = { 2030, 1 };
+                extend.mExtraData.push_back(std::move(worn));
+            }
+            jumpsuit.mExtendData.push_back(std::move(extend));
+        }
         processInventory.mInventoryEntryCount.mValue
             = static_cast<std::uint32_t>(processInventory.mInventoryEntries.size());
         result.mPlayerProcessInventoryData = std::move(processInventory);
@@ -531,7 +559,20 @@ namespace
         EXPECT_EQ(plan.mPlayer.mWornVisualItems[0].mRecord, form(0x00025b83, 1));
         EXPECT_EQ(plan.mPlayer.mWornVisualItems[1].mRecord, form(0x00015038, 1));
         EXPECT_EQ(plan.mPlayer.mWornVisualItems[2].mRecord, form(0x0000431e, 1));
+        ASSERT_TRUE(plan.mPlayer.mWornVisualItems[2].mHealth.has_value());
+        EXPECT_FLOAT_EQ(*plan.mPlayer.mWornVisualItems[2].mHealth, 99.9f);
         EXPECT_EQ(plan.mPlayer.mWornVisualItems[0].mSourceOffset, 2010u);
+        ASSERT_EQ(plan.mPlayer.mConditionedStacks.size(), 6u);
+        constexpr std::array<std::int32_t, 6> expectedConditionCounts{ 3, 2, 3, 3, 2, 1 };
+        constexpr std::array<float, 6> expectedConditionHealth{ 30.0000019f, 35.f, 50.f, 65.f, 75.f, 99.9f };
+        for (std::size_t index = 0; index < plan.mPlayer.mConditionedStacks.size(); ++index)
+        {
+            const auto& stack = plan.mPlayer.mConditionedStacks[index];
+            EXPECT_EQ(stack.mRecord, form(0x0000431e, 1));
+            EXPECT_EQ(stack.mCount, expectedConditionCounts[index]);
+            EXPECT_FLOAT_EQ(stack.mHealth, expectedConditionHealth[index]);
+            EXPECT_EQ(stack.mSourceOffset, 2100u + index * 10);
+        }
         ASSERT_EQ(plan.mPlayer.mInventoryItems.size(), 50u);
         const auto findInventoryCount = [&](ESM::FormId record) -> std::optional<std::int32_t> {
             const auto found = std::ranges::find(plan.mPlayer.mInventoryItems, record,
@@ -571,6 +612,9 @@ namespace
         EXPECT_THAT(plan.mUncoveredState, Contains("global-variables"));
         EXPECT_THAT(plan.mUncoveredState, Not(Contains("global-variables-time-weather")));
         EXPECT_THAT(plan.mUncoveredState, Not(Contains("player-inventory-equipment-ammo")));
+        EXPECT_THAT(plan.mUncoveredState,
+            Not(Contains("player-inventory-instance-condition-hotkeys-equipment-actions-ammo-selection")));
+        EXPECT_THAT(plan.mUncoveredState, Contains("player-inventory-hotkeys-equipment-actions-ammo-selection"));
         EXPECT_THAT(plan.mUncoveredState, Contains("quest-variables"));
         EXPECT_THAT(plan.mUncoveredState, Not(Contains("quest-stages-objectives-variables")));
 
@@ -705,6 +749,12 @@ namespace
         resolution = MWWorld::resolveFalloutSaveLoadPlan(save, &player, content);
         EXPECT_FALSE(resolution);
         EXPECT_THAT(resolution.mError, HasSubstr("Player inventory RefID did not resolve"));
+
+        save = makeSavePlanFixture({ "FalloutNV.esm", "DeadMoney.esm" });
+        save.mPlayerProcessInventoryData->mInventoryEntries[30].mExtendData[0].mExtraData[0].mCount->mValue = 15;
+        resolution = MWWorld::resolveFalloutSaveLoadPlan(save, &player, content);
+        EXPECT_FALSE(resolution);
+        EXPECT_THAT(resolution.mError, HasSubstr("conditioned stacks exceed the final inventory total"));
 
         save = makeSavePlanFixture({ "FalloutNV.esm", "DeadMoney.esm" });
         player.mInventoryItems = { { form(0x000340fd, 1), std::numeric_limits<std::int32_t>::max() } };

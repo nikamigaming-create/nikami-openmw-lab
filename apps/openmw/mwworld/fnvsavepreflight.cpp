@@ -7,11 +7,13 @@
 
 #include <components/files/conversion.hpp>
 #include <components/misc/strings/algorithm.hpp>
+#include <components/esm4/loadarmo.hpp>
 #include <components/esm4/loadcell.hpp>
 #include <components/esm4/loadclas.hpp>
 #include <components/esm4/loadclmt.hpp>
 #include <components/esm4/loadnpc.hpp>
 #include <components/esm4/loadrace.hpp>
+#include <components/esm4/loadweap.hpp>
 #include <components/esm4/loadwrld.hpp>
 
 #include "esmstore.hpp"
@@ -22,6 +24,40 @@ namespace
     MWWorld::FalloutSavePreflightResolution failure(std::string message)
     {
         return { std::nullopt, std::move(message) };
+    }
+
+    std::string validateConditionedInventory(
+        const MWWorld::FalloutSavePlayerHeaderState& player, const MWWorld::ESMStore& store)
+    {
+        for (const MWWorld::FalloutSavePlayerHeaderState::ConditionedStack& stack : player.mConditionedStacks)
+        {
+            const ESM::RefId id(stack.mRecord);
+            std::uint32_t maximumHealth = 0;
+            switch (store.find(id))
+            {
+                case ESM::REC_ARMO4:
+                {
+                    const ESM4::Armor* armor = store.get<ESM4::Armor>().search(id);
+                    if (armor != nullptr)
+                        maximumHealth = armor->mData.health;
+                    break;
+                }
+                case ESM::REC_WEAP4:
+                {
+                    const ESM4::Weapon* weapon = store.get<ESM4::Weapon>().search(id);
+                    if (weapon != nullptr)
+                        maximumHealth = weapon->mData.health;
+                    break;
+                }
+                default:
+                    break;
+            }
+            if (maximumHealth == 0)
+                return "FNV save conditioned inventory item is not a loaded damageable ARMO/WEAP: " + id.toString();
+            if (stack.mHealth > static_cast<float>(maximumHealth))
+                return "FNV save inventory ExtraHealth exceeds authored maximum health for " + id.toString();
+        }
+        return {};
     }
 }
 
@@ -38,7 +74,21 @@ namespace MWWorld
         FalloutSavePreflightResolution result = resolveFalloutSavePreflightContext(std::move(save), store.getFalloutPlayerState(),
             store.getFalloutNativePlayerRecords(), store.get<ESM4::World>(), store.get<ESM4::Cell>(),
             store.get<ESM4::Climate>(), store.get<ESM4::Weather>(), currentContentFiles);
-        if (!result || !result.mContext->mPlan.mQuestProgress)
+        if (!result)
+            return result;
+
+        const std::string inventoryError = validateConditionedInventory(result.mContext->mPlan.mPlayer, store);
+        if (!inventoryError.empty())
+            return failure(inventoryError);
+        for (const FalloutInventoryItem& item : result.mContext->mPlan.mPlayer.mInventoryItems)
+        {
+            if (store.find(ESM::RefId(item.mRecord)) == 0)
+            {
+                result.mContext->mPlan.mUncoveredState.push_back("player-inventory-unresolved-content-forms");
+                break;
+            }
+        }
+        if (!result.mContext->mPlan.mQuestProgress)
             return result;
 
         ESM4QuestRuntime validationRuntime;

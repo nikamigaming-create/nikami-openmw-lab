@@ -149,7 +149,7 @@ namespace
     {
         return {
             "player-runtime-actor-values-modifiers-health-limbs-perks",
-            "player-inventory-instance-condition-hotkeys-equipment-actions-ammo-selection",
+            "player-inventory-hotkeys-equipment-actions-ammo-selection",
             "player-factions-reputation-crime-disguise",
             "quest-stages-objectives-variables",
             "global-variables",
@@ -519,6 +519,7 @@ namespace MWWorld
             return loadFailure("FNV save Player process level is not canonical high process");
         plan.mPlayer.mProcessLevel = processInventory.mProcessLevel.mValue;
         std::map<ESM::FormId, std::int64_t> inventoryTotals;
+        std::map<ESM::FormId, std::int64_t> conditionedTotals;
         for (const FalloutInventoryItem& item : nativePlayerState->mInventoryItems)
         {
             if (item.mRecord.isZeroOrUnset() || item.mCount <= 0)
@@ -538,14 +539,50 @@ namespace MWWorld
 
             for (const ESM4::FONVSavePlayerInventoryExtendData& extend : entry.mExtendData)
             {
-                const auto worn = std::find_if(extend.mExtraData.begin(), extend.mExtraData.end(),
-                    [](const ESM4::FONVSavePlayerInventoryExtraData& extra) {
-                        return extra.mType.mValue == ESM4::sFONVExtraWornType;
-                    });
-                if (worn == extend.mExtraData.end())
-                    continue;
-                plan.mPlayer.mWornVisualItems.push_back(
-                    FalloutSavePlayerHeaderState::WornVisualItem{ *normalized, worn->mType.mRange.mOffset });
+                std::int32_t stackCount = 1;
+                std::optional<float> health;
+                std::optional<std::uint64_t> wornOffset;
+                bool sawCount = false;
+                for (const ESM4::FONVSavePlayerInventoryExtraData& extra : extend.mExtraData)
+                {
+                    switch (extra.mType.mValue)
+                    {
+                        case ESM4::sFONVExtraCountType:
+                            if (sawCount || !extra.mCount || extra.mCount->mValue <= 0)
+                                return loadFailure("FNV save Player inventory has an invalid ExtraCount stack");
+                            sawCount = true;
+                            stackCount = extra.mCount->mValue;
+                            break;
+                        case ESM4::sFONVExtraHealthType:
+                            if (health || !extra.mHealth || !std::isfinite(extra.mHealth->mValue)
+                                || extra.mHealth->mValue < 0.f)
+                            {
+                                return loadFailure("FNV save Player inventory has an invalid ExtraHealth stack");
+                            }
+                            health = extra.mHealth->mValue;
+                            break;
+                        case ESM4::sFONVExtraWornType:
+                            if (wornOffset)
+                                return loadFailure("FNV save Player inventory stack has duplicate ExtraWorn state");
+                            wornOffset = extra.mType.mRange.mOffset;
+                            break;
+                        default:
+                            return loadFailure("FNV save Player inventory exposes an unsupported extra-data type");
+                    }
+                }
+                if (health)
+                {
+                    conditionedTotals[*normalized] += stackCount;
+                    plan.mPlayer.mConditionedStacks.push_back(FalloutSavePlayerHeaderState::ConditionedStack{
+                        *normalized, stackCount, *health, extend.mRange.mOffset });
+                }
+                if (wornOffset)
+                {
+                    if (stackCount != 1)
+                        return loadFailure("FNV save Player ExtraWorn state applies to a non-singleton stack");
+                    plan.mPlayer.mWornVisualItems.push_back(
+                        FalloutSavePlayerHeaderState::WornVisualItem{ *normalized, health, *wornOffset });
+                }
             }
         }
         plan.mPlayer.mInventoryItems.reserve(inventoryTotals.size());
@@ -557,6 +594,12 @@ namespace MWWorld
                 return loadFailure("FNV save Player inventory total exceeds the compatibility carrier range");
             plan.mPlayer.mInventoryItems.push_back(
                 FalloutInventoryItem{ record, static_cast<std::int32_t>(total) });
+        }
+        for (const auto& [record, total] : conditionedTotals)
+        {
+            const auto inventory = inventoryTotals.find(record);
+            if (inventory == inventoryTotals.end() || inventory->second <= 0 || total > inventory->second)
+                return loadFailure("FNV save Player conditioned stacks exceed the final inventory total");
         }
 
         if (!save.mPlayerReferenceMovement)

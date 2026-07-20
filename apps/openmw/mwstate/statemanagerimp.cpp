@@ -580,6 +580,34 @@ void MWState::StateManager::loadGame(const Character* character, const std::file
         player.getRefData().setCustomData(nullptr);
         MWWorld::InventoryStore& savedInventory = player.getClass().getInventoryStore(player);
         savedInventory.unequipAll();
+        for (const MWWorld::FalloutSavePlayerHeaderState::ConditionedStack& stack
+            : context.mPlan.mPlayer.mConditionedStacks)
+        {
+            const ESM::RefId record(stack.mRecord);
+            MWWorld::ContainerStoreIterator found = savedInventory.end();
+            for (MWWorld::ContainerStoreIterator item = savedInventory.begin(); item != savedInventory.end(); ++item)
+            {
+                if (item->getCellRef().getRefId() == record && item->getCellRef().getCharge() == -1
+                    && item->getCellRef().getCount(false) >= stack.mCount)
+                {
+                    found = item;
+                    break;
+                }
+            }
+            if (found == savedInventory.end())
+                throw std::runtime_error("native FNV conditioned item is absent from rebuilt Player inventory");
+
+            if (found->getCellRef().getCount(false) > stack.mCount)
+                savedInventory.unstack(*found, stack.mCount);
+            const int maximumHealth = found->getClass().getItemMaxHealth(*found);
+            const int health = static_cast<int>(std::lround(stack.mHealth));
+            if (maximumHealth <= 0 || health < 0 || health > maximumHealth)
+                throw std::runtime_error("native FNV conditioned item escaped preflight health validation");
+            found->getCellRef().setCharge(health);
+            Log(Debug::Info) << "Native FNV save Player restored ExtraHealth stack: form=" << record
+                             << " count=" << stack.mCount << " health=" << health
+                             << " sourceOffset=" << stack.mSourceOffset;
+        }
         std::size_t runtimeStacks = 0;
         std::size_t visibleStacks = 0;
         for (MWWorld::ContainerStoreIterator item = savedInventory.begin(); item != savedInventory.end(); ++item)
@@ -597,7 +625,9 @@ void MWState::StateManager::loadGame(const Character* character, const std::file
             MWWorld::ContainerStoreIterator found = savedInventory.end();
             for (MWWorld::ContainerStoreIterator item = savedInventory.begin(); item != savedInventory.end(); ++item)
             {
-                if (item->getCellRef().getRefId() == record)
+                if (item->getCellRef().getRefId() == record
+                    && (!worn.mHealth
+                        || item->getClass().getItemHealth(*item) == static_cast<int>(std::lround(*worn.mHealth))))
                 {
                     found = item;
                     break;

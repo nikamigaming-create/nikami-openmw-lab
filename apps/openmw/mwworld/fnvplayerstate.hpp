@@ -163,9 +163,18 @@ namespace MWWorld
     // location string is a display label, not a cell identity or permission to move the player.
     struct FalloutSavePlayerHeaderState
     {
+        struct ConditionedStack
+        {
+            ESM::FormId mRecord;
+            std::int32_t mCount = 0;
+            float mHealth = 0.f;
+            std::uint64_t mSourceOffset = 0;
+        };
+
         struct WornVisualItem
         {
             ESM::FormId mRecord;
+            std::optional<float> mHealth;
             std::uint64_t mSourceOffset = 0;
         };
 
@@ -184,6 +193,7 @@ namespace MWWorld
         std::string mPlayTimeLabel;
         std::int8_t mProcessLevel = -1;
         std::vector<FalloutInventoryItem> mInventoryItems;
+        std::vector<ConditionedStack> mConditionedStacks;
         std::vector<WornVisualItem> mWornVisualItems;
     };
 
@@ -259,8 +269,8 @@ namespace MWWorld
         const Store<ESM4::Cell>& cells, const FalloutSaveLoadPlan::PlayerTransform& transform);
 
     // Apply exact name/level fields plus normalized positive inventory totals to the ESM3 compatibility carrier.
-    // ExtraWorn remains a separate visual signal because per-instance condition and equipment semantics are not
-    // represented by ESM::InventoryList.
+    // Per-instance condition and ExtraWorn remain separate runtime signals because ESM::InventoryList cannot carry
+    // either property.
     void applyFalloutSavePlayerHeader(ESM::NPC& proxy, const FalloutSavePlayerHeaderState& state);
 
     // Seed only fields that have an explicit same-unit shared representation, including positive authored inventory
