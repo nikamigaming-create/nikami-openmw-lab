@@ -92,6 +92,7 @@ file(GLOB UNITTEST_SRC_FILES
     esm4/testloadnote.cpp
     esm4/testloadterm.cpp
     esm4/testloadregion.cpp
+    esm4/testloadrace.cpp
 
     fx/lexer.cpp
     fx/technique.cpp
