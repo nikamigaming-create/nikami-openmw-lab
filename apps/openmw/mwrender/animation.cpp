@@ -87,6 +87,7 @@
 #include "../mwworld/esmstore.hpp"
 
 #include "../mwmechanics/character.hpp" // FIXME: for MWMechanics::Priority
+#include "../mwmechanics/creaturestats.hpp"
 #include "../mwmechanics/weapontype.hpp"
 
 #include "actorutil.hpp"
@@ -259,6 +260,17 @@ namespace
 
         const MWWorld::LiveCellRef<ESM4::Npc>* ref = ptr.get<ESM4::Npc>();
         return ref != nullptr && ref->mBase != nullptr && ref->mBase->mIsFONV && !ref->mBase->mIsFO3;
+    }
+
+    bool isFalloutDeathFallbackContext(const MWWorld::Ptr& ptr)
+    {
+        if (isFalloutNpcAnimationContext(ptr))
+            return true;
+        if (ptr.getType() != ESM4::Creature::sRecordId)
+            return false;
+
+        const MWWorld::LiveCellRef<ESM4::Creature>* ref = ptr.get<ESM4::Creature>();
+        return ref != nullptr && ref->mBase != nullptr && ref->mBase->mIsFONV;
     }
 
     float matrixDifference(const osg::Matrixf& left, const osg::Matrixf& right)
@@ -7118,6 +7130,8 @@ namespace MWRender
             }
         }
 
+        applyFalloutDeathPoseFallback();
+
         if (esm4Npc && mObjectRoot != nullptr
             && std::getenv("OPENMW_ESM4_TRANSFORM_ORACLE_OUTPUT") != nullptr)
         {
@@ -7140,6 +7154,67 @@ namespace MWRender
             auditGenericProofPosture(mObjectRoot.get(), mPtr);
 
         return movement;
+    }
+
+    void Animation::applyFalloutDeathPoseFallback()
+    {
+        if (mFalloutCorpseTransform == nullptr || !isFalloutDeathFallbackContext(mPtr)
+            || !mPtr.getClass().isActor())
+            return;
+
+        const bool dead = mPtr.getClass().getCreatureStats(mPtr).isDead();
+        if (!dead)
+        {
+            if (mFalloutCorpsePoseApplied)
+            {
+                mFalloutCorpseTransform->setMatrix(osg::Matrixf::identity());
+                mFalloutCorpseTransform->dirtyBound();
+                mFalloutCorpsePoseApplied = false;
+                Log(Debug::Info) << "FNV death fallback: actor=" << mPtr.getCellRef().getRefId()
+                                 << " state=resurrected pose=identity";
+            }
+            return;
+        }
+
+        static constexpr std::array<std::string_view, 5> sDeathGroups{
+            "death1", "death2", "death3", "death4", "death5"
+        };
+        if (std::any_of(sDeathGroups.begin(), sDeathGroups.end(),
+                [&](std::string_view group) { return hasAnimation(group); }))
+            return;
+        if (mFalloutCorpsePoseApplied || mFalloutCorpseTransform->getNumChildren() == 0)
+            return;
+
+        osg::ComputeBoundsVisitor boundsVisitor;
+        mFalloutCorpseTransform->getChild(0)->accept(boundsVisitor);
+        const osg::BoundingBox bounds = boundsVisitor.getBoundingBox();
+        if (!bounds.valid())
+        {
+            Log(Debug::Warning) << "FNV death fallback: actor=" << mPtr.getCellRef().getRefId()
+                                << " state=failed reason=invalid-bounds";
+            return;
+        }
+
+        const osg::Vec3f pivot = bounds.center();
+        const std::string refId = mPtr.getCellRef().getRefId().serializeText();
+        const float direction = !refId.empty() && (static_cast<unsigned char>(refId.back()) & 1u) ? -1.f : 1.f;
+        osg::Matrixf pose = osg::Matrixf::translate(-pivot)
+            * osg::Matrixf::rotate(direction * osg::PI_2, osg::Vec3f(0.f, 1.f, 0.f))
+            * osg::Matrixf::translate(pivot);
+
+        float transformedMinZ = std::numeric_limits<float>::max();
+        for (unsigned int corner = 0; corner < 8; ++corner)
+            transformedMinZ = std::min(transformedMinZ, (bounds.corner(corner) * pose).z());
+        const float groundShift = bounds.zMin() - transformedMinZ;
+        pose = pose * osg::Matrixf::translate(0.f, 0.f, groundShift);
+
+        mFalloutCorpseTransform->setMatrix(pose);
+        mFalloutCorpseTransform->dirtyBound();
+        mFalloutCorpsePoseApplied = true;
+        Log(Debug::Info) << "FNV combat death: actor=" << mPtr.getCellRef().getRefId()
+                         << " dead=1 visual=procedural-grounded-side-pose status=pass angle="
+                         << direction * 90.f << " groundShift=" << groundShift
+                         << " boundsMinZ=" << bounds.zMin() << " boundsMaxZ=" << bounds.zMax();
     }
 
     void Animation::setLoopingEnabled(std::string_view groupname, bool enabled)
@@ -7251,6 +7326,8 @@ namespace MWRender
         }
         mObjectRoot = nullptr;
         mSkeleton = nullptr;
+        mFalloutCorpseTransform = nullptr;
+        mFalloutCorpsePoseApplied = false;
 
         mNodeMap.clear();
         mNodeMapCreated = false;
@@ -7365,6 +7442,16 @@ namespace MWRender
                 mObjectRoot = correctedRoot;
                 mInsert->addChild(mObjectRoot);
             }
+        }
+
+        if (isFalloutDeathFallbackContext(mPtr))
+        {
+            mInsert->removeChild(mObjectRoot);
+            mFalloutCorpseTransform = new osg::MatrixTransform;
+            mFalloutCorpseTransform->setName("FNV Actor Corpse Pose");
+            mFalloutCorpseTransform->addChild(mObjectRoot);
+            mObjectRoot = mFalloutCorpseTransform;
+            mInsert->addChild(mObjectRoot);
         }
 
         // osgAnimation formats with skeletons should have their nodemap be bone instances
