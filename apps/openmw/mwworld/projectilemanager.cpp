@@ -453,6 +453,31 @@ namespace MWWorld
         return true;
     }
 
+    std::size_t ProjectileManager::countPendingFalloutVatsProjectiles(const MWWorld::Ptr& actor)
+    {
+        if (actor.isEmpty())
+            return 0;
+        const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
+        if (store == nullptr)
+            return 0;
+
+        std::size_t count = 0;
+        for (FalloutProjectileState& state : mFalloutProjectiles)
+        {
+            if (state.mToDelete || !state.mImpact.mVatsAction || state.getCaster() != actor)
+                continue;
+            const ESM4::Projectile* projectile = store->get<ESM4::Projectile>().search(state.mProjectile);
+            if (projectile == nullptr || !projectile->mData.present)
+                continue;
+            const bool openEnded = (projectile->mData.flags & ESM4::Projectile::Detonates) != 0
+                || ((projectile->mData.flags & ESM4::Projectile::AlternateTrigger) != 0
+                    && projectile->mData.alternateProximity > 0.f);
+            if (!openEnded)
+                ++count;
+        }
+        return count;
+    }
+
     unsigned int ProjectileManager::detonateFalloutPlacedExplosives(const MWWorld::Ptr& actor)
     {
         const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
@@ -904,20 +929,10 @@ namespace MWWorld
 
             const MWWorld::Ptr target = projectile->getTarget();
             const MWWorld::Ptr caster = projectileState.getCaster();
-            const osg::Vec3f hitPosition = Misc::Convert::toOsg(projectile->getHitPosition());
+            const osg::Vec3f physicalHitPosition = Misc::Convert::toOsg(projectile->getHitPosition());
             if (projectile->getHitWater())
-                mRendering->emitWaterRipple(hitPosition);
-            if (!caster.isEmpty() && !target.isEmpty() && target.getClass().isActor())
-            {
-                const bool applied = MWBase::Environment::get().getMechanicsManager()
-                    ->executeFalloutProjectileImpact(caster, target, projectileState.mPreviousPosition,
-                        hitPosition, projectileState.mImpact);
-                if (!applied)
-                    Log(Debug::Error) << "FNV moving projectile impact rejected: caster=" << caster.toString()
-                                      << " target=" << target.toString()
-                                      << " projectile="
-                                      << ESM::RefId::formIdRefId(projectileState.mProjectile);
-            }
+                mRendering->emitWaterRipple(physicalHitPosition);
+
             const ESM4::Projectile* authoredProjectile
                 = MWBase::Environment::get().getESMStore()->get<ESM4::Projectile>().search(
                     projectileState.mProjectile);
@@ -929,9 +944,80 @@ namespace MWWorld
             {
                 const osg::Vec3f hitNormal = Misc::Convert::toOsg(projectile->getHitNormal());
                 if (!bounceFalloutProjectile(
-                        projectileState, *authoredProjectile, hitPosition, hitNormal))
+                        projectileState, *authoredProjectile, physicalHitPosition, hitNormal))
                     projectileState.mToDelete = true;
                 continue;
+            }
+
+            MWWorld::Ptr resolvedTarget = target;
+            osg::Vec3f resolvedHitPosition = physicalHitPosition;
+            const bool terminalDirectImpact = authoredProjectile != nullptr
+                && (authoredProjectile->mData.flags
+                    & (ESM4::Projectile::AlternateTrigger | ESM4::Projectile::Detonates)) == 0;
+            const std::optional<ESM::FormId> queuedTarget = terminalDirectImpact
+                ? MWMechanics::getAuthoritativeFalloutVatsProjectileTarget(projectileState.mImpact)
+                : std::nullopt;
+            if (queuedTarget)
+            {
+                MWBase::World* world = MWBase::Environment::get().getWorld();
+                MWWorld::Ptr candidate = world != nullptr
+                    ? world->searchPtr(ESM::RefId(*queuedTarget), true, false)
+                    : MWWorld::Ptr();
+                if (candidate.isEmpty() && world != nullptr)
+                {
+                    std::vector<MWWorld::Ptr> nearby;
+                    MWBase::Environment::get().getMechanicsManager()->getActorsInRange(
+                        physicalHitPosition, projectileState.mMaximumRange, nearby);
+                    const auto activeTarget = std::ranges::find_if(nearby, [&](const MWWorld::Ptr& actor) {
+                        return !actor.isEmpty() && actor.getClass().isActor()
+                            && actor.getCellRef().getRefNum() == *queuedTarget;
+                    });
+                    if (activeTarget != nearby.end())
+                        candidate = *activeTarget;
+                }
+                if (!candidate.isEmpty() && candidate.getClass().isActor())
+                {
+                    resolvedTarget = candidate;
+                    resolvedHitPosition = world->getActorHeadTransform(candidate).getTrans();
+                    const MWMechanics::FalloutVatsQueuedAction& action
+                        = *projectileState.mImpact.mVatsAction;
+                    if (MWRender::Animation* animation = world->getAnimation(candidate))
+                    {
+                        if (const osg::Node* targetNode = animation->getNode(action.mTargetNode))
+                        {
+                            const osg::NodePathList paths = targetNode->getParentalNodePaths();
+                            if (!paths.empty())
+                                resolvedHitPosition = osg::computeLocalToWorld(paths.front()).getTrans();
+                        }
+                    }
+                    projectileState.mNode->setPosition(resolvedHitPosition);
+                    Log(Debug::Info) << "FNV moving projectile VATS resolution: projectile="
+                                     << ESM::RefId::formIdRefId(projectileState.mProjectile)
+                                     << " queuedTarget=" << candidate.toString()
+                                     << " physicalTarget="
+                                     << (target.isEmpty() ? std::string("scenery") : target.toString())
+                                     << " physicalHitPosition=" << physicalHitPosition
+                                     << " resolvedHitPosition=" << resolvedHitPosition
+                                     << " redirected=" << (target != candidate);
+                }
+                else
+                {
+                    Log(Debug::Warning) << "FNV moving projectile VATS target unavailable: projectile="
+                                        << ESM::RefId::formIdRefId(projectileState.mProjectile)
+                                        << " target=" << ESM::RefId::formIdRefId(*queuedTarget);
+                }
+            }
+
+            if (!caster.isEmpty() && !resolvedTarget.isEmpty() && resolvedTarget.getClass().isActor())
+            {
+                const bool applied = MWBase::Environment::get().getMechanicsManager()
+                    ->executeFalloutProjectileImpact(caster, resolvedTarget, projectileState.mPreviousPosition,
+                        resolvedHitPosition, projectileState.mImpact);
+                if (!applied)
+                    Log(Debug::Error) << "FNV moving projectile impact rejected: caster=" << caster.toString()
+                                      << " target=" << resolvedTarget.toString()
+                                      << " projectile="
+                                      << ESM::RefId::formIdRefId(projectileState.mProjectile);
             }
             const bool detonateOnImpact = authoredProjectile != nullptr
                 && (authoredProjectile->mData.flags & ESM4::Projectile::Explosion) != 0
@@ -942,7 +1028,7 @@ namespace MWWorld
             {
                 if (caster.isEmpty()
                     || !MWBase::Environment::get().getMechanicsManager()->executeFalloutExplosion(
-                        caster, hitPosition, projectileState.mImpact))
+                        caster, resolvedHitPosition, projectileState.mImpact))
                 {
                     Log(Debug::Error) << "FNV moving projectile explosion rejected: caster="
                                       << (caster.isEmpty() ? std::string("none") : caster.toString())

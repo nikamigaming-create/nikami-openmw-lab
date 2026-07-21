@@ -44,6 +44,7 @@
 #include <components/esm4/loadweap.hpp>
 #include <components/debug/debuglog.hpp>
 #include <components/misc/mathutil.hpp>
+#include <components/misc/constants.hpp>
 #include <components/misc/resourcehelpers.hpp>
 #include <components/misc/rng.hpp>
 #include <components/misc/strings/algorithm.hpp>
@@ -2703,12 +2704,19 @@ namespace MWMechanics
             mPtr.getClass().getCreatureStats(mPtr).getAiSequence().getCombatTargets(targetActors);
 
         osg::Vec3f direction;
+        std::optional<osg::Vec3f> fixedAimPoint;
         if (vatsAimPoint)
+        {
+            fixedAimPoint = *vatsAimPoint;
             direction = *vatsAimPoint - origin;
+        }
         else if (mPtr == getPlayer() && world->getCamera() != nullptr)
             direction = world->getCamera()->getOrient() * osg::Vec3f(0.f, 1.f, 0.f);
         else if (!targetActors.empty())
+        {
+            fixedAimPoint = world->getActorHeadTransform(targetActors.front()).getTrans();
             direction = world->getActorHeadTransform(targetActors.front()).getTrans() - origin;
+        }
         else
         {
             const ESM::Position& position = mPtr.getRefData().getPosition();
@@ -2716,7 +2724,24 @@ namespace MWMechanics
                 * osg::Quat(position.rot[2], osg::Vec3f(0.f, 0.f, -1.f));
             direction = orientation * osg::Vec3f(0.f, 1.f, 0.f);
         }
-        if (direction.normalize() == 0.f)
+        if (!contract->mAuthoredHitscan && fixedAimPoint && projectile->mData.gravity > 0.f)
+        {
+            const float gravityAcceleration = Constants::GravityConst * Constants::UnitsPerMeter * 0.1f
+                * projectile->mData.gravity;
+            FalloutBallisticAimFailure ballisticFailure = FalloutBallisticAimFailure::None;
+            const std::optional<osg::Vec3f> ballistic = buildFalloutBallisticAimDirection(
+                *fixedAimPoint - origin, projectile->mData.speed, gravityAcceleration, ballisticFailure);
+            if (!ballistic)
+                return fail(getFalloutBallisticAimFailureName(ballisticFailure));
+            direction = *ballistic;
+            Log(Debug::Info) << "FNV ballistic aim: actor=" << mPtr.toString()
+                             << " origin=" << origin << " target=" << *fixedAimPoint
+                             << " displacement=" << (*fixedAimPoint - origin)
+                             << " speed=" << projectile->mData.speed
+                             << " gravityAcceleration=" << gravityAcceleration
+                             << " direction=" << direction;
+        }
+        else if (direction.normalize() == 0.f)
             return fail("zero-shot-direction");
 
         const MWPhysics::RayCastingInterface* rayCasting = world->getRayCasting();

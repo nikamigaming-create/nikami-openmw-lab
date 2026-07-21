@@ -912,6 +912,61 @@ namespace
         EXPECT_EQ(failure, MWMechanics::FalloutProjectileBounceFailure::InvalidBounciness);
     }
 
+    TEST(FalloutCombatTest, AimsGravityProjectileAlongReachableLowBallisticArc)
+    {
+        MWMechanics::FalloutBallisticAimFailure failure;
+        constexpr float speed = 1750.f;
+        constexpr float gravity = 94.067f;
+        const osg::Vec3f displacement(2400.f, 600.f, 90.f);
+        const auto direction
+            = MWMechanics::buildFalloutBallisticAimDirection(displacement, speed, gravity, failure);
+        ASSERT_TRUE(direction.has_value());
+        EXPECT_EQ(failure, MWMechanics::FalloutBallisticAimFailure::None);
+        EXPECT_NEAR(direction->length(), 1.f, 1e-5f);
+        EXPECT_GT(direction->z(), displacement.z() / displacement.length());
+
+        const float horizontalDistance = std::hypot(displacement.x(), displacement.y());
+        const float horizontalSpeed = speed * std::hypot(direction->x(), direction->y());
+        const float time = horizontalDistance / horizontalSpeed;
+        EXPECT_NEAR(speed * direction->z() * time - 0.5f * gravity * time * time,
+            displacement.z(), 0.02f);
+    }
+
+    TEST(FalloutCombatTest, RejectsMalformedOrUnreachableBallisticAim)
+    {
+        MWMechanics::FalloutBallisticAimFailure failure;
+        EXPECT_FALSE(MWMechanics::buildFalloutBallisticAimDirection(
+            osg::Vec3f(), 100.f, 10.f, failure));
+        EXPECT_EQ(failure, MWMechanics::FalloutBallisticAimFailure::InvalidDisplacement);
+        EXPECT_FALSE(MWMechanics::buildFalloutBallisticAimDirection(
+            osg::Vec3f(1000.f, 0.f, 1000.f), 10.f, 100.f, failure));
+        EXPECT_EQ(failure, MWMechanics::FalloutBallisticAimFailure::Unreachable);
+
+        const auto zeroGravity = MWMechanics::buildFalloutBallisticAimDirection(
+            osg::Vec3f(3.f, 4.f, 0.f), 10.f, 0.f, failure);
+        ASSERT_TRUE(zeroGravity.has_value());
+        EXPECT_EQ(failure, MWMechanics::FalloutBallisticAimFailure::None);
+        EXPECT_NEAR(zeroGravity->x(), 0.6f, 1e-6f);
+        EXPECT_NEAR(zeroGravity->y(), 0.8f, 1e-6f);
+    }
+
+    TEST(FalloutCombatTest, ResolvesOnlySuccessfulQueuedVatsProjectilesAuthoritatively)
+    {
+        MWMechanics::FalloutProjectileImpactContract impact;
+        EXPECT_FALSE(MWMechanics::getAuthoritativeFalloutVatsProjectileTarget(impact));
+
+        MWMechanics::FalloutVatsQueuedAction action;
+        action.mTarget = id(0x1107077);
+        impact.mVatsAction = action;
+        impact.mVatsTargetHit = false;
+        EXPECT_FALSE(MWMechanics::getAuthoritativeFalloutVatsProjectileTarget(impact));
+
+        impact.mVatsTargetHit = true;
+        const auto target = MWMechanics::getAuthoritativeFalloutVatsProjectileTarget(impact);
+        ASSERT_TRUE(target.has_value());
+        EXPECT_EQ(*target, action.mTarget);
+    }
+
     TEST(FalloutCombatTest, ResolvesRetailFragMineAndRemoteProjectileTriggers)
     {
         ESM4::Projectile projectile;

@@ -57,6 +57,14 @@ namespace MWMechanics
         }
     }
 
+    std::optional<ESM::FormId> getAuthoritativeFalloutVatsProjectileTarget(
+        const FalloutProjectileImpactContract& impact) noexcept
+    {
+        if (!impact.mVatsAction || !impact.mVatsTargetHit || impact.mVatsAction->mTarget.isZeroOrUnset())
+            return std::nullopt;
+        return impact.mVatsAction->mTarget;
+    }
+
     std::optional<ESM4::Faction::GroupCombatReaction> resolveFalloutFactionReaction(
         std::span<const ESM4::ActorFaction> actorFactions, std::span<const ESM4::ActorFaction> targetFactions,
         const FalloutFactionLookup& findFaction)
@@ -423,6 +431,58 @@ namespace MWMechanics
         if (!finiteVector(result))
         {
             failure = FalloutProjectileBounceFailure::InvalidResult;
+            return std::nullopt;
+        }
+        return result;
+    }
+
+    std::optional<osg::Vec3f> buildFalloutBallisticAimDirection(
+        const osg::Vec3f& displacement, float speed, float gravityAcceleration, FalloutBallisticAimFailure& failure)
+    {
+        failure = FalloutBallisticAimFailure::None;
+        const auto finiteVector = [](const osg::Vec3f& value) {
+            return std::isfinite(value.x()) && std::isfinite(value.y()) && std::isfinite(value.z());
+        };
+        if (!finiteVector(displacement) || displacement.length2() <= 0.f)
+            failure = FalloutBallisticAimFailure::InvalidDisplacement;
+        else if (!std::isfinite(speed) || speed <= 0.f)
+            failure = FalloutBallisticAimFailure::InvalidSpeed;
+        else if (!std::isfinite(gravityAcceleration) || gravityAcceleration < 0.f)
+            failure = FalloutBallisticAimFailure::InvalidGravity;
+        if (failure != FalloutBallisticAimFailure::None)
+            return std::nullopt;
+
+        osg::Vec3f direct = displacement;
+        direct.normalize();
+        if (gravityAcceleration == 0.f)
+            return direct;
+
+        const double horizontalSquared = static_cast<double>(displacement.x()) * displacement.x()
+            + static_cast<double>(displacement.y()) * displacement.y();
+        if (horizontalSquared <= std::numeric_limits<double>::epsilon())
+            return direct;
+
+        const double horizontal = std::sqrt(horizontalSquared);
+        const double vertical = displacement.z();
+        const double velocitySquared = static_cast<double>(speed) * speed;
+        const double gravity = gravityAcceleration;
+        const double discriminant = velocitySquared * velocitySquared
+            - gravity * (gravity * horizontalSquared + 2.0 * vertical * velocitySquared);
+        if (!std::isfinite(discriminant) || discriminant < 0.0)
+        {
+            failure = FalloutBallisticAimFailure::Unreachable;
+            return std::nullopt;
+        }
+
+        const double tangent = (velocitySquared - std::sqrt(std::max(0.0, discriminant)))
+            / (gravity * horizontal);
+        const double cosine = 1.0 / std::sqrt(1.0 + tangent * tangent);
+        const double sine = tangent * cosine;
+        osg::Vec3f result(static_cast<float>(displacement.x() / horizontal * cosine),
+            static_cast<float>(displacement.y() / horizontal * cosine), static_cast<float>(sine));
+        if (!finiteVector(result) || result.normalize() == 0.f)
+        {
+            failure = FalloutBallisticAimFailure::InvalidResult;
             return std::nullopt;
         }
         return result;
@@ -1347,6 +1407,26 @@ namespace MWMechanics
             case FalloutProjectileBounceFailure::InvalidBounciness:
                 return "invalid-bounciness";
             case FalloutProjectileBounceFailure::InvalidResult:
+                return "invalid-result";
+        }
+        return "unknown";
+    }
+
+    std::string_view getFalloutBallisticAimFailureName(FalloutBallisticAimFailure failure)
+    {
+        switch (failure)
+        {
+            case FalloutBallisticAimFailure::None:
+                return "none";
+            case FalloutBallisticAimFailure::InvalidDisplacement:
+                return "invalid-displacement";
+            case FalloutBallisticAimFailure::InvalidSpeed:
+                return "invalid-speed";
+            case FalloutBallisticAimFailure::InvalidGravity:
+                return "invalid-gravity";
+            case FalloutBallisticAimFailure::Unreachable:
+                return "unreachable";
+            case FalloutBallisticAimFailure::InvalidResult:
                 return "invalid-result";
         }
         return "unknown";

@@ -138,6 +138,16 @@ namespace MWMechanics
         InvalidResult,
     };
 
+    enum class FalloutBallisticAimFailure
+    {
+        None,
+        InvalidDisplacement,
+        InvalidSpeed,
+        InvalidGravity,
+        Unreachable,
+        InvalidResult,
+    };
+
     enum class FalloutProjectileTriggerFailure
     {
         None,
@@ -526,6 +536,11 @@ namespace MWMechanics
         bool mCritical = false;
     };
 
+    /// A successful queued V.A.T.S. roll is authoritative for the queued actor even when the visual moving
+    /// projectile intersects incidental scenery first. Ordinary shots and rolled misses retain physical collision.
+    [[nodiscard]] std::optional<ESM::FormId> getAuthoritativeFalloutVatsProjectileTarget(
+        const FalloutProjectileImpactContract& impact) noexcept;
+
     using FalloutAmmoTypePredicate = std::function<bool(ESM::FormId)>;
     using FalloutAmmoCount = std::function<int(ESM::FormId)>;
     using FalloutFactionLookup = std::function<const ESM4::Faction*(ESM::FormId)>;
@@ -605,6 +620,12 @@ namespace MWMechanics
     /// coefficient of restitution. Tangential velocity is preserved; friction remains the physics surface's job.
     [[nodiscard]] std::optional<osg::Vec3f> resolveFalloutProjectileBounce(const osg::Vec3f& velocity,
         const osg::Vec3f& collisionNormal, float bounciness, FalloutProjectileBounceFailure& failure);
+
+    /// Aim a constant-speed Fallout projectile at a fixed world-space displacement while preserving the exact
+    /// downward acceleration used by ProjectileManager. The low trajectory is selected so V.A.T.S. and AI lobbed
+    /// shots reach their authored target instead of aiming along a gravity-oblivious straight ray.
+    [[nodiscard]] std::optional<osg::Vec3f> buildFalloutBallisticAimDirection(
+        const osg::Vec3f& displacement, float speed, float gravityAcceleration, FalloutBallisticAimFailure& failure);
 
     /// Resolve the PROJ flag/timer/proximity state machine. FNV proximity mines use the winning
     /// fMinesDelayMin plus their authored timer scaled by the placing actor's weapon skill. Exterior proximity uses
@@ -736,6 +757,7 @@ namespace MWMechanics
     [[nodiscard]] std::string_view getFalloutExplosionKnockdownFailureName(
         FalloutExplosionKnockdownFailure failure);
     [[nodiscard]] std::string_view getFalloutProjectileBounceFailureName(FalloutProjectileBounceFailure failure);
+    [[nodiscard]] std::string_view getFalloutBallisticAimFailureName(FalloutBallisticAimFailure failure);
     [[nodiscard]] std::string_view getFalloutProjectileTriggerFailureName(FalloutProjectileTriggerFailure failure);
     [[nodiscard]] std::string_view getFalloutCriticalFailureName(FalloutCriticalFailure failure);
     [[nodiscard]] std::string_view getFalloutActorEffectFailureName(FalloutActorEffectFailure failure);

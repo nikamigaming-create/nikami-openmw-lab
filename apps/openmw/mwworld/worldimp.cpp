@@ -3984,6 +3984,13 @@ namespace MWWorld
             && mProjectileManager->launchFalloutProjectile(actor, projectile, worldPos, direction, impact);
     }
 
+    std::size_t World::countPendingFalloutVatsProjectiles(const MWWorld::Ptr& actor)
+    {
+        return mProjectileManager != nullptr
+            ? mProjectileManager->countPendingFalloutVatsProjectiles(actor)
+            : 0;
+    }
+
     unsigned int World::detonateFalloutPlacedExplosives(const MWWorld::Ptr& actor)
     {
         return mProjectileManager != nullptr

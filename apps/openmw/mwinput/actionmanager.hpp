@@ -6,6 +6,7 @@
 
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "../mwmechanics/falloutcombat.hpp"
@@ -98,6 +99,7 @@ namespace MWInput
         std::size_t mFalloutVatsExecutionShotsAttempted = 0;
         std::size_t mFalloutVatsExecutionShotsFired = 0;
         std::size_t mFalloutVatsExecutionRolledHits = 0;
+        std::vector<std::pair<ESM::FormId, float>> mFalloutVatsExecutionTargetHealthBefore;
         float mFalloutVatsCaptureTimer = 0.f;
         unsigned int mFalloutVatsCaptureFrames = 0;
         unsigned int mFalloutVatsVideoCaptureCount = 0;

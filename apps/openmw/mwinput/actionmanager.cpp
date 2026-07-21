@@ -650,6 +650,7 @@ namespace MWInput
         mFalloutVatsExecutionShotsAttempted = 0;
         mFalloutVatsExecutionShotsFired = 0;
         mFalloutVatsExecutionRolledHits = 0;
+        mFalloutVatsExecutionTargetHealthBefore.clear();
         MWBase::Environment::get().getWorld()->getTimeManager()->setSimulationTimeScale(0.2f);
         Log(Debug::Info) << "FNV VATS execution: phase=begin queued=" << mFalloutVatsExecutionQueued
                          << " apBefore=" << mFalloutVatsExecutionApBefore
@@ -676,7 +677,9 @@ namespace MWInput
             return;
         }
 
-        if (mFalloutVats.isExecutionComplete() && mFalloutVatsExecutionTimer >= 0.9f)
+        if (mFalloutVats.isExecutionComplete() && mFalloutVatsExecutionTimer >= 0.9f
+            && MWBase::Environment::get().getWorld()->countPendingFalloutVatsProjectiles(
+                MWBase::Environment::get().getWorld()->getPlayerPtr()) == 0)
             finishFalloutVatsExecution(false);
     }
 
@@ -725,6 +728,9 @@ namespace MWInput
 
         const float healthBefore
             = executionTarget.getClass().getCreatureStats(executionTarget).getHealth().getCurrent();
+        if (std::ranges::none_of(mFalloutVatsExecutionTargetHealthBefore,
+                [&](const auto& entry) { return entry.first == executing.mTarget; }))
+            mFalloutVatsExecutionTargetHealthBefore.emplace_back(executing.mTarget, healthBefore);
         osg::Vec3f targetPoint = world->getActorHeadTransform(executionTarget).getTrans();
         if (MWRender::Animation* animation = world->getAnimation(executionTarget))
         {
@@ -769,6 +775,25 @@ namespace MWInput
 
     void ActionManager::finishFalloutVatsExecution(bool interrupted)
     {
+        float observedDamage = 0.f;
+        MWBase::World* world = MWBase::Environment::get().getWorld();
+        for (const auto& [targetId, healthBefore] : mFalloutVatsExecutionTargetHealthBefore)
+        {
+            MWWorld::Ptr target;
+            const auto activeTarget = std::ranges::find_if(mFalloutVatsTargets, [&](const MWWorld::Ptr& candidate) {
+                return !candidate.isEmpty() && candidate.getCellRef().getRefNum() == targetId;
+            });
+            if (activeTarget != mFalloutVatsTargets.end())
+                target = *activeTarget;
+            else
+                target = world->searchPtr(ESM::RefId(targetId), true, false);
+            if (target.isEmpty() || !target.getClass().isActor())
+                continue;
+            const float healthAfter = target.getClass().getCreatureStats(target).getHealth().getCurrent();
+            if (std::isfinite(healthAfter))
+                observedDamage += std::max(0.f, healthBefore - healthAfter);
+        }
+        mFalloutVatsExecutionDamage = std::max(mFalloutVatsExecutionDamage, observedDamage);
         const float apAfter
             = std::max(0.f, mFalloutVatsExecutionApBefore - mFalloutVatsExecutionApSpent);
         MWBase::Environment::get().getWorld()->getFalloutPlayerRuntimeState().setCurrentActorValue(

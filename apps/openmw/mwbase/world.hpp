@@ -528,6 +528,7 @@ namespace MWBase
             const osg::Vec3f& worldPos, const osg::Vec3f& direction,
             const MWMechanics::FalloutProjectileImpactContract& impact)
             = 0;
+        virtual std::size_t countPendingFalloutVatsProjectiles(const MWWorld::Ptr& actor) = 0;
         virtual unsigned int detonateFalloutPlacedExplosives(const MWWorld::Ptr& actor) = 0;
         virtual bool playFalloutImageSpaceModifier(ESM::FormId, float) { return false; }
         virtual void updateProjectilesCasters() = 0;

@@ -66,6 +66,10 @@ namespace MWWorld
             const osg::Vec3f& pos, const osg::Vec3f& direction,
             const MWMechanics::FalloutProjectileImpactContract& impact);
 
+        /// Count queued V.A.T.S. projectiles that must resolve before the cinematic transaction can finish.
+        /// Persistent mines/remote explosives are excluded because their authored lifetime is open-ended.
+        std::size_t countPendingFalloutVatsProjectiles(const MWWorld::Ptr& actor);
+
         /// Arm the detonation state for every settled, remotely triggered Fallout explosive placed by actor.
         /// Returns the number of charges accepted by the authored PROJ Detonates contract.
         unsigned int detonateFalloutPlacedExplosives(const MWWorld::Ptr& actor);
