@@ -273,7 +273,7 @@ function Emitter:emit()
     self:collectBlockLocals()
     local name = self.ast.name or 'anonymous'
     self:out('-- transpiled from ObScript: ' .. name)
-    self:out("local obs = require('obs')")
+    self:out("local obs = require('openmw_aux.obscript.runtime')")
     self:out(('local S = obs.locals(%s)'):format(luaString(name)))
     self:out()
     for _, block in ipairs(self.ast.blocks) do

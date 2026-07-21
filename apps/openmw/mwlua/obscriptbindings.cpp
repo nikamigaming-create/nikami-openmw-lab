@@ -39,9 +39,8 @@ namespace MWLua
         sol::table api(lua, sol::create);
 
         auto recordBindingsClass = lua.new_usertype<ESM4::Script>("ESM4_Script");
-        recordBindingsClass[sol::meta_function::to_string] = [](const ESM4::Script& rec) {
-            return "ESM4_Script[" + ESM::RefId(rec.mId).toDebugString() + "]";
-        };
+        recordBindingsClass[sol::meta_function::to_string]
+            = [](const ESM4::Script& rec) { return "ESM4_Script[" + ESM::RefId(rec.mId).toDebugString() + "]"; };
         recordBindingsClass["id"] = sol::readonly_property(
             [](const ESM4::Script& rec) -> std::string { return ESM::RefId(rec.mId).serializeText(); });
         recordBindingsClass["editorId"]

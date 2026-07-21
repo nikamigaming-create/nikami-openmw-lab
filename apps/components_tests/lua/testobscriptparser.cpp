@@ -74,8 +74,7 @@ namespace
         // a NEWLINE + EOF pair is appended.
         EXPECT_EQ(LuaUtil::call(script["tokenKinds"], "SET x to 3.5 ; comment").get<std::string>(),
             "KEYWORD NAME KEYWORD FLOAT NEWLINE EOF");
-        EXPECT_EQ(LuaUtil::call(script["tokenKinds"], "x != 1 !!!").get<std::string>(),
-            "NAME OP INT NEWLINE EOF");
+        EXPECT_EQ(LuaUtil::call(script["tokenKinds"], "x != 1 !!!").get<std::string>(), "NAME OP INT NEWLINE EOF");
         // digit-led identifiers lex as names, not numbers
         EXPECT_EQ(LuaUtil::call(script["tokenKinds"], "12GaCoinShot .2ndFloor").get<std::string>(),
             "NAME OP NAME NEWLINE EOF");
@@ -108,9 +107,10 @@ namespace
     TEST_F(ObScriptParserTest, IfElseChain)
     {
         // covers: elseif; the two-word 'else if' variant; junk after bare else
-        sol::table ast = parse("scn S\nbegin GameMode\n"
-                               "if x == 0\nelseif x == 1\nelse if x == 2\nelse junk ignored\nendif\n"
-                               "end\n");
+        sol::table ast = parse(
+            "scn S\nbegin GameMode\n"
+            "if x == 0\nelseif x == 1\nelse if x == 2\nelse junk ignored\nendif\n"
+            "end\n");
         sol::table ifStmt = ast["blocks"].get<sol::table>()[1].get<sol::table>()["body"].get<sol::table>()[1];
         EXPECT_EQ(ifStmt["kind"].get<std::string>(), "If");
         sol::table clauses = ifStmt["clauses"];
@@ -185,7 +185,10 @@ namespace
     TEST_F(ObScriptParserTest, OperatorPrecedence)
     {
         sol::table ast = parse("scn S\nbegin GameMode\nset x to 1 + 2 * 3\nend\n");
-        sol::table value = ast["blocks"].get<sol::table>()[1].get<sol::table>()["body"].get<sol::table>()[1]
+        sol::table value = ast["blocks"]
+                               .get<sol::table>()[1]
+                               .get<sol::table>()["body"]
+                               .get<sol::table>()[1]
                                .get<sol::table>()["value"];
         EXPECT_EQ(value["op"].get<std::string>(), "+");
         EXPECT_EQ(value["right"].get<sol::table>()["op"].get<std::string>(), "*");

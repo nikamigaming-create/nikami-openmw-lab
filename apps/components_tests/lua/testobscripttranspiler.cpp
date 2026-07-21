@@ -68,7 +68,7 @@ namespace
     {
         const std::string lua = transpile("scn MyScript\n");
         EXPECT_THAT(lua, HasSubstr("-- transpiled from ObScript: MyScript"));
-        EXPECT_THAT(lua, HasSubstr("local obs = require('obs')"));
+        EXPECT_THAT(lua, HasSubstr("local obs = require('openmw_aux.obscript.runtime')"));
         EXPECT_THAT(lua, HasSubstr("local S = obs.locals(\"MyScript\")"));
     }
 
@@ -83,8 +83,9 @@ namespace
 
     TEST_F(ObScriptTranspilerTest, LocalsVersusGlobals)
     {
-        const std::string lua = transpile("scn S\nshort MyVar\nbegin GameMode\n"
-                                          "set MyVar to 1\nset OtherQuestVar to 2\nend\n");
+        const std::string lua = transpile(
+            "scn S\nshort MyVar\nbegin GameMode\n"
+            "set MyVar to 1\nset OtherQuestVar to 2\nend\n");
         // declared locals live on S; unknown names go through the runtime
         EXPECT_THAT(lua, HasSubstr("S.MyVar = 1"));
         EXPECT_THAT(lua, HasSubstr("obs.setv(\"OtherQuestVar\", 2)"));
@@ -98,16 +99,18 @@ namespace
 
     TEST_F(ObScriptTranspilerTest, CrossScriptVariables)
     {
-        const std::string lua = transpile("scn S\nshort x\nbegin GameMode\n"
-                                          "set MyQuest.var to x\nset x to MyQuest.var\nend\n");
+        const std::string lua = transpile(
+            "scn S\nshort x\nbegin GameMode\n"
+            "set MyQuest.var to x\nset x to MyQuest.var\nend\n");
         EXPECT_THAT(lua, HasSubstr("obs.msetv(\"MyQuest\", \"var\", S.x)"));
         EXPECT_THAT(lua, HasSubstr("S.x = obs.mv(\"MyQuest\", \"var\")"));
     }
 
     TEST_F(ObScriptTranspilerTest, CallsFreeAndMember)
     {
-        const std::string lua = transpile("scn S\nbegin OnActivate\n"
-                                          "ShowMessage SomeMsg\nplayer.AddItem Caps001 5\nSomeRef.Enable\nend\n");
+        const std::string lua = transpile(
+            "scn S\nbegin OnActivate\n"
+            "ShowMessage SomeMsg\nplayer.AddItem Caps001 5\nSomeRef.Enable\nend\n");
         EXPECT_THAT(lua, HasSubstr("obs.f(\"ShowMessage\", \"SomeMsg\")"));
         EXPECT_THAT(lua, HasSubstr("obs.m(\"player\", \"AddItem\", \"Caps001\", 5)"));
         // zero-arg member command in statement position
@@ -116,8 +119,9 @@ namespace
 
     TEST_F(ObScriptTranspilerTest, IfChainAndTruthiness)
     {
-        const std::string lua = transpile("scn S\nshort x\nbegin GameMode\n"
-                                          "if x == 1\nelseif x > 1 && x < 5\nelse\nendif\nend\n");
+        const std::string lua = transpile(
+            "scn S\nshort x\nbegin GameMode\n"
+            "if x == 1\nelseif x > 1 && x < 5\nelse\nendif\nend\n");
         EXPECT_THAT(lua, HasSubstr("if obs.b((S.x == 1)) then"));
         // &&/|| operands go through ObScript truthiness (nonzero)
         EXPECT_THAT(lua, HasSubstr("elseif obs.b((obs.b((S.x > 1)) and obs.b((S.x < 5)))) then"));
@@ -149,8 +153,9 @@ namespace
     TEST_F(ObScriptTranspilerTest, OutputIsValidLua)
     {
         // the emitted source must itself load in the sandbox environment
-        const std::string lua = transpile("scn S\nshort x\nbegin GameMode\n"
-                                          "if x >= 0 && <10\nset x to x + 1\nendif\nShowMessage Msg\nend\n");
+        const std::string lua = transpile(
+            "scn S\nshort x\nbegin GameMode\n"
+            "if x >= 0 && <10\nset x to x + 1\nendif\nShowMessage Msg\nend\n");
         sol::state_view view(mLua.unsafeState());
         const sol::load_result loaded = view.load(lua);
         EXPECT_TRUE(loaded.valid());
