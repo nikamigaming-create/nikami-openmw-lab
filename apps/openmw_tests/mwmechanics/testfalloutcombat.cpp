@@ -308,7 +308,7 @@ namespace
         const MWMechanics::FalloutVatsQueuedAction first{ id(0x100), 0, 71, 22.f, 1.f };
         MWMechanics::FalloutVatsQueueFailure failure;
         const auto action = MWMechanics::queueFalloutVatsAction(
-            std::span(&first, 1), id(0x200), 1, 83, 2.f, 50.f, weapon, failure);
+            std::span(&first, 1), id(0x200), 1, 83, 2.f, 50.f, 2, weapon, failure);
 
         ASSERT_TRUE(action);
         EXPECT_EQ(failure, MWMechanics::FalloutVatsQueueFailure::None);
@@ -326,8 +326,18 @@ namespace
         const MWMechanics::FalloutVatsQueuedAction first{ id(0x100), 0, 71, 22.f, 1.f };
         MWMechanics::FalloutVatsQueueFailure failure;
         EXPECT_FALSE(MWMechanics::queueFalloutVatsAction(
-            std::span(&first, 1), id(0x200), 1, 83, 1.f, 40.f, weapon, failure));
+            std::span(&first, 1), id(0x200), 1, 83, 1.f, 40.f, 2, weapon, failure));
         EXPECT_EQ(failure, MWMechanics::FalloutVatsQueueFailure::InsufficientActionPoints);
+    }
+
+    TEST(FalloutCombatTest, RejectsVatsQueueBeyondAvailableAuthoredAmmunition)
+    {
+        MWMechanics::FalloutVatsWeaponContract weapon{ 10.f, 42, 1.f, 32 };
+        const MWMechanics::FalloutVatsQueuedAction first{ id(0x100), 0, 71, 10.f, 1.f };
+        MWMechanics::FalloutVatsQueueFailure failure;
+        EXPECT_FALSE(MWMechanics::queueFalloutVatsAction(
+            std::span(&first, 1), id(0x200), 1, 83, 1.f, 80.f, 1, weapon, failure));
+        EXPECT_EQ(failure, MWMechanics::FalloutVatsQueueFailure::InsufficientAmmunition);
     }
 
     TEST(FalloutCombatTest, PreservesAuthoredVatsBodyPartContract)
@@ -362,8 +372,8 @@ namespace
 
         const MWMechanics::FalloutVatsWeaponContract weapon{ 22.f, 42, 0.75f, 32 };
         MWMechanics::FalloutVatsQueueFailure failure;
-        ASSERT_TRUE(runtime.queueSelected(weapon, failure));
-        ASSERT_TRUE(runtime.queueSelected(weapon, failure));
+        ASSERT_TRUE(runtime.queueSelected(weapon, 2, failure));
+        ASSERT_TRUE(runtime.queueSelected(weapon, 2, failure));
         EXPECT_EQ(runtime.getPhase(), MWMechanics::FalloutVatsPhase::Targeting);
         EXPECT_FLOAT_EQ(runtime.getReservedActionPoints(), 44.f);
 
@@ -375,12 +385,25 @@ namespace
         EXPECT_EQ(runtime.getExecutingAction()->mBodyPart, 1);
         EXPECT_EQ(runtime.getExecutingAction()->mDisplayedHitChance, 73);
         EXPECT_FLOAT_EQ(runtime.getExecutingAction()->mDamageMultiplier, 1.5f);
+        EXPECT_EQ(runtime.getExecutingAction()->mBodyPartName, "Head");
+        EXPECT_EQ(runtime.getExecutingAction()->mTargetNode, "Bip01 Head");
+        EXPECT_EQ(runtime.getExecutingAction()->mActorValue, 48);
 
         EXPECT_TRUE(runtime.advanceExecution());
         ASSERT_NE(runtime.getExecutingAction(), nullptr);
         EXPECT_TRUE(runtime.advanceExecution());
         EXPECT_EQ(runtime.getPhase(), MWMechanics::FalloutVatsPhase::Inactive);
         EXPECT_TRUE(runtime.getQueue().empty());
+    }
+
+    TEST(FalloutCombatTest, ResolvesDisplayedVatsChanceAtExactPercentageBoundary)
+    {
+        EXPECT_FALSE(MWMechanics::doesFalloutVatsAttackHit(0, 0.f));
+        EXPECT_TRUE(MWMechanics::doesFalloutVatsAttackHit(1, 0.f));
+        EXPECT_TRUE(MWMechanics::doesFalloutVatsAttackHit(73, 0.72999f));
+        EXPECT_FALSE(MWMechanics::doesFalloutVatsAttackHit(73, 0.73f));
+        EXPECT_TRUE(MWMechanics::doesFalloutVatsAttackHit(100, 0.99999f));
+        EXPECT_FALSE(MWMechanics::doesFalloutVatsAttackHit(100, 1.f));
     }
 
     TEST(FalloutCombatTest, PreservesGenericShotgunRaysAndTotalAuthoredDamage)

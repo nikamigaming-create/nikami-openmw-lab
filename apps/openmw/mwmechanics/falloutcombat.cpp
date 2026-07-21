@@ -195,10 +195,18 @@ namespace MWMechanics
         return result;
     }
 
+    bool doesFalloutVatsAttackHit(std::uint8_t displayedHitChance, float roll) noexcept
+    {
+        if (!std::isfinite(roll) || roll < 0.f || roll >= 1.f)
+            return false;
+        return displayedHitChance == 100
+            || (displayedHitChance != 0 && roll * 100.f < static_cast<float>(displayedHitChance));
+    }
+
     std::optional<FalloutVatsQueuedAction> queueFalloutVatsAction(
         std::span<const FalloutVatsQueuedAction> queued, ESM::FormId target, std::uint8_t bodyPart,
         unsigned int displayedHitChance, float bodyPartDamageMultiplier, float currentActionPoints,
-        const FalloutVatsWeaponContract& weapon, FalloutVatsQueueFailure& failure)
+        std::size_t availableShots, const FalloutVatsWeaponContract& weapon, FalloutVatsQueueFailure& failure)
     {
         failure = FalloutVatsQueueFailure::None;
         if (target.isZeroOrUnset())
@@ -212,6 +220,8 @@ namespace MWMechanics
             failure = FalloutVatsQueueFailure::InvalidActionPointState;
         else if (queued.size() >= 16)
             failure = FalloutVatsQueueFailure::QueueLimitReached;
+        else if (queued.size() >= availableShots)
+            failure = FalloutVatsQueueFailure::InsufficientAmmunition;
 
         const float reserved = failure == FalloutVatsQueueFailure::None
             ? getFalloutVatsReservedActionPoints(queued) : 0.f;
@@ -268,6 +278,9 @@ namespace MWMechanics
         mSelectedBodyPart = 0;
         mDisplayedHitChance = 0;
         mSelectedDamageMultiplier = 1.f;
+        mSelectedBodyPartName.clear();
+        mSelectedTargetNode.clear();
+        mSelectedActorValue = -1;
         mQueue.clear();
         mExecutionIndex = 0;
     }
@@ -281,11 +294,14 @@ namespace MWMechanics
         mSelectedBodyPart = bodyPart.mIndex;
         mDisplayedHitChance = displayedHitChance;
         mSelectedDamageMultiplier = bodyPart.mDamageMultiplier;
+        mSelectedBodyPartName = bodyPart.mName;
+        mSelectedTargetNode = bodyPart.mTargetNode;
+        mSelectedActorValue = bodyPart.mActorValue;
         return true;
     }
 
     bool FalloutVatsRuntime::queueSelected(
-        const FalloutVatsWeaponContract& weapon, FalloutVatsQueueFailure& failure)
+        const FalloutVatsWeaponContract& weapon, std::size_t availableShots, FalloutVatsQueueFailure& failure)
     {
         if (mPhase != FalloutVatsPhase::Targeting)
         {
@@ -293,10 +309,14 @@ namespace MWMechanics
             return false;
         }
         const std::optional<FalloutVatsQueuedAction> action = queueFalloutVatsAction(mQueue, mSelectedTarget,
-            mSelectedBodyPart, mDisplayedHitChance, mSelectedDamageMultiplier, mActionPointsBefore, weapon, failure);
+            mSelectedBodyPart, mDisplayedHitChance, mSelectedDamageMultiplier, mActionPointsBefore,
+            availableShots, weapon, failure);
         if (!action)
             return false;
         mQueue.push_back(*action);
+        mQueue.back().mBodyPartName = mSelectedBodyPartName;
+        mQueue.back().mTargetNode = mSelectedTargetNode;
+        mQueue.back().mActorValue = mSelectedActorValue;
         return true;
     }
 
@@ -557,6 +577,8 @@ namespace MWMechanics
                 return "invalid-action-point-state";
             case FalloutVatsQueueFailure::InsufficientActionPoints:
                 return "insufficient-action-points";
+            case FalloutVatsQueueFailure::InsufficientAmmunition:
+                return "insufficient-ammunition";
             case FalloutVatsQueueFailure::QueueLimitReached:
                 return "queue-limit-reached";
         }

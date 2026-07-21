@@ -138,7 +138,7 @@ namespace MWMechanics
 
         void forceStateUpdate(const MWWorld::Ptr& ptr) override;
         bool executeFalloutVatsRangedHit(const MWWorld::Ptr& actor, const MWWorld::Ptr& target,
-            const osg::Vec3f& targetPoint, float damageMultiplier) override;
+            const osg::Vec3f& targetPoint, float damageMultiplier, bool targetHit) override;
 
         /// Attempt to play an animation group
         /// @return Success or error

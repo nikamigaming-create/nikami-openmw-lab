@@ -113,7 +113,7 @@ namespace MWMechanics
 
         void forceStateUpdate(const MWWorld::Ptr& ptr) const;
         bool executeFalloutVatsRangedHit(const MWWorld::Ptr& actor, const MWWorld::Ptr& target,
-            const osg::Vec3f& targetPoint, float damageMultiplier) const;
+            const osg::Vec3f& targetPoint, float damageMultiplier, bool targetHit) const;
 
         bool playAnimationGroup(const MWWorld::Ptr& ptr, std::string_view groupName, int mode, uint32_t number,
             bool scripted = false) const;

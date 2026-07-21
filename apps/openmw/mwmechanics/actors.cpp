@@ -2145,12 +2145,12 @@ namespace MWMechanics
     }
 
     bool Actors::executeFalloutVatsRangedHit(const MWWorld::Ptr& actor, const MWWorld::Ptr& target,
-        const osg::Vec3f& targetPoint, float damageMultiplier) const
+        const osg::Vec3f& targetPoint, float damageMultiplier, bool targetHit) const
     {
         const auto iter = mIndex.find(actor.mRef);
         return iter != mIndex.end()
             && iter->second->getCharacterController().executeFalloutVatsRangedHit(
-                target, targetPoint, damageMultiplier);
+                target, targetPoint, damageMultiplier, targetHit);
     }
 
     bool Actors::playAnimationGroup(

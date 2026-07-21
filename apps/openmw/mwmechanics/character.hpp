@@ -355,7 +355,7 @@ namespace MWMechanics
         /// Execute an already queued and resolved VATS ranged hit through the ordinary Fallout weapon path. The
         /// caller owns chance resolution and supplies the selected body-part target point and damage multiplier.
         bool executeFalloutVatsRangedHit(
-            const MWWorld::Ptr& target, const osg::Vec3f& targetPoint, float damageMultiplier);
+            const MWWorld::Ptr& target, const osg::Vec3f& targetPoint, float damageMultiplier, bool targetHit);
 
         float calculateWindUp() const;
 

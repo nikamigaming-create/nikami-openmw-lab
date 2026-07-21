@@ -169,7 +169,7 @@ namespace MWBase
         virtual void forceStateUpdate(const MWWorld::Ptr& ptr) = 0;
 
         virtual bool executeFalloutVatsRangedHit(const MWWorld::Ptr&, const MWWorld::Ptr&,
-            const osg::Vec3f&, float)
+            const osg::Vec3f&, float, bool)
         {
             return false;
         }

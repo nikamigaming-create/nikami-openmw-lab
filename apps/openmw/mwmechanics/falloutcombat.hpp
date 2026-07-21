@@ -5,6 +5,7 @@
 #include <functional>
 #include <optional>
 #include <span>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -84,6 +85,7 @@ namespace MWMechanics
         InvalidDisplayedHitChance,
         InvalidActionPointState,
         InsufficientActionPoints,
+        InsufficientAmmunition,
         QueueLimitReached,
     };
 
@@ -94,6 +96,9 @@ namespace MWMechanics
         std::uint8_t mDisplayedHitChance = 0;
         float mActionPointCost = 0.f;
         float mDamageMultiplier = 1.f;
+        std::string mBodyPartName;
+        std::string mTargetNode;
+        std::int8_t mActorValue = -1;
     };
 
     enum class FalloutVatsBodyPartFailure
@@ -134,6 +139,9 @@ namespace MWMechanics
         std::uint8_t mSelectedBodyPart = 0;
         unsigned int mDisplayedHitChance = 0;
         float mSelectedDamageMultiplier = 1.f;
+        std::string mSelectedBodyPartName;
+        std::string mSelectedTargetNode;
+        std::int8_t mSelectedActorValue = -1;
         std::vector<FalloutVatsQueuedAction> mQueue;
         std::size_t mExecutionIndex = 0;
 
@@ -143,7 +151,7 @@ namespace MWMechanics
         [[nodiscard]] bool select(ESM::FormId target, const FalloutVatsBodyPartContract& bodyPart,
             unsigned int displayedHitChance) noexcept;
         [[nodiscard]] bool queueSelected(
-            const FalloutVatsWeaponContract& weapon, FalloutVatsQueueFailure& failure);
+            const FalloutVatsWeaponContract& weapon, std::size_t availableShots, FalloutVatsQueueFailure& failure);
         [[nodiscard]] std::optional<float> beginExecution() noexcept;
         [[nodiscard]] const FalloutVatsQueuedAction* getExecutingAction() const noexcept;
         [[nodiscard]] bool advanceExecution() noexcept;
@@ -256,10 +264,14 @@ namespace MWMechanics
     [[nodiscard]] std::optional<FalloutVatsQueuedAction> queueFalloutVatsAction(
         std::span<const FalloutVatsQueuedAction> queued, ESM::FormId target, std::uint8_t bodyPart,
         unsigned int displayedHitChance, float bodyPartDamageMultiplier, float currentActionPoints,
-        const FalloutVatsWeaponContract& weapon, FalloutVatsQueueFailure& failure);
+        std::size_t availableShots, const FalloutVatsWeaponContract& weapon, FalloutVatsQueueFailure& failure);
 
     [[nodiscard]] float getFalloutVatsReservedActionPoints(
         std::span<const FalloutVatsQueuedAction> queued) noexcept;
+
+    /// Resolve the displayed VATS percentage against a caller-supplied [0, 1) PRNG sample. Keeping this decision
+    /// independent from weapon delivery makes misses consume the same ammo/AP and use the same authored fire path.
+    [[nodiscard]] bool doesFalloutVatsAttackHit(std::uint8_t displayedHitChance, float roll) noexcept;
 
     [[nodiscard]] std::optional<FalloutVatsBodyPartContract> buildFalloutVatsBodyPartContract(
         const ESM4::BodyPartData::BodyPart& bodyPart, std::uint8_t index, FalloutVatsBodyPartFailure& failure);

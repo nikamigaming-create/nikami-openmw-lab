@@ -2306,12 +2306,29 @@ namespace MWMechanics
     }
 
     bool CharacterController::executeFalloutVatsRangedHit(
-        const MWWorld::Ptr& target, const osg::Vec3f& targetPoint, float damageMultiplier)
+        const MWWorld::Ptr& target, const osg::Vec3f& targetPoint, float damageMultiplier, bool targetHit)
     {
         if (target.isEmpty() || !target.getClass().isActor() || !std::isfinite(damageMultiplier)
             || damageMultiplier <= 0.f)
             return false;
-        return fireFalloutWeapon(target, targetPoint, damageMultiplier);
+
+        osg::Vec3f aimPoint = targetPoint;
+        if (!targetHit)
+        {
+            const osg::Vec3f origin
+                = MWBase::Environment::get().getWorld()->getActorHeadTransform(mPtr).getTrans();
+            osg::Vec3f forward = targetPoint - origin;
+            const float distance = forward.normalize();
+            if (distance == 0.f)
+                return false;
+            const osg::Vec3f reference
+                = std::abs(forward.z()) < 0.9f ? osg::Vec3f(0.f, 0.f, 1.f) : osg::Vec3f(1.f, 0.f, 0.f);
+            osg::Vec3f perpendicular = forward ^ reference;
+            if (perpendicular.normalize() == 0.f)
+                return false;
+            aimPoint += perpendicular * std::max(96.f, distance * 0.2f);
+        }
+        return fireFalloutWeapon(target, aimPoint, damageMultiplier);
     }
 
     bool CharacterController::strikeFalloutMelee(std::uint8_t animationType)

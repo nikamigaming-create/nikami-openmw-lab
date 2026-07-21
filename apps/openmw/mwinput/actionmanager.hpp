@@ -6,6 +6,7 @@
 
 #include <optional>
 #include <string>
+#include <vector>
 
 #include "../mwmechanics/falloutcombat.hpp"
 #include "../mwworld/ptr.hpp"
@@ -55,6 +56,9 @@ namespace MWInput
         void handleGuiArrowKey(int action);
         bool isFalloutContent() const;
         void toggleFalloutVats();
+        bool selectFalloutVatsBodyPart(std::size_t index);
+        void cycleFalloutVatsBodyPart(int direction);
+        std::size_t getFalloutVatsAvailableShots() const;
         void queueFalloutVatsAttack();
         void executeFalloutVatsQueue();
         void updateFalloutVatsHud();
@@ -67,8 +71,11 @@ namespace MWInput
         MWMechanics::FalloutVatsRuntime mFalloutVats;
         std::optional<MWMechanics::FalloutVatsWeaponContract> mFalloutVatsWeapon;
         MWWorld::Ptr mFalloutVatsTarget;
+        std::vector<MWMechanics::FalloutVatsBodyPartContract> mFalloutVatsBodyParts;
+        std::size_t mFalloutVatsBodyPartIndex = 0;
         std::string mFalloutVatsTargetName;
         std::string mFalloutVatsBodyPartName;
+        std::string mFalloutVatsBodyPartTargetNode;
         unsigned int mFalloutVatsHitChance = 0;
         float mFalloutVatsCaptureTimer = 0.f;
         unsigned int mFalloutVatsCaptureFrames = 0;

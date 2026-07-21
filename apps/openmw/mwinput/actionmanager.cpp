@@ -14,6 +14,7 @@
 
 #include <components/settings/values.hpp>
 #include <components/debug/debuglog.hpp>
+#include <components/misc/rng.hpp>
 //## VR_PATCH BEGIN
 #include <components/vr/vr.hpp>
 //## VR_PATCH END
@@ -34,7 +35,9 @@
 #include "../mwworld/player.hpp"
 
 #include <components/esm4/loadbptd.hpp>
+#include <components/esm4/loadammo.hpp>
 #include <components/esm4/loadcrea.hpp>
+#include <components/esm4/loadflst.hpp>
 #include <components/esm4/loadnpc.hpp>
 #include <components/esm4/loadrace.hpp>
 #include <components/esm4/loadweap.hpp>
@@ -204,9 +207,15 @@ namespace MWInput
                 break;
             case A_MoveLeft:
             case A_MoveRight:
+                if (mFalloutVats.getPhase() != MWMechanics::FalloutVatsPhase::Targeting)
+                    handleGuiArrowKey(action);
+                break;
             case A_MoveForward:
             case A_MoveBackward:
-                handleGuiArrowKey(action);
+                if (mFalloutVats.getPhase() == MWMechanics::FalloutVatsPhase::Targeting)
+                    cycleFalloutVatsBodyPart(action == A_MoveForward ? -1 : 1);
+                else
+                    handleGuiArrowKey(action);
                 break;
             case A_Rest:
                 rest();
@@ -305,6 +314,12 @@ namespace MWInput
             }
             mFalloutVats.cancel();
             mFalloutVatsTarget = {};
+            mFalloutVatsBodyParts.clear();
+            mFalloutVatsBodyPartIndex = 0;
+            mFalloutVatsTargetName.clear();
+            mFalloutVatsBodyPartName.clear();
+            mFalloutVatsBodyPartTargetNode.clear();
+            mFalloutVatsHitChance = 0;
             updateFalloutVatsHud();
             return;
         }
@@ -454,19 +469,20 @@ namespace MWInput
             return;
         }
 
-        std::optional<MWMechanics::FalloutVatsBodyPartContract> selectedBodyPart;
+        mFalloutVatsBodyParts.clear();
+        std::size_t selectedBodyPartIndex = 0;
         for (std::size_t index = 0; index < targetBodyData->mBodyParts.size() && index <= 14; ++index)
         {
             MWMechanics::FalloutVatsBodyPartFailure bodyFailure;
             auto candidate = MWMechanics::buildFalloutVatsBodyPartContract(
                 targetBodyData->mBodyParts[index], static_cast<std::uint8_t>(index), bodyFailure);
-            if (candidate && (candidate->mName == "Torso" || !selectedBodyPart))
-                selectedBodyPart = candidate;
-            if (selectedBodyPart && selectedBodyPart->mName == "Torso")
-                break;
+            if (!candidate)
+                continue;
+            if (candidate->mName == "Torso")
+                selectedBodyPartIndex = mFalloutVatsBodyParts.size();
+            mFalloutVatsBodyParts.push_back(*candidate);
         }
-        const ESM::FormId targetId = target.getCellRef().getRefNum();
-        if (!selectedBodyPart)
+        if (mFalloutVatsBodyParts.empty())
         {
             mFalloutVats.cancel();
             Log(Debug::Warning) << "FNV VATS: authored limbs incomplete target="
@@ -474,25 +490,52 @@ namespace MWInput
             MWBase::Environment::get().getWindowManager()->messageBox("Target V.A.T.S. limbs are incomplete");
             return;
         }
-        const unsigned int hitChance = selectedBodyPart->mAbsoluteHitChance
-            ? selectedBodyPart->mBaseHitChance
-            : std::min(100u, static_cast<unsigned int>(selectedBodyPart->mBaseHitChance)
-                    + static_cast<unsigned int>(mFalloutVatsWeapon->mBaseHitChance));
-        if (!mFalloutVats.select(targetId, *selectedBodyPart, hitChance))
-        {
-            mFalloutVats.cancel();
-            return;
-        }
         mFalloutVatsTarget = target;
         mFalloutVatsTargetName = std::string(target.getClass().getName(target));
-        mFalloutVatsBodyPartName = std::string(selectedBodyPart->mName);
+        if (!selectFalloutVatsBodyPart(selectedBodyPartIndex))
+            toggleFalloutVats();
+    }
+
+    bool ActionManager::selectFalloutVatsBodyPart(std::size_t index)
+    {
+        if (mFalloutVats.getPhase() != MWMechanics::FalloutVatsPhase::Targeting
+            || mFalloutVatsTarget.isEmpty() || !mFalloutVatsWeapon || index >= mFalloutVatsBodyParts.size())
+            return false;
+
+        const MWMechanics::FalloutVatsBodyPartContract& bodyPart = mFalloutVatsBodyParts[index];
+        const unsigned int hitChance = bodyPart.mAbsoluteHitChance
+            ? bodyPart.mBaseHitChance
+            : std::min(100u, static_cast<unsigned int>(bodyPart.mBaseHitChance)
+                    + static_cast<unsigned int>(mFalloutVatsWeapon->mBaseHitChance));
+        if (!mFalloutVats.select(mFalloutVatsTarget.getCellRef().getRefNum(), bodyPart, hitChance))
+            return false;
+
+        mFalloutVatsBodyPartIndex = index;
+        mFalloutVatsBodyPartName = std::string(bodyPart.mName);
+        mFalloutVatsBodyPartTargetNode = std::string(bodyPart.mTargetNode);
         mFalloutVatsHitChance = hitChance;
-        if (MWRender::Animation* animation = world->getAnimation(target))
-            animation->setFalloutVatsWireframe({}, true);
+        if (MWRender::Animation* animation
+            = MWBase::Environment::get().getWorld()->getAnimation(mFalloutVatsTarget))
+            animation->setFalloutVatsWireframe(mFalloutVatsBodyPartTargetNode, true);
         Log(Debug::Info) << "FNV VATS: selected target=" << mFalloutVatsTargetName
-                         << " bodyPart=" << mFalloutVatsBodyPartName << " hitChance=" << mFalloutVatsHitChance
-                         << " actionPoints=" << ap->mValue;
+                         << " bodyPart=" << mFalloutVatsBodyPartName
+                         << " bodyPartIndex=" << static_cast<unsigned int>(bodyPart.mIndex)
+                         << " targetNode=" << mFalloutVatsBodyPartTargetNode
+                         << " hitChance=" << mFalloutVatsHitChance
+                         << " actionPoints=" << mFalloutVats.getActionPointsBefore();
         updateFalloutVatsHud();
+        return true;
+    }
+
+    void ActionManager::cycleFalloutVatsBodyPart(int direction)
+    {
+        if (mFalloutVatsBodyParts.empty() || direction == 0)
+            return;
+        const std::size_t count = mFalloutVatsBodyParts.size();
+        const std::size_t next = direction > 0
+            ? (mFalloutVatsBodyPartIndex + 1) % count
+            : (mFalloutVatsBodyPartIndex + count - 1) % count;
+        selectFalloutVatsBodyPart(next);
     }
 
     void ActionManager::queueFalloutVatsAttack()
@@ -500,27 +543,114 @@ namespace MWInput
         if (!mFalloutVatsWeapon)
             return;
         MWMechanics::FalloutVatsQueueFailure failure;
-        if (!mFalloutVats.queueSelected(*mFalloutVatsWeapon, failure))
+        if (!mFalloutVats.queueSelected(*mFalloutVatsWeapon, getFalloutVatsAvailableShots(), failure))
             MWBase::Environment::get().getWindowManager()->messageBox(
                 std::string("V.A.T.S. queue failed: ") + std::string(MWMechanics::getFalloutVatsQueueFailureName(failure)));
         updateFalloutVatsHud();
     }
 
+    std::size_t ActionManager::getFalloutVatsAvailableShots() const
+    {
+        const MWWorld::Ptr player = MWBase::Environment::get().getWorld()->getPlayerPtr();
+        const MWWorld::InventoryStore& inventory = player.getClass().getInventoryStore(player);
+        const MWWorld::ConstContainerStoreIterator weapon
+            = inventory.getSlot(MWWorld::InventoryStore::Slot_CarriedRight);
+        if (weapon == inventory.end() || weapon->getType() != ESM4::Weapon::sRecordId)
+            return 0;
+
+        const ESM4::Weapon& base = *weapon->get<ESM4::Weapon>()->mBase;
+        if (MWMechanics::isFalloutThrownWeapon(base))
+            return static_cast<std::size_t>(std::max(0,
+                inventory.count(ESM::RefId::formIdRefId(base.mId))));
+        if (base.mData.ammoUse == 0)
+            return 0;
+
+        const auto& store = MWBase::Environment::get().getWorld()->getStore();
+        std::vector<ESM::FormId> candidates;
+        if (store.get<ESM4::Ammunition>().search(base.mAmmo) != nullptr)
+            candidates.push_back(base.mAmmo);
+        else if (const ESM4::FormIdList* list = store.get<ESM4::FormIdList>().search(base.mAmmo))
+            candidates = list->mObjects;
+        else
+            return 0;
+
+        std::size_t rounds = 0;
+        std::vector<ESM::FormId> counted;
+        for (ESM::FormId candidate : candidates)
+        {
+            if (candidate.isZeroOrUnset()
+                || store.get<ESM4::Ammunition>().search(candidate) == nullptr
+                || std::ranges::find(counted, candidate) != counted.end())
+                continue;
+            counted.push_back(candidate);
+            rounds += static_cast<std::size_t>(std::max(0,
+                inventory.count(ESM::RefId::formIdRefId(candidate))));
+        }
+        return rounds / base.mData.ammoUse;
+    }
+
     void ActionManager::executeFalloutVatsQueue()
     {
-        const std::optional<float> apAfter = mFalloutVats.beginExecution();
-        if (!apAfter || mFalloutVatsTarget.isEmpty())
+        const std::size_t queuedActions = mFalloutVats.getQueue().size();
+        const float apBefore = mFalloutVats.getActionPointsBefore();
+        const std::optional<float> plannedApAfter = mFalloutVats.beginExecution();
+        if (!plannedApAfter || mFalloutVatsTarget.isEmpty())
             return;
-        MWBase::Environment::get().getWorld()->getFalloutPlayerRuntimeState().setCurrentActorValue(
-            MWWorld::FalloutPlayerRuntimeState::ActionPointsActorValue, *apAfter);
+        MWBase::World* world = MWBase::Environment::get().getWorld();
+        const float healthBefore
+            = mFalloutVatsTarget.getClass().getCreatureStats(mFalloutVatsTarget).getHealth().getCurrent();
         updateFalloutVatsHud();
+        std::size_t shotsAttempted = 0;
+        std::size_t shotsFired = 0;
+        std::size_t rolledHits = 0;
+        float apSpent = 0.f;
         while (const MWMechanics::FalloutVatsQueuedAction* action = mFalloutVats.getExecutingAction())
         {
-            MWBase::Environment::get().getMechanicsManager()->executeFalloutVatsRangedHit(
-                MWBase::Environment::get().getWorld()->getPlayerPtr(), mFalloutVatsTarget,
-                mFalloutVatsTarget.getRefData().getPosition().asVec3(), action->mDamageMultiplier);
+            const MWMechanics::FalloutVatsQueuedAction executing = *action;
+            ++shotsAttempted;
+            osg::Vec3f targetPoint = world->getActorHeadTransform(mFalloutVatsTarget).getTrans();
+            if (MWRender::Animation* animation = world->getAnimation(mFalloutVatsTarget))
+            {
+                if (const osg::Node* targetNode = animation->getNode(executing.mTargetNode))
+                {
+                    const osg::NodePathList paths = targetNode->getParentalNodePaths();
+                    if (!paths.empty())
+                        targetPoint = osg::computeLocalToWorld(paths.front()).getTrans();
+                }
+            }
+            const float hitRoll = Misc::Rng::rollProbability(world->getPrng());
+            const bool rolledHit
+                = MWMechanics::doesFalloutVatsAttackHit(executing.mDisplayedHitChance, hitRoll);
+            const bool fired = MWBase::Environment::get().getMechanicsManager()->executeFalloutVatsRangedHit(
+                world->getPlayerPtr(), mFalloutVatsTarget, targetPoint, executing.mDamageMultiplier, rolledHit);
+            Log(Debug::Info) << "FNV VATS action: target=" << mFalloutVatsTargetName
+                             << " bodyPart=" << executing.mBodyPartName
+                             << " targetNode=" << executing.mTargetNode
+                             << " displayedHitChance=" << static_cast<unsigned int>(executing.mDisplayedHitChance)
+                             << " roll=" << hitRoll << " rolledHit=" << rolledHit << " fired=" << fired;
+            if (!fired)
+                break;
+            ++shotsFired;
+            if (rolledHit)
+                ++rolledHits;
+            apSpent += executing.mActionPointCost;
             mFalloutVats.advanceExecution();
         }
+        if (mFalloutVats.getPhase() == MWMechanics::FalloutVatsPhase::Executing)
+            mFalloutVats.cancel();
+        const float apAfter = std::max(0.f, apBefore - apSpent);
+        world->getFalloutPlayerRuntimeState().setCurrentActorValue(
+            MWWorld::FalloutPlayerRuntimeState::ActionPointsActorValue, apAfter);
+        const float healthAfter
+            = mFalloutVatsTarget.getClass().getCreatureStats(mFalloutVatsTarget).getHealth().getCurrent();
+        Log(Debug::Info) << "FNV VATS execution: target=" << mFalloutVatsTargetName
+                         << " bodyPart=" << mFalloutVatsBodyPartName << " queued=" << queuedActions
+                         << " targetNode=" << mFalloutVatsBodyPartTargetNode
+                         << " shotsAttempted=" << shotsAttempted << " shotsFired=" << shotsFired
+                         << " rolledHits=" << rolledHits << " apBefore=" << apBefore
+                         << " plannedApAfter=" << *plannedApAfter << " apAfter=" << apAfter
+                         << " healthBefore=" << healthBefore << " healthAfter=" << healthAfter
+                         << " damage=" << (healthBefore - healthAfter);
         if (MWRender::Animation* animation
             = MWBase::Environment::get().getWorld()->getAnimation(mFalloutVatsTarget))
             animation->setFalloutVatsWireframe({}, false);
