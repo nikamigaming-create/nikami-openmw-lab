@@ -392,6 +392,9 @@ namespace
         EXPECT_TRUE(runtime.advanceExecution());
         ASSERT_NE(runtime.getExecutingAction(), nullptr);
         EXPECT_TRUE(runtime.advanceExecution());
+        EXPECT_TRUE(runtime.isExecutionComplete());
+        EXPECT_EQ(runtime.getPhase(), MWMechanics::FalloutVatsPhase::Executing);
+        EXPECT_TRUE(runtime.finishExecution());
         EXPECT_EQ(runtime.getPhase(), MWMechanics::FalloutVatsPhase::Inactive);
         EXPECT_TRUE(runtime.getQueue().empty());
     }

@@ -2312,6 +2312,14 @@ namespace MWMechanics
             || damageMultiplier <= 0.f)
             return false;
 
+        MWRender::Animation::AnimPriority priority(Priority_Weapon);
+        priority[MWRender::BoneGroup_LowerBody] = Priority_WeaponLowerBody;
+        const bool visualAction
+            = playFalloutWeaponAction(mWeaponType, MWRender::FonvWeaponAction::PrimaryAttack, priority);
+        if (visualAction)
+            mUpperBodyState = UpperBodyState::AttackEnd;
+        MWBase::Environment::get().getWorld()->breakInvisibility(mPtr);
+
         osg::Vec3f aimPoint = targetPoint;
         if (!targetHit)
         {
@@ -2328,7 +2336,12 @@ namespace MWMechanics
                 return false;
             aimPoint += perpendicular * std::max(96.f, distance * 0.2f);
         }
-        return fireFalloutWeapon(target, aimPoint, damageMultiplier);
+        const bool fired = fireFalloutWeapon(target, aimPoint, damageMultiplier);
+        Log(fired ? Debug::Info : Debug::Error)
+            << "FNV VATS weapon action: actor=" << mPtr.toString()
+            << " target=" << target.toString() << " visualAction=" << visualAction
+            << " targetHit=" << targetHit << " fired=" << fired;
+        return fired;
     }
 
     bool CharacterController::strikeFalloutMelee(std::uint8_t animationType)

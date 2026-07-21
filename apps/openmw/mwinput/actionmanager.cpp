@@ -79,6 +79,9 @@ namespace MWInput
         else
             mTimeIdle += dt;
 
+        if (mFalloutVats.getPhase() == MWMechanics::FalloutVatsPhase::Executing)
+            updateFalloutVatsExecution(dt);
+
         if (std::getenv("OPENMW_FNV_VATS_CAPTURE") != nullptr && !mFalloutVatsCaptureQueued
             && isFalloutContent())
         {
@@ -198,7 +201,7 @@ namespace MWInput
                 inputManager->resetIdleTime();
                 if (mFalloutVats.getPhase() == MWMechanics::FalloutVatsPhase::Targeting)
                     executeFalloutVatsQueue();
-                else if (!VR::getVR())
+                else if (mFalloutVats.getPhase() == MWMechanics::FalloutVatsPhase::Inactive && !VR::getVR())
                     activate();
                 break;
             case A_Use:
@@ -209,14 +212,14 @@ namespace MWInput
             case A_MoveRight:
                 if (mFalloutVats.getPhase() == MWMechanics::FalloutVatsPhase::Targeting)
                     cycleFalloutVatsTarget(action == A_MoveLeft ? -1 : 1);
-                else
+                else if (mFalloutVats.getPhase() == MWMechanics::FalloutVatsPhase::Inactive)
                     handleGuiArrowKey(action);
                 break;
             case A_MoveForward:
             case A_MoveBackward:
                 if (mFalloutVats.getPhase() == MWMechanics::FalloutVatsPhase::Targeting)
                     cycleFalloutVatsBodyPart(action == A_MoveForward ? -1 : 1);
-                else
+                else if (mFalloutVats.getPhase() == MWMechanics::FalloutVatsPhase::Inactive)
                     handleGuiArrowKey(action);
                 break;
             case A_Rest:
@@ -308,6 +311,11 @@ namespace MWInput
     {
         if (mFalloutVats.getPhase() != MWMechanics::FalloutVatsPhase::Inactive)
         {
+            if (mFalloutVats.getPhase() == MWMechanics::FalloutVatsPhase::Executing)
+            {
+                finishFalloutVatsExecution(true);
+                return;
+            }
             mFalloutVats.cancel();
             restoreFalloutVatsView();
             updateFalloutVatsHud();
@@ -610,6 +618,15 @@ namespace MWInput
         mFalloutVatsPreviousCameraMode = -1;
         mFalloutVatsPreviousCameraDistance = 0.f;
         mFalloutVatsPreviousSimulationScale = 1.f;
+        mFalloutVatsExecutionTimer = 0.f;
+        mFalloutVatsExecutionApBefore = 0.f;
+        mFalloutVatsExecutionPlannedApAfter = 0.f;
+        mFalloutVatsExecutionApSpent = 0.f;
+        mFalloutVatsExecutionDamage = 0.f;
+        mFalloutVatsExecutionQueued = 0;
+        mFalloutVatsExecutionShotsAttempted = 0;
+        mFalloutVatsExecutionShotsFired = 0;
+        mFalloutVatsExecutionRolledHits = 0;
     }
 
     void ActionManager::queueFalloutVatsAttack()
@@ -665,84 +682,151 @@ namespace MWInput
 
     void ActionManager::executeFalloutVatsQueue()
     {
-        const std::size_t queuedActions = mFalloutVats.getQueue().size();
-        const float apBefore = mFalloutVats.getActionPointsBefore();
         const std::optional<float> plannedApAfter = mFalloutVats.beginExecution();
         if (!plannedApAfter || mFalloutVatsTarget.isEmpty())
             return;
-        MWBase::World* world = MWBase::Environment::get().getWorld();
-        updateFalloutVatsHud();
-        std::size_t shotsAttempted = 0;
-        std::size_t shotsFired = 0;
-        std::size_t rolledHits = 0;
-        float apSpent = 0.f;
-        float totalDamage = 0.f;
-        while (const MWMechanics::FalloutVatsQueuedAction* action = mFalloutVats.getExecutingAction())
-        {
-            const MWMechanics::FalloutVatsQueuedAction executing = *action;
-            ++shotsAttempted;
-            MWWorld::Ptr executionTarget;
-            const auto target = std::ranges::find_if(mFalloutVatsTargets, [&](const MWWorld::Ptr& candidate) {
-                return !candidate.isEmpty() && candidate.getCellRef().getRefNum() == executing.mTarget;
-            });
-            if (target != mFalloutVatsTargets.end())
-                executionTarget = *target;
-            else
-                executionTarget = world->searchPtr(ESM::RefId(executing.mTarget), true, false);
-            if (executionTarget.isEmpty() || !executionTarget.getClass().isActor())
-            {
-                Log(Debug::Error) << "FNV VATS action: target=" << executing.mTarget
-                                  << " bodyPart=" << executing.mBodyPartName
-                                  << " result=target-unavailable fired=0";
-                break;
-            }
 
-            const float healthBefore
-                = executionTarget.getClass().getCreatureStats(executionTarget).getHealth().getCurrent();
-            osg::Vec3f targetPoint = world->getActorHeadTransform(executionTarget).getTrans();
-            if (MWRender::Animation* animation = world->getAnimation(executionTarget))
-            {
-                if (const osg::Node* targetNode = animation->getNode(executing.mTargetNode))
-                {
-                    const osg::NodePathList paths = targetNode->getParentalNodePaths();
-                    if (!paths.empty())
-                        targetPoint = osg::computeLocalToWorld(paths.front()).getTrans();
-                }
-            }
-            const float hitRoll = Misc::Rng::rollProbability(world->getPrng());
-            const bool rolledHit
-                = MWMechanics::doesFalloutVatsAttackHit(executing.mDisplayedHitChance, hitRoll);
-            const bool fired = MWBase::Environment::get().getMechanicsManager()->executeFalloutVatsRangedHit(
-                world->getPlayerPtr(), executionTarget, targetPoint, executing.mDamageMultiplier, rolledHit);
-            const float healthAfter
-                = executionTarget.getClass().getCreatureStats(executionTarget).getHealth().getCurrent();
-            totalDamage += std::max(0.f, healthBefore - healthAfter);
-            Log(Debug::Info) << "FNV VATS action: target=" << executionTarget.getClass().getName(executionTarget)
-                             << " bodyPart=" << executing.mBodyPartName
-                             << " targetNode=" << executing.mTargetNode
-                             << " displayedHitChance=" << static_cast<unsigned int>(executing.mDisplayedHitChance)
-                             << " roll=" << hitRoll << " rolledHit=" << rolledHit << " fired=" << fired
-                             << " healthBefore=" << healthBefore << " healthAfter=" << healthAfter
-                             << " damage=" << (healthBefore - healthAfter);
-            if (!fired)
-                break;
-            ++shotsFired;
-            if (rolledHit)
-                ++rolledHits;
-            apSpent += executing.mActionPointCost;
-            mFalloutVats.advanceExecution();
+        mFalloutVatsExecutionTimer = 0.f;
+        mFalloutVatsExecutionApBefore = mFalloutVats.getActionPointsBefore();
+        mFalloutVatsExecutionPlannedApAfter = *plannedApAfter;
+        mFalloutVatsExecutionApSpent = 0.f;
+        mFalloutVatsExecutionDamage = 0.f;
+        mFalloutVatsExecutionQueued = mFalloutVats.getQueue().size();
+        mFalloutVatsExecutionShotsAttempted = 0;
+        mFalloutVatsExecutionShotsFired = 0;
+        mFalloutVatsExecutionRolledHits = 0;
+        MWBase::Environment::get().getWorld()->getTimeManager()->setSimulationTimeScale(0.2f);
+        Log(Debug::Info) << "FNV VATS execution: phase=begin queued=" << mFalloutVatsExecutionQueued
+                         << " apBefore=" << mFalloutVatsExecutionApBefore
+                         << " plannedApAfter=" << mFalloutVatsExecutionPlannedApAfter;
+        updateFalloutVatsHud();
+    }
+
+    void ActionManager::updateFalloutVatsExecution(float dt)
+    {
+        if (mFalloutVats.getPhase() != MWMechanics::FalloutVatsPhase::Executing)
+            return;
+        if (std::isfinite(dt) && dt > 0.f)
+            mFalloutVatsExecutionTimer += dt;
+        updateFalloutVatsCamera();
+
+        if (mFalloutVats.getExecutingAction() != nullptr)
+        {
+            const float delay = mFalloutVatsExecutionShotsAttempted == 0 ? 0.35f : 0.65f;
+            if (mFalloutVatsExecutionTimer < delay)
+                return;
+            mFalloutVatsExecutionTimer = 0.f;
+            if (!executeNextFalloutVatsAction())
+                finishFalloutVatsExecution(true);
+            return;
         }
-        if (mFalloutVats.getPhase() == MWMechanics::FalloutVatsPhase::Executing)
-            mFalloutVats.cancel();
-        const float apAfter = std::max(0.f, apBefore - apSpent);
+
+        if (mFalloutVats.isExecutionComplete() && mFalloutVatsExecutionTimer >= 0.9f)
+            finishFalloutVatsExecution(false);
+    }
+
+    bool ActionManager::executeNextFalloutVatsAction()
+    {
+        const MWMechanics::FalloutVatsQueuedAction* queued = mFalloutVats.getExecutingAction();
+        if (queued == nullptr)
+            return false;
+        const MWMechanics::FalloutVatsQueuedAction executing = *queued;
+        ++mFalloutVatsExecutionShotsAttempted;
+
+        MWBase::World* world = MWBase::Environment::get().getWorld();
+        MWWorld::Ptr executionTarget;
+        const auto target = std::ranges::find_if(mFalloutVatsTargets, [&](const MWWorld::Ptr& candidate) {
+            return !candidate.isEmpty() && candidate.getCellRef().getRefNum() == executing.mTarget;
+        });
+        if (target != mFalloutVatsTargets.end())
+            executionTarget = *target;
+        else
+            executionTarget = world->searchPtr(ESM::RefId(executing.mTarget), true, false);
+        if (executionTarget.isEmpty() || !executionTarget.getClass().isActor())
+        {
+            Log(Debug::Error) << "FNV VATS action: target=" << executing.mTarget
+                              << " bodyPart=" << executing.mBodyPartName
+                              << " result=target-unavailable fired=0";
+            return false;
+        }
+
+        if (executionTarget != mFalloutVatsTarget)
+        {
+            if (!mFalloutVatsTarget.isEmpty())
+            {
+                if (MWRender::Animation* animation = world->getAnimation(mFalloutVatsTarget))
+                    animation->setFalloutVatsWireframe({}, false);
+            }
+            mFalloutVatsTarget = executionTarget;
+            mFalloutVatsTargetName = std::string(executionTarget.getClass().getName(executionTarget));
+        }
+        mFalloutVatsBodyPartName = executing.mBodyPartName;
+        mFalloutVatsBodyPartTargetNode = executing.mTargetNode;
+        mFalloutVatsHitChance = executing.mDisplayedHitChance;
+        if (MWRender::Animation* animation = world->getAnimation(executionTarget))
+            animation->setFalloutVatsWireframe(executing.mTargetNode, true);
+        updateFalloutVatsCamera();
+        updateFalloutVatsHud();
+
+        const float healthBefore
+            = executionTarget.getClass().getCreatureStats(executionTarget).getHealth().getCurrent();
+        osg::Vec3f targetPoint = world->getActorHeadTransform(executionTarget).getTrans();
+        if (MWRender::Animation* animation = world->getAnimation(executionTarget))
+        {
+            if (const osg::Node* targetNode = animation->getNode(executing.mTargetNode))
+            {
+                const osg::NodePathList paths = targetNode->getParentalNodePaths();
+                if (!paths.empty())
+                    targetPoint = osg::computeLocalToWorld(paths.front()).getTrans();
+            }
+        }
+        const float hitRoll = Misc::Rng::rollProbability(world->getPrng());
+        const bool rolledHit
+            = MWMechanics::doesFalloutVatsAttackHit(executing.mDisplayedHitChance, hitRoll);
+        const bool fired = MWBase::Environment::get().getMechanicsManager()->executeFalloutVatsRangedHit(
+            world->getPlayerPtr(), executionTarget, targetPoint, executing.mDamageMultiplier, rolledHit);
+        const float healthAfter
+            = executionTarget.getClass().getCreatureStats(executionTarget).getHealth().getCurrent();
+        mFalloutVatsExecutionDamage += std::max(0.f, healthBefore - healthAfter);
+        Log(Debug::Info) << "FNV VATS action: target=" << executionTarget.getClass().getName(executionTarget)
+                         << " bodyPart=" << executing.mBodyPartName
+                         << " targetNode=" << executing.mTargetNode
+                         << " displayedHitChance=" << static_cast<unsigned int>(executing.mDisplayedHitChance)
+                         << " roll=" << hitRoll << " rolledHit=" << rolledHit << " fired=" << fired
+                         << " healthBefore=" << healthBefore << " healthAfter=" << healthAfter
+                         << " damage=" << (healthBefore - healthAfter);
+        if (!fired)
+            return false;
+
+        ++mFalloutVatsExecutionShotsFired;
+        if (rolledHit)
+            ++mFalloutVatsExecutionRolledHits;
+        mFalloutVatsExecutionApSpent += executing.mActionPointCost;
+        const float apAfter = std::max(0.f, mFalloutVatsExecutionApBefore - mFalloutVatsExecutionApSpent);
         world->getFalloutPlayerRuntimeState().setCurrentActorValue(
             MWWorld::FalloutPlayerRuntimeState::ActionPointsActorValue, apAfter);
-        Log(Debug::Info) << "FNV VATS execution: queued=" << queuedActions
-                         << " shotsAttempted=" << shotsAttempted << " shotsFired=" << shotsFired
-                         << " rolledHits=" << rolledHits << " apBefore=" << apBefore
-                         << " plannedApAfter=" << *plannedApAfter << " apAfter=" << apAfter
-                         << " totalDamage=" << totalDamage;
-        mFalloutVats.cancel();
+        return mFalloutVats.advanceExecution();
+    }
+
+    void ActionManager::finishFalloutVatsExecution(bool interrupted)
+    {
+        const float apAfter
+            = std::max(0.f, mFalloutVatsExecutionApBefore - mFalloutVatsExecutionApSpent);
+        MWBase::Environment::get().getWorld()->getFalloutPlayerRuntimeState().setCurrentActorValue(
+            MWWorld::FalloutPlayerRuntimeState::ActionPointsActorValue, apAfter);
+        Log(interrupted ? Debug::Warning : Debug::Info)
+            << "FNV VATS execution: phase=end interrupted=" << interrupted
+            << " queued=" << mFalloutVatsExecutionQueued
+            << " shotsAttempted=" << mFalloutVatsExecutionShotsAttempted
+            << " shotsFired=" << mFalloutVatsExecutionShotsFired
+            << " rolledHits=" << mFalloutVatsExecutionRolledHits
+            << " apBefore=" << mFalloutVatsExecutionApBefore
+            << " plannedApAfter=" << mFalloutVatsExecutionPlannedApAfter
+            << " apAfter=" << apAfter << " totalDamage=" << mFalloutVatsExecutionDamage;
+        if (!interrupted && !mFalloutVats.finishExecution())
+            mFalloutVats.cancel();
+        else if (interrupted)
+            mFalloutVats.cancel();
         restoreFalloutVatsView();
         updateFalloutVatsHud();
     }

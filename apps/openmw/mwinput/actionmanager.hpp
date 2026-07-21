@@ -65,6 +65,9 @@ namespace MWInput
         std::size_t getFalloutVatsAvailableShots() const;
         void queueFalloutVatsAttack();
         void executeFalloutVatsQueue();
+        void updateFalloutVatsExecution(float dt);
+        bool executeNextFalloutVatsAction();
+        void finishFalloutVatsExecution(bool interrupted);
         void updateFalloutVatsHud();
 
         BindingsManager* mBindingsManager;
@@ -86,6 +89,15 @@ namespace MWInput
         int mFalloutVatsPreviousCameraMode = -1;
         float mFalloutVatsPreviousCameraDistance = 0.f;
         float mFalloutVatsPreviousSimulationScale = 1.f;
+        float mFalloutVatsExecutionTimer = 0.f;
+        float mFalloutVatsExecutionApBefore = 0.f;
+        float mFalloutVatsExecutionPlannedApAfter = 0.f;
+        float mFalloutVatsExecutionApSpent = 0.f;
+        float mFalloutVatsExecutionDamage = 0.f;
+        std::size_t mFalloutVatsExecutionQueued = 0;
+        std::size_t mFalloutVatsExecutionShotsAttempted = 0;
+        std::size_t mFalloutVatsExecutionShotsFired = 0;
+        std::size_t mFalloutVatsExecutionRolledHits = 0;
         float mFalloutVatsCaptureTimer = 0.f;
         unsigned int mFalloutVatsCaptureFrames = 0;
         unsigned int mFalloutVatsVideoCaptureCount = 0;

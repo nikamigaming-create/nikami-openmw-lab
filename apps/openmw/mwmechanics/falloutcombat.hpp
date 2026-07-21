@@ -155,6 +155,8 @@ namespace MWMechanics
         [[nodiscard]] std::optional<float> beginExecution() noexcept;
         [[nodiscard]] const FalloutVatsQueuedAction* getExecutingAction() const noexcept;
         [[nodiscard]] bool advanceExecution() noexcept;
+        [[nodiscard]] bool isExecutionComplete() const noexcept;
+        [[nodiscard]] bool finishExecution() noexcept;
 
         [[nodiscard]] FalloutVatsPhase getPhase() const noexcept { return mPhase; }
         [[nodiscard]] float getActionPointsBefore() const noexcept { return mActionPointsBefore; }

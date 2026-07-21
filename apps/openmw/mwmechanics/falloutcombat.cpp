@@ -344,8 +344,19 @@ namespace MWMechanics
         if (getExecutingAction() == nullptr)
             return false;
         ++mExecutionIndex;
-        if (mExecutionIndex == mQueue.size())
-            cancel();
+        return true;
+    }
+
+    bool FalloutVatsRuntime::isExecutionComplete() const noexcept
+    {
+        return mPhase == FalloutVatsPhase::Executing && mExecutionIndex >= mQueue.size();
+    }
+
+    bool FalloutVatsRuntime::finishExecution() noexcept
+    {
+        if (!isExecutionComplete())
+            return false;
+        cancel();
         return true;
     }
 
