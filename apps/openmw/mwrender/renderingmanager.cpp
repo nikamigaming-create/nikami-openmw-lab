@@ -2370,6 +2370,20 @@ namespace MWRender
         return mObjects->getAnimation(ptr);
     }
 
+    MWRender::Animation* RenderingManager::getFalloutWeaponAnimation(
+        const MWWorld::Ptr& ptr, bool firstPerson)
+    {
+        if (mPlayerAnimation && ptr == mPlayerAnimation->getPtr())
+        {
+            if (firstPerson)
+                return mFalloutPlayerFirstPersonAnimation.get();
+            if (mFalloutPlayerVisualAnimation)
+                return mFalloutPlayerVisualAnimation.get();
+        }
+
+        return firstPerson ? nullptr : getAnimation(ptr);
+    }
+
     PostProcessor* RenderingManager::getPostProcessor()
     {
         return mPostProcessor;

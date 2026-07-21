@@ -3204,6 +3204,12 @@ namespace MWWorld
         return mRendering->getAnimation(ptr);
     }
 
+    MWRender::Animation* World::getFalloutWeaponAnimation(
+        const MWWorld::Ptr& ptr, bool firstPerson)
+    {
+        return mRendering->getFalloutWeaponAnimation(ptr, firstPerson);
+    }
+
     void World::screenshot(osg::Image* image, int w, int h)
     {
         mRendering->screenshot(image, w, h);

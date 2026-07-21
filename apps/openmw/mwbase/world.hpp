@@ -477,6 +477,11 @@ namespace MWBase
         /// \todo Probably shouldn't be here
         virtual MWRender::Animation* getAnimation(const MWWorld::Ptr& ptr) = 0;
         virtual const MWRender::Animation* getAnimation(const MWWorld::ConstPtr& ptr) const = 0;
+        /// Return the authored Fallout weapon-action rig for an actor.  Native Fallout players use a visible
+        /// ESM4 proxy while the ordinary player animation remains a hidden compatibility/camera rig.
+        /// `firstPerson` returns the separate Camera1st rig when one exists; non-player actors have no such rig.
+        virtual MWRender::Animation* getFalloutWeaponAnimation(
+            const MWWorld::Ptr& ptr, bool firstPerson) = 0;
         virtual void reattachPlayerCamera() = 0;
 
         /// \todo this does not belong here

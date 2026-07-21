@@ -552,6 +552,8 @@ namespace MWWorld
         /// \todo Probably shouldn't be here
         MWRender::Animation* getAnimation(const MWWorld::Ptr& ptr) override;
         const MWRender::Animation* getAnimation(const MWWorld::ConstPtr& ptr) const override;
+        MWRender::Animation* getFalloutWeaponAnimation(
+            const MWWorld::Ptr& ptr, bool firstPerson) override;
         void reattachPlayerCamera() override;
 
         /// \todo this does not belong here

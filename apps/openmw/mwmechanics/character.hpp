@@ -143,6 +143,8 @@ namespace MWMechanics
         FalloutTriggerState mFalloutTriggerState;
         FalloutAttackDelivery mFalloutAttackDelivery;
         MWRender::Animation* mAnimation;
+        MWRender::Animation* mFalloutWeaponAnimation = nullptr;
+        bool mFalloutWeaponListenerAttached = false;
 
         struct AnimationQueueEntry
         {
@@ -266,6 +268,13 @@ namespace MWMechanics
 
         std::string_view getWeaponAnimation(int weaponType);
         std::string_view getWeaponShortGroup(int weaponType) const;
+        MWRender::Animation* getFalloutWeaponAnimation(bool firstPerson = false);
+        void attachFalloutWeaponTextKeys();
+        void detachFalloutWeaponTextKeys();
+        void disableFalloutWeaponGroup(std::string_view group);
+        void setFalloutWeaponGroup(std::string_view group, bool relativeDuration);
+        void showFalloutWeapons(bool show);
+        void setFalloutWeaponAiming(float pitchFactor, bool accurate);
         std::string_view getFalloutWeaponActionGroup(int weaponType, MWRender::FonvWeaponAction action);
         bool playFalloutWeaponAction(
             int weaponType, MWRender::FonvWeaponAction action, const MWRender::AnimPriority& priorityWeapon);

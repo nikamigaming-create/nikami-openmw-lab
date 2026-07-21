@@ -244,6 +244,7 @@ namespace MWRender
 
         Animation* getAnimation(const MWWorld::Ptr& ptr);
         const Animation* getAnimation(const MWWorld::ConstPtr& ptr) const;
+        Animation* getFalloutWeaponAnimation(const MWWorld::Ptr& ptr, bool firstPerson);
 
         PostProcessor* getPostProcessor();
 
