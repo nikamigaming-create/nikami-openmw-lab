@@ -215,7 +215,9 @@ namespace MWMechanics
         std::uint8_t mBodyPart = 0;
         std::uint8_t mDisplayedHitChance = 0;
         float mActionPointCost = 0.f;
-        float mDamageMultiplier = 1.f;
+        float mHealthDamageMultiplier = 1.f;
+        float mLimbDamageMultiplier = 1.f;
+        std::uint8_t mHealthPercent = 0;
         std::string mBodyPartName;
         std::string mTargetNode;
         std::int8_t mActorValue = -1;
@@ -238,7 +240,8 @@ namespace MWMechanics
         std::string_view mTargetNode;
         std::int8_t mActorValue = -1;
         std::uint8_t mBaseHitChance = 0;
-        float mDamageMultiplier = 1.f;
+        std::uint8_t mHealthPercent = 0;
+        float mHealthDamageMultiplier = 1.f;
         bool mAbsoluteHitChance = false;
     };
 
@@ -258,7 +261,8 @@ namespace MWMechanics
         ESM::FormId mSelectedTarget;
         std::uint8_t mSelectedBodyPart = 0;
         unsigned int mDisplayedHitChance = 0;
-        float mSelectedDamageMultiplier = 1.f;
+        std::uint8_t mSelectedHealthPercent = 0;
+        float mSelectedHealthDamageMultiplier = 1.f;
         std::string mSelectedBodyPartName;
         std::string mSelectedTargetNode;
         std::int8_t mSelectedActorValue = -1;
@@ -434,7 +438,8 @@ namespace MWMechanics
     /// retail-visible AP reservation atomically and preserves the selected target, limb and displayed percentage.
     [[nodiscard]] std::optional<FalloutVatsQueuedAction> queueFalloutVatsAction(
         std::span<const FalloutVatsQueuedAction> queued, ESM::FormId target, std::uint8_t bodyPart,
-        unsigned int displayedHitChance, float bodyPartDamageMultiplier, float currentActionPoints,
+        unsigned int displayedHitChance, float bodyPartDamageMultiplier, std::uint8_t bodyPartHealthPercent,
+        float currentActionPoints,
         std::size_t availableShots, const FalloutVatsWeaponContract& weapon, FalloutVatsQueueFailure& failure);
 
     [[nodiscard]] float getFalloutVatsReservedActionPoints(

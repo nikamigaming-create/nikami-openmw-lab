@@ -451,7 +451,8 @@ namespace MWMechanics
 
     std::optional<FalloutVatsQueuedAction> queueFalloutVatsAction(
         std::span<const FalloutVatsQueuedAction> queued, ESM::FormId target, std::uint8_t bodyPart,
-        unsigned int displayedHitChance, float bodyPartDamageMultiplier, float currentActionPoints,
+        unsigned int displayedHitChance, float bodyPartDamageMultiplier, std::uint8_t bodyPartHealthPercent,
+        float currentActionPoints,
         std::size_t availableShots, const FalloutVatsWeaponContract& weapon, FalloutVatsQueueFailure& failure)
     {
         failure = FalloutVatsQueueFailure::None;
@@ -482,7 +483,8 @@ namespace MWMechanics
         if (failure != FalloutVatsQueueFailure::None)
             return std::nullopt;
         return FalloutVatsQueuedAction{ target, bodyPart, static_cast<std::uint8_t>(displayedHitChance),
-            weapon.mActionPointCost, bodyPartDamageMultiplier * weapon.mLimbDamageMultiplier };
+            weapon.mActionPointCost, bodyPartDamageMultiplier, weapon.mLimbDamageMultiplier,
+            bodyPartHealthPercent };
     }
 
     std::optional<FalloutVatsBodyPartContract> buildFalloutVatsBodyPartContract(
@@ -502,8 +504,8 @@ namespace MWMechanics
         if (failure != FalloutVatsBodyPartFailure::None)
             return std::nullopt;
         return FalloutVatsBodyPartContract{ index, bodyPart.mPartName, bodyPart.mVATSTarget,
-            bodyPart.mData.actorValue, bodyPart.mData.toHitChance, bodyPart.mData.damageMult,
-            (bodyPart.mData.flags & 0x40) != 0 };
+            bodyPart.mData.actorValue, bodyPart.mData.toHitChance, bodyPart.mData.healthPercent,
+            bodyPart.mData.damageMult, (bodyPart.mData.flags & 0x40) != 0 };
     }
 
     bool FalloutVatsRuntime::enter(float currentActionPoints) noexcept
@@ -523,7 +525,8 @@ namespace MWMechanics
         mSelectedTarget = {};
         mSelectedBodyPart = 0;
         mDisplayedHitChance = 0;
-        mSelectedDamageMultiplier = 1.f;
+        mSelectedHealthPercent = 0;
+        mSelectedHealthDamageMultiplier = 1.f;
         mSelectedBodyPartName.clear();
         mSelectedTargetNode.clear();
         mSelectedActorValue = -1;
@@ -539,7 +542,8 @@ namespace MWMechanics
         mSelectedTarget = target;
         mSelectedBodyPart = bodyPart.mIndex;
         mDisplayedHitChance = displayedHitChance;
-        mSelectedDamageMultiplier = bodyPart.mDamageMultiplier;
+        mSelectedHealthPercent = bodyPart.mHealthPercent;
+        mSelectedHealthDamageMultiplier = bodyPart.mHealthDamageMultiplier;
         mSelectedBodyPartName = bodyPart.mName;
         mSelectedTargetNode = bodyPart.mTargetNode;
         mSelectedActorValue = bodyPart.mActorValue;
@@ -555,8 +559,8 @@ namespace MWMechanics
             return false;
         }
         const std::optional<FalloutVatsQueuedAction> action = queueFalloutVatsAction(mQueue, mSelectedTarget,
-            mSelectedBodyPart, mDisplayedHitChance, mSelectedDamageMultiplier, mActionPointsBefore,
-            availableShots, weapon, failure);
+            mSelectedBodyPart, mDisplayedHitChance, mSelectedHealthDamageMultiplier, mSelectedHealthPercent,
+            mActionPointsBefore, availableShots, weapon, failure);
         if (!action)
             return false;
         mQueue.push_back(*action);

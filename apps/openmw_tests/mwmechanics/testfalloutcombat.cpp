@@ -305,10 +305,10 @@ namespace
     TEST(FalloutCombatTest, QueuesObservedVatsTargetLimbChanceAndReservesActionPoints)
     {
         MWMechanics::FalloutVatsWeaponContract weapon{ 22.f, 42, 0.75f, 32 };
-        const MWMechanics::FalloutVatsQueuedAction first{ id(0x100), 0, 71, 22.f, 1.f };
+        const MWMechanics::FalloutVatsQueuedAction first{ id(0x100), 0, 71, 22.f, 1.f, 1.f, 60 };
         MWMechanics::FalloutVatsQueueFailure failure;
         const auto action = MWMechanics::queueFalloutVatsAction(
-            std::span(&first, 1), id(0x200), 1, 83, 2.f, 50.f, 2, weapon, failure);
+            std::span(&first, 1), id(0x200), 1, 83, 2.f, 20, 50.f, 2, weapon, failure);
 
         ASSERT_TRUE(action);
         EXPECT_EQ(failure, MWMechanics::FalloutVatsQueueFailure::None);
@@ -316,27 +316,29 @@ namespace
         EXPECT_EQ(action->mBodyPart, 1);
         EXPECT_EQ(action->mDisplayedHitChance, 83);
         EXPECT_FLOAT_EQ(action->mActionPointCost, 22.f);
-        EXPECT_FLOAT_EQ(action->mDamageMultiplier, 1.5f);
+        EXPECT_FLOAT_EQ(action->mHealthDamageMultiplier, 2.f);
+        EXPECT_FLOAT_EQ(action->mLimbDamageMultiplier, 0.75f);
+        EXPECT_EQ(action->mHealthPercent, 20);
         EXPECT_FLOAT_EQ(MWMechanics::getFalloutVatsReservedActionPoints(std::span(&first, 1)), 22.f);
     }
 
     TEST(FalloutCombatTest, RejectsVatsQueueWhenReservedActionPointsExceedCurrentValue)
     {
         MWMechanics::FalloutVatsWeaponContract weapon{ 22.f, 42, 1.f, 32 };
-        const MWMechanics::FalloutVatsQueuedAction first{ id(0x100), 0, 71, 22.f, 1.f };
+        const MWMechanics::FalloutVatsQueuedAction first{ id(0x100), 0, 71, 22.f, 1.f, 1.f, 60 };
         MWMechanics::FalloutVatsQueueFailure failure;
         EXPECT_FALSE(MWMechanics::queueFalloutVatsAction(
-            std::span(&first, 1), id(0x200), 1, 83, 1.f, 40.f, 2, weapon, failure));
+            std::span(&first, 1), id(0x200), 1, 83, 1.f, 20, 40.f, 2, weapon, failure));
         EXPECT_EQ(failure, MWMechanics::FalloutVatsQueueFailure::InsufficientActionPoints);
     }
 
     TEST(FalloutCombatTest, RejectsVatsQueueBeyondAvailableAuthoredAmmunition)
     {
         MWMechanics::FalloutVatsWeaponContract weapon{ 10.f, 42, 1.f, 32 };
-        const MWMechanics::FalloutVatsQueuedAction first{ id(0x100), 0, 71, 10.f, 1.f };
+        const MWMechanics::FalloutVatsQueuedAction first{ id(0x100), 0, 71, 10.f, 1.f, 1.f, 60 };
         MWMechanics::FalloutVatsQueueFailure failure;
         EXPECT_FALSE(MWMechanics::queueFalloutVatsAction(
-            std::span(&first, 1), id(0x200), 1, 83, 1.f, 80.f, 1, weapon, failure));
+            std::span(&first, 1), id(0x200), 1, 83, 1.f, 20, 80.f, 1, weapon, failure));
         EXPECT_EQ(failure, MWMechanics::FalloutVatsQueueFailure::InsufficientAmmunition);
     }
 
@@ -348,6 +350,7 @@ namespace
         bodyPart.mData.actorValue = 48;
         bodyPart.mData.toHitChance = 35;
         bodyPart.mData.damageMult = 2.f;
+        bodyPart.mData.healthPercent = 20;
         bodyPart.mData.flags = 0x40;
         MWMechanics::FalloutVatsBodyPartFailure failure;
         const auto contract = MWMechanics::buildFalloutVatsBodyPartContract(bodyPart, 1, failure);
@@ -359,7 +362,8 @@ namespace
         EXPECT_EQ(contract->mTargetNode, "Bip01 Head");
         EXPECT_EQ(contract->mActorValue, 48);
         EXPECT_EQ(contract->mBaseHitChance, 35);
-        EXPECT_FLOAT_EQ(contract->mDamageMultiplier, 2.f);
+        EXPECT_EQ(contract->mHealthPercent, 20);
+        EXPECT_FLOAT_EQ(contract->mHealthDamageMultiplier, 2.f);
         EXPECT_TRUE(contract->mAbsoluteHitChance);
     }
 
@@ -367,7 +371,7 @@ namespace
     {
         MWMechanics::FalloutVatsRuntime runtime;
         ASSERT_TRUE(runtime.enter(80.f));
-        const MWMechanics::FalloutVatsBodyPartContract head{ 1, "Head", "Bip01 Head", 48, 35, 2.f, false };
+        const MWMechanics::FalloutVatsBodyPartContract head{ 1, "Head", "Bip01 Head", 48, 35, 20, 2.f, false };
         ASSERT_TRUE(runtime.select(id(0x1234), head, 73));
 
         const MWMechanics::FalloutVatsWeaponContract weapon{ 22.f, 42, 0.75f, 32 };
@@ -384,7 +388,9 @@ namespace
         EXPECT_EQ(runtime.getExecutingAction()->mTarget, id(0x1234));
         EXPECT_EQ(runtime.getExecutingAction()->mBodyPart, 1);
         EXPECT_EQ(runtime.getExecutingAction()->mDisplayedHitChance, 73);
-        EXPECT_FLOAT_EQ(runtime.getExecutingAction()->mDamageMultiplier, 1.5f);
+        EXPECT_FLOAT_EQ(runtime.getExecutingAction()->mHealthDamageMultiplier, 2.f);
+        EXPECT_FLOAT_EQ(runtime.getExecutingAction()->mLimbDamageMultiplier, 0.75f);
+        EXPECT_EQ(runtime.getExecutingAction()->mHealthPercent, 20);
         EXPECT_EQ(runtime.getExecutingAction()->mBodyPartName, "Head");
         EXPECT_EQ(runtime.getExecutingAction()->mTargetNode, "Bip01 Head");
         EXPECT_EQ(runtime.getExecutingAction()->mActorValue, 48);

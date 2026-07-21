@@ -784,7 +784,7 @@ namespace MWInput
         const bool rolledHit
             = MWMechanics::doesFalloutVatsAttackHit(executing.mDisplayedHitChance, hitRoll);
         const bool fired = MWBase::Environment::get().getMechanicsManager()->executeFalloutVatsRangedHit(
-            world->getPlayerPtr(), executionTarget, targetPoint, executing.mDamageMultiplier, rolledHit);
+            world->getPlayerPtr(), executionTarget, targetPoint, executing.mHealthDamageMultiplier, rolledHit);
         const float healthAfter
             = executionTarget.getClass().getCreatureStats(executionTarget).getHealth().getCurrent();
         mFalloutVatsExecutionDamage += std::max(0.f, healthBefore - healthAfter);
@@ -792,6 +792,10 @@ namespace MWInput
                          << " bodyPart=" << executing.mBodyPartName
                          << " targetNode=" << executing.mTargetNode
                          << " displayedHitChance=" << static_cast<unsigned int>(executing.mDisplayedHitChance)
+                         << " healthDamageMultiplier=" << executing.mHealthDamageMultiplier
+                         << " limbDamageMultiplier=" << executing.mLimbDamageMultiplier
+                         << " healthPercent=" << static_cast<unsigned int>(executing.mHealthPercent)
+                         << " actorValue=" << static_cast<int>(executing.mActorValue)
                          << " roll=" << hitRoll << " rolledHit=" << rolledHit << " fired=" << fired
                          << " healthBefore=" << healthBefore << " healthAfter=" << healthAfter
                          << " damage=" << (healthBefore - healthAfter);
