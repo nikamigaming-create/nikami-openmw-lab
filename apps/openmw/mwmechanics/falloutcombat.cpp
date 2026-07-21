@@ -361,6 +361,63 @@ namespace MWMechanics
         return result;
     }
 
+    std::optional<FalloutProjectileTrigger> buildFalloutProjectileTrigger(
+        const ESM4::Projectile& projectile, float projectileSkill, float minesDelayMin,
+        float exteriorRadiusMultiplier, bool exterior, FalloutProjectileTriggerFailure& failure)
+    {
+        failure = FalloutProjectileTriggerFailure::None;
+        if (!projectile.mData.present)
+            failure = FalloutProjectileTriggerFailure::MissingData;
+        else if ((projectile.mData.flags & ESM4::Projectile::Explosion) == 0
+            || projectile.mData.explosion.isZeroOrUnset())
+            failure = FalloutProjectileTriggerFailure::MissingExplosion;
+        else if (!std::isfinite(projectileSkill) || projectileSkill < 0.f)
+            failure = FalloutProjectileTriggerFailure::InvalidSkill;
+        else if (!std::isfinite(minesDelayMin) || minesDelayMin < 0.f
+            || !std::isfinite(exteriorRadiusMultiplier) || exteriorRadiusMultiplier < 0.f)
+            failure = FalloutProjectileTriggerFailure::InvalidTuning;
+        else if (!std::isfinite(projectile.mData.alternateTimer)
+            || projectile.mData.alternateTimer < 0.f)
+            failure = FalloutProjectileTriggerFailure::InvalidTimer;
+        else if (!std::isfinite(projectile.mData.alternateProximity)
+            || projectile.mData.alternateProximity < 0.f)
+            failure = FalloutProjectileTriggerFailure::InvalidProximity;
+        if (failure != FalloutProjectileTriggerFailure::None)
+            return std::nullopt;
+
+        FalloutProjectileTrigger result;
+        if ((projectile.mData.flags & ESM4::Projectile::Detonates) != 0)
+            result.mMode = FalloutProjectileTriggerMode::Remote;
+        else if ((projectile.mData.flags & ESM4::Projectile::AlternateTrigger) == 0)
+            result.mMode = FalloutProjectileTriggerMode::Impact;
+        else if (projectile.mData.alternateProximity > 0.f)
+        {
+            result.mMode = FalloutProjectileTriggerMode::Proximity;
+            result.mDelay = minesDelayMin
+                + projectile.mData.alternateTimer * (std::min(projectileSkill, 100.f) / 100.f);
+            result.mProximityRadius = projectile.mData.alternateProximity
+                * (exterior ? exteriorRadiusMultiplier : 1.f);
+        }
+        else
+        {
+            result.mMode = FalloutProjectileTriggerMode::Timed;
+            result.mDelay = projectile.mData.alternateTimer;
+            if (result.mDelay <= 0.f)
+            {
+                failure = FalloutProjectileTriggerFailure::InvalidTimer;
+                return std::nullopt;
+            }
+        }
+
+        if (!std::isfinite(result.mDelay) || result.mDelay < 0.f
+            || !std::isfinite(result.mProximityRadius) || result.mProximityRadius < 0.f)
+        {
+            failure = FalloutProjectileTriggerFailure::InvalidResult;
+            return std::nullopt;
+        }
+        return result;
+    }
+
     std::optional<FalloutCriticalContract> buildFalloutCriticalContract(const ESM4::Weapon& weapon,
         float actorCriticalChance, bool vats, float vatsCriticalChanceBonus, FalloutCriticalFailure& failure)
     {
@@ -1072,6 +1129,30 @@ namespace MWMechanics
             case FalloutProjectileBounceFailure::InvalidBounciness:
                 return "invalid-bounciness";
             case FalloutProjectileBounceFailure::InvalidResult:
+                return "invalid-result";
+        }
+        return "unknown";
+    }
+
+    std::string_view getFalloutProjectileTriggerFailureName(FalloutProjectileTriggerFailure failure)
+    {
+        switch (failure)
+        {
+            case FalloutProjectileTriggerFailure::None:
+                return "none";
+            case FalloutProjectileTriggerFailure::MissingData:
+                return "missing-data";
+            case FalloutProjectileTriggerFailure::MissingExplosion:
+                return "missing-explosion";
+            case FalloutProjectileTriggerFailure::InvalidSkill:
+                return "invalid-skill";
+            case FalloutProjectileTriggerFailure::InvalidTuning:
+                return "invalid-tuning";
+            case FalloutProjectileTriggerFailure::InvalidTimer:
+                return "invalid-timer";
+            case FalloutProjectileTriggerFailure::InvalidProximity:
+                return "invalid-proximity";
+            case FalloutProjectileTriggerFailure::InvalidResult:
                 return "invalid-result";
         }
         return "unknown";

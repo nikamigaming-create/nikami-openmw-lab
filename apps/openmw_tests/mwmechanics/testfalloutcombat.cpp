@@ -817,6 +817,68 @@ namespace
         EXPECT_EQ(failure, MWMechanics::FalloutProjectileBounceFailure::InvalidBounciness);
     }
 
+    TEST(FalloutCombatTest, ResolvesRetailFragMineAndRemoteProjectileTriggers)
+    {
+        ESM4::Projectile projectile;
+        projectile.mData.present = true;
+        projectile.mData.explosion = id(0x179da);
+        projectile.mData.flags = ESM4::Projectile::Explosion | ESM4::Projectile::AlternateTrigger;
+        projectile.mData.alternateTimer = 2.5f;
+        MWMechanics::FalloutProjectileTriggerFailure failure;
+
+        const auto frag = MWMechanics::buildFalloutProjectileTrigger(
+            projectile, 50.f, 0.2f, 1.6f, true, failure);
+        ASSERT_TRUE(frag);
+        EXPECT_EQ(failure, MWMechanics::FalloutProjectileTriggerFailure::None);
+        EXPECT_EQ(frag->mMode, MWMechanics::FalloutProjectileTriggerMode::Timed);
+        EXPECT_FLOAT_EQ(frag->mDelay, 2.5f);
+        EXPECT_FLOAT_EQ(frag->mProximityRadius, 0.f);
+
+        projectile.mData.alternateTimer = 3.f;
+        projectile.mData.alternateProximity = 100.f;
+        const auto mine = MWMechanics::buildFalloutProjectileTrigger(
+            projectile, 50.f, 0.2f, 1.6f, true, failure);
+        ASSERT_TRUE(mine);
+        EXPECT_EQ(mine->mMode, MWMechanics::FalloutProjectileTriggerMode::Proximity);
+        EXPECT_FLOAT_EQ(mine->mDelay, 1.7f);
+        EXPECT_FLOAT_EQ(mine->mProximityRadius, 160.f);
+
+        projectile.mData.flags = ESM4::Projectile::Explosion | ESM4::Projectile::Detonates;
+        const auto remote = MWMechanics::buildFalloutProjectileTrigger(
+            projectile, 50.f, 0.2f, 1.6f, true, failure);
+        ASSERT_TRUE(remote);
+        EXPECT_EQ(remote->mMode, MWMechanics::FalloutProjectileTriggerMode::Remote);
+        EXPECT_FLOAT_EQ(remote->mDelay, 0.f);
+        EXPECT_FLOAT_EQ(remote->mProximityRadius, 0.f);
+
+        projectile.mData.flags = ESM4::Projectile::Explosion;
+        const auto impact = MWMechanics::buildFalloutProjectileTrigger(
+            projectile, 50.f, 0.2f, 1.6f, false, failure);
+        ASSERT_TRUE(impact);
+        EXPECT_EQ(impact->mMode, MWMechanics::FalloutProjectileTriggerMode::Impact);
+    }
+
+    TEST(FalloutCombatTest, RejectsMalformedProjectileTriggerData)
+    {
+        ESM4::Projectile projectile;
+        MWMechanics::FalloutProjectileTriggerFailure failure;
+        EXPECT_FALSE(MWMechanics::buildFalloutProjectileTrigger(
+            projectile, 50.f, 0.2f, 1.6f, false, failure));
+        EXPECT_EQ(failure, MWMechanics::FalloutProjectileTriggerFailure::MissingData);
+
+        projectile.mData.present = true;
+        projectile.mData.flags = ESM4::Projectile::Explosion | ESM4::Projectile::AlternateTrigger;
+        EXPECT_FALSE(MWMechanics::buildFalloutProjectileTrigger(
+            projectile, 50.f, 0.2f, 1.6f, false, failure));
+        EXPECT_EQ(failure, MWMechanics::FalloutProjectileTriggerFailure::MissingExplosion);
+
+        projectile.mData.explosion = id(0x179da);
+        projectile.mData.alternateTimer = -1.f;
+        EXPECT_FALSE(MWMechanics::buildFalloutProjectileTrigger(
+            projectile, 50.f, 0.2f, 1.6f, false, failure));
+        EXPECT_EQ(failure, MWMechanics::FalloutProjectileTriggerFailure::InvalidTimer);
+    }
+
     ESM4::Weapon retailCriticalWeapon(bool automatic = false)
     {
         ESM4::Weapon weapon;

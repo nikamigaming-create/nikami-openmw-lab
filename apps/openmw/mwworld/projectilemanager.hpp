@@ -150,6 +150,7 @@ namespace MWWorld
             bool mRotates = false;
             bool mSettled = false;
             bool mDetonate = false;
+            bool mArmed = false;
             MWMechanics::FalloutProjectileImpactContract mImpact;
         };
 

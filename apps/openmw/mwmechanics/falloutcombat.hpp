@@ -118,6 +118,33 @@ namespace MWMechanics
         InvalidResult,
     };
 
+    enum class FalloutProjectileTriggerFailure
+    {
+        None,
+        MissingData,
+        MissingExplosion,
+        InvalidSkill,
+        InvalidTuning,
+        InvalidTimer,
+        InvalidProximity,
+        InvalidResult,
+    };
+
+    enum class FalloutProjectileTriggerMode
+    {
+        Impact,
+        Timed,
+        Proximity,
+        Remote,
+    };
+
+    struct FalloutProjectileTrigger
+    {
+        FalloutProjectileTriggerMode mMode = FalloutProjectileTriggerMode::Impact;
+        float mDelay = 0.f;
+        float mProximityRadius = 0.f;
+    };
+
     enum class FalloutCriticalFailure
     {
         None,
@@ -412,6 +439,7 @@ namespace MWMechanics
         float mRawDamage = 0.f;
         float mLimbDamageMultiplier = 1.f;
         float mExplosionDamageMultiplier = 1.f;
+        float mProjectileSkill = 0.f;
         std::vector<ESM::FormId> mAmmoEffects;
         std::optional<FalloutVatsQueuedAction> mVatsAction;
         bool mVatsTargetHit = true;
@@ -482,6 +510,13 @@ namespace MWMechanics
     /// coefficient of restitution. Tangential velocity is preserved; friction remains the physics surface's job.
     [[nodiscard]] std::optional<osg::Vec3f> resolveFalloutProjectileBounce(const osg::Vec3f& velocity,
         const osg::Vec3f& collisionNormal, float bounciness, FalloutProjectileBounceFailure& failure);
+
+    /// Resolve the PROJ flag/timer/proximity state machine. FNV proximity mines use the winning
+    /// fMinesDelayMin plus their authored timer scaled by the placing actor's weapon skill. Exterior proximity uses
+    /// fMineExteriorRadiusMult. Detonates takes precedence and remains remote-only.
+    [[nodiscard]] std::optional<FalloutProjectileTrigger> buildFalloutProjectileTrigger(
+        const ESM4::Projectile& projectile, float projectileSkill, float minesDelayMin,
+        float exteriorRadiusMultiplier, bool exterior, FalloutProjectileTriggerFailure& failure);
 
     /// Resolve the weapon's native CRDT chance and damage before the target armor stage. New Vegas ignores weapon
     /// condition for critical chance. Automatic weapons divide their authored multiplier by fire rate, while VATS
@@ -587,6 +622,7 @@ namespace MWMechanics
     [[nodiscard]] std::string_view getFalloutRangedDamageFailureName(FalloutRangedDamageFailure failure);
     [[nodiscard]] std::string_view getFalloutExplosionDamageFailureName(FalloutExplosionDamageFailure failure);
     [[nodiscard]] std::string_view getFalloutProjectileBounceFailureName(FalloutProjectileBounceFailure failure);
+    [[nodiscard]] std::string_view getFalloutProjectileTriggerFailureName(FalloutProjectileTriggerFailure failure);
     [[nodiscard]] std::string_view getFalloutCriticalFailureName(FalloutCriticalFailure failure);
     [[nodiscard]] std::string_view getFalloutAmmoEffectFailureName(FalloutAmmoEffectFailure failure);
     [[nodiscard]] std::string_view getFalloutWeaponDegradationFailureName(

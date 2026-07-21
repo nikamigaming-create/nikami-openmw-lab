@@ -2753,6 +2753,7 @@ namespace MWMechanics
                 impact.mRawDamage = rawHitDamage;
                 impact.mLimbDamageMultiplier = weaponLimbDamageMultiplier;
                 impact.mExplosionDamageMultiplier = explosionDamageMultiplier;
+                impact.mProjectileSkill = *skill;
                 impact.mCritical = criticalHit;
                 impact.mAmmoEffects.reserve(ammoEffects.size());
                 for (const ESM4::AmmoEffect* effect : ammoEffects)
@@ -2907,6 +2908,7 @@ namespace MWMechanics
             explosionImpact.mWeapon = mFalloutWeapon->mId;
             explosionImpact.mExplosion = projectile->mData.explosion;
             explosionImpact.mExplosionDamageMultiplier = explosionDamageMultiplier;
+            explosionImpact.mProjectileSkill = *skill;
             explosionImpact.mAmmoEffects.reserve(ammoEffects.size());
             for (const ESM4::AmmoEffect* effect : ammoEffects)
                 explosionImpact.mAmmoEffects.push_back(effect->mId);

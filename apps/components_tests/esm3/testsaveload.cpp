@@ -284,11 +284,13 @@ namespace ESM
             record.mRawDamage = 37.5f;
             record.mLimbDamageMultiplier = 1.25f;
             record.mExplosionDamageMultiplier = 0.875f;
+            record.mProjectileSkill = 62.f;
             record.mAmmoEffects = { RefId::formIdRefId({ 0x70809, 0 }),
                 RefId::formIdRefId({ 0xa0b0c, 0 }) };
             record.mFlags = FalloutProjectileState::Rotates | FalloutProjectileState::Critical
                 | FalloutProjectileState::HasVatsAction | FalloutProjectileState::VatsTargetHit
-                | FalloutProjectileState::Settled | FalloutProjectileState::Detonate;
+                | FalloutProjectileState::Settled | FalloutProjectileState::Detonate
+                | FalloutProjectileState::Armed;
             record.mVats.mTarget = RefId::formIdRefId({ 0xd0e0f, 0 });
             record.mVats.mBodyPart = 3;
             record.mVats.mDisplayedHitChance = 78;
@@ -320,6 +322,7 @@ namespace ESM
             EXPECT_EQ(result.mRawDamage, 37.5f);
             EXPECT_EQ(result.mLimbDamageMultiplier, 1.25f);
             EXPECT_EQ(result.mExplosionDamageMultiplier, 0.875f);
+            EXPECT_EQ(result.mProjectileSkill, 62.f);
             EXPECT_EQ(result.mAmmoEffects, record.mAmmoEffects);
             EXPECT_EQ(result.mFlags, record.mFlags);
             EXPECT_EQ(result.mVats.mTarget, record.mVats.mTarget);

@@ -2,6 +2,7 @@
 
 #include <cmath>
 #include <iomanip>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <sstream>
@@ -12,6 +13,7 @@
 
 #include <components/esm3/esmwriter.hpp>
 #include <components/esm3/loadench.hpp>
+#include <components/esm3/loadgmst.hpp>
 #include <components/esm3/loadmgef.hpp>
 #include <components/esm3/loadrace.hpp>
 #include <components/esm3/projectilestate.hpp>
@@ -36,6 +38,7 @@
 #include <components/settings/values.hpp>
 
 #include "../mwworld/class.hpp"
+#include "../mwworld/cellstore.hpp"
 #include "../mwworld/esmstore.hpp"
 #include "../mwworld/inventorystore.hpp"
 #include "../mwworld/manualref.hpp"
@@ -410,7 +413,8 @@ namespace MWWorld
         if (hasExplosion != !impact.mExplosion.isZeroOrUnset()
             || (hasExplosion && impact.mExplosion != projectile->mData.explosion)
             || !std::isfinite(impact.mExplosionDamageMultiplier)
-            || impact.mExplosionDamageMultiplier < 0.f)
+            || impact.mExplosionDamageMultiplier < 0.f || !std::isfinite(impact.mProjectileSkill)
+            || impact.mProjectileSkill < 0.f)
             return false;
 
         FalloutProjectileState state;
@@ -429,6 +433,7 @@ namespace MWWorld
         state.mRotates = (projectile->mData.flags & ESM4::Projectile::Rotates) != 0;
         state.mSettled = false;
         state.mDetonate = false;
+        state.mArmed = false;
         state.mImpact = impact;
         state.mToDelete = false;
 
@@ -608,27 +613,101 @@ namespace MWWorld
 
     void ProjectileManager::moveFalloutProjectiles(float duration)
     {
+        const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
+        MWBase::MechanicsManager* mechanics = MWBase::Environment::get().getMechanicsManager();
+        MWBase::SoundManager* sound = MWBase::Environment::get().getSoundManager();
+        if (store == nullptr || mechanics == nullptr || sound == nullptr)
+            return;
+        const ESM::GameSetting* minesDelaySetting
+            = store->get<ESM::GameSetting>().search("fMinesDelayMin");
+        const ESM::GameSetting* exteriorRadiusSetting
+            = store->get<ESM::GameSetting>().search("fMineExteriorRadiusMult");
+        const float minesDelayMin = minesDelaySetting != nullptr
+            ? minesDelaySetting->mValue.getFloat()
+            : std::numeric_limits<float>::quiet_NaN();
+        const float exteriorRadiusMultiplier = exteriorRadiusSetting != nullptr
+            ? exteriorRadiusSetting->mValue.getFloat()
+            : std::numeric_limits<float>::quiet_NaN();
+
         for (FalloutProjectileState& state : mFalloutProjectiles)
         {
             if (state.mToDelete)
                 continue;
             const ESM4::Projectile* authored
-                = MWBase::Environment::get().getESMStore()->get<ESM4::Projectile>().search(state.mProjectile);
+                = store->get<ESM4::Projectile>().search(state.mProjectile);
             if (authored == nullptr || !authored->mData.present)
             {
                 state.mToDelete = true;
                 continue;
             }
             state.mElapsedTime += duration;
-            const bool timedAlternateTrigger
-                = (authored->mData.flags & ESM4::Projectile::Explosion) != 0
-                && (authored->mData.flags & ESM4::Projectile::AlternateTrigger) != 0
-                && (authored->mData.flags & ESM4::Projectile::Detonates) == 0
-                && authored->mData.alternateProximity <= 0.f
-                && std::isfinite(authored->mData.alternateTimer)
-                && authored->mData.alternateTimer > 0.f;
-            if (timedAlternateTrigger && state.mElapsedTime >= authored->mData.alternateTimer)
-                state.mDetonate = true;
+            const MWWorld::Ptr caster = state.getCaster();
+            if ((authored->mData.flags & ESM4::Projectile::Explosion) != 0)
+            {
+                const bool exterior = !caster.isEmpty() && caster.isInCell() && caster.getCell()->isExterior();
+                MWMechanics::FalloutProjectileTriggerFailure triggerFailure
+                    = MWMechanics::FalloutProjectileTriggerFailure::None;
+                const std::optional<MWMechanics::FalloutProjectileTrigger> trigger
+                    = MWMechanics::buildFalloutProjectileTrigger(*authored,
+                        state.mImpact.mProjectileSkill, minesDelayMin, exteriorRadiusMultiplier,
+                        exterior, triggerFailure);
+                if (!trigger)
+                {
+                    Log(Debug::Error) << "FNV projectile trigger rejected: projectile="
+                                      << ESM::RefId::formIdRefId(state.mProjectile)
+                                      << " reason="
+                                      << MWMechanics::getFalloutProjectileTriggerFailureName(triggerFailure);
+                    state.mToDelete = true;
+                    continue;
+                }
+                if (trigger->mMode == MWMechanics::FalloutProjectileTriggerMode::Timed
+                    && state.mElapsedTime >= trigger->mDelay)
+                    state.mDetonate = true;
+                else if (trigger->mMode == MWMechanics::FalloutProjectileTriggerMode::Proximity
+                    && state.mSettled && state.mElapsedTime >= trigger->mDelay)
+                {
+                    if (!state.mArmed)
+                    {
+                        state.mArmed = true;
+                        if (!authored->mData.countdownSound.isZeroOrUnset())
+                        {
+                            sound->playSound3D(state.mNode->getPosition(),
+                                ESM::RefId::formIdRefId(authored->mData.countdownSound), 1.f, 1.f);
+                        }
+                        Log(Debug::Info) << "FNV proximity explosive armed: projectile="
+                                         << ESM::RefId::formIdRefId(state.mProjectile)
+                                         << " delay=" << trigger->mDelay
+                                         << " radius=" << trigger->mProximityRadius
+                                         << " elapsed=" << state.mElapsedTime;
+                    }
+
+                    if (!caster.isEmpty())
+                    {
+                        std::vector<MWWorld::Ptr> nearby;
+                        mechanics->getActorsInRange(
+                            state.mNode->getPosition(), trigger->mProximityRadius, nearby);
+                        for (const MWWorld::Ptr& candidate : nearby)
+                        {
+                            if (candidate.isEmpty() || candidate == caster || !candidate.getClass().isActor()
+                                || candidate.getClass().getCreatureStats(candidate).isDead())
+                                continue;
+                            const bool hostile = candidate.getClass().getCreatureStats(candidate)
+                                                     .getAiSequence().isInCombat(caster)
+                                || mechanics->isAggressive(candidate, caster);
+                            if (!hostile)
+                                continue;
+                            state.mDetonate = true;
+                            Log(Debug::Info) << "FNV proximity explosive triggered: projectile="
+                                             << ESM::RefId::formIdRefId(state.mProjectile)
+                                             << " source=" << caster.toString()
+                                             << " target=" << candidate.toString()
+                                             << " radius=" << trigger->mProximityRadius
+                                             << " elapsed=" << state.mElapsedTime;
+                            break;
+                        }
+                    }
+                }
+            }
             if (state.mDetonate || state.mSettled)
                 continue;
             MWPhysics::Projectile* projectile = mPhysics->getProjectile(state.mProjectileId);
@@ -654,7 +733,6 @@ namespace MWWorld
             }
             update(state, duration);
 
-            MWWorld::Ptr caster = state.getCaster();
             std::vector<MWWorld::Ptr> targetActors;
             if (!caster.isEmpty() && caster.getClass().isActor() && caster != MWMechanics::getPlayer())
                 caster.getClass().getCreatureStats(caster).getAiSequence().getCombatTargets(targetActors);
@@ -1003,6 +1081,7 @@ namespace MWWorld
             state.mRawDamage = projectile.mImpact.mRawDamage;
             state.mLimbDamageMultiplier = projectile.mImpact.mLimbDamageMultiplier;
             state.mExplosionDamageMultiplier = projectile.mImpact.mExplosionDamageMultiplier;
+            state.mProjectileSkill = projectile.mImpact.mProjectileSkill;
             if (projectile.mRotates)
                 state.mFlags |= ESM::FalloutProjectileState::Rotates;
             if (projectile.mImpact.mCritical)
@@ -1013,6 +1092,8 @@ namespace MWWorld
                 state.mFlags |= ESM::FalloutProjectileState::Settled;
             if (projectile.mDetonate)
                 state.mFlags |= ESM::FalloutProjectileState::Detonate;
+            if (projectile.mArmed)
+                state.mFlags |= ESM::FalloutProjectileState::Armed;
             for (ESM::FormId effect : projectile.mImpact.mAmmoEffects)
                 state.mAmmoEffects.push_back(ESM::RefId::formIdRefId(effect));
 
@@ -1115,7 +1196,8 @@ namespace MWWorld
                 || esm.mRawDamage < 0.f || !std::isfinite(esm.mLimbDamageMultiplier)
                 || esm.mLimbDamageMultiplier < 0.f || !std::isfinite(esm.mExplosionDamageMultiplier)
                 || esm.mExplosionDamageMultiplier < 0.f || !std::isfinite(esm.mElapsedTime)
-                || esm.mElapsedTime < 0.f)
+                || esm.mElapsedTime < 0.f || !std::isfinite(esm.mProjectileSkill)
+                || esm.mProjectileSkill < 0.f)
             {
                 Log(Debug::Warning) << "Rejected malformed native Fallout projectile save state";
                 return true;
@@ -1135,6 +1217,7 @@ namespace MWWorld
             state.mRotates = (esm.mFlags & ESM::FalloutProjectileState::Rotates) != 0;
             state.mSettled = (esm.mFlags & ESM::FalloutProjectileState::Settled) != 0;
             state.mDetonate = (esm.mFlags & ESM::FalloutProjectileState::Detonate) != 0;
+            state.mArmed = (esm.mFlags & ESM::FalloutProjectileState::Armed) != 0;
             state.mImpact.mWeapon = *weaponId;
             if (!esm.mExplosion.empty())
             {
@@ -1149,6 +1232,7 @@ namespace MWWorld
             state.mImpact.mRawDamage = esm.mRawDamage;
             state.mImpact.mLimbDamageMultiplier = esm.mLimbDamageMultiplier;
             state.mImpact.mExplosionDamageMultiplier = esm.mExplosionDamageMultiplier;
+            state.mImpact.mProjectileSkill = esm.mProjectileSkill;
             state.mImpact.mCritical = (esm.mFlags & ESM::FalloutProjectileState::Critical) != 0;
             state.mImpact.mVatsTargetHit = (esm.mFlags & ESM::FalloutProjectileState::VatsTargetHit) != 0;
             state.mToDelete = false;

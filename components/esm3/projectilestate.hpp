@@ -80,6 +80,7 @@ namespace ESM
             VatsTargetHit = 1u << 3,
             Settled = 1u << 4,
             Detonate = 1u << 5,
+            Armed = 1u << 6,
         };
 
         Vector3 mVelocity;
@@ -95,6 +96,7 @@ namespace ESM
         float mRawDamage = 0.f;
         float mLimbDamageMultiplier = 1.f;
         float mExplosionDamageMultiplier = 1.f;
+        float mProjectileSkill = 0.f;
         std::vector<RefId> mAmmoEffects;
         std::uint8_t mFlags = 0;
         FalloutProjectileVatsState mVats;
