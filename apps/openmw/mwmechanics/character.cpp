@@ -3046,6 +3046,52 @@ namespace MWMechanics
         if (removed != contract->mAmmoUse || consumableBefore - consumableAfter != contract->mAmmoUse)
             return fail(contract->mConsumesWeapon ? "throwable-transaction-mismatch" : "ammo-transaction-mismatch");
 
+        // Fallout equips consumable thrown weapons as a one-item stack. Removing that item clears the carried-right
+        // slot even when another compatible stack remains in the inventory. Retail immediately advances to the next
+        // item in that stack, so keep the weapon family equipped without refunding or recreating the consumed item.
+        if (contract->mConsumesWeapon && consumableAfter > 0)
+        {
+            auto* inventoryStore = dynamic_cast<MWWorld::InventoryStore*>(&inventory);
+            MWWorld::ContainerStoreIterator replacement
+                = inventoryStore != nullptr ? inventoryStore->end() : inventory.end();
+            if (inventoryStore != nullptr)
+            {
+                for (MWWorld::ContainerStoreIterator candidate = inventoryStore->begin();
+                     candidate != inventoryStore->end(); ++candidate)
+                {
+                    if (candidate->getCellRef().getCount() > 0
+                        && candidate->getCellRef().getRefId() == consumableRefId)
+                    {
+                        replacement = candidate;
+                        break;
+                    }
+                }
+            }
+
+            if (inventoryStore != nullptr && replacement != inventoryStore->end())
+            {
+                inventoryStore->equip(MWWorld::InventoryStore::Slot_CarriedRight, replacement);
+                const MWWorld::ContainerStoreIterator equipped
+                    = inventoryStore->getSlot(MWWorld::InventoryStore::Slot_CarriedRight);
+                if (equipped != inventoryStore->end()
+                    && equipped->getCellRef().getRefId() == consumableRefId
+                    && equipped->getCellRef().getCount() > 0)
+                {
+                    mWeapon = *equipped;
+                    Log(Debug::Info) << "FNV throwable stack handoff: actor=" << mPtr.toString()
+                                     << " weapon=" << consumableRefId << " remaining=" << consumableAfter
+                                     << " equippedCount=" << equipped->getCellRef().getCount() << " status=pass";
+                }
+                else
+                    Log(Debug::Error) << "FNV throwable stack handoff failed after equip: actor=" << mPtr.toString()
+                                      << " weapon=" << consumableRefId << " remaining=" << consumableAfter;
+            }
+            else
+                Log(Debug::Error) << "FNV throwable stack handoff could not find remaining item: actor="
+                                  << mPtr.toString() << " weapon=" << consumableRefId
+                                  << " remaining=" << consumableAfter;
+        }
+
         float weaponConditionAfter = *weaponCondition;
         float conditionLoss = 0.f;
         const bool suppressWeaponWear = mPtr == getPlayer() && world->getGodModeState();
