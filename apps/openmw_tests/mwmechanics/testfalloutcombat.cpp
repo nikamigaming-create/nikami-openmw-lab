@@ -827,6 +827,44 @@ namespace
         EXPECT_FLOAT_EQ(vats->mConditionLoss, 1.2f);
     }
 
+    TEST(FalloutCombatTest, AppliesRetailAmmoDamagePenetrationAndSpreadBeforeImpact)
+    {
+        ESM4::AmmoEffect damage;
+        damage.mType = ESM4::AmmoEffect::Type::Damage;
+        damage.mOperation = ESM4::AmmoEffect::Operation::Multiply;
+        damage.mValue = 1.75f;
+        ESM4::AmmoEffect threshold;
+        threshold.mType = ESM4::AmmoEffect::Type::DamageThreshold;
+        threshold.mOperation = ESM4::AmmoEffect::Operation::Subtract;
+        threshold.mValue = 15.f;
+        ESM4::AmmoEffect spread;
+        spread.mType = ESM4::AmmoEffect::Type::Spread;
+        spread.mOperation = ESM4::AmmoEffect::Operation::Multiply;
+        spread.mValue = 0.35f;
+        const std::array<const ESM4::AmmoEffect*, 3> effects{ &damage, &threshold, &spread };
+
+        MWMechanics::FalloutAmmoEffectFailure effectFailure;
+        const auto incoming = MWMechanics::applyFalloutAmmoEffects(
+            30.f, ESM4::AmmoEffect::Type::Damage, effects, effectFailure);
+        const auto targetThreshold = MWMechanics::applyFalloutAmmoEffects(
+            10.f, ESM4::AmmoEffect::Type::DamageThreshold, effects, effectFailure);
+        const auto shotSpread = MWMechanics::applyFalloutAmmoEffects(
+            2.f, ESM4::AmmoEffect::Type::Spread, effects, effectFailure);
+        ASSERT_TRUE(incoming);
+        ASSERT_TRUE(targetThreshold);
+        ASSERT_TRUE(shotSpread);
+        EXPECT_FLOAT_EQ(*incoming, 52.5f);
+        EXPECT_FLOAT_EQ(*targetThreshold, -5.f);
+        EXPECT_FLOAT_EQ(*shotSpread, 0.7f);
+
+        MWMechanics::FalloutDamageMitigationFailure mitigationFailure;
+        const auto impact = MWMechanics::resolveFalloutDamageMitigation(
+            *incoming, 0.f, *targetThreshold, 0.2f, 85.f, mitigationFailure);
+        ASSERT_TRUE(impact);
+        EXPECT_FLOAT_EQ(impact->mDamageThreshold, 0.f);
+        EXPECT_FLOAT_EQ(impact->mHealthDamage, 52.5f);
+    }
+
     TEST(FalloutCombatTest, RejectsMalformedAmmoEffectsAndWeaponWear)
     {
         MWMechanics::FalloutAmmoEffectFailure effectFailure;

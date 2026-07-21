@@ -23,6 +23,7 @@
 #include <array>
 #include <cmath>
 #include <cstdlib>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -431,15 +432,29 @@ namespace
     }
 
     std::optional<MWMechanics::FalloutDamageMitigation> resolveFalloutActorImpactDamage(
-        const MWWorld::Ptr& actor, float incomingDamage, MWMechanics::FalloutDamageMitigationFailure& failure)
+        const MWWorld::Ptr& actor, float incomingDamage, std::span<const ESM4::AmmoEffect* const> ammoEffects,
+        MWMechanics::FalloutDamageMitigationFailure& failure,
+        MWMechanics::FalloutAmmoEffectFailure& ammoEffectFailure)
     {
+        ammoEffectFailure = MWMechanics::FalloutAmmoEffectFailure::None;
         const std::optional<FalloutArmorProtection> protection = getFalloutArmorProtection(actor);
         const std::optional<float> minimumDamageMultiplier = getFalloutGameSetting("fMinDamMultiplier");
         const std::optional<float> maximumDamageResistance = getFalloutGameSetting("fMaxArmorRating");
         if (!protection || !minimumDamageMultiplier || !maximumDamageResistance)
             return std::nullopt;
-        return MWMechanics::resolveFalloutDamageMitigation(incomingDamage, protection->mDamageResistance,
-            protection->mDamageThreshold, *minimumDamageMultiplier, *maximumDamageResistance, failure);
+
+        const std::optional<float> damageResistance = MWMechanics::applyFalloutAmmoEffects(
+            protection->mDamageResistance, ESM4::AmmoEffect::Type::DamageResistance, ammoEffects,
+            ammoEffectFailure);
+        if (!damageResistance)
+            return std::nullopt;
+        const std::optional<float> damageThreshold = MWMechanics::applyFalloutAmmoEffects(
+            protection->mDamageThreshold, ESM4::AmmoEffect::Type::DamageThreshold, ammoEffects,
+            ammoEffectFailure);
+        if (!damageThreshold)
+            return std::nullopt;
+        return MWMechanics::resolveFalloutDamageMitigation(incomingDamage, *damageResistance,
+            *damageThreshold, *minimumDamageMultiplier, *maximumDamageResistance, failure);
     }
 
     bool usesFonvPowerArmorAnimationFamily(const MWWorld::Ptr& ptr)
@@ -2523,6 +2538,19 @@ namespace MWMechanics
         if (rayCasting == nullptr)
             return fail("missing-ray-caster");
 
+        FalloutAmmoEffectFailure ammoEffectFailure = FalloutAmmoEffectFailure::None;
+        float shotSpread = 0.f;
+        if (!vatsAimPoint)
+        {
+            const std::optional<float> adjustedSpread = applyFalloutAmmoEffects(
+                contract->mSpread, ESM4::AmmoEffect::Type::Spread, ammoEffects, ammoEffectFailure);
+            if (!adjustedSpread)
+                return fail(getFalloutAmmoEffectFailureName(ammoEffectFailure));
+            if (*adjustedSpread < 0.f || *adjustedSpread >= 90.f)
+                return fail("ammo-adjusted-spread-out-of-range");
+            shotSpread = *adjustedSpread;
+        }
+
         std::vector<osg::Vec3f> rayDirections;
         rayDirections.reserve(contract->mProjectileCount);
         Misc::Rng::Generator& prng = world->getPrng();
@@ -2534,7 +2562,7 @@ namespace MWMechanics
             const float angle = 2.f * osg::PI * Misc::Rng::rollProbability(prng);
             const osg::Vec2f diskSample(radius * std::cos(angle), radius * std::sin(angle));
             const std::optional<osg::Vec3f> rayDirection
-                = buildFalloutRayDirection(direction, vatsAimPoint ? 0.f : contract->mSpread, diskSample);
+                = buildFalloutRayDirection(direction, shotSpread, diskSample);
             if (!rayDirection)
                 return fail("invalid-ray-direction");
             rayDirections.push_back(*rayDirection);
@@ -2618,11 +2646,20 @@ namespace MWMechanics
             float incomingDamage = critical->damageForProjectile(damagePerProjectile, criticalHit);
             if (vatsAttack && result.mHitObject == vatsTarget)
                 incomingDamage *= vatsDamageMultiplier;
+            const std::optional<float> ammoAdjustedDamage = applyFalloutAmmoEffects(
+                incomingDamage, ESM4::AmmoEffect::Type::Damage, ammoEffects, ammoEffectFailure);
+            if (!ammoAdjustedDamage)
+                return fail(getFalloutAmmoEffectFailureName(ammoEffectFailure));
+            incomingDamage = *ammoAdjustedDamage;
             FalloutDamageMitigationFailure mitigationFailure = FalloutDamageMitigationFailure::None;
+            ammoEffectFailure = FalloutAmmoEffectFailure::None;
             const std::optional<FalloutDamageMitigation> mitigation
-                = resolveFalloutActorImpactDamage(result.mHitObject, incomingDamage, mitigationFailure);
+                = resolveFalloutActorImpactDamage(
+                    result.mHitObject, incomingDamage, ammoEffects, mitigationFailure, ammoEffectFailure);
             if (!mitigation)
-                return fail(getFalloutDamageMitigationFailureName(mitigationFailure));
+                return fail(ammoEffectFailure == FalloutAmmoEffectFailure::None
+                        ? getFalloutDamageMitigationFailureName(mitigationFailure)
+                        : getFalloutAmmoEffectFailureName(ammoEffectFailure));
 
             auto found = std::find_if(actorImpacts.begin(), actorImpacts.end(), [&](const ActorImpact& impact) {
                 return impact.mActor == result.mHitObject;
@@ -2694,7 +2731,9 @@ namespace MWMechanics
                          << " criticalEffectOnDeath=" << critical->mEffectOnDeath
                          << " criticalEffectApplied=0"
                          << " projectileCount=" << static_cast<unsigned int>(contract->mProjectileCount)
-                         << " damagePerProjectile=" << damagePerProjectile << " spread=" << contract->mSpread
+                         << " damagePerProjectile=" << damagePerProjectile
+                         << " authoredSpread=" << contract->mSpread << " ammoAdjustedSpread=" << shotSpread
+                         << " ammoEffects=" << ammoEffects.size()
                          << " authoredHitscan=" << contract->mAuthoredHitscan
                          << " immediateRayFallback=" << !contract->mAuthoredHitscan << " rayHits=" << rayHits
                          << " actorRayHits=" << actorRayHits << " actorsHit=" << actorImpacts.size()
@@ -2810,10 +2849,14 @@ namespace MWMechanics
         if (actorHit)
         {
             FalloutDamageMitigationFailure mitigationFailure = FalloutDamageMitigationFailure::None;
+            FalloutAmmoEffectFailure ammoEffectFailure = FalloutAmmoEffectFailure::None;
             const std::optional<FalloutDamageMitigation> resolved
-                = resolveFalloutActorImpactDamage(result.mHitObject, contract->mDamage, mitigationFailure);
+                = resolveFalloutActorImpactDamage(
+                    result.mHitObject, contract->mDamage, {}, mitigationFailure, ammoEffectFailure);
             if (!resolved)
-                return fail(getFalloutDamageMitigationFailureName(mitigationFailure));
+                return fail(ammoEffectFailure == FalloutAmmoEffectFailure::None
+                        ? getFalloutDamageMitigationFailureName(mitigationFailure)
+                        : getFalloutAmmoEffectFailureName(ammoEffectFailure));
             mitigation = *resolved;
             healthDamage = mitigation.mHealthDamage;
             const ESM::RefId weapon = mFalloutWeapon != nullptr
