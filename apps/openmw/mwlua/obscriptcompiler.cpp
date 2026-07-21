@@ -1,6 +1,7 @@
 #include "obscriptcompiler.hpp"
 
 #include <algorithm>
+#include <map>
 #include <stdexcept>
 #include <string>
 
@@ -9,7 +10,26 @@
 #include <sol/table.hpp>
 
 #include <components/debug/debuglog.hpp>
+#include <components/esm/refid.hpp>
+#include <components/esm4/loadacti.hpp>
+#include <components/esm4/loadalch.hpp>
+#include <components/esm4/loadarmo.hpp>
+#include <components/esm4/loadbook.hpp>
+#include <components/esm4/loadclot.hpp>
+#include <components/esm4/loadcont.hpp>
+#include <components/esm4/loadcrea.hpp>
+#include <components/esm4/loaddoor.hpp>
+#include <components/esm4/loadflor.hpp>
+#include <components/esm4/loadfurn.hpp>
+#include <components/esm4/loadimod.hpp>
+#include <components/esm4/loadingr.hpp>
+#include <components/esm4/loadligh.hpp>
+#include <components/esm4/loadlvlc.hpp>
+#include <components/esm4/loadmisc.hpp>
+#include <components/esm4/loadnpc.hpp>
 #include <components/esm4/loadscpt.hpp>
+#include <components/esm4/loadterm.hpp>
+#include <components/esm4/loadweap.hpp>
 #include <components/lua/luastate.hpp>
 #include <components/vfs/inmemoryarchive.hpp>
 #include <components/vfs/manager.hpp>
@@ -54,14 +74,35 @@ namespace MWLua
                     std::string("Failed to load ObScript compiler: ") + result.get<sol::error>().what());
             return result.get<sol::table>();
         }
+
+        // Calls fn(recordFormId, scriptFormId) for every record of the given
+        // types that links a script via SCRI.
+        template <class... RecordTypes, class Fn>
+        void forEachScriptedRecord(const MWWorld::ESMStore& store, Fn&& fn)
+        {
+            (
+                [&] {
+                    const MWWorld::Store<RecordTypes>& s = store.get<RecordTypes>();
+                    for (size_t i = 0; i < s.getSize(); ++i)
+                    {
+                        const RecordTypes& record = *s.at(i);
+                        if (record.mScriptId != ESM::FormId())
+                            fn(record.mId, record.mScriptId);
+                    }
+                }(),
+                ...);
+        }
     }
 
-    int compileObScripts(LuaUtil::LuaState& lua, VFS::Manager& vfs, VFS::InMemoryArchive& out)
+    ESM::LuaScriptsCfg compileObScripts(LuaUtil::LuaState& lua, VFS::Manager& vfs, VFS::InMemoryArchive& out)
     {
-        const MWWorld::Store<ESM4::Script>& scripts = MWBase::Environment::get().getESMStore()->get<ESM4::Script>();
+        ESM::LuaScriptsCfg cfg;
+        const MWWorld::ESMStore& store = *MWBase::Environment::get().getESMStore();
+        const MWWorld::Store<ESM4::Script>& scripts = store.get<ESM4::Script>();
         if (scripts.getSize() == 0)
-            return 0;
+            return cfg;
 
+        std::map<ESM::FormId, size_t> cfgIndexByScript; // SCPT FormId -> index into cfg.mScripts
         int generated = 0;
         lua.protectedCall([&](LuaUtil::LuaView& view) {
             sol::state_view sol = view.sol();
@@ -83,11 +124,32 @@ namespace MWLua
                 out.addFile(VFS::Path::Normalized("generated/obscript/" + record.mEditorId + ".lua"),
                     result.get<std::string>());
                 ++generated;
+
+                ESM::LuaScriptCfg& scriptCfg = cfg.mScripts.emplace_back();
+                scriptCfg.mScriptPath = VFS::Path::Normalized("generated/obscript/" + record.mEditorId + ".lua");
+                scriptCfg.mFlags = ESM::LuaScriptCfg::sCustom;
+                cfgIndexByScript[record.mId] = cfg.mScripts.size() - 1;
             }
         });
 
+        // Attach each generated script to the base records referencing it via SCRI.
+        forEachScriptedRecord<ESM4::Activator, ESM4::Armor, ESM4::Book, ESM4::Clothing, ESM4::Container, ESM4::Creature,
+            ESM4::Door, ESM4::Flora, ESM4::Furniture, ESM4::Ingredient, ESM4::ItemMod, ESM4::LevelledCreature,
+            ESM4::Light, ESM4::MiscItem, ESM4::Npc, ESM4::Potion, ESM4::Terminal, ESM4::Weapon>(
+            store, [&](ESM::FormId recordId, ESM::FormId scriptId) {
+                auto it = cfgIndexByScript.find(scriptId);
+                if (it == cfgIndexByScript.end())
+                    return;
+                cfg.mScripts[it->second].mRecords.push_back(
+                    ESM::LuaScriptCfg::PerRecordCfg{ true, ESM::RefId::formIdRefId(recordId), {} });
+            });
+
+        // Scripts attached to nothing (quest scripts etc.) are not configured yet.
+        std::erase_if(cfg.mScripts, [](const ESM::LuaScriptCfg& s) { return s.mRecords.empty(); });
+
         vfs.buildIndex();
-        Log(Debug::Info) << "Compiled " << generated << " ObScript records to Lua";
-        return generated;
+        Log(Debug::Info) << "Compiled " << generated << " ObScript records to Lua, " << cfg.mScripts.size()
+                         << " attached to base records";
+        return cfg;
     }
 }

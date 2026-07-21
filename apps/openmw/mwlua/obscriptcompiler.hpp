@@ -1,6 +1,8 @@
 #ifndef MWLUA_OBSCRIPTCOMPILER_H
 #define MWLUA_OBSCRIPTCOMPILER_H
 
+#include <components/esm/luascripts.hpp>
+
 namespace LuaUtil
 {
     class LuaState;
@@ -14,12 +16,11 @@ namespace VFS
 
 namespace MWLua
 {
-    // Translates every ESM4 script record (SCPT) in the ESM store into a Lua
-    // script file under generated/obscript/ in the given archive, using
-    // openmw_aux/obscript/compiler.lua, and rebuilds the VFS index so the
-    // generated files are visible. Scripts that fail to compile are logged
-    // and skipped. Returns the number of scripts generated.
-    int compileObScripts(LuaUtil::LuaState& lua, VFS::Manager& vfs, VFS::InMemoryArchive& out);
+    // Compiles every ESM4 script record (SCPT) into a Lua file under
+    // generated/obscript/ in the given archive and rebuilds the VFS index.
+    // Failures are logged and skipped. Returns a config attaching each
+    // generated script (as sCustom) to the base records referencing it via SCRI.
+    ESM::LuaScriptsCfg compileObScripts(LuaUtil::LuaState& lua, VFS::Manager& vfs, VFS::InMemoryArchive& out);
 }
 
 #endif // MWLUA_OBSCRIPTCOMPILER_H
