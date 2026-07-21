@@ -116,6 +116,7 @@ file(GLOB UNITTEST_SRC_FILES
 
     vfs/testpathutil.cpp
 
+    sceneutil/lightcommon.cpp
     sceneutil/osgacontroller.cpp
     sceneutil/visitor.cpp
 

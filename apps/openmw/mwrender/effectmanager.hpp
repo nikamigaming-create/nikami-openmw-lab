@@ -20,6 +20,11 @@ namespace Resource
     class ResourceSystem;
 }
 
+namespace ESM4
+{
+    struct Light;
+}
+
 namespace MWRender
 {
     class EffectAnimationTime;
@@ -35,7 +40,8 @@ namespace MWRender
 
         /// Add an effect. When it's finished playing, it will be removed automatically.
         void addEffect(VFS::Path::NormalizedView model, std::string_view textureOverride,
-            const osg::Vec3f& worldPosition, float scale, bool isMagicVFX = true, bool useAmbientLight = true);
+            const osg::Vec3f& worldPosition, float scale, bool isMagicVFX = true, bool useAmbientLight = true,
+            const ESM4::Light* light = nullptr, bool isExterior = false);
 
         void update(float dt);
 

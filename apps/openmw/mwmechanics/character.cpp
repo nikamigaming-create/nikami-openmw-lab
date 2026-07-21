@@ -36,6 +36,7 @@
 #include <components/esm4/loadcrea.hpp>
 #include <components/esm4/loadexpl.hpp>
 #include <components/esm4/loadflst.hpp>
+#include <components/esm4/loadligh.hpp>
 #include <components/esm4/loadproj.hpp>
 #include <components/esm4/loadscpt.hpp>
 #include <components/esm4/loadsndr.hpp>
@@ -3176,6 +3177,9 @@ namespace MWMechanics
             || !std::isfinite(explosion->mData.radius) || explosion->mData.radius <= 0.f
             || !std::isfinite(explosion->mData.force) || explosion->mData.force < 0.f)
             return fail("invalid-explosion-data");
+        if (!explosion->mData.light.isZeroOrUnset()
+            && store->get<ESM4::Light>().search(explosion->mData.light) == nullptr)
+            return fail("missing-authored-light");
 
         std::vector<const ESM4::AmmoEffect*> ammoEffects;
         ammoEffects.reserve(impact.mAmmoEffects.size());
@@ -3191,7 +3195,8 @@ namespace MWMechanics
         {
             world->spawnEffect(Misc::ResourceHelpers::correctMeshPath(
                                    VFS::Path::Normalized(explosion->mModel)),
-                "", position, 1.f, false, false);
+                "", position, 1.f, false, false,
+                ESM::RefId(explosion->mData.light));
         }
         if (explosion->mData.soundLevel != ESM4::Explosion::Silent)
         {
@@ -3304,6 +3309,7 @@ namespace MWMechanics
                          << " damageMultiplier=" << impact.mExplosionDamageMultiplier
                          << " radius=" << explosion->mData.radius
                          << " force=" << explosion->mData.force
+                         << " light=" << ESM::RefId::formIdRefId(explosion->mData.light)
                          << " flags=" << explosion->mData.flags
                          << " actorsInRadius=" << actors.size()
                          << " blockedByLineOfSight=" << blockedByLineOfSight

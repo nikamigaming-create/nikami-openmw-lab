@@ -34,6 +34,7 @@
 #include <components/esm4/loadcont.hpp>
 #include <components/esm4/loaddoor.hpp>
 #include <components/esm4/loadland.hpp>
+#include <components/esm4/loadligh.hpp>
 #include <components/esm4/loadstat.hpp>
 #include <components/esm4/loadwrld.hpp>
 
@@ -4637,9 +4638,16 @@ namespace MWWorld
     }
 
     void World::spawnEffect(VFS::Path::NormalizedView model, const std::string& textureOverride,
-        const osg::Vec3f& worldPos, float scale, bool isMagicVFX, bool useAmbientLight)
+        const osg::Vec3f& worldPos, float scale, bool isMagicVFX, bool useAmbientLight,
+        const ESM::RefId& lightId)
     {
-        mRendering->spawnEffect(model, textureOverride, worldPos, scale, isMagicVFX, useAmbientLight);
+        const ESM4::Light* light = lightId.empty()
+            ? nullptr
+            : mStore.get<ESM4::Light>().search(lightId);
+        if (!lightId.empty() && light == nullptr)
+            Log(Debug::Error) << "Effect references missing ESM4 light: " << lightId;
+        mRendering->spawnEffect(model, textureOverride, worldPos, scale, isMagicVFX,
+            useAmbientLight, light, isCellExterior());
     }
 
     struct ResetActorsVisitor

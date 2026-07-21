@@ -577,7 +577,8 @@ namespace MWBase
         virtual void spawnRandomCreature(const ESM::RefId& creatureList) = 0;
 
         virtual void spawnEffect(VFS::Path::NormalizedView model, const std::string& textureOverride,
-            const osg::Vec3f& worldPos, float scale = 1.f, bool isMagicVFX = true, bool useAmbientLight = true)
+            const osg::Vec3f& worldPos, float scale = 1.f, bool isMagicVFX = true, bool useAmbientLight = true,
+            const ESM::RefId& lightId = {})
             = 0;
 
         /// @see MWWorld::WeatherManager::isInStorm
