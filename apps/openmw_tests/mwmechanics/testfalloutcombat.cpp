@@ -498,7 +498,7 @@ namespace
         EXPECT_FLOAT_EQ(contract->mDamage, 70.f);
         EXPECT_FLOAT_EQ(contract->damagePerProjectile(), 10.f);
         EXPECT_FLOAT_EQ(contract->mMinSpread, 0.5f);
-        EXPECT_FLOAT_EQ(contract->mSpread, 1.5f);
+        EXPECT_FLOAT_EQ(contract->mLegacySpread, 1.5f);
         EXPECT_TRUE(contract->mAuthoredHitscan);
     }
 
@@ -590,6 +590,72 @@ namespace
         EXPECT_FALSE(MWMechanics::advanceFalloutTrigger(trigger, true, true, *cadence, 1.f));
         EXPECT_FALSE(MWMechanics::advanceFalloutTrigger(trigger, false, true, *cadence, 0.f));
         EXPECT_TRUE(MWMechanics::advanceFalloutTrigger(trigger, true, true, *cadence, 0.f));
+    }
+
+    TEST(FalloutCombatTest, SelectsAuthoredDeliveryKeysOnlyForNonAutomaticEventRoutedAttacks)
+    {
+        using Event = MWMechanics::FalloutAttackDeliveryEvent;
+
+        for (const std::uint8_t animationType : { 0, 1, 2 })
+            EXPECT_EQ(MWMechanics::getFalloutAttackDeliveryEvent(animationType, true, false), Event::Hit);
+        for (const std::uint8_t animationType : { 10, 11, 12, 13 })
+            EXPECT_EQ(MWMechanics::getFalloutAttackDeliveryEvent(animationType, true, false), Event::Release);
+
+        EXPECT_EQ(MWMechanics::getFalloutAttackDeliveryEvent(9, false, false), Event::Hit);
+        EXPECT_EQ(MWMechanics::getFalloutAttackDeliveryEvent(3, true, false), Event::None);
+        EXPECT_EQ(MWMechanics::getFalloutAttackDeliveryEvent(14, false, false), Event::None);
+
+        EXPECT_EQ(MWMechanics::getFalloutAttackDeliveryEvent(2, true, true), Event::None);
+        EXPECT_EQ(MWMechanics::getFalloutAttackDeliveryEvent(9, false, true), Event::None);
+        EXPECT_EQ(MWMechanics::getFalloutAttackDeliveryEvent(10, false, true), Event::None);
+    }
+
+    TEST(FalloutCombatTest, FallsBackToImmediateDeliveryWhenAuthoredVisualCannotPlay)
+    {
+        using Event = MWMechanics::FalloutAttackDeliveryEvent;
+
+        EXPECT_FALSE(MWMechanics::shouldDeliverFalloutAttackImmediately(Event::Hit, true));
+        EXPECT_FALSE(MWMechanics::shouldDeliverFalloutAttackImmediately(Event::Release, true));
+        EXPECT_TRUE(MWMechanics::shouldDeliverFalloutAttackImmediately(Event::Hit, false));
+        EXPECT_TRUE(MWMechanics::shouldDeliverFalloutAttackImmediately(Event::Release, false));
+        EXPECT_TRUE(MWMechanics::shouldDeliverFalloutAttackImmediately(Event::None, true));
+    }
+
+    TEST(FalloutCombatTest, AuthoredAttackDeliveryRequiresExactWeaponGroupAndKeyAndConsumesOnce)
+    {
+        using Event = MWMechanics::FalloutAttackDeliveryEvent;
+        MWMechanics::FalloutAttackDelivery state;
+        ASSERT_TRUE(MWMechanics::queueFalloutAttackDelivery(state, Event::Hit, id(0x1234), 2, "attack2"));
+
+        EXPECT_FALSE(MWMechanics::consumeFalloutAttackDelivery(state, id(0x5678), "attack2", "hit"));
+        EXPECT_FALSE(MWMechanics::consumeFalloutAttackDelivery(state, id(0x1234), "attack1", "hit"));
+        EXPECT_FALSE(MWMechanics::consumeFalloutAttackDelivery(state, id(0x1234), "attack2", "release"));
+        EXPECT_TRUE(state.isPending());
+
+        const std::optional<MWMechanics::FalloutAttackDelivery> delivered
+            = MWMechanics::consumeFalloutAttackDelivery(state, id(0x1234), "attack2", "hit");
+        ASSERT_TRUE(delivered);
+        EXPECT_EQ(delivered->mEvent, Event::Hit);
+        EXPECT_EQ(delivered->mAnimationType, 2);
+        EXPECT_EQ(delivered->mAnimationGroup, "attack2");
+        EXPECT_FALSE(state.isPending());
+        EXPECT_FALSE(MWMechanics::consumeFalloutAttackDelivery(state, id(0x1234), "attack2", "hit"));
+    }
+
+    TEST(FalloutCombatTest, AuthoredAttackDeliveryAcceptsNamespacedReleaseAndRejectsInvalidQueue)
+    {
+        using Event = MWMechanics::FalloutAttackDeliveryEvent;
+        MWMechanics::FalloutAttackDelivery state;
+        EXPECT_FALSE(MWMechanics::queueFalloutAttackDelivery(state, Event::None, id(0x1234), 10, "attack1"));
+        EXPECT_FALSE(MWMechanics::queueFalloutAttackDelivery(state, Event::Release, id(0x1234), 14, "attack1"));
+        EXPECT_FALSE(MWMechanics::queueFalloutAttackDelivery(state, Event::Release, id(0x1234), 10, {}));
+
+        ASSERT_TRUE(MWMechanics::queueFalloutAttackDelivery(state, Event::Release, id(0x1234), 10, "attack1"));
+        const std::optional<MWMechanics::FalloutAttackDelivery> delivered
+            = MWMechanics::consumeFalloutAttackDelivery(state, id(0x1234), "attack1", "attack1: release");
+        ASSERT_TRUE(delivered);
+        EXPECT_EQ(delivered->mEvent, Event::Release);
+        EXPECT_FALSE(state.isPending());
     }
 
     TEST(FalloutCombatTest, AutomaticTriggerRepeatsAtAuthoredDurationCadence)
@@ -1008,6 +1074,69 @@ namespace
         EXPECT_EQ(impact->mMode, MWMechanics::FalloutProjectileTriggerMode::Impact);
     }
 
+    TEST(FalloutCombatTest, TreatsRetailThrowingSpearAsTerminalDespiteAlternateTriggerFlag)
+    {
+        ESM4::Projectile projectile;
+        projectile.mData.present = true;
+        projectile.mData.type = ESM4::Projectile::Missile;
+        projectile.mData.flags = ESM4::Projectile::AlternateTrigger
+            | ESM4::Projectile::CanBePickedUp | ESM4::Projectile::PinsLimbs;
+
+        EXPECT_FALSE(MWMechanics::doesFalloutProjectileRemainAfterImpact(projectile));
+
+        projectile.mData.type = ESM4::Projectile::Lobber;
+        EXPECT_TRUE(MWMechanics::doesFalloutProjectileRemainAfterImpact(projectile));
+
+        projectile.mData.flags = ESM4::Projectile::PinsLimbs;
+        EXPECT_FALSE(MWMechanics::doesFalloutProjectileRemainAfterImpact(projectile));
+    }
+
+    TEST(FalloutCombatTest, GivesPhysicalCollisionPriorityOverRangeExpiry)
+    {
+        EXPECT_TRUE(MWMechanics::shouldResolveFalloutProjectileRangeExpiry(true, 6000.f, 6000.f));
+        EXPECT_TRUE(MWMechanics::shouldResolveFalloutProjectileRangeExpiry(true, 6001.f, 6000.f));
+        EXPECT_FALSE(MWMechanics::shouldResolveFalloutProjectileRangeExpiry(true, 5999.f, 6000.f));
+
+        // An inactive physics projectile has a real contact to process, even when that contact's final segment
+        // crossed or landed exactly on the authored range boundary.
+        EXPECT_FALSE(MWMechanics::shouldResolveFalloutProjectileRangeExpiry(false, 6000.f, 6000.f));
+        EXPECT_FALSE(MWMechanics::shouldResolveFalloutProjectileRangeExpiry(false, 6001.f, 6000.f));
+
+        EXPECT_FALSE(MWMechanics::shouldResolveFalloutProjectileRangeExpiry(
+            true, std::numeric_limits<float>::quiet_NaN(), 6000.f));
+        EXPECT_FALSE(MWMechanics::shouldResolveFalloutProjectileRangeExpiry(true, 6000.f, 0.f));
+    }
+
+    TEST(FalloutCombatTest, ResolvesOnlySuccessfulTerminalVatsProjectileAtRangeExpiry)
+    {
+        ESM4::Projectile spear;
+        spear.mData.present = true;
+        spear.mData.type = ESM4::Projectile::Missile;
+        spear.mData.flags = ESM4::Projectile::AlternateTrigger
+            | ESM4::Projectile::CanBePickedUp | ESM4::Projectile::PinsLimbs;
+
+        MWMechanics::FalloutProjectileImpactContract impact;
+        MWMechanics::FalloutVatsQueuedAction action;
+        action.mTarget = id(0x1107077);
+        impact.mVatsAction = action;
+        impact.mVatsTargetHit = true;
+
+        const auto target = MWMechanics::getFalloutVatsProjectileRangeExpiryTarget(spear, impact);
+        ASSERT_TRUE(target);
+        EXPECT_EQ(*target, action.mTarget);
+
+        impact.mVatsTargetHit = false;
+        EXPECT_FALSE(MWMechanics::getFalloutVatsProjectileRangeExpiryTarget(spear, impact));
+
+        impact.mVatsTargetHit = true;
+        spear.mData.type = ESM4::Projectile::Lobber;
+        EXPECT_FALSE(MWMechanics::getFalloutVatsProjectileRangeExpiryTarget(spear, impact));
+
+        spear.mData.present = false;
+        spear.mData.type = ESM4::Projectile::Missile;
+        EXPECT_FALSE(MWMechanics::getFalloutVatsProjectileRangeExpiryTarget(spear, impact));
+    }
+
     TEST(FalloutCombatTest, RejectsMalformedProjectileTriggerData)
     {
         ESM4::Projectile projectile;
@@ -1407,7 +1536,7 @@ end
         EXPECT_EQ(wearFailure, MWMechanics::FalloutWeaponDegradationFailure::InvalidWeaponOverride);
     }
 
-    TEST(FalloutCombatTest, BuildsUnitRayAtAuthoredSpreadConeBoundary)
+    TEST(FalloutCombatTest, BuildsUnitRaysAtAuthoredMedianAndMaximumSpread)
     {
         const auto center = MWMechanics::buildFalloutRayDirection(
             osg::Vec3f(0.f, 2.f, 0.f), 10.f, osg::Vec2f(0.f, 0.f));
@@ -1416,20 +1545,28 @@ end
         EXPECT_FLOAT_EQ(center->y(), 1.f);
         EXPECT_FLOAT_EQ(center->z(), 0.f);
 
+        const auto median = MWMechanics::buildFalloutRayDirection(
+            osg::Vec3f(0.f, 1.f, 0.f), 10.f, osg::Vec2f(0.5f, 0.f));
+        ASSERT_TRUE(median);
+        EXPECT_NEAR(median->length(), 1.f, 1e-6f);
+        EXPECT_NEAR(
+            std::acos((*median) * osg::Vec3f(0.f, 1.f, 0.f)), osg::DegreesToRadians(10.f), 1e-6f);
+
         const auto edge = MWMechanics::buildFalloutRayDirection(
             osg::Vec3f(0.f, 1.f, 0.f), 10.f, osg::Vec2f(1.f, 0.f));
         ASSERT_TRUE(edge);
         EXPECT_NEAR(edge->length(), 1.f, 1e-6f);
-        EXPECT_NEAR(std::acos((*edge) * osg::Vec3f(0.f, 1.f, 0.f)), osg::DegreesToRadians(10.f), 1e-6f);
+        EXPECT_NEAR(std::acos((*edge) * osg::Vec3f(0.f, 1.f, 0.f)), osg::DegreesToRadians(20.f), 1e-6f);
     }
 
-    TEST(FalloutCombatTest, RejectsMalformedSpreadAndRayInputsBeforeFiring)
+    TEST(FalloutCombatTest, IgnoresUnusedLegacySpreadButRejectsMalformedMinSpreadAndRayInputs)
     {
         ESM4::Weapon weapon;
         weapon.mData.hasBallistics = true;
         weapon.mData.projectile = id(0x426d);
         weapon.mData.ammoUse = 1;
         weapon.mData.numProjectiles = 1;
+        weapon.mData.minSpread = 0.5f;
         weapon.mData.spread = std::numeric_limits<float>::quiet_NaN();
         ESM4::Projectile projectile;
         projectile.mId = id(0x426d);
@@ -1437,12 +1574,20 @@ end
         projectile.mData.range = 10000.f;
 
         MWMechanics::FalloutShotFailure failure;
+        const auto contract = MWMechanics::buildFalloutRayShotContract(weapon, projectile, id(0x4240), failure);
+        ASSERT_TRUE(contract);
+        EXPECT_EQ(failure, MWMechanics::FalloutShotFailure::None);
+        EXPECT_TRUE(std::isnan(contract->mLegacySpread));
+
+        weapon.mData.minSpread = std::numeric_limits<float>::quiet_NaN();
         EXPECT_FALSE(MWMechanics::buildFalloutRayShotContract(weapon, projectile, id(0x4240), failure));
         EXPECT_EQ(failure, MWMechanics::FalloutShotFailure::InvalidSpread);
         EXPECT_FALSE(MWMechanics::buildFalloutRayDirection(
             osg::Vec3f(0.f, 0.f, 0.f), 1.f, osg::Vec2f(0.f, 0.f)));
         EXPECT_FALSE(MWMechanics::buildFalloutRayDirection(
             osg::Vec3f(0.f, 1.f, 0.f), 1.f, osg::Vec2f(1.1f, 0.f)));
+        EXPECT_FALSE(MWMechanics::buildFalloutRayDirection(
+            osg::Vec3f(0.f, 1.f, 0.f), 45.f, osg::Vec2f(1.f, 0.f)));
     }
 
     MWMechanics::FalloutMeleeTuning retailMeleeTuning()

@@ -36,6 +36,41 @@ namespace
         EXPECT_EQ(std::bit_cast<std::uint32_t>(data.impactForce), std::uint32_t{ 0x40400000 });
     }
 
+    TEST(Esm4ProjectileTest, shouldParseRetailThrowingSpearProjectileLifecycleByteExactly)
+    {
+        // FalloutNV.esm 0014D6C7 PROJ.DATA (NVSpearProjectile). CanBePickedUp is preserved as authored data, but
+        // retail ignores that legacy flag for Missile projectiles; a thrown spear is consumed rather than cloned at
+        // impact. PinsLimbs describes severed-limb attachment and does not make the projectile persistent.
+        const std::array<std::uint8_t, 84> bytes{
+            0x44, 0x01, 0x01, 0x00, 0x00, 0x00, 0x80, 0x3f, 0x00, 0x00, 0x48, 0x45,
+            0x00, 0x80, 0xbb, 0x45, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x20, 0x40,
+            0x7f, 0x39, 0x0e, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x3f, 0x00, 0x00, 0x00, 0x40, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80, 0x3f,
+        };
+        ESM4::Projectile::Data data;
+
+        ASSERT_TRUE(ESM4::loadFalloutProjectileData(bytes, data));
+        ASSERT_TRUE(data.present);
+        EXPECT_EQ(data.flags, 0x0144);
+        EXPECT_EQ(data.type, ESM4::Projectile::Missile);
+        EXPECT_TRUE(data.flags & ESM4::Projectile::AlternateTrigger);
+        EXPECT_TRUE(data.flags & ESM4::Projectile::CanBePickedUp);
+        EXPECT_TRUE(data.flags & ESM4::Projectile::PinsLimbs);
+        EXPECT_FALSE(data.flags & ESM4::Projectile::Explosion);
+        EXPECT_FLOAT_EQ(data.gravity, 1.f);
+        EXPECT_FLOAT_EQ(data.speed, 3200.f);
+        EXPECT_FLOAT_EQ(data.range, 6000.f);
+        EXPECT_FLOAT_EQ(data.alternateTimer, 2.5f);
+        EXPECT_EQ(data.explosion.toUint32(), 0xe397f);
+        EXPECT_FLOAT_EQ(data.fadeDuration, 0.5f);
+        EXPECT_FLOAT_EQ(data.impactForce, 2.f);
+        EXPECT_TRUE(data.defaultWeapon.isZeroOrUnset());
+        EXPECT_FLOAT_EQ(data.bounciness, 1.f);
+    }
+
     TEST(Esm4ProjectileTest, shouldRejectUnknownProjectileDataLayout)
     {
         const std::array<std::uint8_t, 80> bytes{};

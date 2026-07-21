@@ -141,6 +141,7 @@ namespace MWMechanics
         MWWorld::Ptr mWeapon;
         const ESM4::Weapon* mFalloutWeapon = nullptr;
         FalloutTriggerState mFalloutTriggerState;
+        FalloutAttackDelivery mFalloutAttackDelivery;
         MWRender::Animation* mAnimation;
 
         struct AnimationQueueEntry

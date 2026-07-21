@@ -477,6 +477,29 @@ namespace MWMechanics
         float mCooldown = 0.f;
     };
 
+    enum class FalloutAttackDeliveryEvent : std::uint8_t
+    {
+        None,
+        Hit,
+        Release,
+    };
+
+    /// One native non-V.A.T.S. attack waiting for its authored KF delivery key. The animation group and equipped
+    /// weapon identity are frozen with the attack so a stale key from an interrupted clip cannot damage with a new
+    /// weapon. A matching key consumes this state exactly once.
+    struct FalloutAttackDelivery
+    {
+        FalloutAttackDeliveryEvent mEvent = FalloutAttackDeliveryEvent::None;
+        ESM::FormId mWeapon;
+        std::uint8_t mAnimationType = 0xff;
+        std::string mAnimationGroup;
+
+        [[nodiscard]] bool isPending() const noexcept
+        {
+            return mEvent != FalloutAttackDeliveryEvent::None;
+        }
+    };
+
     struct FalloutMeleeTuning
     {
         float mDamageSkillBase = 0.f;
@@ -508,7 +531,9 @@ namespace MWMechanics
         float mMaxRange = 0.f;
         float mProjectileRange = 0.f;
         float mMinSpread = 0.f;
-        float mSpread = 0.f;
+        // Retained for record diagnostics only. FNV does not use WEAP.DNAM Spread when firing; Min Spread is the
+        // authored weapon-spread input.
+        float mLegacySpread = 0.f;
         bool mAuthoredHitscan = false;
         bool mConsumesWeapon = false;
 
@@ -634,6 +659,23 @@ namespace MWMechanics
         const ESM4::Projectile& projectile, float projectileSkill, float minesDelayMin,
         float exteriorRadiusMultiplier, bool exterior, FalloutProjectileTriggerFailure& failure);
 
+    /// Whether a physical collision leaves this projectile active for a later timed, proximity, or remote trigger.
+    /// Trigger flags only confer persistence on lobbers; retail throwing spears are missiles carrying the legacy
+    /// AlternateTrigger bit and still terminate on their first impact.
+    [[nodiscard]] bool doesFalloutProjectileRemainAfterImpact(const ESM4::Projectile& projectile) noexcept;
+
+    /// Range expiry is a fallback for a projectile that is still flying. A physics collision in the same simulation
+    /// step is authoritative and must be processed before distance expiry, including at the exact range boundary.
+    /// Malformed distance state fails closed rather than deleting a potentially valid collision.
+    [[nodiscard]] bool shouldResolveFalloutProjectileRangeExpiry(
+        bool physicsActive, float distanceTravelled, float maximumRange) noexcept;
+
+    /// A successful queued V.A.T.S. roll remains authoritative if a terminal moving projectile reaches its authored
+    /// range without producing a physics collision. Misses, ordinary shots, malformed records, and persistent
+    /// lobbers do not synthesize a range-expiry hit.
+    [[nodiscard]] std::optional<ESM::FormId> getFalloutVatsProjectileRangeExpiryTarget(
+        const ESM4::Projectile& projectile, const FalloutProjectileImpactContract& impact) noexcept;
+
     /// Resolve the native command executed by a weapon's authored SCPT OnFire block. This deliberately inspects
     /// script source rather than weapon FormIDs so overrides and mods retain the same data-driven behavior.
     [[nodiscard]] FalloutWeaponOnFireAction resolveFalloutWeaponOnFireAction(std::string_view scriptSource) noexcept;
@@ -727,12 +769,36 @@ namespace MWMechanics
     [[nodiscard]] bool advanceFalloutTrigger(FalloutTriggerState& state, bool triggerDown, bool ready,
         const FalloutFireCadence& cadence, float duration) noexcept;
 
+    /// Select the authored KF event that delivers a non-V.A.T.S. attack. Melee clips author Hit; hand-thrown and
+    /// placed explosive clips author Release; non-hitscan gun/launcher clips author Hit. Automatic and hitscan
+    /// weapons continue to use trigger cadence directly so an action clip cannot collapse a firing loop to one hit.
+    [[nodiscard]] FalloutAttackDeliveryEvent getFalloutAttackDeliveryEvent(
+        std::uint8_t animationType, bool authoredHitscan, bool automatic) noexcept;
+
+    /// Gameplay is immediate for cadence-driven attacks and as a fallback when an event-routed visual action cannot
+    /// play. A successfully playing event-routed action waits for its authored Hit/Release key.
+    [[nodiscard]] bool shouldDeliverFalloutAttackImmediately(
+        FalloutAttackDeliveryEvent event, bool visualAction) noexcept;
+
+    /// Arm one exact animation-key delivery. None, an invalid animation family, or an empty group fails closed.
+    [[nodiscard]] bool queueFalloutAttackDelivery(FalloutAttackDelivery& state,
+        FalloutAttackDeliveryEvent event, ESM::FormId weapon, std::uint8_t animationType,
+        std::string_view animationGroup);
+
+    /// Consume a queued delivery only when the still-equipped weapon, active animation group, and native text key
+    /// all match. Both native raw keys ("hit") and already-namespaced keys ("attack2: hit") are accepted.
+    [[nodiscard]] std::optional<FalloutAttackDelivery> consumeFalloutAttackDelivery(
+        FalloutAttackDelivery& state, ESM::FormId equippedWeapon, std::string_view animationGroup,
+        std::string_view textKey) noexcept;
+
     [[nodiscard]] bool isFalloutThrownWeapon(const ESM4::Weapon& weapon) noexcept;
 
-    /// Resolve one unit ray inside the authored circular spread cone. diskSample is a caller-provided point in the
-    /// unit disk, allowing production to use the world PRNG while keeping the geometry deterministic and testable.
+    /// Resolve one unit ray using FNV's authored WEAP Min Spread semantics. Min Spread is the median angular
+    /// deviation: a sample radius of 0.5 produces that angle and radius 1 produces the 2x maximum. The caller
+    /// supplies the polar sample in the unit disk, allowing production to use the world PRNG while keeping the
+    /// geometry deterministic and testable.
     [[nodiscard]] std::optional<osg::Vec3f> buildFalloutRayDirection(
-        const osg::Vec3f& forward, float spreadDegrees, const osg::Vec2f& diskSample);
+        const osg::Vec3f& forward, float medianSpreadDegrees, const osg::Vec2f& polarSample);
 
     /// Build the native Fallout melee contract from WEAP DATA/DNAM and the actor's current Fallout values. DNAM
     /// families 0..2 are HandToHand, OneHandMelee, and TwoHandMelee respectively. A missing WEAP is valid only for

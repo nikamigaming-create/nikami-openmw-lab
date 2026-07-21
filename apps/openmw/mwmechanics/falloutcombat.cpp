@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <memory>
+#include <utility>
 #include <vector>
 
 #include <osg/Math>
@@ -171,9 +172,10 @@ namespace MWMechanics
             failure = FalloutShotFailure::InvalidProjectileCount;
         else if (!std::isfinite(projectile.mData.range) || projectile.mData.range <= 0.f)
             failure = FalloutShotFailure::InvalidRange;
+        // New Vegas ignores the legacy WEAP.DNAM Spread field. Min Spread is the median projectile deviation, so
+        // twice that value must remain below 90 degrees for a finite forward ray.
         else if (!std::isfinite(weapon.mData.minSpread) || weapon.mData.minSpread < 0.f
-            || weapon.mData.minSpread >= 90.f || !std::isfinite(weapon.mData.spread) || weapon.mData.spread < 0.f
-            || weapon.mData.spread >= 90.f)
+            || weapon.mData.minSpread >= 45.f)
             failure = FalloutShotFailure::InvalidSpread;
 
         if (failure != FalloutShotFailure::None)
@@ -543,6 +545,27 @@ namespace MWMechanics
             return std::nullopt;
         }
         return result;
+    }
+
+    bool doesFalloutProjectileRemainAfterImpact(const ESM4::Projectile& projectile) noexcept
+    {
+        return projectile.mData.present && projectile.mData.type == ESM4::Projectile::Lobber
+            && (projectile.mData.flags & (ESM4::Projectile::AlternateTrigger | ESM4::Projectile::Detonates)) != 0;
+    }
+
+    bool shouldResolveFalloutProjectileRangeExpiry(
+        bool physicsActive, float distanceTravelled, float maximumRange) noexcept
+    {
+        return physicsActive && std::isfinite(distanceTravelled) && distanceTravelled >= 0.f
+            && std::isfinite(maximumRange) && maximumRange > 0.f && distanceTravelled >= maximumRange;
+    }
+
+    std::optional<ESM::FormId> getFalloutVatsProjectileRangeExpiryTarget(
+        const ESM4::Projectile& projectile, const FalloutProjectileImpactContract& impact) noexcept
+    {
+        if (!projectile.mData.present || doesFalloutProjectileRemainAfterImpact(projectile))
+            return std::nullopt;
+        return getAuthoritativeFalloutVatsProjectileTarget(impact);
     }
 
     FalloutWeaponOnFireAction resolveFalloutWeaponOnFireAction(std::string_view scriptSource) noexcept
@@ -1134,6 +1157,59 @@ namespace MWMechanics
         return true;
     }
 
+    FalloutAttackDeliveryEvent getFalloutAttackDeliveryEvent(
+        std::uint8_t animationType, bool authoredHitscan, bool automatic) noexcept
+    {
+        if (animationType > 13 || automatic)
+            return FalloutAttackDeliveryEvent::None;
+        if (isFalloutMeleeAnimationType(animationType))
+            return FalloutAttackDeliveryEvent::Hit;
+        if (animationType >= 10)
+            return FalloutAttackDeliveryEvent::Release;
+        if (!authoredHitscan)
+            return FalloutAttackDeliveryEvent::Hit;
+        return FalloutAttackDeliveryEvent::None;
+    }
+
+    bool shouldDeliverFalloutAttackImmediately(
+        FalloutAttackDeliveryEvent event, bool visualAction) noexcept
+    {
+        return event == FalloutAttackDeliveryEvent::None || !visualAction;
+    }
+
+    bool queueFalloutAttackDelivery(FalloutAttackDelivery& state, FalloutAttackDeliveryEvent event,
+        ESM::FormId weapon, std::uint8_t animationType, std::string_view animationGroup)
+    {
+        state = {};
+        if (event == FalloutAttackDeliveryEvent::None || animationType > 13 || animationGroup.empty())
+            return false;
+
+        state.mEvent = event;
+        state.mWeapon = weapon;
+        state.mAnimationType = animationType;
+        state.mAnimationGroup = animationGroup;
+        return true;
+    }
+
+    std::optional<FalloutAttackDelivery> consumeFalloutAttackDelivery(FalloutAttackDelivery& state,
+        ESM::FormId equippedWeapon, std::string_view animationGroup, std::string_view textKey) noexcept
+    {
+        if (!state.isPending() || state.mWeapon != equippedWeapon || state.mAnimationGroup != animationGroup)
+            return std::nullopt;
+
+        const std::string_view expected = state.mEvent == FalloutAttackDeliveryEvent::Hit ? "hit" : "release";
+        const bool rawMatch = textKey == expected;
+        const bool namespacedMatch = textKey.size() == animationGroup.size() + 2 + expected.size()
+            && textKey.starts_with(animationGroup) && textKey.substr(animationGroup.size(), 2) == ": "
+            && textKey.substr(animationGroup.size() + 2) == expected;
+        if (!rawMatch && !namespacedMatch)
+            return std::nullopt;
+
+        FalloutAttackDelivery delivered = std::move(state);
+        state = {};
+        return delivered;
+    }
+
     bool isFalloutThrownWeapon(const ESM4::Weapon& weapon) noexcept
     {
         // Fallout's consumable hand-thrown families are contiguous in WEAP.DNAM:
@@ -1142,11 +1218,12 @@ namespace MWMechanics
     }
 
     std::optional<osg::Vec3f> buildFalloutRayDirection(
-        const osg::Vec3f& direction, float spreadDegrees, const osg::Vec2f& diskSample)
+        const osg::Vec3f& direction, float medianSpreadDegrees, const osg::Vec2f& polarSample)
     {
         if (!std::isfinite(direction.x()) || !std::isfinite(direction.y()) || !std::isfinite(direction.z())
-            || !std::isfinite(spreadDegrees) || spreadDegrees < 0.f || spreadDegrees >= 90.f
-            || !std::isfinite(diskSample.x()) || !std::isfinite(diskSample.y()) || diskSample.length2() > 1.00001f)
+            || !std::isfinite(medianSpreadDegrees) || medianSpreadDegrees < 0.f || medianSpreadDegrees >= 45.f
+            || !std::isfinite(polarSample.x()) || !std::isfinite(polarSample.y())
+            || polarSample.length2() > 1.00001f)
             return std::nullopt;
 
         osg::Vec3f forward = direction;
@@ -1161,9 +1238,12 @@ namespace MWMechanics
         osg::Vec3f up = right ^ forward;
         up.normalize();
 
-        const float coneRadius = std::tan(osg::DegreesToRadians(spreadDegrees));
-        osg::Vec3f result
-            = forward + right * (diskSample.x() * coneRadius) + up * (diskSample.y() * coneRadius);
+        const float sampleRadius = polarSample.length();
+        const float angularDeviation = 2.f * medianSpreadDegrees * sampleRadius;
+        const float coneRadius = std::tan(osg::DegreesToRadians(angularDeviation));
+        const osg::Vec2f sampleDirection = sampleRadius > 0.f ? polarSample / sampleRadius : osg::Vec2f();
+        osg::Vec3f result = forward + right * (sampleDirection.x() * coneRadius)
+            + up * (sampleDirection.y() * coneRadius);
         if (result.normalize() == 0.f)
             return std::nullopt;
         return result;

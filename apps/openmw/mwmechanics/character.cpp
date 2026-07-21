@@ -1013,6 +1013,7 @@ namespace MWMechanics
     {
         clearStateAnimation(mCurrentWeapon);
         mUpperBodyState = UpperBodyState::None;
+        mFalloutAttackDelivery = {};
     }
 
     void CharacterController::resetCurrentDeathState()
@@ -1993,6 +1994,7 @@ namespace MWMechanics
 
     void CharacterController::detachAnimation()
     {
+        mFalloutAttackDelivery = {};
         if (mAnimation)
         {
             persistAnimationState();
@@ -2077,6 +2079,26 @@ namespace MWMechanics
                 }
             }
             return;
+        }
+
+        const ESM::FormId equippedFalloutWeapon
+            = mFalloutWeapon != nullptr ? mFalloutWeapon->mId : ESM::FormId{};
+        if (mUpperBodyState == UpperBodyState::AttackEnd)
+        {
+            if (const std::optional<FalloutAttackDelivery> delivery = consumeFalloutAttackDelivery(
+                    mFalloutAttackDelivery, equippedFalloutWeapon, groupname, evt))
+            {
+                const bool delivered = isFalloutMeleeAnimationType(delivery->mAnimationType)
+                    ? strikeFalloutMelee(delivery->mAnimationType)
+                    : fireFalloutWeapon();
+                Log(delivered ? Debug::Info : Debug::Error)
+                    << "FNV combat authored attack delivery: actor=" << mPtr.toString()
+                    << " weapon=" << ESM::RefId::formIdRefId(delivery->mWeapon)
+                    << " animationType=" << static_cast<unsigned int>(delivery->mAnimationType)
+                    << " group=" << delivery->mAnimationGroup << " key=" << evt
+                    << " status=" << (delivered ? "pass" : "fail");
+                return;
+            }
         }
 
         if (evt.substr(0, groupname.size()) != groupname || evt.substr(groupname.size(), 2) != ": ")
@@ -2298,6 +2320,7 @@ namespace MWMechanics
     {
         bool forceStateUpdate = false;
         const auto failVisualClosed = [&]() {
+            mFalloutAttackDelivery = {};
             mAnimation->showWeapons(false);
             mUpperBodyState = UpperBodyState::None;
             mWeaponType = ESM::Weapon::None;
@@ -2307,6 +2330,7 @@ namespace MWMechanics
             mAnimation->setWeaponGroup(std::string{}, false);
         };
         const auto settleUsableWithoutAction = [&](std::string_view reason) {
+            mFalloutAttackDelivery = {};
             if (!mCurrentWeapon.empty())
                 mAnimation->disable(mCurrentWeapon);
             mCurrentWeapon.clear();
@@ -2324,6 +2348,33 @@ namespace MWMechanics
                     || getWeaponType(mWeaponType)->mWeaponClass == ESM::WeaponType::Thrown);
             mAnimation->setPitchFactor(actionPlaying && ranged ? 1.f : 0.f);
             mAnimation->setAccurateAiming(actionPlaying && ranged);
+        };
+        const auto getAttackDeliveryEvent = [&]() {
+            const std::optional<std::uint8_t> animationType = getFalloutWeaponAnimationType(mWeaponType);
+            if (!animationType)
+                return FalloutAttackDeliveryEvent::None;
+
+            bool authoredHitscan = true;
+            if (mFalloutWeapon != nullptr && !isFalloutMeleeAnimationType(*animationType)
+                && !isFalloutThrownWeapon(*mFalloutWeapon))
+            {
+                const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
+                const ESM4::Projectile* projectile = store != nullptr
+                    ? store->get<ESM4::Projectile>().search(mFalloutWeapon->mData.projectile)
+                    : nullptr;
+                if (projectile != nullptr)
+                    authoredHitscan = (projectile->mData.flags & ESM4::Projectile::Hitscan) != 0;
+            }
+            const bool automatic = mFalloutWeapon != nullptr && mFalloutWeapon->mData.isAutomatic();
+            return getFalloutAttackDeliveryEvent(*animationType, authoredHitscan, automatic);
+        };
+        const auto deliverGameplayAttack = [&]() {
+            const std::optional<std::uint8_t> animationType = getFalloutWeaponAnimationType(mWeaponType);
+            if (!animationType)
+                return false;
+            return isFalloutMeleeAnimationType(*animationType)
+                ? strikeFalloutMelee(*animationType)
+                : fireFalloutWeapon();
         };
 
         const bool semanticActionPlaying = mUpperBodyState == UpperBodyState::Equipping
@@ -2364,9 +2415,9 @@ namespace MWMechanics
 
         if (semanticActionPlaying && actionProgress == MWRender::FonvWeaponActionProgress::Running)
         {
-            if (triggerAttack)
+            if (triggerAttack && getAttackDeliveryEvent() == FalloutAttackDeliveryEvent::None)
             {
-                const bool gameplayAction = fireFalloutWeapon();
+                const bool gameplayAction = deliverGameplayAttack();
                 if (!gameplayAction)
                     Log(Debug::Error) << "FNV mechanics gameplay automatic attack failed: actor=" << mPtr.toString()
                                       << " weaponType=" << mWeaponType;
@@ -2377,6 +2428,15 @@ namespace MWMechanics
 
         if (semanticActionPlaying)
         {
+            if (mUpperBodyState == UpperBodyState::AttackEnd && mFalloutAttackDelivery.isPending())
+            {
+                Log(Debug::Error) << "FNV combat authored attack key was not observed: actor=" << mPtr.toString()
+                                  << " weapon=" << ESM::RefId::formIdRefId(mFalloutAttackDelivery.mWeapon)
+                                  << " animationType="
+                                  << static_cast<unsigned int>(mFalloutAttackDelivery.mAnimationType)
+                                  << " group=" << mFalloutAttackDelivery.mAnimationGroup;
+                mFalloutAttackDelivery = {};
+            }
             if (actionProgress == MWRender::FonvWeaponActionProgress::Interrupted)
             {
                 Log(Debug::Error) << "FNV mechanics exact weapon action was interrupted: actor=" << mPtr.toString()
@@ -2468,6 +2528,7 @@ namespace MWMechanics
 
         if (triggerAttack && mUpperBodyState == UpperBodyState::WeaponEquipped && hitAllowsAttack)
         {
+            mFalloutAttackDelivery = {};
             mAttackStrength = -1.f;
             mReadyToHit = false;
             mAttackSuccess = false;
@@ -2475,12 +2536,43 @@ namespace MWMechanics
             mAttackHitPos = osg::Vec3f();
             MWBase::Environment::get().getWorld()->breakInvisibility(mPtr);
 
+            const std::optional<std::uint8_t> animationType = getFalloutWeaponAnimationType(mWeaponType);
+            const FalloutAttackDeliveryEvent deliveryEvent = getAttackDeliveryEvent();
+            bool deliveryQueued = false;
+            if (animationType && deliveryEvent != FalloutAttackDeliveryEvent::None)
+            {
+                if (const std::optional<MWRender::FonvWeaponActionSource> source
+                    = MWRender::getFonvWeaponActionSource(
+                        *animationType, 0, MWRender::FonvWeaponAction::PrimaryAttack))
+                {
+                    deliveryQueued = queueFalloutAttackDelivery(mFalloutAttackDelivery, deliveryEvent,
+                        mFalloutWeapon != nullptr ? mFalloutWeapon->mId : ESM::FormId{}, *animationType,
+                        source->mSemanticGroup);
+                }
+            }
+            // Arm the state before Animation::play so a modded clip with a delivery key at its start time is still
+            // authoritative. playFalloutWeaponAction will immediately dispatch keys at or before that start time.
+            if (deliveryQueued)
+                mUpperBodyState = UpperBodyState::AttackEnd;
             const bool visualAction
                 = playFalloutWeaponAction(mWeaponType, MWRender::FonvWeaponAction::PrimaryAttack, priorityWeapon);
-            const std::optional<std::uint8_t> animationType = getFalloutWeaponAnimationType(mWeaponType);
-            const bool gameplayAction = animationType && isFalloutMeleeAnimationType(*animationType)
-                ? strikeFalloutMelee(*animationType)
-                : fireFalloutWeapon();
+            bool gameplayAction = false;
+            if (shouldDeliverFalloutAttackImmediately(deliveryEvent, visualAction))
+            {
+                mFalloutAttackDelivery = {};
+                gameplayAction = deliverGameplayAttack();
+                if (deliveryEvent != FalloutAttackDeliveryEvent::None && !visualAction)
+                {
+                    Log(gameplayAction ? Debug::Warning : Debug::Error)
+                        << "FNV combat used immediate delivery fallback: actor=" << mPtr.toString()
+                        << " weaponType=" << mWeaponType << " reason=missing-primary-attack-action"
+                        << " status=" << (gameplayAction ? "pass" : "fail");
+                }
+            }
+            else if (visualAction && deliveryQueued)
+                gameplayAction = true;
+            else
+                mFalloutAttackDelivery = {};
             if (visualAction)
                 mUpperBodyState = UpperBodyState::AttackEnd;
             else
@@ -2757,16 +2849,16 @@ namespace MWMechanics
             return fail("invalid-limb-damage-tuning");
 
         FalloutAmmoEffectFailure ammoEffectFailure = FalloutAmmoEffectFailure::None;
-        float shotSpread = 0.f;
+        float medianShotSpread = 0.f;
         if (!vatsAimPoint)
         {
             const std::optional<float> adjustedSpread = applyFalloutAmmoEffects(
-                contract->mSpread, ESM4::AmmoEffect::Type::Spread, ammoEffects, ammoEffectFailure);
+                contract->mMinSpread, ESM4::AmmoEffect::Type::Spread, ammoEffects, ammoEffectFailure);
             if (!adjustedSpread)
                 return fail(getFalloutAmmoEffectFailureName(ammoEffectFailure));
-            if (*adjustedSpread < 0.f || *adjustedSpread >= 90.f)
+            if (*adjustedSpread < 0.f || *adjustedSpread >= 45.f)
                 return fail("ammo-adjusted-spread-out-of-range");
-            shotSpread = *adjustedSpread;
+            medianShotSpread = *adjustedSpread;
         }
 
         std::vector<osg::Vec3f> rayDirections;
@@ -2776,11 +2868,13 @@ namespace MWMechanics
             && doesFalloutCriticalHit(critical->mChancePercent, Misc::Rng::rollProbability(prng));
         for (unsigned int ray = 0; ray < contract->mProjectileCount; ++ray)
         {
-            const float radius = std::sqrt(Misc::Rng::rollProbability(prng));
+            // FNV authors Min Spread as the median deviation, with a maximum of twice the value. Sampling radius
+            // uniformly (rather than uniformly by disk area) preserves that median contract.
+            const float radius = Misc::Rng::rollProbability(prng);
             const float angle = 2.f * osg::PI * Misc::Rng::rollProbability(prng);
-            const osg::Vec2f diskSample(radius * std::cos(angle), radius * std::sin(angle));
+            const osg::Vec2f polarSample(radius * std::cos(angle), radius * std::sin(angle));
             const std::optional<osg::Vec3f> rayDirection
-                = buildFalloutRayDirection(direction, shotSpread, diskSample);
+                = buildFalloutRayDirection(direction, medianShotSpread, polarSample);
             if (!rayDirection)
                 return fail("invalid-ray-direction");
             rayDirections.push_back(*rayDirection);
@@ -2906,7 +3000,12 @@ namespace MWMechanics
             }
             else
             {
-                result = rayCasting->castRay(origin, destination, { mPtr }, targetActors,
+                // Ordinary Fallout gunfire is physical even when an AI package supplied an intended combat
+                // target. Passing that target list to PhysicsSystem would whitelist it and make every other actor
+                // non-solid to the shot, so a bystander between an NPC and its target could not intercept a pellet.
+                // V.A.T.S. successful rolls take the explicit authoritative branch above; all other rays must stop
+                // at the first world or actor contact.
+                result = rayCasting->castRay(origin, destination, { mPtr }, {},
                     MWPhysics::CollisionType_Default, MWPhysics::CollisionType_Projectile);
             }
             if (!result.mHit)
@@ -3098,7 +3197,10 @@ namespace MWMechanics
                          << " limbDamageMultiplier=" << weaponLimbDamageMultiplier
                          << " projectileCount=" << static_cast<unsigned int>(contract->mProjectileCount)
                          << " damagePerProjectile=" << damagePerProjectile
-                         << " authoredSpread=" << contract->mSpread << " ammoAdjustedSpread=" << shotSpread
+                         << " authoredMinSpread=" << contract->mMinSpread
+                         << " legacyUnusedSpread=" << contract->mLegacySpread
+                         << " ammoAdjustedMedianSpread=" << medianShotSpread
+                         << " maximumPelletDeviation=" << (2.f * medianShotSpread)
                          << " ammoEffects=" << ammoEffects.size()
                          << " authoredHitscan=" << contract->mAuthoredHitscan
                          << " movingProjectiles=" << movingProjectiles << " rayHits=" << rayHits
@@ -3120,6 +3222,10 @@ namespace MWMechanics
             || !std::isfinite(action.mHealthDamageMultiplier) || action.mHealthDamageMultiplier <= 0.f
             || !std::isfinite(action.mLimbDamageMultiplier) || action.mLimbDamageMultiplier < 0.f)
             return false;
+
+        // V.A.T.S. resolves its queued hit contract authoritatively in this method. Never let a real-time KF key
+        // left over from an interrupted attack deliver a second shot during the cinematic.
+        mFalloutAttackDelivery = {};
 
         MWRender::Animation::AnimPriority priority(Priority_Weapon);
         priority[MWRender::BoneGroup_LowerBody] = Priority_WeaponLowerBody;
@@ -3741,7 +3847,10 @@ namespace MWMechanics
         if (shouldUseFalloutWeaponState(weaptype, mWeaponType))
         {
             if (!MWRender::canAdvanceFonvWeaponState(isKnockedOut(), isKnockedDown(), isRecovery()))
+            {
+                mFalloutAttackDelivery = {};
                 return false;
+            }
             return updateFalloutWeaponState(weaptype, weaponChanged, requestedFalloutWeapon, priorityWeapon, duration);
         }
 

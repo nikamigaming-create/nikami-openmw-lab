@@ -786,10 +786,9 @@ namespace MWWorld
             }
             update(state, duration);
 
-            std::vector<MWWorld::Ptr> targetActors;
-            if (!caster.isEmpty() && caster.getClass().isActor() && caster != MWMechanics::getPlayer())
-                caster.getClass().getCreatureStats(caster).getAiSequence().getCombatTargets(targetActors);
-            projectile->setValidTargets(targetActors);
+            // Ordinary moving shots are physical. An AI package's intended target controls aim, not collision:
+            // every actor in the flight path must remain solid so a bystander can intercept the projectile.
+            projectile->setValidTargets({});
         }
     }
 
@@ -914,14 +913,103 @@ namespace MWWorld
             }
             if (projectileState.mSettled)
                 continue;
+            const ESM4::Projectile* authoredProjectile
+                = MWBase::Environment::get().getESMStore()->get<ESM4::Projectile>().search(
+                    projectileState.mProjectile);
             projectileState.mDistanceTravelled += (position - projectileState.mPreviousPosition).length();
-            if (projectileState.mDistanceTravelled >= projectileState.mMaximumRange)
+            const bool projectileActive = projectile->isActive();
+            if (MWMechanics::shouldResolveFalloutProjectileRangeExpiry(projectileActive,
+                    projectileState.mDistanceTravelled, projectileState.mMaximumRange))
             {
+                const std::optional<ESM::FormId> queuedTarget = authoredProjectile != nullptr
+                    ? MWMechanics::getFalloutVatsProjectileRangeExpiryTarget(
+                        *authoredProjectile, projectileState.mImpact)
+                    : std::nullopt;
+                if (queuedTarget)
+                {
+                    MWBase::World* world = MWBase::Environment::get().getWorld();
+                    MWWorld::Ptr candidate = world != nullptr
+                        ? world->searchPtr(ESM::RefId(*queuedTarget), true, false)
+                        : MWWorld::Ptr();
+                    if (candidate.isEmpty() && world != nullptr)
+                    {
+                        std::vector<MWWorld::Ptr> nearby;
+                        MWBase::Environment::get().getMechanicsManager()->getActorsInRange(
+                            position, projectileState.mMaximumRange, nearby);
+                        const auto activeTarget = std::ranges::find_if(nearby, [&](const MWWorld::Ptr& actor) {
+                            return !actor.isEmpty() && actor.getClass().isActor()
+                                && actor.getCellRef().getRefNum() == *queuedTarget;
+                        });
+                        if (activeTarget != nearby.end())
+                            candidate = *activeTarget;
+                    }
+
+                    if (!candidate.isEmpty() && candidate.getClass().isActor())
+                    {
+                        osg::Vec3f resolvedHitPosition = world->getActorHeadTransform(candidate).getTrans();
+                        const MWMechanics::FalloutVatsQueuedAction& action
+                            = *projectileState.mImpact.mVatsAction;
+                        if (MWRender::Animation* animation = world->getAnimation(candidate))
+                        {
+                            if (const osg::Node* targetNode = animation->getNode(action.mTargetNode))
+                            {
+                                const osg::NodePathList paths = targetNode->getParentalNodePaths();
+                                if (!paths.empty())
+                                    resolvedHitPosition = osg::computeLocalToWorld(paths.front()).getTrans();
+                            }
+                        }
+                        projectileState.mNode->setPosition(resolvedHitPosition);
+
+                        const MWWorld::Ptr caster = projectileState.getCaster();
+                        const bool applied = !caster.isEmpty()
+                            && MWBase::Environment::get().getMechanicsManager()->executeFalloutProjectileImpact(
+                                caster, candidate, projectileState.mPreviousPosition, resolvedHitPosition,
+                                projectileState.mImpact);
+                        if (!applied)
+                        {
+                            Log(Debug::Error) << "FNV moving projectile VATS range impact rejected: caster="
+                                              << (caster.isEmpty() ? std::string("none") : caster.toString())
+                                              << " target=" << candidate.toString() << " projectile="
+                                              << ESM::RefId::formIdRefId(projectileState.mProjectile);
+                        }
+
+                        const bool detonateOnImpact
+                            = (authoredProjectile->mData.flags & ESM4::Projectile::Explosion) != 0
+                            && (authoredProjectile->mData.flags & ESM4::Projectile::AlternateTrigger) == 0
+                            && (authoredProjectile->mData.flags & ESM4::Projectile::Detonates) == 0
+                            && !projectileState.mImpact.mExplosion.isZeroOrUnset();
+                        if (detonateOnImpact
+                            && (caster.isEmpty()
+                                || !MWBase::Environment::get().getMechanicsManager()->executeFalloutExplosion(
+                                    caster, resolvedHitPosition, projectileState.mImpact)))
+                        {
+                            Log(Debug::Error) << "FNV moving projectile VATS range explosion rejected: caster="
+                                              << (caster.isEmpty() ? std::string("none") : caster.toString())
+                                              << " projectile="
+                                              << ESM::RefId::formIdRefId(projectileState.mProjectile)
+                                              << " explosion="
+                                              << ESM::RefId::formIdRefId(projectileState.mImpact.mExplosion);
+                        }
+
+                        Log(Debug::Info) << "FNV moving projectile VATS range resolution: projectile="
+                                         << ESM::RefId::formIdRefId(projectileState.mProjectile)
+                                         << " target=" << candidate.toString()
+                                         << " range=" << projectileState.mMaximumRange
+                                         << " travelled=" << projectileState.mDistanceTravelled
+                                         << " resolvedHitPosition=" << resolvedHitPosition;
+                    }
+                    else
+                    {
+                        Log(Debug::Warning) << "FNV moving projectile VATS range target unavailable: projectile="
+                                            << ESM::RefId::formIdRefId(projectileState.mProjectile)
+                                            << " target=" << ESM::RefId::formIdRefId(*queuedTarget);
+                    }
+                }
                 projectileState.mToDelete = true;
                 continue;
             }
 
-            if (projectile->isActive())
+            if (projectileActive)
             {
                 projectileState.mPreviousPosition = position;
                 continue;
@@ -933,13 +1021,8 @@ namespace MWWorld
             if (projectile->getHitWater())
                 mRendering->emitWaterRipple(physicalHitPosition);
 
-            const ESM4::Projectile* authoredProjectile
-                = MWBase::Environment::get().getESMStore()->get<ESM4::Projectile>().search(
-                    projectileState.mProjectile);
             const bool persistentLobber = authoredProjectile != nullptr
-                && authoredProjectile->mData.type == ESM4::Projectile::Lobber
-                && ((authoredProjectile->mData.flags & ESM4::Projectile::AlternateTrigger) != 0
-                    || (authoredProjectile->mData.flags & ESM4::Projectile::Detonates) != 0);
+                && MWMechanics::doesFalloutProjectileRemainAfterImpact(*authoredProjectile);
             if (persistentLobber)
             {
                 const osg::Vec3f hitNormal = Misc::Convert::toOsg(projectile->getHitNormal());
@@ -951,9 +1034,10 @@ namespace MWWorld
 
             MWWorld::Ptr resolvedTarget = target;
             osg::Vec3f resolvedHitPosition = physicalHitPosition;
-            const bool terminalDirectImpact = authoredProjectile != nullptr
-                && (authoredProjectile->mData.flags
-                    & (ESM4::Projectile::AlternateTrigger | ESM4::Projectile::Detonates)) == 0;
+            // AlternateTrigger and Detonates select trigger modes for explosive lobbers. They do not make a
+            // non-explosive missile persistent: retail NVSpearProjectile carries AlternateTrigger, but still has a
+            // terminal direct impact and must resolve a successful queued V.A.T.S. target authoritatively.
+            const bool terminalDirectImpact = authoredProjectile != nullptr && !persistentLobber;
             const std::optional<ESM::FormId> queuedTarget = terminalDirectImpact
                 ? MWMechanics::getAuthoritativeFalloutVatsProjectileTarget(projectileState.mImpact)
                 : std::nullopt;
@@ -1038,6 +1122,11 @@ namespace MWWorld
                                       << ESM::RefId::formIdRefId(projectileState.mImpact.mExplosion);
                 }
             }
+            // Retail does not materialize a recoverable world reference for Missile impacts, even when the legacy
+            // CanBePickedUp bit is authored (as it is on NVSpearProjectile). The thrown WEAP was consumed exactly
+            // once before launch, so deleting this one-shot flight state also prevents impact/save-load duplication.
+            // PinsLimbs applies to a severed ragdoll limb, not to projectile persistence; it belongs in the future
+            // dismemberment/limb-attachment path rather than spawning or retaining the projectile here.
             projectileState.mToDelete = true;
         }
         const MWWorld::ESMStore& esmStore = *MWBase::Environment::get().getESMStore();
