@@ -407,60 +407,7 @@ namespace MWInput
             return false;
 
         MWBase::World* world = MWBase::Environment::get().getWorld();
-        const ESM4::BodyPartData* targetBodyData = nullptr;
-        if (target.getType() == ESM4::Npc::sRecordId)
-        {
-            const ESM4::Npc* npc = target.get<ESM4::Npc>()->mBase;
-            if (const ESM4::Race* race = world->getStore().get<ESM4::Race>().search(npc->mRace))
-            {
-                Log(Debug::Info) << "FNV VATS: NPC race=" << race->mEditorId
-                                 << " raceId=" << npc->mRace << " bodyData=" << race->mBodyPartData;
-                targetBodyData = world->getStore().get<ESM4::BodyPartData>().search(race->mBodyPartData);
-            }
-        }
-        if (targetBodyData == nullptr)
-        {
-            std::string targetToken(target.getClass().getName(target));
-            std::erase_if(targetToken, [](unsigned char c) { return !std::isalnum(c); });
-            std::ranges::transform(targetToken, targetToken.begin(), [](unsigned char c) { return std::tolower(c); });
-            if (targetToken.starts_with("young"))
-                targetToken.erase(0, 5);
-            for (const ESM4::BodyPartData& candidate : world->getStore().get<ESM4::BodyPartData>())
-            {
-                std::string editor = candidate.mEditorId;
-                std::ranges::transform(editor, editor.begin(), [](unsigned char c) { return std::tolower(c); });
-                if (!targetToken.empty() && editor.find(targetToken) != std::string::npos)
-                {
-                    targetBodyData = &candidate;
-                    break;
-                }
-            }
-        }
-        if (targetBodyData == nullptr && target.getType() == ESM4::Npc::sRecordId)
-        {
-            const ESM4::BodyPartData* genericAuthoredBody = nullptr;
-            const ESM4::BodyPartData* defaultAuthoredBody = nullptr;
-            for (const ESM4::BodyPartData& candidate : world->getStore().get<ESM4::BodyPartData>())
-            {
-                std::string editor = candidate.mEditorId;
-                std::ranges::transform(editor, editor.begin(), [](unsigned char c) { return std::tolower(c); });
-                const bool humanRecord = editor.find("human") != std::string::npos
-                    || editor.find("humanoid") != std::string::npos;
-                const bool hasTorso = std::ranges::any_of(candidate.mBodyParts,
-                    [](const ESM4::BodyPartData::BodyPart& part) { return part.mPartName == "Torso"; });
-                if (hasTorso && genericAuthoredBody == nullptr)
-                    genericAuthoredBody = &candidate;
-                if (hasTorso && editor == "defaultbodypartdata")
-                    defaultAuthoredBody = &candidate;
-                if (humanRecord && hasTorso)
-                {
-                    targetBodyData = &candidate;
-                    break;
-                }
-            }
-            if (targetBodyData == nullptr)
-                targetBodyData = defaultAuthoredBody != nullptr ? defaultAuthoredBody : genericAuthoredBody;
-        }
+        const ESM4::BodyPartData* targetBodyData = MWMechanics::getFalloutActorBodyPartData(target);
         if (targetBodyData == nullptr)
         {
             Log(Debug::Warning) << "FNV VATS: body data unavailable target=" << target.getClass().getName(target);
@@ -784,7 +731,7 @@ namespace MWInput
         const bool rolledHit
             = MWMechanics::doesFalloutVatsAttackHit(executing.mDisplayedHitChance, hitRoll);
         const bool fired = MWBase::Environment::get().getMechanicsManager()->executeFalloutVatsRangedHit(
-            world->getPlayerPtr(), executionTarget, targetPoint, executing.mHealthDamageMultiplier, rolledHit);
+            world->getPlayerPtr(), executionTarget, targetPoint, executing, rolledHit);
         const float healthAfter
             = executionTarget.getClass().getCreatureStats(executionTarget).getHealth().getCurrent();
         mFalloutVatsExecutionDamage += std::max(0.f, healthBefore - healthAfter);

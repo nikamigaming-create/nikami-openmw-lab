@@ -831,10 +831,10 @@ namespace MWMechanics
     }
 
     bool MechanicsManager::executeFalloutVatsRangedHit(const MWWorld::Ptr& actor, const MWWorld::Ptr& target,
-        const osg::Vec3f& targetPoint, float damageMultiplier, bool targetHit)
+        const osg::Vec3f& targetPoint, const FalloutVatsQueuedAction& action, bool targetHit)
     {
         return actor.getClass().isActor() && target.getClass().isActor()
-            && mActors.executeFalloutVatsRangedHit(actor, target, targetPoint, damageMultiplier, targetHit);
+            && mActors.executeFalloutVatsRangedHit(actor, target, targetPoint, action, targetHit);
     }
 
     bool MechanicsManager::playAnimationGroup(

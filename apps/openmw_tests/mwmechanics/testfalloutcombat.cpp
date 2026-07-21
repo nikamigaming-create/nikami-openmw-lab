@@ -347,7 +347,7 @@ namespace
         ESM4::BodyPartData::BodyPart bodyPart;
         bodyPart.mPartName = "Head";
         bodyPart.mVATSTarget = "Bip01 Head";
-        bodyPart.mData.actorValue = 48;
+        bodyPart.mData.actorValue = 25;
         bodyPart.mData.toHitChance = 35;
         bodyPart.mData.damageMult = 2.f;
         bodyPart.mData.healthPercent = 20;
@@ -360,7 +360,7 @@ namespace
         EXPECT_EQ(contract->mIndex, 1);
         EXPECT_EQ(contract->mName, "Head");
         EXPECT_EQ(contract->mTargetNode, "Bip01 Head");
-        EXPECT_EQ(contract->mActorValue, 48);
+        EXPECT_EQ(contract->mActorValue, 25);
         EXPECT_EQ(contract->mBaseHitChance, 35);
         EXPECT_EQ(contract->mHealthPercent, 20);
         EXPECT_FLOAT_EQ(contract->mHealthDamageMultiplier, 2.f);
@@ -371,7 +371,7 @@ namespace
     {
         MWMechanics::FalloutVatsRuntime runtime;
         ASSERT_TRUE(runtime.enter(80.f));
-        const MWMechanics::FalloutVatsBodyPartContract head{ 1, "Head", "Bip01 Head", 48, 35, 20, 2.f, false };
+        const MWMechanics::FalloutVatsBodyPartContract head{ 1, "Head", "Bip01 Head", 25, 35, 20, 2.f, false };
         ASSERT_TRUE(runtime.select(id(0x1234), head, 73));
 
         const MWMechanics::FalloutVatsWeaponContract weapon{ 22.f, 42, 0.75f, 32 };
@@ -393,7 +393,7 @@ namespace
         EXPECT_EQ(runtime.getExecutingAction()->mHealthPercent, 20);
         EXPECT_EQ(runtime.getExecutingAction()->mBodyPartName, "Head");
         EXPECT_EQ(runtime.getExecutingAction()->mTargetNode, "Bip01 Head");
-        EXPECT_EQ(runtime.getExecutingAction()->mActorValue, 48);
+        EXPECT_EQ(runtime.getExecutingAction()->mActorValue, 25);
 
         EXPECT_TRUE(runtime.advanceExecution());
         ASSERT_NE(runtime.getExecutingAction(), nullptr);
@@ -413,6 +413,57 @@ namespace
         EXPECT_FALSE(MWMechanics::doesFalloutVatsAttackHit(73, 0.73f));
         EXPECT_TRUE(MWMechanics::doesFalloutVatsAttackHit(100, 0.99999f));
         EXPECT_FALSE(MWMechanics::doesFalloutVatsAttackHit(100, 1.f));
+    }
+
+    TEST(FalloutCombatTest, ResolvesDeepestExactRenderedNodeToAuthoredBodyPart)
+    {
+        ESM4::BodyPartData bodyData;
+        ESM4::BodyPartData::BodyPart torso;
+        torso.mPartName = "Torso";
+        torso.mNodeName = "Bip01 Spine2";
+        torso.mVATSTarget = "Bip01 Spine2";
+        torso.mData.actorValue = 26;
+        torso.mData.healthPercent = 60;
+        torso.mData.damageMult = 1.f;
+        bodyData.mBodyParts.push_back(torso);
+        ESM4::BodyPartData::BodyPart head;
+        head.mPartName = "Head";
+        head.mNodeName = "Bip01 Head";
+        head.mVATSTarget = "Bip01 Head";
+        head.mData.actorValue = 25;
+        head.mData.healthPercent = 20;
+        head.mData.damageMult = 2.f;
+        bodyData.mBodyParts.push_back(head);
+
+        const std::vector<std::string> path{ "Scene Root", "Bip01 Spine2", "Bip01 Head" };
+        const auto resolved = MWMechanics::resolveFalloutBodyPartFromNodePath(bodyData, path);
+        ASSERT_TRUE(resolved);
+        EXPECT_EQ(resolved->mIndex, 1);
+        EXPECT_EQ(resolved->mName, "Head");
+        EXPECT_EQ(resolved->mActorValue, 25);
+        EXPECT_FLOAT_EQ(resolved->mHealthDamageMultiplier, 2.f);
+
+        const std::vector<std::string> nonExact{ "Scene Root", "Bip01 Headgear" };
+        EXPECT_FALSE(MWMechanics::resolveFalloutBodyPartFromNodePath(bodyData, nonExact));
+    }
+
+    TEST(FalloutCombatTest, AppliesIndependentRetailLimbConditionAndCrippleTransition)
+    {
+        // A 25-percent limb on a 100-health actor has 25 condition. The health channel's armor result does not
+        // enter this calculation: 10 raw hit damage * 1.5 weapon * 2 player-target tuning applies 30 limb damage.
+        const auto impact = MWMechanics::resolveFalloutLimbImpact(100.f, 25, 20.f, 10.f, 1.5f, 2.f);
+        ASSERT_TRUE(impact);
+        EXPECT_FLOAT_EQ(impact->mMaximumCondition, 25.f);
+        EXPECT_FLOAT_EQ(impact->mConditionBefore, 5.f);
+        EXPECT_FLOAT_EQ(impact->mDamageApplied, 30.f);
+        EXPECT_FLOAT_EQ(impact->mDamageTakenAfter, 50.f);
+        EXPECT_FLOAT_EQ(impact->mConditionAfter, 0.f);
+        EXPECT_TRUE(impact->mNewlyCrippled);
+
+        const auto alreadyCrippled = MWMechanics::resolveFalloutLimbImpact(100.f, 25, 50.f, 10.f, 1.5f, 2.f);
+        ASSERT_TRUE(alreadyCrippled);
+        EXPECT_FALSE(alreadyCrippled->mNewlyCrippled);
+        EXPECT_FALSE(MWMechanics::resolveFalloutLimbImpact(100.f, 0, 0.f, 10.f, 1.f, 1.f));
     }
 
     TEST(FalloutCombatTest, PreservesGenericShotgunRaysAndTotalAuthoredDamage)

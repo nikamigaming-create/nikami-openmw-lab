@@ -2028,9 +2028,6 @@ namespace MWRender
             return result;
 
         auto test = [&](const osgUtil::LineSegmentIntersector::Intersection& intersection) {
-            if (!intersection.nodePath.empty())
-                result.mHitNode = intersection.nodePath.back();
-
 //## VR_PATCH END
             PtrHolder* ptrHolder = nullptr;
             std::vector<RefnumMarker*> refnumMarkers;
@@ -2090,6 +2087,14 @@ namespace MWRender
             if (!result.mHitObject.isEmpty() || result.mHitRefnum.isSet() || hitNonObjectWorld)
             {
                 result.mHit = true;
+                result.mHitNode = intersection.nodePath.empty() ? nullptr : intersection.nodePath.back();
+                result.mHitNodePath.clear();
+                result.mHitNodePath.reserve(intersection.nodePath.size());
+                for (const osg::Node* node : intersection.nodePath)
+                {
+                    if (node != nullptr && !node->getName().empty())
+                        result.mHitNodePath.push_back(node->getName());
+                }
                 result.mHitPointWorld = intersection.getWorldIntersectPoint();
                 result.mHitNormalWorld = intersection.getWorldIntersectNormal();
                 result.mHitPointLocal = intersection.getLocalIntersectPoint();

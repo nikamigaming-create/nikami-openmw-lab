@@ -134,6 +134,7 @@ namespace MWRender
         osg::Vec3f mHitPointLocal;
         MWWorld::Ptr mHitObject;
         osg::Node* mHitNode;
+        std::vector<std::string> mHitNodePath;
         /// Cast a ray between two points
         ESM::RefNum mHitRefnum;
         float mRatio;

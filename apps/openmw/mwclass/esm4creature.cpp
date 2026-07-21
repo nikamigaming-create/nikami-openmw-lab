@@ -22,6 +22,7 @@
 #include <components/esm4/loadammo.hpp>
 #include <components/esm4/loadarmo.hpp>
 #include <components/esm4/loadbook.hpp>
+#include <components/esm4/loadbptd.hpp>
 #include <components/esm4/loadcell.hpp>
 #include <components/esm4/loadclot.hpp>
 #include <components/esm4/loadfurn.hpp>
@@ -1872,6 +1873,23 @@ namespace MWClass
     const ESM4::Creature* ESM4Creature::getStatsRecord(const MWWorld::Ptr& ptr)
     {
         return getCustomData(ptr).mTemplates.mStats;
+    }
+
+    const ESM4::BodyPartData* ESM4Creature::getBodyPartData(const MWWorld::Ptr& ptr)
+    {
+        if (ptr.isEmpty() || ptr.getType() != ESM4::Creature::sRecordId)
+            return nullptr;
+
+        const ESM4::Creature* base = ptr.get<ESM4::Creature>()->mBase;
+        const ESM4::CreatureVisualTemplate visual
+            = ESM4::resolveCreatureVisualTemplate(getLegacyCreatureTemplateRecords(*base));
+        if (visual.mBodyParts == nullptr || visual.mBodyParts->mBodyParts.size() != 1)
+            return nullptr;
+
+        const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
+        return store != nullptr
+            ? store->get<ESM4::BodyPartData>().search(visual.mBodyParts->mBodyParts.front())
+            : nullptr;
     }
 
     std::string_view ESM4Creature::getModel(const MWWorld::ConstPtr& ptr) const

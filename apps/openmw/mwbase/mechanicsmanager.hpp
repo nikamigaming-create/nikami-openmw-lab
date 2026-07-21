@@ -27,6 +27,7 @@ namespace ESM
 namespace MWMechanics
 {
     enum class GreetingState;
+    struct FalloutVatsQueuedAction;
 }
 
 namespace MWWorld
@@ -169,7 +170,7 @@ namespace MWBase
         virtual void forceStateUpdate(const MWWorld::Ptr& ptr) = 0;
 
         virtual bool executeFalloutVatsRangedHit(const MWWorld::Ptr&, const MWWorld::Ptr&,
-            const osg::Vec3f&, float, bool)
+            const osg::Vec3f&, const MWMechanics::FalloutVatsQueuedAction&, bool)
         {
             return false;
         }

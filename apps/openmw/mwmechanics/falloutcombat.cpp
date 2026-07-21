@@ -2,16 +2,60 @@
 
 #include <algorithm>
 #include <cmath>
+#include <memory>
 #include <vector>
 
 #include <osg/Math>
 
 #include <components/esm4/loadamef.hpp>
+#include <components/esm4/loadnpc.hpp>
 #include <components/esm4/loadproj.hpp>
+#include <components/esm4/loadrace.hpp>
 #include <components/esm4/loadweap.hpp>
+#include <components/misc/strings/algorithm.hpp>
+
+#include "../mwbase/environment.hpp"
+#include "../mwbase/world.hpp"
+#include "../mwclass/esm4creature.hpp"
+#include "../mwworld/esmstore.hpp"
+#include "../mwworld/class.hpp"
+#include "../mwworld/ptr.hpp"
 
 namespace MWMechanics
 {
+    namespace
+    {
+        constexpr std::int8_t sFirstFalloutLimbActorValue = 25;
+        constexpr std::int8_t sLastFalloutLimbActorValue = 31;
+
+        bool isFalloutLimbActorValue(std::int8_t actorValue) noexcept
+        {
+            return actorValue >= sFirstFalloutLimbActorValue && actorValue <= sLastFalloutLimbActorValue;
+        }
+
+        const ESM4::BodyPartData* findFalloutBodyPartData(
+            const MWWorld::ESMStore& store, std::string_view editorId)
+        {
+            const auto& bodyPartData = store.get<ESM4::BodyPartData>();
+            const auto found = std::find_if(bodyPartData.begin(), bodyPartData.end(), [&](const auto& candidate) {
+                return Misc::StringUtils::ciEqual(candidate.mEditorId, editorId);
+            });
+            return found != bodyPartData.end() ? std::addressof(*found) : nullptr;
+        }
+
+        bool matchesFalloutBodyPartNode(
+            const ESM4::BodyPartData::BodyPart& bodyPart, std::string_view node) noexcept
+        {
+            if (node.empty())
+                return false;
+            const auto matches = [&](std::string_view authored) {
+                return !authored.empty() && Misc::StringUtils::ciEqual(authored, node);
+            };
+            return matches(bodyPart.mNodeName) || matches(bodyPart.mVATSTarget)
+                || matches(bodyPart.mIKStartNode) || matches(bodyPart.mGoreEffectsTarget);
+        }
+    }
+
     std::optional<ESM4::Faction::GroupCombatReaction> resolveFalloutFactionReaction(
         std::span<const ESM4::ActorFaction> actorFactions, std::span<const ESM4::ActorFaction> targetFactions,
         const FalloutFactionLookup& findFaction)
@@ -495,7 +539,7 @@ namespace MWMechanics
             failure = FalloutVatsBodyPartFailure::MissingName;
         else if (bodyPart.mVATSTarget.empty())
             failure = FalloutVatsBodyPartFailure::MissingTargetNode;
-        else if (bodyPart.mData.actorValue < 0)
+        else if (!isFalloutLimbActorValue(bodyPart.mData.actorValue))
             failure = FalloutVatsBodyPartFailure::InvalidActorValue;
         else if (bodyPart.mData.toHitChance > 100)
             failure = FalloutVatsBodyPartFailure::InvalidHitChance;
@@ -506,6 +550,88 @@ namespace MWMechanics
         return FalloutVatsBodyPartContract{ index, bodyPart.mPartName, bodyPart.mVATSTarget,
             bodyPart.mData.actorValue, bodyPart.mData.toHitChance, bodyPart.mData.healthPercent,
             bodyPart.mData.damageMult, (bodyPart.mData.flags & 0x40) != 0 };
+    }
+
+    const ESM4::BodyPartData* getFalloutActorBodyPartData(const MWWorld::Ptr& actor)
+    {
+        if (actor.isEmpty() || !actor.getClass().isActor())
+            return nullptr;
+
+        MWBase::World* world = MWBase::Environment::get().getWorld();
+        const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
+        if (world == nullptr || store == nullptr)
+            return nullptr;
+
+        if (actor.getType() == ESM4::Npc::sRecordId)
+        {
+            if (actor == world->getPlayerPtr())
+                return findFalloutBodyPartData(*store, "PlayerBodyPartData");
+
+            const ESM4::Npc* npc = actor.get<ESM4::Npc>()->mBase;
+            const ESM4::Race* race = store->get<ESM4::Race>().search(npc->mRace);
+            if (race == nullptr)
+                return nullptr;
+            if (!race->mBodyPartData.isZeroOrUnset())
+                return store->get<ESM4::BodyPartData>().search(race->mBodyPartData);
+            return findFalloutBodyPartData(*store, "DefaultBodyPartData");
+        }
+        if (actor.getType() == ESM4::Creature::sRecordId)
+            return MWClass::ESM4Creature::getBodyPartData(actor);
+        return nullptr;
+    }
+
+    std::optional<FalloutBodyPartContract> buildFalloutBodyPartContract(
+        const ESM4::BodyPartData::BodyPart& bodyPart, std::uint8_t index) noexcept
+    {
+        if (index > 14 || bodyPart.mPartName.empty() || !isFalloutLimbActorValue(bodyPart.mData.actorValue)
+            || !std::isfinite(bodyPart.mData.damageMult) || bodyPart.mData.damageMult <= 0.f)
+            return std::nullopt;
+        return FalloutBodyPartContract{ index, bodyPart.mPartName, bodyPart.mNodeName, bodyPart.mVATSTarget,
+            bodyPart.mIKStartNode, bodyPart.mGoreEffectsTarget, bodyPart.mData.actorValue,
+            bodyPart.mData.healthPercent, bodyPart.mData.damageMult };
+    }
+
+    std::optional<FalloutBodyPartContract> resolveFalloutBodyPartFromNodePath(
+        const ESM4::BodyPartData& bodyPartData, std::span<const std::string> nodePath) noexcept
+    {
+        for (auto node = nodePath.rbegin(); node != nodePath.rend(); ++node)
+        {
+            for (std::size_t index = 0; index < bodyPartData.mBodyParts.size() && index <= 14; ++index)
+            {
+                const auto& bodyPart = bodyPartData.mBodyParts[index];
+                if (!matchesFalloutBodyPartNode(bodyPart, *node))
+                    continue;
+                if (const auto contract
+                    = buildFalloutBodyPartContract(bodyPart, static_cast<std::uint8_t>(index)))
+                    return contract;
+            }
+        }
+        return std::nullopt;
+    }
+
+    std::optional<FalloutLimbImpact> resolveFalloutLimbImpact(float actorMaximumHealth,
+        std::uint8_t bodyPartHealthPercent, float damageTakenBefore, float rawHitDamage,
+        float weaponLimbDamageMultiplier, float targetLimbDamageMultiplier) noexcept
+    {
+        if (!std::isfinite(actorMaximumHealth) || actorMaximumHealth <= 0.f || bodyPartHealthPercent == 0
+            || !std::isfinite(damageTakenBefore) || damageTakenBefore < 0.f
+            || !std::isfinite(rawHitDamage) || rawHitDamage < 0.f
+            || !std::isfinite(weaponLimbDamageMultiplier) || weaponLimbDamageMultiplier < 0.f
+            || !std::isfinite(targetLimbDamageMultiplier) || targetLimbDamageMultiplier < 0.f)
+            return std::nullopt;
+
+        const float maximumCondition
+            = actorMaximumHealth * static_cast<float>(bodyPartHealthPercent) * 0.01f;
+        const float damageApplied = rawHitDamage * weaponLimbDamageMultiplier * targetLimbDamageMultiplier;
+        const float damageTakenAfter = damageTakenBefore + damageApplied;
+        if (!std::isfinite(maximumCondition) || maximumCondition <= 0.f || !std::isfinite(damageApplied)
+            || !std::isfinite(damageTakenAfter))
+            return std::nullopt;
+
+        const float conditionBefore = std::max(0.f, maximumCondition - damageTakenBefore);
+        const float conditionAfter = std::max(0.f, maximumCondition - damageTakenAfter);
+        return FalloutLimbImpact{ maximumCondition, conditionBefore, conditionAfter, damageApplied,
+            damageTakenAfter, damageApplied > 0.f && conditionBefore > 0.f && conditionAfter == 0.f };
     }
 
     bool FalloutVatsRuntime::enter(float currentActionPoints) noexcept

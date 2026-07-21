@@ -33,6 +33,7 @@ namespace ESM
 namespace ESM4
 {
     struct AIPackage;
+    struct BodyPartData;
 }
 
 namespace MWWorld
@@ -240,6 +241,9 @@ namespace MWClass
         static bool materializeFnvDeathItem(const MWWorld::Ptr& ptr, Misc::Rng::Generator& prng, int playerLevel,
             MWBase::World* world = nullptr);
         static const ESM4::Creature* getStatsRecord(const MWWorld::Ptr& ptr);
+
+        /// Return the exact winning PNAM body-part data selected through the creature's visual template chain.
+        static const ESM4::BodyPartData* getBodyPartData(const MWWorld::Ptr& ptr);
 
         /// Validate all fallible FNV creature payload data before LiveCellRef applies the enclosing CellRef/RefData.
         static bool validateState(const ESM4::Creature& creature, const ESM::CreatureState& state,

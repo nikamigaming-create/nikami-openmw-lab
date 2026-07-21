@@ -24,6 +24,11 @@ namespace ESM4
     struct Weapon;
 }
 
+namespace MWWorld
+{
+    class Ptr;
+}
+
 namespace MWMechanics
 {
     enum class FalloutShotFailure
@@ -245,6 +250,31 @@ namespace MWMechanics
         bool mAbsoluteHitChance = false;
     };
 
+    /// The authored BPTD fields shared by ordinary ray hits and VATS. Unlike the VATS presentation contract,
+    /// this keeps every authored node identity so a rendered hit can be mapped without name heuristics.
+    struct FalloutBodyPartContract
+    {
+        std::uint8_t mIndex = 0;
+        std::string_view mName;
+        std::string_view mNodeName;
+        std::string_view mVatsTargetNode;
+        std::string_view mIkStartNode;
+        std::string_view mGoreEffectsTarget;
+        std::int8_t mActorValue = -1;
+        std::uint8_t mHealthPercent = 0;
+        float mHealthDamageMultiplier = 1.f;
+    };
+
+    struct FalloutLimbImpact
+    {
+        float mMaximumCondition = 0.f;
+        float mConditionBefore = 0.f;
+        float mConditionAfter = 0.f;
+        float mDamageApplied = 0.f;
+        float mDamageTakenAfter = 0.f;
+        bool mNewlyCrippled = false;
+    };
+
     enum class FalloutVatsPhase
     {
         Inactive,
@@ -451,6 +481,23 @@ namespace MWMechanics
 
     [[nodiscard]] std::optional<FalloutVatsBodyPartContract> buildFalloutVatsBodyPartContract(
         const ESM4::BodyPartData::BodyPart& bodyPart, std::uint8_t index, FalloutVatsBodyPartFailure& failure);
+
+    /// Resolve the winning native BPTD used by a placed actor: player BPTD for the player, race GNAM or the exact
+    /// default human BPTD for NPCs, and the resolved CREA PNAM provider for creatures.
+    [[nodiscard]] const ESM4::BodyPartData* getFalloutActorBodyPartData(const MWWorld::Ptr& actor);
+
+    [[nodiscard]] std::optional<FalloutBodyPartContract> buildFalloutBodyPartContract(
+        const ESM4::BodyPartData::BodyPart& bodyPart, std::uint8_t index) noexcept;
+
+    /// Prefer the deepest exact rendered node identity. No substring or actor-name matching is permitted.
+    [[nodiscard]] std::optional<FalloutBodyPartContract> resolveFalloutBodyPartFromNodePath(
+        const ESM4::BodyPartData& bodyPartData, std::span<const std::string> nodePath) noexcept;
+
+    /// Convert the independent native hit-data limb channel into the target actor value's persistent condition.
+    /// Health armor mitigation is intentionally absent: retail calculates limb damage before DR/DT.
+    [[nodiscard]] std::optional<FalloutLimbImpact> resolveFalloutLimbImpact(float actorMaximumHealth,
+        std::uint8_t bodyPartHealthPercent, float damageTakenBefore, float rawHitDamage,
+        float weaponLimbDamageMultiplier, float targetLimbDamageMultiplier) noexcept;
 
     /// Advance one weapon trigger using elapsed simulation time. A semi-automatic trigger fires once per press;
     /// an automatic trigger repeats while held when its authored cooldown expires. Visual animation state is only an

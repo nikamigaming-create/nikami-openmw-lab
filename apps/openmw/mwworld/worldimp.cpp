@@ -2619,6 +2619,7 @@ namespace MWWorld
         res.mHitPos = rayRes.mHitPointWorld;
         res.mHitNormal = rayRes.mHitNormalWorld;
         res.mHitObject = rayRes.mHitObject;
+        res.mHitNodePath = std::move(rayRes.mHitNodePath);
         if (res.mHitObject.isEmpty() && rayRes.mHitRefnum.isSet())
             res.mHitObject = MWBase::Environment::get().getWorldModel()->getPtr(rayRes.mHitRefnum);
         return res.mHit;

@@ -232,7 +232,8 @@ namespace MWMechanics
         bool updateFalloutWeaponState(int requestedWeaponType, bool weaponChanged,
             const ESM4::Weapon* requestedWeapon, const MWRender::AnimPriority& priorityWeapon, float duration);
         bool fireFalloutWeapon(const MWWorld::Ptr& vatsTarget = MWWorld::Ptr(),
-            const std::optional<osg::Vec3f>& vatsAimPoint = std::nullopt, float vatsDamageMultiplier = 1.f);
+            const std::optional<osg::Vec3f>& vatsAimPoint = std::nullopt,
+            const FalloutVatsQueuedAction* vatsAction = nullptr, bool vatsTargetHit = true);
         bool strikeFalloutMelee(std::uint8_t animationType);
         void updateIdleStormState(bool inwater) const;
 
@@ -355,7 +356,8 @@ namespace MWMechanics
         /// Execute an already queued and resolved VATS ranged hit through the ordinary Fallout weapon path. The
         /// caller owns chance resolution and supplies the selected body-part target point and damage multiplier.
         bool executeFalloutVatsRangedHit(
-            const MWWorld::Ptr& target, const osg::Vec3f& targetPoint, float damageMultiplier, bool targetHit);
+            const MWWorld::Ptr& target, const osg::Vec3f& targetPoint,
+            const FalloutVatsQueuedAction& action, bool targetHit);
 
         float calculateWindUp() const;
 
