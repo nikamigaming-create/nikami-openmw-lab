@@ -201,6 +201,74 @@ namespace
         return std::isfinite(value) ? std::optional<float>(value) : std::nullopt;
     }
 
+    std::optional<float> getFalloutGameSettingOrEngineDefault(std::string_view id, float engineDefault)
+    {
+        const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
+        if (store == nullptr || !std::isfinite(engineDefault))
+            return std::nullopt;
+        const ESM::GameSetting* setting = store->get<ESM::GameSetting>().search(id);
+        if (setting == nullptr)
+            return engineDefault;
+        if (setting->mValue.getType() != ESM::VT_Float)
+            return std::nullopt;
+        const float value = setting->mValue.getFloat();
+        return std::isfinite(value) ? std::optional<float>(value) : std::nullopt;
+    }
+
+    std::optional<MWMechanics::FalloutExplosionKnockdownTuning> getFalloutExplosionKnockdownTuning()
+    {
+        // FalloutNV.esm overrides only fKnockdownCurrentHealthThreshold (50). The other retail values live in
+        // FalloutNV.exe's GMST defaults; a winning plugin record still replaces each default independently.
+        const std::optional<float> damageMultiplier
+            = getFalloutGameSettingOrEngineDefault("fKnockdownDamageMult", 0.3f);
+        const std::optional<float> damageBase
+            = getFalloutGameSettingOrEngineDefault("fKnockdownDamageBase", 0.f);
+        const std::optional<float> agilityMultiplier
+            = getFalloutGameSettingOrEngineDefault("fKnockdownAgilMult", 1.f);
+        const std::optional<float> agilityBase
+            = getFalloutGameSettingOrEngineDefault("fKnockdownAgilBase", 0.f);
+        const std::optional<float> maximumChance
+            = getFalloutGameSettingOrEngineDefault("fKnockdownChance", 0.25f);
+        const std::optional<float> currentHealthThreshold
+            = getFalloutGameSettingOrEngineDefault("fKnockdownCurrentHealthThreshold", 50.f);
+        const std::optional<float> baseHealthThreshold
+            = getFalloutGameSettingOrEngineDefault("fKnockdownBaseHealthThreshold", 75.f);
+        if (!damageMultiplier || !damageBase || !agilityMultiplier || !agilityBase || !maximumChance
+            || !currentHealthThreshold || !baseHealthThreshold)
+            return std::nullopt;
+        return MWMechanics::FalloutExplosionKnockdownTuning{ *damageMultiplier, *damageBase,
+            *agilityMultiplier, *agilityBase, *maximumChance, *currentHealthThreshold,
+            *baseHealthThreshold };
+    }
+
+    std::optional<float> getFalloutActorAgility(const MWWorld::Ptr& actor)
+    {
+        constexpr std::uint32_t agilityActorValue = MWWorld::FalloutPlayerRuntimeState::SpecialActorValueBegin
+            + static_cast<std::uint32_t>(MWWorld::FalloutSpecial::Agility);
+        if (actor == MWMechanics::getPlayer())
+        {
+            MWBase::World* world = MWBase::Environment::get().getWorld();
+            if (world == nullptr)
+                return std::nullopt;
+            const std::optional<MWWorld::FalloutRuntimeActorValue> agility
+                = world->getFalloutPlayerRuntimeState().getCurrentActorValue(agilityActorValue);
+            return agility ? std::optional<float>(agility->mValue) : std::nullopt;
+        }
+        if (actor.getType() == ESM::REC_NPC_4)
+        {
+            const ESM4::Npc* stats = MWClass::ESM4Npc::getStatsRecord(actor);
+            if (stats != nullptr && stats->mHasFNVData)
+                return static_cast<float>(stats->mFNVData.agility);
+        }
+        if (actor.getType() == ESM4::Creature::sRecordId)
+        {
+            const ESM4::Creature* stats = MWClass::ESM4Creature::getStatsRecord(actor);
+            if (stats != nullptr && stats->mIsFONV && stats->mHasFNVData)
+                return static_cast<float>(stats->mFNVData.agility);
+        }
+        return std::nullopt;
+    }
+
     std::optional<MWMechanics::FalloutBodyPartContract> resolveFalloutRayBodyPart(
         const MWWorld::Ptr& target, const osg::Vec3f& hitPosition, std::span<const std::string> renderedNodePath)
     {
@@ -3212,6 +3280,18 @@ namespace MWMechanics
         if (rayCasting == nullptr)
             return fail("missing-ray-caster");
 
+        const bool alwaysKnockDown
+            = (explosion->mData.flags & ESM4::Explosion::KnockDownAlways) != 0;
+        const bool formulaKnockDown = !alwaysKnockDown
+            && (explosion->mData.flags & ESM4::Explosion::KnockDownByFormula) != 0;
+        std::optional<FalloutExplosionKnockdownTuning> knockdownTuning;
+        if (formulaKnockDown)
+        {
+            knockdownTuning = getFalloutExplosionKnockdownTuning();
+            if (!knockdownTuning)
+                return fail("missing-knockdown-tuning");
+        }
+
         unsigned int blockedByLineOfSight = 0;
         unsigned int damagedActors = 0;
         unsigned int knockedDownActors = 0;
@@ -3268,23 +3348,42 @@ namespace MWMechanics
                         ? getFalloutDamageMitigationFailureName(mitigationFailure)
                         : getFalloutAmmoEffectFailureName(ammoFailure));
 
+            std::optional<FalloutExplosionKnockdown> knockdown;
+            if (formulaKnockDown)
+            {
+                const std::optional<float> agility = getFalloutActorAgility(target);
+                if (!agility)
+                    return fail("missing-target-agility");
+                FalloutExplosionKnockdownFailure knockdownFailure
+                    = FalloutExplosionKnockdownFailure::None;
+                knockdown = buildFalloutExplosionKnockdown(mitigation->mHealthDamage,
+                    targetStats.getHealth().getCurrent(), targetStats.getHealth().getModified(), *agility,
+                    *knockdownTuning, knockdownFailure);
+                if (!knockdown)
+                    return fail(getFalloutExplosionKnockdownFailureName(knockdownFailure));
+            }
+
             target.getClass().onHit(target, { { "health", mitigation->mHealthDamage } },
                 ESM::RefId::formIdRefId(impact.mWeapon), mPtr, true, DamageSourceType::Ranged);
             ++damagedActors;
 
             bool knockedDown = false;
-            if (!targetStats.isDead()
-                && (explosion->mData.flags & ESM4::Explosion::KnockDownAlways) != 0)
+            int knockdownRoll = -1;
+            if (!targetStats.isDead() && alwaysKnockDown)
             {
                 targetStats.setKnockedDown(true);
                 knockedDown = true;
             }
-            else if (!targetStats.isDead()
-                && (explosion->mData.flags & ESM4::Explosion::KnockDownByFormula) != 0)
+            else if (!targetStats.isDead() && knockdown)
             {
-                // The force-vs-resistance formula is a separate runtime channel; retain an immediate authored
-                // blast reaction until that actor-value formula is connected.
-                targetStats.setHitRecovery(true);
+                if (knockdown->mMode == FalloutExplosionKnockdownMode::Chance)
+                    knockdownRoll = Misc::Rng::rollDice(1000, world->getPrng());
+                knockedDown = knockdown->mMode == FalloutExplosionKnockdownMode::Forced
+                    || (knockdownRoll >= 0
+                        && doesFalloutExplosionKnockDown(
+                            *knockdown, static_cast<unsigned int>(knockdownRoll)));
+                if (knockedDown)
+                    targetStats.setKnockedDown(true);
             }
             if (knockedDown)
                 ++knockedDownActors;
@@ -3298,6 +3397,13 @@ namespace MWMechanics
                              << " radialDamage=" << radialDamage->mDamage
                              << " ammoAdjustedDamage=" << *ammoAdjustedDamage
                              << " healthDamage=" << mitigation->mHealthDamage
+                             << " knockdownMode="
+                             << (knockdown ? static_cast<int>(knockdown->mMode)
+                                           : (alwaysKnockDown
+                                                   ? static_cast<int>(FalloutExplosionKnockdownMode::Forced)
+                                                   : static_cast<int>(FalloutExplosionKnockdownMode::None)))
+                             << " knockdownChance=" << (knockdown ? knockdown->mChance : 0.f)
+                             << " knockdownRoll=" << knockdownRoll
                              << " knockedDown=" << knockedDown;
         }
 

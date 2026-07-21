@@ -332,6 +332,72 @@ namespace MWMechanics
         return FalloutExplosionDamage{ authoredDamage, damageMultiplier, radius, distance, falloff, damage };
     }
 
+    std::optional<FalloutExplosionKnockdown> buildFalloutExplosionKnockdown(
+        float healthDamage, float currentHealth, float maximumHealth, float agility,
+        const FalloutExplosionKnockdownTuning& tuning, FalloutExplosionKnockdownFailure& failure)
+    {
+        failure = FalloutExplosionKnockdownFailure::None;
+        if (!std::isfinite(healthDamage) || healthDamage < 0.f)
+            failure = FalloutExplosionKnockdownFailure::InvalidDamage;
+        else if (!std::isfinite(currentHealth) || currentHealth < 0.f
+            || !std::isfinite(maximumHealth) || maximumHealth <= 0.f)
+            failure = FalloutExplosionKnockdownFailure::InvalidHealth;
+        else if (!std::isfinite(agility) || agility < 0.f)
+            failure = FalloutExplosionKnockdownFailure::InvalidAgility;
+        else if (!std::isfinite(tuning.mDamageMultiplier) || tuning.mDamageMultiplier < 0.f
+            || !std::isfinite(tuning.mDamageBase) || tuning.mDamageBase < 0.f
+            || !std::isfinite(tuning.mAgilityMultiplier) || tuning.mAgilityMultiplier < 0.f
+            || !std::isfinite(tuning.mAgilityBase) || tuning.mAgilityBase < 0.f
+            || !std::isfinite(tuning.mMaximumChance) || tuning.mMaximumChance < 0.f
+            || tuning.mMaximumChance > 1.f || !std::isfinite(tuning.mCurrentHealthThresholdPercent)
+            || tuning.mCurrentHealthThresholdPercent < 0.f || tuning.mCurrentHealthThresholdPercent > 100.f
+            || !std::isfinite(tuning.mBaseHealthThresholdPercent)
+            || tuning.mBaseHealthThresholdPercent < 0.f || tuning.mBaseHealthThresholdPercent > 100.f)
+            failure = FalloutExplosionKnockdownFailure::InvalidTuning;
+
+        if (failure != FalloutExplosionKnockdownFailure::None)
+            return std::nullopt;
+
+        FalloutExplosionKnockdown result{ FalloutExplosionKnockdownMode::None,
+            healthDamage, currentHealth, maximumHealth, agility, 0.f };
+        if (healthDamage > maximumHealth * tuning.mBaseHealthThresholdPercent / 100.f)
+        {
+            result.mMode = FalloutExplosionKnockdownMode::Forced;
+            result.mChance = 1.f;
+            return result;
+        }
+        if (healthDamage < currentHealth * tuning.mCurrentHealthThresholdPercent / 100.f)
+            return result;
+
+        const float numerator = healthDamage * tuning.mDamageMultiplier + tuning.mDamageBase;
+        const float denominator = tuning.mAgilityMultiplier * (agility * 10.f) + tuning.mAgilityBase;
+        if (!std::isfinite(numerator) || numerator < 0.f || !std::isfinite(denominator)
+            || denominator <= 0.f)
+        {
+            failure = FalloutExplosionKnockdownFailure::InvalidResult;
+            return std::nullopt;
+        }
+        result.mChance = std::min(numerator / denominator, tuning.mMaximumChance);
+        if (!std::isfinite(result.mChance) || result.mChance < 0.f)
+        {
+            failure = FalloutExplosionKnockdownFailure::InvalidResult;
+            return std::nullopt;
+        }
+        result.mMode = FalloutExplosionKnockdownMode::Chance;
+        return result;
+    }
+
+    bool doesFalloutExplosionKnockDown(
+        const FalloutExplosionKnockdown& knockdown, unsigned int roll) noexcept
+    {
+        if (knockdown.mMode == FalloutExplosionKnockdownMode::Forced)
+            return true;
+        if (knockdown.mMode != FalloutExplosionKnockdownMode::Chance || roll > 999
+            || !std::isfinite(knockdown.mChance) || knockdown.mChance <= 0.f)
+            return false;
+        return knockdown.mChance * 1000.f > static_cast<float>(roll);
+    }
+
     std::optional<osg::Vec3f> resolveFalloutProjectileBounce(const osg::Vec3f& velocity,
         const osg::Vec3f& collisionNormal, float bounciness, FalloutProjectileBounceFailure& failure)
     {
@@ -1173,6 +1239,26 @@ namespace MWMechanics
             case FalloutExplosionDamageFailure::InvalidDistance:
                 return "invalid-distance";
             case FalloutExplosionDamageFailure::InvalidResult:
+                return "invalid-result";
+        }
+        return "unknown";
+    }
+
+    std::string_view getFalloutExplosionKnockdownFailureName(FalloutExplosionKnockdownFailure failure)
+    {
+        switch (failure)
+        {
+            case FalloutExplosionKnockdownFailure::None:
+                return "none";
+            case FalloutExplosionKnockdownFailure::InvalidDamage:
+                return "invalid-damage";
+            case FalloutExplosionKnockdownFailure::InvalidHealth:
+                return "invalid-health";
+            case FalloutExplosionKnockdownFailure::InvalidAgility:
+                return "invalid-agility";
+            case FalloutExplosionKnockdownFailure::InvalidTuning:
+                return "invalid-tuning";
+            case FalloutExplosionKnockdownFailure::InvalidResult:
                 return "invalid-result";
         }
         return "unknown";

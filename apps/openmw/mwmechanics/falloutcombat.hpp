@@ -109,6 +109,23 @@ namespace MWMechanics
         InvalidResult,
     };
 
+    enum class FalloutExplosionKnockdownFailure
+    {
+        None,
+        InvalidDamage,
+        InvalidHealth,
+        InvalidAgility,
+        InvalidTuning,
+        InvalidResult,
+    };
+
+    enum class FalloutExplosionKnockdownMode
+    {
+        None,
+        Forced,
+        Chance,
+    };
+
     enum class FalloutProjectileBounceFailure
     {
         None,
@@ -210,6 +227,27 @@ namespace MWMechanics
         float mDistance = 0.f;
         float mFalloff = 0.f;
         float mDamage = 0.f;
+    };
+
+    struct FalloutExplosionKnockdownTuning
+    {
+        float mDamageMultiplier = 0.f;
+        float mDamageBase = 0.f;
+        float mAgilityMultiplier = 0.f;
+        float mAgilityBase = 0.f;
+        float mMaximumChance = 0.f;
+        float mCurrentHealthThresholdPercent = 0.f;
+        float mBaseHealthThresholdPercent = 0.f;
+    };
+
+    struct FalloutExplosionKnockdown
+    {
+        FalloutExplosionKnockdownMode mMode = FalloutExplosionKnockdownMode::None;
+        float mHealthDamage = 0.f;
+        float mCurrentHealth = 0.f;
+        float mMaximumHealth = 0.f;
+        float mAgility = 0.f;
+        float mChance = 0.f;
     };
 
     struct FalloutCriticalContract
@@ -512,6 +550,18 @@ namespace MWMechanics
     [[nodiscard]] std::optional<FalloutExplosionDamage> resolveFalloutExplosionDamage(float authoredDamage,
         float damageMultiplier, float radius, float distance, FalloutExplosionDamageFailure& failure);
 
+    /// Resolve the native Fallout explosion knockdown formula after DT/DR mitigation. Damage below the current-
+    /// health threshold cannot knock an actor down; damage above the base-health threshold forces knockdown;
+    /// otherwise the chance is damage divided by Agility and capped by the winning GMSTs. The random roll is a
+    /// separate operation so forced/rejected impacts do not consume the world PRNG.
+    [[nodiscard]] std::optional<FalloutExplosionKnockdown> buildFalloutExplosionKnockdown(
+        float healthDamage, float currentHealth, float maximumHealth, float agility,
+        const FalloutExplosionKnockdownTuning& tuning, FalloutExplosionKnockdownFailure& failure);
+
+    /// Apply the engine's integer [0, 999] test: chance * 1000 must be strictly greater than the roll.
+    [[nodiscard]] bool doesFalloutExplosionKnockDown(
+        const FalloutExplosionKnockdown& knockdown, unsigned int roll) noexcept;
+
     /// Reflect a lobber's incoming velocity around the collision normal using PROJ.DATA bounciness as its
     /// coefficient of restitution. Tangential velocity is preserved; friction remains the physics surface's job.
     [[nodiscard]] std::optional<osg::Vec3f> resolveFalloutProjectileBounce(const osg::Vec3f& velocity,
@@ -637,6 +687,8 @@ namespace MWMechanics
     [[nodiscard]] std::string_view getFalloutDamageMitigationFailureName(FalloutDamageMitigationFailure failure);
     [[nodiscard]] std::string_view getFalloutRangedDamageFailureName(FalloutRangedDamageFailure failure);
     [[nodiscard]] std::string_view getFalloutExplosionDamageFailureName(FalloutExplosionDamageFailure failure);
+    [[nodiscard]] std::string_view getFalloutExplosionKnockdownFailureName(
+        FalloutExplosionKnockdownFailure failure);
     [[nodiscard]] std::string_view getFalloutProjectileBounceFailureName(FalloutProjectileBounceFailure failure);
     [[nodiscard]] std::string_view getFalloutProjectileTriggerFailureName(FalloutProjectileTriggerFailure failure);
     [[nodiscard]] std::string_view getFalloutCriticalFailureName(FalloutCriticalFailure failure);

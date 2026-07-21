@@ -27,6 +27,11 @@ namespace
         return ESM4::ActorFaction{ value, 0, 0, 0, 0 };
     }
 
+    MWMechanics::FalloutExplosionKnockdownTuning retailExplosionKnockdownTuning()
+    {
+        return { 0.3f, 0.f, 1.f, 0.f, 0.25f, 50.f, 75.f };
+    }
+
     TEST(FalloutCombatTest, EmptyFollowTargetHasNoSidingActors)
     {
         const MWMechanics::Actors actors;
@@ -787,6 +792,78 @@ namespace
         EXPECT_EQ(failure, MWMechanics::FalloutExplosionDamageFailure::InvalidRadius);
         EXPECT_FALSE(MWMechanics::resolveFalloutExplosionDamage(125.f, 1.f, 900.f, -1.f, failure));
         EXPECT_EQ(failure, MWMechanics::FalloutExplosionDamageFailure::InvalidDistance);
+    }
+
+    TEST(FalloutCombatTest, AppliesRetailExplosionKnockdownThresholdsAndAgilityFormula)
+    {
+        MWMechanics::FalloutExplosionKnockdownFailure failure;
+        const auto belowCurrentThreshold = MWMechanics::buildFalloutExplosionKnockdown(
+            49.99f, 100.f, 100.f, 5.f, retailExplosionKnockdownTuning(), failure);
+        ASSERT_TRUE(belowCurrentThreshold);
+        EXPECT_EQ(failure, MWMechanics::FalloutExplosionKnockdownFailure::None);
+        EXPECT_EQ(belowCurrentThreshold->mMode, MWMechanics::FalloutExplosionKnockdownMode::None);
+
+        const auto cappedChance = MWMechanics::buildFalloutExplosionKnockdown(
+            50.f, 100.f, 100.f, 5.f, retailExplosionKnockdownTuning(), failure);
+        ASSERT_TRUE(cappedChance);
+        EXPECT_EQ(cappedChance->mMode, MWMechanics::FalloutExplosionKnockdownMode::Chance);
+        EXPECT_FLOAT_EQ(cappedChance->mChance, 0.25f);
+        EXPECT_TRUE(MWMechanics::doesFalloutExplosionKnockDown(*cappedChance, 249));
+        EXPECT_FALSE(MWMechanics::doesFalloutExplosionKnockDown(*cappedChance, 250));
+
+        const auto agilityTen = MWMechanics::buildFalloutExplosionKnockdown(
+            50.f, 100.f, 100.f, 10.f, retailExplosionKnockdownTuning(), failure);
+        ASSERT_TRUE(agilityTen);
+        EXPECT_EQ(agilityTen->mMode, MWMechanics::FalloutExplosionKnockdownMode::Chance);
+        EXPECT_FLOAT_EQ(agilityTen->mChance, 0.15f);
+        EXPECT_TRUE(MWMechanics::doesFalloutExplosionKnockDown(*agilityTen, 149));
+        EXPECT_FALSE(MWMechanics::doesFalloutExplosionKnockDown(*agilityTen, 150));
+
+        const auto forced = MWMechanics::buildFalloutExplosionKnockdown(
+            75.01f, 100.f, 100.f, 10.f, retailExplosionKnockdownTuning(), failure);
+        ASSERT_TRUE(forced);
+        EXPECT_EQ(forced->mMode, MWMechanics::FalloutExplosionKnockdownMode::Forced);
+        EXPECT_FLOAT_EQ(forced->mChance, 1.f);
+        EXPECT_TRUE(MWMechanics::doesFalloutExplosionKnockDown(*forced, 999));
+    }
+
+    TEST(FalloutCombatTest, UsesCurrentHealthForExplosionKnockdownEligibility)
+    {
+        MWMechanics::FalloutExplosionKnockdownFailure failure;
+        const auto below = MWMechanics::buildFalloutExplosionKnockdown(
+            24.99f, 50.f, 100.f, 5.f, retailExplosionKnockdownTuning(), failure);
+        ASSERT_TRUE(below);
+        EXPECT_EQ(below->mMode, MWMechanics::FalloutExplosionKnockdownMode::None);
+
+        const auto eligible = MWMechanics::buildFalloutExplosionKnockdown(
+            25.f, 50.f, 100.f, 5.f, retailExplosionKnockdownTuning(), failure);
+        ASSERT_TRUE(eligible);
+        EXPECT_EQ(eligible->mMode, MWMechanics::FalloutExplosionKnockdownMode::Chance);
+        EXPECT_FLOAT_EQ(eligible->mChance, 0.15f);
+    }
+
+    TEST(FalloutCombatTest, RejectsMalformedExplosionKnockdownInputs)
+    {
+        MWMechanics::FalloutExplosionKnockdownFailure failure;
+        EXPECT_FALSE(MWMechanics::buildFalloutExplosionKnockdown(
+            -1.f, 100.f, 100.f, 5.f, retailExplosionKnockdownTuning(), failure));
+        EXPECT_EQ(failure, MWMechanics::FalloutExplosionKnockdownFailure::InvalidDamage);
+        EXPECT_FALSE(MWMechanics::buildFalloutExplosionKnockdown(
+            50.f, 100.f, 0.f, 5.f, retailExplosionKnockdownTuning(), failure));
+        EXPECT_EQ(failure, MWMechanics::FalloutExplosionKnockdownFailure::InvalidHealth);
+        EXPECT_FALSE(MWMechanics::buildFalloutExplosionKnockdown(
+            50.f, 100.f, 100.f, -1.f, retailExplosionKnockdownTuning(), failure));
+        EXPECT_EQ(failure, MWMechanics::FalloutExplosionKnockdownFailure::InvalidAgility);
+
+        auto invalidTuning = retailExplosionKnockdownTuning();
+        invalidTuning.mMaximumChance = 1.01f;
+        EXPECT_FALSE(MWMechanics::buildFalloutExplosionKnockdown(
+            50.f, 100.f, 100.f, 5.f, invalidTuning, failure));
+        EXPECT_EQ(failure, MWMechanics::FalloutExplosionKnockdownFailure::InvalidTuning);
+
+        EXPECT_FALSE(MWMechanics::buildFalloutExplosionKnockdown(
+            50.f, 100.f, 100.f, 0.f, retailExplosionKnockdownTuning(), failure));
+        EXPECT_EQ(failure, MWMechanics::FalloutExplosionKnockdownFailure::InvalidResult);
     }
 
     TEST(FalloutCombatTest, ReflectsLobberVelocityUsingAuthoredBounciness)
