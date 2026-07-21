@@ -84,6 +84,8 @@ bool ESM4::loadFalloutWeaponDnam(std::span<const std::uint8_t> dnam, Weapon::Dat
 
     if (dnam.size() >= 72)
         data.overrideActionPoints = readFloat(68);
+    if (dnam.size() >= 88)
+        data.damageToWeaponMult = readFloat(84);
     if (dnam.size() >= 92)
         data.animShotsPerSec = readFloat(88);
     if (dnam.size() >= 108)

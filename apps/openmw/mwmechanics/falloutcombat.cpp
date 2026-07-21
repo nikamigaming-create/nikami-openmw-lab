@@ -6,6 +6,7 @@
 
 #include <osg/Math>
 
+#include <components/esm4/loadamef.hpp>
 #include <components/esm4/loadproj.hpp>
 #include <components/esm4/loadweap.hpp>
 
@@ -304,6 +305,92 @@ namespace MWMechanics
             || roll >= 1.f)
             return false;
         return roll * 100.f < std::min(chancePercent, 100.f);
+    }
+
+    std::optional<float> applyFalloutAmmoEffects(float baseValue, ESM4::AmmoEffect::Type type,
+        std::span<const ESM4::AmmoEffect* const> effects, FalloutAmmoEffectFailure& failure)
+    {
+        failure = FalloutAmmoEffectFailure::None;
+        if (!std::isfinite(baseValue))
+        {
+            failure = FalloutAmmoEffectFailure::InvalidBaseValue;
+            return std::nullopt;
+        }
+
+        float result = baseValue;
+        for (const ESM4::AmmoEffect* effect : effects)
+        {
+            if (effect == nullptr)
+            {
+                failure = FalloutAmmoEffectFailure::MissingEffect;
+                return std::nullopt;
+            }
+            if (effect->mType != type)
+                continue;
+            if (!std::isfinite(effect->mValue))
+            {
+                failure = FalloutAmmoEffectFailure::InvalidEffectValue;
+                return std::nullopt;
+            }
+
+            switch (effect->mOperation)
+            {
+                case ESM4::AmmoEffect::Operation::Add:
+                    result += effect->mValue;
+                    break;
+                case ESM4::AmmoEffect::Operation::Multiply:
+                    result *= effect->mValue;
+                    break;
+                case ESM4::AmmoEffect::Operation::Subtract:
+                    result -= effect->mValue;
+                    break;
+                default:
+                    failure = FalloutAmmoEffectFailure::InvalidOperation;
+                    return std::nullopt;
+            }
+            if (!std::isfinite(result))
+            {
+                failure = FalloutAmmoEffectFailure::InvalidResult;
+                return std::nullopt;
+            }
+        }
+        return result;
+    }
+
+    std::optional<FalloutWeaponDegradation> buildFalloutWeaponDegradation(
+        const ESM4::Weapon& weapon, std::span<const ESM4::AmmoEffect* const> effects,
+        float damageToWeaponGameSetting, bool vats, float vatsDamageToWeaponMultiplier,
+        FalloutWeaponDegradationFailure& failure)
+    {
+        failure = FalloutWeaponDegradationFailure::None;
+        const bool override = (weapon.mData.flags2 & ESM4::Weapon::Data::OverrideDamageToWeapon) != 0;
+        const float baseLoss = override ? weapon.mData.damageToWeaponMult : damageToWeaponGameSetting;
+        if (!override && (!std::isfinite(damageToWeaponGameSetting) || damageToWeaponGameSetting < 0.f))
+            failure = FalloutWeaponDegradationFailure::InvalidGameSetting;
+        else if (override && (!std::isfinite(baseLoss) || baseLoss < 0.f))
+            failure = FalloutWeaponDegradationFailure::InvalidWeaponOverride;
+        else if (vats && (!std::isfinite(vatsDamageToWeaponMultiplier) || vatsDamageToWeaponMultiplier < 0.f))
+            failure = FalloutWeaponDegradationFailure::InvalidVatsMultiplier;
+        if (failure != FalloutWeaponDegradationFailure::None)
+            return std::nullopt;
+
+        FalloutAmmoEffectFailure effectFailure = FalloutAmmoEffectFailure::None;
+        const std::optional<float> ammoAdjusted = applyFalloutAmmoEffects(
+            baseLoss, ESM4::AmmoEffect::Type::WeaponCondition, effects, effectFailure);
+        if (!ammoAdjusted)
+        {
+            failure = FalloutWeaponDegradationFailure::InvalidAmmoEffect;
+            return std::nullopt;
+        }
+
+        const float vatsMultiplier = vats ? vatsDamageToWeaponMultiplier : 1.f;
+        const float conditionLoss = *ammoAdjusted * vatsMultiplier;
+        if (!std::isfinite(conditionLoss) || conditionLoss < 0.f)
+        {
+            failure = FalloutWeaponDegradationFailure::InvalidResult;
+            return std::nullopt;
+        }
+        return FalloutWeaponDegradation{ baseLoss, *ammoAdjusted, vatsMultiplier, conditionLoss, override };
     }
 
     std::optional<float> resolveFalloutArmorConditionMultiplier(
@@ -785,6 +872,46 @@ namespace MWMechanics
                 return "invalid-vats-bonus";
             case FalloutCriticalFailure::InvalidChance:
                 return "invalid-chance";
+        }
+        return "unknown";
+    }
+
+    std::string_view getFalloutAmmoEffectFailureName(FalloutAmmoEffectFailure failure)
+    {
+        switch (failure)
+        {
+            case FalloutAmmoEffectFailure::None:
+                return "none";
+            case FalloutAmmoEffectFailure::InvalidBaseValue:
+                return "invalid-base-value";
+            case FalloutAmmoEffectFailure::MissingEffect:
+                return "missing-effect";
+            case FalloutAmmoEffectFailure::InvalidEffectValue:
+                return "invalid-effect-value";
+            case FalloutAmmoEffectFailure::InvalidOperation:
+                return "invalid-operation";
+            case FalloutAmmoEffectFailure::InvalidResult:
+                return "invalid-result";
+        }
+        return "unknown";
+    }
+
+    std::string_view getFalloutWeaponDegradationFailureName(FalloutWeaponDegradationFailure failure)
+    {
+        switch (failure)
+        {
+            case FalloutWeaponDegradationFailure::None:
+                return "none";
+            case FalloutWeaponDegradationFailure::InvalidGameSetting:
+                return "invalid-game-setting";
+            case FalloutWeaponDegradationFailure::InvalidWeaponOverride:
+                return "invalid-weapon-override";
+            case FalloutWeaponDegradationFailure::InvalidVatsMultiplier:
+                return "invalid-vats-multiplier";
+            case FalloutWeaponDegradationFailure::InvalidAmmoEffect:
+                return "invalid-ammo-effect";
+            case FalloutWeaponDegradationFailure::InvalidResult:
+                return "invalid-result";
         }
         return "unknown";
     }

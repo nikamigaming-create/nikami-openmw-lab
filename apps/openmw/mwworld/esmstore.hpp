@@ -86,6 +86,7 @@ namespace ESM4
     struct ActorCharacter;
     struct ActorCreature;
     struct AnimObject;
+    struct AmmoEffect;
     struct Ammunition;
     struct AIPackage;
     struct Armor;
@@ -210,7 +211,7 @@ namespace MWWorld
             // New stores must be appended so an incremental build can never reinterpret an existing slot.
             Store<ESM4::Projectile>, Store<ESM4::ActorValueInformation>, Store<ESM4::Faction>, Store<ESM4::Perk>,
             Store<ESM4::RecipeCategory>, Store<ESM4::Recipe>, Store<ESM4::Note>, Store<ESM4::AnimObject>,
-            Store<ESM4::GameSetting>>;
+            Store<ESM4::GameSetting>, Store<ESM4::AmmoEffect>>;
 
     private:
         template <typename T>

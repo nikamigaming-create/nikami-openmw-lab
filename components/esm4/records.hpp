@@ -5,6 +5,7 @@
 #include <components/esm4/loadacti.hpp>
 #include <components/esm4/loadalch.hpp>
 #include <components/esm4/loadaloc.hpp>
+#include <components/esm4/loadamef.hpp>
 #include <components/esm4/loadammo.hpp>
 #include <components/esm4/loadanio.hpp>
 #include <components/esm4/loadappa.hpp>

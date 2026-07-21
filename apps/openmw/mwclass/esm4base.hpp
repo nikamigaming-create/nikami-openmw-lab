@@ -325,6 +325,11 @@ namespace MWClass
             return ESM4Impl::ItemHealth<Record>::get(*ptr.get<Record>()->mBase);
         }
 
+        bool hasItemHealth(const MWWorld::ConstPtr& ptr) const override
+        {
+            return getItemMaxHealth(ptr) > 0;
+        }
+
         const ESM::RefId& getUpSoundId(const MWWorld::ConstPtr& ptr) const override
         {
             static const ESM::RefId sEmpty;

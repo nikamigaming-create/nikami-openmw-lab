@@ -63,6 +63,11 @@ namespace ESM4
                 Automatic = 0x02,
             };
 
+            enum WeaponFlags2 : std::uint32_t
+            {
+                OverrideDamageToWeapon = 0x80,
+            };
+
             // type
             // 0 = Blade One Hand
             // 1 = Blade Two Hand
@@ -106,6 +111,7 @@ namespace ESM4
             std::uint32_t flags2;
             float animAttackMult;
             float fireRate;
+            float damageToWeaponMult;
             float overrideActionPoints;
             float limbDamageMult;
             std::int32_t skillActorValue;
@@ -143,6 +149,7 @@ namespace ESM4
                 , flags2(0)
                 , animAttackMult(0.f)
                 , fireRate(0.f)
+                , damageToWeaponMult(0.f)
                 , overrideActionPoints(0.f)
                 , limbDamageMult(1.f)
                 , skillActorValue(-1)

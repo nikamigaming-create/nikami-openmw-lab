@@ -14,6 +14,7 @@
 
 #include <components/esm/formid.hpp>
 #include <components/esm4/actor.hpp>
+#include <components/esm4/loadamef.hpp>
 #include <components/esm4/loadbptd.hpp>
 #include <components/esm4/loadfact.hpp>
 
@@ -104,6 +105,26 @@ namespace MWMechanics
         InvalidChance,
     };
 
+    enum class FalloutAmmoEffectFailure
+    {
+        None,
+        InvalidBaseValue,
+        MissingEffect,
+        InvalidEffectValue,
+        InvalidOperation,
+        InvalidResult,
+    };
+
+    enum class FalloutWeaponDegradationFailure
+    {
+        None,
+        InvalidGameSetting,
+        InvalidWeaponOverride,
+        InvalidVatsMultiplier,
+        InvalidAmmoEffect,
+        InvalidResult,
+    };
+
     struct FalloutRangedDamageTuning
     {
         float mWeaponDamageMultiplier = 0.f;
@@ -135,6 +156,15 @@ namespace MWMechanics
         {
             return baseDamage + (critical ? mDamage : 0.f);
         }
+    };
+
+    struct FalloutWeaponDegradation
+    {
+        float mBaseLoss = 0.f;
+        float mAmmoAdjustedLoss = 0.f;
+        float mVatsMultiplier = 1.f;
+        float mConditionLoss = 0.f;
+        bool mUsesWeaponOverride = false;
     };
 
     struct FalloutDamageMitigation
@@ -375,6 +405,20 @@ namespace MWMechanics
     /// this per actor-impacting projectile; VATS calls it once for the queued attack.
     [[nodiscard]] bool doesFalloutCriticalHit(float chancePercent, float roll) noexcept;
 
+    /// Apply FNV AMEF operations of one requested type in the AMMO.RCIL order supplied by the caller. Effects of
+    /// every other type are ignored. This is the same shared retail operation path used for damage, DR, DT, spread,
+    /// condition loss, and fatigue.
+    [[nodiscard]] std::optional<float> applyFalloutAmmoEffects(float baseValue, ESM4::AmmoEffect::Type type,
+        std::span<const ESM4::AmmoEffect* const> effects, FalloutAmmoEffectFailure& failure);
+
+    /// Resolve condition lost by one fired trigger. FNV starts with fDamageToWeaponValue unless WEAP flags2 selects
+    /// the serialized damage-to-weapon override, then applies the selected AMMO's Weapon Condition AMEF entries.
+    /// VATS scales that result by fVATSDamageToWeaponMult.
+    [[nodiscard]] std::optional<FalloutWeaponDegradation> buildFalloutWeaponDegradation(
+        const ESM4::Weapon& weapon, std::span<const ESM4::AmmoEffect* const> effects,
+        float damageToWeaponGameSetting, bool vats, float vatsDamageToWeaponMultiplier,
+        FalloutWeaponDegradationFailure& failure);
+
     /// New Vegas scales an equipped armor piece's DT/DR only below 50 percent condition. The vanilla penalty rate
     /// is 1.0, producing a 0.5 multiplier at zero condition and full protection at 50 percent or above.
     [[nodiscard]] std::optional<float> resolveFalloutArmorConditionMultiplier(
@@ -436,6 +480,9 @@ namespace MWMechanics
     [[nodiscard]] std::string_view getFalloutDamageMitigationFailureName(FalloutDamageMitigationFailure failure);
     [[nodiscard]] std::string_view getFalloutRangedDamageFailureName(FalloutRangedDamageFailure failure);
     [[nodiscard]] std::string_view getFalloutCriticalFailureName(FalloutCriticalFailure failure);
+    [[nodiscard]] std::string_view getFalloutAmmoEffectFailureName(FalloutAmmoEffectFailure failure);
+    [[nodiscard]] std::string_view getFalloutWeaponDegradationFailureName(
+        FalloutWeaponDegradationFailure failure);
     [[nodiscard]] std::string_view getFalloutVatsWeaponFailureName(FalloutVatsWeaponFailure failure);
     [[nodiscard]] std::string_view getFalloutVatsQueueFailureName(FalloutVatsQueueFailure failure);
     [[nodiscard]] std::string_view getFalloutVatsBodyPartFailureName(FalloutVatsBodyPartFailure failure);

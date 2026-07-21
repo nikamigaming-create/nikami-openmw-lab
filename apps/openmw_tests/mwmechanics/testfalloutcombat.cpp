@@ -768,6 +768,91 @@ namespace
         EXPECT_FLOAT_EQ(disabled->mChancePercent, 0.f);
     }
 
+    TEST(FalloutCombatTest, AppliesAuthoredAmmoEffectsInRcilOrder)
+    {
+        ESM4::AmmoEffect add;
+        add.mType = ESM4::AmmoEffect::Type::Damage;
+        add.mOperation = ESM4::AmmoEffect::Operation::Add;
+        add.mValue = 2.f;
+        ESM4::AmmoEffect multiply;
+        multiply.mType = ESM4::AmmoEffect::Type::Damage;
+        multiply.mOperation = ESM4::AmmoEffect::Operation::Multiply;
+        multiply.mValue = 3.f;
+        ESM4::AmmoEffect otherType;
+        otherType.mType = ESM4::AmmoEffect::Type::Spread;
+        otherType.mOperation = ESM4::AmmoEffect::Operation::Multiply;
+        otherType.mValue = 100.f;
+        ESM4::AmmoEffect subtract;
+        subtract.mType = ESM4::AmmoEffect::Type::Damage;
+        subtract.mOperation = ESM4::AmmoEffect::Operation::Subtract;
+        subtract.mValue = 4.f;
+        const std::array<const ESM4::AmmoEffect*, 4> effects{ &add, &multiply, &otherType, &subtract };
+
+        MWMechanics::FalloutAmmoEffectFailure failure;
+        const auto result = MWMechanics::applyFalloutAmmoEffects(
+            10.f, ESM4::AmmoEffect::Type::Damage, effects, failure);
+        ASSERT_TRUE(result);
+        EXPECT_EQ(failure, MWMechanics::FalloutAmmoEffectFailure::None);
+        EXPECT_FLOAT_EQ(*result, 32.f);
+    }
+
+    TEST(FalloutCombatTest, BuildsRetailWeaponConditionLossFromGmstOverrideAndAmmo)
+    {
+        ESM4::Weapon weapon;
+        ESM4::AmmoEffect condition;
+        condition.mType = ESM4::AmmoEffect::Type::WeaponCondition;
+        condition.mOperation = ESM4::AmmoEffect::Operation::Multiply;
+        condition.mValue = 0.75f;
+        const std::array<const ESM4::AmmoEffect*, 1> effects{ &condition };
+
+        MWMechanics::FalloutWeaponDegradationFailure failure;
+        const auto ordinary = MWMechanics::buildFalloutWeaponDegradation(
+            weapon, effects, 0.2f, false, 1.f, failure);
+        ASSERT_TRUE(ordinary);
+        EXPECT_EQ(failure, MWMechanics::FalloutWeaponDegradationFailure::None);
+        EXPECT_FALSE(ordinary->mUsesWeaponOverride);
+        EXPECT_FLOAT_EQ(ordinary->mBaseLoss, 0.2f);
+        EXPECT_FLOAT_EQ(ordinary->mAmmoAdjustedLoss, 0.15f);
+        EXPECT_FLOAT_EQ(ordinary->mConditionLoss, 0.15f);
+
+        weapon.mData.flags2 = ESM4::Weapon::Data::OverrideDamageToWeapon;
+        weapon.mData.damageToWeaponMult = 0.4f;
+        condition.mValue = 1.5f;
+        const auto vats = MWMechanics::buildFalloutWeaponDegradation(
+            weapon, effects, 0.2f, true, 2.f, failure);
+        ASSERT_TRUE(vats);
+        EXPECT_TRUE(vats->mUsesWeaponOverride);
+        EXPECT_FLOAT_EQ(vats->mBaseLoss, 0.4f);
+        EXPECT_FLOAT_EQ(vats->mAmmoAdjustedLoss, 0.6f);
+        EXPECT_FLOAT_EQ(vats->mConditionLoss, 1.2f);
+    }
+
+    TEST(FalloutCombatTest, RejectsMalformedAmmoEffectsAndWeaponWear)
+    {
+        MWMechanics::FalloutAmmoEffectFailure effectFailure;
+        const std::array<const ESM4::AmmoEffect*, 1> missing{ nullptr };
+        EXPECT_FALSE(MWMechanics::applyFalloutAmmoEffects(
+            1.f, ESM4::AmmoEffect::Type::Damage, missing, effectFailure));
+        EXPECT_EQ(effectFailure, MWMechanics::FalloutAmmoEffectFailure::MissingEffect);
+
+        ESM4::AmmoEffect invalid;
+        invalid.mType = ESM4::AmmoEffect::Type::Damage;
+        invalid.mOperation = static_cast<ESM4::AmmoEffect::Operation>(3);
+        invalid.mValue = 1.f;
+        const std::array<const ESM4::AmmoEffect*, 1> invalidEffects{ &invalid };
+        EXPECT_FALSE(MWMechanics::applyFalloutAmmoEffects(
+            1.f, ESM4::AmmoEffect::Type::Damage, invalidEffects, effectFailure));
+        EXPECT_EQ(effectFailure, MWMechanics::FalloutAmmoEffectFailure::InvalidOperation);
+
+        ESM4::Weapon weapon;
+        weapon.mData.flags2 = ESM4::Weapon::Data::OverrideDamageToWeapon;
+        weapon.mData.damageToWeaponMult = -1.f;
+        MWMechanics::FalloutWeaponDegradationFailure wearFailure;
+        EXPECT_FALSE(MWMechanics::buildFalloutWeaponDegradation(
+            weapon, {}, 0.2f, false, 1.f, wearFailure));
+        EXPECT_EQ(wearFailure, MWMechanics::FalloutWeaponDegradationFailure::InvalidWeaponOverride);
+    }
+
     TEST(FalloutCombatTest, BuildsUnitRayAtAuthoredSpreadConeBoundary)
     {
         const auto center = MWMechanics::buildFalloutRayDirection(

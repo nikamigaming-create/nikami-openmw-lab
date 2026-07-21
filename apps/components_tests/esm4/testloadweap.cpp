@@ -155,6 +155,21 @@ namespace
         EXPECT_FLOAT_EQ(data.limbDamageMult, 0.75f);
     }
 
+    TEST(Esm4WeaponTest, shouldPreserveAuthoredDamageToWeaponOverride)
+    {
+        std::array<std::uint8_t, 88> dnam{};
+        const float damageToWeapon = 0.35f;
+        const std::uint32_t flags2 = ESM4::Weapon::Data::OverrideDamageToWeapon;
+        std::memcpy(dnam.data() + 56, &flags2, sizeof(flags2));
+        std::memcpy(dnam.data() + 84, &damageToWeapon, sizeof(damageToWeapon));
+
+        ESM4::Weapon::Data data;
+        ASSERT_TRUE(ESM4::loadFalloutWeaponDnam(dnam, data));
+        EXPECT_EQ(data.flags2 & ESM4::Weapon::Data::OverrideDamageToWeapon,
+            ESM4::Weapon::Data::OverrideDamageToWeapon);
+        EXPECT_FLOAT_EQ(data.damageToWeaponMult, 0.35f);
+    }
+
     TEST(Esm4WeaponTest, shouldParseRetailServiceRifleCriticalDataByteExactly)
     {
         // FalloutNV.esm 000E9C3B WEAP.CRDT: 18 critical damage, x1 multiplier, On Death, no effect.

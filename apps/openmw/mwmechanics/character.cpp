@@ -21,6 +21,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstdlib>
 #include <string>
 #include <string_view>
@@ -310,34 +311,61 @@ namespace
         if (maximum <= 0)
             return 1.f;
         const int current = item.getClass().getItemHealth(item);
-        if (current < 0 || current > maximum)
+        const float exact = static_cast<float>(current) + item.getCellRef().getChargeIntRemainder();
+        if (!std::isfinite(exact) || exact < 0.f || exact > static_cast<float>(maximum))
             return std::nullopt;
-        return static_cast<float>(current) / static_cast<float>(maximum);
+        return exact / static_cast<float>(maximum);
     }
 
-    std::optional<float> getFalloutEquippedWeaponCondition(
+    MWWorld::Ptr getFalloutEquippedWeaponInstance(
         const MWWorld::Ptr& actor, const MWWorld::Ptr& controllerWeapon, const ESM4::Weapon& weapon)
     {
         const ESM::RefId weaponId = ESM::RefId::formIdRefId(weapon.mId);
         if (actor.getClass().hasInventoryStore(actor))
         {
-            const MWWorld::InventoryStore& inventory = actor.getClass().getInventoryStore(actor);
-            const MWWorld::ConstContainerStoreIterator equipped
+            MWWorld::InventoryStore& inventory = actor.getClass().getInventoryStore(actor);
+            const MWWorld::ContainerStoreIterator equipped
                 = inventory.getSlot(MWWorld::InventoryStore::Slot_CarriedRight);
             if (equipped != inventory.end() && equipped->getType() == ESM4::Weapon::sRecordId
                 && equipped->getCellRef().getRefId() == weaponId)
-                return getFalloutItemCondition(*equipped);
+                return *equipped;
         }
 
         if (!controllerWeapon.isEmpty() && controllerWeapon.getType() == ESM4::Weapon::sRecordId
             && controllerWeapon.getCellRef().getRefId() == weaponId)
-            return getFalloutItemCondition(controllerWeapon);
+            return controllerWeapon;
 
-        const MWWorld::ContainerStore& inventory = actor.getClass().getContainerStore(actor);
-        const auto found = std::find_if(inventory.begin(), inventory.end(), [&](const MWWorld::ConstPtr& item) {
+        MWWorld::ContainerStore& inventory = actor.getClass().getContainerStore(actor);
+        const auto found = std::find_if(inventory.begin(), inventory.end(), [&](const MWWorld::Ptr& item) {
             return item.getType() == ESM4::Weapon::sRecordId && item.getCellRef().getRefId() == weaponId;
         });
-        return found == inventory.end() ? std::nullopt : getFalloutItemCondition(*found);
+        return found == inventory.end() ? MWWorld::Ptr{} : *found;
+    }
+
+    bool applyFalloutWeaponConditionLoss(const MWWorld::Ptr& weapon, float conditionLoss)
+    {
+        const int maximum = weapon.getClass().getItemMaxHealth(weapon);
+        if (!std::isfinite(conditionLoss) || conditionLoss < 0.f)
+            return false;
+        if (maximum <= 0)
+            return true;
+
+        const int current = weapon.getClass().getItemHealth(weapon);
+        const float remainder = weapon.getCellRef().getChargeIntRemainder();
+        const float exact = static_cast<float>(current) + remainder;
+        if (!std::isfinite(exact) || exact < 0.f || exact > static_cast<float>(maximum))
+            return false;
+
+        if (weapon.getCellRef().getCharge() == -1)
+            weapon.getCellRef().setCharge(maximum);
+        if (conditionLoss >= exact)
+        {
+            weapon.getCellRef().setCharge(0);
+            weapon.getCellRef().setChargeIntRemainder(0.f);
+        }
+        else
+            weapon.getCellRef().applyChargeRemainderToBeSubtracted(conditionLoss);
+        return true;
     }
 
     std::optional<FalloutArmorProtection> getFalloutArmorProtection(const MWWorld::Ptr& actor)
@@ -2335,6 +2363,7 @@ namespace MWMechanics
         MWWorld::ContainerStore& inventory = mPtr.getClass().getContainerStore(mPtr);
         const bool consumesWeapon = isFalloutThrownWeapon(*mFalloutWeapon);
         std::optional<ESM::FormId> consumable;
+        const ESM4::Ammunition* ammunition = nullptr;
         if (consumesWeapon)
         {
             if (inventory.count(ESM::RefId::formIdRefId(mFalloutWeapon->mId)) < 1)
@@ -2379,6 +2408,9 @@ namespace MWMechanics
                 playAuthoredFalloutWeaponSound(mPtr, mFalloutWeapon, FalloutWeaponSoundEvent::DryFire);
                 return fail("insufficient-authored-ammo");
             }
+            ammunition = store->get<ESM4::Ammunition>().search(*consumable);
+            if (ammunition == nullptr)
+                return fail("selected-ammo-record-disappeared");
         }
         if (!consumable)
             return fail("missing-consumable");
@@ -2393,13 +2425,34 @@ namespace MWMechanics
         if (!contract)
             return fail(getFalloutShotFailureName(contractFailure));
 
+        std::vector<const ESM4::AmmoEffect*> ammoEffects;
+        if (ammunition != nullptr)
+        {
+            ammoEffects.reserve(ammunition->mAmmoEffects.size());
+            for (ESM::FormId effectId : ammunition->mAmmoEffects)
+            {
+                const ESM4::AmmoEffect* effect = store->get<ESM4::AmmoEffect>().search(effectId);
+                if (effect == nullptr)
+                    return fail("missing-authored-ammo-effect");
+                ammoEffects.push_back(effect);
+            }
+        }
+
         const std::optional<float> skill = getFalloutRangedSkill(mPtr, mFalloutWeapon->mData.skillActorValue);
         if (!skill)
             return fail("missing-ranged-skill");
+        const MWWorld::Ptr equippedWeapon = getFalloutEquippedWeaponInstance(mPtr, mWeapon, *mFalloutWeapon);
+        if (equippedWeapon.isEmpty())
+            return fail("missing-equipped-weapon-instance");
         const std::optional<float> weaponCondition
-            = getFalloutEquippedWeaponCondition(mPtr, mWeapon, *mFalloutWeapon);
+            = getFalloutItemCondition(equippedWeapon);
         if (!weaponCondition)
             return fail("missing-equipped-weapon-condition");
+        if (*weaponCondition <= 0.f)
+        {
+            playAuthoredFalloutWeaponSound(mPtr, mFalloutWeapon, FalloutWeaponSoundEvent::DryFire);
+            return fail("broken-equipped-weapon");
+        }
         const std::optional<FalloutRangedDamageTuning> damageTuning = getFalloutRangedDamageTuning();
         if (!damageTuning)
             return fail("missing-ranged-damage-tuning");
@@ -2410,6 +2463,21 @@ namespace MWMechanics
             return fail(getFalloutRangedDamageFailureName(damageFailure));
 
         const bool vatsAttack = !vatsTarget.isEmpty();
+        std::optional<FalloutWeaponDegradation> degradation;
+        if (!consumesWeapon)
+        {
+            const std::optional<float> damageToWeapon = getFalloutGameSetting("fDamageToWeaponValue");
+            const std::optional<float> vatsDamageToWeapon = vatsAttack
+                ? getFalloutGameSetting("fVATSDamageToWeaponMult")
+                : std::optional<float>(1.f);
+            if (!damageToWeapon || !vatsDamageToWeapon)
+                return fail("missing-weapon-degradation-tuning");
+            FalloutWeaponDegradationFailure degradationFailure = FalloutWeaponDegradationFailure::None;
+            degradation = buildFalloutWeaponDegradation(*mFalloutWeapon, ammoEffects, *damageToWeapon,
+                vatsAttack, *vatsDamageToWeapon, degradationFailure);
+            if (!degradation)
+                return fail(getFalloutWeaponDegradationFailureName(degradationFailure));
+        }
         const std::optional<float> actorCriticalChance = getFalloutBaseCriticalChance(mPtr);
         if (!actorCriticalChance)
             return fail("missing-base-critical-chance");
@@ -2483,6 +2551,20 @@ namespace MWMechanics
         const int consumableAfter = inventory.count(consumableRefId);
         if (removed != contract->mAmmoUse || consumableBefore - consumableAfter != contract->mAmmoUse)
             return fail(contract->mConsumesWeapon ? "throwable-transaction-mismatch" : "ammo-transaction-mismatch");
+
+        float weaponConditionAfter = *weaponCondition;
+        float conditionLoss = 0.f;
+        const bool suppressWeaponWear = mPtr == getPlayer() && world->getGodModeState();
+        if (degradation && !suppressWeaponWear)
+        {
+            conditionLoss = degradation->mConditionLoss;
+            if (!applyFalloutWeaponConditionLoss(equippedWeapon, conditionLoss))
+                return fail("weapon-condition-transaction-failed");
+            const std::optional<float> after = getFalloutItemCondition(equippedWeapon);
+            if (!after)
+                return fail("invalid-weapon-condition-after-shot");
+            weaponConditionAfter = *after;
+        }
         playAuthoredFalloutWeaponSound(mPtr, mFalloutWeapon, FalloutWeaponSoundEvent::Fire);
         if (contract->mConsumesWeapon && consumableAfter == 0 && mPtr.getType() == ESM::REC_NPC_4)
             MWClass::ESM4Npc::setEquippedWeapon(mPtr, nullptr);
@@ -2573,6 +2655,16 @@ namespace MWMechanics
                              << " criticalProjectiles=" << impact.mCriticalProjectiles;
         }
 
+        const bool weaponBroken = degradation && !suppressWeaponWear && weaponConditionAfter <= 0.f;
+        if (weaponBroken)
+        {
+            if (auto* inventoryStore = dynamic_cast<MWWorld::InventoryStore*>(&inventory);
+                inventoryStore != nullptr && inventoryStore->isEquipped(equippedWeapon))
+                inventoryStore->unequipItem(equippedWeapon);
+            if (mPtr.getType() == ESM::REC_NPC_4)
+                MWClass::ESM4Npc::setEquippedWeapon(mPtr, nullptr);
+        }
+
         Log(Debug::Info) << "FNV combat shot: actor=" << mPtr.toString()
                          << " weapon=" << ESM::RefId::formIdRefId(mFalloutWeapon->mId)
                          << " consumable=" << consumableRefId << " consumableKind="
@@ -2583,7 +2675,16 @@ namespace MWMechanics
                          << " authoredDamage=" << rangedDamage->mAuthoredDamage << " skill=" << rangedDamage->mSkill
                          << " skillMultiplier=" << rangedDamage->mSkillMultiplier
                          << " weaponCondition=" << rangedDamage->mCondition
+                         << " weaponConditionAfter=" << weaponConditionAfter
                          << " conditionMultiplier=" << rangedDamage->mConditionMultiplier
+                         << " conditionLoss=" << conditionLoss
+                         << " conditionLossSuppressed=" << suppressWeaponWear
+                         << " damageToWeaponBase=" << (degradation ? degradation->mBaseLoss : 0.f)
+                         << " damageToWeaponAmmoAdjusted="
+                         << (degradation ? degradation->mAmmoAdjustedLoss : 0.f)
+                         << " damageToWeaponOverride="
+                         << (degradation ? degradation->mUsesWeaponOverride : false)
+                         << " weaponBroken=" << weaponBroken
                          << " weaponDamageMultiplier=" << rangedDamage->mWeaponDamageMultiplier
                          << " triggerDamage=" << rangedDamage->mDamage
                          << " criticalChance=" << critical->mChancePercent

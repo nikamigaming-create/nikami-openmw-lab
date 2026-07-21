@@ -214,6 +214,7 @@ add_component_dir (esm4
     loadacti
     loadalch
     loadaloc
+    loadamef
     loadammo
     loadanio
     loadappa
