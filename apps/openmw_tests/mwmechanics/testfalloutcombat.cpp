@@ -542,6 +542,51 @@ namespace
         EXPECT_EQ(failure, MWMechanics::FalloutFireCadenceFailure::InvalidAnimationMultiplier);
     }
 
+    TEST(FalloutCombatTest, PreservesAuthoredFalloutAiWeaponRanges)
+    {
+        ESM4::Weapon serviceRifle;
+        serviceRifle.mData.hasBallistics = true;
+        serviceRifle.mData.animationType = 5;
+        serviceRifle.mData.maxRange = 3548.f;
+
+        MWMechanics::FalloutAiCombatRangeFailure failure;
+        const auto ranged
+            = MWMechanics::buildFalloutAiCombatRange(&serviceRifle, 256.f, 1.f, failure);
+        ASSERT_TRUE(ranged);
+        EXPECT_EQ(failure, MWMechanics::FalloutAiCombatRangeFailure::None);
+        EXPECT_TRUE(ranged->mRanged);
+        EXPECT_FLOAT_EQ(ranged->mDistance, 3548.f);
+
+        ESM4::Weapon knife;
+        knife.mData.animationType = 1;
+        knife.mData.reach = 0.8f;
+        const auto melee = MWMechanics::buildFalloutAiCombatRange(&knife, 256.f, 1.f, failure);
+        ASSERT_TRUE(melee);
+        EXPECT_FALSE(melee->mRanged);
+        EXPECT_FLOAT_EQ(melee->mDistance, 204.8f);
+
+        const auto unarmed = MWMechanics::buildFalloutAiCombatRange(nullptr, 256.f, 1.f, failure);
+        ASSERT_TRUE(unarmed);
+        EXPECT_FALSE(unarmed->mRanged);
+        EXPECT_FLOAT_EQ(unarmed->mDistance, 256.f);
+    }
+
+    TEST(FalloutCombatTest, RejectsMissingFalloutAiRangeDataInsteadOfUsingMorrowindFallbacks)
+    {
+        ESM4::Weapon ranged;
+        ranged.mData.animationType = 5;
+        MWMechanics::FalloutAiCombatRangeFailure failure;
+        EXPECT_FALSE(MWMechanics::buildFalloutAiCombatRange(&ranged, 256.f, 1.f, failure));
+        EXPECT_EQ(failure, MWMechanics::FalloutAiCombatRangeFailure::MissingBallistics);
+
+        ranged.mData.hasBallistics = true;
+        EXPECT_FALSE(MWMechanics::buildFalloutAiCombatRange(&ranged, 256.f, 1.f, failure));
+        EXPECT_EQ(failure, MWMechanics::FalloutAiCombatRangeFailure::InvalidWeaponRange);
+
+        EXPECT_FALSE(MWMechanics::buildFalloutAiCombatRange(nullptr, 0.f, 1.f, failure));
+        EXPECT_EQ(failure, MWMechanics::FalloutAiCombatRangeFailure::InvalidTuning);
+    }
+
     TEST(FalloutCombatTest, BuildsUnitRayAtAuthoredSpreadConeBoundary)
     {
         const auto center = MWMechanics::buildFalloutRayDirection(

@@ -58,6 +58,21 @@ namespace MWMechanics
         InvalidShotsPerSecond,
     };
 
+    enum class FalloutAiCombatRangeFailure
+    {
+        None,
+        InvalidTuning,
+        MissingBallistics,
+        InvalidWeaponRange,
+        InvalidWeaponReach,
+    };
+
+    struct FalloutAiCombatRange
+    {
+        float mDistance = 0.f;
+        bool mRanged = false;
+    };
+
     enum class FalloutVatsWeaponFailure
     {
         None,
@@ -255,6 +270,12 @@ namespace MWMechanics
     [[nodiscard]] std::optional<FalloutFireCadence> buildFalloutFireCadence(
         const ESM4::Weapon& weapon, FalloutFireCadenceFailure& failure);
 
+    /// Resolve the distance at which native AI may begin a Fallout weapon action. Ranged weapons preserve the
+    /// authored WEAP maximum range; melee and unarmed actions use the winning Fallout combat-distance GMSTs.
+    /// Invalid or absent source data fails closed instead of inheriting Morrowind projectile/reach constants.
+    [[nodiscard]] std::optional<FalloutAiCombatRange> buildFalloutAiCombatRange(const ESM4::Weapon* weapon,
+        float combatDistance, float unarmedReach, FalloutAiCombatRangeFailure& failure);
+
     /// Preserve the weapon-authored VATS inputs without supplying an inferred fallback. DNAM flag 3 makes the
     /// serialized AP override authoritative; weapons that require retail GMST/perk calculation remain uncovered.
     [[nodiscard]] std::optional<FalloutVatsWeaponContract> buildFalloutVatsWeaponContract(
@@ -307,6 +328,7 @@ namespace MWMechanics
 
     [[nodiscard]] std::string_view getFalloutShotFailureName(FalloutShotFailure failure);
     [[nodiscard]] std::string_view getFalloutFireCadenceFailureName(FalloutFireCadenceFailure failure);
+    [[nodiscard]] std::string_view getFalloutAiCombatRangeFailureName(FalloutAiCombatRangeFailure failure);
     [[nodiscard]] std::string_view getFalloutVatsWeaponFailureName(FalloutVatsWeaponFailure failure);
     [[nodiscard]] std::string_view getFalloutVatsQueueFailureName(FalloutVatsQueueFailure failure);
     [[nodiscard]] std::string_view getFalloutVatsBodyPartFailureName(FalloutVatsBodyPartFailure failure);

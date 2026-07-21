@@ -1,13 +1,21 @@
 #include "aicombataction.hpp"
 
+#include <cmath>
+
+#include <components/debug/debuglog.hpp>
+
 #include <components/esm3/loadench.hpp>
+#include <components/esm3/loadgmst.hpp>
 #include <components/esm3/loadmgef.hpp>
 #include <components/esm4/loadcrea.hpp>
 #include <components/esm4/loadnpc.hpp>
+#include <components/esm4/loadweap.hpp>
 
 #include "../mwbase/environment.hpp"
 #include "../mwbase/mechanicsmanager.hpp"
 #include "../mwbase/world.hpp"
+
+#include "../mwclass/esm4npc.hpp"
 
 #include "../mwworld/actionequip.hpp"
 #include "../mwworld/cellstore.hpp"
@@ -165,8 +173,107 @@ namespace MWMechanics
         return mWeapon.get<ESM::Weapon>()->mBase;
     }
 
+    namespace
+    {
+        class ActionFalloutWeapon final : public Action
+        {
+            FalloutAiCombatRange mRange;
+
+        public:
+            explicit ActionFalloutWeapon(FalloutAiCombatRange range)
+                : mRange(range)
+            {
+            }
+
+            void prepare(const MWWorld::Ptr& actor) override
+            {
+                // ESM4 equipment is owned by ESM4NpcCustomData and selected from the winning base/template
+                // inventory. Never route it through Morrowind's CarriedRight slot or silently unequip it.
+                actor.getClass().getCreatureStats(actor).setDrawState(DrawState::Weapon);
+            }
+
+            float getCombatRange(bool& isRanged) const override
+            {
+                isRanged = mRange.mRanged;
+                return mRange.mDistance;
+            }
+        };
+
+        std::optional<float> getFalloutGameSetting(std::string_view id)
+        {
+            const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
+            if (store == nullptr)
+                return std::nullopt;
+            const ESM::GameSetting* setting = store->get<ESM::GameSetting>().search(id);
+            if (setting == nullptr || setting->mValue.getType() != ESM::VT_Float)
+                return std::nullopt;
+            const float value = setting->mValue.getFloat();
+            return std::isfinite(value) ? std::optional<float>(value) : std::nullopt;
+        }
+    }
+
+    bool isFalloutNewVegasActor(const MWWorld::Ptr& actor)
+    {
+        if (actor.getType() == ESM4::Npc::sRecordId)
+        {
+            const MWWorld::LiveCellRef<ESM4::Npc>* ref = actor.get<ESM4::Npc>();
+            return ref != nullptr && ref->mBase != nullptr && ref->mBase->mIsFONV;
+        }
+        if (actor.getType() == ESM4::Creature::sRecordId)
+        {
+            const MWWorld::LiveCellRef<ESM4::Creature>* ref = actor.get<ESM4::Creature>();
+            return ref != nullptr && ref->mBase != nullptr && ref->mBase->mIsFONV;
+        }
+        return false;
+    }
+
+    std::optional<float> getFalloutCombatRange(const MWWorld::Ptr& actor, bool& isRanged)
+    {
+        if (!isFalloutNewVegasActor(actor))
+            return std::nullopt;
+
+        const std::optional<float> combatDistance = getFalloutGameSetting("fCombatDistance");
+        const std::optional<float> unarmedReach = getFalloutGameSetting("fHandToHandReach");
+        if (!combatDistance || !unarmedReach)
+            return std::nullopt;
+
+        const ESM4::Weapon* weapon = actor.getType() == ESM4::Npc::sRecordId
+            ? MWClass::ESM4Npc::getEquippedWeapon(actor)
+            : nullptr;
+        FalloutAiCombatRangeFailure failure = FalloutAiCombatRangeFailure::None;
+        const std::optional<FalloutAiCombatRange> range
+            = buildFalloutAiCombatRange(weapon, *combatDistance, *unarmedReach, failure);
+        if (!range)
+        {
+            Log(Debug::Error) << "FNV AI combat range rejected: actor=" << actor.toString()
+                              << " weapon="
+                              << (weapon != nullptr ? ESM::RefId::formIdRefId(weapon->mId).toDebugString()
+                                                    : std::string("unarmed"))
+                              << " reason=" << getFalloutAiCombatRangeFailureName(failure);
+            return std::nullopt;
+        }
+        isRanged = range->mRanged;
+        return range->mDistance;
+    }
+
     std::unique_ptr<Action> prepareNextAction(const MWWorld::Ptr& actor, const MWWorld::Ptr& enemy)
     {
+        if (isFalloutNewVegasActor(actor))
+        {
+            bool isRanged = false;
+            const std::optional<float> distance = getFalloutCombatRange(actor, isRanged);
+            std::unique_ptr<Action> action;
+            if (distance)
+                action = std::make_unique<ActionFalloutWeapon>(FalloutAiCombatRange{ *distance, isRanged });
+            else
+                action = std::make_unique<ActionFlee>();
+
+            if (makeFleeDecision(actor, enemy, 0.f))
+                action = std::make_unique<ActionFlee>();
+            action->prepare(actor);
+            return action;
+        }
+
         Spells& spells = actor.getClass().getCreatureStats(actor).getSpells();
 
         float bestActionRating = 0.f;
@@ -321,6 +428,13 @@ namespace MWMechanics
 
     float getMaxAttackDistance(const MWWorld::Ptr& actor)
     {
+        if (isFalloutNewVegasActor(actor))
+        {
+            bool falloutRanged = false;
+            const std::optional<float> falloutRange = getFalloutCombatRange(actor, falloutRanged);
+            return falloutRange.value_or(0.f);
+        }
+
         const CreatureStats& stats = actor.getClass().getCreatureStats(actor);
         const MWWorld::Store<ESM::GameSetting>& gmst
             = MWBase::Environment::get().getESMStore()->get<ESM::GameSetting>();
@@ -507,21 +621,6 @@ namespace MWMechanics
             return false;
 
         return true;
-    }
-
-    static bool isFalloutNewVegasActor(const MWWorld::Ptr& actor)
-    {
-        if (actor.getType() == ESM4::Npc::sRecordId)
-        {
-            const MWWorld::LiveCellRef<ESM4::Npc>* ref = actor.get<ESM4::Npc>();
-            return ref != nullptr && ref->mBase != nullptr && ref->mBase->mIsFONV;
-        }
-        if (actor.getType() == ESM4::Creature::sRecordId)
-        {
-            const MWWorld::LiveCellRef<ESM4::Creature>* ref = actor.get<ESM4::Creature>();
-            return ref != nullptr && ref->mBase != nullptr && ref->mBase->mIsFONV;
-        }
-        return false;
     }
 
     float vanillaRateFlee(const MWWorld::Ptr& actor, const MWWorld::Ptr& enemy)

@@ -159,6 +159,32 @@ namespace MWMechanics
         return FalloutFireCadence{ true, 1.f / shotsPerSecond };
     }
 
+    std::optional<FalloutAiCombatRange> buildFalloutAiCombatRange(const ESM4::Weapon* weapon,
+        float combatDistance, float unarmedReach, FalloutAiCombatRangeFailure& failure)
+    {
+        failure = FalloutAiCombatRangeFailure::None;
+        if (!std::isfinite(combatDistance) || combatDistance <= 0.f || !std::isfinite(unarmedReach)
+            || unarmedReach <= 0.f)
+            failure = FalloutAiCombatRangeFailure::InvalidTuning;
+        else if (weapon == nullptr)
+            return FalloutAiCombatRange{ combatDistance * unarmedReach, false };
+        else if (isFalloutMeleeAnimationType(weapon->mData.animationType))
+        {
+            if (!std::isfinite(weapon->mData.reach) || weapon->mData.reach <= 0.f)
+                failure = FalloutAiCombatRangeFailure::InvalidWeaponReach;
+            else
+                return FalloutAiCombatRange{ combatDistance * weapon->mData.reach, false };
+        }
+        else if (!weapon->mData.hasBallistics)
+            failure = FalloutAiCombatRangeFailure::MissingBallistics;
+        else if (!std::isfinite(weapon->mData.maxRange) || weapon->mData.maxRange <= 0.f)
+            failure = FalloutAiCombatRangeFailure::InvalidWeaponRange;
+        else
+            return FalloutAiCombatRange{ weapon->mData.maxRange, true };
+
+        return std::nullopt;
+    }
+
     std::optional<FalloutVatsWeaponContract> buildFalloutVatsWeaponContract(
         const ESM4::Weapon& weapon, FalloutVatsWeaponFailure& failure)
     {
@@ -546,6 +572,24 @@ namespace MWMechanics
                 return "invalid-fire-rate";
             case FalloutFireCadenceFailure::InvalidShotsPerSecond:
                 return "invalid-shots-per-second";
+        }
+        return "unknown";
+    }
+
+    std::string_view getFalloutAiCombatRangeFailureName(FalloutAiCombatRangeFailure failure)
+    {
+        switch (failure)
+        {
+            case FalloutAiCombatRangeFailure::None:
+                return "none";
+            case FalloutAiCombatRangeFailure::InvalidTuning:
+                return "invalid-tuning";
+            case FalloutAiCombatRangeFailure::MissingBallistics:
+                return "missing-ballistics";
+            case FalloutAiCombatRangeFailure::InvalidWeaponRange:
+                return "invalid-weapon-range";
+            case FalloutAiCombatRangeFailure::InvalidWeaponReach:
+                return "invalid-weapon-reach";
         }
         return "unknown";
     }
