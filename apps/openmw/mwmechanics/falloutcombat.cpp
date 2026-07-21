@@ -1076,7 +1076,9 @@ namespace MWMechanics
 
     bool isFalloutThrownWeapon(const ESM4::Weapon& weapon) noexcept
     {
-        return weapon.mData.animationType == 13;
+        // Fallout's consumable hand-thrown families are contiguous in WEAP.DNAM:
+        // grenade, mine, placed mine (including C4), and generic thrown weapon.
+        return weapon.mData.animationType >= 10 && weapon.mData.animationType <= 13;
     }
 
     std::optional<osg::Vec3f> buildFalloutRayDirection(

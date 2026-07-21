@@ -30,8 +30,12 @@ namespace ESM4
     inline constexpr std::uint8_t sFONVExtraHealthType = 0x25;
     inline constexpr std::uint8_t sFONVExtraHotkeyType = 0x4a;
     inline constexpr std::uint8_t sFONVExtraAmmoType = 0x6e;
+    inline constexpr std::uint8_t sFONVExtraPackageStartLocationType = 0x18;
+    inline constexpr std::uint8_t sFONVExtraFollowerArrayType = 0x1d;
     inline constexpr std::uint8_t sFONVExtraFactionChangesType = 0x5e;
+    inline constexpr std::uint8_t sFONVExtraActorCauseType = 0x60;
     inline constexpr std::uint8_t sFONVExtraEncounterZoneType = 0x74;
+    inline constexpr std::uint8_t sFONVExtraSayToTopicInfoType = 0x75;
 
     struct FONVSaveRange
     {
@@ -203,13 +207,23 @@ namespace ESM4
         std::vector<std::uint8_t> mRaw;
     };
 
-    // Only the engine-authored ExtraFactionChanges and ExtraEncounterZone layouts are decoded by this slice.
+    // ChangedREFR extra-data layouts used by retail player saves. Fields retain the xEdit names where the runtime
+    // semantics are not established; every typed payload remains independently range-addressable through mRaw.
     struct FONVSavePlayerActorExtraData
     {
         FONVSaveField<std::uint8_t> mType;
+        std::optional<FONVSaveResolvedReferenceId> mPackageStartCellOrWorldspace;
+        std::optional<std::array<FONVSaveField<float>, 3>> mPackageStartPosition;
+        std::optional<FONVSaveField<std::uint32_t>> mPackageStartUnknown;
+        std::optional<FONVSaveField<std::uint32_t>> mFollowerCount;
+        std::vector<FONVSaveResolvedReferenceId> mFollowers;
         std::optional<FONVSaveField<std::uint32_t>> mFactionChangeCount;
         std::vector<FONVSavePlayerFactionChange> mFactionChanges;
+        std::optional<FONVSaveField<std::uint32_t>> mActorCause;
         std::optional<FONVSaveResolvedReferenceId> mEncounterZone;
+        std::optional<FONVSaveResolvedReferenceId> mSayToTopic;
+        std::optional<FONVSaveResolvedReferenceId> mSayToTopicInfo;
+        std::optional<FONVSaveField<std::uint8_t>> mSayToUnknown;
         FONVSaveRange mRange;
         std::vector<std::uint8_t> mRaw;
     };
@@ -245,11 +259,13 @@ namespace ESM4
         std::vector<std::uint8_t> mRaw;
     };
 
-    // ChangedMobileObject process level, ChangedREFR actor extras, then ChangedInventory. Array counts retain their
-    // raw U6to30 encodings; the raw continuation is handed to the following MobileObject process-state parser.
+    // ChangedMobileObject process level, optional CHANGE_REFR_SCALE, ChangedREFR actor extras, then
+    // ChangedInventory. Array counts retain their raw U6to30 encodings; the raw continuation is handed to the
+    // following MobileObject process-state parser.
     struct FONVSavePlayerProcessInventoryData
     {
         FONVSaveField<std::int8_t> mProcessLevel;
+        std::optional<FONVSaveField<float>> mReferenceScale;
         FONVSaveField<std::uint32_t> mActorExtraDataCount;
         std::vector<FONVSavePlayerActorExtraData> mActorExtraData;
         FONVSaveField<std::uint32_t> mInventoryEntryCount;

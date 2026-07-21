@@ -2333,7 +2333,11 @@ namespace MWMechanics
         const MWRender::FonvWeaponActionProgress actionProgress
             = MWRender::getFonvWeaponActionProgress(actionStateExists, complete);
 
-        const bool triggerDown = getAttackingOrSpell();
+        const bool vatsSuppressesPlayerTrigger = mPtr == getPlayer()
+            && MWBase::Environment::get().getWorld()->getFalloutPlayerRuntimeState().isVatsActive();
+        if (vatsSuppressesPlayerTrigger && getAttackingOrSpell())
+            setAttackingOrSpell(false);
+        const bool triggerDown = !vatsSuppressesPlayerTrigger && getAttackingOrSpell();
         const bool hitAllowsAttack = mHitState == CharState_None || mHitState == CharState_Block;
         const bool stateAllowsAttack = mUpperBodyState == UpperBodyState::WeaponEquipped
             || (mUpperBodyState == UpperBodyState::AttackEnd && mFalloutWeapon != nullptr
@@ -2864,8 +2868,22 @@ namespace MWMechanics
             }
 
             const osg::Vec3f destination = origin + rayDirection * contract->mProjectileRange;
-            const MWPhysics::RayCastingResult result = rayCasting->castRay(origin, destination, { mPtr }, targetActors,
-                MWPhysics::CollisionType_Default, MWPhysics::CollisionType_Projectile);
+            MWPhysics::RayCastingResult result;
+            if (vatsAttack && vatsTargetHit)
+            {
+                // A queued V.A.T.S. roll is the authoritative hit result. Target acquisition already chose the
+                // authored actor/body-part contract; resolving the rolled hit directly prevents incidental scenery
+                // collision from turning a displayed successful roll into an unreported zero-damage shot.
+                result.mHit = true;
+                result.mHitPos = vatsAimPoint.value_or(destination);
+                result.mHitNormal = -rayDirection;
+                result.mHitObject = vatsTarget;
+            }
+            else
+            {
+                result = rayCasting->castRay(origin, destination, { mPtr }, targetActors,
+                    MWPhysics::CollisionType_Default, MWPhysics::CollisionType_Projectile);
+            }
             if (!result.mHit)
                 continue;
             ++rayHits;

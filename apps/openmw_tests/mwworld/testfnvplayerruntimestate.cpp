@@ -117,6 +117,40 @@ TEST(FalloutPlayerRuntimeStateTest, OmitsUnchangedStateFromTheSave)
     EXPECT_FALSE(reader.hasMoreRecs());
 }
 
+TEST(FalloutPlayerRuntimeStateTest, KeepsVatsActivityTransientAcrossStateLifecycle)
+{
+    MWWorld::FalloutPlayerRuntimeState runtime;
+    EXPECT_FALSE(runtime.isVatsActive());
+
+    runtime.setVatsActive(true);
+    EXPECT_TRUE(runtime.isVatsActive());
+    EXPECT_FALSE(runtime.isDirty());
+    EXPECT_EQ(runtime.countSavedGameRecords(), 0);
+
+    runtime.initialize(makeBaseState(0));
+    EXPECT_FALSE(runtime.isVatsActive());
+    EXPECT_FALSE(runtime.isDirty());
+
+    runtime.setVatsActive(true);
+    EXPECT_TRUE(runtime.isVatsActive());
+    EXPECT_FALSE(runtime.isDirty());
+    EXPECT_EQ(runtime.countSavedGameRecords(), 0);
+
+    runtime.resetCurrent();
+    EXPECT_FALSE(runtime.isVatsActive());
+    EXPECT_FALSE(runtime.isDirty());
+
+    runtime.setVatsActive(true);
+    runtime.clear();
+    EXPECT_FALSE(runtime.isVatsActive());
+    EXPECT_FALSE(runtime.isDirty());
+
+    runtime.setVatsActive(true);
+    runtime.initialize(makeBaseState(0));
+    EXPECT_FALSE(runtime.isVatsActive());
+    EXPECT_FALSE(runtime.isDirty());
+}
+
 TEST(FalloutPlayerRuntimeStateTest, DerivesCarryCapacityFromCurrentStrength)
 {
     MWWorld::FalloutPlayerRuntimeState runtime;

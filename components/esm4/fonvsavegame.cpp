@@ -605,6 +605,39 @@ namespace
             cursor, data, [&](std::string_view label) { return cursor.readU8(label); }, "player actor extra type");
         switch (result.mType.mValue)
         {
+            case ESM4::sFONVExtraPackageStartLocationType:
+            {
+                result.mPackageStartCellOrWorldspace = decodeDelimitedResolvedReferenceId(
+                    cursor, data, formIds, "player package-start CELL/WRLD RefID");
+                std::array<ESM4::FONVSaveField<float>, 3> position;
+                for (ESM4::FONVSaveField<float>& component : position)
+                {
+                    component = readField<float>(cursor, data,
+                        [&](std::string_view label) { return cursor.readF32(label); },
+                        "player package-start position");
+                    if (!std::isfinite(component.mValue))
+                    {
+                        throw ESM4::FONVSaveError(
+                            component.mRange.mOffset, "non-finite player package-start position");
+                    }
+                }
+                cursor.expectDelimiter("player package-start position");
+                result.mPackageStartPosition = std::move(position);
+                result.mPackageStartUnknown = readDelimitedField<std::uint32_t>(cursor, data,
+                    [&](std::string_view label) { return cursor.readU32(label); },
+                    "player package-start unknown word");
+                break;
+            }
+            case ESM4::sFONVExtraFollowerArrayType:
+                result.mFollowerCount = readPackedCount(cursor, data, "player follower count");
+                validatePackedCountFits(*result.mFollowerCount, cursor, 4, "player follower count");
+                result.mFollowers.reserve(result.mFollowerCount->mValue);
+                for (std::uint32_t i = 0; i < result.mFollowerCount->mValue; ++i)
+                {
+                    result.mFollowers.push_back(decodeDelimitedResolvedReferenceId(
+                        cursor, data, formIds, "player follower RefID"));
+                }
+                break;
             case ESM4::sFONVExtraFactionChangesType:
             {
                 result.mFactionChangeCount = readPackedCount(cursor, data, "player faction-change count");
@@ -625,9 +658,22 @@ namespace
                 }
                 break;
             }
+            case ESM4::sFONVExtraActorCauseType:
+                result.mActorCause = readDelimitedField<std::uint32_t>(cursor, data,
+                    [&](std::string_view label) { return cursor.readU32(label); }, "player actor-cause word");
+                break;
             case ESM4::sFONVExtraEncounterZoneType:
                 result.mEncounterZone
                     = decodeDelimitedResolvedReferenceId(cursor, data, formIds, "player encounter-zone RefID");
+                break;
+            case ESM4::sFONVExtraSayToTopicInfoType:
+                result.mSayToTopic
+                    = decodeDelimitedResolvedReferenceId(cursor, data, formIds, "player SayTo topic RefID");
+                result.mSayToTopicInfo
+                    = decodeDelimitedResolvedReferenceId(cursor, data, formIds, "player SayTo topic-info RefID");
+                result.mSayToUnknown = readDelimitedField<std::uint8_t>(
+                    cursor, data, [&](std::string_view label) { return cursor.readU8(label); },
+                    "player SayTo unknown byte");
                 break;
             default:
                 throw ESM4::FONVSaveError(
@@ -732,6 +778,18 @@ namespace
         result.mProcessLevel = readDelimitedField<std::int8_t>(cursor, data,
             [&](std::string_view label) { return std::bit_cast<std::int8_t>(cursor.readU8(label)); },
             "player process level");
+
+        constexpr std::uint32_t changeReferenceScale = 0x00000010;
+        if ((player.mChangeFlags.mValue & changeReferenceScale) != 0)
+        {
+            result.mReferenceScale = readDelimitedField<float>(cursor, data,
+                [&](std::string_view label) { return cursor.readF32(label); }, "player reference scale");
+            if (!std::isfinite(result.mReferenceScale->mValue) || result.mReferenceScale->mValue <= 0.f)
+            {
+                throw ESM4::FONVSaveError(
+                    result.mReferenceScale->mRange.mOffset, "invalid player reference scale");
+            }
+        }
         result.mActorExtraDataCount = readPackedCount(cursor, data, "player actor extra-data count");
         validatePackedCountFits(result.mActorExtraDataCount, cursor, 2, "player actor extra-data count");
         result.mActorExtraData.reserve(result.mActorExtraDataCount.mValue);
@@ -1671,8 +1729,10 @@ namespace
         for (std::uint32_t i = 0; i < result.mObjectiveCount.mValue; ++i)
             result.mObjectives.push_back(parsePlayerCharacterObjectiveEntry(cursor, data, formIds));
 
-        if (cursor.position() - begin != ESM4::sFONVPlayerCharacterListsStateBytes)
-            throw ESM4::FONVSaveError(begin, "canonical PlayerCharacter lists state has an unexpected size");
+        // This state is a sequence of counted retail lists. Its serialized size changes as topics, notes,
+        // inventory, perks, stages, and objectives change between saves; Save 330's 147 bytes are not a format
+        // invariant. Every count and entry is already parsed with bounds checks above, so the cursor position is
+        // the authoritative boundary for the following PlayerCharacter state.
         result.mRange = range(begin, cursor.position());
         result.mRaw = copyRange(data, begin, cursor.position());
         result.mUnparsedRemainder = readRawField(

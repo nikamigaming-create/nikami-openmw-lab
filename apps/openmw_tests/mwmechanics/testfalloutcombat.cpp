@@ -560,6 +560,23 @@ namespace
         EXPECT_EQ(failure, MWMechanics::FalloutShotFailure::MissingAmmo);
     }
 
+    TEST(FalloutCombatTest, ClassifiesAuthoredGrenadeMineAndPlacedExplosiveFamiliesAsConsumableWeapons)
+    {
+        ESM4::Weapon weapon;
+
+        for (const std::uint8_t animationType : { 10, 11, 12, 13 })
+        {
+            weapon.mData.animationType = animationType;
+            EXPECT_TRUE(MWMechanics::isFalloutThrownWeapon(weapon)) << "animationType=" << +animationType;
+        }
+
+        for (const std::uint8_t animationType : { 9, 14 })
+        {
+            weapon.mData.animationType = animationType;
+            EXPECT_FALSE(MWMechanics::isFalloutThrownWeapon(weapon)) << "animationType=" << +animationType;
+        }
+    }
+
     TEST(FalloutCombatTest, SemiAutomaticTriggerFiresOncePerPress)
     {
         ESM4::Weapon weapon;

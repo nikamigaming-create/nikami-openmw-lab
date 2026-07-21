@@ -69,17 +69,20 @@ namespace MWWorld
     {
         mBase = base;
         mCurrent = makeBaseCurrent();
+        mVatsActive = false;
     }
 
     void FalloutPlayerRuntimeState::clear()
     {
         mBase.reset();
         mCurrent = {};
+        mVatsActive = false;
     }
 
     void FalloutPlayerRuntimeState::resetCurrent()
     {
         mCurrent = makeBaseCurrent();
+        mVatsActive = false;
     }
 
     bool FalloutPlayerRuntimeState::isDirty() const

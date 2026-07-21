@@ -197,6 +197,12 @@ namespace MWInput
             case A_Console:
                 toggleConsole();
                 break;
+            case A_Jump:
+                // The shipped Fallout profile keeps OpenMW's E-to-jump binding, while the native FNV VATS HUD uses
+                // retail's [E] ACCEPT prompt. In targeting mode E is an accept action, not a world jump.
+                if (mFalloutVats.getPhase() == MWMechanics::FalloutVatsPhase::Targeting)
+                    executeFalloutVatsQueue();
+                break;
             case A_Activate:
                 inputManager->resetIdleTime();
                 if (mFalloutVats.getPhase() == MWMechanics::FalloutVatsPhase::Targeting)
@@ -362,6 +368,7 @@ namespace MWInput
             MWBase::Environment::get().getWindowManager()->messageBox("V.A.T.S. action points unavailable");
             return;
         }
+        world->getFalloutPlayerRuntimeState().setVatsActive(true);
 
         MWWorld::InventoryStore& inventory = player.getClass().getInventoryStore(player);
         const MWWorld::ContainerStoreIterator weapon = inventory.getSlot(MWWorld::InventoryStore::Slot_CarriedRight);
@@ -536,6 +543,7 @@ namespace MWInput
     void ActionManager::restoreFalloutVatsView()
     {
         MWBase::World* world = MWBase::Environment::get().getWorld();
+        world->getFalloutPlayerRuntimeState().setVatsActive(false);
         if (!mFalloutVatsTarget.isEmpty())
         {
             if (MWRender::Animation* animation = world->getAnimation(mFalloutVatsTarget))
