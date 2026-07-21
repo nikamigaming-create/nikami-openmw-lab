@@ -125,6 +125,7 @@ namespace ESM4
     struct LevelledNpc;
     struct Light;
     struct MiscItem;
+    struct MagicEffect;
     struct MovableStatic;
     struct Npc;
     struct Note;
@@ -141,6 +142,7 @@ namespace ESM4
     struct Script;
     struct Sound;
     struct SoundReference;
+    struct Spell;
     struct Static;
     struct StaticCollection;
     struct Terminal;
@@ -212,7 +214,8 @@ namespace MWWorld
             // New stores must be appended so an incremental build can never reinterpret an existing slot.
             Store<ESM4::Projectile>, Store<ESM4::ActorValueInformation>, Store<ESM4::Faction>, Store<ESM4::Perk>,
             Store<ESM4::RecipeCategory>, Store<ESM4::Recipe>, Store<ESM4::Note>, Store<ESM4::AnimObject>,
-            Store<ESM4::GameSetting>, Store<ESM4::AmmoEffect>, Store<ESM4::Explosion>>;
+            Store<ESM4::GameSetting>, Store<ESM4::AmmoEffect>, Store<ESM4::Explosion>,
+            Store<ESM4::MagicEffect>, Store<ESM4::Spell>>;
 
     private:
         template <typename T>
