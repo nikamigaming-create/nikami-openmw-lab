@@ -12,6 +12,7 @@
 #include <components/esm3/loadscpt.hpp>
 #include <components/esm3/loadweap.hpp>
 #include <components/esm3/player.hpp>
+#include <components/esm3/projectilestate.hpp>
 #include <components/esm3/quickkeys.hpp>
 
 #include <gmock/gmock.h>
@@ -261,6 +262,67 @@ namespace ESM
             Container result;
             saveAndLoadRecord(record, CurrentSaveGameFormatVersion, result);
             EXPECT_EQ(result.mInventory.mList, record.mInventory.mList);
+        }
+
+        TEST_F(Esm3SaveLoadRecordTest, falloutProjectileStateShouldPreserveFrozenImpactAndVatsPayload)
+        {
+            FalloutProjectileState record;
+            record.mId = RefId::formIdRefId({ 0x10203, 0 });
+            record.mPosition = Vector3(osg::Vec3f(1.f, 2.f, 3.f));
+            record.mOrientation = Quaternion(osg::Quat(0.1, 0.2, 0.3, 0.9));
+            record.mActorId = 42;
+            record.mVelocity = Vector3(osg::Vec3f(400.f, 500.f, 600.f));
+            record.mRotationVelocity = Vector3(osg::Vec3f(0.25f, 0.5f, 0.75f));
+            record.mPreviousPosition = Vector3(osg::Vec3f(-1.f, -2.f, -3.f));
+            record.mGravity = 1.5f;
+            record.mMaximumRange = 10000.f;
+            record.mDistanceTravelled = 321.f;
+            record.mWeapon = RefId::formIdRefId({ 0x40506, 0 });
+            record.mRawDamage = 37.5f;
+            record.mLimbDamageMultiplier = 1.25f;
+            record.mAmmoEffects = { RefId::formIdRefId({ 0x70809, 0 }),
+                RefId::formIdRefId({ 0xa0b0c, 0 }) };
+            record.mFlags = FalloutProjectileState::Rotates | FalloutProjectileState::Critical
+                | FalloutProjectileState::HasVatsAction | FalloutProjectileState::VatsTargetHit;
+            record.mVats.mTarget = RefId::formIdRefId({ 0xd0e0f, 0 });
+            record.mVats.mBodyPart = 3;
+            record.mVats.mDisplayedHitChance = 78;
+            record.mVats.mHealthPercent = 25;
+            record.mVats.mActorValue = 27;
+            record.mVats.mActionPointCost = 18.f;
+            record.mVats.mHealthDamageMultiplier = 0.75f;
+            record.mVats.mLimbDamageMultiplier = 1.4f;
+            record.mVats.mBodyPartName = "Left Arm";
+            record.mVats.mTargetNode = "Bip01 L UpperArm";
+
+            FalloutProjectileState result;
+            saveAndLoadRecord(record, CurrentSaveGameFormatVersion, result);
+
+            EXPECT_EQ(result.mId, record.mId);
+            EXPECT_THAT(result.mPosition.mValues, ElementsAre(1.f, 2.f, 3.f));
+            EXPECT_THAT(result.mOrientation.mValues, ElementsAreArray(record.mOrientation.mValues));
+            EXPECT_EQ(result.mActorId, 42);
+            EXPECT_THAT(result.mVelocity.mValues, ElementsAre(400.f, 500.f, 600.f));
+            EXPECT_THAT(result.mRotationVelocity.mValues, ElementsAre(0.25f, 0.5f, 0.75f));
+            EXPECT_THAT(result.mPreviousPosition.mValues, ElementsAre(-1.f, -2.f, -3.f));
+            EXPECT_EQ(result.mGravity, 1.5f);
+            EXPECT_EQ(result.mMaximumRange, 10000.f);
+            EXPECT_EQ(result.mDistanceTravelled, 321.f);
+            EXPECT_EQ(result.mWeapon, record.mWeapon);
+            EXPECT_EQ(result.mRawDamage, 37.5f);
+            EXPECT_EQ(result.mLimbDamageMultiplier, 1.25f);
+            EXPECT_EQ(result.mAmmoEffects, record.mAmmoEffects);
+            EXPECT_EQ(result.mFlags, record.mFlags);
+            EXPECT_EQ(result.mVats.mTarget, record.mVats.mTarget);
+            EXPECT_EQ(result.mVats.mBodyPart, 3);
+            EXPECT_EQ(result.mVats.mDisplayedHitChance, 78);
+            EXPECT_EQ(result.mVats.mHealthPercent, 25);
+            EXPECT_EQ(result.mVats.mActorValue, 27);
+            EXPECT_EQ(result.mVats.mActionPointCost, 18.f);
+            EXPECT_EQ(result.mVats.mHealthDamageMultiplier, 0.75f);
+            EXPECT_EQ(result.mVats.mLimbDamageMultiplier, 1.4f);
+            EXPECT_EQ(result.mVats.mBodyPartName, "Left Arm");
+            EXPECT_EQ(result.mVats.mTargetNode, "Bip01 L UpperArm");
         }
 
         TEST_F(Esm3SaveLoadRecordTest, regionSoundRefShouldSupportRefIdLongerThan32)

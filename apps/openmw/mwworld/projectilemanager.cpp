@@ -845,6 +845,53 @@ namespace MWWorld
             writer.endRecord(ESM::REC_PROJ);
         }
 
+        for (const FalloutProjectileState& projectile : mFalloutProjectiles)
+        {
+            writer.startRecord(ESM::REC_FPRJ);
+
+            ESM::FalloutProjectileState state;
+            state.mId = ESM::RefId::formIdRefId(projectile.mProjectile);
+            state.mPosition = ESM::Vector3(osg::Vec3f(projectile.mNode->getPosition()));
+            state.mOrientation = ESM::Quaternion(osg::Quat(projectile.mNode->getAttitude()));
+            state.mActorId = projectile.mActorId;
+            state.mVelocity = projectile.mVelocity;
+            state.mRotationVelocity = projectile.mRotationVelocity;
+            state.mPreviousPosition = projectile.mPreviousPosition;
+            state.mGravity = projectile.mGravity;
+            state.mMaximumRange = projectile.mMaximumRange;
+            state.mDistanceTravelled = projectile.mDistanceTravelled;
+            state.mWeapon = ESM::RefId::formIdRefId(projectile.mImpact.mWeapon);
+            state.mRawDamage = projectile.mImpact.mRawDamage;
+            state.mLimbDamageMultiplier = projectile.mImpact.mLimbDamageMultiplier;
+            if (projectile.mRotates)
+                state.mFlags |= ESM::FalloutProjectileState::Rotates;
+            if (projectile.mImpact.mCritical)
+                state.mFlags |= ESM::FalloutProjectileState::Critical;
+            if (projectile.mImpact.mVatsTargetHit)
+                state.mFlags |= ESM::FalloutProjectileState::VatsTargetHit;
+            for (ESM::FormId effect : projectile.mImpact.mAmmoEffects)
+                state.mAmmoEffects.push_back(ESM::RefId::formIdRefId(effect));
+
+            if (projectile.mImpact.mVatsAction)
+            {
+                state.mFlags |= ESM::FalloutProjectileState::HasVatsAction;
+                const MWMechanics::FalloutVatsQueuedAction& action = *projectile.mImpact.mVatsAction;
+                state.mVats.mTarget = ESM::RefId::formIdRefId(action.mTarget);
+                state.mVats.mBodyPart = action.mBodyPart;
+                state.mVats.mDisplayedHitChance = action.mDisplayedHitChance;
+                state.mVats.mHealthPercent = action.mHealthPercent;
+                state.mVats.mActorValue = action.mActorValue;
+                state.mVats.mActionPointCost = action.mActionPointCost;
+                state.mVats.mHealthDamageMultiplier = action.mHealthDamageMultiplier;
+                state.mVats.mLimbDamageMultiplier = action.mLimbDamageMultiplier;
+                state.mVats.mBodyPartName = action.mBodyPartName;
+                state.mVats.mTargetNode = action.mTargetNode;
+            }
+
+            state.save(writer);
+            writer.endRecord(ESM::REC_FPRJ);
+        }
+
         for (std::vector<MagicBoltState>::const_iterator it = mMagicBolts.begin(); it != mMagicBolts.end(); ++it)
         {
             writer.startRecord(ESM::REC_MPRJ);
@@ -902,6 +949,103 @@ namespace MWWorld
                 osg::Vec4(0, 0, 0, 0));
 
             mProjectiles.push_back(std::move(state));
+            return true;
+        }
+        if (type == ESM::REC_FPRJ)
+        {
+            ESM::FalloutProjectileState esm;
+            esm.load(reader);
+
+            const ESM::FormId* projectileId = esm.mId.getIf<ESM::FormId>();
+            const ESM::FormId* weaponId = esm.mWeapon.getIf<ESM::FormId>();
+            const auto finiteVector = [](const ESM::Vector3& value) {
+                return std::isfinite(value.mValues[0]) && std::isfinite(value.mValues[1])
+                    && std::isfinite(value.mValues[2]);
+            };
+            if (projectileId == nullptr || weaponId == nullptr || !finiteVector(esm.mPosition)
+                || !finiteVector(esm.mVelocity) || !finiteVector(esm.mRotationVelocity)
+                || !finiteVector(esm.mPreviousPosition) || !std::isfinite(esm.mGravity) || esm.mGravity < 0.f
+                || !std::isfinite(esm.mMaximumRange) || esm.mMaximumRange <= 0.f
+                || !std::isfinite(esm.mDistanceTravelled) || esm.mDistanceTravelled < 0.f
+                || esm.mDistanceTravelled >= esm.mMaximumRange || !std::isfinite(esm.mRawDamage)
+                || esm.mRawDamage < 0.f || !std::isfinite(esm.mLimbDamageMultiplier)
+                || esm.mLimbDamageMultiplier < 0.f)
+            {
+                Log(Debug::Warning) << "Rejected malformed native Fallout projectile save state";
+                return true;
+            }
+
+            FalloutProjectileState state;
+            state.mActorId = esm.mActorId;
+            state.mProjectile = *projectileId;
+            state.mVelocity = esm.mVelocity;
+            state.mRotationVelocity = esm.mRotationVelocity;
+            state.mPreviousPosition = esm.mPreviousPosition;
+            state.mGravity = esm.mGravity;
+            state.mMaximumRange = esm.mMaximumRange;
+            state.mDistanceTravelled = esm.mDistanceTravelled;
+            state.mRotates = (esm.mFlags & ESM::FalloutProjectileState::Rotates) != 0;
+            state.mImpact.mWeapon = *weaponId;
+            state.mImpact.mRawDamage = esm.mRawDamage;
+            state.mImpact.mLimbDamageMultiplier = esm.mLimbDamageMultiplier;
+            state.mImpact.mCritical = (esm.mFlags & ESM::FalloutProjectileState::Critical) != 0;
+            state.mImpact.mVatsTargetHit = (esm.mFlags & ESM::FalloutProjectileState::VatsTargetHit) != 0;
+            state.mToDelete = false;
+
+            for (const ESM::RefId& effect : esm.mAmmoEffects)
+            {
+                const ESM::FormId* effectId = effect.getIf<ESM::FormId>();
+                if (effectId == nullptr)
+                {
+                    Log(Debug::Warning) << "Rejected native Fallout projectile save state with malformed ammo effect";
+                    return true;
+                }
+                state.mImpact.mAmmoEffects.push_back(*effectId);
+            }
+
+            if ((esm.mFlags & ESM::FalloutProjectileState::HasVatsAction) != 0)
+            {
+                const ESM::FormId* targetId = esm.mVats.mTarget.getIf<ESM::FormId>();
+                if (targetId == nullptr || esm.mVats.mBodyPartName.empty() || esm.mVats.mTargetNode.empty()
+                    || !std::isfinite(esm.mVats.mActionPointCost) || esm.mVats.mActionPointCost < 0.f
+                    || !std::isfinite(esm.mVats.mHealthDamageMultiplier)
+                    || esm.mVats.mHealthDamageMultiplier < 0.f
+                    || !std::isfinite(esm.mVats.mLimbDamageMultiplier)
+                    || esm.mVats.mLimbDamageMultiplier < 0.f)
+                {
+                    Log(Debug::Warning) << "Rejected native Fallout projectile save state with malformed VATS action";
+                    return true;
+                }
+                MWMechanics::FalloutVatsQueuedAction action;
+                action.mTarget = *targetId;
+                action.mBodyPart = esm.mVats.mBodyPart;
+                action.mDisplayedHitChance = esm.mVats.mDisplayedHitChance;
+                action.mHealthPercent = esm.mVats.mHealthPercent;
+                action.mActorValue = esm.mVats.mActorValue;
+                action.mActionPointCost = esm.mVats.mActionPointCost;
+                action.mHealthDamageMultiplier = esm.mVats.mHealthDamageMultiplier;
+                action.mLimbDamageMultiplier = esm.mVats.mLimbDamageMultiplier;
+                action.mBodyPartName = std::move(esm.mVats.mBodyPartName);
+                action.mTargetNode = std::move(esm.mVats.mTargetNode);
+                state.mImpact.mVatsAction = std::move(action);
+            }
+
+            const ESM4::Projectile* projectile
+                = MWBase::Environment::get().getESMStore()->get<ESM4::Projectile>().search(state.mProjectile);
+            if (projectile == nullptr || !projectile->mData.present || projectile->mModel.empty())
+            {
+                Log(Debug::Warning) << "Failed to resolve native Fallout projectile " << esm.mId
+                                    << " while reading projectile record";
+                return true;
+            }
+
+            const VFS::Path::Normalized model
+                = Misc::ResourceHelpers::correctMeshPath(VFS::Path::Normalized(projectile->mModel));
+            createModel(state, model, osg::Vec3f(esm.mPosition), osg::Quat(esm.mOrientation), false, false,
+                osg::Vec4(0.f, 0.f, 0.f, 0.f));
+            state.mProjectileId
+                = mPhysics->addProjectile(state.getCaster(), osg::Vec3f(esm.mPosition), model, false);
+            mFalloutProjectiles.push_back(std::move(state));
             return true;
         }
         if (type == ESM::REC_MPRJ)
@@ -971,7 +1115,7 @@ namespace MWWorld
 
     int ProjectileManager::countSavedGameRecords() const
     {
-        return mMagicBolts.size() + mProjectiles.size();
+        return mMagicBolts.size() + mProjectiles.size() + mFalloutProjectiles.size();
     }
 
     MWWorld::Ptr ProjectileManager::State::getCaster()

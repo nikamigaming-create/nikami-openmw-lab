@@ -125,6 +125,7 @@ namespace ESM
         REC_ACTC = esm3Recname("ACTC"),
         REC_MPRJ = esm3Recname("MPRJ"),
         REC_PROJ = esm3Recname("PROJ"),
+        REC_FPRJ = esm3Recname("FPRJ"), // Native Fallout projectile runtime state
         REC_DCOU = esm3Recname("DCOU"),
         REC_MARK = esm3Recname("MARK"),
         REC_ENAB = esm3Recname("ENAB"),

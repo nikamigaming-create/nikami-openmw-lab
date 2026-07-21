@@ -837,6 +837,7 @@ void MWState::StateManager::loadGame(const Character* character, const std::file
                 case ESM::REC_ACTC:
                 case ESM::REC_PROJ:
                 case ESM::REC_MPRJ:
+                case ESM::REC_FPRJ:
                 case ESM::REC_ENAB:
                 case ESM::REC_LEVC:
                 case ESM::REC_LEVI:
