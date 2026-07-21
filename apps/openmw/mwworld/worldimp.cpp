@@ -3983,6 +3983,13 @@ namespace MWWorld
             && mProjectileManager->launchFalloutProjectile(actor, projectile, worldPos, direction, impact);
     }
 
+    unsigned int World::detonateFalloutPlacedExplosives(const MWWorld::Ptr& actor)
+    {
+        return mProjectileManager != nullptr
+            ? mProjectileManager->detonateFalloutPlacedExplosives(actor)
+            : 0;
+    }
+
     void World::launchMagicBolt(
         const ESM::RefId& spellId, const MWWorld::Ptr& caster, const osg::Vec3f& fallbackDirection, ESM::RefNum item)
     {

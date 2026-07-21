@@ -66,6 +66,10 @@ namespace MWWorld
             const osg::Vec3f& pos, const osg::Vec3f& direction,
             const MWMechanics::FalloutProjectileImpactContract& impact);
 
+        /// Arm the detonation state for every settled, remotely triggered Fallout explosive placed by actor.
+        /// Returns the number of charges accepted by the authored PROJ Detonates contract.
+        unsigned int detonateFalloutPlacedExplosives(const MWWorld::Ptr& actor);
+
         void updateCasters();
 
         void update(float dt);

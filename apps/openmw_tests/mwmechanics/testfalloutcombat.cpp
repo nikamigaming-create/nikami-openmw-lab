@@ -879,6 +879,47 @@ namespace
         EXPECT_EQ(failure, MWMechanics::FalloutProjectileTriggerFailure::InvalidTimer);
     }
 
+    TEST(FalloutCombatTest, ResolvesRetailDetonatorCommandOnlyInsideOnFireBlock)
+    {
+        constexpr std::string_view retailSource = R"(scn DetonatorOnFire
+
+begin OnFire
+     player.DetonatePlacedExplosives
+end
+)";
+        EXPECT_EQ(MWMechanics::resolveFalloutWeaponOnFireAction(retailSource),
+            MWMechanics::FalloutWeaponOnFireAction::DetonatePlacedExplosives);
+
+        constexpr std::string_view notOnFire = R"(begin OnEquip
+player.DetonatePlacedExplosives
+end
+begin OnFire
+; player.DetonatePlacedExplosives
+end
+)";
+        EXPECT_EQ(MWMechanics::resolveFalloutWeaponOnFireAction(notOnFire),
+            MWMechanics::FalloutWeaponOnFireAction::None);
+
+        EXPECT_EQ(MWMechanics::resolveFalloutWeaponOnFireAction(
+                      "BEGIN\tONFIRE\r\n\tPLAYER.DETONATEPLACEDEXPLOSIVES\t\r\nEND\r\n"),
+            MWMechanics::FalloutWeaponOnFireAction::DetonatePlacedExplosives);
+    }
+
+    TEST(FalloutCombatTest, SelectsOnlySettledRemoteChargeWithMatchingFrozenExplosion)
+    {
+        ESM4::Projectile c4;
+        c4.mData.present = true;
+        c4.mData.flags = ESM4::Projectile::Explosion | ESM4::Projectile::Detonates;
+        c4.mData.explosion = id(0x130044);
+
+        EXPECT_TRUE(MWMechanics::isFalloutRemoteDetonationCandidate(c4, true, id(0x130044)));
+        EXPECT_FALSE(MWMechanics::isFalloutRemoteDetonationCandidate(c4, false, id(0x130044)));
+        EXPECT_FALSE(MWMechanics::isFalloutRemoteDetonationCandidate(c4, true, id(0x179da)));
+
+        c4.mData.flags = ESM4::Projectile::Explosion;
+        EXPECT_FALSE(MWMechanics::isFalloutRemoteDetonationCandidate(c4, true, id(0x130044)));
+    }
+
     ESM4::Weapon retailCriticalWeapon(bool automatic = false)
     {
         ESM4::Weapon weapon;

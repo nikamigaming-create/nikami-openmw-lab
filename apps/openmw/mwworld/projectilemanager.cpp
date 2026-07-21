@@ -453,6 +453,34 @@ namespace MWWorld
         return true;
     }
 
+    unsigned int ProjectileManager::detonateFalloutPlacedExplosives(const MWWorld::Ptr& actor)
+    {
+        const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
+        if (store == nullptr || actor.isEmpty() || !actor.getClass().isActor())
+            return 0;
+
+        unsigned int count = 0;
+        for (FalloutProjectileState& state : mFalloutProjectiles)
+        {
+            if (state.mToDelete || state.mDetonate || state.getCaster() != actor)
+                continue;
+            const ESM4::Projectile* projectile
+                = store->get<ESM4::Projectile>().search(state.mProjectile);
+            if (projectile == nullptr
+                || !MWMechanics::isFalloutRemoteDetonationCandidate(
+                    *projectile, state.mSettled, state.mImpact.mExplosion))
+                continue;
+            state.mDetonate = true;
+            ++count;
+            Log(Debug::Info) << "FNV placed explosive remotely triggered: actor=" << actor.toString()
+                             << " projectile=" << ESM::RefId::formIdRefId(state.mProjectile)
+                             << " explosion=" << ESM::RefId::formIdRefId(state.mImpact.mExplosion)
+                             << " position=" << state.mNode->getPosition()
+                             << " elapsed=" << state.mElapsedTime;
+        }
+        return count;
+    }
+
     void ProjectileManager::updateCasters()
     {
         for (auto& state : mProjectiles)

@@ -37,6 +37,7 @@
 #include <components/esm4/loadexpl.hpp>
 #include <components/esm4/loadflst.hpp>
 #include <components/esm4/loadproj.hpp>
+#include <components/esm4/loadscpt.hpp>
 #include <components/esm4/loadsndr.hpp>
 #include <components/esm4/loadsoun.hpp>
 #include <components/esm4/loadweap.hpp>
@@ -2445,6 +2446,29 @@ namespace MWMechanics
         const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
         if (world == nullptr || store == nullptr)
             return fail("missing-world-store");
+
+        if (!mFalloutWeapon->mScriptId.isZeroOrUnset())
+        {
+            const ESM4::Script* script
+                = store->get<ESM4::Script>().search(ESM::RefId(mFalloutWeapon->mScriptId));
+            if (script != nullptr
+                && resolveFalloutWeaponOnFireAction(script->mScript.scriptSource)
+                    == FalloutWeaponOnFireAction::DetonatePlacedExplosives)
+            {
+                if (vatsAction != nullptr || !vatsTarget.isEmpty() || vatsAimPoint)
+                    return fail("scripted-on-fire-action-in-vats");
+                const unsigned int detonated
+                    = world->detonateFalloutPlacedExplosives(getPlayer());
+                playAuthoredFalloutWeaponSound(
+                    mPtr, mFalloutWeapon, FalloutWeaponSoundEvent::Fire);
+                Log(Debug::Info) << "FNV weapon OnFire script executed: actor=" << mPtr.toString()
+                                 << " weapon=" << ESM::RefId::formIdRefId(mFalloutWeapon->mId)
+                                 << " script=" << ESM::RefId(mFalloutWeapon->mScriptId)
+                                 << " command=player.DetonatePlacedExplosives"
+                                 << " charges=" << detonated << " status=pass";
+                return true;
+            }
+        }
 
         MWWorld::ContainerStore& inventory = mPtr.getClass().getContainerStore(mPtr);
         const bool consumesWeapon = isFalloutThrownWeapon(*mFalloutWeapon);

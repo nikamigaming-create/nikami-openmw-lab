@@ -604,6 +604,7 @@ namespace MWWorld
         bool launchFalloutProjectile(const MWWorld::Ptr& actor, ESM::FormId projectile,
             const osg::Vec3f& worldPos, const osg::Vec3f& direction,
             const MWMechanics::FalloutProjectileImpactContract& impact) override;
+        unsigned int detonateFalloutPlacedExplosives(const MWWorld::Ptr& actor) override;
         void updateProjectilesCasters() override;
 
         void applyLoopingParticles(const MWWorld::Ptr& ptr) const override;

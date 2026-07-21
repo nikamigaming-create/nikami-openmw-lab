@@ -145,6 +145,12 @@ namespace MWMechanics
         float mProximityRadius = 0.f;
     };
 
+    enum class FalloutWeaponOnFireAction
+    {
+        None,
+        DetonatePlacedExplosives,
+    };
+
     enum class FalloutCriticalFailure
     {
         None,
@@ -517,6 +523,16 @@ namespace MWMechanics
     [[nodiscard]] std::optional<FalloutProjectileTrigger> buildFalloutProjectileTrigger(
         const ESM4::Projectile& projectile, float projectileSkill, float minesDelayMin,
         float exteriorRadiusMultiplier, bool exterior, FalloutProjectileTriggerFailure& failure);
+
+    /// Resolve the native command executed by a weapon's authored SCPT OnFire block. This deliberately inspects
+    /// script source rather than weapon FormIDs so overrides and mods retain the same data-driven behavior.
+    [[nodiscard]] FalloutWeaponOnFireAction resolveFalloutWeaponOnFireAction(std::string_view scriptSource) noexcept;
+
+    /// A placed charge is remotely selectable only after settling and only when its frozen explosion still matches
+    /// the winning authored PROJ record. This prevents stale save state or record overrides from detonating another
+    /// projectile family.
+    [[nodiscard]] bool isFalloutRemoteDetonationCandidate(
+        const ESM4::Projectile& projectile, bool settled, ESM::FormId frozenExplosion) noexcept;
 
     /// Resolve the weapon's native CRDT chance and damage before the target armor stage. New Vegas ignores weapon
     /// condition for critical chance. Automatic weapons divide their authored multiplier by fire rate, while VATS

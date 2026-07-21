@@ -418,6 +418,68 @@ namespace MWMechanics
         return result;
     }
 
+    FalloutWeaponOnFireAction resolveFalloutWeaponOnFireAction(std::string_view scriptSource) noexcept
+    {
+        const auto trim = [](std::string_view value) {
+            constexpr std::string_view whitespace = " \t\r\n";
+            const std::size_t first = value.find_first_not_of(whitespace);
+            if (first == std::string_view::npos)
+                return std::string_view{};
+            const std::size_t last = value.find_last_not_of(whitespace);
+            return value.substr(first, last - first + 1);
+        };
+
+        bool inOnFire = false;
+        while (!scriptSource.empty())
+        {
+            const std::size_t newline = scriptSource.find('\n');
+            std::string_view line = scriptSource.substr(0, newline);
+            scriptSource = newline == std::string_view::npos
+                ? std::string_view{}
+                : scriptSource.substr(newline + 1);
+            if (const std::size_t comment = line.find(';'); comment != std::string_view::npos)
+                line = line.substr(0, comment);
+            line = trim(line);
+            if (line.empty())
+                continue;
+
+            const std::string normalized = Misc::StringUtils::lowerCase(line);
+            if (normalized.starts_with("begin")
+                && (normalized.size() == 5 || normalized[5] == ' ' || normalized[5] == '\t'))
+            {
+                std::string_view event = trim(std::string_view(normalized).substr(5));
+                if (const std::size_t separator = event.find_first_of(" \t"); separator != std::string_view::npos)
+                    event = event.substr(0, separator);
+                inOnFire = event == "onfire";
+                continue;
+            }
+            if (normalized == "end")
+            {
+                inOnFire = false;
+                continue;
+            }
+            if (!inOnFire)
+                continue;
+
+            std::string_view command = normalized;
+            if (const std::size_t separator = command.find_first_of(" \t"); separator != std::string_view::npos)
+                command = command.substr(0, separator);
+            if (command == "player.detonateplacedexplosives")
+                return FalloutWeaponOnFireAction::DetonatePlacedExplosives;
+        }
+        return FalloutWeaponOnFireAction::None;
+    }
+
+    bool isFalloutRemoteDetonationCandidate(
+        const ESM4::Projectile& projectile, bool settled, ESM::FormId frozenExplosion) noexcept
+    {
+        return settled && projectile.mData.present
+            && (projectile.mData.flags & ESM4::Projectile::Explosion) != 0
+            && (projectile.mData.flags & ESM4::Projectile::Detonates) != 0
+            && !projectile.mData.explosion.isZeroOrUnset()
+            && frozenExplosion == projectile.mData.explosion;
+    }
+
     std::optional<FalloutCriticalContract> buildFalloutCriticalContract(const ESM4::Weapon& weapon,
         float actorCriticalChance, bool vats, float vatsCriticalChanceBonus, FalloutCriticalFailure& failure)
     {
