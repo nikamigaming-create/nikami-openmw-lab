@@ -97,6 +97,22 @@ bool ESM4::loadFalloutWeaponDnam(std::span<const std::uint8_t> dnam, Weapon::Dat
     return true;
 }
 
+bool ESM4::loadFalloutWeaponCrdt(std::span<const std::uint8_t> crdt, Weapon::CriticalData& data)
+{
+    constexpr std::size_t serializedSize = 16;
+    if (crdt.size() != serializedSize)
+        return false;
+
+    std::uint32_t effect = 0;
+    std::memcpy(&data.damage, crdt.data(), sizeof(data.damage));
+    std::memcpy(&data.chanceMultiplier, crdt.data() + 4, sizeof(data.chanceMultiplier));
+    data.flags = crdt[8];
+    std::memcpy(&effect, crdt.data() + 12, sizeof(effect));
+    data.effect = ESM::FormId::fromUint32(effect);
+    data.present = true;
+    return true;
+}
+
 void ESM4::Weapon::load(ESM4::Reader& reader)
 {
     mId = reader.getFormIdFromHeader();
@@ -206,6 +222,17 @@ void ESM4::Weapon::load(ESM4::Reader& reader)
                 else
                     reader.skipSubRecordData();
                 break;
+            case ESM::fourCC("CRDT"):
+                if (isFalloutWeapon && subHdr.dataSize == 16)
+                {
+                    std::array<std::uint8_t, 16> crdt{};
+                    reader.get(crdt.data(), crdt.size());
+                    loadFalloutWeaponCrdt(crdt, mCriticalData);
+                    reader.adjustFormId(mCriticalData.effect);
+                }
+                else
+                    reader.skipSubRecordData();
+                break;
             case ESM::fourCC("WNAM"):
                 reader.getFormId(mWorldModel);
                 break;
@@ -230,7 +257,6 @@ void ESM4::Weapon::load(ESM4::Reader& reader)
             case ESM::fourCC("BAMT"):
             case ESM::fourCC("BIDS"):
             case ESM::fourCC("CNAM"):
-            case ESM::fourCC("CRDT"):
             case ESM::fourCC("EAMT"):
             case ESM::fourCC("EITM"):
             case ESM::fourCC("KSIZ"):

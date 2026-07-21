@@ -261,6 +261,51 @@ namespace MWMechanics
             conditionMultiplier, tuning.mWeaponDamageMultiplier, damage };
     }
 
+    std::optional<FalloutCriticalContract> buildFalloutCriticalContract(const ESM4::Weapon& weapon,
+        float actorCriticalChance, bool vats, float vatsCriticalChanceBonus, FalloutCriticalFailure& failure)
+    {
+        failure = FalloutCriticalFailure::None;
+        if (!weapon.mCriticalData.present)
+            failure = FalloutCriticalFailure::MissingCriticalData;
+        else if (!std::isfinite(actorCriticalChance) || actorCriticalChance < 0.f)
+            failure = FalloutCriticalFailure::InvalidActorChance;
+        else if (!std::isfinite(weapon.mCriticalData.chanceMultiplier)
+            || weapon.mCriticalData.chanceMultiplier < 0.f)
+            failure = FalloutCriticalFailure::InvalidWeaponMultiplier;
+        else if (weapon.mData.isAutomatic()
+            && (!std::isfinite(weapon.mData.fireRate) || weapon.mData.fireRate <= 0.f))
+            failure = FalloutCriticalFailure::InvalidAutomaticFireRate;
+        else if (!std::isfinite(vatsCriticalChanceBonus) || vatsCriticalChanceBonus < 0.f)
+            failure = FalloutCriticalFailure::InvalidVatsBonus;
+
+        if (failure != FalloutCriticalFailure::None)
+            return std::nullopt;
+
+        const float weaponMultiplier = weapon.mData.isAutomatic()
+            ? weapon.mCriticalData.chanceMultiplier / weapon.mData.fireRate
+            : weapon.mCriticalData.chanceMultiplier;
+        const float chance = weapon.mCriticalData.chanceMultiplier == 0.f
+            ? 0.f
+            : actorCriticalChance * weaponMultiplier + (vats ? vatsCriticalChanceBonus : 0.f);
+        if (!std::isfinite(chance) || chance < 0.f)
+        {
+            failure = FalloutCriticalFailure::InvalidChance;
+            return std::nullopt;
+        }
+
+        return FalloutCriticalContract{ std::min(chance, 100.f),
+            static_cast<float>(weapon.mCriticalData.damage), weapon.mCriticalData.effect,
+            (weapon.mCriticalData.flags & ESM4::Weapon::CriticalData::OnDeath) != 0 };
+    }
+
+    bool doesFalloutCriticalHit(float chancePercent, float roll) noexcept
+    {
+        if (!std::isfinite(chancePercent) || chancePercent <= 0.f || !std::isfinite(roll) || roll < 0.f
+            || roll >= 1.f)
+            return false;
+        return roll * 100.f < std::min(chancePercent, 100.f);
+    }
+
     std::optional<float> resolveFalloutArmorConditionMultiplier(
         float normalizedCondition, float penaltyRate) noexcept
     {
@@ -718,6 +763,28 @@ namespace MWMechanics
                 return "invalid-tuning";
             case FalloutRangedDamageFailure::InvalidDamage:
                 return "invalid-damage";
+        }
+        return "unknown";
+    }
+
+    std::string_view getFalloutCriticalFailureName(FalloutCriticalFailure failure)
+    {
+        switch (failure)
+        {
+            case FalloutCriticalFailure::None:
+                return "none";
+            case FalloutCriticalFailure::MissingCriticalData:
+                return "missing-critical-data";
+            case FalloutCriticalFailure::InvalidActorChance:
+                return "invalid-actor-chance";
+            case FalloutCriticalFailure::InvalidWeaponMultiplier:
+                return "invalid-weapon-multiplier";
+            case FalloutCriticalFailure::InvalidAutomaticFireRate:
+                return "invalid-automatic-fire-rate";
+            case FalloutCriticalFailure::InvalidVatsBonus:
+                return "invalid-vats-bonus";
+            case FalloutCriticalFailure::InvalidChance:
+                return "invalid-chance";
         }
         return "unknown";
     }

@@ -258,6 +258,46 @@ namespace
             conditionThreshold, conditionPenaltyRate };
     }
 
+    std::optional<float> getFalloutActorLuck(const MWWorld::Ptr& actor)
+    {
+        constexpr std::uint32_t luckActorValue = MWWorld::FalloutPlayerRuntimeState::SpecialActorValueBegin
+            + static_cast<std::uint32_t>(MWWorld::FalloutSpecial::Luck);
+        if (actor == MWMechanics::getPlayer())
+        {
+            const std::optional<MWWorld::FalloutRuntimeActorValue> luck
+                = MWBase::Environment::get().getWorld()->getFalloutPlayerRuntimeState().getCurrentActorValue(
+                    luckActorValue);
+            return luck ? std::optional<float>(luck->mValue) : std::nullopt;
+        }
+        if (actor.getType() == ESM::REC_NPC_4)
+        {
+            const ESM4::Npc* stats = MWClass::ESM4Npc::getStatsRecord(actor);
+            if (stats != nullptr && stats->mHasFNVData)
+                return static_cast<float>(stats->mFNVData.luck);
+        }
+        if (actor.getType() == ESM4::Creature::sRecordId)
+        {
+            const ESM4::Creature* stats = MWClass::ESM4Creature::getStatsRecord(actor);
+            if (stats != nullptr && stats->mIsFONV && stats->mHasFNVData)
+                return static_cast<float>(stats->mFNVData.luck);
+        }
+        return std::nullopt;
+    }
+
+    std::optional<float> getFalloutBaseCriticalChance(const MWWorld::Ptr& actor)
+    {
+        const std::optional<float> luck = getFalloutActorLuck(actor);
+        const std::optional<float> base = getFalloutGameSetting("fAVDCritLuckBase");
+        if (!luck || !base)
+            return std::nullopt;
+
+        // New Vegas retains this engine default but does not serialize it in FalloutNV.esm. Honor a winning mod
+        // record if one is present, otherwise use the retail executable's 1.0 multiplier.
+        const float luckMultiplier = getFalloutGameSetting("fAVDCritLuckMult").value_or(1.f);
+        const float chance = *base + luckMultiplier * *luck;
+        return std::isfinite(chance) && chance >= 0.f ? std::optional<float>(chance) : std::nullopt;
+    }
+
     struct FalloutArmorProtection
     {
         float mDamageResistance = 0.f;
@@ -2369,6 +2409,24 @@ namespace MWMechanics
         if (!rangedDamage)
             return fail(getFalloutRangedDamageFailureName(damageFailure));
 
+        const bool vatsAttack = !vatsTarget.isEmpty();
+        const std::optional<float> actorCriticalChance = getFalloutBaseCriticalChance(mPtr);
+        if (!actorCriticalChance)
+            return fail("missing-base-critical-chance");
+        float vatsCriticalChanceBonus = 0.f;
+        if (vatsAttack)
+        {
+            const std::optional<float> setting = getFalloutGameSetting("fVATSCriticalChanceBonus");
+            if (!setting)
+                return fail("missing-vats-critical-chance-bonus");
+            vatsCriticalChanceBonus = *setting;
+        }
+        FalloutCriticalFailure criticalFailure = FalloutCriticalFailure::None;
+        const std::optional<FalloutCriticalContract> critical = buildFalloutCriticalContract(
+            *mFalloutWeapon, *actorCriticalChance, vatsAttack, vatsCriticalChanceBonus, criticalFailure);
+        if (!critical)
+            return fail(getFalloutCriticalFailureName(criticalFailure));
+
         const osg::Vec3f origin = world->getActorHeadTransform(mPtr).getTrans();
         std::vector<MWWorld::Ptr> targetActors;
         if (!vatsTarget.isEmpty())
@@ -2400,6 +2458,8 @@ namespace MWMechanics
         std::vector<osg::Vec3f> rayDirections;
         rayDirections.reserve(contract->mProjectileCount);
         Misc::Rng::Generator& prng = world->getPrng();
+        const bool vatsCritical = vatsAttack && rangedDamage->mDamage > 0.f && critical->mChancePercent > 0.f
+            && doesFalloutCriticalHit(critical->mChancePercent, Misc::Rng::rollProbability(prng));
         for (unsigned int ray = 0; ray < contract->mProjectileCount; ++ray)
         {
             const float radius = std::sqrt(Misc::Rng::rollProbability(prng));
@@ -2435,12 +2495,15 @@ namespace MWMechanics
             float mDamageResistance = 0.f;
             float mDamageThreshold = 0.f;
             bool mThresholdLimited = false;
+            unsigned int mCriticalProjectiles = 0;
         };
         std::vector<ActorImpact> actorImpacts;
         unsigned int rayHits = 0;
         unsigned int actorRayHits = 0;
         const float damagePerProjectile
             = rangedDamage->mDamage / static_cast<float>(contract->mProjectileCount);
+        bool vatsCriticalConsumed = false;
+        unsigned int criticalProjectiles = 0;
         for (const osg::Vec3f& rayDirection : rayDirections)
         {
             const osg::Vec3f destination = origin + rayDirection * contract->mProjectileRange;
@@ -2453,8 +2516,25 @@ namespace MWMechanics
                 continue;
             ++actorRayHits;
 
-            float incomingDamage = damagePerProjectile;
-            if (!vatsTarget.isEmpty() && result.mHitObject == vatsTarget)
+            bool criticalHit = false;
+            if (rangedDamage->mDamage > 0.f && critical->mChancePercent > 0.f)
+            {
+                if (vatsAttack)
+                {
+                    criticalHit = !vatsCriticalConsumed && vatsCritical;
+                    vatsCriticalConsumed = true;
+                }
+                else
+                {
+                    criticalHit = doesFalloutCriticalHit(
+                        critical->mChancePercent, Misc::Rng::rollProbability(prng));
+                }
+            }
+            if (criticalHit)
+                ++criticalProjectiles;
+
+            float incomingDamage = critical->damageForProjectile(damagePerProjectile, criticalHit);
+            if (vatsAttack && result.mHitObject == vatsTarget)
                 incomingDamage *= vatsDamageMultiplier;
             FalloutDamageMitigationFailure mitigationFailure = FalloutDamageMitigationFailure::None;
             const std::optional<FalloutDamageMitigation> mitigation
@@ -2469,13 +2549,14 @@ namespace MWMechanics
             {
                 actorImpacts.push_back(ActorImpact{ result.mHitObject, mitigation->mIncomingDamage,
                     mitigation->mHealthDamage, mitigation->mDamageResistance, mitigation->mDamageThreshold,
-                    mitigation->mThresholdLimited });
+                    mitigation->mThresholdLimited, criticalHit ? 1u : 0u });
             }
             else
             {
                 found->mIncomingDamage += mitigation->mIncomingDamage;
                 found->mHealthDamage += mitigation->mHealthDamage;
                 found->mThresholdLimited = found->mThresholdLimited || mitigation->mThresholdLimited;
+                found->mCriticalProjectiles += criticalHit ? 1u : 0u;
             }
         }
 
@@ -2488,7 +2569,8 @@ namespace MWMechanics
                              << " damageResistance=" << impact.mDamageResistance
                              << " damageThreshold=" << impact.mDamageThreshold
                              << " healthDamage=" << impact.mHealthDamage
-                             << " thresholdLimited=" << impact.mThresholdLimited;
+                             << " thresholdLimited=" << impact.mThresholdLimited
+                             << " criticalProjectiles=" << impact.mCriticalProjectiles;
         }
 
         Log(Debug::Info) << "FNV combat shot: actor=" << mPtr.toString()
@@ -2504,6 +2586,12 @@ namespace MWMechanics
                          << " conditionMultiplier=" << rangedDamage->mConditionMultiplier
                          << " weaponDamageMultiplier=" << rangedDamage->mWeaponDamageMultiplier
                          << " triggerDamage=" << rangedDamage->mDamage
+                         << " criticalChance=" << critical->mChancePercent
+                         << " criticalDamage=" << critical->mDamage
+                         << " criticalProjectiles=" << criticalProjectiles
+                         << " criticalEffect=" << ESM::RefId::formIdRefId(critical->mEffect)
+                         << " criticalEffectOnDeath=" << critical->mEffectOnDeath
+                         << " criticalEffectApplied=0"
                          << " projectileCount=" << static_cast<unsigned int>(contract->mProjectileCount)
                          << " damagePerProjectile=" << damagePerProjectile << " spread=" << contract->mSpread
                          << " authoredHitscan=" << contract->mAuthoredHitscan

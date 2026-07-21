@@ -155,6 +155,46 @@ namespace
         EXPECT_FLOAT_EQ(data.limbDamageMult, 0.75f);
     }
 
+    TEST(Esm4WeaponTest, shouldParseRetailServiceRifleCriticalDataByteExactly)
+    {
+        // FalloutNV.esm 000E9C3B WEAP.CRDT: 18 critical damage, x1 multiplier, On Death, no effect.
+        const std::array<std::uint8_t, 16> crdt{ 0x12, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80, 0x3f,
+            0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
+
+        ESM4::Weapon::CriticalData data;
+        ASSERT_TRUE(ESM4::loadFalloutWeaponCrdt(crdt, data));
+        EXPECT_TRUE(data.present);
+        EXPECT_EQ(data.damage, 18);
+        EXPECT_EQ(std::bit_cast<std::uint32_t>(data.chanceMultiplier), std::uint32_t{ 0x3f800000 });
+        EXPECT_EQ(data.flags, ESM4::Weapon::CriticalData::OnDeath);
+        EXPECT_TRUE(data.effect.isZeroOrUnset());
+
+        EXPECT_FALSE(ESM4::loadFalloutWeaponCrdt(
+            std::span<const std::uint8_t>(crdt.data(), crdt.size() - 1), data));
+    }
+
+    TEST(Esm4WeaponTest, shouldAdjustFalloutCriticalEffectThroughWinningLoadOrder)
+    {
+        std::string crdt(16, '\0');
+        const std::uint16_t damage = 24;
+        const float chanceMultiplier = 2.f;
+        const std::uint32_t effect = 0x5678;
+        std::memcpy(crdt.data(), &damage, sizeof(damage));
+        std::memcpy(crdt.data() + 4, &chanceMultiplier, sizeof(chanceMultiplier));
+        std::memcpy(crdt.data() + 12, &effect, sizeof(effect));
+
+        std::string payload;
+        appendSubRecord(payload, "CRDT", crdt);
+        auto reader = makeFnvWeaponReader(std::move(payload));
+        ESM4::Weapon weapon;
+        weapon.load(*reader);
+
+        EXPECT_TRUE(weapon.mCriticalData.present);
+        EXPECT_EQ(weapon.mCriticalData.damage, 24);
+        EXPECT_FLOAT_EQ(weapon.mCriticalData.chanceMultiplier, 2.f);
+        EXPECT_EQ(weapon.mCriticalData.effect, ESM::FormId::fromUint32(0x02005678));
+    }
+
     TEST(Esm4WeaponTest, shouldParseRetailServiceRifleBallisticContractByteExactly)
     {
         // FalloutNV.esm 000E9C3B WEAP.DNAM, through fireRate at byte 67.

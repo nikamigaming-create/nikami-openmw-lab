@@ -42,6 +42,20 @@ namespace ESM4
 
     struct Weapon
     {
+        struct CriticalData
+        {
+            enum Flags : std::uint8_t
+            {
+                OnDeath = 0x01,
+            };
+
+            std::uint16_t damage = 0;
+            float chanceMultiplier = 0.f;
+            std::uint8_t flags = 0;
+            ESM::FormId effect;
+            bool present = false;
+        };
+
         struct Data
         {
             enum WeaponFlags1 : std::uint8_t
@@ -183,6 +197,7 @@ namespace ESM4
         ESM::FormId mEnchantment;
 
         Data mData;
+        CriticalData mCriticalData;
 
         void load(ESM4::Reader& reader);
         // void save(ESM4::Writer& writer) const;
@@ -194,6 +209,11 @@ namespace ESM4
     // Parse the stable FO3/FNV WEAP.DNAM prefix. The first 16 bytes contain the animation selectors and the
     // 68-byte prefix contains the complete primary ballistic contract. Later games reuse DNAM incompatibly.
     [[nodiscard]] bool loadFalloutWeaponDnam(std::span<const std::uint8_t> dnam, Weapon::Data& data);
+
+    /// Parse the exact 16-byte FO3/FNV WEAP.CRDT critical-hit payload. Later games reuse weapon records
+    /// incompatibly, so callers must gate this helper by game/version before adjusting the returned effect FormID.
+    [[nodiscard]] bool loadFalloutWeaponCrdt(
+        std::span<const std::uint8_t> crdt, Weapon::CriticalData& data);
 }
 
 #endif // ESM4_WEAP_H

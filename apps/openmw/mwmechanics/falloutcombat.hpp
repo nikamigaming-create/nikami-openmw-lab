@@ -93,6 +93,17 @@ namespace MWMechanics
         InvalidDamage,
     };
 
+    enum class FalloutCriticalFailure
+    {
+        None,
+        MissingCriticalData,
+        InvalidActorChance,
+        InvalidWeaponMultiplier,
+        InvalidAutomaticFireRate,
+        InvalidVatsBonus,
+        InvalidChance,
+    };
+
     struct FalloutRangedDamageTuning
     {
         float mWeaponDamageMultiplier = 0.f;
@@ -111,6 +122,19 @@ namespace MWMechanics
         float mConditionMultiplier = 0.f;
         float mWeaponDamageMultiplier = 0.f;
         float mDamage = 0.f;
+    };
+
+    struct FalloutCriticalContract
+    {
+        float mChancePercent = 0.f;
+        float mDamage = 0.f;
+        ESM::FormId mEffect;
+        bool mEffectOnDeath = false;
+
+        [[nodiscard]] float damageForProjectile(float baseDamage, bool critical) const noexcept
+        {
+            return baseDamage + (critical ? mDamage : 0.f);
+        }
     };
 
     struct FalloutDamageMitigation
@@ -341,6 +365,16 @@ namespace MWMechanics
     [[nodiscard]] std::optional<FalloutRangedDamage> buildFalloutRangedDamage(float authoredDamage, float skill,
         float normalizedCondition, const FalloutRangedDamageTuning& tuning, FalloutRangedDamageFailure& failure);
 
+    /// Resolve the weapon's native CRDT chance and damage before the target armor stage. New Vegas ignores weapon
+    /// condition for critical chance. Automatic weapons divide their authored multiplier by fire rate, while VATS
+    /// adds its winning GMST bonus after that multiplication. A zero CRDT multiplier disables criticals entirely.
+    [[nodiscard]] std::optional<FalloutCriticalContract> buildFalloutCriticalContract(const ESM4::Weapon& weapon,
+        float actorCriticalChance, bool vats, float vatsCriticalChanceBonus, FalloutCriticalFailure& failure);
+
+    /// Compare a percentage against a caller-supplied [0, 1) PRNG sample. Real-time multi-projectile weapons call
+    /// this per actor-impacting projectile; VATS calls it once for the queued attack.
+    [[nodiscard]] bool doesFalloutCriticalHit(float chancePercent, float roll) noexcept;
+
     /// New Vegas scales an equipped armor piece's DT/DR only below 50 percent condition. The vanilla penalty rate
     /// is 1.0, producing a 0.5 multiplier at zero condition and full protection at 50 percent or above.
     [[nodiscard]] std::optional<float> resolveFalloutArmorConditionMultiplier(
@@ -401,6 +435,7 @@ namespace MWMechanics
     [[nodiscard]] std::string_view getFalloutAiCombatRangeFailureName(FalloutAiCombatRangeFailure failure);
     [[nodiscard]] std::string_view getFalloutDamageMitigationFailureName(FalloutDamageMitigationFailure failure);
     [[nodiscard]] std::string_view getFalloutRangedDamageFailureName(FalloutRangedDamageFailure failure);
+    [[nodiscard]] std::string_view getFalloutCriticalFailureName(FalloutCriticalFailure failure);
     [[nodiscard]] std::string_view getFalloutVatsWeaponFailureName(FalloutVatsWeaponFailure failure);
     [[nodiscard]] std::string_view getFalloutVatsQueueFailureName(FalloutVatsQueueFailure failure);
     [[nodiscard]] std::string_view getFalloutVatsBodyPartFailureName(FalloutVatsBodyPartFailure failure);

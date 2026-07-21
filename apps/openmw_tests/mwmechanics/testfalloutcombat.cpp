@@ -689,6 +689,85 @@ namespace
         EXPECT_EQ(failure, MWMechanics::FalloutRangedDamageFailure::InvalidTuning);
     }
 
+    ESM4::Weapon retailCriticalWeapon(bool automatic = false)
+    {
+        ESM4::Weapon weapon;
+        weapon.mCriticalData.present = true;
+        weapon.mCriticalData.damage = 20;
+        weapon.mCriticalData.chanceMultiplier = 2.f;
+        weapon.mCriticalData.flags = ESM4::Weapon::CriticalData::OnDeath;
+        weapon.mCriticalData.effect = id(0x1234);
+        if (automatic)
+        {
+            weapon.mData.weaponFlags1 = ESM4::Weapon::Data::Automatic;
+            weapon.mData.fireRate = 8.f;
+        }
+        return weapon;
+    }
+
+    TEST(FalloutCombatTest, BuildsRetailCriticalChanceDamageAndEffectContract)
+    {
+        ESM4::Weapon weapon = retailCriticalWeapon();
+        MWMechanics::FalloutCriticalFailure failure;
+        const auto realTime
+            = MWMechanics::buildFalloutCriticalContract(weapon, 5.f, false, 15.f, failure);
+        ASSERT_TRUE(realTime);
+        EXPECT_EQ(failure, MWMechanics::FalloutCriticalFailure::None);
+        EXPECT_FLOAT_EQ(realTime->mChancePercent, 10.f);
+        EXPECT_FLOAT_EQ(realTime->mDamage, 20.f);
+        EXPECT_EQ(realTime->mEffect, id(0x1234));
+        EXPECT_TRUE(realTime->mEffectOnDeath);
+        EXPECT_FLOAT_EQ(realTime->damageForProjectile(3.f, false), 3.f);
+        EXPECT_FLOAT_EQ(realTime->damageForProjectile(3.f, true), 23.f);
+
+        const auto vats = MWMechanics::buildFalloutCriticalContract(weapon, 5.f, true, 15.f, failure);
+        ASSERT_TRUE(vats);
+        EXPECT_FLOAT_EQ(vats->mChancePercent, 25.f);
+    }
+
+    TEST(FalloutCombatTest, DividesAutomaticCriticalMultiplierByFireRate)
+    {
+        ESM4::Weapon weapon = retailCriticalWeapon(true);
+        weapon.mCriticalData.chanceMultiplier = 1.f;
+        MWMechanics::FalloutCriticalFailure failure;
+        const auto realTime
+            = MWMechanics::buildFalloutCriticalContract(weapon, 8.f, false, 15.f, failure);
+        ASSERT_TRUE(realTime);
+        EXPECT_FLOAT_EQ(realTime->mChancePercent, 1.f);
+
+        const auto vats = MWMechanics::buildFalloutCriticalContract(weapon, 8.f, true, 15.f, failure);
+        ASSERT_TRUE(vats);
+        EXPECT_FLOAT_EQ(vats->mChancePercent, 16.f);
+    }
+
+    TEST(FalloutCombatTest, ResolvesCriticalRollAtExactPercentageBoundary)
+    {
+        EXPECT_TRUE(MWMechanics::doesFalloutCriticalHit(10.f, 0.09999f));
+        EXPECT_FALSE(MWMechanics::doesFalloutCriticalHit(10.f, 0.1f));
+        EXPECT_TRUE(MWMechanics::doesFalloutCriticalHit(100.f, 0.99999f));
+        EXPECT_FALSE(MWMechanics::doesFalloutCriticalHit(0.f, 0.f));
+        EXPECT_FALSE(MWMechanics::doesFalloutCriticalHit(10.f, 1.f));
+    }
+
+    TEST(FalloutCombatTest, RejectsMissingOrMalformedCriticalContracts)
+    {
+        ESM4::Weapon weapon;
+        MWMechanics::FalloutCriticalFailure failure;
+        EXPECT_FALSE(MWMechanics::buildFalloutCriticalContract(weapon, 5.f, false, 15.f, failure));
+        EXPECT_EQ(failure, MWMechanics::FalloutCriticalFailure::MissingCriticalData);
+
+        weapon = retailCriticalWeapon(true);
+        weapon.mData.fireRate = 0.f;
+        EXPECT_FALSE(MWMechanics::buildFalloutCriticalContract(weapon, 5.f, false, 15.f, failure));
+        EXPECT_EQ(failure, MWMechanics::FalloutCriticalFailure::InvalidAutomaticFireRate);
+
+        weapon = retailCriticalWeapon();
+        weapon.mCriticalData.chanceMultiplier = 0.f;
+        const auto disabled = MWMechanics::buildFalloutCriticalContract(weapon, 100.f, true, 15.f, failure);
+        ASSERT_TRUE(disabled);
+        EXPECT_FLOAT_EQ(disabled->mChancePercent, 0.f);
+    }
+
     TEST(FalloutCombatTest, BuildsUnitRayAtAuthoredSpreadConeBoundary)
     {
         const auto center = MWMechanics::buildFalloutRayDirection(
