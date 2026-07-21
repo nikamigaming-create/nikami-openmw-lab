@@ -361,6 +361,8 @@ namespace MWMechanics
 
         bool executeFalloutProjectileImpact(const MWWorld::Ptr& target, const osg::Vec3f& segmentStart,
             const osg::Vec3f& hitPosition, const FalloutProjectileImpactContract& impact);
+        bool executeFalloutExplosion(
+            const osg::Vec3f& position, const FalloutProjectileImpactContract& impact);
 
         float calculateWindUp() const;
 

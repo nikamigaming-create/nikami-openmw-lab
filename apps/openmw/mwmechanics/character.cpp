@@ -34,6 +34,7 @@
 #include <components/esm4/loadarmo.hpp>
 #include <components/esm4/loadammo.hpp>
 #include <components/esm4/loadcrea.hpp>
+#include <components/esm4/loadexpl.hpp>
 #include <components/esm4/loadflst.hpp>
 #include <components/esm4/loadproj.hpp>
 #include <components/esm4/loadsndr.hpp>
@@ -2503,6 +2504,12 @@ namespace MWMechanics
         const ESM4::Projectile* projectile = store->get<ESM4::Projectile>().search(mFalloutWeapon->mData.projectile);
         if (projectile == nullptr)
             return fail("missing-projectile-record");
+        const bool projectileHasExplosion
+            = (projectile->mData.flags & ESM4::Projectile::Explosion) != 0;
+        if (projectileHasExplosion
+            && (projectile->mData.explosion.isZeroOrUnset()
+                || store->get<ESM4::Explosion>().search(projectile->mData.explosion) == nullptr))
+            return fail("missing-projectile-explosion-record");
 
         FalloutShotFailure contractFailure = FalloutShotFailure::None;
         const std::optional<FalloutShotContract> contract
@@ -2551,6 +2558,10 @@ namespace MWMechanics
             contract->mDamage, *skill, *weaponCondition, *damageTuning, damageFailure);
         if (!rangedDamage)
             return fail(getFalloutRangedDamageFailureName(damageFailure));
+        const float explosionDamageMultiplier = rangedDamage->mWeaponDamageMultiplier
+            * rangedDamage->mSkillMultiplier * rangedDamage->mConditionMultiplier;
+        if (!std::isfinite(explosionDamageMultiplier) || explosionDamageMultiplier < 0.f)
+            return fail("invalid-explosion-damage-multiplier");
 
         if (vatsTarget.isEmpty() != (vatsAction == nullptr))
             return fail("incomplete-vats-contract");
@@ -2712,6 +2723,7 @@ namespace MWMechanics
         bool vatsCriticalConsumed = false;
         unsigned int criticalProjectiles = 0;
         unsigned int movingProjectiles = 0;
+        std::vector<osg::Vec3f> impactExplosionPositions;
         for (const osg::Vec3f& rayDirection : rayDirections)
         {
             bool criticalHit = false;
@@ -2736,8 +2748,11 @@ namespace MWMechanics
             {
                 FalloutProjectileImpactContract impact;
                 impact.mWeapon = mFalloutWeapon->mId;
+                if (projectileHasExplosion)
+                    impact.mExplosion = projectile->mData.explosion;
                 impact.mRawDamage = rawHitDamage;
                 impact.mLimbDamageMultiplier = weaponLimbDamageMultiplier;
+                impact.mExplosionDamageMultiplier = explosionDamageMultiplier;
                 impact.mCritical = criticalHit;
                 impact.mAmmoEffects.reserve(ammoEffects.size());
                 for (const ESM4::AmmoEffect* effect : ammoEffects)
@@ -2760,6 +2775,9 @@ namespace MWMechanics
             if (!result.mHit)
                 continue;
             ++rayHits;
+            if (projectileHasExplosion
+                && (projectile->mData.flags & ESM4::Projectile::AlternateTrigger) == 0)
+                impactExplosionPositions.push_back(result.mHitPos);
             if (result.mHitObject.isEmpty() || !result.mHitObject.getClass().isActor())
                 continue;
             if (vatsAttack && result.mHitObject == vatsTarget && !vatsTargetHit)
@@ -2883,6 +2901,24 @@ namespace MWMechanics
                              << " limbChannels=" << impact.mLimbImpacts.size();
         }
 
+        if (!impactExplosionPositions.empty())
+        {
+            FalloutProjectileImpactContract explosionImpact;
+            explosionImpact.mWeapon = mFalloutWeapon->mId;
+            explosionImpact.mExplosion = projectile->mData.explosion;
+            explosionImpact.mExplosionDamageMultiplier = explosionDamageMultiplier;
+            explosionImpact.mAmmoEffects.reserve(ammoEffects.size());
+            for (const ESM4::AmmoEffect* effect : ammoEffects)
+                explosionImpact.mAmmoEffects.push_back(effect->mId);
+            for (const osg::Vec3f& explosionPosition : impactExplosionPositions)
+            {
+                if (!executeFalloutExplosion(explosionPosition, explosionImpact))
+                    Log(Debug::Error) << "FNV hitscan explosion failed after impact: actor=" << mPtr.toString()
+                                      << " projectile=" << ESM::RefId::formIdRefId(projectile->mId)
+                                      << " explosion=" << ESM::RefId::formIdRefId(projectile->mData.explosion);
+            }
+        }
+
         const bool weaponBroken = degradation && !suppressWeaponWear && weaponConditionAfter <= 0.f;
         if (weaponBroken)
         {
@@ -2928,6 +2964,7 @@ namespace MWMechanics
                          << " ammoEffects=" << ammoEffects.size()
                          << " authoredHitscan=" << contract->mAuthoredHitscan
                          << " movingProjectiles=" << movingProjectiles << " rayHits=" << rayHits
+                         << " impactExplosions=" << impactExplosionPositions.size()
                          << " actorRayHits=" << actorRayHits << " actorsHit=" << actorImpacts.size()
                          << " vatsTarget=" << (vatsTarget.isEmpty() ? std::string("none") : vatsTarget.toString())
                          << " vatsHealthDamageMultiplier="
@@ -3080,6 +3117,175 @@ namespace MWMechanics
                          << " limbDamage=" << (limbImpact ? limbImpact->mDamageApplied : 0.f)
                          << " newlyCrippled=" << (limbImpact && limbImpact->mNewlyCrippled)
                          << " critical=" << impact.mCritical;
+        return true;
+    }
+
+    bool CharacterController::executeFalloutExplosion(
+        const osg::Vec3f& position, const FalloutProjectileImpactContract& impact)
+    {
+        const auto fail = [&](std::string_view reason) {
+            Log(Debug::Error) << "FNV explosion rejected: actor=" << mPtr.toString()
+                              << " explosion=" << ESM::RefId::formIdRefId(impact.mExplosion)
+                              << " reason=" << reason;
+            return false;
+        };
+
+        if (impact.mExplosion.isZeroOrUnset())
+            return fail("missing-explosion");
+        if (!std::isfinite(impact.mExplosionDamageMultiplier)
+            || impact.mExplosionDamageMultiplier < 0.f)
+            return fail("invalid-damage-multiplier");
+
+        const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
+        MWBase::World* world = MWBase::Environment::get().getWorld();
+        MWBase::MechanicsManager* mechanics = MWBase::Environment::get().getMechanicsManager();
+        MWBase::SoundManager* sound = MWBase::Environment::get().getSoundManager();
+        if (store == nullptr || world == nullptr || mechanics == nullptr || sound == nullptr)
+            return fail("missing-runtime-service");
+
+        const ESM4::Explosion* explosion = store->get<ESM4::Explosion>().search(impact.mExplosion);
+        if (explosion == nullptr || !explosion->mData.present)
+            return fail("unresolved-explosion-record");
+        if (!std::isfinite(explosion->mData.damage) || explosion->mData.damage < 0.f
+            || !std::isfinite(explosion->mData.radius) || explosion->mData.radius <= 0.f
+            || !std::isfinite(explosion->mData.force) || explosion->mData.force < 0.f)
+            return fail("invalid-explosion-data");
+
+        std::vector<const ESM4::AmmoEffect*> ammoEffects;
+        ammoEffects.reserve(impact.mAmmoEffects.size());
+        for (ESM::FormId effectId : impact.mAmmoEffects)
+        {
+            const ESM4::AmmoEffect* effect = store->get<ESM4::AmmoEffect>().search(effectId);
+            if (effect == nullptr)
+                return fail("missing-authored-ammo-effect");
+            ammoEffects.push_back(effect);
+        }
+
+        if (!explosion->mModel.empty())
+        {
+            world->spawnEffect(Misc::ResourceHelpers::correctMeshPath(
+                                   VFS::Path::Normalized(explosion->mModel)),
+                "", position, 1.f, false, false);
+        }
+        if (explosion->mData.soundLevel != ESM4::Explosion::Silent)
+        {
+            if (!explosion->mData.sound1.isZeroOrUnset())
+                sound->playSound3D(position, ESM::RefId::formIdRefId(explosion->mData.sound1), 1.f, 1.f);
+            if (!explosion->mData.sound2.isZeroOrUnset())
+                sound->playSound3D(position, ESM::RefId::formIdRefId(explosion->mData.sound2), 1.f, 1.f);
+        }
+
+        std::vector<MWWorld::Ptr> actors;
+        mechanics->getActorsInRange(position, explosion->mData.radius, actors);
+        const MWPhysics::RayCastingInterface* rayCasting = world->getRayCasting();
+        if (rayCasting == nullptr)
+            return fail("missing-ray-caster");
+
+        unsigned int blockedByLineOfSight = 0;
+        unsigned int damagedActors = 0;
+        unsigned int knockedDownActors = 0;
+        for (const MWWorld::Ptr& target : actors)
+        {
+            if (target.isEmpty() || !target.getClass().isActor())
+                continue;
+            CreatureStats& targetStats = target.getClass().getCreatureStats(target);
+            if (targetStats.isDead())
+                continue;
+
+            const osg::Vec3f targetOrigin = target.getRefData().getPosition().asVec3();
+            const float distance = (targetOrigin - position).length();
+            FalloutExplosionDamageFailure explosionFailure = FalloutExplosionDamageFailure::None;
+            const std::optional<FalloutExplosionDamage> radialDamage
+                = resolveFalloutExplosionDamage(explosion->mData.damage,
+                    impact.mExplosionDamageMultiplier, explosion->mData.radius, distance,
+                    explosionFailure);
+            if (!radialDamage)
+                return fail(getFalloutExplosionDamageFailureName(explosionFailure));
+            if (radialDamage->mDamage <= 0.f)
+                continue;
+
+            if ((explosion->mData.flags & ESM4::Explosion::IgnoreLineOfSight) == 0)
+            {
+                osg::Vec3f targetPoint = targetOrigin;
+                targetPoint.z() += world->getHalfExtents(target, true).z();
+                osg::Vec3f toTarget = targetPoint - position;
+                const float targetDistance = toTarget.normalize();
+                if (targetDistance > 2.f)
+                {
+                    const osg::Vec3f lineStart = position + toTarget * 2.f;
+                    const int mask = MWPhysics::CollisionType_World | MWPhysics::CollisionType_HeightMap
+                        | MWPhysics::CollisionType_Door;
+                    if (rayCasting->castRay(lineStart, targetPoint, mask).mHit)
+                    {
+                        ++blockedByLineOfSight;
+                        continue;
+                    }
+                }
+            }
+
+            FalloutAmmoEffectFailure ammoFailure = FalloutAmmoEffectFailure::None;
+            const std::optional<float> ammoAdjustedDamage = applyFalloutAmmoEffects(
+                radialDamage->mDamage, ESM4::AmmoEffect::Type::Damage, ammoEffects, ammoFailure);
+            if (!ammoAdjustedDamage)
+                return fail(getFalloutAmmoEffectFailureName(ammoFailure));
+            FalloutDamageMitigationFailure mitigationFailure = FalloutDamageMitigationFailure::None;
+            const std::optional<FalloutDamageMitigation> mitigation
+                = resolveFalloutActorImpactDamage(
+                    target, *ammoAdjustedDamage, ammoEffects, mitigationFailure, ammoFailure);
+            if (!mitigation)
+                return fail(ammoFailure == FalloutAmmoEffectFailure::None
+                        ? getFalloutDamageMitigationFailureName(mitigationFailure)
+                        : getFalloutAmmoEffectFailureName(ammoFailure));
+
+            target.getClass().onHit(target, { { "health", mitigation->mHealthDamage } },
+                ESM::RefId::formIdRefId(impact.mWeapon), mPtr, true, DamageSourceType::Ranged);
+            ++damagedActors;
+
+            bool knockedDown = false;
+            if (!targetStats.isDead()
+                && (explosion->mData.flags & ESM4::Explosion::KnockDownAlways) != 0)
+            {
+                targetStats.setKnockedDown(true);
+                knockedDown = true;
+            }
+            else if (!targetStats.isDead()
+                && (explosion->mData.flags & ESM4::Explosion::KnockDownByFormula) != 0)
+            {
+                // The force-vs-resistance formula is a separate runtime channel; retain an immediate authored
+                // blast reaction until that actor-value formula is connected.
+                targetStats.setHitRecovery(true);
+            }
+            if (knockedDown)
+                ++knockedDownActors;
+
+            Log(Debug::Info) << "FNV explosion actor impact: source=" << mPtr.toString()
+                             << " target=" << target.toString()
+                             << " explosion=" << ESM::RefId::formIdRefId(impact.mExplosion)
+                             << " distance=" << radialDamage->mDistance
+                             << " radius=" << radialDamage->mRadius
+                             << " falloff=" << radialDamage->mFalloff
+                             << " radialDamage=" << radialDamage->mDamage
+                             << " ammoAdjustedDamage=" << *ammoAdjustedDamage
+                             << " healthDamage=" << mitigation->mHealthDamage
+                             << " knockedDown=" << knockedDown;
+        }
+
+        Log(Debug::Info) << "FNV explosion detonated: source=" << mPtr.toString()
+                         << " weapon=" << ESM::RefId::formIdRefId(impact.mWeapon)
+                         << " explosion=" << ESM::RefId::formIdRefId(impact.mExplosion)
+                         << " model=" << explosion->mModel
+                         << " authoredDamage=" << explosion->mData.damage
+                         << " damageMultiplier=" << impact.mExplosionDamageMultiplier
+                         << " radius=" << explosion->mData.radius
+                         << " force=" << explosion->mData.force
+                         << " flags=" << explosion->mData.flags
+                         << " actorsInRadius=" << actors.size()
+                         << " blockedByLineOfSight=" << blockedByLineOfSight
+                         << " damagedActors=" << damagedActors
+                         << " knockedDownActors=" << knockedDownActors
+                         << " sound1=" << ESM::RefId::formIdRefId(explosion->mData.sound1)
+                         << " sound2=" << ESM::RefId::formIdRefId(explosion->mData.sound2)
+                         << " status=pass";
         return true;
     }
 

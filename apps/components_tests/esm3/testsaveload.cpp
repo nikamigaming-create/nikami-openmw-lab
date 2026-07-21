@@ -278,8 +278,10 @@ namespace ESM
             record.mMaximumRange = 10000.f;
             record.mDistanceTravelled = 321.f;
             record.mWeapon = RefId::formIdRefId({ 0x40506, 0 });
+            record.mExplosion = RefId::formIdRefId({ 0x50607, 0 });
             record.mRawDamage = 37.5f;
             record.mLimbDamageMultiplier = 1.25f;
+            record.mExplosionDamageMultiplier = 0.875f;
             record.mAmmoEffects = { RefId::formIdRefId({ 0x70809, 0 }),
                 RefId::formIdRefId({ 0xa0b0c, 0 }) };
             record.mFlags = FalloutProjectileState::Rotates | FalloutProjectileState::Critical
@@ -309,8 +311,10 @@ namespace ESM
             EXPECT_EQ(result.mMaximumRange, 10000.f);
             EXPECT_EQ(result.mDistanceTravelled, 321.f);
             EXPECT_EQ(result.mWeapon, record.mWeapon);
+            EXPECT_EQ(result.mExplosion, record.mExplosion);
             EXPECT_EQ(result.mRawDamage, 37.5f);
             EXPECT_EQ(result.mLimbDamageMultiplier, 1.25f);
+            EXPECT_EQ(result.mExplosionDamageMultiplier, 0.875f);
             EXPECT_EQ(result.mAmmoEffects, record.mAmmoEffects);
             EXPECT_EQ(result.mFlags, record.mFlags);
             EXPECT_EQ(result.mVats.mTarget, record.mVats.mTarget);

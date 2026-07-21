@@ -87,8 +87,10 @@ namespace ESM
         float mMaximumRange = 0.f;
         float mDistanceTravelled = 0.f;
         RefId mWeapon;
+        RefId mExplosion;
         float mRawDamage = 0.f;
         float mLimbDamageMultiplier = 1.f;
+        float mExplosionDamageMultiplier = 1.f;
         std::vector<RefId> mAmmoEffects;
         std::uint8_t mFlags = 0;
         FalloutProjectileVatsState mVats;

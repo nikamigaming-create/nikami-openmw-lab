@@ -746,6 +746,49 @@ namespace
         EXPECT_EQ(failure, MWMechanics::FalloutRangedDamageFailure::InvalidTuning);
     }
 
+    TEST(FalloutCombatTest, ResolvesAuthoredExplosionDamageAcrossItsRadius)
+    {
+        MWMechanics::FalloutExplosionDamageFailure failure;
+        const auto center
+            = MWMechanics::resolveFalloutExplosionDamage(125.f, 0.75f, 900.f, 0.f, failure);
+        ASSERT_TRUE(center);
+        EXPECT_EQ(failure, MWMechanics::FalloutExplosionDamageFailure::None);
+        EXPECT_FLOAT_EQ(center->mFalloff, 1.f);
+        EXPECT_FLOAT_EQ(center->mDamage, 93.75f);
+
+        const auto halfway
+            = MWMechanics::resolveFalloutExplosionDamage(125.f, 0.75f, 900.f, 450.f, failure);
+        ASSERT_TRUE(halfway);
+        EXPECT_FLOAT_EQ(halfway->mFalloff, 0.5f);
+        EXPECT_FLOAT_EQ(halfway->mDamage, 46.875f);
+
+        const auto edge
+            = MWMechanics::resolveFalloutExplosionDamage(125.f, 0.75f, 900.f, 900.f, failure);
+        ASSERT_TRUE(edge);
+        EXPECT_FLOAT_EQ(edge->mFalloff, 0.f);
+        EXPECT_FLOAT_EQ(edge->mDamage, 0.f);
+
+        const auto outside
+            = MWMechanics::resolveFalloutExplosionDamage(125.f, 0.75f, 900.f, 1200.f, failure);
+        ASSERT_TRUE(outside);
+        EXPECT_FLOAT_EQ(outside->mFalloff, 0.f);
+        EXPECT_FLOAT_EQ(outside->mDamage, 0.f);
+    }
+
+    TEST(FalloutCombatTest, RejectsMalformedExplosionDamageInputs)
+    {
+        MWMechanics::FalloutExplosionDamageFailure failure;
+        EXPECT_FALSE(MWMechanics::resolveFalloutExplosionDamage(-1.f, 1.f, 900.f, 0.f, failure));
+        EXPECT_EQ(failure, MWMechanics::FalloutExplosionDamageFailure::InvalidDamage);
+        EXPECT_FALSE(MWMechanics::resolveFalloutExplosionDamage(125.f,
+            std::numeric_limits<float>::quiet_NaN(), 900.f, 0.f, failure));
+        EXPECT_EQ(failure, MWMechanics::FalloutExplosionDamageFailure::InvalidMultiplier);
+        EXPECT_FALSE(MWMechanics::resolveFalloutExplosionDamage(125.f, 1.f, 0.f, 0.f, failure));
+        EXPECT_EQ(failure, MWMechanics::FalloutExplosionDamageFailure::InvalidRadius);
+        EXPECT_FALSE(MWMechanics::resolveFalloutExplosionDamage(125.f, 1.f, 900.f, -1.f, failure));
+        EXPECT_EQ(failure, MWMechanics::FalloutExplosionDamageFailure::InvalidDistance);
+    }
+
     ESM4::Weapon retailCriticalWeapon(bool automatic = false)
     {
         ESM4::Weapon weapon;

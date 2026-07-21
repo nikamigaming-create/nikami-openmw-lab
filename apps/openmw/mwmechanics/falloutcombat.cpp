@@ -306,6 +306,32 @@ namespace MWMechanics
             conditionMultiplier, tuning.mWeaponDamageMultiplier, damage };
     }
 
+    std::optional<FalloutExplosionDamage> resolveFalloutExplosionDamage(float authoredDamage,
+        float damageMultiplier, float radius, float distance, FalloutExplosionDamageFailure& failure)
+    {
+        failure = FalloutExplosionDamageFailure::None;
+        if (!std::isfinite(authoredDamage) || authoredDamage < 0.f)
+            failure = FalloutExplosionDamageFailure::InvalidDamage;
+        else if (!std::isfinite(damageMultiplier) || damageMultiplier < 0.f)
+            failure = FalloutExplosionDamageFailure::InvalidMultiplier;
+        else if (!std::isfinite(radius) || radius <= 0.f)
+            failure = FalloutExplosionDamageFailure::InvalidRadius;
+        else if (!std::isfinite(distance) || distance < 0.f)
+            failure = FalloutExplosionDamageFailure::InvalidDistance;
+
+        if (failure != FalloutExplosionDamageFailure::None)
+            return std::nullopt;
+
+        const float falloff = std::clamp(1.f - distance / radius, 0.f, 1.f);
+        const float damage = authoredDamage * damageMultiplier * falloff;
+        if (!std::isfinite(damage) || damage < 0.f)
+        {
+            failure = FalloutExplosionDamageFailure::InvalidResult;
+            return std::nullopt;
+        }
+        return FalloutExplosionDamage{ authoredDamage, damageMultiplier, radius, distance, falloff, damage };
+    }
+
     std::optional<FalloutCriticalContract> buildFalloutCriticalContract(const ESM4::Weapon& weapon,
         float actorCriticalChance, bool vats, float vatsCriticalChanceBonus, FalloutCriticalFailure& failure)
     {
@@ -980,6 +1006,26 @@ namespace MWMechanics
                 return "invalid-tuning";
             case FalloutRangedDamageFailure::InvalidDamage:
                 return "invalid-damage";
+        }
+        return "unknown";
+    }
+
+    std::string_view getFalloutExplosionDamageFailureName(FalloutExplosionDamageFailure failure)
+    {
+        switch (failure)
+        {
+            case FalloutExplosionDamageFailure::None:
+                return "none";
+            case FalloutExplosionDamageFailure::InvalidDamage:
+                return "invalid-damage";
+            case FalloutExplosionDamageFailure::InvalidMultiplier:
+                return "invalid-multiplier";
+            case FalloutExplosionDamageFailure::InvalidRadius:
+                return "invalid-radius";
+            case FalloutExplosionDamageFailure::InvalidDistance:
+                return "invalid-distance";
+            case FalloutExplosionDamageFailure::InvalidResult:
+                return "invalid-result";
         }
         return "unknown";
     }

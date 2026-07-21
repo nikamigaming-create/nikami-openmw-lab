@@ -845,6 +845,12 @@ namespace MWMechanics
             && mActors.executeFalloutProjectileImpact(actor, target, segmentStart, hitPosition, impact);
     }
 
+    bool MechanicsManager::executeFalloutExplosion(const MWWorld::Ptr& actor, const osg::Vec3f& position,
+        const FalloutProjectileImpactContract& impact)
+    {
+        return actor.getClass().isActor() && mActors.executeFalloutExplosion(actor, position, impact);
+    }
+
     bool MechanicsManager::playAnimationGroup(
         const MWWorld::Ptr& ptr, std::string_view groupName, int mode, uint32_t number, bool scripted)
     {

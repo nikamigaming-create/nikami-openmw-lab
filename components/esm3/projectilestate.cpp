@@ -77,6 +77,9 @@ namespace ESM
         esm.writeHNRefId("WEAP", mWeapon);
         esm.writeHNT("DAMG", mRawDamage);
         esm.writeHNT("LDAM", mLimbDamageMultiplier);
+        if (!mExplosion.empty())
+            esm.writeHNRefId("EXPL", mExplosion);
+        esm.writeHNT("EDMG", mExplosionDamageMultiplier);
         esm.writeHNT("FLAG", mFlags);
         for (const RefId& effect : mAmmoEffects)
             esm.writeHNRefId("AMEF", effect);
@@ -109,6 +112,9 @@ namespace ESM
         mWeapon = esm.getHNRefId("WEAP");
         esm.getHNT(mRawDamage, "DAMG");
         esm.getHNT(mLimbDamageMultiplier, "LDAM");
+        if (esm.isNextSub("EXPL"))
+            mExplosion = esm.getRefId();
+        esm.getHNOT(mExplosionDamageMultiplier, "EDMG");
         esm.getHNT(mFlags, "FLAG");
         while (esm.isNextSub("AMEF"))
             mAmmoEffects.push_back(esm.getRefId());

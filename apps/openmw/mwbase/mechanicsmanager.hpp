@@ -180,6 +180,11 @@ namespace MWBase
         {
             return false;
         }
+        virtual bool executeFalloutExplosion(const MWWorld::Ptr&, const osg::Vec3f&,
+            const MWMechanics::FalloutProjectileImpactContract&)
+        {
+            return false;
+        }
         ///< Forces an object to refresh its animation state.
 
         virtual bool playAnimationGroup(

@@ -99,6 +99,16 @@ namespace MWMechanics
         InvalidDamage,
     };
 
+    enum class FalloutExplosionDamageFailure
+    {
+        None,
+        InvalidDamage,
+        InvalidMultiplier,
+        InvalidRadius,
+        InvalidDistance,
+        InvalidResult,
+    };
+
     enum class FalloutCriticalFailure
     {
         None,
@@ -147,6 +157,16 @@ namespace MWMechanics
         float mCondition = 0.f;
         float mConditionMultiplier = 0.f;
         float mWeaponDamageMultiplier = 0.f;
+        float mDamage = 0.f;
+    };
+
+    struct FalloutExplosionDamage
+    {
+        float mAuthoredDamage = 0.f;
+        float mDamageMultiplier = 0.f;
+        float mRadius = 0.f;
+        float mDistance = 0.f;
+        float mFalloff = 0.f;
         float mDamage = 0.f;
     };
 
@@ -379,8 +399,10 @@ namespace MWMechanics
     struct FalloutProjectileImpactContract
     {
         ESM::FormId mWeapon;
+        ESM::FormId mExplosion;
         float mRawDamage = 0.f;
         float mLimbDamageMultiplier = 1.f;
+        float mExplosionDamageMultiplier = 1.f;
         std::vector<ESM::FormId> mAmmoEffects;
         std::optional<FalloutVatsQueuedAction> mVatsAction;
         bool mVatsTargetHit = true;
@@ -440,6 +462,12 @@ namespace MWMechanics
     /// rather than WEAP data.
     [[nodiscard]] std::optional<FalloutRangedDamage> buildFalloutRangedDamage(float authoredDamage, float skill,
         float normalizedCondition, const FalloutRangedDamageTuning& tuning, FalloutRangedDamageFailure& failure);
+
+    /// Resolve one actor's radial blast damage from an authored EXPL damage/radius pair. The weapon's frozen
+    /// skill/condition multiplier is supplied separately because EXPL damage is not part of WEAP.DATA damage.
+    /// Damage falls linearly from the detonation origin to zero at the authored radius.
+    [[nodiscard]] std::optional<FalloutExplosionDamage> resolveFalloutExplosionDamage(float authoredDamage,
+        float damageMultiplier, float radius, float distance, FalloutExplosionDamageFailure& failure);
 
     /// Resolve the weapon's native CRDT chance and damage before the target armor stage. New Vegas ignores weapon
     /// condition for critical chance. Automatic weapons divide their authored multiplier by fire rate, while VATS
@@ -543,6 +571,7 @@ namespace MWMechanics
     [[nodiscard]] std::string_view getFalloutAiCombatRangeFailureName(FalloutAiCombatRangeFailure failure);
     [[nodiscard]] std::string_view getFalloutDamageMitigationFailureName(FalloutDamageMitigationFailure failure);
     [[nodiscard]] std::string_view getFalloutRangedDamageFailureName(FalloutRangedDamageFailure failure);
+    [[nodiscard]] std::string_view getFalloutExplosionDamageFailureName(FalloutExplosionDamageFailure failure);
     [[nodiscard]] std::string_view getFalloutCriticalFailureName(FalloutCriticalFailure failure);
     [[nodiscard]] std::string_view getFalloutAmmoEffectFailureName(FalloutAmmoEffectFailure failure);
     [[nodiscard]] std::string_view getFalloutWeaponDegradationFailureName(

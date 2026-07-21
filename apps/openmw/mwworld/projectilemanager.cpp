@@ -406,6 +406,12 @@ namespace MWWorld
             || !std::isfinite(projectile->mData.gravity) || projectile->mData.gravity < 0.f
             || direction.normalize() == 0.f)
             return false;
+        const bool hasExplosion = (projectile->mData.flags & ESM4::Projectile::Explosion) != 0;
+        if (hasExplosion != !impact.mExplosion.isZeroOrUnset()
+            || (hasExplosion && impact.mExplosion != projectile->mData.explosion)
+            || !std::isfinite(impact.mExplosionDamageMultiplier)
+            || impact.mExplosionDamageMultiplier < 0.f)
+            return false;
 
         FalloutProjectileState state;
         state.mActorId = actor.getClass().getCreatureStats(actor).getActorId();
@@ -711,6 +717,27 @@ namespace MWWorld
                                       << " projectile="
                                       << ESM::RefId::formIdRefId(projectileState.mProjectile);
             }
+            const ESM4::Projectile* authoredProjectile
+                = MWBase::Environment::get().getESMStore()->get<ESM4::Projectile>().search(
+                    projectileState.mProjectile);
+            const bool detonateOnImpact = authoredProjectile != nullptr
+                && (authoredProjectile->mData.flags & ESM4::Projectile::Explosion) != 0
+                && (authoredProjectile->mData.flags & ESM4::Projectile::AlternateTrigger) == 0
+                && !projectileState.mImpact.mExplosion.isZeroOrUnset();
+            if (detonateOnImpact)
+            {
+                if (caster.isEmpty()
+                    || !MWBase::Environment::get().getMechanicsManager()->executeFalloutExplosion(
+                        caster, hitPosition, projectileState.mImpact))
+                {
+                    Log(Debug::Error) << "FNV moving projectile explosion rejected: caster="
+                                      << (caster.isEmpty() ? std::string("none") : caster.toString())
+                                      << " projectile="
+                                      << ESM::RefId::formIdRefId(projectileState.mProjectile)
+                                      << " explosion="
+                                      << ESM::RefId::formIdRefId(projectileState.mImpact.mExplosion);
+                }
+            }
             projectileState.mToDelete = true;
         }
         const MWWorld::ESMStore& esmStore = *MWBase::Environment::get().getESMStore();
@@ -861,8 +888,11 @@ namespace MWWorld
             state.mMaximumRange = projectile.mMaximumRange;
             state.mDistanceTravelled = projectile.mDistanceTravelled;
             state.mWeapon = ESM::RefId::formIdRefId(projectile.mImpact.mWeapon);
+            if (!projectile.mImpact.mExplosion.isZeroOrUnset())
+                state.mExplosion = ESM::RefId::formIdRefId(projectile.mImpact.mExplosion);
             state.mRawDamage = projectile.mImpact.mRawDamage;
             state.mLimbDamageMultiplier = projectile.mImpact.mLimbDamageMultiplier;
+            state.mExplosionDamageMultiplier = projectile.mImpact.mExplosionDamageMultiplier;
             if (projectile.mRotates)
                 state.mFlags |= ESM::FalloutProjectileState::Rotates;
             if (projectile.mImpact.mCritical)
@@ -969,7 +999,8 @@ namespace MWWorld
                 || !std::isfinite(esm.mDistanceTravelled) || esm.mDistanceTravelled < 0.f
                 || esm.mDistanceTravelled >= esm.mMaximumRange || !std::isfinite(esm.mRawDamage)
                 || esm.mRawDamage < 0.f || !std::isfinite(esm.mLimbDamageMultiplier)
-                || esm.mLimbDamageMultiplier < 0.f)
+                || esm.mLimbDamageMultiplier < 0.f || !std::isfinite(esm.mExplosionDamageMultiplier)
+                || esm.mExplosionDamageMultiplier < 0.f)
             {
                 Log(Debug::Warning) << "Rejected malformed native Fallout projectile save state";
                 return true;
@@ -986,8 +1017,19 @@ namespace MWWorld
             state.mDistanceTravelled = esm.mDistanceTravelled;
             state.mRotates = (esm.mFlags & ESM::FalloutProjectileState::Rotates) != 0;
             state.mImpact.mWeapon = *weaponId;
+            if (!esm.mExplosion.empty())
+            {
+                const ESM::FormId* explosionId = esm.mExplosion.getIf<ESM::FormId>();
+                if (explosionId == nullptr)
+                {
+                    Log(Debug::Warning) << "Rejected native Fallout projectile save state with malformed explosion";
+                    return true;
+                }
+                state.mImpact.mExplosion = *explosionId;
+            }
             state.mImpact.mRawDamage = esm.mRawDamage;
             state.mImpact.mLimbDamageMultiplier = esm.mLimbDamageMultiplier;
+            state.mImpact.mExplosionDamageMultiplier = esm.mExplosionDamageMultiplier;
             state.mImpact.mCritical = (esm.mFlags & ESM::FalloutProjectileState::Critical) != 0;
             state.mImpact.mVatsTargetHit = (esm.mFlags & ESM::FalloutProjectileState::VatsTargetHit) != 0;
             state.mToDelete = false;
@@ -1036,6 +1078,13 @@ namespace MWWorld
             {
                 Log(Debug::Warning) << "Failed to resolve native Fallout projectile " << esm.mId
                                     << " while reading projectile record";
+                return true;
+            }
+            const bool hasExplosion = (projectile->mData.flags & ESM4::Projectile::Explosion) != 0;
+            if (hasExplosion != !state.mImpact.mExplosion.isZeroOrUnset()
+                || (hasExplosion && state.mImpact.mExplosion != projectile->mData.explosion))
+            {
+                Log(Debug::Warning) << "Rejected native Fallout projectile save state with mismatched explosion";
                 return true;
             }
 

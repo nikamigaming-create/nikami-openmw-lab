@@ -142,6 +142,8 @@ namespace MWMechanics
         bool executeFalloutProjectileImpact(const MWWorld::Ptr& actor, const MWWorld::Ptr& target,
             const osg::Vec3f& segmentStart, const osg::Vec3f& hitPosition,
             const FalloutProjectileImpactContract& impact) override;
+        bool executeFalloutExplosion(const MWWorld::Ptr& actor, const osg::Vec3f& position,
+            const FalloutProjectileImpactContract& impact) override;
 
         /// Attempt to play an animation group
         /// @return Success or error

@@ -2163,6 +2163,14 @@ namespace MWMechanics
                 target, segmentStart, hitPosition, impact);
     }
 
+    bool Actors::executeFalloutExplosion(const MWWorld::Ptr& actor, const osg::Vec3f& position,
+        const FalloutProjectileImpactContract& impact) const
+    {
+        const auto iter = mIndex.find(actor.mRef);
+        return iter != mIndex.end()
+            && iter->second->getCharacterController().executeFalloutExplosion(position, impact);
+    }
+
     bool Actors::playAnimationGroup(
         const MWWorld::Ptr& ptr, std::string_view groupName, int mode, uint32_t number, bool scripted) const
     {

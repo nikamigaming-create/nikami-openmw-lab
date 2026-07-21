@@ -119,6 +119,8 @@ namespace MWMechanics
         bool executeFalloutProjectileImpact(const MWWorld::Ptr& actor, const MWWorld::Ptr& target,
             const osg::Vec3f& segmentStart, const osg::Vec3f& hitPosition,
             const FalloutProjectileImpactContract& impact) const;
+        bool executeFalloutExplosion(const MWWorld::Ptr& actor, const osg::Vec3f& position,
+            const FalloutProjectileImpactContract& impact) const;
 
         bool playAnimationGroup(const MWWorld::Ptr& ptr, std::string_view groupName, int mode, uint32_t number,
             bool scripted = false) const;
