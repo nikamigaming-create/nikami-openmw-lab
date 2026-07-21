@@ -78,6 +78,8 @@ namespace ESM
             Critical = 1u << 1,
             HasVatsAction = 1u << 2,
             VatsTargetHit = 1u << 3,
+            Settled = 1u << 4,
+            Detonate = 1u << 5,
         };
 
         Vector3 mVelocity;
@@ -86,6 +88,8 @@ namespace ESM
         float mGravity = 0.f;
         float mMaximumRange = 0.f;
         float mDistanceTravelled = 0.f;
+        float mElapsedTime = 0.f;
+        std::uint8_t mBounceCount = 0;
         RefId mWeapon;
         RefId mExplosion;
         float mRawDamage = 0.f;

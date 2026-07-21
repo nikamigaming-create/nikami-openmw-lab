@@ -277,6 +277,8 @@ namespace ESM
             record.mGravity = 1.5f;
             record.mMaximumRange = 10000.f;
             record.mDistanceTravelled = 321.f;
+            record.mElapsedTime = 1.75f;
+            record.mBounceCount = 3;
             record.mWeapon = RefId::formIdRefId({ 0x40506, 0 });
             record.mExplosion = RefId::formIdRefId({ 0x50607, 0 });
             record.mRawDamage = 37.5f;
@@ -285,7 +287,8 @@ namespace ESM
             record.mAmmoEffects = { RefId::formIdRefId({ 0x70809, 0 }),
                 RefId::formIdRefId({ 0xa0b0c, 0 }) };
             record.mFlags = FalloutProjectileState::Rotates | FalloutProjectileState::Critical
-                | FalloutProjectileState::HasVatsAction | FalloutProjectileState::VatsTargetHit;
+                | FalloutProjectileState::HasVatsAction | FalloutProjectileState::VatsTargetHit
+                | FalloutProjectileState::Settled | FalloutProjectileState::Detonate;
             record.mVats.mTarget = RefId::formIdRefId({ 0xd0e0f, 0 });
             record.mVats.mBodyPart = 3;
             record.mVats.mDisplayedHitChance = 78;
@@ -310,6 +313,8 @@ namespace ESM
             EXPECT_EQ(result.mGravity, 1.5f);
             EXPECT_EQ(result.mMaximumRange, 10000.f);
             EXPECT_EQ(result.mDistanceTravelled, 321.f);
+            EXPECT_EQ(result.mElapsedTime, 1.75f);
+            EXPECT_EQ(result.mBounceCount, 3);
             EXPECT_EQ(result.mWeapon, record.mWeapon);
             EXPECT_EQ(result.mExplosion, record.mExplosion);
             EXPECT_EQ(result.mRawDamage, 37.5f);

@@ -332,6 +332,35 @@ namespace MWMechanics
         return FalloutExplosionDamage{ authoredDamage, damageMultiplier, radius, distance, falloff, damage };
     }
 
+    std::optional<osg::Vec3f> resolveFalloutProjectileBounce(const osg::Vec3f& velocity,
+        const osg::Vec3f& collisionNormal, float bounciness, FalloutProjectileBounceFailure& failure)
+    {
+        failure = FalloutProjectileBounceFailure::None;
+        const auto finiteVector = [](const osg::Vec3f& value) {
+            return std::isfinite(value.x()) && std::isfinite(value.y()) && std::isfinite(value.z());
+        };
+        if (!finiteVector(velocity))
+            failure = FalloutProjectileBounceFailure::InvalidVelocity;
+        else if (!finiteVector(collisionNormal) || collisionNormal.length2() <= 0.f)
+            failure = FalloutProjectileBounceFailure::InvalidNormal;
+        else if (!std::isfinite(bounciness) || bounciness < 0.f)
+            failure = FalloutProjectileBounceFailure::InvalidBounciness;
+        if (failure != FalloutProjectileBounceFailure::None)
+            return std::nullopt;
+
+        osg::Vec3f normal = collisionNormal;
+        normal.normalize();
+        const float normalSpeed = velocity * normal;
+        const osg::Vec3f result
+            = normalSpeed < 0.f ? velocity - normal * ((1.f + bounciness) * normalSpeed) : velocity;
+        if (!finiteVector(result))
+        {
+            failure = FalloutProjectileBounceFailure::InvalidResult;
+            return std::nullopt;
+        }
+        return result;
+    }
+
     std::optional<FalloutCriticalContract> buildFalloutCriticalContract(const ESM4::Weapon& weapon,
         float actorCriticalChance, bool vats, float vatsCriticalChanceBonus, FalloutCriticalFailure& failure)
     {
@@ -1025,6 +1054,24 @@ namespace MWMechanics
             case FalloutExplosionDamageFailure::InvalidDistance:
                 return "invalid-distance";
             case FalloutExplosionDamageFailure::InvalidResult:
+                return "invalid-result";
+        }
+        return "unknown";
+    }
+
+    std::string_view getFalloutProjectileBounceFailureName(FalloutProjectileBounceFailure failure)
+    {
+        switch (failure)
+        {
+            case FalloutProjectileBounceFailure::None:
+                return "none";
+            case FalloutProjectileBounceFailure::InvalidVelocity:
+                return "invalid-velocity";
+            case FalloutProjectileBounceFailure::InvalidNormal:
+                return "invalid-normal";
+            case FalloutProjectileBounceFailure::InvalidBounciness:
+                return "invalid-bounciness";
+            case FalloutProjectileBounceFailure::InvalidResult:
                 return "invalid-result";
         }
         return "unknown";

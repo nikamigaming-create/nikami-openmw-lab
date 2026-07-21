@@ -24,6 +24,11 @@ namespace Loading
     class Listener;
 }
 
+namespace ESM4
+{
+    struct Projectile;
+}
+
 namespace osg
 {
     class Group;
@@ -140,7 +145,11 @@ namespace MWWorld
             float mGravity = 0.f;
             float mMaximumRange = 0.f;
             float mDistanceTravelled = 0.f;
+            float mElapsedTime = 0.f;
+            std::uint8_t mBounceCount = 0;
             bool mRotates = false;
+            bool mSettled = false;
+            bool mDetonate = false;
             MWMechanics::FalloutProjectileImpactContract mImpact;
         };
 
@@ -155,6 +164,8 @@ namespace MWWorld
 
         void moveProjectiles(float dt);
         void moveFalloutProjectiles(float dt);
+        bool bounceFalloutProjectile(FalloutProjectileState& state, const ESM4::Projectile& projectile,
+            const osg::Vec3f& hitPosition, const osg::Vec3f& hitNormal);
         void moveMagicBolts(float dt);
 
         void createModel(State& state, VFS::Path::NormalizedView model, const osg::Vec3f& pos, const osg::Quat& orient,

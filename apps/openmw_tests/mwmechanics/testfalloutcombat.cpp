@@ -789,6 +789,34 @@ namespace
         EXPECT_EQ(failure, MWMechanics::FalloutExplosionDamageFailure::InvalidDistance);
     }
 
+    TEST(FalloutCombatTest, ReflectsLobberVelocityUsingAuthoredBounciness)
+    {
+        MWMechanics::FalloutProjectileBounceFailure failure;
+        const auto bounce = MWMechanics::resolveFalloutProjectileBounce(
+            osg::Vec3f(10.f, 5.f, -20.f), osg::Vec3f(0.f, 0.f, 2.f), 0.5f, failure);
+        ASSERT_TRUE(bounce);
+        EXPECT_EQ(failure, MWMechanics::FalloutProjectileBounceFailure::None);
+        EXPECT_FLOAT_EQ(bounce->x(), 10.f);
+        EXPECT_FLOAT_EQ(bounce->y(), 5.f);
+        EXPECT_FLOAT_EQ(bounce->z(), 10.f);
+
+        const auto separating = MWMechanics::resolveFalloutProjectileBounce(
+            osg::Vec3f(1.f, 2.f, 3.f), osg::Vec3f(0.f, 0.f, 1.f), 0.5f, failure);
+        ASSERT_TRUE(separating);
+        EXPECT_EQ(*separating, osg::Vec3f(1.f, 2.f, 3.f));
+    }
+
+    TEST(FalloutCombatTest, RejectsMalformedLobberBounceInputs)
+    {
+        MWMechanics::FalloutProjectileBounceFailure failure;
+        EXPECT_FALSE(MWMechanics::resolveFalloutProjectileBounce(
+            osg::Vec3f(1.f, 2.f, 3.f), osg::Vec3f(), 0.5f, failure));
+        EXPECT_EQ(failure, MWMechanics::FalloutProjectileBounceFailure::InvalidNormal);
+        EXPECT_FALSE(MWMechanics::resolveFalloutProjectileBounce(
+            osg::Vec3f(1.f, 2.f, 3.f), osg::Vec3f(0.f, 0.f, 1.f), -0.1f, failure));
+        EXPECT_EQ(failure, MWMechanics::FalloutProjectileBounceFailure::InvalidBounciness);
+    }
+
     ESM4::Weapon retailCriticalWeapon(bool automatic = false)
     {
         ESM4::Weapon weapon;

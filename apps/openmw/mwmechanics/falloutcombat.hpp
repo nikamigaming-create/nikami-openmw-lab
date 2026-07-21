@@ -109,6 +109,15 @@ namespace MWMechanics
         InvalidResult,
     };
 
+    enum class FalloutProjectileBounceFailure
+    {
+        None,
+        InvalidVelocity,
+        InvalidNormal,
+        InvalidBounciness,
+        InvalidResult,
+    };
+
     enum class FalloutCriticalFailure
     {
         None,
@@ -469,6 +478,11 @@ namespace MWMechanics
     [[nodiscard]] std::optional<FalloutExplosionDamage> resolveFalloutExplosionDamage(float authoredDamage,
         float damageMultiplier, float radius, float distance, FalloutExplosionDamageFailure& failure);
 
+    /// Reflect a lobber's incoming velocity around the collision normal using PROJ.DATA bounciness as its
+    /// coefficient of restitution. Tangential velocity is preserved; friction remains the physics surface's job.
+    [[nodiscard]] std::optional<osg::Vec3f> resolveFalloutProjectileBounce(const osg::Vec3f& velocity,
+        const osg::Vec3f& collisionNormal, float bounciness, FalloutProjectileBounceFailure& failure);
+
     /// Resolve the weapon's native CRDT chance and damage before the target armor stage. New Vegas ignores weapon
     /// condition for critical chance. Automatic weapons divide their authored multiplier by fire rate, while VATS
     /// adds its winning GMST bonus after that multiplication. A zero CRDT multiplier disables criticals entirely.
@@ -572,6 +586,7 @@ namespace MWMechanics
     [[nodiscard]] std::string_view getFalloutDamageMitigationFailureName(FalloutDamageMitigationFailure failure);
     [[nodiscard]] std::string_view getFalloutRangedDamageFailureName(FalloutRangedDamageFailure failure);
     [[nodiscard]] std::string_view getFalloutExplosionDamageFailureName(FalloutExplosionDamageFailure failure);
+    [[nodiscard]] std::string_view getFalloutProjectileBounceFailureName(FalloutProjectileBounceFailure failure);
     [[nodiscard]] std::string_view getFalloutCriticalFailureName(FalloutCriticalFailure failure);
     [[nodiscard]] std::string_view getFalloutAmmoEffectFailureName(FalloutAmmoEffectFailure failure);
     [[nodiscard]] std::string_view getFalloutWeaponDegradationFailureName(

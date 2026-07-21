@@ -74,6 +74,8 @@ namespace ESM
         esm.writeHNT("GRAV", mGravity);
         esm.writeHNT("RANG", mMaximumRange);
         esm.writeHNT("DIST", mDistanceTravelled);
+        esm.writeHNT("ELAP", mElapsedTime);
+        esm.writeHNT("BNCE", mBounceCount);
         esm.writeHNRefId("WEAP", mWeapon);
         esm.writeHNT("DAMG", mRawDamage);
         esm.writeHNT("LDAM", mLimbDamageMultiplier);
@@ -109,6 +111,8 @@ namespace ESM
         esm.getHNT(mGravity, "GRAV");
         esm.getHNT(mMaximumRange, "RANG");
         esm.getHNT(mDistanceTravelled, "DIST");
+        esm.getHNOT(mElapsedTime, "ELAP");
+        esm.getHNOT(mBounceCount, "BNCE");
         mWeapon = esm.getHNRefId("WEAP");
         esm.getHNT(mRawDamage, "DAMG");
         esm.getHNT(mLimbDamageMultiplier, "LDAM");
