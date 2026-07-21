@@ -496,7 +496,7 @@ namespace
         EXPECT_TRUE(contract->mAuthoredHitscan);
     }
 
-    TEST(FalloutCombatTest, UsesImmediateRayFallbackForAuthoredNonHitscanProjectile)
+    TEST(FalloutCombatTest, PreservesAuthoredNonHitscanProjectileForMovingDelivery)
     {
         ESM4::Weapon weapon;
         weapon.mData.hasBallistics = true;

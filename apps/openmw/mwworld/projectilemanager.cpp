@@ -1,5 +1,6 @@
 #include "projectilemanager.hpp"
 
+#include <cmath>
 #include <iomanip>
 #include <memory>
 #include <optional>
@@ -14,6 +15,8 @@
 #include <components/esm3/loadmgef.hpp>
 #include <components/esm3/loadrace.hpp>
 #include <components/esm3/projectilestate.hpp>
+
+#include <components/esm4/loadproj.hpp>
 
 #include <components/esm/quaternion.hpp>
 #include <components/esm/vector3.hpp>
@@ -38,6 +41,7 @@
 #include "../mwworld/manualref.hpp"
 
 #include "../mwbase/environment.hpp"
+#include "../mwbase/mechanicsmanager.hpp"
 #include "../mwbase/soundmanager.hpp"
 #include "../mwbase/windowmanager.hpp"
 #include "../mwbase/world.hpp"
@@ -388,9 +392,56 @@ namespace MWWorld
         mProjectiles.push_back(std::move(state));
     }
 
+    bool ProjectileManager::launchFalloutProjectile(const Ptr& actor, ESM::FormId projectileId,
+        const osg::Vec3f& pos, const osg::Vec3f& requestedDirection,
+        const MWMechanics::FalloutProjectileImpactContract& impact)
+    {
+        const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
+        const ESM4::Projectile* projectile
+            = store != nullptr ? store->get<ESM4::Projectile>().search(projectileId) : nullptr;
+        osg::Vec3f direction = requestedDirection;
+        if (projectile == nullptr || !projectile->mData.present || projectile->mModel.empty()
+            || !std::isfinite(projectile->mData.speed) || projectile->mData.speed <= 0.f
+            || !std::isfinite(projectile->mData.range) || projectile->mData.range <= 0.f
+            || !std::isfinite(projectile->mData.gravity) || projectile->mData.gravity < 0.f
+            || direction.normalize() == 0.f)
+            return false;
+
+        FalloutProjectileState state;
+        state.mActorId = actor.getClass().getCreatureStats(actor).getActorId();
+        state.mCasterHandle = actor;
+        state.mProjectile = projectileId;
+        state.mVelocity = direction * projectile->mData.speed;
+        state.mRotationVelocity = osg::Vec3f(projectile->mData.rotationX,
+            projectile->mData.rotationY, projectile->mData.rotationZ);
+        state.mPreviousPosition = pos;
+        state.mGravity = projectile->mData.gravity;
+        state.mMaximumRange = projectile->mData.range;
+        state.mDistanceTravelled = 0.f;
+        state.mRotates = (projectile->mData.flags & ESM4::Projectile::Rotates) != 0;
+        state.mImpact = impact;
+        state.mToDelete = false;
+
+        osg::Quat orient;
+        orient.makeRotate(osg::Vec3f(0.f, 1.f, 0.f), direction);
+        const VFS::Path::Normalized model
+            = Misc::ResourceHelpers::correctMeshPath(VFS::Path::Normalized(projectile->mModel));
+        createModel(state, model, pos, orient, false, false, osg::Vec4(0.f, 0.f, 0.f, 0.f));
+        state.mProjectileId = mPhysics->addProjectile(actor, pos, model, false);
+        mFalloutProjectiles.push_back(std::move(state));
+
+        Log(Debug::Info) << "FNV moving projectile launched: actor=" << actor.toString()
+                         << " projectile=" << ESM::RefId::formIdRefId(projectileId)
+                         << " speed=" << projectile->mData.speed << " gravity=" << projectile->mData.gravity
+                         << " range=" << projectile->mData.range << " rawDamage=" << impact.mRawDamage;
+        return true;
+    }
+
     void ProjectileManager::updateCasters()
     {
         for (auto& state : mProjectiles)
+            mPhysics->setCaster(state.mProjectileId, state.getCaster());
+        for (auto& state : mFalloutProjectiles)
             mPhysics->setCaster(state.mProjectileId, state.getCaster());
 
         for (auto& state : mMagicBolts)
@@ -416,6 +467,7 @@ namespace MWWorld
     {
         periodicCleanup(dt);
         moveProjectiles(dt);
+        moveFalloutProjectiles(dt);
         moveMagicBolts(dt);
     }
 
@@ -436,6 +488,11 @@ namespace MWWorld
             {
                 if (isCleanable(projectileState))
                     cleanupProjectile(projectileState);
+            }
+            for (auto& projectileState : mFalloutProjectiles)
+            {
+                if (isCleanable(projectileState))
+                    projectileState.mToDelete = true;
             }
 
             for (auto& magicBoltState : mMagicBolts)
@@ -538,6 +595,43 @@ namespace MWWorld
         }
     }
 
+    void ProjectileManager::moveFalloutProjectiles(float duration)
+    {
+        for (FalloutProjectileState& state : mFalloutProjectiles)
+        {
+            if (state.mToDelete)
+                continue;
+            MWPhysics::Projectile* projectile = mPhysics->getProjectile(state.mProjectileId);
+            if (!projectile->isActive())
+                continue;
+
+            state.mVelocity -= osg::Vec3f(0.f, 0.f,
+                Constants::GravityConst * Constants::UnitsPerMeter * 0.1f * state.mGravity * duration);
+            projectile->setVelocity(state.mVelocity);
+
+            if (state.mRotates)
+            {
+                const osg::Quat rotation(state.mRotationVelocity.x() * duration, osg::Vec3f(1.f, 0.f, 0.f),
+                    state.mRotationVelocity.y() * duration, osg::Vec3f(0.f, 1.f, 0.f),
+                    state.mRotationVelocity.z() * duration, osg::Vec3f(0.f, 0.f, 1.f));
+                state.mNode->setAttitude(state.mNode->getAttitude() * rotation);
+            }
+            else if (state.mVelocity.length2() > 0.f)
+            {
+                osg::Quat orient;
+                orient.makeRotate(osg::Vec3f(0.f, 1.f, 0.f), state.mVelocity);
+                state.mNode->setAttitude(orient);
+            }
+            update(state, duration);
+
+            MWWorld::Ptr caster = state.getCaster();
+            std::vector<MWWorld::Ptr> targetActors;
+            if (!caster.isEmpty() && caster.getClass().isActor() && caster != MWMechanics::getPlayer())
+                caster.getClass().getCreatureStats(caster).getAiSequence().getCombatTargets(targetActors);
+            projectile->setValidTargets(targetActors);
+        }
+    }
+
     void ProjectileManager::processHits()
     {
         for (auto& projectileState : mProjectiles)
@@ -578,6 +672,45 @@ namespace MWWorld
 
             MWMechanics::projectileHit(
                 caster, target, bow, projectileRef.getPtr(), hitPosition, projectileState.mAttackStrength);
+            projectileState.mToDelete = true;
+        }
+        for (FalloutProjectileState& projectileState : mFalloutProjectiles)
+        {
+            if (projectileState.mToDelete)
+                continue;
+
+            MWPhysics::Projectile* projectile = mPhysics->getProjectile(projectileState.mProjectileId);
+            const osg::Vec3f position = projectile->getSimulationPosition();
+            projectileState.mNode->setPosition(position);
+            projectileState.mDistanceTravelled += (position - projectileState.mPreviousPosition).length();
+            if (projectileState.mDistanceTravelled >= projectileState.mMaximumRange)
+            {
+                projectileState.mToDelete = true;
+                continue;
+            }
+
+            if (projectile->isActive())
+            {
+                projectileState.mPreviousPosition = position;
+                continue;
+            }
+
+            const MWWorld::Ptr target = projectile->getTarget();
+            const MWWorld::Ptr caster = projectileState.getCaster();
+            const osg::Vec3f hitPosition = Misc::Convert::toOsg(projectile->getHitPosition());
+            if (projectile->getHitWater())
+                mRendering->emitWaterRipple(hitPosition);
+            if (!caster.isEmpty() && !target.isEmpty() && target.getClass().isActor())
+            {
+                const bool applied = MWBase::Environment::get().getMechanicsManager()
+                    ->executeFalloutProjectileImpact(caster, target, projectileState.mPreviousPosition,
+                        hitPosition, projectileState.mImpact);
+                if (!applied)
+                    Log(Debug::Error) << "FNV moving projectile impact rejected: caster=" << caster.toString()
+                                      << " target=" << target.toString()
+                                      << " projectile="
+                                      << ESM::RefId::formIdRefId(projectileState.mProjectile);
+            }
             projectileState.mToDelete = true;
         }
         const MWWorld::ESMStore& esmStore = *MWBase::Environment::get().getESMStore();
@@ -629,6 +762,11 @@ namespace MWWorld
             if (projectileState.mToDelete)
                 cleanupProjectile(projectileState);
         }
+        for (FalloutProjectileState& projectileState : mFalloutProjectiles)
+        {
+            if (projectileState.mToDelete)
+                cleanupFalloutProjectile(projectileState);
+        }
 
         for (auto& magicBoltState : mMagicBolts)
         {
@@ -638,12 +776,22 @@ namespace MWWorld
         mProjectiles.erase(std::remove_if(mProjectiles.begin(), mProjectiles.end(),
                                [](const State& state) { return state.mToDelete; }),
             mProjectiles.end());
+        mFalloutProjectiles.erase(std::remove_if(mFalloutProjectiles.begin(), mFalloutProjectiles.end(),
+                                      [](const State& state) { return state.mToDelete; }),
+            mFalloutProjectiles.end());
         mMagicBolts.erase(
             std::remove_if(mMagicBolts.begin(), mMagicBolts.end(), [](const State& state) { return state.mToDelete; }),
             mMagicBolts.end());
     }
 
     void ProjectileManager::cleanupProjectile(ProjectileManager::ProjectileState& state)
+    {
+        mParent->removeChild(state.mNode);
+        mPhysics->removeProjectile(state.mProjectileId);
+        state.mToDelete = true;
+    }
+
+    void ProjectileManager::cleanupFalloutProjectile(ProjectileManager::FalloutProjectileState& state)
     {
         mParent->removeChild(state.mNode);
         mPhysics->removeProjectile(state.mProjectileId);
@@ -666,6 +814,10 @@ namespace MWWorld
         for (auto& mProjectile : mProjectiles)
             cleanupProjectile(mProjectile);
         mProjectiles.clear();
+
+        for (FalloutProjectileState& projectile : mFalloutProjectiles)
+            cleanupFalloutProjectile(projectile);
+        mFalloutProjectiles.clear();
 
         for (auto& mMagicBolt : mMagicBolts)
             cleanupMagicBolt(mMagicBolt);

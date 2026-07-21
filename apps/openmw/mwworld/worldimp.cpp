@@ -3975,6 +3975,14 @@ namespace MWWorld
         mProjectileManager->launchProjectile(actor, projectile, worldPos, orient, bow, speed, attackStrength);
     }
 
+    bool World::launchFalloutProjectile(const MWWorld::Ptr& actor, ESM::FormId projectile,
+        const osg::Vec3f& worldPos, const osg::Vec3f& direction,
+        const MWMechanics::FalloutProjectileImpactContract& impact)
+    {
+        return mProjectileManager != nullptr
+            && mProjectileManager->launchFalloutProjectile(actor, projectile, worldPos, direction, impact);
+    }
+
     void World::launchMagicBolt(
         const ESM::RefId& spellId, const MWWorld::Ptr& caster, const osg::Vec3f& fallbackDirection, ESM::RefNum item)
     {

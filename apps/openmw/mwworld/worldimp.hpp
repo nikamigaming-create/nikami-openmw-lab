@@ -601,6 +601,9 @@ namespace MWWorld
             ESM::RefNum item) override;
         void launchProjectile(MWWorld::Ptr& actor, MWWorld::Ptr& projectile, const osg::Vec3f& worldPos,
             const osg::Quat& orient, MWWorld::Ptr& bow, float speed, float attackStrength) override;
+        bool launchFalloutProjectile(const MWWorld::Ptr& actor, ESM::FormId projectile,
+            const osg::Vec3f& worldPos, const osg::Vec3f& direction,
+            const MWMechanics::FalloutProjectileImpactContract& impact) override;
         void updateProjectilesCasters() override;
 
         void applyLoopingParticles(const MWWorld::Ptr& ptr) const override;

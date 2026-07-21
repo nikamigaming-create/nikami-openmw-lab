@@ -139,6 +139,9 @@ namespace MWMechanics
         void forceStateUpdate(const MWWorld::Ptr& ptr) override;
         bool executeFalloutVatsRangedHit(const MWWorld::Ptr& actor, const MWWorld::Ptr& target,
             const osg::Vec3f& targetPoint, const FalloutVatsQueuedAction& action, bool targetHit) override;
+        bool executeFalloutProjectileImpact(const MWWorld::Ptr& actor, const MWWorld::Ptr& target,
+            const osg::Vec3f& segmentStart, const osg::Vec3f& hitPosition,
+            const FalloutProjectileImpactContract& impact) override;
 
         /// Attempt to play an animation group
         /// @return Success or error

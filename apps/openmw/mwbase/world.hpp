@@ -10,6 +10,7 @@
 #include <string_view>
 #include <vector>
 
+#include <components/esm/formid.hpp>
 #include <components/misc/rng.hpp>
 #include <components/vfs/pathutil.hpp>
 
@@ -82,6 +83,11 @@ namespace MWPhysics
 {
     class RayCastingResult;
     class RayCastingInterface;
+}
+
+namespace MWMechanics
+{
+    struct FalloutProjectileImpactContract;
 }
 
 namespace MWRender
@@ -517,6 +523,10 @@ namespace MWBase
             = 0;
         virtual void launchProjectile(MWWorld::Ptr& actor, MWWorld::Ptr& projectile, const osg::Vec3f& worldPos,
             const osg::Quat& orient, MWWorld::Ptr& bow, float speed, float attackStrength)
+            = 0;
+        virtual bool launchFalloutProjectile(const MWWorld::Ptr& actor, ESM::FormId projectile,
+            const osg::Vec3f& worldPos, const osg::Vec3f& direction,
+            const MWMechanics::FalloutProjectileImpactContract& impact)
             = 0;
         virtual void updateProjectilesCasters() = 0;
 

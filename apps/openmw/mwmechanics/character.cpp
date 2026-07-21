@@ -2509,6 +2509,11 @@ namespace MWMechanics
             = buildFalloutRayShotContract(*mFalloutWeapon, *projectile, *consumable, contractFailure);
         if (!contract)
             return fail(getFalloutShotFailureName(contractFailure));
+        if (!contract->mAuthoredHitscan
+            && (projectile->mModel.empty() || !std::isfinite(projectile->mData.speed)
+                || projectile->mData.speed <= 0.f || !std::isfinite(projectile->mData.gravity)
+                || projectile->mData.gravity < 0.f))
+            return fail("invalid-authored-projectile-motion");
 
         std::vector<const ESM4::AmmoEffect*> ammoEffects;
         if (ammunition != nullptr)
@@ -2706,8 +2711,49 @@ namespace MWMechanics
             = rangedDamage->mDamage / static_cast<float>(contract->mProjectileCount);
         bool vatsCriticalConsumed = false;
         unsigned int criticalProjectiles = 0;
+        unsigned int movingProjectiles = 0;
         for (const osg::Vec3f& rayDirection : rayDirections)
         {
+            bool criticalHit = false;
+            if (rangedDamage->mDamage > 0.f && critical->mChancePercent > 0.f)
+            {
+                if (vatsAttack)
+                {
+                    criticalHit = !vatsCriticalConsumed && vatsCritical;
+                    vatsCriticalConsumed = true;
+                }
+                else
+                {
+                    criticalHit = doesFalloutCriticalHit(
+                        critical->mChancePercent, Misc::Rng::rollProbability(prng));
+                }
+            }
+            if (criticalHit)
+                ++criticalProjectiles;
+            const float rawHitDamage = critical->damageForProjectile(damagePerProjectile, criticalHit);
+
+            if (!contract->mAuthoredHitscan)
+            {
+                FalloutProjectileImpactContract impact;
+                impact.mWeapon = mFalloutWeapon->mId;
+                impact.mRawDamage = rawHitDamage;
+                impact.mLimbDamageMultiplier = weaponLimbDamageMultiplier;
+                impact.mCritical = criticalHit;
+                impact.mAmmoEffects.reserve(ammoEffects.size());
+                for (const ESM4::AmmoEffect* effect : ammoEffects)
+                    impact.mAmmoEffects.push_back(effect->mId);
+                if (vatsAction != nullptr)
+                {
+                    impact.mVatsAction = *vatsAction;
+                    impact.mVatsTargetHit = vatsTargetHit;
+                }
+                if (!world->launchFalloutProjectile(
+                        mPtr, contract->mProjectile, origin, rayDirection, impact))
+                    return fail("moving-projectile-launch-failed");
+                ++movingProjectiles;
+                continue;
+            }
+
             const osg::Vec3f destination = origin + rayDirection * contract->mProjectileRange;
             const MWPhysics::RayCastingResult result = rayCasting->castRay(origin, destination, { mPtr }, targetActors,
                 MWPhysics::CollisionType_Default, MWPhysics::CollisionType_Projectile);
@@ -2737,24 +2783,6 @@ namespace MWMechanics
                 bodyPart = resolveFalloutRayBodyPart(result.mHitObject, result.mHitPos, renderedNodePath);
             }
 
-            bool criticalHit = false;
-            if (rangedDamage->mDamage > 0.f && critical->mChancePercent > 0.f)
-            {
-                if (vatsAttack)
-                {
-                    criticalHit = !vatsCriticalConsumed && vatsCritical;
-                    vatsCriticalConsumed = true;
-                }
-                else
-                {
-                    criticalHit = doesFalloutCriticalHit(
-                        critical->mChancePercent, Misc::Rng::rollProbability(prng));
-                }
-            }
-            if (criticalHit)
-                ++criticalProjectiles;
-
-            const float rawHitDamage = critical->damageForProjectile(damagePerProjectile, criticalHit);
             float incomingDamage = rawHitDamage;
             if (bodyPart)
                 incomingDamage *= bodyPart->mHealthDamageMultiplier;
@@ -2899,7 +2927,7 @@ namespace MWMechanics
                          << " authoredSpread=" << contract->mSpread << " ammoAdjustedSpread=" << shotSpread
                          << " ammoEffects=" << ammoEffects.size()
                          << " authoredHitscan=" << contract->mAuthoredHitscan
-                         << " immediateRayFallback=" << !contract->mAuthoredHitscan << " rayHits=" << rayHits
+                         << " movingProjectiles=" << movingProjectiles << " rayHits=" << rayHits
                          << " actorRayHits=" << actorRayHits << " actorsHit=" << actorImpacts.size()
                          << " vatsTarget=" << (vatsTarget.isEmpty() ? std::string("none") : vatsTarget.toString())
                          << " vatsHealthDamageMultiplier="
@@ -2948,6 +2976,111 @@ namespace MWMechanics
             << " target=" << target.toString() << " visualAction=" << visualAction
             << " targetHit=" << targetHit << " fired=" << fired;
         return fired;
+    }
+
+    bool CharacterController::executeFalloutProjectileImpact(const MWWorld::Ptr& target,
+        const osg::Vec3f& segmentStart, const osg::Vec3f& hitPosition,
+        const FalloutProjectileImpactContract& impact)
+    {
+        if (target.isEmpty() || !target.getClass().isActor() || !std::isfinite(impact.mRawDamage)
+            || impact.mRawDamage < 0.f || !std::isfinite(impact.mLimbDamageMultiplier)
+            || impact.mLimbDamageMultiplier < 0.f)
+            return false;
+
+        const bool queuedVatsTarget = impact.mVatsAction
+            && target.getCellRef().getRefNum() == impact.mVatsAction->mTarget;
+        if (queuedVatsTarget && !impact.mVatsTargetHit)
+            return true;
+
+        const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
+        MWBase::World* world = MWBase::Environment::get().getWorld();
+        if (store == nullptr || world == nullptr)
+            return false;
+
+        std::vector<const ESM4::AmmoEffect*> ammoEffects;
+        ammoEffects.reserve(impact.mAmmoEffects.size());
+        for (ESM::FormId effectId : impact.mAmmoEffects)
+        {
+            const ESM4::AmmoEffect* effect = store->get<ESM4::AmmoEffect>().search(effectId);
+            if (effect == nullptr)
+                return false;
+            ammoEffects.push_back(effect);
+        }
+
+        std::optional<FalloutBodyPartContract> bodyPart;
+        if (queuedVatsTarget)
+        {
+            const FalloutVatsQueuedAction& action = *impact.mVatsAction;
+            bodyPart = FalloutBodyPartContract{ action.mBodyPart, action.mBodyPartName, action.mTargetNode,
+                action.mTargetNode, {}, {}, action.mActorValue, action.mHealthPercent,
+                action.mHealthDamageMultiplier };
+        }
+        else
+        {
+            osg::Vec3f renderEnd = hitPosition;
+            osg::Vec3f direction = hitPosition - segmentStart;
+            if (direction.normalize() != 0.f)
+                renderEnd += direction * 4.f;
+            const std::array<MWWorld::Ptr, 1> renderingRayIgnore{ mPtr };
+            MWPhysics::RayCastingResult renderedHit;
+            std::span<const std::string> renderedNodePath;
+            if (world->castRenderingRay(
+                    renderedHit, segmentStart, renderEnd, false, false, renderingRayIgnore)
+                && renderedHit.mHitObject == target)
+                renderedNodePath = renderedHit.mHitNodePath;
+            bodyPart = resolveFalloutRayBodyPart(target, hitPosition, renderedNodePath);
+        }
+
+        float incomingDamage = impact.mRawDamage;
+        if (bodyPart)
+            incomingDamage *= bodyPart->mHealthDamageMultiplier;
+        FalloutAmmoEffectFailure ammoFailure = FalloutAmmoEffectFailure::None;
+        const std::optional<float> ammoAdjustedDamage = applyFalloutAmmoEffects(
+            incomingDamage, ESM4::AmmoEffect::Type::Damage, ammoEffects, ammoFailure);
+        if (!ammoAdjustedDamage)
+            return false;
+        FalloutDamageMitigationFailure mitigationFailure = FalloutDamageMitigationFailure::None;
+        const std::optional<FalloutDamageMitigation> mitigation
+            = resolveFalloutActorImpactDamage(target, *ammoAdjustedDamage, ammoEffects, mitigationFailure, ammoFailure);
+        if (!mitigation)
+            return false;
+
+        CreatureStats& targetStats = target.getClass().getCreatureStats(target);
+        std::optional<FalloutLimbImpact> limbImpact;
+        if (bodyPart && bodyPart->mHealthPercent != 0)
+        {
+            const std::optional<float> playerLimbMultiplier
+                = getFalloutGameSetting("fCombatPlayerLimbDamageMult");
+            if (!playerLimbMultiplier || *playerLimbMultiplier < 0.f)
+                return false;
+            limbImpact = resolveFalloutLimbImpact(targetStats.getHealth().getModified(),
+                bodyPart->mHealthPercent, targetStats.getFalloutLimbDamage(bodyPart->mActorValue),
+                impact.mRawDamage, impact.mLimbDamageMultiplier,
+                target == getPlayer() ? *playerLimbMultiplier : 1.f);
+            if (!limbImpact)
+                return false;
+        }
+
+        target.getClass().onHit(target, { { "health", mitigation->mHealthDamage } },
+            ESM::RefId::formIdRefId(impact.mWeapon), mPtr, true, DamageSourceType::Ranged);
+        if (limbImpact)
+        {
+            if (!targetStats.setFalloutLimbDamage(bodyPart->mActorValue, limbImpact->mDamageTakenAfter))
+                return false;
+            if (limbImpact->mNewlyCrippled && !targetStats.isDead())
+                targetStats.setHitRecovery(true);
+        }
+
+        Log(Debug::Info) << "FNV moving projectile impact: actor=" << mPtr.toString()
+                         << " target=" << target.toString()
+                         << " weapon=" << ESM::RefId::formIdRefId(impact.mWeapon)
+                         << " bodyPart=" << (bodyPart ? std::string(bodyPart->mName) : std::string("unresolved"))
+                         << " rawDamage=" << impact.mRawDamage
+                         << " healthDamage=" << mitigation->mHealthDamage
+                         << " limbDamage=" << (limbImpact ? limbImpact->mDamageApplied : 0.f)
+                         << " newlyCrippled=" << (limbImpact && limbImpact->mNewlyCrippled)
+                         << " critical=" << impact.mCritical;
+        return true;
     }
 
     bool CharacterController::strikeFalloutMelee(std::uint8_t animationType)

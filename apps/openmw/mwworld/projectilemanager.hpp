@@ -10,6 +10,7 @@
 #include <components/vfs/pathutil.hpp>
 
 #include "../mwbase/soundmanager.hpp"
+#include "../mwmechanics/falloutcombat.hpp"
 
 #include "ptr.hpp"
 
@@ -55,6 +56,10 @@ namespace MWWorld
 
         void launchProjectile(const MWWorld::Ptr& actor, const MWWorld::ConstPtr& projectile, const osg::Vec3f& pos,
             const osg::Quat& orient, const MWWorld::Ptr& bow, float speed, float attackStrength);
+
+        bool launchFalloutProjectile(const MWWorld::Ptr& actor, ESM::FormId projectile,
+            const osg::Vec3f& pos, const osg::Vec3f& direction,
+            const MWMechanics::FalloutProjectileImpactContract& impact);
 
         void updateCasters();
 
@@ -126,14 +131,30 @@ namespace MWWorld
             bool mThrown;
         };
 
+        struct FalloutProjectileState : public State
+        {
+            ESM::FormId mProjectile;
+            osg::Vec3f mVelocity;
+            osg::Vec3f mRotationVelocity;
+            osg::Vec3f mPreviousPosition;
+            float mGravity = 0.f;
+            float mMaximumRange = 0.f;
+            float mDistanceTravelled = 0.f;
+            bool mRotates = false;
+            MWMechanics::FalloutProjectileImpactContract mImpact;
+        };
+
         std::vector<MagicBoltState> mMagicBolts;
         std::vector<ProjectileState> mProjectiles;
+        std::vector<FalloutProjectileState> mFalloutProjectiles;
 
         void cleanupProjectile(ProjectileState& state);
+        void cleanupFalloutProjectile(FalloutProjectileState& state);
         void cleanupMagicBolt(MagicBoltState& state);
         void periodicCleanup(float dt);
 
         void moveProjectiles(float dt);
+        void moveFalloutProjectiles(float dt);
         void moveMagicBolts(float dt);
 
         void createModel(State& state, VFS::Path::NormalizedView model, const osg::Vec3f& pos, const osg::Quat& orient,

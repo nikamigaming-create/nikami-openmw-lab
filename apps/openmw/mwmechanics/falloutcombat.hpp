@@ -374,6 +374,19 @@ namespace MWMechanics
         }
     };
 
+    /// Immutable hit payload carried by a moving native FNV projectile. Target armor and body-part data are
+    /// intentionally resolved only at contact; the weapon/ammo/critical decision was fixed when the trigger fired.
+    struct FalloutProjectileImpactContract
+    {
+        ESM::FormId mWeapon;
+        float mRawDamage = 0.f;
+        float mLimbDamageMultiplier = 1.f;
+        std::vector<ESM::FormId> mAmmoEffects;
+        std::optional<FalloutVatsQueuedAction> mVatsAction;
+        bool mVatsTargetHit = true;
+        bool mCritical = false;
+    };
+
     using FalloutAmmoTypePredicate = std::function<bool(ESM::FormId)>;
     using FalloutAmmoCount = std::function<int(ESM::FormId)>;
     using FalloutFactionLookup = std::function<const ESM4::Faction*(ESM::FormId)>;
@@ -399,8 +412,7 @@ namespace MWMechanics
     [[nodiscard]] std::optional<ESM::FormId> selectAuthoredFalloutAmmo(std::span<const ESM::FormId> candidates,
         std::uint8_t rounds, const FalloutAmmoTypePredicate& isAmmo, const FalloutAmmoCount& countAmmo);
 
-    /// Validate and preserve the serialized WEAP -> PROJ contract used by the immediate-ray production path.
-    /// Authored non-hitscan projectiles deliberately use the same ray fallback until moving ESM4 projectiles exist.
+    /// Validate and preserve the serialized WEAP -> PROJ contract used by hitscan rays and moving projectiles.
     [[nodiscard]] std::optional<FalloutShotContract> buildFalloutRayShotContract(const ESM4::Weapon& weapon,
         const ESM4::Projectile& projectile, ESM::FormId ammo, FalloutShotFailure& failure);
 
