@@ -3,6 +3,7 @@
 #include <apps/openmw/mwworld/ptr.hpp>
 
 #include <components/esm4/loadproj.hpp>
+#include <components/esm4/loadscpt.hpp>
 #include <components/esm4/loadweap.hpp>
 
 #include <gtest/gtest.h>
@@ -1074,6 +1075,107 @@ end
         const auto disabled = MWMechanics::buildFalloutCriticalContract(weapon, 100.f, true, 15.f, failure);
         ASSERT_TRUE(disabled);
         EXPECT_FLOAT_EQ(disabled->mChancePercent, 0.f);
+    }
+
+    TEST(FalloutCombatTest, ResolvesOrderedNativeCriticalActorEffectChain)
+    {
+        ESM4::Spell spell;
+        spell.mId = id(0x1000);
+        spell.mData.present = true;
+        spell.mData.type = ESM4::Spell::Type::ActorEffect;
+        spell.mData.flags = ESM4::Spell::ScriptEffectAlwaysApplies;
+        ESM4::Spell::Effect scripted;
+        scripted.baseEffect = id(0x2000);
+        scripted.magnitude = 12;
+        scripted.duration = 3;
+        scripted.range = ESM4::Spell::Range::Target;
+        scripted.actorValue = 16;
+        scripted.conditions.push_back({ 0x20, 1.f, ESM4::FUN_GetDead, 0, 0, 1, 0 });
+        ESM4::Spell::Effect paralysis;
+        paralysis.baseEffect = id(0x2001);
+        paralysis.duration = 5;
+        paralysis.range = ESM4::Spell::Range::Touch;
+        spell.mEffects = { scripted, paralysis };
+
+        ESM4::MagicEffect scriptEffect;
+        scriptEffect.mId = scripted.baseEffect;
+        scriptEffect.mData.present = true;
+        scriptEffect.mData.archetype = ESM4::MagicEffect::Archetype::Script;
+        scriptEffect.mData.associatedItem = id(0x3000);
+        scriptEffect.mData.effectShader = id(0x4000);
+        scriptEffect.mModel = "Effects\\Critical.nif";
+        scriptEffect.mCounterEffects = { id(0x2002) };
+        ESM4::MagicEffect paralysisEffect;
+        paralysisEffect.mId = paralysis.baseEffect;
+        paralysisEffect.mData.present = true;
+        paralysisEffect.mData.archetype = ESM4::MagicEffect::Archetype::Paralysis;
+        ESM4::Script scriptRecord;
+        scriptRecord.mId = scriptEffect.mData.associatedItem;
+
+        const std::map<ESM::FormId, const ESM4::MagicEffect*> magicEffects{
+            { scriptEffect.mId, &scriptEffect }, { paralysisEffect.mId, &paralysisEffect }
+        };
+        MWMechanics::FalloutActorEffectFailure failure;
+        const auto contract = MWMechanics::buildFalloutActorEffectContract(spell.mId,
+            [&](ESM::FormId value) { return value == spell.mId ? &spell : nullptr; },
+            [&](ESM::FormId value) {
+                const auto found = magicEffects.find(value);
+                return found != magicEffects.end() ? found->second : nullptr;
+            },
+            [&](ESM::FormId value) { return value == scriptRecord.mId ? &scriptRecord : nullptr; }, failure);
+
+        ASSERT_TRUE(contract);
+        EXPECT_EQ(failure, MWMechanics::FalloutActorEffectFailure::None);
+        EXPECT_EQ(contract->mSpell, spell.mId);
+        EXPECT_EQ(contract->mSpellData.flags, ESM4::Spell::ScriptEffectAlwaysApplies);
+        ASSERT_EQ(contract->mEffects.size(), 2u);
+        EXPECT_EQ(contract->mEffects[0].mEffect.baseEffect, scripted.baseEffect);
+        EXPECT_EQ(contract->mEffects[0].mEffect.conditions.size(), 1u);
+        EXPECT_EQ(contract->mEffects[0].mMagicEffect.effectShader, id(0x4000));
+        EXPECT_EQ(contract->mEffects[0].mModel, "Effects\\Critical.nif");
+        EXPECT_EQ(contract->mEffects[0].mCounterEffects, std::vector<ESM::FormId>{ id(0x2002) });
+        EXPECT_EQ(contract->mEffects[0].mScript, scriptRecord.mId);
+        EXPECT_EQ(contract->mEffects[1].mMagicEffect.archetype, ESM4::MagicEffect::Archetype::Paralysis);
+        EXPECT_TRUE(contract->mEffects[1].mScript.isZeroOrUnset());
+    }
+
+    TEST(FalloutCombatTest, RejectsIncompleteNativeCriticalActorEffectChain)
+    {
+        ESM4::Spell spell;
+        spell.mId = id(0x1000);
+        spell.mData.present = true;
+        spell.mData.type = ESM4::Spell::Type::ActorEffect;
+        spell.mEffects.push_back({ id(0x2000), 0, 0, 0, ESM4::Spell::Range::Self, -1, {} });
+        ESM4::MagicEffect effect;
+        effect.mId = spell.mEffects.front().baseEffect;
+        effect.mData.present = true;
+        effect.mData.archetype = ESM4::MagicEffect::Archetype::Script;
+        effect.mData.associatedItem = id(0x3000);
+
+        MWMechanics::FalloutActorEffectFailure failure;
+        EXPECT_FALSE(MWMechanics::buildFalloutActorEffectContract(spell.mId,
+            [&](ESM::FormId) { return &spell; }, [&](ESM::FormId) { return &effect; },
+            [&](ESM::FormId) -> const ESM4::Script* { return nullptr; }, failure));
+        EXPECT_EQ(failure, MWMechanics::FalloutActorEffectFailure::MissingScript);
+        EXPECT_EQ(MWMechanics::getFalloutActorEffectFailureName(failure), "missing-script");
+
+        spell.mData.type = ESM4::Spell::Type::Ability;
+        EXPECT_FALSE(MWMechanics::buildFalloutActorEffectContract(spell.mId,
+            [&](ESM::FormId) { return &spell; }, [&](ESM::FormId) { return &effect; },
+            [&](ESM::FormId) -> const ESM4::Script* { return nullptr; }, failure));
+        EXPECT_EQ(failure, MWMechanics::FalloutActorEffectFailure::UnsupportedSpellType);
+
+        spell.mData.type = ESM4::Spell::Type::ActorEffect;
+        effect.mData.associatedItem = {};
+        effect.mData.effectShader = id(0x4000);
+        const auto shaderOnly = MWMechanics::buildFalloutActorEffectContract(spell.mId,
+            [&](ESM::FormId) { return &spell; }, [&](ESM::FormId) { return &effect; },
+            [&](ESM::FormId) -> const ESM4::Script* { return nullptr; }, failure);
+        ASSERT_TRUE(shaderOnly);
+        EXPECT_EQ(failure, MWMechanics::FalloutActorEffectFailure::None);
+        ASSERT_EQ(shaderOnly->mEffects.size(), 1u);
+        EXPECT_TRUE(shaderOnly->mEffects.front().mScript.isZeroOrUnset());
+        EXPECT_EQ(shaderOnly->mEffects.front().mMagicEffect.effectShader, id(0x4000));
     }
 
     TEST(FalloutCombatTest, AppliesAuthoredAmmoEffectsInRcilOrder)

@@ -11,6 +11,7 @@
 #include <components/esm4/loadnpc.hpp>
 #include <components/esm4/loadproj.hpp>
 #include <components/esm4/loadrace.hpp>
+#include <components/esm4/loadscpt.hpp>
 #include <components/esm4/loadweap.hpp>
 #include <components/misc/strings/algorithm.hpp>
 
@@ -581,6 +582,73 @@ namespace MWMechanics
         return FalloutCriticalContract{ std::min(chance, 100.f),
             static_cast<float>(weapon.mCriticalData.damage), weapon.mCriticalData.effect,
             (weapon.mCriticalData.flags & ESM4::Weapon::CriticalData::OnDeath) != 0 };
+    }
+
+    std::optional<FalloutActorEffectContract> buildFalloutActorEffectContract(ESM::FormId spellId,
+        const FalloutSpellLookup& findSpell, const FalloutMagicEffectLookup& findMagicEffect,
+        const FalloutScriptLookup& findScript, FalloutActorEffectFailure& failure)
+    {
+        failure = FalloutActorEffectFailure::None;
+        if (spellId.isZeroOrUnset())
+            failure = FalloutActorEffectFailure::MissingSpell;
+        const ESM4::Spell* spell
+            = failure == FalloutActorEffectFailure::None ? findSpell(spellId) : nullptr;
+        if (failure == FalloutActorEffectFailure::None && spell == nullptr)
+            failure = FalloutActorEffectFailure::MissingSpell;
+        else if (failure == FalloutActorEffectFailure::None && !spell->mData.present)
+            failure = FalloutActorEffectFailure::MissingSpellData;
+        else if (failure == FalloutActorEffectFailure::None
+            && spell->mData.type != ESM4::Spell::Type::ActorEffect)
+            failure = FalloutActorEffectFailure::UnsupportedSpellType;
+        else if (failure == FalloutActorEffectFailure::None && spell->mEffects.empty())
+            failure = FalloutActorEffectFailure::EmptySpell;
+        if (failure != FalloutActorEffectFailure::None)
+            return std::nullopt;
+
+        FalloutActorEffectContract result;
+        result.mSpell = spellId;
+        result.mSpellData = spell->mData;
+        result.mEffects.reserve(spell->mEffects.size());
+        for (const ESM4::Spell::Effect& effect : spell->mEffects)
+        {
+            if (effect.baseEffect.isZeroOrUnset())
+            {
+                failure = FalloutActorEffectFailure::MissingBaseEffect;
+                return std::nullopt;
+            }
+            if (effect.range != ESM4::Spell::Range::Self && effect.range != ESM4::Spell::Range::Touch
+                && effect.range != ESM4::Spell::Range::Target)
+            {
+                failure = FalloutActorEffectFailure::InvalidRange;
+                return std::nullopt;
+            }
+
+            const ESM4::MagicEffect* magicEffect = findMagicEffect(effect.baseEffect);
+            if (magicEffect == nullptr)
+            {
+                failure = FalloutActorEffectFailure::MissingMagicEffect;
+                return std::nullopt;
+            }
+            if (!magicEffect->mData.present)
+            {
+                failure = FalloutActorEffectFailure::MissingMagicEffectData;
+                return std::nullopt;
+            }
+
+            ESM::FormId script;
+            if (magicEffect->mData.archetype == ESM4::MagicEffect::Archetype::Script)
+            {
+                script = magicEffect->mData.associatedItem;
+                if (!script.isZeroOrUnset() && findScript(script) == nullptr)
+                {
+                    failure = FalloutActorEffectFailure::MissingScript;
+                    return std::nullopt;
+                }
+            }
+            result.mEffects.push_back({ effect, magicEffect->mData, magicEffect->mModel,
+                magicEffect->mCounterEffects, script });
+        }
+        return result;
     }
 
     bool doesFalloutCriticalHit(float chancePercent, float roll) noexcept
@@ -1324,6 +1392,34 @@ namespace MWMechanics
                 return "invalid-vats-bonus";
             case FalloutCriticalFailure::InvalidChance:
                 return "invalid-chance";
+        }
+        return "unknown";
+    }
+
+    std::string_view getFalloutActorEffectFailureName(FalloutActorEffectFailure failure)
+    {
+        switch (failure)
+        {
+            case FalloutActorEffectFailure::None:
+                return "none";
+            case FalloutActorEffectFailure::MissingSpell:
+                return "missing-spell";
+            case FalloutActorEffectFailure::MissingSpellData:
+                return "missing-spell-data";
+            case FalloutActorEffectFailure::UnsupportedSpellType:
+                return "unsupported-spell-type";
+            case FalloutActorEffectFailure::EmptySpell:
+                return "empty-spell";
+            case FalloutActorEffectFailure::MissingBaseEffect:
+                return "missing-base-effect";
+            case FalloutActorEffectFailure::MissingMagicEffect:
+                return "missing-magic-effect";
+            case FalloutActorEffectFailure::MissingMagicEffectData:
+                return "missing-magic-effect-data";
+            case FalloutActorEffectFailure::InvalidRange:
+                return "invalid-range";
+            case FalloutActorEffectFailure::MissingScript:
+                return "missing-script";
         }
         return "unknown";
     }

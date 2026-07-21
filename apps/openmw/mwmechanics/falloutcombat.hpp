@@ -17,10 +17,13 @@
 #include <components/esm4/loadamef.hpp>
 #include <components/esm4/loadbptd.hpp>
 #include <components/esm4/loadfact.hpp>
+#include <components/esm4/loadmgef.hpp>
+#include <components/esm4/loadspel.hpp>
 
 namespace ESM4
 {
     struct Projectile;
+    struct Script;
     struct Weapon;
 }
 
@@ -179,6 +182,20 @@ namespace MWMechanics
         InvalidChance,
     };
 
+    enum class FalloutActorEffectFailure
+    {
+        None,
+        MissingSpell,
+        MissingSpellData,
+        UnsupportedSpellType,
+        EmptySpell,
+        MissingBaseEffect,
+        MissingMagicEffect,
+        MissingMagicEffectData,
+        InvalidRange,
+        MissingScript,
+    };
+
     enum class FalloutAmmoEffectFailure
     {
         None,
@@ -261,6 +278,25 @@ namespace MWMechanics
         {
             return baseDamage + (critical ? mDamage : 0.f);
         }
+    };
+
+    /// Pointer-free snapshot of one native SPEL.EFID/EFIT entry and its winning MGEF record. Keeping the complete
+    /// parsed data structures here preserves conditions, authored timing, resistance, shaders, sounds, model, and
+    /// archetype parameters for the execution stage without retaining store pointers across a load-order rebuild.
+    struct FalloutActorEffectEntry
+    {
+        ESM4::Spell::Effect mEffect;
+        ESM4::MagicEffect::Data mMagicEffect;
+        std::string mModel;
+        std::vector<ESM::FormId> mCounterEffects;
+        ESM::FormId mScript;
+    };
+
+    struct FalloutActorEffectContract
+    {
+        ESM::FormId mSpell;
+        ESM4::Spell::Data mSpellData;
+        std::vector<FalloutActorEffectEntry> mEffects;
     };
 
     struct FalloutWeaponDegradation
@@ -493,6 +529,9 @@ namespace MWMechanics
     using FalloutAmmoTypePredicate = std::function<bool(ESM::FormId)>;
     using FalloutAmmoCount = std::function<int(ESM::FormId)>;
     using FalloutFactionLookup = std::function<const ESM4::Faction*(ESM::FormId)>;
+    using FalloutSpellLookup = std::function<const ESM4::Spell*(ESM::FormId)>;
+    using FalloutMagicEffectLookup = std::function<const ESM4::MagicEffect*(ESM::FormId)>;
+    using FalloutScriptLookup = std::function<const ESM4::Script*(ESM::FormId)>;
 
     /// Resolve the actor's directional authored Creation Engine group-combat reaction to the target. An actor with
     /// no effective faction is neutral to a target with known membership. A missing target identity or an unresolved
@@ -589,6 +628,13 @@ namespace MWMechanics
     /// adds its winning GMST bonus after that multiplication. A zero CRDT multiplier disables criticals entirely.
     [[nodiscard]] std::optional<FalloutCriticalContract> buildFalloutCriticalContract(const ESM4::Weapon& weapon,
         float actorCriticalChance, bool vats, float vatsCriticalChanceBonus, FalloutCriticalFailure& failure);
+
+    /// Resolve the complete native actor-effect chain used by WEAP.CRDT: SPEL -> ordered EFID/EFIT entries -> MGEF
+    /// -> optional associated SCPT for Script archetypes. Every nonzero reference must resolve through the winning
+    /// stores; malformed, incomplete, or non-actor spells fail closed rather than producing a partial effect.
+    [[nodiscard]] std::optional<FalloutActorEffectContract> buildFalloutActorEffectContract(ESM::FormId spellId,
+        const FalloutSpellLookup& findSpell, const FalloutMagicEffectLookup& findMagicEffect,
+        const FalloutScriptLookup& findScript, FalloutActorEffectFailure& failure);
 
     /// Compare a percentage against a caller-supplied [0, 1) PRNG sample. Real-time multi-projectile weapons call
     /// this per actor-impacting projectile; VATS calls it once for the queued attack.
@@ -692,6 +738,7 @@ namespace MWMechanics
     [[nodiscard]] std::string_view getFalloutProjectileBounceFailureName(FalloutProjectileBounceFailure failure);
     [[nodiscard]] std::string_view getFalloutProjectileTriggerFailureName(FalloutProjectileTriggerFailure failure);
     [[nodiscard]] std::string_view getFalloutCriticalFailureName(FalloutCriticalFailure failure);
+    [[nodiscard]] std::string_view getFalloutActorEffectFailureName(FalloutActorEffectFailure failure);
     [[nodiscard]] std::string_view getFalloutAmmoEffectFailureName(FalloutAmmoEffectFailure failure);
     [[nodiscard]] std::string_view getFalloutWeaponDegradationFailureName(
         FalloutWeaponDegradationFailure failure);
