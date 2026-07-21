@@ -212,13 +212,59 @@ namespace
             *unarmedDamageMult, *meleeStrengthMult, *meleeStrengthOffset, *combatDistance, *unarmedReach };
     }
 
+    std::optional<float> getFalloutRangedSkill(const MWWorld::Ptr& actor, std::int32_t actorValue)
+    {
+        constexpr std::uint32_t first = MWWorld::FalloutPlayerRuntimeState::SkillActorValueBegin;
+        constexpr std::uint32_t last = MWWorld::FalloutPlayerRuntimeState::SkillActorValueEnd;
+        if (actorValue < static_cast<std::int32_t>(first) || actorValue > static_cast<std::int32_t>(last))
+            return std::nullopt;
+
+        if (actor == MWMechanics::getPlayer())
+        {
+            const MWWorld::FalloutPlayerRuntimeState& runtime
+                = MWBase::Environment::get().getWorld()->getFalloutPlayerRuntimeState();
+            const std::optional<MWWorld::FalloutRuntimeActorValue> value
+                = runtime.getCurrentActorValue(static_cast<std::uint32_t>(actorValue));
+            return value ? std::optional<float>(value->mValue) : std::nullopt;
+        }
+
+        if (actor.getType() != ESM::REC_NPC_4)
+            return std::nullopt;
+        const ESM4::Npc* stats = MWClass::ESM4Npc::getStatsRecord(actor);
+        if (stats == nullptr || !stats->mHasFNVSkills)
+            return std::nullopt;
+
+        const ESM4::Npc::FNVSkillValues& values = stats->mFNVSkills.values;
+        const std::array<std::uint8_t, MWWorld::FalloutPlayerState::SkillCount> skills = { values.barter,
+            values.bigGuns, values.energyWeapons, values.explosives, values.lockpick, values.medicine,
+            values.meleeWeapons, values.repair, values.science, values.smallGuns, values.sneak, values.speech,
+            values.survivalOrThrowing, values.unarmed };
+        return static_cast<float>(skills[static_cast<std::uint32_t>(actorValue) - first]);
+    }
+
+    std::optional<MWMechanics::FalloutRangedDamageTuning> getFalloutRangedDamageTuning()
+    {
+        const std::optional<float> skillBase = getFalloutGameSetting("fDamageSkillBase");
+        const std::optional<float> skillMultiplier = getFalloutGameSetting("fDamageSkillMult");
+        if (!skillBase || !skillMultiplier)
+            return std::nullopt;
+
+        // New Vegas keeps these values in executable runtime state. The base master does not serialize
+        // fDamageWeaponMult, and SetConditionDamagePenalty changes the latter two values at runtime.
+        const float weaponDamageMultiplier = getFalloutGameSetting("fDamageWeaponMult").value_or(1.f);
+        constexpr float conditionThreshold = 0.75f;
+        constexpr float conditionPenaltyRate = 0.67f;
+        return MWMechanics::FalloutRangedDamageTuning{ weaponDamageMultiplier, *skillBase, *skillMultiplier,
+            conditionThreshold, conditionPenaltyRate };
+    }
+
     struct FalloutArmorProtection
     {
         float mDamageResistance = 0.f;
         float mDamageThreshold = 0.f;
     };
 
-    std::optional<float> getFalloutArmorItemCondition(const MWWorld::ConstPtr& item)
+    std::optional<float> getFalloutItemCondition(const MWWorld::ConstPtr& item)
     {
         const int maximum = item.getClass().getItemMaxHealth(item);
         if (maximum <= 0)
@@ -227,6 +273,31 @@ namespace
         if (current < 0 || current > maximum)
             return std::nullopt;
         return static_cast<float>(current) / static_cast<float>(maximum);
+    }
+
+    std::optional<float> getFalloutEquippedWeaponCondition(
+        const MWWorld::Ptr& actor, const MWWorld::Ptr& controllerWeapon, const ESM4::Weapon& weapon)
+    {
+        const ESM::RefId weaponId = ESM::RefId::formIdRefId(weapon.mId);
+        if (actor.getClass().hasInventoryStore(actor))
+        {
+            const MWWorld::InventoryStore& inventory = actor.getClass().getInventoryStore(actor);
+            const MWWorld::ConstContainerStoreIterator equipped
+                = inventory.getSlot(MWWorld::InventoryStore::Slot_CarriedRight);
+            if (equipped != inventory.end() && equipped->getType() == ESM4::Weapon::sRecordId
+                && equipped->getCellRef().getRefId() == weaponId)
+                return getFalloutItemCondition(*equipped);
+        }
+
+        if (!controllerWeapon.isEmpty() && controllerWeapon.getType() == ESM4::Weapon::sRecordId
+            && controllerWeapon.getCellRef().getRefId() == weaponId)
+            return getFalloutItemCondition(controllerWeapon);
+
+        const MWWorld::ContainerStore& inventory = actor.getClass().getContainerStore(actor);
+        const auto found = std::find_if(inventory.begin(), inventory.end(), [&](const MWWorld::ConstPtr& item) {
+            return item.getType() == ESM4::Weapon::sRecordId && item.getCellRef().getRefId() == weaponId;
+        });
+        return found == inventory.end() ? std::nullopt : getFalloutItemCondition(*found);
     }
 
     std::optional<FalloutArmorProtection> getFalloutArmorProtection(const MWWorld::Ptr& actor)
@@ -261,7 +332,7 @@ namespace
                 });
                 if (found != inventory.end())
                 {
-                    const std::optional<float> itemCondition = getFalloutArmorItemCondition(*found);
+                    const std::optional<float> itemCondition = getFalloutItemCondition(*found);
                     if (!itemCondition)
                         return std::nullopt;
                     condition = *itemCondition;
@@ -284,7 +355,7 @@ namespace
                 || std::find(counted.begin(), counted.end(), *equipped) != counted.end())
                 continue;
             counted.push_back(*equipped);
-            const std::optional<float> condition = getFalloutArmorItemCondition(*equipped);
+            const std::optional<float> condition = getFalloutItemCondition(*equipped);
             if (!condition || !addArmor(equipped->get<ESM4::Armor>()->mBase, *condition))
                 return std::nullopt;
         }
@@ -2209,7 +2280,7 @@ namespace MWMechanics
                               << " weapon="
                               << (mFalloutWeapon != nullptr ? ESM::RefId::formIdRefId(mFalloutWeapon->mId).toDebugString()
                                                             : std::string("none"))
-                              << " reason=" << reason << " exact=1";
+                              << " reason=" << reason;
             return false;
         };
 
@@ -2282,6 +2353,22 @@ namespace MWMechanics
         if (!contract)
             return fail(getFalloutShotFailureName(contractFailure));
 
+        const std::optional<float> skill = getFalloutRangedSkill(mPtr, mFalloutWeapon->mData.skillActorValue);
+        if (!skill)
+            return fail("missing-ranged-skill");
+        const std::optional<float> weaponCondition
+            = getFalloutEquippedWeaponCondition(mPtr, mWeapon, *mFalloutWeapon);
+        if (!weaponCondition)
+            return fail("missing-equipped-weapon-condition");
+        const std::optional<FalloutRangedDamageTuning> damageTuning = getFalloutRangedDamageTuning();
+        if (!damageTuning)
+            return fail("missing-ranged-damage-tuning");
+        FalloutRangedDamageFailure damageFailure = FalloutRangedDamageFailure::None;
+        const std::optional<FalloutRangedDamage> rangedDamage = buildFalloutRangedDamage(
+            contract->mDamage, *skill, *weaponCondition, *damageTuning, damageFailure);
+        if (!rangedDamage)
+            return fail(getFalloutRangedDamageFailureName(damageFailure));
+
         const osg::Vec3f origin = world->getActorHeadTransform(mPtr).getTrans();
         std::vector<MWWorld::Ptr> targetActors;
         if (!vatsTarget.isEmpty())
@@ -2352,7 +2439,8 @@ namespace MWMechanics
         std::vector<ActorImpact> actorImpacts;
         unsigned int rayHits = 0;
         unsigned int actorRayHits = 0;
-        const float damagePerProjectile = contract->damagePerProjectile();
+        const float damagePerProjectile
+            = rangedDamage->mDamage / static_cast<float>(contract->mProjectileCount);
         for (const osg::Vec3f& rayDirection : rayDirections)
         {
             const osg::Vec3f destination = origin + rayDirection * contract->mProjectileRange;
@@ -2409,7 +2497,13 @@ namespace MWMechanics
                          << (contract->mConsumesWeapon ? "weapon" : "ammo")
                          << " consumableBefore=" << consumableBefore << " consumableAfter=" << consumableAfter
                          << " projectile=" << ESM::RefId::formIdRefId(contract->mProjectile)
-                         << " projectileRange=" << contract->mProjectileRange << " damage=" << contract->mDamage
+                         << " projectileRange=" << contract->mProjectileRange
+                         << " authoredDamage=" << rangedDamage->mAuthoredDamage << " skill=" << rangedDamage->mSkill
+                         << " skillMultiplier=" << rangedDamage->mSkillMultiplier
+                         << " weaponCondition=" << rangedDamage->mCondition
+                         << " conditionMultiplier=" << rangedDamage->mConditionMultiplier
+                         << " weaponDamageMultiplier=" << rangedDamage->mWeaponDamageMultiplier
+                         << " triggerDamage=" << rangedDamage->mDamage
                          << " projectileCount=" << static_cast<unsigned int>(contract->mProjectileCount)
                          << " damagePerProjectile=" << damagePerProjectile << " spread=" << contract->mSpread
                          << " authoredHitscan=" << contract->mAuthoredHitscan
@@ -2417,7 +2511,7 @@ namespace MWMechanics
                          << " actorRayHits=" << actorRayHits << " actorsHit=" << actorImpacts.size()
                          << " vatsTarget=" << (vatsTarget.isEmpty() ? std::string("none") : vatsTarget.toString())
                          << " vatsDamageMultiplier=" << vatsDamageMultiplier
-                         << " exact=1 status=pass";
+                         << " status=pass";
         return true;
     }
 

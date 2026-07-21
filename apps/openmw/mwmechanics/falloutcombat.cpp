@@ -222,6 +222,45 @@ namespace MWMechanics
             afterResistance, minimumDamage, healthDamage, reducedDamage <= minimumDamage };
     }
 
+    std::optional<FalloutRangedDamage> buildFalloutRangedDamage(float authoredDamage, float skill,
+        float normalizedCondition, const FalloutRangedDamageTuning& tuning, FalloutRangedDamageFailure& failure)
+    {
+        failure = FalloutRangedDamageFailure::None;
+        if (!std::isfinite(authoredDamage) || authoredDamage < 0.f)
+            failure = FalloutRangedDamageFailure::InvalidWeaponDamage;
+        else if (!std::isfinite(skill) || skill < 0.f)
+            failure = FalloutRangedDamageFailure::InvalidSkill;
+        else if (!std::isfinite(normalizedCondition) || normalizedCondition < 0.f || normalizedCondition > 1.f)
+            failure = FalloutRangedDamageFailure::InvalidCondition;
+        else if (!std::isfinite(tuning.mWeaponDamageMultiplier) || tuning.mWeaponDamageMultiplier < 0.f
+            || !std::isfinite(tuning.mSkillBase) || tuning.mSkillBase < 0.f
+            || !std::isfinite(tuning.mSkillMultiplier) || tuning.mSkillMultiplier < 0.f
+            || !std::isfinite(tuning.mConditionThreshold) || tuning.mConditionThreshold < 0.f
+            || tuning.mConditionThreshold > 1.f || !std::isfinite(tuning.mConditionPenaltyRate)
+            || tuning.mConditionPenaltyRate < 0.f)
+            failure = FalloutRangedDamageFailure::InvalidTuning;
+
+        if (failure != FalloutRangedDamageFailure::None)
+            return std::nullopt;
+
+        const float skillMultiplier = tuning.mSkillBase + tuning.mSkillMultiplier * (skill / 100.f);
+        const float conditionMultiplier = normalizedCondition >= tuning.mConditionThreshold
+            ? 1.f
+            : std::max(0.f,
+                1.f - (tuning.mConditionThreshold - normalizedCondition) * tuning.mConditionPenaltyRate);
+        const float damage
+            = authoredDamage * tuning.mWeaponDamageMultiplier * skillMultiplier * conditionMultiplier;
+        if (!std::isfinite(skillMultiplier) || skillMultiplier < 0.f || !std::isfinite(conditionMultiplier)
+            || !std::isfinite(damage) || damage < 0.f)
+        {
+            failure = FalloutRangedDamageFailure::InvalidDamage;
+            return std::nullopt;
+        }
+
+        return FalloutRangedDamage{ authoredDamage, skill, skillMultiplier, normalizedCondition,
+            conditionMultiplier, tuning.mWeaponDamageMultiplier, damage };
+    }
+
     std::optional<float> resolveFalloutArmorConditionMultiplier(
         float normalizedCondition, float penaltyRate) noexcept
     {
@@ -659,6 +698,26 @@ namespace MWMechanics
                 return "invalid-minimum-multiplier";
             case FalloutDamageMitigationFailure::InvalidResistanceCap:
                 return "invalid-resistance-cap";
+        }
+        return "unknown";
+    }
+
+    std::string_view getFalloutRangedDamageFailureName(FalloutRangedDamageFailure failure)
+    {
+        switch (failure)
+        {
+            case FalloutRangedDamageFailure::None:
+                return "none";
+            case FalloutRangedDamageFailure::InvalidWeaponDamage:
+                return "invalid-weapon-damage";
+            case FalloutRangedDamageFailure::InvalidSkill:
+                return "invalid-skill";
+            case FalloutRangedDamageFailure::InvalidCondition:
+                return "invalid-condition";
+            case FalloutRangedDamageFailure::InvalidTuning:
+                return "invalid-tuning";
+            case FalloutRangedDamageFailure::InvalidDamage:
+                return "invalid-damage";
         }
         return "unknown";
     }

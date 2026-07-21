@@ -83,6 +83,36 @@ namespace MWMechanics
         InvalidResistanceCap,
     };
 
+    enum class FalloutRangedDamageFailure
+    {
+        None,
+        InvalidWeaponDamage,
+        InvalidSkill,
+        InvalidCondition,
+        InvalidTuning,
+        InvalidDamage,
+    };
+
+    struct FalloutRangedDamageTuning
+    {
+        float mWeaponDamageMultiplier = 0.f;
+        float mSkillBase = 0.f;
+        float mSkillMultiplier = 0.f;
+        float mConditionThreshold = 0.f;
+        float mConditionPenaltyRate = 0.f;
+    };
+
+    struct FalloutRangedDamage
+    {
+        float mAuthoredDamage = 0.f;
+        float mSkill = 0.f;
+        float mSkillMultiplier = 0.f;
+        float mCondition = 0.f;
+        float mConditionMultiplier = 0.f;
+        float mWeaponDamageMultiplier = 0.f;
+        float mDamage = 0.f;
+    };
+
     struct FalloutDamageMitigation
     {
         float mIncomingDamage = 0.f;
@@ -304,6 +334,13 @@ namespace MWMechanics
         float damageResistance, float damageThreshold, float minimumDamageMultiplier,
         float maximumDamageResistance, FalloutDamageMitigationFailure& failure);
 
+    /// Build New Vegas damage for one ranged trigger before critical, perk, ammo-effect, difficulty, and target
+    /// mitigation stages. The skill coefficients come from the winning GMST records. The weapon multiplier,
+    /// condition threshold, and condition penalty rate are explicit inputs because retail keeps them in engine state
+    /// rather than WEAP data.
+    [[nodiscard]] std::optional<FalloutRangedDamage> buildFalloutRangedDamage(float authoredDamage, float skill,
+        float normalizedCondition, const FalloutRangedDamageTuning& tuning, FalloutRangedDamageFailure& failure);
+
     /// New Vegas scales an equipped armor piece's DT/DR only below 50 percent condition. The vanilla penalty rate
     /// is 1.0, producing a 0.5 multiplier at zero condition and full protection at 50 percent or above.
     [[nodiscard]] std::optional<float> resolveFalloutArmorConditionMultiplier(
@@ -363,6 +400,7 @@ namespace MWMechanics
     [[nodiscard]] std::string_view getFalloutFireCadenceFailureName(FalloutFireCadenceFailure failure);
     [[nodiscard]] std::string_view getFalloutAiCombatRangeFailureName(FalloutAiCombatRangeFailure failure);
     [[nodiscard]] std::string_view getFalloutDamageMitigationFailureName(FalloutDamageMitigationFailure failure);
+    [[nodiscard]] std::string_view getFalloutRangedDamageFailureName(FalloutRangedDamageFailure failure);
     [[nodiscard]] std::string_view getFalloutVatsWeaponFailureName(FalloutVatsWeaponFailure failure);
     [[nodiscard]] std::string_view getFalloutVatsQueueFailureName(FalloutVatsQueueFailure failure);
     [[nodiscard]] std::string_view getFalloutVatsBodyPartFailureName(FalloutVatsBodyPartFailure failure);

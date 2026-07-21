@@ -641,6 +641,54 @@ namespace
         EXPECT_FALSE(MWMechanics::resolveFalloutArmorConditionMultiplier(1.01f, 1.f));
     }
 
+    MWMechanics::FalloutRangedDamageTuning retailRangedDamageTuning()
+    {
+        // The first value is the New Vegas engine default; the next two are winning FalloutNV.esm GMST values. New
+        // Vegas keeps the final two values in engine state: damage degrades below 75% condition at a 0.67 rate.
+        return MWMechanics::FalloutRangedDamageTuning{ 1.f, 0.5f, 0.5f, 0.75f, 0.67f };
+    }
+
+    TEST(FalloutCombatTest, AppliesRetailSkillAndWeaponConditionToRangedDamage)
+    {
+        MWMechanics::FalloutRangedDamageFailure failure;
+        const auto fullCondition
+            = MWMechanics::buildFalloutRangedDamage(20.f, 50.f, 1.f, retailRangedDamageTuning(), failure);
+        ASSERT_TRUE(fullCondition);
+        EXPECT_EQ(failure, MWMechanics::FalloutRangedDamageFailure::None);
+        EXPECT_FLOAT_EQ(fullCondition->mSkillMultiplier, 0.75f);
+        EXPECT_FLOAT_EQ(fullCondition->mConditionMultiplier, 1.f);
+        EXPECT_FLOAT_EQ(fullCondition->mDamage, 15.f);
+
+        const auto threshold
+            = MWMechanics::buildFalloutRangedDamage(20.f, 50.f, 0.75f, retailRangedDamageTuning(), failure);
+        ASSERT_TRUE(threshold);
+        EXPECT_FLOAT_EQ(threshold->mConditionMultiplier, 1.f);
+        EXPECT_FLOAT_EQ(threshold->mDamage, 15.f);
+
+        const auto broken
+            = MWMechanics::buildFalloutRangedDamage(20.f, 50.f, 0.f, retailRangedDamageTuning(), failure);
+        ASSERT_TRUE(broken);
+        EXPECT_FLOAT_EQ(broken->mConditionMultiplier, 0.4975f);
+        EXPECT_FLOAT_EQ(broken->mDamage, 7.4625f);
+    }
+
+    TEST(FalloutCombatTest, RejectsMalformedRangedDamageInputsBeforeAShot)
+    {
+        MWMechanics::FalloutRangedDamageFailure failure;
+        EXPECT_FALSE(MWMechanics::buildFalloutRangedDamage(
+            20.f, -1.f, 1.f, retailRangedDamageTuning(), failure));
+        EXPECT_EQ(failure, MWMechanics::FalloutRangedDamageFailure::InvalidSkill);
+
+        EXPECT_FALSE(MWMechanics::buildFalloutRangedDamage(
+            20.f, 50.f, 1.01f, retailRangedDamageTuning(), failure));
+        EXPECT_EQ(failure, MWMechanics::FalloutRangedDamageFailure::InvalidCondition);
+
+        MWMechanics::FalloutRangedDamageTuning invalid = retailRangedDamageTuning();
+        invalid.mSkillMultiplier = std::numeric_limits<float>::quiet_NaN();
+        EXPECT_FALSE(MWMechanics::buildFalloutRangedDamage(20.f, 50.f, 1.f, invalid, failure));
+        EXPECT_EQ(failure, MWMechanics::FalloutRangedDamageFailure::InvalidTuning);
+    }
+
     TEST(FalloutCombatTest, BuildsUnitRayAtAuthoredSpreadConeBoundary)
     {
         const auto center = MWMechanics::buildFalloutRayDirection(
