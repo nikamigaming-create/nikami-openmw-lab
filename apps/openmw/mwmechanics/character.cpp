@@ -212,6 +212,97 @@ namespace
             *unarmedDamageMult, *meleeStrengthMult, *meleeStrengthOffset, *combatDistance, *unarmedReach };
     }
 
+    struct FalloutArmorProtection
+    {
+        float mDamageResistance = 0.f;
+        float mDamageThreshold = 0.f;
+    };
+
+    std::optional<float> getFalloutArmorItemCondition(const MWWorld::ConstPtr& item)
+    {
+        const int maximum = item.getClass().getItemMaxHealth(item);
+        if (maximum <= 0)
+            return 1.f;
+        const int current = item.getClass().getItemHealth(item);
+        if (current < 0 || current > maximum)
+            return std::nullopt;
+        return static_cast<float>(current) / static_cast<float>(maximum);
+    }
+
+    std::optional<FalloutArmorProtection> getFalloutArmorProtection(const MWWorld::Ptr& actor)
+    {
+        FalloutArmorProtection result;
+        const auto addArmor = [&](const ESM4::Armor* armor, float condition) -> bool {
+            if (armor == nullptr || !armor->mHasFalloutData)
+                return true;
+            // SetArmorConditionPenalty exposes this vanilla engine constant; 1.0 yields 50% protection at zero
+            // condition and full protection from 50% condition upward.
+            const std::optional<float> conditionMultiplier
+                = MWMechanics::resolveFalloutArmorConditionMultiplier(condition, 1.f);
+            if (!conditionMultiplier || !std::isfinite(armor->mFalloutData.damageThreshold))
+                return false;
+            const float damageResistance
+                = static_cast<float>(armor->mFalloutData.damageResistanceHundredths) / 100.f;
+            result.mDamageResistance += damageResistance * *conditionMultiplier;
+            result.mDamageThreshold += armor->mFalloutData.damageThreshold * *conditionMultiplier;
+            return std::isfinite(result.mDamageResistance) && std::isfinite(result.mDamageThreshold);
+        };
+
+        if (actor.getType() == ESM::REC_NPC_4)
+        {
+            const std::vector<const ESM4::Armor*>& equipped = MWClass::ESM4Npc::getEquippedArmor(actor);
+            for (const ESM4::Armor* armor : equipped)
+            {
+                float condition = 1.f;
+                const MWWorld::ContainerStore& inventory = actor.getClass().getContainerStore(actor);
+                const auto found = std::find_if(inventory.begin(), inventory.end(), [&](const MWWorld::ConstPtr& item) {
+                    return armor != nullptr && item.getType() == ESM4::Armor::sRecordId
+                        && item.getCellRef().getRefId() == ESM::RefId::formIdRefId(armor->mId);
+                });
+                if (found != inventory.end())
+                {
+                    const std::optional<float> itemCondition = getFalloutArmorItemCondition(*found);
+                    if (!itemCondition)
+                        return std::nullopt;
+                    condition = *itemCondition;
+                }
+                if (!addArmor(armor, condition))
+                    return std::nullopt;
+            }
+            return result;
+        }
+
+        if (actor != MWMechanics::getPlayer())
+            return result;
+
+        const MWWorld::InventoryStore& inventory = actor.getClass().getInventoryStore(actor);
+        std::vector<MWWorld::ConstPtr> counted;
+        for (int slot = 0; slot < MWWorld::InventoryStore::Slots; ++slot)
+        {
+            const MWWorld::ConstContainerStoreIterator equipped = inventory.getSlot(slot);
+            if (equipped == inventory.end() || equipped->getType() != ESM4::Armor::sRecordId
+                || std::find(counted.begin(), counted.end(), *equipped) != counted.end())
+                continue;
+            counted.push_back(*equipped);
+            const std::optional<float> condition = getFalloutArmorItemCondition(*equipped);
+            if (!condition || !addArmor(equipped->get<ESM4::Armor>()->mBase, *condition))
+                return std::nullopt;
+        }
+        return result;
+    }
+
+    std::optional<MWMechanics::FalloutDamageMitigation> resolveFalloutActorImpactDamage(
+        const MWWorld::Ptr& actor, float incomingDamage, MWMechanics::FalloutDamageMitigationFailure& failure)
+    {
+        const std::optional<FalloutArmorProtection> protection = getFalloutArmorProtection(actor);
+        const std::optional<float> minimumDamageMultiplier = getFalloutGameSetting("fMinDamMultiplier");
+        const std::optional<float> maximumDamageResistance = getFalloutGameSetting("fMaxArmorRating");
+        if (!protection || !minimumDamageMultiplier || !maximumDamageResistance)
+            return std::nullopt;
+        return MWMechanics::resolveFalloutDamageMitigation(incomingDamage, protection->mDamageResistance,
+            protection->mDamageThreshold, *minimumDamageMultiplier, *maximumDamageResistance, failure);
+    }
+
     bool usesFonvPowerArmorAnimationFamily(const MWWorld::Ptr& ptr)
     {
         if (ptr.getType() != ESM::REC_NPC_4)
@@ -2252,7 +2343,11 @@ namespace MWMechanics
         struct ActorImpact
         {
             MWWorld::Ptr mActor;
-            float mDamage = 0.f;
+            float mIncomingDamage = 0.f;
+            float mHealthDamage = 0.f;
+            float mDamageResistance = 0.f;
+            float mDamageThreshold = 0.f;
+            bool mThresholdLimited = false;
         };
         std::vector<ActorImpact> actorImpacts;
         unsigned int rayHits = 0;
@@ -2270,21 +2365,42 @@ namespace MWMechanics
                 continue;
             ++actorRayHits;
 
+            float incomingDamage = damagePerProjectile;
+            if (!vatsTarget.isEmpty() && result.mHitObject == vatsTarget)
+                incomingDamage *= vatsDamageMultiplier;
+            FalloutDamageMitigationFailure mitigationFailure = FalloutDamageMitigationFailure::None;
+            const std::optional<FalloutDamageMitigation> mitigation
+                = resolveFalloutActorImpactDamage(result.mHitObject, incomingDamage, mitigationFailure);
+            if (!mitigation)
+                return fail(getFalloutDamageMitigationFailureName(mitigationFailure));
+
             auto found = std::find_if(actorImpacts.begin(), actorImpacts.end(), [&](const ActorImpact& impact) {
                 return impact.mActor == result.mHitObject;
             });
             if (found == actorImpacts.end())
-                actorImpacts.push_back(ActorImpact{ result.mHitObject, damagePerProjectile });
+            {
+                actorImpacts.push_back(ActorImpact{ result.mHitObject, mitigation->mIncomingDamage,
+                    mitigation->mHealthDamage, mitigation->mDamageResistance, mitigation->mDamageThreshold,
+                    mitigation->mThresholdLimited });
+            }
             else
-                found->mDamage += damagePerProjectile;
+            {
+                found->mIncomingDamage += mitigation->mIncomingDamage;
+                found->mHealthDamage += mitigation->mHealthDamage;
+                found->mThresholdLimited = found->mThresholdLimited || mitigation->mThresholdLimited;
+            }
         }
 
         for (ActorImpact& impact : actorImpacts)
         {
-            if (!vatsTarget.isEmpty() && impact.mActor == vatsTarget)
-                impact.mDamage *= vatsDamageMultiplier;
-            impact.mActor.getClass().onHit(impact.mActor, { { "health", impact.mDamage } },
+            impact.mActor.getClass().onHit(impact.mActor, { { "health", impact.mHealthDamage } },
                 ESM::RefId::formIdRefId(mFalloutWeapon->mId), mPtr, true, DamageSourceType::Ranged);
+            Log(Debug::Info) << "FNV combat actor impact: target=" << impact.mActor.toString()
+                             << " incomingDamage=" << impact.mIncomingDamage
+                             << " damageResistance=" << impact.mDamageResistance
+                             << " damageThreshold=" << impact.mDamageThreshold
+                             << " healthDamage=" << impact.mHealthDamage
+                             << " thresholdLimited=" << impact.mThresholdLimited;
         }
 
         Log(Debug::Info) << "FNV combat shot: actor=" << mPtr.toString()
@@ -2406,12 +2522,21 @@ namespace MWMechanics
             MWPhysics::CollisionType_Default, MWPhysics::CollisionType_Projectile);
         const bool actorHit
             = result.mHit && !result.mHitObject.isEmpty() && result.mHitObject.getClass().isActor();
+        float healthDamage = 0.f;
+        FalloutDamageMitigation mitigation;
         if (actorHit)
         {
+            FalloutDamageMitigationFailure mitigationFailure = FalloutDamageMitigationFailure::None;
+            const std::optional<FalloutDamageMitigation> resolved
+                = resolveFalloutActorImpactDamage(result.mHitObject, contract->mDamage, mitigationFailure);
+            if (!resolved)
+                return fail(getFalloutDamageMitigationFailureName(mitigationFailure));
+            mitigation = *resolved;
+            healthDamage = mitigation.mHealthDamage;
             const ESM::RefId weapon = mFalloutWeapon != nullptr
                 ? ESM::RefId::formIdRefId(mFalloutWeapon->mId)
                 : ESM::RefId{};
-            result.mHitObject.getClass().onHit(result.mHitObject, { { "health", contract->mDamage } }, weapon, mPtr,
+            result.mHitObject.getClass().onHit(result.mHitObject, { { "health", healthDamage } }, weapon, mPtr,
                 true, DamageSourceType::Melee);
         }
 
@@ -2426,7 +2551,10 @@ namespace MWMechanics
                          << " strength=" << values->mStrength
                          << " creatureAuthoredDamage=" << values->mCreatureDamage.value_or(0.f)
                          << " reach=" << contract->mReach
-                         << " damage=" << contract->mDamage << " rayHit=" << result.mHit
+                         << " damage=" << contract->mDamage << " healthDamage=" << healthDamage
+                         << " damageResistance=" << mitigation.mDamageResistance
+                         << " damageThreshold=" << mitigation.mDamageThreshold
+                         << " thresholdLimited=" << mitigation.mThresholdLimited << " rayHit=" << result.mHit
                          << " actorHit=" << actorHit
                          << " target=" << (actorHit ? result.mHitObject.toString() : std::string("none"))
                          << " exact=1 status=pass";

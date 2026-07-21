@@ -587,6 +587,60 @@ namespace
         EXPECT_EQ(failure, MWMechanics::FalloutAiCombatRangeFailure::InvalidTuning);
     }
 
+    TEST(FalloutCombatTest, AppliesNewVegasResistanceThenThresholdAndMinimumDamage)
+    {
+        MWMechanics::FalloutDamageMitigationFailure failure;
+        const auto ordinary = MWMechanics::resolveFalloutDamageMitigation(80.f, 30.f, 20.f, 0.2f, 85.f, failure);
+        ASSERT_TRUE(ordinary);
+        EXPECT_EQ(failure, MWMechanics::FalloutDamageMitigationFailure::None);
+        EXPECT_FLOAT_EQ(ordinary->mDamageAfterResistance, 56.f);
+        EXPECT_FLOAT_EQ(ordinary->mHealthDamage, 36.f);
+        EXPECT_FALSE(ordinary->mThresholdLimited);
+
+        const auto capped = MWMechanics::resolveFalloutDamageMitigation(40.f, 100.f, 10.f, 0.2f, 85.f, failure);
+        ASSERT_TRUE(capped);
+        EXPECT_FLOAT_EQ(capped->mDamageResistance, 85.f);
+        EXPECT_FLOAT_EQ(capped->mDamageAfterResistance, 6.f);
+        EXPECT_FLOAT_EQ(capped->mMinimumDamage, 8.f);
+        EXPECT_FLOAT_EQ(capped->mHealthDamage, 8.f);
+        EXPECT_TRUE(capped->mThresholdLimited);
+    }
+
+    TEST(FalloutCombatTest, MitigatesEachShotgunPelletInsteadOfTheAggregatedTriggerDamage)
+    {
+        MWMechanics::FalloutDamageMitigationFailure failure;
+        float total = 0.f;
+        for (unsigned int pellet = 0; pellet < 7; ++pellet)
+        {
+            const auto impact
+                = MWMechanics::resolveFalloutDamageMitigation(10.f, 0.f, 8.f, 0.2f, 85.f, failure);
+            ASSERT_TRUE(impact);
+            total += impact->mHealthDamage;
+        }
+        EXPECT_FLOAT_EQ(total, 14.f);
+    }
+
+    TEST(FalloutCombatTest, PreservesNegativeResistanceButNeverTurnsNegativeThresholdIntoBonusDamage)
+    {
+        MWMechanics::FalloutDamageMitigationFailure failure;
+        const auto impact
+            = MWMechanics::resolveFalloutDamageMitigation(20.f, -25.f, -10.f, 0.2f, 85.f, failure);
+        ASSERT_TRUE(impact);
+        EXPECT_FLOAT_EQ(impact->mDamageResistance, -25.f);
+        EXPECT_FLOAT_EQ(impact->mDamageThreshold, 0.f);
+        EXPECT_FLOAT_EQ(impact->mHealthDamage, 25.f);
+    }
+
+    TEST(FalloutCombatTest, AppliesVanillaArmorConditionPenaltyOnlyBelowHalfCondition)
+    {
+        EXPECT_FLOAT_EQ(*MWMechanics::resolveFalloutArmorConditionMultiplier(1.f, 1.f), 1.f);
+        EXPECT_FLOAT_EQ(*MWMechanics::resolveFalloutArmorConditionMultiplier(0.5f, 1.f), 1.f);
+        EXPECT_FLOAT_EQ(*MWMechanics::resolveFalloutArmorConditionMultiplier(0.25f, 1.f), 0.75f);
+        EXPECT_FLOAT_EQ(*MWMechanics::resolveFalloutArmorConditionMultiplier(0.f, 1.f), 0.5f);
+        EXPECT_FALSE(MWMechanics::resolveFalloutArmorConditionMultiplier(-0.01f, 1.f));
+        EXPECT_FALSE(MWMechanics::resolveFalloutArmorConditionMultiplier(1.01f, 1.f));
+    }
+
     TEST(FalloutCombatTest, BuildsUnitRayAtAuthoredSpreadConeBoundary)
     {
         const auto center = MWMechanics::buildFalloutRayDirection(

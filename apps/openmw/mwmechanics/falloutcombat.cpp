@@ -185,6 +185,55 @@ namespace MWMechanics
         return std::nullopt;
     }
 
+    std::optional<FalloutDamageMitigation> resolveFalloutDamageMitigation(float incomingDamage,
+        float damageResistance, float damageThreshold, float minimumDamageMultiplier,
+        float maximumDamageResistance, FalloutDamageMitigationFailure& failure)
+    {
+        failure = FalloutDamageMitigationFailure::None;
+        if (!std::isfinite(incomingDamage) || incomingDamage < 0.f)
+            failure = FalloutDamageMitigationFailure::InvalidDamage;
+        else if (!std::isfinite(damageResistance))
+            failure = FalloutDamageMitigationFailure::InvalidResistance;
+        else if (!std::isfinite(damageThreshold))
+            failure = FalloutDamageMitigationFailure::InvalidThreshold;
+        else if (!std::isfinite(minimumDamageMultiplier) || minimumDamageMultiplier < 0.f
+            || minimumDamageMultiplier > 1.f)
+            failure = FalloutDamageMitigationFailure::InvalidMinimumMultiplier;
+        else if (!std::isfinite(maximumDamageResistance) || maximumDamageResistance < 0.f
+            || maximumDamageResistance > 100.f)
+            failure = FalloutDamageMitigationFailure::InvalidResistanceCap;
+
+        if (failure != FalloutDamageMitigationFailure::None)
+            return std::nullopt;
+
+        const float effectiveResistance = std::min(damageResistance, maximumDamageResistance);
+        const float effectiveThreshold = std::max(0.f, damageThreshold);
+        const float afterResistance = incomingDamage * (1.f - effectiveResistance / 100.f);
+        const float minimumDamage = incomingDamage * minimumDamageMultiplier;
+        const float reducedDamage = afterResistance - effectiveThreshold;
+        const float healthDamage = std::max(reducedDamage, minimumDamage);
+        if (!std::isfinite(afterResistance) || !std::isfinite(minimumDamage) || !std::isfinite(healthDamage))
+        {
+            failure = FalloutDamageMitigationFailure::InvalidDamage;
+            return std::nullopt;
+        }
+
+        return FalloutDamageMitigation{ incomingDamage, effectiveResistance, effectiveThreshold,
+            afterResistance, minimumDamage, healthDamage, reducedDamage <= minimumDamage };
+    }
+
+    std::optional<float> resolveFalloutArmorConditionMultiplier(
+        float normalizedCondition, float penaltyRate) noexcept
+    {
+        if (!std::isfinite(normalizedCondition) || normalizedCondition < 0.f || normalizedCondition > 1.f
+            || !std::isfinite(penaltyRate) || penaltyRate < 0.f)
+            return std::nullopt;
+        if (normalizedCondition >= 0.5f)
+            return 1.f;
+        const float multiplier = 1.f - (0.5f - normalizedCondition) * penaltyRate;
+        return std::isfinite(multiplier) ? std::optional<float>(std::max(0.f, multiplier)) : std::nullopt;
+    }
+
     std::optional<FalloutVatsWeaponContract> buildFalloutVatsWeaponContract(
         const ESM4::Weapon& weapon, FalloutVatsWeaponFailure& failure)
     {
@@ -590,6 +639,26 @@ namespace MWMechanics
                 return "invalid-weapon-range";
             case FalloutAiCombatRangeFailure::InvalidWeaponReach:
                 return "invalid-weapon-reach";
+        }
+        return "unknown";
+    }
+
+    std::string_view getFalloutDamageMitigationFailureName(FalloutDamageMitigationFailure failure)
+    {
+        switch (failure)
+        {
+            case FalloutDamageMitigationFailure::None:
+                return "none";
+            case FalloutDamageMitigationFailure::InvalidDamage:
+                return "invalid-damage";
+            case FalloutDamageMitigationFailure::InvalidResistance:
+                return "invalid-resistance";
+            case FalloutDamageMitigationFailure::InvalidThreshold:
+                return "invalid-threshold";
+            case FalloutDamageMitigationFailure::InvalidMinimumMultiplier:
+                return "invalid-minimum-multiplier";
+            case FalloutDamageMitigationFailure::InvalidResistanceCap:
+                return "invalid-resistance-cap";
         }
         return "unknown";
     }

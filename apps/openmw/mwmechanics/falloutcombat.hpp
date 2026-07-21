@@ -73,6 +73,27 @@ namespace MWMechanics
         bool mRanged = false;
     };
 
+    enum class FalloutDamageMitigationFailure
+    {
+        None,
+        InvalidDamage,
+        InvalidResistance,
+        InvalidThreshold,
+        InvalidMinimumMultiplier,
+        InvalidResistanceCap,
+    };
+
+    struct FalloutDamageMitigation
+    {
+        float mIncomingDamage = 0.f;
+        float mDamageResistance = 0.f;
+        float mDamageThreshold = 0.f;
+        float mDamageAfterResistance = 0.f;
+        float mMinimumDamage = 0.f;
+        float mHealthDamage = 0.f;
+        bool mThresholdLimited = false;
+    };
+
     enum class FalloutVatsWeaponFailure
     {
         None,
@@ -276,6 +297,18 @@ namespace MWMechanics
     [[nodiscard]] std::optional<FalloutAiCombatRange> buildFalloutAiCombatRange(const ESM4::Weapon* weapon,
         float combatDistance, float unarmedReach, FalloutAiCombatRangeFailure& failure);
 
+    /// Apply New Vegas damage mitigation to one impact. Damage resistance is a percentage and is applied before
+    /// damage threshold; the combined reduction cannot pass below incomingDamage * minimumDamageMultiplier.
+    /// Negative DT is ignored, matching the actor-value contract, while negative DR remains a vulnerability.
+    [[nodiscard]] std::optional<FalloutDamageMitigation> resolveFalloutDamageMitigation(float incomingDamage,
+        float damageResistance, float damageThreshold, float minimumDamageMultiplier,
+        float maximumDamageResistance, FalloutDamageMitigationFailure& failure);
+
+    /// New Vegas scales an equipped armor piece's DT/DR only below 50 percent condition. The vanilla penalty rate
+    /// is 1.0, producing a 0.5 multiplier at zero condition and full protection at 50 percent or above.
+    [[nodiscard]] std::optional<float> resolveFalloutArmorConditionMultiplier(
+        float normalizedCondition, float penaltyRate) noexcept;
+
     /// Preserve the weapon-authored VATS inputs without supplying an inferred fallback. DNAM flag 3 makes the
     /// serialized AP override authoritative; weapons that require retail GMST/perk calculation remain uncovered.
     [[nodiscard]] std::optional<FalloutVatsWeaponContract> buildFalloutVatsWeaponContract(
@@ -329,6 +362,7 @@ namespace MWMechanics
     [[nodiscard]] std::string_view getFalloutShotFailureName(FalloutShotFailure failure);
     [[nodiscard]] std::string_view getFalloutFireCadenceFailureName(FalloutFireCadenceFailure failure);
     [[nodiscard]] std::string_view getFalloutAiCombatRangeFailureName(FalloutAiCombatRangeFailure failure);
+    [[nodiscard]] std::string_view getFalloutDamageMitigationFailureName(FalloutDamageMitigationFailure failure);
     [[nodiscard]] std::string_view getFalloutVatsWeaponFailureName(FalloutVatsWeaponFailure failure);
     [[nodiscard]] std::string_view getFalloutVatsQueueFailureName(FalloutVatsQueueFailure failure);
     [[nodiscard]] std::string_view getFalloutVatsBodyPartFailureName(FalloutVatsBodyPartFailure failure);
