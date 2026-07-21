@@ -232,6 +232,41 @@ namespace
         EXPECT_NEAR(result.mTint[3], 0.392156869f, 1e-6f);
     }
 
+    TEST(Esm4ImageSpaceTest, shouldComposeRetailFragExplosionModifierOverAuthoredDuration)
+    {
+        ESM4::ImageSpace base;
+        base.mTraits[ESM4::ImageSpace::Trait_CinematicSaturation] = 1.f;
+        base.mTraits[ESM4::ImageSpace::Trait_CinematicContrastAverageLuminance] = 0.2f;
+        base.mTraits[ESM4::ImageSpace::Trait_CinematicContrast] = 1.1f;
+        base.mTraits[ESM4::ImageSpace::Trait_CinematicBrightness] = 1.f;
+
+        ESM4::ImageSpaceModifier frag;
+        frag.mDuration = 1.5f;
+        frag.mBlurRadius = { { 0.f, 0.f }, { 0.04f, 1.f }, { 0.74f, 0.f }, { 1.f, 0.f } };
+        frag.mMultiply[ESM4::ImageSpaceModifier::Channel_CinematicContrast]
+            = { { 0.f, 1.f }, { 0.04f, 2.f }, { 0.74f, 1.f }, { 1.f, 1.f } };
+        frag.mMultiply[ESM4::ImageSpaceModifier::Channel_CinematicContrastAverageLuminance]
+            = { { 0.f, 1.f }, { 0.04f, 0.7f }, { 0.74f, 1.f }, { 1.f, 1.f } };
+        frag.mMultiply[ESM4::ImageSpaceModifier::Channel_CinematicBrightness]
+            = { { 0.f, 1.f }, { 0.04f, 2.f }, { 0.74f, 1.f }, { 1.f, 1.f } };
+
+        const float peakTime = ESM4::normalizeImageSpaceModifierTime(0.06f, frag.mDuration);
+        EXPECT_NEAR(peakTime, 0.04f, 1e-6f);
+        const ESM4::ComposedImageSpace peak = ESM4::composeImageSpace(base, { { &frag, peakTime, 1.f } });
+        EXPECT_FLOAT_EQ(peak.mBlurRadius, 1.f);
+        EXPECT_FLOAT_EQ(peak.mTraits[ESM4::ImageSpace::Trait_CinematicContrast], 2.2f);
+        EXPECT_FLOAT_EQ(
+            peak.mTraits[ESM4::ImageSpace::Trait_CinematicContrastAverageLuminance], 0.14f);
+        EXPECT_FLOAT_EQ(peak.mTraits[ESM4::ImageSpace::Trait_CinematicBrightness], 2.f);
+
+        const float endTime = ESM4::normalizeImageSpaceModifierTime(frag.mDuration, frag.mDuration);
+        const ESM4::ComposedImageSpace end = ESM4::composeImageSpace(base, { { &frag, endTime, 1.f } });
+        EXPECT_FLOAT_EQ(end.mBlurRadius, 0.f);
+        EXPECT_FLOAT_EQ(end.mTraits[ESM4::ImageSpace::Trait_CinematicContrast], 1.1f);
+        EXPECT_FLOAT_EQ(end.mTraits[ESM4::ImageSpace::Trait_CinematicContrastAverageLuminance], 0.2f);
+        EXPECT_FLOAT_EQ(end.mTraits[ESM4::ImageSpace::Trait_CinematicBrightness], 1.f);
+    }
+
     TEST(Esm4ImageSpaceTest, shouldNotRenormalizeOpenMwLdrSceneByRetailTargetLuminance)
     {
         const std::filesystem::path shaderPath = std::filesystem::path{ OPENMW_PROJECT_SOURCE_DIR } / "files" / "data"

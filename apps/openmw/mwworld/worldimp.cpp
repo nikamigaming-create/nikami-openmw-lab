@@ -3991,6 +3991,12 @@ namespace MWWorld
             : 0;
     }
 
+    bool World::playFalloutImageSpaceModifier(ESM::FormId modifier, float strength)
+    {
+        return mWeatherManager != nullptr
+            && mWeatherManager->playFalloutImageSpaceModifier(modifier, strength);
+    }
+
     void World::launchMagicBolt(
         const ESM::RefId& spellId, const MWWorld::Ptr& caster, const osg::Vec3f& fallbackDirection, ESM::RefNum item)
     {

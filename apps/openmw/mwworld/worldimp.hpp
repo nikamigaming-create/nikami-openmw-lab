@@ -605,6 +605,7 @@ namespace MWWorld
             const osg::Vec3f& worldPos, const osg::Vec3f& direction,
             const MWMechanics::FalloutProjectileImpactContract& impact) override;
         unsigned int detonateFalloutPlacedExplosives(const MWWorld::Ptr& actor) override;
+        bool playFalloutImageSpaceModifier(ESM::FormId modifier, float strength) override;
         void updateProjectilesCasters() override;
 
         void applyLoopingParticles(const MWWorld::Ptr& ptr) const override;

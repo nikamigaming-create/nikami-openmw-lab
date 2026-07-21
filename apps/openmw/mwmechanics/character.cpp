@@ -3243,7 +3243,8 @@ namespace MWMechanics
             return fail("unresolved-explosion-record");
         if (!std::isfinite(explosion->mData.damage) || explosion->mData.damage < 0.f
             || !std::isfinite(explosion->mData.radius) || explosion->mData.radius <= 0.f
-            || !std::isfinite(explosion->mData.force) || explosion->mData.force < 0.f)
+            || !std::isfinite(explosion->mData.force) || explosion->mData.force < 0.f
+            || !std::isfinite(explosion->mData.imageSpaceRadius) || explosion->mData.imageSpaceRadius < 0.f)
             return fail("invalid-explosion-data");
         if (!explosion->mData.light.isZeroOrUnset()
             && store->get<ESM4::Light>().search(explosion->mData.light) == nullptr)
@@ -3272,6 +3273,16 @@ namespace MWMechanics
                 sound->playSound3D(position, ESM::RefId::formIdRefId(explosion->mData.sound1), 1.f, 1.f);
             if (!explosion->mData.sound2.isZeroOrUnset())
                 sound->playSound3D(position, ESM::RefId::formIdRefId(explosion->mData.sound2), 1.f, 1.f);
+        }
+
+        float playerImageSpaceDistance = -1.f;
+        bool imageSpaceStarted = false;
+        if (!explosion->mImageSpaceModifier.isZeroOrUnset() && explosion->mData.imageSpaceRadius > 0.f)
+        {
+            const MWWorld::ConstPtr player = MWMechanics::getPlayer();
+            playerImageSpaceDistance = (world->getActorHeadTransform(player).getTrans() - position).length();
+            if (playerImageSpaceDistance <= explosion->mData.imageSpaceRadius)
+                imageSpaceStarted = world->playFalloutImageSpaceModifier(explosion->mImageSpaceModifier, 1.f);
         }
 
         std::vector<MWWorld::Ptr> actors;
@@ -3416,6 +3427,10 @@ namespace MWMechanics
                          << " radius=" << explosion->mData.radius
                          << " force=" << explosion->mData.force
                          << " light=" << ESM::RefId::formIdRefId(explosion->mData.light)
+                         << " imageSpaceModifier=" << ESM::RefId::formIdRefId(explosion->mImageSpaceModifier)
+                         << " imageSpaceRadius=" << explosion->mData.imageSpaceRadius
+                         << " playerImageSpaceDistance=" << playerImageSpaceDistance
+                         << " imageSpaceStarted=" << imageSpaceStarted
                          << " flags=" << explosion->mData.flags
                          << " actorsInRadius=" << actors.size()
                          << " blockedByLineOfSight=" << blockedByLineOfSight

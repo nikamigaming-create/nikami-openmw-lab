@@ -7,6 +7,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <vector>
 
 #include <osg/Vec4f>
 #include <osg/Vec3f>
@@ -405,6 +406,9 @@ namespace MWWorld
 
         bool readRecord(ESM::ESMReader& reader, uint32_t type);
 
+        /// Start an authored Fallout IMAD instance. Each call owns an independent timer.
+        bool playFalloutImageSpaceModifier(ESM::FormId modifier, float strength);
+
         void clear();
 
     private:
@@ -433,6 +437,13 @@ namespace MWWorld
         std::size_t mFalloutWeatherStart;
         bool mFalloutWeatherInitialized;
         ESM::RefId mFalloutWeatherSource;
+        struct FalloutImageSpaceModifierInstance
+        {
+            ESM::FormId mModifier;
+            float mElapsed = 0.f;
+            float mStrength = 1.f;
+        };
+        std::vector<FalloutImageSpaceModifierInstance> mFalloutImageSpaceModifierInstances;
         MoonModel mMasser;
         MoonModel mSecunda;
 

@@ -889,6 +889,7 @@ namespace MWWorld
         , mFalloutWeatherStart(0)
         , mFalloutWeatherInitialized(false)
         , mFalloutWeatherSource()
+        , mFalloutImageSpaceModifierInstances()
         , mMasser("Masser")
         , mSecunda("Secunda")
         , mWindSpeed(0.f)
@@ -1126,6 +1127,18 @@ namespace MWWorld
     void WeatherManager::update(float duration, bool paused, const TimeStamp& time, bool isExterior)
     {
         MWWorld::ConstPtr player = MWMechanics::getPlayer();
+
+        if (!paused && std::isfinite(duration) && duration > 0.f)
+        {
+            for (FalloutImageSpaceModifierInstance& instance : mFalloutImageSpaceModifierInstances)
+                instance.mElapsed += duration;
+        }
+        std::erase_if(mFalloutImageSpaceModifierInstances, [&](const FalloutImageSpaceModifierInstance& instance) {
+            const ESM4::ImageSpaceModifier* modifier
+                = mStore.get<ESM4::ImageSpaceModifier>().search(ESM::RefId(instance.mModifier));
+            return modifier == nullptr || !std::isfinite(modifier->mDuration) || modifier->mDuration <= 0.f
+                || !std::isfinite(instance.mElapsed) || instance.mElapsed > modifier->mDuration;
+        });
 
         // FO3/FNV do not use OpenMW's synthetic Morrowind "Clear" slot. Exterior CELL
         // XCLR regions provide the primary authored weather list (REGN RDAT/RDWT);
@@ -1373,6 +1386,17 @@ namespace MWWorld
                 addWeatherModifiers(mWeatherSettings[mCurrentWeather], currentWeatherStrength);
                 if (inTransition())
                     addWeatherModifiers(mWeatherSettings[mNextWeather], 1.f - mTransitionFactor);
+            }
+
+            for (const FalloutImageSpaceModifierInstance& instance : mFalloutImageSpaceModifierInstances)
+            {
+                if (const ESM4::ImageSpaceModifier* modifier
+                    = mStore.get<ESM4::ImageSpaceModifier>().search(ESM::RefId(instance.mModifier)))
+                {
+                    modifiers.push_back({ modifier,
+                        ESM4::normalizeImageSpaceModifierTime(instance.mElapsed, modifier->mDuration),
+                        instance.mStrength });
+                }
             }
 
             const ESM4::ComposedImageSpace composed = ESM4::composeImageSpace(*base, modifiers);
@@ -1802,9 +1826,25 @@ namespace MWWorld
         mTimePassed = 0.0f;
         mWeatherUpdateTime = 0.0f;
         mFalloutWeatherSource = ESM::RefId();
+        mFalloutImageSpaceModifierInstances.clear();
         forceWeather(0);
         mRegions.clear();
         importRegions();
+    }
+
+    bool WeatherManager::playFalloutImageSpaceModifier(ESM::FormId modifierId, float strength)
+    {
+        if (!usesFallout3Weather(mStore.getESM4Game()) || modifierId.isZeroOrUnset()
+            || !std::isfinite(strength) || strength <= 0.f)
+            return false;
+
+        const ESM4::ImageSpaceModifier* modifier
+            = mStore.get<ESM4::ImageSpaceModifier>().search(ESM::RefId(modifierId));
+        if (modifier == nullptr || !std::isfinite(modifier->mDuration) || modifier->mDuration <= 0.f)
+            return false;
+
+        mFalloutImageSpaceModifierInstances.push_back({ modifierId, 0.f, strength });
+        return true;
     }
 
     inline void WeatherManager::addWeather(
