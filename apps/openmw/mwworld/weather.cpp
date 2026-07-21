@@ -1420,7 +1420,8 @@ namespace MWWorld
                     composed.mTraits[ESM4::ImageSpace::Trait_CinematicContrast],
                     composed.mTraits[ESM4::ImageSpace::Trait_CinematicBrightness]),
                 osg::Vec4f(composed.mTint[0], composed.mTint[1], composed.mTint[2], composed.mTint[3]),
-                osg::Vec4f(composed.mFade[0], composed.mFade[1], composed.mFade[2], composed.mFade[3]));
+                osg::Vec4f(composed.mFade[0], composed.mFade[1], composed.mFade[2], composed.mFade[3]),
+                composed.mBlurRadius);
 
             if (std::getenv("OPENMW_FNV_PROOF_IMAGE_SPACE_ID") != nullptr)
             {

@@ -288,7 +288,7 @@ namespace MWRender
     }
 
     void PostProcessor::setFalloutImageSpace(const osg::Vec4f& hdr, const osg::Vec4f& cinematic,
-        const osg::Vec4f& tint, const osg::Vec4f& fade)
+        const osg::Vec4f& tint, const osg::Vec4f& fade, float blurRadius)
     {
         if (!mFalloutImageSpaceTechnique)
         {
@@ -320,6 +320,7 @@ namespace MWRender
         setUniform(mFalloutImageSpaceTechnique, "uFalloutCinematic", cinematic);
         setUniform(mFalloutImageSpaceTechnique, "uFalloutTint", tint);
         setUniform(mFalloutImageSpaceTechnique, "uFalloutFade", fade);
+        setUniform(mFalloutImageSpaceTechnique, "uFalloutBlurRadius", std::max(0.f, blurRadius));
     }
 
     void PostProcessor::clearFalloutImageSpace()
@@ -332,7 +333,7 @@ namespace MWRender
         // disabled, otherwise re-enabling it can resurrect the last exterior
         // grade. The generic setUniform helper intentionally ignores updates
         // while disabled, so write these identity values directly.
-        const auto setIdentityUniform = [&](const std::string& name, const osg::Vec4f& value) {
+        const auto setIdentityUniform = [&](const std::string& name, const auto& value) {
             const auto it = mFalloutImageSpaceTechnique->findUniform(name);
             if (it != mFalloutImageSpaceTechnique->getUniformMap().end() && !(*it)->mStatic)
                 (*it)->setValue(value);
@@ -342,6 +343,7 @@ namespace MWRender
         setIdentityUniform("uFalloutCinematic", osg::Vec4f(1.f, 0.f, 1.f, 1.f));
         setIdentityUniform("uFalloutTint", osg::Vec4f(1.f, 1.f, 1.f, 0.f));
         setIdentityUniform("uFalloutFade", osg::Vec4f(0.f, 0.f, 0.f, 0.f));
+        setIdentityUniform("uFalloutBlurRadius", 0.f);
     }
 
     void PostProcessor::traverse(osg::NodeVisitor& nv)

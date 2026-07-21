@@ -284,6 +284,26 @@ namespace
         EXPECT_NE(shader.find("* (uFalloutHdr.x / hdrDenominator)"), std::string::npos);
     }
 
+    TEST(Esm4ImageSpaceTest, shouldUseRetailFNVImageSpaceBlurSurfaceAndKernel)
+    {
+        const std::filesystem::path shaderPath = std::filesystem::path{ OPENMW_PROJECT_SOURCE_DIR } / "files" / "data"
+            / "shaders" / "internal_fallout_imagespace.omwfx";
+        std::ifstream stream(shaderPath);
+        ASSERT_TRUE(stream) << shaderPath;
+        const std::string shader{ std::istreambuf_iterator<char>{ stream }, std::istreambuf_iterator<char>{} };
+
+        EXPECT_NE(shader.find("uniform_float uFalloutBlurRadius"), std::string::npos);
+        EXPECT_NE(shader.find("width = 256;"), std::string::npos);
+        EXPECT_NE(shader.find("height = 256;"), std::string::npos);
+        EXPECT_NE(shader.find("uFalloutBlurRadius / (9.0 * 256.0)"), std::string::npos);
+        EXPECT_NE(shader.find("* 0.025"), std::string::npos);
+        EXPECT_NE(shader.find("* 0.05"), std::string::npos);
+        EXPECT_NE(shader.find("* 0.075"), std::string::npos);
+        EXPECT_NE(shader.find("* 0.15"), std::string::npos);
+        EXPECT_NE(shader.find("* 0.3"), std::string::npos);
+        EXPECT_NE(shader.find("if (uFalloutBlurRadius > 0.0)"), std::string::npos);
+    }
+
     TEST(Esm4ImageSpaceTest, shouldPreferAuthoredInteriorCellImageSpace)
     {
         ESM4::World world;
@@ -338,6 +358,7 @@ namespace
             std::string_view::npos);
         EXPECT_NE(clearBody.find("setIdentityUniform(\"uFalloutFade\", osg::Vec4f(0.f, 0.f, 0.f, 0.f))"),
             std::string_view::npos);
+        EXPECT_NE(clearBody.find("setIdentityUniform(\"uFalloutBlurRadius\", 0.f)"), std::string_view::npos);
 
         const std::filesystem::path weatherPath = std::filesystem::path{ OPENMW_PROJECT_SOURCE_DIR } / "apps"
             / "openmw" / "mwworld" / "weather.cpp";
