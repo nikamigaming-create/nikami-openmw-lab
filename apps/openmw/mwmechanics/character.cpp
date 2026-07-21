@@ -246,6 +246,26 @@ namespace
         return nearest;
     }
 
+    std::optional<float> getFalloutMeleeLimbDamageMultiplier(const ESM4::Weapon* weapon)
+    {
+        if (weapon != nullptr)
+            return std::isfinite(weapon->mData.limbDamageMult) && weapon->mData.limbDamageMult >= 0.f
+                ? std::optional<float>(weapon->mData.limbDamageMult)
+                : std::nullopt;
+
+        const MWWorld::ESMStore* store = MWBase::Environment::get().getESMStore();
+        if (store == nullptr)
+            return std::nullopt;
+        const auto& weapons = store->get<ESM4::Weapon>();
+        const auto fists = std::find_if(weapons.begin(), weapons.end(), [](const ESM4::Weapon& candidate) {
+            return Misc::StringUtils::ciEqual(candidate.mEditorId, "Fists");
+        });
+        if (fists == weapons.end() || !std::isfinite(fists->mData.limbDamageMult)
+            || fists->mData.limbDamageMult < 0.f)
+            return std::nullopt;
+        return fists->mData.limbDamageMult;
+    }
+
     std::optional<MWMechanics::FalloutMeleeTuning> getFalloutMeleeTuning()
     {
         const std::optional<float> damageSkillBase = getFalloutGameSetting("fDamageSkillBase");
@@ -2963,6 +2983,11 @@ namespace MWMechanics
                 mFalloutWeapon, animationType, values->mSkill, values->mStrength, *tuning, contractFailure);
         if (!contract)
             return fail(getFalloutMeleeFailureName(contractFailure));
+        const std::optional<float> limbDamageMultiplier = getFalloutMeleeLimbDamageMultiplier(mFalloutWeapon);
+        const std::optional<float> playerLimbDamageMultiplier
+            = getFalloutGameSetting("fCombatPlayerLimbDamageMult");
+        if (!limbDamageMultiplier || !playerLimbDamageMultiplier || *playerLimbDamageMultiplier < 0.f)
+            return fail("missing-limb-damage-tuning");
 
         const osg::Vec3f origin = world->getActorHeadTransform(mPtr).getTrans();
         std::vector<MWWorld::Ptr> targetActors;
@@ -2994,13 +3019,26 @@ namespace MWMechanics
             = result.mHit && !result.mHitObject.isEmpty() && result.mHitObject.getClass().isActor();
         float healthDamage = 0.f;
         FalloutDamageMitigation mitigation;
+        std::optional<FalloutBodyPartContract> bodyPart;
+        std::optional<FalloutLimbImpact> limbImpact;
         if (actorHit)
         {
+            const std::array<MWWorld::Ptr, 1> renderingRayIgnore{ mPtr };
+            MWPhysics::RayCastingResult renderedHit;
+            std::span<const std::string> renderedNodePath;
+            if (world->castRenderingRay(renderedHit, origin, destination, false, false, renderingRayIgnore)
+                && renderedHit.mHitObject == result.mHitObject)
+                renderedNodePath = renderedHit.mHitNodePath;
+            bodyPart = resolveFalloutRayBodyPart(result.mHitObject, result.mHitPos, renderedNodePath);
+
+            float incomingDamage = contract->mDamage;
+            if (bodyPart)
+                incomingDamage *= bodyPart->mHealthDamageMultiplier;
             FalloutDamageMitigationFailure mitigationFailure = FalloutDamageMitigationFailure::None;
             FalloutAmmoEffectFailure ammoEffectFailure = FalloutAmmoEffectFailure::None;
             const std::optional<FalloutDamageMitigation> resolved
                 = resolveFalloutActorImpactDamage(
-                    result.mHitObject, contract->mDamage, {}, mitigationFailure, ammoEffectFailure);
+                    result.mHitObject, incomingDamage, {}, mitigationFailure, ammoEffectFailure);
             if (!resolved)
                 return fail(ammoEffectFailure == FalloutAmmoEffectFailure::None
                         ? getFalloutDamageMitigationFailureName(mitigationFailure)
@@ -3010,8 +3048,25 @@ namespace MWMechanics
             const ESM::RefId weapon = mFalloutWeapon != nullptr
                 ? ESM::RefId::formIdRefId(mFalloutWeapon->mId)
                 : ESM::RefId{};
+            CreatureStats& targetStats = result.mHitObject.getClass().getCreatureStats(result.mHitObject);
+            if (bodyPart && bodyPart->mHealthPercent != 0)
+            {
+                limbImpact = resolveFalloutLimbImpact(targetStats.getHealth().getModified(),
+                    bodyPart->mHealthPercent, targetStats.getFalloutLimbDamage(bodyPart->mActorValue),
+                    contract->mDamage, *limbDamageMultiplier,
+                    result.mHitObject == getPlayer() ? *playerLimbDamageMultiplier : 1.f);
+                if (!limbImpact)
+                    return fail("invalid-limb-impact");
+            }
             result.mHitObject.getClass().onHit(result.mHitObject, { { "health", healthDamage } }, weapon, mPtr,
                 true, DamageSourceType::Melee);
+            if (limbImpact)
+            {
+                if (!targetStats.setFalloutLimbDamage(bodyPart->mActorValue, limbImpact->mDamageTakenAfter))
+                    return fail("limb-damage-transaction-failed");
+                if (limbImpact->mNewlyCrippled && !targetStats.isDead())
+                    targetStats.setHitRecovery(true);
+            }
         }
 
         Log(Debug::Info) << "FNV combat melee: actor=" << mPtr.toString()
@@ -3026,6 +3081,14 @@ namespace MWMechanics
                          << " creatureAuthoredDamage=" << values->mCreatureDamage.value_or(0.f)
                          << " reach=" << contract->mReach
                          << " damage=" << contract->mDamage << " healthDamage=" << healthDamage
+                         << " bodyPart=" << (bodyPart ? std::string(bodyPart->mName) : std::string("unresolved"))
+                         << " bodyPartHealthMultiplier="
+                         << (bodyPart ? bodyPart->mHealthDamageMultiplier : 1.f)
+                         << " limbDamageMultiplier=" << *limbDamageMultiplier
+                         << " limbDamage=" << (limbImpact ? limbImpact->mDamageApplied : 0.f)
+                         << " limbConditionBefore=" << (limbImpact ? limbImpact->mConditionBefore : 0.f)
+                         << " limbConditionAfter=" << (limbImpact ? limbImpact->mConditionAfter : 0.f)
+                         << " newlyCrippled=" << (limbImpact && limbImpact->mNewlyCrippled)
                          << " damageResistance=" << mitigation.mDamageResistance
                          << " damageThreshold=" << mitigation.mDamageThreshold
                          << " thresholdLimited=" << mitigation.mThresholdLimited << " rayHit=" << result.mHit
