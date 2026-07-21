@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <limits>
+#include <utility>
 
 namespace ESM
 {
@@ -169,6 +170,23 @@ namespace ESM
         }
         mFalloutLimbDamage.fill(0.f);
         esm.getHNOT(mFalloutLimbDamage, "FLMB");
+        mFalloutActiveEffects.clear();
+        while (esm.isNextSub("FAEF"))
+        {
+            FalloutActiveEffect effect;
+            std::uint32_t kind = 0;
+            esm.getHT(kind);
+            effect.mKind = static_cast<FalloutActiveEffectKind>(kind);
+            effect.mSpell = esm.getHNRefId("FASP");
+            effect.mBaseEffect = esm.getHNRefId("FABE");
+            esm.getHNT(effect.mFlags, "FAFL");
+            esm.getHNT(effect.mActorValue, "FAAV");
+            esm.getHNT(effect.mMagnitude, "FAMG");
+            esm.getHNT(effect.mDuration, "FADR");
+            esm.getHNT(effect.mTimeLeft, "FATL");
+            esm.getHNT(effect.mCasterActorId, "FACA");
+            mFalloutActiveEffects.push_back(std::move(effect));
+        }
     }
 
     void CreatureStats::save(ESMWriter& esm) const
@@ -269,6 +287,18 @@ namespace ESM
             esm.writeHNT("NOAC", mMissingACDT);
         if (std::any_of(mFalloutLimbDamage.begin(), mFalloutLimbDamage.end(), [](float value) { return value != 0.f; }))
             esm.writeHNT("FLMB", mFalloutLimbDamage);
+        for (const FalloutActiveEffect& effect : mFalloutActiveEffects)
+        {
+            esm.writeHNT("FAEF", static_cast<std::uint32_t>(effect.mKind));
+            esm.writeHNRefId("FASP", effect.mSpell);
+            esm.writeHNRefId("FABE", effect.mBaseEffect);
+            esm.writeHNT("FAFL", effect.mFlags);
+            esm.writeHNT("FAAV", effect.mActorValue);
+            esm.writeHNT("FAMG", effect.mMagnitude);
+            esm.writeHNT("FADR", effect.mDuration);
+            esm.writeHNT("FATL", effect.mTimeLeft);
+            esm.writeHNT("FACA", effect.mCasterActorId);
+        }
     }
 
     void CreatureStats::blank()
@@ -299,6 +329,7 @@ namespace ESM
         mCorprusSpells.clear();
         mMissingACDT = false;
         mFalloutLimbDamage.fill(0.f);
+        mFalloutActiveEffects.clear();
     }
 
 }

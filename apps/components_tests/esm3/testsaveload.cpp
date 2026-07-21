@@ -454,10 +454,13 @@ namespace ESM
             record.blank();
             record.mLastHitAttemptObject = generateRandomRefId();
             record.mLastHitObject = generateRandomRefId();
+            record.mFalloutActiveEffects.push_back({ generateRandomRefId(), generateRandomRefId(),
+                FalloutActiveEffectKind::ActorValueModifier, 0x76, 76, -1.f, 60.f, 41.25f, 42 });
             CreatureStats result;
             saveAndLoadRecord(record, GetParam(), result);
             EXPECT_EQ(record.mLastHitAttemptObject, result.mLastHitAttemptObject);
             EXPECT_EQ(record.mLastHitObject, result.mLastHitObject);
+            EXPECT_EQ(record.mFalloutActiveEffects, result.mFalloutActiveEffects);
         }
 
         TEST_P(Esm3SaveLoadRecordTest, containerShouldNotChange)

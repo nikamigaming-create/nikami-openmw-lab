@@ -1178,6 +1178,40 @@ end
         EXPECT_EQ(shaderOnly->mEffects.front().mMagicEffect.effectShader, id(0x4000));
     }
 
+    TEST(FalloutCombatTest, AdvancesSaveableNativeFalloutStatusEffectsWithoutMorrowindMagic)
+    {
+        std::vector<ESM::FalloutActiveEffect> effects;
+        const ESM::RefId spell = ESM::RefId::formIdRefId(id(0x1000));
+        const ESM::RefId healthEffect = ESM::RefId::formIdRefId(id(0x2000));
+        const ESM::RefId modifierEffect = ESM::RefId::formIdRefId(id(0x2001));
+        const ESM::RefId paralysisEffect = ESM::RefId::formIdRefId(id(0x2002));
+        EXPECT_TRUE(MWMechanics::addFalloutActiveEffect(effects, { spell, healthEffect,
+            ESM::FalloutActiveEffectKind::HealthDamage, 0x75, 16, 2.f, 5.f, 5.f, 11 }));
+        EXPECT_TRUE(MWMechanics::addFalloutActiveEffect(effects, { spell, modifierEffect,
+            ESM::FalloutActiveEffectKind::ActorValueModifier, 0x76, 76, -1.f, 5.f, 5.f, 11 }));
+        EXPECT_TRUE(MWMechanics::addFalloutActiveEffect(effects, { spell, paralysisEffect,
+            ESM::FalloutActiveEffectKind::Paralysis, 0x73, 47, 1.f, 5.f, 5.f, 11 }));
+        EXPECT_FLOAT_EQ(MWMechanics::getFalloutActorValueModifier(effects, 76), -1.f);
+        EXPECT_TRUE(MWMechanics::hasFalloutParalysis(effects));
+
+        const MWMechanics::FalloutActiveEffectsAdvance first
+            = MWMechanics::advanceFalloutActiveEffects(effects, 2.f);
+        EXPECT_FLOAT_EQ(first.mHealthDamage, 4.f);
+        EXPECT_EQ(first.mExpired, 0u);
+        EXPECT_EQ(first.mRejected, 0u);
+        ASSERT_EQ(effects.size(), 3u);
+        EXPECT_FLOAT_EQ(effects.front().mTimeLeft, 3.f);
+
+        const MWMechanics::FalloutActiveEffectsAdvance second
+            = MWMechanics::advanceFalloutActiveEffects(effects, 4.f);
+        EXPECT_FLOAT_EQ(second.mHealthDamage, 6.f);
+        EXPECT_EQ(second.mExpired, 3u);
+        EXPECT_EQ(second.mRejected, 0u);
+        EXPECT_TRUE(effects.empty());
+        EXPECT_FLOAT_EQ(MWMechanics::getFalloutActorValueModifier(effects, 76), 0.f);
+        EXPECT_FALSE(MWMechanics::hasFalloutParalysis(effects));
+    }
+
     TEST(FalloutCombatTest, AppliesAuthoredAmmoEffectsInRcilOrder)
     {
         ESM4::AmmoEffect add;

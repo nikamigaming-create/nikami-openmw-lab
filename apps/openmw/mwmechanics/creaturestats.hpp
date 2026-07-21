@@ -2,10 +2,13 @@
 #define GAME_MWMECHANICS_CREATURESTATS_H
 
 #include <array>
+#include <cstddef>
+#include <cstdint>
 #include <map>
 #include <set>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 #include "activespells.hpp"
 #include "aisequence.hpp"
@@ -17,15 +20,26 @@
 
 #include <components/esm/attr.hpp>
 #include <components/esm/refid.hpp>
+#include <components/esm3/creaturestats.hpp>
 #include <components/esm3/magiceffects.hpp>
-
-namespace ESM
-{
-    struct CreatureStats;
-}
 
 namespace MWMechanics
 {
+    struct FalloutActiveEffectsAdvance
+    {
+        float mHealthDamage = 0.f;
+        std::size_t mExpired = 0;
+        std::size_t mRejected = 0;
+    };
+
+    bool addFalloutActiveEffect(
+        std::vector<ESM::FalloutActiveEffect>& effects, ESM::FalloutActiveEffect effect);
+    FalloutActiveEffectsAdvance advanceFalloutActiveEffects(
+        std::vector<ESM::FalloutActiveEffect>& effects, float duration);
+    float getFalloutActorValueModifier(
+        const std::vector<ESM::FalloutActiveEffect>& effects, std::int32_t actorValue);
+    bool hasFalloutParalysis(const std::vector<ESM::FalloutActiveEffect>& effects);
+
     struct CorprusStats
     {
         static constexpr int sWorseningPeriod = 24;
@@ -65,6 +79,9 @@ namespace MWMechanics
 
         // Native FNV limb actor values 25..31 store accumulated damage independently from health.
         std::array<float, 7> mFalloutLimbDamage{};
+
+        // Native Fallout timed effects deliberately remain separate from Morrowind ActiveSpells.
+        std::vector<ESM::FalloutActiveEffect> mFalloutActiveEffects;
 
         float mFallHeight = 0.f;
 
@@ -135,6 +152,15 @@ namespace MWMechanics
 
         float getFalloutLimbDamage(std::int8_t actorValue) const;
         bool setFalloutLimbDamage(std::int8_t actorValue, float damage);
+
+        bool addFalloutActiveEffect(ESM::FalloutActiveEffect effect);
+        FalloutActiveEffectsAdvance advanceFalloutActiveEffects(float duration);
+        float getFalloutActorValueModifier(std::int32_t actorValue) const;
+        bool isFalloutParalyzed() const;
+        const std::vector<ESM::FalloutActiveEffect>& getFalloutActiveEffects() const
+        {
+            return mFalloutActiveEffects;
+        }
 
         const Spells& getSpells() const;
 
