@@ -124,6 +124,7 @@ set(BUILTIN_DATA_FILES
     openmw_aux/calendarconfig.lua
     openmw_aux/ui.lua
     openmw_aux/lexer.lua
+    openmw_aux/obscript/bindings.lua
     openmw_aux/obscript/compiler.lua
     openmw_aux/obscript/parser.lua
     openmw_aux/obscript/runtime.lua
@@ -178,6 +179,7 @@ set(BUILTIN_DATA_FILES
     scripts/omw/input/actionbindings.lua
     scripts/omw/input/smoothmovement.lua
     scripts/omw/input/gamepadcontrols.lua
+    scripts/omw/obscript.lua
     scripts/omw/vr/spaces.lua
     scripts/omw/vr/ui/common.lua
     scripts/omw/vr/ui/menu.lua

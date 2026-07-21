@@ -196,4 +196,65 @@ function obs.coverageReport(limit)
     return table.concat(out, "\n")
 end
 
+-- --------------------------- local-script interface
+
+local function fireAll(entry, h)
+    obs._current = entry
+    if type(h) == "table" then
+        for _, fn in ipairs(h) do fn() end
+    else
+        h()
+    end
+    obs._current = nil
+end
+
+--- Builds the local-script table (`engineHandlers`) for the script loaded in
+-- this sandbox. Each attached object gets its own sandbox and therefore its
+-- own runtime instance and locals. Called as the last line of generated code.
+function obs.makeLocalScript()
+    -- engine bindings for the local context; absent outside it (e.g. console lab)
+    pcall(require, 'openmw_aux.obscript.bindings')
+
+    local entry = obs._current
+    if entry == nil then
+        for _, e in pairs(obs._scripts) do
+            entry = e
+            break
+        end
+    end
+    if entry == nil then
+        return {} -- script registered no blocks
+    end
+
+    return {
+        engineHandlers = {
+            onUpdate = function(dt)
+                obs._dt = dt
+                local h = entry.handlers["gamemode"]
+                if h then fireAll(entry, h) end
+            end,
+            onActivated = function(actor)
+                local h = entry.handlers["onactivate"]
+                if h then
+                    obs._actionRef = actor
+                    fireAll(entry, h)
+                    obs._actionRef = nil
+                end
+            end,
+            onSave = function()
+                local locals = {}
+                for k, v in pairs(entry.locals) do
+                    locals[k] = v
+                end
+                return { locals = locals }
+            end,
+            onLoad = function(data)
+                if data and data.locals then
+                    entry.locals = setmetatable(data.locals, zerotable_mt)
+                end
+            end,
+        },
+    }
+end
+
 return obs

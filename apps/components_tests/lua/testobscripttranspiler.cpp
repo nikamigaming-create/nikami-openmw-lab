@@ -70,6 +70,7 @@ namespace
         EXPECT_THAT(lua, HasSubstr("-- transpiled from ObScript: MyScript"));
         EXPECT_THAT(lua, HasSubstr("local obs = require('openmw_aux.obscript.runtime')"));
         EXPECT_THAT(lua, HasSubstr("local S = obs.locals(\"MyScript\")"));
+        EXPECT_THAT(lua, HasSubstr("return obs.makeLocalScript()"));
     }
 
     TEST_F(ObScriptTranspilerTest, BlockToHandler)

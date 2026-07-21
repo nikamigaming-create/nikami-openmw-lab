@@ -303,6 +303,7 @@ function Emitter:emit()
         self.depth = self.depth - 1
         self:out('end)')
     end
+    self:out('return obs.makeLocalScript()')
     return table.concat(self.lines, '\n') .. '\n'
 end
 

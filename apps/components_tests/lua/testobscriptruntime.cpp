@@ -115,6 +115,32 @@ namespace
                 obs.f('CoverageProbeCmd')
                 return obs.coverageReport(50)
             end,
+
+            makeLocalScript = function(log)
+                obs.locals('LocalIfaceScript')
+                obs.on('GameMode', function() log[#log + 1] = 'update' end)
+                obs.on('OnActivate', function()
+                    log[#log + 1] = 'activated:' .. tostring(obs._actionRef)
+                end)
+                local script = obs.makeLocalScript()
+                local h = script.engineHandlers
+                if type(h) ~= 'table' then
+                    return 'no engineHandlers'
+                end
+                h.onUpdate(0.25)
+                h.onActivated('someactor')
+                local dtSeen = obs._dt
+                local save = h.onSave()
+                return #log, log[1], log[2], dtSeen, type(save.locals)
+            end,
+
+            makeLocalScriptEmpty = function()
+                -- fresh runtime per sandbox in the engine; here simulate by
+                -- checking a script with no blocks yields usable handlers
+                obs.locals('EmptyIfaceScript')
+                local script = obs.makeLocalScript()
+                return type(script) == 'table' and 1 or 0
+            end,
         }
         )X");
 
@@ -209,4 +235,27 @@ namespace
         const std::string report = LuaUtil::call(script()["coverage"]).get<std::string>();
         EXPECT_THAT(report, HasSubstr("2  coverageprobecmd"));
     }
+
+    TEST_F(ObScriptRuntimeTest, MakeLocalScript)
+    {
+        sol::table s = script();
+        mLua.protectedCall([&](LuaUtil::LuaView& view) {
+            sol::table log = view.sol().create_table();
+            auto r = LuaUtil::call(s["makeLocalScript"], log)
+                         .get<std::tuple<int, std::string, std::string, double, std::string>>();
+            EXPECT_EQ(std::get<0>(r), 2); // both handlers fired
+            EXPECT_EQ(std::get<1>(r), "update");
+            EXPECT_EQ(std::get<2>(r), "activated:someactor");
+            EXPECT_DOUBLE_EQ(std::get<3>(r), 0.25); // dt captured for GetSecondsPassed
+            EXPECT_EQ(std::get<4>(r), "table"); // onSave returns serializable locals
+        });
+    }
+
+    TEST_F(ObScriptRuntimeTest, MakeLocalScriptWithoutBlocks)
+    {
+        sol::table s = script();
+        auto r = LuaUtil::call(s["makeLocalScriptEmpty"]).get<int>();
+        EXPECT_EQ(r, 1);
+    }
+
 }
