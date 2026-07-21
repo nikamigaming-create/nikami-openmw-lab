@@ -84,6 +84,7 @@ file(GLOB UNITTEST_SRC_FILES
     esm4/testloadamef.cpp
     esm4/testloadweap.cpp
     esm4/testloadproj.cpp
+    esm4/testloadexpl.cpp
     esm4/testloadweather.cpp
     esm4/testloadimagespace.cpp
     esm4/testloadlvli.cpp

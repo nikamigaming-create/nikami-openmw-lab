@@ -104,6 +104,7 @@ namespace ESM4
     struct DialogInfo;
     struct Door;
     struct Eyes;
+    struct Explosion;
     struct Faction;
     struct Flora;
     struct FormIdList;
@@ -211,7 +212,7 @@ namespace MWWorld
             // New stores must be appended so an incremental build can never reinterpret an existing slot.
             Store<ESM4::Projectile>, Store<ESM4::ActorValueInformation>, Store<ESM4::Faction>, Store<ESM4::Perk>,
             Store<ESM4::RecipeCategory>, Store<ESM4::Recipe>, Store<ESM4::Note>, Store<ESM4::AnimObject>,
-            Store<ESM4::GameSetting>, Store<ESM4::AmmoEffect>>;
+            Store<ESM4::GameSetting>, Store<ESM4::AmmoEffect>, Store<ESM4::Explosion>>;
 
     private:
         template <typename T>

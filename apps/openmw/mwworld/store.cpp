@@ -1424,6 +1424,7 @@ template class MWWorld::TypedDynamicStore<ESM4::Note>;
 template class MWWorld::TypedDynamicStore<ESM4::Outfit>;
 template class MWWorld::TypedDynamicStore<ESM4::Potion>;
 template class MWWorld::TypedDynamicStore<ESM4::Projectile>;
+template class MWWorld::TypedDynamicStore<ESM4::Explosion>;
 template class MWWorld::TypedDynamicStore<ESM4::ActorValueInformation>;
 template class MWWorld::TypedDynamicStore<ESM4::Faction>;
 template class MWWorld::TypedDynamicStore<ESM4::Perk>;
