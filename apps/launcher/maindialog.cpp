@@ -592,11 +592,13 @@ void Launcher::MainDialog::play()
         return;
     }
 
-    // Launch the game detached
-
-//## VR_PATCH BEGIN
-    if (mGameInvoker->startProcess(QLatin1String("openmw_vr"), true))
-//## VR_PATCH END
+    // Launch the executable included by the selected build variant.
+#ifdef OPENMW_LAUNCHER_VR
+    constexpr auto executable = "openmw_vr";
+#else
+    constexpr auto executable = "openmw";
+#endif
+    if (mGameInvoker->startProcess(QLatin1String(executable), true))
         return qApp->quit();
 }
 
