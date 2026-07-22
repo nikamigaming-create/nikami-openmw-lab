@@ -17,6 +17,7 @@
 #include <stdexcept>
 #include <string_view>
 #include <unordered_map>
+#include <vector>
 
 #include <osg/Array>
 #include <osg/Geometry>
@@ -3617,7 +3618,7 @@ namespace NifOsg
         static osg::ref_ptr<Emitter> handleModernParticleEmitter(
             const Nif::NiPSysEmitter* emitter, unsigned int quota)
         {
-            osg::ref_ptr<Emitter> osgEmitter = new Emitter({});
+            osg::ref_ptr<Emitter> osgEmitter = new Emitter(std::vector<int>{});
 
             osgParticle::ConstantRateCounter* counter = new osgParticle::ConstantRateCounter;
             const float lifetime = emitter && emitter->mLifespan > 0.f ? emitter->mLifespan : 2.f;
