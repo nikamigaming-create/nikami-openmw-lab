@@ -4077,8 +4077,9 @@ namespace MWRender
         if (!normalizeFiniteQuat(left) || !normalizeFiniteQuat(right))
             return 0.f;
 
-        const double dot = std::clamp(std::abs(left.x() * right.x() + left.y() * right.y() + left.z() * right.z()
-                                         + left.w() * right.w()),
+        const double dot = std::clamp(
+            static_cast<double>(std::abs(left.x() * right.x() + left.y() * right.y() + left.z() * right.z()
+                + left.w() * right.w())),
             0.0, 1.0);
         return static_cast<float>(2.0 * std::acos(dot) * 180.0 / osg::PI);
     }
