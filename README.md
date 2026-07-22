@@ -23,6 +23,29 @@ VR
 --
 [Read the docs](https://openmw-vr.readthedocs.io/en/latest/index.html) to get started with playing VR
 
+Playing Fallout: New Vegas (experimental)
+------------------------------------------
+
+This fork contains work-in-progress Fallout: New Vegas support. It does not include the game or any Bethesda assets;
+you must own and install Fallout: New Vegas separately. Expect incomplete gameplay and keep saves made by this build
+separate from saves you care about.
+
+1. Download the latest Windows package from this repository's
+   [Releases](https://github.com/nikamigaming-create/nikami-openmw-lab/releases) page and extract it to a new folder.
+2. Install Fallout: New Vegas with Steam or GOG and run the original launcher once. A typical Steam data folder is
+   `C:\Program Files (x86)\Steam\steamapps\common\Fallout New Vegas\Data`.
+3. Run `openmw-launcher.exe` from the extracted package. On **Data Files**, add the Fallout: New Vegas `Data` folder.
+4. Enable `FalloutNV.esm`. If you own the DLC, enable its plugins after the base game in this order:
+   `DeadMoney.esm`, `HonestHearts.esm`, `OldWorldBlues.esm`, `LonesomeRoad.esm`, `GunRunnersArsenal.esm`, followed by
+   the Courier's Stash pack plugins you own.
+5. Enable the matching `Fallout - *.bsa` archives shown by the launcher, including meshes, textures, sounds, and
+   voices. Enable DLC archives only for DLC you own and enabled in step 4.
+6. Save the profile, select it, and press **Play**. You can launch the same configured profile later with
+   `openmw.exe`.
+
+If the launcher does not list `FalloutNV.esm`, verify that the selected directory is the game's `Data` directory,
+not the directory containing it. Do not copy Fallout files into this repository or attach them to bug reports.
+
 Current Status
 --------------
 
