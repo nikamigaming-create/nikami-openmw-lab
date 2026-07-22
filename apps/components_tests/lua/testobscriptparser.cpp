@@ -170,7 +170,7 @@ namespace
         sol::table ast = parse("scn S\nbegin GameMode\n=====\n-----\n` ! @ # [ ] ~\nEnable\nend\n");
         sol::table body = ast["blocks"].get<sol::table>()[1].get<sol::table>()["body"];
         int junk = 0, exprs = 0;
-        for (const auto& [_, stmt] : body)
+        for (const auto& [key, stmt] : body)
         {
             std::string kind = stmt.as<sol::table>()["kind"].get<std::string>();
             if (kind == "JunkLine")
