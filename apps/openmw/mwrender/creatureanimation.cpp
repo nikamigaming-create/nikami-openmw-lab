@@ -388,8 +388,9 @@ namespace MWRender
         class CreatureRigTopologyVisitor : public osg::NodeVisitor
         {
         public:
-            explicit CreatureRigTopologyVisitor(const SceneUtil::Skeleton* expectedSkeleton)
+            CreatureRigTopologyVisitor(const osg::Node* auditRoot, const SceneUtil::Skeleton* expectedSkeleton)
                 : osg::NodeVisitor(TRAVERSE_ALL_CHILDREN)
+                , mAuditRoot(auditRoot)
                 , mExpectedSkeleton(expectedSkeleton)
             {
             }
@@ -406,9 +407,13 @@ namespace MWRender
                 for (const osg::NodePath& path : paths)
                 {
                     unsigned int effectiveMask = drawable.getNodeMask();
+                    bool insideAuditRoot = false;
                     for (const osg::Node* node : path)
-                        if (node != nullptr)
+                    {
+                        insideAuditRoot = insideAuditRoot || node == mAuditRoot;
+                        if (insideAuditRoot && node != nullptr)
                             effectiveMask &= node->getNodeMask();
+                    }
                     hasVisiblePath = hasVisiblePath || effectiveMask != 0;
                 }
                 if (hasVisiblePath)
@@ -433,6 +438,7 @@ namespace MWRender
                     ++mVisibleRigGeometryCount;
             }
 
+            const osg::Node* mAuditRoot;
             const SceneUtil::Skeleton* mExpectedSkeleton;
             unsigned int mDrawableCount = 0;
             unsigned int mParentedDrawableCount = 0;
@@ -450,7 +456,11 @@ namespace MWRender
             if (bodyNode == nullptr)
                 return;
 
-            CreatureRigTopologyVisitor visitor(skeleton);
+            // Audit the creature body subtree itself. The actor owner can be
+            // temporarily hidden while its render object is assembled (and corpse
+            // pose wrappers intentionally do this), which is not evidence that the
+            // body's authored drawable masks or rig topology failed.
+            CreatureRigTopologyVisitor visitor(bodyNode, skeleton);
             bodyNode->accept(visitor);
             const bool drawableGate = visitor.mDrawableCount != 0
                 && visitor.mParentedDrawableCount == visitor.mDrawableCount

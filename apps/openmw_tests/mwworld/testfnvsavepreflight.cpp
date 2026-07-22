@@ -10,9 +10,11 @@
 #include <components/esm/refid.hpp>
 #include <components/esm4/fonvsavegame.hpp>
 #include <components/esm4/loadachr.hpp>
+#include <components/esm4/loadammo.hpp>
 #include <components/esm4/loadcell.hpp>
 #include <components/esm4/loadclas.hpp>
 #include <components/esm4/loadclmt.hpp>
+#include <components/esm4/loadflst.hpp>
 #include <components/esm4/loadnpc.hpp>
 #include <components/esm4/loadrace.hpp>
 #include <components/esm4/loadwrld.hpp>
@@ -161,6 +163,8 @@ namespace
             if (includeCurrentWeather)
                 weather.insertStatic(mCurrent);
             weather.insertStatic(mDefault);
+            MWWorld::Store<ESM4::FormIdList> formLists;
+            MWWorld::Store<ESM4::Ammunition> ammunition;
 
             MWWorld::FalloutNativePlayerRecordsResolution native;
             if (includeNative)
@@ -169,7 +173,8 @@ namespace
                 native.mError = "validated native records were not published";
 
             return MWWorld::resolveFalloutSavePreflightContext(makeSave(), includePlayer ? &mPlayer : nullptr,
-                native, worlds, cells, climates, weather, contentFiles == nullptr ? mContentFiles : *contentFiles);
+                native, formLists, ammunition, worlds, cells, climates, weather,
+                contentFiles == nullptr ? mContentFiles : *contentFiles);
         }
     };
 
@@ -198,8 +203,10 @@ namespace
         EXPECT_EQ(context.mWeather.mCurrent.mWeather, form(0x1237d7));
         EXPECT_EQ(context.mWeather.mDefault.mWeather, form(0x0ffc88));
         EXPECT_NO_THROW(MWWorld::requireFalloutSaveVisualApplicationReady(context));
-        const MWWorld::FalloutSaveLoadPlanResolution expectedPlan
-            = MWWorld::resolveFalloutSaveLoadPlan(makeSave(), &fixture.mPlayer, fixture.mContentFiles);
+        MWWorld::Store<ESM4::FormIdList> formLists;
+        MWWorld::Store<ESM4::Ammunition> ammunition;
+        const MWWorld::FalloutSaveLoadPlanResolution expectedPlan = MWWorld::resolveFalloutSaveLoadPlan(
+            makeSave(), &fixture.mPlayer, formLists, ammunition, fixture.mContentFiles);
         ASSERT_TRUE(expectedPlan) << expectedPlan.mError;
         EXPECT_EQ(context.mPlan.mUncoveredState, expectedPlan.mPlan->mUncoveredState);
         EXPECT_THAT(context.mPlan.mUncoveredState, Contains("global-variables"));

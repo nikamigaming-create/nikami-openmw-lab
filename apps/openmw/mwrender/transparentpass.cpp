@@ -128,6 +128,12 @@ namespace MWRender
             if (rl->_drawable->getNodeMask() == Mask_ParticleSystem || rl->_drawable->getNodeMask() == Mask_Effect)
                 continue;
 
+            // The auxiliary depth target represents opaque coverage. Only alpha-tested cutouts have a binary
+            // coverage contract suitable for this replay; ordinary blended glass, decals, and effects must retain
+            // the opaque depth already behind them or they occlude post-processing as solid geometry.
+            if (ss->getAttribute(osg::StateAttribute::ALPHAFUNC) == nullptr)
+                continue;
+
             if (ss->getAttribute(osg::StateAttribute::MATERIAL))
             {
                 const osg::Material* mat

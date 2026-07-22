@@ -62,6 +62,7 @@ namespace MWBase
         virtual ~LuaManager() = default;
 
         virtual void newGameStarted() = 0;
+        virtual void prepareGameLoad() = 0;
         virtual void gameLoaded() = 0;
         virtual void gameEnded() = 0;
         virtual void noGame() = 0;

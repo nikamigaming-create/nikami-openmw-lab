@@ -155,7 +155,9 @@ namespace
 
     std::optional<ValidatedFalloutPlayer> resolveValidatedFalloutPlayer(std::size_t masterCandidateCount,
         const std::optional<std::int32_t>& masterCandidateIndex, const MWWorld::Store<ESM4::Npc>& npcs,
-        const MWWorld::Store<ESM4::Class>& classes, const MWWorld::Store<ESM4::Race>& races)
+        const MWWorld::Store<ESM4::Class>& classes, const MWWorld::Store<ESM4::Race>& races,
+        const MWWorld::Store<ESM4::FormIdList>& formLists,
+        const MWWorld::Store<ESM4::Ammunition>& ammunition)
     {
         if (masterCandidateCount == 0)
             return std::nullopt;
@@ -167,6 +169,11 @@ namespace
         const std::int32_t master = *masterCandidateIndex;
         MWWorld::FalloutPlayerStateResolution player
             = MWWorld::resolveFalloutPlayerIdentity(npcs, ESM::FormId{ 7, master }, ESM::FormId{ 0x14, master });
+        if (!player)
+            throw std::runtime_error(player.mError);
+
+        player = MWWorld::resolveFalloutPlayerInventoryFormLists(
+            std::move(*player.mState), formLists, ammunition);
         if (!player)
             throw std::runtime_error(player.mError);
 
@@ -1238,7 +1245,7 @@ namespace MWWorld
     {
         const std::optional<ValidatedFalloutPlayer> player = resolveValidatedFalloutPlayer(
             mFalloutNewVegasMasterCandidateCount, mFalloutNewVegasMasterCandidateIndex, get<ESM4::Npc>(),
-            get<ESM4::Class>(), get<ESM4::Race>());
+            get<ESM4::Class>(), get<ESM4::Race>(), get<ESM4::FormIdList>(), get<ESM4::Ammunition>());
         if (!player)
             return false;
 
@@ -1438,7 +1445,7 @@ namespace MWWorld
         std::optional<FalloutPlayerCompatibilityCarriers> falloutPlayerCarriers;
         std::optional<ValidatedFalloutPlayer> player = resolveValidatedFalloutPlayer(
             mFalloutNewVegasMasterCandidateCount, mFalloutNewVegasMasterCandidateIndex, get<ESM4::Npc>(),
-            get<ESM4::Class>(), get<ESM4::Race>());
+            get<ESM4::Class>(), get<ESM4::Race>(), get<ESM4::FormIdList>(), get<ESM4::Ammunition>());
         if (player)
         {
             falloutPlayerCarriers.emplace(makeFalloutPlayerCompatibilityCarriers(

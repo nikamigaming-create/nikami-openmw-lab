@@ -367,6 +367,9 @@ namespace MWRender
 
         MWWorld::Ptr getPtr() { return mPtr; }
 
+        bool addFalloutDialogueAnimSource(
+            const std::string& model, const std::string& baseModel, std::string_view semanticGroup);
+
         void setProofPreviewAnimation(bool enabled);
         void setProofPreviewGameplayAudit(bool enabled);
         bool isProofPreviewAnimation() const { return mProofPreviewAnimation; }
@@ -404,7 +407,7 @@ namespace MWRender
         // the glow seems to be about 1.5 seconds except for telekinesis, which is 1 second.
         void addSpellCastGlow(const osg::Vec4f& color, float glowDuration = 1.5);
 
-        /// Apply the VATS diagnostic wireframe to an authored target node, restoring its prior state on disable.
+        /// Apply the VATS selection wireframe to an authored target node, restoring its prior state on disable.
         void setFalloutVatsWireframe(std::string_view targetNode, bool enabled);
 
         virtual void updatePtr(const MWWorld::Ptr& ptr);

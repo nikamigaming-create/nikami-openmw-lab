@@ -15,9 +15,12 @@
 #include <components/esm/attr.hpp>
 #include <components/esm/refid.hpp>
 #include <components/esm3/loadnpc.hpp>
+#include <components/esm4/common.hpp>
 #include <components/esm4/fonvsavegame.hpp>
+#include <components/esm4/loadammo.hpp>
 #include <components/esm4/loadcell.hpp>
 #include <components/esm4/loadclas.hpp>
+#include <components/esm4/loadflst.hpp>
 #include <components/esm4/loadnpc.hpp>
 #include <components/esm4/loadrace.hpp>
 #include <components/esm4/loadwrld.hpp>
@@ -126,6 +129,19 @@ namespace
 
         ESM4::FONVSavePlayerProcessInventoryData processInventory;
         processInventory.mProcessLevel.mValue = 0;
+        ESM4::FONVSavePlayerActorExtraData factionExtra;
+        factionExtra.mType.mValue = ESM4::sFONVExtraFactionChangesType;
+        ESM4::FONVSavePlayerFactionChange removedFaction;
+        removedFaction.mFaction.mResolvedFormId = 0x0001b2a4u;
+        removedFaction.mRank.mValue = -2;
+        removedFaction.mRange = { 1800, 6 };
+        factionExtra.mFactionChanges.push_back(std::move(removedFaction));
+        ESM4::FONVSavePlayerFactionChange addedFaction;
+        addedFaction.mFaction.mResolvedFormId = 0x00012345u;
+        addedFaction.mRank.mValue = 3;
+        addedFaction.mRange = { 1806, 6 };
+        factionExtra.mFactionChanges.push_back(std::move(addedFaction));
+        processInventory.mActorExtraData.push_back(std::move(factionExtra));
         const auto addInventory
             = [&](std::uint32_t rawFormId, std::int32_t delta, std::optional<std::uint64_t> wornOffset) {
             ESM4::FONVSavePlayerInventoryEntry entry;
@@ -235,6 +251,14 @@ namespace
         sky.mRange = { 494355, 71 };
         result.mSky = std::move(sky);
         return result;
+    }
+
+    MWWorld::FalloutSaveLoadPlanResolution resolveSavePlan(const ESM4::FONVSaveGamePrefix& save,
+        const MWWorld::FalloutPlayerState* player, std::span<const std::string> content)
+    {
+        MWWorld::Store<ESM4::FormIdList> formLists;
+        MWWorld::Store<ESM4::Ammunition> ammunition;
+        return MWWorld::resolveFalloutSaveLoadPlan(save, player, formLists, ammunition, content);
     }
 
     TEST(FalloutPlayerStateTest, resolvesExactOfficialPlayerIdentityStateAndActorValueComponents)
@@ -487,6 +511,161 @@ namespace
         EXPECT_EQ(proxy.mInventory.mList[1].mCount, 1);
     }
 
+    TEST(FalloutPlayerStateTest, ResolvesAuthoredPlayerAmmoListToItsRetailDefaultAmmo)
+    {
+        MWWorld::FalloutPlayerState player;
+        const ESM::FormId listId = form(0x1537ea, 1);
+        const ESM::FormId standardAmmoId = form(0x4240, 1);
+        const ESM::FormId hollowPointAmmoId = form(0x13e441, 1);
+        const ESM::FormId directItemId = form(0x25b83, 1);
+        player.mInventoryItems = { { listId, 100 }, { standardAmmoId, 5 }, { directItemId, 1 } };
+
+        MWWorld::Store<ESM4::FormIdList> formLists;
+        ESM4::FormIdList ammoList;
+        ammoList.mId = listId;
+        ammoList.mEditorId = "AmmoList556mm";
+        ammoList.mObjects = { standardAmmoId, hollowPointAmmoId };
+        formLists.insertStatic(ammoList);
+
+        MWWorld::Store<ESM4::Ammunition> ammunition;
+        ESM4::Ammunition standardAmmo{};
+        standardAmmo.mId = standardAmmoId;
+        ammunition.insertStatic(standardAmmo);
+        ESM4::Ammunition hollowPointAmmo{};
+        hollowPointAmmo.mId = hollowPointAmmoId;
+        ammunition.insertStatic(hollowPointAmmo);
+
+        const MWWorld::FalloutPlayerStateResolution resolution
+            = MWWorld::resolveFalloutPlayerInventoryFormLists(std::move(player), formLists, ammunition);
+        ASSERT_TRUE(resolution) << resolution.mError;
+        EXPECT_THAT(resolution.mState->mInventoryItems,
+            ElementsAreArray(std::array<MWWorld::FalloutInventoryItem, 2>{ {
+                { standardAmmoId, 105 },
+                { directItemId, 1 },
+            } }));
+    }
+
+    TEST(FalloutPlayerStateTest, RejectsPlayerInventoryListWithoutExactAmmoMembers)
+    {
+        MWWorld::FalloutPlayerState player;
+        const ESM::FormId listId = form(0x1537ea, 1);
+        player.mInventoryItems = { { listId, 100 } };
+
+        MWWorld::Store<ESM4::FormIdList> formLists;
+        ESM4::FormIdList ammoList;
+        ammoList.mId = listId;
+        ammoList.mObjects = { form(0x4240, 1), form(0xdead, 1) };
+        formLists.insertStatic(ammoList);
+        MWWorld::Store<ESM4::Ammunition> ammunition;
+        ESM4::Ammunition standardAmmo{};
+        standardAmmo.mId = ammoList.mObjects.front();
+        ammunition.insertStatic(standardAmmo);
+
+        const MWWorld::FalloutPlayerStateResolution resolution
+            = MWWorld::resolveFalloutPlayerInventoryFormLists(std::move(player), formLists, ammunition);
+        EXPECT_FALSE(resolution);
+        EXPECT_THAT(resolution.mError, HasSubstr("not an exact AMMO-only list"));
+    }
+
+    TEST(FalloutPlayerStateTest, UsesWinningAuthoredOrderWhenCanonicalizingAmmoLists)
+    {
+        const ESM::FormId listId = form(0x1537ea, 1);
+        const ESM::FormId standardAmmoId = form(0x4240, 1);
+        const ESM::FormId hollowPointAmmoId = form(0x13e441, 1);
+        MWWorld::FalloutPlayerState player;
+        player.mInventoryItems = { { listId, 12 } };
+
+        MWWorld::Store<ESM4::FormIdList> formLists;
+        ESM4::FormIdList original;
+        original.mId = listId;
+        original.mObjects = { standardAmmoId, hollowPointAmmoId };
+        formLists.insertStatic(original);
+        ESM4::FormIdList winning = original;
+        winning.mObjects = { hollowPointAmmoId, standardAmmoId };
+        formLists.insertStatic(winning);
+
+        MWWorld::Store<ESM4::Ammunition> ammunition;
+        ESM4::Ammunition standardAmmo{};
+        standardAmmo.mId = standardAmmoId;
+        ammunition.insertStatic(standardAmmo);
+        ESM4::Ammunition hollowPointAmmo{};
+        hollowPointAmmo.mId = hollowPointAmmoId;
+        ammunition.insertStatic(hollowPointAmmo);
+
+        const MWWorld::FalloutPlayerStateResolution resolution
+            = MWWorld::resolveFalloutPlayerInventoryFormLists(std::move(player), formLists, ammunition);
+        ASSERT_TRUE(resolution) << resolution.mError;
+        EXPECT_THAT(resolution.mState->mInventoryItems,
+            ElementsAreArray(std::array<MWWorld::FalloutInventoryItem, 1>{ { { hollowPointAmmoId, 12 } } }));
+    }
+
+    TEST(FalloutPlayerStateTest, RejectsDeletedEmptyAndOverflowingAmmoListResolution)
+    {
+        const ESM::FormId listId = form(0x1537ea, 1);
+        const ESM::FormId standardAmmoId = form(0x4240, 1);
+        MWWorld::Store<ESM4::Ammunition> ammunition;
+        ESM4::Ammunition standardAmmo{};
+        standardAmmo.mId = standardAmmoId;
+        ammunition.insertStatic(standardAmmo);
+
+        MWWorld::FalloutPlayerState player;
+        player.mInventoryItems = { { listId, 1 } };
+        MWWorld::Store<ESM4::FormIdList> formLists;
+        ESM4::FormIdList list;
+        list.mId = listId;
+        list.mFlags = ESM4::Rec_Deleted;
+        list.mObjects = { standardAmmoId };
+        formLists.insertStatic(list);
+        MWWorld::FalloutPlayerStateResolution resolution
+            = MWWorld::resolveFalloutPlayerInventoryFormLists(player, formLists, ammunition);
+        EXPECT_FALSE(resolution);
+        EXPECT_THAT(resolution.mError, HasSubstr("FLST is deleted"));
+
+        list.mFlags = 0;
+        list.mObjects.clear();
+        formLists.insertStatic(list);
+        resolution = MWWorld::resolveFalloutPlayerInventoryFormLists(player, formLists, ammunition);
+        EXPECT_FALSE(resolution);
+        EXPECT_THAT(resolution.mError, HasSubstr("FLST is empty"));
+
+        list.mObjects = { standardAmmoId };
+        formLists.insertStatic(list);
+        player.mInventoryItems = { { listId, std::numeric_limits<std::int32_t>::max() }, { standardAmmoId, 1 } };
+        resolution = MWWorld::resolveFalloutPlayerInventoryFormLists(player, formLists, ammunition);
+        EXPECT_FALSE(resolution);
+        EXPECT_THAT(resolution.mError, HasSubstr("total exceeds"));
+    }
+
+    TEST(FalloutPlayerStateTest, RejectsAmmoListContainingDeletedAmmo)
+    {
+        const ESM::FormId listId = form(0x1537ea, 1);
+        const ESM::FormId ammoId = form(0x4240, 1);
+        MWWorld::FalloutPlayerState player;
+        player.mInventoryItems = { { listId, 1 } };
+        MWWorld::Store<ESM4::FormIdList> formLists;
+        ESM4::FormIdList list;
+        list.mId = listId;
+        list.mObjects = { ammoId };
+        formLists.insertStatic(list);
+        MWWorld::Store<ESM4::Ammunition> ammunition;
+        ESM4::Ammunition ammo{};
+        ammo.mId = ammoId;
+        ammo.mFlags = ESM4::Rec_Deleted;
+        ammunition.insertStatic(ammo);
+
+        const MWWorld::FalloutPlayerStateResolution resolution
+            = MWWorld::resolveFalloutPlayerInventoryFormLists(std::move(player), formLists, ammunition);
+        EXPECT_FALSE(resolution);
+        EXPECT_THAT(resolution.mError, HasSubstr("not an exact AMMO-only list"));
+
+        MWWorld::FalloutPlayerState directPlayer;
+        directPlayer.mInventoryItems = { { ammoId, 1 } };
+        const MWWorld::FalloutPlayerStateResolution directResolution
+            = MWWorld::resolveFalloutPlayerInventoryFormLists(std::move(directPlayer), formLists, ammunition);
+        EXPECT_FALSE(directResolution);
+        EXPECT_THAT(directResolution.mError, HasSubstr("inventory AMMO is deleted"));
+    }
+
     TEST(FalloutPlayerStateTest, convertsRetailReferenceFovToExactOpenMwVerticalProjection)
     {
         EXPECT_EQ(std::bit_cast<std::uint32_t>(MWWorld::convertFalloutReferenceFovToOpenMwVertical(75.f)), 0x426f5c9du);
@@ -553,7 +732,7 @@ namespace
 
         const ESM4::FONVSaveGamePrefix save = makeSavePlanFixture({ "FalloutNV.esm", "DeadMoney.esm" });
         const MWWorld::FalloutSaveLoadPlanResolution resolution
-            = MWWorld::resolveFalloutSaveLoadPlan(save, &*player.mState, content);
+            = resolveSavePlan(save, &*player.mState, content);
         ASSERT_TRUE(resolution) << resolution.mError;
         const MWWorld::FalloutSaveLoadPlan& plan = *resolution.mPlan;
         EXPECT_EQ(plan.mPlayer.mReferenceRecord, referenceId);
@@ -562,6 +741,11 @@ namespace
         EXPECT_TRUE(plan.mPlayer.mWeaponDrawn);
         EXPECT_TRUE(plan.mPlayer.mHotkeyItems.empty());
         EXPECT_TRUE(plan.mPlayer.mAmmoSelections.empty());
+        EXPECT_THAT(plan.mPlayer.mFactionChanges,
+            ElementsAreArray(std::array<MWWorld::FalloutSavePlayerHeaderState::FactionChange, 2>{ {
+                { form(0x0001b2a4, 1), -2, 1800 },
+                { form(0x00012345, 1), 3, 1806 },
+            } }));
         ASSERT_EQ(plan.mPlayer.mWornVisualItems.size(), 3u);
         EXPECT_EQ(plan.mPlayer.mWornVisualItems[0].mRecord, form(0x00025b83, 1));
         EXPECT_EQ(plan.mPlayer.mWornVisualItems[1].mRecord, form(0x00015038, 1));
@@ -623,8 +807,17 @@ namespace
             Not(Contains("player-inventory-instance-condition-hotkeys-equipment-actions-ammo-selection")));
         EXPECT_THAT(plan.mUncoveredState, Not(Contains("player-inventory-hotkeys-equipment-actions-ammo-selection")));
         EXPECT_THAT(plan.mUncoveredState, Contains("player-weapon-current-action-clip-reload-state"));
+        EXPECT_THAT(plan.mUncoveredState, Contains("player-reputation-crime-disguise"));
+        EXPECT_THAT(plan.mUncoveredState, Not(Contains("player-factions-reputation-crime-disguise")));
         EXPECT_THAT(plan.mUncoveredState, Contains("quest-variables"));
         EXPECT_THAT(plan.mUncoveredState, Not(Contains("quest-stages-objectives-variables")));
+
+        MWWorld::FalloutPlayerState restoredPlayer = *player.mState;
+        restoredPlayer.mFactions.front().faction = form(0x0001b2a4, 1).toUint32();
+        MWWorld::applyFalloutSavePlayerFactionChanges(restoredPlayer, plan.mPlayer.mFactionChanges);
+        ASSERT_EQ(restoredPlayer.mFactions.size(), 1u);
+        EXPECT_EQ(ESM::FormId::fromUint32(restoredPlayer.mFactions.front().faction), form(0x00012345, 1));
+        EXPECT_EQ(restoredPlayer.mFactions.front().rank, 3);
 
         MWWorld::Store<ESM4::World> worlds;
         ESM4::World worldspace;
@@ -695,7 +888,7 @@ namespace
         addDelta(0x00000300u, 3);
 
         const MWWorld::FalloutSaveLoadPlanResolution resolution
-            = MWWorld::resolveFalloutSaveLoadPlan(save, &*player.mState, content);
+            = resolveSavePlan(save, &*player.mState, content);
         ASSERT_TRUE(resolution) << resolution.mError;
         EXPECT_THAT(resolution.mPlan->mPlayer.mInventoryItems,
             ElementsAreArray(std::array<MWWorld::FalloutInventoryItem, 2>{ {
@@ -711,6 +904,55 @@ namespace
         ASSERT_EQ(proxy.mInventory.mList.size(), 2u);
         EXPECT_EQ(proxy.mInventory.mList[0].mCount, 5);
         EXPECT_EQ(proxy.mInventory.mList[1].mCount, 3);
+    }
+
+    TEST(FalloutPlayerStateTest, CanonicalizesSavedAmmoListBeforeMergingSignedInventoryDelta)
+    {
+        const std::vector<std::string> content{ "builtin.omwscripts", "FalloutNV.esm", "DeadMoney.esm" };
+        const ESM::FormId listId = form(0x1537ea, 1);
+        const ESM::FormId standardAmmoId = form(0x4240, 1);
+        const ESM::FormId hollowPointAmmoId = form(0x13e441, 1);
+        MWWorld::FalloutPlayerState player;
+        player.mBaseRecord = form(7, 1);
+        player.mReferenceRecord = form(0x14, 1);
+        player.mReferenceBaseRecord = player.mBaseRecord;
+        player.mEditorId = "Player";
+        player.mInventoryItems = { { standardAmmoId, 5 } };
+
+        MWWorld::Store<ESM4::FormIdList> formLists;
+        ESM4::FormIdList list;
+        list.mId = listId;
+        list.mObjects = { standardAmmoId, hollowPointAmmoId };
+        formLists.insertStatic(list);
+        MWWorld::Store<ESM4::Ammunition> ammunition;
+        ESM4::Ammunition standardAmmo{};
+        standardAmmo.mId = standardAmmoId;
+        ammunition.insertStatic(standardAmmo);
+        ESM4::Ammunition hollowPointAmmo{};
+        hollowPointAmmo.mId = hollowPointAmmoId;
+        ammunition.insertStatic(hollowPointAmmo);
+
+        ESM4::FONVSaveGamePrefix save = makeSavePlanFixture({ "FalloutNV.esm", "DeadMoney.esm" });
+        save.mPlayerProcessInventoryData->mInventoryEntries.clear();
+        ESM4::FONVSavePlayerInventoryEntry entry;
+        entry.mType.mResolvedFormId = 0x001537eau;
+        entry.mDelta.mValue = 100;
+        save.mPlayerProcessInventoryData->mInventoryEntries.push_back(entry);
+        save.mPlayerProcessInventoryData->mInventoryEntryCount.mValue = 1;
+
+        MWWorld::FalloutSaveLoadPlanResolution resolution
+            = MWWorld::resolveFalloutSaveLoadPlan(save, &player, formLists, ammunition, content);
+        ASSERT_TRUE(resolution) << resolution.mError;
+        EXPECT_THAT(resolution.mPlan->mPlayer.mInventoryItems,
+            ElementsAreArray(std::array<MWWorld::FalloutInventoryItem, 1>{ { { standardAmmoId, 105 } } }));
+        EXPECT_THAT(resolution.mPlan->mPlayer.mInventoryItems,
+            Not(Contains(MWWorld::FalloutInventoryItem{ listId, 100 })));
+
+        save.mPlayerProcessInventoryData->mInventoryEntries.front().mDelta.mValue = -3;
+        resolution = MWWorld::resolveFalloutSaveLoadPlan(save, &player, formLists, ammunition, content);
+        ASSERT_TRUE(resolution) << resolution.mError;
+        EXPECT_THAT(resolution.mPlan->mPlayer.mInventoryItems,
+            ElementsAreArray(std::array<MWWorld::FalloutInventoryItem, 1>{ { { standardAmmoId, 2 } } }));
     }
 
     TEST(FalloutPlayerStateTest, resolvesInventoryHotkeyAndSelectedAmmoExtras)
@@ -739,7 +981,7 @@ namespace
         save.mPlayerProcessInventoryData->mInventoryEntries[25].mExtendData.push_back(std::move(extend));
 
         const MWWorld::FalloutSaveLoadPlanResolution resolution
-            = MWWorld::resolveFalloutSaveLoadPlan(save, &*player.mState, content);
+            = resolveSavePlan(save, &*player.mState, content);
         ASSERT_TRUE(resolution) << resolution.mError;
         ASSERT_EQ(resolution.mPlan->mPlayer.mHotkeyItems.size(), 1u);
         EXPECT_EQ(resolution.mPlan->mPlayer.mHotkeyItems[0].mIndex, 4u);
@@ -763,55 +1005,55 @@ namespace
 
         ESM4::FONVSaveGamePrefix save = makeSavePlanFixture({ "FalloutNV.esm", "DeadMoney.esm" });
         save.mPlayerCharacterScalarReferenceState.reset();
-        MWWorld::FalloutSaveLoadPlanResolution resolution = MWWorld::resolveFalloutSaveLoadPlan(save, &player, content);
+        MWWorld::FalloutSaveLoadPlanResolution resolution = resolveSavePlan(save, &player, content);
         EXPECT_FALSE(resolution);
         EXPECT_THAT(resolution.mError, HasSubstr("does not expose the canonical Player camera/FOV state"));
 
         save = makeSavePlanFixture({ "FalloutNV.esm", "DeadMoney.esm" });
         save.mPlayerCharacterScalarReferenceState->mWorldFov.mValue = std::numeric_limits<float>::infinity();
-        resolution = MWWorld::resolveFalloutSaveLoadPlan(save, &player, content);
+        resolution = resolveSavePlan(save, &player, content);
         EXPECT_FALSE(resolution);
         EXPECT_THAT(resolution.mError, HasSubstr("camera FOV values must be finite and in (0, 180)"));
 
         save = makeSavePlanFixture({ "FalloutNV.esm", "DeadMoney.esm" });
         save.mSky.reset();
-        resolution = MWWorld::resolveFalloutSaveLoadPlan(save, &player, content);
+        resolution = resolveSavePlan(save, &player, content);
         EXPECT_FALSE(resolution);
         EXPECT_THAT(resolution.mError, HasSubstr("does not expose a proven Sky global-data payload"));
 
         save = makeSavePlanFixture({ "FalloutNV.esm", "DeadMoney.esm" });
         save.mPlayerProcessInventoryData.reset();
-        resolution = MWWorld::resolveFalloutSaveLoadPlan(save, &player, content);
+        resolution = resolveSavePlan(save, &player, content);
         EXPECT_FALSE(resolution);
         EXPECT_THAT(resolution.mError, HasSubstr("does not expose the canonical Player process/inventory state"));
 
         save = makeSavePlanFixture({ "FalloutNV.esm", "DeadMoney.esm" });
         save.mPlayerProcessInventoryData->mProcessLevel.mValue = 1;
-        resolution = MWWorld::resolveFalloutSaveLoadPlan(save, &player, content);
+        resolution = resolveSavePlan(save, &player, content);
         EXPECT_FALSE(resolution);
         EXPECT_THAT(resolution.mError, HasSubstr("process level is not canonical high process"));
 
         save = makeSavePlanFixture({ "FalloutNV.esm", "DeadMoney.esm" });
         save.mPlayerProcessInventoryData->mInventoryEntries.front().mType.mResolvedFormId.reset();
-        resolution = MWWorld::resolveFalloutSaveLoadPlan(save, &player, content);
+        resolution = resolveSavePlan(save, &player, content);
         EXPECT_FALSE(resolution);
         EXPECT_THAT(resolution.mError, HasSubstr("Player inventory RefID did not resolve"));
 
         save = makeSavePlanFixture({ "FalloutNV.esm", "DeadMoney.esm" });
         save.mPlayerMobileObjectProcessState->mMiddleHighProcess.mWeaponOut.mValue = 2;
-        resolution = MWWorld::resolveFalloutSaveLoadPlan(save, &player, content);
+        resolution = resolveSavePlan(save, &player, content);
         EXPECT_FALSE(resolution);
         EXPECT_THAT(resolution.mError, HasSubstr("weapon-out state is not a canonical boolean"));
 
         save = makeSavePlanFixture({ "FalloutNV.esm", "DeadMoney.esm" });
         save.mPlayerProcessInventoryData->mInventoryEntries[30].mExtendData[0].mExtraData[0].mCount->mValue = 15;
-        resolution = MWWorld::resolveFalloutSaveLoadPlan(save, &player, content);
+        resolution = resolveSavePlan(save, &player, content);
         EXPECT_FALSE(resolution);
         EXPECT_THAT(resolution.mError, HasSubstr("conditioned stacks exceed the final inventory total"));
 
         save = makeSavePlanFixture({ "FalloutNV.esm", "DeadMoney.esm" });
         player.mInventoryItems = { { form(0x000340fd, 1), std::numeric_limits<std::int32_t>::max() } };
-        resolution = MWWorld::resolveFalloutSaveLoadPlan(save, &player, content);
+        resolution = resolveSavePlan(save, &player, content);
         EXPECT_FALSE(resolution);
         EXPECT_THAT(resolution.mError, HasSubstr("inventory total exceeds the compatibility carrier range"));
     }

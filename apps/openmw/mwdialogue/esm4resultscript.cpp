@@ -63,6 +63,8 @@ namespace MWDialogue
             else if (Misc::StringUtils::ciEqual(command, "evp")
                 || Misc::StringUtils::ciEqual(command, "EvaluatePackage"))
                 result.mType = Esm4ResultCommandType::EvaluatePackage;
+            else if (Misc::StringUtils::ciEqual(command, "StopCombat"))
+                result.mType = Esm4ResultCommandType::StopCombat;
             else
                 return result;
 

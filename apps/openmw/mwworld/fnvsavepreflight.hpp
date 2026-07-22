@@ -14,8 +14,10 @@
 
 namespace ESM4
 {
+    struct Ammunition;
     struct Cell;
     struct Climate;
+    struct FormIdList;
     struct Weather;
     struct World;
 }
@@ -68,6 +70,7 @@ namespace MWWorld
     // inputs exclusively from the validated ESMStore entry point above.
     FalloutSavePreflightResolution resolveFalloutSavePreflightContext(ESM4::FONVSaveGamePrefix save,
         const FalloutPlayerState* player, const FalloutNativePlayerRecordsResolution& nativePlayer,
+        const Store<ESM4::FormIdList>& formLists, const Store<ESM4::Ammunition>& ammunition,
         const Store<ESM4::World>& worlds, const Store<ESM4::Cell>& cells, const Store<ESM4::Climate>& climates,
         const Store<ESM4::Weather>& weather, std::span<const std::string> currentContentFiles);
 

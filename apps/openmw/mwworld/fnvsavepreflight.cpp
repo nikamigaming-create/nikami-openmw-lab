@@ -13,6 +13,7 @@
 #include <components/esm4/loadcell.hpp>
 #include <components/esm4/loadclas.hpp>
 #include <components/esm4/loadclmt.hpp>
+#include <components/esm4/loadfact.hpp>
 #include <components/esm4/loadflst.hpp>
 #include <components/esm4/loadnpc.hpp>
 #include <components/esm4/loadrace.hpp>
@@ -84,6 +85,8 @@ namespace
                 return "FNV save ExtraAmmo owner is not a loaded Player weapon: " + weaponId.toString();
             if (store.get<ESM4::Ammunition>().search(ESM::RefId(selection.mAmmo)) == nullptr)
                 return "FNV save ExtraAmmo selection is not a loaded AMMO record: " + selection.mAmmo.toString();
+            if (selection.mSavedCount < 0 || selection.mSavedCount > weapon->mData.clipSize)
+                return "FNV save ExtraAmmo count exceeds the authored WEAP magazine: " + weaponId.toString();
 
             bool compatible = weapon->mAmmo == selection.mAmmo;
             if (!compatible)
@@ -93,6 +96,17 @@ namespace
             }
             if (!compatible)
                 return "FNV save ExtraAmmo selection is incompatible with its WEAP: " + selection.mAmmo.toString();
+        }
+        return {};
+    }
+
+    std::string validateFactionChanges(
+        const MWWorld::FalloutSavePlayerHeaderState& player, const MWWorld::ESMStore& store)
+    {
+        for (const MWWorld::FalloutSavePlayerHeaderState::FactionChange& change : player.mFactionChanges)
+        {
+            if (store.get<ESM4::Faction>().search(ESM::RefId(change.mFaction)) == nullptr)
+                return "FNV save Player faction change is not a loaded FACT record: " + change.mFaction.toString();
         }
         return {};
     }
@@ -109,8 +123,9 @@ namespace MWWorld
         ESM4::FONVSaveGamePrefix save, const ESMStore& store, std::span<const std::string> currentContentFiles)
     {
         FalloutSavePreflightResolution result = resolveFalloutSavePreflightContext(std::move(save), store.getFalloutPlayerState(),
-            store.getFalloutNativePlayerRecords(), store.get<ESM4::World>(), store.get<ESM4::Cell>(),
-            store.get<ESM4::Climate>(), store.get<ESM4::Weather>(), currentContentFiles);
+            store.getFalloutNativePlayerRecords(), store.get<ESM4::FormIdList>(), store.get<ESM4::Ammunition>(),
+            store.get<ESM4::World>(), store.get<ESM4::Cell>(), store.get<ESM4::Climate>(),
+            store.get<ESM4::Weather>(), currentContentFiles);
         if (!result)
             return result;
 
@@ -120,6 +135,9 @@ namespace MWWorld
         const std::string selectionError = validateInventorySelections(result.mContext->mPlan.mPlayer, store);
         if (!selectionError.empty())
             return failure(selectionError);
+        const std::string factionError = validateFactionChanges(result.mContext->mPlan.mPlayer, store);
+        if (!factionError.empty())
+            return failure(factionError);
         for (const FalloutInventoryItem& item : result.mContext->mPlan.mPlayer.mInventoryItems)
         {
             if (store.find(ESM::RefId(item.mRecord)) == 0)
@@ -141,6 +159,7 @@ namespace MWWorld
 
     FalloutSavePreflightResolution resolveFalloutSavePreflightContext(ESM4::FONVSaveGamePrefix save,
         const FalloutPlayerState* player, const FalloutNativePlayerRecordsResolution& nativePlayer,
+        const Store<ESM4::FormIdList>& formLists, const Store<ESM4::Ammunition>& ammunition,
         const Store<ESM4::World>& worlds, const Store<ESM4::Cell>& cells, const Store<ESM4::Climate>& climates,
         const Store<ESM4::Weather>& weather, std::span<const std::string> currentContentFiles)
     {
@@ -164,7 +183,7 @@ namespace MWWorld
         }
 
         FalloutSaveLoadPlanResolution plan
-            = resolveFalloutSaveLoadPlan(save, player, currentContentFiles);
+            = resolveFalloutSaveLoadPlan(save, player, formLists, ammunition, currentContentFiles);
         if (!plan)
             return failure("FNV save load-plan resolution failed: " + plan.mError);
 

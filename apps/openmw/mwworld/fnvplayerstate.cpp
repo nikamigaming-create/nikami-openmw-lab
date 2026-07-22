@@ -6,6 +6,8 @@
 #include <limits>
 #include <map>
 #include <numbers>
+#include <set>
+#include <sstream>
 #include <stdexcept>
 #include <string_view>
 #include <unordered_set>
@@ -14,9 +16,12 @@
 #include <components/esm/refid.hpp>
 #include <components/esm/util.hpp>
 #include <components/esm3/loadnpc.hpp>
+#include <components/esm4/common.hpp>
 #include <components/esm4/fonvsavegame.hpp>
+#include <components/esm4/loadammo.hpp>
 #include <components/esm4/loadcell.hpp>
 #include <components/esm4/loadclas.hpp>
+#include <components/esm4/loadflst.hpp>
 #include <components/esm4/loadnpc.hpp>
 #include <components/esm4/loadrace.hpp>
 #include <components/esm4/loadwrld.hpp>
@@ -95,6 +100,52 @@ namespace
         return { std::nullopt, std::move(message) };
     }
 
+    struct FalloutInventoryRecordResolution
+    {
+        std::optional<ESM::FormId> mRecord;
+        std::string mError;
+
+        explicit operator bool() const { return mRecord.has_value(); }
+    };
+
+    FalloutInventoryRecordResolution resolveFalloutInventoryRecord(ESM::FormId record,
+        const MWWorld::Store<ESM4::FormIdList>& formLists,
+        const MWWorld::Store<ESM4::Ammunition>& ammunition)
+    {
+        if (record.isZeroOrUnset())
+            return { std::nullopt, "inventory identity is null" };
+
+        const ESM4::FormIdList* list = formLists.search(ESM::RefId(record));
+        if (list == nullptr)
+        {
+            if (const ESM4::Ammunition* ammo = ammunition.search(ESM::RefId(record));
+                ammo != nullptr && (ammo->mId != record || (ammo->mFlags & ESM4::Rec_Deleted) != 0))
+            {
+                return { std::nullopt, "inventory AMMO is deleted or has the wrong typed FormID: " + record.toString() };
+            }
+            return { record, {} };
+        }
+        if (list->mId != record)
+            return { std::nullopt, "inventory FLST resolved with the wrong typed FormID: " + record.toString() };
+        if ((list->mFlags & ESM4::Rec_Deleted) != 0)
+            return { std::nullopt, "inventory FLST is deleted: " + record.toString() };
+        if (list->mObjects.empty())
+            return { std::nullopt, "inventory FLST is empty: " + record.toString() };
+
+        for (const ESM::FormId member : list->mObjects)
+        {
+            if (member.isZeroOrUnset())
+                return { std::nullopt, "inventory FLST contains a null member: " + record.toString() };
+            const ESM4::Ammunition* ammo = ammunition.search(ESM::RefId(member));
+            if (ammo == nullptr || ammo->mId != member || (ammo->mFlags & ESM4::Rec_Deleted) != 0)
+            {
+                return { std::nullopt,
+                    "inventory FLST is not an exact AMMO-only list of live records: " + record.toString() };
+            }
+        }
+        return { list->mObjects.front(), {} };
+    }
+
     std::vector<std::size_t> findContentFileIndices(
         std::span<const std::string> contentFiles, std::string_view fileName)
     {
@@ -150,7 +201,7 @@ namespace
         return {
             "player-runtime-actor-values-modifiers-health-limbs-perks",
             "player-weapon-current-action-clip-reload-state",
-            "player-factions-reputation-crime-disguise",
+            "player-reputation-crime-disguise",
             "quest-stages-objectives-variables",
             "global-variables",
             "world-change-forms-doors-containers-actors-unloaded-references",
@@ -350,6 +401,35 @@ namespace MWWorld
         return resolution;
     }
 
+    FalloutPlayerStateResolution resolveFalloutPlayerInventoryFormLists(FalloutPlayerState state,
+        const Store<ESM4::FormIdList>& formLists, const Store<ESM4::Ammunition>& ammunition)
+    {
+        std::map<ESM::FormId, std::int64_t> resolvedInventory;
+        for (const FalloutInventoryItem& item : state.mInventoryItems)
+        {
+            if (item.mRecord.isZeroOrUnset() || item.mCount <= 0)
+                return failure("resolved Player inventory has an invalid item before FLST resolution");
+            const FalloutInventoryRecordResolution record
+                = resolveFalloutInventoryRecord(item.mRecord, formLists, ammunition);
+            if (!record)
+                return failure("resolved Player " + record.mError);
+
+            std::int64_t& total = resolvedInventory[*record.mRecord];
+            total += item.mCount;
+            if (total > std::numeric_limits<std::int32_t>::max())
+            {
+                return failure(
+                    "resolved Player inventory total exceeds the compatibility carrier range after FLST resolution");
+            }
+        }
+
+        state.mInventoryItems.clear();
+        state.mInventoryItems.reserve(resolvedInventory.size());
+        for (const auto& [record, count] : resolvedInventory)
+            state.mInventoryItems.push_back(FalloutInventoryItem{ record, static_cast<std::int32_t>(count) });
+        return { std::move(state), {} };
+    }
+
     FalloutNativePlayerRecordsResolution resolveFalloutNativePlayerRecords(const Store<ESM4::Npc>& npcs,
         const Store<ESM4::Class>& classes, const Store<ESM4::Race>& races, const FalloutPlayerState& playerState)
     {
@@ -428,7 +508,8 @@ namespace MWWorld
     }
 
     FalloutSaveLoadPlanResolution resolveFalloutSaveLoadPlan(const ESM4::FONVSaveGamePrefix& save,
-        const FalloutPlayerState* nativePlayerState, std::span<const std::string> currentContentFiles)
+        const FalloutPlayerState* nativePlayerState, const Store<ESM4::FormIdList>& formLists,
+        const Store<ESM4::Ammunition>& ammunition, std::span<const std::string> currentContentFiles)
     {
         constexpr std::string_view falloutMaster = "FalloutNV.esm";
         if (nativePlayerState == nullptr)
@@ -449,7 +530,26 @@ namespace MWWorld
 
         const std::vector<std::size_t> currentPluginIndices = findCurrentFalloutPluginIndices(currentContentFiles);
         if (currentPluginIndices.size() != save.mMasters.size())
-            return loadFailure("current ESM/ESP content count does not exactly match the FNV save master table");
+        {
+            std::ostringstream message;
+            message << "current ESM/ESP content count does not exactly match the FNV save master table: expected "
+                    << save.mMasters.size() << " [";
+            for (std::size_t i = 0; i < save.mMasters.size(); ++i)
+            {
+                if (i != 0)
+                    message << ", ";
+                message << save.mMasters[i].mFileName.mValue;
+            }
+            message << "], got " << currentPluginIndices.size() << " [";
+            for (std::size_t i = 0; i < currentPluginIndices.size(); ++i)
+            {
+                if (i != 0)
+                    message << ", ";
+                message << currentContentFiles[currentPluginIndices[i]];
+            }
+            message << ']';
+            return loadFailure(message.str());
+        }
         for (std::size_t position = 0; position < save.mMasters.size(); ++position)
         {
             const std::string& current = currentContentFiles[currentPluginIndices[position]];
@@ -525,6 +625,25 @@ namespace MWWorld
         if (weaponOut.mValue > 1)
             return loadFailure("FNV save Player weapon-out state is not a canonical boolean");
         plan.mPlayer.mWeaponDrawn = weaponOut.mValue != 0;
+        std::set<ESM::FormId> changedFactions;
+        for (const ESM4::FONVSavePlayerActorExtraData& extra : processInventory.mActorExtraData)
+        {
+            if (extra.mType.mValue != ESM4::sFONVExtraFactionChangesType)
+                continue;
+            for (const ESM4::FONVSavePlayerFactionChange& change : extra.mFactionChanges)
+            {
+                if (!change.mFaction.mResolvedFormId)
+                    return loadFailure("FNV save Player faction-change RefID did not resolve");
+                const std::optional<ESM::FormId> faction
+                    = normalizeSavedFormId(*change.mFaction.mResolvedFormId, currentPluginIndices);
+                if (!faction)
+                    return loadFailure("FNV save Player faction-change FormID has unsupported provenance");
+                if (!changedFactions.insert(*faction).second)
+                    return loadFailure("FNV save Player has duplicate faction-change identities");
+                plan.mPlayer.mFactionChanges.push_back(FalloutSavePlayerHeaderState::FactionChange{
+                    *faction, change.mRank.mValue, change.mRange.mOffset });
+            }
+        }
         std::map<ESM::FormId, std::int64_t> inventoryTotals;
         std::map<ESM::FormId, std::int64_t> conditionedTotals;
         std::array<bool, 8> assignedHotkeys{};
@@ -544,7 +663,12 @@ namespace MWWorld
                 = normalizeSavedFormId(*entry.mType.mResolvedFormId, currentPluginIndices);
             if (!normalized)
                 return loadFailure("FNV save Player inventory FormID has unsupported provenance");
-            inventoryTotals[*normalized] += static_cast<std::int64_t>(entry.mDelta.mValue);
+            const FalloutInventoryRecordResolution record
+                = resolveFalloutInventoryRecord(*normalized, formLists, ammunition);
+            if (!record)
+                return loadFailure("FNV save Player " + record.mError);
+            const ESM::FormId inventoryRecord = *record.mRecord;
+            inventoryTotals[inventoryRecord] += static_cast<std::int64_t>(entry.mDelta.mValue);
 
             for (const ESM4::FONVSavePlayerInventoryExtendData& extend : entry.mExtendData)
             {
@@ -596,16 +720,16 @@ namespace MWWorld
                 }
                 if (health)
                 {
-                    conditionedTotals[*normalized] += stackCount;
+                    conditionedTotals[inventoryRecord] += stackCount;
                     plan.mPlayer.mConditionedStacks.push_back(FalloutSavePlayerHeaderState::ConditionedStack{
-                        *normalized, stackCount, *health, extend.mRange.mOffset });
+                        inventoryRecord, stackCount, *health, extend.mRange.mOffset });
                 }
                 if (wornOffset)
                 {
                     if (stackCount != 1)
                         return loadFailure("FNV save Player ExtraWorn state applies to a non-singleton stack");
                     plan.mPlayer.mWornVisualItems.push_back(
-                        FalloutSavePlayerHeaderState::WornVisualItem{ *normalized, health, *wornOffset });
+                        FalloutSavePlayerHeaderState::WornVisualItem{ inventoryRecord, health, *wornOffset });
                 }
                 if (hotkey)
                 {
@@ -613,7 +737,7 @@ namespace MWWorld
                         return loadFailure("FNV save Player inventory has duplicate ExtraHotkey assignments");
                     assignedHotkeys[hotkey->mValue] = true;
                     plan.mPlayer.mHotkeyItems.push_back(FalloutSavePlayerHeaderState::HotkeyItem{
-                        hotkey->mValue, *normalized, hotkey->mRange.mOffset });
+                        hotkey->mValue, inventoryRecord, hotkey->mRange.mOffset });
                 }
                 if (ammoExtra != nullptr)
                 {
@@ -621,13 +745,18 @@ namespace MWWorld
                         = normalizeSavedFormId(*ammoExtra->mAmmo->mResolvedFormId, currentPluginIndices);
                     if (!ammo)
                         return loadFailure("FNV save Player ExtraAmmo FormID has unsupported provenance");
-                    const auto [existing, inserted] = selectedAmmo.emplace(*normalized, *ammo);
-                    if (!inserted && existing->second != *ammo)
+                    const FalloutInventoryRecordResolution ammoRecord
+                        = resolveFalloutInventoryRecord(*ammo, formLists, ammunition);
+                    if (!ammoRecord)
+                        return loadFailure("FNV save Player ExtraAmmo " + ammoRecord.mError);
+                    const auto [existing, inserted] = selectedAmmo.emplace(inventoryRecord, *ammoRecord.mRecord);
+                    if (!inserted && existing->second != *ammoRecord.mRecord)
                         return loadFailure("FNV save Player has conflicting ExtraAmmo selections for one weapon");
                     if (inserted)
                     {
                         plan.mPlayer.mAmmoSelections.push_back(FalloutSavePlayerHeaderState::AmmoSelection{
-                            *normalized, *ammo, ammoExtra->mAmmoCount->mValue, ammoExtra->mType.mRange.mOffset });
+                            inventoryRecord, *ammoRecord.mRecord, ammoExtra->mAmmoCount->mValue,
+                            ammoExtra->mType.mRange.mOffset });
                     }
                 }
             }
@@ -826,6 +955,27 @@ namespace MWWorld
             if (item.mRecord.isZeroOrUnset() || item.mCount <= 0 || !seen.insert(item.mRecord).second)
                 throw std::runtime_error("invalid normalized FNV save Player inventory total");
             proxy.mInventory.mList.push_back(ESM::ContItem{ item.mCount, ESM::RefId(item.mRecord) });
+        }
+    }
+
+    void applyFalloutSavePlayerFactionChanges(
+        FalloutPlayerState& player, std::span<const FalloutSavePlayerHeaderState::FactionChange> changes)
+    {
+        for (const FalloutSavePlayerHeaderState::FactionChange& change : changes)
+        {
+            const auto found = std::ranges::find_if(player.mFactions, [&](const ESM4::ActorFaction& membership) {
+                return ESM::FormId::fromUint32(membership.faction) == change.mFaction;
+            });
+            if (change.mRank < 0)
+            {
+                if (found != player.mFactions.end())
+                    player.mFactions.erase(found);
+                continue;
+            }
+            if (found != player.mFactions.end())
+                found->rank = change.mRank;
+            else
+                player.mFactions.push_back(ESM4::ActorFaction{ change.mFaction.toUint32(), change.mRank, 0, 0, 0 });
         }
     }
 

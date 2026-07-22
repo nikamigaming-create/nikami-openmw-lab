@@ -86,6 +86,7 @@ namespace MWMechanics
 
         /// Removes an actor from combat and makes all of their allies stop fighting the actor's targets
         void stopCombat(const MWWorld::Ptr& ptr) const;
+        bool playFalloutDialogueAnimation(const MWWorld::ConstPtr& ptr, const ESM::RefId& animationId) const;
 
         void playIdleDialogue(const MWWorld::Ptr& actor) const;
         void updateMovementSpeed(const MWWorld::Ptr& actor) const;
@@ -114,6 +115,7 @@ namespace MWMechanics
         bool isSneaking(const MWWorld::Ptr& ptr) const;
 
         void forceStateUpdate(const MWWorld::Ptr& ptr) const;
+        bool reloadFalloutWeapon(const MWWorld::Ptr& actor) const;
         bool executeFalloutVatsRangedHit(const MWWorld::Ptr& actor, const MWWorld::Ptr& target,
             const osg::Vec3f& targetPoint, const FalloutVatsQueuedAction& action, bool targetHit) const;
         bool executeFalloutProjectileImpact(const MWWorld::Ptr& actor, const MWWorld::Ptr& target,

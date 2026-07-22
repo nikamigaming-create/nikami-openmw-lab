@@ -87,20 +87,37 @@ namespace MWGui
         assignWidget(mName, "Name");
         if (mName)
             mName->setNeedMouseFocus(false);
-        if (Settings::gui().mControllerMenus)
-        {
-            assignWidget(mControllerBorder, "ControllerBorder");
-            if (mControllerBorder)
-                mControllerBorder->setNeedMouseFocus(false);
-        }
+        assignWidget(mControllerBorder, "ControllerBorder");
+        if (mControllerBorder)
+            mControllerBorder->setNeedMouseFocus(false);
 
         Base::initialiseOverride();
     }
 
     void ItemWidget::setControllerFocus(bool focus)
     {
+        mControllerFocused = focus;
+        updateFocusHighlight();
+    }
+
+    void ItemWidget::onMouseSetFocus(MyGUI::Widget* oldWidget)
+    {
+        mMouseFocused = true;
+        updateFocusHighlight();
+        Base::onMouseSetFocus(oldWidget);
+    }
+
+    void ItemWidget::onMouseLostFocus(MyGUI::Widget* newWidget)
+    {
+        mMouseFocused = false;
+        updateFocusHighlight();
+        Base::onMouseLostFocus(newWidget);
+    }
+
+    void ItemWidget::updateFocusHighlight()
+    {
         if (mControllerBorder)
-            mControllerBorder->setVisible(focus);
+            mControllerBorder->setVisible(mControllerFocused || mMouseFocused);
     }
 
     void ItemWidget::setCount(int count)
@@ -207,6 +224,17 @@ namespace MWGui
 
         if (!backgroundTex.empty())
             backgroundTex += ".dds";
+
+        // Fallout inventory screens reuse ItemWidget but do not ship the Morrowind
+        // menu_icon_equip/menu_icon_barter frame textures.  Use OpenMW's bundled
+        // selection frame instead of issuing a failed VFS image request for every
+        // equipped or barter item.
+        if (!backgroundTex.empty())
+        {
+            const VFS::Manager* const vfs = MWBase::Environment::get().getResourceSystem()->getVFS();
+            if (!vfs->exists(VFS::Path::toNormalized(backgroundTex)))
+                backgroundTex = "textures\\omw_menu_icon_active.dds";
+        }
 
         float scale = 1.f;
         if (!backgroundTex.empty())

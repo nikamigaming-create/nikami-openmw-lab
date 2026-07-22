@@ -5,6 +5,9 @@ on:
       tags:
         - openmw-vr-**
 
+permissions:
+  contents: write
+
 jobs:
   Output-Envs:
     name: Read .env file and expose it as output
@@ -15,7 +18,7 @@ jobs:
       - uses: actions/checkout@v4
       - run: cat "${{ github.workspace }}/CI/github.env" >> $GITHUB_ENV
 
-  Windows:
+  Windows-VR:
     needs:
       - Output-Envs
     uses: ./.github/workflows/windows.yml
@@ -23,6 +26,38 @@ jobs:
       image: "2022"
       vcpkg-deps-tag: ${{ needs.Output-Envs.outputs.VCPKG_DEPS_TAG }}
       build-type: Release
+      variant: vr
       package: true
-      release: true
+      release: false
     secrets: inherit
+
+  Windows-Flat:
+    needs:
+      - Output-Envs
+    uses: ./.github/workflows/windows.yml
+    with:
+      image: "2022"
+      vcpkg-deps-tag: ${{ needs.Output-Envs.outputs.VCPKG_DEPS_TAG }}
+      build-type: Release
+      variant: flat
+      package: true
+      release: false
+    secrets: inherit
+
+  Publish:
+    needs:
+      - Windows-VR
+      - Windows-Flat
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: openmw-*-windows-2022-${{ github.sha }}
+          path: release-assets
+          merge-multiple: true
+      - name: Create prerelease
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release-assets/*.exe
+          prerelease: true
+          draft: true

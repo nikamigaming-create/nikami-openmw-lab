@@ -78,6 +78,7 @@ namespace MWWorld
 
         // Fallout weapons can select one AMMO from an authored FLST. TES3 inventories leave this empty.
         std::map<ESM::RefId, ESM::RefId> mFalloutAmmoSelections;
+        std::map<ESM::RefId, int32_t> mFalloutLoadedAmmo;
 
         void copySlots(const InventoryStore& store);
 
@@ -136,6 +137,8 @@ namespace MWWorld
 
         void setFalloutAmmoSelection(const ESM::RefId& weapon, const ESM::RefId& ammo);
         std::optional<ESM::RefId> getFalloutAmmoSelection(const ESM::RefId& weapon) const;
+        void setFalloutLoadedAmmo(const ESM::RefId& weapon, int count);
+        std::optional<int> getFalloutLoadedAmmo(const ESM::RefId& weapon) const;
 
         void writeState(ESM::InventoryState& state) const override;
         void readState(const ESM::InventoryState& state) override;

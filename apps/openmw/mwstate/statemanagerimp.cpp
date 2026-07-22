@@ -45,6 +45,7 @@
 #include "../mwworld/class.hpp"
 #include "../mwworld/datetimemanager.hpp"
 #include "../mwworld/esmstore.hpp"
+#include "../mwworld/fnvplayerruntimestate.hpp"
 #include "../mwworld/fnvsavepreflight.hpp"
 #include "../mwworld/globals.hpp"
 #include "../mwworld/inventorystore.hpp"
@@ -589,6 +590,7 @@ void MWState::StateManager::loadGame(const Character* character, const std::file
         mLastSavegame = filepath;
 
         MWBase::Environment::get().getWindowManager()->setNewGame(false);
+        MWBase::Environment::get().getLuaManager()->prepareGameLoad();
         mutableWorld.saveLoaded();
         if (context.mPlan.mQuestProgress)
         {
@@ -597,6 +599,13 @@ void MWState::StateManager::loadGame(const Character* character, const std::file
                 throw std::runtime_error("native FNV quest-progress application failed after preflight: " + error);
         }
         mutableWorld.setupPlayer();
+
+        MWWorld::FalloutPlayerState restoredPlayerState = context.mPlayer;
+        MWWorld::applyFalloutSavePlayerFactionChanges(restoredPlayerState, context.mPlan.mPlayer.mFactionChanges);
+        mutableWorld.getFalloutPlayerRuntimeState().initialize(restoredPlayerState);
+        Log(Debug::Info) << "Native FNV save Player restored faction overlay: changes="
+                         << context.mPlan.mPlayer.mFactionChanges.size()
+                         << " memberships=" << restoredPlayerState.mFactions.size();
 
         MWWorld::Ptr player = mutableWorld.getPlayerPtr();
         // setupPlayer replaces the Player base record but intentionally retains the live reference data.  Native
@@ -640,6 +649,7 @@ void MWState::StateManager::loadGame(const Character* character, const std::file
             const ESM::RefId weapon(selection.mWeapon);
             const ESM::RefId ammo(selection.mAmmo);
             savedInventory.setFalloutAmmoSelection(weapon, ammo);
+            savedInventory.setFalloutLoadedAmmo(weapon, selection.mSavedCount);
             Log(Debug::Info) << "Native FNV save Player restored selected ammo: weapon=" << weapon
                              << " ammo=" << ammo << " savedCount=" << selection.mSavedCount
                              << " sourceOffset=" << selection.mSourceOffset;

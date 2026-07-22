@@ -71,6 +71,7 @@ namespace MWLua
         // Available everywhere through the MWBase::LuaManager interface.
         // LuaManager queues these events and propagates to scripts on the next `update` call.
         void newGameStarted() override;
+        void prepareGameLoad() override;
         void gameLoaded() override;
         void gameEnded() override;
         void noGame() override;

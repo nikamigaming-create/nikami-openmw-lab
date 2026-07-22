@@ -3567,6 +3567,36 @@ namespace MWRender
         return wrapper;
     }
 
+    bool Animation::addFalloutDialogueAnimSource(
+        const std::string& model, const std::string& baseModel, std::string_view semanticGroup)
+    {
+        return addSingleAnimSource(model, baseModel, false, {}, semanticGroup) != nullptr;
+    }
+
+    osg::ref_ptr<osg::Group> correctFalloutCreatureForwardAxis(
+        osg::ref_ptr<osg::Group> objectRoot, const MWWorld::Ptr& ptr)
+    {
+        if (objectRoot == nullptr || ptr.getType() != ESM4::Creature::sRecordId)
+            return objectRoot;
+
+        const MWWorld::LiveCellRef<ESM4::Creature>* ref = ptr.get<ESM4::Creature>();
+        if (ref == nullptr || ref->mBase == nullptr || !ref->mBase->mIsFONV)
+            return objectRoot;
+
+        std::string model = Misc::StringUtils::lowerCase(std::string(ptr.getClass().getModel(ptr)));
+        std::replace(model.begin(), model.end(), '\\', '/');
+        if (model.find("/nvsecuritron/") == std::string::npos)
+            return objectRoot;
+
+        // The FNV securitron skeleton's screen/front points along -X while OpenMW movement and facing use +Y.
+        // Keep gameplay yaw authoritative and correct only this measured visual assembly.
+        osg::ref_ptr<osg::MatrixTransform> wrapper = new osg::MatrixTransform;
+        wrapper->setName("FNV Securitron Forward Axis");
+        wrapper->setMatrix(osg::Matrixf::rotate(-osg::PI_2, osg::Vec3f(0.f, 0.f, 1.f)));
+        wrapper->addChild(objectRoot);
+        return wrapper;
+    }
+
 
     float getFalloutIdleSeedSeconds(std::string_view groupname)
     {
@@ -7446,6 +7476,16 @@ namespace MWRender
             }
         }
 
+        if (osg::ref_ptr<osg::Group> correctedRoot = correctFalloutCreatureForwardAxis(mObjectRoot, mPtr))
+        {
+            if (correctedRoot.get() != mObjectRoot.get())
+            {
+                mInsert->removeChild(mObjectRoot);
+                mObjectRoot = correctedRoot;
+                mInsert->addChild(mObjectRoot);
+            }
+        }
+
         if (isFalloutDeathFallbackContext(mPtr))
         {
             mInsert->removeChild(mObjectRoot);
@@ -7522,9 +7562,11 @@ namespace MWRender
 
         osg::Node* node = const_cast<osg::Node*>(getNode(targetNode));
         if (node == nullptr)
-            node = mObjectRoot.get();
-        if (node == nullptr)
+        {
+            Log(Debug::Warning) << "FNV VATS: refusing whole-actor highlight for missing authored node="
+                                << targetNode;
             return;
+        }
 
         mFalloutVatsWireframeNode = node;
         mFalloutVatsOriginalStateSet = node->getStateSet();
@@ -7540,11 +7582,11 @@ namespace MWRender
             osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE | osg::StateAttribute::PROTECTED);
 
         osg::ref_ptr<osg::Material> material = new osg::Material;
-        const osg::Vec4f vatsGreen(0.05f, 1.f, 0.2f, 1.f);
+        const osg::Vec4f vatsAmber(1.f, 0.42f, 0.04f, 1.f);
         material->setColorMode(osg::Material::OFF);
-        material->setAmbient(osg::Material::FRONT_AND_BACK, vatsGreen);
-        material->setDiffuse(osg::Material::FRONT_AND_BACK, vatsGreen);
-        material->setEmission(osg::Material::FRONT_AND_BACK, vatsGreen * 0.65f);
+        material->setAmbient(osg::Material::FRONT_AND_BACK, vatsAmber);
+        material->setDiffuse(osg::Material::FRONT_AND_BACK, vatsAmber);
+        material->setEmission(osg::Material::FRONT_AND_BACK, vatsAmber * 0.65f);
         stateSet->setAttributeAndModes(
             material, osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE | osg::StateAttribute::PROTECTED);
         node->setStateSet(stateSet);

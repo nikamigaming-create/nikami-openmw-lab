@@ -159,7 +159,9 @@ local function createDerivedSpaces()
         'LeftWristTop',
         {
             position = util.vector3(-0.037, -0.023, -0.050) * I.vrspaces.unitsPerMeter,
-            orientation = util.transform.rotate(math.pi / 2, util.vector3(0, 0, 1))
+            -- The layer quad is already upright in the wrist-top space. Rotating it 90 degrees here also
+            -- rotates the child Stats/Map/Utility offsets into depth, producing the transposed panel stack.
+            orientation = util.transform.identity
         }
     )
 

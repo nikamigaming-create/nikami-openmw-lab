@@ -297,4 +297,14 @@ namespace
         EXPECT_EQ(legionFactionChecks, 1);
         EXPECT_EQ(legionInfoChecks, excludedVoiceTypes.size());
     }
+
+    TEST(Esm4DialogueExpressionTest, StoresRetailEmotionAndClampsAuthoredWeight)
+    {
+        int actorToken = 0;
+        MWDialogue::setEsm4DialogueExpression(&actorToken, ESM4::EMO_Happy, 150);
+        const auto expression = MWDialogue::getEsm4DialogueExpression(&actorToken);
+        ASSERT_TRUE(expression.has_value());
+        EXPECT_EQ(expression->mType, ESM4::EMO_Happy);
+        EXPECT_FLOAT_EQ(expression->mWeight, 1.f);
+    }
 }

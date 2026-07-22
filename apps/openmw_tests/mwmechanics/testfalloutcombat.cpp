@@ -373,6 +373,38 @@ namespace
         EXPECT_TRUE(contract->mAbsoluteHitChance);
     }
 
+    TEST(FalloutCombatTest, ComputesEveryDisplayedVatsLimbChanceFromAuthoredContracts)
+    {
+        const MWMechanics::FalloutVatsWeaponContract weapon{ 22.f, 42, 1.f, 32 };
+        const MWMechanics::FalloutVatsBodyPartContract relative{
+            1, "Head", "Bip01 Head", 25, 35, 20, 2.f, false };
+        const MWMechanics::FalloutVatsBodyPartContract capped{
+            2, "Torso", "Bip01 Spine2", 26, 75, 60, 1.f, false };
+        const MWMechanics::FalloutVatsBodyPartContract absolute{
+            3, "Left Arm", "Bip01 L UpperArm", 27, 31, 25, 1.f, true };
+
+        EXPECT_EQ(MWMechanics::getFalloutVatsDisplayedHitChance(relative, weapon), 77u);
+        EXPECT_EQ(MWMechanics::getFalloutVatsDisplayedHitChance(capped, weapon), 100u);
+        EXPECT_EQ(MWMechanics::getFalloutVatsDisplayedHitChance(absolute, weapon), 31u);
+    }
+
+    TEST(FalloutCombatTest, FramesVatsCameraOnRenderedActorFront)
+    {
+        const auto pose = MWMechanics::buildFalloutVatsFrontalCameraPose(
+            osg::Vec3f(10.f, 20.f, 30.f), 100.f, osg::Vec3f(2.f, 0.f, 5.f));
+        EXPECT_EQ(pose.mFocus, osg::Vec3f(10.f, 20.f, 30.f));
+        EXPECT_NEAR(pose.mEye.x(), 225.f, 0.001f);
+        EXPECT_NEAR(pose.mEye.y(), 20.f, 0.001f);
+        EXPECT_NEAR(pose.mEye.z(), 30.f, 0.001f);
+
+        const auto fallback = MWMechanics::buildFalloutVatsFrontalCameraPose(
+            osg::Vec3f(), std::numeric_limits<float>::quiet_NaN(), osg::Vec3f());
+        EXPECT_EQ(fallback.mFocus, osg::Vec3f());
+        EXPECT_NEAR(fallback.mEye.x(), 0.f, 0.001f);
+        EXPECT_NEAR(fallback.mEye.y(), 172.f, 0.001f);
+        EXPECT_NEAR(fallback.mEye.z(), 0.f, 0.001f);
+    }
+
     TEST(FalloutCombatTest, RunsVatsQueueAsOneActionPointTransaction)
     {
         MWMechanics::FalloutVatsRuntime runtime;

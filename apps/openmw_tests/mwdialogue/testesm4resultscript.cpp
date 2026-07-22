@@ -40,9 +40,10 @@ namespace MWDialogue
             "GSGasStationDoorRef.Unlock\r\n"
             "TrudyRef.Enable\r\n"
             "set VFreeformGoodsprings.bEnableTrudyDone to 1\r\n"
-            "SunnyREF.evp;\r\n");
+            "SunnyREF.evp;\r\n"
+            "VictorREF.stopcombat player\r\n");
 
-        ASSERT_EQ(script.mCommands.size(), 5);
+        ASSERT_EQ(script.mCommands.size(), 6);
         EXPECT_EQ(script.mCommands[0].mType, Esm4ResultCommandType::Quest);
         EXPECT_EQ(script.mCommands[0].mSource,
             "if(GetQuestRunning VCG03)\n"
@@ -58,6 +59,8 @@ namespace MWDialogue
         EXPECT_EQ(script.mCommands[3].mSource, "set VFreeformGoodsprings.bEnableTrudyDone to 1");
         EXPECT_EQ(script.mCommands[4].mType, Esm4ResultCommandType::EvaluatePackage);
         EXPECT_EQ(script.mCommands[4].mTarget, "SunnyREF");
+        EXPECT_EQ(script.mCommands[5].mType, Esm4ResultCommandType::StopCombat);
+        EXPECT_EQ(script.mCommands[5].mTarget, "VictorREF");
         EXPECT_EQ(script.mSkippedConditionalCommands, 0);
         EXPECT_FALSE(script.mMalformedControlFlow);
     }

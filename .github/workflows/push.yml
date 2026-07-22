@@ -85,9 +85,13 @@ jobs:
       matrix:
         image:
         - "2022"
+        variant:
+        - vr
+        - flat
 
     uses: ./.github/workflows/windows.yml
     with:
       image: ${{ matrix.image }}
       vcpkg-deps-tag: ${{ needs.Output-Envs.outputs.VCPKG_DEPS_TAG }}
       build-type: ${{ needs.Output-Envs.outputs.BUILD_TYPE }}
+      variant: ${{ matrix.variant }}

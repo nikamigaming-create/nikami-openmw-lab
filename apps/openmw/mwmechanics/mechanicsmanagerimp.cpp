@@ -830,6 +830,11 @@ namespace MWMechanics
             mActors.forceStateUpdate(ptr);
     }
 
+    bool MechanicsManager::reloadFalloutWeapon(const MWWorld::Ptr& actor)
+    {
+        return actor.getClass().isActor() && mActors.reloadFalloutWeapon(actor);
+    }
+
     bool MechanicsManager::executeFalloutVatsRangedHit(const MWWorld::Ptr& actor, const MWWorld::Ptr& target,
         const osg::Vec3f& targetPoint, const FalloutVatsQueuedAction& action, bool targetHit)
     {
@@ -1871,6 +1876,12 @@ namespace MWMechanics
     void MechanicsManager::stopCombat(const MWWorld::Ptr& actor)
     {
         mActors.stopCombat(actor);
+    }
+
+    bool MechanicsManager::playFalloutDialogueAnimation(
+        const MWWorld::ConstPtr& ptr, const ESM::RefId& animationId)
+    {
+        return mActors.playFalloutDialogueAnimation(ptr, animationId);
     }
 
     void MechanicsManager::getObjectsInRange(

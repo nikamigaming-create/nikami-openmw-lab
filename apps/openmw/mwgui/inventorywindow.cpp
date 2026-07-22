@@ -421,6 +421,8 @@ namespace MWGui
         MWWorld::Ptr object = item.mBase;
         int count = item.mCount;
         bool shift = MyGUI::InputManager::getInstance().isShiftPressed();
+        const bool falloutActivate = hasFalloutContent() && mGuiMode == GM_Inventory && !mTrading
+            && mPendingControllerAction == ControllerAction::None;
 
         if (MyGUI::InputManager::getInstance().isControlPressed())
             count = 1;
@@ -461,7 +463,7 @@ namespace MWGui
 
         // Show a dialog to select a count of items, but not when using an item from the inventory
         // in controller mode. In that case, we skip the dialog and just use one item immediately.
-        if (count > 1 && !shift && mPendingControllerAction != ControllerAction::Use)
+        if (count > 1 && !shift && mPendingControllerAction != ControllerAction::Use && !falloutActivate)
         {
             CountDialog* dialog = MWBase::Environment::get().getWindowManager()->getCountDialog();
             std::string message = "#{sTake}";
@@ -491,7 +493,7 @@ namespace MWGui
 
             if (mTrading || mPendingControllerAction == ControllerAction::Sell)
                 sellItem(nullptr, count);
-            else if (mPendingControllerAction == ControllerAction::Use)
+            else if (mPendingControllerAction == ControllerAction::Use || falloutActivate)
             {
                 dragItem(nullptr, count);
                 if (item.mType == ItemStack::Type_Equipped)

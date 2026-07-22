@@ -51,11 +51,13 @@
 #include "../mwmechanics/movement.hpp"
 
 #include "../mwworld/actionopen.hpp"
+#include "../mwworld/actiontalk.hpp"
 #include "../mwworld/containerstore.hpp"
 #include "../mwworld/customdata.hpp"
 #include "../mwworld/esmstore.hpp"
 #include "../mwworld/esm4questruntime.hpp"
 #include "../mwworld/worldmodel.hpp"
+#include "../mwworld/failedaction.hpp"
 
 #include "../mwgui/tooltips.hpp"
 
@@ -1940,9 +1942,12 @@ namespace MWClass
     std::unique_ptr<MWWorld::Action> ESM4Creature::activate(
         const MWWorld::Ptr& ptr, const MWWorld::Ptr& actor) const
     {
+        (void)actor;
         if (getCreatureStats(ptr).isDead())
             return std::make_unique<MWWorld::ActionOpen>(ptr);
-        return Actor::activate(ptr, actor);
+        if (getCreatureStats(ptr).getKnockedDown())
+            return std::make_unique<MWWorld::FailedAction>();
+        return std::make_unique<MWWorld::ActionTalk>(ptr);
     }
 
     MWMechanics::CreatureStats& ESM4Creature::getCreatureStats(const MWWorld::Ptr& ptr) const
@@ -2126,6 +2131,22 @@ namespace MWClass
         (void)ptr;
         (void)id;
         return 50.f;
+    }
+
+    int ESM4Creature::getServices(const MWWorld::ConstPtr& ptr) const
+    {
+        // Fallout service menus are selected by dialogue results rather than
+        // the Morrowind service bitmask consumed by the shared dialogue UI.
+        (void)ptr;
+        return 0;
+    }
+
+    int ESM4Creature::getBaseGold(const MWWorld::ConstPtr& ptr) const
+    {
+        // Fallout currency remains in actor inventories; do not synthesize a
+        // Morrowind merchant gold pool merely because dialogue was opened.
+        (void)ptr;
+        return 0;
     }
 
     bool ESM4Creature::isPersistent(const MWWorld::ConstPtr& ptr) const

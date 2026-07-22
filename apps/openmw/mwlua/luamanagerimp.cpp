@@ -416,6 +416,13 @@ namespace MWLua
         mNewGameStarted = true;
     }
 
+    void LuaManager::prepareGameLoad()
+    {
+        // Local auto-start scripts can be attached while the world and player are reconstructed. Native-format
+        // imports have no OpenMW LUAM record whose reader would otherwise activate storage before that happens.
+        mGlobalStorage.setActive(true);
+    }
+
     void LuaManager::gameLoaded()
     {
         mGlobalStorage.setActive(true);

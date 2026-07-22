@@ -69,6 +69,7 @@ namespace MWInput
         void updateFalloutVatsExecution(float dt);
         bool executeNextFalloutVatsAction();
         void finishFalloutVatsExecution(bool interrupted);
+        void updateFalloutVatsPointerSelection();
         void updateFalloutVatsHud();
 
         BindingsManager* mBindingsManager;
@@ -100,12 +101,6 @@ namespace MWInput
         std::size_t mFalloutVatsExecutionShotsFired = 0;
         std::size_t mFalloutVatsExecutionRolledHits = 0;
         std::vector<std::pair<ESM::FormId, float>> mFalloutVatsExecutionTargetHealthBefore;
-        float mFalloutVatsCaptureTimer = 0.f;
-        unsigned int mFalloutVatsCaptureFrames = 0;
-        unsigned int mFalloutVatsVideoCaptureCount = 0;
-        bool mFalloutVatsCapturePrepared = false;
-        bool mFalloutVatsCaptureQueued = false;
-        bool mFalloutVatsVideoExited = false;
     };
 }
 #endif

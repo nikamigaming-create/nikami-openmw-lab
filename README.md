@@ -23,6 +23,63 @@ VR
 --
 [Read the docs](https://openmw-vr.readthedocs.io/en/latest/index.html) to get started with playing VR
 
+Playing Fallout: New Vegas (experimental)
+------------------------------------------
+
+Windows prereleases provide two installers:
+
+* `OpenMW-Flat-*-win64.exe` for normal monitor, keyboard, mouse, or controller play.
+* `OpenMW-VR-*-win64.exe` for OpenXR headsets and VR controllers.
+
+Use the Flat installer unless you specifically want to play in VR.
+
+Launching a game
+----------------
+
+The installer variant selects the display mode; the launcher Content List selects the game:
+
+1. Start `openmw-launcher.exe` from the installation folder and open **Data Files**.
+2. Select **New Content List** and name it for the game, for example `Morrowind` or `Fallout New Vegas`.
+3. Add that game's data directory, archives, and master/plugin files to the new Content List.
+4. Select the desired Content List before pressing **Play**. The Flat launcher starts `openmw.exe`; the VR launcher
+   starts `openmw_vr.exe`.
+5. Directly starting `openmw.exe` or `openmw_vr.exe` later uses the Content List most recently selected and saved by
+   the launcher.
+
+For Morrowind, add the folder containing `Morrowind.esm`, enable `Morrowind.esm`, and enable `Morrowind.bsa`. If
+installed, load `Tribunal.esm` and `Bloodmoon.esm` after the base game with their matching archives. Morrowind is the
+stable, upstream-supported game path.
+
+Fallout: New Vegas uses the experimental setup below. The engine can identify `Oblivion.esm`, `Fallout3.esm`,
+`Skyrim.esm`/`SkyrimVR.esm`, `Fallout4.esm`, and `Starfield.esm` for ongoing parser and world-viewer development, but
+this release does not claim those games are playable yet.
+
+This fork contains work-in-progress Fallout: New Vegas support. It does not include the game or any Bethesda assets;
+you must own and install Fallout: New Vegas separately. Expect incomplete gameplay and keep saves made by this build
+separate from saves you care about.
+
+1. Download the appropriate Windows installer from this repository's
+   [Releases](https://github.com/nikamigaming-create/nikami-openmw-lab/releases) page and install it to a new folder.
+2. Install Fallout: New Vegas with Steam or GOG and run the original launcher once. A typical Steam data folder is
+   `C:\Program Files (x86)\Steam\steamapps\common\Fallout New Vegas\Data`.
+3. Run `openmw-launcher.exe` from the installation folder. On **Data Files**, add the Fallout: New Vegas `Data` folder.
+4. Enable `FalloutNV.esm`. For a new game, enable owned DLC after the base game. For a native `.fos` save, the Content
+   List must instead match the save's embedded master table exactly; the preflight error reports the first mismatched
+   index without modifying the session. Master order can vary between saves, especially for `GunRunnersArsenal.esm`
+   and the Courier's Stash packs, so do not assume a generic DLC order when loading an existing save.
+5. Enable the matching `Fallout - *.bsa` archives shown by the launcher, including meshes, textures, sounds, and
+   voices. Enable DLC archives only for DLC you own and enabled in step 4.
+6. Save the Content List, select it, and press **Play**. You can launch the same configured Content List later with
+   `openmw.exe` for Flat or `openmw_vr.exe` for VR.
+
+The experimental FNV main menu is not yet a reliable launch path. To load an existing save directly, start the engine
+with `--load-savegame "C:\path\to\Save Name.fos"` after saving the matching FNV Content List in the launcher. The engine
+preflights the native save before replacing the current session and stops with a precise error if the master order or
+required compatibility state does not match.
+
+If the launcher does not list `FalloutNV.esm`, verify that the selected directory is the game's `Data` directory,
+not the directory containing it. Do not copy Fallout files into this repository or attach them to bug reports.
+
 Current Status
 --------------
 

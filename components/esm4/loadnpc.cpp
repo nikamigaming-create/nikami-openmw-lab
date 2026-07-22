@@ -217,10 +217,20 @@ void ESM4::Npc::load(ESM4::Reader& reader)
             {
                 if (mIsFONV)
                 {
-                    if (subHdr.dataSize != sizeof(mFNVData))
+                    // Nearly every FO3/FNV NPC stores the eleven-byte actor-value
+                    // prefix here.  Two shipped Fallout 3 encounter records append
+                    // fourteen opaque bytes to that same prefix.  Reject genuinely
+                    // truncated or unexpected records, but consume the documented
+                    // FO3 extension so those two records cannot abort loading the
+                    // entire Fallout3.esm NPC group.
+                    const bool hasFo3ExtendedData
+                        = mIsFO3 && subHdr.dataSize > sizeof(mFNVData);
+                    if (subHdr.dataSize != sizeof(mFNVData) && !hasFo3ExtendedData)
                         throw std::runtime_error("ESM4::NPC_::load - Fallout DATA size mismatch");
 
                     reader.get(mFNVData);
+                    if (hasFo3ExtendedData)
+                        reader.skipSubRecordData(subHdr.dataSize - sizeof(mFNVData));
                     mHasFNVData = true;
                     break;
                 }

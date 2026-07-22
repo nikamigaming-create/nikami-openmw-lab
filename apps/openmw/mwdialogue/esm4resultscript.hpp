@@ -16,6 +16,7 @@ namespace MWDialogue
         Disable,
         Unlock,
         EvaluatePackage,
+        StopCombat,
     };
 
     struct Esm4ResultCommand
